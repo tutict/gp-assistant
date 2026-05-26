@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>A股选股 Agent</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">A-Share Research Workspace</p>
+          <h1>A股选股 Agent</h1>
+        </div>
+        <div class="status-pill">Mock / AkShare</div>
+      </header>
+
+      <section class="workspace">
+        <aside class="filters" aria-label="筛选条件">
+          <h2>基础条件</h2>
+          <label class="field">
+            <span>行业</span>
+            <input id="industry" placeholder="例如 Banking / Batteries" />
+          </label>
+          <label class="field">
+            <span>最低 ROE</span>
+            <input id="minRoe" type="number" step="0.01" placeholder="0.10" />
+          </label>
+          <label class="field">
+            <span>最高 PE</span>
+            <input id="maxPe" type="number" step="0.1" placeholder="10" />
+          </label>
+          <label class="field">
+            <span>最高 PB</span>
+            <input id="maxPb" type="number" step="0.1" placeholder="1" />
+          </label>
+        </aside>
+
+        <section class="tool-grid">
+          <article class="tool-card">
+            <div class="card-heading">
+              <h2>普通选股</h2>
+              <span>Score</span>
+            </div>
+            <button id="screenBtn" type="button">运行筛选</button>
+            <pre id="screenResult" class="result">等待筛选...</pre>
+          </article>
+
+          <article class="tool-card">
+            <div class="card-heading">
+              <h2>关系图选股</h2>
+              <span>Graph</span>
+            </div>
+            <label class="field compact">
+              <span>种子股票</span>
+              <input id="seedCodes" placeholder="300750.SZ, 002594.SZ" />
+            </label>
+            <div class="split-fields">
+              <label class="field compact">
+                <span>传播层数</span>
+                <input id="relationDepth" type="number" value="1" min="1" max="3" />
+              </label>
+              <label class="field compact">
+                <span>关系权重</span>
+                <input id="relationWeight" type="number" value="0.4" min="0" max="1" step="0.05" />
+              </label>
+            </div>
+            <button id="graphBtn" type="button">运行关系图</button>
+            <pre id="graphResult" class="result">等待关系图选股...</pre>
+          </article>
+
+          <article class="tool-card">
+            <div class="card-heading">
+              <h2>持有回测</h2>
+              <span>Backtest</span>
+            </div>
+            <div class="split-fields">
+              <label class="field compact">
+                <span>开始日期</span>
+                <input id="btStart" placeholder="20200101" />
+              </label>
+              <label class="field compact">
+                <span>结束日期</span>
+                <input id="btEnd" placeholder="20240101" />
+              </label>
+            </div>
+            <label class="field compact">
+              <span>Top N</span>
+              <input id="btTopN" type="number" value="10" min="1" max="100" />
+            </label>
+            <button id="backtestBtn" type="button">运行回测</button>
+            <pre id="backtestResult" class="result">等待回测...</pre>
+          </article>
+        </section>
+      </section>
+
+      <section class="agent-panel">
+        <div class="card-heading">
+          <h2>Agent 指令</h2>
+          <span>JSON Action</span>
+        </div>
+        <textarea
+          id="agentMsg"
+          rows="4"
+          placeholder="例如：帮我用产业链关系筛选新能源股票，PE 低于 25，ROE 高于 10%"
+        ></textarea>
+        <button id="agentBtn" type="button">发送给 Agent</button>
+        <pre id="agentResult" class="result large">等待 Agent 回复...</pre>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
