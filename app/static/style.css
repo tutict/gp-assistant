@@ -242,7 +242,7 @@ textarea:focus {
 
 .market-strip {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1px;
   overflow: hidden;
   margin-top: 18px;
@@ -367,7 +367,8 @@ textarea::placeholder {
 }
 
 .field-pair,
-.backtest-controls {
+.backtest-controls,
+.trend-controls {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
@@ -430,6 +431,14 @@ textarea::placeholder {
   min-width: 112px;
 }
 
+.button-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .tool-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -440,7 +449,8 @@ textarea::placeholder {
   grid-column: 1 / -1;
 }
 
-.backtest-controls {
+.backtest-controls,
+.trend-controls {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
@@ -573,6 +583,7 @@ textarea::placeholder {
 
 .stock-meta,
 .mini-metrics,
+.signal-summary,
 .tag-row,
 .related-list,
 .chart-labels,
@@ -584,6 +595,7 @@ textarea::placeholder {
 
 .stock-meta,
 .mini-metrics,
+.signal-summary,
 .tag-row,
 .related-list {
   flex-wrap: wrap;
@@ -592,6 +604,7 @@ textarea::placeholder {
 
 .stock-meta span,
 .mini-metrics span,
+.signal-summary span,
 .tag-row span,
 .related-list div,
 .symbol-strip {
@@ -606,6 +619,87 @@ textarea::placeholder {
   color: var(--accent-strong);
   font-size: 0.72rem;
   font-weight: 760;
+}
+
+.signal-summary span {
+  color: var(--text);
+  font-size: 0.72rem;
+}
+
+.signal-summary span:first-child {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--line));
+  color: var(--accent-strong);
+  font-weight: 780;
+}
+
+.signal-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.signal-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.signal-card h3 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.signal-card p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.state-pill {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--accent-strong);
+  font-size: 0.75rem;
+  font-weight: 820;
+  padding: 5px 9px;
+}
+
+.signal-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.signal-grid div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  padding: 8px 9px;
+}
+
+.signal-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 780;
+  text-transform: uppercase;
+}
+
+.signal-grid strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .score-badge {
@@ -676,6 +770,31 @@ textarea::placeholder {
   width: 100%;
   height: 150px;
   color: var(--positive);
+}
+
+.chart-wrap.trend-chart svg {
+  height: 190px;
+  color: var(--text);
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.chart-legend span::before {
+  display: inline-block;
+  width: 18px;
+  height: 3px;
+  margin-right: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  vertical-align: middle;
+  content: "";
 }
 
 .chart-labels {
@@ -770,6 +889,7 @@ textarea::placeholder {
   .control-rail,
   .tool-grid,
   .field-pair,
+  .trend-controls,
   .backtest-controls,
   .agent-input-row {
     grid-template-columns: 1fr;
@@ -795,8 +915,22 @@ textarea::placeholder {
     flex-direction: column;
   }
 
+  .button-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    justify-content: stretch;
+  }
+
+  .button-row button {
+    width: 100%;
+  }
+
   .metric-strip {
     grid-template-columns: 1fr;
+  }
+
+  .signal-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .stock-main {

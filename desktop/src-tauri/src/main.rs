@@ -54,6 +54,26 @@ fn core_backtest_with_data(payload: serde_json::Value) -> Result<serde_json::Val
 }
 
 #[tauri::command]
+fn core_trend(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    gp_core::trend_value(payload).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn core_trend_with_data(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    gp_core::trend_with_data_value(payload).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn core_trend_screen(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    gp_core::trend_screen_value(payload).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn core_trend_screen_with_data(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    gp_core::trend_screen_with_data_value(payload).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn core_agent(payload: serde_json::Value) -> Result<serde_json::Value, String> {
     gp_core::agent_value(payload).map_err(|error| error.to_string())
 }
@@ -94,6 +114,10 @@ fn main() {
             core_graph_screen_with_data,
             core_backtest,
             core_backtest_with_data,
+            core_trend,
+            core_trend_with_data,
+            core_trend_screen,
+            core_trend_screen_with_data,
             core_agent,
             core_agent_with_data,
             core_validate_data_source

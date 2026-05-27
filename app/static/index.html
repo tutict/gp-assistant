@@ -53,6 +53,11 @@
           <strong>持有回测</strong>
           <em>验证组合净值曲线</em>
         </div>
+        <div>
+          <span>04</span>
+          <strong>趋势指标</strong>
+          <em>SWL/SWS、短买、离场、量化评分</em>
+        </div>
       </section>
 
       <section class="workspace">
@@ -182,6 +187,36 @@
               </div>
               <div id="graphResult" class="result-panel empty">
                 <div class="empty-state">等待关系图选股</div>
+              </div>
+            </article>
+
+            <article class="module wide">
+              <div class="module-heading">
+                <div>
+                  <p>Trend</p>
+                  <h2>趋势指标</h2>
+                </div>
+                <div class="button-row">
+                  <button id="trendAnalyzeBtn" type="button">分析个股</button>
+                  <button id="trendScreenBtn" type="button">趋势选股</button>
+                </div>
+              </div>
+              <div class="trend-controls">
+                <label class="field">
+                  <span>股票代码</span>
+                  <input id="trendCode" value="300750.SZ" placeholder="300750.SZ" />
+                </label>
+                <label class="field">
+                  <span>开始日期</span>
+                  <input id="trendStart" value="20200101" placeholder="20200101" />
+                </label>
+                <label class="field">
+                  <span>结束日期</span>
+                  <input id="trendEnd" value="20240101" placeholder="20240101" />
+                </label>
+              </div>
+              <div id="trendResult" class="result-panel medium empty">
+                <div class="empty-state">等待趋势指标分析</div>
               </div>
             </article>
 

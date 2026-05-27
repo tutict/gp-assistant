@@ -11,11 +11,16 @@ from app.schemas import (
     ScreenCriteria,
     ScreenResult,
     StockItem,
+    TrendIndicatorRequest,
+    TrendIndicatorResult,
+    TrendScreenRequest,
+    TrendScreenResult,
 )
 from app.services.agent import run_agent
 from app.services.backtest import backtest_hold
 from app.services.screener import screen_stocks
 from app.services.stock_graph import graph_screen_stocks
+from app.services.trend_indicator import analyze_trend, trend_screen_stocks
 
 router = APIRouter()
 
@@ -59,6 +64,23 @@ def screen(criteria: ScreenCriteria):
 def graph_screen(request: GraphScreenRequest):
     provider = get_provider()
     return graph_screen_stocks(provider, request)
+
+
+@router.post("/trend", response_model=TrendIndicatorResult)
+def trend(request: TrendIndicatorRequest):
+    provider = get_provider()
+    try:
+        return analyze_trend(provider, request)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Stock not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/trend-screen", response_model=TrendScreenResult)
+def trend_screen(request: TrendScreenRequest):
+    provider = get_provider()
+    return trend_screen_stocks(provider, request)
 
 
 @router.post("/backtest", response_model=BacktestResult)

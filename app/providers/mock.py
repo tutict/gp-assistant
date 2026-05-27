@@ -117,14 +117,46 @@ class MockProvider(StockProvider):
         return self._data[code]
 
     def get_history(self, code: str, start_date: str, end_date: str):
+        import math
+
         import pandas as pd
 
         if code not in self._data:
             raise KeyError(f"Stock {code} not found")
         dates = pd.date_range(start=pd.to_datetime(start_date), end=pd.to_datetime(end_date), freq="B")
-        base = self._data[code].price or 10.0
-        series = [base * (1 + 0.0005 * i) for i in range(len(dates))]
-        return pd.DataFrame({"date": dates.strftime("%Y-%m-%d"), "close": series})
+        stock = self._data[code]
+        base = stock.price or 10.0
+        seed = sum(ord(char) for char in code)
+        drift = 0.00028 + (seed % 7) * 0.00006
+        phase = (seed % 17) / 3
+
+        rows = []
+        previous_close = base
+        for index, date in enumerate(dates):
+            wave = math.sin(index / 8 + phase) * 0.018
+            pullback = math.sin(index / 23 + phase) * 0.008
+            close = max(base * (1 + drift * index + wave + pullback), 0.01)
+            open_price = previous_close * (1 + math.cos(index / 9 + phase) * 0.004)
+            high = max(open_price, close) * (1.006 + abs(math.sin(index / 11 + phase)) * 0.006)
+            low = min(open_price, close) * (0.994 - abs(math.cos(index / 13 + phase)) * 0.004)
+            volume = 2_000_000 + (seed % 31) * 55_000 + index * 2_500
+            volume *= 1 + abs(math.sin(index / 10 + phase)) * 0.35
+            capital = None
+            if stock.market_cap_billion:
+                capital = stock.market_cap_billion * 1_000_000_000 / max(base, 0.01)
+            rows.append(
+                {
+                    "date": date.strftime("%Y-%m-%d"),
+                    "open": open_price,
+                    "high": high,
+                    "low": low,
+                    "close": close,
+                    "volume": volume,
+                    "capital": capital,
+                }
+            )
+            previous_close = close
+        return pd.DataFrame(rows)
 
     def list_relations(self) -> List[StockRelation]:
         return [

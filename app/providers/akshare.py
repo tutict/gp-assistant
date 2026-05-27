@@ -37,11 +37,19 @@ class AkShareProvider(StockProvider):
         symbol = code.split(".")[0]
         df = history_fn(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="")
         if df is None or df.empty:
-            return pd.DataFrame(columns=["date", "close"])
+            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
 
-        date_col = self._pick_col(df, ["日期", "date"])
-        close_col = self._pick_col(df, ["收盘", "close"])
-        df = df[[date_col, close_col]].rename(columns={date_col: "date", close_col: "close"})
+        columns = {
+            "date": self._pick_col(df, ["日期", "date"]),
+            "open": self._pick_col(df, ["开盘", "open"], required=False),
+            "high": self._pick_col(df, ["最高", "high"], required=False),
+            "low": self._pick_col(df, ["最低", "low"], required=False),
+            "close": self._pick_col(df, ["收盘", "close"]),
+            "volume": self._pick_col(df, ["成交量", "volume", "vol"], required=False),
+        }
+        selected = [source for source in columns.values() if source]
+        renamed = {source: target for target, source in columns.items() if source}
+        df = df[selected].rename(columns=renamed)
         df["date"] = df["date"].astype(str)
         return df
 
@@ -84,10 +92,12 @@ class AkShareProvider(StockProvider):
         raise RuntimeError("AkShare spot data unavailable")
 
     @staticmethod
-    def _pick_col(df: pd.DataFrame, options: List[str]) -> str:
+    def _pick_col(df: pd.DataFrame, options: List[str], required: bool = True) -> Optional[str]:
         for col in options:
             if col in df.columns:
                 return col
+        if not required:
+            return None
         raise KeyError(f"Column not found in AkShare data: {options}")
 
     def _row_to_stock(self, row: pd.Series) -> StockItem:

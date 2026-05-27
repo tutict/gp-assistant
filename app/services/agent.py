@@ -4,17 +4,18 @@ import re
 from typing import Any, Dict, Optional
 
 from app.providers.base import StockProvider
-from app.schemas import AgentResponse, BacktestRequest, GraphScreenRequest, ScreenCriteria
+from app.schemas import AgentResponse, BacktestRequest, GraphScreenRequest, ScreenCriteria, TrendScreenRequest
 from app.services.backtest import backtest_hold
 from app.services.screener import screen_stocks
 from app.services.stock_graph import graph_screen_stocks
+from app.services.trend_indicator import trend_screen_stocks
 
 
 SYSTEM_PROMPT = """You are an A-share stock assistant. You must respond in JSON.
-Decide whether the user wants a basic stock screen, relation-aware graph screen, backtest, or clarification.
+Decide whether the user wants a basic stock screen, relation-aware graph screen, trend screen, backtest, or clarification.
 Return this shape:
 {
-  "action": "screen" | "graph_screen" | "backtest" | "clarify",
+  "action": "screen" | "graph_screen" | "trend_screen" | "backtest" | "clarify",
   "criteria": { ...ScreenCriteria fields... } | null,
   "graph_screen": {
     "criteria": { ...ScreenCriteria fields... },
@@ -23,11 +24,19 @@ Return this shape:
     "relation_weight": 0.35,
     "limit": 20
   } | null,
+  "trend_screen": {
+    "criteria": { ...ScreenCriteria fields... },
+    "start_date": "20200101",
+    "end_date": "20240101",
+    "limit": 20
+  } | null,
   "backtest": { ...BacktestRequest fields... } | null,
   "reply": "short Chinese reply to the user"
 }
 Use action "graph_screen" when the user mentions stock relations, industry chain, upstream/downstream,
 supply chain, peer linkage, GNN, knowledge graph, graph learning, or LangGraph-related stock relation analysis.
+Use action "trend_screen" when the user asks for uptrend, trend indicator, SWL/SWS, short-buy,
+main-force accumulation, red hold, cyan watch, support/resistance, or quantitative score screening.
 If the user request is unclear, use action "clarify" and ask a brief question in reply.
 """
 
@@ -38,7 +47,10 @@ def run_agent(provider: StockProvider, message: str) -> AgentResponse:
     reply = response.get("reply", "")
     criteria = _parse_criteria(response.get("criteria"))
     graph_request = _parse_graph_screen(response.get("graph_screen"))
+    trend_request = _parse_trend_screen(response.get("trend_screen"))
     backtest = _parse_backtest(response.get("backtest"))
+    if action == "trend_screen" and trend_request is None:
+        trend_request = TrendScreenRequest(criteria=criteria or ScreenCriteria())
 
     data = None
     if action == "screen" and criteria:
@@ -46,6 +58,9 @@ def run_agent(provider: StockProvider, message: str) -> AgentResponse:
         data = result.model_dump()
     elif action == "graph_screen" and graph_request:
         result = graph_screen_stocks(provider, graph_request)
+        data = result.model_dump()
+    elif action == "trend_screen" and trend_request:
+        result = trend_screen_stocks(provider, trend_request)
         data = result.model_dump()
     elif action == "backtest" and backtest:
         result = backtest_hold(provider, backtest)
@@ -56,6 +71,7 @@ def run_agent(provider: StockProvider, message: str) -> AgentResponse:
         action=action,
         criteria=criteria,
         graph_screen=graph_request,
+        trend_screen=trend_request,
         backtest=backtest,
         data=data,
     )
@@ -92,6 +108,34 @@ def _call_llm(message: str) -> Dict[str, Any]:
 def _heuristic_parse(message: str) -> Dict[str, Any]:
     lower = message.lower()
     criteria = _heuristic_criteria(message)
+
+    if _contains_any(
+        lower,
+        [
+            "趋势",
+            "上升趋势",
+            "趋势指标",
+            "短买",
+            "主力吸筹",
+            "红色持股",
+            "青色观望",
+            "swl",
+            "sws",
+            "量化评分",
+            "支撑",
+            "阻力",
+        ],
+    ):
+        return {
+            "action": "trend_screen",
+            "reply": "已按趋势指标做选股排序，结果包含 SWL/SWS、持股/观望状态、短买/离场信号和量化评分。",
+            "trend_screen": {
+                "criteria": criteria,
+                "start_date": _extract_date(message, default="20200101", first=True),
+                "end_date": _extract_date(message, default="20240101", first=False),
+                "limit": 20,
+            },
+        }
 
     if _contains_any(lower, ["关系", "产业链", "上下游", "供应链", "关联", "联动", "图学习", "知识图谱", "graph", "gnn", "langgraph"]):
         return {
@@ -218,6 +262,15 @@ def _parse_graph_screen(data: Optional[Dict[str, Any]]) -> Optional[GraphScreenR
         return None
     try:
         return GraphScreenRequest(**data)
+    except Exception:
+        return None
+
+
+def _parse_trend_screen(data: Optional[Dict[str, Any]]) -> Optional[TrendScreenRequest]:
+    if not data:
+        return None
+    try:
+        return TrendScreenRequest(**data)
     except Exception:
         return None
 

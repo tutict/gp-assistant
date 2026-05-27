@@ -1,7 +1,7 @@
 # A-Share Screener Agent (FastAPI)
 
 Minimal A-share stock screener scaffold with AkShare data, lightweight backtest,
-agent endpoint, and relation-aware graph screening.
+agent endpoint, relation-aware graph screening, and SWL/SWS trend signals.
 
 ## Run
 ```bash
@@ -55,7 +55,8 @@ Set `GP_CORE_TARGET` to build a specific mobile target, for example
 toolchain.
 
 The current Rust core includes mock-data stock screening, relation-aware graph
-screening, deterministic mock backtests, and the local heuristic agent router.
+screening, SWL/SWS trend screening, deterministic mock backtests, and the local
+heuristic agent router.
 Native/mobile shells can pass their own `CoreDataSet` into the Rust core for
 stocks, relations, and historical bars, so Android/iOS can source data from
 SQLite, bundled JSON, or a remote API without embedding Python.
@@ -63,6 +64,10 @@ SQLite, bundled JSON, or a remote API without embedding Python.
 ## Notes
 - AkShare spot data is cached to `data/cache/stocks.csv`. Set `AKSHARE_REFRESH=true` to refresh.
 - Backtest dates use `YYYYMMDD` format.
+- Trend screening ports the provided TongDaXin-style formula into calculable
+  signals: SWL/SWS, red-hold/watch states, short-buy/exit flags, oversold,
+  support/resistance, and a 90-point quant score. `WINNER(C)` is omitted because
+  it needs chip-distribution data.
 - Relation-aware screening is implemented as a lightweight graph propagation layer:
   single-stock scores are computed first, then peer/supply-chain/thematic relations
   spread signals across connected stocks.
@@ -92,6 +97,12 @@ curl -X POST http://127.0.0.1:8000/api/screen ^
 curl -X POST http://127.0.0.1:8000/api/graph-screen ^
   -H "Content-Type: application/json" ^
   -d "{\"criteria\":{\"max_pe\":25,\"min_roe\":0.1},\"seed_codes\":[\"300750.SZ\"],\"relation_depth\":1,\"relation_weight\":0.4,\"limit\":10}"
+```
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/trend-screen ^
+  -H "Content-Type: application/json" ^
+  -d "{\"criteria\":{\"max_pe\":30},\"start_date\":\"20200101\",\"end_date\":\"20240101\",\"limit\":10}"
 ```
 
 ```bash

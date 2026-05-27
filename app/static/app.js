@@ -3,6 +3,8 @@ const $ = (selector) => document.querySelector(selector);
 const buttons = {
   screen: $("#screenBtn"),
   graph: $("#graphBtn"),
+  trendAnalyze: $("#trendAnalyzeBtn"),
+  trendScreen: $("#trendScreenBtn"),
   backtest: $("#backtestBtn"),
   agent: $("#agentBtn"),
 };
@@ -10,6 +12,7 @@ const buttons = {
 const panels = {
   screen: $("#screenResult"),
   graph: $("#graphResult"),
+  trend: $("#trendResult"),
   backtest: $("#backtestResult"),
   agent: $("#agentResult"),
 };
@@ -24,6 +27,8 @@ bindActions();
 function bindActions() {
   buttons.screen.addEventListener("click", () => runTask(buttons.screen, panels.screen, runScreen));
   buttons.graph.addEventListener("click", () => runTask(buttons.graph, panels.graph, runGraph));
+  buttons.trendAnalyze.addEventListener("click", () => runTask(buttons.trendAnalyze, panels.trend, runTrendAnalysis));
+  buttons.trendScreen.addEventListener("click", () => runTask(buttons.trendScreen, panels.trend, runTrendScreen));
   buttons.backtest.addEventListener("click", () => runTask(buttons.backtest, panels.backtest, runBacktest));
   buttons.agent.addEventListener("click", () => runTask(buttons.agent, panels.agent, runAgent));
 }
@@ -58,6 +63,35 @@ async function runGraph() {
   };
   const data = await postJson("/api/graph-screen", payload, panels.graph);
   if (data) renderGraphResult(panels.graph, data);
+}
+
+async function runTrendAnalysis() {
+  const code = $("#trendCode").value.trim().toUpperCase();
+  if (!code) {
+    setError(panels.trend, "请输入股票代码", "例如：300750.SZ");
+    return;
+  }
+  setLoading(panels.trend, "趋势指标计算中");
+  const payload = {
+    code,
+    start_date: $("#trendStart").value.trim() || "20200101",
+    end_date: $("#trendEnd").value.trim() || "20240101",
+    series_limit: 180,
+  };
+  const data = await postJson("/api/trend", payload, panels.trend);
+  if (data) renderTrendAnalysis(panels.trend, data);
+}
+
+async function runTrendScreen() {
+  setLoading(panels.trend, "趋势选股中");
+  const payload = {
+    criteria: buildCriteria({ limit: 100 }),
+    start_date: $("#trendStart").value.trim() || "20200101",
+    end_date: $("#trendEnd").value.trim() || "20240101",
+    limit: Math.min(readInt("resultLimit", 30), 100),
+  };
+  const data = await postJson("/api/trend-screen", payload, panels.trend);
+  if (data) renderTrendScreenResult(panels.trend, data);
 }
 
 async function runBacktest() {
@@ -187,6 +221,42 @@ function renderGraphResult(node, data) {
   });
 }
 
+function renderTrendAnalysis(node, data) {
+  const signal = data.signal || {};
+  const series = data.series || [];
+  renderResult(node, {
+    summary: [
+      ["状态", statusLabel(signal.status)],
+      ["量化分", `${signal.quant_score ?? 0}/${signal.quant_score_max ?? 90}`],
+      ["收盘价", formatNumber(signal.close)],
+    ],
+    body: [
+      renderSignalCard(data.stock || {}, signal),
+      series.length ? renderTrendChart(series) : renderEmpty("没有可用趋势曲线"),
+      signal.notes?.length ? renderNotes(signal.notes) : "",
+    ].join(""),
+    raw: data,
+  });
+}
+
+function renderTrendScreenResult(node, data) {
+  const items = data.items || [];
+  renderResult(node, {
+    summary: [
+      ["返回", data.returned ?? items.length],
+      ["候选", data.total ?? 0],
+      ["最高分", items[0] ? formatNumber(items[0].final_score) : "-"],
+    ],
+    body: [
+      items.length
+        ? renderStockList(items.map(trendItemToView))
+        : renderEmpty("没有趋势信号匹配当前条件"),
+      data.notes?.length ? renderNotes(data.notes) : "",
+    ].join(""),
+    raw: data,
+  });
+}
+
 function renderBacktestResult(node, data) {
   const metrics = data.metrics || {};
   const curve = data.equity_curve || [];
@@ -219,6 +289,13 @@ function renderAgentResult(node, data) {
         : renderEmpty("没有关系图结果"),
     );
     if (nested.notes?.length) bodyParts.push(renderNotes(nested.notes));
+  } else if (data.action === "trend_screen") {
+    bodyParts.push(
+      nestedItems.length
+        ? renderStockList(nestedItems.map(trendItemToView))
+        : renderEmpty("没有趋势选股结果"),
+    );
+    if (nested.notes?.length) bodyParts.push(renderNotes(nested.notes));
   } else if (data.action === "backtest") {
     bodyParts.push(nestedMetrics.total_return !== undefined ? renderMetricLine(nestedMetrics) : "");
     bodyParts.push(nested.equity_curve?.length ? renderSparkline(nested.equity_curve) : "");
@@ -232,11 +309,18 @@ function renderAgentResult(node, data) {
     bodyParts.push(renderEmpty("Agent 没有返回可展示数据"));
   }
 
+  const thirdMetric =
+    data.action === "graph_screen"
+      ? ["关系边", nested.relation_count ?? "-"]
+      : data.action === "trend_screen"
+        ? ["最高分", nestedItems[0] ? formatNumber(nestedItems[0].final_score) : "-"]
+        : ["关系边", nested.relation_count ?? "-"];
+
   renderResult(node, {
     summary: [
       ["动作", actionLabel(data.action)],
       ["结果", nested.returned ?? nestedItems.length ?? "-"],
-      ["关系边", nested.relation_count ?? "-"],
+      thirdMetric,
     ],
     body: bodyParts.join(""),
     raw: data,
@@ -264,6 +348,22 @@ function graphItemToView(item) {
       ["关系", item.relation_score],
     ],
     related: item.related || [],
+  };
+}
+
+function trendItemToView(item) {
+  const signal = item.signal || {};
+  return {
+    stock: item.stock,
+    score: item.final_score,
+    scoreLabel: "趋势分",
+    reasons: item.reasons || [],
+    signal,
+    extra: [
+      ["基础", item.base_score],
+      ["趋势", item.trend_score],
+      ["量化", signal.quant_score],
+    ],
   };
 }
 
@@ -302,6 +402,7 @@ function renderStockRow(item) {
   const extra = item.extra?.length
     ? `<div class="mini-metrics">${item.extra.map(([label, value]) => `<span>${escapeHtml(label)} ${formatNumber(value)}</span>`).join("")}</div>`
     : "";
+  const signal = item.signal ? renderSignalSummary(item.signal) : "";
   const weight = item.weight !== undefined ? `<span class="weight">${formatPercent(item.weight)}</span>` : "";
   const related = item.related?.length ? renderRelated(item.related) : "";
 
@@ -325,9 +426,48 @@ function renderStockRow(item) {
         <span>ROE ${formatPercent(stock.roe)}</span>
       </div>
       ${extra}
+      ${signal}
       ${reasons}
       ${related}
     </article>
+  `;
+}
+
+function renderSignalSummary(signal) {
+  return `
+    <div class="signal-summary">
+      <span>${escapeHtml(statusLabel(signal.status))}</span>
+      <span>量化 ${escapeHtml(String(signal.quant_score ?? 0))}/${escapeHtml(String(signal.quant_score_max ?? 90))}</span>
+      <span>SWL ${formatNumber(signal.swl)}</span>
+      <span>SWS ${formatNumber(signal.sws)}</span>
+      <span>支撑 ${formatNumber(signal.support)}</span>
+      <span>阻力 ${formatNumber(signal.resistance)}</span>
+    </div>
+  `;
+}
+
+function renderSignalCard(stock, signal) {
+  return `
+    <section class="signal-card">
+      <header>
+        <div>
+          <h3>${escapeHtml(stock.name || stock.code || signal.code || "-")}</h3>
+          <p>${escapeHtml(stock.code || signal.code || "")} · ${escapeHtml(signal.date || "")}</p>
+        </div>
+        <span class="state-pill">${escapeHtml(statusLabel(signal.status))}</span>
+      </header>
+      <div class="signal-grid">
+        <div><span>Close</span><strong>${formatNumber(signal.close)}</strong></div>
+        <div><span>SWL / SWS</span><strong>${formatNumber(signal.swl)} / ${formatNumber(signal.sws)}</strong></div>
+        <div><span>Quant</span><strong>${escapeHtml(String(signal.quant_score ?? 0))}/${escapeHtml(String(signal.quant_score_max ?? 90))}</strong></div>
+        <div><span>Support</span><strong>${formatNumber(signal.support)}</strong></div>
+        <div><span>Resistance</span><strong>${formatNumber(signal.resistance)}</strong></div>
+        <div><span>Breakout</span><strong>${formatNumber(signal.breakout)}</strong></div>
+        <div><span>Reversal</span><strong>${formatNumber(signal.reversal)}</strong></div>
+        <div><span>Wait</span><strong>${formatNumber(signal.wait_line)}</strong></div>
+      </div>
+      ${signal.reasons?.length ? `<div class="tag-row">${signal.reasons.map((reason) => `<span>${escapeHtml(reasonLabel(reason))}</span>`).join("")}</div>` : ""}
+    </section>
   `;
 }
 
@@ -383,6 +523,62 @@ function renderSparkline(curve) {
   `;
 }
 
+function renderTrendChart(series) {
+  const width = 720;
+  const height = 190;
+  const values = series
+    .flatMap((point) => [point.close, point.swl, point.sws])
+    .map(Number)
+    .filter(Number.isFinite);
+  if (values.length < 2) return renderEmpty("趋势点不足");
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const yFor = (value) => height - ((Number(value) - min) / range) * height;
+  const xFor = (index) => (index / Math.max(series.length - 1, 1)) * width;
+  const linePoints = (key) =>
+    series
+      .map((point, index) => {
+        const value = Number(point[key]);
+        if (!Number.isFinite(value)) return null;
+        return `${xFor(index).toFixed(2)},${yFor(value).toFixed(2)}`;
+      })
+      .filter(Boolean)
+      .join(" ");
+  const markers = series
+    .map((point, index) => {
+      const close = Number(point.close);
+      if (!Number.isFinite(close)) return "";
+      const cx = xFor(index).toFixed(2);
+      const cy = yFor(close).toFixed(2);
+      if (point.short_buy) return `<circle cx="${cx}" cy="${cy}" r="4.5" fill="var(--positive)" />`;
+      if (point.white_exit) return `<circle cx="${cx}" cy="${cy}" r="4.5" fill="var(--danger)" />`;
+      return "";
+    })
+    .join("");
+
+  return `
+    <div class="chart-wrap trend-chart">
+      <div class="chart-legend">
+        <span>Close</span>
+        <span style="color: var(--accent-strong)">SWL</span>
+        <span style="color: var(--muted)">SWS</span>
+      </div>
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="趋势指标曲线">
+        <polyline points="${linePoints("close")}" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline points="${linePoints("swl")}" fill="none" stroke="var(--accent-strong)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline points="${linePoints("sws")}" fill="none" stroke="var(--muted)" stroke-width="2" stroke-dasharray="7 6" stroke-linecap="round" stroke-linejoin="round" />
+        ${markers}
+      </svg>
+      <div class="chart-labels">
+        <span>${escapeHtml(series[0]?.date || "")}</span>
+        <span>${escapeHtml(series[series.length - 1]?.date || "")}</span>
+      </div>
+    </div>
+  `;
+}
+
 function renderMetricLine(metrics) {
   return `
     <div class="metric-line">
@@ -431,10 +627,24 @@ function actionLabel(action) {
   const labels = {
     screen: "普通选股",
     graph_screen: "关系图",
+    trend_screen: "趋势选股",
     backtest: "回测",
     clarify: "澄清",
   };
   return labels[action] || action || "-";
+}
+
+function statusLabel(status) {
+  const labels = {
+    buy_setup: "短买信号",
+    uptrend: "上升趋势",
+    hold: "红色持股",
+    watch: "青色观望",
+    exit: "白色离场",
+    oversold: "急速超跌",
+    neutral: "中性",
+  };
+  return labels[status] || status || "-";
 }
 
 function reasonLabel(reason) {
@@ -445,6 +655,13 @@ function reasonLabel(reason) {
     mcap_ok: "市值达标",
     strong_relation_signal: "强关系信号",
     moderate_relation_signal: "中等关系信号",
+    short_buy_signal: "短买",
+    red_hold: "红色持股",
+    swl_above_sws: "SWL 强于 SWS",
+    high_quant_score: "量化分较高",
+    white_exit: "白色离场",
+    cyan_watch: "青色观望",
+    oversold: "急速超跌",
   };
   return labels[reason] || reason;
 }

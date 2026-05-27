@@ -74,6 +74,79 @@ class GraphScreenResult(BaseModel):
     notes: List[str] = Field(default_factory=list)
 
 
+class TrendIndicatorRequest(BaseModel):
+    code: str
+    start_date: str = Field(default="20200101", description="YYYYMMDD")
+    end_date: str = Field(default="20240101", description="YYYYMMDD")
+    series_limit: int = Field(default=120, ge=20, le=500)
+
+
+class TrendIndicatorPoint(BaseModel):
+    date: str
+    close: float
+    swl: Optional[float] = None
+    sws: Optional[float] = None
+    red_hold: bool = False
+    cyan_watch: bool = False
+    short_buy: bool = False
+    white_exit: bool = False
+
+
+class TrendIndicatorSignal(BaseModel):
+    code: str
+    date: str
+    close: float
+    swl: Optional[float] = None
+    sws: Optional[float] = None
+    star_line: Optional[float] = None
+    bull_line: Optional[float] = None
+    wait_line: Optional[float] = None
+    support: Optional[float] = None
+    resistance: Optional[float] = None
+    breakout: Optional[float] = None
+    reversal: Optional[float] = None
+    swl_above_sws: bool = False
+    red_hold: bool = False
+    cyan_watch: bool = False
+    short_buy: bool = False
+    white_exit: bool = False
+    oversold: bool = False
+    quant_score: int = 0
+    quant_score_max: int = 90
+    status: str = "neutral"
+    reasons: List[str] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
+
+
+class TrendIndicatorResult(BaseModel):
+    stock: StockItem
+    signal: TrendIndicatorSignal
+    series: List[TrendIndicatorPoint] = Field(default_factory=list)
+
+
+class TrendScreenRequest(BaseModel):
+    criteria: ScreenCriteria = Field(default_factory=ScreenCriteria)
+    start_date: str = Field(default="20200101", description="YYYYMMDD")
+    end_date: str = Field(default="20240101", description="YYYYMMDD")
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+class TrendStockSignal(BaseModel):
+    stock: StockItem
+    base_score: float
+    trend_score: float
+    final_score: float
+    signal: TrendIndicatorSignal
+    reasons: List[str] = Field(default_factory=list)
+
+
+class TrendScreenResult(BaseModel):
+    total: int
+    returned: int
+    items: List[TrendStockSignal]
+    notes: List[str] = Field(default_factory=list)
+
+
 class BacktestRequest(BaseModel):
     criteria: ScreenCriteria = Field(default_factory=ScreenCriteria)
     start_date: str = Field(description="YYYYMMDD")
@@ -110,4 +183,5 @@ class AgentResponse(BaseModel):
     criteria: Optional[ScreenCriteria] = None
     backtest: Optional[BacktestRequest] = None
     graph_screen: Optional[GraphScreenRequest] = None
+    trend_screen: Optional[TrendScreenRequest] = None
     data: Optional[dict] = None

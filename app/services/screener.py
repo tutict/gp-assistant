@@ -1,34 +1,34 @@
-from typing import List
+from typing import List, Optional
 
 from app.schemas import ScreenCriteria, ScreenResult, ScreenedStock, StockItem
 
 
-def _matches(stock: StockItem, criteria: ScreenCriteria) -> List[str]:
+def _matches(stock: StockItem, criteria: ScreenCriteria) -> Optional[List[str]]:
     reasons: List[str] = []
     if not criteria.include_st and stock.is_st:
-        return []
+        return None
 
     if criteria.industry and stock.industry.lower() != criteria.industry.lower():
-        return []
+        return None
 
     if criteria.min_roe is not None:
         if stock.roe is None or stock.roe < criteria.min_roe:
-            return []
+            return None
         reasons.append("roe_ok")
 
     if criteria.max_pe is not None:
         if stock.pe is None or stock.pe > criteria.max_pe:
-            return []
+            return None
         reasons.append("pe_ok")
 
     if criteria.max_pb is not None:
         if stock.pb is None or stock.pb > criteria.max_pb:
-            return []
+            return None
         reasons.append("pb_ok")
 
     if criteria.min_market_cap_billion is not None:
         if stock.market_cap_billion is None or stock.market_cap_billion < criteria.min_market_cap_billion:
-            return []
+            return None
         reasons.append("mcap_ok")
 
     return reasons
@@ -51,16 +51,7 @@ def screen_stocks(universe: List[StockItem], criteria: ScreenCriteria) -> Screen
     screened: List[ScreenedStock] = []
     for stock in universe:
         reasons = _matches(stock, criteria)
-        if not reasons and any(
-            [
-                criteria.min_roe is not None,
-                criteria.max_pe is not None,
-                criteria.max_pb is not None,
-                criteria.min_market_cap_billion is not None,
-                criteria.industry is not None,
-                not criteria.include_st,
-            ]
-        ):
+        if reasons is None:
             continue
         score = _score(stock, reasons)
         screened.append(ScreenedStock(stock=stock, score=score, reasons=reasons))

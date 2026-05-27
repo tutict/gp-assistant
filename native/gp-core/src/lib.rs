@@ -172,6 +172,121 @@ pub struct GraphScreenResult {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TrendIndicatorRequest {
+    pub code: String,
+    #[serde(default = "default_start_date")]
+    pub start_date: String,
+    #[serde(default = "default_end_date")]
+    pub end_date: String,
+    #[serde(default = "default_series_limit")]
+    pub series_limit: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TrendIndicatorPoint {
+    pub date: String,
+    pub close: f64,
+    #[serde(default)]
+    pub swl: Option<f64>,
+    #[serde(default)]
+    pub sws: Option<f64>,
+    #[serde(default)]
+    pub red_hold: bool,
+    #[serde(default)]
+    pub cyan_watch: bool,
+    #[serde(default)]
+    pub short_buy: bool,
+    #[serde(default)]
+    pub white_exit: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TrendIndicatorSignal {
+    pub code: String,
+    pub date: String,
+    pub close: f64,
+    #[serde(default)]
+    pub swl: Option<f64>,
+    #[serde(default)]
+    pub sws: Option<f64>,
+    #[serde(default)]
+    pub star_line: Option<f64>,
+    #[serde(default)]
+    pub bull_line: Option<f64>,
+    #[serde(default)]
+    pub wait_line: Option<f64>,
+    #[serde(default)]
+    pub support: Option<f64>,
+    #[serde(default)]
+    pub resistance: Option<f64>,
+    #[serde(default)]
+    pub breakout: Option<f64>,
+    #[serde(default)]
+    pub reversal: Option<f64>,
+    #[serde(default)]
+    pub swl_above_sws: bool,
+    #[serde(default)]
+    pub red_hold: bool,
+    #[serde(default)]
+    pub cyan_watch: bool,
+    #[serde(default)]
+    pub short_buy: bool,
+    #[serde(default)]
+    pub white_exit: bool,
+    #[serde(default)]
+    pub oversold: bool,
+    #[serde(default)]
+    pub quant_score: i32,
+    #[serde(default = "default_quant_score_max")]
+    pub quant_score_max: i32,
+    pub status: String,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TrendIndicatorResult {
+    pub stock: StockItem,
+    pub signal: TrendIndicatorSignal,
+    #[serde(default)]
+    pub series: Vec<TrendIndicatorPoint>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TrendScreenRequest {
+    #[serde(default)]
+    pub criteria: ScreenCriteria,
+    #[serde(default = "default_start_date")]
+    pub start_date: String,
+    #[serde(default = "default_end_date")]
+    pub end_date: String,
+    #[serde(default = "default_trend_limit")]
+    pub limit: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TrendStockSignal {
+    pub stock: StockItem,
+    pub base_score: f64,
+    pub trend_score: f64,
+    pub final_score: f64,
+    pub signal: TrendIndicatorSignal,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TrendScreenResult {
+    pub total: usize,
+    pub returned: usize,
+    pub items: Vec<TrendStockSignal>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BacktestRequest {
     #[serde(default)]
     pub criteria: ScreenCriteria,
@@ -220,13 +335,25 @@ pub struct AgentResponse {
     #[serde(default)]
     pub graph_screen: Option<GraphScreenRequest>,
     #[serde(default)]
+    pub trend_screen: Option<TrendScreenRequest>,
+    #[serde(default)]
     pub data: Option<Value>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HistoryBar {
     pub date: String,
+    #[serde(default)]
+    pub open: Option<f64>,
+    #[serde(default)]
+    pub high: Option<f64>,
+    #[serde(default)]
+    pub low: Option<f64>,
     pub close: f64,
+    #[serde(default)]
+    pub volume: Option<f64>,
+    #[serde(default)]
+    pub capital: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -270,6 +397,18 @@ pub struct BacktestWithDataRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TrendWithDataRequest {
+    pub data: CoreDataSet,
+    pub request: TrendIndicatorRequest,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TrendScreenWithDataRequest {
+    pub data: CoreDataSet,
+    pub request: TrendScreenRequest,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AgentWithDataRequest {
     pub data: CoreDataSet,
     pub message: String,
@@ -279,6 +418,39 @@ pub struct AgentWithDataRequest {
 struct HistoryPoint {
     date: NaiveDate,
     close: f64,
+}
+
+#[derive(Clone, Debug)]
+struct PreparedBar {
+    date: NaiveDate,
+    open: f64,
+    high: f64,
+    low: f64,
+    close: f64,
+    volume: f64,
+    capital: f64,
+}
+
+#[derive(Clone, Debug)]
+struct ComputedTrendBar {
+    date: NaiveDate,
+    close: f64,
+    swl: f64,
+    sws: f64,
+    star_line: f64,
+    bull_line: f64,
+    wait_line: f64,
+    support: f64,
+    resistance: f64,
+    breakout: f64,
+    reversal: f64,
+    swl_above_sws: bool,
+    red_hold: bool,
+    cyan_watch: bool,
+    short_buy: bool,
+    white_exit: bool,
+    oversold: bool,
+    quant_score: i32,
 }
 
 pub trait MarketDataSource {
@@ -377,6 +549,26 @@ fn default_graph_limit() -> usize {
     20
 }
 
+fn default_start_date() -> String {
+    "20200101".to_string()
+}
+
+fn default_end_date() -> String {
+    "20240101".to_string()
+}
+
+fn default_series_limit() -> usize {
+    120
+}
+
+fn default_trend_limit() -> usize {
+    20
+}
+
+fn default_quant_score_max() -> i32 {
+    90
+}
+
 fn default_top_n() -> usize {
     10
 }
@@ -414,6 +606,27 @@ pub fn backtest_value(payload: Value) -> CoreResult<Value> {
 pub fn backtest_with_data_value(payload: Value) -> CoreResult<Value> {
     let request: BacktestWithDataRequest = serde_json::from_value(payload)?;
     serde_json::to_value(backtest_with_data(&request.data, &request.request)?).map_err(Into::into)
+}
+
+pub fn trend_value(payload: Value) -> CoreResult<Value> {
+    let request: TrendIndicatorRequest = serde_json::from_value(payload)?;
+    serde_json::to_value(trend_with_mock(&request)?).map_err(Into::into)
+}
+
+pub fn trend_with_data_value(payload: Value) -> CoreResult<Value> {
+    let request: TrendWithDataRequest = serde_json::from_value(payload)?;
+    serde_json::to_value(trend_with_data(&request.data, &request.request)?).map_err(Into::into)
+}
+
+pub fn trend_screen_value(payload: Value) -> CoreResult<Value> {
+    let request: TrendScreenRequest = serde_json::from_value(payload)?;
+    serde_json::to_value(trend_screen_with_mock(&request)?).map_err(Into::into)
+}
+
+pub fn trend_screen_with_data_value(payload: Value) -> CoreResult<Value> {
+    let request: TrendScreenWithDataRequest = serde_json::from_value(payload)?;
+    serde_json::to_value(trend_screen_with_data(&request.data, &request.request)?)
+        .map_err(Into::into)
 }
 
 pub fn agent_value(payload: Value) -> CoreResult<Value> {
@@ -552,6 +765,112 @@ pub fn backtest_with_source(
     })
 }
 
+pub fn trend_with_mock(request: &TrendIndicatorRequest) -> CoreResult<TrendIndicatorResult> {
+    trend_with_source(&MockDataSource, request)
+}
+
+pub fn trend_with_data(
+    data: &CoreDataSet,
+    request: &TrendIndicatorRequest,
+) -> CoreResult<TrendIndicatorResult> {
+    let source = StaticDataSource::new(data.clone());
+    trend_with_source(&source, request)
+}
+
+pub fn trend_with_source(
+    source: &impl MarketDataSource,
+    request: &TrendIndicatorRequest,
+) -> CoreResult<TrendIndicatorResult> {
+    let universe = source.list_stocks()?;
+    let stock = universe
+        .iter()
+        .find(|stock| stock.code.as_str() == request.code.as_str())
+        .cloned()
+        .ok_or_else(|| CoreError::new(format!("Stock {} not found", request.code)))?;
+    let history = source.get_history(&stock.code, &request.start_date, &request.end_date)?;
+    let bars = prepare_bars(&history, &stock)?;
+    if bars.is_empty() {
+        return Err(CoreError::new(format!(
+            "No history available for {}",
+            stock.code
+        )));
+    }
+    let computed = compute_trend_bars(&bars);
+    let signal = trend_signal_from_bar(&stock.code, computed.last().expect("non-empty trend bars"));
+    let limit = request.series_limit.clamp(20, 500);
+    let skip = computed.len().saturating_sub(limit);
+    let series = computed
+        .iter()
+        .skip(skip)
+        .map(trend_point_from_bar)
+        .collect();
+    Ok(TrendIndicatorResult {
+        stock,
+        signal,
+        series,
+    })
+}
+
+pub fn trend_screen_with_mock(request: &TrendScreenRequest) -> CoreResult<TrendScreenResult> {
+    trend_screen_with_source(&MockDataSource, request)
+}
+
+pub fn trend_screen_with_data(
+    data: &CoreDataSet,
+    request: &TrendScreenRequest,
+) -> CoreResult<TrendScreenResult> {
+    let source = StaticDataSource::new(data.clone());
+    trend_screen_with_source(&source, request)
+}
+
+pub fn trend_screen_with_source(
+    source: &impl MarketDataSource,
+    request: &TrendScreenRequest,
+) -> CoreResult<TrendScreenResult> {
+    let universe = source.list_stocks()?;
+    let candidate_pool = screen_candidate_pool(&universe, &request.criteria, request.limit);
+    let mut items = Vec::new();
+    let mut skipped = 0_usize;
+
+    for candidate in &candidate_pool {
+        let trend_request = TrendIndicatorRequest {
+            code: candidate.stock.code.clone(),
+            start_date: request.start_date.clone(),
+            end_date: request.end_date.clone(),
+            series_limit: 60,
+        };
+        let Ok(analysis) = trend_with_source(source, &trend_request) else {
+            skipped += 1;
+            continue;
+        };
+        let trend_score = trend_score(&analysis.signal);
+        let final_score = combined_trend_score(candidate.score, trend_score);
+        let mut reasons = candidate.reasons.clone();
+        reasons.extend(analysis.signal.reasons.clone());
+        items.push(TrendStockSignal {
+            stock: candidate.stock.clone(),
+            base_score: round6(candidate.score),
+            trend_score: round6(trend_score),
+            final_score: round6(final_score),
+            signal: analysis.signal,
+            reasons,
+        });
+    }
+
+    items.sort_by(|left, right| right.final_score.total_cmp(&left.final_score));
+    items.truncate(request.limit.clamp(1, 100));
+    let mut notes = trend_notes();
+    if skipped > 0 {
+        notes.push(format!("Skipped {skipped} stocks without usable OHLC history."));
+    }
+    Ok(TrendScreenResult {
+        total: candidate_pool.len(),
+        returned: items.len(),
+        items,
+        notes,
+    })
+}
+
 pub fn run_agent_with_mock(message: &str) -> CoreResult<AgentResponse> {
     run_agent_with_source(&MockDataSource, message)
 }
@@ -567,6 +886,41 @@ pub fn run_agent_with_source(
 ) -> CoreResult<AgentResponse> {
     let lower = message.to_lowercase();
     let criteria = heuristic_criteria(message);
+
+    if contains_any(
+        &lower,
+        &[
+            "趋势",
+            "上升趋势",
+            "趋势指标",
+            "短买",
+            "主力吸筹",
+            "红色持股",
+            "青色观望",
+            "swl",
+            "sws",
+            "量化评分",
+            "支撑",
+            "阻力",
+        ],
+    ) {
+        let trend_request = TrendScreenRequest {
+            criteria,
+            start_date: extract_date(message, "20200101", true),
+            end_date: extract_date(message, "20240101", false),
+            limit: 20,
+        };
+        let data = serde_json::to_value(trend_screen_with_source(source, &trend_request)?)?;
+        return Ok(AgentResponse {
+            reply: "已按趋势指标做选股排序。".to_string(),
+            action: "trend_screen".to_string(),
+            criteria: None,
+            backtest: None,
+            graph_screen: None,
+            trend_screen: Some(trend_request),
+            data: Some(data),
+        });
+    }
 
     if contains_any(
         &lower,
@@ -602,6 +956,7 @@ pub fn run_agent_with_source(
             criteria: None,
             backtest: None,
             graph_screen: Some(graph_request),
+            trend_screen: None,
             data: Some(data),
         });
     }
@@ -621,6 +976,7 @@ pub fn run_agent_with_source(
             criteria: None,
             backtest: Some(backtest),
             graph_screen: None,
+            trend_screen: None,
             data: Some(data),
         });
     }
@@ -633,6 +989,7 @@ pub fn run_agent_with_source(
             criteria: Some(criteria),
             backtest: None,
             graph_screen: None,
+            trend_screen: None,
             data: Some(data),
         });
     }
@@ -643,24 +1000,18 @@ pub fn run_agent_with_source(
         criteria: None,
         backtest: None,
         graph_screen: None,
+        trend_screen: None,
         data: None,
     })
 }
 
 pub fn screen_stocks(universe: &[StockItem], criteria: &ScreenCriteria) -> ScreenResult {
     let mut screened = Vec::new();
-    let has_filter = criteria.min_roe.is_some()
-        || criteria.max_pe.is_some()
-        || criteria.max_pb.is_some()
-        || criteria.min_market_cap_billion.is_some()
-        || criteria.industry.is_some()
-        || !criteria.include_st;
 
     for stock in universe {
-        let reasons = matches_stock(stock, criteria);
-        if reasons.is_empty() && has_filter {
+        let Some(reasons) = matches_stock(stock, criteria) else {
             continue;
-        }
+        };
         let score = score_stock(stock, &reasons);
         screened.push(ScreenedStock {
             stock: stock.clone(),
@@ -929,35 +1280,35 @@ pub fn mock_relations() -> Vec<StockRelation> {
     ]
 }
 
-fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Vec<String> {
+fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Option<Vec<String>> {
     let mut reasons = Vec::new();
     if !criteria.include_st && stock.is_st {
-        return reasons;
+        return None;
     }
 
     if let Some(industry) = criteria.industry.as_ref() {
         if stock.industry.to_lowercase() != industry.to_lowercase() {
-            return Vec::new();
+            return None;
         }
     }
 
     if let Some(min_roe) = criteria.min_roe {
         if stock.roe.map(|roe| roe < min_roe).unwrap_or(true) {
-            return Vec::new();
+            return None;
         }
         reasons.push("roe_ok".to_string());
     }
 
     if let Some(max_pe) = criteria.max_pe {
         if stock.pe.map(|pe| pe > max_pe).unwrap_or(true) {
-            return Vec::new();
+            return None;
         }
         reasons.push("pe_ok".to_string());
     }
 
     if let Some(max_pb) = criteria.max_pb {
         if stock.pb.map(|pb| pb > max_pb).unwrap_or(true) {
-            return Vec::new();
+            return None;
         }
         reasons.push("pb_ok".to_string());
     }
@@ -968,12 +1319,12 @@ fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Vec<String> {
             .map(|market_cap| market_cap < min_market_cap)
             .unwrap_or(true)
         {
-            return Vec::new();
+            return None;
         }
         reasons.push("mcap_ok".to_string());
     }
 
-    reasons
+    Some(reasons)
 }
 
 fn score_stock(stock: &StockItem, reasons: &[String]) -> f64 {
@@ -1259,6 +1610,480 @@ fn assign_weights(signals: &mut [GraphStockSignal]) {
     }
 }
 
+fn prepare_bars(history: &[HistoryBar], stock: &StockItem) -> CoreResult<Vec<PreparedBar>> {
+    let fallback_capital = stock
+        .market_cap_billion
+        .map(|market_cap| market_cap * 1_000_000_000.0 / stock.price.max(0.01))
+        .unwrap_or_else(|| {
+            let max_volume = history
+                .iter()
+                .filter_map(|bar| bar.volume)
+                .fold(0.0_f64, f64::max);
+            (max_volume * 20.0).max(1.0)
+        });
+    let mut bars = Vec::with_capacity(history.len());
+    for bar in history {
+        let date = parse_date(&bar.date)?;
+        let open = bar.open.unwrap_or(bar.close);
+        let high = bar.high.unwrap_or(open.max(bar.close));
+        let low = bar.low.unwrap_or(open.min(bar.close));
+        bars.push(PreparedBar {
+            date,
+            open,
+            high,
+            low,
+            close: bar.close,
+            volume: bar.volume.unwrap_or(0.0).max(0.0),
+            capital: bar.capital.unwrap_or(fallback_capital).max(1.0),
+        });
+    }
+    bars.sort_by(|left, right| left.date.cmp(&right.date));
+    Ok(bars)
+}
+
+fn compute_trend_bars(bars: &[PreparedBar]) -> Vec<ComputedTrendBar> {
+    let close: Vec<f64> = bars.iter().map(|bar| bar.close).collect();
+    let open: Vec<f64> = bars.iter().map(|bar| bar.open).collect();
+    let high: Vec<f64> = bars.iter().map(|bar| bar.high).collect();
+    let low: Vec<f64> = bars.iter().map(|bar| bar.low).collect();
+    let volume: Vec<f64> = bars.iter().map(|bar| bar.volume).collect();
+    let capital: Vec<f64> = bars.iter().map(|bar| bar.capital).collect();
+
+    let ema10 = ema(&close, 10);
+    let ema20 = ema(&close, 20);
+    let swl: Vec<f64> = ema10
+        .iter()
+        .zip(&ema20)
+        .map(|(left, right)| (*left * 7.0 + *right * 3.0) / 10.0)
+        .collect();
+    let vol_sum_5 = rolling_sum(&volume, 5);
+    let alpha: Vec<f64> = vol_sum_5
+        .iter()
+        .zip(&capital)
+        .map(|(vol_sum, capital)| {
+            ((100.0 * *vol_sum / (3.0 * *capital)).max(1.0) / 100.0).clamp(0.01, 1.0)
+        })
+        .collect();
+    let sws = dma(&ema20, &alpha);
+
+    let var1 = primary_state(&close, true);
+    let vard = primary_state(&close, false);
+    let red_states = alternating_states(&var1, &close, true);
+    let cyan_states = alternating_states(&vard, &close, false);
+    let red_hold = or_states(&red_states);
+    let cyan_watch = or_states(&cyan_states);
+
+    let ma34 = ma(&close, 34);
+    let ma3 = ma(&close, 3);
+    let bull_line = ma(&close, 26);
+    let star_line = star_line(&close, &open, &high, &low);
+    let quant_score = quant_scores(&close, &high, &low, &volume);
+
+    let mut computed = Vec::with_capacity(bars.len());
+    for index in 0..bars.len() {
+        let e_value = (high[index] + low[index] + open[index] + 2.0 * close[index]) / 5.0;
+        let short_buy = index > 0 && cyan_watch[index - 1] && var1[index];
+        let white_exit = index > 0 && red_hold[index - 1] && vard[index];
+        let oversold = ma34[index].is_finite() && ((close[index] - ma34[index]) / ma34[index] * 100.0) < -14.0;
+        let wait_line = if ma3[index].is_finite()
+            && star_line[index].is_finite()
+            && ma3[index] > star_line[index]
+        {
+            star_line[index]
+        } else {
+            ma3[index]
+        };
+        computed.push(ComputedTrendBar {
+            date: bars[index].date,
+            close: close[index],
+            swl: swl[index],
+            sws: sws[index],
+            star_line: star_line[index],
+            bull_line: bull_line[index],
+            wait_line,
+            support: 2.0 * e_value - high[index],
+            resistance: 2.0 * e_value - low[index],
+            breakout: e_value + (high[index] - low[index]),
+            reversal: e_value - (high[index] - low[index]),
+            swl_above_sws: swl[index] > sws[index],
+            red_hold: red_hold[index],
+            cyan_watch: cyan_watch[index],
+            short_buy,
+            white_exit,
+            oversold,
+            quant_score: quant_score[index],
+        });
+    }
+    computed
+}
+
+fn primary_state(close: &[f64], up: bool) -> Vec<bool> {
+    let mut state = vec![false; close.len()];
+    for index in 2..close.len() {
+        state[index] = if up {
+            close[index] > close[index - 1] && close[index] > close[index - 2]
+        } else {
+            close[index] < close[index - 1] && close[index] < close[index - 2]
+        };
+    }
+    state
+}
+
+fn alternating_states(primary: &[bool], close: &[f64], starts_with_le_ge: bool) -> Vec<Vec<bool>> {
+    let mut states = vec![primary.to_vec()];
+    for state_index in 1..12 {
+        let previous = states.last().expect("state exists");
+        let le_ge = if state_index % 2 == 1 {
+            starts_with_le_ge
+        } else {
+            !starts_with_le_ge
+        };
+        let mut next = vec![false; close.len()];
+        for index in 2..close.len() {
+            let condition = if le_ge {
+                close[index] <= close[index - 1] && close[index] >= close[index - 2]
+            } else {
+                close[index] >= close[index - 1] && close[index] <= close[index - 2]
+            };
+            next[index] = previous[index - 1] && condition;
+        }
+        states.push(next);
+    }
+    states
+}
+
+fn or_states(states: &[Vec<bool>]) -> Vec<bool> {
+    if states.is_empty() {
+        return Vec::new();
+    }
+    let mut combined = vec![false; states[0].len()];
+    for state in states {
+        for (index, value) in state.iter().enumerate() {
+            combined[index] |= *value;
+        }
+    }
+    combined
+}
+
+fn ema(values: &[f64], span: usize) -> Vec<f64> {
+    let alpha = 2.0 / (span as f64 + 1.0);
+    let mut output = Vec::with_capacity(values.len());
+    let mut previous = None;
+    for value in values {
+        let current = match previous {
+            Some(previous_value) => alpha * *value + (1.0 - alpha) * previous_value,
+            None => *value,
+        };
+        previous = Some(current);
+        output.push(current);
+    }
+    output
+}
+
+fn ma(values: &[f64], window: usize) -> Vec<f64> {
+    let mut output = vec![f64::NAN; values.len()];
+    let mut sum = 0.0;
+    for index in 0..values.len() {
+        sum += values[index];
+        if index >= window {
+            sum -= values[index - window];
+        }
+        if index + 1 >= window {
+            output[index] = sum / window as f64;
+        }
+    }
+    output
+}
+
+fn rolling_sum(values: &[f64], window: usize) -> Vec<f64> {
+    let mut output = Vec::with_capacity(values.len());
+    let mut sum = 0.0;
+    for index in 0..values.len() {
+        sum += values[index];
+        if index >= window {
+            sum -= values[index - window];
+        }
+        output.push(sum);
+    }
+    output
+}
+
+fn rolling_min(values: &[f64], window: usize) -> Vec<f64> {
+    (0..values.len())
+        .map(|index| {
+            let start = index.saturating_sub(window.saturating_sub(1));
+            values[start..=index].iter().copied().fold(f64::INFINITY, f64::min)
+        })
+        .collect()
+}
+
+fn rolling_max(values: &[f64], window: usize) -> Vec<f64> {
+    (0..values.len())
+        .map(|index| {
+            let start = index.saturating_sub(window.saturating_sub(1));
+            values[start..=index]
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, f64::max)
+        })
+        .collect()
+}
+
+fn dma(values: &[f64], alpha: &[f64]) -> Vec<f64> {
+    let mut output = Vec::with_capacity(values.len());
+    let mut previous = None;
+    for (value, coefficient) in values.iter().zip(alpha) {
+        let coefficient = (*coefficient).clamp(0.0, 1.0);
+        let current = match previous {
+            Some(previous_value) => coefficient * *value + (1.0 - coefficient) * previous_value,
+            None => *value,
+        };
+        previous = Some(current);
+        output.push(current);
+    }
+    output
+}
+
+fn tdx_sma(values: &[f64], window: f64, weight: f64) -> Vec<f64> {
+    let mut output = Vec::with_capacity(values.len());
+    let mut previous = None;
+    for value in values {
+        let value = if value.is_finite() { *value } else { 50.0 };
+        let current = match previous {
+            Some(previous_value) => (weight * value + (window - weight) * previous_value) / window,
+            None => value,
+        };
+        previous = Some(current);
+        output.push(current);
+    }
+    output
+}
+
+fn kdj(close: &[f64], high: &[f64], low: &[f64]) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let low_min = rolling_min(low, 9);
+    let high_max = rolling_max(high, 9);
+    let rsv: Vec<f64> = close
+        .iter()
+        .enumerate()
+        .map(|(index, close)| {
+            let spread = high_max[index] - low_min[index];
+            if spread == 0.0 {
+                f64::NAN
+            } else {
+                ((*close - low_min[index]) / spread * 100.0).clamp(0.0, 100.0)
+            }
+        })
+        .collect();
+    let k = tdx_sma(&rsv, 3.0, 1.0);
+    let d = tdx_sma(&k, 3.0, 1.0);
+    let j = k.iter().zip(&d).map(|(k, d)| 3.0 * k - 2.0 * d).collect();
+    (k, d, j)
+}
+
+fn quant_scores(close: &[f64], high: &[f64], low: &[f64], volume: &[f64]) -> Vec<i32> {
+    let ma5 = ma(close, 5);
+    let ma10 = ma(close, 10);
+    let ma20 = ma(close, 20);
+    let ma60 = ma(close, 60);
+    let volume_ma60 = ma(volume, 60);
+    let (k, _d, j) = kdj(close, high, low);
+    let ema12 = ema(close, 12);
+    let ema26 = ema(close, 26);
+    let dif: Vec<f64> = ema12
+        .iter()
+        .zip(ema26)
+        .map(|(left, right)| *left - right)
+        .collect();
+    let dea = ema(&dif, 9);
+    let macd: Vec<f64> = dif
+        .iter()
+        .zip(&dea)
+        .map(|(dif, dea)| 2.0 * (*dif - *dea))
+        .collect();
+
+    let mut scores = vec![0; close.len()];
+    for index in 0..close.len() {
+        if ma5[index] > ma10[index] {
+            scores[index] += 20;
+        }
+        if ma20[index] > ma60[index] {
+            scores[index] += 10;
+        }
+        if j[index] > k[index] {
+            scores[index] += 10;
+        }
+        if dif[index] > dea[index] {
+            scores[index] += 10;
+        }
+        if macd[index] > 0.0 {
+            scores[index] += 10;
+        }
+        if volume[index] > volume_ma60[index] {
+            scores[index] += 10;
+        }
+        if index > 0 && close[index] / close[index - 1] > 1.03 {
+            scores[index] += 10;
+        }
+    }
+    scores
+}
+
+fn star_line(close: &[f64], open: &[f64], high: &[f64], low: &[f64]) -> Vec<f64> {
+    let ytsl: Vec<f64> = close
+        .iter()
+        .enumerate()
+        .map(|(index, close)| (3.0 * close + low[index] + open[index] + high[index]) / 6.0)
+        .collect();
+    let mut output = vec![f64::NAN; close.len()];
+    for index in 20..close.len() {
+        let mut total = 0.0;
+        for (offset, weight) in (0..19).zip((2..=20).rev()) {
+            total += ytsl[index - offset] * weight as f64;
+        }
+        total += ytsl[index - 20];
+        output[index] = total / 211.0;
+    }
+    output
+}
+
+fn trend_signal_from_bar(code: &str, bar: &ComputedTrendBar) -> TrendIndicatorSignal {
+    let reasons = trend_reasons(bar);
+    TrendIndicatorSignal {
+        code: code.to_string(),
+        date: bar.date.format("%Y-%m-%d").to_string(),
+        close: round4(bar.close),
+        swl: finite_round4(bar.swl),
+        sws: finite_round4(bar.sws),
+        star_line: finite_round4(bar.star_line),
+        bull_line: finite_round4(bar.bull_line),
+        wait_line: finite_round4(bar.wait_line),
+        support: finite_round4(bar.support),
+        resistance: finite_round4(bar.resistance),
+        breakout: finite_round4(bar.breakout),
+        reversal: finite_round4(bar.reversal),
+        swl_above_sws: bar.swl_above_sws,
+        red_hold: bar.red_hold,
+        cyan_watch: bar.cyan_watch,
+        short_buy: bar.short_buy,
+        white_exit: bar.white_exit,
+        oversold: bar.oversold,
+        quant_score: bar.quant_score,
+        quant_score_max: default_quant_score_max(),
+        status: trend_status(bar),
+        reasons,
+        notes: trend_notes(),
+    }
+}
+
+fn trend_point_from_bar(bar: &ComputedTrendBar) -> TrendIndicatorPoint {
+    TrendIndicatorPoint {
+        date: bar.date.format("%Y-%m-%d").to_string(),
+        close: round4(bar.close),
+        swl: finite_round4(bar.swl),
+        sws: finite_round4(bar.sws),
+        red_hold: bar.red_hold,
+        cyan_watch: bar.cyan_watch,
+        short_buy: bar.short_buy,
+        white_exit: bar.white_exit,
+    }
+}
+
+fn trend_reasons(bar: &ComputedTrendBar) -> Vec<String> {
+    let mut reasons = Vec::new();
+    if bar.short_buy {
+        reasons.push("short_buy_signal".to_string());
+    }
+    if bar.red_hold {
+        reasons.push("red_hold".to_string());
+    }
+    if bar.swl_above_sws {
+        reasons.push("swl_above_sws".to_string());
+    }
+    if bar.quant_score >= 60 {
+        reasons.push("high_quant_score".to_string());
+    }
+    if bar.white_exit {
+        reasons.push("white_exit".to_string());
+    }
+    if bar.cyan_watch {
+        reasons.push("cyan_watch".to_string());
+    }
+    if bar.oversold {
+        reasons.push("oversold".to_string());
+    }
+    reasons
+}
+
+fn trend_status(bar: &ComputedTrendBar) -> String {
+    if bar.short_buy {
+        "buy_setup"
+    } else if bar.white_exit {
+        "exit"
+    } else if bar.red_hold && bar.swl_above_sws {
+        "uptrend"
+    } else if bar.red_hold {
+        "hold"
+    } else if bar.cyan_watch {
+        "watch"
+    } else if bar.oversold {
+        "oversold"
+    } else {
+        "neutral"
+    }
+    .to_string()
+}
+
+fn trend_score(signal: &TrendIndicatorSignal) -> f64 {
+    let mut score =
+        (signal.quant_score as f64 / signal.quant_score_max.max(1) as f64) * 58.0;
+    if signal.swl_above_sws {
+        score += 10.0;
+    }
+    if signal.red_hold {
+        score += 12.0;
+    }
+    if signal.short_buy {
+        score += 16.0;
+    }
+    if signal
+        .star_line
+        .map(|star_line| signal.close > star_line)
+        .unwrap_or(false)
+    {
+        score += 4.0;
+    }
+    if signal
+        .bull_line
+        .map(|bull_line| signal.close > bull_line)
+        .unwrap_or(false)
+    {
+        score += 4.0;
+    }
+    if signal.white_exit {
+        score -= 26.0;
+    }
+    if signal.cyan_watch {
+        score -= 10.0;
+    }
+    if signal.oversold {
+        score -= 8.0;
+    }
+    score.clamp(0.0, 100.0)
+}
+
+fn combined_trend_score(base_score: f64, trend_score: f64) -> f64 {
+    (base_score.clamp(0.0, 10.0) * 4.0 + trend_score * 0.75).min(100.0)
+}
+
+fn trend_notes() -> Vec<String> {
+    vec![
+        "WINNER(C) depends on chip-distribution data and is omitted; quant_score is scored out of 90."
+            .to_string(),
+        "SWS uses the formula's volume/capital term as a percent DMA coefficient and clips it to 1%-100%."
+            .to_string(),
+    ]
+}
+
 pub fn validate_data_set(data: &CoreDataSet) -> CoreResult<DataSourceSummary> {
     let mut warnings = Vec::new();
     let mut stock_codes = HashSet::new();
@@ -1308,6 +2133,20 @@ pub fn validate_data_set(data: &CoreDataSet) -> CoreResult<DataSourceSummary> {
                     "History close cannot be negative: {code} {}",
                     bar.date
                 )));
+            }
+            for (label, value) in [
+                ("open", bar.open),
+                ("high", bar.high),
+                ("low", bar.low),
+                ("volume", bar.volume),
+                ("capital", bar.capital),
+            ] {
+                if value.map(|value| value < 0.0).unwrap_or(false) {
+                    return Err(CoreError::new(format!(
+                        "History {label} cannot be negative: {code} {}",
+                        bar.date
+                    )));
+                }
             }
             if previous_date
                 .map(|previous| date < previous)
@@ -1385,13 +2224,34 @@ fn mock_history(
 
     let mut points = Vec::new();
     let mut current = start;
+    let seed: u32 = code.bytes().map(u32::from).sum();
+    let drift = 0.00028 + (seed % 7) as f64 * 0.00006;
+    let phase = (seed % 17) as f64 / 3.0;
+    let mut previous_close = stock.price;
+    let capital = stock
+        .market_cap_billion
+        .map(|market_cap| market_cap * 1_000_000_000.0 / stock.price.max(0.01));
     while current <= end {
         if !matches!(current.weekday(), Weekday::Sat | Weekday::Sun) {
             let index = points.len() as f64;
+            let wave = (index / 8.0 + phase).sin() * 0.018;
+            let pullback = (index / 23.0 + phase).sin() * 0.008;
+            let close = (stock.price * (1.0 + drift * index + wave + pullback)).max(0.01);
+            let open = previous_close * (1.0 + (index / 9.0 + phase).cos() * 0.004);
+            let high = open.max(close) * (1.006 + (index / 11.0 + phase).sin().abs() * 0.006);
+            let low = open.min(close) * (0.994 - (index / 13.0 + phase).cos().abs() * 0.004);
+            let volume = (2_000_000.0 + (seed % 31) as f64 * 55_000.0 + index * 2_500.0)
+                * (1.0 + (index / 10.0 + phase).sin().abs() * 0.35);
             points.push(HistoryBar {
                 date: current.format("%Y-%m-%d").to_string(),
-                close: stock.price * (1.0 + 0.0005 * index),
+                open: Some(open),
+                high: Some(high),
+                low: Some(low),
+                close,
+                volume: Some(volume),
+                capital,
             });
+            previous_close = close;
         }
         current = current
             .checked_add_days(Days::new(1))
@@ -1570,6 +2430,18 @@ fn round6(value: f64) -> f64 {
     (value * 1_000_000.0).round() / 1_000_000.0
 }
 
+fn round4(value: f64) -> f64 {
+    (value * 10_000.0).round() / 10_000.0
+}
+
+fn finite_round4(value: f64) -> Option<f64> {
+    if value.is_finite() {
+        Some(round4(value))
+    } else {
+        None
+    }
+}
+
 fn c_string_to_str<'a>(input: *const c_char) -> CoreResult<&'a str> {
     if input.is_null() {
         return Err(CoreError::new("Input pointer is null"));
@@ -1652,6 +2524,42 @@ pub extern "C" fn gp_core_backtest_with_data_json(request_json: *const c_char) -
 }
 
 #[no_mangle]
+pub extern "C" fn gp_core_trend_json(request_json: *const c_char) -> *mut c_char {
+    ffi_response(request_json, |input| {
+        let request: TrendIndicatorRequest = serde_json::from_str(input)?;
+        serde_json::to_value(trend_with_mock(&request)?).map_err(Into::into)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn gp_core_trend_with_data_json(request_json: *const c_char) -> *mut c_char {
+    ffi_response(request_json, |input| {
+        let request: TrendWithDataRequest = serde_json::from_str(input)?;
+        serde_json::to_value(trend_with_data(&request.data, &request.request)?)
+            .map_err(Into::into)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn gp_core_trend_screen_json(request_json: *const c_char) -> *mut c_char {
+    ffi_response(request_json, |input| {
+        let request: TrendScreenRequest = serde_json::from_str(input)?;
+        serde_json::to_value(trend_screen_with_mock(&request)?).map_err(Into::into)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn gp_core_trend_screen_with_data_json(
+    request_json: *const c_char,
+) -> *mut c_char {
+    ffi_response(request_json, |input| {
+        let request: TrendScreenWithDataRequest = serde_json::from_str(input)?;
+        serde_json::to_value(trend_screen_with_data(&request.data, &request.request)?)
+            .map_err(Into::into)
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn gp_core_agent_json(request_json: *const c_char) -> *mut c_char {
     ffi_response(request_json, |input| {
         let request: AgentRequest = serde_json::from_str(input)?;
@@ -1729,15 +2637,30 @@ mod tests {
             vec![
                 HistoryBar {
                     date: "2020-01-01".to_string(),
+                    open: Some(9.8),
+                    high: Some(10.2),
+                    low: Some(9.7),
                     close: 10.0,
+                    volume: Some(1_000_000.0),
+                    capital: Some(1_000_000_000.0),
                 },
                 HistoryBar {
                     date: "2020-01-02".to_string(),
+                    open: Some(10.2),
+                    high: Some(11.2),
+                    low: Some(10.1),
                     close: 11.0,
+                    volume: Some(1_200_000.0),
+                    capital: Some(1_000_000_000.0),
                 },
                 HistoryBar {
                     date: "2020-01-03".to_string(),
+                    open: Some(11.1),
+                    high: Some(12.2),
+                    low: Some(11.0),
                     close: 12.0,
+                    volume: Some(1_400_000.0),
+                    capital: Some(1_000_000_000.0),
                 },
             ],
         )]);
@@ -1758,6 +2681,12 @@ mod tests {
         assert_eq!(result.returned, 3);
         assert_eq!(result.items[0].stock.code, "600000.SH");
         assert!(result.items[0].reasons.contains(&"pe_ok".to_string()));
+    }
+
+    #[test]
+    fn default_screen_includes_non_st_stocks() {
+        let result = screen_with_mock(&ScreenCriteria::default());
+        assert_eq!(result.returned, 9);
     }
 
     #[test]
@@ -1797,9 +2726,43 @@ mod tests {
     }
 
     #[test]
+    fn trend_indicator_runs_with_mock_history() {
+        let result = trend_with_mock(&TrendIndicatorRequest {
+            code: "300750.SZ".to_string(),
+            start_date: "20200101".to_string(),
+            end_date: "20240101".to_string(),
+            series_limit: 80,
+        })
+        .expect("trend indicator should run");
+        assert_eq!(result.stock.code, "300750.SZ");
+        assert!(!result.series.is_empty());
+        assert!(result.signal.quant_score <= 90);
+    }
+
+    #[test]
+    fn trend_screen_ranks_candidates() {
+        let result = trend_screen_with_mock(&TrendScreenRequest {
+            criteria: ScreenCriteria::default(),
+            start_date: "20200101".to_string(),
+            end_date: "20240101".to_string(),
+            limit: 5,
+        })
+        .expect("trend screen should run");
+        assert_eq!(result.returned, 5);
+        assert!(result.items[0].final_score >= result.items[4].final_score);
+    }
+
+    #[test]
     fn agent_routes_graph_request() {
         let response = run_agent_with_mock("用关系图分析 300750.SZ 产业链选股").unwrap();
         assert_eq!(response.action, "graph_screen");
+        assert!(response.data.is_some());
+    }
+
+    #[test]
+    fn agent_routes_trend_request() {
+        let response = run_agent_with_mock("用趋势指标筛选上升趋势股票").unwrap();
+        assert_eq!(response.action, "trend_screen");
         assert!(response.data.is_some());
     }
 
