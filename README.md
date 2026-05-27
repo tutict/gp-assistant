@@ -15,6 +15,51 @@ uvicorn app.main:app --reload
 
 Open `http://127.0.0.1:8000` for the responsive web UI.
 
+## Desktop App (Tauri)
+The Tauri shell lives in `desktop/` and starts the local FastAPI service before
+opening the desktop window.
+
+```bash
+cd desktop
+cmd /c npm install
+cmd /c npm run dev
+```
+
+Dev mode uses `GP_ASSISTANT_PYTHON` when set, then falls back to
+`.venv-cpython\Scripts\python.exe`, `.venv\Scripts\python.exe`, and finally
+`python` on `PATH`. The backend defaults to `http://127.0.0.1:8010` and
+`STOCK_PROVIDER=mock`.
+
+Build a Windows desktop package with an embedded FastAPI sidecar:
+
+```bash
+cd desktop
+cmd /c npm run build:windows
+```
+
+The sidecar build uses PyInstaller and writes the Tauri external binary to
+`desktop/src-tauri/binaries/`.
+
+## Mobile / Native Core
+The mobile path should not embed the Python/FastAPI sidecar. The shared stock
+logic now lives in `native/gp-core` as a Rust library that can be used by Tauri
+mobile commands or wrapped from Swift/Kotlin through a small C ABI.
+
+```bash
+cargo test --manifest-path native/gp-core/Cargo.toml
+powershell -ExecutionPolicy Bypass -File scripts/build-mobile-core.ps1
+```
+
+Set `GP_CORE_TARGET` to build a specific mobile target, for example
+`aarch64-linux-android` after installing the Rust target and Android NDK
+toolchain.
+
+The current Rust core includes mock-data stock screening, relation-aware graph
+screening, deterministic mock backtests, and the local heuristic agent router.
+Native/mobile shells can pass their own `CoreDataSet` into the Rust core for
+stocks, relations, and historical bars, so Android/iOS can source data from
+SQLite, bundled JSON, or a remote API without embedding Python.
+
 ## Notes
 - AkShare spot data is cached to `data/cache/stocks.csv`. Set `AKSHARE_REFRESH=true` to refresh.
 - Backtest dates use `YYYYMMDD` format.

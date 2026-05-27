@@ -4,6 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>A股选股 Agent</title>
+    <script>
+      const savedTheme = localStorage.getItem("gp-assistant-theme");
+      const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.dataset.theme = savedTheme || (systemDark ? "dark" : "light");
+    </script>
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
@@ -13,7 +18,16 @@
           <p class="eyebrow">A-Share Research Workspace</p>
           <h1>A股选股 Agent</h1>
         </div>
-        <div class="status-pill">Mock / AkShare</div>
+        <div class="top-actions">
+          <div class="status-pill">Mock / AkShare</div>
+          <label class="theme-switch" for="themeToggle">
+            <span id="themeText">亮色</span>
+            <input id="themeToggle" type="checkbox" />
+            <span class="switch-track" aria-hidden="true">
+              <span class="switch-thumb"></span>
+            </span>
+          </label>
+        </div>
       </header>
 
       <section class="workspace">
@@ -44,7 +58,9 @@
               <span>Score</span>
             </div>
             <button id="screenBtn" type="button">运行筛选</button>
-            <pre id="screenResult" class="result">等待筛选...</pre>
+            <div id="screenResult" class="result-panel empty">
+              <div class="empty-state">等待筛选</div>
+            </div>
           </article>
 
           <article class="tool-card">
@@ -67,7 +83,9 @@
               </label>
             </div>
             <button id="graphBtn" type="button">运行关系图</button>
-            <pre id="graphResult" class="result">等待关系图选股...</pre>
+            <div id="graphResult" class="result-panel empty">
+              <div class="empty-state">等待关系图选股</div>
+            </div>
           </article>
 
           <article class="tool-card">
@@ -90,7 +108,9 @@
               <input id="btTopN" type="number" value="10" min="1" max="100" />
             </label>
             <button id="backtestBtn" type="button">运行回测</button>
-            <pre id="backtestResult" class="result">等待回测...</pre>
+            <div id="backtestResult" class="result-panel empty">
+              <div class="empty-state">等待回测</div>
+            </div>
           </article>
         </section>
       </section>
@@ -106,7 +126,9 @@
           placeholder="例如：帮我用产业链关系筛选新能源股票，PE 低于 25，ROE 高于 10%"
         ></textarea>
         <button id="agentBtn" type="button">发送给 Agent</button>
-        <pre id="agentResult" class="result large">等待 Agent 回复...</pre>
+        <div id="agentResult" class="result-panel large empty">
+          <div class="empty-state">等待 Agent 回复</div>
+        </div>
       </section>
     </main>
     <script src="/static/app.js"></script>
