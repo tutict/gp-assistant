@@ -1,80 +1,124 @@
-const screenBtn = document.getElementById("screenBtn");
-const graphBtn = document.getElementById("graphBtn");
-const backtestBtn = document.getElementById("backtestBtn");
-const agentBtn = document.getElementById("agentBtn");
+const $ = (selector) => document.querySelector(selector);
 
-const screenResult = document.getElementById("screenResult");
-const graphResult = document.getElementById("graphResult");
-const backtestResult = document.getElementById("backtestResult");
-const agentResult = document.getElementById("agentResult");
-const themeToggle = document.getElementById("themeToggle");
-const themeText = document.getElementById("themeText");
+const buttons = {
+  screen: $("#screenBtn"),
+  graph: $("#graphBtn"),
+  backtest: $("#backtestBtn"),
+  agent: $("#agentBtn"),
+};
 
+const panels = {
+  screen: $("#screenResult"),
+  graph: $("#graphResult"),
+  backtest: $("#backtestResult"),
+  agent: $("#agentResult"),
+};
+
+const themeToggle = $("#themeToggle");
+const themeText = $("#themeText");
 const THEME_KEY = "gp-assistant-theme";
 
-[screenResult, graphResult, backtestResult, agentResult].forEach((node) => {
-  if (node.classList.contains("large")) node.dataset.large = "true";
-});
-
 initTheme();
+bindActions();
 
-screenBtn.addEventListener("click", async () => {
-  setLoading(screenResult, "筛选中");
-  const data = await postJson("/api/screen", buildCriteria({ limit: 30 }), screenResult);
-  if (data) renderScreenResult(screenResult, data);
-});
+function bindActions() {
+  buttons.screen.addEventListener("click", () => runTask(buttons.screen, panels.screen, runScreen));
+  buttons.graph.addEventListener("click", () => runTask(buttons.graph, panels.graph, runGraph));
+  buttons.backtest.addEventListener("click", () => runTask(buttons.backtest, panels.backtest, runBacktest));
+  buttons.agent.addEventListener("click", () => runTask(buttons.agent, panels.agent, runAgent));
+}
 
-graphBtn.addEventListener("click", async () => {
-  setLoading(graphResult, "关系传播中");
+async function runTask(button, panel, task) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "运行中";
+  try {
+    await task();
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+async function runScreen() {
+  setLoading(panels.screen, "筛选中");
+  const payload = buildCriteria();
+  const data = await postJson("/api/screen", payload, panels.screen);
+  if (data) renderScreenResult(panels.screen, data);
+}
+
+async function runGraph() {
+  setLoading(panels.graph, "关系传播中");
   const payload = {
     criteria: buildCriteria({ limit: 100 }),
-    seed_codes: parseCodes(document.getElementById("seedCodes").value),
-    relation_depth: clampInt(document.getElementById("relationDepth").value, 1, 3, 1),
-    relation_weight: clampFloat(document.getElementById("relationWeight").value, 0, 1, 0.4),
-    limit: 20,
+    seed_codes: parseCodes($("#seedCodes").value),
+    relation_depth: clampInt($("#relationDepth").value, 1, 3, 1),
+    relation_weight: clampFloat($("#relationWeight").value, 0, 1, 0.4),
+    limit: Math.min(readInt("resultLimit", 30), 100),
   };
-  const data = await postJson("/api/graph-screen", payload, graphResult);
-  if (data) renderGraphResult(graphResult, data);
-});
+  const data = await postJson("/api/graph-screen", payload, panels.graph);
+  if (data) renderGraphResult(panels.graph, data);
+}
 
-backtestBtn.addEventListener("click", async () => {
-  setLoading(backtestResult, "回测中");
+async function runBacktest() {
+  setLoading(panels.backtest, "回测中");
   const payload = {
     criteria: buildCriteria({ limit: 100 }),
-    start_date: document.getElementById("btStart").value || "20200101",
-    end_date: document.getElementById("btEnd").value || "20240101",
-    top_n: clampInt(document.getElementById("btTopN").value, 1, 100, 10),
+    start_date: $("#btStart").value.trim() || "20200101",
+    end_date: $("#btEnd").value.trim() || "20240101",
+    top_n: clampInt($("#btTopN").value, 1, 100, 10),
   };
-  const data = await postJson("/api/backtest", payload, backtestResult);
-  if (data) renderBacktestResult(backtestResult, data);
-});
+  const data = await postJson("/api/backtest", payload, panels.backtest);
+  if (data) renderBacktestResult(panels.backtest, data);
+}
 
-agentBtn.addEventListener("click", async () => {
-  const message = document.getElementById("agentMsg").value.trim();
-  if (!message) return;
-  setLoading(agentResult, "Agent 思考中");
-  const data = await postJson("/api/agent", { message }, agentResult);
-  if (data) renderAgentResult(agentResult, data);
-});
+async function runAgent() {
+  const message = $("#agentMsg").value.trim();
+  if (!message) {
+    setError(panels.agent, "请输入 Agent 指令", "例如：用产业链关系筛选新能源股票，PE 低于 25。");
+    return;
+  }
+  setLoading(panels.agent, "Agent 分析中");
+  const data = await postJson("/api/agent", { message }, panels.agent);
+  if (data) renderAgentResult(panels.agent, data);
+}
 
 function buildCriteria(overrides = {}) {
-  return {
-    industry: document.getElementById("industry").value.trim() || null,
-    min_roe: readNumber("minRoe"),
-    max_pe: readNumber("maxPe"),
-    max_pb: readNumber("maxPb"),
+  const criteria = {
+    include_st: $("#includeSt").checked,
+    limit: readInt("resultLimit", 30),
+    sort_by: $("#sortBy").value,
+    sort_dir: $("#sortDir").value,
     ...overrides,
   };
+
+  const industry = $("#industry").value.trim();
+  if (industry) criteria.industry = industry;
+
+  addNumber(criteria, "min_roe", "minRoe");
+  addNumber(criteria, "max_pe", "maxPe");
+  addNumber(criteria, "max_pb", "maxPb");
+  addNumber(criteria, "min_market_cap_billion", "minMcap");
+  return criteria;
+}
+
+function addNumber(target, key, id) {
+  const value = readNumber(id);
+  if (value !== null) target[key] = value;
 }
 
 function readNumber(id) {
-  const value = Number.parseFloat(document.getElementById(id).value);
+  const value = Number.parseFloat($(`#${id}`).value);
   return Number.isFinite(value) ? value : null;
+}
+
+function readInt(id, fallback) {
+  return clampInt($(`#${id}`).value, 1, 200, fallback);
 }
 
 function parseCodes(raw) {
   return raw
-    .split(/[,\s，]+/)
+    .split(/[,，\s]+/)
     .map((item) => item.trim().toUpperCase())
     .filter(Boolean);
 }
@@ -100,7 +144,7 @@ async function postJson(url, payload, resultNode) {
     });
     if (!resp.ok) {
       const text = await resp.text();
-      setError(resultNode, `请求失败: ${resp.status}`, text);
+      setError(resultNode, `请求失败：${resp.status}`, text);
       return null;
     }
     return await resp.json();
@@ -116,9 +160,11 @@ function renderScreenResult(node, data) {
     summary: [
       ["命中", data.returned ?? items.length],
       ["候选", data.total ?? 0],
-      ["首位分", items[0] ? formatNumber(items[0].score) : "-"],
+      ["最高分", items[0] ? formatNumber(items[0].score) : "-"],
     ],
-    body: items.length ? renderStockList(items.map(screenItemToView)) : renderEmpty("没有符合条件的股票"),
+    body: items.length
+      ? renderStockList(items.map(screenItemToView))
+      : renderEmpty("没有符合条件的股票"),
     raw: data,
   });
 }
@@ -132,7 +178,9 @@ function renderGraphResult(node, data) {
       ["最高分", items[0] ? formatNumber(items[0].final_score) : "-"],
     ],
     body: [
-      items.length ? renderStockList(items.map(graphItemToView)) : renderEmpty("没有可传播的关系信号"),
+      items.length
+        ? renderStockList(items.map(graphItemToView))
+        : renderEmpty("没有可传播的关系信号"),
       data.notes?.length ? renderNotes(data.notes) : "",
     ].join(""),
     raw: data,
@@ -147,8 +195,8 @@ function renderBacktestResult(node, data) {
     summary: [
       ["总收益", formatPercent(metrics.total_return)],
       ["年化", formatPercent(metrics.annualized_return)],
-      ["回撤", formatPercent(metrics.max_drawdown)],
-      ["标的", metrics.num_stocks ?? symbols.length],
+      ["最大回撤", formatPercent(metrics.max_drawdown)],
+      ["标的数", metrics.num_stocks ?? symbols.length],
     ],
     body: [
       curve.length ? renderSparkline(curve) : renderEmpty("没有可用净值曲线"),
@@ -162,15 +210,24 @@ function renderAgentResult(node, data) {
   const nested = data.data || {};
   const nestedItems = nested.items || [];
   const nestedMetrics = nested.metrics || {};
-  const bodyParts = [`<div class="agent-reply">${escapeHtml(data.reply || "已处理。")}</div>`];
+  const bodyParts = [`<div class="agent-reply">${escapeHtml(data.reply || "已处理")}</div>`];
+
   if (data.action === "graph_screen") {
-    bodyParts.push(nestedItems.length ? renderStockList(nestedItems.map(graphItemToView)) : renderEmpty("没有关系图结果"));
+    bodyParts.push(
+      nestedItems.length
+        ? renderStockList(nestedItems.map(graphItemToView))
+        : renderEmpty("没有关系图结果"),
+    );
     if (nested.notes?.length) bodyParts.push(renderNotes(nested.notes));
   } else if (data.action === "backtest") {
     bodyParts.push(nestedMetrics.total_return !== undefined ? renderMetricLine(nestedMetrics) : "");
     bodyParts.push(nested.equity_curve?.length ? renderSparkline(nested.equity_curve) : "");
   } else if (data.action === "screen") {
-    bodyParts.push(nestedItems.length ? renderStockList(nestedItems.map(screenItemToView)) : renderEmpty("没有选股结果"));
+    bodyParts.push(
+      nestedItems.length
+        ? renderStockList(nestedItems.map(screenItemToView))
+        : renderEmpty("没有选股结果"),
+    );
   } else {
     bodyParts.push(renderEmpty("Agent 没有返回可展示数据"));
   }
@@ -190,7 +247,7 @@ function screenItemToView(item) {
   return {
     stock: item.stock,
     score: item.score,
-    scoreLabel: "分数",
+    scoreLabel: "综合分",
     reasons: item.reasons || [],
   };
 }
@@ -199,7 +256,7 @@ function graphItemToView(item) {
   return {
     stock: item.stock,
     score: item.final_score,
-    scoreLabel: "最终",
+    scoreLabel: "最终分",
     weight: item.suggested_weight,
     reasons: item.reasons || [],
     extra: [
@@ -213,13 +270,17 @@ function graphItemToView(item) {
 function renderResult(node, { summary, body, raw }) {
   node.className = basePanelClass(node);
   node.innerHTML = `
-    <div class="summary-grid">
-      ${summary.map(([label, value]) => `
-        <div class="summary-item">
-          <span>${escapeHtml(label)}</span>
-          <strong>${escapeHtml(String(value))}</strong>
-        </div>
-      `).join("")}
+    <div class="metric-strip">
+      ${summary
+        .map(
+          ([label, value]) => `
+            <div class="metric">
+              <span>${escapeHtml(label)}</span>
+              <strong>${escapeHtml(String(value))}</strong>
+            </div>
+          `,
+        )
+        .join("")}
     </div>
     <div class="result-body">${body}</div>
     <details class="raw-json">
@@ -236,7 +297,7 @@ function renderStockList(items) {
 function renderStockRow(item) {
   const stock = item.stock || {};
   const reasons = item.reasons?.length
-    ? `<div class="reason-row">${item.reasons.map((reason) => `<span>${escapeHtml(reasonLabel(reason))}</span>`).join("")}</div>`
+    ? `<div class="tag-row">${item.reasons.map((reason) => `<span>${escapeHtml(reasonLabel(reason))}</span>`).join("")}</div>`
     : "";
   const extra = item.extra?.length
     ? `<div class="mini-metrics">${item.extra.map(([label, value]) => `<span>${escapeHtml(label)} ${formatNumber(value)}</span>`).join("")}</div>`
@@ -273,12 +334,17 @@ function renderStockRow(item) {
 function renderRelated(relations) {
   return `
     <div class="related-list">
-      ${relations.slice(0, 3).map((relation) => `
-        <div>
-          <span>${escapeHtml(relationTypeLabel(relation.relation_type))}</span>
-          <strong>${formatPercent(relation.weight)}</strong>
-        </div>
-      `).join("")}
+      ${relations
+        .slice(0, 3)
+        .map(
+          (relation) => `
+            <div>
+              <span>${escapeHtml(relationTypeLabel(relation.relation_type))}</span>
+              <strong>${formatPercent(relation.weight)}</strong>
+            </div>
+          `,
+        )
+        .join("")}
     </div>
   `;
 }
@@ -288,18 +354,22 @@ function renderNotes(notes) {
 }
 
 function renderSparkline(curve) {
-  const width = 420;
-  const height = 120;
+  const width = 720;
+  const height = 150;
   const values = curve.map((point) => Number(point.equity)).filter(Number.isFinite);
   if (values.length < 2) return renderEmpty("净值点不足");
+
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
-  const points = values.map((value, index) => {
-    const x = (index / (values.length - 1)) * width;
-    const y = height - ((value - min) / range) * height;
-    return `${x.toFixed(2)},${y.toFixed(2)}`;
-  }).join(" ");
+  const points = values
+    .map((value, index) => {
+      const x = (index / (values.length - 1)) * width;
+      const y = height - ((value - min) / range) * height;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+
   return `
     <div class="chart-wrap">
       <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="净值曲线">
@@ -318,7 +388,7 @@ function renderMetricLine(metrics) {
     <div class="metric-line">
       <span>总收益 ${formatPercent(metrics.total_return)}</span>
       <span>年化 ${formatPercent(metrics.annualized_return)}</span>
-      <span>回撤 ${formatPercent(metrics.max_drawdown)}</span>
+      <span>最大回撤 ${formatPercent(metrics.max_drawdown)}</span>
     </div>
   `;
 }
@@ -338,7 +408,10 @@ function setError(node, title, detail) {
 }
 
 function basePanelClass(node) {
-  return node.dataset.large === "true" ? "result-panel large" : "result-panel";
+  const classes = ["result-panel"];
+  if (node.dataset.large === "true") classes.push("compact");
+  if (node.classList.contains("medium")) classes.push("medium");
+  return classes.join(" ");
 }
 
 function formatNumber(value) {
