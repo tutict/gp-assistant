@@ -1,10 +1,13 @@
+from datetime import datetime, timedelta
 from typing import Dict, List
 
 from app.providers.base import StockProvider
-from app.schemas import StockItem, StockRelation
+from app.schemas import MinuteBar, OrderBookLevel, OrderBookSnapshot, StockItem, StockRelation
 
 
 class MockProvider(StockProvider):
+    name = "mock"
+
     def __init__(self):
         self._data: Dict[str, StockItem] = {
             "600519.SH": StockItem(
@@ -158,6 +161,90 @@ class MockProvider(StockProvider):
             previous_close = close
         return pd.DataFrame(rows)
 
+    def get_minutes(
+        self,
+        code: str,
+        start_datetime: str,
+        end_datetime: str,
+        period: str = "1",
+    ) -> List[MinuteBar]:
+        import math
+
+        if code not in self._data:
+            raise KeyError(f"Stock {code} not found")
+
+        stock = self._data[code]
+        step = max(int(period or "1"), 1)
+        end = _parse_dt(end_datetime) or datetime.now().replace(second=0, microsecond=0)
+        start = _parse_dt(start_datetime) or (end - timedelta(days=3))
+        base = stock.price or 10.0
+        seed = sum(ord(char) for char in code)
+        phase = (seed % 19) / 4
+
+        bars: List[MinuteBar] = []
+        previous = base
+        cursor = start
+        index = 0
+        while cursor <= end and len(bars) < 520:
+            if cursor.weekday() < 5 and (
+                cursor.replace(hour=9, minute=30) <= cursor <= cursor.replace(hour=11, minute=30)
+                or cursor.replace(hour=13, minute=0) <= cursor <= cursor.replace(hour=15, minute=0)
+            ):
+                drift = index * 0.00004
+                wave = math.sin(index / 8 + phase) * 0.006
+                close = max(base * (1 + drift + wave), 0.01)
+                open_price = previous
+                high = max(open_price, close) * 1.0018
+                low = min(open_price, close) * 0.9982
+                volume = 12_000 + (seed % 17) * 900 + abs(math.sin(index / 5 + phase)) * 6_000
+                bars.append(
+                    MinuteBar(
+                        datetime=cursor.strftime("%Y-%m-%d %H:%M:%S"),
+                        open=open_price,
+                        high=high,
+                        low=low,
+                        close=close,
+                        volume=round(volume, 2),
+                        amount=round(volume * close, 2),
+                    )
+                )
+                previous = close
+                index += 1
+            cursor += timedelta(minutes=step)
+        return bars[-240:]
+
+    def get_order_book(self, code: str) -> OrderBookSnapshot | None:
+        if code not in self._data:
+            raise KeyError(f"Stock {code} not found")
+        stock = self._data[code]
+        base = stock.price or 10.0
+        seed = sum(ord(char) for char in code)
+        bids = [
+            OrderBookLevel(level=level, price=round(base - level * 0.02, 3), volume=10_000 + seed % 997 + level * 1800)
+            for level in range(1, 6)
+        ]
+        asks = [
+            OrderBookLevel(level=level, price=round(base + level * 0.02, 3), volume=9_500 + seed % 863 + level * 1700)
+            for level in range(1, 6)
+        ]
+        return OrderBookSnapshot(
+            code=code,
+            timestamp=datetime.now().isoformat(timespec="seconds"),
+            bids=bids,
+            asks=asks,
+            metrics={
+                "最新": base,
+                "今开": round(base * 0.996, 3),
+                "最高": round(base * 1.018, 3),
+                "最低": round(base * 0.982, 3),
+                "昨收": round(base * 0.994, 3),
+                "涨跌": round(base * 0.006, 3),
+                "涨幅": 0.6,
+                "量比": 1.15,
+                "换手": 1.8,
+            },
+        )
+
     def list_relations(self) -> List[StockRelation]:
         return [
             StockRelation(
@@ -210,3 +297,17 @@ class MockProvider(StockProvider):
                 description="Chemical materials can feed new-energy supply chains.",
             ),
         ]
+
+
+def _parse_dt(value: str) -> datetime | None:
+    if not value:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y%m%d %H:%M:%S", "%Y-%m-%d", "%Y%m%d"):
+        try:
+            parsed = datetime.strptime(value, fmt)
+            if fmt in {"%Y-%m-%d", "%Y%m%d"}:
+                return parsed.replace(hour=15, minute=0)
+            return parsed
+        except ValueError:
+            continue
+    return None

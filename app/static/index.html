@@ -37,10 +37,11 @@
       </div>
       <a href="#sectionFilters" data-mobile-nav-link><span>01</span>筛选条件</a>
       <a href="#sectionAgent" data-mobile-nav-link><span>02</span>Agent 指令</a>
-      <a href="#sectionScreen" data-mobile-nav-link><span>03</span>普通选股</a>
-      <a href="#sectionGraph" data-mobile-nav-link><span>04</span>关系图</a>
-      <a href="#sectionTrend" data-mobile-nav-link><span>05</span>趋势指标</a>
-      <a href="#sectionBacktest" data-mobile-nav-link><span>06</span>持有回测</a>
+      <a href="#sectionObserve" data-mobile-nav-link><span>03</span>股票观察</a>
+      <a href="#sectionScreen" data-mobile-nav-link><span>04</span>普通选股</a>
+      <a href="#sectionGraph" data-mobile-nav-link><span>05</span>关系图</a>
+      <a href="#sectionTrend" data-mobile-nav-link><span>06</span>趋势指标</a>
+      <a href="#sectionBacktest" data-mobile-nav-link><span>07</span>持有回测</a>
     </nav>
     <main class="app-shell">
       <header class="app-header">
@@ -52,7 +53,18 @@
           </div>
         </div>
         <div class="top-actions">
-          <span class="status-pill"><i aria-hidden="true"></i>Mock / AkShare</span>
+          <label class="source-control">
+            <span>数据源</span>
+            <select id="dataSourceSelect">
+              <option value="mock">Mock</option>
+              <option value="akshare">AkShare</option>
+            </select>
+          </label>
+          <label class="source-refresh">
+            <input id="refreshSource" type="checkbox" />
+            <span>刷新缓存</span>
+          </label>
+          <span id="sourceStatus" class="status-pill"><i aria-hidden="true"></i>Mock</span>
           <label class="theme-switch" for="themeToggle">
             <span id="themeText">亮色</span>
             <input id="themeToggle" type="checkbox" />
@@ -214,6 +226,43 @@
             </details>
             <div id="agentResult" class="result-panel compact empty" data-large="true">
               <div class="empty-state">输入指令后查看 Agent 动作与结果</div>
+            </div>
+          </section>
+
+          <section id="sectionObserve" class="module observe-module">
+            <div class="module-heading">
+              <div>
+                <p>Watch</p>
+                <h2>股票观察</h2>
+              </div>
+              <button id="observeBtn" type="button">观察</button>
+            </div>
+            <div class="observe-controls">
+              <label class="field">
+                <span>股票代码</span>
+                <input id="observeCode" placeholder="300750.SZ" />
+              </label>
+              <label class="field">
+                <span>分钟周期</span>
+                <select id="observeMinutePeriod">
+                  <option value="1">1 分钟</option>
+                  <option value="5">5 分钟</option>
+                  <option value="15">15 分钟</option>
+                  <option value="30">30 分钟</option>
+                  <option value="60">60 分钟</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>开始日期</span>
+                <input id="observeStart" placeholder="20200101" />
+              </label>
+              <label class="field">
+                <span>结束日期</span>
+                <input id="observeEnd" placeholder="20240101" />
+              </label>
+            </div>
+            <div id="observeResult" class="result-panel medium empty">
+              <div class="empty-state">从选股结果点击“观察”，或输入代码查看行情和日线技术面</div>
             </div>
           </section>
 

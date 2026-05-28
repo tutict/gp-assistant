@@ -106,6 +106,7 @@ button:disabled {
 
 #sectionFilters,
 #sectionAgent,
+#sectionObserve,
 #sectionScreen,
 #sectionGraph,
 #sectionTrend,
@@ -183,11 +184,14 @@ h2 {
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
+  min-width: 0;
   gap: 10px;
 }
 
 .status-pill,
-.theme-switch {
+.theme-switch,
+.source-control,
+.source-refresh {
   display: inline-flex;
   align-items: center;
   min-height: 34px;
@@ -206,6 +210,27 @@ h2 {
   height: 8px;
   border-radius: 50%;
   background: var(--positive);
+}
+
+.source-control span,
+.source-refresh span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 780;
+}
+
+.source-control select {
+  min-height: 24px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-weight: 780;
+}
+
+.source-refresh input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
 }
 
 .theme-switch {
@@ -384,7 +409,8 @@ textarea::placeholder {
 
 .field-pair,
 .backtest-controls,
-.trend-controls {
+.trend-controls,
+.observe-controls {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
@@ -537,8 +563,13 @@ textarea::placeholder {
 }
 
 .backtest-controls,
-.trend-controls {
+.trend-controls,
+.observe-controls {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.observe-controls {
+  grid-template-columns: 1.1fr 0.8fr 1fr 1fr;
 }
 
 .result-panel {
@@ -654,6 +685,28 @@ textarea::placeholder {
   gap: 12px;
 }
 
+.stock-title {
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+  gap: 9px;
+}
+
+.observe-action {
+  min-height: 28px;
+  flex: 0 0 auto;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--accent-strong);
+  font-size: 0.72rem;
+  padding: 4px 8px;
+}
+
+.observe-action:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--accent-strong);
+}
+
 .stock-main strong {
   display: block;
   overflow-wrap: anywhere;
@@ -726,6 +779,135 @@ textarea::placeholder {
   border-radius: 8px;
   background: var(--surface);
   padding: 12px;
+}
+
+.quote-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.quote-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quote-card h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.quote-card p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.quote-price {
+  color: var(--accent-strong);
+  font-size: 1.2rem;
+  font-weight: 860;
+  white-space: nowrap;
+}
+
+.quote-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quote-grid div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  padding: 8px 9px;
+}
+
+.quote-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 780;
+}
+
+.quote-grid strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 0.93rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-book {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.order-book header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.order-book header span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.order-book-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.order-book-grid div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  padding: 7px 8px;
+}
+
+.order-book-grid span,
+.order-book-grid em {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-book-grid strong {
+  display: block;
+  overflow: hidden;
+  margin: 2px 0;
+  color: var(--text);
+  font-size: 0.88rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-book-grid .ask strong {
+  color: var(--danger);
+}
+
+.order-book-grid .bid strong {
+  color: var(--positive);
 }
 
 .signal-card header {
@@ -964,6 +1146,7 @@ textarea::placeholder {
 
   #sectionFilters,
   #sectionAgent,
+  #sectionObserve,
   #sectionScreen,
   #sectionGraph,
   #sectionTrend,
@@ -1117,7 +1300,18 @@ textarea::placeholder {
   }
 
   .top-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     justify-content: flex-start;
+    width: 100%;
+  }
+
+  .source-control,
+  .source-refresh,
+  .status-pill,
+  .theme-switch {
+    justify-content: space-between;
+    width: 100%;
   }
 
   .market-strip,
@@ -1126,6 +1320,7 @@ textarea::placeholder {
   .field-pair,
   .trend-controls,
   .backtest-controls,
+  .observe-controls,
   .llm-settings-grid,
   .agent-input-row {
     grid-template-columns: 1fr;
@@ -1171,6 +1366,14 @@ textarea::placeholder {
   }
 
   .signal-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .quote-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .order-book-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

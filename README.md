@@ -65,6 +65,15 @@ SQLite, bundled JSON, or a remote API without embedding Python.
 
 ## Notes
 - AkShare spot data is cached to `data/cache/stocks.csv`. Set `AKSHARE_REFRESH=true` to refresh.
+- The web UI can switch data sources per request between `mock` and `akshare`.
+  API clients can do the same with `X-Stock-Provider: mock|akshare`; use
+  `X-Akshare-Refresh: true` to force-refresh the AkShare spot cache.
+- `/api/observe/{code}` returns the selected source's quote snapshot together
+  with daily SWL/SWS technical analysis, minute bars, and the current five-level
+  order book when the selected source supports them.
+- `/api/minutes/{code}` returns normalized A-share minute bars. `/api/order-book/{code}`
+  returns normalized bid/ask levels. AkShare uses `stock_zh_a_hist_min_em` and
+  `stock_bid_ask_em`; mock data is deterministic for local testing.
 - Backtest dates use `YYYYMMDD` format.
 - The Agent can call OpenAI Chat Completions or OpenAI-compatible APIs. Configure
   `OPENAI_API_KEY`, `OPENAI_MODEL`, optional `OPENAI_BASE_URL`,

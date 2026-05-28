@@ -147,6 +147,40 @@ class TrendScreenResult(BaseModel):
     notes: List[str] = Field(default_factory=list)
 
 
+class MinuteBar(BaseModel):
+    datetime: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: Optional[float] = None
+    amount: Optional[float] = None
+
+
+class OrderBookLevel(BaseModel):
+    level: int
+    price: Optional[float] = None
+    volume: Optional[float] = None
+
+
+class OrderBookSnapshot(BaseModel):
+    code: str
+    timestamp: Optional[str] = None
+    bids: List[OrderBookLevel] = Field(default_factory=list)
+    asks: List[OrderBookLevel] = Field(default_factory=list)
+    metrics: dict = Field(default_factory=dict)
+
+
+class StockObservation(BaseModel):
+    source: str
+    stock: StockItem
+    trend: Optional[TrendIndicatorResult] = None
+    minute_period: str = "1"
+    minute_bars: List[MinuteBar] = Field(default_factory=list)
+    order_book: Optional[OrderBookSnapshot] = None
+    notes: List[str] = Field(default_factory=list)
+
+
 class BacktestRequest(BaseModel):
     criteria: ScreenCriteria = Field(default_factory=ScreenCriteria)
     start_date: str = Field(description="YYYYMMDD")

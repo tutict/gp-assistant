@@ -1,13 +1,17 @@
 import os
+import math
+from datetime import datetime
 from typing import Dict, List, Optional
 
 import pandas as pd
 
 from app.providers.base import StockProvider
-from app.schemas import StockItem, StockRelation
+from app.schemas import MinuteBar, OrderBookLevel, OrderBookSnapshot, StockItem, StockRelation
 
 
 class AkShareProvider(StockProvider):
+    name = "akshare"
+
     def __init__(self, cache_path: Optional[str] = None, refresh: bool = False):
         self.cache_path = cache_path or os.getenv("AKSHARE_CACHE", "data/cache/stocks.csv")
         self.refresh = refresh or os.getenv("AKSHARE_REFRESH", "false").lower() == "true"
@@ -23,8 +27,9 @@ class AkShareProvider(StockProvider):
         return [self._row_to_stock(row) for _, row in df.iterrows()]
 
     def get_stock(self, code: str) -> StockItem:
+        normalized_code = self._normalize_code(code)
         for item in self.list_stocks():
-            if item.code == code:
+            if item.code == normalized_code:
                 return item
         raise KeyError(f"Stock {code} not found")
 
@@ -52,6 +57,101 @@ class AkShareProvider(StockProvider):
         df = df[selected].rename(columns=renamed)
         df["date"] = df["date"].astype(str)
         return df
+
+    def get_minutes(
+        self,
+        code: str,
+        start_datetime: str,
+        end_datetime: str,
+        period: str = "1",
+    ) -> List[MinuteBar]:
+        ak = self._import_akshare()
+        minute_fn = getattr(ak, "stock_zh_a_hist_min_em", None)
+        if minute_fn is None:
+            raise RuntimeError("AkShare missing stock_zh_a_hist_min_em")
+
+        period = str(period or "1")
+        if period not in {"1", "5", "15", "30", "60"}:
+            period = "1"
+        symbol = self._normalize_code(code).split(".")[0]
+        df = minute_fn(
+            symbol=symbol,
+            start_date=start_datetime,
+            end_date=end_datetime,
+            period=period,
+            adjust="",
+        )
+        if df is None or df.empty:
+            return []
+
+        columns = {
+            "datetime": self._pick_col(df, ["时间", "datetime", "date"]),
+            "open": self._pick_col(df, ["开盘", "open"], required=False),
+            "high": self._pick_col(df, ["最高", "high"], required=False),
+            "low": self._pick_col(df, ["最低", "low"], required=False),
+            "close": self._pick_col(df, ["收盘", "close"]),
+            "volume": self._pick_col(df, ["成交量", "volume", "vol"], required=False),
+            "amount": self._pick_col(df, ["成交额", "amount"], required=False),
+        }
+
+        bars: List[MinuteBar] = []
+        for _, row in df.iterrows():
+            close = self._to_float(row.get(columns["close"]))
+            if close is None:
+                continue
+            open_price = self._to_float(row.get(columns["open"])) if columns["open"] else close
+            high = self._to_float(row.get(columns["high"])) if columns["high"] else close
+            low = self._to_float(row.get(columns["low"])) if columns["low"] else close
+            bars.append(
+                MinuteBar(
+                    datetime=str(row.get(columns["datetime"], "")),
+                    open=open_price if open_price is not None else close,
+                    high=high if high is not None else close,
+                    low=low if low is not None else close,
+                    close=close,
+                    volume=self._to_float(row.get(columns["volume"])) if columns["volume"] else None,
+                    amount=self._to_float(row.get(columns["amount"])) if columns["amount"] else None,
+                )
+            )
+        return bars
+
+    def get_order_book(self, code: str) -> OrderBookSnapshot | None:
+        ak = self._import_akshare()
+        bid_ask_fn = getattr(ak, "stock_bid_ask_em", None)
+        if bid_ask_fn is None:
+            raise RuntimeError("AkShare missing stock_bid_ask_em")
+
+        normalized_code = self._normalize_code(code)
+        symbol = normalized_code.split(".")[0]
+        df = bid_ask_fn(symbol=symbol)
+        if df is None or df.empty or "item" not in df or "value" not in df:
+            return None
+
+        values = {str(row["item"]): row["value"] for _, row in df.iterrows()}
+        bids = [
+            OrderBookLevel(
+                level=level,
+                price=self._to_float(values.get(f"buy_{level}")),
+                volume=self._to_float(values.get(f"buy_{level}_vol")),
+            )
+            for level in range(1, 6)
+        ]
+        asks = [
+            OrderBookLevel(
+                level=level,
+                price=self._to_float(values.get(f"sell_{level}")),
+                volume=self._to_float(values.get(f"sell_{level}_vol")),
+            )
+            for level in range(1, 6)
+        ]
+        metric_keys = ["最新", "均价", "涨幅", "涨跌", "总手", "金额", "换手", "量比", "最高", "最低", "今开", "昨收", "涨停", "跌停", "外盘", "内盘"]
+        return OrderBookSnapshot(
+            code=normalized_code,
+            timestamp=datetime.now().isoformat(timespec="seconds"),
+            bids=bids,
+            asks=asks,
+            metrics={key: self._to_float(values.get(key)) for key in metric_keys if key in values},
+        )
 
     def list_relations(self) -> List[StockRelation]:
         items = self.list_stocks()
@@ -109,7 +209,7 @@ class AkShareProvider(StockProvider):
         mcap_col = self._first_present(row, ["总市值", "总市值-元", "market_cap"])
         industry_col = self._first_present(row, ["行业", "industry", "板块"])
 
-        code = str(row.get(code_col, "")).strip()
+        code = self._normalize_code(str(row.get(code_col, "")).strip())
         name = str(row.get(name_col, "")).strip()
         price = self._to_float(row.get(price_col))
         pe = self._to_float(row.get(pe_col))
@@ -142,7 +242,8 @@ class AkShareProvider(StockProvider):
                 return None
             if isinstance(value, str) and value.strip() in {"", "-", "None"}:
                 return None
-            return float(value)
+            result = float(value)
+            return result if math.isfinite(result) else None
         except (TypeError, ValueError):
             return None
 
@@ -152,6 +253,19 @@ class AkShareProvider(StockProvider):
             if col in row:
                 return col
         return options[0]
+
+    @staticmethod
+    def _normalize_code(code: str) -> str:
+        normalized = str(code or "").strip().upper()
+        if "." in normalized:
+            return normalized
+        if normalized.startswith("6"):
+            return f"{normalized}.SH"
+        if normalized.startswith(("4", "8")):
+            return f"{normalized}.BJ"
+        if normalized:
+            return f"{normalized}.SZ"
+        return normalized
 
     @staticmethod
     def _import_akshare():

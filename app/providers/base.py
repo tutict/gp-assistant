@@ -1,10 +1,12 @@
 import os
-from typing import List
+from typing import List, Optional
 
-from app.schemas import StockItem, StockRelation
+from app.schemas import MinuteBar, OrderBookSnapshot, StockItem, StockRelation
 
 
 class StockProvider:
+    name = "base"
+
     def list_stocks(self) -> List[StockItem]:
         raise NotImplementedError
 
@@ -14,12 +16,24 @@ class StockProvider:
     def get_history(self, code: str, start_date: str, end_date: str):
         raise NotImplementedError
 
+    def get_minutes(
+        self,
+        code: str,
+        start_datetime: str,
+        end_datetime: str,
+        period: str = "1",
+    ) -> List[MinuteBar]:
+        return []
+
+    def get_order_book(self, code: str) -> OrderBookSnapshot | None:
+        return None
+
     def list_relations(self) -> List[StockRelation]:
         return []
 
 
-def get_provider() -> StockProvider:
-    provider_name = os.getenv("STOCK_PROVIDER", "mock").lower()
+def get_provider(provider_name: Optional[str] = None, refresh: Optional[bool] = None) -> StockProvider:
+    provider_name = (provider_name or os.getenv("STOCK_PROVIDER", "mock")).strip().lower()
     if provider_name == "mock":
         from app.providers.mock import MockProvider
 
@@ -27,5 +41,5 @@ def get_provider() -> StockProvider:
     if provider_name == "akshare":
         from app.providers.akshare import AkShareProvider
 
-        return AkShareProvider()
-    return MockProvider()
+        return AkShareProvider(refresh=bool(refresh) if refresh is not None else False)
+    raise ValueError(f"Unsupported stock provider: {provider_name}")

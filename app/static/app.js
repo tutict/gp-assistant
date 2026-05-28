@@ -7,6 +7,7 @@ const buttons = {
   trendScreen: $("#trendScreenBtn"),
   backtest: $("#backtestBtn"),
   agent: $("#agentBtn"),
+  observe: $("#observeBtn"),
 };
 
 const panels = {
@@ -15,12 +16,20 @@ const panels = {
   trend: $("#trendResult"),
   backtest: $("#backtestResult"),
   agent: $("#agentResult"),
+  observe: $("#observeResult"),
 };
 
 const themeToggle = $("#themeToggle");
 const themeText = $("#themeText");
 const THEME_KEY = "gp-assistant-theme";
+const DATA_SOURCE_KEY = "gp-assistant-data-source";
+const DATA_REFRESH_KEY = "gp-assistant-source-refresh";
 const LLM_SETTINGS_KEY = "gp-assistant-llm-settings";
+const dataSource = {
+  select: $("#dataSourceSelect"),
+  refresh: $("#refreshSource"),
+  status: $("#sourceStatus"),
+};
 const mobileNav = {
   toggle: $("#mobileNavToggle"),
   close: $("#mobileNavClose"),
@@ -43,6 +52,7 @@ const llmSettings = {
 
 initTheme();
 initMobileNav();
+initDataSource();
 initLlmSettings();
 bindActions();
 
@@ -53,6 +63,22 @@ function bindActions() {
   buttons.trendScreen.addEventListener("click", () => runTask(buttons.trendScreen, panels.trend, runTrendScreen));
   buttons.backtest.addEventListener("click", () => runTask(buttons.backtest, panels.backtest, runBacktest));
   buttons.agent.addEventListener("click", () => runTask(buttons.agent, panels.agent, runAgent));
+  buttons.observe?.addEventListener("click", () => runTask(buttons.observe, panels.observe, () => runObserve()));
+  dataSource.select?.addEventListener("change", () => {
+    localStorage.setItem(DATA_SOURCE_KEY, getSelectedDataSource());
+    updateSourceStatus();
+  });
+  dataSource.refresh?.addEventListener("change", () => {
+    localStorage.setItem(DATA_REFRESH_KEY, dataSource.refresh.checked ? "true" : "false");
+    updateSourceStatus();
+  });
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+    const action = target?.closest("[data-observe-code]");
+    if (!action) return;
+    event.preventDefault();
+    runObserve(action.dataset.observeCode);
+  });
   llmSettings.save?.addEventListener("click", saveLlmSettings);
   llmSettings.clear?.addEventListener("click", clearLlmSettings);
   [
@@ -193,6 +219,58 @@ async function runAgent() {
   if (data) renderAgentResult(panels.agent, data);
 }
 
+async function runObserve(codeOverride) {
+  const code = (codeOverride || $("#observeCode").value || "").trim().toUpperCase();
+  if (!code) {
+    setError(panels.observe, "请输入股票代码", "例如：300750.SZ");
+    return;
+  }
+  $("#observeCode").value = code;
+  document.querySelector("#sectionObserve")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  setLoading(panels.observe, "观察行情和技术面");
+  const params = new URLSearchParams({
+    minute_period: $("#observeMinutePeriod").value || "1",
+    series_limit: "160",
+    minute_limit: "180",
+  });
+  const startDate = $("#observeStart").value.trim();
+  const endDate = $("#observeEnd").value.trim();
+  if (startDate) params.set("start_date", startDate);
+  if (endDate) params.set("end_date", endDate);
+  const data = await getJson(`/api/observe/${encodeURIComponent(code)}?${params}`, panels.observe);
+  if (data) renderObserveResult(panels.observe, data);
+}
+
+function initDataSource() {
+  if (!dataSource.select) return;
+  const savedSource = localStorage.getItem(DATA_SOURCE_KEY);
+  if (savedSource && [...dataSource.select.options].some((option) => option.value === savedSource)) {
+    dataSource.select.value = savedSource;
+  }
+  if (dataSource.refresh) {
+    dataSource.refresh.checked = localStorage.getItem(DATA_REFRESH_KEY) === "true";
+  }
+  updateSourceStatus();
+}
+
+function getSelectedDataSource() {
+  return dataSource.select?.value || "mock";
+}
+
+function dataSourceHeaders() {
+  const headers = { "X-Stock-Provider": getSelectedDataSource() };
+  if (dataSource.refresh?.checked) headers["X-Akshare-Refresh"] = "true";
+  return headers;
+}
+
+function updateSourceStatus() {
+  if (!dataSource.status) return;
+  const source = getSelectedDataSource();
+  const label = source === "akshare" ? "AkShare" : "Mock";
+  const suffix = dataSource.refresh?.checked && source === "akshare" ? " 刷新" : "";
+  dataSource.status.innerHTML = `<i aria-hidden="true"></i>${escapeHtml(label + suffix)}`;
+}
+
 function initLlmSettings() {
   if (!llmSettings.model) return;
   try {
@@ -329,8 +407,26 @@ async function postJson(url, payload, resultNode) {
   try {
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...dataSourceHeaders() },
       body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      setError(resultNode, `请求失败：${resp.status}`, text);
+      return null;
+    }
+    return await resp.json();
+  } catch (err) {
+    setError(resultNode, "请求异常", err.message);
+    return null;
+  }
+}
+
+async function getJson(url, resultNode) {
+  try {
+    const resp = await fetch(url, {
+      method: "GET",
+      headers: dataSourceHeaders(),
     });
     if (!resp.ok) {
       const text = await resp.text();
@@ -427,6 +523,31 @@ function renderBacktestResult(node, data) {
     body: [
       curve.length ? renderSparkline(curve) : renderEmpty("没有可用净值曲线"),
       symbols.length ? `<div class="symbol-strip">${symbols.map(escapeHtml).join(" · ")}</div>` : "",
+    ].join(""),
+    raw: data,
+  });
+}
+
+function renderObserveResult(node, data) {
+  const stock = data.stock || {};
+  const trend = data.trend || {};
+  const signal = trend.signal || {};
+  const series = trend.series || [];
+  const minuteBars = data.minute_bars || [];
+  renderResult(node, {
+    summary: [
+      ["数据源", sourceLabel(data.source)],
+      ["最新价", formatNumber(stock.price)],
+      ["分钟线", `${data.minute_period || "1"}m · ${minuteBars.length}`],
+    ],
+    body: [
+      renderQuoteCard(stock),
+      data.order_book ? renderOrderBook(data.order_book) : renderEmpty("没有可用盘口"),
+      trend.signal ? renderSignalCard(stock, signal) : renderEmpty("没有可用日线技术面"),
+      minuteBars.length ? renderMinuteChart(minuteBars) : renderEmpty("没有可用分钟线"),
+      series.length ? renderTrendChart(series) : "",
+      data.notes?.length ? renderNotes(data.notes) : "",
+      signal.notes?.length ? renderNotes(signal.notes) : "",
     ].join(""),
     raw: data,
   });
@@ -561,13 +682,19 @@ function renderStockRow(item) {
   const signal = item.signal ? renderSignalSummary(item.signal) : "";
   const weight = item.weight !== undefined ? `<span class="weight">${formatPercent(item.weight)}</span>` : "";
   const related = item.related?.length ? renderRelated(item.related) : "";
+  const observeButton = stock.code
+    ? `<button class="observe-action" type="button" data-observe-code="${escapeHtml(stock.code)}">观察</button>`
+    : "";
 
   return `
     <article class="stock-row">
       <div class="stock-main">
-        <div>
-          <strong>${escapeHtml(stock.name || stock.code || "-")}</strong>
-          <span>${escapeHtml(stock.code || "")}</span>
+        <div class="stock-title">
+          <div>
+            <strong>${escapeHtml(stock.name || stock.code || "-")}</strong>
+            <span>${escapeHtml(stock.code || "")}</span>
+          </div>
+          ${observeButton}
         </div>
         <div class="score-badge">
           <small>${escapeHtml(item.scoreLabel || "Score")}</small>
@@ -587,6 +714,73 @@ function renderStockRow(item) {
       ${related}
     </article>
   `;
+}
+
+function renderQuoteCard(stock) {
+  return `
+    <section class="quote-card">
+      <header>
+        <div>
+          <h3>${escapeHtml(stock.name || stock.code || "-")}</h3>
+          <p>${escapeHtml(stock.code || "")} · ${escapeHtml(stock.industry || "Unknown")}</p>
+        </div>
+        <span class="quote-price">${formatNumber(stock.price)}</span>
+      </header>
+      <div class="quote-grid">
+        <div><span>PE</span><strong>${formatNumber(stock.pe)}</strong></div>
+        <div><span>PB</span><strong>${formatNumber(stock.pb)}</strong></div>
+        <div><span>ROE</span><strong>${formatPercent(stock.roe)}</strong></div>
+        <div><span>市值</span><strong>${formatNumber(stock.market_cap_billion)} 亿</strong></div>
+        <div><span>股息率</span><strong>${formatPercent(stock.dividend_yield)}</strong></div>
+        <div><span>ST</span><strong>${stock.is_st ? "是" : "否"}</strong></div>
+      </div>
+    </section>
+  `;
+}
+
+function renderOrderBook(book) {
+  const asks = [...(book.asks || [])].sort((left, right) => right.level - left.level);
+  const bids = book.bids || [];
+  const rows = [
+    ...asks.map((level) => ({ ...level, side: `卖${level.level}`, tone: "ask" })),
+    ...bids.map((level) => ({ ...level, side: `买${level.level}`, tone: "bid" })),
+  ];
+  return `
+    <section class="order-book">
+      <header>
+        <strong>五档盘口</strong>
+        <span>${escapeHtml(book.timestamp || "")}</span>
+      </header>
+      <div class="order-book-grid">
+        ${rows
+          .map(
+            (row) => `
+              <div class="${row.tone}">
+                <span>${escapeHtml(row.side)}</span>
+                <strong>${formatNumber(row.price)}</strong>
+                <em>${formatNumber(row.volume)}</em>
+              </div>
+            `,
+          )
+          .join("")}
+      </div>
+      ${book.metrics ? renderBookMetrics(book.metrics) : ""}
+    </section>
+  `;
+}
+
+function renderBookMetrics(metrics) {
+  const entries = [
+    ["今开", metrics["今开"]],
+    ["最高", metrics["最高"]],
+    ["最低", metrics["最低"]],
+    ["昨收", metrics["昨收"]],
+    ["涨跌", metrics["涨跌"]],
+    ["涨幅", metrics["涨幅"]],
+    ["量比", metrics["量比"]],
+    ["换手", metrics["换手"]],
+  ];
+  return `<div class="mini-metrics">${entries.map(([label, value]) => `<span>${escapeHtml(label)} ${formatNumber(value)}</span>`).join("")}</div>`;
 }
 
 function renderSignalSummary(signal) {
@@ -674,6 +868,42 @@ function renderSparkline(curve) {
       <div class="chart-labels">
         <span>${escapeHtml(curve[0]?.date || "")}</span>
         <span>${escapeHtml(curve[curve.length - 1]?.date || "")}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderMinuteChart(bars) {
+  const width = 720;
+  const height = 170;
+  const values = bars.map((bar) => Number(bar.close)).filter(Number.isFinite);
+  if (values.length < 2) return renderEmpty("分钟线点不足");
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const points = values
+    .map((value, index) => {
+      const x = (index / (values.length - 1)) * width;
+      const y = height - ((value - min) / range) * height;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+  const last = bars[bars.length - 1];
+
+  return `
+    <div class="chart-wrap minute-chart">
+      <div class="chart-legend">
+        <span>Minute Close</span>
+        <span>${escapeHtml(last?.datetime || "")}</span>
+        <span>${formatNumber(last?.close)}</span>
+      </div>
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="分钟线">
+        <polyline points="${points}" fill="none" stroke="var(--accent-strong)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      <div class="chart-labels">
+        <span>${escapeHtml(bars[0]?.datetime || "")}</span>
+        <span>${escapeHtml(last?.datetime || "")}</span>
       </div>
     </div>
   `;
@@ -767,6 +997,7 @@ function basePanelClass(node) {
 }
 
 function formatNumber(value) {
+  if (value === null || value === undefined || value === "") return "-";
   const number = Number(value);
   if (!Number.isFinite(number)) return "-";
   if (Math.abs(number) >= 1000) return number.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
@@ -774,6 +1005,7 @@ function formatNumber(value) {
 }
 
 function formatPercent(value) {
+  if (value === null || value === undefined || value === "") return "-";
   const number = Number(value);
   if (!Number.isFinite(number)) return "-";
   return `${(number * 100).toLocaleString("zh-CN", { maximumFractionDigits: 2 })}%`;
@@ -788,6 +1020,14 @@ function actionLabel(action) {
     clarify: "澄清",
   };
   return labels[action] || action || "-";
+}
+
+function sourceLabel(source) {
+  const labels = {
+    mock: "Mock",
+    akshare: "AkShare",
+  };
+  return labels[source] || source || "-";
 }
 
 function statusLabel(status) {
