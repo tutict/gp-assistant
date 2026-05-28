@@ -20,8 +20,16 @@ const panels = {
 const themeToggle = $("#themeToggle");
 const themeText = $("#themeText");
 const THEME_KEY = "gp-assistant-theme";
+const mobileNav = {
+  toggle: $("#mobileNavToggle"),
+  close: $("#mobileNavClose"),
+  panel: $("#mobileNav"),
+  overlay: $("#mobileNavOverlay"),
+  links: document.querySelectorAll("[data-mobile-nav-link]"),
+};
 
 initTheme();
+initMobileNav();
 bindActions();
 
 function bindActions() {
@@ -31,6 +39,47 @@ function bindActions() {
   buttons.trendScreen.addEventListener("click", () => runTask(buttons.trendScreen, panels.trend, runTrendScreen));
   buttons.backtest.addEventListener("click", () => runTask(buttons.backtest, panels.backtest, runBacktest));
   buttons.agent.addEventListener("click", () => runTask(buttons.agent, panels.agent, runAgent));
+}
+
+function initMobileNav() {
+  if (!mobileNav.toggle || !mobileNav.panel || !mobileNav.overlay) return;
+
+  mobileNav.toggle.addEventListener("click", () => setMobileNavOpen(true));
+  mobileNav.close?.addEventListener("click", () => setMobileNavOpen(false));
+  mobileNav.overlay.addEventListener("click", () => setMobileNavOpen(false));
+  mobileNav.links.forEach((link) => {
+    link.addEventListener("click", () => setMobileNavOpen(false));
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") setMobileNavOpen(false);
+  });
+  trackMobileNavSections();
+}
+
+function setMobileNavOpen(isOpen) {
+  document.body.classList.toggle("mobile-nav-open", isOpen);
+  mobileNav.toggle?.setAttribute("aria-expanded", String(isOpen));
+  mobileNav.panel?.setAttribute("aria-hidden", String(!isOpen));
+}
+
+function trackMobileNavSections() {
+  if (!("IntersectionObserver" in window)) return;
+  const links = [...mobileNav.links];
+  const sections = links
+    .map((link) => document.querySelector(link.getAttribute("href")))
+    .filter(Boolean);
+  const observer = new IntersectionObserver(
+    (entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+      if (!visible) return;
+      const activeHref = `#${visible.target.id}`;
+      links.forEach((link) => link.classList.toggle("active", link.getAttribute("href") === activeHref));
+    },
+    { rootMargin: "-24% 0px -58% 0px", threshold: [0.08, 0.2, 0.45] },
+  );
+  sections.forEach((section) => observer.observe(section));
 }
 
 async function runTask(button, panel, task) {

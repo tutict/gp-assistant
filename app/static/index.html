@@ -16,6 +16,32 @@
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
+    <button
+      id="mobileNavToggle"
+      class="mobile-nav-toggle"
+      type="button"
+      aria-controls="mobileNav"
+      aria-expanded="false"
+      aria-label="打开导航"
+    >
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+    <div id="mobileNavOverlay" class="mobile-nav-overlay" aria-hidden="true"></div>
+    <nav id="mobileNav" class="mobile-nav" aria-label="移动端页面导航" aria-hidden="true">
+      <div class="mobile-nav-header">
+        <span>GP</span>
+        <strong>快速导航</strong>
+        <button id="mobileNavClose" type="button" aria-label="关闭导航">&times;</button>
+      </div>
+      <a href="#sectionFilters" data-mobile-nav-link><span>01</span>筛选条件</a>
+      <a href="#sectionAgent" data-mobile-nav-link><span>02</span>Agent 指令</a>
+      <a href="#sectionScreen" data-mobile-nav-link><span>03</span>普通选股</a>
+      <a href="#sectionGraph" data-mobile-nav-link><span>04</span>关系图</a>
+      <a href="#sectionTrend" data-mobile-nav-link><span>05</span>趋势指标</a>
+      <a href="#sectionBacktest" data-mobile-nav-link><span>06</span>持有回测</a>
+    </nav>
     <main class="app-shell">
       <header class="app-header">
         <div class="brand-lockup">
@@ -61,7 +87,7 @@
       </section>
 
       <section class="workspace">
-        <aside class="control-rail" aria-label="筛选条件">
+        <aside id="sectionFilters" class="control-rail" aria-label="筛选条件">
           <div class="rail-section">
             <div class="section-title">
               <p>Universe</p>
@@ -128,7 +154,7 @@
         </aside>
 
         <section class="workbench">
-          <section class="agent-console">
+          <section id="sectionAgent" class="agent-console">
             <div class="module-heading">
               <div>
                 <p>Command</p>
@@ -150,7 +176,7 @@
           </section>
 
           <section class="tool-grid" aria-label="分析工具">
-            <article class="module">
+            <article id="sectionScreen" class="module">
               <div class="module-heading">
                 <div>
                   <p>Screen</p>
@@ -163,7 +189,7 @@
               </div>
             </article>
 
-            <article class="module">
+            <article id="sectionGraph" class="module">
               <div class="module-heading">
                 <div>
                   <p>Graph</p>
@@ -190,7 +216,7 @@
               </div>
             </article>
 
-            <article class="module wide">
+            <article id="sectionTrend" class="module wide">
               <div class="module-heading">
                 <div>
                   <p>Trend</p>
@@ -220,7 +246,7 @@
               </div>
             </article>
 
-            <article class="module wide">
+            <article id="sectionBacktest" class="module wide">
               <div class="module-heading">
                 <div>
                   <p>Backtest</p>
