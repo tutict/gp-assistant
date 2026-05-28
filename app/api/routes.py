@@ -92,4 +92,4 @@ def backtest(request: BacktestRequest):
 @router.post("/agent", response_model=AgentResponse)
 def agent(request: AgentRequest):
     provider = get_provider()
-    return run_agent(provider, request.message)
+    return run_agent(provider, request.message, request.llm)

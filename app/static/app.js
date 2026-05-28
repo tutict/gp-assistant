@@ -20,6 +20,7 @@ const panels = {
 const themeToggle = $("#themeToggle");
 const themeText = $("#themeText");
 const THEME_KEY = "gp-assistant-theme";
+const LLM_SETTINGS_KEY = "gp-assistant-llm-settings";
 const mobileNav = {
   toggle: $("#mobileNavToggle"),
   close: $("#mobileNavClose"),
@@ -27,9 +28,22 @@ const mobileNav = {
   overlay: $("#mobileNavOverlay"),
   links: document.querySelectorAll("[data-mobile-nav-link]"),
 };
+const llmSettings = {
+  apiKey: $("#llmApiKey"),
+  baseUrl: $("#llmBaseUrl"),
+  model: $("#llmModel"),
+  temperature: $("#llmTemperature"),
+  timeout: $("#llmTimeout"),
+  jsonMode: $("#llmJsonMode"),
+  rememberKey: $("#llmRememberKey"),
+  status: $("#llmStatus"),
+  save: $("#llmSaveBtn"),
+  clear: $("#llmClearBtn"),
+};
 
 initTheme();
 initMobileNav();
+initLlmSettings();
 bindActions();
 
 function bindActions() {
@@ -39,6 +53,16 @@ function bindActions() {
   buttons.trendScreen.addEventListener("click", () => runTask(buttons.trendScreen, panels.trend, runTrendScreen));
   buttons.backtest.addEventListener("click", () => runTask(buttons.backtest, panels.backtest, runBacktest));
   buttons.agent.addEventListener("click", () => runTask(buttons.agent, panels.agent, runAgent));
+  llmSettings.save?.addEventListener("click", saveLlmSettings);
+  llmSettings.clear?.addEventListener("click", clearLlmSettings);
+  [
+    llmSettings.apiKey,
+    llmSettings.baseUrl,
+    llmSettings.model,
+    llmSettings.temperature,
+    llmSettings.timeout,
+    llmSettings.jsonMode,
+  ].forEach((input) => input?.addEventListener("input", updateLlmStatus));
 }
 
 function initMobileNav() {
@@ -162,8 +186,91 @@ async function runAgent() {
     return;
   }
   setLoading(panels.agent, "Agent 分析中");
-  const data = await postJson("/api/agent", { message }, panels.agent);
+  const payload = { message };
+  const llm = buildLlmConfig();
+  if (llm) payload.llm = llm;
+  const data = await postJson("/api/agent", payload, panels.agent);
   if (data) renderAgentResult(panels.agent, data);
+}
+
+function initLlmSettings() {
+  if (!llmSettings.model) return;
+  try {
+    const saved = JSON.parse(localStorage.getItem(LLM_SETTINGS_KEY) || "{}");
+    if (saved.api_key) {
+      llmSettings.apiKey.value = saved.api_key;
+      llmSettings.rememberKey.checked = true;
+    }
+    llmSettings.baseUrl.value = saved.base_url || "";
+    llmSettings.model.value = saved.model || "";
+    llmSettings.temperature.value = saved.temperature ?? "";
+    llmSettings.timeout.value = saved.timeout_seconds ?? "";
+    llmSettings.jsonMode.checked = saved.json_mode !== false;
+  } catch {
+    localStorage.removeItem(LLM_SETTINGS_KEY);
+  }
+  updateLlmStatus();
+}
+
+function buildLlmConfig() {
+  if (!llmSettings.model) return null;
+  const config = {};
+  const apiKey = llmSettings.apiKey.value.trim();
+  const baseUrl = normalizeBaseUrl(llmSettings.baseUrl.value);
+  const model = llmSettings.model.value.trim();
+  const temperature = Number.parseFloat(llmSettings.temperature.value);
+  const timeout = Number.parseFloat(llmSettings.timeout.value);
+
+  if (apiKey) config.api_key = apiKey;
+  if (baseUrl) config.base_url = baseUrl;
+  if (model) config.model = model;
+  if (Number.isFinite(temperature)) config.temperature = Math.min(Math.max(temperature, 0), 2);
+  if (Number.isFinite(timeout)) config.timeout_seconds = Math.min(Math.max(timeout, 1), 180);
+  config.json_mode = llmSettings.jsonMode.checked;
+
+  return Object.keys(config).length > 1 || config.json_mode === false ? config : null;
+}
+
+function saveLlmSettings() {
+  const config = buildLlmConfig() || {};
+  if (!llmSettings.rememberKey.checked) delete config.api_key;
+  localStorage.setItem(LLM_SETTINGS_KEY, JSON.stringify(config));
+  updateLlmStatus("已保存");
+}
+
+function clearLlmSettings() {
+  localStorage.removeItem(LLM_SETTINGS_KEY);
+  llmSettings.apiKey.value = "";
+  llmSettings.baseUrl.value = "";
+  llmSettings.model.value = "";
+  llmSettings.temperature.value = "";
+  llmSettings.timeout.value = "";
+  llmSettings.jsonMode.checked = true;
+  llmSettings.rememberKey.checked = false;
+  updateLlmStatus();
+}
+
+function updateLlmStatus(customText) {
+  if (!llmSettings.status) return;
+  if (customText) {
+    llmSettings.status.textContent = customText;
+    return;
+  }
+  const hasKey = Boolean(llmSettings.apiKey.value.trim());
+  const hasEndpoint = Boolean(llmSettings.baseUrl.value.trim() || llmSettings.model.value.trim());
+  if (hasKey && hasEndpoint) {
+    llmSettings.status.textContent = "自定义 API";
+  } else if (hasKey) {
+    llmSettings.status.textContent = "自定义 Key";
+  } else if (hasEndpoint) {
+    llmSettings.status.textContent = "服务端 Key";
+  } else {
+    llmSettings.status.textContent = "服务端默认";
+  }
+}
+
+function normalizeBaseUrl(value) {
+  return value.trim().replace(/\/+$/, "");
 }
 
 function buildCriteria(overrides = {}) {
@@ -722,6 +829,8 @@ function relationTypeLabel(type) {
     thematic: "主题相关",
     manufacturing_chain: "制造链",
     upstream_material: "上游材料",
+    valuation_peer: "估值相似",
+    size_peer: "市值相近",
   };
   return labels[type] || type || "关系";
 }

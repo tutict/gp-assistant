@@ -1,7 +1,8 @@
 # A-Share Screener Agent (FastAPI)
 
 Minimal A-share stock screener scaffold with AkShare data, lightweight backtest,
-agent endpoint, relation-aware graph screening, and SWL/SWS trend signals.
+LangGraph-compatible agent orchestration, relation-aware graph screening, and
+SWL/SWS trend signals.
 
 ## Run
 ```bash
@@ -10,6 +11,7 @@ python -m venv .venv
 pip install -r requirements.txt
 set STOCK_PROVIDER=akshare
 set OPENAI_API_KEY=your_key_here
+set OPENAI_MODEL=gpt-4o-mini
 uvicorn app.main:app --reload
 ```
 
@@ -64,16 +66,24 @@ SQLite, bundled JSON, or a remote API without embedding Python.
 ## Notes
 - AkShare spot data is cached to `data/cache/stocks.csv`. Set `AKSHARE_REFRESH=true` to refresh.
 - Backtest dates use `YYYYMMDD` format.
+- The Agent can call OpenAI Chat Completions or OpenAI-compatible APIs. Configure
+  `OPENAI_API_KEY`, `OPENAI_MODEL`, optional `OPENAI_BASE_URL`,
+  `OPENAI_TEMPERATURE`, `OPENAI_TIMEOUT_SECONDS`, and `OPENAI_JSON_MODE=false`
+  for compatible services that do not support JSON mode. The web UI can also
+  pass these settings per request from the Agent panel.
 - Trend screening ports the provided TongDaXin-style formula into calculable
   signals: SWL/SWS, red-hold/watch states, short-buy/exit flags, oversold,
   support/resistance, and a 90-point quant score. `WINNER(C)` is omitted because
   it needs chip-distribution data.
-- Relation-aware screening is implemented as a lightweight graph propagation layer:
-  single-stock scores are computed first, then peer/supply-chain/thematic relations
-  spread signals across connected stocks.
-- LangGraph is useful for orchestrating a multi-step agent workflow. It is not the
-  stock relationship model itself; stock relationships should come from a knowledge
-  graph, graph learning model, or structured relation dataset.
+- Relation-aware screening builds a stock knowledge graph from provider relations
+  plus inferred industry, valuation, and market-cap peer edges. Candidate scores
+  blend base screening, personalized graph propagation, two-layer message passing,
+  and local neighborhood relevance.
+- LangGraph is used when installed to orchestrate the agent state flow
+  (`parse_intent -> screen/graph_screen/trend_screen/backtest/clarify`). If the
+  package is unavailable, the same node functions run through a local fallback.
+  LangGraph is not the stock relationship model itself; that model lives in the
+  knowledge-graph/GNN-style scoring layer.
 
 ## Build Local Training Data (RQData HTTP API)
 ```bash

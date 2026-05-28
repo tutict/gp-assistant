@@ -173,8 +173,20 @@ class BacktestResult(BaseModel):
     symbols: List[str]
 
 
+class LlmClientConfig(BaseModel):
+    api_key: Optional[str] = Field(default=None, max_length=4096)
+    base_url: Optional[str] = Field(default=None, max_length=512)
+    model: Optional[str] = Field(default=None, max_length=128)
+    temperature: Optional[float] = Field(default=None, ge=0, le=2)
+    timeout_seconds: Optional[float] = Field(default=None, gt=0, le=180)
+    json_mode: Optional[bool] = None
+    organization: Optional[str] = Field(default=None, max_length=256)
+    project: Optional[str] = Field(default=None, max_length=256)
+
+
 class AgentRequest(BaseModel):
     message: str
+    llm: Optional[LlmClientConfig] = None
 
 
 class AgentResponse(BaseModel):

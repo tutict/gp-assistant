@@ -170,6 +170,48 @@
               ></textarea>
               <button id="agentBtn" class="primary-action" type="button">运行 Agent</button>
             </div>
+            <details class="agent-settings">
+              <summary>
+                <span>LLM API</span>
+                <strong id="llmStatus">服务端默认</strong>
+              </summary>
+              <div class="llm-settings-grid">
+                <label class="field">
+                  <span>API Key</span>
+                  <input id="llmApiKey" type="password" autocomplete="off" placeholder="sk-..." />
+                </label>
+                <label class="field">
+                  <span>Base URL</span>
+                  <input id="llmBaseUrl" inputmode="url" placeholder="https://api.openai.com/v1" />
+                </label>
+                <label class="field">
+                  <span>Model</span>
+                  <input id="llmModel" placeholder="gpt-4o-mini" />
+                </label>
+                <label class="field">
+                  <span>Temperature</span>
+                  <input id="llmTemperature" type="number" min="0" max="2" step="0.1" placeholder="0.2" />
+                </label>
+                <label class="field">
+                  <span>Timeout</span>
+                  <input id="llmTimeout" type="number" min="1" max="180" step="1" placeholder="30" />
+                </label>
+                <div class="settings-flags">
+                  <label class="check-field">
+                    <input id="llmJsonMode" type="checkbox" checked />
+                    <span>JSON mode</span>
+                  </label>
+                  <label class="check-field">
+                    <input id="llmRememberKey" type="checkbox" />
+                    <span>本机记住 Key</span>
+                  </label>
+                </div>
+              </div>
+              <div class="settings-actions">
+                <button id="llmSaveBtn" type="button">保存设置</button>
+                <button id="llmClearBtn" class="ghost-action" type="button">清除</button>
+              </div>
+            </details>
             <div id="agentResult" class="result-panel compact empty" data-large="true">
               <div class="empty-state">输入指令后查看 Agent 动作与结果</div>
             </div>

@@ -1,10 +1,21 @@
+from __future__ import annotations
+
 import json
 import os
 import re
-from typing import Any, Dict, Optional
+from dataclasses import dataclass
+from functools import lru_cache
+from typing import Any, Dict, Optional, TypedDict
 
 from app.providers.base import StockProvider
-from app.schemas import AgentResponse, BacktestRequest, GraphScreenRequest, ScreenCriteria, TrendScreenRequest
+from app.schemas import (
+    AgentResponse,
+    BacktestRequest,
+    GraphScreenRequest,
+    LlmClientConfig,
+    ScreenCriteria,
+    TrendScreenRequest,
+)
 from app.services.backtest import backtest_hold
 from app.services.screener import screen_stocks
 from app.services.stock_graph import graph_screen_stocks
@@ -13,6 +24,7 @@ from app.services.trend_indicator import trend_screen_stocks
 
 SYSTEM_PROMPT = """You are an A-share stock assistant. You must respond in JSON.
 Decide whether the user wants a basic stock screen, relation-aware graph screen, trend screen, backtest, or clarification.
+LangGraph is only the workflow/state orchestration layer. Stock-to-stock relationships must be handled by the graph_screen tool, which uses a stock knowledge graph and GNN-style relation scoring.
 Return this shape:
 {
   "action": "screen" | "graph_screen" | "trend_screen" | "backtest" | "clarify",
@@ -40,69 +52,380 @@ main-force accumulation, red hold, cyan watch, support/resistance, or quantitati
 If the user request is unclear, use action "clarify" and ask a brief question in reply.
 """
 
+VALID_ACTIONS = {"screen", "graph_screen", "trend_screen", "backtest", "clarify"}
 
-def run_agent(provider: StockProvider, message: str) -> AgentResponse:
-    response = _call_llm(message)
-    action = response.get("action", "clarify")
-    reply = response.get("reply", "")
+
+@dataclass(frozen=True)
+class ResolvedLlmConfig:
+    api_key: Optional[str]
+    base_url: Optional[str]
+    model: str
+    temperature: float
+    timeout_seconds: float
+    json_mode: bool
+    organization: Optional[str]
+    project: Optional[str]
+
+
+class AgentState(TypedDict, total=False):
+    provider: StockProvider
+    message: str
+    llm_config: Optional[LlmClientConfig]
+    action: str
+    reply: str
+    criteria: Optional[ScreenCriteria]
+    graph_screen: Optional[GraphScreenRequest]
+    trend_screen: Optional[TrendScreenRequest]
+    backtest: Optional[BacktestRequest]
+    data: Optional[dict[str, Any]]
+
+
+def run_agent(
+    provider: StockProvider,
+    message: str,
+    llm_config: Optional[LlmClientConfig] = None,
+) -> AgentResponse:
+    initial_state: AgentState = {
+        "provider": provider,
+        "message": message,
+        "llm_config": llm_config,
+    }
+    workflow = _get_langgraph_workflow()
+    if workflow is not None:
+        final_state = workflow.invoke(initial_state)
+    else:
+        final_state = _run_agent_state_machine(initial_state)
+    return _state_to_response(final_state)
+
+
+@lru_cache(maxsize=1)
+def _get_langgraph_workflow() -> Any:
+    try:
+        from langgraph.graph import END, START, StateGraph
+    except Exception:
+        return None
+
+    builder = StateGraph(AgentState)
+    builder.add_node("parse_intent", _parse_intent_node)
+    builder.add_node("screen", _screen_node)
+    builder.add_node("graph_screen", _graph_screen_node)
+    builder.add_node("trend_screen", _trend_screen_node)
+    builder.add_node("backtest", _backtest_node)
+    builder.add_node("clarify", _clarify_node)
+
+    builder.add_edge(START, "parse_intent")
+    builder.add_conditional_edges(
+        "parse_intent",
+        _route_action,
+        {
+            "screen": "screen",
+            "graph_screen": "graph_screen",
+            "trend_screen": "trend_screen",
+            "backtest": "backtest",
+            "clarify": "clarify",
+        },
+    )
+    for node in ("screen", "graph_screen", "trend_screen", "backtest", "clarify"):
+        builder.add_edge(node, END)
+    return builder.compile()
+
+
+def _run_agent_state_machine(initial_state: AgentState) -> AgentState:
+    state: AgentState = dict(initial_state)
+    state.update(_parse_intent_node(state))
+    action = _route_action(state)
+    if action == "screen":
+        state.update(_screen_node(state))
+    elif action == "graph_screen":
+        state.update(_graph_screen_node(state))
+    elif action == "trend_screen":
+        state.update(_trend_screen_node(state))
+    elif action == "backtest":
+        state.update(_backtest_node(state))
+    else:
+        state.update(_clarify_node(state))
+    return state
+
+
+def _parse_intent_node(state: AgentState) -> AgentState:
+    response = _call_llm(state.get("message", ""), state.get("llm_config"))
+    action = str(response.get("action") or "clarify")
+    if action not in VALID_ACTIONS:
+        action = "clarify"
+
     criteria = _parse_criteria(response.get("criteria"))
     graph_request = _parse_graph_screen(response.get("graph_screen"))
     trend_request = _parse_trend_screen(response.get("trend_screen"))
     backtest = _parse_backtest(response.get("backtest"))
-    if action == "trend_screen" and trend_request is None:
+
+    if graph_request is not None and criteria is None:
+        criteria = graph_request.criteria
+    if trend_request is not None and criteria is None:
+        criteria = trend_request.criteria
+    if backtest is not None and criteria is None:
+        criteria = backtest.criteria
+
+    if action == "screen" and criteria is None:
+        criteria = ScreenCriteria()
+    elif action == "graph_screen" and graph_request is None:
+        graph_request = GraphScreenRequest(criteria=criteria or ScreenCriteria())
+    elif action == "trend_screen" and trend_request is None:
         trend_request = TrendScreenRequest(criteria=criteria or ScreenCriteria())
+    elif action == "backtest" and backtest is None:
+        backtest = BacktestRequest(
+            criteria=criteria or ScreenCriteria(),
+            start_date="20200101",
+            end_date="20240101",
+        )
 
-    data = None
-    if action == "screen" and criteria:
-        result = screen_stocks(provider.list_stocks(), criteria)
-        data = result.model_dump()
-    elif action == "graph_screen" and graph_request:
-        result = graph_screen_stocks(provider, graph_request)
-        data = result.model_dump()
-    elif action == "trend_screen" and trend_request:
-        result = trend_screen_stocks(provider, trend_request)
-        data = result.model_dump()
-    elif action == "backtest" and backtest:
-        result = backtest_hold(provider, backtest)
-        data = result.model_dump()
+    return {
+        "action": action,
+        "reply": str(response.get("reply") or ""),
+        "criteria": criteria,
+        "graph_screen": graph_request,
+        "trend_screen": trend_request,
+        "backtest": backtest,
+        "data": None,
+    }
 
+
+def _route_action(state: AgentState) -> str:
+    action = state.get("action") or "clarify"
+    return action if action in VALID_ACTIONS else "clarify"
+
+
+def _screen_node(state: AgentState) -> AgentState:
+    criteria = state.get("criteria") or ScreenCriteria()
+    result = screen_stocks(state["provider"].list_stocks(), criteria)
+    return {
+        "criteria": criteria,
+        "data": result.model_dump(),
+        "reply": state.get("reply") or "已完成基础选股。",
+    }
+
+
+def _graph_screen_node(state: AgentState) -> AgentState:
+    request = state.get("graph_screen") or GraphScreenRequest(
+        criteria=state.get("criteria") or ScreenCriteria()
+    )
+    result = graph_screen_stocks(state["provider"], request)
+    return {
+        "graph_screen": request,
+        "criteria": request.criteria,
+        "data": result.model_dump(),
+        "reply": state.get("reply") or "已按知识图谱和GNN式关系评分完成选股。",
+    }
+
+
+def _trend_screen_node(state: AgentState) -> AgentState:
+    request = state.get("trend_screen") or TrendScreenRequest(
+        criteria=state.get("criteria") or ScreenCriteria()
+    )
+    result = trend_screen_stocks(state["provider"], request)
+    return {
+        "trend_screen": request,
+        "criteria": request.criteria,
+        "data": result.model_dump(),
+        "reply": state.get("reply") or "已按趋势指标完成选股。",
+    }
+
+
+def _backtest_node(state: AgentState) -> AgentState:
+    request = state.get("backtest") or BacktestRequest(
+        criteria=state.get("criteria") or ScreenCriteria(),
+        start_date="20200101",
+        end_date="20240101",
+    )
+    result = backtest_hold(state["provider"], request)
+    return {
+        "backtest": request,
+        "criteria": request.criteria,
+        "data": result.model_dump(),
+        "reply": state.get("reply") or "已完成回测。",
+    }
+
+
+def _clarify_node(state: AgentState) -> AgentState:
+    return {
+        "data": None,
+        "reply": state.get("reply")
+        or "你想做普通选股、关系图选股、趋势指标选股，还是回测？请补充条件。",
+    }
+
+
+def _state_to_response(state: AgentState) -> AgentResponse:
     return AgentResponse(
-        reply=reply or "已处理。",
-        action=action,
-        criteria=criteria,
-        graph_screen=graph_request,
-        trend_screen=trend_request,
-        backtest=backtest,
-        data=data,
+        reply=state.get("reply") or "已处理。",
+        action=state.get("action") or "clarify",
+        criteria=state.get("criteria"),
+        graph_screen=state.get("graph_screen"),
+        trend_screen=state.get("trend_screen"),
+        backtest=state.get("backtest"),
+        data=state.get("data"),
     )
 
 
-def _call_llm(message: str) -> Dict[str, Any]:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
+def _call_llm(message: str, override: Optional[LlmClientConfig] = None) -> Dict[str, Any]:
+    config = _resolve_llm_config(override)
+    if not config.api_key:
         result = _heuristic_parse(message)
-        result["reply"] = f"{result.get('reply', '已处理。')}（未配置 OPENAI_API_KEY，已使用本地规则解析。）"
+        result["reply"] = (
+            f"{result.get('reply', '已处理。')}（未配置 OPENAI_API_KEY，已使用本地规则解析。）"
+        )
         return result
 
     from openai import OpenAI
 
-    client = OpenAI(api_key=api_key)
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-
     try:
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[
+        client_kwargs: Dict[str, Any] = {
+            "api_key": config.api_key,
+            "timeout": config.timeout_seconds,
+        }
+        if config.base_url:
+            client_kwargs["base_url"] = config.base_url
+        if config.organization:
+            client_kwargs["organization"] = config.organization
+        if config.project:
+            client_kwargs["project"] = config.project
+        client = OpenAI(**client_kwargs)
+
+        request: Dict[str, Any] = {
+            "model": config.model,
+            "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": message},
             ],
-            response_format={"type": "json_object"},
-            temperature=0.2,
-        )
+            "temperature": config.temperature,
+        }
+        if config.json_mode:
+            request["response_format"] = {"type": "json_object"}
+        completion = _create_chat_completion(client, request)
         content = completion.choices[0].message.content or "{}"
-        return json.loads(content)
+        return _parse_json_response(content)
+    except Exception as exc:
+        result = _heuristic_parse(message)
+        result["reply"] = (
+            f"{result.get('reply', '已处理。')}（LLM 调用失败，已使用本地规则解析：{_safe_error(exc)}）"
+        )
+        return result
+
+
+def _create_chat_completion(client: Any, request: Dict[str, Any]) -> Any:
+    try:
+        return client.chat.completions.create(**request)
     except Exception:
-        return _heuristic_parse(message)
+        fallback = dict(request)
+        if "response_format" not in fallback:
+            raise
+        fallback.pop("response_format", None)
+        return client.chat.completions.create(**fallback)
+
+
+def _parse_json_response(content: str) -> Dict[str, Any]:
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", content, flags=re.DOTALL)
+        if not match:
+            raise
+        return json.loads(match.group(0))
+
+
+def _resolve_llm_config(override: Optional[LlmClientConfig]) -> ResolvedLlmConfig:
+    api_key = _coalesce_str(
+        override.api_key if override else None,
+        os.getenv("OPENAI_API_KEY"),
+    )
+    base_url = _normalize_base_url(
+        _coalesce_str(override.base_url if override else None, os.getenv("OPENAI_BASE_URL"))
+    )
+    model = _coalesce_str(
+        override.model if override else None,
+        os.getenv("OPENAI_MODEL"),
+        "gpt-4o-mini",
+    )
+    temperature = _coalesce_float(
+        override.temperature if override else None,
+        os.getenv("OPENAI_TEMPERATURE"),
+        0.2,
+    )
+    timeout_seconds = _coalesce_float(
+        override.timeout_seconds if override else None,
+        os.getenv("OPENAI_TIMEOUT_SECONDS"),
+        30.0,
+    )
+    json_mode = _coalesce_bool(
+        override.json_mode if override else None,
+        os.getenv("OPENAI_JSON_MODE"),
+        True,
+    )
+    organization = _coalesce_str(
+        override.organization if override else None,
+        os.getenv("OPENAI_ORG_ID"),
+    )
+    project = _coalesce_str(
+        override.project if override else None,
+        os.getenv("OPENAI_PROJECT_ID"),
+    )
+    return ResolvedLlmConfig(
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        temperature=min(max(temperature, 0.0), 2.0),
+        timeout_seconds=min(max(timeout_seconds, 1.0), 180.0),
+        json_mode=json_mode,
+        organization=organization,
+        project=project,
+    )
+
+
+def _coalesce_str(*values: Optional[str]) -> Optional[str]:
+    for value in values:
+        if value is None:
+            continue
+        stripped = str(value).strip()
+        if stripped:
+            return stripped
+    return None
+
+
+def _coalesce_float(*values: Any) -> float:
+    fallback = float(values[-1])
+    for value in values[:-1]:
+        if value is None or value == "":
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return fallback
+
+
+def _coalesce_bool(*values: Any) -> bool:
+    fallback = bool(values[-1])
+    for value in values[:-1]:
+        if value is None or value == "":
+            continue
+        if isinstance(value, bool):
+            return value
+        lowered = str(value).strip().lower()
+        if lowered in {"1", "true", "yes", "y", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "n", "off"}:
+            return False
+    return fallback
+
+
+def _normalize_base_url(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    return value.rstrip("/")
+
+
+def _safe_error(exc: Exception) -> str:
+    text = str(exc).replace(os.getenv("OPENAI_API_KEY", "") or "\0", "[redacted]")
+    text = re.sub(r"sk-[A-Za-z0-9_-]{8,}", "sk-[redacted]", text)
+    return text[:180]
 
 
 def _heuristic_parse(message: str) -> Dict[str, Any]:
@@ -137,14 +460,31 @@ def _heuristic_parse(message: str) -> Dict[str, Any]:
             },
         }
 
-    if _contains_any(lower, ["关系", "产业链", "上下游", "供应链", "关联", "联动", "图学习", "知识图谱", "graph", "gnn", "langgraph"]):
+    if _contains_any(
+        lower,
+        [
+            "关系",
+            "产业链",
+            "上下游",
+            "供应链",
+            "关联",
+            "联动",
+            "图学习",
+            "知识图谱",
+            "graph",
+            "gnn",
+            "langgraph",
+        ],
+    ):
         return {
             "action": "graph_screen",
-            "reply": "已按股票关系图做关系传播选股，结果包含基础分、关系分和建议权重。",
+            "reply": "已按股票知识图谱和GNN式关系评分做选股，结果包含基础分、关系分和建议权重。",
             "graph_screen": {
                 "criteria": criteria,
                 "seed_codes": _extract_codes(message),
-                "relation_depth": 2 if _contains_any(lower, ["二级", "2层", "2-hop", "two hop"]) else 1,
+                "relation_depth": 2
+                if _contains_any(lower, ["二级", "2层", "2-hop", "two hop"])
+                else 1,
                 "relation_weight": 0.4,
                 "limit": 20,
             },
@@ -168,7 +508,10 @@ def _heuristic_parse(message: str) -> Dict[str, Any]:
             "criteria": criteria,
         }
 
-    return {"action": "clarify", "reply": "你是要普通选股、关系图选股，还是回测？请补充条件。"}
+    return {
+        "action": "clarify",
+        "reply": "你想做普通选股、关系图选股、趋势指标选股，还是回测？请补充条件。",
+    }
 
 
 def _heuristic_criteria(message: str) -> Dict[str, Any]:
@@ -193,7 +536,7 @@ def _heuristic_criteria(message: str) -> Dict[str, Any]:
 def _extract_number_after(message: str, labels: list[str]) -> Optional[float]:
     for label in labels:
         pattern = rf"{re.escape(label)}\s*(?:低于|小于|<=|<|不高于|少于|在)?\s*(\d+(?:\.\d+)?)"
-        match = re.search(pattern, message)
+        match = re.search(pattern, message, flags=re.IGNORECASE)
         if match:
             return float(match.group(1))
     return None
@@ -202,7 +545,7 @@ def _extract_number_after(message: str, labels: list[str]) -> Optional[float]:
 def _extract_percent_after(message: str, labels: list[str]) -> Optional[float]:
     for label in labels:
         pattern = rf"{re.escape(label)}\s*(?:高于|大于|>=|>|不低于|超过|在)?\s*(\d+(?:\.\d+)?)\s*(%)?"
-        match = re.search(pattern, message)
+        match = re.search(pattern, message, flags=re.IGNORECASE)
         if match:
             value = float(match.group(1))
             return value / 100 if match.group(2) or value > 1 else value
@@ -228,20 +571,34 @@ def _extract_industry(message: str) -> Optional[str]:
 
 
 def _extract_codes(message: str) -> list[str]:
-    return re.findall(r"\b\d{6}\.(?:SH|SZ|BJ)\b", message.upper())
+    codes = []
+    for code in re.findall(r"\b\d{6}(?:\.(?:SH|SZ|BJ))?\b", message.upper()):
+        if "." in code:
+            codes.append(code)
+        elif code.startswith("6"):
+            codes.append(f"{code}.SH")
+        elif code.startswith(("4", "8")):
+            codes.append(f"{code}.BJ")
+        else:
+            codes.append(f"{code}.SZ")
+    return codes
 
 
 def _extract_date(message: str, default: str, first: bool) -> str:
-    dates = re.findall(r"\b(20\d{2})(?:[-/.年]?)(\d{2})(?:[-/.月]?)(\d{2})", message)
+    compact_dates = re.findall(r"\b(20\d{2})(\d{2})(\d{2})\b", message)
+    separated_dates = re.findall(
+        r"\b(20\d{2})(?:[-/.年])(\d{1,2})(?:[-/.月])(\d{1,2})",
+        message,
+    )
+    dates = compact_dates or separated_dates
     if not dates:
         years = re.findall(r"\b(20\d{2})\b", message)
         if years:
             year = years[0] if first else years[-1]
             return f"{year}0101" if first else f"{year}1231"
         return default
-    index = 0 if first else -1
-    year, month, day = dates[index]
-    return f"{year}{month}{day}"
+    year, month, day = dates[0 if first else -1]
+    return f"{year}{int(month):02d}{int(day):02d}"
 
 
 def _contains_any(text: str, needles: list[str]) -> bool:
