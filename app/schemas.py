@@ -23,7 +23,7 @@ class ScreenCriteria(BaseModel):
     min_market_cap_billion: Optional[float] = None
     industry: Optional[str] = None
     include_st: bool = False
-    limit: int = Field(default=50, ge=1, le=200)
+    limit: int = Field(default=10, ge=1, le=200)
     sort_by: str = Field(default="score")
     sort_dir: str = Field(default="desc")
 
@@ -53,7 +53,7 @@ class GraphScreenRequest(BaseModel):
     seed_codes: List[str] = Field(default_factory=list, max_length=50)
     relation_depth: int = Field(default=1, ge=1, le=3)
     relation_weight: float = Field(default=0.35, ge=0, le=1)
-    limit: int = Field(default=20, ge=1, le=100)
+    limit: int = Field(default=10, ge=1, le=100)
 
 
 class GraphStockSignal(BaseModel):
@@ -128,7 +128,7 @@ class TrendScreenRequest(BaseModel):
     criteria: ScreenCriteria = Field(default_factory=ScreenCriteria)
     start_date: str = Field(default="20200101", description="YYYYMMDD")
     end_date: str = Field(default="20240101", description="YYYYMMDD")
-    limit: int = Field(default=20, ge=1, le=100)
+    limit: int = Field(default=10, ge=1, le=100)
 
 
 class TrendStockSignal(BaseModel):
@@ -205,6 +205,44 @@ class BacktestResult(BaseModel):
     metrics: BacktestMetrics
     equity_curve: List[EquityPoint]
     symbols: List[str]
+
+
+class CachePolicy(BaseModel):
+    mode: str = Field(default="light")
+    max_bytes: int = Field(default=200 * 1024 * 1024, ge=1)
+    daily_days: int = Field(default=500, ge=1, le=5000)
+    minute_days: int = Field(default=3, ge=0, le=90)
+    keep_watchlist_forever: bool = True
+    auto_prune: bool = True
+
+
+class DataCacheStatus(BaseModel):
+    source: str
+    cache_dir: str
+    cache_bytes: int
+    cache_limit_bytes: int
+    cache_usage: float
+    universe_count: int
+    universe_cache_path: Optional[str] = None
+    universe_updated_at: Optional[str] = None
+    universe_age_hours: Optional[float] = None
+    stale: bool = False
+    policy: CachePolicy
+    notes: List[str] = Field(default_factory=list)
+
+
+class DataRefreshResult(BaseModel):
+    source: str
+    refreshed: bool
+    status: DataCacheStatus
+    notes: List[str] = Field(default_factory=list)
+
+
+class CachePruneResult(BaseModel):
+    removed_files: int
+    removed_bytes: int
+    status: DataCacheStatus
+    notes: List[str] = Field(default_factory=list)
 
 
 class LlmClientConfig(BaseModel):

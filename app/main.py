@@ -9,7 +9,7 @@ from app.api.routes import router as api_router
 
 load_dotenv()
 
-app = FastAPI(title="A-Share Screener", version="0.2.0")
+app = FastAPI(title="A股选股智能体", version="0.2.0")
 
 app.include_router(api_router, prefix="/api")
 

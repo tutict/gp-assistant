@@ -17,6 +17,7 @@ from app.schemas import (
     TrendScreenRequest,
 )
 from app.services.backtest import backtest_hold
+from app.services.data_maintenance import data_source_status, prune_cache, refresh_universe
 from app.services.screener import screen_stocks
 from app.services.stock_graph import graph_screen_stocks
 from app.services.trend_indicator import trend_screen_stocks
@@ -27,20 +28,20 @@ Decide whether the user wants a basic stock screen, relation-aware graph screen,
 LangGraph is only the workflow/state orchestration layer. Stock-to-stock relationships must be handled by the graph_screen tool, which uses a stock knowledge graph and GNN-style relation scoring.
 Return this shape:
 {
-  "action": "screen" | "graph_screen" | "trend_screen" | "backtest" | "clarify",
+  "action": "screen" | "graph_screen" | "trend_screen" | "backtest" | "data_status" | "refresh_data" | "prune_cache" | "clarify",
   "criteria": { ...ScreenCriteria fields... } | null,
   "graph_screen": {
     "criteria": { ...ScreenCriteria fields... },
     "seed_codes": ["optional stock codes"],
     "relation_depth": 1,
     "relation_weight": 0.35,
-    "limit": 20
+    "limit": 10
   } | null,
   "trend_screen": {
     "criteria": { ...ScreenCriteria fields... },
     "start_date": "20200101",
     "end_date": "20240101",
-    "limit": 20
+    "limit": 10
   } | null,
   "backtest": { ...BacktestRequest fields... } | null,
   "reply": "short Chinese reply to the user"
@@ -49,10 +50,22 @@ Use action "graph_screen" when the user mentions stock relations, industry chain
 supply chain, peer linkage, GNN, knowledge graph, graph learning, or LangGraph-related stock relation analysis.
 Use action "trend_screen" when the user asks for uptrend, trend indicator, SWL/SWS, short-buy,
 main-force accumulation, red hold, cyan watch, support/resistance, or quantitative score screening.
+Use action "data_status" for data source status, stock universe count, cache usage, or freshness questions.
+Use action "refresh_data" when the user asks to refresh, sync, or update the stock universe/data source.
+Use action "prune_cache" when the user asks to clean, shrink, or free local cache/storage.
 If the user request is unclear, use action "clarify" and ask a brief question in reply.
 """
 
-VALID_ACTIONS = {"screen", "graph_screen", "trend_screen", "backtest", "clarify"}
+VALID_ACTIONS = {
+    "screen",
+    "graph_screen",
+    "trend_screen",
+    "backtest",
+    "data_status",
+    "refresh_data",
+    "prune_cache",
+    "clarify",
+}
 
 
 @dataclass(frozen=True)
@@ -111,6 +124,9 @@ def _get_langgraph_workflow() -> Any:
     builder.add_node("graph_screen", _graph_screen_node)
     builder.add_node("trend_screen", _trend_screen_node)
     builder.add_node("backtest", _backtest_node)
+    builder.add_node("data_status", _data_status_node)
+    builder.add_node("refresh_data", _refresh_data_node)
+    builder.add_node("prune_cache", _prune_cache_node)
     builder.add_node("clarify", _clarify_node)
 
     builder.add_edge(START, "parse_intent")
@@ -122,10 +138,22 @@ def _get_langgraph_workflow() -> Any:
             "graph_screen": "graph_screen",
             "trend_screen": "trend_screen",
             "backtest": "backtest",
+            "data_status": "data_status",
+            "refresh_data": "refresh_data",
+            "prune_cache": "prune_cache",
             "clarify": "clarify",
         },
     )
-    for node in ("screen", "graph_screen", "trend_screen", "backtest", "clarify"):
+    for node in (
+        "screen",
+        "graph_screen",
+        "trend_screen",
+        "backtest",
+        "data_status",
+        "refresh_data",
+        "prune_cache",
+        "clarify",
+    ):
         builder.add_edge(node, END)
     return builder.compile()
 
@@ -142,6 +170,12 @@ def _run_agent_state_machine(initial_state: AgentState) -> AgentState:
         state.update(_trend_screen_node(state))
     elif action == "backtest":
         state.update(_backtest_node(state))
+    elif action == "data_status":
+        state.update(_data_status_node(state))
+    elif action == "refresh_data":
+        state.update(_refresh_data_node(state))
+    elif action == "prune_cache":
+        state.update(_prune_cache_node(state))
     else:
         state.update(_clarify_node(state))
     return state
@@ -242,6 +276,40 @@ def _backtest_node(state: AgentState) -> AgentState:
         "criteria": request.criteria,
         "data": result.model_dump(),
         "reply": state.get("reply") or "已完成回测。",
+    }
+
+
+def _data_status_node(state: AgentState) -> AgentState:
+    source = getattr(state["provider"], "name", state["provider"].__class__.__name__)
+    result = data_source_status(source)
+    return {
+        "data": result.model_dump(),
+        "reply": state.get("reply")
+        or f"当前数据源是 {source}，股票池 {result.universe_count} 只，缓存占用 {result.cache_bytes} 字节。",
+    }
+
+
+def _refresh_data_node(state: AgentState) -> AgentState:
+    source = getattr(state["provider"], "name", state["provider"].__class__.__name__)
+    result = refresh_universe(source)
+    return {
+        "data": result.model_dump(),
+        "reply": state.get("reply")
+        or (
+            f"已刷新 {result.source} 股票池，当前 {result.status.universe_count} 只。"
+            if result.refreshed
+            else "刷新股票池失败，请查看返回详情。"
+        ),
+    }
+
+
+def _prune_cache_node(state: AgentState) -> AgentState:
+    source = getattr(state["provider"], "name", state["provider"].__class__.__name__)
+    result = prune_cache(source)
+    return {
+        "data": result.model_dump(),
+        "reply": state.get("reply")
+        or f"已清理缓存，删除 {result.removed_files} 个文件，释放 {result.removed_bytes} 字节。",
     }
 
 
@@ -432,6 +500,30 @@ def _heuristic_parse(message: str) -> Dict[str, Any]:
     lower = message.lower()
     criteria = _heuristic_criteria(message)
 
+    if _contains_any(lower, ["清理缓存", "清缓存", "释放空间", "缓存瘦身", "prune cache", "clear cache"]):
+        return {
+            "action": "prune_cache",
+            "reply": "已按轻量缓存策略清理可丢弃缓存，股票池基础缓存会保留。",
+        }
+
+    if _contains_any(
+        lower,
+        ["刷新数据", "刷新股票池", "更新股票池", "同步数据", "更新数据源", "refresh data", "refresh universe"],
+    ):
+        return {
+            "action": "refresh_data",
+            "reply": "已触发股票池刷新；刷新结果会返回股票池数量、缓存占用和数据源状态。",
+        }
+
+    if _contains_any(
+        lower,
+        ["数据状态", "数据源状态", "缓存状态", "缓存占用", "股票池数量", "股票池状态", "data status"],
+    ):
+        return {
+            "action": "data_status",
+            "reply": "已读取当前数据源、股票池数量、更新时间和缓存占用。",
+        }
+
     if _contains_any(
         lower,
         [
@@ -456,7 +548,7 @@ def _heuristic_parse(message: str) -> Dict[str, Any]:
                 "criteria": criteria,
                 "start_date": _extract_date(message, default="20200101", first=True),
                 "end_date": _extract_date(message, default="20240101", first=False),
-                "limit": 20,
+                "limit": 10,
             },
         }
 
@@ -486,7 +578,7 @@ def _heuristic_parse(message: str) -> Dict[str, Any]:
                 if _contains_any(lower, ["二级", "2层", "2-hop", "two hop"])
                 else 1,
                 "relation_weight": 0.4,
-                "limit": 20,
+                "limit": 10,
             },
         }
 
@@ -554,15 +646,17 @@ def _extract_percent_after(message: str, labels: list[str]) -> Optional[float]:
 
 def _extract_industry(message: str) -> Optional[str]:
     known = {
-        "银行": "Banking",
-        "白酒": "Beverages",
-        "饮料": "Beverages",
-        "电池": "Batteries",
-        "新能源": "Batteries",
-        "汽车": "Auto",
-        "电子": "Electronics",
-        "光伏": "Solar",
-        "化工": "Chemicals",
+        "银行": "银行",
+        "白酒": "白酒",
+        "饮料": "白酒",
+        "电池": "动力电池",
+        "动力电池": "动力电池",
+        "新能源": "动力电池",
+        "汽车": "汽车",
+        "电子": "电子制造",
+        "电子制造": "电子制造",
+        "光伏": "光伏",
+        "化工": "化工",
     }
     for keyword, industry in known.items():
         if keyword in message:

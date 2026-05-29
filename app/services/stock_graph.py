@@ -51,10 +51,10 @@ def graph_screen_stocks(provider: StockProvider, request: GraphScreenRequest) ->
 
     notes = [
         *graph_notes(graph),
-        "LangGraph orchestrates agent state/tool flow; this service models stock relationships as a knowledge graph.",
+        "LangGraph 负责智能体状态和工具编排，股票关系由知识图谱和关系评分层建模。",
     ]
     if not graph.relations:
-        notes.append("No stock relations were available; result falls back to base screening scores.")
+        notes.append("当前没有可用股票关系，结果已回退为基础选股分。")
 
     return GraphScreenResult(
         total=len(candidate_pool),

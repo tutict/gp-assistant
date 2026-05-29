@@ -25,10 +25,18 @@ const THEME_KEY = "gp-assistant-theme";
 const DATA_SOURCE_KEY = "gp-assistant-data-source";
 const DATA_REFRESH_KEY = "gp-assistant-source-refresh";
 const LLM_SETTINGS_KEY = "gp-assistant-llm-settings";
+const DEFAULT_RESULT_LIMIT = 10;
 const dataSource = {
   select: $("#dataSourceSelect"),
   refresh: $("#refreshSource"),
   status: $("#sourceStatus"),
+  universe: $("#universeCount"),
+  cache: $("#cacheBytes"),
+  updated: $("#universeUpdated"),
+  policy: $("#cachePolicy"),
+  note: $("#maintenanceNote"),
+  refreshUniverse: $("#refreshUniverseBtn"),
+  pruneCache: $("#pruneCacheBtn"),
 };
 const mobileNav = {
   toggle: $("#mobileNavToggle"),
@@ -67,11 +75,14 @@ function bindActions() {
   dataSource.select?.addEventListener("change", () => {
     localStorage.setItem(DATA_SOURCE_KEY, getSelectedDataSource());
     updateSourceStatus();
+    loadDataStatus();
   });
   dataSource.refresh?.addEventListener("change", () => {
     localStorage.setItem(DATA_REFRESH_KEY, dataSource.refresh.checked ? "true" : "false");
     updateSourceStatus();
   });
+  dataSource.refreshUniverse?.addEventListener("click", () => runDataTask(dataSource.refreshUniverse, refreshUniverse));
+  dataSource.pruneCache?.addEventListener("click", () => runDataTask(dataSource.pruneCache, pruneCache));
   document.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : event.target?.parentElement;
     const action = target?.closest("[data-observe-code]");
@@ -158,7 +169,7 @@ async function runGraph() {
     seed_codes: parseCodes($("#seedCodes").value),
     relation_depth: clampInt($("#relationDepth").value, 1, 3, 1),
     relation_weight: clampFloat($("#relationWeight").value, 0, 1, 0.4),
-    limit: Math.min(readInt("resultLimit", 30), 100),
+    limit: Math.min(readInt("resultLimit", DEFAULT_RESULT_LIMIT), 100),
   };
   const data = await postJson("/api/graph-screen", payload, panels.graph);
   if (data) renderGraphResult(panels.graph, data);
@@ -187,7 +198,7 @@ async function runTrendScreen() {
     criteria: buildCriteria({ limit: 100 }),
     start_date: $("#trendStart").value.trim() || "20200101",
     end_date: $("#trendEnd").value.trim() || "20240101",
-    limit: Math.min(readInt("resultLimit", 30), 100),
+    limit: Math.min(readInt("resultLimit", DEFAULT_RESULT_LIMIT), 100),
   };
   const data = await postJson("/api/trend-screen", payload, panels.trend);
   if (data) renderTrendScreenResult(panels.trend, data);
@@ -208,10 +219,10 @@ async function runBacktest() {
 async function runAgent() {
   const message = $("#agentMsg").value.trim();
   if (!message) {
-    setError(panels.agent, "请输入 Agent 指令", "例如：用产业链关系筛选新能源股票，PE 低于 25。");
+    setError(panels.agent, "请输入智能体指令", "例如：用产业链关系筛选新能源股票，市盈率低于 25。");
     return;
   }
-  setLoading(panels.agent, "Agent 分析中");
+  setLoading(panels.agent, "智能体分析中");
   const payload = { message };
   const llm = buildLlmConfig();
   if (llm) payload.llm = llm;
@@ -251,6 +262,7 @@ function initDataSource() {
     dataSource.refresh.checked = localStorage.getItem(DATA_REFRESH_KEY) === "true";
   }
   updateSourceStatus();
+  loadDataStatus();
 }
 
 function getSelectedDataSource() {
@@ -259,16 +271,95 @@ function getSelectedDataSource() {
 
 function dataSourceHeaders() {
   const headers = { "X-Stock-Provider": getSelectedDataSource() };
-  if (dataSource.refresh?.checked) headers["X-Akshare-Refresh"] = "true";
+  if (dataSource.refresh?.checked) headers["X-Stock-Refresh"] = "true";
   return headers;
 }
 
 function updateSourceStatus() {
   if (!dataSource.status) return;
   const source = getSelectedDataSource();
-  const label = source === "akshare" ? "AkShare" : "Mock";
-  const suffix = dataSource.refresh?.checked && source === "akshare" ? " 刷新" : "";
+  const label = sourceLabel(source);
+  const suffix = dataSource.refresh?.checked && source !== "mock" ? " 刷新" : "";
   dataSource.status.innerHTML = `<i aria-hidden="true"></i>${escapeHtml(label + suffix)}`;
+}
+
+async function runDataTask(button, task) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "处理中";
+  try {
+    await task();
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+async function loadDataStatus() {
+  if (!dataSource.universe) return;
+  setMaintenanceNote("读取数据状态中");
+  try {
+    const resp = await fetch("/api/data-sources/status", {
+      method: "GET",
+      headers: dataSourceHeaders(),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    renderDataStatus(await resp.json());
+  } catch (err) {
+    setMaintenanceNote(`数据状态读取失败：${err.message}`);
+  }
+}
+
+async function refreshUniverse() {
+  setMaintenanceNote("刷新股票池中，真实数据源可能需要几十秒");
+  try {
+    const resp = await fetch("/api/data-sources/refresh-universe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...dataSourceHeaders() },
+      body: JSON.stringify({ mode: "light", max_bytes: 209715200, daily_days: 500, minute_days: 3 }),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const data = await resp.json();
+    renderDataStatus(data.status);
+    setMaintenanceNote((data.notes || []).join(" ") || "股票池刷新完成");
+  } catch (err) {
+    setMaintenanceNote(`股票池刷新失败：${err.message}`);
+  }
+}
+
+async function pruneCache() {
+  setMaintenanceNote("清理可丢弃缓存中");
+  try {
+    const resp = await fetch("/api/data-sources/prune-cache", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...dataSourceHeaders() },
+      body: JSON.stringify({ mode: "light", max_bytes: 209715200, daily_days: 500, minute_days: 3 }),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const data = await resp.json();
+    renderDataStatus(data.status);
+    setMaintenanceNote(`已删除 ${data.removed_files || 0} 个文件，释放 ${formatBytes(data.removed_bytes || 0)}。`);
+  } catch (err) {
+    setMaintenanceNote(`缓存清理失败：${err.message}`);
+  }
+}
+
+function renderDataStatus(status) {
+  if (!status || !dataSource.universe) return;
+  dataSource.universe.textContent = `${formatNumber(status.universe_count)} 只`;
+  dataSource.cache.textContent = formatBytes(status.cache_bytes);
+  dataSource.updated.textContent = status.universe_updated_at
+    ? `更新于 ${formatDateTime(status.universe_updated_at)}`
+    : status.source === "mock"
+      ? "本地演示数据"
+      : "未建立缓存";
+  const policy = status.policy || {};
+  dataSource.policy.textContent = `${policy.mode === "full" ? "完整" : "轻量"}模式 · 上限 ${formatBytes(status.cache_limit_bytes)}`;
+  setMaintenanceNote((status.notes || []).join(" ") || "数据状态正常");
+}
+
+function setMaintenanceNote(text) {
+  if (dataSource.note) dataSource.note.textContent = text;
 }
 
 function initLlmSettings() {
@@ -337,11 +428,11 @@ function updateLlmStatus(customText) {
   const hasKey = Boolean(llmSettings.apiKey.value.trim());
   const hasEndpoint = Boolean(llmSettings.baseUrl.value.trim() || llmSettings.model.value.trim());
   if (hasKey && hasEndpoint) {
-    llmSettings.status.textContent = "自定义 API";
+    llmSettings.status.textContent = "自定义接口";
   } else if (hasKey) {
-    llmSettings.status.textContent = "自定义 Key";
+    llmSettings.status.textContent = "自定义密钥";
   } else if (hasEndpoint) {
-    llmSettings.status.textContent = "服务端 Key";
+    llmSettings.status.textContent = "服务端密钥";
   } else {
     llmSettings.status.textContent = "服务端默认";
   }
@@ -354,7 +445,7 @@ function normalizeBaseUrl(value) {
 function buildCriteria(overrides = {}) {
   const criteria = {
     include_st: $("#includeSt").checked,
-    limit: readInt("resultLimit", 30),
+    limit: readInt("resultLimit", DEFAULT_RESULT_LIMIT),
     sort_by: $("#sortBy").value,
     sort_dir: $("#sortDir").value,
     ...overrides,
@@ -582,8 +673,12 @@ function renderAgentResult(node, data) {
         ? renderStockList(nestedItems.map(screenItemToView))
         : renderEmpty("没有选股结果"),
     );
+  } else if (["data_status", "refresh_data", "prune_cache"].includes(data.action)) {
+    const status = nested.status || nested;
+    bodyParts.push(renderDataStatusCard(status));
+    if (nested.notes?.length) bodyParts.push(renderNotes(nested.notes));
   } else {
-    bodyParts.push(renderEmpty("Agent 没有返回可展示数据"));
+    bodyParts.push(renderEmpty("智能体没有返回可展示数据"));
   }
 
   const thirdMetric =
@@ -591,17 +686,34 @@ function renderAgentResult(node, data) {
       ? ["关系边", nested.relation_count ?? "-"]
       : data.action === "trend_screen"
         ? ["最高分", nestedItems[0] ? formatNumber(nestedItems[0].final_score) : "-"]
+        : data.action === "data_status" || data.action === "refresh_data" || data.action === "prune_cache"
+          ? ["缓存", formatBytes((nested.status || nested).cache_bytes)]
         : ["关系边", nested.relation_count ?? "-"];
 
   renderResult(node, {
     summary: [
       ["动作", actionLabel(data.action)],
-      ["结果", nested.returned ?? nestedItems.length ?? "-"],
+      ["结果", nested.returned ?? (nested.status || nested).universe_count ?? nestedItems.length ?? "-"],
       thirdMetric,
     ],
     body: bodyParts.join(""),
     raw: data,
   });
+}
+
+function renderDataStatusCard(status) {
+  if (!status) return renderEmpty("没有数据维护状态");
+  return `
+    <section class="data-status-card">
+      <div><span>数据源</span><strong>${escapeHtml(sourceLabel(status.source))}</strong></div>
+      <div><span>股票池</span><strong>${formatNumber(status.universe_count)} 只</strong></div>
+      <div><span>缓存</span><strong>${formatBytes(status.cache_bytes)}</strong></div>
+      <div><span>上限</span><strong>${formatBytes(status.cache_limit_bytes)}</strong></div>
+      <div><span>状态</span><strong>${status.stale ? "需刷新" : "可用"}</strong></div>
+      <div><span>更新时间</span><strong>${escapeHtml(status.universe_updated_at ? formatDateTime(status.universe_updated_at) : "-")}</strong></div>
+      ${status.notes?.length ? `<div class="wide">${renderNotes(status.notes)}</div>` : ""}
+    </section>
+  `;
 }
 
 function screenItemToView(item) {
@@ -661,14 +773,24 @@ function renderResult(node, { summary, body, raw }) {
     </div>
     <div class="result-body">${body}</div>
     <details class="raw-json">
-      <summary>原始 JSON</summary>
+      <summary>原始数据</summary>
       <pre>${escapeHtml(JSON.stringify(raw, null, 2))}</pre>
     </details>
   `;
 }
 
 function renderStockList(items) {
-  return `<div class="stock-list">${items.map(renderStockRow).join("")}</div>`;
+  return `
+    <div class="quote-table">
+      <div class="quote-table-head">
+        <span>名称</span>
+        <span>评分</span>
+        <span>市盈率</span>
+        <span>市净率</span>
+      </div>
+      <div class="stock-list">${items.map(renderStockRow).join("")}</div>
+    </div>
+  `;
 }
 
 function renderStockRow(item) {
@@ -688,25 +810,33 @@ function renderStockRow(item) {
 
   return `
     <article class="stock-row">
-      <div class="stock-main">
+      <div class="stock-grid">
         <div class="stock-title">
           <div>
             <strong>${escapeHtml(stock.name || stock.code || "-")}</strong>
-            <span>${escapeHtml(stock.code || "")}</span>
+            <span>${escapeHtml(stock.code || "")} ${escapeHtml(stock.industry || "")}</span>
           </div>
-          ${observeButton}
         </div>
         <div class="score-badge">
-          <small>${escapeHtml(item.scoreLabel || "Score")}</small>
+          <small>${escapeHtml(item.scoreLabel || "评分")}</small>
           <b>${formatNumber(item.score)}</b>
           ${weight}
         </div>
+        <div class="quote-number">
+          <strong>${formatNumber(stock.pe)}</strong>
+          <span>市盈率</span>
+        </div>
+        <div class="quote-number">
+          <strong>${formatNumber(stock.pb)}</strong>
+          <span>市净率</span>
+        </div>
       </div>
-      <div class="stock-meta">
-        <span>${escapeHtml(stock.industry || "Unknown")}</span>
-        <span>PE ${formatNumber(stock.pe)}</span>
-        <span>PB ${formatNumber(stock.pb)}</span>
-        <span>ROE ${formatPercent(stock.roe)}</span>
+      <div class="row-actions">
+        <div class="stock-meta">
+          <span>净资产收益率 ${formatPercent(stock.roe)}</span>
+          <span>市值 ${formatNumber(stock.market_cap_billion)} 亿</span>
+        </div>
+        ${observeButton}
       </div>
       ${extra}
       ${signal}
@@ -722,17 +852,17 @@ function renderQuoteCard(stock) {
       <header>
         <div>
           <h3>${escapeHtml(stock.name || stock.code || "-")}</h3>
-          <p>${escapeHtml(stock.code || "")} · ${escapeHtml(stock.industry || "Unknown")}</p>
+          <p>${escapeHtml(stock.code || "")} · ${escapeHtml(stock.industry || "未知行业")}</p>
         </div>
         <span class="quote-price">${formatNumber(stock.price)}</span>
       </header>
       <div class="quote-grid">
-        <div><span>PE</span><strong>${formatNumber(stock.pe)}</strong></div>
-        <div><span>PB</span><strong>${formatNumber(stock.pb)}</strong></div>
-        <div><span>ROE</span><strong>${formatPercent(stock.roe)}</strong></div>
+        <div><span>市盈率</span><strong>${formatNumber(stock.pe)}</strong></div>
+        <div><span>市净率</span><strong>${formatNumber(stock.pb)}</strong></div>
+        <div><span>净资产收益率</span><strong>${formatPercent(stock.roe)}</strong></div>
         <div><span>市值</span><strong>${formatNumber(stock.market_cap_billion)} 亿</strong></div>
         <div><span>股息率</span><strong>${formatPercent(stock.dividend_yield)}</strong></div>
-        <div><span>ST</span><strong>${stock.is_st ? "是" : "否"}</strong></div>
+        <div><span>是否 ST</span><strong>${stock.is_st ? "是" : "否"}</strong></div>
       </div>
     </section>
   `;
@@ -807,14 +937,14 @@ function renderSignalCard(stock, signal) {
         <span class="state-pill">${escapeHtml(statusLabel(signal.status))}</span>
       </header>
       <div class="signal-grid">
-        <div><span>Close</span><strong>${formatNumber(signal.close)}</strong></div>
-        <div><span>SWL / SWS</span><strong>${formatNumber(signal.swl)} / ${formatNumber(signal.sws)}</strong></div>
-        <div><span>Quant</span><strong>${escapeHtml(String(signal.quant_score ?? 0))}/${escapeHtml(String(signal.quant_score_max ?? 90))}</strong></div>
-        <div><span>Support</span><strong>${formatNumber(signal.support)}</strong></div>
-        <div><span>Resistance</span><strong>${formatNumber(signal.resistance)}</strong></div>
-        <div><span>Breakout</span><strong>${formatNumber(signal.breakout)}</strong></div>
-        <div><span>Reversal</span><strong>${formatNumber(signal.reversal)}</strong></div>
-        <div><span>Wait</span><strong>${formatNumber(signal.wait_line)}</strong></div>
+        <div><span>收盘价</span><strong>${formatNumber(signal.close)}</strong></div>
+        <div><span>SWL/SWS 线</span><strong>${formatNumber(signal.swl)} / ${formatNumber(signal.sws)}</strong></div>
+        <div><span>量化分</span><strong>${escapeHtml(String(signal.quant_score ?? 0))}/${escapeHtml(String(signal.quant_score_max ?? 90))}</strong></div>
+        <div><span>支撑位</span><strong>${formatNumber(signal.support)}</strong></div>
+        <div><span>阻力位</span><strong>${formatNumber(signal.resistance)}</strong></div>
+        <div><span>突破位</span><strong>${formatNumber(signal.breakout)}</strong></div>
+        <div><span>反转位</span><strong>${formatNumber(signal.reversal)}</strong></div>
+        <div><span>等待线</span><strong>${formatNumber(signal.wait_line)}</strong></div>
       </div>
       ${signal.reasons?.length ? `<div class="tag-row">${signal.reasons.map((reason) => `<span>${escapeHtml(reasonLabel(reason))}</span>`).join("")}</div>` : ""}
     </section>
@@ -894,7 +1024,7 @@ function renderMinuteChart(bars) {
   return `
     <div class="chart-wrap minute-chart">
       <div class="chart-legend">
-        <span>Minute Close</span>
+        <span>分钟收盘</span>
         <span>${escapeHtml(last?.datetime || "")}</span>
         <span>${formatNumber(last?.close)}</span>
       </div>
@@ -947,7 +1077,7 @@ function renderTrendChart(series) {
   return `
     <div class="chart-wrap trend-chart">
       <div class="chart-legend">
-        <span>Close</span>
+        <span>收盘价</span>
         <span style="color: var(--accent-strong)">SWL</span>
         <span style="color: var(--muted)">SWS</span>
       </div>
@@ -1011,12 +1141,39 @@ function formatPercent(value) {
   return `${(number * 100).toLocaleString("zh-CN", { maximumFractionDigits: 2 })}%`;
 }
 
+function formatBytes(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let size = number;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size.toLocaleString("zh-CN", { maximumFractionDigits: unit === 0 ? 0 : 1 })} ${units[unit]}`;
+}
+
+function formatDateTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value || "-";
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function actionLabel(action) {
   const labels = {
     screen: "普通选股",
     graph_screen: "关系图",
     trend_screen: "趋势选股",
     backtest: "回测",
+    data_status: "数据状态",
+    refresh_data: "刷新数据",
+    prune_cache: "清理缓存",
     clarify: "澄清",
   };
   return labels[action] || action || "-";
@@ -1024,8 +1181,9 @@ function actionLabel(action) {
 
 function sourceLabel(source) {
   const labels = {
-    mock: "Mock",
-    akshare: "AkShare",
+    mock: "本地演示",
+    akshare: "公开行情",
+    eastmoney: "东方财富",
   };
   return labels[source] || source || "-";
 }
@@ -1045,9 +1203,9 @@ function statusLabel(status) {
 
 function reasonLabel(reason) {
   const labels = {
-    roe_ok: "ROE 达标",
-    pe_ok: "PE 达标",
-    pb_ok: "PB 达标",
+    roe_ok: "净资产收益率达标",
+    pe_ok: "市盈率达标",
+    pb_ok: "市净率达标",
     mcap_ok: "市值达标",
     strong_relation_signal: "强关系信号",
     moderate_relation_signal: "中等关系信号",
@@ -1103,5 +1261,5 @@ function getPreferredTheme() {
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   if (themeToggle) themeToggle.checked = theme === "dark";
-  if (themeText) themeText.textContent = theme === "dark" ? "暗色" : "亮色";
+  if (themeText) themeText.textContent = theme === "dark" ? "暗色模式" : "亮色模式";
 }

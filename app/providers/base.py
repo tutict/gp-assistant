@@ -42,4 +42,8 @@ def get_provider(provider_name: Optional[str] = None, refresh: Optional[bool] = 
         from app.providers.akshare import AkShareProvider
 
         return AkShareProvider(refresh=bool(refresh) if refresh is not None else False)
-    raise ValueError(f"Unsupported stock provider: {provider_name}")
+    if provider_name == "eastmoney":
+        from app.providers.eastmoney import EastmoneyProvider
+
+        return EastmoneyProvider(refresh=bool(refresh) if refresh is not None else False)
+    raise ValueError(f"不支持的数据源：{provider_name}")

@@ -31,13 +31,13 @@ class AkShareProvider(StockProvider):
         for item in self.list_stocks():
             if item.code == normalized_code:
                 return item
-        raise KeyError(f"Stock {code} not found")
+        raise KeyError(f"未找到股票 {code}")
 
     def get_history(self, code: str, start_date: str, end_date: str):
         ak = self._import_akshare()
         history_fn = getattr(ak, "stock_zh_a_hist", None)
         if history_fn is None:
-            raise RuntimeError("AkShare missing stock_zh_a_hist")
+            raise RuntimeError("AkShare 缺少 stock_zh_a_hist 接口")
 
         symbol = code.split(".")[0]
         df = history_fn(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="")
@@ -68,7 +68,7 @@ class AkShareProvider(StockProvider):
         ak = self._import_akshare()
         minute_fn = getattr(ak, "stock_zh_a_hist_min_em", None)
         if minute_fn is None:
-            raise RuntimeError("AkShare missing stock_zh_a_hist_min_em")
+            raise RuntimeError("AkShare 缺少 stock_zh_a_hist_min_em 接口")
 
         period = str(period or "1")
         if period not in {"1", "5", "15", "30", "60"}:
@@ -119,7 +119,7 @@ class AkShareProvider(StockProvider):
         ak = self._import_akshare()
         bid_ask_fn = getattr(ak, "stock_bid_ask_em", None)
         if bid_ask_fn is None:
-            raise RuntimeError("AkShare missing stock_bid_ask_em")
+            raise RuntimeError("AkShare 缺少 stock_bid_ask_em 接口")
 
         normalized_code = self._normalize_code(code)
         symbol = normalized_code.split(".")[0]
@@ -157,7 +157,7 @@ class AkShareProvider(StockProvider):
         items = self.list_stocks()
         by_industry: Dict[str, List[StockItem]] = {}
         for item in items:
-            if item.industry and item.industry != "Unknown":
+            if item.industry and item.industry != "未知行业":
                 by_industry.setdefault(item.industry, []).append(item)
 
         relations: List[StockRelation] = []
@@ -175,7 +175,7 @@ class AkShareProvider(StockProvider):
                             target_code=target.code,
                             relation_type="industry_peer",
                             weight=0.5,
-                            description=f"Same industry: {industry}",
+                            description=f"同行业：{industry}",
                         )
                     )
         return relations
@@ -189,7 +189,7 @@ class AkShareProvider(StockProvider):
                 df = fn()
                 if df is not None and not df.empty:
                     return df
-        raise RuntimeError("AkShare spot data unavailable")
+        raise RuntimeError("AkShare A 股实时行情不可用")
 
     @staticmethod
     def _pick_col(df: pd.DataFrame, options: List[str], required: bool = True) -> Optional[str]:
@@ -198,7 +198,7 @@ class AkShareProvider(StockProvider):
                 return col
         if not required:
             return None
-        raise KeyError(f"Column not found in AkShare data: {options}")
+        raise KeyError(f"AkShare 数据缺少字段：{options}")
 
     def _row_to_stock(self, row: pd.Series) -> StockItem:
         code_col = self._first_present(row, ["代码", "code", "symbol", "股票代码"])
@@ -215,7 +215,7 @@ class AkShareProvider(StockProvider):
         pe = self._to_float(row.get(pe_col))
         pb = self._to_float(row.get(pb_col))
         mcap = self._to_float(row.get(mcap_col))
-        industry = str(row.get(industry_col, "Unknown")).strip() or "Unknown"
+        industry = str(row.get(industry_col, "未知行业")).strip() or "未知行业"
 
         market_cap_billion = None
         if mcap is not None:
@@ -272,5 +272,5 @@ class AkShareProvider(StockProvider):
         try:
             import akshare as ak
         except ImportError as exc:
-            raise RuntimeError("AkShare not installed. Run: pip install akshare") from exc
+            raise RuntimeError("未安装 AkShare，请先执行：pip install akshare") from exc
         return ak

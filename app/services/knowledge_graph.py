@@ -20,8 +20,8 @@ RELATION_TYPE_PRIORS = {
 }
 
 GRAPH_NOTES = [
-    "Knowledge graph combines provider relations with inferred industry, valuation, and size peers.",
-    "Relation scores blend personalized propagation, two-layer graph message passing, and local neighborhood flow.",
+    "知识图谱会合并数据源关系，并补充行业、估值和市值相近关系。",
+    "关系分融合个性化传播、两层图消息传递和局部邻域相关性。",
 ]
 
 
@@ -114,15 +114,15 @@ def graph_notes(graph: KnowledgeGraph) -> List[str]:
     relation_types = ", ".join(graph.stats.get("relation_types", []))
     return [
         *GRAPH_NOTES,
-        f"Graph has {graph.stats.get('node_count', 0)} nodes and {graph.stats.get('relation_count', 0)} edges.",
-        f"Relation types: {relation_types or 'none'}.",
+        f"关系图包含 {graph.stats.get('node_count', 0)} 个节点、{graph.stats.get('relation_count', 0)} 条关系边。",
+        f"关系类型：{relation_types or '暂无'}。",
     ]
 
 
 def _infer_industry_relations(universe: Sequence[StockItem]) -> List[StockRelation]:
     by_industry: Dict[str, List[StockItem]] = {}
     for stock in universe:
-        if stock.industry and stock.industry != "Unknown":
+        if stock.industry and stock.industry != "未知行业":
             by_industry.setdefault(stock.industry, []).append(stock)
 
     relations: List[StockRelation] = []
@@ -136,7 +136,7 @@ def _infer_industry_relations(universe: Sequence[StockItem]) -> List[StockRelati
                         target_code=target.code,
                         relation_type="industry_peer",
                         weight=0.45,
-                        description=f"Same industry: {industry}",
+                        description=f"同行业：{industry}",
                     )
                 )
     return relations
@@ -233,7 +233,7 @@ def _size_similarity(left: StockItem, right: StockItem) -> float:
 
 def _build_feature_matrix(stocks: Sequence[StockItem]) -> np.ndarray:
     numeric_rows = []
-    industries = sorted({stock.industry or "Unknown" for stock in stocks})
+    industries = sorted({stock.industry or "未知行业" for stock in stocks})
     industry_index = {industry: index for index, industry in enumerate(industries)}
 
     for stock in stocks:
@@ -260,7 +260,7 @@ def _build_feature_matrix(stocks: Sequence[StockItem]) -> np.ndarray:
 
     categorical = np.zeros((len(stocks), len(industries)), dtype=float)
     for row, stock in enumerate(stocks):
-        categorical[row, industry_index[stock.industry or "Unknown"]] = 1.0
+        categorical[row, industry_index[stock.industry or "未知行业"]] = 1.0
 
     return np.concatenate([numeric, categorical], axis=1)
 

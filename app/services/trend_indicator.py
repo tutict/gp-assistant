@@ -20,8 +20,8 @@ from app.services.screener import screen_stocks
 
 QUANT_SCORE_MAX = 90
 TREND_NOTES = [
-    "WINNER(C) depends on chip-distribution data and is omitted; quant_score is scored out of 90.",
-    "SWS uses the formula's volume/capital term as a percent DMA coefficient and clips it to 1%-100%.",
+    "WINNER(C) 需要筹码分布数据，当前未纳入；量化分按 90 分制计算。",
+    "SWS 使用公式中的成交量/流通股本项作为 DMA 百分比系数，并限制在 1%-100%。",
 ]
 
 
@@ -30,7 +30,7 @@ def analyze_trend(provider: StockProvider, request: TrendIndicatorRequest) -> Tr
     history = provider.get_history(stock.code, request.start_date, request.end_date)
     frame = _prepare_history(history, stock)
     if frame.empty:
-        raise ValueError(f"No history available for {stock.code}")
+        raise ValueError(f"{stock.code} 没有可用历史行情")
 
     computed = _compute_indicator_frame(frame, stock)
     signal = _latest_signal(stock.code, computed)

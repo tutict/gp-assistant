@@ -522,7 +522,7 @@ impl MarketDataSource for StaticDataSource {
 }
 
 fn default_screen_limit() -> usize {
-    50
+    10
 }
 
 fn default_sort_by() -> String {
@@ -546,7 +546,7 @@ fn default_relation_weight_param() -> f64 {
 }
 
 fn default_graph_limit() -> usize {
-    20
+    10
 }
 
 fn default_start_date() -> String {
@@ -562,7 +562,7 @@ fn default_series_limit() -> usize {
 }
 
 fn default_trend_limit() -> usize {
-    20
+    10
 }
 
 fn default_quant_score_max() -> i32 {
@@ -786,12 +786,12 @@ pub fn trend_with_source(
         .iter()
         .find(|stock| stock.code.as_str() == request.code.as_str())
         .cloned()
-        .ok_or_else(|| CoreError::new(format!("Stock {} not found", request.code)))?;
+        .ok_or_else(|| CoreError::new(format!("未找到股票 {}", request.code)))?;
     let history = source.get_history(&stock.code, &request.start_date, &request.end_date)?;
     let bars = prepare_bars(&history, &stock)?;
     if bars.is_empty() {
         return Err(CoreError::new(format!(
-            "No history available for {}",
+            "{} 没有可用历史行情",
             stock.code
         )));
     }
@@ -908,7 +908,7 @@ pub fn run_agent_with_source(
             criteria,
             start_date: extract_date(message, "20200101", true),
             end_date: extract_date(message, "20240101", false),
-            limit: 20,
+            limit: 10,
         };
         let data = serde_json::to_value(trend_screen_with_source(source, &trend_request)?)?;
         return Ok(AgentResponse {
@@ -947,7 +947,7 @@ pub fn run_agent_with_source(
                 1
             },
             relation_weight: 0.4,
-            limit: 20,
+            limit: 10,
         };
         let data = serde_json::to_value(graph_screen_with_source(source, &graph_request)?)?;
         return Ok(AgentResponse {
@@ -1092,14 +1092,14 @@ pub fn graph_screen_stocks(
     assign_weights(&mut signals);
 
     let mut notes = vec![
-        "Relation graph is a lightweight propagation layer, not LangGraph workflow orchestration."
+        "关系图是轻量传播评分层，不是 LangGraph 工作流编排。"
             .to_string(),
-        "Use LangGraph for agent state flow; use graph learning or knowledge graph data for stock relations."
+        "LangGraph 用于智能体状态流；股票关系由图学习或知识图谱数据建模。"
             .to_string(),
     ];
     if relations.is_empty() {
         notes.push(
-            "No stock relations were available; result falls back to base screening scores."
+            "当前没有可用股票关系，结果已回退为基础选股分。"
                 .to_string(),
         );
     }
@@ -1117,8 +1117,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
     vec![
         StockItem {
             code: "600519.SH".to_string(),
-            name: "Kweichow Moutai".to_string(),
-            industry: "Beverages".to_string(),
+            name: "贵州茅台".to_string(),
+            industry: "白酒".to_string(),
             is_st: false,
             price: 1700.0,
             pe: Some(32.1),
@@ -1129,8 +1129,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
         },
         StockItem {
             code: "000001.SZ".to_string(),
-            name: "Ping An Bank".to_string(),
-            industry: "Banking".to_string(),
+            name: "平安银行".to_string(),
+            industry: "银行".to_string(),
             is_st: false,
             price: 12.3,
             pe: Some(5.8),
@@ -1141,8 +1141,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
         },
         StockItem {
             code: "300750.SZ".to_string(),
-            name: "CATL".to_string(),
-            industry: "Batteries".to_string(),
+            name: "宁德时代".to_string(),
+            industry: "动力电池".to_string(),
             is_st: false,
             price: 195.0,
             pe: Some(25.5),
@@ -1153,8 +1153,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
         },
         StockItem {
             code: "002594.SZ".to_string(),
-            name: "BYD".to_string(),
-            industry: "Auto".to_string(),
+            name: "比亚迪".to_string(),
+            industry: "汽车".to_string(),
             is_st: false,
             price: 246.0,
             pe: Some(22.4),
@@ -1165,8 +1165,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
         },
         StockItem {
             code: "002475.SZ".to_string(),
-            name: "Luxshare Precision".to_string(),
-            industry: "Electronics".to_string(),
+            name: "立讯精密".to_string(),
+            industry: "电子制造".to_string(),
             is_st: false,
             price: 36.8,
             pe: Some(24.0),
@@ -1177,8 +1177,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
         },
         StockItem {
             code: "600036.SH".to_string(),
-            name: "China Merchants Bank".to_string(),
-            industry: "Banking".to_string(),
+            name: "招商银行".to_string(),
+            industry: "银行".to_string(),
             is_st: false,
             price: 31.2,
             pe: Some(6.9),
@@ -1189,8 +1189,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
         },
         StockItem {
             code: "600000.SH".to_string(),
-            name: "Shanghai Pudong Dev Bank".to_string(),
-            industry: "Banking".to_string(),
+            name: "浦发银行".to_string(),
+            industry: "银行".to_string(),
             is_st: false,
             price: 9.1,
             pe: Some(4.8),
@@ -1201,8 +1201,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
         },
         StockItem {
             code: "601012.SH".to_string(),
-            name: "LONGi Green Energy".to_string(),
-            industry: "Solar".to_string(),
+            name: "隆基绿能".to_string(),
+            industry: "光伏".to_string(),
             is_st: false,
             price: 18.6,
             pe: Some(14.2),
@@ -1213,8 +1213,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
         },
         StockItem {
             code: "600309.SH".to_string(),
-            name: "Wanhua Chemical".to_string(),
-            industry: "Chemicals".to_string(),
+            name: "万华化学".to_string(),
+            industry: "化工".to_string(),
             is_st: false,
             price: 78.4,
             pe: Some(15.6),
@@ -1233,49 +1233,49 @@ pub fn mock_relations() -> Vec<StockRelation> {
             target_code: "000001.SZ".to_string(),
             relation_type: "industry_peer".to_string(),
             weight: 0.75,
-            description: Some("Joint exposure to banking valuation and credit cycle.".to_string()),
+            description: Some("同受银行估值与信用周期影响。".to_string()),
         },
         StockRelation {
             source_code: "600036.SH".to_string(),
             target_code: "600000.SH".to_string(),
             relation_type: "industry_peer".to_string(),
             weight: 0.8,
-            description: Some("Large A-share commercial bank peer group.".to_string()),
+            description: Some("A 股大型商业银行同业对比。".to_string()),
         },
         StockRelation {
             source_code: "000001.SZ".to_string(),
             target_code: "600000.SH".to_string(),
             relation_type: "industry_peer".to_string(),
             weight: 0.7,
-            description: Some("Regional and credit-cycle peer signal.".to_string()),
+            description: Some("区域银行与信用周期同业信号。".to_string()),
         },
         StockRelation {
             source_code: "300750.SZ".to_string(),
             target_code: "002594.SZ".to_string(),
             relation_type: "supply_chain".to_string(),
             weight: 0.65,
-            description: Some("Power battery and EV demand-chain linkage.".to_string()),
+            description: Some("动力电池与新能源汽车需求链联动。".to_string()),
         },
         StockRelation {
             source_code: "300750.SZ".to_string(),
             target_code: "601012.SH".to_string(),
             relation_type: "thematic".to_string(),
             weight: 0.45,
-            description: Some("Clean-energy capital-cycle exposure.".to_string()),
+            description: Some("清洁能源资本开支周期相关。".to_string()),
         },
         StockRelation {
             source_code: "002475.SZ".to_string(),
             target_code: "002594.SZ".to_string(),
             relation_type: "manufacturing_chain".to_string(),
             weight: 0.35,
-            description: Some("Advanced manufacturing and export-demand linkage.".to_string()),
+            description: Some("先进制造与出口需求链联动。".to_string()),
         },
         StockRelation {
             source_code: "600309.SH".to_string(),
             target_code: "300750.SZ".to_string(),
             relation_type: "upstream_material".to_string(),
             weight: 0.3,
-            description: Some("Chemical materials can feed new-energy supply chains.".to_string()),
+            description: Some("化工材料与新能源供应链上游相关。".to_string()),
         },
     ]
 }
@@ -1393,7 +1393,7 @@ fn merge_relations(relations: &[StockRelation]) -> Vec<StockRelation> {
 fn infer_industry_relations(universe: &[StockItem]) -> Vec<StockRelation> {
     let mut by_industry: HashMap<String, Vec<StockItem>> = HashMap::new();
     for stock in universe {
-        if !stock.industry.is_empty() && stock.industry != "Unknown" {
+        if !stock.industry.is_empty() && stock.industry != "未知行业" {
             by_industry
                 .entry(stock.industry.clone())
                 .or_default()
@@ -1418,7 +1418,7 @@ fn infer_industry_relations(universe: &[StockItem]) -> Vec<StockRelation> {
                     target_code: target.code.clone(),
                     relation_type: "industry_peer".to_string(),
                     weight: 0.45,
-                    description: Some(format!("Same industry: {industry}")),
+                    description: Some(format!("同行业：{industry}")),
                 });
             }
         }
@@ -2349,15 +2349,17 @@ fn extract_percent_after(message: &str, labels: &[&str]) -> Option<f64> {
 
 fn extract_industry(message: &str) -> Option<String> {
     let known = [
-        ("银行", "Banking"),
-        ("白酒", "Beverages"),
-        ("饮料", "Beverages"),
-        ("电池", "Batteries"),
-        ("新能源", "Batteries"),
-        ("汽车", "Auto"),
-        ("电子", "Electronics"),
-        ("光伏", "Solar"),
-        ("化工", "Chemicals"),
+        ("银行", "银行"),
+        ("白酒", "白酒"),
+        ("饮料", "白酒"),
+        ("电池", "动力电池"),
+        ("动力电池", "动力电池"),
+        ("新能源", "动力电池"),
+        ("汽车", "汽车"),
+        ("电子", "电子制造"),
+        ("电子制造", "电子制造"),
+        ("光伏", "光伏"),
+        ("化工", "化工"),
     ];
     known
         .iter()
@@ -2602,8 +2604,8 @@ mod tests {
         let stocks = vec![
             StockItem {
                 code: "111111.SZ".to_string(),
-                name: "Alpha Bank".to_string(),
-                industry: "Banking".to_string(),
+                name: "样本银行".to_string(),
+                industry: "银行".to_string(),
                 is_st: false,
                 price: 10.0,
                 pe: Some(5.0),
@@ -2614,8 +2616,8 @@ mod tests {
             },
             StockItem {
                 code: "222222.SZ".to_string(),
-                name: "Beta Auto".to_string(),
-                industry: "Auto".to_string(),
+                name: "样本汽车".to_string(),
+                industry: "汽车".to_string(),
                 is_st: false,
                 price: 20.0,
                 pe: Some(30.0),

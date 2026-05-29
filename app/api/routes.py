@@ -9,6 +9,10 @@ from app.schemas import (
     AgentResponse,
     BacktestRequest,
     BacktestResult,
+    CachePolicy,
+    CachePruneResult,
+    DataCacheStatus,
+    DataRefreshResult,
     GraphScreenRequest,
     GraphScreenResult,
     MinuteBar,
@@ -24,6 +28,7 @@ from app.schemas import (
 )
 from app.services.agent import run_agent
 from app.services.backtest import backtest_hold
+from app.services.data_maintenance import data_source_status, prune_cache, refresh_universe
 from app.services.screener import screen_stocks
 from app.services.stock_graph import graph_screen_stocks
 from app.services.trend_indicator import analyze_trend, trend_screen_stocks
@@ -39,12 +44,25 @@ def _parse_bool(value: Optional[str]) -> Optional[bool]:
 
 def _provider_from_headers(
     x_stock_provider: Optional[str] = Header(default=None),
+    x_stock_refresh: Optional[str] = Header(default=None),
     x_akshare_refresh: Optional[str] = Header(default=None),
 ):
     try:
-        return get_provider(x_stock_provider, refresh=_parse_bool(x_akshare_refresh))
+        refresh = _parse_bool(x_stock_refresh)
+        if refresh is None:
+            refresh = _parse_bool(x_akshare_refresh)
+        return get_provider(x_stock_provider, refresh=refresh)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _provider_display_name(source: str) -> str:
+    labels = {
+        "mock": "本地演示",
+        "akshare": "公开行情",
+        "eastmoney": "东方财富",
+    }
+    return labels.get((source or "").lower(), source or "未知数据源")
 
 
 def _default_dates(start_date: Optional[str], end_date: Optional[str]) -> tuple[str, str]:
@@ -96,13 +114,13 @@ def list_strategies():
         "strategies": [
             {
                 "id": "quality_value",
-                "name": "Quality + Value",
-                "description": "Low PB/PE with positive ROE.",
+                "name": "质量价值",
+                "description": "低估值且净资产收益率为正。",
             },
             {
                 "id": "defensive_dividend",
-                "name": "Defensive Dividend",
-                "description": "Stable earnings with moderate valuation.",
+                "name": "防御分红",
+                "description": "盈利稳定、估值适中、分红较好。",
             },
         ]
     }
@@ -115,16 +133,42 @@ def list_data_sources(provider=Depends(_provider_from_headers)):
         "available": [
             {
                 "id": "mock",
-                "name": "Mock",
-                "description": "Local deterministic demo data.",
+                "name": "本地演示",
+                "description": "本地确定性演示数据。",
             },
             {
                 "id": "akshare",
-                "name": "AkShare",
-                "description": "A-share public market data via AkShare.",
+                "name": "AkShare 数据",
+                "description": "通过 AkShare 获取 A 股公开行情数据。",
+            },
+            {
+                "id": "eastmoney",
+                "name": "东方财富",
+                "description": "直接获取东方财富 A 股股票池，并使用本地 CSV 缓存。",
             },
         ],
     }
+
+
+@router.get("/data-sources/status", response_model=DataCacheStatus)
+def get_data_source_status(provider=Depends(_provider_from_headers)):
+    return data_source_status(getattr(provider, "name", provider.__class__.__name__))
+
+
+@router.post("/data-sources/refresh-universe", response_model=DataRefreshResult)
+def refresh_data_source_universe(
+    policy: Optional[CachePolicy] = None,
+    provider=Depends(_provider_from_headers),
+):
+    return refresh_universe(getattr(provider, "name", provider.__class__.__name__), policy)
+
+
+@router.post("/data-sources/prune-cache", response_model=CachePruneResult)
+def prune_data_source_cache(
+    policy: Optional[CachePolicy] = None,
+    provider=Depends(_provider_from_headers),
+):
+    return prune_cache(getattr(provider, "name", provider.__class__.__name__), policy)
 
 
 @router.get("/stocks/{code}", response_model=StockItem)
@@ -132,7 +176,7 @@ def get_stock(code: str, provider=Depends(_provider_from_headers)):
     try:
         stock = provider.get_stock(code)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Stock not found")
+        raise HTTPException(status_code=404, detail="未找到股票")
     return stock
 
 
@@ -154,9 +198,9 @@ def observe_stock(
     try:
         stock = provider.get_stock(code)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Stock not found")
+        raise HTTPException(status_code=404, detail="未找到股票")
 
-    notes = [f"Data source: {getattr(provider, 'name', provider.__class__.__name__)}."]
+    notes = [f"数据源：{_provider_display_name(getattr(provider, 'name', provider.__class__.__name__))}。"]
     try:
         trend = analyze_trend(
             provider,
@@ -181,14 +225,14 @@ def observe_stock(
         )[-max(20, min(minute_limit, 500)) :]
     except Exception as exc:
         minute_bars = []
-        notes.append(f"Minute data unavailable: {exc}")
+        notes.append(f"分钟线不可用：{exc}")
 
     order_book = None
     if include_order_book:
         try:
             order_book = provider.get_order_book(stock.code)
         except Exception as exc:
-            notes.append(f"Order book unavailable: {exc}")
+            notes.append(f"盘口不可用：{exc}")
 
     return StockObservation(
         source=getattr(provider, "name", provider.__class__.__name__),
@@ -213,7 +257,7 @@ def stock_minutes(
     try:
         stock = provider.get_stock(code)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Stock not found")
+        raise HTTPException(status_code=404, detail="未找到股票")
     start_value, end_value = _default_minute_range(start, end, None)
     period = period if period in {"1", "5", "15", "30", "60"} else "1"
     return provider.get_minutes(stock.code, start_value, end_value, period)[-max(1, min(limit, 500)) :]
@@ -225,9 +269,9 @@ def stock_order_book(code: str, provider=Depends(_provider_from_headers)):
         stock = provider.get_stock(code)
         snapshot = provider.get_order_book(stock.code)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Stock not found")
+        raise HTTPException(status_code=404, detail="未找到股票")
     if snapshot is None:
-        raise HTTPException(status_code=404, detail="Order book unavailable")
+        raise HTTPException(status_code=404, detail="盘口不可用")
     return snapshot
 
 
@@ -247,7 +291,7 @@ def trend(request: TrendIndicatorRequest, provider=Depends(_provider_from_header
     try:
         return analyze_trend(provider, request)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Stock not found")
+        raise HTTPException(status_code=404, detail="未找到股票")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
