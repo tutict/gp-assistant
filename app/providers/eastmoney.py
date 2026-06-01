@@ -9,19 +9,27 @@ import pandas as pd
 import requests
 
 from app.providers.akshare import AkShareProvider
-from app.providers.base import StockProvider
+from app.providers.base import PROXY_MODE_NONE, StockProvider, normalize_proxy_mode
 from app.schemas import MinuteBar, OrderBookSnapshot, StockItem, StockRelation
 
 
 class EastmoneyProvider(StockProvider):
     name = "eastmoney"
 
-    def __init__(self, cache_path: Optional[str] = None, refresh: bool = False):
+    def __init__(
+        self,
+        cache_path: Optional[str] = None,
+        refresh: bool = False,
+        proxy_mode: Optional[str] = None,
+    ):
         self.cache_path = cache_path or os.getenv("EASTMONEY_CACHE", "data/cache/eastmoney_stocks.csv")
         self.refresh = refresh or os.getenv("EASTMONEY_REFRESH", "false").lower() == "true"
         self.max_pages = int(os.getenv("EASTMONEY_MAX_PAGES", "70"))
         self.page_size = int(os.getenv("EASTMONEY_PAGE_SIZE", "100"))
-        self._akshare = AkShareProvider(refresh=False)
+        self.proxy_mode = normalize_proxy_mode(proxy_mode)
+        self._session = requests.Session()
+        self._session.trust_env = self.proxy_mode != PROXY_MODE_NONE
+        self._akshare = AkShareProvider(refresh=False, proxy_mode=self.proxy_mode)
 
     def list_stocks(self) -> List[StockItem]:
         if not self.refresh and os.path.exists(self.cache_path):
@@ -122,7 +130,12 @@ class EastmoneyProvider(StockProvider):
         }
         for host in hosts:
             try:
-                response = requests.get(f"{host}/api/qt/clist/get", params=params, timeout=12)
+                response = self._session.get(
+                    f"{host}/api/qt/clist/get",
+                    params=params,
+                    headers={"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/"},
+                    timeout=12,
+                )
                 response.raise_for_status()
                 data = response.json().get("data") or {}
                 return data.get("diff") or []

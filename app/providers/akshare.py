@@ -5,16 +5,22 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from app.providers.base import StockProvider
+from app.providers.base import StockProvider, normalize_proxy_mode, proxy_environment
 from app.schemas import MinuteBar, OrderBookLevel, OrderBookSnapshot, StockItem, StockRelation
 
 
 class AkShareProvider(StockProvider):
     name = "akshare"
 
-    def __init__(self, cache_path: Optional[str] = None, refresh: bool = False):
+    def __init__(
+        self,
+        cache_path: Optional[str] = None,
+        refresh: bool = False,
+        proxy_mode: Optional[str] = None,
+    ):
         self.cache_path = cache_path or os.getenv("AKSHARE_CACHE", "data/cache/stocks.csv")
         self.refresh = refresh or os.getenv("AKSHARE_REFRESH", "false").lower() == "true"
+        self.proxy_mode = normalize_proxy_mode(proxy_mode)
 
     def list_stocks(self) -> List[StockItem]:
         if not self.refresh and os.path.exists(self.cache_path):
@@ -40,7 +46,8 @@ class AkShareProvider(StockProvider):
             raise RuntimeError("AkShare 缺少 stock_zh_a_hist 接口")
 
         symbol = code.split(".")[0]
-        df = history_fn(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="")
+        with proxy_environment(self.proxy_mode):
+            df = history_fn(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="")
         if df is None or df.empty:
             return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
 
@@ -74,13 +81,14 @@ class AkShareProvider(StockProvider):
         if period not in {"1", "5", "15", "30", "60"}:
             period = "1"
         symbol = self._normalize_code(code).split(".")[0]
-        df = minute_fn(
-            symbol=symbol,
-            start_date=start_datetime,
-            end_date=end_datetime,
-            period=period,
-            adjust="",
-        )
+        with proxy_environment(self.proxy_mode):
+            df = minute_fn(
+                symbol=symbol,
+                start_date=start_datetime,
+                end_date=end_datetime,
+                period=period,
+                adjust="",
+            )
         if df is None or df.empty:
             return []
 
@@ -123,7 +131,8 @@ class AkShareProvider(StockProvider):
 
         normalized_code = self._normalize_code(code)
         symbol = normalized_code.split(".")[0]
-        df = bid_ask_fn(symbol=symbol)
+        with proxy_environment(self.proxy_mode):
+            df = bid_ask_fn(symbol=symbol)
         if df is None or df.empty or "item" not in df or "value" not in df:
             return None
 
@@ -186,7 +195,8 @@ class AkShareProvider(StockProvider):
         for name in candidates:
             fn = getattr(ak, name, None)
             if fn:
-                df = fn()
+                with proxy_environment(self.proxy_mode):
+                    df = fn()
                 if df is not None and not df.empty:
                     return df
         raise RuntimeError("AkShare A 股实时行情不可用")

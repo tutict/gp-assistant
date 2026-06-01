@@ -46,12 +46,13 @@ def _provider_from_headers(
     x_stock_provider: Optional[str] = Header(default=None),
     x_stock_refresh: Optional[str] = Header(default=None),
     x_akshare_refresh: Optional[str] = Header(default=None),
+    x_stock_proxy: Optional[str] = Header(default=None),
 ):
     try:
         refresh = _parse_bool(x_stock_refresh)
         if refresh is None:
             refresh = _parse_bool(x_akshare_refresh)
-        return get_provider(x_stock_provider, refresh=refresh)
+        return get_provider(x_stock_provider, refresh=refresh, proxy_mode=x_stock_proxy)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

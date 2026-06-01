@@ -75,6 +75,7 @@ API 客户端也可以通过请求头切换：
 
 - `X-Stock-Provider: mock|akshare|eastmoney`
 - `X-Stock-Refresh: true` 强制刷新所选数据源的股票池缓存
+- `X-Stock-Proxy: system|none` 切换行情数据源请求是否使用系统代理；也可用环境变量 `STOCK_PROXY_MODE=system|none` 设置默认值。
 
 AkShare 股票池缓存路径为 `data/cache/stocks.csv`，可设置 `AKSHARE_REFRESH=true` 强制刷新。东方财富缓存路径为 `data/cache/eastmoney_stocks.csv`。
 

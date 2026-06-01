@@ -24,11 +24,13 @@ const themeText = $("#themeText");
 const THEME_KEY = "gp-assistant-theme";
 const DATA_SOURCE_KEY = "gp-assistant-data-source";
 const DATA_REFRESH_KEY = "gp-assistant-source-refresh";
+const DATA_PROXY_KEY = "gp-assistant-proxy-mode";
 const LLM_SETTINGS_KEY = "gp-assistant-llm-settings";
 const DEFAULT_RESULT_LIMIT = 10;
 const dataSource = {
   select: $("#dataSourceSelect"),
   refresh: $("#refreshSource"),
+  proxy: $("#proxyModeSelect"),
   status: $("#sourceStatus"),
   universe: $("#universeCount"),
   cache: $("#cacheBytes"),
@@ -80,6 +82,11 @@ function bindActions() {
   dataSource.refresh?.addEventListener("change", () => {
     localStorage.setItem(DATA_REFRESH_KEY, dataSource.refresh.checked ? "true" : "false");
     updateSourceStatus();
+  });
+  dataSource.proxy?.addEventListener("change", () => {
+    localStorage.setItem(DATA_PROXY_KEY, getSelectedProxyMode());
+    updateSourceStatus();
+    loadDataStatus();
   });
   dataSource.refreshUniverse?.addEventListener("click", () => runDataTask(dataSource.refreshUniverse, refreshUniverse));
   dataSource.pruneCache?.addEventListener("click", () => runDataTask(dataSource.pruneCache, pruneCache));
@@ -261,6 +268,10 @@ function initDataSource() {
   if (dataSource.refresh) {
     dataSource.refresh.checked = localStorage.getItem(DATA_REFRESH_KEY) === "true";
   }
+  const savedProxy = localStorage.getItem(DATA_PROXY_KEY);
+  if (dataSource.proxy && savedProxy && [...dataSource.proxy.options].some((option) => option.value === savedProxy)) {
+    dataSource.proxy.value = savedProxy;
+  }
   updateSourceStatus();
   loadDataStatus();
 }
@@ -272,7 +283,12 @@ function getSelectedDataSource() {
 function dataSourceHeaders() {
   const headers = { "X-Stock-Provider": getSelectedDataSource() };
   if (dataSource.refresh?.checked) headers["X-Stock-Refresh"] = "true";
+  headers["X-Stock-Proxy"] = getSelectedProxyMode();
   return headers;
+}
+
+function getSelectedProxyMode() {
+  return dataSource.proxy?.value || "system";
 }
 
 function updateSourceStatus() {
@@ -280,7 +296,8 @@ function updateSourceStatus() {
   const source = getSelectedDataSource();
   const label = sourceLabel(source);
   const suffix = dataSource.refresh?.checked && source !== "mock" ? " 刷新" : "";
-  dataSource.status.innerHTML = `<i aria-hidden="true"></i>${escapeHtml(label + suffix)}`;
+  const proxySuffix = getSelectedProxyMode() === "none" && source !== "mock" ? " 直连" : "";
+  dataSource.status.innerHTML = `<i aria-hidden="true"></i>${escapeHtml(label + suffix + proxySuffix)}`;
 }
 
 async function runDataTask(button, task) {
