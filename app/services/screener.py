@@ -1,6 +1,14 @@
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-from app.schemas import ScreenCriteria, ScreenResult, ScreenedStock, StockItem
+from app.schemas import (
+    ScreenCriteria,
+    ScreenResult,
+    ScreenedStock,
+    SectorScreenGroup,
+    SectorScreenRequest,
+    SectorScreenResult,
+    StockItem,
+)
 
 
 def _matches(stock: StockItem, criteria: ScreenCriteria) -> Optional[List[str]]:
@@ -47,7 +55,7 @@ def _score(stock: StockItem, reasons: List[str]) -> float:
     return score
 
 
-def screen_stocks(universe: List[StockItem], criteria: ScreenCriteria) -> ScreenResult:
+def _screened_stocks(universe: List[StockItem], criteria: ScreenCriteria) -> List[ScreenedStock]:
     screened: List[ScreenedStock] = []
     for stock in universe:
         reasons = _matches(stock, criteria)
@@ -66,5 +74,49 @@ def screen_stocks(universe: List[StockItem], criteria: ScreenCriteria) -> Screen
     else:
         screened.sort(key=lambda x: x.score, reverse=reverse)
 
+    return screened
+
+
+def screen_stocks(universe: List[StockItem], criteria: ScreenCriteria) -> ScreenResult:
+    screened = _screened_stocks(universe, criteria)
     items = screened[: criteria.limit]
     return ScreenResult(total=len(screened), returned=len(items), items=items)
+
+
+def screen_stocks_by_sector(universe: List[StockItem], request: SectorScreenRequest) -> SectorScreenResult:
+    screened = _screened_stocks(universe, request.criteria)
+    by_sector: Dict[str, List[ScreenedStock]] = {}
+    for item in screened:
+        sector = (item.stock.industry or "未知板块").strip() or "未知板块"
+        by_sector.setdefault(sector, []).append(item)
+
+    groups: List[SectorScreenGroup] = []
+    for sector, items in by_sector.items():
+        if len(items) < request.min_sector_candidates:
+            continue
+        selected = items[: request.per_sector_limit]
+        average_score = sum(item.score for item in selected) / len(selected)
+        groups.append(
+            SectorScreenGroup(
+                sector=sector,
+                total=len(items),
+                returned=len(selected),
+                average_score=average_score,
+                items=selected,
+            )
+        )
+
+    groups.sort(key=lambda group: (-group.average_score, -group.total, group.sector))
+    groups = groups[: request.max_sectors]
+    returned = sum(group.returned for group in groups)
+    notes = ["按股票行业字段作为板块分组。"]
+    if request.criteria.industry:
+        notes.append(f"已限制行业：{request.criteria.industry}")
+
+    return SectorScreenResult(
+        total=len(screened),
+        returned=returned,
+        sector_count=len(groups),
+        groups=groups,
+        notes=notes,
+    )

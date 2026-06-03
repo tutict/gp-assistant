@@ -3766,13 +3766,19 @@ h1 {
 
 .market-strip {
   display: grid;
+  grid-template-columns: 1fr;
+  grid-auto-flow: row;
   gap: 0;
+  overflow: visible;
 }
 
 .market-strip a {
   display: grid;
+  grid-column: 1 / -1;
   grid-template-columns: 34px minmax(0, 1fr);
   min-height: 64px;
+  width: 100%;
+  min-width: 0;
   border: 0;
   border-bottom: 1px solid var(--line);
   border-radius: 0;
@@ -4080,6 +4086,50 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
+}
+
+.sector-groups {
+  display: grid;
+  gap: 12px;
+}
+
+.sector-group {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--surface-2));
+}
+
+.sector-group > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  padding: 11px 13px;
+}
+
+.sector-group h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.sector-group p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.sector-group > header strong {
+  color: var(--accent-strong);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sector-group .quote-table {
+  border: 0;
+  border-radius: 0;
 }
 
 .quote-table-head,
@@ -4610,6 +4660,213 @@ h1 {
   .order-book-grid,
   .metric-strip {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 1025px) {
+  .app-shell {
+    width: min(100vw, 1760px);
+  }
+
+  .app-header {
+    grid-template-columns: auto minmax(16px, 1fr) auto;
+    min-height: 62px;
+    padding: 8px 22px;
+  }
+
+  .brand-lockup {
+    grid-column: 1;
+    justify-self: start;
+  }
+
+  .top-actions {
+    grid-column: 3;
+  }
+
+  .source-control,
+  .source-refresh,
+  .theme-switch,
+  .status-pill {
+    min-height: 34px;
+    border-radius: 8px;
+    padding: 5px 9px;
+  }
+
+  .theme-switch {
+    min-width: 106px;
+  }
+
+  .workspace {
+    grid-template-columns: minmax(286px, 304px) minmax(0, 1fr);
+  }
+
+  .workbench {
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .agent-console,
+  .module {
+    gap: 10px;
+    border-radius: 12px;
+    padding: 14px;
+  }
+
+  .module-heading {
+    margin-bottom: 8px;
+  }
+
+  .module-heading h2 {
+    font-size: 1.02rem;
+  }
+
+  .module-heading > span {
+    font-size: 0.72rem;
+  }
+
+  .module-heading button,
+  .button-row button {
+    min-height: 36px;
+    padding-inline: 14px;
+  }
+
+  .agent-input-row {
+    grid-template-columns: minmax(0, 1fr) 128px;
+    gap: 10px;
+  }
+
+  .agent-input-row textarea {
+    min-height: 96px;
+  }
+
+  .primary-action {
+    min-height: 96px;
+    border-radius: 8px;
+  }
+
+  .agent-settings {
+    margin-top: 0;
+  }
+
+  .result-panel {
+    min-height: 220px;
+  }
+
+  .agent-console .result-panel {
+    min-height: 148px;
+  }
+
+  .observe-module {
+    align-self: start;
+  }
+
+  .observe-module .result-panel.medium {
+    min-height: 292px;
+  }
+
+  .result-panel.empty,
+  .result-panel.loading,
+  .result-panel.error {
+    min-height: 112px;
+  }
+
+  .empty-state {
+    min-height: 88px;
+    border: 0;
+    background: transparent;
+    color: color-mix(in srgb, var(--muted) 86%, transparent);
+    padding: 12px;
+  }
+
+  .agent-console .result-panel.empty {
+    min-height: 96px;
+  }
+
+  .agent-console .result-panel.empty .empty-state {
+    min-height: 72px;
+  }
+
+  .quote-table,
+  .sector-group,
+  .result-panel {
+    border-radius: 8px;
+  }
+}
+
+@media (min-width: 1281px) {
+  .workbench {
+    grid-template-columns: minmax(0, 1.55fr) minmax(380px, 0.78fr);
+    grid-template-areas:
+      "agent observe"
+      "tools tools";
+    align-items: start;
+  }
+
+  .agent-console {
+    grid-area: agent;
+  }
+
+  .observe-module {
+    grid-area: observe;
+  }
+
+  .tool-grid {
+    grid-area: tools;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    align-items: start;
+    gap: 12px;
+  }
+
+  #sectionScreen {
+    grid-column: 1 / span 6;
+  }
+
+  #sectionGraph {
+    grid-column: 7 / span 6;
+  }
+
+  #sectionTrend {
+    grid-column: 1 / span 6;
+  }
+
+  #sectionBacktest {
+    grid-column: 7 / span 6;
+  }
+
+  #sectionScreen .result-panel,
+  #sectionGraph .result-panel {
+    min-height: 190px;
+  }
+
+  #sectionTrend .result-panel,
+  #sectionBacktest .result-panel {
+    min-height: 230px;
+  }
+
+  #sectionScreen .result-panel.empty,
+  #sectionGraph .result-panel.empty,
+  #sectionTrend .result-panel.empty,
+  #sectionBacktest .result-panel.empty {
+    min-height: 136px;
+  }
+}
+
+@media (min-width: 1025px) and (max-width: 1280px) {
+  .workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .observe-module,
+  .tool-grid {
+    grid-column: 1;
+  }
+
+  .tool-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .module.wide {
+    grid-column: span 2;
   }
 }
 

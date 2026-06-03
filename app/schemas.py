@@ -40,6 +40,29 @@ class ScreenResult(BaseModel):
     items: List[ScreenedStock]
 
 
+class SectorScreenRequest(BaseModel):
+    criteria: ScreenCriteria = Field(default_factory=ScreenCriteria)
+    per_sector_limit: int = Field(default=3, ge=1, le=50)
+    max_sectors: int = Field(default=8, ge=1, le=50)
+    min_sector_candidates: int = Field(default=1, ge=1, le=500)
+
+
+class SectorScreenGroup(BaseModel):
+    sector: str
+    total: int
+    returned: int
+    average_score: float
+    items: List[ScreenedStock]
+
+
+class SectorScreenResult(BaseModel):
+    total: int
+    returned: int
+    sector_count: int
+    groups: List[SectorScreenGroup]
+    notes: List[str] = Field(default_factory=list)
+
+
 class StockRelation(BaseModel):
     source_code: str
     target_code: str
@@ -113,6 +136,9 @@ class TrendIndicatorSignal(BaseModel):
     oversold: bool = False
     quant_score: int = 0
     quant_score_max: int = 90
+    pattern_score: int = 0
+    pattern_score_max: int = 100
+    pattern_signals: List[str] = Field(default_factory=list)
     status: str = "neutral"
     reasons: List[str] = Field(default_factory=list)
     notes: List[str] = Field(default_factory=list)
@@ -266,6 +292,7 @@ class AgentResponse(BaseModel):
     action: str
     criteria: Optional[ScreenCriteria] = None
     backtest: Optional[BacktestRequest] = None
+    sector_screen: Optional[SectorScreenRequest] = None
     graph_screen: Optional[GraphScreenRequest] = None
     trend_screen: Optional[TrendScreenRequest] = None
     data: Optional[dict] = None

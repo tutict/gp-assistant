@@ -111,7 +111,32 @@ function Run-SmokeTests {
         -Body $screenBody `
         -TimeoutSec 10
 
-    Write-Step "Smoke tests passed. Screen result: $($screen.returned)/$($screen.total)."
+    $sectorBody = @{
+        criteria = @{
+            min_roe = 0.05
+            max_pe = 40
+            limit = 50
+            sort_by = "score"
+            sort_dir = "desc"
+        }
+        max_sectors = 4
+        per_sector_limit = 2
+        min_sector_candidates = 1
+    } | ConvertTo-Json -Depth 4
+
+    $sectorScreen = Invoke-RestMethod `
+        -Method Post `
+        -Uri "$Url/api/sector-screen" `
+        -Headers @{ "X-Stock-Provider" = $Source } `
+        -ContentType "application/json" `
+        -Body $sectorBody `
+        -TimeoutSec 10
+
+    if ($sectorScreen.sector_count -lt 1) {
+        throw "Sector screen smoke test returned no sectors."
+    }
+
+    Write-Step "Smoke tests passed. Screen result: $($screen.returned)/$($screen.total); sector result: $($sectorScreen.returned)/$($sectorScreen.sector_count)."
 }
 
 function Start-TestServer {

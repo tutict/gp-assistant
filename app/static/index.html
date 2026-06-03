@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>A股选股智能体</title>
+    <link rel="icon" href="data:," />
     <script>
       const requestedTheme = new URLSearchParams(window.location.search).get("theme");
       const savedTheme =
@@ -183,6 +184,20 @@
               <span>返回数量</span>
               <input id="resultLimit" type="number" min="1" max="200" value="10" />
             </label>
+            <label class="check-field">
+              <input id="sectorMode" type="checkbox" />
+              <span>按板块分组选股</span>
+            </label>
+            <div class="field-pair">
+              <label class="field">
+                <span>最多板块</span>
+                <input id="maxSectors" type="number" min="1" max="50" value="8" />
+              </label>
+              <label class="field">
+                <span>每板块数量</span>
+                <input id="perSectorLimit" type="number" min="1" max="50" value="3" />
+              </label>
+            </div>
             <label class="check-field">
               <input id="includeSt" type="checkbox" />
               <span>包含 ST 股票</span>

@@ -19,6 +19,8 @@ from app.schemas import (
     OrderBookSnapshot,
     ScreenCriteria,
     ScreenResult,
+    SectorScreenRequest,
+    SectorScreenResult,
     StockObservation,
     StockItem,
     TrendIndicatorRequest,
@@ -29,7 +31,7 @@ from app.schemas import (
 from app.services.agent import run_agent
 from app.services.backtest import backtest_hold
 from app.services.data_maintenance import data_source_status, prune_cache, refresh_universe
-from app.services.screener import screen_stocks
+from app.services.screener import screen_stocks, screen_stocks_by_sector
 from app.services.stock_graph import graph_screen_stocks
 from app.services.trend_indicator import analyze_trend, trend_screen_stocks
 
@@ -280,6 +282,12 @@ def stock_order_book(code: str, provider=Depends(_provider_from_headers)):
 def screen(criteria: ScreenCriteria, provider=Depends(_provider_from_headers)):
     universe = provider.list_stocks()
     return screen_stocks(universe, criteria)
+
+
+@router.post("/sector-screen", response_model=SectorScreenResult)
+def sector_screen(request: SectorScreenRequest, provider=Depends(_provider_from_headers)):
+    universe = provider.list_stocks()
+    return screen_stocks_by_sector(universe, request)
 
 
 @router.post("/graph-screen", response_model=GraphScreenResult)

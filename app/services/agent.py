@@ -14,22 +14,29 @@ from app.schemas import (
     GraphScreenRequest,
     LlmClientConfig,
     ScreenCriteria,
+    SectorScreenRequest,
     TrendScreenRequest,
 )
 from app.services.backtest import backtest_hold
 from app.services.data_maintenance import data_source_status, prune_cache, refresh_universe
-from app.services.screener import screen_stocks
+from app.services.screener import screen_stocks, screen_stocks_by_sector
 from app.services.stock_graph import graph_screen_stocks
 from app.services.trend_indicator import trend_screen_stocks
 
 
 SYSTEM_PROMPT = """You are an A-share stock assistant. You must respond in JSON.
-Decide whether the user wants a basic stock screen, relation-aware graph screen, trend screen, backtest, or clarification.
+Decide whether the user wants a basic stock screen, sector-grouped screen, relation-aware graph screen, trend screen, backtest, or clarification.
 LangGraph is only the workflow/state orchestration layer. Stock-to-stock relationships must be handled by the graph_screen tool, which uses a stock knowledge graph and GNN-style relation scoring.
 Return this shape:
 {
-  "action": "screen" | "graph_screen" | "trend_screen" | "backtest" | "data_status" | "refresh_data" | "prune_cache" | "clarify",
+  "action": "screen" | "sector_screen" | "graph_screen" | "trend_screen" | "backtest" | "data_status" | "refresh_data" | "prune_cache" | "clarify",
   "criteria": { ...ScreenCriteria fields... } | null,
+  "sector_screen": {
+    "criteria": { ...ScreenCriteria fields... },
+    "per_sector_limit": 3,
+    "max_sectors": 8,
+    "min_sector_candidates": 1
+  } | null,
   "graph_screen": {
     "criteria": { ...ScreenCriteria fields... },
     "seed_codes": ["optional stock codes"],
@@ -46,6 +53,7 @@ Return this shape:
   "backtest": { ...BacktestRequest fields... } | null,
   "reply": "short Chinese reply to the user"
 }
+Use action "sector_screen" when the user asks to group by sector/industry/board, pick stocks from each sector, or diversify across sectors.
 Use action "graph_screen" when the user mentions stock relations, industry chain, upstream/downstream,
 supply chain, peer linkage, GNN, knowledge graph, graph learning, or LangGraph-related stock relation analysis.
 Use action "trend_screen" when the user asks for uptrend, trend indicator, SWL/SWS, short-buy,
@@ -58,6 +66,7 @@ If the user request is unclear, use action "clarify" and ask a brief question in
 
 VALID_ACTIONS = {
     "screen",
+    "sector_screen",
     "graph_screen",
     "trend_screen",
     "backtest",
@@ -87,6 +96,7 @@ class AgentState(TypedDict, total=False):
     action: str
     reply: str
     criteria: Optional[ScreenCriteria]
+    sector_screen: Optional[SectorScreenRequest]
     graph_screen: Optional[GraphScreenRequest]
     trend_screen: Optional[TrendScreenRequest]
     backtest: Optional[BacktestRequest]
@@ -121,6 +131,7 @@ def _get_langgraph_workflow() -> Any:
     builder = StateGraph(AgentState)
     builder.add_node("parse_intent", _parse_intent_node)
     builder.add_node("screen", _screen_node)
+    builder.add_node("sector_screen", _sector_screen_node)
     builder.add_node("graph_screen", _graph_screen_node)
     builder.add_node("trend_screen", _trend_screen_node)
     builder.add_node("backtest", _backtest_node)
@@ -135,6 +146,7 @@ def _get_langgraph_workflow() -> Any:
         _route_action,
         {
             "screen": "screen",
+            "sector_screen": "sector_screen",
             "graph_screen": "graph_screen",
             "trend_screen": "trend_screen",
             "backtest": "backtest",
@@ -146,6 +158,7 @@ def _get_langgraph_workflow() -> Any:
     )
     for node in (
         "screen",
+        "sector_screen",
         "graph_screen",
         "trend_screen",
         "backtest",
@@ -164,6 +177,8 @@ def _run_agent_state_machine(initial_state: AgentState) -> AgentState:
     action = _route_action(state)
     if action == "screen":
         state.update(_screen_node(state))
+    elif action == "sector_screen":
+        state.update(_sector_screen_node(state))
     elif action == "graph_screen":
         state.update(_graph_screen_node(state))
     elif action == "trend_screen":
@@ -188,10 +203,13 @@ def _parse_intent_node(state: AgentState) -> AgentState:
         action = "clarify"
 
     criteria = _parse_criteria(response.get("criteria"))
+    sector_request = _parse_sector_screen(response.get("sector_screen"))
     graph_request = _parse_graph_screen(response.get("graph_screen"))
     trend_request = _parse_trend_screen(response.get("trend_screen"))
     backtest = _parse_backtest(response.get("backtest"))
 
+    if sector_request is not None and criteria is None:
+        criteria = sector_request.criteria
     if graph_request is not None and criteria is None:
         criteria = graph_request.criteria
     if trend_request is not None and criteria is None:
@@ -201,6 +219,8 @@ def _parse_intent_node(state: AgentState) -> AgentState:
 
     if action == "screen" and criteria is None:
         criteria = ScreenCriteria()
+    elif action == "sector_screen" and sector_request is None:
+        sector_request = SectorScreenRequest(criteria=criteria or ScreenCriteria())
     elif action == "graph_screen" and graph_request is None:
         graph_request = GraphScreenRequest(criteria=criteria or ScreenCriteria())
     elif action == "trend_screen" and trend_request is None:
@@ -216,6 +236,7 @@ def _parse_intent_node(state: AgentState) -> AgentState:
         "action": action,
         "reply": str(response.get("reply") or ""),
         "criteria": criteria,
+        "sector_screen": sector_request,
         "graph_screen": graph_request,
         "trend_screen": trend_request,
         "backtest": backtest,
@@ -235,6 +256,19 @@ def _screen_node(state: AgentState) -> AgentState:
         "criteria": criteria,
         "data": result.model_dump(),
         "reply": state.get("reply") or "已完成基础选股。",
+    }
+
+
+def _sector_screen_node(state: AgentState) -> AgentState:
+    request = state.get("sector_screen") or SectorScreenRequest(
+        criteria=state.get("criteria") or ScreenCriteria()
+    )
+    result = screen_stocks_by_sector(state["provider"].list_stocks(), request)
+    return {
+        "sector_screen": request,
+        "criteria": request.criteria,
+        "data": result.model_dump(),
+        "reply": state.get("reply") or "已按板块分组选股。",
     }
 
 
@@ -326,6 +360,7 @@ def _state_to_response(state: AgentState) -> AgentResponse:
         reply=state.get("reply") or "已处理。",
         action=state.get("action") or "clarify",
         criteria=state.get("criteria"),
+        sector_screen=state.get("sector_screen"),
         graph_screen=state.get("graph_screen"),
         trend_screen=state.get("trend_screen"),
         backtest=state.get("backtest"),
@@ -526,6 +561,33 @@ def _heuristic_parse(message: str) -> Dict[str, Any]:
 
     if _contains_any(
         lower,
+        ["板块分组", "按板块", "每个板块", "分板块", "行业分组", "每个行业", "分行业", "sector"],
+    ):
+        return {
+            "action": "sector_screen",
+            "reply": "已按板块分组选股，每个板块返回排名靠前的候选股票。",
+            "sector_screen": {
+                "criteria": criteria,
+                "max_sectors": _extract_limited_int(
+                    message,
+                    ["最多板块", "板块数量", "行业数量", "max sectors"],
+                    default=8,
+                    minimum=1,
+                    maximum=50,
+                ),
+                "per_sector_limit": _extract_limited_int(
+                    message,
+                    ["每板块", "每个板块", "每行业", "每个行业", "per sector"],
+                    default=3,
+                    minimum=1,
+                    maximum=50,
+                ),
+                "min_sector_candidates": 1,
+            },
+        }
+
+    if _contains_any(
+        lower,
         [
             "趋势",
             "上升趋势",
@@ -644,6 +706,22 @@ def _extract_percent_after(message: str, labels: list[str]) -> Optional[float]:
     return None
 
 
+def _extract_limited_int(
+    message: str,
+    labels: list[str],
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    for label in labels:
+        pattern = rf"{re.escape(label)}\s*(?:各)?\s*(?:数量|取|选|返回|不超过|最多|为|=|:|：)?\s*(\d+)"
+        match = re.search(pattern, message, flags=re.IGNORECASE)
+        if match:
+            value = int(match.group(1))
+            return min(max(value, minimum), maximum)
+    return default
+
+
 def _extract_industry(message: str) -> Optional[str]:
     known = {
         "银行": "银行",
@@ -704,6 +782,15 @@ def _parse_criteria(data: Optional[Dict[str, Any]]) -> Optional[ScreenCriteria]:
         return None
     try:
         return ScreenCriteria(**data)
+    except Exception:
+        return None
+
+
+def _parse_sector_screen(data: Optional[Dict[str, Any]]) -> Optional[SectorScreenRequest]:
+    if not data:
+        return None
+    try:
+        return SectorScreenRequest(**data)
     except Exception:
         return None
 

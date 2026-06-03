@@ -163,6 +163,19 @@ async function runTask(button, panel, task) {
 }
 
 async function runScreen() {
+  if ($("#sectorMode")?.checked) {
+    setLoading(panels.screen, "按板块筛选中");
+    const payload = {
+      criteria: buildCriteria(),
+      max_sectors: clampInt($("#maxSectors")?.value, 1, 50, 8),
+      per_sector_limit: clampInt($("#perSectorLimit")?.value, 1, 50, 3),
+      min_sector_candidates: 1,
+    };
+    const data = await postJson("/api/sector-screen", payload, panels.screen);
+    if (data) renderSectorScreenResult(panels.screen, data);
+    return;
+  }
+
   setLoading(panels.screen, "筛选中");
   const payload = buildCriteria();
   const data = await postJson("/api/screen", payload, panels.screen);
@@ -563,6 +576,46 @@ function renderScreenResult(node, data) {
   });
 }
 
+function renderSectorScreenResult(node, data) {
+  const groups = data.groups || [];
+  renderResult(node, {
+    summary: [
+      ["板块", data.sector_count ?? groups.length],
+      ["展示", data.returned ?? 0],
+      ["候选", data.total ?? 0],
+    ],
+    body: [
+      groups.length ? renderSectorGroups(groups) : renderEmpty("没有符合条件的板块"),
+      data.notes?.length ? renderNotes(data.notes) : "",
+    ].join(""),
+    raw: data,
+  });
+}
+
+function renderSectorGroups(groups) {
+  return `
+    <div class="sector-groups">
+      ${groups
+        .map((group) => {
+          const items = group.items || [];
+          return `
+            <section class="sector-group">
+              <header>
+                <div>
+                  <h3>${escapeHtml(group.sector || "未知板块")}</h3>
+                  <p>候选 ${formatNumber(group.total)} 只 · 展示 ${formatNumber(group.returned)} 只</p>
+                </div>
+                <strong>均分 ${formatNumber(group.average_score)}</strong>
+              </header>
+              ${items.length ? renderStockList(items.map(screenItemToView)) : renderEmpty("该板块没有入选股票")}
+            </section>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
 function renderGraphResult(node, data) {
   const items = data.items || [];
   renderResult(node, {
@@ -664,10 +717,14 @@ function renderObserveResult(node, data) {
 function renderAgentResult(node, data) {
   const nested = data.data || {};
   const nestedItems = nested.items || [];
+  const nestedGroups = nested.groups || [];
   const nestedMetrics = nested.metrics || {};
   const bodyParts = [`<div class="agent-reply">${escapeHtml(data.reply || "已处理")}</div>`];
 
-  if (data.action === "graph_screen") {
+  if (data.action === "sector_screen") {
+    bodyParts.push(nestedGroups.length ? renderSectorGroups(nestedGroups) : renderEmpty("没有分板块选股结果"));
+    if (nested.notes?.length) bodyParts.push(renderNotes(nested.notes));
+  } else if (data.action === "graph_screen") {
     bodyParts.push(
       nestedItems.length
         ? renderStockList(nestedItems.map(graphItemToView))
@@ -699,7 +756,9 @@ function renderAgentResult(node, data) {
   }
 
   const thirdMetric =
-    data.action === "graph_screen"
+    data.action === "sector_screen"
+      ? ["板块", nested.sector_count ?? nestedGroups.length ?? "-"]
+      : data.action === "graph_screen"
       ? ["关系边", nested.relation_count ?? "-"]
       : data.action === "trend_screen"
         ? ["最高分", nestedItems[0] ? formatNumber(nestedItems[0].final_score) : "-"]
@@ -1185,6 +1244,7 @@ function formatDateTime(value) {
 function actionLabel(action) {
   const labels = {
     screen: "普通选股",
+    sector_screen: "板块选股",
     graph_screen: "关系图",
     trend_screen: "趋势选股",
     backtest: "回测",
