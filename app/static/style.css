@@ -4978,6 +4978,84 @@ h1 {
   }
 }
 
+@media (min-width: 1440px) {
+  .app-shell {
+    width: 100vw;
+    max-width: none;
+    padding: 0 0 24px;
+  }
+
+  .app-header {
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+    padding-inline: clamp(22px, 2vw, 36px);
+  }
+
+  .workspace {
+    grid-template-columns: clamp(286px, 16.5vw, 320px) minmax(0, 1fr);
+    min-height: calc(100svh - 62px);
+  }
+
+  .workbench {
+    grid-template-columns: minmax(0, 1.72fr) minmax(420px, 0.78fr);
+    gap: 12px;
+    padding: 12px clamp(12px, 1vw, 20px);
+  }
+
+  .agent-console,
+  .module {
+    padding: 12px 14px;
+  }
+
+  .agent-input-row textarea,
+  .primary-action {
+    min-height: 84px;
+  }
+
+  .agent-console .result-panel.empty {
+    min-height: 78px;
+  }
+
+  .agent-console .result-panel.empty .empty-state {
+    min-height: 54px;
+    padding: 8px;
+  }
+
+  .observe-module .result-panel.medium {
+    min-height: 248px;
+  }
+
+  .result-panel.empty,
+  .result-panel.loading,
+  .result-panel.error {
+    min-height: 96px;
+  }
+
+  #sectionScreen .result-panel,
+  #sectionGraph .result-panel {
+    min-height: 156px;
+  }
+
+  #sectionTrend .result-panel,
+  #sectionBacktest .result-panel {
+    min-height: 176px;
+  }
+
+  #sectionScreen .result-panel.empty,
+  #sectionGraph .result-panel.empty,
+  #sectionTrend .result-panel.empty,
+  #sectionBacktest .result-panel.empty {
+    min-height: 92px;
+  }
+}
+
+@media (min-width: 1920px) {
+  .workbench {
+    grid-template-columns: minmax(0, 1.8fr) minmax(460px, 0.76fr);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
