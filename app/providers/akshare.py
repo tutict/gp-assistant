@@ -31,14 +31,35 @@ class AkShareProvider(StockProvider):
         self.proxy_mode = normalize_proxy_mode(proxy_mode)
 
     def list_stocks(self) -> List[StockItem]:
-        if not self.refresh and os.path.exists(self.cache_path):
-            df = pd.read_csv(self.cache_path)
-            return [self._row_to_stock(row) for _, row in df.iterrows()]
-
-        df = self._fetch_spot()
-        os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
-        df.to_csv(self.cache_path, index=False)
+        df = self._load_spot()
         return [self._row_to_stock(row) for _, row in df.iterrows()]
+
+    def list_stocks_for_screen(self) -> tuple[List[StockItem], List[str]]:
+        try:
+            df = self._load_spot()
+            if not self._has_any_column(df, self._previous_close_columns()):
+                df = self._fetch_spot()
+                os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
+                df.to_csv(self.cache_path, index=False)
+        except Exception as exc:
+            return self.list_stocks(), [f"前一交易日收盘价不可用，已回退到股票池价格：{exc}"]
+
+        items: List[StockItem] = []
+        previous_close_count = 0
+        fallback_count = 0
+        for _, row in df.iterrows():
+            stock = self._row_to_stock(row, use_previous_close=True)
+            items.append(stock)
+            previous_col = self._first_present_optional(row, self._previous_close_columns())
+            if previous_col and self._positive_float(row.get(previous_col)) is not None:
+                previous_close_count += 1
+            else:
+                fallback_count += 1
+
+        notes = [f"筛选价格口径：前一交易日收盘价（AkShare 昨收字段），已应用 {previous_close_count} 只。"]
+        if fallback_count:
+            notes.append(f"{fallback_count} 只股票缺少昨收价，已回退到股票池价格。")
+        return items, notes
 
     def get_stock(self, code: str) -> StockItem:
         normalized_code = self._normalize_code(code)
@@ -312,6 +333,15 @@ class AkShareProvider(StockProvider):
                     return df
         raise RuntimeError("AkShare A 股实时行情不可用")
 
+    def _load_spot(self) -> pd.DataFrame:
+        if not self.refresh and os.path.exists(self.cache_path):
+            return pd.read_csv(self.cache_path)
+
+        df = self._fetch_spot()
+        os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
+        df.to_csv(self.cache_path, index=False)
+        return df
+
     @staticmethod
     def _pick_col(df: pd.DataFrame, options: List[str], required: bool = True) -> Optional[str]:
         for col in options:
@@ -321,7 +351,7 @@ class AkShareProvider(StockProvider):
             return None
         raise KeyError(f"AkShare 数据缺少字段：{options}")
 
-    def _row_to_stock(self, row: pd.Series) -> StockItem:
+    def _row_to_stock(self, row: pd.Series, use_previous_close: bool = False) -> StockItem:
         code_col = self._first_present(row, ["代码", "code", "symbol", "股票代码"])
         name_col = self._first_present(row, ["名称", "name", "股票简称"])
         price_col = self._first_present(row, ["最新价", "price", "现价"])
@@ -329,18 +359,23 @@ class AkShareProvider(StockProvider):
         pb_col = self._first_present(row, ["市净率", "pb", "PB"])
         mcap_col = self._first_present(row, ["总市值", "总市值-元", "market_cap"])
         industry_col = self._first_present(row, ["行业", "industry", "板块"])
+        previous_col = self._first_present_optional(row, self._previous_close_columns())
 
         code = self._normalize_code(str(row.get(code_col, "")).strip())
         name = str(row.get(name_col, "")).strip()
-        price = self._to_float(row.get(price_col))
-        pe = self._to_float(row.get(pe_col))
-        pb = self._to_float(row.get(pb_col))
+        latest_price = self._positive_float(row.get(price_col))
+        previous_close = self._positive_float(row.get(previous_col)) if use_previous_close and previous_col else None
+        price = previous_close or latest_price or 0.0
+        ratio = price / latest_price if latest_price and latest_price > 0 else 1.0
+        pe = self._scale_optional(self._to_float(row.get(pe_col)), ratio)
+        pb = self._scale_optional(self._to_float(row.get(pb_col)), ratio)
         mcap = self._to_float(row.get(mcap_col))
         industry = str(row.get(industry_col, "未知行业")).strip() or "未知行业"
 
         market_cap_billion = None
         if mcap is not None:
             market_cap_billion = mcap / 1e8 if mcap > 1e6 else mcap
+            market_cap_billion = self._scale_optional(market_cap_billion, ratio)
 
         is_st = "ST" in name.upper()
         return StockItem(
@@ -369,11 +404,38 @@ class AkShareProvider(StockProvider):
             return None
 
     @staticmethod
+    def _positive_float(value) -> Optional[float]:
+        result = AkShareProvider._to_float(value)
+        return result if result is not None and result > 0 else None
+
+    @staticmethod
+    def _scale_optional(value: Optional[float], ratio: float) -> Optional[float]:
+        if value is None:
+            return None
+        result = value * ratio
+        return result if math.isfinite(result) and result >= 0 else None
+
+    @staticmethod
     def _first_present(row: pd.Series, options: List[str]) -> str:
         for col in options:
             if col in row:
                 return col
         return options[0]
+
+    @staticmethod
+    def _first_present_optional(row: pd.Series, options: List[str]) -> Optional[str]:
+        for col in options:
+            if col in row:
+                return col
+        return None
+
+    @staticmethod
+    def _has_any_column(df: pd.DataFrame, options: List[str]) -> bool:
+        return any(option in df.columns for option in options)
+
+    @staticmethod
+    def _previous_close_columns() -> List[str]:
+        return ["昨收", "昨收价", "前收盘价", "previous_close", "prev_close", "yesterday_close", "f18"]
 
     @classmethod
     def _append_indicator(

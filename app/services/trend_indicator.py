@@ -15,7 +15,7 @@ from app.schemas import (
     TrendScreenResult,
     TrendStockSignal,
 )
-from app.services.screener import screen_stocks
+from app.services.screener import screen_stocks, screening_universe
 
 
 QUANT_SCORE_MAX = 90
@@ -39,7 +39,7 @@ def analyze_trend(provider: StockProvider, request: TrendIndicatorRequest) -> Tr
 
 
 def trend_screen_stocks(provider: StockProvider, request: TrendScreenRequest) -> TrendScreenResult:
-    universe = provider.list_stocks()
+    universe, screen_notes = screening_universe(provider)
     candidate_pool = _screen_candidate_pool(universe, request.criteria, request.limit)
 
     items: List[TrendStockSignal] = []
@@ -74,7 +74,7 @@ def trend_screen_stocks(provider: StockProvider, request: TrendScreenRequest) ->
 
     items.sort(key=lambda item: item.final_score, reverse=True)
     selected = items[: request.limit]
-    notes = list(TREND_NOTES)
+    notes = [*screen_notes, *TREND_NOTES]
     if skipped:
         notes.append(f"Skipped {skipped} stocks without usable OHLC history.")
 

@@ -1,5 +1,6 @@
 from typing import Dict, List, Optional
 
+from app.providers.base import StockProvider
 from app.schemas import (
     ScreenCriteria,
     ScreenResult,
@@ -9,6 +10,10 @@ from app.schemas import (
     SectorScreenResult,
     StockItem,
 )
+
+
+def screening_universe(provider: StockProvider) -> tuple[List[StockItem], List[str]]:
+    return provider.list_stocks_for_screen()
 
 
 def _matches(stock: StockItem, criteria: ScreenCriteria) -> Optional[List[str]]:
@@ -77,13 +82,21 @@ def _screened_stocks(universe: List[StockItem], criteria: ScreenCriteria) -> Lis
     return screened
 
 
-def screen_stocks(universe: List[StockItem], criteria: ScreenCriteria) -> ScreenResult:
+def screen_stocks(
+    universe: List[StockItem],
+    criteria: ScreenCriteria,
+    notes: Optional[List[str]] = None,
+) -> ScreenResult:
     screened = _screened_stocks(universe, criteria)
     items = screened[: criteria.limit]
-    return ScreenResult(total=len(screened), returned=len(items), items=items)
+    return ScreenResult(total=len(screened), returned=len(items), items=items, notes=notes or [])
 
 
-def screen_stocks_by_sector(universe: List[StockItem], request: SectorScreenRequest) -> SectorScreenResult:
+def screen_stocks_by_sector(
+    universe: List[StockItem],
+    request: SectorScreenRequest,
+    notes: Optional[List[str]] = None,
+) -> SectorScreenResult:
     screened = _screened_stocks(universe, request.criteria)
     by_sector: Dict[str, List[ScreenedStock]] = {}
     for item in screened:
@@ -109,14 +122,14 @@ def screen_stocks_by_sector(universe: List[StockItem], request: SectorScreenRequ
     groups.sort(key=lambda group: (-group.average_score, -group.total, group.sector))
     groups = groups[: request.max_sectors]
     returned = sum(group.returned for group in groups)
-    notes = ["按股票行业字段作为板块分组。"]
+    result_notes = [*(notes or []), "按股票行业字段作为板块分组。"]
     if request.criteria.industry:
-        notes.append(f"已限制行业：{request.criteria.industry}")
+        result_notes.append(f"已限制行业：{request.criteria.industry}")
 
     return SectorScreenResult(
         total=len(screened),
         returned=returned,
         sector_count=len(groups),
         groups=groups,
-        notes=notes,
+        notes=result_notes,
     )

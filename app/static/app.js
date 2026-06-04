@@ -569,9 +569,10 @@ function renderScreenResult(node, data) {
       ["候选", data.total ?? 0],
       ["最高分", items[0] ? formatNumber(items[0].score) : "-"],
     ],
-    body: items.length
-      ? renderStockList(items.map(screenItemToView))
-      : renderEmpty("没有符合条件的股票"),
+    body: [
+      items.length ? renderStockList(items.map(screenItemToView)) : renderEmpty("没有符合条件的股票"),
+      data.notes?.length ? renderNotes(data.notes) : "",
+    ].join(""),
     raw: data,
   });
 }
@@ -760,6 +761,7 @@ function renderAgentResult(node, data) {
         ? renderStockList(nestedItems.map(screenItemToView))
         : renderEmpty("没有选股结果"),
     );
+    if (nested.notes?.length) bodyParts.push(renderNotes(nested.notes));
   } else if (["data_status", "refresh_data", "prune_cache"].includes(data.action)) {
     const status = nested.status || nested;
     bodyParts.push(renderDataStatusCard(status));
@@ -929,6 +931,7 @@ function renderStockRow(item) {
       </div>
       <div class="row-actions">
         <div class="stock-meta">
+          <span>价格 ${formatNumber(stock.price)}</span>
           <span>净资产收益率 ${formatPercent(stock.roe)}</span>
           <span>市值 ${formatNumber(stock.market_cap_billion)} 亿</span>
         </div>

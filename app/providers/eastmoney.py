@@ -15,6 +15,7 @@ from app.schemas import FinancialIndicatorSection, MinuteBar, OrderBookSnapshot,
 
 class EastmoneyProvider(StockProvider):
     name = "eastmoney"
+    _SCREEN_REQUIRED_FIELDS = ("f18",)
 
     def __init__(
         self,
@@ -32,13 +33,34 @@ class EastmoneyProvider(StockProvider):
         self._akshare = AkShareProvider(refresh=False, proxy_mode=self.proxy_mode)
 
     def list_stocks(self) -> List[StockItem]:
-        if not self.refresh and os.path.exists(self.cache_path):
-            df = pd.read_csv(self.cache_path)
-        else:
-            df = self._fetch_spot()
-            os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
-            df.to_csv(self.cache_path, index=False)
+        df = self._load_spot()
         return [stock for _, row in df.iterrows() if (stock := self._row_to_stock(row)) is not None]
+
+    def list_stocks_for_screen(self) -> tuple[List[StockItem], List[str]]:
+        try:
+            df = self._load_spot(required_fields=self._SCREEN_REQUIRED_FIELDS)
+        except Exception as exc:
+            return self.list_stocks(), [f"前一交易日收盘价不可用，已回退到股票池价格：{exc}"]
+
+        items: List[StockItem] = []
+        previous_close_count = 0
+        fallback_count = 0
+        for _, row in df.iterrows():
+            stock = self._row_to_stock(row, use_previous_close=True)
+            if stock is None:
+                continue
+            items.append(stock)
+            if self._positive_float(row.get("f18")) is not None:
+                previous_close_count += 1
+            else:
+                fallback_count += 1
+
+        notes = [
+            f"筛选价格口径：前一交易日收盘价（东方财富昨收 f18），已应用 {previous_close_count} 只。"
+        ]
+        if fallback_count:
+            notes.append(f"{fallback_count} 只股票缺少昨收价，已回退到股票池价格。")
+        return items, notes
 
     def get_stock(self, code: str) -> StockItem:
         normalized_code = self._normalize_code(code)
@@ -129,7 +151,7 @@ class EastmoneyProvider(StockProvider):
             "invt": 2,
             "fid": "f12",
             "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
-            "fields": "f2,f9,f12,f14,f20,f23,f100",
+            "fields": "f2,f9,f12,f14,f18,f20,f23,f100",
         }
         for host in hosts:
             try:
@@ -146,22 +168,37 @@ class EastmoneyProvider(StockProvider):
                 time.sleep(0.15)
         return None
 
-    def _row_to_stock(self, row: pd.Series) -> StockItem | None:
+    def _load_spot(self, required_fields: tuple[str, ...] = ()) -> pd.DataFrame:
+        if not self.refresh and os.path.exists(self.cache_path):
+            df = pd.read_csv(self.cache_path)
+            if all(field in df.columns for field in required_fields):
+                return df
+
+        df = self._fetch_spot()
+        os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
+        df.to_csv(self.cache_path, index=False)
+        return df
+
+    def _row_to_stock(self, row: pd.Series, use_previous_close: bool = False) -> StockItem | None:
         code = str(row.get("f12", "")).strip()
         if not code or not code.startswith(("0", "3", "6")):
             return None
 
         name = str(row.get("f14", "")).strip() or code
-        price = self._to_float(row.get("f2"))
+        latest_price = self._positive_float(row.get("f2"))
+        previous_close = self._positive_float(row.get("f18")) if use_previous_close else None
+        price = previous_close or latest_price
         if price is None or price <= 0:
             return None
 
-        pe = self._non_negative(row.get("f9"))
-        pb = self._non_negative(row.get("f23"))
+        ratio = price / latest_price if latest_price and latest_price > 0 else 1.0
+        pe = self._scale_optional(self._non_negative(row.get("f9")), ratio)
+        pb = self._scale_optional(self._non_negative(row.get("f23")), ratio)
         market_cap = self._to_float(row.get("f20"))
         market_cap_billion = None
         if market_cap is not None:
             market_cap_billion = market_cap / 1e8 if market_cap > 1e6 else market_cap
+            market_cap_billion = self._scale_optional(market_cap_billion, ratio)
 
         industry = str(row.get("f100", "未知行业")).strip() or "未知行业"
         return StockItem(
@@ -181,6 +218,18 @@ class EastmoneyProvider(StockProvider):
     def _non_negative(value) -> Optional[float]:
         result = EastmoneyProvider._to_float(value)
         return result if result is not None and result >= 0 else None
+
+    @staticmethod
+    def _positive_float(value) -> Optional[float]:
+        result = EastmoneyProvider._to_float(value)
+        return result if result is not None and result > 0 else None
+
+    @staticmethod
+    def _scale_optional(value: Optional[float], ratio: float) -> Optional[float]:
+        if value is None:
+            return None
+        result = value * ratio
+        return result if math.isfinite(result) and result >= 0 else None
 
     @staticmethod
     def _to_float(value) -> Optional[float]:

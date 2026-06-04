@@ -11,11 +11,11 @@ from app.schemas import (
     StockRelation,
 )
 from app.services.knowledge_graph import build_knowledge_graph, graph_notes, score_candidates
-from app.services.screener import screen_stocks
+from app.services.screener import screen_stocks, screening_universe
 
 
 def graph_screen_stocks(provider: StockProvider, request: GraphScreenRequest) -> GraphScreenResult:
-    universe = provider.list_stocks()
+    universe, screen_notes = screening_universe(provider)
     candidate_pool = _screen_candidate_pool(universe, request.criteria, request.limit)
     candidate_by_code = {item.stock.code: item for item in candidate_pool}
     all_stocks = {stock.code: stock for stock in universe}
@@ -50,6 +50,7 @@ def graph_screen_stocks(provider: StockProvider, request: GraphScreenRequest) ->
     signals = _assign_weights(signals[: request.limit])
 
     notes = [
+        *screen_notes,
         *graph_notes(graph),
         "LangGraph 负责智能体状态和工具编排，股票关系由知识图谱和关系评分层建模。",
     ]

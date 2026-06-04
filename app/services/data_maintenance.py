@@ -144,7 +144,7 @@ def _status_notes(source: str, cache_path: Path | None, universe_count: int, sta
     if source == "mock":
         return ["本地演示数据为确定性样本，不使用磁盘缓存。"]
     if source == "astock":
-        notes = ["A股全栈数据源使用腾讯实时估值、百度日 K 线，并复用本地股票池缓存。"]
+        notes = ["A股全栈数据源使用腾讯实时估值、通达信行情补充、百度日 K 线，并复用本地股票池缓存。"]
         if cache_path is None or not cache_path.exists():
             notes.append("No local stock universe cache yet. Refresh the universe before full-market screening.")
             return notes

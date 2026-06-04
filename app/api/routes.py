@@ -33,7 +33,7 @@ from app.services.agent import run_agent
 from app.services.backtest import backtest_hold
 from app.services.data_maintenance import data_source_status, prune_cache, refresh_universe
 from app.services.observation import observe_stock as build_stock_observation
-from app.services.screener import screen_stocks, screen_stocks_by_sector
+from app.services.screener import screen_stocks, screen_stocks_by_sector, screening_universe
 from app.services.stock_graph import graph_screen_stocks
 from app.services.trend_indicator import analyze_trend, trend_screen_stocks
 
@@ -138,7 +138,7 @@ def list_data_sources(provider=Depends(_provider_from_headers)):
             {
                 "id": "astock",
                 "name": "A股全栈",
-                "description": "结合 a-stock-data 思路：腾讯实时估值、百度日 K 线，并复用本地股票池缓存。",
+                "description": "腾讯实时估值优先、通达信行情补充、百度日 K 线，并复用本地股票池缓存。",
             },
         ],
     }
@@ -238,14 +238,14 @@ def stock_order_book(code: str, provider=Depends(_provider_from_headers)):
 
 @router.post("/screen", response_model=ScreenResult)
 def screen(criteria: ScreenCriteria, provider=Depends(_provider_from_headers)):
-    universe = provider.list_stocks()
-    return screen_stocks(universe, criteria)
+    universe, notes = screening_universe(provider)
+    return screen_stocks(universe, criteria, notes=notes)
 
 
 @router.post("/sector-screen", response_model=SectorScreenResult)
 def sector_screen(request: SectorScreenRequest, provider=Depends(_provider_from_headers)):
-    universe = provider.list_stocks()
-    return screen_stocks_by_sector(universe, request)
+    universe, notes = screening_universe(provider)
+    return screen_stocks_by_sector(universe, request, notes=notes)
 
 
 @router.post("/graph-screen", response_model=GraphScreenResult)

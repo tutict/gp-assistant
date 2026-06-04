@@ -54,6 +54,9 @@ class StockProvider:
     def list_stocks(self) -> List[StockItem]:
         raise NotImplementedError
 
+    def list_stocks_for_screen(self) -> tuple[List[StockItem], List[str]]:
+        return self.list_stocks(), []
+
     def get_stock(self, code: str) -> StockItem:
         raise NotImplementedError
 

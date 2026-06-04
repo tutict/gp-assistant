@@ -54,6 +54,7 @@ class ScreenResult(BaseModel):
     total: int
     returned: int
     items: List[ScreenedStock]
+    notes: List[str] = Field(default_factory=list)
 
 
 class SectorScreenRequest(BaseModel):

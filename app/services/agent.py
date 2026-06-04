@@ -21,7 +21,7 @@ from app.schemas import (
 from app.services.backtest import backtest_hold
 from app.services.data_maintenance import data_source_status, prune_cache, refresh_universe
 from app.services.observation import observe_stock
-from app.services.screener import screen_stocks, screen_stocks_by_sector
+from app.services.screener import screen_stocks, screen_stocks_by_sector, screening_universe
 from app.services.stock_graph import graph_screen_stocks
 from app.services.trend_indicator import trend_screen_stocks
 
@@ -352,7 +352,8 @@ def _observe_stock_node(state: AgentState) -> AgentState:
 
 def _screen_node(state: AgentState) -> AgentState:
     criteria = state.get("criteria") or ScreenCriteria()
-    result = screen_stocks(state["provider"].list_stocks(), criteria)
+    universe, notes = screening_universe(state["provider"])
+    result = screen_stocks(universe, criteria, notes=notes)
     return {
         "criteria": criteria,
         "data": result.model_dump(),
@@ -364,7 +365,8 @@ def _sector_screen_node(state: AgentState) -> AgentState:
     request = state.get("sector_screen") or SectorScreenRequest(
         criteria=state.get("criteria") or ScreenCriteria()
     )
-    result = screen_stocks_by_sector(state["provider"].list_stocks(), request)
+    universe, notes = screening_universe(state["provider"])
+    result = screen_stocks_by_sector(universe, request, notes=notes)
     return {
         "sector_screen": request,
         "criteria": request.criteria,
