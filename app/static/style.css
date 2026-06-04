@@ -3173,6 +3173,9 @@ button:focus-visible,
 }
 
 .quote-table-head {
+  position: static;
+  z-index: auto;
+  top: auto;
   border-bottom: 1px solid var(--line);
   background: var(--surface-2);
   color: var(--muted);
@@ -4028,7 +4031,7 @@ h1 {
 
 .metric-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 1px;
   overflow: hidden;
   border-bottom: 1px solid var(--line);
