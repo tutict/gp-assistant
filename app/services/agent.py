@@ -15,22 +15,33 @@ from app.schemas import (
     LlmClientConfig,
     ScreenCriteria,
     SectorScreenRequest,
+    StockObserveRequest,
     TrendScreenRequest,
 )
 from app.services.backtest import backtest_hold
 from app.services.data_maintenance import data_source_status, prune_cache, refresh_universe
+from app.services.observation import observe_stock
 from app.services.screener import screen_stocks, screen_stocks_by_sector
 from app.services.stock_graph import graph_screen_stocks
 from app.services.trend_indicator import trend_screen_stocks
 
 
 SYSTEM_PROMPT = """You are an A-share stock assistant. You must respond in JSON.
-Decide whether the user wants a basic stock screen, sector-grouped screen, relation-aware graph screen, trend screen, backtest, or clarification.
+Decide whether the user wants an individual stock observation, basic stock screen, sector-grouped screen, relation-aware graph screen, trend screen, backtest, or clarification.
 LangGraph is only the workflow/state orchestration layer. Stock-to-stock relationships must be handled by the graph_screen tool, which uses a stock knowledge graph and GNN-style relation scoring.
 Return this shape:
 {
-  "action": "screen" | "sector_screen" | "graph_screen" | "trend_screen" | "backtest" | "data_status" | "refresh_data" | "prune_cache" | "clarify",
+  "action": "observe_stock" | "screen" | "sector_screen" | "graph_screen" | "trend_screen" | "backtest" | "data_status" | "refresh_data" | "prune_cache" | "clarify",
   "criteria": { ...ScreenCriteria fields... } | null,
+  "observe": {
+    "code": "000001.SZ",
+    "start_date": null,
+    "end_date": null,
+    "series_limit": 120,
+    "minute_period": "1",
+    "minute_limit": 160,
+    "include_order_book": true
+  } | null,
   "sector_screen": {
     "criteria": { ...ScreenCriteria fields... },
     "per_sector_limit": 3,
@@ -53,6 +64,7 @@ Return this shape:
   "backtest": { ...BacktestRequest fields... } | null,
   "reply": "short Chinese reply to the user"
 }
+Use action "observe_stock" when the user asks about one stock's quote, valuation, PE/PB, order book, intraday bars, daily technical trend, support/resistance, or asks to look at/check/analyze a specific stock code.
 Use action "sector_screen" when the user asks to group by sector/industry/board, pick stocks from each sector, or diversify across sectors.
 Use action "graph_screen" when the user mentions stock relations, industry chain, upstream/downstream,
 supply chain, peer linkage, GNN, knowledge graph, graph learning, or LangGraph-related stock relation analysis.
@@ -65,6 +77,7 @@ If the user request is unclear, use action "clarify" and ask a brief question in
 """
 
 VALID_ACTIONS = {
+    "observe_stock",
     "screen",
     "sector_screen",
     "graph_screen",
@@ -75,6 +88,42 @@ VALID_ACTIONS = {
     "prune_cache",
     "clarify",
 }
+
+OBSERVE_INTENT_KEYWORDS = [
+    "看看",
+    "看一下",
+    "怎么样",
+    "如何",
+    "分析",
+    "观察",
+    "评价",
+    "诊断",
+    "体检",
+    "查",
+    "行情",
+    "报价",
+    "估值",
+    "pe",
+    "pb",
+    "盘口",
+    "买卖盘",
+    "分钟",
+    "分时",
+    "技术面",
+    "日线",
+    "支撑",
+    "阻力",
+    "趋势",
+    "能买吗",
+    "能买",
+    "买入",
+    "卖出",
+    "持有",
+    "值不值得",
+    "quote",
+    "valuation",
+    "order book",
+]
 
 
 @dataclass(frozen=True)
@@ -96,6 +145,7 @@ class AgentState(TypedDict, total=False):
     action: str
     reply: str
     criteria: Optional[ScreenCriteria]
+    observe: Optional[StockObserveRequest]
     sector_screen: Optional[SectorScreenRequest]
     graph_screen: Optional[GraphScreenRequest]
     trend_screen: Optional[TrendScreenRequest]
@@ -130,6 +180,7 @@ def _get_langgraph_workflow() -> Any:
 
     builder = StateGraph(AgentState)
     builder.add_node("parse_intent", _parse_intent_node)
+    builder.add_node("observe_stock", _observe_stock_node)
     builder.add_node("screen", _screen_node)
     builder.add_node("sector_screen", _sector_screen_node)
     builder.add_node("graph_screen", _graph_screen_node)
@@ -145,6 +196,7 @@ def _get_langgraph_workflow() -> Any:
         "parse_intent",
         _route_action,
         {
+            "observe_stock": "observe_stock",
             "screen": "screen",
             "sector_screen": "sector_screen",
             "graph_screen": "graph_screen",
@@ -157,6 +209,7 @@ def _get_langgraph_workflow() -> Any:
         },
     )
     for node in (
+        "observe_stock",
         "screen",
         "sector_screen",
         "graph_screen",
@@ -175,7 +228,9 @@ def _run_agent_state_machine(initial_state: AgentState) -> AgentState:
     state: AgentState = dict(initial_state)
     state.update(_parse_intent_node(state))
     action = _route_action(state)
-    if action == "screen":
+    if action == "observe_stock":
+        state.update(_observe_stock_node(state))
+    elif action == "screen":
         state.update(_screen_node(state))
     elif action == "sector_screen":
         state.update(_sector_screen_node(state))
@@ -197,12 +252,14 @@ def _run_agent_state_machine(initial_state: AgentState) -> AgentState:
 
 
 def _parse_intent_node(state: AgentState) -> AgentState:
+    message = state.get("message", "")
     response = _call_llm(state.get("message", ""), state.get("llm_config"))
     action = str(response.get("action") or "clarify")
     if action not in VALID_ACTIONS:
         action = "clarify"
 
     criteria = _parse_criteria(response.get("criteria"))
+    observe_request = _parse_observe(response.get("observe"))
     sector_request = _parse_sector_screen(response.get("sector_screen"))
     graph_request = _parse_graph_screen(response.get("graph_screen"))
     trend_request = _parse_trend_screen(response.get("trend_screen"))
@@ -216,6 +273,22 @@ def _parse_intent_node(state: AgentState) -> AgentState:
         criteria = trend_request.criteria
     if backtest is not None and criteria is None:
         criteria = backtest.criteria
+
+    if action == "observe_stock" and observe_request is None:
+        observe_request = _observe_request_from_message(message)
+        if observe_request is None:
+            action = "clarify"
+
+    if (
+        action in {"clarify", "screen", "trend_screen"}
+        and observe_request is None
+        and _is_observe_intent(message)
+    ):
+        fallback_observe = _observe_request_from_message(message)
+        if fallback_observe is not None:
+            action = "observe_stock"
+            observe_request = fallback_observe
+            response["reply"] = f"已为 {fallback_observe.code} 拉取行情、估值、盘口和技术面观察。"
 
     if action == "screen" and criteria is None:
         criteria = ScreenCriteria()
@@ -236,6 +309,7 @@ def _parse_intent_node(state: AgentState) -> AgentState:
         "action": action,
         "reply": str(response.get("reply") or ""),
         "criteria": criteria,
+        "observe": observe_request,
         "sector_screen": sector_request,
         "graph_screen": graph_request,
         "trend_screen": trend_request,
@@ -247,6 +321,33 @@ def _parse_intent_node(state: AgentState) -> AgentState:
 def _route_action(state: AgentState) -> str:
     action = state.get("action") or "clarify"
     return action if action in VALID_ACTIONS else "clarify"
+
+
+def _observe_stock_node(state: AgentState) -> AgentState:
+    request = state.get("observe")
+    if request is None or not request.code:
+        return {
+            "action": "clarify",
+            "data": None,
+            "reply": state.get("reply") or "请给出要观察的 6 位 A 股代码，例如 000001 或 300750.SZ。",
+        }
+
+    try:
+        result = observe_stock(state["provider"], request)
+    except KeyError:
+        return {
+            "action": "clarify",
+            "observe": request,
+            "data": None,
+            "reply": f"未找到股票 {request.code}，请确认代码是否正确。",
+        }
+
+    stock = result.stock
+    return {
+        "observe": request,
+        "data": result.model_dump(),
+        "reply": state.get("reply") or f"已完成 {stock.name}（{stock.code}）的行情、估值、盘口和技术面观察。",
+    }
 
 
 def _screen_node(state: AgentState) -> AgentState:
@@ -360,6 +461,7 @@ def _state_to_response(state: AgentState) -> AgentResponse:
         reply=state.get("reply") or "已处理。",
         action=state.get("action") or "clarify",
         criteria=state.get("criteria"),
+        observe=state.get("observe"),
         sector_screen=state.get("sector_screen"),
         graph_screen=state.get("graph_screen"),
         trend_screen=state.get("trend_screen"),
@@ -534,6 +636,7 @@ def _safe_error(exc: Exception) -> str:
 def _heuristic_parse(message: str) -> Dict[str, Any]:
     lower = message.lower()
     criteria = _heuristic_criteria(message)
+    codes = _extract_codes(message)
 
     if _contains_any(lower, ["清理缓存", "清缓存", "释放空间", "缓存瘦身", "prune cache", "clear cache"]):
         return {
@@ -557,6 +660,13 @@ def _heuristic_parse(message: str) -> Dict[str, Any]:
         return {
             "action": "data_status",
             "reply": "已读取当前数据源、股票池数量、更新时间和缓存占用。",
+        }
+
+    if codes and _is_observe_intent(message):
+        return {
+            "action": "observe_stock",
+            "reply": f"已为 {codes[0]} 拉取行情、估值、盘口和技术面观察。",
+            "observe": _observe_request_dict(message, codes[0]),
         }
 
     if _contains_any(
@@ -756,7 +866,7 @@ def _extract_codes(message: str) -> list[str]:
     return codes
 
 
-def _extract_date(message: str, default: str, first: bool) -> str:
+def _extract_date(message: str, default: Optional[str], first: bool) -> Optional[str]:
     compact_dates = re.findall(r"\b(20\d{2})(\d{2})(\d{2})\b", message)
     separated_dates = re.findall(
         r"\b(20\d{2})(?:[-/.年])(\d{1,2})(?:[-/.月])(\d{1,2})",
@@ -777,11 +887,62 @@ def _contains_any(text: str, needles: list[str]) -> bool:
     return any(needle.lower() in text for needle in needles)
 
 
+def _is_observe_intent(message: str) -> bool:
+    return bool(_extract_codes(message)) and _contains_any(message.lower(), OBSERVE_INTENT_KEYWORDS)
+
+
+def _observe_request_dict(message: str, code: str) -> Dict[str, Any]:
+    return {
+        "code": code,
+        "start_date": _extract_date(message, default=None, first=True),
+        "end_date": _extract_date(message, default=None, first=False),
+        "series_limit": _extract_limited_int(
+            message,
+            ["日线数量", "趋势点数", "series limit"],
+            default=120,
+            minimum=20,
+            maximum=500,
+        ),
+        "minute_period": _extract_minute_period(message),
+        "minute_limit": _extract_limited_int(
+            message,
+            ["分钟线数量", "分钟数量", "minute limit"],
+            default=160,
+            minimum=1,
+            maximum=500,
+        ),
+        "include_order_book": not _contains_any(message.lower(), ["不要盘口", "不看盘口", "no order book"]),
+    }
+
+
+def _observe_request_from_message(message: str) -> Optional[StockObserveRequest]:
+    codes = _extract_codes(message)
+    if not codes:
+        return None
+    return _parse_observe(_observe_request_dict(message, codes[0]))
+
+
+def _extract_minute_period(message: str) -> str:
+    match = re.search(r"(?<!\d)(60|30|15|5|1)\s*(?:m|min|分钟|分)(?!\d)", message, flags=re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return "1"
+
+
 def _parse_criteria(data: Optional[Dict[str, Any]]) -> Optional[ScreenCriteria]:
     if not data:
         return None
     try:
         return ScreenCriteria(**data)
+    except Exception:
+        return None
+
+
+def _parse_observe(data: Optional[Dict[str, Any]]) -> Optional[StockObserveRequest]:
+    if not data:
+        return None
+    try:
+        return StockObserveRequest(**data)
     except Exception:
         return None
 

@@ -70,14 +70,17 @@ Web 界面可以在每次请求中切换数据源：
 - `mock`：本地演示数据，便于离线测试和 UI 验证。
 - `akshare`：通过 AkShare 获取 A 股公开行情。
 - `eastmoney`：直接从东方财富获取 A 股股票池，并使用本地 CSV 缓存。
+- `astock`：有机吸收 `a-stock-data` skill 的低风险数据路线，使用腾讯实时行情/估值/盘口、百度日 K 线，并复用本地股票池缓存。
 
 API 客户端也可以通过请求头切换：
 
-- `X-Stock-Provider: mock|akshare|eastmoney`
+- `X-Stock-Provider: mock|akshare|eastmoney|astock`
 - `X-Stock-Refresh: true` 强制刷新所选数据源的股票池缓存
 - `X-Stock-Proxy: system|none` 切换行情数据源请求是否使用系统代理；也可用环境变量 `STOCK_PROXY_MODE=system|none` 设置默认值。
 
-AkShare 股票池缓存路径为 `data/cache/stocks.csv`，可设置 `AKSHARE_REFRESH=true` 强制刷新。东方财富缓存路径为 `data/cache/eastmoney_stocks.csv`。
+AkShare 股票池缓存路径为 `data/cache/stocks.csv`，可设置 `AKSHARE_REFRESH=true` 强制刷新。东方财富缓存路径为 `data/cache/eastmoney_stocks.csv`。`astock` 默认缓存路径为 `data/cache/astock_stocks.csv`，可用 `ASTOCK_CACHE`、`ASTOCK_REFRESH=true`、`ASTOCK_TIMEOUT=10` 调整。
+
+`astock` 集成参考本地开源 skill `a-stock-data-3.2.1` 的思路和端点选择，没有直接拷贝其脚本为运行时依赖；原 skill 采用 Apache-2.0 许可证。
 
 ## 数据维护
 
@@ -111,10 +114,11 @@ python scripts\maintain_data.py --source eastmoney --refresh --prune
 LangGraph 只负责智能体状态和工具编排，例如：
 
 ```text
-parse_intent -> screen/graph_screen/trend_screen/backtest/clarify
+parse_intent -> observe_stock/screen/graph_screen/trend_screen/backtest/clarify
 ```
 
 股票之间的关系不是由 LangGraph 本身建模，而是由项目里的知识图谱和类 GNN 关系评分层建模。
+智能体也可以直接处理个股观察指令，例如“看看 000001 的估值和盘口”，会返回股票快照、五档盘口、分钟线和日线技术面。
 
 ## 行情与技术面接口
 

@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -22,6 +22,7 @@ from app.schemas import (
     SectorScreenRequest,
     SectorScreenResult,
     StockObservation,
+    StockObserveRequest,
     StockItem,
     TrendIndicatorRequest,
     TrendIndicatorResult,
@@ -31,6 +32,7 @@ from app.schemas import (
 from app.services.agent import run_agent
 from app.services.backtest import backtest_hold
 from app.services.data_maintenance import data_source_status, prune_cache, refresh_universe
+from app.services.observation import observe_stock as build_stock_observation
 from app.services.screener import screen_stocks, screen_stocks_by_sector
 from app.services.stock_graph import graph_screen_stocks
 from app.services.trend_indicator import analyze_trend, trend_screen_stocks
@@ -57,22 +59,6 @@ def _provider_from_headers(
         return get_provider(x_stock_provider, refresh=refresh, proxy_mode=x_stock_proxy)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-def _provider_display_name(source: str) -> str:
-    labels = {
-        "mock": "本地演示",
-        "akshare": "公开行情",
-        "eastmoney": "东方财富",
-    }
-    return labels.get((source or "").lower(), source or "未知数据源")
-
-
-def _default_dates(start_date: Optional[str], end_date: Optional[str]) -> tuple[str, str]:
-    today = date.today()
-    end_value = end_date or today.strftime("%Y%m%d")
-    start_value = start_date or (today - timedelta(days=420)).strftime("%Y%m%d")
-    return start_value, end_value
 
 
 def _default_minute_range(
@@ -149,6 +135,11 @@ def list_data_sources(provider=Depends(_provider_from_headers)):
                 "name": "东方财富",
                 "description": "直接获取东方财富 A 股股票池，并使用本地 CSV 缓存。",
             },
+            {
+                "id": "astock",
+                "name": "A股全栈",
+                "description": "结合 a-stock-data 思路：腾讯实时估值、百度日 K 线，并复用本地股票池缓存。",
+            },
         ],
     }
 
@@ -196,56 +187,23 @@ def observe_stock(
     include_order_book: bool = True,
     provider=Depends(_provider_from_headers),
 ):
-    start_value, end_value = _default_dates(start_date, end_date)
-    minute_start_value, minute_end_value = _default_minute_range(minute_start, minute_end, end_date)
     try:
-        stock = provider.get_stock(code)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="未找到股票")
-
-    notes = [f"数据源：{_provider_display_name(getattr(provider, 'name', provider.__class__.__name__))}。"]
-    try:
-        trend = analyze_trend(
+        return build_stock_observation(
             provider,
-            TrendIndicatorRequest(
-                code=stock.code,
-                start_date=start_value,
-                end_date=end_value,
-                series_limit=max(20, min(series_limit, 500)),
+            StockObserveRequest(
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                series_limit=series_limit,
+                minute_period=minute_period,
+                minute_start=minute_start,
+                minute_end=minute_end,
+                minute_limit=minute_limit,
+                include_order_book=include_order_book,
             ),
         )
-    except ValueError as exc:
-        trend = None
-        notes.append(str(exc))
-
-    minute_period = minute_period if minute_period in {"1", "5", "15", "30", "60"} else "1"
-    try:
-        minute_bars = provider.get_minutes(
-            stock.code,
-            minute_start_value,
-            minute_end_value,
-            minute_period,
-        )[-max(20, min(minute_limit, 500)) :]
-    except Exception as exc:
-        minute_bars = []
-        notes.append(f"分钟线不可用：{exc}")
-
-    order_book = None
-    if include_order_book:
-        try:
-            order_book = provider.get_order_book(stock.code)
-        except Exception as exc:
-            notes.append(f"盘口不可用：{exc}")
-
-    return StockObservation(
-        source=getattr(provider, "name", provider.__class__.__name__),
-        stock=stock,
-        trend=trend,
-        minute_period=minute_period,
-        minute_bars=minute_bars,
-        order_book=order_book,
-        notes=notes,
-    )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="未找到股票")
 
 
 @router.get("/minutes/{code}", response_model=list[MinuteBar])

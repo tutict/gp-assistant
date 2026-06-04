@@ -12,6 +12,7 @@ CACHE_DIR = Path(os.getenv("GP_CACHE_DIR", "data/cache"))
 UNIVERSE_CACHE_FILES = {
     "akshare": Path(os.getenv("AKSHARE_CACHE", str(CACHE_DIR / "stocks.csv"))),
     "eastmoney": Path(os.getenv("EASTMONEY_CACHE", str(CACHE_DIR / "eastmoney_stocks.csv"))),
+    "astock": Path(os.getenv("ASTOCK_CACHE", str(CACHE_DIR / "astock_stocks.csv"))),
 }
 
 
@@ -116,7 +117,7 @@ def prune_cache(source: str, policy: CachePolicy | None = None) -> CachePruneRes
 
 def _normalize_source(source: str | None) -> str:
     value = (source or os.getenv("STOCK_PROVIDER", "mock")).strip().lower()
-    return value if value in {"mock", "akshare", "eastmoney"} else "mock"
+    return value if value in {"mock", "akshare", "eastmoney", "astock"} else "mock"
 
 
 def _universe_count(source: str, cache_path: Path | None) -> int:
@@ -142,6 +143,15 @@ def _file_age(path: Path | None) -> tuple[str | None, float | None]:
 def _status_notes(source: str, cache_path: Path | None, universe_count: int, stale: bool) -> list[str]:
     if source == "mock":
         return ["本地演示数据为确定性样本，不使用磁盘缓存。"]
+    if source == "astock":
+        notes = ["A股全栈数据源使用腾讯实时估值、百度日 K 线，并复用本地股票池缓存。"]
+        if cache_path is None or not cache_path.exists():
+            notes.append("No local stock universe cache yet. Refresh the universe before full-market screening.")
+            return notes
+        notes.append(f"Local stock universe has {universe_count} rows.")
+        if stale:
+            notes.append("股票池缓存已超过 24 小时，建议刷新。")
+        return notes
     if cache_path is None or not cache_path.exists():
         return ["No local stock universe cache yet. Refresh the universe before full-market screening."]
     notes = [f"Local stock universe has {universe_count} rows."]

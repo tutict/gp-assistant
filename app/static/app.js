@@ -690,28 +690,38 @@ function renderBacktestResult(node, data) {
 }
 
 function renderObserveResult(node, data) {
+  renderResult(node, {
+    summary: observeSummary(data),
+    body: renderObserveBody(data),
+    raw: data,
+  });
+}
+
+function observeSummary(data) {
+  const stock = data.stock || {};
+  const minuteBars = data.minute_bars || [];
+  return [
+    ["数据源", sourceLabel(data.source)],
+    ["最新价", formatNumber(stock.price)],
+    ["分钟线", `${data.minute_period || "1"}m · ${minuteBars.length}`],
+  ];
+}
+
+function renderObserveBody(data) {
   const stock = data.stock || {};
   const trend = data.trend || {};
   const signal = trend.signal || {};
   const series = trend.series || [];
   const minuteBars = data.minute_bars || [];
-  renderResult(node, {
-    summary: [
-      ["数据源", sourceLabel(data.source)],
-      ["最新价", formatNumber(stock.price)],
-      ["分钟线", `${data.minute_period || "1"}m · ${minuteBars.length}`],
-    ],
-    body: [
-      renderQuoteCard(stock),
-      data.order_book ? renderOrderBook(data.order_book) : renderEmpty("没有可用盘口"),
-      trend.signal ? renderSignalCard(stock, signal) : renderEmpty("没有可用日线技术面"),
-      minuteBars.length ? renderMinuteChart(minuteBars) : renderEmpty("没有可用分钟线"),
-      series.length ? renderTrendChart(series) : "",
-      data.notes?.length ? renderNotes(data.notes) : "",
-      signal.notes?.length ? renderNotes(signal.notes) : "",
-    ].join(""),
-    raw: data,
-  });
+  return [
+    renderQuoteCard(stock),
+    data.order_book ? renderOrderBook(data.order_book) : renderEmpty("没有可用盘口"),
+    trend.signal ? renderSignalCard(stock, signal) : renderEmpty("没有可用日线技术面"),
+    minuteBars.length ? renderMinuteChart(minuteBars) : renderEmpty("没有可用分钟线"),
+    series.length ? renderTrendChart(series) : "",
+    data.notes?.length ? renderNotes(data.notes) : "",
+    signal.notes?.length ? renderNotes(signal.notes) : "",
+  ].join("");
 }
 
 function renderAgentResult(node, data) {
@@ -721,7 +731,9 @@ function renderAgentResult(node, data) {
   const nestedMetrics = nested.metrics || {};
   const bodyParts = [`<div class="agent-reply">${escapeHtml(data.reply || "已处理")}</div>`];
 
-  if (data.action === "sector_screen") {
+  if (data.action === "observe_stock") {
+    bodyParts.push(nested.stock ? renderObserveBody(nested) : renderEmpty("没有个股观察结果"));
+  } else if (data.action === "sector_screen") {
     bodyParts.push(nestedGroups.length ? renderSectorGroups(nestedGroups) : renderEmpty("没有分板块选股结果"));
     if (nested.notes?.length) bodyParts.push(renderNotes(nested.notes));
   } else if (data.action === "graph_screen") {
@@ -756,7 +768,9 @@ function renderAgentResult(node, data) {
   }
 
   const thirdMetric =
-    data.action === "sector_screen"
+    data.action === "observe_stock"
+      ? ["最新价", formatNumber(nested.stock?.price)]
+      : data.action === "sector_screen"
       ? ["板块", nested.sector_count ?? nestedGroups.length ?? "-"]
       : data.action === "graph_screen"
       ? ["关系边", nested.relation_count ?? "-"]
@@ -769,7 +783,12 @@ function renderAgentResult(node, data) {
   renderResult(node, {
     summary: [
       ["动作", actionLabel(data.action)],
-      ["结果", nested.returned ?? (nested.status || nested).universe_count ?? nestedItems.length ?? "-"],
+      [
+        "结果",
+        data.action === "observe_stock"
+          ? nested.stock?.code ?? "-"
+          : nested.returned ?? (nested.status || nested).universe_count ?? nestedItems.length ?? "-",
+      ],
       thirdMetric,
     ],
     body: bodyParts.join(""),
@@ -1244,6 +1263,7 @@ function formatDateTime(value) {
 function actionLabel(action) {
   const labels = {
     screen: "普通选股",
+    observe_stock: "个股观察",
     sector_screen: "板块选股",
     graph_screen: "关系图",
     trend_screen: "趋势选股",
@@ -1261,6 +1281,7 @@ function sourceLabel(source) {
     mock: "本地演示",
     akshare: "公开行情",
     eastmoney: "东方财富",
+    astock: "A股全栈",
   };
   return labels[source] || source || "-";
 }

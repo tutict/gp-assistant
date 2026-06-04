@@ -95,4 +95,8 @@ def get_provider(
         from app.providers.eastmoney import EastmoneyProvider
 
         return EastmoneyProvider(refresh=bool(refresh) if refresh is not None else False, proxy_mode=proxy_mode)
+    if provider_name == "astock":
+        from app.providers.astock import AStockDataProvider
+
+        return AStockDataProvider(refresh=bool(refresh) if refresh is not None else False, proxy_mode=proxy_mode)
     raise ValueError(f"不支持的数据源：{provider_name}")

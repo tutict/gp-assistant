@@ -104,6 +104,18 @@ class TrendIndicatorRequest(BaseModel):
     series_limit: int = Field(default=120, ge=20, le=500)
 
 
+class StockObserveRequest(BaseModel):
+    code: str
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    series_limit: int = Field(default=120, ge=20, le=500)
+    minute_period: str = Field(default="1")
+    minute_start: Optional[str] = None
+    minute_end: Optional[str] = None
+    minute_limit: int = Field(default=160, ge=1, le=500)
+    include_order_book: bool = True
+
+
 class TrendIndicatorPoint(BaseModel):
     date: str
     close: float
@@ -292,6 +304,7 @@ class AgentResponse(BaseModel):
     action: str
     criteria: Optional[ScreenCriteria] = None
     backtest: Optional[BacktestRequest] = None
+    observe: Optional[StockObserveRequest] = None
     sector_screen: Optional[SectorScreenRequest] = None
     graph_screen: Optional[GraphScreenRequest] = None
     trend_screen: Optional[TrendScreenRequest] = None

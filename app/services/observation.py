@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+
+from app.providers.base import StockProvider
+from app.schemas import StockObservation, StockObserveRequest, TrendIndicatorRequest
+from app.services.trend_indicator import analyze_trend
+
+
+def observe_stock(provider: StockProvider, request: StockObserveRequest) -> StockObservation:
+    start_value, end_value = _default_dates(request.start_date, request.end_date)
+    minute_start_value, minute_end_value = _default_minute_range(
+        request.minute_start,
+        request.minute_end,
+        request.end_date,
+    )
+    stock = provider.get_stock(request.code)
+    source = getattr(provider, "name", provider.__class__.__name__)
+    notes = [f"数据源：{_provider_display_name(source)}。"]
+
+    try:
+        trend = analyze_trend(
+            provider,
+            TrendIndicatorRequest(
+                code=stock.code,
+                start_date=start_value,
+                end_date=end_value,
+                series_limit=max(20, min(request.series_limit, 500)),
+            ),
+        )
+    except ValueError as exc:
+        trend = None
+        notes.append(str(exc))
+
+    minute_period = request.minute_period if request.minute_period in {"1", "5", "15", "30", "60"} else "1"
+    try:
+        minute_bars = provider.get_minutes(
+            stock.code,
+            minute_start_value,
+            minute_end_value,
+            minute_period,
+        )[-max(1, min(request.minute_limit, 500)) :]
+    except Exception as exc:
+        minute_bars = []
+        notes.append(f"分钟线不可用：{exc}")
+
+    order_book = None
+    if request.include_order_book:
+        try:
+            order_book = provider.get_order_book(stock.code)
+        except Exception as exc:
+            notes.append(f"盘口不可用：{exc}")
+
+    return StockObservation(
+        source=source,
+        stock=stock,
+        trend=trend,
+        minute_period=minute_period,
+        minute_bars=minute_bars,
+        order_book=order_book,
+        notes=notes,
+    )
+
+
+def _provider_display_name(source: str) -> str:
+    labels = {
+        "mock": "本地演示",
+        "akshare": "公开行情",
+        "eastmoney": "东方财富",
+        "astock": "A股全栈",
+    }
+    return labels.get((source or "").lower(), source or "未知数据源")
+
+
+def _default_dates(start_date: str | None, end_date: str | None) -> tuple[str, str]:
+    today = date.today()
+    end_value = end_date or today.strftime("%Y%m%d")
+    start_value = start_date or (today - timedelta(days=420)).strftime("%Y%m%d")
+    return start_value, end_value
+
+
+def _default_minute_range(
+    minute_start: str | None,
+    minute_end: str | None,
+    end_date: str | None,
+) -> tuple[str, str]:
+    if minute_start and minute_end:
+        return _normalize_minute_datetime(minute_start, is_end=False), _normalize_minute_datetime(
+            minute_end,
+            is_end=True,
+        )
+
+    end_dt = _parse_date_or_datetime(minute_end or end_date) or datetime.now()
+    if end_dt.hour == 0 and end_dt.minute == 0:
+        end_dt = end_dt.replace(hour=15, minute=0, second=0)
+    start_dt = _parse_date_or_datetime(minute_start) or (end_dt - timedelta(days=5)).replace(
+        hour=9,
+        minute=30,
+        second=0,
+    )
+    return start_dt.strftime("%Y-%m-%d %H:%M:%S"), end_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _normalize_minute_datetime(value: str, is_end: bool) -> str:
+    parsed = _parse_date_or_datetime(value)
+    if parsed is None:
+        return value
+    if len(value.strip()) <= 10:
+        parsed = parsed.replace(hour=15 if is_end else 9, minute=0 if is_end else 30, second=0)
+    return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_date_or_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    raw = value.strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y%m%d %H:%M:%S", "%Y-%m-%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except ValueError:
+            continue
+    return None
