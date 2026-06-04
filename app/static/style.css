@@ -5056,6 +5056,124 @@ h1 {
   }
 }
 
+.quote-table {
+  container: stock-list / inline-size;
+}
+
+.quote-table-head,
+.stock-row,
+.stock-grid,
+.stock-grid > *,
+.row-actions,
+.stock-meta,
+.mini-metrics,
+.signal-summary,
+.tag-row,
+.related-list {
+  min-width: 0;
+}
+
+.stock-grid {
+  width: 100%;
+}
+
+.score-badge,
+.quote-number {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.score-badge small,
+.score-badge b,
+.score-badge .weight,
+.quote-number span,
+.quote-number strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-actions {
+  flex-wrap: wrap;
+}
+
+.stock-meta {
+  display: flex;
+  flex: 1 1 220px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.stock-meta span,
+.mini-metrics span,
+.signal-summary span,
+.tag-row span,
+.related-list div {
+  max-width: 100%;
+}
+
+.observe-action {
+  flex: 0 0 auto;
+}
+
+@container stock-list (max-width: 560px) {
+  .quote-table-head,
+  .stock-grid {
+    grid-template-columns: minmax(0, 1.22fr) minmax(62px, 0.62fr) minmax(58px, 0.56fr) minmax(54px, 0.52fr);
+    gap: 6px;
+  }
+
+  .quote-table-head {
+    padding-inline: 8px;
+    font-size: 0.68rem;
+  }
+
+  .stock-row {
+    padding: 10px 8px;
+  }
+
+  .stock-title strong {
+    font-size: 0.94rem;
+  }
+
+  .stock-title span {
+    font-size: 0.72rem;
+  }
+
+  .score-badge small,
+  .quote-number span {
+    font-size: 0.66rem;
+  }
+
+  .score-badge b,
+  .quote-number strong {
+    font-size: 0.98rem;
+  }
+
+  .score-badge .weight {
+    font-size: 0.66rem;
+  }
+
+  .row-actions {
+    justify-content: flex-start;
+  }
+
+  .stock-meta {
+    flex-basis: 180px;
+  }
+
+  .mini-metrics,
+  .signal-summary,
+  .tag-row {
+    gap: 6px;
+  }
+
+  .observe-action {
+    min-height: 34px;
+    padding-inline: 10px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
