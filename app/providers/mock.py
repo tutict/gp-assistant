@@ -117,6 +117,17 @@ class MockProvider(StockProvider):
                 market_cap_billion=245.0,
                 dividend_yield=0.025,
             ),
+            "600887.SH": StockItem(
+                code="600887.SH",
+                name="伊利股份",
+                industry="食品饮料",
+                price=28.5,
+                pe=18.2,
+                pb=3.1,
+                roe=0.16,
+                market_cap_billion=185.0,
+                dividend_yield=0.035,
+            ),
         }
 
     def list_stocks(self) -> List[StockItem]:

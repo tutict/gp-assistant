@@ -1223,6 +1223,18 @@ pub fn mock_stocks() -> Vec<StockItem> {
             market_cap_billion: Some(245.0),
             dividend_yield: Some(0.025),
         },
+        StockItem {
+            code: "600887.SH".to_string(),
+            name: "伊利股份".to_string(),
+            industry: "食品饮料".to_string(),
+            is_st: false,
+            price: 28.5,
+            pe: Some(18.2),
+            pb: Some(3.1),
+            roe: Some(0.16),
+            market_cap_billion: Some(185.0),
+            dividend_yield: Some(0.035),
+        },
     ]
 }
 
@@ -2688,7 +2700,7 @@ mod tests {
     #[test]
     fn default_screen_includes_non_st_stocks() {
         let result = screen_with_mock(&ScreenCriteria::default());
-        assert_eq!(result.returned, 9);
+        assert_eq!(result.returned, 10);
     }
 
     #[test]
