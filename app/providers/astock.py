@@ -11,7 +11,7 @@ import requests
 from app.providers.akshare import AkShareProvider
 from app.providers.base import PROXY_MODE_NONE, StockProvider, normalize_proxy_mode
 from app.providers.eastmoney import EastmoneyProvider
-from app.schemas import MinuteBar, OrderBookSnapshot, StockItem, StockRelation
+from app.schemas import FinancialIndicatorSection, MinuteBar, OrderBookSnapshot, StockItem, StockRelation
 
 
 class AStockDataProvider(StockProvider):
@@ -122,6 +122,9 @@ class AStockDataProvider(StockProvider):
                 "量比": quote.get("vol_ratio"),
             },
         )
+
+    def get_financial_indicators(self, stock: StockItem) -> FinancialIndicatorSection | None:
+        return self._akshare.get_financial_indicators(stock)
 
     def list_relations(self) -> List[StockRelation]:
         return self._eastmoney.list_relations()

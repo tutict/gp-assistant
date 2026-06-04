@@ -16,7 +16,13 @@ def observe_stock(provider: StockProvider, request: StockObserveRequest) -> Stoc
     )
     stock = provider.get_stock(request.code)
     source = getattr(provider, "name", provider.__class__.__name__)
-    notes = [f"数据源：{_provider_display_name(source)}。"]
+    notes = [f"\u6570\u636e\u6e90\uff1a{_provider_display_name(source)}\u3002"]
+
+    try:
+        financial_indicators = provider.get_financial_indicators(stock)
+    except Exception as exc:
+        financial_indicators = None
+        notes.append(f"\u8d22\u52a1\u6307\u6807\u4e0d\u53ef\u7528\uff1a{exc}")
 
     try:
         trend = analyze_trend(
@@ -42,18 +48,19 @@ def observe_stock(provider: StockProvider, request: StockObserveRequest) -> Stoc
         )[-max(1, min(request.minute_limit, 500)) :]
     except Exception as exc:
         minute_bars = []
-        notes.append(f"分钟线不可用：{exc}")
+        notes.append(f"\u5206\u949f\u7ebf\u4e0d\u53ef\u7528\uff1a{exc}")
 
     order_book = None
     if request.include_order_book:
         try:
             order_book = provider.get_order_book(stock.code)
         except Exception as exc:
-            notes.append(f"盘口不可用：{exc}")
+            notes.append(f"\u76d8\u53e3\u4e0d\u53ef\u7528\uff1a{exc}")
 
     return StockObservation(
         source=source,
         stock=stock,
+        financial_indicators=financial_indicators,
         trend=trend,
         minute_period=minute_period,
         minute_bars=minute_bars,
@@ -64,12 +71,12 @@ def observe_stock(provider: StockProvider, request: StockObserveRequest) -> Stoc
 
 def _provider_display_name(source: str) -> str:
     labels = {
-        "mock": "本地演示",
-        "akshare": "公开行情",
-        "eastmoney": "东方财富",
-        "astock": "A股全栈",
+        "mock": "\u672c\u5730\u6f14\u793a",
+        "akshare": "\u516c\u5f00\u884c\u60c5",
+        "eastmoney": "\u4e1c\u65b9\u8d22\u5bcc",
+        "astock": "A\u80a1\u5168\u6808",
     }
-    return labels.get((source or "").lower(), source or "未知数据源")
+    return labels.get((source or "").lower(), source or "\u672a\u77e5\u6570\u636e\u6e90")
 
 
 def _default_dates(start_date: str | None, end_date: str | None) -> tuple[str, str]:

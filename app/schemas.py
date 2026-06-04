@@ -16,6 +16,22 @@ class StockItem(BaseModel):
     dividend_yield: Optional[float] = None
 
 
+class FinancialIndicatorItem(BaseModel):
+    label: str
+    value: str
+    raw_value: Optional[float] = None
+    unit: Optional[str] = None
+    tone: str = "neutral"
+
+
+class FinancialIndicatorSection(BaseModel):
+    title: str = "\u6700\u65b0\u6307\u6807"
+    period: Optional[str] = None
+    source: Optional[str] = None
+    items: List[FinancialIndicatorItem] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
+
+
 class ScreenCriteria(BaseModel):
     min_roe: Optional[float] = None
     max_pe: Optional[float] = None
@@ -212,6 +228,7 @@ class OrderBookSnapshot(BaseModel):
 class StockObservation(BaseModel):
     source: str
     stock: StockItem
+    financial_indicators: Optional[FinancialIndicatorSection] = None
     trend: Optional[TrendIndicatorResult] = None
     minute_period: str = "1"
     minute_bars: List[MinuteBar] = Field(default_factory=list)

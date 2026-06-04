@@ -10,7 +10,7 @@ import requests
 
 from app.providers.akshare import AkShareProvider
 from app.providers.base import PROXY_MODE_NONE, StockProvider, normalize_proxy_mode
-from app.schemas import MinuteBar, OrderBookSnapshot, StockItem, StockRelation
+from app.schemas import FinancialIndicatorSection, MinuteBar, OrderBookSnapshot, StockItem, StockRelation
 
 
 class EastmoneyProvider(StockProvider):
@@ -61,6 +61,9 @@ class EastmoneyProvider(StockProvider):
 
     def get_order_book(self, code: str) -> OrderBookSnapshot | None:
         return self._akshare.get_order_book(code)
+
+    def get_financial_indicators(self, stock: StockItem) -> FinancialIndicatorSection | None:
+        return self._akshare.get_financial_indicators(stock)
 
     def list_relations(self) -> List[StockRelation]:
         items = self.list_stocks()

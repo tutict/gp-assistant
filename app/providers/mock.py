@@ -2,7 +2,15 @@ from datetime import datetime, timedelta
 from typing import Dict, List
 
 from app.providers.base import StockProvider
-from app.schemas import MinuteBar, OrderBookLevel, OrderBookSnapshot, StockItem, StockRelation
+from app.schemas import (
+    FinancialIndicatorItem,
+    FinancialIndicatorSection,
+    MinuteBar,
+    OrderBookLevel,
+    OrderBookSnapshot,
+    StockItem,
+    StockRelation,
+)
 
 
 class MockProvider(StockProvider):
@@ -243,6 +251,43 @@ class MockProvider(StockProvider):
                 "量比": 1.15,
                 "换手": 1.8,
             },
+        )
+
+    def get_financial_indicators(self, stock: StockItem) -> FinancialIndicatorSection | None:
+        seed = sum(ord(char) for char in stock.code)
+        market_cap = stock.market_cap_billion or 100.0
+        eps = stock.price / stock.pe if stock.pe else None
+        bps = stock.price / stock.pb if stock.pb else None
+        revenue = market_cap * (0.12 + (seed % 9) / 100)
+        profit = revenue * (0.08 + (seed % 7) / 100)
+        growth = 3.5 + (seed % 15) * 1.7
+        margin = profit / revenue * 100 if revenue else None
+
+        items: list[FinancialIndicatorItem] = []
+
+        def add(label: str, value: float | None, suffix: str = "", tone: str = "neutral") -> None:
+            if value is None:
+                return
+            text = f"{value:.3f}".rstrip("0").rstrip(".")
+            items.append(FinancialIndicatorItem(label=label, value=f"{text}{suffix}", raw_value=value, tone=tone))
+
+        add("\u5e02\u76c8\u7387(TTM)", stock.pe)
+        add("\u5e02\u51c0\u7387(\u6700\u65b0)", stock.pb)
+        add("\u6bcf\u80a1\u6536\u76ca(\u8ba1\u7b97)", eps, "\u5143")
+        add("\u6bcf\u80a1\u51c0\u8d44\u4ea7", bps, "\u5143")
+        add("\u8425\u4e1a\u603b\u6536\u5165", revenue, "\u4ebf")
+        add("\u603b\u8425\u6536\u540c\u6bd4", growth, "%", "rise")
+        add("\u5f52\u6bcd\u51c0\u5229\u6da6", profit, "\u4ebf")
+        add("\u5f52\u6bcd\u51c0\u5229\u540c\u6bd4", growth * 0.82, "%", "rise")
+        add("\u51c0\u5229\u7387", margin, "%")
+        add("\u51c0\u8d44\u4ea7\u6536\u76ca\u7387", stock.roe * 100 if stock.roe is not None else None, "%")
+        add("\u5e02\u503c", market_cap, "\u4ebf")
+        add("\u80a1\u606f\u7387", stock.dividend_yield * 100 if stock.dividend_yield is not None else None, "%")
+
+        return FinancialIndicatorSection(
+            period="\u6f14\u793a\u6570\u636e",
+            source="\u672c\u5730\u6f14\u793a",
+            items=items,
         )
 
     def list_relations(self) -> List[StockRelation]:

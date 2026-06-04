@@ -4873,6 +4873,111 @@ h1 {
   }
 }
 
+.financial-indicators {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  margin-bottom: 10px;
+}
+
+.financial-indicators header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 13px 14px 10px;
+}
+
+.financial-indicators h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.04rem;
+  font-weight: 840;
+  line-height: 1.2;
+}
+
+.financial-indicators p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 680;
+  line-height: 1.35;
+}
+
+.financial-indicator-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 26px;
+  row-gap: 0;
+  padding: 12px 14px 14px;
+}
+
+.financial-indicator-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: baseline;
+  min-width: 0;
+  gap: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  padding: 8px 0;
+}
+
+.financial-indicator-item:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.financial-indicator-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 720;
+  line-height: 1.35;
+}
+
+.financial-indicator-value {
+  color: var(--text);
+  font-size: 0.96rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 840;
+  line-height: 1.2;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.financial-indicator-value.rise {
+  color: var(--rise);
+}
+
+.financial-indicator-value.fall {
+  color: var(--fall);
+}
+
+.financial-indicator-notes {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  padding: 9px 14px 12px;
+}
+
+@media (max-width: 640px) {
+  .financial-indicator-grid {
+    grid-template-columns: 1fr;
+    column-gap: 0;
+  }
+
+  .financial-indicator-item:nth-last-child(-n + 2) {
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  }
+
+  .financial-indicator-item:last-child {
+    border-bottom: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

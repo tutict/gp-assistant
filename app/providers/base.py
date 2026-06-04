@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from threading import RLock
 from typing import List, Optional
 
-from app.schemas import MinuteBar, OrderBookSnapshot, StockItem, StockRelation
+from app.schemas import FinancialIndicatorSection, MinuteBar, OrderBookSnapshot, StockItem, StockRelation
 
 
 PROXY_MODE_SYSTEM = "system"
@@ -70,6 +70,9 @@ class StockProvider:
         return []
 
     def get_order_book(self, code: str) -> OrderBookSnapshot | None:
+        return None
+
+    def get_financial_indicators(self, stock: StockItem) -> FinancialIndicatorSection | None:
         return None
 
     def list_relations(self) -> List[StockRelation]:

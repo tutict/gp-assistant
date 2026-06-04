@@ -715,6 +715,7 @@ function renderObserveBody(data) {
   const minuteBars = data.minute_bars || [];
   return [
     renderQuoteCard(stock),
+    renderFinancialIndicators(data.financial_indicators),
     data.order_book ? renderOrderBook(data.order_book) : renderEmpty("没有可用盘口"),
     trend.signal ? renderSignalCard(stock, signal) : renderEmpty("没有可用日线技术面"),
     minuteBars.length ? renderMinuteChart(minuteBars) : renderEmpty("没有可用分钟线"),
@@ -959,6 +960,39 @@ function renderQuoteCard(stock) {
         <div><span>股息率</span><strong>${formatPercent(stock.dividend_yield)}</strong></div>
         <div><span>是否 ST</span><strong>${stock.is_st ? "是" : "否"}</strong></div>
       </div>
+    </section>
+  `;
+}
+
+function renderFinancialIndicators(financial) {
+  const items = (financial?.items || []).filter(
+    (item) => item && item.value !== undefined && item.value !== null && item.value !== "",
+  );
+  if (!items.length) return "";
+
+  const meta = [financial.period, financial.source].filter(Boolean).join(" \u00b7 ");
+  return `
+    <section class="financial-indicators">
+      <header>
+        <div>
+          <h3>${escapeHtml(financial.title || "\u6700\u65b0\u6307\u6807")}</h3>
+          ${meta ? `<p>${escapeHtml(meta)}</p>` : ""}
+        </div>
+      </header>
+      <div class="financial-indicator-grid">
+        ${items
+          .map((item) => {
+            const tone = ["rise", "fall"].includes(item.tone) ? item.tone : "neutral";
+            return `
+              <div class="financial-indicator-item">
+                <span class="financial-indicator-label">${escapeHtml(item.label || "-")}</span>
+                <strong class="financial-indicator-value ${tone}">${escapeHtml(item.value)}</strong>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+      ${financial.notes?.length ? `<div class="financial-indicator-notes">${financial.notes.map(escapeHtml).join(" / ")}</div>` : ""}
     </section>
   `;
 }
