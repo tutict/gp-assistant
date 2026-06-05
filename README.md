@@ -84,6 +84,8 @@ AkShare 股票池缓存路径为 `data/cache/stocks.csv`，可设置 `AKSHARE_RE
 
 `astock` 集成参考本地开源 skill `a-stock-data-3.2.1` 的思路和端点选择，没有直接拷贝其脚本为运行时依赖；原 skill 采用 Apache-2.0 许可证。
 
+上下游消息分析缓存路径为 `data/cache/news.sqlite`。第一阶段默认使用本地可复现演示消息适配器；如需尝试通过 AkShare 东方财富个股新闻接口写入真实消息，可设置 `GP_NEWS_ENABLE_AKSHARE=true`。RAG 分析只在已有股票关系图范围内检索消息，不从新闻自动生成供应链关系。
+
 ## 数据维护
 
 数据维护接口：
@@ -91,6 +93,7 @@ AkShare 股票池缓存路径为 `data/cache/stocks.csv`，可设置 `AKSHARE_RE
 - `GET /api/data-sources/status` 查看股票池数量、缓存大小和新鲜度。
 - `POST /api/data-sources/refresh-universe` 刷新股票池。
 - `POST /api/data-sources/prune-cache` 清理可丢弃缓存。
+- `POST /api/news-rag` 按已有上下游关系图检索本地消息缓存，并返回影响判断、证据、置信度和待验证点。
 
 命令行定时维护示例：
 

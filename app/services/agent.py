@@ -13,6 +13,7 @@ from app.schemas import (
     BacktestRequest,
     GraphScreenRequest,
     LlmClientConfig,
+    NewsRagRequest,
     ScreenCriteria,
     SectorScreenRequest,
     StockObserveRequest,
@@ -20,6 +21,7 @@ from app.schemas import (
 )
 from app.services.backtest import backtest_hold
 from app.services.data_maintenance import data_source_status, prune_cache, refresh_universe
+from app.services.news_rag import analyze_supply_chain_news
 from app.services.observation import observe_stock
 from app.services.screener import screen_stocks, screen_stocks_by_sector, screening_universe
 from app.services.stock_graph import graph_screen_stocks
@@ -31,7 +33,7 @@ Decide whether the user wants an individual stock observation, basic stock scree
 LangGraph is only the workflow/state orchestration layer. Stock-to-stock relationships must be handled by the graph_screen tool, which uses a stock knowledge graph and GNN-style relation scoring.
 Return this shape:
 {
-  "action": "observe_stock" | "screen" | "sector_screen" | "graph_screen" | "trend_screen" | "backtest" | "data_status" | "refresh_data" | "prune_cache" | "clarify",
+  "action": "observe_stock" | "screen" | "sector_screen" | "trend_screen" | "backtest" | "news_rag" | "data_status" | "refresh_data" | "prune_cache" | "clarify",
   "criteria": { ...ScreenCriteria fields... } | null,
   "observe": {
     "code": "000001.SZ",
@@ -62,6 +64,13 @@ Return this shape:
     "limit": 10
   } | null,
   "backtest": { ...BacktestRequest fields... } | null,
+  "news_rag": {
+    "code": "optional stock code",
+    "criteria": { ...ScreenCriteria fields... },
+    "seed_codes": ["optional stock codes"],
+    "days": 30,
+    "max_items": 24
+  } | null,
   "reply": "short Chinese reply to the user"
 }
 Use action "observe_stock" when the user asks about one stock's quote, valuation, PE/PB, order book, intraday bars, daily technical trend, support/resistance, or asks to look at/check/analyze a specific stock code.
@@ -70,6 +79,7 @@ Use action "graph_screen" when the user mentions stock relations, industry chain
 supply chain, peer linkage, GNN, knowledge graph, graph learning, or LangGraph-related stock relation analysis.
 Use action "trend_screen" when the user asks for uptrend, trend indicator, SWL/SWS, short-buy,
 main-force accumulation, red hold, cyan watch, support/resistance, or quantitative score screening.
+Use action "news_rag" when the user asks to analyze upstream/downstream positive or negative news, supply-chain catalysts, 利好消息, 利空消息, or evidence-backed industry-chain message analysis.
 Use action "data_status" for data source status, stock universe count, cache usage, or freshness questions.
 Use action "refresh_data" when the user asks to refresh, sync, or update the stock universe/data source.
 Use action "prune_cache" when the user asks to clean, shrink, or free local cache/storage.
@@ -83,6 +93,7 @@ VALID_ACTIONS = {
     "graph_screen",
     "trend_screen",
     "backtest",
+    "news_rag",
     "data_status",
     "refresh_data",
     "prune_cache",
@@ -150,6 +161,7 @@ class AgentState(TypedDict, total=False):
     graph_screen: Optional[GraphScreenRequest]
     trend_screen: Optional[TrendScreenRequest]
     backtest: Optional[BacktestRequest]
+    news_rag: Optional[NewsRagRequest]
     data: Optional[dict[str, Any]]
 
 
@@ -186,6 +198,7 @@ def _get_langgraph_workflow() -> Any:
     builder.add_node("graph_screen", _graph_screen_node)
     builder.add_node("trend_screen", _trend_screen_node)
     builder.add_node("backtest", _backtest_node)
+    builder.add_node("news_rag", _news_rag_node)
     builder.add_node("data_status", _data_status_node)
     builder.add_node("refresh_data", _refresh_data_node)
     builder.add_node("prune_cache", _prune_cache_node)
@@ -202,6 +215,7 @@ def _get_langgraph_workflow() -> Any:
             "graph_screen": "graph_screen",
             "trend_screen": "trend_screen",
             "backtest": "backtest",
+            "news_rag": "news_rag",
             "data_status": "data_status",
             "refresh_data": "refresh_data",
             "prune_cache": "prune_cache",
@@ -215,6 +229,7 @@ def _get_langgraph_workflow() -> Any:
         "graph_screen",
         "trend_screen",
         "backtest",
+        "news_rag",
         "data_status",
         "refresh_data",
         "prune_cache",
@@ -240,6 +255,8 @@ def _run_agent_state_machine(initial_state: AgentState) -> AgentState:
         state.update(_trend_screen_node(state))
     elif action == "backtest":
         state.update(_backtest_node(state))
+    elif action == "news_rag":
+        state.update(_news_rag_node(state))
     elif action == "data_status":
         state.update(_data_status_node(state))
     elif action == "refresh_data":
@@ -264,6 +281,7 @@ def _parse_intent_node(state: AgentState) -> AgentState:
     graph_request = _parse_graph_screen(response.get("graph_screen"))
     trend_request = _parse_trend_screen(response.get("trend_screen"))
     backtest = _parse_backtest(response.get("backtest"))
+    news_rag = _parse_news_rag(response.get("news_rag"))
 
     if sector_request is not None and criteria is None:
         criteria = sector_request.criteria
@@ -273,6 +291,8 @@ def _parse_intent_node(state: AgentState) -> AgentState:
         criteria = trend_request.criteria
     if backtest is not None and criteria is None:
         criteria = backtest.criteria
+    if news_rag is not None and criteria is None:
+        criteria = news_rag.criteria
 
     if action == "observe_stock" and observe_request is None:
         observe_request = _observe_request_from_message(message)
@@ -304,6 +324,11 @@ def _parse_intent_node(state: AgentState) -> AgentState:
             start_date="20200101",
             end_date="20240101",
         )
+    elif action == "news_rag" and news_rag is None:
+        news_rag = NewsRagRequest(
+            criteria=criteria or ScreenCriteria(),
+            seed_codes=_extract_codes(message),
+        )
 
     return {
         "action": action,
@@ -314,6 +339,7 @@ def _parse_intent_node(state: AgentState) -> AgentState:
         "graph_screen": graph_request,
         "trend_screen": trend_request,
         "backtest": backtest,
+        "news_rag": news_rag,
         "data": None,
     }
 
@@ -416,6 +442,19 @@ def _backtest_node(state: AgentState) -> AgentState:
     }
 
 
+def _news_rag_node(state: AgentState) -> AgentState:
+    request = state.get("news_rag") or NewsRagRequest(
+        criteria=state.get("criteria") or ScreenCriteria()
+    )
+    result = analyze_supply_chain_news(state["provider"], request)
+    return {
+        "news_rag": request,
+        "criteria": request.criteria,
+        "data": result.model_dump(),
+        "reply": state.get("reply") or "已完成上下游消息分析，结果包含影响判断、证据、置信度和待验证点。",
+    }
+
+
 def _data_status_node(state: AgentState) -> AgentState:
     source = getattr(state["provider"], "name", state["provider"].__class__.__name__)
     result = data_source_status(source)
@@ -468,6 +507,7 @@ def _state_to_response(state: AgentState) -> AgentResponse:
         graph_screen=state.get("graph_screen"),
         trend_screen=state.get("trend_screen"),
         backtest=state.get("backtest"),
+        news_rag=state.get("news_rag"),
         data=state.get("data"),
     )
 
@@ -662,6 +702,38 @@ def _heuristic_parse(message: str) -> Dict[str, Any]:
         return {
             "action": "data_status",
             "reply": "已读取当前数据源、股票池数量、更新时间和缓存占用。",
+        }
+
+    if _contains_any(
+        lower,
+        [
+            "上下游消息",
+            "利好消息",
+            "利空消息",
+            "消息分析",
+            "新闻分析",
+            "产业链消息",
+            "供应链消息",
+            "催化",
+            "rag",
+        ],
+    ):
+        return {
+            "action": "news_rag",
+            "reply": "已按已有上下游关系图检索本地消息缓存，并生成影响判断、证据和待验证点。",
+            "news_rag": {
+                "criteria": criteria,
+                "code": codes[0] if codes else None,
+                "seed_codes": codes,
+                "days": _extract_limited_int(
+                    message,
+                    ["最近", "近", "days"],
+                    default=30,
+                    minimum=1,
+                    maximum=365,
+                ),
+                "max_items": 24,
+            },
         }
 
     if codes and _is_observe_intent(message):
@@ -981,5 +1053,14 @@ def _parse_backtest(data: Optional[Dict[str, Any]]) -> Optional[BacktestRequest]
         return None
     try:
         return BacktestRequest(**data)
+    except Exception:
+        return None
+
+
+def _parse_news_rag(data: Optional[Dict[str, Any]]) -> Optional[NewsRagRequest]:
+    if not data:
+        return None
+    try:
+        return NewsRagRequest(**data)
     except Exception:
         return None

@@ -6,6 +6,7 @@ const buttons = {
   trendAnalyze: $("#trendAnalyzeBtn"),
   trendScreen: $("#trendScreenBtn"),
   backtest: $("#backtestBtn"),
+  newsRag: $("#newsRagBtn"),
   agent: $("#agentBtn"),
   observe: $("#observeBtn"),
 };
@@ -15,6 +16,7 @@ const panels = {
   graph: $("#graphResult"),
   trend: $("#trendResult"),
   backtest: $("#backtestResult"),
+  newsRag: $("#newsRagResult"),
   agent: $("#agentResult"),
   observe: $("#observeResult"),
 };
@@ -77,6 +79,7 @@ function bindActions() {
   buttons.trendAnalyze.addEventListener("click", () => runTask(buttons.trendAnalyze, panels.trend, runTrendAnalysis));
   buttons.trendScreen.addEventListener("click", () => runTask(buttons.trendScreen, panels.trend, runTrendScreen));
   buttons.backtest.addEventListener("click", () => runTask(buttons.backtest, panels.backtest, runBacktest));
+  buttons.newsRag?.addEventListener("click", () => runTask(buttons.newsRag, panels.newsRag, runNewsRag));
   buttons.agent.addEventListener("click", () => runTask(buttons.agent, panels.agent, runAgent));
   buttons.observe?.addEventListener("click", () => runTask(buttons.observe, panels.observe, () => runObserve()));
   dataSource.select?.addEventListener("change", () => {
@@ -253,6 +256,30 @@ async function runBacktest() {
 async function runBacktestFromScreen() {
   document.querySelector("#sectionBacktest")?.scrollIntoView({ behavior: "smooth", block: "start" });
   await runTask(buttons.backtest, panels.backtest, runBacktest);
+}
+
+async function runNewsRag() {
+  const timer = startPanelProgress(panels.newsRag, "上下游消息分析中", [
+    [18, "读取已有关系图"],
+    [38, "更新本地消息缓存"],
+    [62, "检索证据"],
+    [82, "生成影响判断"],
+  ]);
+  const code = readStockCode("newsCode");
+  if (code) $("#newsCode").value = code;
+  const payload = {
+    criteria: buildCriteria({ limit: 100 }),
+    code: code || null,
+    seed_codes: code ? [code] : parseCodes($("#seedCodes")?.value || ""),
+    days: clampInt($("#newsDays")?.value, 1, 365, 30),
+    max_items: 24,
+  };
+  try {
+    const data = await postJson("/api/news-rag", payload, panels.newsRag);
+    if (data) renderNewsRagResult(panels.newsRag, data);
+  } finally {
+    if (timer) window.clearInterval(timer);
+  }
 }
 
 async function runAgent() {
@@ -457,6 +484,33 @@ function setRefreshProgress(value, label) {
   if (dataSource.progressLabel) dataSource.progressLabel.textContent = label;
   if (dataSource.progressValue) dataSource.progressValue.textContent = `${Math.round(percent)}%`;
   if (dataSource.progressBar) dataSource.progressBar.style.width = `${percent}%`;
+}
+
+function startPanelProgress(node, title, stages) {
+  if (!node) return null;
+  let index = 0;
+  node.className = `${basePanelClass(node)} loading progress-loading`;
+  node.innerHTML = `
+    <div class="analysis-progress">
+      <div>
+        <span>${escapeHtml(title)}</span>
+        <strong data-progress-value>8%</strong>
+      </div>
+      <div class="progress-track" aria-hidden="true"><span data-progress-bar style="width: 8%"></span></div>
+      <p data-progress-label>准备分析</p>
+    </div>
+  `;
+  return window.setInterval(() => {
+    const [value, label] = stages[Math.min(index, stages.length - 1)];
+    const percent = Math.min(Math.max(Number(value) || 0, 0), 100);
+    const valueNode = node.querySelector("[data-progress-value]");
+    const barNode = node.querySelector("[data-progress-bar]");
+    const labelNode = node.querySelector("[data-progress-label]");
+    if (valueNode) valueNode.textContent = `${Math.round(percent)}%`;
+    if (barNode) barNode.style.width = `${percent}%`;
+    if (labelNode) labelNode.textContent = label;
+    index += 1;
+  }, 700);
 }
 
 function initLlmSettings() {
@@ -965,6 +1019,85 @@ function renderBacktestResult(node, data) {
   });
 }
 
+function renderNewsRagResult(node, data) {
+  renderResult(node, {
+    summary: [
+      ["范围", (data.scope_codes || []).length],
+      ["关系边", data.relation_count ?? 0],
+      ["消息", data.message_count ?? 0],
+      ["判断", (data.findings || []).length],
+    ],
+    body: renderNewsRagBody(data),
+    raw: data,
+  });
+}
+
+function renderNewsRagBody(data) {
+  const findings = data.findings || [];
+  return [
+    findings.length ? renderNewsFindings(findings) : renderEmpty("没有命中的上下游消息"),
+    data.notes?.length ? renderNotes(data.notes) : "",
+  ].join("");
+}
+
+function renderNewsFindings(findings) {
+  return `
+    <div class="news-findings">
+      ${findings
+        .map(
+          (finding) => `
+            <section class="news-finding">
+              <header>
+                <div>
+                  <h3>${escapeHtml(finding.target || "-")}</h3>
+                  <p>${escapeHtml(finding.impact_chain || "")}</p>
+                </div>
+                <span class="impact-pill ${impactClass(finding.direction)}">${escapeHtml(finding.direction || "不确定")}</span>
+              </header>
+              <div class="finding-meta">
+                <span>置信度 ${escapeHtml(finding.confidence || "低")}</span>
+                <span>证据 ${formatNumber((finding.evidence || []).length)}</span>
+              </div>
+              ${renderEvidenceList(finding.evidence || [])}
+              ${finding.pending_checks?.length ? renderChecklist(finding.pending_checks) : ""}
+            </section>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderEvidenceList(items) {
+  if (!items.length) return renderEmpty("没有可引用证据");
+  return `
+    <div class="evidence-list">
+      ${items
+        .map(
+          (item) => `
+            <article>
+              <strong>${escapeHtml(item.title || "-")}</strong>
+              <span>${escapeHtml(item.source || "-")} · ${escapeHtml(item.published_at || "-")}</span>
+              <em>${escapeHtml((item.stock_codes || []).join(" · "))}</em>
+            </article>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderChecklist(items) {
+  return `<div class="checklist">${items.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>`;
+}
+
+function impactClass(direction) {
+  if (direction === "利好") return "positive";
+  if (direction === "利空") return "negative";
+  if (direction === "中性") return "neutral";
+  return "uncertain";
+}
+
 function renderResultActions(scope, count) {
   return `
     <div class="result-actions">
@@ -1066,6 +1199,8 @@ function renderAgentResult(node, data) {
     bodyParts.push(nestedMetrics.total_return !== undefined ? renderMetricLine(nestedMetrics) : "");
     bodyParts.push(nested.equity_curve?.length ? renderSparkline(nested.equity_curve) : "");
     if (nested.notes?.length) bodyParts.push(renderBacktestReliability(nested));
+  } else if (data.action === "news_rag") {
+    bodyParts.push(renderNewsRagBody(nested));
   } else if (data.action === "screen") {
     bodyParts.push(
       nestedItems.length
@@ -1090,6 +1225,8 @@ function renderAgentResult(node, data) {
       ? ["关系边", nested.relation_count ?? "-"]
       : data.action === "trend_screen"
         ? ["最高分", nestedItems[0] ? formatNumber(nestedItems[0].final_score) : "-"]
+        : data.action === "news_rag"
+          ? ["消息", nested.message_count ?? "-"]
         : data.action === "data_status" || data.action === "refresh_data" || data.action === "prune_cache"
           ? ["缓存", formatBytes((nested.status || nested).cache_bytes)]
         : ["关系边", nested.relation_count ?? "-"];
@@ -1101,6 +1238,8 @@ function renderAgentResult(node, data) {
         "结果",
         data.action === "observe_stock"
           ? nested.stock?.code ?? "-"
+          : data.action === "news_rag"
+            ? nested.relation_count ?? "-"
           : nested.returned ?? (nested.status || nested).universe_count ?? nestedItems.length ?? "-",
       ],
       thirdMetric,
@@ -1616,6 +1755,7 @@ function actionLabel(action) {
     graph_screen: "关系图",
     trend_screen: "趋势选股",
     backtest: "回测",
+    news_rag: "上下游消息",
     data_status: "数据状态",
     refresh_data: "刷新数据",
     prune_cache: "清理缓存",

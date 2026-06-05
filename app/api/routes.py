@@ -16,6 +16,8 @@ from app.schemas import (
     GraphScreenRequest,
     GraphScreenResult,
     MinuteBar,
+    NewsRagRequest,
+    NewsRagResult,
     OrderBookSnapshot,
     ScreenCriteria,
     ScreenResult,
@@ -32,6 +34,7 @@ from app.schemas import (
 from app.services.agent import run_agent
 from app.services.backtest import backtest_hold
 from app.services.data_maintenance import data_source_status, prune_cache, refresh_universe
+from app.services.news_rag import analyze_supply_chain_news
 from app.services.observation import observe_stock as build_stock_observation
 from app.services.screener import screen_stocks, screen_stocks_by_sector, screening_universe
 from app.services.stock_graph import graph_screen_stocks
@@ -271,6 +274,11 @@ def trend_screen(request: TrendScreenRequest, provider=Depends(_provider_from_he
 @router.post("/backtest", response_model=BacktestResult)
 def backtest(request: BacktestRequest, provider=Depends(_provider_from_headers)):
     return backtest_hold(provider, request)
+
+
+@router.post("/news-rag", response_model=NewsRagResult)
+def news_rag(request: NewsRagRequest, provider=Depends(_provider_from_headers)):
+    return analyze_supply_chain_news(provider, request)
 
 
 @router.post("/agent", response_model=AgentResponse)

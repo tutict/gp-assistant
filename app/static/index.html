@@ -40,8 +40,9 @@
       <a href="#sectionObserve" data-mobile-nav-link><span>03</span>股票观察</a>
       <a href="#sectionBacktest" data-mobile-nav-link><span>04</span>回测验证</a>
       <a href="#sectionGraph" data-mobile-nav-link><span>05</span>图谱增强</a>
-      <a href="#sectionTrend" data-mobile-nav-link><span>06</span>趋势择时</a>
-      <a href="#sectionAgent" data-mobile-nav-link><span>07</span>智能助手</a>
+      <a href="#sectionNewsRag" data-mobile-nav-link><span>06</span>上下游消息</a>
+      <a href="#sectionTrend" data-mobile-nav-link><span>07</span>趋势择时</a>
+      <a href="#sectionAgent" data-mobile-nav-link><span>08</span>智能助手</a>
     </nav>
     <main class="app-shell">
       <header class="app-header">
@@ -388,6 +389,38 @@
               </div>
               <div id="graphResult" class="result-panel empty">
                 <div class="empty-state">等待关系图选股</div>
+              </div>
+            </article>
+
+            <article id="sectionNewsRag" class="module">
+              <div class="module-heading">
+                <div>
+                  <p>消息</p>
+                  <h2>上下游消息</h2>
+                </div>
+                <button id="newsRagBtn" type="button">分析消息</button>
+              </div>
+              <div class="news-controls">
+                <label class="field market-field">
+                  <span>目标股票</span>
+                  <input id="newsCode" inputmode="numeric" autocomplete="off" placeholder="可留空复用当前条件" data-code-confirm />
+                  <div class="market-confirm" hidden>
+                    <button type="button" data-market="SH"><strong>上海股</strong><span>600 / 688</span></button>
+                    <button type="button" data-market="SZ"><strong>深圳股</strong><span>000 / 300</span></button>
+                    <button type="button" data-market="BJ"><strong>北京股</strong><span>8 / 4</span></button>
+                  </div>
+                </label>
+                <label class="field">
+                  <span>消息窗口</span>
+                  <select id="newsDays">
+                    <option value="7">最近 7 天</option>
+                    <option value="30" selected>最近 30 天</option>
+                    <option value="90">最近 90 天</option>
+                  </select>
+                </label>
+              </div>
+              <div id="newsRagResult" class="result-panel empty">
+                <div class="empty-state">按已有上下游关系图检索消息，并给出影响判断和证据</div>
               </div>
             </article>
 

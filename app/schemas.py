@@ -264,6 +264,41 @@ class BacktestResult(BaseModel):
     notes: List[str] = Field(default_factory=list)
 
 
+class NewsRagRequest(BaseModel):
+    code: Optional[str] = Field(default=None, max_length=16)
+    criteria: ScreenCriteria = Field(default_factory=ScreenCriteria)
+    seed_codes: List[str] = Field(default_factory=list, max_length=20)
+    days: int = Field(default=30, ge=1, le=365)
+    max_items: int = Field(default=24, ge=1, le=100)
+
+
+class NewsEvidence(BaseModel):
+    title: str
+    source: str
+    published_at: Optional[str] = None
+    url: Optional[str] = None
+    stock_codes: List[str] = Field(default_factory=list)
+    relation_types: List[str] = Field(default_factory=list)
+    sentiment: str = "uncertain"
+
+
+class NewsImpactFinding(BaseModel):
+    target: str
+    direction: str
+    confidence: str
+    impact_chain: str
+    evidence: List[NewsEvidence] = Field(default_factory=list)
+    pending_checks: List[str] = Field(default_factory=list)
+
+
+class NewsRagResult(BaseModel):
+    scope_codes: List[str] = Field(default_factory=list)
+    relation_count: int = 0
+    message_count: int = 0
+    findings: List[NewsImpactFinding] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
+
+
 class CachePolicy(BaseModel):
     mode: str = Field(default="light")
     max_bytes: int = Field(default=200 * 1024 * 1024, ge=1)
@@ -323,6 +358,7 @@ class AgentResponse(BaseModel):
     action: str
     criteria: Optional[ScreenCriteria] = None
     backtest: Optional[BacktestRequest] = None
+    news_rag: Optional[NewsRagRequest] = None
     observe: Optional[StockObserveRequest] = None
     sector_screen: Optional[SectorScreenRequest] = None
     graph_screen: Optional[GraphScreenRequest] = None
