@@ -52,6 +52,7 @@ const mobileNav = {
   panel: $("#mobileNav"),
   overlay: $("#mobileNavOverlay"),
   links: document.querySelectorAll("[data-mobile-nav-link]"),
+  bottomLinks: document.querySelectorAll("[data-bottom-nav-link]"),
 };
 const llmSettings = {
   apiKey: $("#llmApiKey"),
@@ -131,12 +132,23 @@ function initMobileNav() {
   mobileNav.close?.addEventListener("click", () => setMobileNavOpen(false));
   mobileNav.overlay.addEventListener("click", () => setMobileNavOpen(false));
   mobileNav.links.forEach((link) => {
-    link.addEventListener("click", () => setMobileNavOpen(false));
+    link.addEventListener("click", () => {
+      setActiveNavLink(link.getAttribute("href"));
+      setMobileNavOpen(false);
+    });
   });
+  mobileNav.bottomLinks.forEach((link) => {
+    link.addEventListener("click", () => setActiveNavLink(link.getAttribute("href")));
+  });
+  window.addEventListener("hashchange", syncActiveNavFromHash);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") setMobileNavOpen(false);
   });
   trackMobileNavSections();
+  syncActiveNavFromHash();
+  window.requestAnimationFrame(syncActiveNavFromHash);
+  window.setTimeout(syncActiveNavFromHash, 450);
+  window.setTimeout(syncActiveNavFromHash, 1200);
 }
 
 function setMobileNavOpen(isOpen) {
@@ -153,16 +165,40 @@ function trackMobileNavSections() {
     .filter(Boolean);
   const observer = new IntersectionObserver(
     (entries) => {
+      if (isSectionVisible(window.location.hash)) {
+        setActiveNavLink(window.location.hash);
+        return;
+      }
       const visible = entries
         .filter((entry) => entry.isIntersecting)
         .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
       if (!visible) return;
       const activeHref = `#${visible.target.id}`;
-      links.forEach((link) => link.classList.toggle("active", link.getAttribute("href") === activeHref));
+      setActiveNavLink(activeHref);
     },
     { rootMargin: "-24% 0px -58% 0px", threshold: [0.08, 0.2, 0.45] },
   );
   sections.forEach((section) => observer.observe(section));
+}
+
+function isSectionVisible(href) {
+  if (!href) return false;
+  const section = document.querySelector(href);
+  if (!section) return false;
+  const rect = section.getBoundingClientRect();
+  return rect.top < window.innerHeight * 0.86 && rect.bottom > window.innerHeight * 0.12;
+}
+
+function syncActiveNavFromHash() {
+  setActiveNavLink(window.location.hash || "#sectionScreen");
+}
+
+function setActiveNavLink(activeHref) {
+  if (!activeHref) return;
+  const hashHref = window.location.hash;
+  const bottomHref = isSectionVisible(hashHref) ? hashHref : activeHref;
+  mobileNav.links.forEach((link) => link.classList.toggle("active", link.getAttribute("href") === activeHref));
+  mobileNav.bottomLinks.forEach((link) => link.classList.toggle("active", link.getAttribute("href") === bottomHref));
 }
 
 async function runTask(button, panel, task) {
@@ -174,6 +210,7 @@ async function runTask(button, panel, task) {
   } finally {
     button.disabled = false;
     button.textContent = original;
+    window.setTimeout(syncActiveNavFromHash, 0);
   }
 }
 
