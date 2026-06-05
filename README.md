@@ -88,6 +88,8 @@ AkShare 股票池缓存路径为 `data/cache/stocks.csv`，可设置 `AKSHARE_RE
 
 上下游消息分析缓存路径为 `data/cache/news.sqlite`。证据会区分 `news` 与 `community` 两层：新闻/事实层用于事实证据，社区层用于市场讨论、风险传闻、情绪信号和待核查线索。东方财富股吧社区抓取默认启用，可用 `GP_NEWS_ENABLE_GUBA=false` 关闭；可用 `GP_NEWS_GUBA_MAX_STOCKS`、`GP_NEWS_GUBA_MAX_POSTS`、`GP_NEWS_GUBA_TIMEOUT` 控制抓取范围，也可用 `GP_NEWS_GUBA_URLS` 追加指定股吧帖子 URL（多个 URL 用空白或分号分隔，股吧 URL 自身包含逗号）。第一阶段仍会写入本地可复现演示消息适配器；如需尝试通过 AkShare 东方财富个股新闻接口写入真实消息，可设置 `GP_NEWS_ENABLE_AKSHARE=true`。雪球社区适配器已预留，设置 `GP_NEWS_ENABLE_XUEQIU=true` 后会检查 `GP_XUEQIU_COOKIE`，但在稳定授权抓取完成前不会混入不可靠数据。RAG 分析只在已有股票关系图范围内检索消息，不从新闻自动生成供应链关系。
 
+移动端 RAG 的使用方式和工程设计见 `docs/rag.md`。目标方案使用版本化只读 `rag_pack.sqlite`、`sqlite-vec` 和 `bge-small-zh` INT8；桌面端预计算文档向量，手机端只做查询向量和本地检索。
+
 ## 数据维护
 
 数据维护接口：

@@ -19,6 +19,10 @@ from app.schemas import (
     NewsRagRequest,
     NewsRagResult,
     OrderBookSnapshot,
+    RagPackBuildRequest,
+    RagPackBuildResult,
+    RagPackQueryRequest,
+    RagPackQueryResult,
     ScreenCriteria,
     ScreenResult,
     SectorScreenRequest,
@@ -36,6 +40,7 @@ from app.services.backtest import backtest_hold
 from app.services.data_maintenance import data_source_status, prune_cache, refresh_universe
 from app.services.news_rag import analyze_supply_chain_news
 from app.services.observation import observe_stock as build_stock_observation
+from app.services.rag_pack import build_rag_pack, query_rag_pack
 from app.services.screener import screen_stocks, screen_stocks_by_sector, screening_universe
 from app.services.stock_graph import graph_screen_stocks
 from app.services.stock_search import search_stock_items
@@ -288,6 +293,22 @@ def backtest(request: BacktestRequest, provider=Depends(_provider_from_headers))
 @router.post("/news-rag", response_model=NewsRagResult)
 def news_rag(request: NewsRagRequest, provider=Depends(_provider_from_headers)):
     return analyze_supply_chain_news(provider, request)
+
+
+@router.post("/rag-pack/build", response_model=RagPackBuildResult)
+def rag_pack_build(request: RagPackBuildRequest):
+    try:
+        return build_rag_pack(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/rag-pack/query", response_model=RagPackQueryResult)
+def rag_pack_query(request: RagPackQueryRequest):
+    try:
+        return query_rag_pack(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/agent", response_model=AgentResponse)

@@ -314,6 +314,67 @@ class NewsRagResult(BaseModel):
     notes: List[str] = Field(default_factory=list)
 
 
+class RagPackDocument(BaseModel):
+    source: str
+    source_tier: str = "news"
+    title: str
+    text: str
+    summary: Optional[str] = None
+    url: Optional[str] = None
+    published_at: Optional[str] = None
+    fetched_at: Optional[str] = None
+    stock_codes: List[str] = Field(default_factory=list)
+    relation_types: List[str] = Field(default_factory=list)
+    sentiment: str = "uncertain"
+
+
+class RagPackBuildRequest(BaseModel):
+    documents: List[RagPackDocument] = Field(default_factory=list, max_length=1000)
+    pack_version: str = Field(default="local", max_length=64)
+    target_chars: int = Field(default=500, ge=120, le=1200)
+    overlap_chars: int = Field(default=80, ge=0, le=300)
+
+
+class RagPackBuildResult(BaseModel):
+    path: str
+    document_count: int
+    chunk_count: int
+    content_hash: str
+    embedding_model: str
+    embedding_dim: int
+    notes: List[str] = Field(default_factory=list)
+
+
+class RagPackQueryRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=1000)
+    stock_codes: List[str] = Field(default_factory=list, max_length=50)
+    relation_types: List[str] = Field(default_factory=list, max_length=50)
+    source_tiers: List[str] = Field(default_factory=list, max_length=10)
+    published_after: Optional[str] = None
+    top_k: int = Field(default=8, ge=1, le=50)
+
+
+class RagPackChunkHit(BaseModel):
+    chunk_id: str
+    document_id: str
+    score: float
+    title: str
+    text: str
+    source: str
+    source_tier: str
+    published_at: Optional[str] = None
+    url: Optional[str] = None
+    stock_codes: List[str] = Field(default_factory=list)
+    relation_types: List[str] = Field(default_factory=list)
+    sentiment: str = "uncertain"
+
+
+class RagPackQueryResult(BaseModel):
+    hits: List[RagPackChunkHit] = Field(default_factory=list)
+    manifest: dict = Field(default_factory=dict)
+    notes: List[str] = Field(default_factory=list)
+
+
 class CachePolicy(BaseModel):
     mode: str = Field(default="light")
     max_bytes: int = Field(default=200 * 1024 * 1024, ge=1)
