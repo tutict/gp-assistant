@@ -5615,6 +5615,37 @@ h1 {
   line-height: 1.35;
 }
 
+.evidence-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.source-tier {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 820;
+  line-height: 1;
+  padding: 3px 6px;
+  white-space: nowrap;
+}
+
+.source-tier.community {
+  border-color: color-mix(in srgb, var(--warning) 36%, var(--line));
+  color: var(--warning);
+}
+
+.source-tier.news {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+  color: var(--accent-strong);
+}
+
 .quote-table-head,
 .stock-row,
 .stock-grid,

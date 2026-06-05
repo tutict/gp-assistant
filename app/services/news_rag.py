@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Iterable, List, Sequence
 
@@ -24,6 +28,8 @@ from app.services.screener import screen_stocks, screening_universe
 
 CACHE_PATH = Path(os.getenv("GP_NEWS_CACHE", "data/cache/news.sqlite"))
 CHAIN_RELATION_TYPES = {"supply_chain", "manufacturing_chain", "upstream_material"}
+SOURCE_TIER_NEWS = "news"
+SOURCE_TIER_COMMUNITY = "community"
 
 
 @dataclass(frozen=True)
@@ -37,6 +43,7 @@ class RawNewsItem:
     industries: tuple[str, ...]
     relation_types: tuple[str, ...]
     sentiment: str
+    source_tier: str = SOURCE_TIER_NEWS
 
 
 def analyze_supply_chain_news(provider: StockProvider, request: NewsRagRequest) -> NewsRagResult:
@@ -133,10 +140,33 @@ def _fetch_news_items(
 ) -> tuple[List[RawNewsItem], List[str]]:
     notes: List[str] = []
     items: List[RawNewsItem] = []
+    if _env_enabled("GP_NEWS_ENABLE_GUBA", default=True):
+        adapter = _EastmoneyGubaCommunityAdapter()
+        try:
+            guba_items = adapter.fetch(stocks, relations, days)
+            items.extend(guba_items)
+            if guba_items:
+                notes.append(f"已通过东方财富股吧抓取并缓存 {len(guba_items)} 条社区讨论；社区内容仅作情绪/传闻信号。")
+            elif adapter.errors:
+                notes.append(f"东方财富股吧社区抓取未命中，最近错误：{adapter.errors[0][:120]}")
+        except Exception as exc:
+            notes.append(f"东方财富股吧社区抓取不可用，已继续使用其他消息源：{str(exc)[:120]}")
+    else:
+        notes.append("东方财富股吧社区抓取未启用；可设置 GP_NEWS_ENABLE_GUBA=true 后接入社区讨论。")
+
+    if _env_enabled("GP_NEWS_ENABLE_XUEQIU", default=False):
+        try:
+            xueqiu_items, xueqiu_notes = _XueqiuCommunityAdapter().fetch(stocks, relations, days)
+            items.extend(xueqiu_items)
+            notes.extend(xueqiu_notes)
+        except Exception as exc:
+            notes.append(f"雪球社区适配器不可用，已继续使用其他消息源：{str(exc)[:120]}")
+
     if os.getenv("GP_NEWS_ENABLE_AKSHARE", "").strip().lower() in {"1", "true", "yes", "on"}:
         try:
-            items.extend(_AkshareStockNewsAdapter().fetch(stocks, relations, days))
-            if items:
+            akshare_items = _AkshareStockNewsAdapter().fetch(stocks, relations, days)
+            items.extend(akshare_items)
+            if akshare_items:
                 notes.append("已通过 AkShare 东方财富个股新闻接口抓取并缓存消息。")
         except Exception as exc:
             notes.append(f"AkShare 新闻抓取不可用，已保留本地演示消息适配器：{str(exc)[:120]}")
@@ -151,6 +181,170 @@ def _fetch_news_items(
     if demo_items:
         notes.append("已写入本地可复现演示消息；来源为本地演示时不代表实时新闻。")
     return items, notes
+
+
+class _EastmoneyGubaCommunityAdapter:
+    source = "东方财富股吧"
+
+    def __init__(self) -> None:
+        self.timeout = _env_float("GP_NEWS_GUBA_TIMEOUT", 6.0, minimum=0.5)
+        self.max_stocks = _env_int("GP_NEWS_GUBA_MAX_STOCKS", 6, minimum=0)
+        self.max_posts_per_stock = _env_int("GP_NEWS_GUBA_MAX_POSTS", 5, minimum=0)
+        self.errors: list[str] = []
+
+    def fetch(
+        self,
+        stocks: Sequence[StockItem],
+        relations: Sequence[StockRelation],
+        days: int,
+    ) -> List[RawNewsItem]:
+        import requests
+
+        cutoff = datetime.now() - timedelta(days=days)
+        relation_map = _relation_map(relations)
+        stock_by_code = {stock.code: stock for stock in stocks}
+        session = requests.Session()
+        session.headers.update(
+            {
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://guba.eastmoney.com/",
+            }
+        )
+
+        items: List[RawNewsItem] = []
+        for stock in stocks[: self.max_stocks]:
+            try:
+                response = session.get(self._list_url(stock), timeout=self.timeout)
+                response.raise_for_status()
+            except Exception as exc:
+                self.errors.append(f"{stock.code}: {exc}")
+                continue
+            items.extend(self._parse_article_list(response.text, stock, relation_map, cutoff))
+
+        for url in _configured_urls("GP_NEWS_GUBA_URLS"):
+            try:
+                response = session.get(url, timeout=self.timeout)
+                response.raise_for_status()
+                item = self._parse_post_article(response.text, url, stock_by_code, relation_map, cutoff)
+                if item is not None:
+                    items.append(item)
+            except Exception as exc:
+                self.errors.append(f"{url}: {exc}")
+
+        return _dedupe_raw_items(items)
+
+    def _parse_article_list(
+        self,
+        html: str,
+        stock: StockItem,
+        relation_map: dict[str, set[str]],
+        cutoff: datetime | None = None,
+    ) -> List[RawNewsItem]:
+        data = _load_embedded_object(html, "article_list")
+        rows = data.get("re") if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            return []
+
+        items: List[RawNewsItem] = []
+        for row in rows[: self.max_posts_per_stock]:
+            if not isinstance(row, dict):
+                continue
+            title = str(row.get("post_title") or "").strip()
+            if not title:
+                continue
+            published_at = _parse_news_time(
+                str(row.get("post_publish_time") or row.get("post_display_time") or "")
+            )
+            if cutoff is not None and _parse_dt(published_at) < cutoff:
+                continue
+            stock_code = _normalize_code(str(row.get("stockbar_code") or stock.code))
+            canonical_code = stock.code if stock.code == stock_code else stock_code
+            post_id = str(row.get("post_id") or "").strip()
+            items.append(
+                RawNewsItem(
+                    title=title,
+                    summary=_guba_list_summary(row, title),
+                    source=self.source,
+                    url=self._post_url(stock_code, post_id),
+                    published_at=published_at,
+                    stock_codes=(canonical_code,),
+                    industries=(stock.industry,),
+                    relation_types=tuple(sorted(relation_map.get(canonical_code, set()))),
+                    sentiment=_infer_sentiment(title),
+                    source_tier=SOURCE_TIER_COMMUNITY,
+                )
+            )
+        return items
+
+    def _parse_post_article(
+        self,
+        html: str,
+        url: str,
+        stock_by_code: dict[str, StockItem],
+        relation_map: dict[str, set[str]],
+        cutoff: datetime | None = None,
+    ) -> RawNewsItem | None:
+        data = _load_embedded_object(html, "post_article")
+        if isinstance(data, dict) and data:
+            guba = data.get("post_guba") if isinstance(data.get("post_guba"), dict) else {}
+            stock_code = _normalize_code(str(guba.get("stockbar_code") or _code_from_guba_url(url)))
+            title = str(data.get("post_title") or "").strip()
+            summary = str(data.get("post_abstract") or "").strip()
+            if not summary:
+                summary = _strip_html(str(data.get("post_content") or ""))
+            published_at = _parse_news_time(
+                str(data.get("post_publish_time") or data.get("post_display_time") or "")
+            )
+        else:
+            stock_code = _normalize_code(_code_from_guba_url(url))
+            title = _first_class_text(html, "newstitle")
+            summary = title
+            published_at = _parse_news_time(_first_class_text(html, "time"))
+
+        if not title:
+            return None
+        if cutoff is not None and _parse_dt(published_at) < cutoff:
+            return None
+
+        stock = stock_by_code.get(stock_code)
+        industries = (stock.industry,) if stock is not None else ()
+        return RawNewsItem(
+            title=title,
+            summary=summary or title,
+            source=self.source,
+            url=url,
+            published_at=published_at,
+            stock_codes=(stock_code,),
+            industries=industries,
+            relation_types=tuple(sorted(relation_map.get(stock_code, set()))),
+            sentiment=_infer_sentiment(f"{title} {summary}"),
+            source_tier=SOURCE_TIER_COMMUNITY,
+        )
+
+    @staticmethod
+    def _list_url(stock: StockItem) -> str:
+        return f"https://guba.eastmoney.com/list,{_code_digits(stock.code)}.html"
+
+    @staticmethod
+    def _post_url(stock_code: str, post_id: str) -> str:
+        if not post_id:
+            return f"https://guba.eastmoney.com/list,{_code_digits(stock_code)}.html"
+        return f"https://guba.eastmoney.com/news,{_code_digits(stock_code)},{post_id}.html"
+
+
+class _XueqiuCommunityAdapter:
+    source = "雪球"
+
+    def fetch(
+        self,
+        stocks: Sequence[StockItem],
+        relations: Sequence[StockRelation],
+        days: int,
+    ) -> tuple[List[RawNewsItem], List[str]]:
+        cookie = os.getenv("GP_XUEQIU_COOKIE", "").strip()
+        if not cookie:
+            return [], ["雪球社区适配器已预留；需要配置 GP_XUEQIU_COOKIE 后再启用抓取。"]
+        return [], ["雪球社区适配器已读取配置，但第一阶段暂未启用抓取，避免在无稳定授权接口时混入不可靠数据。"]
 
 
 class _AkshareStockNewsAdapter:
@@ -267,6 +461,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS news_items (
             id TEXT PRIMARY KEY,
             source TEXT NOT NULL,
+            source_tier TEXT NOT NULL DEFAULT 'news',
             title TEXT NOT NULL,
             summary TEXT NOT NULL,
             url TEXT,
@@ -289,6 +484,9 @@ def _init_db(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_news_published ON news_items(published_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_news_entities ON news_entities(entity_type, entity_value)")
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(news_items)").fetchall()}
+    if "source_tier" not in columns:
+        conn.execute("ALTER TABLE news_items ADD COLUMN source_tier TEXT NOT NULL DEFAULT 'news'")
 
 
 def _store_news(conn: sqlite3.Connection, items: Iterable[RawNewsItem]) -> None:
@@ -298,10 +496,20 @@ def _store_news(conn: sqlite3.Connection, items: Iterable[RawNewsItem]) -> None:
         conn.execute(
             """
             INSERT OR REPLACE INTO news_items
-            (id, source, title, summary, url, published_at, fetched_at, sentiment)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (id, source, source_tier, title, summary, url, published_at, fetched_at, sentiment)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (news_id, item.source, item.title, item.summary, item.url, item.published_at, fetched_at, item.sentiment),
+            (
+                news_id,
+                item.source,
+                item.source_tier or SOURCE_TIER_NEWS,
+                item.title,
+                item.summary,
+                item.url,
+                item.published_at,
+                fetched_at,
+                item.sentiment,
+            ),
         )
         conn.execute("DELETE FROM news_entities WHERE news_id = ?", (news_id,))
         for code in item.stock_codes:
@@ -364,6 +572,7 @@ def _row_to_evidence(conn: sqlite3.Connection, row: sqlite3.Row) -> NewsEvidence
     return NewsEvidence(
         title=row["title"],
         source=row["source"],
+        source_tier=row["source_tier"] or SOURCE_TIER_NEWS,
         published_at=row["published_at"],
         url=row["url"],
         stock_codes=sorted({item["entity_value"] for item in entities if item["entity_type"] == "stock"}),
@@ -418,7 +627,7 @@ def _build_findings(
                 confidence=confidence,
                 impact_chain=chain,
                 evidence=list(selected),
-                pending_checks=_pending_checks(direction),
+                pending_checks=_pending_checks(direction, selected),
             )
         )
     return findings
@@ -459,13 +668,16 @@ def _direction(evidence: Sequence[NewsEvidence]) -> str:
 def _confidence(evidence: Sequence[NewsEvidence], relations: Sequence[StockRelation]) -> str:
     if not evidence or not relations:
         return "低"
-    if len(evidence) >= 3 and max(relation.weight for relation in relations) >= 0.6:
+    verified_evidence = [item for item in evidence if item.source_tier != SOURCE_TIER_COMMUNITY]
+    if len(verified_evidence) >= 3 and max(relation.weight for relation in relations) >= 0.6:
         return "中"
     return "低"
 
 
-def _pending_checks(direction: str) -> List[str]:
+def _pending_checks(direction: str, evidence: Sequence[NewsEvidence] = ()) -> List[str]:
     checks = ["核验公告和财报是否支持该消息影响。", "结合日线趋势、成交量和估值变化复查。"]
+    if any(item.source_tier == SOURCE_TIER_COMMUNITY for item in evidence):
+        checks.append("社区讨论仅作市场情绪、风险传闻或待核查线索，需用官方披露或交易数据二次验证。")
     if direction in {"利好", "中性"}:
         checks.append("关注订单兑现、价格传导和毛利率变化。")
     if direction in {"利空", "中性"}:
@@ -491,6 +703,144 @@ def _relation_map(relations: Sequence[StockRelation]) -> dict[str, set[str]]:
         result.setdefault(relation.source_code, set()).add(relation.relation_type)
         result.setdefault(relation.target_code, set()).add(relation.relation_type)
     return result
+
+
+def _env_enabled(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int, minimum: int | None = None) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        value = default
+    if minimum is not None:
+        return max(value, minimum)
+    return value
+
+
+def _env_float(name: str, default: float, minimum: float | None = None) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except ValueError:
+        value = default
+    if minimum is not None:
+        return max(value, minimum)
+    return value
+
+
+def _configured_urls(env_name: str) -> List[str]:
+    raw = os.getenv(env_name, "")
+    return [item.strip().strip(",") for item in re.split(r"[\s;]+", raw) if item.strip().strip(",")]
+
+
+def _dedupe_raw_items(items: Sequence[RawNewsItem]) -> List[RawNewsItem]:
+    seen: set[str] = set()
+    result: List[RawNewsItem] = []
+    for item in items:
+        key = _news_key(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
+def _load_embedded_object(html: str, var_name: str) -> dict:
+    raw = _extract_embedded_object(html, var_name)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _extract_embedded_object(html: str, var_name: str) -> str:
+    marker = re.search(rf"\bvar\s+{re.escape(var_name)}\s*=", html)
+    if marker is None:
+        return ""
+    start = html.find("{", marker.end())
+    if start < 0:
+        return ""
+
+    depth = 0
+    quote = ""
+    escaped = False
+    for index in range(start, len(html)):
+        char = html[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char == "{":
+            depth += 1
+            continue
+        if char == "}":
+            depth -= 1
+            if depth == 0:
+                return html[start : index + 1]
+    return ""
+
+
+class _HtmlTextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        if data.strip():
+            self.parts.append(data.strip())
+
+    def text(self) -> str:
+        return unescape(" ".join(self.parts)).strip()
+
+
+def _strip_html(value: str) -> str:
+    parser = _HtmlTextExtractor()
+    parser.feed(value or "")
+    return parser.text()
+
+
+def _first_class_text(html: str, class_name: str) -> str:
+    match = re.search(
+        rf'<[^>]*class=["\'][^"\']*\b{re.escape(class_name)}\b[^"\']*["\'][^>]*>(.*?)</[^>]+>',
+        html,
+        flags=re.S,
+    )
+    return _strip_html(match.group(1)) if match else ""
+
+
+def _guba_list_summary(row: dict[str, object], title: str) -> str:
+    parts = [title]
+    author = str(row.get("user_nickname") or "").strip()
+    if author:
+        parts.append(f"作者：{author}")
+    comments = _optional_int(row.get("post_comment_count"))
+    clicks = _optional_int(row.get("post_click_count"))
+    if comments is not None:
+        parts.append(f"评论：{comments}")
+    if clicks is not None:
+        parts.append(f"阅读：{clicks}")
+    return "；".join(parts)
+
+
+def _optional_int(value: object) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _coalesce_row(row: dict[str, object], keys: Sequence[str]) -> str:
@@ -524,9 +874,9 @@ def _parse_dt(value: str) -> datetime:
 
 def _infer_sentiment(text: str) -> str:
     lowered = text.lower()
-    if any(word in lowered for word in ["下滑", "亏损", "风险", "承压", "下降", "减产", "调查"]):
+    if any(word in lowered for word in ["下滑", "亏损", "风险", "承压", "下降", "减产", "调查", "破发", "放弃申购", "看空", "下跌"]):
         return "negative"
-    if any(word in lowered for word in ["增长", "改善", "突破", "订单", "中标", "扩产", "景气", "利好"]):
+    if any(word in lowered for word in ["增长", "改善", "突破", "订单", "中标", "扩产", "景气", "利好", "看多", "上涨", "企稳"]):
         return "positive"
     if any(word in lowered for word in ["成本", "涨价", "波动"]):
         return "mixed"
@@ -550,6 +900,15 @@ def _normalize_code(code: str) -> str:
     if digits.startswith(("4", "8")):
         return f"{digits}.BJ"
     return f"{digits}.SZ"
+
+
+def _code_digits(code: str) -> str:
+    return "".join(char for char in (code or "") if char.isdigit())[:6]
+
+
+def _code_from_guba_url(url: str) -> str:
+    match = re.search(r"(?:news|list),(\d{6})", url or "")
+    return match.group(1) if match else ""
 
 
 def _relation_type_label(relation_type: str) -> str:

@@ -1387,7 +1387,10 @@ function renderEvidenceList(items) {
           (item) => `
             <article>
               <strong>${escapeHtml(item.title || "-")}</strong>
-              <span>${escapeHtml(item.source || "-")} · ${escapeHtml(item.published_at || "-")}</span>
+              <span class="evidence-source">
+                <span class="source-tier ${sourceTierClass(item.source_tier)}">${escapeHtml(sourceTierLabel(item.source_tier))}</span>
+                ${escapeHtml(item.source || "-")} · ${escapeHtml(item.published_at || "-")}
+              </span>
               <em>${escapeHtml((item.stock_codes || []).join(" · "))}</em>
             </article>
           `,
@@ -1406,6 +1409,15 @@ function impactClass(direction) {
   if (direction === "利空") return "negative";
   if (direction === "中性") return "neutral";
   return "uncertain";
+}
+
+function sourceTierLabel(tier) {
+  if (tier === "community") return "社区 / 待核查";
+  return "新闻 / 事实";
+}
+
+function sourceTierClass(tier) {
+  return tier === "community" ? "community" : "news";
 }
 
 function renderResultActions(scope, count) {

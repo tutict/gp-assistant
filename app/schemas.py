@@ -289,6 +289,7 @@ class NewsRagRequest(BaseModel):
 class NewsEvidence(BaseModel):
     title: str
     source: str
+    source_tier: str = "news"
     published_at: Optional[str] = None
     url: Optional[str] = None
     stock_codes: List[str] = Field(default_factory=list)
