@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("mock", "akshare", "eastmoney", "astock")]
-    [string]$Provider = "mock",
+    [ValidateSet("akshare", "eastmoney", "astock")]
+    [string]$Provider = "astock",
 
     [int]$Port = 8010,
 

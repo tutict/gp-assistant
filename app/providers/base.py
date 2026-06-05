@@ -87,12 +87,8 @@ def get_provider(
     refresh: Optional[bool] = None,
     proxy_mode: Optional[str] = None,
 ) -> StockProvider:
-    provider_name = (provider_name or os.getenv("STOCK_PROVIDER", "mock")).strip().lower()
+    provider_name = (provider_name or os.getenv("STOCK_PROVIDER", "astock")).strip().lower()
     proxy_mode = normalize_proxy_mode(proxy_mode)
-    if provider_name == "mock":
-        from app.providers.mock import MockProvider
-
-        return MockProvider()
     if provider_name == "akshare":
         from app.providers.akshare import AkShareProvider
 

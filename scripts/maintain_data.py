@@ -15,7 +15,7 @@ from app.services.data_maintenance import data_source_status, prune_cache, refre
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Maintain GP Assistant market-data cache.")
-    parser.add_argument("--source", default="eastmoney", choices=["mock", "akshare", "eastmoney", "astock"])
+    parser.add_argument("--source", default="astock", choices=["akshare", "eastmoney", "astock"])
     parser.add_argument("--refresh", action="store_true", help="Refresh the stock universe cache.")
     parser.add_argument("--prune", action="store_true", help="Prune disposable cache files.")
     parser.add_argument("--max-mb", type=int, default=200, help="Maximum cache size in MB.")

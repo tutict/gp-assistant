@@ -393,7 +393,7 @@ function initDataSource() {
 }
 
 function getSelectedDataSource() {
-  return dataSource.select?.value || "mock";
+  return dataSource.select?.value || "astock";
 }
 
 function dataSourceHeaders() {
@@ -418,8 +418,8 @@ function updateSourceStatus() {
   if (!dataSource.status) return;
   const source = getSelectedDataSource();
   const label = sourceLabel(source);
-  const suffix = dataSource.refresh?.checked && source !== "mock" ? " 刷新" : "";
-  const proxySuffix = getSelectedProxyMode() === "none" && source !== "mock" ? " 直连" : "";
+  const suffix = dataSource.refresh?.checked ? " 刷新" : "";
+  const proxySuffix = getSelectedProxyMode() === "none" ? " 直连" : "";
   dataSource.status.innerHTML = `<i aria-hidden="true"></i>${escapeHtml(label + suffix + proxySuffix)}`;
 }
 
@@ -495,9 +495,7 @@ function renderDataStatus(status) {
   dataSource.cache.textContent = formatBytes(status.cache_bytes);
   dataSource.updated.textContent = status.universe_updated_at
     ? `更新于 ${formatDateTime(status.universe_updated_at)}`
-    : status.source === "mock"
-      ? "本地演示数据"
-      : "未建立缓存";
+    : "未建立缓存";
   const policy = status.policy || {};
   dataSource.policy.textContent = `${policy.mode === "full" ? "完整" : "轻量"}模式 · 上限 ${formatBytes(status.cache_limit_bytes)}`;
   setMaintenanceNote((status.notes || []).join(" ") || "数据状态正常");
@@ -2094,7 +2092,6 @@ function actionLabel(action) {
 
 function sourceLabel(source) {
   const labels = {
-    mock: "本地演示",
     akshare: "公开行情",
     eastmoney: "东方财富",
     astock: "A股全栈",

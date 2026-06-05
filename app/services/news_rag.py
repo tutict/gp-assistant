@@ -169,17 +169,10 @@ def _fetch_news_items(
             if akshare_items:
                 notes.append("已通过 AkShare 东方财富个股新闻接口抓取并缓存消息。")
         except Exception as exc:
-            notes.append(f"AkShare 新闻抓取不可用，已保留本地演示消息适配器：{str(exc)[:120]}")
+            notes.append(f"AkShare 新闻抓取不可用，已继续使用其他消息源：{str(exc)[:120]}")
     else:
         notes.append("AkShare 新闻抓取未启用；可设置 GP_NEWS_ENABLE_AKSHARE=true 后接入真实个股新闻。")
 
-    demo_items = _DemoNewsAdapter().fetch(stocks, relations, days)
-    existing_keys = {_news_key(item) for item in items}
-    for item in demo_items:
-        if _news_key(item) not in existing_keys:
-            items.append(item)
-    if demo_items:
-        notes.append("已写入本地可复现演示消息；来源为本地演示时不代表实时新闻。")
     return items, notes
 
 
@@ -391,61 +384,6 @@ class _AkshareStockNewsAdapter:
                     )
                 )
         return items
-
-
-class _DemoNewsAdapter:
-    source = "本地演示消息"
-
-    def fetch(
-        self,
-        stocks: Sequence[StockItem],
-        relations: Sequence[StockRelation],
-        days: int,
-    ) -> List[RawNewsItem]:
-        stock_by_code = {stock.code: stock for stock in stocks}
-        now = datetime.now()
-        items: List[RawNewsItem] = []
-        for index, relation in enumerate(relations[:10]):
-            left = stock_by_code.get(relation.source_code)
-            right = stock_by_code.get(relation.target_code)
-            if left is None or right is None:
-                continue
-            published_at = (now - timedelta(days=min(index * 2 + 1, max(days - 1, 0)))).isoformat(timespec="seconds")
-            title, summary, sentiment = _demo_message(left, right, relation)
-            items.append(
-                RawNewsItem(
-                    title=title,
-                    summary=summary,
-                    source=self.source,
-                    url=f"local://news/{relation.relation_type}/{relation.source_code}/{relation.target_code}",
-                    published_at=published_at,
-                    stock_codes=(left.code, right.code),
-                    industries=tuple(sorted({left.industry, right.industry})),
-                    relation_types=(relation.relation_type,),
-                    sentiment=sentiment,
-                )
-            )
-        return items
-
-
-def _demo_message(left: StockItem, right: StockItem, relation: StockRelation) -> tuple[str, str, str]:
-    if relation.relation_type == "upstream_material":
-        return (
-            f"{left.name}相关材料需求改善，可能影响{right.name}成本与供给预期",
-            f"本地演示消息：{left.name}与{right.name}存在上游材料关系，需结合材料价格、订单和财报验证。",
-            "mixed",
-        )
-    if relation.relation_type == "manufacturing_chain":
-        return (
-            f"{left.name}与{right.name}制造链订单预期升温",
-            "本地演示消息：制造链需求改善通常利好产能利用率，但需要验证交付、毛利率和库存变化。",
-            "positive",
-        )
-    return (
-        f"{left.name}与{right.name}供应链景气度出现改善信号",
-        "本地演示消息：供应链景气改善可能带来收入弹性，同时需要核验订单兑现和价格传导。",
-        "positive",
-    )
 
 
 def _connect() -> sqlite3.Connection:

@@ -23,7 +23,7 @@ def data_source_status(source: str, policy: CachePolicy | None = None) -> DataCa
     cache_bytes = _directory_size(CACHE_DIR)
     universe_count = _universe_count(normalized_source, cache_path)
     updated_at, age_hours = _file_age(cache_path)
-    stale = normalized_source != "mock" and (cache_path is None or not cache_path.exists() or (age_hours or 0) > 24)
+    stale = cache_path is None or not cache_path.exists() or (age_hours or 0) > 24
     notes = _status_notes(normalized_source, cache_path, universe_count, stale)
 
     return DataCacheStatus(
@@ -116,13 +116,12 @@ def prune_cache(source: str, policy: CachePolicy | None = None) -> CachePruneRes
 
 
 def _normalize_source(source: str | None) -> str:
-    value = (source or os.getenv("STOCK_PROVIDER", "mock")).strip().lower()
-    return value if value in {"mock", "akshare", "eastmoney", "astock"} else "mock"
+    value = (source or os.getenv("STOCK_PROVIDER", "astock")).strip().lower()
+    allowed = {"akshare", "eastmoney", "astock"}
+    return value if value in allowed else "astock"
 
 
 def _universe_count(source: str, cache_path: Path | None) -> int:
-    if source == "mock":
-        return len(get_provider("mock").list_stocks())
     if cache_path is None or not cache_path.exists():
         return 0
     try:
@@ -141,8 +140,6 @@ def _file_age(path: Path | None) -> tuple[str | None, float | None]:
 
 
 def _status_notes(source: str, cache_path: Path | None, universe_count: int, stale: bool) -> list[str]:
-    if source == "mock":
-        return ["本地演示数据为确定性样本，不使用磁盘缓存。"]
     if source == "astock":
         notes = ["A股全栈数据源使用腾讯实时估值、通达信行情补充、百度日 K 线，并复用本地股票池缓存。"]
         if cache_path is None or not cache_path.exists():

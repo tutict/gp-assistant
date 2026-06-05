@@ -130,11 +130,6 @@ def list_data_sources(provider=Depends(_provider_from_headers)):
         "current": getattr(provider, "name", provider.__class__.__name__),
         "available": [
             {
-                "id": "mock",
-                "name": "本地演示",
-                "description": "本地确定性演示数据。",
-            },
-            {
                 "id": "akshare",
                 "name": "AkShare 数据",
                 "description": "通过 AkShare 获取 A 股公开行情数据。",

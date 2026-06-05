@@ -71,7 +71,6 @@ def observe_stock(provider: StockProvider, request: StockObserveRequest) -> Stoc
 
 def _provider_display_name(source: str) -> str:
     labels = {
-        "mock": "\u672c\u5730\u6f14\u793a",
         "akshare": "\u516c\u5f00\u884c\u60c5",
         "eastmoney": "\u4e1c\u65b9\u8d22\u5bcc",
         "astock": "A\u80a1\u5168\u6808",

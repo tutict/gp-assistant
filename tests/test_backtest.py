@@ -1,6 +1,6 @@
 import unittest
 
-from app.providers.mock import MockProvider
+from mock_provider import MockProvider
 from app.schemas import BacktestRequest, ScreenCriteria
 from app.services.backtest import backtest_hold
 from app.services.agent import run_agent

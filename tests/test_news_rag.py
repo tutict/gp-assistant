@@ -6,16 +6,51 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
-from app.providers.mock import MockProvider
+from mock_provider import MockProvider
 from app.schemas import NewsRagRequest, StockItem
 from app.services import news_rag
 from app.services.agent import run_agent
 
 
+DISABLE_NETWORK_NEWS = {
+    "GP_NEWS_ENABLE_GUBA": "false",
+    "GP_NEWS_ENABLE_AKSHARE": "false",
+    "GP_NEWS_ENABLE_XUEQIU": "false",
+}
+
+
+def seed_news_cache() -> None:
+    conn = news_rag._connect()
+    try:
+        news_rag._init_db(conn)
+        news_rag._store_news(
+            conn,
+            [
+                news_rag.RawNewsItem(
+                    title="宁德时代供应链订单预期改善",
+                    summary="公开消息显示动力电池供应链订单预期改善，需结合交付和毛利率继续验证。",
+                    source="测试新闻源",
+                    url="local://test-news/300750/002594",
+                    published_at=datetime.now().isoformat(timespec="seconds"),
+                    stock_codes=("300750.SZ", "002594.SZ"),
+                    industries=("动力电池", "汽车"),
+                    relation_types=("supply_chain",),
+                    sentiment="positive",
+                )
+            ],
+        )
+    finally:
+        conn.close()
+
+
 class NewsRagTests(unittest.TestCase):
     def test_supply_chain_news_uses_existing_relations_and_cache(self):
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"GP_NEWS_ENABLE_GUBA": "false"}):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            DISABLE_NETWORK_NEWS,
+        ):
             news_rag.CACHE_PATH = Path(tmp) / "news.sqlite"
+            seed_news_cache()
             result = news_rag.analyze_supply_chain_news(
                 MockProvider(),
                 NewsRagRequest(code="300750.SZ", seed_codes=["300750.SZ"], days=30, max_items=10),
@@ -29,8 +64,12 @@ class NewsRagTests(unittest.TestCase):
         self.assertTrue(any("已有股票关系图" in note for note in result.notes))
 
     def test_agent_routes_upstream_news_to_news_rag(self):
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"GP_NEWS_ENABLE_GUBA": "false"}):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            DISABLE_NETWORK_NEWS,
+        ):
             news_rag.CACHE_PATH = Path(tmp) / "news.sqlite"
+            seed_news_cache()
             result = run_agent(MockProvider(), "分析 300750 上下游利好消息")
 
         self.assertEqual(result.action, "news_rag")
