@@ -54,6 +54,15 @@ const mobileNav = {
   links: document.querySelectorAll("[data-mobile-nav-link]"),
   bottomLinks: document.querySelectorAll("[data-bottom-nav-link]"),
 };
+const workbench = {
+  root: $(".workbench"),
+  navLinks: document.querySelectorAll("[data-workbench-nav]"),
+  viewLinks: document.querySelectorAll("[data-view-link]"),
+  criteriaOpen: $("#openCriteriaBtn"),
+  criteriaClose: $("#closeCriteriaBtn"),
+  criteriaOverlay: $("#criteriaOverlay"),
+  criteriaSummary: $("#criteriaSummary"),
+};
 const llmSettings = {
   apiKey: $("#llmApiKey"),
   baseUrl: $("#llmBaseUrl"),
@@ -115,6 +124,9 @@ function bindActions() {
   });
   llmSettings.save?.addEventListener("click", saveLlmSettings);
   llmSettings.clear?.addEventListener("click", clearLlmSettings);
+  workbench.criteriaOpen?.addEventListener("click", () => setCriteriaPanelOpen(true));
+  workbench.criteriaClose?.addEventListener("click", () => setCriteriaPanelOpen(false));
+  workbench.criteriaOverlay?.addEventListener("click", () => setCriteriaPanelOpen(false));
   [
     llmSettings.apiKey,
     llmSettings.baseUrl,
@@ -131,24 +143,22 @@ function initMobileNav() {
   mobileNav.toggle.addEventListener("click", () => setMobileNavOpen(true));
   mobileNav.close?.addEventListener("click", () => setMobileNavOpen(false));
   mobileNav.overlay.addEventListener("click", () => setMobileNavOpen(false));
-  mobileNav.links.forEach((link) => {
-    link.addEventListener("click", () => {
-      setActiveNavLink(link.getAttribute("href"));
+  workbench.viewLinks.forEach((link) => {
+    link.addEventListener("click", (event) => {
+      const href = link.getAttribute("href") || "#sectionScreen";
+      event.preventDefault();
+      activateWorkbenchView(viewFromHref(href), { href, updateHash: true });
       setMobileNavOpen(false);
     });
   });
-  mobileNav.bottomLinks.forEach((link) => {
-    link.addEventListener("click", () => setActiveNavLink(link.getAttribute("href")));
-  });
-  window.addEventListener("hashchange", syncActiveNavFromHash);
+  window.addEventListener("hashchange", () => activateWorkbenchView(viewFromHref(window.location.hash), { updateHash: false }));
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") setMobileNavOpen(false);
+    if (event.key === "Escape") {
+      setMobileNavOpen(false);
+      setCriteriaPanelOpen(false);
+    }
   });
-  trackMobileNavSections();
-  syncActiveNavFromHash();
-  window.requestAnimationFrame(syncActiveNavFromHash);
-  window.setTimeout(syncActiveNavFromHash, 450);
-  window.setTimeout(syncActiveNavFromHash, 1200);
+  activateWorkbenchView(viewFromHref(window.location.hash), { updateHash: false });
 }
 
 function setMobileNavOpen(isOpen) {
@@ -157,48 +167,54 @@ function setMobileNavOpen(isOpen) {
   mobileNav.panel?.setAttribute("aria-hidden", String(!isOpen));
 }
 
-function trackMobileNavSections() {
-  if (!("IntersectionObserver" in window)) return;
-  const links = [...mobileNav.links];
-  const sections = links
-    .map((link) => document.querySelector(link.getAttribute("href")))
-    .filter(Boolean);
-  const observer = new IntersectionObserver(
-    (entries) => {
-      if (isSectionVisible(window.location.hash)) {
-        setActiveNavLink(window.location.hash);
-        return;
-      }
-      const visible = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
-      if (!visible) return;
-      const activeHref = `#${visible.target.id}`;
-      setActiveNavLink(activeHref);
-    },
-    { rootMargin: "-24% 0px -58% 0px", threshold: [0.08, 0.2, 0.45] },
-  );
-  sections.forEach((section) => observer.observe(section));
+function activateWorkbenchView(view = "screen", options = {}) {
+  const normalized = ["screen", "observe", "backtest", "news", "agent"].includes(view) ? view : "screen";
+  const href = options.href || hrefForView(normalized);
+  workbench.root?.setAttribute("data-active-view", normalized);
+  document.body.dataset.activeView = normalized;
+  setActiveNavLink(normalized);
+  if (options.updateHash && window.location.hash !== href) {
+    history.replaceState(null, "", href);
+  }
+  setCriteriaPanelOpen(false);
+  workbench.root?.scrollIntoView({ block: "start" });
 }
 
-function isSectionVisible(href) {
-  if (!href) return false;
-  const section = document.querySelector(href);
-  if (!section) return false;
-  const rect = section.getBoundingClientRect();
-  return rect.top < window.innerHeight * 0.86 && rect.bottom > window.innerHeight * 0.12;
+function viewFromHref(href) {
+  const map = {
+    "#sectionScreen": "screen",
+    "#sectionGraph": "screen",
+    "#sectionTrend": "screen",
+    "#sectionObserve": "observe",
+    "#sectionBacktest": "backtest",
+    "#sectionNewsRag": "news",
+    "#sectionAgent": "agent",
+  };
+  return map[href] || "screen";
 }
 
-function syncActiveNavFromHash() {
-  setActiveNavLink(window.location.hash || "#sectionScreen");
+function hrefForView(view) {
+  const map = {
+    screen: "#sectionScreen",
+    observe: "#sectionObserve",
+    backtest: "#sectionBacktest",
+    news: "#sectionNewsRag",
+    agent: "#sectionAgent",
+  };
+  return map[view] || "#sectionScreen";
 }
 
-function setActiveNavLink(activeHref) {
-  if (!activeHref) return;
-  const hashHref = window.location.hash;
-  const bottomHref = isSectionVisible(hashHref) ? hashHref : activeHref;
-  mobileNav.links.forEach((link) => link.classList.toggle("active", link.getAttribute("href") === activeHref));
-  mobileNav.bottomLinks.forEach((link) => link.classList.toggle("active", link.getAttribute("href") === bottomHref));
+function setActiveNavLink(activeView) {
+  workbench.viewLinks.forEach((link) => {
+    link.classList.toggle("active", (link.dataset.viewLink || "") === activeView);
+  });
+}
+
+function setCriteriaPanelOpen(isOpen) {
+  document.body.classList.toggle("criteria-open", Boolean(isOpen));
+  if (workbench.criteriaOverlay) {
+    workbench.criteriaOverlay.hidden = !isOpen;
+  }
 }
 
 async function runTask(button, panel, task) {
@@ -210,7 +226,7 @@ async function runTask(button, panel, task) {
   } finally {
     button.disabled = false;
     button.textContent = original;
-    window.setTimeout(syncActiveNavFromHash, 0);
+    updateCriteriaSummary();
   }
 }
 
@@ -294,7 +310,7 @@ async function runBacktest() {
 }
 
 async function runBacktestFromScreen() {
-  document.querySelector("#sectionBacktest")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  activateWorkbenchView("backtest", { href: "#sectionBacktest", updateHash: true });
   await runTask(buttons.backtest, panels.backtest, runBacktest);
 }
 
@@ -343,7 +359,7 @@ async function runObserve(codeOverride) {
     return;
   }
   $("#observeCode").value = code;
-  document.querySelector("#sectionObserve")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  activateWorkbenchView("observe", { href: "#sectionObserve", updateHash: true });
   setLoading(panels.observe, "观察行情和技术面");
   const params = new URLSearchParams({
     minute_period: $("#observeMinutePeriod").value || "1",
@@ -659,7 +675,7 @@ function initIndustryOptions() {
     option.setAttribute("aria-pressed", option.classList.contains("active") ? "true" : "false");
     option.addEventListener("click", () => {
       setIndustry(option.dataset.industryOption || "");
-      updateBacktestScope();
+      updateResearchSummaries();
     });
   });
   setIndustry(industryInput.value);
@@ -677,7 +693,7 @@ function initRebalanceOptions() {
       option.classList.toggle("active", isActive);
       option.setAttribute("aria-pressed", String(isActive));
     });
-    updateBacktestScope();
+    updateResearchSummaries();
   };
 
   options.forEach((option) => {
@@ -706,10 +722,10 @@ function initCriteriaSummary() {
     "sortDir",
   ].forEach((id) => {
     const input = $(`#${id}`);
-    input?.addEventListener("input", updateBacktestScope);
-    input?.addEventListener("change", updateBacktestScope);
+    input?.addEventListener("input", updateResearchSummaries);
+    input?.addEventListener("change", updateResearchSummaries);
   });
-  updateBacktestScope();
+  updateResearchSummaries();
 }
 
 function initMarketConfirmers() {
@@ -814,6 +830,24 @@ function updateBacktestScope() {
     benchmarkLabel($("#btBenchmark")?.value || "candidate_equal_weight"),
   ];
   node.textContent = parts.join(" · ");
+}
+
+function updateResearchSummaries() {
+  updateBacktestScope();
+  updateCriteriaSummary();
+}
+
+function updateCriteriaSummary() {
+  if (!workbench.criteriaSummary) return;
+  const parts = [
+    $("#industry")?.value ? `行业 ${$("#industry").value}` : "全部行业",
+    $("#minRoe")?.value ? `ROE ≥ ${formatPercent(Number($("#minRoe").value))}` : "",
+    $("#maxPe")?.value ? `PE ≤ ${formatNumber($("#maxPe").value)}` : "",
+    $("#minMcap")?.value ? `市值 ≥ ${formatNumber($("#minMcap").value)} 亿` : "",
+    `返回 ${clampInt($("#resultLimit")?.value, 1, 200, DEFAULT_RESULT_LIMIT)} 只`,
+    rebalanceLabel($("#btRebalance")?.value || "monthly"),
+  ].filter(Boolean);
+  workbench.criteriaSummary.textContent = parts.join(" · ");
 }
 
 function rebalanceLabel(value) {

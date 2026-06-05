@@ -35,14 +35,11 @@
         <strong>快速导航</strong>
         <button id="mobileNavClose" type="button" aria-label="关闭导航">&times;</button>
       </div>
-      <a href="#sectionFilters" data-mobile-nav-link><span>01</span>研究条件</a>
-      <a href="#sectionScreen" data-mobile-nav-link><span>02</span>筛选候选</a>
-      <a href="#sectionObserve" data-mobile-nav-link><span>03</span>股票观察</a>
-      <a href="#sectionBacktest" data-mobile-nav-link><span>04</span>回测验证</a>
-      <a href="#sectionGraph" data-mobile-nav-link><span>05</span>图谱增强</a>
-      <a href="#sectionNewsRag" data-mobile-nav-link><span>06</span>上下游消息</a>
-      <a href="#sectionTrend" data-mobile-nav-link><span>07</span>趋势择时</a>
-      <a href="#sectionAgent" data-mobile-nav-link><span>08</span>智能助手</a>
+      <a href="#sectionScreen" data-mobile-nav-link data-view-link="screen"><span>01</span>筛选</a>
+      <a href="#sectionObserve" data-mobile-nav-link data-view-link="observe"><span>02</span>观察</a>
+      <a href="#sectionBacktest" data-mobile-nav-link data-view-link="backtest"><span>03</span>回测</a>
+      <a href="#sectionNewsRag" data-mobile-nav-link data-view-link="news"><span>04</span>消息</a>
+      <a href="#sectionAgent" data-mobile-nav-link data-view-link="agent"><span>05</span>助手</a>
     </nav>
     <main class="app-shell">
       <header class="app-header">
@@ -86,7 +83,44 @@
       </header>
 
       <section class="workspace">
+        <aside class="workspace-nav" aria-label="主功能导航">
+          <nav class="terminal-nav">
+            <a href="#sectionScreen" class="active" data-workbench-nav data-view-link="screen">
+              <span>01</span>
+              <strong>筛选</strong>
+              <em>基础 · 图谱 · 趋势</em>
+            </a>
+            <a href="#sectionObserve" data-workbench-nav data-view-link="observe">
+              <span>02</span>
+              <strong>观察</strong>
+              <em>盘口 · 日线 · 指标</em>
+            </a>
+            <a href="#sectionBacktest" data-workbench-nav data-view-link="backtest">
+              <span>03</span>
+              <strong>回测</strong>
+              <em>成本 · 基准 · 调仓</em>
+            </a>
+            <a href="#sectionNewsRag" data-workbench-nav data-view-link="news">
+              <span>04</span>
+              <strong>消息</strong>
+              <em>上下游 · 证据</em>
+            </a>
+            <a href="#sectionAgent" data-workbench-nav data-view-link="agent">
+              <span>05</span>
+              <strong>助手</strong>
+              <em>自然语言指令</em>
+            </a>
+          </nav>
+        </aside>
+        <div id="criteriaOverlay" class="criteria-overlay" hidden></div>
         <aside id="sectionFilters" class="control-rail" aria-label="当前研究条件">
+          <div class="criteria-panel-heading">
+            <div>
+              <p>研究上下文</p>
+              <h2>全局条件</h2>
+            </div>
+            <button id="closeCriteriaBtn" class="ghost-action" type="button">关闭</button>
+          </div>
           <section class="market-strip" aria-label="研究流程">
             <a href="#sectionScreen">
               <span>01</span>
@@ -267,8 +301,15 @@
           </details>
         </aside>
 
-        <section class="workbench">
-          <section id="sectionAgent" class="agent-console">
+        <section class="workbench" data-active-view="screen">
+          <div class="research-context-bar">
+            <div>
+              <span>当前研究条件</span>
+              <strong id="criteriaSummary">全部行业 · 返回 10 · 月度再平衡</strong>
+            </div>
+            <button id="openCriteriaBtn" type="button">修改条件</button>
+          </div>
+          <section id="sectionAgent" class="agent-console workbench-view" data-view="agent">
             <div class="module-heading">
               <div>
                 <p>指令</p>
@@ -331,7 +372,7 @@
             </div>
           </section>
 
-          <section id="sectionObserve" class="module observe-module">
+          <section id="sectionObserve" class="module observe-module workbench-view detail-view" data-view="observe">
             <div class="module-heading">
               <div>
                 <p>观察</p>
@@ -374,7 +415,7 @@
           </section>
 
           <section class="tool-grid" aria-label="分析工具">
-            <article id="sectionScreen" class="module">
+            <article id="sectionScreen" class="module workbench-view primary-view" data-view="screen">
               <div class="module-heading">
                 <div>
                   <p>筛选</p>
@@ -387,7 +428,7 @@
               </div>
             </article>
 
-            <article id="sectionGraph" class="module">
+            <article id="sectionGraph" class="module workbench-view secondary-view" data-view="screen">
               <div class="module-heading">
                 <div>
                   <p>图谱</p>
@@ -414,7 +455,7 @@
               </div>
             </article>
 
-            <article id="sectionNewsRag" class="module">
+            <article id="sectionNewsRag" class="module workbench-view primary-view" data-view="news">
               <div class="module-heading">
                 <div>
                   <p>消息</p>
@@ -446,7 +487,7 @@
               </div>
             </article>
 
-            <article id="sectionTrend" class="module wide">
+            <article id="sectionTrend" class="module wide workbench-view secondary-view" data-view="screen">
               <div class="module-heading">
                 <div>
                   <p>趋势</p>
@@ -481,7 +522,7 @@
               </div>
             </article>
 
-            <article id="sectionBacktest" class="module wide">
+            <article id="sectionBacktest" class="module wide workbench-view primary-view" data-view="backtest">
               <div class="module-heading">
                 <div>
                   <p>回测</p>
@@ -502,11 +543,11 @@
       </section>
     </main>
     <nav class="bottom-tabbar" aria-label="底部导航">
-      <a href="#sectionFilters" data-bottom-nav-link><span>01</span><strong>条件</strong></a>
-      <a href="#sectionScreen" class="active" data-bottom-nav-link><span>02</span><strong>筛选</strong></a>
-      <a href="#sectionBacktest" data-bottom-nav-link><span>03</span><strong>回测</strong></a>
-      <a href="#sectionObserve" data-bottom-nav-link><span>04</span><strong>观察</strong></a>
-      <a href="#sectionAgent" data-bottom-nav-link><span>05</span><strong>助手</strong></a>
+      <a href="#sectionScreen" class="active" data-bottom-nav-link data-view-link="screen"><span>01</span><strong>筛选</strong></a>
+      <a href="#sectionObserve" data-bottom-nav-link data-view-link="observe"><span>02</span><strong>观察</strong></a>
+      <a href="#sectionBacktest" data-bottom-nav-link data-view-link="backtest"><span>03</span><strong>回测</strong></a>
+      <a href="#sectionNewsRag" data-bottom-nav-link data-view-link="news"><span>04</span><strong>消息</strong></a>
+      <a href="#sectionAgent" data-bottom-nav-link data-view-link="agent"><span>05</span><strong>助手</strong></a>
     </nav>
     <script src="/static/app.js"></script>
   </body>
