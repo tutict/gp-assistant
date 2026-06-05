@@ -35,13 +35,13 @@
         <strong>快速导航</strong>
         <button id="mobileNavClose" type="button" aria-label="关闭导航">&times;</button>
       </div>
-      <a href="#sectionFilters" data-mobile-nav-link><span>01</span>筛选条件</a>
-      <a href="#sectionAgent" data-mobile-nav-link><span>02</span>智能体指令</a>
+      <a href="#sectionFilters" data-mobile-nav-link><span>01</span>研究条件</a>
+      <a href="#sectionScreen" data-mobile-nav-link><span>02</span>筛选候选</a>
       <a href="#sectionObserve" data-mobile-nav-link><span>03</span>股票观察</a>
-      <a href="#sectionScreen" data-mobile-nav-link><span>04</span>普通选股</a>
-      <a href="#sectionGraph" data-mobile-nav-link><span>05</span>关系图</a>
-      <a href="#sectionTrend" data-mobile-nav-link><span>06</span>趋势指标</a>
-      <a href="#sectionBacktest" data-mobile-nav-link><span>07</span>持有回测</a>
+      <a href="#sectionBacktest" data-mobile-nav-link><span>04</span>回测验证</a>
+      <a href="#sectionGraph" data-mobile-nav-link><span>05</span>图谱增强</a>
+      <a href="#sectionTrend" data-mobile-nav-link><span>06</span>趋势择时</a>
+      <a href="#sectionAgent" data-mobile-nav-link><span>07</span>智能助手</a>
     </nav>
     <main class="app-shell">
       <header class="app-header">
@@ -85,27 +85,27 @@
       </header>
 
       <section class="workspace">
-        <aside id="sectionFilters" class="control-rail" aria-label="筛选条件">
-          <section class="market-strip" aria-label="核心工作台">
+        <aside id="sectionFilters" class="control-rail" aria-label="当前研究条件">
+          <section class="market-strip" aria-label="研究流程">
             <a href="#sectionScreen">
               <span>01</span>
-              <strong>基础选股</strong>
-              <em>估值 · 盈利 · 行业</em>
-            </a>
-            <a href="#sectionGraph">
-              <span>02</span>
-              <strong>图谱联动</strong>
-              <em>同业 · 供应链 · 主题</em>
-            </a>
-            <a href="#sectionTrend">
-              <span>03</span>
-              <strong>趋势择时</strong>
-              <em>SWL/SWS · 短买 · 离场</em>
+              <strong>筛选候选</strong>
+              <em>复用当前研究条件</em>
             </a>
             <a href="#sectionObserve">
+              <span>02</span>
+              <strong>观察个股</strong>
+              <em>盘口 · 日线 · 指标</em>
+            </a>
+            <a href="#sectionBacktest">
+              <span>03</span>
+              <strong>回测验证</strong>
+              <em>等权持有 · 可信度</em>
+            </a>
+            <a href="#sectionGraph">
               <span>04</span>
-              <strong>行情观察</strong>
-              <em>日线 · 分钟线 · 盘口</em>
+              <strong>增强分析</strong>
+              <em>图谱 · 趋势 · 助手</em>
             </a>
           </section>
 
@@ -124,13 +124,25 @@
               <button id="refreshUniverseBtn" type="button">刷新股票池</button>
               <button id="pruneCacheBtn" class="ghost-action" type="button">清理缓存</button>
             </div>
+            <div id="refreshProgress" class="refresh-progress" hidden aria-live="polite">
+              <div>
+                <span id="refreshProgressLabel">准备刷新</span>
+                <strong id="refreshProgressValue">0%</strong>
+              </div>
+              <div class="progress-track" aria-hidden="true">
+                <span id="refreshProgressBar"></span>
+              </div>
+            </div>
             <p id="maintenanceNote">数据维护任务会优先保留基础股票池，只清理可丢弃的行情缓存。</p>
           </section>
 
-          <div class="rail-section">
+          <div class="rail-section research-criteria">
             <div class="section-title">
-              <p>股票池</p>
-              <h2>筛选条件</h2>
+              <div>
+                <p>当前研究条件</p>
+                <h2>基础条件</h2>
+              </div>
+              <span class="section-chip">全局复用</span>
             </div>
             <div class="field industry-field">
               <span>行业</span>
@@ -162,58 +174,74 @@
                 <input id="maxPe" type="number" step="0.1" placeholder="25" />
               </label>
               <label class="field">
-                <span>最高市净率</span>
-                <input id="maxPb" type="number" step="0.1" placeholder="3" />
+                <span>返回数量</span>
+                <input id="resultLimit" type="number" min="1" max="200" value="10" />
               </label>
-            </div>
-          </div>
-
-          <div class="rail-section">
-            <div class="section-title">
-              <p>排序</p>
-              <h2>排序</h2>
             </div>
             <div class="field-pair">
               <label class="field">
-                <span>排序字段</span>
-                <select id="sortBy">
-                  <option value="score">综合分</option>
-                  <option value="pe">市盈率</option>
-                  <option value="pb">市净率</option>
-                  <option value="price">价格</option>
-                </select>
+                <span>开始日期</span>
+                <input id="btStart" type="date" />
               </label>
               <label class="field">
-                <span>方向</span>
-                <select id="sortDir">
-                  <option value="desc">降序</option>
-                  <option value="asc">升序</option>
-                </select>
+                <span>结束日期</span>
+                <input id="btEnd" type="date" />
               </label>
             </div>
             <label class="field">
-              <span>返回数量</span>
-              <input id="resultLimit" type="number" min="1" max="200" value="10" />
-            </label>
-            <label class="check-field">
-              <input id="sectorMode" type="checkbox" />
-              <span>按板块分组选股</span>
-            </label>
-            <div class="field-pair">
-              <label class="field">
-                <span>最多板块</span>
-                <input id="maxSectors" type="number" min="1" max="50" value="8" />
-              </label>
-              <label class="field">
-                <span>每板块数量</span>
-                <input id="perSectorLimit" type="number" min="1" max="50" value="3" />
-              </label>
-            </div>
-            <label class="check-field">
-              <input id="includeSt" type="checkbox" />
-              <span>包含 ST 股票</span>
+              <span>回测持仓数量</span>
+              <input id="btTopN" type="number" value="10" min="1" max="100" />
             </label>
           </div>
+
+          <details class="rail-section advanced-section">
+            <summary>
+              <span>高级条件</span>
+              <strong>排序、分组、风险开关</strong>
+            </summary>
+            <div class="advanced-content">
+              <label class="field">
+                <span>最高市净率</span>
+                <input id="maxPb" type="number" step="0.1" placeholder="3" />
+              </label>
+              <div class="field-pair">
+                <label class="field">
+                  <span>排序字段</span>
+                  <select id="sortBy">
+                    <option value="score">综合分</option>
+                    <option value="pe">市盈率</option>
+                    <option value="pb">市净率</option>
+                    <option value="price">价格</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>方向</span>
+                  <select id="sortDir">
+                    <option value="desc">降序</option>
+                    <option value="asc">升序</option>
+                  </select>
+                </label>
+              </div>
+              <label class="check-field">
+                <input id="sectorMode" type="checkbox" />
+                <span>按板块分组选股</span>
+              </label>
+              <div class="field-pair">
+                <label class="field">
+                  <span>最多板块</span>
+                  <input id="maxSectors" type="number" min="1" max="50" value="8" />
+                </label>
+                <label class="field">
+                  <span>每板块数量</span>
+                  <input id="perSectorLimit" type="number" min="1" max="50" value="3" />
+                </label>
+              </div>
+              <label class="check-field">
+                <input id="includeSt" type="checkbox" />
+                <span>包含 ST 股票</span>
+              </label>
+            </div>
+          </details>
         </aside>
 
         <section class="workbench">
@@ -406,19 +434,9 @@
                 </div>
                 <button id="backtestBtn" type="button">运行回测</button>
               </div>
-              <div class="backtest-controls">
-                <label class="field">
-                  <span>开始日期</span>
-                  <input id="btStart" type="date" />
-                </label>
-                <label class="field">
-                  <span>结束日期</span>
-                  <input id="btEnd" type="date" />
-                </label>
-                <label class="field">
-                  <span>持仓数量</span>
-                  <input id="btTopN" type="number" value="10" min="1" max="100" />
-                </label>
+              <div class="backtest-context">
+                <span>使用当前研究条件</span>
+                <strong id="backtestScope">等权买入并持有</strong>
               </div>
               <div id="backtestResult" class="result-panel medium empty">
                 <div class="empty-state">等待回测</div>
@@ -429,11 +447,11 @@
       </section>
     </main>
     <nav class="bottom-tabbar" aria-label="底部导航">
-      <a href="#sectionAgent"><span>⌘</span><strong>首页</strong></a>
-      <a href="#sectionScreen"><span>▧</span><strong>行情</strong></a>
-      <a href="#sectionScreen" class="active"><span>●</span><strong>自选</strong></a>
+      <a href="#sectionFilters"><span>⌘</span><strong>条件</strong></a>
+      <a href="#sectionScreen" class="active"><span>▧</span><strong>筛选</strong></a>
+      <a href="#sectionBacktest"><span>●</span><strong>回测</strong></a>
       <a href="#sectionObserve"><span>¥</span><strong>观察</strong></a>
-      <a href="#sectionTrend"><span>☰</span><strong>分析</strong></a>
+      <a href="#sectionAgent"><span>☰</span><strong>助手</strong></a>
     </nav>
     <script src="/static/app.js"></script>
   </body>

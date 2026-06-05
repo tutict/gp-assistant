@@ -261,6 +261,7 @@ class BacktestResult(BaseModel):
     metrics: BacktestMetrics
     equity_curve: List[EquityPoint]
     symbols: List[str]
+    notes: List[str] = Field(default_factory=list)
 
 
 class CachePolicy(BaseModel):

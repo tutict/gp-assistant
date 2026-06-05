@@ -14,9 +14,11 @@ def backtest_hold(provider: StockProvider, request: BacktestRequest) -> Backtest
     symbols = [item.stock.code for item in selected]
 
     curves: List[pd.Series] = []
+    missing_symbols: List[str] = []
     for item in selected:
         history = provider.get_history(item.stock.code, request.start_date, request.end_date)
         if history is None or history.empty:
+            missing_symbols.append(item.stock.code)
             continue
         series = _normalize_series(history)
         curves.append(series)
@@ -31,6 +33,15 @@ def backtest_hold(provider: StockProvider, request: BacktestRequest) -> Backtest
             ),
             equity_curve=[],
             symbols=symbols,
+            notes=_quality_notes(
+                selected_count=len(selected),
+                used_count=0,
+                requested_top_n=request.top_n,
+                missing_symbols=missing_symbols,
+                start_date=request.start_date,
+                end_date=request.end_date,
+                curve_points=0,
+            ),
         )
 
     df = pd.concat(curves, axis=1).dropna(how="all")
@@ -49,6 +60,15 @@ def backtest_hold(provider: StockProvider, request: BacktestRequest) -> Backtest
         ),
         equity_curve=equity_curve,
         symbols=symbols,
+        notes=_quality_notes(
+            selected_count=len(selected),
+            used_count=len(curves),
+            requested_top_n=request.top_n,
+            missing_symbols=missing_symbols,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            curve_points=len(equity_curve),
+        ),
     )
 
 
@@ -73,3 +93,40 @@ def _metrics(equity: Any) -> Tuple[float, float, float]:
     rolling_max = equity.cummax()
     drawdown = (equity / rolling_max - 1).min()
     return total_return, annualized, float(drawdown)
+
+
+def _quality_notes(
+    *,
+    selected_count: int,
+    used_count: int,
+    requested_top_n: int,
+    missing_symbols: List[str],
+    start_date: str,
+    end_date: str,
+    curve_points: int,
+) -> List[str]:
+    notes: List[str] = [
+        "当前回测为筛选候选等权买入并持有到结束日期，未计入交易成本、定期再平衡和基准对比。"
+    ]
+    if selected_count == 0:
+        notes.append("当前研究条件没有筛出候选股票，回测结果不可用于判断策略表现。")
+    elif selected_count < requested_top_n:
+        notes.append(f"候选股票只有 {selected_count} 只，少于请求持仓数 {requested_top_n}。")
+    if used_count == 0:
+        notes.append("没有股票取得可用历史行情，净值曲线为空。")
+    elif used_count < selected_count:
+        notes.append(f"实际使用 {used_count}/{selected_count} 只股票生成净值曲线。")
+    if missing_symbols:
+        sample = ", ".join(missing_symbols[:5])
+        suffix = " 等" if len(missing_symbols) > 5 else ""
+        notes.append(f"以下股票缺少历史行情：{sample}{suffix}。")
+    if curve_points and curve_points < 30:
+        notes.append(f"净值曲线只有 {curve_points} 个交易日点，样本偏短。")
+    notes.append(f"验证区间：{_format_compact_date(start_date)} 至 {_format_compact_date(end_date)}。")
+    return notes
+
+
+def _format_compact_date(value: str) -> str:
+    if len(value) == 8 and value.isdigit():
+        return f"{value[:4]}-{value[4:6]}-{value[6:]}"
+    return value

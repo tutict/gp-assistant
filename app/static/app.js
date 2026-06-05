@@ -39,6 +39,10 @@ const dataSource = {
   note: $("#maintenanceNote"),
   refreshUniverse: $("#refreshUniverseBtn"),
   pruneCache: $("#pruneCacheBtn"),
+  progress: $("#refreshProgress"),
+  progressLabel: $("#refreshProgressLabel"),
+  progressValue: $("#refreshProgressValue"),
+  progressBar: $("#refreshProgressBar"),
 };
 const mobileNav = {
   toggle: $("#mobileNavToggle"),
@@ -97,6 +101,13 @@ function bindActions() {
     if (!action) return;
     event.preventDefault();
     runObserve(action.dataset.observeCode);
+  });
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+    const action = target?.closest("[data-run-backtest]");
+    if (!action) return;
+    event.preventDefault();
+    runBacktestFromScreen();
   });
   llmSettings.save?.addEventListener("click", saveLlmSettings);
   llmSettings.clear?.addEventListener("click", clearLlmSettings);
@@ -228,6 +239,7 @@ async function runTrendScreen() {
 
 async function runBacktest() {
   setLoading(panels.backtest, "回测中");
+  updateBacktestScope();
   const payload = {
     criteria: buildCriteria({ limit: 100 }),
     start_date: readDateParam("btStart", "20200101"),
@@ -236,6 +248,11 @@ async function runBacktest() {
   };
   const data = await postJson("/api/backtest", payload, panels.backtest);
   if (data) renderBacktestResult(panels.backtest, data);
+}
+
+async function runBacktestFromScreen() {
+  document.querySelector("#sectionBacktest")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  await runTask(buttons.backtest, panels.backtest, runBacktest);
 }
 
 async function runAgent() {
@@ -343,6 +360,7 @@ async function loadDataStatus() {
 }
 
 async function refreshUniverse() {
+  const progress = startRefreshProgress();
   setMaintenanceNote("刷新股票池中，真实数据源可能需要几十秒");
   try {
     const resp = await fetch("/api/data-sources/refresh-universe", {
@@ -352,10 +370,14 @@ async function refreshUniverse() {
     });
     if (!resp.ok) throw new Error(await resp.text());
     const data = await resp.json();
+    finishRefreshProgress("股票池刷新完成");
     renderDataStatus(data.status);
     setMaintenanceNote((data.notes || []).join(" ") || "股票池刷新完成");
   } catch (err) {
+    failRefreshProgress("股票池刷新失败");
     setMaintenanceNote(`股票池刷新失败：${err.message}`);
+  } finally {
+    window.setTimeout(() => stopRefreshProgress(progress), 900);
   }
 }
 
@@ -392,6 +414,49 @@ function renderDataStatus(status) {
 
 function setMaintenanceNote(text) {
   if (dataSource.note) dataSource.note.textContent = text;
+}
+
+function startRefreshProgress() {
+  if (!dataSource.progress) return null;
+  const stages = [
+    [15, "准备数据源"],
+    [32, "获取股票池"],
+    [54, "写入本地缓存"],
+    [72, "检查缓存占用"],
+    [85, "等待数据源返回"],
+  ];
+  let index = 0;
+  dataSource.progress.hidden = false;
+  setRefreshProgress(8, "准备刷新");
+  return window.setInterval(() => {
+    const [value, label] = stages[Math.min(index, stages.length - 1)];
+    setRefreshProgress(value, label);
+    index += 1;
+  }, 900);
+}
+
+function finishRefreshProgress(label) {
+  setRefreshProgress(100, label || "刷新完成");
+}
+
+function failRefreshProgress(label) {
+  setRefreshProgress(100, label || "刷新失败");
+  dataSource.progress?.classList.add("failed");
+}
+
+function stopRefreshProgress(timer) {
+  if (timer) window.clearInterval(timer);
+  if (!dataSource.progress) return;
+  dataSource.progress.hidden = true;
+  dataSource.progress.classList.remove("failed");
+  setRefreshProgress(0, "准备刷新");
+}
+
+function setRefreshProgress(value, label) {
+  const percent = Math.min(Math.max(Number(value) || 0, 0), 100);
+  if (dataSource.progressLabel) dataSource.progressLabel.textContent = label;
+  if (dataSource.progressValue) dataSource.progressValue.textContent = `${Math.round(percent)}%`;
+  if (dataSource.progressBar) dataSource.progressBar.style.width = `${percent}%`;
 }
 
 function initLlmSettings() {
@@ -478,6 +543,7 @@ function initFormControls() {
   initIndustryOptions();
   initMarketConfirmers();
   initDateInputs();
+  initCriteriaSummary();
 }
 
 function initIndustryOptions() {
@@ -496,9 +562,34 @@ function initIndustryOptions() {
 
   options.forEach((option) => {
     option.setAttribute("aria-pressed", option.classList.contains("active") ? "true" : "false");
-    option.addEventListener("click", () => setIndustry(option.dataset.industryOption || ""));
+    option.addEventListener("click", () => {
+      setIndustry(option.dataset.industryOption || "");
+      updateBacktestScope();
+    });
   });
   setIndustry(industryInput.value);
+}
+
+function initCriteriaSummary() {
+  [
+    "minRoe",
+    "minMcap",
+    "maxPe",
+    "maxPb",
+    "resultLimit",
+    "btStart",
+    "btEnd",
+    "btTopN",
+    "includeSt",
+    "sectorMode",
+    "sortBy",
+    "sortDir",
+  ].forEach((id) => {
+    const input = $(`#${id}`);
+    input?.addEventListener("input", updateBacktestScope);
+    input?.addEventListener("change", updateBacktestScope);
+  });
+  updateBacktestScope();
 }
 
 function initMarketConfirmers() {
@@ -588,6 +679,22 @@ function buildCriteria(overrides = {}) {
   addNumber(criteria, "max_pb", "maxPb");
   addNumber(criteria, "min_market_cap_billion", "minMcap");
   return criteria;
+}
+
+function updateBacktestScope() {
+  const node = $("#backtestScope");
+  if (!node) return;
+  const parts = [
+    $("#industry")?.value ? `行业 ${$("#industry").value}` : "全部行业",
+    `持仓 ${clampInt($("#btTopN")?.value, 1, 100, 10)} 只`,
+    `${displayDateParam("btStart", "2020-01-01")} 至 ${displayDateParam("btEnd", "2024-01-01")}`,
+  ];
+  node.textContent = `${parts.join(" · ")} · 等权持有`;
+}
+
+function displayDateParam(id, fallback) {
+  const value = $(`#${id}`)?.value;
+  return value || fallback;
 }
 
 function addNumber(target, key, id) {
@@ -735,6 +842,7 @@ function renderScreenResult(node, data) {
       ["最高分", items[0] ? formatNumber(items[0].score) : "-"],
     ],
     body: [
+      items.length ? renderResultActions("当前筛选条件", data.returned ?? items.length) : "",
       items.length ? renderStockList(items.map(screenItemToView)) : renderEmpty("没有符合条件的股票"),
       data.notes?.length ? renderNotes(data.notes) : "",
     ].join(""),
@@ -751,6 +859,7 @@ function renderSectorScreenResult(node, data) {
       ["候选", data.total ?? 0],
     ],
     body: [
+      groups.length ? renderResultActions("当前分板块条件", data.returned ?? 0) : "",
       groups.length ? renderSectorGroups(groups) : renderEmpty("没有符合条件的板块"),
       data.notes?.length ? renderNotes(data.notes) : "",
     ].join(""),
@@ -850,9 +959,45 @@ function renderBacktestResult(node, data) {
     body: [
       curve.length ? renderSparkline(curve) : renderEmpty("没有可用净值曲线"),
       symbols.length ? `<div class="symbol-strip">${symbols.map(escapeHtml).join(" · ")}</div>` : "",
+      renderBacktestReliability(data),
     ].join(""),
     raw: data,
   });
+}
+
+function renderResultActions(scope, count) {
+  return `
+    <div class="result-actions">
+      <div>
+        <span>下一步</span>
+        <strong>${escapeHtml(scope)} · ${formatNumber(count)} 个候选</strong>
+      </div>
+      <button type="button" data-run-backtest>用当前条件回测</button>
+    </div>
+  `;
+}
+
+function renderBacktestReliability(data) {
+  const notes = data.notes || [];
+  if (!notes.length) return "";
+  return `
+    <section class="reliability-card">
+      <header>
+        <span>可信度提示</span>
+        <strong>${escapeHtml(backtestReliabilityLabel(data))}</strong>
+      </header>
+      ${renderNotes(notes)}
+    </section>
+  `;
+}
+
+function backtestReliabilityLabel(data) {
+  const metrics = data.metrics || {};
+  const curve = data.equity_curve || [];
+  const used = Number(metrics.num_stocks || 0);
+  if (!curve.length || used === 0) return "低";
+  if (curve.length < 30 || used < 3) return "中低";
+  return "中";
 }
 
 function renderObserveResult(node, data) {
@@ -920,6 +1065,7 @@ function renderAgentResult(node, data) {
   } else if (data.action === "backtest") {
     bodyParts.push(nestedMetrics.total_return !== undefined ? renderMetricLine(nestedMetrics) : "");
     bodyParts.push(nested.equity_curve?.length ? renderSparkline(nested.equity_curve) : "");
+    if (nested.notes?.length) bodyParts.push(renderBacktestReliability(nested));
   } else if (data.action === "screen") {
     bodyParts.push(
       nestedItems.length

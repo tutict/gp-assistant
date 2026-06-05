@@ -5158,6 +5158,189 @@ h1 {
   container: stock-list / inline-size;
 }
 
+.section-chip {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--accent-strong);
+  font-size: 0.72rem;
+  font-weight: 780;
+  padding: 5px 8px;
+  white-space: nowrap;
+}
+
+.advanced-section {
+  padding: 0;
+}
+
+.advanced-section summary {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  cursor: pointer;
+  list-style: none;
+  padding: 16px 36px 16px 16px;
+}
+
+.advanced-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-section summary span {
+  color: var(--text);
+  font-size: 0.98rem;
+  font-weight: 820;
+}
+
+.advanced-section summary strong {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 680;
+}
+
+.advanced-section summary::after {
+  content: "+";
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  color: var(--accent-strong);
+  font-weight: 860;
+}
+
+.advanced-section[open] summary::after {
+  content: "-";
+}
+
+.advanced-content {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding: 14px 16px 18px;
+}
+
+.refresh-progress {
+  display: grid;
+  gap: 8px;
+  padding: 13px 16px;
+}
+
+.refresh-progress[hidden] {
+  display: none;
+}
+
+.refresh-progress > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 740;
+}
+
+.refresh-progress strong {
+  color: var(--accent-strong);
+  font-size: 0.84rem;
+}
+
+.progress-track {
+  overflow: hidden;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-3);
+}
+
+.progress-track span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.28s ease;
+}
+
+.refresh-progress.failed .progress-track span {
+  background: var(--danger);
+}
+
+.backtest-context,
+.result-actions,
+.reliability-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.backtest-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+}
+
+.backtest-context span,
+.result-actions span,
+.reliability-card header span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 760;
+}
+
+.backtest-context strong,
+.result-actions strong,
+.reliability-card header strong {
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 820;
+}
+
+.result-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+}
+
+.result-actions > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.result-actions button {
+  min-height: 34px;
+  border-radius: 6px;
+  padding-inline: 12px;
+}
+
+.reliability-card {
+  overflow: hidden;
+  margin-top: 10px;
+}
+
+.reliability-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  padding: 10px 12px;
+}
+
+.reliability-card .notes {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  margin: 0;
+}
+
 .quote-table-head,
 .stock-row,
 .stock-grid,
@@ -5269,6 +5452,74 @@ h1 {
   .observe-action {
     min-height: 34px;
     padding-inline: 10px;
+  }
+}
+
+@media (max-width: 860px) {
+  #sectionFilters.control-rail {
+    display: block;
+    position: static;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    margin: 10px 10px 0;
+  }
+
+  #sectionFilters .market-strip {
+    display: none;
+  }
+
+  #sectionFilters .data-health {
+    border-bottom: 1px solid var(--line);
+  }
+
+  #sectionFilters .data-health > div,
+  #sectionFilters .data-health > p,
+  #sectionFilters .refresh-progress {
+    padding: 11px 12px;
+  }
+
+  #sectionFilters .data-health-actions,
+  #sectionFilters .field-pair,
+  #sectionFilters .advanced-content {
+    grid-template-columns: 1fr;
+  }
+
+  #sectionFilters .rail-section {
+    padding: 14px 12px;
+  }
+
+  #sectionFilters .advanced-section {
+    padding: 0;
+  }
+
+  .industry-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .backtest-context,
+  .result-actions {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .backtest-context {
+    display: grid;
+  }
+
+  .result-actions button {
+    width: 100%;
+  }
+
+  .chart-wrap {
+    overflow-x: auto;
+  }
+
+  .chart-wrap svg {
+    min-width: 560px;
   }
 }
 
