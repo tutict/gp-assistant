@@ -21,7 +21,7 @@ def _matches(stock: StockItem, criteria: ScreenCriteria) -> Optional[List[str]]:
     if not criteria.include_st and stock.is_st:
         return None
 
-    if criteria.industry and stock.industry.lower() != criteria.industry.lower():
+    if criteria.industry and not _industry_matches(stock.industry, criteria.industry):
         return None
 
     if criteria.min_roe is not None:
@@ -45,6 +45,14 @@ def _matches(stock: StockItem, criteria: ScreenCriteria) -> Optional[List[str]]:
         reasons.append("mcap_ok")
 
     return reasons
+
+
+def _industry_matches(stock_industry: str, selected_industry: str) -> bool:
+    stock_value = (stock_industry or "").strip().lower()
+    selected_value = (selected_industry or "").strip().lower()
+    if not selected_value:
+        return True
+    return stock_value == selected_value or selected_value in stock_value or stock_value in selected_value
 
 
 def _score(stock: StockItem, reasons: List[str]) -> float:

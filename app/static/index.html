@@ -132,10 +132,20 @@
               <p>股票池</p>
               <h2>筛选条件</h2>
             </div>
-            <label class="field">
+            <div class="field industry-field">
               <span>行业</span>
-              <input id="industry" placeholder="银行 / 电池 / 白酒" />
-            </label>
+              <input id="industry" type="hidden" />
+              <div class="industry-options" role="group" aria-label="行业">
+                <button class="industry-option active" type="button" data-industry-option="">全部</button>
+                <button class="industry-option" type="button" data-industry-option="银行">银行</button>
+                <button class="industry-option" type="button" data-industry-option="电池">电池</button>
+                <button class="industry-option" type="button" data-industry-option="白酒">白酒</button>
+                <button class="industry-option" type="button" data-industry-option="食品饮料">食品饮料</button>
+                <button class="industry-option" type="button" data-industry-option="半导体">半导体</button>
+                <button class="industry-option" type="button" data-industry-option="医疗器械">医疗器械</button>
+                <button class="industry-option" type="button" data-industry-option="光伏设备">光伏设备</button>
+              </div>
+            </div>
             <div class="field-pair">
               <label class="field">
                 <span>最低净资产收益率</span>
@@ -279,9 +289,14 @@
               <button id="observeBtn" type="button">观察</button>
             </div>
             <div class="observe-controls">
-              <label class="field">
+              <label class="field market-field">
                 <span>股票代码</span>
-                <input id="observeCode" placeholder="300750.SZ" />
+                <input id="observeCode" inputmode="numeric" autocomplete="off" placeholder="300750" data-code-confirm />
+                <div class="market-confirm" hidden>
+                  <button type="button" data-market="SH"><strong>上海股</strong><span>600 / 688</span></button>
+                  <button type="button" data-market="SZ"><strong>深圳股</strong><span>000 / 300</span></button>
+                  <button type="button" data-market="BJ"><strong>北京股</strong><span>8 / 4</span></button>
+                </div>
               </label>
               <label class="field">
                 <span>分钟周期</span>
@@ -295,11 +310,11 @@
               </label>
               <label class="field">
                 <span>开始日期</span>
-                <input id="observeStart" placeholder="20200101" />
+                <input id="observeStart" type="date" />
               </label>
               <label class="field">
                 <span>结束日期</span>
-                <input id="observeEnd" placeholder="20240101" />
+                <input id="observeEnd" type="date" />
               </label>
             </div>
             <div id="observeResult" class="result-panel medium empty">
@@ -360,17 +375,22 @@
                 </div>
               </div>
               <div class="trend-controls">
-                <label class="field">
+                <label class="field market-field">
                   <span>股票代码</span>
-                  <input id="trendCode" value="300750.SZ" placeholder="300750.SZ" />
+                  <input id="trendCode" inputmode="numeric" autocomplete="off" value="300750.SZ" placeholder="300750" data-code-confirm />
+                  <div class="market-confirm" hidden>
+                    <button type="button" data-market="SH"><strong>上海股</strong><span>600 / 688</span></button>
+                    <button type="button" data-market="SZ"><strong>深圳股</strong><span>000 / 300</span></button>
+                    <button type="button" data-market="BJ"><strong>北京股</strong><span>8 / 4</span></button>
+                  </div>
                 </label>
                 <label class="field">
                   <span>开始日期</span>
-                  <input id="trendStart" value="20200101" placeholder="20200101" />
+                  <input id="trendStart" type="date" value="2020-01-01" />
                 </label>
                 <label class="field">
                   <span>结束日期</span>
-                  <input id="trendEnd" value="20240101" placeholder="20240101" />
+                  <input id="trendEnd" type="date" value="2024-01-01" />
                 </label>
               </div>
               <div id="trendResult" class="result-panel medium empty">
@@ -389,11 +409,11 @@
               <div class="backtest-controls">
                 <label class="field">
                   <span>开始日期</span>
-                  <input id="btStart" placeholder="20200101" />
+                  <input id="btStart" type="date" />
                 </label>
                 <label class="field">
                   <span>结束日期</span>
-                  <input id="btEnd" placeholder="20240101" />
+                  <input id="btEnd" type="date" />
                 </label>
                 <label class="field">
                   <span>持仓数量</span>

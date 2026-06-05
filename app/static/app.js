@@ -64,6 +64,7 @@ initTheme();
 initMobileNav();
 initDataSource();
 initLlmSettings();
+initFormControls();
 bindActions();
 
 function bindActions() {
@@ -196,16 +197,17 @@ async function runGraph() {
 }
 
 async function runTrendAnalysis() {
-  const code = $("#trendCode").value.trim().toUpperCase();
+  const code = readStockCode("trendCode");
   if (!code) {
     setError(panels.trend, "请输入股票代码", "例如：300750.SZ");
     return;
   }
+  $("#trendCode").value = code;
   setLoading(panels.trend, "趋势指标计算中");
   const payload = {
     code,
-    start_date: $("#trendStart").value.trim() || "20200101",
-    end_date: $("#trendEnd").value.trim() || "20240101",
+    start_date: readDateParam("trendStart", "20200101"),
+    end_date: readDateParam("trendEnd", "20240101"),
     series_limit: 180,
   };
   const data = await postJson("/api/trend", payload, panels.trend);
@@ -216,8 +218,8 @@ async function runTrendScreen() {
   setLoading(panels.trend, "趋势选股中");
   const payload = {
     criteria: buildCriteria({ limit: 100 }),
-    start_date: $("#trendStart").value.trim() || "20200101",
-    end_date: $("#trendEnd").value.trim() || "20240101",
+    start_date: readDateParam("trendStart", "20200101"),
+    end_date: readDateParam("trendEnd", "20240101"),
     limit: Math.min(readInt("resultLimit", DEFAULT_RESULT_LIMIT), 100),
   };
   const data = await postJson("/api/trend-screen", payload, panels.trend);
@@ -228,8 +230,8 @@ async function runBacktest() {
   setLoading(panels.backtest, "回测中");
   const payload = {
     criteria: buildCriteria({ limit: 100 }),
-    start_date: $("#btStart").value.trim() || "20200101",
-    end_date: $("#btEnd").value.trim() || "20240101",
+    start_date: readDateParam("btStart", "20200101"),
+    end_date: readDateParam("btEnd", "20240101"),
     top_n: clampInt($("#btTopN").value, 1, 100, 10),
   };
   const data = await postJson("/api/backtest", payload, panels.backtest);
@@ -251,7 +253,7 @@ async function runAgent() {
 }
 
 async function runObserve(codeOverride) {
-  const code = (codeOverride || $("#observeCode").value || "").trim().toUpperCase();
+  const code = normalizeStockCode(codeOverride || $("#observeCode").value);
   if (!code) {
     setError(panels.observe, "请输入股票代码", "例如：300750.SZ");
     return;
@@ -264,8 +266,8 @@ async function runObserve(codeOverride) {
     series_limit: "160",
     minute_limit: "180",
   });
-  const startDate = $("#observeStart").value.trim();
-  const endDate = $("#observeEnd").value.trim();
+  const startDate = readDateParam("observeStart", "");
+  const endDate = readDateParam("observeEnd", "");
   if (startDate) params.set("start_date", startDate);
   if (endDate) params.set("end_date", endDate);
   const data = await getJson(`/api/observe/${encodeURIComponent(code)}?${params}`, panels.observe);
@@ -472,6 +474,103 @@ function normalizeBaseUrl(value) {
   return value.trim().replace(/\/+$/, "");
 }
 
+function initFormControls() {
+  initIndustryOptions();
+  initMarketConfirmers();
+  initDateInputs();
+}
+
+function initIndustryOptions() {
+  const industryInput = $("#industry");
+  const options = [...document.querySelectorAll("[data-industry-option]")];
+  if (!industryInput || !options.length) return;
+
+  const setIndustry = (value) => {
+    industryInput.value = value || "";
+    options.forEach((option) => {
+      const isActive = (option.dataset.industryOption || "") === industryInput.value;
+      option.classList.toggle("active", isActive);
+      option.setAttribute("aria-pressed", String(isActive));
+    });
+  };
+
+  options.forEach((option) => {
+    option.setAttribute("aria-pressed", option.classList.contains("active") ? "true" : "false");
+    option.addEventListener("click", () => setIndustry(option.dataset.industryOption || ""));
+  });
+  setIndustry(industryInput.value);
+}
+
+function initMarketConfirmers() {
+  const fields = [...document.querySelectorAll(".market-field")];
+  if (!fields.length) return;
+
+  fields.forEach((field) => {
+    const input = field.querySelector("input[data-code-confirm]");
+    const panel = field.querySelector(".market-confirm");
+    if (!input || !panel) return;
+
+    input.addEventListener("input", () => {
+      input.value = sanitizeStockCodeInput(input.value);
+      updateMarketConfirm(input, panel);
+    });
+    input.addEventListener("focus", () => updateMarketConfirm(input, panel));
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") hideMarketConfirm(panel);
+    });
+    panel.addEventListener("mousedown", (event) => event.preventDefault());
+    panel.querySelectorAll("[data-market]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const digits = stockCodeDigits(input.value);
+        if (digits.length !== 6) return;
+        input.value = normalizeStockCode(digits, button.dataset.market);
+        hideMarketConfirm(panel);
+        input.focus();
+      });
+    });
+    updateMarketConfirm(input, panel);
+  });
+
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+    if (target?.closest(".market-field")) return;
+    document.querySelectorAll(".market-confirm").forEach(hideMarketConfirm);
+  });
+}
+
+function initDateInputs() {
+  document.querySelectorAll('input[type="date"]').forEach((input) => {
+    const dateValue = toDateInputValue(input.value);
+    if (dateValue) input.value = dateValue;
+    input.addEventListener("click", () => showDatePicker(input));
+  });
+}
+
+function showDatePicker(input) {
+  if (typeof input.showPicker !== "function") return;
+  try {
+    input.showPicker();
+  } catch {
+    // Some browsers only allow showPicker from direct pointer activation.
+  }
+}
+
+function updateMarketConfirm(input, panel) {
+  const digits = stockCodeDigits(input.value);
+  const shouldShow = digits.length === 6 && !hasMarketSuffix(input.value);
+  panel.hidden = !shouldShow;
+  if (!shouldShow) return;
+
+  const suggestedMarket = inferMarketFromDigits(digits);
+  panel.querySelectorAll("[data-market]").forEach((button) => {
+    button.classList.toggle("suggested", button.dataset.market === suggestedMarket);
+  });
+}
+
+function hideMarketConfirm(panel) {
+  panel.hidden = true;
+}
+
 function buildCriteria(overrides = {}) {
   const criteria = {
     include_st: $("#includeSt").checked,
@@ -505,10 +604,76 @@ function readInt(id, fallback) {
   return clampInt($(`#${id}`).value, 1, 200, fallback);
 }
 
+function readStockCode(id) {
+  return normalizeStockCode($(`#${id}`)?.value);
+}
+
+function normalizeStockCode(value, market) {
+  const raw = sanitizeStockCodeInput(value);
+  if (!raw) return "";
+
+  const suffixed = raw.match(/^(\d{6})\.(SH|SZ|BJ)$/);
+  if (suffixed) return `${suffixed[1]}.${suffixed[2]}`;
+
+  const prefixed = raw.match(/^(SH|SZ|BJ)(\d{6})$/);
+  if (prefixed) return `${prefixed[2]}.${prefixed[1]}`;
+
+  const digits = stockCodeDigits(raw);
+  if (digits.length !== 6) return "";
+  return `${digits}.${market || inferMarketFromDigits(digits)}`;
+}
+
+function sanitizeStockCodeInput(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^\dA-Z.]/g, "");
+}
+
+function stockCodeDigits(value) {
+  const raw = sanitizeStockCodeInput(value);
+  const prefixed = raw.match(/^(SH|SZ|BJ)(\d{6})$/);
+  if (prefixed) return prefixed[2];
+  const match = raw.match(/\d{6}/);
+  return match ? match[0] : "";
+}
+
+function hasMarketSuffix(value) {
+  const raw = sanitizeStockCodeInput(value);
+  return /^(\d{6})\.(SH|SZ|BJ)$/.test(raw) || /^(SH|SZ|BJ)(\d{6})$/.test(raw);
+}
+
+function inferMarketFromDigits(digits) {
+  if (/^[569]/.test(digits)) return "SH";
+  if (/^[48]/.test(digits)) return "BJ";
+  return "SZ";
+}
+
+function readDateParam(id, fallback = "") {
+  return normalizeDateParam($(`#${id}`)?.value, fallback);
+}
+
+function normalizeDateParam(value, fallback = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return fallback;
+  const inputDate = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (inputDate) return `${inputDate[1]}${inputDate[2]}${inputDate[3]}`;
+  const compactDate = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compactDate) return compactDate[0];
+  return raw.replaceAll("-", "");
+}
+
+function toDateInputValue(value) {
+  const raw = String(value || "").trim();
+  const compactDate = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compactDate) return `${compactDate[1]}-${compactDate[2]}-${compactDate[3]}`;
+  return raw;
+}
+
 function parseCodes(raw) {
   return raw
     .split(/[,，\s]+/)
-    .map((item) => item.trim().toUpperCase())
+    .map((item) => normalizeStockCode(item))
     .filter(Boolean);
 }
 

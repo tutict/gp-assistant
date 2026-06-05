@@ -494,6 +494,104 @@ textarea::placeholder {
   color: color-mix(in srgb, var(--muted) 72%, transparent);
 }
 
+.industry-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.industry-option {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 760;
+  padding: 5px 10px;
+}
+
+.industry-option:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+  color: var(--accent-strong);
+}
+
+.industry-option.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--button-text);
+}
+
+.market-field {
+  position: relative;
+  z-index: 3;
+}
+
+.market-field input {
+  text-transform: uppercase;
+}
+
+.market-confirm {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--line);
+  box-shadow: var(--shadow);
+}
+
+.market-confirm[hidden] {
+  display: none;
+}
+
+.market-confirm button {
+  display: grid;
+  min-height: 54px;
+  gap: 2px;
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--text);
+  padding: 8px;
+  text-align: left;
+  transform: none;
+}
+
+.market-confirm button:hover,
+.market-confirm button.suggested {
+  background: color-mix(in srgb, var(--accent) 11%, var(--surface));
+  color: var(--accent-strong);
+}
+
+.market-confirm button strong,
+.market-confirm button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.market-confirm button strong {
+  color: inherit;
+  font-size: 0.78rem;
+  font-weight: 820;
+}
+
+.market-confirm button span {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+input[type="date"] {
+  cursor: pointer;
+}
+
 .field-pair,
 .backtest-controls,
 .trend-controls,
