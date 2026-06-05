@@ -193,6 +193,28 @@
               <span>回测持仓数量</span>
               <input id="btTopN" type="number" value="10" min="1" max="100" />
             </label>
+            <div class="field backtest-frequency-field">
+              <span>再平衡</span>
+              <input id="btRebalance" type="hidden" value="monthly" />
+              <div class="option-buttons" role="group" aria-label="再平衡频率">
+                <button class="option-button" type="button" data-rebalance-option="none">持有</button>
+                <button class="option-button active" type="button" data-rebalance-option="monthly">月度</button>
+                <button class="option-button" type="button" data-rebalance-option="quarterly">季度</button>
+              </div>
+            </div>
+            <div class="field-pair">
+              <label class="field">
+                <span>交易成本 bps</span>
+                <input id="btCostBps" type="number" value="10" min="0" max="500" step="1" />
+              </label>
+              <label class="field">
+                <span>基准</span>
+                <select id="btBenchmark">
+                  <option value="candidate_equal_weight">候选池等权</option>
+                  <option value="none">不对比</option>
+                </select>
+              </label>
+            </div>
           </div>
 
           <details class="rail-section advanced-section">

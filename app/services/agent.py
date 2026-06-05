@@ -63,7 +63,15 @@ Return this shape:
     "end_date": "20240101",
     "limit": 10
   } | null,
-  "backtest": { ...BacktestRequest fields... } | null,
+  "backtest": {
+    "criteria": { ...ScreenCriteria fields... },
+    "start_date": "20200101",
+    "end_date": "20240101",
+    "top_n": 10,
+    "rebalance_frequency": "none" | "monthly" | "quarterly",
+    "transaction_cost_bps": 10,
+    "benchmark": "candidate_equal_weight" | "none"
+  } | null,
   "news_rag": {
     "code": "optional stock code",
     "criteria": { ...ScreenCriteria fields... },
@@ -323,6 +331,9 @@ def _parse_intent_node(state: AgentState) -> AgentState:
             criteria=criteria or ScreenCriteria(),
             start_date="20200101",
             end_date="20240101",
+            rebalance_frequency=_extract_rebalance_frequency(message),
+            transaction_cost_bps=_extract_cost_bps(message),
+            benchmark=_extract_benchmark(message),
         )
     elif action == "news_rag" and news_rag is None:
         news_rag = NewsRagRequest(
@@ -836,6 +847,10 @@ def _heuristic_parse(message: str) -> Dict[str, Any]:
                 "criteria": criteria,
                 "start_date": _extract_date(message, default="20200101", first=True),
                 "end_date": _extract_date(message, default="20240101", first=False),
+                "top_n": _extract_limited_int(message, ["持仓", "top_n", "top n"], default=10, minimum=1, maximum=100),
+                "rebalance_frequency": _extract_rebalance_frequency(message),
+                "transaction_cost_bps": _extract_cost_bps(message),
+                "benchmark": _extract_benchmark(message),
             },
         }
 
@@ -955,6 +970,37 @@ def _extract_date(message: str, default: Optional[str], first: bool) -> Optional
         return default
     year, month, day = dates[0 if first else -1]
     return f"{year}{int(month):02d}{int(day):02d}"
+
+
+def _extract_rebalance_frequency(message: str) -> str:
+    lower = message.lower()
+    if _contains_any(lower, ["不再平衡", "不调仓", "买入持有", "持有到期", "buy and hold", "no rebalance"]):
+        return "none"
+    if _contains_any(lower, ["季度", "每季", "quarterly", "quarter"]):
+        return "quarterly"
+    if _contains_any(lower, ["月度", "每月", "monthly", "month"]):
+        return "monthly"
+    return "monthly"
+
+
+def _extract_cost_bps(message: str) -> float:
+    lower = message.lower()
+    if _contains_any(lower, ["无成本", "不计成本", "零成本", "0成本", "no cost"]):
+        return 0.0
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(?:bps|bp|基点)", message, flags=re.IGNORECASE)
+    if not match:
+        match = re.search(r"(?:交易成本|成本|手续费)\D{0,8}(\d+(?:\.\d+)?)", message, flags=re.IGNORECASE)
+    if not match:
+        return 10.0
+    value = float(match.group(1))
+    return min(max(value, 0.0), 500.0)
+
+
+def _extract_benchmark(message: str) -> str:
+    lower = message.lower()
+    if _contains_any(lower, ["无基准", "不对比", "不要基准", "no benchmark"]):
+        return "none"
+    return "candidate_equal_weight"
 
 
 def _contains_any(text: str, needles: list[str]) -> bool:

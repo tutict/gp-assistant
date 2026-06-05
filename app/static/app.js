@@ -248,6 +248,9 @@ async function runBacktest() {
     start_date: readDateParam("btStart", "20200101"),
     end_date: readDateParam("btEnd", "20240101"),
     top_n: clampInt($("#btTopN").value, 1, 100, 10),
+    rebalance_frequency: $("#btRebalance")?.value || "monthly",
+    transaction_cost_bps: clampFloat($("#btCostBps")?.value, 0, 500, 10),
+    benchmark: $("#btBenchmark")?.value || "candidate_equal_weight",
   };
   const data = await postJson("/api/backtest", payload, panels.backtest);
   if (data) renderBacktestResult(panels.backtest, data);
@@ -595,6 +598,7 @@ function normalizeBaseUrl(value) {
 
 function initFormControls() {
   initIndustryOptions();
+  initRebalanceOptions();
   initMarketConfirmers();
   initDateInputs();
   initCriteriaSummary();
@@ -624,6 +628,28 @@ function initIndustryOptions() {
   setIndustry(industryInput.value);
 }
 
+function initRebalanceOptions() {
+  const input = $("#btRebalance");
+  const options = [...document.querySelectorAll("[data-rebalance-option]")];
+  if (!input || !options.length) return;
+
+  const setFrequency = (value) => {
+    input.value = value || "monthly";
+    options.forEach((option) => {
+      const isActive = (option.dataset.rebalanceOption || "") === input.value;
+      option.classList.toggle("active", isActive);
+      option.setAttribute("aria-pressed", String(isActive));
+    });
+    updateBacktestScope();
+  };
+
+  options.forEach((option) => {
+    option.setAttribute("aria-pressed", option.classList.contains("active") ? "true" : "false");
+    option.addEventListener("click", () => setFrequency(option.dataset.rebalanceOption || "monthly"));
+  });
+  setFrequency(input.value);
+}
+
 function initCriteriaSummary() {
   [
     "minRoe",
@@ -634,6 +660,9 @@ function initCriteriaSummary() {
     "btStart",
     "btEnd",
     "btTopN",
+    "btRebalance",
+    "btCostBps",
+    "btBenchmark",
     "includeSt",
     "sectorMode",
     "sortBy",
@@ -738,12 +767,33 @@ function buildCriteria(overrides = {}) {
 function updateBacktestScope() {
   const node = $("#backtestScope");
   if (!node) return;
+  const cost = clampFloat($("#btCostBps")?.value, 0, 500, 10);
   const parts = [
     $("#industry")?.value ? `行业 ${$("#industry").value}` : "全部行业",
     `持仓 ${clampInt($("#btTopN")?.value, 1, 100, 10)} 只`,
     `${displayDateParam("btStart", "2020-01-01")} 至 ${displayDateParam("btEnd", "2024-01-01")}`,
+    rebalanceLabel($("#btRebalance")?.value || "monthly"),
+    `${formatNumber(cost)} bps`,
+    benchmarkLabel($("#btBenchmark")?.value || "candidate_equal_weight"),
   ];
-  node.textContent = `${parts.join(" · ")} · 等权持有`;
+  node.textContent = parts.join(" · ");
+}
+
+function rebalanceLabel(value) {
+  const labels = {
+    none: "买入持有",
+    monthly: "月度再平衡",
+    quarterly: "季度再平衡",
+  };
+  return labels[value] || "月度再平衡";
+}
+
+function benchmarkLabel(value) {
+  const labels = {
+    candidate_equal_weight: "候选池等权基准",
+    none: "无基准",
+  };
+  return labels[value] || value || "候选池等权基准";
 }
 
 function displayDateParam(id, fallback) {
@@ -1002,21 +1052,74 @@ function renderTrendScreenResult(node, data) {
 function renderBacktestResult(node, data) {
   const metrics = data.metrics || {};
   const curve = data.equity_curve || [];
+  const benchmarkCurve = data.benchmark_curve || [];
   const symbols = data.symbols || [];
   renderResult(node, {
     summary: [
       ["总收益", formatPercent(metrics.total_return)],
       ["年化", formatPercent(metrics.annualized_return)],
       ["最大回撤", formatPercent(metrics.max_drawdown)],
-      ["标的数", metrics.num_stocks ?? symbols.length],
+      ["超额", formatPercent(metrics.excess_return)],
     ],
     body: [
       curve.length ? renderSparkline(curve) : renderEmpty("没有可用净值曲线"),
+      benchmarkCurve.length ? renderBenchmarkSparkline(benchmarkCurve) : "",
+      renderBacktestComparison(data),
       symbols.length ? `<div class="symbol-strip">${symbols.map(escapeHtml).join(" · ")}</div>` : "",
       renderBacktestReliability(data),
     ].join(""),
     raw: data,
   });
+}
+
+function renderBenchmarkSparkline(curve) {
+  return `
+    <section class="benchmark-sparkline">
+      <header>
+        <span>基准曲线</span>
+        <strong>${formatPercent(curveReturn(curve))}</strong>
+      </header>
+      ${renderSparkline(curve)}
+    </section>
+  `;
+}
+
+function renderBacktestComparison(data) {
+  const metrics = data.metrics || {};
+  const benchmarkSymbols = data.benchmark_symbols || [];
+  const rebalanceDates = data.rebalance_dates || [];
+  return `
+    <section class="backtest-comparison">
+      <div>
+        <span>基准</span>
+        <strong>${benchmarkSymbols.length ? `${formatNumber(benchmarkSymbols.length)} 只` : "未启用"}</strong>
+      </div>
+      <div>
+        <span>交易成本</span>
+        <strong>${formatMoney(metrics.total_transaction_cost)}</strong>
+      </div>
+      <div>
+        <span>总换手</span>
+        <strong>${formatNumber(metrics.total_turnover)}</strong>
+      </div>
+      <div>
+        <span>再平衡</span>
+        <strong>${formatNumber(metrics.rebalance_count || 0)} 次</strong>
+      </div>
+      <div>
+        <span>调仓日期</span>
+        <strong>${rebalanceDates.length ? escapeHtml(rebalanceDates.slice(0, 4).join(" · ")) : "-"}</strong>
+      </div>
+    </section>
+  `;
+}
+
+function curveReturn(curve) {
+  if (!curve?.length) return null;
+  const start = Number(curve[0]?.equity);
+  const end = Number(curve[curve.length - 1]?.equity);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start <= 0) return null;
+  return end / start - 1;
 }
 
 function renderNewsRagResult(node, data) {
@@ -1714,6 +1817,12 @@ function formatNumber(value) {
   if (!Number.isFinite(number)) return "-";
   if (Math.abs(number) >= 1000) return number.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
   return number.toLocaleString("zh-CN", { maximumFractionDigits: 3 });
+}
+
+function formatMoney(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return `¥${number.toLocaleString("zh-CN", { maximumFractionDigits: 0 })}`;
 }
 
 function formatPercent(value) {

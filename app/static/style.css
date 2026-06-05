@@ -494,13 +494,15 @@ textarea::placeholder {
   color: color-mix(in srgb, var(--muted) 72%, transparent);
 }
 
-.industry-options {
+.industry-options,
+.option-buttons {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
 }
 
-.industry-option {
+.industry-option,
+.option-button {
   min-height: 32px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -511,13 +513,15 @@ textarea::placeholder {
   padding: 5px 10px;
 }
 
-.industry-option:hover {
+.industry-option:hover,
+.option-button:hover {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
   background: color-mix(in srgb, var(--accent) 9%, var(--surface));
   color: var(--accent-strong);
 }
 
-.industry-option.active {
+.industry-option.active,
+.option-button.active {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--button-text);
@@ -5271,7 +5275,9 @@ h1 {
 
 .backtest-context,
 .result-actions,
-.reliability-card {
+.reliability-card,
+.backtest-comparison,
+.benchmark-sparkline {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -5296,10 +5302,65 @@ h1 {
 
 .backtest-context strong,
 .result-actions strong,
-.reliability-card header strong {
+.reliability-card header strong,
+.benchmark-sparkline header strong {
   color: var(--text);
   font-size: 0.88rem;
   font-weight: 820;
+}
+
+.backtest-comparison {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  margin-top: 10px;
+  background: var(--line);
+}
+
+.backtest-comparison > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  background: var(--surface);
+  padding: 10px 12px;
+}
+
+.backtest-comparison span,
+.benchmark-sparkline header span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 760;
+}
+
+.backtest-comparison strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.84rem;
+  font-weight: 820;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.benchmark-sparkline {
+  overflow: hidden;
+  margin-top: 10px;
+}
+
+.benchmark-sparkline header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  padding: 9px 12px;
+}
+
+.benchmark-sparkline .chart-wrap {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .result-actions {
@@ -5643,8 +5704,17 @@ h1 {
     padding: 0;
   }
 
-  .industry-options {
+  .industry-options,
+  .option-buttons {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .backtest-comparison {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .backtest-comparison > div:last-child {
+    grid-column: 1 / -1;
   }
 
   .backtest-context,

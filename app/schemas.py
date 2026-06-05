@@ -243,6 +243,10 @@ class BacktestRequest(BaseModel):
     end_date: str = Field(description="YYYYMMDD")
     top_n: int = Field(default=10, ge=1, le=100)
     initial_cash: float = Field(default=1_000_000, ge=0)
+    rebalance_frequency: str = Field(default="monthly", max_length=20)
+    transaction_cost_bps: float = Field(default=10.0, ge=0, le=500)
+    benchmark: str = Field(default="candidate_equal_weight", max_length=40)
+    benchmark_code: Optional[str] = Field(default=None, max_length=16)
 
 
 class EquityPoint(BaseModel):
@@ -255,12 +259,22 @@ class BacktestMetrics(BaseModel):
     annualized_return: Optional[float] = None
     max_drawdown: Optional[float] = None
     num_stocks: int
+    benchmark_total_return: Optional[float] = None
+    benchmark_annualized_return: Optional[float] = None
+    benchmark_max_drawdown: Optional[float] = None
+    excess_return: Optional[float] = None
+    total_transaction_cost: float = 0.0
+    total_turnover: float = 0.0
+    rebalance_count: int = 0
 
 
 class BacktestResult(BaseModel):
     metrics: BacktestMetrics
     equity_curve: List[EquityPoint]
+    benchmark_curve: List[EquityPoint] = Field(default_factory=list)
     symbols: List[str]
+    benchmark_symbols: List[str] = Field(default_factory=list)
+    rebalance_dates: List[str] = Field(default_factory=list)
     notes: List[str] = Field(default_factory=list)
 
 

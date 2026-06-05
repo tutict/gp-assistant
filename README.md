@@ -8,6 +8,8 @@
 - 关系图选股：用股票知识图谱和类 GNN 关系评分建模同行业、供应链、主题、估值相似、市值相近等关系。
 - 趋势选股：把通达信风格的 SWL/SWS 指标、红色持股、短买、离场、支撑阻力、量化评分等信号转成可计算结果。
 - 行情观察：查看股票快照、五档盘口、分钟线和日线技术面。
+- 回测验证：支持等权组合、月度/季度再平衡、交易成本扣减和候选池等权基准对比。
+- 上下游消息 RAG：基于已有产业链关系图分析利好/利空消息，返回证据、置信度和待核查项。
 - 智能体编排：优先使用 LangGraph 编排状态和工具流；未安装时自动回退到本地状态机。
 - 数据维护：支持股票池刷新、缓存状态查看和可丢弃行情缓存清理。
 
@@ -119,7 +121,7 @@ python scripts\maintain_data.py --source eastmoney --refresh --prune
 LangGraph 只负责智能体状态和工具编排，例如：
 
 ```text
-parse_intent -> observe_stock/screen/graph_screen/trend_screen/backtest/clarify
+parse_intent -> observe_stock/screen/graph_screen/trend_screen/backtest/news_rag/clarify
 ```
 
 股票之间的关系不是由 LangGraph 本身建模，而是由项目里的知识图谱和类 GNN 关系评分层建模。
@@ -182,10 +184,10 @@ curl -X POST http://127.0.0.1:8000/api/trend-screen ^
   -d "{\"criteria\":{\"max_pe\":30},\"start_date\":\"20200101\",\"end_date\":\"20240101\",\"limit\":10}"
 ```
 
-持有回测：
+增强回测：
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/backtest ^
   -H "Content-Type: application/json" ^
-  -d "{\"criteria\":{\"max_pe\":10},\"start_date\":\"20200101\",\"end_date\":\"20240101\",\"top_n\":10}"
+  -d "{\"criteria\":{\"max_pe\":10},\"start_date\":\"20200101\",\"end_date\":\"20240101\",\"top_n\":10,\"rebalance_frequency\":\"monthly\",\"transaction_cost_bps\":10,\"benchmark\":\"candidate_equal_weight\"}"
 ```
