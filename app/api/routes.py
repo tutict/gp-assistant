@@ -38,6 +38,7 @@ from app.services.news_rag import analyze_supply_chain_news
 from app.services.observation import observe_stock as build_stock_observation
 from app.services.screener import screen_stocks, screen_stocks_by_sector, screening_universe
 from app.services.stock_graph import graph_screen_stocks
+from app.services.stock_search import search_stock_items
 from app.services.trend_indicator import analyze_trend, trend_screen_stocks
 
 router = APIRouter()
@@ -166,6 +167,14 @@ def prune_data_source_cache(
     provider=Depends(_provider_from_headers),
 ):
     return prune_cache(getattr(provider, "name", provider.__class__.__name__), policy)
+
+
+@router.get("/stock-search", response_model=list[StockItem])
+def search_stocks(q: str = "", limit: int = 3, provider=Depends(_provider_from_headers)):
+    try:
+        return search_stock_items(provider.list_stocks(), q, limit)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"股票搜索不可用：{exc}") from exc
 
 
 @router.get("/stocks/{code}", response_model=StockItem)

@@ -29,6 +29,7 @@ const DATA_REFRESH_KEY = "gp-assistant-source-refresh";
 const DATA_PROXY_KEY = "gp-assistant-proxy-mode";
 const LLM_SETTINGS_KEY = "gp-assistant-llm-settings";
 const DEFAULT_RESULT_LIMIT = 10;
+const STOCK_SEARCH_LIMIT = 3;
 const dataSource = {
   select: $("#dataSourceSelect"),
   refresh: $("#refreshSource"),
@@ -402,6 +403,13 @@ function dataSourceHeaders() {
   return headers;
 }
 
+function stockSearchHeaders() {
+  return {
+    "X-Stock-Provider": getSelectedDataSource(),
+    "X-Stock-Proxy": getSelectedProxyMode(),
+  };
+}
+
 function getSelectedProxyMode() {
   return dataSource.proxy?.value || "system";
 }
@@ -653,6 +661,7 @@ function initFormControls() {
   initIndustryOptions();
   initRebalanceOptions();
   initMarketConfirmers();
+  initStockSuggesters();
   initDateInputs();
   initCriteriaSummary();
 }
@@ -762,6 +771,133 @@ function initMarketConfirmers() {
     const target = event.target instanceof Element ? event.target : event.target?.parentElement;
     if (target?.closest(".market-field")) return;
     document.querySelectorAll(".market-confirm").forEach(hideMarketConfirm);
+  });
+}
+
+function initStockSuggesters() {
+  const inputs = [...document.querySelectorAll("input[data-code-confirm]")];
+  if (!inputs.length) return;
+
+  inputs.forEach((input) => {
+    const field = input.closest(".market-field") || input.parentElement;
+    if (!field) return;
+
+    const panel = document.createElement("div");
+    panel.className = "stock-suggest";
+    panel.hidden = true;
+    panel.setAttribute("role", "listbox");
+    field.append(panel);
+
+    let timer = 0;
+    let requestId = 0;
+    let activeIndex = -1;
+
+    const hide = () => {
+      panel.hidden = true;
+      panel.innerHTML = "";
+      activeIndex = -1;
+      input.setAttribute("aria-expanded", "false");
+      input.removeAttribute("aria-activedescendant");
+    };
+
+    const choose = (stock) => {
+      if (!stock?.code) return;
+      input.value = stock.code;
+      hide();
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      input.focus();
+    };
+
+    const setActive = (index) => {
+      const options = [...panel.querySelectorAll("[data-stock-suggest-option]")];
+      if (!options.length) return;
+      activeIndex = (index + options.length) % options.length;
+      options.forEach((option, optionIndex) => {
+        const isActive = optionIndex === activeIndex;
+        option.classList.toggle("active", isActive);
+        option.setAttribute("aria-selected", String(isActive));
+        if (isActive) input.setAttribute("aria-activedescendant", option.id);
+      });
+    };
+
+    const render = (items) => {
+      if (!items.length) {
+        hide();
+        const marketPanel = field.querySelector(".market-confirm");
+        if (marketPanel) updateMarketConfirm(input, marketPanel);
+        return;
+      }
+
+      field.querySelectorAll(".market-confirm").forEach(hideMarketConfirm);
+      panel.innerHTML = items
+        .map(
+          (stock, index) => `
+            <button id="${input.id || "stock"}Suggest${index}" type="button" role="option" data-stock-suggest-option="${index}">
+              <strong>${escapeHtml(stock.code || "")}</strong>
+              <span>${escapeHtml(stock.name || "-")}</span>
+              <em>${escapeHtml(stock.industry || "未知行业")}</em>
+            </button>
+          `,
+        )
+        .join("");
+      panel.hidden = false;
+      input.setAttribute("aria-expanded", "true");
+      activeIndex = -1;
+      panel.querySelectorAll("[data-stock-suggest-option]").forEach((button, index) => {
+        button.addEventListener("click", () => choose(items[index]));
+      });
+    };
+
+    const search = async () => {
+      const query = input.value.trim();
+      if (!query) {
+        hide();
+        return;
+      }
+
+      const currentRequest = ++requestId;
+      try {
+        const params = new URLSearchParams({ q: query, limit: String(STOCK_SEARCH_LIMIT) });
+        const resp = await fetch(`/api/stock-search?${params}`, {
+          method: "GET",
+          headers: stockSearchHeaders(),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const items = await resp.json();
+        if (currentRequest !== requestId) return;
+        render(Array.isArray(items) ? items.slice(0, STOCK_SEARCH_LIMIT) : []);
+      } catch {
+        if (currentRequest === requestId) hide();
+      }
+    };
+
+    const scheduleSearch = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(search, 160);
+    };
+
+    input.setAttribute("aria-autocomplete", "list");
+    input.setAttribute("aria-expanded", "false");
+    input.addEventListener("input", scheduleSearch);
+    input.addEventListener("focus", scheduleSearch);
+    input.addEventListener("keydown", (event) => {
+      const options = [...panel.querySelectorAll("[data-stock-suggest-option]")];
+      if (panel.hidden || !options.length) return;
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setActive(activeIndex + 1);
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setActive(activeIndex - 1);
+      } else if (event.key === "Enter" && activeIndex >= 0) {
+        event.preventDefault();
+        options[activeIndex].click();
+      } else if (event.key === "Escape") {
+        hide();
+      }
+    });
+    input.addEventListener("blur", () => window.setTimeout(hide, 120));
+    panel.addEventListener("mousedown", (event) => event.preventDefault());
   });
 }
 

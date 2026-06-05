@@ -592,6 +592,72 @@ textarea::placeholder {
   font-size: 0.68rem;
 }
 
+.stock-suggest {
+  position: absolute;
+  z-index: 34;
+  top: calc(100% + 6px);
+  left: 0;
+  width: min(320px, calc(100vw - 32px));
+  display: grid;
+  gap: 2px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 96%, var(--bg));
+  box-shadow: var(--shadow);
+}
+
+.stock-suggest[hidden] {
+  display: none;
+}
+
+.stock-suggest button {
+  display: grid;
+  grid-template-columns: 92px minmax(72px, 1fr) max-content;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 8px 10px;
+  text-align: left;
+  transform: none;
+}
+
+.stock-suggest button:hover,
+.stock-suggest button.active {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent-strong);
+}
+
+.stock-suggest strong,
+.stock-suggest span,
+.stock-suggest em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-suggest strong {
+  color: inherit;
+  font-size: 0.78rem;
+  font-weight: 840;
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-suggest span {
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 760;
+}
+
+.stock-suggest em {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-style: normal;
+}
+
 input[type="date"] {
   cursor: pointer;
 }
