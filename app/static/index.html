@@ -460,7 +460,11 @@
                   <p>消息</p>
                   <h2>上下游消息</h2>
                 </div>
-                <button id="newsRagBtn" type="button">分析消息</button>
+                <div class="button-row">
+                  <button id="newsRagBtn" type="button">分析消息</button>
+                  <button id="ragPackBuildBtn" type="button">构建离线包</button>
+                  <button id="ragPackQueryBtn" type="button">查询离线包</button>
+                </div>
               </div>
               <div class="news-controls">
                 <label class="field market-field">
@@ -479,6 +483,10 @@
                     <option value="30" selected>最近 30 天</option>
                     <option value="90">最近 90 天</option>
                   </select>
+                </label>
+                <label class="field">
+                  <span>离线查询</span>
+                  <input id="ragPackQuery" autocomplete="off" placeholder="例如：宁德时代上游订单证据" />
                 </label>
               </div>
               <div id="newsRagResult" class="result-panel empty">

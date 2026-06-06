@@ -6,26 +6,33 @@ import math
 import os
 import re
 import sqlite3
+import sys
 from dataclasses import dataclass
 from datetime import datetime
+from datetime import timedelta
 from pathlib import Path
 from typing import Iterable, Sequence
 
 from app.schemas import (
+    RagPackBuildFromNewsCacheRequest,
     RagPackBuildRequest,
     RagPackBuildResult,
     RagPackChunkHit,
     RagPackDocument,
     RagPackQueryRequest,
     RagPackQueryResult,
+    RagPackStatusResult,
 )
 
 
 DEFAULT_PACK_PATH = "data/cache/rag_pack.sqlite"
-SCHEMA_VERSION = "rag-pack-v1"
+DEFAULT_NEWS_CACHE_PATH = "data/cache/news.sqlite"
+DEFAULT_ONNX_MODEL_DIR = "models/bge-small-zh-v1.5-int8"
+SCHEMA_VERSION = "rag-pack-v2"
 CHUNK_VERSION = "chunk-v1"
-DEFAULT_EMBEDDING_MODEL = os.getenv("GP_RAG_EMBEDDING_MODEL", "bge-small-zh-int8-protocol")
-DEFAULT_EMBEDDING_DIM = int(os.getenv("GP_RAG_EMBEDDING_DIM", "384"))
+DEFAULT_EMBEDDING_MODEL = os.getenv("GP_RAG_EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
+DEFAULT_EMBEDDING_DIM = int(os.getenv("GP_RAG_EMBEDDING_DIM", "512"))
+DEFAULT_EMBEDDING_QUANTIZATION = os.getenv("GP_RAG_EMBEDDING_QUANTIZATION", "int8")
 
 
 @dataclass(frozen=True)
@@ -46,16 +53,24 @@ class ChunkRecord:
 
 class EmbeddingProvider:
     model_id = DEFAULT_EMBEDDING_MODEL
-    quantization = "int8"
+    backend = "unknown"
+    quantization = DEFAULT_EMBEDDING_QUANTIZATION
     dim = DEFAULT_EMBEDDING_DIM
     normalized = True
+
+    def validate_ready(self) -> None:
+        return None
 
     def embed(self, text: str) -> list[float]:
         raise NotImplementedError
 
 
 class HashingEmbeddingProvider(EmbeddingProvider):
-    """Deterministic local placeholder until the bge-small-zh INT8 runtime is wired in."""
+    """Deterministic fixture for tests; product paths must use a real local embedder."""
+
+    model_id = "test-hashing-bge-small-zh-v1.5"
+    backend = "hashing-fixture"
+    quantization = "none"
 
     def embed(self, text: str) -> list[float]:
         vector = [0.0] * self.dim
@@ -70,19 +85,100 @@ class HashingEmbeddingProvider(EmbeddingProvider):
         return _normalize(vector)
 
 
+class OnnxEmbeddingProvider(EmbeddingProvider):
+    backend = "onnxruntime"
+
+    def __init__(self, model_dir: Path | None = None) -> None:
+        self.model_dir = model_dir or _onnx_model_dir()
+        self.model_id = DEFAULT_EMBEDDING_MODEL
+        self.quantization = DEFAULT_EMBEDDING_QUANTIZATION
+        self.dim = _read_model_dim(self.model_dir) or DEFAULT_EMBEDDING_DIM
+        self.normalized = True
+        self._tokenizer = None
+        self._session = None
+        self._input_names: set[str] = set()
+
+    def validate_ready(self) -> None:
+        self._ensure_runtime()
+
+    def embed(self, text: str) -> list[float]:
+        self._ensure_runtime()
+        encoded = self._tokenizer.encode(_normalize_text(text))
+        input_ids = encoded.ids[:512]
+        attention_mask = encoded.attention_mask[:512]
+        token_type_ids = encoded.type_ids[:512]
+        if not input_ids:
+            input_ids = [0]
+            attention_mask = [0]
+            token_type_ids = [0]
+
+        import numpy as np
+
+        inputs = {}
+        if "input_ids" in self._input_names:
+            inputs["input_ids"] = np.asarray([input_ids], dtype=np.int64)
+        if "attention_mask" in self._input_names:
+            inputs["attention_mask"] = np.asarray([attention_mask], dtype=np.int64)
+        if "token_type_ids" in self._input_names:
+            inputs["token_type_ids"] = np.asarray([token_type_ids], dtype=np.int64)
+
+        outputs = self._session.run(None, inputs)
+        vector = _pool_onnx_outputs(outputs, attention_mask)
+        if len(vector) != self.dim:
+            raise ValueError(f"RAG embedding 输出维度为 {len(vector)}，但 manifest 配置为 {self.dim}")
+        return _normalize(vector)
+
+    def _ensure_runtime(self) -> None:
+        if self._session is not None and self._tokenizer is not None:
+            return
+        tokenizer_path = self.model_dir / "tokenizer.json"
+        model_path = _find_onnx_model(self.model_dir)
+        if not tokenizer_path.exists() or model_path is None:
+            raise ValueError(
+                "RAG 产品态需要本地 bge-small-zh ONNX/INT8 模型资产；"
+                f"请先运行 scripts\\download-rag-embedding-model.ps1 或设置 GP_RAG_ONNX_MODEL_DIR。缺失目录：{self.model_dir}"
+            )
+        try:
+            from tokenizers import Tokenizer
+        except ImportError as exc:
+            raise ValueError("缺少 tokenizers 依赖；请重新安装 requirements.txt。") from exc
+        try:
+            import onnxruntime as ort
+        except ImportError as exc:
+            raise ValueError("缺少 onnxruntime 依赖；请重新安装 requirements.txt。") from exc
+
+        self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
+        self._session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+        self._input_names = {item.name for item in self._session.get_inputs()}
+
+
+def default_embedding_provider() -> EmbeddingProvider:
+    backend = os.getenv("GP_RAG_EMBEDDING_BACKEND", "onnx").strip().lower()
+    if backend in {"onnx", "onnxruntime"}:
+        return OnnxEmbeddingProvider()
+    if backend in {"hash", "hashing", "test"}:
+        if os.getenv("GP_RAG_ALLOW_HASH_EMBEDDING", "").strip().lower() in {"1", "true", "yes", "on"}:
+            return HashingEmbeddingProvider()
+        raise ValueError("hashing embedding 只允许测试使用；产品路径请配置本地 ONNX embedding。")
+    raise ValueError(f"不支持的 RAG embedding backend：{backend}")
+
+
 def build_rag_pack(
     request: RagPackBuildRequest,
     path: Path | None = None,
     embedding: EmbeddingProvider | None = None,
 ) -> RagPackBuildResult:
     pack_path = path or _pack_path()
-    embedder = embedding or HashingEmbeddingProvider()
+    embedder = embedding or default_embedding_provider()
+    embedder.validate_ready()
     documents = _dedupe_documents(request.documents)
     chunks = [
         chunk
         for document in documents
         for chunk in chunk_document(document, request.target_chars, request.overlap_chars)
     ]
+    if not chunks:
+        raise ValueError("RAG pack 没有可构建的文档 chunk")
     content_hash = _content_hash(documents, chunks, embedder)
 
     pack_path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,10 +209,12 @@ def build_rag_pack(
         chunk_count=len(chunks),
         content_hash=content_hash,
         embedding_model=embedder.model_id,
+        embedding_backend=embedder.backend,
+        embedding_quantization=embedder.quantization,
         embedding_dim=embedder.dim,
         notes=[
-            "已构建版本化只读 RAG pack；当前 embedding provider 为 deterministic hashing 测试替身。",
-            "接入 bge-small-zh INT8 时必须保持 manifest 的 model/dim/normalize 与手机端一致。",
+            "已构建版本化只读 RAG pack；查询阶段只读打开本地 SQLite，不访问云端。",
+            f"embedding：{embedder.model_id} / {embedder.backend} / {embedder.quantization} / dim={embedder.dim}。",
         ],
     )
 
@@ -127,7 +225,7 @@ def query_rag_pack(
     embedding: EmbeddingProvider | None = None,
 ) -> RagPackQueryResult:
     pack_path = path or _pack_path()
-    embedder = embedding or HashingEmbeddingProvider()
+    embedder = embedding or default_embedding_provider()
     if not pack_path.exists():
         return RagPackQueryResult(hits=[], notes=[f"RAG pack 不存在：{pack_path}"])
 
@@ -136,6 +234,7 @@ def query_rag_pack(
     try:
         manifest = _load_manifest(conn)
         _validate_embedder_compatibility(manifest, embedder)
+        embedder.validate_ready()
         query_vector = embedder.embed(request.query)
         candidates = _candidate_chunks(conn, request)
         scored = [
@@ -147,8 +246,111 @@ def query_rag_pack(
         return RagPackQueryResult(
             hits=hits,
             manifest=manifest,
-            notes=["当前查询使用 SQLite 元数据过滤 + 本地向量相似度；sqlite-vec 接入后替换候选召回实现。"],
+            notes=[
+                "已只读打开本地 RAG pack；查询使用 SQLite 元数据过滤 + 本地向量相似度，不访问云端。",
+                "sqlite-vec 接入后可替换候选召回实现，manifest 协议保持不变。",
+            ],
         )
+    finally:
+        conn.close()
+
+
+def rag_pack_status(path: Path | None = None) -> RagPackStatusResult:
+    pack_path = path or _pack_path()
+    if not pack_path.exists():
+        return RagPackStatusResult(exists=False, path=str(pack_path), notes=["RAG pack 尚未构建。"])
+    conn = sqlite3.connect(f"file:{pack_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        manifest = _load_manifest(conn)
+        _validate_pack(conn)
+        return RagPackStatusResult(
+            exists=True,
+            path=str(pack_path),
+            valid=True,
+            manifest=manifest,
+            notes=["RAG pack 可只读打开，manifest 与 chunk/embedding 完整性检查通过。"],
+        )
+    except ValueError as exc:
+        return RagPackStatusResult(
+            exists=True,
+            path=str(pack_path),
+            valid=False,
+            notes=[str(exc)],
+        )
+    finally:
+        conn.close()
+
+
+def build_rag_pack_from_news_cache(
+    request: RagPackBuildFromNewsCacheRequest,
+    path: Path | None = None,
+    embedding: EmbeddingProvider | None = None,
+    news_cache_path: Path | None = None,
+) -> RagPackBuildResult:
+    documents = news_cache_documents(request, news_cache_path=news_cache_path)
+    if not documents:
+        raise ValueError("消息缓存中没有满足条件的 RAG 文档；请先运行上下游消息分析或放宽筛选条件。")
+    return build_rag_pack(
+        RagPackBuildRequest(
+            documents=documents,
+            pack_version=request.pack_version,
+            target_chars=request.target_chars,
+            overlap_chars=request.overlap_chars,
+        ),
+        path=path,
+        embedding=embedding,
+    )
+
+
+def news_cache_documents(
+    request: RagPackBuildFromNewsCacheRequest,
+    news_cache_path: Path | None = None,
+) -> list[RagPackDocument]:
+    cache_path = news_cache_path or _news_cache_path()
+    if not cache_path.exists():
+        return []
+    cutoff = (datetime.now() - timedelta(days=request.days)).isoformat(timespec="seconds")
+    clauses = ["COALESCE(item.published_at, item.fetched_at) >= ?"]
+    params: list[str | int] = [cutoff]
+
+    source_tiers = [tier for tier in request.source_tiers if tier]
+    if source_tiers:
+        clauses.append(f"item.source_tier IN ({_placeholders(source_tiers)})")
+        params.extend(source_tiers)
+
+    stock_codes = [_normalize_code(code) for code in request.stock_codes if code]
+    relation_types = [item for item in request.relation_types if item]
+    joins = []
+    if stock_codes:
+        joins.append("JOIN news_entities stock_entity ON stock_entity.news_id = item.id")
+        clauses.append(
+            f"stock_entity.entity_type = 'stock' AND stock_entity.entity_value IN ({_placeholders(stock_codes)})"
+        )
+        params.extend(stock_codes)
+    if relation_types:
+        joins.append("JOIN news_entities relation_entity ON relation_entity.news_id = item.id")
+        clauses.append(
+            f"relation_entity.entity_type = 'relation_type' AND relation_entity.entity_value IN ({_placeholders(relation_types)})"
+        )
+        params.extend(relation_types)
+
+    params.append(request.limit)
+    conn = sqlite3.connect(f"file:{cache_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT item.*
+            FROM news_items item
+            {' '.join(joins)}
+            WHERE {' AND '.join(clauses)}
+            ORDER BY COALESCE(item.published_at, item.fetched_at) DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        return [_news_row_to_document(conn, row) for row in rows]
     finally:
         conn.close()
 
@@ -202,6 +404,7 @@ def _init_pack_db(conn: sqlite3.Connection) -> None:
           document_count INTEGER NOT NULL,
           chunk_count INTEGER NOT NULL,
           embedding_model TEXT NOT NULL,
+          embedding_backend TEXT NOT NULL,
           embedding_quantization TEXT NOT NULL,
           embedding_dim INTEGER NOT NULL,
           embedding_normalized INTEGER NOT NULL,
@@ -268,6 +471,57 @@ def _pack_path() -> Path:
     return Path(os.getenv("GP_RAG_PACK_PATH", DEFAULT_PACK_PATH))
 
 
+def _news_cache_path() -> Path:
+    return Path(os.getenv("GP_NEWS_CACHE", DEFAULT_NEWS_CACHE_PATH))
+
+
+def _onnx_model_dir() -> Path:
+    configured = os.getenv("GP_RAG_ONNX_MODEL_DIR", "").strip()
+    if configured:
+        return Path(configured)
+    pyinstaller_root = getattr(sys, "_MEIPASS", None)
+    if pyinstaller_root:
+        bundled = Path(pyinstaller_root) / DEFAULT_ONNX_MODEL_DIR
+        if bundled.exists():
+            return bundled
+    return Path(DEFAULT_ONNX_MODEL_DIR)
+
+
+def _find_onnx_model(model_dir: Path) -> Path | None:
+    candidates = [
+        model_dir / "model_quantized.onnx",
+        model_dir / "model_int8.onnx",
+        model_dir / "model.onnx",
+        model_dir / "onnx" / "model_quantized.onnx",
+        model_dir / "onnx" / "model.onnx",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    matches = sorted(model_dir.glob("**/*.onnx")) if model_dir.exists() else []
+    return matches[0] if matches else None
+
+
+def _read_model_dim(model_dir: Path) -> int | None:
+    config_path = model_dir / "rag-embedding.json"
+    model_config_path = model_dir / "config.json"
+    for path, keys in (
+        (config_path, ("embedding_dim", "hidden_size")),
+        (model_config_path, ("hidden_size", "dim")),
+    ):
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            for key in keys:
+                dim = int(data.get(key) or 0)
+                if dim > 0:
+                    return dim
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            continue
+    return None
+
+
 def _store_manifest(
     conn: sqlite3.Connection,
     request: RagPackBuildRequest,
@@ -280,10 +534,10 @@ def _store_manifest(
         """
         INSERT INTO rag_manifest (
           id, schema_version, pack_version, created_at, content_hash,
-          document_count, chunk_count, embedding_model, embedding_quantization,
+          document_count, chunk_count, embedding_model, embedding_backend, embedding_quantization,
           embedding_dim, embedding_normalized, chunk_version, sqlite_vec_version
         )
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             SCHEMA_VERSION,
@@ -293,6 +547,7 @@ def _store_manifest(
             len(documents),
             len(chunks),
             embedder.model_id,
+            embedder.backend,
             embedder.quantization,
             embedder.dim,
             1 if embedder.normalized else 0,
@@ -453,6 +708,10 @@ def _validate_pack(conn: sqlite3.Connection) -> None:
     manifest = _load_manifest(conn)
     if manifest.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("RAG pack schema_version 不匹配")
+    if not manifest.get("embedding_backend"):
+        raise ValueError("RAG pack 缺少 embedding_backend")
+    if not manifest.get("embedding_quantization"):
+        raise ValueError("RAG pack 缺少 embedding_quantization")
     if int(manifest.get("chunk_count") or 0) <= 0:
         raise ValueError("RAG pack 没有可检索 chunk")
     orphan_count = conn.execute(
@@ -477,6 +736,10 @@ def _load_manifest(conn: sqlite3.Connection) -> dict:
 def _validate_embedder_compatibility(manifest: dict, embedder: EmbeddingProvider) -> None:
     if manifest.get("embedding_model") != embedder.model_id:
         raise ValueError("RAG pack embedding_model 与查询模型不匹配")
+    if manifest.get("embedding_backend") != embedder.backend:
+        raise ValueError("RAG pack embedding_backend 与查询模型不匹配")
+    if manifest.get("embedding_quantization") != embedder.quantization:
+        raise ValueError("RAG pack embedding_quantization 与查询模型不匹配")
     if int(manifest.get("embedding_dim") or 0) != embedder.dim:
         raise ValueError("RAG pack embedding_dim 与查询模型不匹配")
     if bool(manifest.get("embedding_normalized")) != embedder.normalized:
@@ -518,6 +781,8 @@ def _content_hash(
     payload = {
         "schema_version": SCHEMA_VERSION,
         "embedding_model": embedder.model_id,
+        "embedding_backend": embedder.backend,
+        "embedding_quantization": embedder.quantization,
         "embedding_dim": embedder.dim,
         "chunk_version": CHUNK_VERSION,
         "documents": [_document_id(document) for document in documents],
@@ -548,6 +813,27 @@ def _normalize(vector: Sequence[float]) -> list[float]:
     return [value / norm for value in vector]
 
 
+def _pool_onnx_outputs(outputs, attention_mask: Sequence[int]) -> list[float]:
+    import numpy as np
+
+    first = np.asarray(outputs[0])
+    if first.ndim == 2:
+        return [float(item) for item in first[0].tolist()]
+    if first.ndim != 3:
+        raise ValueError(f"不支持的 ONNX embedding 输出形状：{first.shape}")
+
+    token_embeddings = first[0]
+    mask = np.asarray(attention_mask, dtype=np.float32)
+    if mask.shape[0] != token_embeddings.shape[0]:
+        mask = np.ones((token_embeddings.shape[0],), dtype=np.float32)
+    mask = mask.reshape((-1, 1))
+    denom = float(mask.sum())
+    if denom <= 0:
+        return [float(item) for item in token_embeddings[0].tolist()]
+    pooled = (token_embeddings * mask).sum(axis=0) / denom
+    return [float(item) for item in pooled.tolist()]
+
+
 def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
     if not left or not right or len(left) != len(right):
         return 0.0
@@ -558,7 +844,6 @@ def _tier_boost(source_tier: str) -> float:
     return {
         "filing": 0.04,
         "news": 0.03,
-        "demo": 0.0,
         "community": -0.02,
     }.get(source_tier, 0.0)
 
@@ -573,6 +858,31 @@ def _decode_vector(value: bytes) -> list[float]:
 
 def _placeholders(values: Sequence[str]) -> str:
     return ",".join("?" for _ in values)
+
+
+def _news_row_to_document(conn: sqlite3.Connection, row: sqlite3.Row) -> RagPackDocument:
+    entities = conn.execute(
+        "SELECT entity_type, entity_value FROM news_entities WHERE news_id = ?",
+        (row["id"],),
+    ).fetchall()
+    stock_codes = sorted({item["entity_value"] for item in entities if item["entity_type"] == "stock"})
+    relation_types = sorted({item["entity_value"] for item in entities if item["entity_type"] == "relation_type"})
+    title = row["title"] or ""
+    summary = row["summary"] or title
+    text = f"{title}\n{summary}".strip()
+    return RagPackDocument(
+        source=row["source"],
+        source_tier=row["source_tier"] or "news",
+        title=title,
+        text=text,
+        summary=summary,
+        url=row["url"],
+        published_at=row["published_at"],
+        fetched_at=row["fetched_at"],
+        stock_codes=stock_codes,
+        relation_types=relation_types,
+        sentiment=row["sentiment"] or "uncertain",
+    )
 
 
 def _normalize_code(code: str) -> str:

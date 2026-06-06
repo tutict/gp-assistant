@@ -6,6 +6,7 @@ $DistDir = Join-Path $Root "dist"
 $EntryPoint = Join-Path $Root "app\desktop_server.py"
 $Requirements = Join-Path $Root "requirements.txt"
 $StaticDir = Join-Path $Root "app\static"
+$ModelDir = Join-Path $Root "models\bge-small-zh-v1.5-int8"
 
 function Resolve-Python {
     $candidates = @(
@@ -65,6 +66,10 @@ $PyInstallerArgs = @(
     "--onefile",
     "--name",
     "gp-assistant-backend",
+    "--collect-all",
+    "onnxruntime",
+    "--collect-all",
+    "tokenizers",
     "--distpath",
     $DistDir,
     "--workpath",
@@ -75,6 +80,15 @@ $PyInstallerArgs = @(
     "$StaticDir;app\static",
     $EntryPoint
 )
+
+if (Test-Path -LiteralPath $ModelDir) {
+    $PyInstallerArgs = @(
+        $PyInstallerArgs[0..($PyInstallerArgs.Length - 2)]
+        "--add-data"
+        "$ModelDir;models\bge-small-zh-v1.5-int8"
+        $PyInstallerArgs[-1]
+    )
+}
 
 Invoke-Checked "Build Tauri sidecar" $Python $PyInstallerArgs
 

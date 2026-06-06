@@ -5592,6 +5592,37 @@ h1 {
   padding: 10px 12px 12px;
 }
 
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
+
+.detail-grid > div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  padding: 9px 10px;
+}
+
+.detail-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 760;
+}
+
+.detail-grid strong {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 0.8rem;
+  line-height: 1.35;
+  margin-top: 3px;
+}
+
 .evidence-list article {
   display: grid;
   gap: 4px;
@@ -5639,6 +5670,11 @@ h1 {
 .source-tier.community {
   border-color: color-mix(in srgb, var(--warning) 36%, var(--line));
   color: var(--warning);
+}
+
+.source-tier.filing {
+  border-color: color-mix(in srgb, var(--positive) 34%, var(--line));
+  color: var(--positive);
 }
 
 .source-tier.news {

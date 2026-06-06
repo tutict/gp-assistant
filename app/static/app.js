@@ -7,6 +7,8 @@ const buttons = {
   trendScreen: $("#trendScreenBtn"),
   backtest: $("#backtestBtn"),
   newsRag: $("#newsRagBtn"),
+  ragPackBuild: $("#ragPackBuildBtn"),
+  ragPackQuery: $("#ragPackQueryBtn"),
   agent: $("#agentBtn"),
   observe: $("#observeBtn"),
 };
@@ -91,6 +93,10 @@ function bindActions() {
   buttons.trendScreen.addEventListener("click", () => runTask(buttons.trendScreen, panels.trend, runTrendScreen));
   buttons.backtest.addEventListener("click", () => runTask(buttons.backtest, panels.backtest, runBacktest));
   buttons.newsRag?.addEventListener("click", () => runTask(buttons.newsRag, panels.newsRag, runNewsRag));
+  buttons.ragPackBuild?.addEventListener("click", () =>
+    runTask(buttons.ragPackBuild, panels.newsRag, runRagPackBuildFromNewsCache),
+  );
+  buttons.ragPackQuery?.addEventListener("click", () => runTask(buttons.ragPackQuery, panels.newsRag, runRagPackQuery));
   buttons.agent.addEventListener("click", () => runTask(buttons.agent, panels.agent, runAgent));
   buttons.observe?.addEventListener("click", () => runTask(buttons.observe, panels.observe, () => runObserve()));
   dataSource.select?.addEventListener("change", () => {
@@ -337,6 +343,42 @@ async function runNewsRag() {
   } finally {
     if (timer) window.clearInterval(timer);
   }
+}
+
+async function runRagPackBuildFromNewsCache() {
+  setLoading(panels.newsRag, "构建离线 RAG pack");
+  const code = readStockCode("newsCode");
+  if (code) $("#newsCode").value = code;
+  const payload = {
+    pack_version: `local-news-${new Date().toISOString().slice(0, 10)}`,
+    days: clampInt($("#newsDays")?.value, 1, 3650, 30),
+    stock_codes: code ? [code] : parseCodes($("#seedCodes")?.value || ""),
+    relation_types: [],
+    source_tiers: ["filing", "news", "community"],
+    limit: 1000,
+    target_chars: 500,
+    overlap_chars: 80,
+  };
+  const data = await postJson("/api/rag-pack/build-from-news-cache", payload, panels.newsRag);
+  if (data) renderRagPackBuildResult(panels.newsRag, data);
+}
+
+async function runRagPackQuery() {
+  const code = readStockCode("newsCode");
+  if (code) $("#newsCode").value = code;
+  const query =
+    $("#ragPackQuery")?.value.trim() ||
+    (code ? `${code} 上下游 供应链 订单 证据` : "上下游 供应链 订单 证据");
+  setLoading(panels.newsRag, "查询本地离线 RAG pack");
+  const payload = {
+    query,
+    stock_codes: code ? [code] : parseCodes($("#seedCodes")?.value || ""),
+    relation_types: [],
+    source_tiers: ["filing", "news", "community"],
+    top_k: 8,
+  };
+  const data = await postJson("/api/rag-pack/query", payload, panels.newsRag);
+  if (data) renderRagPackQueryResult(panels.newsRag, data);
 }
 
 async function runAgent() {
@@ -1348,6 +1390,84 @@ function renderNewsRagBody(data) {
   ].join("");
 }
 
+function renderRagPackBuildResult(node, data) {
+  renderResult(node, {
+    summary: [
+      ["文档", data.document_count ?? 0],
+      ["切片", data.chunk_count ?? 0],
+      ["向量", data.embedding_dim ?? "-"],
+      ["后端", data.embedding_backend || "-"],
+    ],
+    body: [
+      renderKeyValueBlock([
+        ["路径", data.path || "-"],
+        ["模型", data.embedding_model || "-"],
+        ["量化", data.embedding_quantization || "-"],
+        ["哈希", data.content_hash || "-"],
+      ]),
+      data.notes?.length ? renderNotes(data.notes) : "",
+    ].join(""),
+    raw: data,
+  });
+}
+
+function renderRagPackQueryResult(node, data) {
+  const hits = data.hits || [];
+  const manifest = data.manifest || {};
+  renderResult(node, {
+    summary: [
+      ["命中", hits.length],
+      ["版本", manifest.pack_version || "-"],
+      ["模型", manifest.embedding_model || "-"],
+      ["后端", manifest.embedding_backend || "-"],
+    ],
+    body: [
+      hits.length ? renderRagPackHits(hits) : renderEmpty("离线包没有命中证据"),
+      data.notes?.length ? renderNotes(data.notes) : "",
+    ].join(""),
+    raw: data,
+  });
+}
+
+function renderRagPackHits(hits) {
+  return `
+    <div class="evidence-list">
+      ${hits
+        .map(
+          (hit) => `
+            <article>
+              <strong>${escapeHtml(hit.title || "-")}</strong>
+              <span class="evidence-source">
+                <span class="source-tier ${sourceTierClass(hit.source_tier)}">${escapeHtml(sourceTierLabel(hit.source_tier))}</span>
+                ${escapeHtml(hit.source || "-")} · ${escapeHtml(hit.published_at || "-")}
+              </span>
+              <p>${escapeHtml(hit.text || "")}</p>
+              <em>${escapeHtml((hit.stock_codes || []).join(" · "))}</em>
+            </article>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderKeyValueBlock(items) {
+  return `
+    <div class="detail-grid">
+      ${items
+        .map(
+          ([label, value]) => `
+            <div>
+              <span>${escapeHtml(label)}</span>
+              <strong>${escapeHtml(String(value))}</strong>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function renderNewsFindings(findings) {
   return `
     <div class="news-findings">
@@ -1410,11 +1530,13 @@ function impactClass(direction) {
 }
 
 function sourceTierLabel(tier) {
+  if (tier === "filing") return "公告 / 事实";
   if (tier === "community") return "社区 / 待核查";
   return "新闻 / 事实";
 }
 
 function sourceTierClass(tier) {
+  if (tier === "filing") return "filing";
   return tier === "community" ? "community" : "news";
 }
 

@@ -335,12 +335,25 @@ class RagPackBuildRequest(BaseModel):
     overlap_chars: int = Field(default=80, ge=0, le=300)
 
 
+class RagPackBuildFromNewsCacheRequest(BaseModel):
+    pack_version: str = Field(default="local-news-cache", max_length=64)
+    days: int = Field(default=30, ge=1, le=3650)
+    stock_codes: List[str] = Field(default_factory=list, max_length=100)
+    relation_types: List[str] = Field(default_factory=list, max_length=50)
+    source_tiers: List[str] = Field(default_factory=lambda: ["filing", "news", "community"], max_length=10)
+    limit: int = Field(default=1000, ge=1, le=5000)
+    target_chars: int = Field(default=500, ge=120, le=1200)
+    overlap_chars: int = Field(default=80, ge=0, le=300)
+
+
 class RagPackBuildResult(BaseModel):
     path: str
     document_count: int
     chunk_count: int
     content_hash: str
     embedding_model: str
+    embedding_backend: str = "onnx"
+    embedding_quantization: str = "int8"
     embedding_dim: int
     notes: List[str] = Field(default_factory=list)
 
@@ -371,6 +384,14 @@ class RagPackChunkHit(BaseModel):
 
 class RagPackQueryResult(BaseModel):
     hits: List[RagPackChunkHit] = Field(default_factory=list)
+    manifest: dict = Field(default_factory=dict)
+    notes: List[str] = Field(default_factory=list)
+
+
+class RagPackStatusResult(BaseModel):
+    exists: bool
+    path: str
+    valid: bool = False
     manifest: dict = Field(default_factory=dict)
     notes: List[str] = Field(default_factory=list)
 

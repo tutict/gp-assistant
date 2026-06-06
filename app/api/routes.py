@@ -19,10 +19,12 @@ from app.schemas import (
     NewsRagRequest,
     NewsRagResult,
     OrderBookSnapshot,
+    RagPackBuildFromNewsCacheRequest,
     RagPackBuildRequest,
     RagPackBuildResult,
     RagPackQueryRequest,
     RagPackQueryResult,
+    RagPackStatusResult,
     ScreenCriteria,
     ScreenResult,
     SectorScreenRequest,
@@ -40,7 +42,7 @@ from app.services.backtest import backtest_hold
 from app.services.data_maintenance import data_source_status, prune_cache, refresh_universe
 from app.services.news_rag import analyze_supply_chain_news
 from app.services.observation import observe_stock as build_stock_observation
-from app.services.rag_pack import build_rag_pack, query_rag_pack
+from app.services.rag_pack import build_rag_pack, build_rag_pack_from_news_cache, query_rag_pack, rag_pack_status
 from app.services.screener import screen_stocks, screen_stocks_by_sector, screening_universe
 from app.services.stock_graph import graph_screen_stocks
 from app.services.stock_search import search_stock_items
@@ -290,10 +292,23 @@ def news_rag(request: NewsRagRequest, provider=Depends(_provider_from_headers)):
     return analyze_supply_chain_news(provider, request)
 
 
+@router.get("/rag-pack/status", response_model=RagPackStatusResult)
+def rag_pack_get_status():
+    return rag_pack_status()
+
+
 @router.post("/rag-pack/build", response_model=RagPackBuildResult)
 def rag_pack_build(request: RagPackBuildRequest):
     try:
         return build_rag_pack(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/rag-pack/build-from-news-cache", response_model=RagPackBuildResult)
+def rag_pack_build_from_news_cache(request: RagPackBuildFromNewsCacheRequest):
+    try:
+        return build_rag_pack_from_news_cache(request)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

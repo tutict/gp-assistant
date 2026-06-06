@@ -1,6 +1,6 @@
 # RAG Design
 
-This document describes the target design and current engineering surface for evidence-backed industry-chain RAG in GP Assistant. The current implementation supports scoped news retrieval, SQLite caching, source-tier labels, rule-based findings, and a first reusable RAG pack builder/query path. The pack path is designed for `SQLite + sqlite-vec + bge-small-zh INT8`, while the checked-in Python implementation uses a deterministic hashing embedder as a test double until the real model runtime is wired in.
+This document describes the product design and engineering surface for evidence-backed industry-chain RAG in GP Assistant. The current implementation supports scoped news retrieval, SQLite caching, source-tier labels, rule-based findings, and a reusable offline RAG pack builder/query path. Product builds use a local `bge-small-zh-v1.5` ONNX/INT8 embedding runtime through ONNX Runtime. The deterministic hashing embedder is retained only as an explicit test fixture and is not used by default.
 
 ## Goals
 
@@ -40,7 +40,21 @@ Mobile flow:
 
 ## Current API Usage
 
-The first engineering surface is intentionally explicit: callers pass normalized documents, build a pack, then query the pack. It does not yet scrape sources or run `bge-small-zh` by itself.
+The product surface is intentionally explicit: callers can either pass normalized documents or build from the existing message cache, then query a local read-only pack. Queries open `rag_pack.sqlite` in read-only mode and do not call cloud services.
+
+Before building a product pack, download the local embedding assets:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\download-rag-embedding-model.ps1
+```
+
+By default the assets are stored under `models/bge-small-zh-v1.5-int8`. The directory is ignored by git and is bundled into the desktop sidecar when present.
+
+Check local pack status:
+
+```http
+GET /api/rag-pack/status
+```
 
 Build a local pack:
 
@@ -71,6 +85,24 @@ Content-Type: application/json
 ```
 
 The default output path is controlled by `GP_RAG_PACK_PATH`, defaulting to `data/cache/rag_pack.sqlite`.
+
+Build a pack from the existing message cache:
+
+```http
+POST /api/rag-pack/build-from-news-cache
+Content-Type: application/json
+```
+
+```json
+{
+  "pack_version": "2026-06-05-news-cache",
+  "days": 30,
+  "stock_codes": ["300750.SZ"],
+  "relation_types": ["supply_chain"],
+  "source_tiers": ["filing", "news", "community"],
+  "limit": 1000
+}
+```
 
 Query the local pack:
 
@@ -149,23 +181,28 @@ result = query_rag_pack(
 
 - Storage: SQLite.
 - Vector index: sqlite-vec in the target mobile/runtime implementation.
-- Embedding model: `bge-small-zh` INT8.
+- Embedding model: `bge-small-zh-v1.5` INT8-compatible ONNX assets.
+- Desktop runtime: ONNX Runtime + `tokenizers`.
 - Desktop embedding: document and chunk embeddings.
 - Mobile embedding: query embeddings, plus optional small local increments later.
 
 The same model, dimension, quantization, and normalization rules must be used on desktop and mobile. Treat those settings as part of the retrieval protocol, not as an implementation detail.
 
-Current placeholder:
+Product embedding provider:
+
+- `app.services.rag_pack.OnnxEmbeddingProvider`
+- default model id: `BAAI/bge-small-zh-v1.5`
+- default backend: `onnxruntime`
+- default quantization label: `int8`
+- default dimension: `512`
+
+Test-only embedding provider:
 
 - `app.services.rag_pack.HashingEmbeddingProvider`
-- deterministic, normalized vector output
-- used only to make schema, chunking, filtering, and pack/query tests executable before the real embedding runtime lands
+- enabled only when explicitly injected in tests or when `GP_RAG_EMBEDDING_BACKEND=hashing` and `GP_RAG_ALLOW_HASH_EMBEDDING=true`
+- never enabled by default in product API paths
 
-Replacement point:
-
-- implement an `EmbeddingProvider` backed by the chosen `bge-small-zh` INT8 runtime
-- keep `model_id`, `quantization`, `dim`, and `normalized` stable across desktop and mobile
-- fail pack validation when manifest metadata and query model metadata do not match
+Pack validation fails when manifest metadata and query model metadata do not match.
 
 ## Source Tiers
 
@@ -176,7 +213,6 @@ Every document and chunk has a `source_tier`.
 | `filing` | Official filings, exchange disclosures, announcements | Yes |
 | `news` | News or factual market reports | Yes |
 | `community` | Forums, social posts, discussion, rumors, sentiment | No |
-| `demo` | Local deterministic test/demo messages | No |
 
 Community content can help surface risk signals, sentiment changes, and rumors to verify. It must be shown as `community / pending verification` in the UI and must add a secondary verification check.
 
@@ -222,6 +258,7 @@ CREATE TABLE rag_manifest (
   document_count INTEGER NOT NULL,
   chunk_count INTEGER NOT NULL,
   embedding_model TEXT NOT NULL,
+  embedding_backend TEXT NOT NULL,
   embedding_quantization TEXT NOT NULL,
   embedding_dim INTEGER NOT NULL,
   embedding_normalized INTEGER NOT NULL,
@@ -234,6 +271,8 @@ Validation rules:
 
 - Reject unknown `schema_version`.
 - Reject unknown `embedding_model`.
+- Reject mismatched `embedding_backend`.
+- Reject mismatched `embedding_quantization`.
 - Reject mismatched `embedding_dim`.
 - Reject mismatched normalization.
 - Reject corrupted or unexpected `content_hash`.
@@ -305,7 +344,7 @@ CREATE VIRTUAL TABLE chunk_embeddings USING vec0(
 
 If the selected `bge-small-zh` artifact uses a different dimension, the schema and manifest must use that exact dimension.
 
-The current Python scaffold stores embeddings in `chunk_embeddings(chunk_id, embedding BLOB)` as JSON-encoded float vectors. This is deliberate scaffolding so tests and API behavior work without native sqlite-vec packaging. When sqlite-vec is integrated, keep the chunk/document/entity schema and replace only the vector storage/query implementation.
+The current desktop product path stores embeddings in `chunk_embeddings(chunk_id, embedding BLOB)` as JSON-encoded float vectors and scores candidates with local cosine similarity. This keeps GitHub beta packaging simple and fully offline after pack construction. When sqlite-vec is integrated, keep the chunk/document/entity schema and replace only the vector storage/query implementation.
 
 ## Query Plan
 
@@ -324,7 +363,7 @@ For an industry-chain question:
 7. Prefer factual tiers over community when evidence is otherwise similar.
 8. Return evidence with source tier, title, publish time, URL, and stock codes.
 
-Current scaffold query behavior:
+Current desktop query behavior:
 
 1. Open `rag_pack.sqlite` read-only.
 2. Validate manifest compatibility with the query embedder.
@@ -333,7 +372,7 @@ Current scaffold query behavior:
 5. Apply a small source-tier boost/penalty.
 6. Return chunk hits.
 
-This is not the final mobile retrieval path. It is a parity scaffold that makes the contract testable before replacing candidate scoring with sqlite-vec nearest-neighbor search.
+This is the GitHub beta desktop retrieval path. It is compatible with replacing candidate scoring with sqlite-vec nearest-neighbor search later.
 
 Recommended first ranking policy:
 
@@ -404,7 +443,7 @@ Phase 1: Desktop pack builder
 - Generate embeddings with `bge-small-zh` INT8.
 - Validate pack after build.
 
-Current status: schema, deterministic chunking, manifest, atomic pack replacement, read-only query, metadata filtering, and tests exist. The embedding provider is still the deterministic test double.
+Current status: schema, deterministic chunking, manifest, atomic pack replacement, read-only query, metadata filtering, ONNX Runtime embedding provider, message-cache pack builder, UI entry points, and tests exist.
 
 Phase 2: Desktop query parity
 
@@ -435,7 +474,6 @@ Phase 5: Optional local increments
 ## Open Decisions
 
 - Exact `bge-small-zh` runtime on mobile.
-- Exact embedding dimension for the chosen INT8 artifact.
 - sqlite-vec packaging for Android and iOS.
 - Whether filings become a separate `filing` source adapter before or after vector retrieval.
 - Whether reranking remains rule-based or adds a small local reranker later.

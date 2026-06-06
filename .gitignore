@@ -8,6 +8,8 @@ data/
 build/
 dist/
 logs/
+models/*
+!models/.gitkeep
 desktop/node_modules/
 desktop/src-tauri/gen/
 desktop/src-tauri/target/
