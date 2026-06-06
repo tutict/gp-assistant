@@ -51,25 +51,25 @@
           </div>
         </div>
         <div class="top-actions">
-          <label class="source-control">
+          <div class="source-control">
             <span>数据源</span>
-            <select id="dataSourceSelect">
+            <select id="dataSourceSelect" aria-label="数据源">
               <option value="astock">A股全栈</option>
               <option value="akshare">公开行情</option>
               <option value="eastmoney">东方财富</option>
             </select>
-          </label>
+          </div>
           <label class="source-refresh">
             <input id="refreshSource" type="checkbox" />
             <span>刷新缓存</span>
           </label>
-          <label class="source-control">
+          <div class="source-control">
             <span>代理</span>
-            <select id="proxyModeSelect">
+            <select id="proxyModeSelect" aria-label="代理">
               <option value="system">使用系统代理</option>
               <option value="none">不使用代理</option>
             </select>
-          </label>
+          </div>
           <span id="sourceStatus" class="status-pill"><i aria-hidden="true"></i>A股全栈</span>
           <label class="theme-switch" for="themeToggle">
             <span id="themeText">亮色模式</span>

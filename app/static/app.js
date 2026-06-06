@@ -84,6 +84,7 @@ initMobileNav();
 initDataSource();
 initLlmSettings();
 initFormControls();
+initStickyOffsets();
 bindActions();
 
 function bindActions() {
@@ -221,6 +222,28 @@ function setCriteriaPanelOpen(isOpen) {
   document.body.classList.toggle("criteria-open", Boolean(isOpen));
   if (workbench.criteriaOverlay) {
     workbench.criteriaOverlay.hidden = !isOpen;
+  }
+}
+
+function initStickyOffsets() {
+  const shell = $(".app-shell");
+  const header = $(".app-header");
+  const contextBar = $(".research-context-bar");
+  if (!shell || !header) return;
+
+  const update = () => {
+    const headerHeight = Math.ceil(header.getBoundingClientRect().height);
+    const contextHeight = contextBar ? Math.ceil(contextBar.getBoundingClientRect().height) : 0;
+    shell.style.setProperty("--app-header-height", `${headerHeight}px`);
+    shell.style.setProperty("--research-context-height", `${contextHeight}px`);
+  };
+
+  update();
+  window.addEventListener("resize", update);
+  if ("ResizeObserver" in window) {
+    const observer = new ResizeObserver(update);
+    observer.observe(header);
+    if (contextBar) observer.observe(contextBar);
   }
 }
 
@@ -430,8 +453,127 @@ function initDataSource() {
   if (dataSource.proxy && savedProxy && [...dataSource.proxy.options].some((option) => option.value === savedProxy)) {
     dataSource.proxy.value = savedProxy;
   }
+  initSourceSelects();
   updateSourceStatus();
   loadDataStatus();
+}
+
+function initSourceSelects() {
+  document.querySelectorAll(".source-control select").forEach((select) => {
+    if (!(select instanceof HTMLSelectElement) || select.dataset.enhanced === "true") return;
+    const control = select.closest(".source-control");
+    if (!control) return;
+
+    select.dataset.enhanced = "true";
+    select.tabIndex = -1;
+    select.setAttribute("aria-hidden", "true");
+    const idBase = select.id || `sourceSelect${Math.random().toString(16).slice(2)}`;
+    const custom = document.createElement("div");
+    const button = document.createElement("button");
+    const menu = document.createElement("div");
+
+    custom.className = "source-select";
+    button.type = "button";
+    button.className = "source-select-button";
+    button.setAttribute("aria-haspopup", "listbox");
+    button.setAttribute("aria-expanded", "false");
+    button.setAttribute("aria-controls", `${idBase}Menu`);
+    menu.className = "source-select-menu";
+    menu.id = `${idBase}Menu`;
+    menu.setAttribute("role", "listbox");
+    menu.hidden = true;
+
+    [...select.options].forEach((option) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "source-select-option";
+      item.dataset.value = option.value;
+      item.setAttribute("role", "option");
+      item.textContent = option.textContent;
+      item.addEventListener("click", () => {
+        select.value = option.value;
+        syncSourceSelect(select);
+        closeSourceSelects();
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      menu.appendChild(item);
+    });
+
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const shouldOpen = menu.hidden;
+      closeSourceSelects();
+      setSourceSelectOpen(custom, shouldOpen);
+    });
+    button.addEventListener("keydown", (event) => {
+      if (!["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) return;
+      event.preventDefault();
+      closeSourceSelects();
+      setSourceSelectOpen(custom, true);
+      const activeOption = menu.querySelector('[aria-selected="true"]') || menu.querySelector(".source-select-option");
+      activeOption?.focus();
+    });
+    menu.addEventListener("keydown", (event) => {
+      const options = [...menu.querySelectorAll(".source-select-option")];
+      const currentIndex = Math.max(0, options.indexOf(document.activeElement));
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeSourceSelects();
+        button.focus();
+        return;
+      }
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        options[(currentIndex + delta + options.length) % options.length]?.focus();
+        return;
+      }
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        document.activeElement?.click();
+      }
+    });
+
+    custom.append(button, menu);
+    control.appendChild(custom);
+    select.addEventListener("change", () => syncSourceSelect(select));
+    syncSourceSelect(select);
+  });
+
+  document.addEventListener("click", closeSourceSelects);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeSourceSelects();
+  });
+}
+
+function syncSourceSelect(select) {
+  const control = select.closest(".source-control");
+  const custom = control?.querySelector(".source-select");
+  const button = custom?.querySelector(".source-select-button");
+  const selectedOption = select.selectedOptions[0];
+  if (!custom || !button || !selectedOption) return;
+  const selectedText = selectedOption.textContent || selectedOption.value;
+  const labelText = control.querySelector(":scope > span")?.textContent?.trim();
+  button.textContent = selectedText;
+  button.setAttribute("aria-label", labelText ? `${labelText}：${selectedText}` : selectedText);
+  custom.querySelectorAll(".source-select-option").forEach((option) => {
+    const isSelected = option.dataset.value === select.value;
+    option.classList.toggle("selected", isSelected);
+    option.setAttribute("aria-selected", String(isSelected));
+    option.tabIndex = isSelected ? 0 : -1;
+  });
+}
+
+function setSourceSelectOpen(custom, isOpen) {
+  const button = custom.querySelector(".source-select-button");
+  const menu = custom.querySelector(".source-select-menu");
+  custom.classList.toggle("open", isOpen);
+  button?.setAttribute("aria-expanded", String(isOpen));
+  if (menu) menu.hidden = !isOpen;
+}
+
+function closeSourceSelects() {
+  document.querySelectorAll(".source-select.open").forEach((custom) => setSourceSelectOpen(custom, false));
 }
 
 function getSelectedDataSource() {
@@ -463,6 +605,8 @@ function updateSourceStatus() {
   const suffix = dataSource.refresh?.checked ? " 刷新" : "";
   const proxySuffix = getSelectedProxyMode() === "none" ? " 直连" : "";
   dataSource.status.innerHTML = `<i aria-hidden="true"></i>${escapeHtml(label + suffix + proxySuffix)}`;
+  if (dataSource.select) syncSourceSelect(dataSource.select);
+  if (dataSource.proxy) syncSourceSelect(dataSource.proxy);
 }
 
 async function runDataTask(button, task) {

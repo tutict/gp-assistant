@@ -31,6 +31,7 @@ class EastmoneyProvider(StockProvider):
         self._session = requests.Session()
         self._session.trust_env = self.proxy_mode != PROXY_MODE_NONE
         self._akshare = AkShareProvider(refresh=False, proxy_mode=self.proxy_mode)
+        self._last_load_note: str | None = None
 
     def list_stocks(self) -> List[StockItem]:
         df = self._load_spot()
@@ -40,7 +41,7 @@ class EastmoneyProvider(StockProvider):
         try:
             df = self._load_spot(required_fields=self._SCREEN_REQUIRED_FIELDS)
         except Exception as exc:
-            return self.list_stocks(), [f"前一交易日收盘价不可用，已回退到股票池价格：{exc}"]
+            return self._fallback_stocks_for_screen(exc)
 
         items: List[StockItem] = []
         previous_close_count = 0
@@ -55,9 +56,10 @@ class EastmoneyProvider(StockProvider):
             else:
                 fallback_count += 1
 
-        notes = [
-            f"筛选价格口径：前一交易日收盘价（东方财富昨收 f18），已应用 {previous_close_count} 只。"
-        ]
+        notes = []
+        if self._last_load_note:
+            notes.append(self._last_load_note)
+        notes.append(f"筛选价格口径：前一交易日收盘价（东方财富昨收 f18），已应用 {previous_close_count} 只。")
         if fallback_count:
             notes.append(f"{fallback_count} 只股票缺少昨收价，已回退到股票池价格。")
         return items, notes
@@ -169,15 +171,66 @@ class EastmoneyProvider(StockProvider):
         return None
 
     def _load_spot(self, required_fields: tuple[str, ...] = ()) -> pd.DataFrame:
-        if not self.refresh and os.path.exists(self.cache_path):
-            df = pd.read_csv(self.cache_path)
-            if all(field in df.columns for field in required_fields):
-                return df
+        self._last_load_note = None
+        cached_df = self._read_cached_spot()
+        if not self.refresh and cached_df is not None:
+            missing_fields = [field for field in required_fields if field not in cached_df.columns]
+            if not missing_fields:
+                return cached_df
 
-        df = self._fetch_spot()
+        try:
+            df = self._fetch_spot()
+        except Exception as exc:
+            if cached_df is not None:
+                missing_fields = [field for field in required_fields if field not in cached_df.columns]
+                suffix = f"，缓存缺少 {', '.join(missing_fields)} 字段" if missing_fields else ""
+                self._last_load_note = f"东方财富实时连接失败，已使用本地缓存{suffix}：{exc}"
+                return cached_df
+            return self._fallback_spot_from_akshare(exc)
         os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
         df.to_csv(self.cache_path, index=False)
         return df
+
+    def _read_cached_spot(self) -> pd.DataFrame | None:
+        if not os.path.exists(self.cache_path):
+            return None
+        try:
+            return pd.read_csv(self.cache_path)
+        except Exception:
+            return None
+
+    def _fallback_stocks_for_screen(self, exc: Exception) -> tuple[List[StockItem], List[str]]:
+        try:
+            items = self.list_stocks()
+        except Exception as fallback_exc:
+            return [], [f"东方财富数据源不可用，备用股票池也不可用：{fallback_exc}"]
+        note = self._last_load_note or f"前一交易日收盘价不可用，已回退到股票池价格：{exc}"
+        return items, [note]
+
+    def _fallback_spot_from_akshare(self, exc: Exception) -> pd.DataFrame:
+        try:
+            items = self._akshare.list_stocks()
+        except Exception as fallback_exc:
+            raise RuntimeError(f"东方财富实时行情不可用，公开行情备用源也不可用：{fallback_exc}") from exc
+
+        rows = [self._stock_to_row(item) for item in items]
+        if not rows:
+            raise RuntimeError("东方财富实时行情不可用，公开行情备用源没有返回股票") from exc
+        self._last_load_note = f"东方财富实时连接失败，已临时使用公开行情备用源：{exc}"
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def _stock_to_row(stock: StockItem) -> dict:
+        return {
+            "f2": stock.price,
+            "f9": stock.pe,
+            "f12": stock.code.split(".")[0],
+            "f14": stock.name,
+            "f18": None,
+            "f20": stock.market_cap_billion,
+            "f23": stock.pb,
+            "f100": stock.industry,
+        }
 
     def _row_to_stock(self, row: pd.Series, use_previous_close: bool = False) -> StockItem | None:
         code = str(row.get("f12", "")).strip()
