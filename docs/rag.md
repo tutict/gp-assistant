@@ -1,62 +1,62 @@
-# RAG Design
+# 检索增强生成设计
 
-This document describes the product design and engineering surface for evidence-backed industry-chain RAG in GP Assistant. The current implementation supports scoped news retrieval, SQLite caching, source-tier labels, rule-based findings, and a reusable offline RAG pack builder/query path. Product builds use a local `bge-small-zh-v1.5` ONNX/INT8 embedding runtime through ONNX Runtime. The deterministic hashing embedder is retained only as an explicit test fixture and is not used by default.
+本文说明本项目中“有证据支撑的产业链检索增强生成”的产品设计和工程边界。当前实现支持限定范围的消息检索、SQLite 缓存、来源层级标签、基于规则的结论，以及可复用的离线数据包构建与查询路径。产品构建使用本地 `bge-small-zh-v1.5` ONNX/INT8 向量模型，并通过 ONNX Runtime 运行。确定性哈希向量器只作为显式测试夹具保留，默认不会用于产品路径。
 
-## Goals
+## 目标
 
-- Answer A-share industry-chain questions with traceable evidence.
-- Keep retrieval scoped to the existing stock and relation graph.
-- Separate factual evidence from community discussion and rumors.
-- Support mobile offline retrieval without embedding the Python/FastAPI backend.
-- Keep the first mobile version debuggable by avoiding bidirectional sync.
+- 回答 A 股产业链问题时给出可追溯证据。
+- 将检索范围限定在已有股票池和关系图内。
+- 区分事实证据、社区讨论和市场传闻。
+- 支持移动端离线检索，而不在移动端内嵌 Python/FastAPI 后端。
+- 第一版移动端避免双向同步，便于调试和复现。
 
-Non-goals for the first version:
+第一版不做：
 
-- General-purpose stock Q&A across arbitrary documents.
-- Automatic discovery of supply-chain relations from news text.
-- Bidirectional sync between desktop and mobile.
-- Conflict resolution for mobile-written RAG index rows.
-- Using community posts as factual evidence.
+- 面向任意文档的通用股票问答。
+- 从新闻正文自动发现供应链关系。
+- 桌面端和移动端之间的双向同步。
+- 移动端写入 RAG 索引后的冲突解决。
+- 把社区帖子当作事实证据使用。
 
-## User Flow
+## 用户流程
 
-Desktop or backend flow:
+桌面端或后端流程：
 
-1. Fetch news, filings, and community posts.
-2. Normalize each item into a `document`.
-3. Split each document into `chunks`.
-4. Generate chunk embeddings with the agreed embedding model.
-5. Build a versioned `rag_pack.sqlite`.
-6. Publish the pack for mobile download or local import.
+1. 抓取新闻、公告和社区帖子。
+2. 将每条内容规范化为 `document`。
+3. 将每个文档切分为 `chunks`。
+4. 使用约定的向量模型生成 chunk 向量。
+5. 构建带版本号的 `rag_pack.sqlite`。
+6. 发布该数据包，供移动端下载或本地导入。
 
-Mobile flow:
+移动端流程：
 
-1. Download or import `rag_pack.sqlite`.
-2. Validate the pack manifest.
-3. Atomically replace the local read-only pack.
-4. Embed the user query with the same model.
-5. Run filtered sqlite-vec nearest-neighbor search.
-6. Return chunks with titles, URLs, source tier, and pending checks.
+1. 下载或导入 `rag_pack.sqlite`。
+2. 校验数据包 manifest。
+3. 原子替换本地只读数据包。
+4. 使用同一模型为用户查询生成向量。
+5. 运行带过滤条件的 sqlite-vec 最近邻检索。
+6. 返回带标题、URL、来源层级和待核查项的 chunks。
 
-## Current API Usage
+## 当前接口用法
 
-The product surface is intentionally explicit: callers can either pass normalized documents or build from the existing message cache, then query a local read-only pack. Queries open `rag_pack.sqlite` in read-only mode and do not call cloud services.
+产品接口有意保持显式：调用方可以传入规范化文档，也可以从现有消息缓存构建数据包，然后查询本地只读数据包。查询时以只读方式打开 `rag_pack.sqlite`，不会调用云服务。
 
-Before building a product pack, download the local embedding assets:
+构建产品数据包前，先下载本地向量模型资源：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\download-rag-embedding-model.ps1
 ```
 
-By default the assets are stored under `models/bge-small-zh-v1.5-int8`. The directory is ignored by git and is bundled into the desktop sidecar when present.
+默认资源目录为 `models/bge-small-zh-v1.5-int8`。该目录被 git 忽略；如果目录存在，会被打包进桌面端随行进程。
 
-Check local pack status:
+查看本地数据包状态：
 
 ```http
 GET /api/rag-pack/status
 ```
 
-Build a local pack:
+构建本地数据包：
 
 ```http
 POST /api/rag-pack/build
@@ -84,9 +84,9 @@ Content-Type: application/json
 }
 ```
 
-The default output path is controlled by `GP_RAG_PACK_PATH`, defaulting to `data/cache/rag_pack.sqlite`.
+默认输出路径由 `GP_RAG_PACK_PATH` 控制，默认值为 `data/cache/rag_pack.sqlite`。
 
-Build a pack from the existing message cache:
+从现有消息缓存构建数据包：
 
 ```http
 POST /api/rag-pack/build-from-news-cache
@@ -104,7 +104,7 @@ Content-Type: application/json
 }
 ```
 
-Query the local pack:
+查询本地数据包：
 
 ```http
 POST /api/rag-pack/query
@@ -122,7 +122,7 @@ Content-Type: application/json
 }
 ```
 
-Response hits are chunk-level evidence:
+响应命中项是 chunk 级证据：
 
 ```json
 {
@@ -147,7 +147,7 @@ Response hits are chunk-level evidence:
 }
 ```
 
-Direct Python usage is available through `app.services.rag_pack`:
+也可以通过 `app.services.rag_pack` 直接在 Python 中调用：
 
 ```python
 from pathlib import Path
@@ -177,76 +177,76 @@ result = query_rag_pack(
 )
 ```
 
-## Recommended Technical Stack
+## 推荐技术栈
 
-- Storage: SQLite.
-- Vector index: sqlite-vec in the target mobile/runtime implementation.
-- Embedding model: `bge-small-zh-v1.5` INT8-compatible ONNX assets.
-- Desktop runtime: ONNX Runtime + `tokenizers`.
-- Desktop embedding: document and chunk embeddings.
-- Mobile embedding: query embeddings, plus optional small local increments later.
+- 存储：SQLite。
+- 向量索引：目标移动端或运行时实现中使用 sqlite-vec。
+- 向量模型：兼容 INT8 的 `bge-small-zh-v1.5` ONNX 资源。
+- 桌面端运行时：ONNX Runtime + `tokenizers`。
+- 桌面端向量生成：生成 document 和 chunk 向量。
+- 移动端向量生成：生成查询向量，后续可选择支持少量本地增量。
 
-The same model, dimension, quantization, and normalization rules must be used on desktop and mobile. Treat those settings as part of the retrieval protocol, not as an implementation detail.
+桌面端和移动端必须使用相同的模型、维度、量化方式和归一化规则。应把这些设置视为检索协议的一部分，而不是普通实现细节。
 
-Product embedding provider:
+产品向量提供器：
 
 - `app.services.rag_pack.OnnxEmbeddingProvider`
-- default model id: `BAAI/bge-small-zh-v1.5`
-- default backend: `onnxruntime`
-- default quantization label: `int8`
-- default dimension: `512`
+- 默认模型 ID：`BAAI/bge-small-zh-v1.5`
+- 默认后端：`onnxruntime`
+- 默认量化标签：`int8`
+- 默认维度：`512`
 
-Test-only embedding provider:
+测试专用向量提供器：
 
 - `app.services.rag_pack.HashingEmbeddingProvider`
-- enabled only when explicitly injected in tests or when `GP_RAG_EMBEDDING_BACKEND=hashing` and `GP_RAG_ALLOW_HASH_EMBEDDING=true`
-- never enabled by default in product API paths
+- 仅在测试显式注入，或同时设置 `GP_RAG_EMBEDDING_BACKEND=hashing` 与 `GP_RAG_ALLOW_HASH_EMBEDDING=true` 时启用。
+- 产品 API 路径默认永不启用。
 
-Pack validation fails when manifest metadata and query model metadata do not match.
+当 manifest 元数据和查询模型元数据不匹配时，数据包校验必须失败。
 
-## Source Tiers
+## 来源层级
 
-Every document and chunk has a `source_tier`.
+每个 document 和 chunk 都有 `source_tier`。
 
-| Tier | Meaning | Can raise confidence? |
+| 层级 | 含义 | 是否可提升置信度 |
 | --- | --- | --- |
-| `filing` | Official filings, exchange disclosures, announcements | Yes |
-| `news` | News or factual market reports | Yes |
-| `community` | Forums, social posts, discussion, rumors, sentiment | No |
+| `filing` | 官方公告、交易所披露、上市公司公告 | 是 |
+| `news` | 新闻或事实性市场报道 | 是 |
+| `community` | 论坛、社交帖子、讨论、传闻、情绪 | 否 |
 
-Community content can help surface risk signals, sentiment changes, and rumors to verify. It must be shown as `community / pending verification` in the UI and must add a secondary verification check.
+社区内容可以帮助发现风险信号、情绪变化和待验证传闻。界面中必须标记为 `community / pending verification`，并增加二次核查项。
 
-## Retrieval Unit
+## 检索单元
 
-Use `chunks` as the only vector retrieval unit.
+只使用 `chunks` 作为向量检索单元。
 
-Do not vector-search whole documents in the first version. Whole documents are source containers; chunks are the evidence units.
+第一版不要对整篇文档做向量检索。整篇文档只是来源容器，chunk 才是证据单元。
 
-Recommended first chunking rule:
+建议的第一版切分规则：
 
-- Target size: 300-600 Chinese characters.
-- Overlap: 50-100 Chinese characters.
-- Preserve title, source, stock codes, relation types, publish time, and URL on every chunk.
-- Version the chunker with `chunk_version`, starting with `v1`.
+- 目标长度：300 到 600 个中文字符。
+- 重叠长度：50 到 100 个中文字符。
+- 每个 chunk 保留标题、来源、股票代码、关系类型、发布时间和 URL。
+- 使用 `chunk_version` 管理切分器版本，初始值为 `v1`。
 
-## RAG Pack
+## 检索增强生成数据包
 
-The mobile pack is a versioned, read-only SQLite snapshot. It is not a sync database.
+移动端数据包是带版本号的只读 SQLite 快照，不是同步数据库。
 
-Recommended lifecycle:
+建议生命周期：
 
 ```text
 desktop build -> rag_pack.sqlite.tmp -> validate -> publish
 mobile download -> validate -> replace rag_pack.sqlite atomically
 ```
 
-The mobile app may keep a separate local database for user settings, favorites, recent queries, and UI state. It should not write into the main RAG pack in the first version.
+移动端应用可以使用独立本地数据库保存用户设置、自选、最近查询和界面状态。第一版不应写入主 RAG 数据包。
 
-## Manifest
+## 数据包清单
 
-Each pack must include exactly one active manifest row.
+每个数据包必须包含且只包含一条激活的 manifest 记录。
 
-Suggested fields:
+建议字段：
 
 ```sql
 CREATE TABLE rag_manifest (
@@ -267,20 +267,20 @@ CREATE TABLE rag_manifest (
 );
 ```
 
-Validation rules:
+校验规则：
 
-- Reject unknown `schema_version`.
-- Reject unknown `embedding_model`.
-- Reject mismatched `embedding_backend`.
-- Reject mismatched `embedding_quantization`.
-- Reject mismatched `embedding_dim`.
-- Reject mismatched normalization.
-- Reject corrupted or unexpected `content_hash`.
-- Reject packs with zero chunks.
+- 拒绝未知的 `schema_version`。
+- 拒绝未知的 `embedding_model`。
+- 拒绝不匹配的 `embedding_backend`。
+- 拒绝不匹配的 `embedding_quantization`。
+- 拒绝不匹配的 `embedding_dim`。
+- 拒绝不匹配的归一化规则。
+- 拒绝损坏或非预期的 `content_hash`。
+- 拒绝没有 chunk 的数据包。
 
-## Suggested Schema
+## 建议数据结构
 
-Documents:
+文档表：
 
 ```sql
 CREATE TABLE documents (
@@ -297,7 +297,7 @@ CREATE TABLE documents (
 );
 ```
 
-Chunks:
+Chunk 表：
 
 ```sql
 CREATE TABLE chunks (
@@ -314,7 +314,7 @@ CREATE TABLE chunks (
 );
 ```
 
-Entities and relations:
+实体和关系表：
 
 ```sql
 CREATE TABLE chunk_entities (
@@ -331,9 +331,9 @@ CREATE TABLE chunk_relations (
 );
 ```
 
-Vector table shape depends on sqlite-vec binding details, but each vector row must map one-to-one to `chunks.id`.
+向量表形态取决于 sqlite-vec 绑定细节，但每条向量记录必须与 `chunks.id` 一一对应。
 
-Conceptually:
+概念结构如下：
 
 ```sql
 CREATE VIRTUAL TABLE chunk_embeddings USING vec0(
@@ -342,39 +342,39 @@ CREATE VIRTUAL TABLE chunk_embeddings USING vec0(
 );
 ```
 
-If the selected `bge-small-zh` artifact uses a different dimension, the schema and manifest must use that exact dimension.
+如果所选 `bge-small-zh` 资源使用其他维度，schema 和 manifest 必须使用该实际维度。
 
-The current desktop product path stores embeddings in `chunk_embeddings(chunk_id, embedding BLOB)` as JSON-encoded float vectors and scores candidates with local cosine similarity. This keeps GitHub beta packaging simple and fully offline after pack construction. When sqlite-vec is integrated, keep the chunk/document/entity schema and replace only the vector storage/query implementation.
+当前桌面端产品路径把向量存储在 `chunk_embeddings(chunk_id, embedding BLOB)` 中，内容是 JSON 编码的浮点向量，并在本地用余弦相似度为候选项打分。这样可以简化 GitHub beta 包装，并在构建数据包后完全离线运行。后续集成 sqlite-vec 时，应保留 chunk、document、entity schema，只替换向量存储和查询实现。
 
-## Query Plan
+## 查询计划
 
-For an industry-chain question:
+针对产业链问题：
 
-1. Parse stock code, stock name, industry, time window, and intent.
-2. Resolve scope using the existing stock universe and relation graph.
-3. Build metadata filters:
+1. 解析股票代码、股票名称、行业、时间窗口和意图。
+2. 使用现有股票池和关系图解析检索范围。
+3. 构建元数据过滤条件：
    - `stock_codes`
    - `relation_types`
    - `published_at >= cutoff`
-   - allowed `source_tier`
-4. Embed the query using `bge-small-zh` INT8.
-5. Retrieve top-K chunks with sqlite-vec.
-6. Apply post-filters and dedupe by document.
-7. Prefer factual tiers over community when evidence is otherwise similar.
-8. Return evidence with source tier, title, publish time, URL, and stock codes.
+   - 允许的 `source_tier`
+4. 使用 `bge-small-zh` INT8 为查询生成向量。
+5. 使用 sqlite-vec 检索 top-K chunks。
+6. 应用后置过滤，并按文档去重。
+7. 证据相近时优先使用事实性来源层级，而不是社区内容。
+8. 返回包含来源层级、标题、发布时间、URL 和股票代码的证据。
 
-Current desktop query behavior:
+当前桌面端查询行为：
 
-1. Open `rag_pack.sqlite` read-only.
-2. Validate manifest compatibility with the query embedder.
-3. Apply SQLite metadata filters for stock, relation type, source tier, and date.
-4. Score candidate chunks with cosine similarity in Python.
-5. Apply a small source-tier boost/penalty.
-6. Return chunk hits.
+1. 以只读方式打开 `rag_pack.sqlite`。
+2. 校验 manifest 与查询向量器是否兼容。
+3. 使用 SQLite 元数据过滤股票、关系类型、来源层级和日期。
+4. 在 Python 中用余弦相似度为候选 chunks 打分。
+5. 应用较小的来源层级加分或惩罚。
+6. 返回 chunk 命中项。
 
-This is the GitHub beta desktop retrieval path. It is compatible with replacing candidate scoring with sqlite-vec nearest-neighbor search later.
+这是 GitHub beta 的桌面端检索路径。后续可以用 sqlite-vec 最近邻检索替换候选打分，同时保持兼容。
 
-Recommended first ranking policy:
+建议的第一版排序策略：
 
 ```text
 score = vector_score
@@ -384,96 +384,96 @@ score = vector_score
       - community_confidence_penalty
 ```
 
-Do not hide community chunks. Rank them lower and label them clearly.
+不要隐藏社区 chunks。应降低其排序，并给出清晰标签。
 
-## Answer Generation
+## 答案生成
 
-The retrieval layer must be useful without a cloud LLM.
+检索层必须在没有云端大模型时仍然可用。
 
-First version answer generation can be template-based:
+第一版答案生成可以使用模板：
 
-- Direction: positive, negative, neutral, uncertain.
-- Confidence: high, medium, low.
-- Impact chain: upstream/downstream relation path.
-- Evidence list: top chunks.
-- Pending checks: filings, financial reports, price/volume, order data, inventory, margin.
+- 方向：利好、利空、中性、不确定。
+- 置信度：高、中、低。
+- 影响链路：上游或下游关系路径。
+- 证据列表：top chunks。
+- 待核查项：公告、财报、价量、订单数据、库存、毛利率。
 
-If an LLM is available, use retrieved chunks as context and require citations. The LLM must not invent relations outside the existing graph.
+如果可用大模型，应把检索到的 chunks 作为上下文，并要求引用证据。大模型不得编造已有关系图之外的关系。
 
-## Debugging Strategy
+## 调试策略
 
-Keep the pack reproducible.
+保持数据包可复现。
 
-Required debug artifacts:
+必要调试材料：
 
 - `rag_pack.sqlite`
-- manifest row
-- query text
-- query embedding model metadata
-- resolved stock/relation scope
-- SQL filters
-- top-K raw vector results
-- final reranked results
+- manifest 记录
+- 查询文本
+- 查询向量模型元数据
+- 解析出的股票和关系范围
+- SQL 过滤条件
+- top-K 原始向量结果
+- 最终重排结果
 
-This allows desktop reproduction of mobile retrieval bugs with the exact same SQLite file.
+这些材料可以让桌面端用同一个 SQLite 文件复现移动端检索问题。
 
-## Mobile Boundaries
+## 移动端边界
 
-Mobile should do:
+移动端应该做：
 
-- Validate and open a read-only pack.
-- Generate query embeddings.
-- Run sqlite-vec retrieval.
-- Render evidence and pending checks.
-- Store user settings in a separate local database.
+- 校验并打开只读数据包。
+- 生成查询向量。
+- 执行 sqlite-vec 检索。
+- 渲染证据和待核查项。
+- 在独立本地数据库中保存用户设置。
 
-Mobile should not do in the first version:
+第一版移动端不应该做：
 
-- Rebuild the full document embedding index.
-- Merge desktop and mobile index writes.
-- Resolve sync conflicts.
-- Treat community posts as verified facts.
+- 重建完整文档向量索引。
+- 合并桌面端和移动端的索引写入。
+- 解决同步冲突。
+- 把社区帖子当成已验证事实。
 
-## Implementation Phases
+## 实施阶段
 
-Phase 1: Desktop pack builder
+第一阶段：桌面端数据包构建器
 
-- Build `documents`, `chunks`, entity tables, and manifest.
-- Use deterministic chunking.
-- Generate embeddings with `bge-small-zh` INT8.
-- Validate pack after build.
+- 构建 `documents`、`chunks`、实体表和 manifest。
+- 使用确定性切分。
+- 使用 `bge-small-zh` INT8 生成向量。
+- 构建完成后校验数据包。
 
-Current status: schema, deterministic chunking, manifest, atomic pack replacement, read-only query, metadata filtering, ONNX Runtime embedding provider, message-cache pack builder, UI entry points, and tests exist.
+当前状态：已具备 schema、确定性切分、manifest、原子替换数据包、只读查询、元数据过滤、ONNX Runtime 向量提供器、消息缓存数据包构建器、界面入口和测试。
 
-Phase 2: Desktop query parity
+第二阶段：桌面端查询对齐
 
-- Add a desktop query path that reads the pack and returns chunks.
-- Add tests with fixed documents and expected top-K behavior.
-- Keep current `/api/news-rag` response shape compatible where possible.
+- 增加读取数据包并返回 chunks 的桌面端查询路径。
+- 使用固定文档和预期 top-K 行为添加测试。
+- 尽量保持当前 `/api/news-rag` 响应形态兼容。
 
-Phase 3: Mobile read-only retrieval
+第三阶段：移动端只读检索
 
-- Bundle sqlite-vec.
-- Load `rag_pack.sqlite`.
-- Validate manifest.
-- Generate query embeddings.
-- Return ranked chunks and template findings.
+- 打包 sqlite-vec。
+- 加载 `rag_pack.sqlite`。
+- 校验 manifest。
+- 生成查询向量。
+- 返回排序后的 chunks 和模板化结论。
 
-Phase 4: Pack distribution
+第四阶段：数据包分发
 
-- Add `/api/rag-pack/latest`.
-- Use content hash and atomic replacement.
-- Add rollback to previous pack if validation fails.
+- 增加 `/api/rag-pack/latest`。
+- 使用内容哈希和原子替换。
+- 校验失败时回滚到上一个数据包。
 
-Phase 5: Optional local increments
+第五阶段：可选本地增量
 
-- Allow small mobile-only documents in a separate local overlay database.
-- Keep overlay embeddings separate from the main pack.
-- Merge results at query time, not by modifying the pack.
+- 允许移动端只在独立本地覆盖数据库中保存少量文档。
+- 覆盖库向量与主数据包分开保存。
+- 查询时合并结果，不直接修改主数据包。
 
-## Open Decisions
+## 待决问题
 
-- Exact `bge-small-zh` runtime on mobile.
-- sqlite-vec packaging for Android and iOS.
-- Whether filings become a separate `filing` source adapter before or after vector retrieval.
-- Whether reranking remains rule-based or adds a small local reranker later.
+- 移动端使用哪种 `bge-small-zh` 运行时。
+- Android 和 iOS 上 sqlite-vec 的打包方式。
+- 公告是否应在向量检索前后独立成 `filing` 来源适配器。
+- 重排继续使用规则，还是后续增加小型本地重排模型。

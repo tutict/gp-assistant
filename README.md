@@ -138,7 +138,7 @@ AkShare 分钟线使用 `stock_zh_a_hist_min_em`，盘口使用 `stock_bid_ask_e
 
 回测日期使用 `YYYYMMDD` 格式。
 
-## 构建本地训练数据（RQData HTTP API）
+## 构建本地训练数据（RQData HTTP 接口）
 
 ```bash
 set RQDATA_USERNAME=your_username
@@ -151,7 +151,7 @@ python scripts\build_dataset.py --start-date 20190101 --end-date 20240101 --inte
 - `data/datasets/intent.jsonl`：指令到 JSON 参数
 - `data/datasets/report.jsonl`：指标到中文报告文本
 
-## API 示例
+## 接口示例
 
 基础选股：
 

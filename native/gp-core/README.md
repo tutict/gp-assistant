@@ -1,4 +1,4 @@
-# GP Core
+# 原生核心库
 
 `native/gp-core` 是移动端和原生端可嵌入的 Rust 核心库。它复用当前 Python 服务中的核心选股逻辑，覆盖：
 
