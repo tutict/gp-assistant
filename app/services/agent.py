@@ -18,6 +18,7 @@ from app.schemas import (
     SectorScreenRequest,
     StockObserveRequest,
     TrendScreenRequest,
+    current_system_date_yyyymmdd,
 )
 from app.services.backtest import backtest_hold
 from app.services.data_maintenance import data_source_status, prune_cache, refresh_universe
@@ -29,6 +30,7 @@ from app.services.trend_indicator import trend_screen_stocks
 
 
 SYSTEM_PROMPT = """You are an A-share stock assistant. You must respond in JSON.
+The current system date is __CURRENT_DATE_YYYYMMDD__. When the user omits an end_date, use this current system date instead of any fixed historical date.
 Decide whether the user wants an individual stock observation, basic stock screen, sector-grouped screen, relation-aware graph screen, trend screen, backtest, or clarification.
 LangGraph is only the workflow/state orchestration layer. Stock-to-stock relationships must be handled by the graph_screen tool, which uses a stock knowledge graph and GNN-style relation scoring.
 Return this shape:
@@ -60,13 +62,13 @@ Return this shape:
   "trend_screen": {
     "criteria": { ...ScreenCriteria fields... },
     "start_date": "20200101",
-    "end_date": "20240101",
+    "end_date": "__CURRENT_DATE_YYYYMMDD__",
     "limit": 10
   } | null,
   "backtest": {
     "criteria": { ...ScreenCriteria fields... },
     "start_date": "20200101",
-    "end_date": "20240101",
+    "end_date": "__CURRENT_DATE_YYYYMMDD__",
     "top_n": 10,
     "rebalance_frequency": "none" | "monthly" | "quarterly",
     "transaction_cost_bps": 10,
@@ -330,7 +332,7 @@ def _parse_intent_node(state: AgentState) -> AgentState:
         backtest = BacktestRequest(
             criteria=criteria or ScreenCriteria(),
             start_date="20200101",
-            end_date="20240101",
+            end_date=current_system_date_yyyymmdd(),
             rebalance_frequency=_extract_rebalance_frequency(message),
             transaction_cost_bps=_extract_cost_bps(message),
             benchmark=_extract_benchmark(message),
@@ -442,7 +444,7 @@ def _backtest_node(state: AgentState) -> AgentState:
     request = state.get("backtest") or BacktestRequest(
         criteria=state.get("criteria") or ScreenCriteria(),
         start_date="20200101",
-        end_date="20240101",
+        end_date=current_system_date_yyyymmdd(),
     )
     result = backtest_hold(state["provider"], request)
     return {
@@ -550,7 +552,7 @@ def _call_llm(message: str, override: Optional[LlmClientConfig] = None) -> Dict[
         request: Dict[str, Any] = {
             "model": config.model,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": _system_prompt()},
                 {"role": "user", "content": message},
             ],
             "temperature": config.temperature,
@@ -587,6 +589,10 @@ def _parse_json_response(content: str) -> Dict[str, Any]:
         if not match:
             raise
         return json.loads(match.group(0))
+
+
+def _system_prompt() -> str:
+    return SYSTEM_PROMPT.replace("__CURRENT_DATE_YYYYMMDD__", current_system_date_yyyymmdd())
 
 
 def _resolve_llm_config(override: Optional[LlmClientConfig]) -> ResolvedLlmConfig:
@@ -804,7 +810,7 @@ def _heuristic_parse(message: str) -> Dict[str, Any]:
             "trend_screen": {
                 "criteria": criteria,
                 "start_date": _extract_date(message, default="20200101", first=True),
-                "end_date": _extract_date(message, default="20240101", first=False),
+                "end_date": _extract_date(message, default=current_system_date_yyyymmdd(), first=False),
                 "limit": 10,
             },
         }
@@ -846,7 +852,7 @@ def _heuristic_parse(message: str) -> Dict[str, Any]:
             "backtest": {
                 "criteria": criteria,
                 "start_date": _extract_date(message, default="20200101", first=True),
-                "end_date": _extract_date(message, default="20240101", first=False),
+                "end_date": _extract_date(message, default=current_system_date_yyyymmdd(), first=False),
                 "top_n": _extract_limited_int(message, ["持仓", "top_n", "top n"], default=10, minimum=1, maximum=100),
                 "rebalance_frequency": _extract_rebalance_frequency(message),
                 "transaction_cost_bps": _extract_cost_bps(message),

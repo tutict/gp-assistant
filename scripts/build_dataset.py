@@ -13,7 +13,7 @@ from scripts.rqdata_http_client import RQDataHttpClient
 def parse_args():
     parser = argparse.ArgumentParser(description="Build training datasets from RQData HTTP API.")
     parser.add_argument("--start-date", default="20180101", help="YYYYMMDD")
-    parser.add_argument("--end-date", default="20240101", help="YYYYMMDD")
+    parser.add_argument("--end-date", default=datetime.now().strftime("%Y%m%d"), help="YYYYMMDD")
     parser.add_argument("--intent-samples", type=int, default=1000)
     parser.add_argument("--report-samples", type=int, default=100)
     parser.add_argument("--out-dir", default="data/datasets")

@@ -143,8 +143,10 @@ AkShare 分钟线使用 `stock_zh_a_hist_min_em`，盘口使用 `stock_bid_ask_e
 ```bash
 set RQDATA_USERNAME=your_username
 set RQDATA_PASSWORD=your_password
-python scripts\build_dataset.py --start-date 20190101 --end-date 20240101 --intent-samples 500 --report-samples 100
+python scripts\build_dataset.py --start-date 20190101 --intent-samples 500 --report-samples 100
 ```
+
+未指定 `--end-date` 时，脚本会使用当前系统日期。
 
 输出：
 
@@ -182,7 +184,7 @@ curl -X POST http://127.0.0.1:8000/api/graph-screen ^
 ```bash
 curl -X POST http://127.0.0.1:8000/api/trend-screen ^
   -H "Content-Type: application/json" ^
-  -d "{\"criteria\":{\"max_pe\":30},\"start_date\":\"20200101\",\"end_date\":\"20240101\",\"limit\":10}"
+  -d "{\"criteria\":{\"max_pe\":30},\"start_date\":\"20200101\",\"limit\":10}"
 ```
 
 增强回测：
@@ -190,5 +192,7 @@ curl -X POST http://127.0.0.1:8000/api/trend-screen ^
 ```bash
 curl -X POST http://127.0.0.1:8000/api/backtest ^
   -H "Content-Type: application/json" ^
-  -d "{\"criteria\":{\"max_pe\":10},\"start_date\":\"20200101\",\"end_date\":\"20240101\",\"top_n\":10,\"rebalance_frequency\":\"monthly\",\"transaction_cost_bps\":10,\"benchmark\":\"candidate_equal_weight\"}"
+  -d "{\"criteria\":{\"max_pe\":10},\"start_date\":\"20200101\",\"top_n\":10,\"rebalance_frequency\":\"monthly\",\"transaction_cost_bps\":10,\"benchmark\":\"candidate_equal_weight\"}"
 ```
+
+趋势和回测接口未指定 `end_date` 时，默认使用服务运行环境的当前系统日期。

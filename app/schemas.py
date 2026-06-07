@@ -1,6 +1,11 @@
+from datetime import date
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
+
+
+def current_system_date_yyyymmdd() -> str:
+    return date.today().strftime("%Y%m%d")
 
 
 class StockItem(BaseModel):
@@ -117,7 +122,7 @@ class GraphScreenResult(BaseModel):
 class TrendIndicatorRequest(BaseModel):
     code: str
     start_date: str = Field(default="20200101", description="YYYYMMDD")
-    end_date: str = Field(default="20240101", description="YYYYMMDD")
+    end_date: str = Field(default_factory=current_system_date_yyyymmdd, description="YYYYMMDD")
     series_limit: int = Field(default=120, ge=20, le=500)
 
 
@@ -182,7 +187,7 @@ class TrendIndicatorResult(BaseModel):
 class TrendScreenRequest(BaseModel):
     criteria: ScreenCriteria = Field(default_factory=ScreenCriteria)
     start_date: str = Field(default="20200101", description="YYYYMMDD")
-    end_date: str = Field(default="20240101", description="YYYYMMDD")
+    end_date: str = Field(default_factory=current_system_date_yyyymmdd, description="YYYYMMDD")
     limit: int = Field(default=10, ge=1, le=100)
 
 
@@ -240,7 +245,7 @@ class StockObservation(BaseModel):
 class BacktestRequest(BaseModel):
     criteria: ScreenCriteria = Field(default_factory=ScreenCriteria)
     start_date: str = Field(description="YYYYMMDD")
-    end_date: str = Field(description="YYYYMMDD")
+    end_date: str = Field(default_factory=current_system_date_yyyymmdd, description="YYYYMMDD")
     top_n: int = Field(default=10, ge=1, le=100)
     initial_cash: float = Field(default=1_000_000, ge=0)
     rebalance_frequency: str = Field(default="monthly", max_length=20)

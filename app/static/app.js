@@ -32,6 +32,7 @@ const DATA_PROXY_KEY = "gp-assistant-proxy-mode";
 const LLM_SETTINGS_KEY = "gp-assistant-llm-settings";
 const DEFAULT_RESULT_LIMIT = 10;
 const STOCK_SEARCH_LIMIT = 3;
+const DEFAULT_TODAY_DATE_INPUT_IDS = new Set(["trendEnd", "btEnd", "observeEnd"]);
 const dataSource = {
   select: $("#dataSourceSelect"),
   refresh: $("#refreshSource"),
@@ -304,7 +305,7 @@ async function runTrendAnalysis() {
   const payload = {
     code,
     start_date: readDateParam("trendStart", "20200101"),
-    end_date: readDateParam("trendEnd", "20240101"),
+    end_date: readDateParam("trendEnd", currentSystemDateCompact()),
     series_limit: 180,
   };
   const data = await postJson("/api/trend", payload, panels.trend);
@@ -316,7 +317,7 @@ async function runTrendScreen() {
   const payload = {
     criteria: buildCriteria({ limit: 100 }),
     start_date: readDateParam("trendStart", "20200101"),
-    end_date: readDateParam("trendEnd", "20240101"),
+    end_date: readDateParam("trendEnd", currentSystemDateCompact()),
     limit: Math.min(readInt("resultLimit", DEFAULT_RESULT_LIMIT), 100),
   };
   const data = await postJson("/api/trend-screen", payload, panels.trend);
@@ -329,7 +330,7 @@ async function runBacktest() {
   const payload = {
     criteria: buildCriteria({ limit: 100 }),
     start_date: readDateParam("btStart", "20200101"),
-    end_date: readDateParam("btEnd", "20240101"),
+    end_date: readDateParam("btEnd", currentSystemDateCompact()),
     top_n: clampInt($("#btTopN").value, 1, 100, 10),
     rebalance_frequency: $("#btRebalance")?.value || "monthly",
     transaction_cost_bps: clampFloat($("#btCostBps")?.value, 0, 500, 10),
@@ -1087,10 +1088,14 @@ function initStockSuggesters() {
 
 function initDateInputs() {
   document.querySelectorAll('input[type="date"]').forEach((input) => {
-    const dateValue = toDateInputValue(input.value);
+    const dateValue = toDateInputValue(input.value || defaultDateInputValue(input));
     if (dateValue) input.value = dateValue;
     input.addEventListener("click", () => showDatePicker(input));
   });
+}
+
+function defaultDateInputValue(input) {
+  return DEFAULT_TODAY_DATE_INPUT_IDS.has(input.id) ? currentSystemDateInputValue() : "";
 }
 
 function showDatePicker(input) {
@@ -1144,7 +1149,7 @@ function updateBacktestScope() {
   const parts = [
     $("#industry")?.value ? `行业 ${$("#industry").value}` : "全部行业",
     `持仓 ${clampInt($("#btTopN")?.value, 1, 100, 10)} 只`,
-    `${displayDateParam("btStart", "2020-01-01")} 至 ${displayDateParam("btEnd", "2024-01-01")}`,
+    `${displayDateParam("btStart", "2020-01-01")} 至 ${displayDateParam("btEnd", currentSystemDateInputValue())}`,
     rebalanceLabel($("#btRebalance")?.value || "monthly"),
     `${formatNumber(cost)} bps`,
     benchmarkLabel($("#btBenchmark")?.value || "candidate_equal_weight"),
@@ -1253,6 +1258,19 @@ function inferMarketFromDigits(digits) {
 
 function readDateParam(id, fallback = "") {
   return normalizeDateParam($(`#${id}`)?.value, fallback);
+}
+
+function currentSystemDateInputValue() {
+  const now = new Date();
+  return [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function currentSystemDateCompact() {
+  return currentSystemDateInputValue().replaceAll("-", "");
 }
 
 function normalizeDateParam(value, fallback = "") {

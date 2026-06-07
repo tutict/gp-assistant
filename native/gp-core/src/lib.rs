@@ -6,7 +6,7 @@ use std::{
     panic,
 };
 
-use chrono::{Datelike, Days, NaiveDate, Weekday};
+use chrono::{Datelike, Days, Local, NaiveDate, Weekday};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -554,7 +554,11 @@ fn default_start_date() -> String {
 }
 
 fn default_end_date() -> String {
-    "20240101".to_string()
+    current_system_date_yyyymmdd()
+}
+
+fn current_system_date_yyyymmdd() -> String {
+    Local::now().date_naive().format("%Y%m%d").to_string()
 }
 
 fn default_series_limit() -> usize {
@@ -904,10 +908,11 @@ pub fn run_agent_with_source(
             "阻力",
         ],
     ) {
+        let default_end_date = current_system_date_yyyymmdd();
         let trend_request = TrendScreenRequest {
             criteria,
             start_date: extract_date(message, "20200101", true),
-            end_date: extract_date(message, "20240101", false),
+            end_date: extract_date(message, &default_end_date, false),
             limit: 10,
         };
         let data = serde_json::to_value(trend_screen_with_source(source, &trend_request)?)?;
@@ -962,10 +967,11 @@ pub fn run_agent_with_source(
     }
 
     if message.contains("回测") || lower.contains("backtest") {
+        let default_end_date = current_system_date_yyyymmdd();
         let backtest = BacktestRequest {
             criteria,
             start_date: extract_date(message, "20200101", true),
-            end_date: extract_date(message, "20240101", false),
+            end_date: extract_date(message, &default_end_date, false),
             top_n: default_top_n(),
             initial_cash: default_initial_cash(),
         };
@@ -2744,7 +2750,7 @@ mod tests {
         let result = trend_with_mock(&TrendIndicatorRequest {
             code: "300750.SZ".to_string(),
             start_date: "20200101".to_string(),
-            end_date: "20240101".to_string(),
+            end_date: default_end_date(),
             series_limit: 80,
         })
         .expect("trend indicator should run");
@@ -2758,7 +2764,7 @@ mod tests {
         let result = trend_screen_with_mock(&TrendScreenRequest {
             criteria: ScreenCriteria::default(),
             start_date: "20200101".to_string(),
-            end_date: "20240101".to_string(),
+            end_date: default_end_date(),
             limit: 5,
         })
         .expect("trend screen should run");
