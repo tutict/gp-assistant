@@ -132,19 +132,9 @@ def list_data_sources(provider=Depends(_provider_from_headers)):
         "current": getattr(provider, "name", provider.__class__.__name__),
         "available": [
             {
-                "id": "akshare",
-                "name": "AkShare 数据",
-                "description": "通过 AkShare 获取 A 股公开行情数据。",
-            },
-            {
-                "id": "eastmoney",
-                "name": "东方财富",
-                "description": "直接获取东方财富 A 股股票池，并使用本地 CSV 缓存。",
-            },
-            {
-                "id": "astock",
-                "name": "A股全栈",
-                "description": "腾讯实时估值优先、通达信行情补充、百度日 K 线，并复用本地股票池缓存。",
+                "id": "tdx",
+                "name": "通达信",
+                "description": "通过通达信行情服务器获取 A 股股票池、昨收价、日线、分钟线和盘口数据。",
             },
         ],
     }

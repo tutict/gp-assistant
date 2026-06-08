@@ -10,9 +10,7 @@ from app.schemas import CachePolicy, CachePruneResult, DataCacheStatus, DataRefr
 
 CACHE_DIR = Path(os.getenv("GP_CACHE_DIR", "data/cache"))
 UNIVERSE_CACHE_FILES = {
-    "akshare": Path(os.getenv("AKSHARE_CACHE", str(CACHE_DIR / "stocks.csv"))),
-    "eastmoney": Path(os.getenv("EASTMONEY_CACHE", str(CACHE_DIR / "eastmoney_stocks.csv"))),
-    "astock": Path(os.getenv("ASTOCK_CACHE", str(CACHE_DIR / "astock_stocks.csv"))),
+    "tdx": Path(os.getenv("TDX_CACHE", str(CACHE_DIR / "tdx_stocks.csv"))),
 }
 
 
@@ -46,36 +44,23 @@ def refresh_universe(source: str, policy: CachePolicy | None = None) -> DataRefr
     policy = policy or CachePolicy()
     normalized_source = _normalize_source(source)
     notes: list[str] = []
-    refreshed_source = normalized_source
 
     try:
         provider = get_provider(normalized_source, refresh=True)
         count = len(provider.list_stocks())
         notes.append(f"Refreshed {count} stocks from {normalized_source}.")
     except Exception as exc:
-        if normalized_source == "akshare":
-            notes.append(f"AkShare 刷新失败，已回退到东方财富：{exc}")
-            refreshed_source = "eastmoney"
-            try:
-                provider = get_provider("eastmoney", refresh=True)
-                count = len(provider.list_stocks())
-                notes.append(f"Refreshed {count} stocks from eastmoney.")
-            except Exception as fallback_exc:
-                status = data_source_status(refreshed_source, policy)
-                notes.append(f"东方财富回退也失败：{fallback_exc}")
-                return DataRefreshResult(source=refreshed_source, refreshed=False, status=status, notes=notes)
-        else:
-            status = data_source_status(normalized_source, policy)
-            notes.append(f"Refresh failed: {exc}")
-            return DataRefreshResult(source=normalized_source, refreshed=False, status=status, notes=notes)
+        status = data_source_status(normalized_source, policy)
+        notes.append(f"Refresh failed: {exc}")
+        return DataRefreshResult(source=normalized_source, refreshed=False, status=status, notes=notes)
 
-    status = data_source_status(refreshed_source, policy)
+    status = data_source_status(normalized_source, policy)
     if policy.auto_prune:
-        prune_result = prune_cache(refreshed_source, policy)
+        prune_result = prune_cache(normalized_source, policy)
         if prune_result.removed_files:
             notes.append(f"Pruned {prune_result.removed_files} cache files.")
         status = prune_result.status
-    return DataRefreshResult(source=refreshed_source, refreshed=True, status=status, notes=notes)
+    return DataRefreshResult(source=normalized_source, refreshed=True, status=status, notes=notes)
 
 
 def prune_cache(source: str, policy: CachePolicy | None = None) -> CachePruneResult:
@@ -116,9 +101,10 @@ def prune_cache(source: str, policy: CachePolicy | None = None) -> CachePruneRes
 
 
 def _normalize_source(source: str | None) -> str:
-    value = (source or os.getenv("STOCK_PROVIDER", "astock")).strip().lower()
-    allowed = {"akshare", "eastmoney", "astock"}
-    return value if value in allowed else "astock"
+    value = (source or os.getenv("STOCK_PROVIDER", "tdx")).strip().lower()
+    if value in {"tdx", "astock", "akshare", "eastmoney"}:
+        return "tdx"
+    return "tdx"
 
 
 def _universe_count(source: str, cache_path: Path | None) -> int:
@@ -140,8 +126,8 @@ def _file_age(path: Path | None) -> tuple[str | None, float | None]:
 
 
 def _status_notes(source: str, cache_path: Path | None, universe_count: int, stale: bool) -> list[str]:
-    if source == "astock":
-        notes = ["A股全栈数据源使用腾讯实时估值、通达信行情补充、百度日 K 线，并复用本地股票池缓存。"]
+    if source == "tdx":
+        notes = ["通达信数据源用于股票池、昨收价、日线、分钟线和盘口；本地股票池缓存用于减少全市场枚举耗时。"]
         if cache_path is None or not cache_path.exists():
             notes.append("No local stock universe cache yet. Refresh the universe before full-market screening.")
             return notes

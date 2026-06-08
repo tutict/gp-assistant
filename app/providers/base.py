@@ -87,18 +87,10 @@ def get_provider(
     refresh: Optional[bool] = None,
     proxy_mode: Optional[str] = None,
 ) -> StockProvider:
-    provider_name = (provider_name or os.getenv("STOCK_PROVIDER", "astock")).strip().lower()
+    provider_name = (provider_name or os.getenv("STOCK_PROVIDER", "tdx")).strip().lower()
     proxy_mode = normalize_proxy_mode(proxy_mode)
-    if provider_name == "akshare":
-        from app.providers.akshare import AkShareProvider
+    if provider_name in {"tdx", "astock", "akshare", "eastmoney"}:
+        from app.providers.tdx import TdxProvider
 
-        return AkShareProvider(refresh=bool(refresh) if refresh is not None else False, proxy_mode=proxy_mode)
-    if provider_name == "eastmoney":
-        from app.providers.eastmoney import EastmoneyProvider
-
-        return EastmoneyProvider(refresh=bool(refresh) if refresh is not None else False, proxy_mode=proxy_mode)
-    if provider_name == "astock":
-        from app.providers.astock import AStockDataProvider
-
-        return AStockDataProvider(refresh=bool(refresh) if refresh is not None else False, proxy_mode=proxy_mode)
+        return TdxProvider(refresh=bool(refresh) if refresh is not None else False, proxy_mode=proxy_mode)
     raise ValueError(f"不支持的数据源：{provider_name}")

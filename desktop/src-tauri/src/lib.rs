@@ -199,7 +199,7 @@ fn start_backend(app: &tauri::App, port: u16) -> tauri::Result<BackendProcess> {
             .env("GP_ASSISTANT_PORT", port.to_string())
             .env(
                 "STOCK_PROVIDER",
-                env::var("STOCK_PROVIDER").unwrap_or_else(|_| "astock".to_string()),
+                env::var("STOCK_PROVIDER").unwrap_or_else(|_| "tdx".to_string()),
             )
             .spawn()
             .map_err(shell_error)?
@@ -240,7 +240,7 @@ fn start_python_backend(port: u16) -> tauri::Result<Child> {
         .env("GP_ASSISTANT_PORT", port.to_string())
         .env(
             "STOCK_PROVIDER",
-            env::var("STOCK_PROVIDER").unwrap_or_else(|_| "astock".to_string()),
+            env::var("STOCK_PROVIDER").unwrap_or_else(|_| "tdx".to_string()),
         )
         .stdout(Stdio::null())
         .stderr(Stdio::null());

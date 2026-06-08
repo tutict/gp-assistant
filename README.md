@@ -23,7 +23,7 @@
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-set STOCK_PROVIDER=akshare
+set STOCK_PROVIDER=tdx
 set OPENAI_API_KEY=your_key_here
 set OPENAI_MODEL=gpt-4o-mini
 uvicorn app.main:app --reload
@@ -41,7 +41,7 @@ cmd /c npm install
 cmd /c npm run dev
 ```
 
-开发模式会优先使用 `GP_ASSISTANT_PYTHON` 指定的解释器，然后依次回退到 `.venv-cpython\Scripts\python.exe`、`.venv\Scripts\python.exe` 和系统 `PATH` 中的 `python`。默认后端地址为 `http://127.0.0.1:8010`，默认数据源为 `STOCK_PROVIDER=astock`。
+开发模式会优先使用 `GP_ASSISTANT_PYTHON` 指定的解释器，然后依次回退到 `.venv-cpython\Scripts\python.exe`、`.venv\Scripts\python.exe` 和系统 `PATH` 中的 `python`。默认后端地址为 `http://127.0.0.1:8010`，默认数据源为 `STOCK_PROVIDER=tdx`。
 
 构建带 FastAPI sidecar 的 Windows 桌面安装包：
 
@@ -75,7 +75,7 @@ cmd /c npm run android:init
 cmd /c npm run build:android
 ```
 
-Android 端不会启动 Python/FastAPI sidecar，会加载本地静态前端并通过 Tauri command 调用 `native/gp-core`。当前移动端已覆盖基础筛选、关系图筛选、趋势、回测和本地智能体路由；实时行情观察、数据源刷新和新闻/RAG 仍需后续接入移动端数据包或远端 API。
+Android 端不会启动 Python/FastAPI sidecar，会加载本地静态前端、读取构建时生成的通达信股票池数据包，并通过 Tauri command 调用 `native/gp-core`。当前移动端已覆盖基础筛选、关系图筛选、趋势、回测和本地智能体路由；实时行情观察、数据源刷新和新闻/RAG 仍需后续接入移动端数据包或远端 API。
 
 如需构建指定移动端目标，可设置 `GP_CORE_TARGET`，例如安装 Rust target 和 Android NDK 后使用 `aarch64-linux-android`。
 
@@ -83,23 +83,17 @@ Rust 核心目前包含关系图选股、SWL/SWS 趋势选股、确定性回测�
 
 ## 数据源
 
-Web 界面可以在每次请求中切换数据源：
+桌面端和 Web 后端统一使用 `tdx` 通达信数据源，覆盖 A 股股票池、昨收价、日线、分钟线和盘口。旧版本保存过的 `astock`、`akshare`、`eastmoney` 配置会自动迁移到 `tdx`，不会再作为可选数据源显示。
 
-- `akshare`：通过 AkShare 获取 A 股公开行情。
-- `eastmoney`：直接从东方财富获取 A 股股票池，并使用本地 CSV 缓存。
-- `astock`：有机吸收 `a-stock-data` skill 的低风险数据路线，使用腾讯实时行情/估值/盘口，腾讯缺少昨收价时用通达信行情补充，百度日 K 线，并复用本地股票池缓存。
+API 客户端可以通过请求头显式指定通达信数据源：
 
-API 客户端也可以通过请求头切换：
-
-- `X-Stock-Provider: astock|akshare|eastmoney`
+- `X-Stock-Provider: tdx`
 - `X-Stock-Refresh: true` 强制刷新所选数据源的股票池缓存
 - `X-Stock-Proxy: system|none` 切换行情数据源请求是否使用系统代理；也可用环境变量 `STOCK_PROXY_MODE=system|none` 设置默认值。
 
-AkShare 股票池缓存路径为 `data/cache/stocks.csv`，可设置 `AKSHARE_REFRESH=true` 强制刷新。东方财富缓存路径为 `data/cache/eastmoney_stocks.csv`。`astock` 默认缓存路径为 `data/cache/astock_stocks.csv`，可用 `ASTOCK_CACHE`、`ASTOCK_REFRESH=true`、`ASTOCK_TIMEOUT=10` 调整。
+通达信股票池缓存路径默认为 `data/cache/tdx_stocks.csv`，可用 `TDX_CACHE` 调整；可设置 `TDX_REFRESH=true` 强制刷新。通达信服务器可用 `TDX_HOSTS=host1:7709,host2:7709` 指定，连接超时可用 `TDX_TIMEOUT=6` 调整。
 
-`astock` 筛选价格口径为“腾讯昨收优先、通达信补充、股票池价格兜底”。通达信补充源依赖 `pytdx`，默认启用；如需关闭可设置 `ASTOCK_TDX_ENABLED=false`，如需指定服务器可设置 `ASTOCK_TDX_HOSTS=host1:7709,host2:7709`，如需调整连接超时可设置 `ASTOCK_TDX_TIMEOUT=3`。
-
-`astock` 集成参考本地开源 skill `a-stock-data-3.2.1` 的思路和端点选择，没有直接拷贝其脚本为运行时依赖；原 skill 采用 Apache-2.0 许可证。
+筛选价格口径为“通达信前一交易日收盘价优先、股票池缓存价格兜底”。Android 构建脚本会在打包前生成 `desktop/mobile-dist/static/mobile-market-data.json`，移动端运行时使用该内置通达信数据包，不再调用 Rust 样例数据。
 
 上下游消息分析缓存路径为 `data/cache/news.sqlite`。证据会区分 `news` 与 `community` 两层：新闻/事实层用于事实证据，社区层用于市场讨论、风险传闻、情绪信号和待核查线索。东方财富股吧社区抓取默认启用，可用 `GP_NEWS_ENABLE_GUBA=false` 关闭；可用 `GP_NEWS_GUBA_MAX_STOCKS`、`GP_NEWS_GUBA_MAX_POSTS`、`GP_NEWS_GUBA_TIMEOUT` 控制抓取范围，也可用 `GP_NEWS_GUBA_URLS` 追加指定股吧帖子 URL（多个 URL 用空白或分号分隔，股吧 URL 自身包含逗号）。如需尝试通过 AkShare 东方财富个股新闻接口写入真实消息，可设置 `GP_NEWS_ENABLE_AKSHARE=true`。雪球社区适配器已预留，设置 `GP_NEWS_ENABLE_XUEQIU=true` 后会检查 `GP_XUEQIU_COOKIE`，但在稳定授权抓取完成前不会混入不可靠数据。RAG 分析只在已有股票关系图范围内检索消息，不从新闻自动生成供应链关系。
 
@@ -117,7 +111,7 @@ AkShare 股票池缓存路径为 `data/cache/stocks.csv`，可设置 `AKSHARE_RE
 命令行定时维护示例：
 
 ```bash
-python scripts\maintain_data.py --source eastmoney --refresh --prune
+python scripts\maintain_data.py --source tdx --refresh --prune
 ```
 
 移动端存储较小，建议使用轻量缓存策略：保留股票池和最近需要观察的个股行情，定期清理历史行情、分钟线和盘口缓存。
@@ -150,7 +144,7 @@ parse_intent -> observe_stock/screen/graph_screen/trend_screen/backtest/news_rag
 - `GET /api/minutes/{code}` 返回规范化 A 股分钟线。
 - `GET /api/order-book/{code}` 返回规范化买卖盘口。
 
-AkShare 分钟线使用 `stock_zh_a_hist_min_em`，盘口使用 `stock_bid_ask_em`。
+通达信分钟线和盘口通过 `pytdx` 获取。
 
 回测日期使用 `YYYYMMDD` 格式。
 

@@ -71,9 +71,10 @@ def observe_stock(provider: StockProvider, request: StockObserveRequest) -> Stoc
 
 def _provider_display_name(source: str) -> str:
     labels = {
-        "akshare": "\u516c\u5f00\u884c\u60c5",
-        "eastmoney": "\u4e1c\u65b9\u8d22\u5bcc",
-        "astock": "A\u80a1\u5168\u6808",
+        "tdx": "\u901a\u8fbe\u4fe1",
+        "astock": "\u901a\u8fbe\u4fe1",
+        "akshare": "\u901a\u8fbe\u4fe1",
+        "eastmoney": "\u901a\u8fbe\u4fe1",
     }
     return labels.get((source or "").lower(), source or "\u672a\u77e5\u6570\u636e\u6e90")
 

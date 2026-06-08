@@ -70,6 +70,8 @@ $PyInstallerArgs = @(
     "onnxruntime",
     "--collect-all",
     "tokenizers",
+    "--collect-all",
+    "pytdx",
     "--distpath",
     $DistDir,
     "--workpath",

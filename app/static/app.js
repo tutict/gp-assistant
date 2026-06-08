@@ -32,7 +32,11 @@ const DATA_PROXY_KEY = "gp-assistant-proxy-mode";
 const LLM_SETTINGS_KEY = "gp-assistant-llm-settings";
 const DEFAULT_RESULT_LIMIT = 10;
 const STOCK_SEARCH_LIMIT = 3;
+const DEFAULT_DATA_SOURCE = "tdx";
+const MOBILE_MARKET_DATA_URL = "/static/mobile-market-data.json";
 const DEFAULT_TODAY_DATE_INPUT_IDS = new Set(["trendEnd", "btEnd", "observeEnd"]);
+let mobileMarketDataPromise = null;
+let mobileMarketDataSummary = null;
 const dataSource = {
   select: $("#dataSourceSelect"),
   refresh: $("#refreshSource"),
@@ -443,9 +447,12 @@ async function runObserve(codeOverride) {
 
 function initDataSource() {
   if (!dataSource.select) return;
-  const savedSource = localStorage.getItem(DATA_SOURCE_KEY);
+  const savedSource = normalizeDataSource(localStorage.getItem(DATA_SOURCE_KEY));
   if (savedSource && [...dataSource.select.options].some((option) => option.value === savedSource)) {
     dataSource.select.value = savedSource;
+  } else {
+    dataSource.select.value = DEFAULT_DATA_SOURCE;
+    localStorage.setItem(DATA_SOURCE_KEY, DEFAULT_DATA_SOURCE);
   }
   if (dataSource.refresh) {
     dataSource.refresh.checked = localStorage.getItem(DATA_REFRESH_KEY) === "true";
@@ -578,7 +585,13 @@ function closeSourceSelects() {
 }
 
 function getSelectedDataSource() {
-  return dataSource.select?.value || "astock";
+  return normalizeDataSource(dataSource.select?.value);
+}
+
+function normalizeDataSource(source) {
+  const value = String(source || "").trim().toLowerCase();
+  if (["tdx", "astock", "akshare", "eastmoney"].includes(value)) return "tdx";
+  return DEFAULT_DATA_SOURCE;
 }
 
 function dataSourceHeaders() {
@@ -677,7 +690,8 @@ function renderDataStatus(status) {
     ? `更新于 ${formatDateTime(status.universe_updated_at)}`
     : "未建立缓存";
   const policy = status.policy || {};
-  dataSource.policy.textContent = `${policy.mode === "full" ? "完整" : "轻量"}模式 · 上限 ${formatBytes(status.cache_limit_bytes)}`;
+  const policyLabel = policy.mode === "bundled" ? "内置" : policy.mode === "full" ? "完整" : "轻量";
+  dataSource.policy.textContent = `${policyLabel}模式 · 上限 ${formatBytes(status.cache_limit_bytes)}`;
   setMaintenanceNote((status.notes || []).join(" ") || "数据状态正常");
 }
 
@@ -1340,7 +1354,7 @@ async function requestTauriJson(method, url, payload) {
   const parsed = new URL(url, window.location.href);
   const path = parsed.pathname;
   if (method === "GET") {
-    if (path === "/api/data-sources/status") return { handled: true, data: mobileDataStatus() };
+    if (path === "/api/data-sources/status") return { handled: true, data: await mobileDataStatus(invoke) };
     if (path === "/api/stock-search") {
       return { handled: true, data: await searchTauriStocks(invoke, parsed.searchParams) };
     }
@@ -1350,25 +1364,93 @@ async function requestTauriJson(method, url, payload) {
   if (method !== "POST") return { handled: false };
   switch (path) {
     case "/api/screen":
-      return { handled: true, data: await invoke("core_screen", { payload }) };
+      return {
+        handled: true,
+        data: await invoke("core_screen_with_data", {
+          payload: { data: await loadMobileMarketData(invoke), criteria: payload },
+        }),
+      };
+    case "/api/data-sources/refresh-universe":
+      return {
+        handled: true,
+        data: {
+          source: DEFAULT_DATA_SOURCE,
+          refreshed: false,
+          status: await mobileDataStatus(invoke),
+          notes: ["移动端使用构建时内置的通达信数据包；更新股票池需要重新打包安装。"],
+        },
+      };
+    case "/api/data-sources/prune-cache":
+      return {
+        handled: true,
+        data: {
+          removed_files: 0,
+          removed_bytes: 0,
+          status: await mobileDataStatus(invoke),
+          notes: ["移动端当前没有可清理的行情缓存。"],
+        },
+      };
     case "/api/sector-screen":
       return { handled: true, data: await buildTauriSectorScreen(invoke, payload) };
     case "/api/graph-screen":
-      return { handled: true, data: await invoke("core_graph_screen", { payload }) };
+      return {
+        handled: true,
+        data: await invoke("core_graph_screen_with_data", {
+          payload: { data: await loadMobileMarketData(invoke), request: payload },
+        }),
+      };
     case "/api/trend":
-      return { handled: true, data: await invoke("core_trend", { payload }) };
+      return {
+        handled: true,
+        data: await invoke("core_trend_with_data", {
+          payload: { data: await loadMobileMarketData(invoke), request: payload },
+        }),
+      };
     case "/api/trend-screen":
-      return { handled: true, data: await invoke("core_trend_screen", { payload }) };
+      return {
+        handled: true,
+        data: await invoke("core_trend_screen_with_data", {
+          payload: { data: await loadMobileMarketData(invoke), request: payload },
+        }),
+      };
     case "/api/backtest":
-      return { handled: true, data: await invoke("core_backtest", { payload }) };
+      return {
+        handled: true,
+        data: await invoke("core_backtest_with_data", {
+          payload: { data: await loadMobileMarketData(invoke), request: payload },
+        }),
+      };
     case "/api/agent":
-      return { handled: true, data: await invoke("core_agent", { payload: { message: payload.message || "" } }) };
+      return {
+        handled: true,
+        data: await invoke("core_agent_with_data", {
+          payload: { data: await loadMobileMarketData(invoke), message: payload.message || "" },
+        }),
+      };
     default:
       throw new Error(`移动端暂不支持该接口：${path}`);
   }
 }
 
+async function loadMobileMarketData(invoke) {
+  if (!mobileMarketDataPromise) {
+    mobileMarketDataPromise = fetch(MOBILE_MARKET_DATA_URL)
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`移动端未内置通达信数据集：HTTP ${response.status}`);
+        const data = await response.json();
+        mobileMarketDataSummary = await invoke("core_validate_data_source", { payload: data });
+        return data;
+      })
+      .catch((error) => {
+        mobileMarketDataPromise = null;
+        throw error;
+      });
+  }
+  return await mobileMarketDataPromise;
+}
+
 async function buildTauriSectorScreen(invoke, payload = {}) {
+  const data = await loadMobileMarketData(invoke);
   const criteria = {
     ...(payload.criteria || {}),
     limit: Math.max(
@@ -1376,7 +1458,7 @@ async function buildTauriSectorScreen(invoke, payload = {}) {
       Number(payload.max_sectors || 8) * Number(payload.per_sector_limit || 3) * 4,
     ),
   };
-  const screen = await invoke("core_screen", { payload: criteria });
+  const screen = await invoke("core_screen_with_data", { payload: { data, criteria } });
   const maxSectors = clampInt(payload.max_sectors, 1, 50, 8);
   const perSectorLimit = clampInt(payload.per_sector_limit, 1, 50, 3);
   const bySector = new Map();
@@ -1400,7 +1482,7 @@ async function buildTauriSectorScreen(invoke, payload = {}) {
     returned: groups.reduce((sum, group) => sum + group.returned, 0),
     sector_count: groups.length,
     groups,
-    notes: ["移动端使用内置 Rust core 数据进行本地板块分组。"],
+    notes: ["移动端使用内置通达信数据集进行本地板块分组。"],
   };
 }
 
@@ -1408,23 +1490,39 @@ async function searchTauriStocks(invoke, params) {
   const query = String(params.get("q") || "").trim().toLowerCase();
   const limit = clampInt(params.get("limit"), 1, 20, STOCK_SEARCH_LIMIT);
   if (!query) return [];
-  const screen = await invoke("core_screen", { payload: { limit: 100, include_st: true } });
-  return (screen.items || [])
-    .map((item) => item.stock)
+  const data = await loadMobileMarketData(invoke);
+  return (data.stocks || [])
     .filter((stock) => `${stock?.code || ""} ${stock?.name || ""} ${stock?.industry || ""}`.toLowerCase().includes(query))
     .slice(0, limit);
 }
 
-function mobileDataStatus() {
-  return {
-    provider: "tauri-core",
-    universe_count: 0,
-    cache_bytes: 0,
-    cache_limit_bytes: 0,
-    universe_updated_at: null,
-    policy: { mode: "light" },
-    notes: ["移动端当前使用内置 Rust core 样例数据；真实行情缓存和刷新功能暂未接入。"],
-  };
+async function mobileDataStatus(invoke) {
+  try {
+    const data = await loadMobileMarketData(invoke);
+    const summary = mobileMarketDataSummary || { stock_count: data.stocks?.length || 0, warnings: [] };
+    return {
+      source: "tdx",
+      universe_count: summary.stock_count || 0,
+      cache_bytes: 0,
+      cache_limit_bytes: 0,
+      universe_updated_at: data.generated_at || null,
+      policy: { mode: "bundled" },
+      notes: [
+        `移动端使用内置通达信数据集，股票 ${summary.stock_count || 0} 只。`,
+        ...(summary.warnings || []),
+      ],
+    };
+  } catch (error) {
+    return {
+      source: "tdx",
+      universe_count: 0,
+      cache_bytes: 0,
+      cache_limit_bytes: 0,
+      universe_updated_at: null,
+      policy: { mode: "bundled" },
+      notes: [`移动端通达信数据集不可用：${error.message}`],
+    };
+  }
 }
 
 function renderScreenResult(node, data) {
@@ -2457,9 +2555,10 @@ function actionLabel(action) {
 
 function sourceLabel(source) {
   const labels = {
-    akshare: "公开行情",
-    eastmoney: "东方财富",
-    astock: "A股全栈",
+    tdx: "通达信",
+    akshare: "通达信",
+    eastmoney: "通达信",
+    astock: "通达信",
   };
   return labels[source] || source || "-";
 }
