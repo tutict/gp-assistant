@@ -626,12 +626,7 @@ async function loadDataStatus() {
   if (!dataSource.universe) return;
   setMaintenanceNote("读取数据状态中");
   try {
-    const resp = await fetch("/api/data-sources/status", {
-      method: "GET",
-      headers: dataSourceHeaders(),
-    });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    renderDataStatus(await resp.json());
+    renderDataStatus(await requestJson("GET", "/api/data-sources/status"));
   } catch (err) {
     setMaintenanceNote(`数据状态读取失败：${err.message}`);
   }
@@ -641,13 +636,12 @@ async function refreshUniverse() {
   const progress = startRefreshProgress();
   setMaintenanceNote("刷新股票池中，真实数据源可能需要几十秒");
   try {
-    const resp = await fetch("/api/data-sources/refresh-universe", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...dataSourceHeaders() },
-      body: JSON.stringify({ mode: "light", max_bytes: 209715200, daily_days: 500, minute_days: 3 }),
+    const data = await requestJson("POST", "/api/data-sources/refresh-universe", {
+      mode: "light",
+      max_bytes: 209715200,
+      daily_days: 500,
+      minute_days: 3,
     });
-    if (!resp.ok) throw new Error(await resp.text());
-    const data = await resp.json();
     finishRefreshProgress("股票池刷新完成");
     renderDataStatus(data.status);
     setMaintenanceNote((data.notes || []).join(" ") || "股票池刷新完成");
@@ -662,13 +656,12 @@ async function refreshUniverse() {
 async function pruneCache() {
   setMaintenanceNote("清理可丢弃缓存中");
   try {
-    const resp = await fetch("/api/data-sources/prune-cache", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...dataSourceHeaders() },
-      body: JSON.stringify({ mode: "light", max_bytes: 209715200, daily_days: 500, minute_days: 3 }),
+    const data = await requestJson("POST", "/api/data-sources/prune-cache", {
+      mode: "light",
+      max_bytes: 209715200,
+      daily_days: 500,
+      minute_days: 3,
     });
-    if (!resp.ok) throw new Error(await resp.text());
-    const data = await resp.json();
     renderDataStatus(data.status);
     setMaintenanceNote(`已删除 ${data.removed_files || 0} 个文件，释放 ${formatBytes(data.removed_bytes || 0)}。`);
   } catch (err) {
@@ -1043,12 +1036,7 @@ function initStockSuggesters() {
       const currentRequest = ++requestId;
       try {
         const params = new URLSearchParams({ q: query, limit: String(STOCK_SEARCH_LIMIT) });
-        const resp = await fetch(`/api/stock-search?${params}`, {
-          method: "GET",
-          headers: stockSearchHeaders(),
-        });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const items = await resp.json();
+        const items = await requestJson("GET", `/api/stock-search?${params}`, undefined, stockSearchHeaders());
         if (currentRequest !== requestId) return;
         render(Array.isArray(items) ? items.slice(0, STOCK_SEARCH_LIMIT) : []);
       } catch {
@@ -1311,17 +1299,7 @@ function clampFloat(raw, min, max, fallback) {
 
 async function postJson(url, payload, resultNode) {
   try {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...dataSourceHeaders() },
-      body: JSON.stringify(payload),
-    });
-    if (!resp.ok) {
-      const text = await resp.text();
-      setError(resultNode, `请求失败：${resp.status}`, text);
-      return null;
-    }
-    return await resp.json();
+    return await requestJson("POST", url, payload);
   } catch (err) {
     setError(resultNode, "请求异常", err.message);
     return null;
@@ -1330,20 +1308,123 @@ async function postJson(url, payload, resultNode) {
 
 async function getJson(url, resultNode) {
   try {
-    const resp = await fetch(url, {
-      method: "GET",
-      headers: dataSourceHeaders(),
-    });
-    if (!resp.ok) {
-      const text = await resp.text();
-      setError(resultNode, `请求失败：${resp.status}`, text);
-      return null;
-    }
-    return await resp.json();
+    return await requestJson("GET", url);
   } catch (err) {
     setError(resultNode, "请求异常", err.message);
     return null;
   }
+}
+
+async function requestJson(method, url, payload, headers = dataSourceHeaders()) {
+  const tauriResult = await requestTauriJson(method, url, payload);
+  if (tauriResult.handled) return tauriResult.data;
+
+  const request = {
+    method,
+    headers: method === "POST" ? { "Content-Type": "application/json", ...headers } : headers,
+  };
+  if (payload !== undefined) request.body = JSON.stringify(payload);
+
+  const resp = await fetch(url, request);
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(text || `HTTP ${resp.status}`);
+  }
+  return await resp.json();
+}
+
+async function requestTauriJson(method, url, payload) {
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (!invoke) return { handled: false };
+
+  const parsed = new URL(url, window.location.href);
+  const path = parsed.pathname;
+  if (method === "GET") {
+    if (path === "/api/data-sources/status") return { handled: true, data: mobileDataStatus() };
+    if (path === "/api/stock-search") {
+      return { handled: true, data: await searchTauriStocks(invoke, parsed.searchParams) };
+    }
+    throw new Error(`移动端暂不支持该接口：${path}`);
+  }
+
+  if (method !== "POST") return { handled: false };
+  switch (path) {
+    case "/api/screen":
+      return { handled: true, data: await invoke("core_screen", { payload }) };
+    case "/api/sector-screen":
+      return { handled: true, data: await buildTauriSectorScreen(invoke, payload) };
+    case "/api/graph-screen":
+      return { handled: true, data: await invoke("core_graph_screen", { payload }) };
+    case "/api/trend":
+      return { handled: true, data: await invoke("core_trend", { payload }) };
+    case "/api/trend-screen":
+      return { handled: true, data: await invoke("core_trend_screen", { payload }) };
+    case "/api/backtest":
+      return { handled: true, data: await invoke("core_backtest", { payload }) };
+    case "/api/agent":
+      return { handled: true, data: await invoke("core_agent", { payload: { message: payload.message || "" } }) };
+    default:
+      throw new Error(`移动端暂不支持该接口：${path}`);
+  }
+}
+
+async function buildTauriSectorScreen(invoke, payload = {}) {
+  const criteria = {
+    ...(payload.criteria || {}),
+    limit: Math.max(
+      Number(payload.criteria?.limit || 0),
+      Number(payload.max_sectors || 8) * Number(payload.per_sector_limit || 3) * 4,
+    ),
+  };
+  const screen = await invoke("core_screen", { payload: criteria });
+  const maxSectors = clampInt(payload.max_sectors, 1, 50, 8);
+  const perSectorLimit = clampInt(payload.per_sector_limit, 1, 50, 3);
+  const bySector = new Map();
+  for (const item of screen.items || []) {
+    const sector = item.stock?.industry || "未分组";
+    if (!bySector.has(sector)) bySector.set(sector, []);
+    bySector.get(sector).push(item);
+  }
+  const groups = [...bySector.entries()]
+    .map(([sector, items]) => ({
+      sector,
+      total: items.length,
+      returned: Math.min(items.length, perSectorLimit),
+      average_score: items.reduce((sum, item) => sum + Number(item.score || 0), 0) / Math.max(items.length, 1),
+      items: items.slice(0, perSectorLimit),
+    }))
+    .sort((left, right) => right.average_score - left.average_score)
+    .slice(0, maxSectors);
+  return {
+    total: screen.total || 0,
+    returned: groups.reduce((sum, group) => sum + group.returned, 0),
+    sector_count: groups.length,
+    groups,
+    notes: ["移动端使用内置 Rust core 数据进行本地板块分组。"],
+  };
+}
+
+async function searchTauriStocks(invoke, params) {
+  const query = String(params.get("q") || "").trim().toLowerCase();
+  const limit = clampInt(params.get("limit"), 1, 20, STOCK_SEARCH_LIMIT);
+  if (!query) return [];
+  const screen = await invoke("core_screen", { payload: { limit: 100, include_st: true } });
+  return (screen.items || [])
+    .map((item) => item.stock)
+    .filter((stock) => `${stock?.code || ""} ${stock?.name || ""} ${stock?.industry || ""}`.toLowerCase().includes(query))
+    .slice(0, limit);
+}
+
+function mobileDataStatus() {
+  return {
+    provider: "tauri-core",
+    universe_count: 0,
+    cache_bytes: 0,
+    cache_limit_bytes: 0,
+    universe_updated_at: null,
+    policy: { mode: "light" },
+    notes: ["移动端当前使用内置 Rust core 样例数据；真实行情缓存和刷新功能暂未接入。"],
+  };
 }
 
 function renderScreenResult(node, data) {

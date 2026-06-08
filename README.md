@@ -61,6 +61,22 @@ cargo test --manifest-path native/gp-core/Cargo.toml
 powershell -ExecutionPolicy Bypass -File scripts/build-mobile-core.ps1
 ```
 
+构建 Tauri Android 安装包前，需要先安装 Android SDK、Android NDK，并设置 `ANDROID_HOME` 和 `NDK_HOME`。仓库提供了初始化和构建脚本：
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts\build-android.ps1 -InitOnly
+powershell -ExecutionPolicy Bypass -File scripts\build-android.ps1
+```
+
+也可以在 `desktop/` 下直接执行：
+
+```bash
+cmd /c npm run android:init
+cmd /c npm run build:android
+```
+
+Android 端不会启动 Python/FastAPI sidecar，会加载本地静态前端并通过 Tauri command 调用 `native/gp-core`。当前移动端已覆盖基础筛选、关系图筛选、趋势、回测和本地智能体路由；实时行情观察、数据源刷新和新闻/RAG 仍需后续接入移动端数据包或远端 API。
+
 如需构建指定移动端目标，可设置 `GP_CORE_TARGET`，例如安装 Rust target 和 Android NDK 后使用 `aarch64-linux-android`。
 
 Rust 核心目前包含关系图选股、SWL/SWS 趋势选股、确定性回测和本地启发式智能体路由。移动端可以把 SQLite、内置 JSON 或远端接口拿到的股票、关系、历史行情统一封装为 `CoreDataSet` 后传入 Rust 核心。
