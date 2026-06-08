@@ -11,6 +11,7 @@ $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $DesktopDir = Join-Path $Root "desktop"
 $AndroidProjectDir = Join-Path $Root "desktop\src-tauri\gen\android"
+$PrepareAssetsScript = Join-Path $PSScriptRoot "prepare-tauri-android-assets.ps1"
 
 function Use-EnvPathFallback {
     param(
@@ -44,7 +45,16 @@ function Initialize-AndroidEnvironment {
     }
 
     $AndroidJdk = "C:\Program Files\Android\openjdk\jdk-21.0.8"
-    Use-EnvPathFallback "JAVA_HOME" $AndroidJdk
+    $AndroidJdkOverride = [Environment]::GetEnvironmentVariable("GP_ANDROID_JAVA_HOME")
+    if ($AndroidJdkOverride) {
+        [Environment]::SetEnvironmentVariable("JAVA_HOME", $AndroidJdkOverride, "Process")
+        $env:JAVA_HOME = $AndroidJdkOverride
+    } elseif (Test-Path -LiteralPath $AndroidJdk) {
+        [Environment]::SetEnvironmentVariable("JAVA_HOME", $AndroidJdk, "Process")
+        $env:JAVA_HOME = $AndroidJdk
+    } else {
+        Use-EnvPathFallback "JAVA_HOME" $AndroidJdk
+    }
 
     $JavaHome = [Environment]::GetEnvironmentVariable("JAVA_HOME")
     if ($JavaHome) {
@@ -107,6 +117,14 @@ Initialize-AndroidEnvironment
 
 Assert-EnvPath "ANDROID_HOME" "Install Android SDK and set ANDROID_HOME to the SDK directory."
 Assert-EnvPath "NDK_HOME" "Install Android NDK and set NDK_HOME to the NDK directory."
+
+Invoke-Checked "Prepare Tauri Android frontend assets" "powershell.exe" @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    $PrepareAssetsScript
+)
 
 Push-Location $DesktopDir
 try {

@@ -11,6 +11,7 @@ logs/
 models/*
 !models/.gitkeep
 desktop/node_modules/
+desktop/mobile-dist/
 desktop/src-tauri/gen/
 desktop/src-tauri/target/
 desktop/src-tauri/binaries/*
