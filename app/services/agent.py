@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, Optional, TypedDict
 
 from app.providers.base import StockProvider
@@ -95,6 +97,38 @@ Use action "refresh_data" when the user asks to refresh, sync, or update the sto
 Use action "prune_cache" when the user asks to clean, shrink, or free local cache/storage.
 If the user request is unclear, use action "clarify" and ask a brief question in reply.
 """
+
+RESEARCH_RISK_NOTE = "仅供选股研究，不构成投资建议。"
+FORBIDDEN_ADVICE_PATTERNS = [
+    r"必涨",
+    r"稳赚",
+    r"保本",
+    r"无风险",
+    r"确定上涨",
+    r"稳赚不赔",
+    r"建议\s*(立即)?买入",
+    r"可以买入",
+    r"应该买入",
+    r"立即买入",
+    r"满仓",
+    r"梭哈",
+    r"清仓",
+    r"必须卖出",
+]
+
+DEFAULT_RESEARCH_REPLIES = {
+    "observe_stock": "已按选股研究口径整理个股行情、估值、盘口和技术面观察。",
+    "screen": "已按选股研究口径完成基础筛选。",
+    "sector_screen": "已按选股研究口径完成板块分组选股。",
+    "graph_screen": "已按选股研究口径完成关系图选股。",
+    "trend_screen": "已按选股研究口径完成趋势指标排序。",
+    "backtest": "已按选股研究口径完成历史回测。",
+    "news_rag": "已按选股研究口径完成上下游消息证据分析。",
+    "data_status": "已读取当前数据源和缓存状态。",
+    "refresh_data": "已按选股研究口径触发数据刷新。",
+    "prune_cache": "已按轻量缓存策略清理可丢弃缓存。",
+    "clarify": "请补充你的研究目标：普通筛选、关系图选股、趋势观察、消息证据分析或回测。",
+}
 
 VALID_ACTIONS = {
     "observe_stock",
@@ -511,9 +545,10 @@ def _clarify_node(state: AgentState) -> AgentState:
 
 
 def _state_to_response(state: AgentState) -> AgentResponse:
+    action = state.get("action") or "clarify"
     return AgentResponse(
-        reply=state.get("reply") or "已处理。",
-        action=state.get("action") or "clarify",
+        reply=_research_reply(state.get("reply") or "已处理。", action),
+        action=action,
         criteria=state.get("criteria"),
         observe=state.get("observe"),
         sector_screen=state.get("sector_screen"),
@@ -592,7 +627,39 @@ def _parse_json_response(content: str) -> Dict[str, Any]:
 
 
 def _system_prompt() -> str:
-    return SYSTEM_PROMPT.replace("__CURRENT_DATE_YYYYMMDD__", current_system_date_yyyymmdd())
+    base_prompt = SYSTEM_PROMPT.replace("__CURRENT_DATE_YYYYMMDD__", current_system_date_yyyymmdd())
+    return f"{_stock_soul()}\n\n{base_prompt}"
+
+
+@lru_cache(maxsize=1)
+def _stock_soul() -> str:
+    candidates = [
+        Path(__file__).resolve().parents[1] / "prompts" / "stock_soul.md",
+        Path(getattr(sys, "_MEIPASS", Path.cwd())) / "app" / "prompts" / "stock_soul.md",
+    ]
+    for path in candidates:
+        try:
+            if path.exists():
+                return path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+    return (
+        "你是 A 股选股研究助手，不是投资顾问。不得承诺收益，不得给出直接交易指令。"
+        f"回复必须提示：{RESEARCH_RISK_NOTE}"
+    )
+
+
+def _research_reply(reply: str, action: str) -> str:
+    text = str(reply or "").strip() or DEFAULT_RESEARCH_REPLIES.get(action, "已按选股研究口径处理。")
+    if _contains_forbidden_advice(text):
+        text = DEFAULT_RESEARCH_REPLIES.get(action, "已按选股研究口径处理。")
+    if "不构成投资建议" not in text:
+        text = f"{text} {RESEARCH_RISK_NOTE}"
+    return text
+
+
+def _contains_forbidden_advice(text: str) -> bool:
+    return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in FORBIDDEN_ADVICE_PATTERNS)
 
 
 def _resolve_llm_config(override: Optional[LlmClientConfig]) -> ResolvedLlmConfig:

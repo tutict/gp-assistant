@@ -1,10 +1,10 @@
-$ErrorActionPreference = "Stop"
-
 param(
     [string]$RepoId = "Xenova/bge-small-zh-v1.5",
     [string]$Revision = "main",
     [string]$ModelDir = "models\bge-small-zh-v1.5-int8"
 )
+
+$ErrorActionPreference = "Stop"
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Target = Join-Path $Root $ModelDir
@@ -116,7 +116,12 @@ if config_path.exists():
 print(f"Downloaded {repo_id}@{revision} to {target}")
 '@
 
-& $Python -c $script $RepoId $Revision $Target
+$TempDir = Join-Path $Root "output"
+New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
+$Downloader = Join-Path $TempDir "download-rag-embedding-model.py"
+Set-Content -LiteralPath $Downloader -Value $script -Encoding UTF8
+
+& $Python $Downloader $RepoId $Revision $Target
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to download RAG embedding model."
 }

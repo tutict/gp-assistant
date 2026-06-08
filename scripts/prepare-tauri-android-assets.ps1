@@ -8,6 +8,8 @@ $OutputDir = Join-Path $Root "desktop\mobile-dist"
 $StaticOutputDir = Join-Path $OutputDir "static"
 $MobileDataScript = Join-Path $PSScriptRoot "build-mobile-tdx-dataset.py"
 $MobileDataOutput = Join-Path $StaticOutputDir "mobile-market-data.json"
+$AndroidManifest = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\AndroidManifest.xml"
+$AndroidBuildGradle = Join-Path $Root "desktop\src-tauri\gen\android\app\build.gradle.kts"
 
 function Resolve-Python {
     $candidates = @(
@@ -43,6 +45,29 @@ function Assert-WorkspaceChildPath {
     }
 }
 
+function Update-AndroidProjectForLanImport {
+    if (Test-Path -LiteralPath $AndroidManifest) {
+        $manifest = Get-Content -LiteralPath $AndroidManifest -Raw
+        if ($manifest -notmatch "android\.permission\.CAMERA") {
+            $manifest = $manifest -replace (
+                [regex]::Escape('    <uses-permission android:name="android.permission.INTERNET" />'),
+                "    <uses-permission android:name=`"android.permission.INTERNET`" />`r`n" +
+                "    <uses-permission android:name=`"android.permission.CAMERA`" />`r`n" +
+                "    <uses-feature android:name=`"android.hardware.camera`" android:required=`"false`" />"
+            )
+            Set-Content -LiteralPath $AndroidManifest -Value $manifest -Encoding UTF8
+        }
+    }
+
+    if (Test-Path -LiteralPath $AndroidBuildGradle) {
+        $gradle = Get-Content -LiteralPath $AndroidBuildGradle -Raw
+        $updated = $gradle -replace 'manifestPlaceholders\["usesCleartextTraffic"\]\s*=\s*"false"', 'manifestPlaceholders["usesCleartextTraffic"] = "true"'
+        if ($updated -ne $gradle) {
+            Set-Content -LiteralPath $AndroidBuildGradle -Value $updated -Encoding UTF8
+        }
+    }
+}
+
 if (-not (Test-Path -LiteralPath $SourceDir)) {
     throw "Frontend source directory does not exist: $SourceDir"
 }
@@ -68,5 +93,7 @@ $Python = Resolve-Python
 if ($LASTEXITCODE -ne 0) {
     throw "Build mobile TDX data set failed with exit code $LASTEXITCODE."
 }
+
+Update-AndroidProjectForLanImport
 
 Write-Host "Prepared Tauri Android assets at: $OutputDir"

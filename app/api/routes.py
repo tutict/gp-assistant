@@ -1,3 +1,4 @@
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -36,6 +37,11 @@ from app.schemas import (
     TrendIndicatorResult,
     TrendScreenRequest,
     TrendScreenResult,
+    UpstreamRagPackBuildRequest,
+    UpstreamRagPackBuildResult,
+    UpstreamRagPackStatusResult,
+    UpstreamRagTransferResult,
+    UpstreamRagTransferStartRequest,
 )
 from app.services.agent import run_agent
 from app.services.backtest import backtest_hold
@@ -47,6 +53,8 @@ from app.services.screener import screen_stocks, screen_stocks_by_sector, screen
 from app.services.stock_graph import graph_screen_stocks
 from app.services.stock_search import search_stock_items
 from app.services.trend_indicator import analyze_trend, trend_screen_stocks
+from app.services.upstream_rag_pack import build_upstream_rag_pack, latest_upstream_pack
+from app.services.upstream_rag_transfer import active_upstream_rag_transfer, start_upstream_rag_transfer
 
 router = APIRouter()
 
@@ -307,6 +315,49 @@ def rag_pack_build_from_news_cache(request: RagPackBuildFromNewsCacheRequest):
 def rag_pack_query(request: RagPackQueryRequest):
     try:
         return query_rag_pack(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/upstream-rag/status", response_model=UpstreamRagPackStatusResult)
+def upstream_rag_status():
+    manifest = latest_upstream_pack()
+    return UpstreamRagPackStatusResult(
+        exists=manifest is not None,
+        manifest=manifest or {},
+        transfer=active_upstream_rag_transfer(),
+        notes=[] if manifest else ["尚未构建上下游 RAG 包。"],
+    )
+
+
+@router.post("/upstream-rag/build", response_model=UpstreamRagPackBuildResult)
+def upstream_rag_build(request: UpstreamRagPackBuildRequest, provider=Depends(_provider_from_headers)):
+    try:
+        result = build_upstream_rag_pack(
+            provider=provider,
+            code=request.code,
+            data_until=request.data_until,
+            filing_days=request.filing_days,
+            news_days=request.news_days,
+            manual_urls=request.manual_urls,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="未找到股票") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return UpstreamRagPackBuildResult(
+        pack_path=result.pack_path,
+        manifest_path=result.manifest_path,
+        manifest=result.manifest,
+        quality=asdict(result.quality),
+        notes=result.notes,
+    )
+
+
+@router.post("/upstream-rag/transfer/start", response_model=UpstreamRagTransferResult)
+def upstream_rag_transfer_start(request: UpstreamRagTransferStartRequest):
+    try:
+        return start_upstream_rag_transfer(request.ttl_minutes)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

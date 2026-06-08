@@ -414,6 +414,75 @@ pub struct AgentWithDataRequest {
     pub message: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MobileStockSourceItem {
+    pub title: String,
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub source_tier: String,
+    #[serde(default)]
+    pub source_name: String,
+    #[serde(default)]
+    pub published_at: Option<String>,
+    #[serde(default)]
+    pub source_url: Option<String>,
+    #[serde(default)]
+    pub evidence: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MobileStockSkillRequest {
+    pub stock_code: String,
+    #[serde(default)]
+    pub stock_name: String,
+    #[serde(default)]
+    pub question: String,
+    #[serde(default)]
+    pub sources: Vec<MobileStockSourceItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MobileStockSkillFinding {
+    pub label: String,
+    pub title: String,
+    pub summary: String,
+    pub source_tier: String,
+    pub source_name: String,
+    #[serde(default)]
+    pub published_at: Option<String>,
+    pub evidence: String,
+    pub confidence: f64,
+    pub risk_note: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MobileStockSkillOverview {
+    pub stock_code: String,
+    pub stock_name: String,
+    pub overall_label: String,
+    pub summary: String,
+    pub positive_count: usize,
+    pub negative_count: usize,
+    pub neutral_count: usize,
+    pub unverified_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MobileStockSkillResult {
+    pub overview: MobileStockSkillOverview,
+    #[serde(default)]
+    pub positive_factors: Vec<MobileStockSkillFinding>,
+    #[serde(default)]
+    pub negative_factors: Vec<MobileStockSkillFinding>,
+    #[serde(default)]
+    pub neutral_information: Vec<MobileStockSkillFinding>,
+    #[serde(default)]
+    pub unverified_leads: Vec<MobileStockSkillFinding>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
 #[derive(Clone, Debug)]
 struct HistoryPoint {
     date: NaiveDate,
@@ -643,6 +712,11 @@ pub fn agent_with_data_value(payload: Value) -> CoreResult<Value> {
     serde_json::to_value(run_agent_with_data(&request.data, &request.message)?).map_err(Into::into)
 }
 
+pub fn mobile_stock_skill_value(payload: Value) -> CoreResult<Value> {
+    let request: MobileStockSkillRequest = serde_json::from_value(payload)?;
+    serde_json::to_value(run_mobile_stock_skill(&request)).map_err(Into::into)
+}
+
 pub fn validate_data_source_value(payload: Value) -> CoreResult<Value> {
     let data: CoreDataSet = serde_json::from_value(payload)?;
     serde_json::to_value(validate_data_set(&data)?).map_err(Into::into)
@@ -794,10 +868,7 @@ pub fn trend_with_source(
     let history = source.get_history(&stock.code, &request.start_date, &request.end_date)?;
     let bars = prepare_bars(&history, &stock)?;
     if bars.is_empty() {
-        return Err(CoreError::new(format!(
-            "{} 没有可用历史行情",
-            stock.code
-        )));
+        return Err(CoreError::new(format!("{} 没有可用历史行情", stock.code)));
     }
     let computed = compute_trend_bars(&bars);
     let signal = trend_signal_from_bar(&stock.code, computed.last().expect("non-empty trend bars"));
@@ -865,7 +936,9 @@ pub fn trend_screen_with_source(
     items.truncate(request.limit.clamp(1, 100));
     let mut notes = trend_notes();
     if skipped > 0 {
-        notes.push(format!("Skipped {skipped} stocks without usable OHLC history."));
+        notes.push(format!(
+            "Skipped {skipped} stocks without usable OHLC history."
+        ));
     }
     Ok(TrendScreenResult {
         total: candidate_pool.len(),
@@ -917,7 +990,7 @@ pub fn run_agent_with_source(
         };
         let data = serde_json::to_value(trend_screen_with_source(source, &trend_request)?)?;
         return Ok(AgentResponse {
-            reply: "已按趋势指标做选股排序。".to_string(),
+            reply: research_reply("已按趋势指标做选股排序。"),
             action: "trend_screen".to_string(),
             criteria: None,
             backtest: None,
@@ -956,7 +1029,7 @@ pub fn run_agent_with_source(
         };
         let data = serde_json::to_value(graph_screen_with_source(source, &graph_request)?)?;
         return Ok(AgentResponse {
-            reply: "已按股票关系图做关系传播选股。".to_string(),
+            reply: research_reply("已按股票关系图做关系传播选股。"),
             action: "graph_screen".to_string(),
             criteria: None,
             backtest: None,
@@ -977,7 +1050,7 @@ pub fn run_agent_with_source(
         };
         let data = serde_json::to_value(backtest_with_source(source, &backtest)?)?;
         return Ok(AgentResponse {
-            reply: "已按描述执行本地回测。".to_string(),
+            reply: research_reply("已按描述执行本地回测。"),
             action: "backtest".to_string(),
             criteria: None,
             backtest: Some(backtest),
@@ -990,7 +1063,7 @@ pub fn run_agent_with_source(
     if contains_any(&lower, &["选股", "筛选", "screen", "挑股票"]) {
         let data = serde_json::to_value(screen_with_source(source, &criteria)?)?;
         return Ok(AgentResponse {
-            reply: "已按描述筛选股票。".to_string(),
+            reply: research_reply("已按描述筛选股票。"),
             action: "screen".to_string(),
             criteria: Some(criteria),
             backtest: None,
@@ -1001,7 +1074,7 @@ pub fn run_agent_with_source(
     }
 
     Ok(AgentResponse {
-        reply: "请说明要普通选股、关系图选股，还是回测。".to_string(),
+        reply: research_reply("请说明要普通选股、关系图选股，还是回测。"),
         action: "clarify".to_string(),
         criteria: None,
         backtest: None,
@@ -1009,6 +1082,255 @@ pub fn run_agent_with_source(
         trend_screen: None,
         data: None,
     })
+}
+
+pub fn run_mobile_stock_skill(request: &MobileStockSkillRequest) -> MobileStockSkillResult {
+    let mut positive_factors = Vec::new();
+    let mut negative_factors = Vec::new();
+    let mut neutral_information = Vec::new();
+    let mut unverified_leads = Vec::new();
+    let mut notes = vec![
+        "手机端股票分析 Skill 已按结构化信源条目生成结论。".to_string(),
+        "仅供选股研究，不构成投资建议。".to_string(),
+    ];
+
+    for source in request.sources.iter().take(80) {
+        let finding = mobile_source_to_finding(source);
+        match finding.label.as_str() {
+            "positive" => positive_factors.push(finding),
+            "negative" => negative_factors.push(finding),
+            "neutral" => neutral_information.push(finding),
+            _ => unverified_leads.push(finding),
+        }
+    }
+
+    sort_findings(&mut positive_factors);
+    sort_findings(&mut negative_factors);
+    sort_findings(&mut neutral_information);
+    sort_findings(&mut unverified_leads);
+
+    if request.sources.is_empty() {
+        notes.push("未找到可靠信源；请先接入 CNINFO、通达信 F10 或公开新闻 URL。".to_string());
+    }
+    if request
+        .sources
+        .iter()
+        .any(|item| normalize_source_tier(&item.source_tier) == "community")
+    {
+        notes.push("社区来源只作为待验证线索，不能单独形成利好或利空事实。".to_string());
+    }
+
+    let overview = MobileStockSkillOverview {
+        stock_code: request.stock_code.trim().to_uppercase(),
+        stock_name: request.stock_name.trim().to_string(),
+        overall_label: mobile_overall_label(
+            positive_factors.len(),
+            negative_factors.len(),
+            unverified_leads.len(),
+        ),
+        summary: mobile_overview_summary(
+            request,
+            positive_factors.len(),
+            negative_factors.len(),
+            neutral_information.len(),
+            unverified_leads.len(),
+        ),
+        positive_count: positive_factors.len(),
+        negative_count: negative_factors.len(),
+        neutral_count: neutral_information.len(),
+        unverified_count: unverified_leads.len(),
+    };
+
+    MobileStockSkillResult {
+        overview,
+        positive_factors,
+        negative_factors,
+        neutral_information,
+        unverified_leads,
+        notes,
+    }
+}
+
+fn research_reply(text: &str) -> String {
+    format!("{text} 仅供选股研究，不构成投资建议。")
+}
+
+fn mobile_source_to_finding(source: &MobileStockSourceItem) -> MobileStockSkillFinding {
+    let source_tier = normalize_source_tier(&source.source_tier);
+    let evidence = first_non_empty(&[
+        source.evidence.as_str(),
+        source.summary.as_str(),
+        source.title.as_str(),
+    ]);
+    let label = classify_mobile_source(&source_tier, &source.title, &source.summary, &evidence);
+    let confidence = mobile_confidence(&source_tier, &label, !evidence.is_empty());
+
+    MobileStockSkillFinding {
+        label: label.clone(),
+        title: truncate_chars(
+            &first_non_empty(&[source.title.as_str(), source.summary.as_str(), "未命名信源"]),
+            80,
+        ),
+        summary: mobile_finding_summary(&label, source),
+        source_tier,
+        source_name: first_non_empty(&[source.source_name.as_str(), "未标注来源"]),
+        published_at: source.published_at.clone(),
+        evidence: truncate_chars(&evidence, 220),
+        confidence,
+        risk_note: mobile_risk_note(&label),
+    }
+}
+
+fn classify_mobile_source(source_tier: &str, title: &str, summary: &str, evidence: &str) -> String {
+    if source_tier == "community" || evidence.trim().is_empty() {
+        return "unverified".to_string();
+    }
+    let text = format!("{title} {summary} {evidence}").to_lowercase();
+    let positive = contains_any(
+        &text,
+        &[
+            "增长", "预增", "扭亏", "订单", "中标", "签订", "扩产", "回购", "增持", "分红", "盈利",
+            "改善", "突破", "获批", "投产", "景气", "涨价",
+        ],
+    );
+    let negative = contains_any(
+        &text,
+        &[
+            "下滑", "下降", "亏损", "预亏", "减持", "处罚", "调查", "诉讼", "仲裁", "违约", "终止",
+            "取消", "风险", "计提", "减值", "停产", "限产", "退市",
+        ],
+    );
+
+    match (positive, negative) {
+        (true, false) => "positive".to_string(),
+        (false, true) => "negative".to_string(),
+        (true, true) => "neutral".to_string(),
+        (false, false) => "neutral".to_string(),
+    }
+}
+
+fn mobile_confidence(source_tier: &str, label: &str, has_evidence: bool) -> f64 {
+    if !has_evidence || label == "unverified" {
+        return 0.2;
+    }
+    let base = match source_tier {
+        "filing" => 0.9,
+        "financial_snapshot" => 0.75,
+        "news" => 0.62,
+        "research" => 0.55,
+        "manual_url" => 0.5,
+        "community" => 0.2,
+        _ => 0.4,
+    };
+    round4(base)
+}
+
+fn mobile_finding_summary(label: &str, source: &MobileStockSourceItem) -> String {
+    let body = first_non_empty(&[
+        source.summary.as_str(),
+        source.evidence.as_str(),
+        source.title.as_str(),
+    ]);
+    let prefix = match label {
+        "positive" => "选股研究视角下偏利好",
+        "negative" => "选股研究视角下偏利空",
+        "neutral" => "中性信息",
+        _ => "待验证线索",
+    };
+    format!("{prefix}：{}", truncate_chars(&body, 120))
+}
+
+fn mobile_risk_note(label: &str) -> String {
+    let note = match label {
+        "positive" => "需要用后续公告、财报和成交数据验证，不能据此作交易决定。",
+        "negative" => "需要确认事项影响范围和持续性，不能单独作为交易依据。",
+        "neutral" => "属于信息披露或背景材料，需结合财务和行情继续验证。",
+        _ => "来源不足或未被官方披露确认，只能作为待验证线索。",
+    };
+    format!("{note} 仅供选股研究，不构成投资建议。")
+}
+
+fn mobile_overall_label(positive: usize, negative: usize, unverified: usize) -> String {
+    if positive == 0 && negative == 0 && unverified > 0 {
+        return "unverified".to_string();
+    }
+    if positive > negative {
+        "positive".to_string()
+    } else if negative > positive {
+        "negative".to_string()
+    } else {
+        "neutral".to_string()
+    }
+}
+
+fn mobile_overview_summary(
+    request: &MobileStockSkillRequest,
+    positive: usize,
+    negative: usize,
+    neutral: usize,
+    unverified: usize,
+) -> String {
+    let target = if request.stock_name.trim().is_empty() {
+        request.stock_code.trim()
+    } else {
+        request.stock_name.trim()
+    };
+    if positive + negative + neutral + unverified == 0 {
+        return format!(
+            "{target} 未找到可靠信源，暂不能形成利好利空判断。仅供选股研究，不构成投资建议。"
+        );
+    }
+    format!(
+        "{target} 当前命中利好 {positive} 条、利空 {negative} 条、中性 {neutral} 条、待验证 {unverified} 条。仅供选股研究，不构成投资建议。"
+    )
+}
+
+fn sort_findings(findings: &mut [MobileStockSkillFinding]) {
+    findings.sort_by(|left, right| {
+        right
+            .confidence
+            .total_cmp(&left.confidence)
+            .then_with(|| right.published_at.cmp(&left.published_at))
+    });
+}
+
+fn normalize_source_tier(value: &str) -> String {
+    let normalized = value.trim().to_lowercase();
+    match normalized.as_str() {
+        "filing" | "financial_snapshot" | "news" | "research" | "community" | "manual_url" => {
+            normalized
+        }
+        "tdx" | "f10" => "financial_snapshot".to_string(),
+        "cninfo" | "notice" | "announcement" => "filing".to_string(),
+        "" => "manual_url".to_string(),
+        _ => normalized,
+    }
+}
+
+fn first_non_empty(values: &[&str]) -> String {
+    values
+        .iter()
+        .find_map(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut result = String::new();
+    for (index, ch) in value.chars().enumerate() {
+        if index >= max_chars {
+            result.push_str("...");
+            break;
+        }
+        result.push(ch);
+    }
+    result
 }
 
 pub fn screen_stocks(universe: &[StockItem], criteria: &ScreenCriteria) -> ScreenResult {
@@ -1098,16 +1420,11 @@ pub fn graph_screen_stocks(
     assign_weights(&mut signals);
 
     let mut notes = vec![
-        "关系图是轻量传播评分层，不是 LangGraph 工作流编排。"
-            .to_string(),
-        "LangGraph 用于智能体状态流；股票关系由图学习或知识图谱数据建模。"
-            .to_string(),
+        "关系图是轻量传播评分层，不是 LangGraph 工作流编排。".to_string(),
+        "LangGraph 用于智能体状态流；股票关系由图学习或知识图谱数据建模。".to_string(),
     ];
     if relations.is_empty() {
-        notes.push(
-            "当前没有可用股票关系，结果已回退为基础选股分。"
-                .to_string(),
-        );
+        notes.push("当前没有可用股票关系，结果已回退为基础选股分。".to_string());
     }
 
     GraphScreenResult {
@@ -1702,7 +2019,8 @@ fn compute_trend_bars(bars: &[PreparedBar]) -> Vec<ComputedTrendBar> {
         let e_value = (high[index] + low[index] + open[index] + 2.0 * close[index]) / 5.0;
         let short_buy = index > 0 && cyan_watch[index - 1] && var1[index];
         let white_exit = index > 0 && red_hold[index - 1] && vard[index];
-        let oversold = ma34[index].is_finite() && ((close[index] - ma34[index]) / ma34[index] * 100.0) < -14.0;
+        let oversold =
+            ma34[index].is_finite() && ((close[index] - ma34[index]) / ma34[index] * 100.0) < -14.0;
         let wait_line = if ma3[index].is_finite()
             && star_line[index].is_finite()
             && ma3[index] > star_line[index]
@@ -1830,7 +2148,10 @@ fn rolling_min(values: &[f64], window: usize) -> Vec<f64> {
     (0..values.len())
         .map(|index| {
             let start = index.saturating_sub(window.saturating_sub(1));
-            values[start..=index].iter().copied().fold(f64::INFINITY, f64::min)
+            values[start..=index]
+                .iter()
+                .copied()
+                .fold(f64::INFINITY, f64::min)
         })
         .collect()
 }
@@ -2052,8 +2373,7 @@ fn trend_status(bar: &ComputedTrendBar) -> String {
 }
 
 fn trend_score(signal: &TrendIndicatorSignal) -> f64 {
-    let mut score =
-        (signal.quant_score as f64 / signal.quant_score_max.max(1) as f64) * 58.0;
+    let mut score = (signal.quant_score as f64 / signal.quant_score_max.max(1) as f64) * 58.0;
     if signal.swl_above_sws {
         score += 10.0;
     }
@@ -2555,8 +2875,7 @@ pub extern "C" fn gp_core_trend_json(request_json: *const c_char) -> *mut c_char
 pub extern "C" fn gp_core_trend_with_data_json(request_json: *const c_char) -> *mut c_char {
     ffi_response(request_json, |input| {
         let request: TrendWithDataRequest = serde_json::from_str(input)?;
-        serde_json::to_value(trend_with_data(&request.data, &request.request)?)
-            .map_err(Into::into)
+        serde_json::to_value(trend_with_data(&request.data, &request.request)?).map_err(Into::into)
     })
 }
 
@@ -2569,9 +2888,7 @@ pub extern "C" fn gp_core_trend_screen_json(request_json: *const c_char) -> *mut
 }
 
 #[no_mangle]
-pub extern "C" fn gp_core_trend_screen_with_data_json(
-    request_json: *const c_char,
-) -> *mut c_char {
+pub extern "C" fn gp_core_trend_screen_with_data_json(request_json: *const c_char) -> *mut c_char {
     ffi_response(request_json, |input| {
         let request: TrendScreenWithDataRequest = serde_json::from_str(input)?;
         serde_json::to_value(trend_screen_with_data(&request.data, &request.request)?)
@@ -2593,6 +2910,14 @@ pub extern "C" fn gp_core_agent_with_data_json(request_json: *const c_char) -> *
         let request: AgentWithDataRequest = serde_json::from_str(input)?;
         serde_json::to_value(run_agent_with_data(&request.data, &request.message)?)
             .map_err(Into::into)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn gp_core_mobile_stock_skill_json(request_json: *const c_char) -> *mut c_char {
+    ffi_response(request_json, |input| {
+        let request: MobileStockSkillRequest = serde_json::from_str(input)?;
+        serde_json::to_value(run_mobile_stock_skill(&request)).map_err(Into::into)
     })
 }
 
@@ -2776,6 +3101,7 @@ mod tests {
     fn agent_routes_graph_request() {
         let response = run_agent_with_mock("用关系图分析 300750.SZ 产业链选股").unwrap();
         assert_eq!(response.action, "graph_screen");
+        assert!(response.reply.contains("不构成投资建议"));
         assert!(response.data.is_some());
     }
 
@@ -2783,7 +3109,67 @@ mod tests {
     fn agent_routes_trend_request() {
         let response = run_agent_with_mock("用趋势指标筛选上升趋势股票").unwrap();
         assert_eq!(response.action, "trend_screen");
+        assert!(response.reply.contains("不构成投资建议"));
         assert!(response.data.is_some());
+    }
+
+    #[test]
+    fn mobile_stock_skill_classifies_sources_with_guardrails() {
+        let result = run_mobile_stock_skill(&MobileStockSkillRequest {
+            stock_code: "300750.SZ".to_string(),
+            stock_name: "宁德时代".to_string(),
+            question: "分析近期利好利空".to_string(),
+            sources: vec![
+                MobileStockSourceItem {
+                    title: "宁德时代签订储能订单公告".to_string(),
+                    summary: "公司披露新签订单增长，交付节奏改善。".to_string(),
+                    source_tier: "filing".to_string(),
+                    source_name: "巨潮资讯".to_string(),
+                    published_at: Some("2026-06-08".to_string()),
+                    source_url: Some("https://example.test/notice".to_string()),
+                    evidence: "公司披露新签订单增长，预计对经营产生积极影响。".to_string(),
+                },
+                MobileStockSourceItem {
+                    title: "股吧讨论短线必涨".to_string(),
+                    summary: "社区讨论称短线必涨。".to_string(),
+                    source_tier: "community".to_string(),
+                    source_name: "股吧".to_string(),
+                    published_at: Some("2026-06-08".to_string()),
+                    source_url: None,
+                    evidence: "社区讨论称短线必涨。".to_string(),
+                },
+            ],
+        });
+
+        assert_eq!(result.overview.positive_count, 1);
+        assert_eq!(result.overview.unverified_count, 1);
+        assert_eq!(result.positive_factors[0].source_tier, "filing");
+        assert_eq!(result.unverified_leads[0].label, "unverified");
+        assert!(result.positive_factors[0]
+            .risk_note
+            .contains("不构成投资建议"));
+        assert!(result
+            .notes
+            .iter()
+            .any(|note| note.contains("社区来源只作为待验证线索")));
+    }
+
+    #[test]
+    fn mobile_stock_skill_does_not_invent_without_sources() {
+        let result = run_mobile_stock_skill(&MobileStockSkillRequest {
+            stock_code: "300750.SZ".to_string(),
+            stock_name: "宁德时代".to_string(),
+            question: "分析近期利好利空".to_string(),
+            sources: Vec::new(),
+        });
+
+        assert_eq!(result.overview.overall_label, "neutral");
+        assert_eq!(result.overview.positive_count, 0);
+        assert!(result.overview.summary.contains("未找到可靠信源"));
+        assert!(result
+            .notes
+            .iter()
+            .any(|note| note.contains("未找到可靠信源")));
     }
 
     #[test]

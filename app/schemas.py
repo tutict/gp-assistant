@@ -401,6 +401,42 @@ class RagPackStatusResult(BaseModel):
     notes: List[str] = Field(default_factory=list)
 
 
+class UpstreamRagPackBuildRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=16)
+    data_until: Optional[str] = None
+    filing_days: int = Field(default=1095, ge=30, le=3650)
+    news_days: int = Field(default=180, ge=1, le=3650)
+    manual_urls: List[str] = Field(default_factory=list, max_length=12)
+
+
+class UpstreamRagPackBuildResult(BaseModel):
+    pack_path: str
+    manifest_path: str
+    manifest: dict = Field(default_factory=dict)
+    quality: dict = Field(default_factory=dict)
+    notes: List[str] = Field(default_factory=list)
+
+
+class UpstreamRagTransferStartRequest(BaseModel):
+    ttl_minutes: int = Field(default=15, ge=1, le=60)
+
+
+class UpstreamRagTransferResult(BaseModel):
+    manifest_url: str
+    pack_url: str
+    token: str
+    expires_at: str
+    qr_svg: Optional[str] = None
+    notes: List[str] = Field(default_factory=list)
+
+
+class UpstreamRagPackStatusResult(BaseModel):
+    exists: bool
+    manifest: dict = Field(default_factory=dict)
+    transfer: dict = Field(default_factory=dict)
+    notes: List[str] = Field(default_factory=list)
+
+
 class CachePolicy(BaseModel):
     mode: str = Field(default="light")
     max_bytes: int = Field(default=200 * 1024 * 1024, ge=1)

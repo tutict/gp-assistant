@@ -6,6 +6,7 @@ $DistDir = Join-Path $Root "dist"
 $EntryPoint = Join-Path $Root "app\desktop_server.py"
 $Requirements = Join-Path $Root "requirements.txt"
 $StaticDir = Join-Path $Root "app\static"
+$PromptDir = Join-Path $Root "app\prompts"
 $ModelDir = Join-Path $Root "models\bge-small-zh-v1.5-int8"
 
 function Resolve-Python {
@@ -80,6 +81,8 @@ $PyInstallerArgs = @(
     (Join-Path $Root "build\pyinstaller"),
     "--add-data",
     "$StaticDir;app\static",
+    "--add-data",
+    "$PromptDir;app\prompts",
     $EntryPoint
 )
 

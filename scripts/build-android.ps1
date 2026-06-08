@@ -113,6 +113,32 @@ function Use-LocalGradleDistribution {
     Set-Content -LiteralPath $WrapperProperties -Value $Updated -Encoding ASCII
 }
 
+function Update-AndroidProjectForLanImport {
+    $AndroidManifest = Join-Path $AndroidProjectDir "app\src\main\AndroidManifest.xml"
+    $AndroidBuildGradle = Join-Path $AndroidProjectDir "app\build.gradle.kts"
+
+    if (Test-Path -LiteralPath $AndroidManifest) {
+        $manifest = Get-Content -LiteralPath $AndroidManifest -Raw
+        if ($manifest -notmatch "android\.permission\.CAMERA") {
+            $manifest = $manifest -replace (
+                [regex]::Escape('    <uses-permission android:name="android.permission.INTERNET" />'),
+                "    <uses-permission android:name=`"android.permission.INTERNET`" />`r`n" +
+                "    <uses-permission android:name=`"android.permission.CAMERA`" />`r`n" +
+                "    <uses-feature android:name=`"android.hardware.camera`" android:required=`"false`" />"
+            )
+            Set-Content -LiteralPath $AndroidManifest -Value $manifest -Encoding UTF8
+        }
+    }
+
+    if (Test-Path -LiteralPath $AndroidBuildGradle) {
+        $gradle = Get-Content -LiteralPath $AndroidBuildGradle -Raw
+        $updated = $gradle -replace 'manifestPlaceholders\["usesCleartextTraffic"\]\s*=\s*"false"', 'manifestPlaceholders["usesCleartextTraffic"] = "true"'
+        if ($updated -ne $gradle) {
+            Set-Content -LiteralPath $AndroidBuildGradle -Value $updated -Encoding UTF8
+        }
+    }
+}
+
 Initialize-AndroidEnvironment
 
 Assert-EnvPath "ANDROID_HOME" "Install Android SDK and set ANDROID_HOME to the SDK directory."
@@ -134,6 +160,7 @@ try {
             "android:init"
         )
     }
+    Update-AndroidProjectForLanImport
     Use-LocalGradleDistribution
 
     if ($InitOnly) {

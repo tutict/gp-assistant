@@ -9,6 +9,8 @@ const buttons = {
   newsRag: $("#newsRagBtn"),
   ragPackBuild: $("#ragPackBuildBtn"),
   ragPackQuery: $("#ragPackQueryBtn"),
+  upstreamScan: $("#upstreamScanBtn"),
+  upstreamImport: $("#upstreamImportBtn"),
   agent: $("#agentBtn"),
   observe: $("#observeBtn"),
 };
@@ -100,9 +102,11 @@ function bindActions() {
   buttons.backtest.addEventListener("click", () => runTask(buttons.backtest, panels.backtest, runBacktest));
   buttons.newsRag?.addEventListener("click", () => runTask(buttons.newsRag, panels.newsRag, runNewsRag));
   buttons.ragPackBuild?.addEventListener("click", () =>
-    runTask(buttons.ragPackBuild, panels.newsRag, runRagPackBuildFromNewsCache),
+    runTask(buttons.ragPackBuild, panels.newsRag, runUpstreamRagBuildAndTransfer),
   );
-  buttons.ragPackQuery?.addEventListener("click", () => runTask(buttons.ragPackQuery, panels.newsRag, runRagPackQuery));
+  buttons.ragPackQuery?.addEventListener("click", () => runTask(buttons.ragPackQuery, panels.newsRag, runUpstreamRagList));
+  buttons.upstreamScan?.addEventListener("click", () => runTask(buttons.upstreamScan, panels.newsRag, runUpstreamQrScan));
+  buttons.upstreamImport?.addEventListener("click", () => runTask(buttons.upstreamImport, panels.newsRag, runUpstreamRagImport));
   buttons.agent.addEventListener("click", () => runTask(buttons.agent, panels.agent, runAgent));
   buttons.observe?.addEventListener("click", () => runTask(buttons.observe, panels.observe, () => runObserve()));
   dataSource.select?.addEventListener("change", () => {
@@ -134,6 +138,27 @@ function bindActions() {
     if (!action) return;
     event.preventDefault();
     runBacktestFromScreen();
+  });
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+    const detail = target?.closest("[data-upstream-detail]");
+    if (!detail) return;
+    event.preventDefault();
+    runTask(detail, panels.newsRag, () => runUpstreamRagDetail(detail.dataset.stockCode, detail.dataset.packVersion));
+  });
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+    const rollback = target?.closest("[data-upstream-rollback]");
+    if (!rollback) return;
+    event.preventDefault();
+    runTask(rollback, panels.newsRag, () => runUpstreamRagRollback(rollback.dataset.stockCode));
+  });
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+    const cancel = target?.closest("[data-upstream-scan-cancel]");
+    if (!cancel) return;
+    event.preventDefault();
+    window.__gpUpstreamQrCancel?.();
   });
   llmSettings.save?.addEventListener("click", saveLlmSettings);
   llmSettings.clear?.addEventListener("click", clearLlmSettings);
@@ -407,6 +432,145 @@ async function runRagPackQuery() {
   };
   const data = await postJson("/api/rag-pack/query", payload, panels.newsRag);
   if (data) renderRagPackQueryResult(panels.newsRag, data);
+}
+
+async function runUpstreamRagBuildAndTransfer() {
+  const timer = startPanelProgress(panels.newsRag, "构建上下游 RAG 同步包", [
+    [16, "采集 CNINFO 公告"],
+    [36, "读取通达信 F10"],
+    [58, "抓取公开 URL"],
+    [76, "抽取关系和证据"],
+    [90, "生成 manifest 和二维码"],
+  ]);
+  const code = readStockCode("newsCode") || parseCodes($("#seedCodes")?.value || "")[0] || "";
+  if (!code) {
+    if (timer) window.clearInterval(timer);
+    setError(panels.newsRag, "请输入目标股票代码", "构建手机同步包需要明确的单只股票，例如：300750.SZ。");
+    return;
+  }
+  $("#newsCode").value = code;
+  const buildPayload = {
+    code,
+    data_until: currentSystemDateInputValue(),
+    filing_days: 1095,
+    news_days: clampInt($("#newsDays")?.value, 1, 3650, 180),
+    manual_urls: parseUpstreamManualUrls(),
+  };
+  try {
+    const build = await postJson("/api/upstream-rag/build", buildPayload, panels.newsRag);
+    if (!build) return;
+    const transfer = build.manifest?.valid
+      ? await postJson("/api/upstream-rag/transfer/start", { ttl_minutes: 15 }, panels.newsRag)
+      : null;
+    renderUpstreamRagBuildResult(panels.newsRag, build, transfer);
+  } finally {
+    if (timer) window.clearInterval(timer);
+  }
+}
+
+async function runUpstreamRagList() {
+  setLoading(panels.newsRag, isTauriRuntime() ? "读取手机端 RAG 包" : "读取桌面端同步包状态");
+  const data = isTauriRuntime()
+    ? await getJson("/api/upstream-rag/mobile/list", panels.newsRag)
+    : await getJson("/api/upstream-rag/status", panels.newsRag);
+  if (!data) return;
+  if (isTauriRuntime()) {
+    renderUpstreamRagMobileList(panels.newsRag, data);
+  } else {
+    renderUpstreamRagDesktopStatus(panels.newsRag, data);
+  }
+}
+
+async function runUpstreamRagImport() {
+  if (!isTauriRuntime()) {
+    setError(panels.newsRag, "导入仅在安卓端执行", "桌面端负责构建和开启局域网临时传输服务。");
+    return;
+  }
+  const descriptor = parseUpstreamImportDescriptor($("#upstreamImportPayload")?.value || "");
+  if (!descriptor.manifest_url) {
+    setError(panels.newsRag, "缺少扫码内容", "请扫码或粘贴 manifest_url / 二维码 JSON。");
+    return;
+  }
+  setLoading(panels.newsRag, "下载并校验上下游 RAG 包");
+  try {
+    const payload = await fetchUpstreamImportPayload(descriptor);
+    const data = await postJson("/api/upstream-rag/mobile/import", payload, panels.newsRag);
+    if (data) renderUpstreamRagImportResult(panels.newsRag, data);
+  } catch (err) {
+    setError(panels.newsRag, "导入失败", err.message);
+  }
+}
+
+async function runUpstreamQrScan() {
+  if (!("BarcodeDetector" in window) || !navigator.mediaDevices?.getUserMedia) {
+    setError(panels.newsRag, "当前 WebView 不支持扫码", "请用系统相机扫描桌面端二维码后，把二维码 JSON 或 manifest_url 粘贴到输入框。");
+    return;
+  }
+  const detector = new BarcodeDetector({ formats: ["qr_code"] });
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } });
+  } catch (err) {
+    setError(panels.newsRag, "无法打开相机", err.message);
+    return;
+  }
+
+  panels.newsRag.className = basePanelClass(panels.newsRag);
+  panels.newsRag.innerHTML = `
+    <div class="upstream-scan">
+      <video id="upstreamScanVideo" autoplay playsinline muted></video>
+      <div>
+        <strong>对准桌面端二维码</strong>
+        <button type="button" data-upstream-scan-cancel>取消</button>
+      </div>
+    </div>
+  `;
+  const video = $("#upstreamScanVideo");
+  video.srcObject = stream;
+  await video.play();
+
+  let cancelled = false;
+  window.__gpUpstreamQrCancel = () => {
+    cancelled = true;
+  };
+  try {
+    while (!cancelled) {
+      const codes = await detector.detect(video).catch(() => []);
+      const raw = codes?.[0]?.rawValue || "";
+      if (raw) {
+        $("#upstreamImportPayload").value = raw;
+        break;
+      }
+      await delay(240);
+    }
+  } finally {
+    stream.getTracks().forEach((track) => track.stop());
+    window.__gpUpstreamQrCancel = null;
+  }
+  if (cancelled) {
+    panels.newsRag.className = `${basePanelClass(panels.newsRag)} empty`;
+    panels.newsRag.innerHTML = renderEmpty("已取消扫码");
+    return;
+  }
+  await runUpstreamRagImport();
+}
+
+async function runUpstreamRagDetail(stockCode, packVersion) {
+  setLoading(panels.newsRag, "读取 RAG 包详情");
+  const data = isTauriRuntime()
+    ? await postJson("/api/upstream-rag/mobile/detail", { stock_code: stockCode, pack_version: packVersion }, panels.newsRag)
+    : await getJson("/api/upstream-rag/status", panels.newsRag);
+  if (data) renderUpstreamRagDetailResult(panels.newsRag, data);
+}
+
+async function runUpstreamRagRollback(stockCode) {
+  if (!isTauriRuntime()) {
+    setError(panels.newsRag, "回滚仅在安卓端执行", "桌面端可以重新构建并开启传输。");
+    return;
+  }
+  setLoading(panels.newsRag, "回滚 RAG 包");
+  const data = await postJson("/api/upstream-rag/mobile/rollback", { stock_code: stockCode }, panels.newsRag);
+  if (data) renderUpstreamRagDetailResult(panels.newsRag, data);
 }
 
 async function runAgent() {
@@ -1355,6 +1519,20 @@ async function requestTauriJson(method, url, payload) {
   const path = parsed.pathname;
   if (method === "GET") {
     if (path === "/api/data-sources/status") return { handled: true, data: await mobileDataStatus(invoke) };
+    if (path === "/api/upstream-rag/mobile/list") {
+      return { handled: true, data: await invoke("core_upstream_rag_list") };
+    }
+    if (path === "/api/upstream-rag/mobile/detail") {
+      return {
+        handled: true,
+        data: await invoke("core_upstream_rag_detail", {
+          payload: {
+            stock_code: parsed.searchParams.get("stock_code") || "",
+            pack_version: parsed.searchParams.get("pack_version") || "",
+          },
+        }),
+      };
+    }
     if (path === "/api/stock-search") {
       return { handled: true, data: await searchTauriStocks(invoke, parsed.searchParams) };
     }
@@ -1427,9 +1605,92 @@ async function requestTauriJson(method, url, payload) {
           payload: { data: await loadMobileMarketData(invoke), message: payload.message || "" },
         }),
       };
+    case "/api/upstream-rag/mobile/import":
+      return { handled: true, data: await invoke("core_upstream_rag_import", { payload }) };
+    case "/api/upstream-rag/mobile/detail":
+      return { handled: true, data: await invoke("core_upstream_rag_detail", { payload }) };
+    case "/api/upstream-rag/mobile/rollback":
+      return { handled: true, data: await invoke("core_upstream_rag_rollback", { payload }) };
     default:
       throw new Error(`移动端暂不支持该接口：${path}`);
   }
+}
+
+function isTauriRuntime() {
+  return Boolean(window.__TAURI__?.core?.invoke);
+}
+
+function parseUpstreamManualUrls() {
+  return String($("#upstreamManualUrls")?.value || "")
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter((item) => /^https?:\/\//i.test(item))
+    .slice(0, 12);
+}
+
+function parseUpstreamImportDescriptor(rawValue) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      return {
+        manifest_url: parsed.manifest_url || parsed.manifestUrl || "",
+        pack_url: parsed.pack_url || parsed.packUrl || "",
+        token: parsed.token || "",
+      };
+    }
+  } catch {
+    // 输入不是 JSON 时继续按 URL 解析。
+  }
+  if (/^https?:\/\//i.test(raw)) {
+    return { manifest_url: raw, pack_url: deriveUpstreamPackUrl(raw) };
+  }
+  return {};
+}
+
+async function fetchUpstreamImportPayload(descriptor) {
+  const manifestResponse = await fetch(descriptor.manifest_url, { cache: "no-store" });
+  if (!manifestResponse.ok) {
+    throw new Error(`manifest 下载失败：HTTP ${manifestResponse.status}`);
+  }
+  const manifest = await manifestResponse.json();
+  const packUrl = descriptor.pack_url || deriveUpstreamPackUrl(descriptor.manifest_url, manifest.files?.pack);
+  const packResponse = await fetch(packUrl, { cache: "no-store" });
+  if (!packResponse.ok) {
+    throw new Error(`RAG 包下载失败：HTTP ${packResponse.status}`);
+  }
+  const packBuffer = await packResponse.arrayBuffer();
+  return {
+    manifest,
+    pack_base64: arrayBufferToBase64(packBuffer),
+  };
+}
+
+function deriveUpstreamPackUrl(manifestUrl, packFile = "rag_pack.sqlite") {
+  try {
+    const url = new URL(manifestUrl);
+    const parts = url.pathname.split("/");
+    parts[parts.length - 1] = packFile || "rag_pack.sqlite";
+    url.pathname = parts.join("/");
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 async function loadMobileMarketData(invoke) {
@@ -1792,6 +2053,234 @@ function renderRagPackHits(hits) {
   `;
 }
 
+function renderUpstreamRagBuildResult(node, build, transfer) {
+  const manifest = build.manifest || {};
+  const quality = build.quality || {};
+  renderResult(node, {
+    summary: [
+      ["有效", manifest.valid ? "是" : "否"],
+      ["文档", manifest.document_count ?? 0],
+      ["证据", manifest.evidence_count ?? 0],
+      ["关系", manifest.relation_edge_count ?? 0],
+    ],
+    body: [
+      renderKeyValueBlock([
+        ["股票", `${manifest.target_stock_name || "-"} ${manifest.target_stock_code || ""}`.trim()],
+        ["版本", manifest.pack_version || "-"],
+        ["包大小", formatBytes(manifest.file_size || 0)],
+        ["SHA256", manifest.sha256 || "-"],
+      ]),
+      renderUpstreamQuality(quality, manifest),
+      transfer ? renderUpstreamTransferBlock(transfer) : renderEmpty("质量门禁未通过，未开启手机同步。"),
+      build.notes?.length ? renderNotes(build.notes) : "",
+    ].join(""),
+    raw: { build, transfer },
+  });
+}
+
+function renderUpstreamRagDesktopStatus(node, data) {
+  const manifest = data.manifest || {};
+  renderResult(node, {
+    summary: [
+      ["状态", data.exists ? "已构建" : "未构建"],
+      ["有效", manifest.valid ? "是" : "否"],
+      ["关系", manifest.relation_edge_count ?? 0],
+      ["传输", data.transfer?.active ? "已开启" : "未开启"],
+    ],
+    body: data.exists
+      ? [
+          renderKeyValueBlock([
+            ["股票", `${manifest.target_stock_name || "-"} ${manifest.target_stock_code || ""}`.trim()],
+            ["版本", manifest.pack_version || "-"],
+            ["包大小", formatBytes(manifest.file_size || 0)],
+            ["SHA256", manifest.sha256 || "-"],
+          ]),
+          data.transfer?.active ? renderUpstreamTransferBlock(data.transfer) : renderEmpty("当前没有局域网临时传输会话。"),
+          renderUpstreamRelationGraph(manifest),
+          renderUpstreamEvidenceChunks(manifest.evidence_chunks || []),
+          data.notes?.length ? renderNotes(data.notes) : "",
+        ].join("")
+      : renderEmpty("尚未构建上下游 RAG 包。"),
+    raw: data,
+  });
+}
+
+function renderUpstreamRagMobileList(node, data) {
+  const packs = [...(data.packs || [])].sort((left, right) => Number(Boolean(right.current)) - Number(Boolean(left.current)));
+  renderResult(node, {
+    summary: [
+      ["本机包", packs.length],
+      ["当前", packs.filter((pack) => pack.current).length],
+      ["目录", data.root || "-"],
+      ["状态", packs.length ? "可用" : "空"],
+    ],
+    body: packs.length
+      ? `
+        <div class="rag-pack-list">
+          ${packs
+            .map(
+              (pack) => `
+                <article>
+                  <header>
+                    <div>
+                      <h3>${escapeHtml(pack.target_stock_name || "-")}</h3>
+                      <p>${escapeHtml(pack.target_stock_code || "-")} · ${escapeHtml(pack.pack_version || "-")}</p>
+                    </div>
+                    <span class="pack-state ${pack.current ? "current" : ""}">${pack.current ? "当前" : "历史"}</span>
+                  </header>
+                  ${renderKeyValueBlock([
+                    ["构建时间", formatDateTime(pack.built_at)],
+                    ["包大小", formatBytes(pack.file_size || 0)],
+                    ["关系", pack.relation_edge_count ?? 0],
+                    ["证据", pack.evidence_count ?? 0],
+                  ])}
+                  <div class="button-row">
+                    <button type="button" data-upstream-detail data-stock-code="${escapeHtml(pack.target_stock_code || "")}" data-pack-version="${escapeHtml(pack.pack_version || "")}">详情</button>
+                    <button class="ghost-action" type="button" data-upstream-rollback data-stock-code="${escapeHtml(pack.target_stock_code || "")}">回滚</button>
+                  </div>
+                </article>
+              `,
+            )
+            .join("")}
+        </div>
+      `
+      : renderEmpty("安卓端尚未导入上下游 RAG 包。"),
+    raw: data,
+  });
+}
+
+function renderUpstreamRagImportResult(node, data) {
+  renderResult(node, {
+    summary: [
+      ["导入", data.imported ? "完成" : "失败"],
+      ["股票", data.stock_code || "-"],
+      ["版本", data.pack_version || "-"],
+      ["状态", "已校验"],
+    ],
+    body: [
+      data.manifest ? renderUpstreamRelationGraph(data.manifest) : "",
+      data.manifest ? renderUpstreamEvidenceChunks(data.manifest.evidence_chunks || []) : "",
+      data.notes?.length ? renderNotes(data.notes) : "",
+    ].join(""),
+    raw: data,
+  });
+}
+
+function renderUpstreamRagDetailResult(node, data) {
+  const manifest = data.manifest || data;
+  renderResult(node, {
+    summary: [
+      ["股票", manifest.target_stock_code || "-"],
+      ["版本", manifest.pack_version || "-"],
+      ["关系", manifest.relation_edge_count ?? 0],
+      ["证据", manifest.evidence_count ?? 0],
+    ],
+    body: [
+      renderKeyValueBlock([
+        ["名称", manifest.target_stock_name || "-"],
+        ["行业", manifest.target_stock_industry || "-"],
+        ["数据截至", manifest.data_until || "-"],
+        ["SHA256", manifest.sha256 || "-"],
+      ]),
+      renderUpstreamRelationGraph(manifest),
+      renderUpstreamEvidenceChunks(manifest.evidence_chunks || []),
+      data.notes?.length ? renderNotes(data.notes) : "",
+    ].join(""),
+    raw: data,
+  });
+}
+
+function renderUpstreamQuality(quality, manifest) {
+  const errors = quality.errors || manifest.quality?.errors || [];
+  const warnings = quality.warnings || manifest.quality?.warnings || [];
+  if (!errors.length && !warnings.length) return renderEmpty("质量门禁通过，可同步到手机。");
+  return `
+    <div class="upstream-quality">
+      ${errors.map((item) => `<span class="danger">${escapeHtml(item)}</span>`).join("")}
+      ${warnings.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function renderUpstreamTransferBlock(transfer) {
+  return `
+    <section class="upstream-transfer">
+      <header>
+        <div>
+          <h3>局域网临时传输</h3>
+          <p>过期时间 ${escapeHtml(formatDateTime(transfer.expires_at))}</p>
+        </div>
+        ${transfer.qr_svg ? `<img src="${escapeHtml(transfer.qr_svg)}" alt="上下游 RAG 包导入二维码" />` : ""}
+      </header>
+      ${renderKeyValueBlock([
+        ["Manifest", transfer.manifest_url || "-"],
+        ["RAG 包", transfer.pack_url || "-"],
+      ])}
+      ${transfer.notes?.length ? renderNotes(transfer.notes) : ""}
+    </section>
+  `;
+}
+
+function renderUpstreamRelationGraph(manifest) {
+  const edges = manifest.relation_edges || [];
+  if (!edges.length) return renderEmpty("没有可展示的上下游关系边。");
+  const target = `${manifest.target_stock_name || ""} ${manifest.target_stock_code || ""}`.trim();
+  return `
+    <section class="upstream-graph">
+      <header>
+        <h3>关系图</h3>
+        <span>${escapeHtml(target || "-")}</span>
+      </header>
+      <div class="relation-map">
+        ${edges
+          .slice(0, 18)
+          .map((edge) => {
+            const source = edge.source_entity?.entity_name || edge.source_entity?.stock_code || "-";
+            const targetName = edge.target_entity?.entity_name || edge.target_entity?.stock_code || "-";
+            return `
+              <article class="relation-edge ${escapeHtml(edge.status || "")}">
+                <span>${escapeHtml(source)}</span>
+                <strong>${escapeHtml(relationTypeLabel(edge.relation_type))}</strong>
+                <span>${escapeHtml(targetName)}</span>
+                <em>${escapeHtml(relationStatusLabel(edge.status))} · ${formatPercent(edge.confidence || 0)}</em>
+              </article>
+            `;
+          })
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderUpstreamEvidenceChunks(chunks) {
+  if (!chunks.length) return renderEmpty("没有可展示的证据片段。");
+  return `
+    <section class="upstream-evidence">
+      <header>
+        <h3>证据列表</h3>
+        <span>${formatNumber(chunks.length)} 条预览</span>
+      </header>
+      <div class="evidence-list">
+        ${chunks
+          .slice(0, 24)
+          .map(
+            (item) => `
+              <article>
+                <strong>${escapeHtml(item.title || "-")}</strong>
+                <span class="evidence-source">
+                  <span class="source-tier ${sourceTierClass(item.source_tier)}">${escapeHtml(sourceTierLabel(item.source_tier))}</span>
+                  ${escapeHtml(item.source_name || "-")} · ${escapeHtml(item.published_at || "-")}
+                </span>
+                <p>${escapeHtml(item.evidence_text || "")}</p>
+              </article>
+            `,
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
 function renderKeyValueBlock(items) {
   return `
     <div class="detail-grid">
@@ -1872,12 +2361,17 @@ function impactClass(direction) {
 
 function sourceTierLabel(tier) {
   if (tier === "filing") return "公告 / 事实";
+  if (tier === "financial_snapshot") return "通达信 / 财务";
+  if (tier === "research") return "研报 / 摘要";
+  if (tier === "manual_url") return "公开 URL";
   if (tier === "community") return "社区 / 待核查";
   return "新闻 / 事实";
 }
 
 function sourceTierClass(tier) {
   if (tier === "filing") return "filing";
+  if (tier === "financial_snapshot") return "filing";
+  if (tier === "manual_url" || tier === "research") return "news";
   return tier === "community" ? "community" : "news";
 }
 
@@ -2604,8 +3098,26 @@ function relationTypeLabel(type) {
     upstream_material: "上游材料",
     valuation_peer: "估值相似",
     size_peer: "市值相近",
+    supplier: "上游供应",
+    customer: "下游客户",
+    raw_material_price: "原材料",
+    product: "产品应用",
+    capacity: "产能项目",
+    financial: "财务表现",
+    risk: "风险事项",
+    event: "披露事项",
   };
   return labels[type] || type || "关系";
+}
+
+function relationStatusLabel(status) {
+  const labels = {
+    confirmed: "已确认",
+    supported: "有证据",
+    inferred: "推断",
+    rumor: "待核查",
+  };
+  return labels[status] || status || "-";
 }
 
 function escapeHtml(value) {
