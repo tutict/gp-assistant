@@ -8,6 +8,7 @@ from app.providers.base import get_provider
 from app.schemas import (
     AgentRequest,
     AgentResponse,
+    AutoRefreshResult,
     BacktestRequest,
     BacktestResult,
     CachePolicy,
@@ -45,7 +46,7 @@ from app.schemas import (
 )
 from app.services.agent import run_agent
 from app.services.backtest import backtest_hold
-from app.services.data_maintenance import data_source_status, prune_cache, refresh_universe
+from app.services.data_maintenance import auto_refresh_universe_after_close, data_source_status, prune_cache, refresh_universe
 from app.services.news_rag import analyze_supply_chain_news
 from app.services.observation import observe_stock as build_stock_observation
 from app.services.rag_pack import build_rag_pack, build_rag_pack_from_news_cache, query_rag_pack, rag_pack_status
@@ -159,6 +160,14 @@ def refresh_data_source_universe(
     provider=Depends(_provider_from_headers),
 ):
     return refresh_universe(getattr(provider, "name", provider.__class__.__name__), policy)
+
+
+@router.post("/data-sources/auto-refresh-universe", response_model=AutoRefreshResult)
+def auto_refresh_data_source_universe(
+    policy: Optional[CachePolicy] = None,
+    provider=Depends(_provider_from_headers),
+):
+    return auto_refresh_universe_after_close(getattr(provider, "name", provider.__class__.__name__), policy)
 
 
 @router.post("/data-sources/prune-cache", response_model=CachePruneResult)

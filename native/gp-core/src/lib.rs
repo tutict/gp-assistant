@@ -290,6 +290,10 @@ pub struct TrendScreenResult {
 pub struct BacktestRequest {
     #[serde(default)]
     pub criteria: ScreenCriteria,
+    #[serde(default = "default_backtest_source")]
+    pub source: String,
+    #[serde(default)]
+    pub stock_codes: Vec<String>,
     pub start_date: String,
     pub end_date: String,
     #[serde(default = "default_top_n")]
@@ -317,6 +321,8 @@ pub struct BacktestResult {
     pub metrics: BacktestMetrics,
     pub equity_curve: Vec<EquityPoint>,
     pub symbols: Vec<String>,
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -650,6 +656,10 @@ fn default_initial_cash() -> f64 {
     1_000_000.0
 }
 
+fn default_backtest_source() -> String {
+    "criteria".to_string()
+}
+
 pub fn screen_value(payload: Value) -> CoreResult<Value> {
     let criteria: ScreenCriteria = serde_json::from_value(payload)?;
     serde_json::to_value(screen_with_mock(&criteria)).map_err(Into::into)
@@ -777,12 +787,7 @@ pub fn backtest_with_source(
     request: &BacktestRequest,
 ) -> CoreResult<BacktestResult> {
     let universe = source.list_stocks()?;
-    let screened = screen_stocks(&universe, &request.criteria);
-    let selected: Vec<ScreenedStock> = screened
-        .items
-        .into_iter()
-        .take(request.top_n.clamp(1, 100))
-        .collect();
+    let (selected, selection_notes) = selected_backtest_items(&universe, request);
     let symbols: Vec<String> = selected
         .iter()
         .map(|item| item.stock.code.clone())
@@ -816,6 +821,7 @@ pub fn backtest_with_source(
             },
             equity_curve: Vec::new(),
             symbols,
+            notes: selection_notes,
         });
     }
 
@@ -840,7 +846,112 @@ pub fn backtest_with_source(
         },
         equity_curve,
         symbols,
+        notes: selection_notes,
     })
+}
+
+fn selected_backtest_items(
+    universe: &[StockItem],
+    request: &BacktestRequest,
+) -> (Vec<ScreenedStock>, Vec<String>) {
+    if normalize_backtest_source(&request.source) != "watchlist" {
+        let screened = screen_stocks(universe, &request.criteria);
+        return (
+            screened
+                .items
+                .into_iter()
+                .take(request.top_n.clamp(1, 100))
+                .collect(),
+            Vec::new(),
+        );
+    }
+
+    let codes = dedupe_stock_codes(&request.stock_codes);
+    if codes.is_empty() {
+        return (
+            Vec::new(),
+            vec!["自选观察池为空，未执行固定标的回测。".to_string()],
+        );
+    }
+
+    let by_code: HashMap<String, StockItem> = universe
+        .iter()
+        .map(|stock| (stock.code.to_uppercase(), stock.clone()))
+        .collect();
+    let mut selected = Vec::new();
+    let mut missing = Vec::new();
+    for code in codes.iter().take(request.top_n.clamp(1, 100)) {
+        if let Some(stock) = by_code.get(code) {
+            selected.push(ScreenedStock {
+                stock: stock.clone(),
+                score: 0.0,
+                reasons: vec!["watchlist".to_string()],
+            });
+        } else {
+            missing.push(code.clone());
+        }
+    }
+
+    let mut notes = vec![format!(
+        "回测标的来源：自选观察池，已选择 {} / {} 只。",
+        selected.len(),
+        codes.len()
+    )];
+    if !missing.is_empty() {
+        let sample = missing.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
+        let suffix = if missing.len() > 5 { " 等" } else { "" };
+        notes.push(format!(
+            "自选观察池中 {} 只股票不在当前股票池：{}{}。",
+            missing.len(),
+            sample,
+            suffix
+        ));
+    }
+    (selected, notes)
+}
+
+fn normalize_backtest_source(source: &str) -> String {
+    if source.trim().eq_ignore_ascii_case("watchlist") {
+        "watchlist".to_string()
+    } else {
+        "criteria".to_string()
+    }
+}
+
+fn dedupe_stock_codes(codes: &[String]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    for code in codes {
+        let normalized = normalize_stock_code(code);
+        if normalized.is_empty() || !seen.insert(normalized.clone()) {
+            continue;
+        }
+        result.push(normalized);
+    }
+    result
+}
+
+fn normalize_stock_code(code: &str) -> String {
+    let text = code.trim().to_uppercase();
+    if text.is_empty() {
+        return String::new();
+    }
+    if let Some((digits, suffix)) = text.split_once('.') {
+        if digits.chars().all(|ch| ch.is_ascii_digit()) && matches!(suffix, "SH" | "SZ") {
+            return format!("{:0>6}.{}", digits, suffix);
+        }
+        return text;
+    }
+    let digits: String = text.chars().filter(|ch| ch.is_ascii_digit()).collect();
+    if digits.len() != 6 {
+        return text;
+    }
+    let suffix = if digits.starts_with('5') || digits.starts_with('6') || digits.starts_with('9') {
+        "SH"
+    } else {
+        "SZ"
+    };
+    format!("{}.{}", digits, suffix)
 }
 
 pub fn trend_with_mock(request: &TrendIndicatorRequest) -> CoreResult<TrendIndicatorResult> {
@@ -1043,6 +1154,8 @@ pub fn run_agent_with_source(
         let default_end_date = current_system_date_yyyymmdd();
         let backtest = BacktestRequest {
             criteria,
+            source: default_backtest_source(),
+            stock_codes: Vec::new(),
             start_date: extract_date(message, "20200101", true),
             end_date: extract_date(message, &default_end_date, false),
             top_n: default_top_n(),
@@ -3073,6 +3186,8 @@ mod tests {
                 max_pe: Some(10.0),
                 ..ScreenCriteria::default()
             },
+            source: default_backtest_source(),
+            stock_codes: Vec::new(),
             start_date: "20200101".to_string(),
             end_date: "20200110".to_string(),
             top_n: 2,
@@ -3337,6 +3452,8 @@ mod tests {
                     max_pe: Some(10.0),
                     ..ScreenCriteria::default()
                 },
+                source: default_backtest_source(),
+                stock_codes: Vec::new(),
                 start_date: "20200101".to_string(),
                 end_date: "20200103".to_string(),
                 top_n: 1,
@@ -3346,5 +3463,25 @@ mod tests {
         .expect("native data backtest should run");
         assert_eq!(result.equity_curve.len(), 3);
         assert_eq!(result.equity_curve.last().unwrap().equity, 1200.0);
+    }
+
+    #[test]
+    fn backtests_watchlist_codes_in_saved_order() {
+        let result = backtest_with_data(
+            &sample_data_set(),
+            &BacktestRequest {
+                criteria: ScreenCriteria::default(),
+                source: "watchlist".to_string(),
+                stock_codes: vec!["222222.SZ".to_string(), "111111.SZ".to_string()],
+                start_date: "20200101".to_string(),
+                end_date: "20200103".to_string(),
+                top_n: 10,
+                initial_cash: 1000.0,
+            },
+        )
+        .expect("watchlist backtest should run");
+
+        assert_eq!(result.symbols, vec!["222222.SZ", "111111.SZ"]);
+        assert!(result.notes.iter().any(|note| note.contains("自选观察池")));
     }
 }

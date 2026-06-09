@@ -32,7 +32,10 @@ const THEME_KEY = "gp-assistant-theme";
 const DATA_SOURCE_KEY = "gp-assistant-data-source";
 const DATA_REFRESH_KEY = "gp-assistant-source-refresh";
 const DATA_PROXY_KEY = "gp-assistant-proxy-mode";
+const AUTO_REFRESH_CHECK_KEY = "gp-assistant-auto-refresh-last-check";
+const AUTO_REFRESH_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const LLM_SETTINGS_KEY = "gp-assistant-llm-settings";
+const WATCHLIST_KEY = "gp-assistant-watchlist";
 const DEFAULT_RESULT_LIMIT = 10;
 const STOCK_SEARCH_LIMIT = 3;
 const DEFAULT_DATA_SOURCE = "tdx";
@@ -40,6 +43,7 @@ const MOBILE_MARKET_DATA_URL = "/static/mobile-market-data.json";
 const DEFAULT_TODAY_DATE_INPUT_IDS = new Set(["trendEnd", "btEnd", "observeEnd"]);
 let mobileMarketDataPromise = null;
 let mobileMarketDataSummary = null;
+let autoRefreshInFlight = false;
 const dataSource = {
   select: $("#dataSourceSelect"),
   refresh: $("#refreshSource"),
@@ -74,6 +78,15 @@ const workbench = {
   criteriaOverlay: $("#criteriaOverlay"),
   criteriaSummary: $("#criteriaSummary"),
 };
+const watchlistUi = {
+  source: $("#btSource"),
+  sourceOptions: document.querySelectorAll("[data-backtest-source-option]"),
+  panel: $("#watchlistPanel"),
+  count: $("#watchlistCount"),
+  items: $("#watchlistItems"),
+  empty: $("#watchlistEmpty"),
+  clear: $("#clearWatchlistBtn"),
+};
 const llmSettings = {
   apiKey: $("#llmApiKey"),
   baseUrl: $("#llmBaseUrl"),
@@ -90,6 +103,8 @@ const llmSettings = {
 initTheme();
 initMobileNav();
 initDataSource();
+initAutoRefresh();
+initWatchlist();
 initLlmSettings();
 initFormControls();
 initStickyOffsets();
@@ -129,12 +144,32 @@ function bindActions() {
   });
   dataSource.refreshUniverse?.addEventListener("click", () => runDataTask(dataSource.refreshUniverse, refreshUniverse));
   dataSource.pruneCache?.addEventListener("click", () => runDataTask(dataSource.pruneCache, pruneCache));
+  watchlistUi.source?.addEventListener("change", () => {
+    setBacktestSource(watchlistUi.source.value);
+  });
+  watchlistUi.sourceOptions.forEach((option) => {
+    option.addEventListener("click", () => setBacktestSource(option.dataset.backtestSourceOption));
+  });
+  watchlistUi.clear?.addEventListener("click", clearWatchlist);
   document.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+    const watch = target?.closest("[data-watchlist-code]");
+    if (watch) {
+      event.preventDefault();
+      toggleWatchlistFromElement(watch);
+      return;
+    }
     const action = target?.closest("[data-observe-code]");
     if (!action) return;
     event.preventDefault();
     runObserve(action.dataset.observeCode);
+  });
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+    const remove = target?.closest("[data-watchlist-remove]");
+    if (!remove) return;
+    event.preventDefault();
+    removeWatchlistStock(remove.dataset.watchlistRemove);
   });
   document.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : event.target?.parentElement;
@@ -364,8 +399,16 @@ async function runTrendScreen() {
 async function runBacktest() {
   setLoading(panels.backtest, "回测中");
   updateBacktestScope();
+  const source = getBacktestSource();
+  const watchlistItems = readWatchlist();
+  if (source === "watchlist" && !watchlistItems.length) {
+    setError(panels.backtest, "自选观察池为空", "请先从筛选结果收藏股票。");
+    return;
+  }
   const payload = {
+    source,
     criteria: buildCriteria({ limit: 100 }),
+    stock_codes: source === "watchlist" ? watchlistItems.map((item) => item.code) : [],
     start_date: readDateParam("btStart", "20200101"),
     end_date: readDateParam("btEnd", currentSystemDateCompact()),
     top_n: clampInt($("#btTopN").value, 1, 100, 10),
@@ -711,7 +754,151 @@ function initDataSource() {
   }
   initSourceSelects();
   updateSourceStatus();
-  loadDataStatus();
+  loadDataStatus().finally(() => maybeAutoRefreshUniverse("startup"));
+}
+
+function initAutoRefresh() {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") maybeAutoRefreshUniverse("visible");
+  });
+  window.addEventListener("focus", () => maybeAutoRefreshUniverse("focus"));
+}
+
+function initWatchlist() {
+  syncBacktestSourceControls();
+  renderWatchlistPanel();
+  syncWatchlistButtons();
+}
+
+function readWatchlist() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(WATCHLIST_KEY) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && normalizeStockCode(item.code))
+      .map((item) => ({
+        code: normalizeStockCode(item.code),
+        name: String(item.name || item.code || ""),
+        industry: String(item.industry || ""),
+        addedAt: String(item.addedAt || new Date().toISOString()),
+        source: String(item.source || "screen"),
+        screenCriteriaSummary: String(item.screenCriteriaSummary || ""),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function saveWatchlist(items) {
+  localStorage.setItem(WATCHLIST_KEY, JSON.stringify(items));
+  renderWatchlistPanel();
+  syncWatchlistButtons();
+  updateResearchSummaries();
+}
+
+function isWatchlisted(code) {
+  const normalized = normalizeStockCode(code);
+  return readWatchlist().some((item) => item.code === normalized);
+}
+
+function toggleWatchlistFromElement(element) {
+  const code = normalizeStockCode(element.dataset.watchlistCode);
+  if (!code) return;
+  const item = {
+    code,
+    name: element.dataset.watchlistName || code,
+    industry: element.dataset.watchlistIndustry || "",
+    addedAt: new Date().toISOString(),
+    source: element.dataset.watchlistSource || "screen",
+    screenCriteriaSummary: currentCriteriaSummaryText(),
+  };
+  toggleWatchlistStock(item);
+}
+
+function toggleWatchlistStock(item) {
+  const normalized = normalizeStockCode(item.code);
+  if (!normalized) return;
+  const current = readWatchlist();
+  const existingIndex = current.findIndex((entry) => entry.code === normalized);
+  if (existingIndex >= 0) {
+    current.splice(existingIndex, 1);
+    saveWatchlist(current);
+    setMaintenanceNote(`${normalized} 已取消收藏。`);
+    return;
+  }
+  saveWatchlist([{ ...item, code: normalized, addedAt: new Date().toISOString() }, ...current]);
+  setMaintenanceNote(`${item.name || normalized} 已加入自选观察池。`);
+}
+
+function removeWatchlistStock(code) {
+  const normalized = normalizeStockCode(code);
+  if (!normalized) return;
+  saveWatchlist(readWatchlist().filter((item) => item.code !== normalized));
+  setMaintenanceNote(`${normalized} 已从自选观察池移除。`);
+}
+
+function clearWatchlist() {
+  if (!readWatchlist().length) return;
+  saveWatchlist([]);
+  setMaintenanceNote("自选观察池已清空。");
+}
+
+function renderWatchlistPanel() {
+  if (!watchlistUi.panel) return;
+  const items = readWatchlist();
+  const source = getBacktestSource();
+  watchlistUi.panel.hidden = source !== "watchlist";
+  if (watchlistUi.count) watchlistUi.count.textContent = `${items.length} 只`;
+  if (watchlistUi.empty) watchlistUi.empty.hidden = items.length > 0;
+  if (!watchlistUi.items) return;
+  watchlistUi.items.innerHTML = items
+    .map(
+      (item) => `
+        <article class="watchlist-item">
+          <div>
+            <strong>${escapeHtml(item.name || item.code)}</strong>
+            <span>${escapeHtml(item.code)} ${escapeHtml(item.industry || "")}</span>
+            ${item.screenCriteriaSummary ? `<em>${escapeHtml(item.screenCriteriaSummary)}</em>` : ""}
+          </div>
+          <button type="button" data-watchlist-remove="${escapeHtml(item.code)}">移除</button>
+        </article>
+      `,
+    )
+    .join("");
+}
+
+function syncWatchlistButtons() {
+  document.querySelectorAll("[data-watchlist-code]").forEach((button) => {
+    const saved = isWatchlisted(button.dataset.watchlistCode);
+    button.classList.toggle("saved", saved);
+    button.textContent = saved ? "已收藏" : "收藏";
+    button.setAttribute("aria-pressed", String(saved));
+  });
+}
+
+function currentCriteriaSummaryText() {
+  return workbench.criteriaSummary?.textContent || "";
+}
+
+function getBacktestSource() {
+  return watchlistUi.source?.value === "watchlist" ? "watchlist" : "criteria";
+}
+
+function setBacktestSource(value) {
+  const normalized = value === "watchlist" ? "watchlist" : "criteria";
+  if (watchlistUi.source) watchlistUi.source.value = normalized;
+  syncBacktestSourceControls();
+  renderWatchlistPanel();
+  updateResearchSummaries();
+}
+
+function syncBacktestSourceControls() {
+  const source = getBacktestSource();
+  watchlistUi.sourceOptions.forEach((option) => {
+    const active = option.dataset.backtestSourceOption === source;
+    option.classList.toggle("active", active);
+    option.setAttribute("aria-pressed", String(active));
+  });
 }
 
 function initSourceSelects() {
@@ -891,6 +1078,39 @@ async function loadDataStatus() {
   } catch (err) {
     setMaintenanceNote(`数据状态读取失败：${err.message}`);
   }
+}
+
+async function maybeAutoRefreshUniverse(trigger = "startup") {
+  if (!shouldCheckAutoRefreshUniverse()) return;
+  autoRefreshInFlight = true;
+  localStorage.setItem(AUTO_REFRESH_CHECK_KEY, String(Date.now()));
+  try {
+    const data = await requestJson("POST", "/api/data-sources/auto-refresh-universe", {
+      mode: "light",
+      max_bytes: 209715200,
+      daily_days: 500,
+      minute_days: 3,
+    });
+    renderDataStatus(data.status);
+    const notes = data.notes || [];
+    if (data.refreshed) {
+      setMaintenanceNote(notes.join(" ") || "交易日收盘后已自动刷新基础股票池。");
+    } else if (data.due) {
+      setMaintenanceNote(notes.join(" ") || "交易日自动刷新未完成，可手动刷新。");
+    } else if (notes.length && trigger === "startup") {
+      setMaintenanceNote(notes.join(" "));
+    }
+  } catch (err) {
+    setMaintenanceNote(`交易日自动刷新检查失败：${err.message}`);
+  } finally {
+    autoRefreshInFlight = false;
+  }
+}
+
+function shouldCheckAutoRefreshUniverse() {
+  if (!dataSource.universe || autoRefreshInFlight || isTauriRuntime()) return false;
+  const lastChecked = Number(localStorage.getItem(AUTO_REFRESH_CHECK_KEY) || 0);
+  return !Number.isFinite(lastChecked) || Date.now() - lastChecked >= AUTO_REFRESH_CHECK_INTERVAL_MS;
 }
 
 async function refreshUniverse() {
@@ -1162,6 +1382,7 @@ function initCriteriaSummary() {
     "btStart",
     "btEnd",
     "btTopN",
+    "btSource",
     "btRebalance",
     "btCostBps",
     "btBenchmark",
@@ -1396,9 +1617,18 @@ function updateBacktestScope() {
   const node = $("#backtestScope");
   if (!node) return;
   const cost = clampFloat($("#btCostBps")?.value, 0, 500, 10);
+  const source = getBacktestSource();
+  const watchlistItems = readWatchlist();
+  const topN = clampInt($("#btTopN")?.value, 1, 100, 10);
+  const sourceText =
+    source === "watchlist"
+      ? `自选观察池 ${Math.min(topN, watchlistItems.length)} / ${watchlistItems.length} 只`
+      : ($("#industry")?.value ? `行业 ${$("#industry").value}` : "全部行业");
+  const label = node.closest(".backtest-context")?.querySelector("span");
+  if (label) label.textContent = source === "watchlist" ? "使用自选观察池" : "使用当前研究条件";
   const parts = [
-    $("#industry")?.value ? `行业 ${$("#industry").value}` : "全部行业",
-    `持仓 ${clampInt($("#btTopN")?.value, 1, 100, 10)} 只`,
+    sourceText,
+    `持仓 ${topN} 只`,
     `${displayDateParam("btStart", "2020-01-01")} 至 ${displayDateParam("btEnd", currentSystemDateInputValue())}`,
     rebalanceLabel($("#btRebalance")?.value || "monthly"),
     `${formatNumber(cost)} bps`,
@@ -1635,6 +1865,20 @@ async function requestTauriJson(method, url, payload) {
         data: await invoke("core_screen_with_data", {
           payload: { data: await loadMobileMarketData(invoke), criteria: payload },
         }),
+      };
+    case "/api/data-sources/auto-refresh-universe":
+      return {
+        handled: true,
+        data: {
+          source: DEFAULT_DATA_SOURCE,
+          checked_at: new Date().toISOString(),
+          trading_day: false,
+          after_close: false,
+          due: false,
+          refreshed: false,
+          status: await mobileDataStatus(invoke),
+          notes: ["移动端使用内置股票池数据包，交易日自动刷新仅在桌面端执行。"],
+        },
       };
     case "/api/data-sources/refresh-universe":
       return {
@@ -2812,6 +3056,10 @@ function renderStockRow(item) {
   const signal = item.signal ? renderSignalSummary(item.signal) : "";
   const weight = item.weight !== undefined ? `<span class="weight">${formatPercent(item.weight)}</span>` : "";
   const related = item.related?.length ? renderRelated(item.related) : "";
+  const saved = isWatchlisted(stock.code);
+  const watchButton = stock.code
+    ? `<button class="watchlist-action${saved ? " saved" : ""}" type="button" data-watchlist-code="${escapeHtml(stock.code)}" data-watchlist-name="${escapeHtml(stock.name || stock.code)}" data-watchlist-industry="${escapeHtml(stock.industry || "")}" data-watchlist-source="screen" aria-pressed="${saved ? "true" : "false"}">${saved ? "已收藏" : "收藏"}</button>`
+    : "";
   const observeButton = stock.code
     ? `<button class="observe-action" type="button" data-observe-code="${escapeHtml(stock.code)}">观察</button>`
     : "";
@@ -2845,7 +3093,7 @@ function renderStockRow(item) {
           <span>净资产收益率 ${formatPercent(stock.roe)}</span>
           <span>市值 ${formatNumber(stock.market_cap_billion)} 亿</span>
         </div>
-        ${observeButton}
+        <div class="row-button-group">${watchButton}${observeButton}</div>
       </div>
       ${extra}
       ${signal}

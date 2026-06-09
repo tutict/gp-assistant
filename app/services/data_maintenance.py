@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
 from app.providers.base import get_provider
-from app.schemas import CachePolicy, CachePruneResult, DataCacheStatus, DataRefreshResult
+from app.schemas import AutoRefreshResult, CachePolicy, CachePruneResult, DataCacheStatus, DataRefreshResult
 
 CACHE_DIR = Path(os.getenv("GP_CACHE_DIR", "data/cache"))
 UNIVERSE_CACHE_FILES = {
     "tdx": Path(os.getenv("TDX_CACHE", str(CACHE_DIR / "tdx_stocks.csv"))),
 }
+CHINA_TZ = timezone(timedelta(hours=8))
+AUTO_REFRESH_CLOSE_TIME = time(15, 30)
 
 
 def data_source_status(source: str, policy: CachePolicy | None = None) -> DataCacheStatus:
@@ -61,6 +64,78 @@ def refresh_universe(source: str, policy: CachePolicy | None = None) -> DataRefr
             notes.append(f"Pruned {prune_result.removed_files} cache files.")
         status = prune_result.status
     return DataRefreshResult(source=normalized_source, refreshed=True, status=status, notes=notes)
+
+
+def auto_refresh_universe_after_close(
+    source: str,
+    policy: CachePolicy | None = None,
+    now: datetime | None = None,
+) -> AutoRefreshResult:
+    policy = policy or CachePolicy()
+    normalized_source = _normalize_source(source)
+    checked_at = _china_now(now)
+    status = data_source_status(normalized_source, policy)
+    trading_day, calendar_note = _is_a_share_trading_day(checked_at.date())
+    after_close = checked_at.time() >= AUTO_REFRESH_CLOSE_TIME
+    notes: list[str] = []
+    if calendar_note:
+        notes.append(calendar_note)
+
+    if not trading_day:
+        notes.append("今天不是 A 股交易日，已跳过交易日自动刷新。")
+        return _auto_refresh_result(
+            normalized_source,
+            checked_at,
+            trading_day=False,
+            after_close=after_close,
+            due=False,
+            refreshed=False,
+            status=status,
+            notes=notes,
+        )
+
+    if not after_close:
+        notes.append("尚未到北京时间 15:30，盘中不自动刷新基础股票池。")
+        return _auto_refresh_result(
+            normalized_source,
+            checked_at,
+            trading_day=True,
+            after_close=False,
+            due=False,
+            refreshed=False,
+            status=status,
+            notes=notes,
+        )
+
+    if _universe_cache_refreshed_after_close(normalized_source, checked_at):
+        notes.append("今天收盘后已经刷新过基础股票池。")
+        return _auto_refresh_result(
+            normalized_source,
+            checked_at,
+            trading_day=True,
+            after_close=True,
+            due=False,
+            refreshed=False,
+            status=status,
+            notes=notes,
+        )
+
+    refresh_result = refresh_universe(normalized_source, policy)
+    notes.extend(refresh_result.notes)
+    if refresh_result.refreshed:
+        notes.insert(0, "交易日收盘后自动刷新基础股票池已完成。")
+    else:
+        notes.insert(0, "交易日收盘后自动刷新基础股票池失败，可稍后重试或手动刷新。")
+    return _auto_refresh_result(
+        normalized_source,
+        checked_at,
+        trading_day=True,
+        after_close=True,
+        due=True,
+        refreshed=refresh_result.refreshed,
+        status=refresh_result.status,
+        notes=notes,
+    )
 
 
 def prune_cache(source: str, policy: CachePolicy | None = None) -> CachePruneResult:
@@ -141,6 +216,80 @@ def _status_notes(source: str, cache_path: Path | None, universe_count: int, sta
     if stale:
         notes.append("股票池缓存已超过 24 小时，建议刷新。")
     return notes
+
+
+def _auto_refresh_result(
+    source: str,
+    checked_at: datetime,
+    *,
+    trading_day: bool,
+    after_close: bool,
+    due: bool,
+    refreshed: bool,
+    status: DataCacheStatus,
+    notes: list[str],
+) -> AutoRefreshResult:
+    return AutoRefreshResult(
+        source=source,
+        checked_at=checked_at.isoformat(timespec="seconds"),
+        trading_day=trading_day,
+        after_close=after_close,
+        due=due,
+        refreshed=refreshed,
+        status=status,
+        notes=notes,
+    )
+
+
+def _china_now(now: datetime | None = None) -> datetime:
+    value = now or datetime.now(CHINA_TZ)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=CHINA_TZ)
+    return value.astimezone(CHINA_TZ)
+
+
+def _universe_cache_refreshed_after_close(source: str, checked_at: datetime) -> bool:
+    cache_path = UNIVERSE_CACHE_FILES.get(source)
+    if cache_path is None or not cache_path.exists():
+        return False
+    cutoff = datetime.combine(checked_at.date(), AUTO_REFRESH_CLOSE_TIME, tzinfo=CHINA_TZ)
+    modified = datetime.fromtimestamp(cache_path.stat().st_mtime, tz=timezone.utc).astimezone(CHINA_TZ)
+    return modified >= cutoff
+
+
+def _is_a_share_trading_day(day: date) -> tuple[bool, str | None]:
+    try:
+        return day in _a_share_trading_days(), None
+    except Exception as exc:
+        return False, f"A 股交易日历不可用，已跳过自动刷新：{exc}"
+
+
+@lru_cache(maxsize=1)
+def _a_share_trading_days() -> frozenset[date]:
+    import akshare as ak
+
+    frame = ak.tool_trade_date_hist_sina()
+    if "trade_date" not in frame.columns:
+        raise RuntimeError("AkShare 交易日历缺少 trade_date 字段")
+    dates = {_parse_trade_date(value) for value in frame["trade_date"].dropna()}
+    return frozenset(value for value in dates if value is not None)
+
+
+def _parse_trade_date(value) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    text = text.split(" ")[0]
+    for fmt in ("%Y-%m-%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def _cache_files(root: Path) -> Iterable[Path]:

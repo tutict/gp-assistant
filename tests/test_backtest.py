@@ -47,6 +47,46 @@ class BacktestQualityNotesTests(unittest.TestCase):
         self.assertEqual(result.metrics.total_transaction_cost, 0)
         self.assertEqual(len(result.rebalance_dates), 1)
 
+    def test_backtest_can_use_watchlist_codes_without_screening_filters(self):
+        result = backtest_hold(
+            MockProvider(),
+            BacktestRequest(
+                criteria=ScreenCriteria(industry="银行", max_pe=1, limit=10),
+                source="watchlist",
+                stock_codes=["300750.SZ", "002594.SZ"],
+                start_date="20200101",
+                end_date="20200301",
+                top_n=10,
+                rebalance_frequency="none",
+                transaction_cost_bps=0,
+                benchmark="none",
+            ),
+        )
+
+        self.assertEqual(result.symbols, ["300750.SZ", "002594.SZ"])
+        self.assertTrue(any("自选观察池" in note for note in result.notes))
+        self.assertGreater(len(result.equity_curve), 0)
+
+    def test_watchlist_benchmark_ignores_current_screening_filters(self):
+        result = backtest_hold(
+            MockProvider(),
+            BacktestRequest(
+                criteria=ScreenCriteria(industry="不存在的行业", max_pe=0.1, limit=10),
+                source="watchlist",
+                stock_codes=["300750.SZ"],
+                start_date="20200101",
+                end_date="20200301",
+                top_n=10,
+                rebalance_frequency="none",
+                transaction_cost_bps=0,
+            ),
+        )
+
+        self.assertEqual(result.symbols, ["300750.SZ"])
+        self.assertGreater(len(result.benchmark_symbols), 0)
+        self.assertGreater(len(result.benchmark_curve), 0)
+        self.assertTrue(any("不应用当前筛选条件" in note for note in result.notes))
+
     def test_agent_backtest_parses_new_controls(self):
         result = run_agent(MockProvider(), "回测银行股，持仓 3 只，季度再平衡，交易成本 20 bps，不对比基准")
 

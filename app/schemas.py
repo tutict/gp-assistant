@@ -244,6 +244,8 @@ class StockObservation(BaseModel):
 
 class BacktestRequest(BaseModel):
     criteria: ScreenCriteria = Field(default_factory=ScreenCriteria)
+    source: str = Field(default="criteria", max_length=20)
+    stock_codes: List[str] = Field(default_factory=list, max_length=100)
     start_date: str = Field(description="YYYYMMDD")
     end_date: str = Field(default_factory=current_system_date_yyyymmdd, description="YYYYMMDD")
     top_n: int = Field(default=10, ge=1, le=100)
@@ -463,6 +465,17 @@ class DataCacheStatus(BaseModel):
 
 class DataRefreshResult(BaseModel):
     source: str
+    refreshed: bool
+    status: DataCacheStatus
+    notes: List[str] = Field(default_factory=list)
+
+
+class AutoRefreshResult(BaseModel):
+    source: str
+    checked_at: str
+    trading_day: bool
+    after_close: bool
+    due: bool
     refreshed: bool
     status: DataCacheStatus
     notes: List[str] = Field(default_factory=list)

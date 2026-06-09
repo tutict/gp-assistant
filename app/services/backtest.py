@@ -23,8 +23,7 @@ def backtest_hold(provider: StockProvider, request: BacktestRequest) -> Backtest
 
     universe, universe_notes = screening_universe(provider)
     frequency = _normalize_rebalance_frequency(request.rebalance_frequency)
-    screened = screen_stocks(universe, request.criteria)
-    selected = screened.items[: request.top_n]
+    selected, selection_notes = _selected_backtest_items(universe, request)
     symbols = [item.stock.code for item in selected]
 
     price_frame, missing_symbols = _price_frame(provider, selected, request.start_date, request.end_date)
@@ -55,6 +54,7 @@ def backtest_hold(provider: StockProvider, request: BacktestRequest) -> Backtest
             benchmark_symbols=benchmark_symbols,
             rebalance_dates=[],
             notes=_quality_notes(
+                source=_normalize_backtest_source(request.source),
                 selected_count=len(selected),
                 used_count=0,
                 requested_top_n=request.top_n,
@@ -66,7 +66,7 @@ def backtest_hold(provider: StockProvider, request: BacktestRequest) -> Backtest
                 transaction_cost_bps=request.transaction_cost_bps,
                 benchmark_symbols=benchmark_symbols,
                 benchmark_notes=benchmark_notes,
-                universe_notes=universe_notes,
+                universe_notes=[*universe_notes, *selection_notes],
             ),
         )
 
@@ -109,6 +109,7 @@ def backtest_hold(provider: StockProvider, request: BacktestRequest) -> Backtest
         benchmark_symbols=benchmark_symbols,
         rebalance_dates=rebalance_dates,
         notes=_quality_notes(
+            source=_normalize_backtest_source(request.source),
             selected_count=len(selected),
             used_count=len(price_frame.columns),
             requested_top_n=request.top_n,
@@ -120,9 +121,37 @@ def backtest_hold(provider: StockProvider, request: BacktestRequest) -> Backtest
             transaction_cost_bps=request.transaction_cost_bps,
             benchmark_symbols=benchmark_symbols,
             benchmark_notes=benchmark_notes,
-            universe_notes=universe_notes,
+            universe_notes=[*universe_notes, *selection_notes],
         ),
     )
+
+
+def _selected_backtest_items(universe: List[Any], request: BacktestRequest) -> tuple[List[ScreenedStock], List[str]]:
+    if _normalize_backtest_source(request.source) != "watchlist":
+        screened = screen_stocks(universe, request.criteria)
+        return screened.items[: request.top_n], []
+
+    notes: list[str] = []
+    normalized_codes = _dedupe_codes(request.stock_codes)
+    if not normalized_codes:
+        return [], ["自选观察池为空，未执行固定标的回测。"]
+
+    by_code = {stock.code.upper(): stock for stock in universe}
+    selected: list[ScreenedStock] = []
+    missing: list[str] = []
+    for code in normalized_codes[: request.top_n]:
+        stock = by_code.get(code)
+        if stock is None:
+            missing.append(code)
+            continue
+        selected.append(ScreenedStock(stock=stock, score=0.0, reasons=["watchlist"]))
+
+    notes.append(f"回测标的来源：自选观察池，已选择 {len(selected)} / {len(normalized_codes)} 只。")
+    if missing:
+        sample = ", ".join(missing[:5])
+        suffix = " 等" if len(missing) > 5 else ""
+        notes.append(f"自选观察池中 {len(missing)} 只股票不在当前股票池：{sample}{suffix}。")
+    return selected, notes
 
 
 def _price_frame(
@@ -156,6 +185,38 @@ def _price_frame(
     frame = frame.dropna(how="all").ffill().dropna(axis=1, how="all")
     frame = frame.dropna(how="any")
     return frame, missing_symbols
+
+
+def _normalize_backtest_source(source: str | None) -> str:
+    return "watchlist" if str(source or "").strip().lower() == "watchlist" else "criteria"
+
+
+def _dedupe_codes(codes: List[str]) -> List[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for code in codes or []:
+        normalized = _normalize_code(code)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
+
+
+def _normalize_code(code: str) -> str:
+    text = str(code or "").strip().upper()
+    if not text:
+        return ""
+    if "." in text:
+        digits, suffix = text.split(".", 1)
+        if digits.isdigit() and suffix in {"SH", "SZ"}:
+            return f"{digits.zfill(6)}.{suffix}"
+        return text
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if len(digits) != 6:
+        return text
+    suffix = "SH" if digits.startswith(("5", "6", "9")) else "SZ"
+    return f"{digits}.{suffix}"
 
 
 def _close_series(history: Any):
@@ -278,7 +339,11 @@ def _benchmark_curve(
         equity = _normalized_equity(series, request.initial_cash)
         return _align_series(equity, portfolio_dates), [code], [f"基准：{code} 收盘价归一化净值。"]
 
-    criteria = _benchmark_criteria(request.criteria)
+    criteria = (
+        ScreenCriteria(limit=BENCHMARK_CANDIDATE_LIMIT)
+        if _normalize_backtest_source(request.source) == "watchlist"
+        else _benchmark_criteria(request.criteria)
+    )
     candidates = screen_stocks(universe, criteria).items[:BENCHMARK_CANDIDATE_LIMIT]
     frame, missing = _price_frame(provider, candidates, request.start_date, request.end_date)
     if frame.empty:
@@ -288,6 +353,8 @@ def _benchmark_curve(
     normalized = frame / frame.iloc[0]
     equity = normalized.mean(axis=1) * request.initial_cash
     notes = [f"基准：候选池前 {len(frame.columns)} 只股票等权净值，不扣交易成本。"]
+    if _normalize_backtest_source(request.source) == "watchlist":
+        notes.append("自选观察池回测的候选池基准使用基础股票池默认排序，不应用当前筛选条件。")
     if len(candidates) >= BENCHMARK_CANDIDATE_LIMIT:
         notes.append(f"候选池基准最多取前 {BENCHMARK_CANDIDATE_LIMIT} 只，避免一次回测抓取过多历史行情。")
     if missing:
@@ -359,6 +426,7 @@ def _equity_points(equity: Any) -> List[EquityPoint]:
 
 def _quality_notes(
     *,
+    source: str,
     selected_count: int,
     used_count: int,
     requested_top_n: int,
@@ -373,9 +441,14 @@ def _quality_notes(
     universe_notes: List[str],
 ) -> List[str]:
     label = REBALANCE_LABELS.get(rebalance_frequency, REBALANCE_LABELS["monthly"])
+    source_note = (
+        "自选观察池回测固定股票代码，基础行情和估值使用当前最新股票池；不会再应用当前筛选条件。"
+        if source == "watchlist"
+        else "当前筛选条件使用最新截面指标，尚未使用历史基本面快照；再平衡会按同一套条件恢复目标权重。"
+    )
     notes: List[str] = [
         f"回测模型：筛选候选等权建仓，{label}，交易成本按换手额的 {transaction_cost_bps:g} bps 扣减。",
-        "当前筛选条件使用最新截面指标，尚未使用历史基本面快照；再平衡会按同一套条件恢复目标权重。",
+        source_note,
     ]
     if selected_count == 0:
         notes.append("当前研究条件没有筛出候选股票，回测结果不可用于判断策略表现。")
