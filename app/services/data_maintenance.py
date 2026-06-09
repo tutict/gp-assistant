@@ -202,7 +202,7 @@ def _file_age(path: Path | None) -> tuple[str | None, float | None]:
 
 def _status_notes(source: str, cache_path: Path | None, universe_count: int, stale: bool) -> list[str]:
     if source == "tdx":
-        notes = ["通达信数据源用于股票池、昨收价、日线、分钟线和盘口；本地股票池缓存用于减少全市场枚举耗时。"]
+        notes = ["通达信用于股票池、日线和分钟线；筛选与盘口行情优先使用腾讯股票；本地股票池缓存用于减少全市场枚举耗时。"]
         if cache_path is None or not cache_path.exists():
             notes.append("No local stock universe cache yet. Refresh the universe before full-market screening.")
             return notes

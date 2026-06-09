@@ -8,14 +8,30 @@
 - 关系图选股：用股票知识图谱和类 GNN 关系评分建模同行业、供应链、主题、估值相似、市值相近等关系。
 - 趋势选股：把通达信风格的 SWL/SWS 指标、红色持股、短买、离场、支撑阻力、量化评分等信号转成可计算结果。
 - 行情观察：查看股票快照、五档盘口、分钟线和日线技术面。
-- 回测验证：支持等权组合、月度/季度再平衡、交易成本扣减和候选池等权基准对比。
+- 回测验证：支持等权组合、月度/季度再平衡、交易成本扣减、候选池等权基准对比，以及自选观察池固定标的回测。
 - 上下游消息 RAG：基于已有产业链关系图分析利好/利空消息，返回证据、置信度和待核查项。
 - 智能体编排：优先使用 LangGraph 编排状态和工具流；未安装时自动回退到本地状态机。
-- 数据维护：支持股票池刷新、缓存状态查看和可丢弃行情缓存清理。
+- 移动端：支持内置股票池筛选、分板块选股、观察、收藏、自选观察池回测、扫码导入 RAG 包和移动端响应式面板。
+- 数据维护：支持股票池刷新、交易日收盘后自动刷新检查、缓存状态查看和可丢弃行情缓存清理。
 
 ## 风险提示
 
 本项目用于 A 股选股研究、策略验证和产品使用，不构成任何投资建议或收益承诺。股票市场有风险，投资需谨慎；用户应结合自身风险承受能力独立判断，并自行承担投资决策结果。
+
+## 当前稳定版
+
+当前稳定版为 `v0.2.0`，发布页见 <https://github.com/tutict/gp-assistant/releases/tag/v0.2.0>。
+
+发布页提供：
+
+- Windows 安装包：`GP-Assistant_0.2.0_windows-x64-setup.exe`
+- Android 可安装测试包：`GP-Assistant_0.2.0_android-aarch64-debug.apk`
+- Android 未签名 release 包：`GP-Assistant_0.2.0_android-aarch64-release-unsigned.apk`
+- Linux 安装包：`GP-Assistant_0.2.0_linux-amd64.deb`
+- Linux 便携包：`GP-Assistant_0.2.0_linux-amd64.AppImage`
+- `SHA256SUMS.txt`：发布产物 SHA-256 校验值
+
+Android 的 `release-unsigned.apk` 需要接入正式 keystore 后再签名分发；普通手机安装验证优先使用 debug APK。
 
 ## 本地运行
 
@@ -52,6 +68,27 @@ cmd /c npm run build:windows
 
 sidecar 构建使用 PyInstaller，输出到 `desktop/src-tauri/binaries/`。
 
+Linux 桌面包需要在 Linux 环境中构建，推荐使用 WSL Ubuntu。先准备 Rust stable、Node.js、Python/PyInstaller，以及 Tauri Linux 依赖（WebKitGTK、GTK、AppIndicator、librsvg、patchelf 等），并生成 Linux 平台 sidecar：
+
+```bash
+python -m PyInstaller --clean --onefile --name gp-assistant-backend \
+  --collect-all onnxruntime --collect-all tokenizers --collect-all pytdx \
+  --add-data app/static:app/static \
+  --add-data app/prompts:app/prompts \
+  app/desktop_server.py
+cp dist/gp-assistant-backend desktop/src-tauri/binaries/gp-assistant-backend-x86_64-unknown-linux-gnu
+```
+
+然后在 `desktop/` 下打包 Linux 安装包：
+
+```bash
+npm install
+npm exec tauri -- build \
+  --config src-tauri/tauri.sidecar.conf.json \
+  --config '{"bundle":{"icon":["icons/icon.png","icons/icon.ico"]}}' \
+  --bundles deb appimage
+```
+
 ## 移动端 / 原生核心
 
 移动端不建议直接嵌入 Python/FastAPI sidecar。项目已把核心选股逻辑迁移到 `native/gp-core` Rust 库，可供 Tauri mobile command 调用，也可以通过小型 C ABI 包装给 Swift/Kotlin 使用。
@@ -75,7 +112,7 @@ cmd /c npm run android:init
 cmd /c npm run build:android
 ```
 
-Android 端不会启动 Python/FastAPI sidecar，会加载本地静态前端、读取构建时生成的通达信股票池数据包，并通过 Tauri command 调用 `native/gp-core`。当前移动端已覆盖基础筛选、关系图筛选、趋势、回测和本地智能体路由；实时行情观察、数据源刷新和新闻/RAG 仍需后续接入移动端数据包或远端 API。
+Android 端不会启动 Python/FastAPI sidecar，会加载本地静态前端、读取构建时生成的通达信股票池数据包，并通过 Tauri command 调用 `native/gp-core`。当前移动端已覆盖基础筛选、分板块筛选、关系图筛选、趋势、观察、收藏、自选观察池回测、本地智能体路由和 RAG 包扫码导入。移动端的“刷新股票池”会重新加载安装包内置数据；如需更新到最新全市场股票池，需要在桌面端刷新数据后重新构建并重新安装移动包。
 
 如需构建指定移动端目标，可设置 `GP_CORE_TARGET`，例如安装 Rust target 和 Android NDK 后使用 `aarch64-linux-android`。
 
@@ -83,7 +120,7 @@ Rust 核心目前包含关系图选股、SWL/SWS 趋势选股、确定性回测�
 
 ## 数据源
 
-桌面端和 Web 后端统一使用 `tdx` 通达信数据源，覆盖 A 股股票池、昨收价、日线、分钟线和盘口。旧版本保存过的 `astock`、`akshare`、`eastmoney` 配置会自动迁移到 `tdx`，不会再作为可选数据源显示。
+桌面端和 Web 后端统一使用 `tdx` 数据源组合：通达信负责 A 股股票池、日线和分钟线，筛选行情与盘口优先走腾讯股票。旧版本保存过的 `astock`、`akshare`、`eastmoney` 配置会自动迁移到 `tdx`，不会再作为可选数据源显示。
 
 API 客户端可以通过请求头显式指定通达信数据源：
 
@@ -91,11 +128,11 @@ API 客户端可以通过请求头显式指定通达信数据源：
 - `X-Stock-Refresh: true` 强制刷新所选数据源的股票池缓存
 - `X-Stock-Proxy: system|none` 切换行情数据源请求是否使用系统代理；也可用环境变量 `STOCK_PROXY_MODE=system|none` 设置默认值。
 
-通达信股票池缓存路径默认为 `data/cache/tdx_stocks.csv`，可用 `TDX_CACHE` 调整；可设置 `TDX_REFRESH=true` 强制刷新。通达信服务器可用 `TDX_HOSTS=host1:7709,host2:7709` 指定，连接超时可用 `TDX_TIMEOUT=6` 调整。
+通达信股票池缓存路径默认为 `data/cache/tdx_stocks.csv`，可用 `TDX_CACHE` 调整；可设置 `TDX_REFRESH=true` 强制刷新。通达信服务器可用 `TDX_HOSTS=host1:7709,host2:7709` 指定，连接超时可用 `TDX_TIMEOUT=6` 调整。腾讯批量行情大小可用 `TDX_TENCENT_BATCH_SIZE=80` 调整。
 
-筛选价格口径为“通达信前一交易日收盘价优先、股票池缓存价格兜底”。Android 构建脚本会在打包前生成 `desktop/mobile-dist/static/mobile-market-data.json`，移动端运行时使用该内置通达信数据包，不再调用 Rust 样例数据。
+筛选价格口径为“北京时间 15:00 前使用前一交易日收盘价，15:00 后使用当天收盘价”，腾讯行情优先、通达信补充、本地缓存兜底。Android 构建脚本会在打包前生成 `desktop/mobile-dist/static/mobile-market-data.json`，移动端运行时使用该内置通达信数据包，不再调用 Rust 样例数据。
 
-上下游消息分析缓存路径为 `data/cache/news.sqlite`。证据会区分 `news` 与 `community` 两层：新闻/事实层用于事实证据，社区层用于市场讨论、风险传闻、情绪信号和待核查线索。东方财富股吧社区抓取默认启用，可用 `GP_NEWS_ENABLE_GUBA=false` 关闭；可用 `GP_NEWS_GUBA_MAX_STOCKS`、`GP_NEWS_GUBA_MAX_POSTS`、`GP_NEWS_GUBA_TIMEOUT` 控制抓取范围，也可用 `GP_NEWS_GUBA_URLS` 追加指定股吧帖子 URL（多个 URL 用空白或分号分隔，股吧 URL 自身包含逗号）。如需尝试通过 AkShare 东方财富个股新闻接口写入真实消息，可设置 `GP_NEWS_ENABLE_AKSHARE=true`。雪球社区适配器已预留，设置 `GP_NEWS_ENABLE_XUEQIU=true` 后会检查 `GP_XUEQIU_COOKIE`，但在稳定授权抓取完成前不会混入不可靠数据。RAG 分析只在已有股票关系图范围内检索消息，不从新闻自动生成供应链关系。
+上下游消息分析缓存路径为 `data/cache/news.sqlite`。证据会区分 `news` 与 `community` 两层：新闻/事实层用于事实证据，社区层用于市场讨论、风险传闻、情绪信号和待核查线索。东方财富相关抓取默认关闭；如确实需要，可用 `GP_NEWS_ENABLE_GUBA=true` 开启股吧社区抓取，或设置 `GP_NEWS_ENABLE_AKSHARE=true` 尝试通过 AkShare 东方财富个股新闻接口写入真实消息。雪球社区适配器已预留，设置 `GP_NEWS_ENABLE_XUEQIU=true` 后会检查 `GP_XUEQIU_COOKIE`，但在稳定授权抓取完成前不会混入不可靠数据。RAG 分析只在已有股票关系图范围内检索消息，不从新闻自动生成供应链关系。
 
 移动端 RAG 的使用方式和工程设计见 `docs/rag.md`。目标方案使用版本化只读 `rag_pack.sqlite`、`sqlite-vec` 和 `bge-small-zh` INT8；桌面端预计算文档向量，手机端只做查询向量和本地检索。
 
@@ -105,8 +142,16 @@ API 客户端可以通过请求头显式指定通达信数据源：
 
 - `GET /api/data-sources/status` 查看股票池数量、缓存大小和新鲜度。
 - `POST /api/data-sources/refresh-universe` 刷新股票池。
+- `POST /api/data-sources/auto-refresh-universe` 按交易日规则检查并自动刷新基础股票池。
 - `POST /api/data-sources/prune-cache` 清理可丢弃缓存。
 - `POST /api/news-rag` 按已有上下游关系图检索本地消息缓存，并返回影响判断、证据、置信度和待验证点。
+
+自动刷新规则：
+
+- 使用 A 股交易日历判断是否为交易日。
+- 只有北京时间 15:30 之后才会刷新，盘中不自动刷新基础股票池。
+- 如果当天收盘后已经刷新过 `data/cache/tdx_stocks.csv`，本日不会重复刷新。
+- Web 页面会在启动后按间隔触发检查；Tauri 移动端不访问真实行情服务器，只重载内置股票池数据包。
 
 命令行定时维护示例：
 

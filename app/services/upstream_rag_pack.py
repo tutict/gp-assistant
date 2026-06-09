@@ -213,7 +213,10 @@ def build_upstream_rag_pack(
 
     documents: list[UpstreamCollectedDocument] = []
     documents.extend(_collect_cninfo_documents(stock, data_until_value, filing_days, notes))
-    documents.extend(_collect_akshare_news_documents(stock, data_until_value, news_days, notes))
+    if _env_enabled("GP_UPSTREAM_ENABLE_AKSHARE_NEWS", default=False):
+        documents.extend(_collect_akshare_news_documents(stock, data_until_value, news_days, notes))
+    else:
+        notes.append("AkShare 东方财富新闻采集未启用；可设置 GP_UPSTREAM_ENABLE_AKSHARE_NEWS=true 后开启。")
     documents.extend(_collect_tdx_f10_documents(stock, provider, notes))
     documents.extend(_collect_public_url_documents(stock, manual_urls, news_days, notes))
     documents = _dedupe_collected_documents(documents)
@@ -570,6 +573,13 @@ def _collect_akshare_news_documents(
     if documents:
         notes.append(f"新闻采集 {len(documents)} 条。")
     return documents
+
+
+def _env_enabled(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _collect_public_url_documents(

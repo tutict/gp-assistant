@@ -143,7 +143,7 @@ def list_data_sources(provider=Depends(_provider_from_headers)):
             {
                 "id": "tdx",
                 "name": "通达信",
-                "description": "通过通达信行情服务器获取 A 股股票池、昨收价、日线、分钟线和盘口数据。",
+                "description": "通过通达信获取 A 股股票池、日线和分钟线；筛选与盘口行情优先使用腾讯股票。",
             },
         ],
     }

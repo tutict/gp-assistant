@@ -140,7 +140,7 @@ def _fetch_news_items(
 ) -> tuple[List[RawNewsItem], List[str]]:
     notes: List[str] = []
     items: List[RawNewsItem] = []
-    if _env_enabled("GP_NEWS_ENABLE_GUBA", default=True):
+    if _env_enabled("GP_NEWS_ENABLE_GUBA", default=False):
         adapter = _EastmoneyGubaCommunityAdapter()
         try:
             guba_items = adapter.fetch(stocks, relations, days)

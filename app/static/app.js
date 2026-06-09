@@ -101,6 +101,7 @@ const llmSettings = {
 };
 
 initTheme();
+initRuntimeSurface();
 initMobileNav();
 initDataSource();
 initAutoRefresh();
@@ -219,6 +220,15 @@ function bindActions() {
     llmSettings.timeout,
     llmSettings.jsonMode,
   ].forEach((input) => input?.addEventListener("input", updateLlmStatus));
+}
+
+function initRuntimeSurface() {
+  const mobileRuntime = isMobileTauriRuntime();
+  document.body.classList.toggle("mobile-tauri", mobileRuntime);
+  document.body.classList.toggle("desktop-runtime", !mobileRuntime);
+  if (buttons.ragPackQuery) {
+    buttons.ragPackQuery.textContent = mobileRuntime ? "查看本机包" : "查看同步包";
+  }
 }
 
 function initMobileNav() {
@@ -548,12 +558,13 @@ async function runUpstreamRagBuildAndTransfer() {
 }
 
 async function runUpstreamRagList() {
-  setLoading(panels.newsRag, isTauriRuntime() ? "读取手机端 RAG 包" : "读取桌面端同步包状态");
-  const data = isTauriRuntime()
+  const mobileRuntime = isMobileTauriRuntime();
+  setLoading(panels.newsRag, mobileRuntime ? "读取手机端 RAG 包" : "读取桌面端同步包状态");
+  const data = mobileRuntime
     ? await getJson("/api/upstream-rag/mobile/list", panels.newsRag)
     : await getJson("/api/upstream-rag/status", panels.newsRag);
   if (!data) return;
-  if (isTauriRuntime()) {
+  if (mobileRuntime) {
     renderUpstreamRagMobileList(panels.newsRag, data);
   } else {
     renderUpstreamRagDesktopStatus(panels.newsRag, data);
@@ -561,7 +572,7 @@ async function runUpstreamRagList() {
 }
 
 async function runUpstreamRagImport() {
-  if (!isTauriRuntime()) {
+  if (!isMobileTauriRuntime()) {
     setError(panels.newsRag, "导入仅在安卓端执行", "桌面端负责构建和开启局域网临时传输服务。");
     return;
   }
@@ -712,14 +723,14 @@ function cameraAccessMessage(error) {
 
 async function runUpstreamRagDetail(stockCode, packVersion) {
   setLoading(panels.newsRag, "读取 RAG 包详情");
-  const data = isTauriRuntime()
+  const data = isMobileTauriRuntime()
     ? await postJson("/api/upstream-rag/mobile/detail", { stock_code: stockCode, pack_version: packVersion }, panels.newsRag)
     : await getJson("/api/upstream-rag/status", panels.newsRag);
   if (data) renderUpstreamRagDetailResult(panels.newsRag, data);
 }
 
 async function runUpstreamRagRollback(stockCode) {
-  if (!isTauriRuntime()) {
+  if (!isMobileTauriRuntime()) {
     setError(panels.newsRag, "回滚仅在安卓端执行", "桌面端可以重新构建并开启传输。");
     return;
   }
@@ -1167,7 +1178,7 @@ async function maybeAutoRefreshUniverse(trigger = "startup") {
 }
 
 function shouldCheckAutoRefreshUniverse() {
-  if (!dataSource.universe || autoRefreshInFlight || isTauriRuntime()) return false;
+  if (!dataSource.universe || autoRefreshInFlight || isMobileTauriRuntime()) return false;
   const lastChecked = Number(localStorage.getItem(AUTO_REFRESH_CHECK_KEY) || 0);
   return !Number.isFinite(lastChecked) || Date.now() - lastChecked >= AUTO_REFRESH_CHECK_INTERVAL_MS;
 }
@@ -1886,7 +1897,7 @@ async function requestJson(method, url, payload, headers = dataSourceHeaders()) 
 
 async function requestTauriJson(method, url, payload) {
   const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return { handled: false };
+  if (!invoke || !isMobileTauriRuntime()) return { handled: false };
 
   const parsed = new URL(url, window.location.href);
   const path = parsed.pathname;
@@ -2012,6 +2023,19 @@ async function requestTauriJson(method, url, payload) {
 
 function isTauriRuntime() {
   return Boolean(window.__TAURI__?.core?.invoke);
+}
+
+function isMobileTauriRuntime() {
+  return isTauriRuntime() && !isDesktopBackendOrigin();
+}
+
+function isDesktopBackendOrigin() {
+  const protocol = window.location.protocol;
+  const hostname = window.location.hostname;
+  return (
+    (protocol === "http:" || protocol === "https:") &&
+    (hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1")
+  );
 }
 
 function parseUpstreamManualUrls() {

@@ -27,6 +27,8 @@ use tauri_plugin_shell::{process::CommandChild, ShellExt};
 const APP_HOST: &str = "127.0.0.1";
 #[cfg(not(mobile))]
 const DEFAULT_PORT: u16 = 8010;
+#[cfg(not(mobile))]
+const BACKEND_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[cfg(not(mobile))]
 struct BackendState(Mutex<Option<BackendProcess>>);
@@ -393,14 +395,57 @@ impl BackendProcess {
         match self {
             BackendProcess::Python(child) => {
                 let _ = child.kill();
+                let _ = child.wait();
             }
             BackendProcess::Sidecar(child) => {
                 if let Some(child) = child.take() {
+                    let pid = child.pid();
                     let _ = child.kill();
+                    wait_for_process_exit(pid, BACKEND_SHUTDOWN_TIMEOUT);
                 }
             }
         }
     }
+}
+
+#[cfg(not(mobile))]
+fn wait_for_process_exit(pid: u32, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if !process_is_running(pid) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(all(not(mobile), windows))]
+fn process_is_running(pid: u32) -> bool {
+    Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+        .output()
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .split_whitespace()
+                .any(|part| part == pid.to_string())
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(all(not(mobile), unix))]
+fn process_is_running(pid: u32) -> bool {
+    let proc_path = PathBuf::from(format!("/proc/{pid}"));
+    proc_path.exists()
+        || Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+}
+
+#[cfg(all(not(mobile), not(any(windows, unix))))]
+fn process_is_running(_pid: u32) -> bool {
+    false
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

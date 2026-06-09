@@ -41,7 +41,7 @@ class TdxProviderTests(unittest.TestCase):
         self.assertIsNotNone(delisted)
         self.assertTrue(delisted.is_st)
 
-    def test_list_stocks_for_screen_uses_tdx_last_close_then_cache_fallback(self):
+    def test_list_stocks_for_screen_uses_tencent_previous_close_before_market_close(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             fundamental_cache_path = os.path.join(temp_dir, "fundamentals.csv")
             pd.DataFrame(columns=["f2", "f9", "f12", "f14", "f20", "f23", "f100"]).to_csv(
@@ -54,15 +54,23 @@ class TdxProviderTests(unittest.TestCase):
                     StockItem(code="600000.SH", name="浦发银行", industry="银行", price=10.0),
                     StockItem(code="300750.SZ", name="宁德时代", industry="动力电池", price=195.0),
                 ]
-                provider._quotes_batched = lambda codes: (
+                provider._screen_price_policy = lambda: ("last_close", "当天未收盘，使用前一交易日收盘价")
+                provider._tencent_quotes_batched = lambda codes: (
                     {
                         "600000": {
                             "code": "600000",
                             "name": "浦发银行",
                             "price": 10.2,
                             "last_close": 9.8,
+                            "pe_ttm": 10.2,
+                            "pb": 1.02,
+                            "mcap_yi": 102.0,
                         }
                     },
+                    0,
+                )
+                provider._quotes_batched = lambda codes: (
+                    {},
                     0,
                     None,
                 )
@@ -71,9 +79,50 @@ class TdxProviderTests(unittest.TestCase):
 
         self.assertEqual([item.code for item in items], ["600000.SH", "300750.SZ"])
         self.assertEqual(items[0].price, 9.8)
+        self.assertAlmostEqual(items[0].pe or 0, 9.8)
+        self.assertAlmostEqual(items[0].pb or 0, 0.98)
+        self.assertAlmostEqual(items[0].market_cap_billion or 0, 98.0)
         self.assertEqual(items[1].price, 195.0)
-        self.assertIn("通达信前一交易日收盘价", notes[0])
+        self.assertIn("当天未收盘", notes[0])
+        self.assertIn("腾讯 1 只", notes[0])
         self.assertTrue(any("股票池缓存价格" in note for note in notes))
+
+    def test_list_stocks_for_screen_uses_tencent_current_price_after_market_close(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fundamental_cache_path = os.path.join(temp_dir, "fundamentals.csv")
+            pd.DataFrame(columns=["f2", "f9", "f12", "f14", "f20", "f23", "f100"]).to_csv(
+                fundamental_cache_path,
+                index=False,
+            )
+            with patch.dict(os.environ, {"TDX_FUNDAMENTAL_CACHE": fundamental_cache_path}):
+                provider = TdxProvider()
+                provider.list_stocks = lambda: [
+                    StockItem(code="600000.SH", name="浦发银行", industry="银行", price=10.0)
+                ]
+                provider._screen_price_policy = lambda: ("price", "当天已收盘，使用当天收盘价")
+                provider._tencent_quotes_batched = lambda codes: (
+                    {
+                        "600000": {
+                            "code": "600000",
+                            "name": "浦发银行",
+                            "price": 12.0,
+                            "last_close": 10.0,
+                            "pe_ttm": 12.0,
+                            "pb": 1.2,
+                            "mcap_yi": 120.0,
+                        }
+                    },
+                    0,
+                )
+                provider._quotes_batched = lambda codes: ({}, 0, None)
+
+                items, notes = provider.list_stocks_for_screen()
+
+        self.assertEqual(items[0].price, 12.0)
+        self.assertEqual(items[0].pe, 12.0)
+        self.assertEqual(items[0].pb, 1.2)
+        self.assertEqual(items[0].market_cap_billion, 120.0)
+        self.assertIn("当天已收盘", notes[0])
 
     def test_list_stocks_for_screen_merges_cached_fundamentals(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -97,6 +146,8 @@ class TdxProviderTests(unittest.TestCase):
                 provider.list_stocks = lambda: [
                     StockItem(code="000001.SZ", name="平安银行", industry="深市A股", price=10.0)
                 ]
+                provider._screen_price_policy = lambda: ("price", "当天已收盘，使用当天收盘价")
+                provider._tencent_quotes_batched = lambda codes: ({}, 0)
                 provider._quotes_batched = lambda codes: (
                     {
                         "000001": {

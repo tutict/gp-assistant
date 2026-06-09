@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import os
 import math
-from datetime import datetime
+from datetime import datetime, time, timedelta, timezone
 from typing import List, Optional
 
 import pandas as pd
+import requests
 
-from app.providers.base import StockProvider, normalize_proxy_mode
+from app.providers.base import PROXY_MODE_NONE, StockProvider, normalize_proxy_mode
 from app.schemas import (
     FinancialIndicatorItem,
     FinancialIndicatorSection,
@@ -21,6 +22,8 @@ from app.schemas import (
 
 class TdxProvider(StockProvider):
     name = "tdx"
+    _SCREEN_MARKET_CLOSE = time(15, 0)
+    _CHINA_TZ = timezone(timedelta(hours=8))
 
     def __init__(
         self,
@@ -33,10 +36,14 @@ class TdxProvider(StockProvider):
         self.timeout = float(os.getenv("TDX_TIMEOUT", "6"))
         self.page_size = max(100, int(os.getenv("TDX_PAGE_SIZE", "1000")))
         self.quote_batch_size = max(1, int(os.getenv("TDX_QUOTE_BATCH_SIZE", "80")))
+        self.tencent_batch_size = max(1, int(os.getenv("TDX_TENCENT_BATCH_SIZE", "80")))
         self.history_batch_size = max(1, min(int(os.getenv("TDX_HISTORY_BATCH_SIZE", "800")), 800))
         self.history_pages = max(1, int(os.getenv("TDX_HISTORY_PAGES", "8")))
         self.proxy_mode = normalize_proxy_mode(proxy_mode)
         self.fundamental_cache_path = self._resolve_fundamental_cache_path()
+        self._session = requests.Session()
+        self._session.trust_env = self.proxy_mode != PROXY_MODE_NONE
+        self._session.headers.update({"User-Agent": "Mozilla/5.0"})
 
     def list_stocks(self) -> List[StockItem]:
         cached = self._read_cached_universe()
@@ -53,28 +60,44 @@ class TdxProvider(StockProvider):
         except Exception as exc:
             return [], [f"通达信股票池不可用：{exc}"]
 
-        quotes, failed_batches, note = self._quotes_batched([item.code for item in items])
-        fundamentals, fundamental_note = self._fundamentals_for_screen()
+        price_field, price_policy = self._screen_price_policy()
+        tencent_quotes, failed_tencent_batches = self._tencent_quotes_batched([item.code for item in items])
+        missing_codes = [
+            item.code
+            for item in items
+            if self._screen_quote_price(tencent_quotes.get(self._code_digits(item.code)), price_field) is None
+        ]
+        tdx_quotes, failed_tdx_batches, tdx_note = self._quotes_batched(missing_codes)
+        fundamentals, fundamental_note = self._cached_fundamentals_for_screen()
         updated_items: list[StockItem] = []
-        quoted_count = 0
+        tencent_quoted_count = 0
+        tdx_quoted_count = 0
         fallback_count = 0
         fundamental_price_count = 0
         fundamental_count = 0
         estimated_roe_count = 0
         for item in items:
-            quote = quotes.get(self._code_digits(item.code))
-            updated = self._stock_with_quote(item, quote)
+            digits = self._code_digits(item.code)
+            quote = tencent_quotes.get(digits)
+            updated = self._stock_with_quote(item, quote, price_field)
+            quote_source = "tencent" if updated is not None else None
+            if updated is None:
+                quote = tdx_quotes.get(digits)
+                updated = self._stock_with_quote(item, quote, price_field)
+                quote_source = "tdx" if updated is not None else None
             if updated is None:
                 fallback_count += 1
                 updated = item
-            else:
-                quoted_count += 1
+            elif quote_source == "tencent":
+                tencent_quoted_count += 1
+            elif quote_source == "tdx":
+                tdx_quoted_count += 1
 
             fundamental = fundamentals.get(updated.code)
             updated, used_fundamental, estimated_roe, used_fundamental_price = self._stock_with_fundamentals(
                 updated,
                 fundamental,
-                prefer_fundamental_price=quote is None,
+                prefer_fundamental_price=quote_source is None,
             )
             if used_fundamental:
                 fundamental_count += 1
@@ -84,21 +107,26 @@ class TdxProvider(StockProvider):
                 fundamental_price_count += 1
             updated_items.append(updated)
 
-        notes = [f"筛选价格口径：通达信前一交易日收盘价，已应用 {quoted_count} 只。"]
+        notes = [
+            f"筛选价格口径：{price_policy}（腾讯优先，通达信补充），"
+            f"腾讯 {tencent_quoted_count} 只，通达信 {tdx_quoted_count} 只。"
+        ]
         if fallback_count:
             notes.append(
-                f"{fallback_count} 只股票缺少通达信昨收价，其中 {fundamental_price_count} 只已回退到基础指标价格，其余回退到股票池缓存价格。"
+                f"{fallback_count} 只股票缺少腾讯/通达信可用价格，其中 {fundamental_price_count} 只已回退到本地基础指标价格，其余回退到股票池缓存价格。"
             )
         if fundamental_count:
-            notes.append(f"基础指标补充：东方财富估值/行业字段，已合并 {fundamental_count} 只。")
+            notes.append(f"基础指标补充：腾讯行情估值字段和本地行业/估值缓存，已合并 {fundamental_count} 只。")
         if estimated_roe_count:
             notes.append(f"{estimated_roe_count} 只股票缺少直接 ROE，已用 市净率 / 市盈率 估算 ROE。")
         if fundamental_note:
             notes.append(fundamental_note)
-        if failed_batches:
-            notes.append(f"通达信批量行情失败 {failed_batches} 批，其余股票已继续处理。")
-        if note:
-            notes.append(note)
+        if failed_tencent_batches:
+            notes.append(f"腾讯批量行情失败 {failed_tencent_batches} 批，其余股票已继续处理。")
+        if failed_tdx_batches:
+            notes.append(f"通达信批量行情失败 {failed_tdx_batches} 批，其余股票已继续处理。")
+        if tdx_note:
+            notes.append(tdx_note)
         return updated_items, notes
 
     def get_stock(self, code: str) -> StockItem:
@@ -106,12 +134,17 @@ class TdxProvider(StockProvider):
         base = self._find_cached_stock(normalized_code)
         quote = None
         try:
-            quote = self._quotes_batched([normalized_code])[0].get(self._code_digits(normalized_code))
+            quote = self._tencent_quote([normalized_code]).get(self._code_digits(normalized_code))
         except Exception:
             quote = None
-        updated = self._stock_with_quote(base, quote)
+        if quote is None:
+            try:
+                quote = self._quotes_batched([normalized_code])[0].get(self._code_digits(normalized_code))
+            except Exception:
+                quote = None
+        updated = self._stock_with_quote(base, quote, "price")
         stock = updated or base
-        fundamentals, _ = self._fundamentals_for_screen()
+        fundamentals, _ = self._cached_fundamentals_for_screen()
         enriched, _, _, _ = self._stock_with_fundamentals(stock, fundamentals.get(stock.code))
         return enriched
 
@@ -193,7 +226,12 @@ class TdxProvider(StockProvider):
 
     def get_order_book(self, code: str) -> OrderBookSnapshot | None:
         normalized_code = self._normalize_code(code)
-        quote = self._quotes_batched([normalized_code])[0].get(self._code_digits(normalized_code))
+        try:
+            quote = self._tencent_quote([normalized_code]).get(self._code_digits(normalized_code))
+        except Exception:
+            quote = None
+        if not quote:
+            quote = self._quotes_batched([normalized_code])[0].get(self._code_digits(normalized_code))
         if not quote:
             return None
 
@@ -254,7 +292,7 @@ class TdxProvider(StockProvider):
         return FinancialIndicatorSection(
             title="最新指标",
             period="行情估值",
-            source="通达信/东方财富缓存",
+            source="腾讯/通达信/本地缓存",
             items=items,
             notes=notes,
         )
@@ -326,6 +364,102 @@ class TdxProvider(StockProvider):
             return {}, max(failed_batches, 1), f"通达信行情不可用：{exc}"
         return quotes, failed_batches, None
 
+    def _tencent_quotes_batched(self, codes: list[str]) -> tuple[dict[str, dict], int]:
+        normalized_codes = [self._normalize_code(code) for code in codes if code]
+        if not normalized_codes:
+            return {}, 0
+
+        quotes: dict[str, dict] = {}
+        failed_batches = 0
+        for index in range(0, len(normalized_codes), self.tencent_batch_size):
+            batch = normalized_codes[index : index + self.tencent_batch_size]
+            if not batch:
+                continue
+            try:
+                quotes.update(self._tencent_quote(batch))
+            except Exception:
+                failed_batches += 1
+        return quotes, failed_batches
+
+    def _tencent_quote(self, codes: list[str]) -> dict[str, dict]:
+        prefixed = [symbol for code in codes if (symbol := self._tencent_symbol(code))]
+        if not prefixed:
+            return {}
+        response = self._session.get(
+            "https://qt.gtimg.cn/q=" + ",".join(prefixed),
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        response.encoding = "gbk"
+        result: dict[str, dict] = {}
+        for line in response.text.strip().split(";"):
+            if not line.strip() or "=" not in line or '"' not in line:
+                continue
+            key = line.split("=")[0].split("_")[-1]
+            values = line.split('"')[1].split("~")
+            if len(values) < 53:
+                continue
+            code = key[2:]
+            result[code] = {
+                "code": code,
+                "name": values[1],
+                "price": self._to_float(values[3]),
+                "last_close": self._to_float(values[4]),
+                "open": self._to_float(values[5]),
+                "bid1": self._to_float(values[9]),
+                "bid1_volume": self._to_float(values[10]),
+                "bid2": self._to_float(values[11]),
+                "bid2_volume": self._to_float(values[12]),
+                "bid3": self._to_float(values[13]),
+                "bid3_volume": self._to_float(values[14]),
+                "bid4": self._to_float(values[15]),
+                "bid4_volume": self._to_float(values[16]),
+                "bid5": self._to_float(values[17]),
+                "bid5_volume": self._to_float(values[18]),
+                "ask1": self._to_float(values[19]),
+                "ask1_volume": self._to_float(values[20]),
+                "ask2": self._to_float(values[21]),
+                "ask2_volume": self._to_float(values[22]),
+                "ask3": self._to_float(values[23]),
+                "ask3_volume": self._to_float(values[24]),
+                "ask4": self._to_float(values[25]),
+                "ask4_volume": self._to_float(values[26]),
+                "ask5": self._to_float(values[27]),
+                "ask5_volume": self._to_float(values[28]),
+                "timestamp": self._format_tencent_timestamp(values[30]),
+                "change_amt": self._to_float(values[31]),
+                "change_pct": self._to_float(values[32]),
+                "high": self._to_float(values[33]),
+                "low": self._to_float(values[34]),
+                "amount_wan": self._to_float(values[37]),
+                "turnover_pct": self._to_float(values[38]),
+                "pe_ttm": self._to_float(values[39]),
+                "amplitude_pct": self._to_float(values[43]),
+                "mcap_yi": self._to_float(values[44]),
+                "float_mcap_yi": self._to_float(values[45]),
+                "pb": self._to_float(values[46]),
+                "limit_up": self._to_float(values[47]),
+                "limit_down": self._to_float(values[48]),
+                "vol_ratio": self._to_float(values[49]),
+                "pe_static": self._to_float(values[52]),
+            }
+        return result
+
+    def _screen_price_policy(self) -> tuple[str, str]:
+        checked_at = datetime.now(self._CHINA_TZ)
+        if checked_at.weekday() < 5 and checked_at.time() < self._SCREEN_MARKET_CLOSE:
+            return "last_close", "当天未收盘，使用前一交易日收盘价"
+        return "price", "当天已收盘，使用当天收盘价"
+
+    def _screen_quote_price(self, quote: Optional[dict], price_field: str) -> Optional[float]:
+        if not quote:
+            return None
+        preferred = self._positive_float(quote.get(price_field))
+        if preferred is not None:
+            return preferred
+        fallback_field = "last_close" if price_field == "price" else "price"
+        return self._positive_float(quote.get(fallback_field))
+
     def _with_connected_api(self, callback):
         from pytdx.hq import TdxHq_API
 
@@ -359,26 +493,21 @@ class TdxProvider(StockProvider):
                 return item
         raise KeyError(f"未找到股票 {normalized_code}")
 
-    def _fundamentals_for_screen(self) -> tuple[dict[str, StockItem], str | None]:
+    def _cached_fundamentals_for_screen(self) -> tuple[dict[str, StockItem], str | None]:
+        if not os.path.exists(self.fundamental_cache_path):
+            return {}, None
         try:
-            from app.providers.eastmoney import EastmoneyProvider
-
-            provider = EastmoneyProvider(
-                cache_path=self.fundamental_cache_path,
-                refresh=self.refresh,
-                proxy_mode=self.proxy_mode,
-            )
-            items = provider.list_stocks()
-            note = getattr(provider, "_last_load_note", None)
+            df = pd.read_csv(self.fundamental_cache_path, dtype={"f12": str, "code": str})
         except Exception as exc:
-            return {}, f"基础指标补充不可用：{exc}"
+            return {}, f"本地基础指标缓存不可用：{exc}"
 
+        items = [item for _, row in df.iterrows() if (item := self._stock_from_fundamental_row(row)) is not None]
         lookup: dict[str, StockItem] = {}
         for item in items:
             normalized = self._normalize_code(item.code)
             if normalized:
                 lookup[normalized] = item
-        return lookup, note
+        return lookup, None
 
     @classmethod
     def _stock_from_security_list_item(cls, item: dict, market: int) -> StockItem | None:
@@ -415,17 +544,56 @@ class TdxProvider(StockProvider):
             dividend_yield=cls._non_negative(row.get("dividend_yield")),
         )
 
-    def _stock_with_quote(self, item: StockItem, quote: Optional[dict]) -> StockItem | None:
+    @classmethod
+    def _stock_from_fundamental_row(cls, row) -> StockItem | None:
+        raw_code = str(row.get("code") or row.get("f12") or "").strip()
+        if not raw_code:
+            return None
+        code = cls._normalize_code(raw_code)
+        name = str(row.get("name") or row.get("f14") or raw_code).strip() or raw_code
+        latest_price = cls._positive_float(row.get("price")) or cls._positive_float(row.get("f2")) or 0.0
+        market_cap = cls._to_float(row.get("market_cap_billion"))
+        if market_cap is None:
+            raw_market_cap = cls._to_float(row.get("f20"))
+            if raw_market_cap is not None:
+                market_cap = raw_market_cap / 1e8 if raw_market_cap > 1e6 else raw_market_cap
+        return StockItem(
+            code=code,
+            name=name,
+            industry=str(row.get("industry") or row.get("f100") or "未知行业").strip() or "未知行业",
+            is_st=cls._bool_value(row.get("is_st")) or cls._is_risk_labeled_name(name),
+            price=latest_price,
+            pe=cls._non_negative(row.get("pe")) or cls._non_negative(row.get("f9")),
+            pb=cls._non_negative(row.get("pb")) or cls._non_negative(row.get("f23")),
+            roe=cls._to_float(row.get("roe")),
+            market_cap_billion=cls._non_negative(market_cap),
+            dividend_yield=cls._non_negative(row.get("dividend_yield")),
+        )
+
+    def _stock_with_quote(self, item: StockItem, quote: Optional[dict], price_field: str) -> StockItem | None:
         if not quote:
             return None
-        price = self._positive_float(quote.get("last_close")) or self._positive_float(quote.get("price"))
+        price = self._screen_quote_price(quote, price_field)
         if price is None:
             return None
+        quote_price = self._positive_float(quote.get("price")) or price
+        ratio = price / quote_price if quote_price and quote_price > 0 else 1.0
+        if not math.isfinite(ratio) or ratio <= 0:
+            ratio = 1.0
+        pe = self._scale_optional(
+            self._non_negative(quote.get("pe_ttm")) or self._non_negative(quote.get("pe_static")),
+            ratio,
+        )
+        pb = self._scale_optional(self._non_negative(quote.get("pb")), ratio)
+        market_cap_billion = self._scale_optional(self._non_negative(quote.get("mcap_yi")), ratio)
         return item.model_copy(
             update={
                 "name": quote.get("name") or item.name,
                 "is_st": item.is_st or self._is_risk_labeled_name(quote.get("name") or item.name),
                 "price": price,
+                "pe": pe if pe is not None else item.pe,
+                "pb": pb if pb is not None else item.pb,
+                "market_cap_billion": market_cap_billion if market_cap_billion is not None else item.market_cap_billion,
             }
         )
 
@@ -598,7 +766,11 @@ class TdxProvider(StockProvider):
         digits = TdxProvider._code_digits(code)
         if market == 1 or digits.startswith("6"):
             return f"{digits}.SH"
-        if market == 0 or digits:
+        if market == 0 or digits.startswith(("0", "2", "3")):
+            return f"{digits}.SZ"
+        if digits.startswith(("4", "8")):
+            return f"{digits}.BJ"
+        if digits:
             return f"{digits}.SZ"
         return digits
 
@@ -610,6 +782,28 @@ class TdxProvider(StockProvider):
         if normalized.startswith(("SH", "SZ", "BJ")):
             return normalized[2:]
         return normalized
+
+    @staticmethod
+    def _tencent_symbol(code: str) -> str:
+        normalized = TdxProvider._normalize_code(code)
+        digits = TdxProvider._code_digits(normalized)
+        if not digits:
+            return ""
+        if normalized.endswith(".SH") or digits.startswith(("6", "9")):
+            return f"sh{digits}"
+        if normalized.endswith(".BJ") or digits.startswith(("4", "8")):
+            return f"bj{digits}"
+        return f"sz{digits}"
+
+    @staticmethod
+    def _format_tencent_timestamp(value: str) -> str | None:
+        raw = str(value or "").strip()
+        if len(raw) < 14:
+            return raw or None
+        try:
+            return datetime.strptime(raw[:14], "%Y%m%d%H%M%S").isoformat(timespec="seconds")
+        except ValueError:
+            return raw
 
     @staticmethod
     def _book_level(level: int, quote: dict, side: str) -> OrderBookLevel | None:

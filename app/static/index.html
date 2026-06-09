@@ -469,11 +469,11 @@
                   <h2>上下游消息</h2>
                 </div>
                 <div class="button-row">
-                  <button id="newsRagBtn" type="button">分析消息</button>
-                  <button id="ragPackBuildBtn" type="button">构建同步包</button>
-                  <button id="ragPackQueryBtn" type="button">查看手机包</button>
-                  <button id="upstreamScanBtn" type="button">扫码导入</button>
-                  <button id="upstreamImportBtn" type="button">导入到手机</button>
+                  <button id="newsRagBtn" type="button" data-desktop-only>分析消息</button>
+                  <button id="ragPackBuildBtn" type="button" data-desktop-only>构建同步包</button>
+                  <button id="ragPackQueryBtn" type="button">查看同步包</button>
+                  <button id="upstreamScanBtn" type="button" data-mobile-only>扫码导入</button>
+                  <button id="upstreamImportBtn" type="button" data-mobile-only>导入到手机</button>
                 </div>
               </div>
               <div class="news-controls">
@@ -498,11 +498,11 @@
                   <span>离线查询</span>
                   <input id="ragPackQuery" autocomplete="off" placeholder="例如：宁德时代上游订单证据" />
                 </label>
-                <label class="field news-wide">
+                <label class="field news-wide" data-desktop-only>
                   <span>公开 URL</span>
                   <textarea id="upstreamManualUrls" rows="3" placeholder="公告、财报摘要、研报摘要、新闻网页 URL，每行一个"></textarea>
                 </label>
-                <label class="field news-wide">
+                <label class="field news-wide" data-mobile-only>
                   <span>扫码内容 / Manifest URL</span>
                   <input id="upstreamImportPayload" autocomplete="off" placeholder="扫码后自动填入，也可粘贴 manifest_url 或二维码 JSON" />
                 </label>
