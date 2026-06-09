@@ -180,6 +180,13 @@ function bindActions() {
   });
   document.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+    const action = target?.closest("[data-empty-action]");
+    if (!action) return;
+    event.preventDefault();
+    handlePanelEmptyAction(action.dataset.emptyAction, action);
+  });
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : event.target?.parentElement;
     const detail = target?.closest("[data-upstream-detail]");
     if (!detail) return;
     event.preventDefault();
@@ -423,6 +430,27 @@ async function runBacktest() {
 async function runBacktestFromScreen() {
   activateWorkbenchView("backtest", { href: "#sectionBacktest", updateHash: true });
   await runTask(buttons.backtest, panels.backtest, runBacktest);
+}
+
+async function handlePanelEmptyAction(action, trigger) {
+  if (action === "run-screen") {
+    activateWorkbenchView("screen", { href: "#sectionScreen", updateHash: true });
+    await runTask(buttons.screen, panels.screen, runScreen);
+    return;
+  }
+  if (action === "watchlist-backtest") {
+    setBacktestSource("watchlist");
+    activateWorkbenchView("backtest", { href: "#sectionBacktest", updateHash: true });
+    await runTask(buttons.backtest, panels.backtest, runBacktest);
+    return;
+  }
+  if (action === "go-observe-screen") {
+    activateWorkbenchView("screen", { href: "#sectionScreen", updateHash: true });
+    panels.screen?.scrollIntoView({ block: "start", behavior: "smooth" });
+    return;
+  }
+  activateWorkbenchView("screen", { href: "#sectionScreen", updateHash: true });
+  trigger?.blur?.();
 }
 
 async function runNewsRag() {
@@ -717,7 +745,10 @@ async function runAgent() {
 async function runObserve(codeOverride) {
   const code = normalizeStockCode(codeOverride || $("#observeCode").value);
   if (!code) {
-    setError(panels.observe, "请输入股票代码", "例如：300750.SZ");
+    setError(panels.observe, "请输入股票代码", "例如：300750.SZ", {
+      label: "回到筛选页选一只观察",
+      action: "go-observe-screen",
+    });
     return;
   }
   $("#observeCode").value = code;
@@ -768,6 +799,7 @@ function initWatchlist() {
   syncBacktestSourceControls();
   renderWatchlistPanel();
   syncWatchlistButtons();
+  updateBacktestIdleState();
 }
 
 function readWatchlist() {
@@ -793,6 +825,7 @@ function saveWatchlist(items) {
   localStorage.setItem(WATCHLIST_KEY, JSON.stringify(items));
   renderWatchlistPanel();
   syncWatchlistButtons();
+  updateBacktestIdleState();
   updateResearchSummaries();
 }
 
@@ -849,11 +882,12 @@ function renderWatchlistPanel() {
   const source = getBacktestSource();
   watchlistUi.panel.hidden = source !== "watchlist";
   if (watchlistUi.count) watchlistUi.count.textContent = `${items.length} 只`;
-  if (watchlistUi.empty) watchlistUi.empty.hidden = items.length > 0;
+  if (watchlistUi.empty) watchlistUi.empty.hidden = true;
   if (!watchlistUi.items) return;
-  watchlistUi.items.innerHTML = items
-    .map(
-      (item) => `
+  watchlistUi.items.innerHTML = items.length
+    ? items
+        .map(
+          (item) => `
         <article class="watchlist-item">
           <div>
             <strong>${escapeHtml(item.name || item.code)}</strong>
@@ -863,16 +897,24 @@ function renderWatchlistPanel() {
           <button type="button" data-watchlist-remove="${escapeHtml(item.code)}">移除</button>
         </article>
       `,
-    )
-    .join("");
+        )
+        .join("")
+    : renderEmpty("先从筛选结果收藏股票", { label: "去筛选收藏", action: "go-screen" });
 }
 
 function syncWatchlistButtons() {
   document.querySelectorAll("[data-watchlist-code]").forEach((button) => {
     const saved = isWatchlisted(button.dataset.watchlistCode);
+    const label = saved ? "已收藏" : "收藏";
     button.classList.toggle("saved", saved);
-    button.textContent = saved ? "已收藏" : "收藏";
+    const icon = button.querySelector(".watchlist-icon");
+    const text = button.querySelector(".watchlist-label");
+    if (icon) icon.textContent = saved ? "★" : "☆";
+    if (text) text.textContent = label;
+    if (!icon && !text) button.textContent = label;
     button.setAttribute("aria-pressed", String(saved));
+    button.setAttribute("aria-label", `${label} ${button.dataset.watchlistName || button.dataset.watchlistCode || ""}`.trim());
+    button.setAttribute("title", label);
   });
 }
 
@@ -889,6 +931,7 @@ function setBacktestSource(value) {
   if (watchlistUi.source) watchlistUi.source.value = normalized;
   syncBacktestSourceControls();
   renderWatchlistPanel();
+  updateBacktestIdleState();
   updateResearchSummaries();
 }
 
@@ -899,6 +942,22 @@ function syncBacktestSourceControls() {
     option.classList.toggle("active", active);
     option.setAttribute("aria-pressed", String(active));
   });
+}
+
+function updateBacktestIdleState() {
+  if (!panels.backtest?.classList.contains("empty")) return;
+  const items = readWatchlist();
+  const source = getBacktestSource();
+  const canUseWatchlist = items.length > 0;
+  const action =
+    source === "watchlist" && canUseWatchlist
+      ? null
+      : canUseWatchlist
+        ? { label: "切到自选观察池", action: "watchlist-backtest" }
+        : { label: "先运行筛选", action: "run-screen" };
+  const text =
+    source === "watchlist" && canUseWatchlist ? "等待自选观察池回测结果" : canUseWatchlist ? `自选观察池已有 ${items.length} 只股票` : "等待回测";
+  panels.backtest.innerHTML = renderEmpty(text, action);
 }
 
 function initSourceSelects() {
@@ -2223,7 +2282,9 @@ function renderScreenResult(node, data) {
     ],
     body: [
       items.length ? renderResultActions("当前筛选条件", data.returned ?? items.length) : "",
-      items.length ? renderStockList(items.map(screenItemToView)) : renderEmpty("没有符合条件的股票"),
+      items.length
+        ? renderStockList(items.map(screenItemToView))
+        : renderEmpty("没有符合条件的股票", { label: "重跑筛选", action: "run-screen" }),
       data.notes?.length ? renderNotes(data.notes) : "",
     ].join(""),
     raw: data,
@@ -2240,7 +2301,9 @@ function renderSectorScreenResult(node, data) {
     ],
     body: [
       groups.length ? renderResultActions("当前分板块条件", data.returned ?? 0) : "",
-      groups.length ? renderSectorGroups(groups) : renderEmpty("没有符合条件的板块"),
+      groups.length
+        ? renderSectorGroups(groups)
+        : renderEmpty("没有符合条件的板块", { label: "调整条件", action: "go-screen" }),
       data.notes?.length ? renderNotes(data.notes) : "",
     ].join(""),
     raw: data,
@@ -2338,14 +2401,32 @@ function renderBacktestResult(node, data) {
       ["超额", formatPercent(metrics.excess_return)],
     ],
     body: [
-      curve.length ? renderSparkline(curve) : renderEmpty("没有可用净值曲线"),
+      curve.length
+        ? `<section class="backtest-primary-chart">${renderSparkline(curve)}</section>`
+        : renderEmpty("没有可用净值曲线"),
       benchmarkCurve.length ? renderBenchmarkSparkline(benchmarkCurve) : "",
+      renderBacktestHoldings(data),
       renderBacktestComparison(data),
-      symbols.length ? `<div class="symbol-strip">${symbols.map(escapeHtml).join(" · ")}</div>` : "",
-      renderBacktestReliability(data),
+      renderBacktestReliability(data, true),
     ].join(""),
     raw: data,
   });
+}
+
+function renderBacktestHoldings(data) {
+  const symbols = data.symbols || [];
+  if (!symbols.length) return "";
+  const sourceNote = (data.notes || []).find((note) => String(note).includes("自选观察池"));
+  return `
+    <section class="backtest-holdings">
+      <header>
+        <span>回测股票</span>
+        <strong>${formatNumber(symbols.length)} 只</strong>
+      </header>
+      <div class="symbol-strip">${symbols.map(escapeHtml).join(" · ")}</div>
+      ${sourceNote ? `<p>${escapeHtml(sourceNote)}</p>` : ""}
+    </section>
+  `;
 }
 
 function renderBenchmarkSparkline(curve) {
@@ -2814,9 +2895,20 @@ function renderResultActions(scope, count) {
   `;
 }
 
-function renderBacktestReliability(data) {
+function renderBacktestReliability(data, collapsed = false) {
   const notes = data.notes || [];
   if (!notes.length) return "";
+  if (collapsed) {
+    return `
+      <details class="reliability-card reliability-details">
+        <summary>
+          <span>可信度提示</span>
+          <strong>${escapeHtml(backtestReliabilityLabel(data))}</strong>
+        </summary>
+        ${renderNotes(notes)}
+      </details>
+    `;
+  }
   return `
     <section class="reliability-card">
       <header>
@@ -3057,8 +3149,9 @@ function renderStockRow(item) {
   const weight = item.weight !== undefined ? `<span class="weight">${formatPercent(item.weight)}</span>` : "";
   const related = item.related?.length ? renderRelated(item.related) : "";
   const saved = isWatchlisted(stock.code);
+  const watchLabel = saved ? "已收藏" : "收藏";
   const watchButton = stock.code
-    ? `<button class="watchlist-action${saved ? " saved" : ""}" type="button" data-watchlist-code="${escapeHtml(stock.code)}" data-watchlist-name="${escapeHtml(stock.name || stock.code)}" data-watchlist-industry="${escapeHtml(stock.industry || "")}" data-watchlist-source="screen" aria-pressed="${saved ? "true" : "false"}">${saved ? "已收藏" : "收藏"}</button>`
+    ? `<button class="watchlist-action${saved ? " saved" : ""}" type="button" data-watchlist-code="${escapeHtml(stock.code)}" data-watchlist-name="${escapeHtml(stock.name || stock.code)}" data-watchlist-industry="${escapeHtml(stock.industry || "")}" data-watchlist-source="screen" aria-pressed="${saved ? "true" : "false"}" aria-label="${escapeHtml(watchLabel)} ${escapeHtml(stock.name || stock.code)}" title="${escapeHtml(watchLabel)}"><span class="watchlist-icon" aria-hidden="true">${saved ? "★" : "☆"}</span><span class="watchlist-label">${escapeHtml(watchLabel)}</span></button>`
     : "";
   const observeButton = stock.code
     ? `<button class="observe-action" type="button" data-observe-code="${escapeHtml(stock.code)}">观察</button>`
@@ -3395,8 +3488,11 @@ function renderMetricLine(metrics) {
   `;
 }
 
-function renderEmpty(text) {
-  return `<div class="empty-state">${escapeHtml(text)}</div>`;
+function renderEmpty(text, action) {
+  const button = action
+    ? `<button type="button" data-empty-action="${escapeHtml(action.action)}">${escapeHtml(action.label)}</button>`
+    : "";
+  return `<div class="empty-state${action ? " action-empty" : ""}"><span>${escapeHtml(text)}</span>${button}</div>`;
 }
 
 function setLoading(node, text) {
@@ -3404,9 +3500,12 @@ function setLoading(node, text) {
   node.innerHTML = `<div class="loader"></div><span>${escapeHtml(text)}</span>`;
 }
 
-function setError(node, title, detail) {
+function setError(node, title, detail, action) {
   node.className = `${basePanelClass(node)} error`;
-  node.innerHTML = `<strong>${escapeHtml(title)}</strong><p>${escapeHtml(detail || "")}</p>`;
+  const button = action
+    ? `<button type="button" data-empty-action="${escapeHtml(action.action)}">${escapeHtml(action.label)}</button>`
+    : "";
+  node.innerHTML = `<strong>${escapeHtml(title)}</strong><p>${escapeHtml(detail || "")}</p>${button}`;
 }
 
 function basePanelClass(node) {

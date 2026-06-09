@@ -7394,3 +7394,233 @@ button,
     padding: 9px;
   }
 }
+
+.backtest-run-row {
+  display: grid;
+}
+
+.backtest-run-row button {
+  width: 100%;
+  min-height: 42px;
+  border-radius: 7px;
+  font-weight: 860;
+}
+
+.empty-state.action-empty {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.empty-state.action-empty span {
+  color: inherit;
+}
+
+.empty-state.action-empty button,
+.result-panel.error [data-empty-action] {
+  min-height: 38px;
+  border-radius: 7px;
+  padding: 0 14px;
+  font-size: 0.86rem;
+  font-weight: 820;
+}
+
+.watchlist-action {
+  display: inline-grid;
+  grid-auto-flow: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.watchlist-icon {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.watchlist-label {
+  line-height: 1;
+}
+
+.backtest-primary-chart {
+  display: block;
+}
+
+.backtest-holdings {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.backtest-holdings header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.backtest-holdings header span,
+.backtest-holdings p,
+.reliability-details summary span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 760;
+}
+
+.backtest-holdings header strong,
+.reliability-details summary strong {
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 820;
+}
+
+.backtest-holdings p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.reliability-details summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  border-bottom: 1px solid transparent;
+  background: var(--surface-2);
+  padding: 10px 12px;
+}
+
+.reliability-details[open] summary {
+  border-bottom-color: var(--line);
+}
+
+.reliability-details summary::-webkit-details-marker {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  #sectionBacktest .module-heading {
+    grid-template-columns: 1fr;
+  }
+
+  #sectionBacktest .backtest-source-switch {
+    position: sticky;
+    top: calc(var(--sticky-offset, 0px) + 6px);
+    z-index: 3;
+    background: color-mix(in srgb, var(--bg) 86%, transparent);
+    backdrop-filter: blur(12px);
+    padding-block: 2px;
+  }
+
+  .backtest-source-switch button,
+  .backtest-run-row button {
+    min-height: 44px;
+  }
+
+  .backtest-context {
+    display: grid;
+    gap: 3px;
+    margin-bottom: 0;
+    padding: 9px 10px;
+  }
+
+  .watchlist-panel {
+    gap: 7px;
+    border-radius: 7px;
+  }
+
+  .watchlist-items {
+    max-height: 210px;
+    overflow: auto;
+    padding-right: 1px;
+  }
+
+  .watchlist-item {
+    grid-template-columns: minmax(0, 1fr) 48px;
+    padding: 8px;
+  }
+
+  .watchlist-item button {
+    min-width: 48px;
+    padding: 0;
+  }
+
+  .row-button-group {
+    grid-template-columns: 40px minmax(58px, auto);
+    grid-auto-flow: column;
+    align-items: center;
+  }
+
+  .watchlist-action {
+    width: 40px;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0;
+  }
+
+  .watchlist-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .observe-action {
+    min-height: 40px;
+    min-width: 58px;
+  }
+
+  .backtest-primary-chart .chart-wrap {
+    min-height: 132px;
+  }
+
+  .benchmark-sparkline {
+    margin-top: 0;
+  }
+
+  .backtest-holdings,
+  .backtest-comparison,
+  .reliability-card {
+    margin-top: 0;
+  }
+
+  .backtest-comparison {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .backtest-comparison > div:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .symbol-strip {
+    max-height: 72px;
+    overflow: auto;
+  }
+
+  .reliability-details summary {
+    min-height: 42px;
+    padding: 9px 10px;
+  }
+}
+
+@media (max-width: 420px) {
+  .backtest-source-switch button {
+    padding-inline: 6px;
+    font-size: 0.8rem;
+  }
+
+  .backtest-comparison {
+    grid-template-columns: 1fr;
+  }
+
+  .backtest-comparison > div:last-child {
+    grid-column: auto;
+  }
+}
