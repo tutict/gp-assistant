@@ -8,6 +8,7 @@ data/
 build/
 dist/
 logs/
+output/
 models/*
 !models/.gitkeep
 desktop/node_modules/
