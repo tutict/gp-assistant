@@ -1352,11 +1352,18 @@ pub fn screen_stocks(universe: &[StockItem], criteria: &ScreenCriteria) -> Scree
     screened.sort_by(|left, right| {
         let left_value = sort_value(left, &criteria.sort_by);
         let right_value = sort_value(right, &criteria.sort_by);
-        let ordering = left_value.total_cmp(&right_value);
-        if reverse {
-            ordering.reverse()
-        } else {
-            ordering
+        match (left_value, right_value) {
+            (Some(left_value), Some(right_value)) => {
+                let ordering = left_value.total_cmp(&right_value);
+                if reverse {
+                    ordering.reverse()
+                } else {
+                    ordering
+                }
+            }
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
         }
     });
 
@@ -1622,7 +1629,14 @@ fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Option<Vec<Str
     }
 
     if let Some(industry) = criteria.industry.as_ref() {
-        if stock.industry.to_lowercase() != industry.to_lowercase() {
+        let stock_value = stock.industry.trim().to_lowercase();
+        let selected_value = industry.trim().to_lowercase();
+        if !selected_value.is_empty()
+            && (stock_value.is_empty()
+                || (stock_value != selected_value
+                    && !stock_value.contains(&selected_value)
+                    && !selected_value.contains(&stock_value)))
+        {
             return None;
         }
     }
@@ -1679,12 +1693,12 @@ fn score_stock(stock: &StockItem, reasons: &[String]) -> f64 {
     score
 }
 
-fn sort_value(item: &ScreenedStock, sort_by: &str) -> f64 {
+fn sort_value(item: &ScreenedStock, sort_by: &str) -> Option<f64> {
     match sort_by {
-        "price" => item.stock.price,
-        "pe" => item.stock.pe.unwrap_or(0.0),
-        "pb" => item.stock.pb.unwrap_or(0.0),
-        _ => item.score,
+        "price" => Some(item.stock.price),
+        "pe" => item.stock.pe,
+        "pb" => item.stock.pb,
+        _ => Some(item.score),
     }
 }
 
@@ -3192,6 +3206,126 @@ mod tests {
         .expect("native data screen should run");
         assert_eq!(result.returned, 1);
         assert_eq!(result.items[0].stock.code, "111111.SZ");
+    }
+
+    #[test]
+    fn screens_native_data_with_partial_industry_match() {
+        let mut data = sample_data_set();
+        data.stocks[0].industry = "银行服务".to_string();
+
+        let result = screen_with_data(
+            &data,
+            &ScreenCriteria {
+                industry: Some("银行".to_string()),
+                ..ScreenCriteria::default()
+            },
+        )
+        .expect("native data screen should run");
+
+        assert_eq!(result.returned, 1);
+        assert_eq!(result.items[0].stock.code, "111111.SZ");
+    }
+
+    #[test]
+    fn selected_industry_does_not_match_empty_stock_industry() {
+        let universe = vec![StockItem {
+            code: "000001.SZ".to_string(),
+            name: "平安银行".to_string(),
+            industry: "".to_string(),
+            is_st: false,
+            price: 11.0,
+            pe: Some(5.0),
+            pb: Some(0.8),
+            roe: Some(0.16),
+            market_cap_billion: Some(240.0),
+            dividend_yield: None,
+        }];
+
+        let result = screen_stocks(
+            &universe,
+            &ScreenCriteria {
+                industry: Some("银行".to_string()),
+                ..ScreenCriteria::default()
+            },
+        );
+
+        assert_eq!(result.returned, 0);
+    }
+
+    #[test]
+    fn optional_metric_sort_keeps_missing_values_last() {
+        let universe = vec![
+            StockItem {
+                code: "000001.SZ".to_string(),
+                name: "平安银行".to_string(),
+                industry: "银行".to_string(),
+                is_st: false,
+                price: 11.0,
+                pe: None,
+                pb: None,
+                roe: None,
+                market_cap_billion: None,
+                dividend_yield: None,
+            },
+            StockItem {
+                code: "600000.SH".to_string(),
+                name: "浦发银行".to_string(),
+                industry: "银行".to_string(),
+                is_st: false,
+                price: 9.0,
+                pe: Some(5.0),
+                pb: Some(0.6),
+                roe: Some(0.11),
+                market_cap_billion: Some(170.0),
+                dividend_yield: None,
+            },
+            StockItem {
+                code: "600036.SH".to_string(),
+                name: "招商银行".to_string(),
+                industry: "银行".to_string(),
+                is_st: false,
+                price: 31.0,
+                pe: Some(7.0),
+                pb: Some(0.9),
+                roe: Some(0.14),
+                market_cap_billion: Some(900.0),
+                dividend_yield: None,
+            },
+        ];
+
+        let ascending = screen_stocks(
+            &universe,
+            &ScreenCriteria {
+                sort_by: "pe".to_string(),
+                sort_dir: "asc".to_string(),
+                ..ScreenCriteria::default()
+            },
+        );
+        let descending = screen_stocks(
+            &universe,
+            &ScreenCriteria {
+                sort_by: "pe".to_string(),
+                sort_dir: "desc".to_string(),
+                ..ScreenCriteria::default()
+            },
+        );
+
+        assert_eq!(
+            ascending
+                .items
+                .iter()
+                .map(|item| item.stock.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["600000.SH", "600036.SH", "000001.SZ"]
+        );
+        assert_eq!(
+            descending
+                .items
+                .iter()
+                .map(|item| item.stock.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["600036.SH", "600000.SH", "000001.SZ"]
+        );
     }
 
     #[test]

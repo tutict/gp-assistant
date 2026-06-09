@@ -195,7 +195,7 @@ class EastmoneyProvider(StockProvider):
         if not os.path.exists(self.cache_path):
             return None
         try:
-            return pd.read_csv(self.cache_path)
+            return pd.read_csv(self.cache_path, dtype={"f12": str})
         except Exception:
             return None
 

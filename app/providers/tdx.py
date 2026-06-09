@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import os
+import math
 from datetime import datetime
 from typing import List, Optional
 
 import pandas as pd
 
-from app.providers.base import StockProvider
-from app.schemas import FinancialIndicatorSection, MinuteBar, OrderBookLevel, OrderBookSnapshot, StockItem, StockRelation
+from app.providers.base import StockProvider, normalize_proxy_mode
+from app.schemas import (
+    FinancialIndicatorItem,
+    FinancialIndicatorSection,
+    MinuteBar,
+    OrderBookLevel,
+    OrderBookSnapshot,
+    StockItem,
+    StockRelation,
+)
 
 
 class TdxProvider(StockProvider):
@@ -26,6 +35,8 @@ class TdxProvider(StockProvider):
         self.quote_batch_size = max(1, int(os.getenv("TDX_QUOTE_BATCH_SIZE", "80")))
         self.history_batch_size = max(1, min(int(os.getenv("TDX_HISTORY_BATCH_SIZE", "800")), 800))
         self.history_pages = max(1, int(os.getenv("TDX_HISTORY_PAGES", "8")))
+        self.proxy_mode = normalize_proxy_mode(proxy_mode)
+        self.fundamental_cache_path = self._resolve_fundamental_cache_path()
 
     def list_stocks(self) -> List[StockItem]:
         cached = self._read_cached_universe()
@@ -43,22 +54,47 @@ class TdxProvider(StockProvider):
             return [], [f"通达信股票池不可用：{exc}"]
 
         quotes, failed_batches, note = self._quotes_batched([item.code for item in items])
+        fundamentals, fundamental_note = self._fundamentals_for_screen()
         updated_items: list[StockItem] = []
         quoted_count = 0
         fallback_count = 0
+        fundamental_price_count = 0
+        fundamental_count = 0
+        estimated_roe_count = 0
         for item in items:
             quote = quotes.get(self._code_digits(item.code))
             updated = self._stock_with_quote(item, quote)
             if updated is None:
                 fallback_count += 1
-                updated_items.append(item)
-                continue
-            quoted_count += 1
+                updated = item
+            else:
+                quoted_count += 1
+
+            fundamental = fundamentals.get(updated.code)
+            updated, used_fundamental, estimated_roe, used_fundamental_price = self._stock_with_fundamentals(
+                updated,
+                fundamental,
+                prefer_fundamental_price=quote is None,
+            )
+            if used_fundamental:
+                fundamental_count += 1
+            if estimated_roe:
+                estimated_roe_count += 1
+            if used_fundamental_price:
+                fundamental_price_count += 1
             updated_items.append(updated)
 
         notes = [f"筛选价格口径：通达信前一交易日收盘价，已应用 {quoted_count} 只。"]
         if fallback_count:
-            notes.append(f"{fallback_count} 只股票缺少通达信昨收价，已回退到股票池缓存价格。")
+            notes.append(
+                f"{fallback_count} 只股票缺少通达信昨收价，其中 {fundamental_price_count} 只已回退到基础指标价格，其余回退到股票池缓存价格。"
+            )
+        if fundamental_count:
+            notes.append(f"基础指标补充：东方财富估值/行业字段，已合并 {fundamental_count} 只。")
+        if estimated_roe_count:
+            notes.append(f"{estimated_roe_count} 只股票缺少直接 ROE，已用 市净率 / 市盈率 估算 ROE。")
+        if fundamental_note:
+            notes.append(fundamental_note)
         if failed_batches:
             notes.append(f"通达信批量行情失败 {failed_batches} 批，其余股票已继续处理。")
         if note:
@@ -74,7 +110,10 @@ class TdxProvider(StockProvider):
         except Exception:
             quote = None
         updated = self._stock_with_quote(base, quote)
-        return updated or base
+        stock = updated or base
+        fundamentals, _ = self._fundamentals_for_screen()
+        enriched, _, _, _ = self._stock_with_fundamentals(stock, fundamentals.get(stock.code))
+        return enriched
 
     def get_history(self, code: str, start_date: str, end_date: str):
         market = self._tdx_market_code(code)
@@ -177,7 +216,48 @@ class TdxProvider(StockProvider):
         )
 
     def get_financial_indicators(self, stock: StockItem) -> FinancialIndicatorSection | None:
-        return None
+        items: list[FinancialIndicatorItem] = []
+        estimated_roe = False
+        roe = stock.roe
+        if roe is None and stock.pe and stock.pb:
+            roe = stock.pb / stock.pe
+            estimated_roe = True
+
+        def add(label: str, raw_value, formatter, unit: str | None = None, tone: str = "neutral") -> None:
+            value = self._to_float(raw_value)
+            if value is None:
+                return
+            items.append(
+                FinancialIndicatorItem(
+                    label=label,
+                    value=formatter(value),
+                    raw_value=value,
+                    unit=unit,
+                    tone=tone,
+                )
+            )
+
+        add("市盈率(TTM)", stock.pe, self._format_indicator_decimal)
+        add("市净率(最新)", stock.pb, self._format_indicator_decimal)
+        if stock.pe:
+            add("每股收益(计算)", stock.price / stock.pe, self._format_indicator_yuan, "元")
+        if stock.pb:
+            add("每股净资产", stock.price / stock.pb, self._format_indicator_yuan, "元")
+        add("净资产收益率", roe, self._format_indicator_ratio_percent, tone="rise" if (roe or 0) >= 0 else "fall")
+        add("市值", stock.market_cap_billion, self._format_indicator_yi, "亿")
+        add("股息率", stock.dividend_yield, self._format_indicator_ratio_percent)
+
+        if not items:
+            return None
+
+        notes = ["ROE 缺失时按 市净率 / 市盈率 估算。"] if estimated_roe else []
+        return FinancialIndicatorSection(
+            title="最新指标",
+            period="行情估值",
+            source="通达信/东方财富缓存",
+            items=items,
+            notes=notes,
+        )
 
     def list_relations(self) -> List[StockRelation]:
         return []
@@ -279,6 +359,27 @@ class TdxProvider(StockProvider):
                 return item
         raise KeyError(f"未找到股票 {normalized_code}")
 
+    def _fundamentals_for_screen(self) -> tuple[dict[str, StockItem], str | None]:
+        try:
+            from app.providers.eastmoney import EastmoneyProvider
+
+            provider = EastmoneyProvider(
+                cache_path=self.fundamental_cache_path,
+                refresh=self.refresh,
+                proxy_mode=self.proxy_mode,
+            )
+            items = provider.list_stocks()
+            note = getattr(provider, "_last_load_note", None)
+        except Exception as exc:
+            return {}, f"基础指标补充不可用：{exc}"
+
+        lookup: dict[str, StockItem] = {}
+        for item in items:
+            normalized = self._normalize_code(item.code)
+            if normalized:
+                lookup[normalized] = item
+        return lookup, note
+
     @classmethod
     def _stock_from_security_list_item(cls, item: dict, market: int) -> StockItem | None:
         code = str(item.get("code") or "").strip()
@@ -289,7 +390,7 @@ class TdxProvider(StockProvider):
             code=cls._normalize_code(code, market=market),
             name=name,
             industry=cls._board_label(code, market),
-            is_st="ST" in name.upper(),
+            is_st=cls._is_risk_labeled_name(name),
             price=cls._positive_float(item.get("pre_close")) or 0.0,
             pe=None,
             pb=None,
@@ -300,11 +401,12 @@ class TdxProvider(StockProvider):
 
     @classmethod
     def _stock_from_cached_row(cls, row) -> StockItem:
+        name = str(row.get("name") or row.get("code") or "")
         return StockItem(
             code=str(row.get("code") or ""),
-            name=str(row.get("name") or row.get("code") or ""),
+            name=name,
             industry=str(row.get("industry") or "通达信股票池"),
-            is_st=cls._bool_value(row.get("is_st")),
+            is_st=cls._bool_value(row.get("is_st")) or cls._is_risk_labeled_name(name),
             price=cls._positive_float(row.get("price")) or 0.0,
             pe=cls._non_negative(row.get("pe")),
             pb=cls._non_negative(row.get("pb")),
@@ -322,10 +424,60 @@ class TdxProvider(StockProvider):
         return item.model_copy(
             update={
                 "name": quote.get("name") or item.name,
-                "is_st": "ST" in str(quote.get("name") or item.name).upper(),
+                "is_st": item.is_st or self._is_risk_labeled_name(quote.get("name") or item.name),
                 "price": price,
             }
         )
+
+    def _stock_with_fundamentals(
+        self,
+        item: StockItem,
+        fundamental: StockItem | None,
+        prefer_fundamental_price: bool = False,
+    ) -> tuple[StockItem, bool, bool, bool]:
+        if fundamental is None:
+            return item, False, False, False
+
+        target_price = self._positive_float(item.price)
+        source_price = self._positive_float(fundamental.price)
+        used_fundamental_price = False
+        if prefer_fundamental_price and source_price:
+            target_price = source_price
+            used_fundamental_price = True
+        ratio = target_price / source_price if target_price and source_price else 1.0
+        if not math.isfinite(ratio) or ratio <= 0:
+            ratio = 1.0
+
+        pe = self._scale_optional(fundamental.pe, ratio)
+        pb = self._scale_optional(fundamental.pb, ratio)
+        market_cap_billion = self._scale_optional(fundamental.market_cap_billion, ratio)
+        roe = fundamental.roe
+        estimated_roe = False
+        if roe is None and pe and pb:
+            roe = pb / pe
+            estimated_roe = True
+
+        industry = self._preferred_industry(item.industry, fundamental.industry)
+        updates = {
+            "price": target_price if used_fundamental_price and target_price else item.price,
+            "industry": industry,
+            "is_st": item.is_st or self._is_risk_labeled_name(fundamental.name),
+            "pe": pe if pe is not None else item.pe,
+            "pb": pb if pb is not None else item.pb,
+            "roe": roe if roe is not None else item.roe,
+            "market_cap_billion": (
+                market_cap_billion if market_cap_billion is not None else item.market_cap_billion
+            ),
+            "dividend_yield": (
+                fundamental.dividend_yield if fundamental.dividend_yield is not None else item.dividend_yield
+            ),
+        }
+        used = (
+            any(value is not None for key, value in updates.items() if key not in {"industry", "is_st"})
+            or industry != item.industry
+            or updates["is_st"] != item.is_st
+        )
+        return item.model_copy(update=updates), used, estimated_roe, used_fundamental_price
 
     @classmethod
     def _quote_from_raw(cls, quote: dict) -> dict | None:
@@ -481,6 +633,59 @@ class TdxProvider(StockProvider):
         if not raw:
             return None
         return f"{datetime.now().date().isoformat()} {raw}"
+
+    @staticmethod
+    def _resolve_fundamental_cache_path() -> str:
+        explicit = os.getenv("TDX_FUNDAMENTAL_CACHE")
+        if explicit:
+            return explicit
+        candidates = [
+            os.getenv("ASTOCK_CACHE"),
+            "data/cache/astock_stocks.csv",
+            os.getenv("EASTMONEY_CACHE"),
+            "data/cache/eastmoney_stocks.csv",
+        ]
+        for path in candidates:
+            if path and os.path.exists(path):
+                return path
+        return "data/cache/tdx_fundamentals.csv"
+
+    @staticmethod
+    def _preferred_industry(current: str, candidate: str) -> str:
+        candidate_value = str(candidate or "").strip()
+        current_value = str(current or "").strip()
+        generic = {"", "通达信股票池", "深市A股", "沪市A股", "科创板", "创业板", "未知行业"}
+        if candidate_value and candidate_value not in generic:
+            return candidate_value
+        return current_value or candidate_value or "通达信股票池"
+
+    @staticmethod
+    def _scale_optional(value: Optional[float], ratio: float) -> Optional[float]:
+        if value is None:
+            return None
+        result = value * ratio
+        return result if math.isfinite(result) and result >= 0 else None
+
+    @staticmethod
+    def _format_indicator_decimal(value: float) -> str:
+        return f"{value:.3f}".rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _format_indicator_yuan(value: float) -> str:
+        return f"{value:.3f}".rstrip("0").rstrip(".") + "元"
+
+    @staticmethod
+    def _format_indicator_yi(value: float) -> str:
+        return f"{value:.3f}".rstrip("0").rstrip(".") + "亿"
+
+    @staticmethod
+    def _format_indicator_ratio_percent(value: float) -> str:
+        return f"{value * 100:.2f}".rstrip("0").rstrip(".") + "%"
+
+    @staticmethod
+    def _is_risk_labeled_name(name: object) -> bool:
+        value = str(name or "").strip().upper()
+        return "ST" in value or "退市" in value
 
     @staticmethod
     def _bool_value(value) -> bool:

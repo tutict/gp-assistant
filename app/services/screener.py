@@ -52,6 +52,8 @@ def _industry_matches(stock_industry: str, selected_industry: str) -> bool:
     selected_value = (selected_industry or "").strip().lower()
     if not selected_value:
         return True
+    if not stock_value:
+        return False
     return stock_value == selected_value or selected_value in stock_value or stock_value in selected_value
 
 
@@ -81,13 +83,19 @@ def _screened_stocks(universe: List[StockItem], criteria: ScreenCriteria) -> Lis
     if criteria.sort_by == "price":
         screened.sort(key=lambda x: x.stock.price, reverse=reverse)
     elif criteria.sort_by == "pe":
-        screened.sort(key=lambda x: (x.stock.pe or 0), reverse=reverse)
+        screened.sort(key=lambda x: _optional_sort_key(x.stock.pe, reverse))
     elif criteria.sort_by == "pb":
-        screened.sort(key=lambda x: (x.stock.pb or 0), reverse=reverse)
+        screened.sort(key=lambda x: _optional_sort_key(x.stock.pb, reverse))
     else:
         screened.sort(key=lambda x: x.score, reverse=reverse)
 
     return screened
+
+
+def _optional_sort_key(value: Optional[float], descending: bool) -> tuple[int, float]:
+    if value is None:
+        return (1, 0.0)
+    return (0, -value if descending else value)
 
 
 def screen_stocks(

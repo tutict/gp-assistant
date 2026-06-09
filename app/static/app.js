@@ -2,6 +2,7 @@ const $ = (selector) => document.querySelector(selector);
 
 const buttons = {
   screen: $("#screenBtn"),
+  sectorScreen: $("#sectorScreenBtn"),
   graph: $("#graphBtn"),
   trendAnalyze: $("#trendAnalyzeBtn"),
   trendScreen: $("#trendScreenBtn"),
@@ -96,6 +97,9 @@ bindActions();
 
 function bindActions() {
   buttons.screen.addEventListener("click", () => runTask(buttons.screen, panels.screen, runScreen));
+  buttons.sectorScreen?.addEventListener("click", () =>
+    runTask(buttons.sectorScreen, panels.screen, runSectorScreen),
+  );
   buttons.graph.addEventListener("click", () => runTask(buttons.graph, panels.graph, runGraph));
   buttons.trendAnalyze.addEventListener("click", () => runTask(buttons.trendAnalyze, panels.trend, runTrendAnalysis));
   buttons.trendScreen.addEventListener("click", () => runTask(buttons.trendScreen, panels.trend, runTrendScreen));
@@ -292,15 +296,7 @@ async function runTask(button, panel, task) {
 
 async function runScreen() {
   if ($("#sectorMode")?.checked) {
-    setLoading(panels.screen, "按板块筛选中");
-    const payload = {
-      criteria: buildCriteria(),
-      max_sectors: clampInt($("#maxSectors")?.value, 1, 50, 8),
-      per_sector_limit: clampInt($("#perSectorLimit")?.value, 1, 50, 3),
-      min_sector_candidates: 1,
-    };
-    const data = await postJson("/api/sector-screen", payload, panels.screen);
-    if (data) renderSectorScreenResult(panels.screen, data);
+    await runSectorScreen();
     return;
   }
 
@@ -308,6 +304,18 @@ async function runScreen() {
   const payload = buildCriteria();
   const data = await postJson("/api/screen", payload, panels.screen);
   if (data) renderScreenResult(panels.screen, data);
+}
+
+async function runSectorScreen() {
+  setLoading(panels.screen, "按板块筛选中");
+  const payload = {
+    criteria: buildCriteria(),
+    max_sectors: clampInt($("#maxSectors")?.value, 1, 50, 8),
+    per_sector_limit: clampInt($("#perSectorLimit")?.value, 1, 50, 3),
+    min_sector_candidates: 1,
+  };
+  const data = await postJson("/api/sector-screen", payload, panels.screen);
+  if (data) renderSectorScreenResult(panels.screen, data);
 }
 
 async function runGraph() {
@@ -502,16 +510,21 @@ async function runUpstreamRagImport() {
 }
 
 async function runUpstreamQrScan() {
-  if (!("BarcodeDetector" in window) || !navigator.mediaDevices?.getUserMedia) {
-    setError(panels.newsRag, "当前 WebView 不支持扫码", "请用系统相机扫描桌面端二维码后，把二维码 JSON 或 manifest_url 粘贴到输入框。");
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setError(panels.newsRag, "当前 WebView 不支持打开相机", "请用系统相机扫描桌面端二维码后，把二维码 JSON 或 manifest_url 粘贴到输入框。");
     return;
   }
-  const detector = new BarcodeDetector({ formats: ["qr_code"] });
+  const detector = createBarcodeDetector();
+  const jsQrAvailable = typeof window.jsQR === "function";
+  if (!detector && !jsQrAvailable) {
+    setError(panels.newsRag, "当前 WebView 不支持扫码", "缺少二维码解码器。请把二维码 JSON 或 manifest_url 粘贴到输入框。");
+    return;
+  }
   let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } });
+    stream = await openQrCameraStream();
   } catch (err) {
-    setError(panels.newsRag, "无法打开相机", err.message);
+    setError(panels.newsRag, "无法打开相机", cameraAccessMessage(err));
     return;
   }
 
@@ -521,22 +534,29 @@ async function runUpstreamQrScan() {
       <video id="upstreamScanVideo" autoplay playsinline muted></video>
       <div>
         <strong>对准桌面端二维码</strong>
+        <span id="upstreamScanStatus" class="upstream-scan-status">${detector ? "使用原生识别" : "使用兼容识别"}</span>
         <button type="button" data-upstream-scan-cancel>取消</button>
       </div>
     </div>
   `;
   const video = $("#upstreamScanVideo");
   video.srcObject = stream;
-  await video.play();
+  try {
+    await video.play();
+  } catch (err) {
+    stream.getTracks().forEach((track) => track.stop());
+    setError(panels.newsRag, "无法播放相机画面", err.message || "相机已授权但视频预览启动失败。");
+    return;
+  }
 
   let cancelled = false;
   window.__gpUpstreamQrCancel = () => {
     cancelled = true;
   };
+  const canvas = document.createElement("canvas");
   try {
     while (!cancelled) {
-      const codes = await detector.detect(video).catch(() => []);
-      const raw = codes?.[0]?.rawValue || "";
+      const raw = detector ? await detectWithBarcodeDetector(detector, video) : detectWithJsQr(video, canvas);
       if (raw) {
         $("#upstreamImportPayload").value = raw;
         break;
@@ -553,6 +573,70 @@ async function runUpstreamQrScan() {
     return;
   }
   await runUpstreamRagImport();
+}
+
+function createBarcodeDetector() {
+  if (!("BarcodeDetector" in window)) return null;
+  try {
+    return new BarcodeDetector({ formats: ["qr_code"] });
+  } catch {
+    return null;
+  }
+}
+
+async function openQrCameraStream() {
+  const constraints = [
+    { video: { facingMode: { ideal: "environment" } } },
+    { video: true },
+  ];
+  let lastError = null;
+  for (const constraint of constraints) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraint);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("相机不可用。");
+}
+
+async function detectWithBarcodeDetector(detector, video) {
+  const codes = await detector.detect(video).catch(() => []);
+  return codes?.[0]?.rawValue || "";
+}
+
+function detectWithJsQr(video, canvas) {
+  const sourceWidth = video.videoWidth;
+  const sourceHeight = video.videoHeight;
+  if (!sourceWidth || !sourceHeight || typeof window.jsQR !== "function") return "";
+
+  const maxDimension = 900;
+  const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight));
+  const width = Math.max(1, Math.round(sourceWidth * scale));
+  const height = Math.max(1, Math.round(sourceHeight * scale));
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) return "";
+  context.drawImage(video, 0, 0, width, height);
+  const image = context.getImageData(0, 0, width, height);
+  const code = window.jsQR(image.data, width, height, { inversionAttempts: "attemptBoth" });
+  return code?.data || "";
+}
+
+function cameraAccessMessage(error) {
+  const name = error?.name || "";
+  const message = error?.message || "";
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+    return "相机权限被拒绝。请在系统设置里允许本应用使用相机，然后重新扫码。";
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return "没有找到可用摄像头。";
+  }
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return "摄像头被其他应用占用，或 Android WebView 无法启动摄像头。请关闭占用相机的应用后重试。";
+  }
+  return message || "Android WebView 未返回具体原因。请确认已授予相机权限。";
 }
 
 async function runUpstreamRagDetail(stockCode, packVersion) {
@@ -1536,6 +1620,10 @@ async function requestTauriJson(method, url, payload) {
     if (path === "/api/stock-search") {
       return { handled: true, data: await searchTauriStocks(invoke, parsed.searchParams) };
     }
+    if (path.startsWith("/api/observe/")) {
+      const code = decodeURIComponent(path.slice("/api/observe/".length));
+      return { handled: true, data: await observeTauriStock(invoke, code, parsed.searchParams) };
+    }
     throw new Error(`移动端暂不支持该接口：${path}`);
   }
 
@@ -1553,9 +1641,12 @@ async function requestTauriJson(method, url, payload) {
         handled: true,
         data: {
           source: DEFAULT_DATA_SOURCE,
-          refreshed: false,
-          status: await mobileDataStatus(invoke),
-          notes: ["移动端使用构建时内置的通达信数据包；更新股票池需要重新打包安装。"],
+          refreshed: true,
+          status: await refreshMobileMarketData(invoke),
+          notes: [
+            "移动端已重新加载内置通达信数据包。",
+            "如需更新到最新全市场股票池，请在桌面端重新构建并重新安装移动包。",
+          ],
         },
       };
     case "/api/data-sources/prune-cache":
@@ -1693,9 +1784,14 @@ function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-async function loadMobileMarketData(invoke) {
+async function loadMobileMarketData(invoke, options = {}) {
+  if (options.force) {
+    mobileMarketDataPromise = null;
+    mobileMarketDataSummary = null;
+  }
   if (!mobileMarketDataPromise) {
-    mobileMarketDataPromise = fetch(MOBILE_MARKET_DATA_URL)
+    const url = options.force ? `${MOBILE_MARKET_DATA_URL}?t=${Date.now()}` : MOBILE_MARKET_DATA_URL;
+    mobileMarketDataPromise = fetch(url, { cache: options.force ? "reload" : "default" })
       .then(async (response) => {
         if (!response.ok) throw new Error(`移动端未内置通达信数据集：HTTP ${response.status}`);
         const data = await response.json();
@@ -1708,6 +1804,11 @@ async function loadMobileMarketData(invoke) {
       });
   }
   return await mobileMarketDataPromise;
+}
+
+async function refreshMobileMarketData(invoke) {
+  await loadMobileMarketData(invoke, { force: true });
+  return await mobileDataStatus(invoke);
 }
 
 async function buildTauriSectorScreen(invoke, payload = {}) {
@@ -1747,6 +1848,87 @@ async function buildTauriSectorScreen(invoke, payload = {}) {
   };
 }
 
+async function observeTauriStock(invoke, rawCode, params) {
+  const code = normalizeStockCode(rawCode);
+  if (!code) throw new Error(`股票代码无效：${rawCode || ""}`);
+
+  const data = await loadMobileMarketData(invoke);
+  const stock = findMobileStock(data, code);
+  if (!stock) throw new Error(`未找到股票 ${code}`);
+
+  const notes = ["数据源：通达信移动数据包。"];
+  let trend = null;
+  try {
+    trend = await invoke("core_trend_with_data", {
+      payload: {
+        data,
+        request: {
+          code: stock.code,
+          start_date: normalizeDateParam(params.get("start_date"), "20200101"),
+          end_date: normalizeDateParam(params.get("end_date"), currentSystemDateCompact()),
+          series_limit: clampInt(params.get("series_limit"), 20, 500, 120),
+        },
+      },
+    });
+  } catch (error) {
+    notes.push(`日线技术面不可用：${error?.message || error}`);
+  }
+
+  if (!Object.keys(data.histories || {}).length) {
+    notes.push("当前移动数据包未内置历史 K 线，已展示基础行情和估值快照。");
+  }
+
+  const minutePeriod = ["1", "5", "15", "30", "60"].includes(params.get("minute_period"))
+    ? params.get("minute_period")
+    : "1";
+  return {
+    source: "tdx",
+    stock,
+    financial_indicators: buildMobileFinancialIndicators(stock),
+    trend,
+    minute_period: minutePeriod,
+    minute_bars: [],
+    order_book: null,
+    notes,
+  };
+}
+
+function findMobileStock(data, rawCode) {
+  const normalized = normalizeStockCode(rawCode);
+  const digits = stockCodeDigits(rawCode);
+  return (data.stocks || []).find((stock) => {
+    const stockCode = stock?.code || "";
+    return normalizeStockCode(stockCode) === normalized || stockCodeDigits(stockCode) === digits;
+  });
+}
+
+function buildMobileFinancialIndicators(stock) {
+  const items = [];
+  const add = (label, rawValue, formatter, tone = "neutral") => {
+    if (rawValue === null || rawValue === undefined || rawValue === "") return;
+    const value = Number(rawValue);
+    if (!Number.isFinite(value)) return;
+    items.push({ label, value: formatter(value), raw_value: value, tone });
+  };
+
+  add("市盈率(TTM)", stock.pe, formatNumber);
+  add("市净率(最新)", stock.pb, formatNumber);
+  if (stock.pe) add("每股收益(计算)", Number(stock.price || 0) / Number(stock.pe), (value) => `${formatNumber(value)}元`);
+  if (stock.pb) add("每股净资产", Number(stock.price || 0) / Number(stock.pb), (value) => `${formatNumber(value)}元`);
+  add("净资产收益率", stock.roe, formatPercent, Number(stock.roe || 0) >= 0 ? "rise" : "fall");
+  add("市值", stock.market_cap_billion, (value) => `${formatNumber(value)}亿`);
+  add("股息率", stock.dividend_yield, formatPercent);
+
+  if (!items.length) return null;
+  return {
+    title: "最新指标",
+    period: "移动数据包",
+    source: "行情估值",
+    items,
+    notes: [],
+  };
+}
+
 async function searchTauriStocks(invoke, params) {
   const query = String(params.get("q") || "").trim().toLowerCase();
   const limit = clampInt(params.get("limit"), 1, 20, STOCK_SEARCH_LIMIT);
@@ -1770,6 +1952,7 @@ async function mobileDataStatus(invoke) {
       policy: { mode: "bundled" },
       notes: [
         `移动端使用内置通达信数据集，股票 ${summary.stock_count || 0} 只。`,
+        ...((data.notes || []).slice(0, 3)),
         ...(summary.warnings || []),
       ],
     };
