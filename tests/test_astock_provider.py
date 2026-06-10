@@ -1,10 +1,24 @@
 import unittest
+from unittest.mock import patch
 
 from app.providers.astock import AStockDataProvider
 from app.schemas import StockItem
 
 
 class AStockDataProviderScreenTests(unittest.TestCase):
+    def test_invalid_numeric_env_uses_safe_defaults(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "ASTOCK_TIMEOUT": "bad",
+                "ASTOCK_TENCENT_BATCH_SIZE": "bad",
+            },
+        ):
+            provider = AStockDataProvider()
+
+        self.assertEqual(provider.timeout, 10)
+        self.assertEqual(provider._tencent.batch_size, 80)
+
     def test_list_stocks_for_screen_uses_tencent_previous_close(self):
         provider = AStockDataProvider()
         provider.list_stocks = lambda: [

@@ -19,6 +19,23 @@ class TdxProviderTests(unittest.TestCase):
                 self.assertIsInstance(provider, TdxProvider)
                 self.assertEqual(provider.name, "tdx")
 
+    def test_invalid_numeric_env_uses_safe_defaults(self):
+        with patch.dict(
+            os.environ,
+            {
+                "TDX_TIMEOUT": "bad",
+                "TDX_PAGE_SIZE": "bad",
+                "TDX_TENCENT_BATCH_SIZE": "bad",
+                "TDX_HISTORY_BATCH_SIZE": "9999",
+            },
+        ):
+            provider = TdxProvider()
+
+        self.assertEqual(provider.timeout, 6)
+        self.assertEqual(provider.page_size, 1000)
+        self.assertEqual(provider.tencent_batch_size, 80)
+        self.assertEqual(provider.history_batch_size, 800)
+
     def test_security_list_item_normalizes_a_share_codes(self):
         sh_stock = TdxProvider._stock_from_security_list_item(
             {"code": "600000", "name": "浦发银行", "pre_close": 9.8},

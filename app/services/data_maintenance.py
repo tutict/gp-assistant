@@ -261,7 +261,9 @@ def _is_a_share_trading_day(day: date) -> tuple[bool, str | None]:
     try:
         return day in _a_share_trading_days(), None
     except Exception as exc:
-        return False, f"A 股交易日历不可用，已跳过自动刷新：{exc}"
+        fallback_trading_day = day.weekday() < 5
+        fallback_note = "按工作日兜底判定为交易日" if fallback_trading_day else "按周末兜底判定为非交易日"
+        return fallback_trading_day, f"A 股交易日历不可用，{fallback_note}：{exc}"
 
 
 @lru_cache(maxsize=1)

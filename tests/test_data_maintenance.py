@@ -92,6 +92,32 @@ class DataMaintenanceAutoRefreshTests(unittest.TestCase):
         self.assertTrue(result.after_close)
         refresh.assert_called_once()
 
+    def test_auto_refresh_falls_back_to_weekday_when_calendar_is_unavailable(self):
+        self._write_cache(datetime(2026, 6, 8, 14, 0, tzinfo=maintenance.CHINA_TZ))
+
+        with self._patched_cache(), patch.object(
+            maintenance, "_a_share_trading_days", side_effect=RuntimeError("calendar offline")
+        ):
+            status = maintenance.data_source_status("tdx", self.policy)
+            refresh_result = DataRefreshResult(
+                source="tdx",
+                refreshed=True,
+                status=status,
+                notes=["refreshed"],
+            )
+            with patch.object(maintenance, "refresh_universe", return_value=refresh_result) as refresh:
+                result = maintenance.auto_refresh_universe_after_close(
+                    "tdx",
+                    self.policy,
+                    now=datetime(2026, 6, 8, 16, 0, tzinfo=maintenance.CHINA_TZ),
+                )
+
+        self.assertTrue(result.trading_day)
+        self.assertTrue(result.due)
+        self.assertTrue(result.refreshed)
+        self.assertTrue(any("交易日历不可用" in note for note in result.notes))
+        refresh.assert_called_once()
+
     def _patched_cache(self):
         return patch.multiple(
             maintenance,

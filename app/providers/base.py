@@ -28,6 +28,30 @@ def normalize_proxy_mode(proxy_mode: Optional[str] = None) -> str:
     return PROXY_MODE_SYSTEM
 
 
+def env_int(name: str, default: int, *, minimum: int | None = None, maximum: int | None = None) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
+
+
+def env_float(name: str, default: float, *, minimum: float | None = None, maximum: float | None = None) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
+
+
 @contextmanager
 def proxy_environment(proxy_mode: Optional[str] = None):
     if normalize_proxy_mode(proxy_mode) != PROXY_MODE_NONE:

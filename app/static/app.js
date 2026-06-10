@@ -100,6 +100,82 @@ const llmSettings = {
   clear: $("#llmClearBtn"),
 };
 
+const TAURI_MOBILE_GET_ROUTES = {
+  "/api/data-sources/status": async ({ invoke }) => mobileDataStatus(invoke),
+  "/api/upstream-rag/mobile/list": async ({ invoke }) => invoke("core_upstream_rag_list"),
+  "/api/upstream-rag/mobile/detail": async ({ invoke, parsed }) =>
+    invoke("core_upstream_rag_detail", {
+      payload: {
+        stock_code: parsed.searchParams.get("stock_code") || "",
+        pack_version: parsed.searchParams.get("pack_version") || "",
+      },
+    }),
+  "/api/stock-search": async ({ invoke, parsed }) => searchTauriStocks(invoke, parsed.searchParams),
+};
+
+const TAURI_MOBILE_GET_PREFIX_ROUTES = [
+  {
+    prefix: "/api/observe/",
+    handler: async ({ invoke, path, parsed }) => {
+      const code = decodeURIComponent(path.slice("/api/observe/".length));
+      return observeTauriStock(invoke, code, parsed.searchParams);
+    },
+  },
+];
+
+const TAURI_MOBILE_POST_ROUTES = {
+  "/api/screen": async ({ invoke, payload }) =>
+    invokeCoreWithMobileData(invoke, "core_screen_with_data", "criteria", payload),
+  "/api/data-sources/auto-refresh-universe": async ({ invoke }) => ({
+    source: DEFAULT_DATA_SOURCE,
+    checked_at: new Date().toISOString(),
+    trading_day: false,
+    after_close: false,
+    due: false,
+    refreshed: false,
+    status: await mobileDataStatus(invoke),
+    notes: ["移动端使用内置股票池数据包，交易日自动刷新仅在桌面端执行。"],
+  }),
+  "/api/data-sources/refresh-universe": async ({ invoke }) => ({
+    source: DEFAULT_DATA_SOURCE,
+    refreshed: true,
+    status: await refreshMobileMarketData(invoke),
+    notes: [
+      "移动端已重新加载内置通达信数据包。",
+      "如需更新到最新全市场股票池，请在桌面端重新构建并重新安装移动包。",
+    ],
+  }),
+  "/api/data-sources/prune-cache": async ({ invoke }) => ({
+    removed_files: 0,
+    removed_bytes: 0,
+    status: await mobileDataStatus(invoke),
+    notes: ["移动端当前没有可清理的行情缓存。"],
+  }),
+  "/api/sector-screen": async ({ invoke, payload }) => buildTauriSectorScreen(invoke, payload),
+  "/api/graph-screen": async ({ invoke, payload }) =>
+    invokeCoreWithMobileData(invoke, "core_graph_screen_with_data", "request", payload),
+  "/api/trend": async ({ invoke, payload }) =>
+    invokeCoreWithMobileData(invoke, "core_trend_with_data", "request", payload),
+  "/api/trend-screen": async ({ invoke, payload }) =>
+    invokeCoreWithMobileData(invoke, "core_trend_screen_with_data", "request", payload),
+  "/api/backtest": async ({ invoke, payload }) =>
+    invokeCoreWithMobileData(invoke, "core_backtest_with_data", "request", payload),
+  "/api/agent": async ({ invoke, payload }) =>
+    invokeCoreWithMobileData(invoke, "core_agent_with_data", "message", payload?.message || ""),
+  "/api/upstream-rag/mobile/import": async ({ invoke, payload }) => invoke("core_upstream_rag_import", { payload }),
+  "/api/upstream-rag/mobile/detail": async ({ invoke, payload }) => invoke("core_upstream_rag_detail", { payload }),
+  "/api/upstream-rag/mobile/rollback": async ({ invoke, payload }) => invoke("core_upstream_rag_rollback", { payload }),
+};
+
+async function invokeCoreWithMobileData(invoke, command, payloadKey, payloadValue) {
+  return invoke(command, {
+    payload: {
+      data: await loadMobileMarketData(invoke),
+      [payloadKey]: payloadValue,
+    },
+  });
+}
+
 initTheme();
 initRuntimeSurface();
 initMobileNav();
@@ -1899,126 +1975,25 @@ async function requestTauriJson(method, url, payload) {
   const invoke = window.__TAURI__?.core?.invoke;
   if (!invoke || !isMobileTauriRuntime()) return { handled: false };
 
+  const normalizedMethod = String(method || "GET").toUpperCase();
   const parsed = new URL(url, window.location.href);
   const path = parsed.pathname;
-  if (method === "GET") {
-    if (path === "/api/data-sources/status") return { handled: true, data: await mobileDataStatus(invoke) };
-    if (path === "/api/upstream-rag/mobile/list") {
-      return { handled: true, data: await invoke("core_upstream_rag_list") };
-    }
-    if (path === "/api/upstream-rag/mobile/detail") {
-      return {
-        handled: true,
-        data: await invoke("core_upstream_rag_detail", {
-          payload: {
-            stock_code: parsed.searchParams.get("stock_code") || "",
-            pack_version: parsed.searchParams.get("pack_version") || "",
-          },
-        }),
-      };
-    }
-    if (path === "/api/stock-search") {
-      return { handled: true, data: await searchTauriStocks(invoke, parsed.searchParams) };
-    }
-    if (path.startsWith("/api/observe/")) {
-      const code = decodeURIComponent(path.slice("/api/observe/".length));
-      return { handled: true, data: await observeTauriStock(invoke, code, parsed.searchParams) };
-    }
-    throw new Error(`移动端暂不支持该接口：${path}`);
-  }
+  const handler = tauriMobileRouteHandler(normalizedMethod, path);
+  if (handler) return { handled: true, data: await handler({ invoke, parsed, path, payload }) };
+  if (normalizedMethod === "GET" || normalizedMethod === "POST") throw new Error(`移动端暂不支持该接口：${path}`);
+  return { handled: false };
+}
 
-  if (method !== "POST") return { handled: false };
-  switch (path) {
-    case "/api/screen":
-      return {
-        handled: true,
-        data: await invoke("core_screen_with_data", {
-          payload: { data: await loadMobileMarketData(invoke), criteria: payload },
-        }),
-      };
-    case "/api/data-sources/auto-refresh-universe":
-      return {
-        handled: true,
-        data: {
-          source: DEFAULT_DATA_SOURCE,
-          checked_at: new Date().toISOString(),
-          trading_day: false,
-          after_close: false,
-          due: false,
-          refreshed: false,
-          status: await mobileDataStatus(invoke),
-          notes: ["移动端使用内置股票池数据包，交易日自动刷新仅在桌面端执行。"],
-        },
-      };
-    case "/api/data-sources/refresh-universe":
-      return {
-        handled: true,
-        data: {
-          source: DEFAULT_DATA_SOURCE,
-          refreshed: true,
-          status: await refreshMobileMarketData(invoke),
-          notes: [
-            "移动端已重新加载内置通达信数据包。",
-            "如需更新到最新全市场股票池，请在桌面端重新构建并重新安装移动包。",
-          ],
-        },
-      };
-    case "/api/data-sources/prune-cache":
-      return {
-        handled: true,
-        data: {
-          removed_files: 0,
-          removed_bytes: 0,
-          status: await mobileDataStatus(invoke),
-          notes: ["移动端当前没有可清理的行情缓存。"],
-        },
-      };
-    case "/api/sector-screen":
-      return { handled: true, data: await buildTauriSectorScreen(invoke, payload) };
-    case "/api/graph-screen":
-      return {
-        handled: true,
-        data: await invoke("core_graph_screen_with_data", {
-          payload: { data: await loadMobileMarketData(invoke), request: payload },
-        }),
-      };
-    case "/api/trend":
-      return {
-        handled: true,
-        data: await invoke("core_trend_with_data", {
-          payload: { data: await loadMobileMarketData(invoke), request: payload },
-        }),
-      };
-    case "/api/trend-screen":
-      return {
-        handled: true,
-        data: await invoke("core_trend_screen_with_data", {
-          payload: { data: await loadMobileMarketData(invoke), request: payload },
-        }),
-      };
-    case "/api/backtest":
-      return {
-        handled: true,
-        data: await invoke("core_backtest_with_data", {
-          payload: { data: await loadMobileMarketData(invoke), request: payload },
-        }),
-      };
-    case "/api/agent":
-      return {
-        handled: true,
-        data: await invoke("core_agent_with_data", {
-          payload: { data: await loadMobileMarketData(invoke), message: payload.message || "" },
-        }),
-      };
-    case "/api/upstream-rag/mobile/import":
-      return { handled: true, data: await invoke("core_upstream_rag_import", { payload }) };
-    case "/api/upstream-rag/mobile/detail":
-      return { handled: true, data: await invoke("core_upstream_rag_detail", { payload }) };
-    case "/api/upstream-rag/mobile/rollback":
-      return { handled: true, data: await invoke("core_upstream_rag_rollback", { payload }) };
-    default:
-      throw new Error(`移动端暂不支持该接口：${path}`);
+function tauriMobileRouteHandler(method, path) {
+  if (method === "GET") {
+    return (
+      TAURI_MOBILE_GET_ROUTES[path] ||
+      TAURI_MOBILE_GET_PREFIX_ROUTES.find((route) => path.startsWith(route.prefix))?.handler ||
+      null
+    );
   }
+  if (method === "POST") return TAURI_MOBILE_POST_ROUTES[path] || null;
+  return null;
 }
 
 function isTauriRuntime() {

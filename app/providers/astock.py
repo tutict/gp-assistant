@@ -9,8 +9,9 @@ import pandas as pd
 import requests
 
 from app.providers.akshare import AkShareProvider
-from app.providers.base import PROXY_MODE_NONE, StockProvider, normalize_proxy_mode
+from app.providers.base import PROXY_MODE_NONE, StockProvider, env_float, env_int, normalize_proxy_mode
 from app.providers.eastmoney import EastmoneyProvider
+from app.providers.tencent import TencentQuoteClient
 from app.schemas import FinancialIndicatorSection, MinuteBar, OrderBookSnapshot, StockItem, StockRelation
 
 
@@ -26,10 +27,15 @@ class AStockDataProvider(StockProvider):
         self.proxy_mode = normalize_proxy_mode(proxy_mode)
         self.refresh = refresh or os.getenv("ASTOCK_REFRESH", "false").lower() == "true"
         self.cache_path = cache_path or os.getenv("ASTOCK_CACHE", "data/cache/astock_stocks.csv")
-        self.timeout = float(os.getenv("ASTOCK_TIMEOUT", "10"))
+        self.timeout = env_float("ASTOCK_TIMEOUT", 10, minimum=0.1)
         self._session = requests.Session()
         self._session.trust_env = self.proxy_mode != PROXY_MODE_NONE
         self._session.headers.update({"User-Agent": "Mozilla/5.0"})
+        self._tencent = TencentQuoteClient(
+            self._session,
+            self.timeout,
+            env_int("ASTOCK_TENCENT_BATCH_SIZE", 80, minimum=1),
+        )
         self._eastmoney = EastmoneyProvider(
             cache_path=self.cache_path,
             refresh=self.refresh,
@@ -189,19 +195,7 @@ class AStockDataProvider(StockProvider):
         return self._eastmoney.list_relations()
 
     def _tencent_quotes_batched(self, codes: list[str]) -> tuple[dict[str, dict], int]:
-        batch_size = max(1, int(os.getenv("ASTOCK_TENCENT_BATCH_SIZE", "80")))
-        quotes: dict[str, dict] = {}
-        failed_batches = 0
-        normalized_codes = [self._normalize_code(code) for code in codes if code]
-        for index in range(0, len(normalized_codes), batch_size):
-            batch = normalized_codes[index : index + batch_size]
-            if not batch:
-                continue
-            try:
-                quotes.update(self._tencent_quote(batch))
-            except Exception:
-                failed_batches += 1
-        return quotes, failed_batches
+        return self._tencent.quotes_batched(codes, self._tencent_quote)
 
     def _tdx_quotes_batched(self, codes: list[str]) -> tuple[dict[str, dict], int, str | None]:
         enabled = os.getenv("ASTOCK_TDX_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
@@ -213,13 +207,13 @@ class AStockDataProvider(StockProvider):
         except Exception:
             return {}, 0, "通达信补充行情未启用：请安装 pytdx。"
 
-        batch_size = max(1, int(os.getenv("ASTOCK_TDX_BATCH_SIZE", "80")))
+        batch_size = env_int("ASTOCK_TDX_BATCH_SIZE", 80, minimum=1)
         normalized_codes = [self._normalize_code(code) for code in codes if self._tdx_market_code(code) is not None]
         if not normalized_codes:
             return {}, 0, None
 
         last_error: str | None = None
-        timeout = float(os.getenv("ASTOCK_TDX_TIMEOUT", "3"))
+        timeout = env_float("ASTOCK_TDX_TIMEOUT", 3, minimum=0.1)
         for host, port in self._tdx_hosts():
             api = TdxHq_API(raise_exception=True, auto_retry=False)
             try:
@@ -327,65 +321,7 @@ class AStockDataProvider(StockProvider):
         }
 
     def _tencent_quote(self, codes: list[str]) -> dict[str, dict]:
-        prefixed = [self._tencent_symbol(code) for code in codes]
-        response = self._session.get(
-            "https://qt.gtimg.cn/q=" + ",".join(prefixed),
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
-        response.encoding = "gbk"
-        result: dict[str, dict] = {}
-        for line in response.text.strip().split(";"):
-            if not line.strip() or "=" not in line or '"' not in line:
-                continue
-            key = line.split("=")[0].split("_")[-1]
-            values = line.split('"')[1].split("~")
-            if len(values) < 53:
-                continue
-            code = key[2:]
-            result[code] = {
-                "name": values[1],
-                "price": self._to_float(values[3]),
-                "last_close": self._to_float(values[4]),
-                "open": self._to_float(values[5]),
-                "bid1": self._to_float(values[9]),
-                "bid1_volume": self._to_float(values[10]),
-                "bid2": self._to_float(values[11]),
-                "bid2_volume": self._to_float(values[12]),
-                "bid3": self._to_float(values[13]),
-                "bid3_volume": self._to_float(values[14]),
-                "bid4": self._to_float(values[15]),
-                "bid4_volume": self._to_float(values[16]),
-                "bid5": self._to_float(values[17]),
-                "bid5_volume": self._to_float(values[18]),
-                "ask1": self._to_float(values[19]),
-                "ask1_volume": self._to_float(values[20]),
-                "ask2": self._to_float(values[21]),
-                "ask2_volume": self._to_float(values[22]),
-                "ask3": self._to_float(values[23]),
-                "ask3_volume": self._to_float(values[24]),
-                "ask4": self._to_float(values[25]),
-                "ask4_volume": self._to_float(values[26]),
-                "ask5": self._to_float(values[27]),
-                "ask5_volume": self._to_float(values[28]),
-                "timestamp": self._format_tencent_timestamp(values[30]),
-                "change_amt": self._to_float(values[31]),
-                "change_pct": self._to_float(values[32]),
-                "high": self._to_float(values[33]),
-                "low": self._to_float(values[34]),
-                "amount_wan": self._to_float(values[37]),
-                "turnover_pct": self._to_float(values[38]),
-                "pe_ttm": self._to_float(values[39]),
-                "amplitude_pct": self._to_float(values[43]),
-                "mcap_yi": self._to_float(values[44]),
-                "float_mcap_yi": self._to_float(values[45]),
-                "pb": self._to_float(values[46]),
-                "limit_up": self._to_float(values[47]),
-                "limit_down": self._to_float(values[48]),
-                "vol_ratio": self._to_float(values[49]),
-                "pe_static": self._to_float(values[52]),
-            }
-        return result
+        return self._tencent.quote(codes)
 
     def _baidu_daily_bars(self, code: str, start_date: str, end_date: str) -> pd.DataFrame:
         response = self._session.get(
@@ -468,26 +404,6 @@ class AStockDataProvider(StockProvider):
     @staticmethod
     def _date_key(value: str) -> str:
         return str(value or "").replace("-", "")[:8]
-
-    @staticmethod
-    def _format_tencent_timestamp(value: str) -> Optional[str]:
-        raw = str(value or "").strip()
-        if len(raw) < 14:
-            return raw or None
-        try:
-            return datetime.strptime(raw[:14], "%Y%m%d%H%M%S").isoformat(timespec="seconds")
-        except ValueError:
-            return raw
-
-    @staticmethod
-    def _tencent_symbol(code: str) -> str:
-        normalized = AStockDataProvider._normalize_code(code)
-        digits = AStockDataProvider._code_digits(normalized)
-        if normalized.endswith(".SH") or digits.startswith(("6", "9")):
-            return f"sh{digits}"
-        if normalized.endswith(".BJ") or digits.startswith("8"):
-            return f"bj{digits}"
-        return f"sz{digits}"
 
     @staticmethod
     def _code_digits(code: str) -> str:
