@@ -1,7 +1,7 @@
 import unittest
 
-from app.schemas import ScreenCriteria, StockItem
-from app.services.screener import screen_stocks
+from app.schemas import ScreenCriteria, SectorScreenRequest, StockItem
+from app.services.screener import screen_stocks, screen_stocks_by_sector
 
 
 class ScreenerIndustryTests(unittest.TestCase):
@@ -44,6 +44,31 @@ class ScreenerIndustryTests(unittest.TestCase):
         result = screen_stocks(universe, ScreenCriteria(sort_by="pe", sort_dir="asc"))
 
         self.assertEqual([item.stock.code for item in result.items], ["600000.SH", "600036.SH", "000001.SZ"])
+
+    def test_sector_screen_defaults_return_more_groups_with_three_stocks_each(self):
+        universe = []
+        for sector_index in range(13):
+            for stock_index in range(3):
+                universe.append(
+                    StockItem(
+                        code=f"{sector_index:03d}{stock_index:03d}.SZ",
+                        name=f"stock-{sector_index}-{stock_index}",
+                        industry=f"sector-{sector_index:02d}",
+                        price=10.0 + stock_index,
+                    )
+                )
+        universe.extend(
+            [
+                StockItem(code="900001.SZ", name="small-1", industry="small-sector", price=10.0),
+                StockItem(code="900002.SZ", name="small-2", industry="small-sector", price=11.0),
+            ]
+        )
+
+        result = screen_stocks_by_sector(universe, SectorScreenRequest())
+
+        self.assertEqual(result.sector_count, 12)
+        self.assertTrue(all(group.returned == 3 for group in result.groups))
+        self.assertNotIn("small-sector", {group.sector for group in result.groups})
 
 
 if __name__ == "__main__":

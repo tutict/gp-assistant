@@ -65,8 +65,8 @@ class ScreenResult(BaseModel):
 class SectorScreenRequest(BaseModel):
     criteria: ScreenCriteria = Field(default_factory=ScreenCriteria)
     per_sector_limit: int = Field(default=3, ge=1, le=50)
-    max_sectors: int = Field(default=8, ge=1, le=50)
-    min_sector_candidates: int = Field(default=1, ge=1, le=500)
+    max_sectors: int = Field(default=12, ge=1, le=50)
+    min_sector_candidates: int = Field(default=3, ge=1, le=500)
 
 
 class SectorScreenGroup(BaseModel):

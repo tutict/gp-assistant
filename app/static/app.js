@@ -37,6 +37,9 @@ const AUTO_REFRESH_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const LLM_SETTINGS_KEY = "gp-assistant-llm-settings";
 const WATCHLIST_KEY = "gp-assistant-watchlist";
 const DEFAULT_RESULT_LIMIT = 10;
+const DEFAULT_SECTOR_GROUP_LIMIT = 12;
+const DEFAULT_PER_SECTOR_LIMIT = 3;
+const SECTOR_SCREEN_POOL_MULTIPLIER = 8;
 const STOCK_SEARCH_LIMIT = 3;
 const DEFAULT_DATA_SOURCE = "tdx";
 const MOBILE_MARKET_DATA_URL = "/static/mobile-market-data.json";
@@ -614,11 +617,13 @@ async function runScreen() {
 
 async function runSectorScreen() {
   setLoading(panels.screen, "按板块筛选中");
+  const maxSectors = clampInt($("#maxSectors")?.value, 1, 50, DEFAULT_SECTOR_GROUP_LIMIT);
+  const perSectorLimit = clampInt($("#perSectorLimit")?.value, 1, 50, DEFAULT_PER_SECTOR_LIMIT);
   const payload = {
     criteria: buildCriteria(),
-    max_sectors: clampInt($("#maxSectors")?.value, 1, 50, 8),
-    per_sector_limit: clampInt($("#perSectorLimit")?.value, 1, 50, 3),
-    min_sector_candidates: 1,
+    max_sectors: maxSectors,
+    per_sector_limit: perSectorLimit,
+    min_sector_candidates: perSectorLimit,
   };
   const data = await postJson("/api/sector-screen", payload, panels.screen);
   if (data) renderSectorScreenResult(panels.screen, data);
@@ -2276,16 +2281,15 @@ function delay(ms) {
 
 async function buildTauriSectorScreen(invoke, payload = {}) {
   const data = await loadMobileMarketData(invoke);
+  const maxSectors = clampInt(payload.max_sectors, 1, 50, DEFAULT_SECTOR_GROUP_LIMIT);
+  const perSectorLimit = clampInt(payload.per_sector_limit, 1, 50, DEFAULT_PER_SECTOR_LIMIT);
+  const minSectorCandidates = clampInt(payload.min_sector_candidates, 1, 500, perSectorLimit);
+  const poolLimit = maxSectors * Math.max(perSectorLimit, minSectorCandidates) * SECTOR_SCREEN_POOL_MULTIPLIER;
   const criteria = {
     ...(payload.criteria || {}),
-    limit: Math.max(
-      Number(payload.criteria?.limit || 0),
-      Number(payload.max_sectors || 8) * Number(payload.per_sector_limit || 3) * 4,
-    ),
+    limit: Math.max(Number(payload.criteria?.limit || 0), poolLimit),
   };
   const screen = await invoke("core_screen_with_data", { payload: { data, criteria } });
-  const maxSectors = clampInt(payload.max_sectors, 1, 50, 8);
-  const perSectorLimit = clampInt(payload.per_sector_limit, 1, 50, 3);
   const bySector = new Map();
   for (const item of screen.items || []) {
     const sector = item.stock?.industry || "未分组";
@@ -2293,6 +2297,7 @@ async function buildTauriSectorScreen(invoke, payload = {}) {
     bySector.get(sector).push(item);
   }
   const groups = [...bySector.entries()]
+    .filter(([, items]) => items.length >= minSectorCandidates)
     .map(([sector, items]) => ({
       sector,
       total: items.length,
@@ -2300,7 +2305,7 @@ async function buildTauriSectorScreen(invoke, payload = {}) {
       average_score: items.reduce((sum, item) => sum + Number(item.score || 0), 0) / Math.max(items.length, 1),
       items: items.slice(0, perSectorLimit),
     }))
-    .sort((left, right) => right.average_score - left.average_score)
+    .sort((left, right) => right.average_score - left.average_score || right.total - left.total || left.sector.localeCompare(right.sector))
     .slice(0, maxSectors);
   return {
     total: screen.total || 0,

@@ -51,8 +51,8 @@ Return this shape:
   "sector_screen": {
     "criteria": { ...ScreenCriteria fields... },
     "per_sector_limit": 3,
-    "max_sectors": 8,
-    "min_sector_candidates": 1
+    "max_sectors": 12,
+    "min_sector_candidates": 3
   } | null,
   "graph_screen": {
     "criteria": { ...ScreenCriteria fields... },
@@ -839,7 +839,7 @@ def _heuristic_parse(message: str) -> Dict[str, Any]:
                 "max_sectors": _extract_limited_int(
                     message,
                     ["最多板块", "板块数量", "行业数量", "max sectors"],
-                    default=8,
+                    default=12,
                     minimum=1,
                     maximum=50,
                 ),
@@ -850,7 +850,7 @@ def _heuristic_parse(message: str) -> Dict[str, Any]:
                     minimum=1,
                     maximum=50,
                 ),
-                "min_sector_candidates": 1,
+                "min_sector_candidates": 3,
             },
         }
 
