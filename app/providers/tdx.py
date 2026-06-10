@@ -8,7 +8,7 @@ from typing import List, Optional
 import pandas as pd
 import requests
 
-from app.providers.base import PROXY_MODE_NONE, StockProvider, env_float, env_int, normalize_proxy_mode
+from app.providers.base import StockProvider, env_float, env_int, normalize_proxy_mode
 from app.providers.tencent import TencentQuoteClient
 from app.schemas import (
     FinancialIndicatorItem,
@@ -43,7 +43,7 @@ class TdxProvider(StockProvider):
         self.proxy_mode = normalize_proxy_mode(proxy_mode)
         self.fundamental_cache_path = self._resolve_fundamental_cache_path()
         self._session = requests.Session()
-        self._session.trust_env = self.proxy_mode != PROXY_MODE_NONE
+        self._session.trust_env = False
         self._session.headers.update({"User-Agent": "Mozilla/5.0"})
         self._tencent = TencentQuoteClient(self._session, self.timeout, self.tencent_batch_size)
 

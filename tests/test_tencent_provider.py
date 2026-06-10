@@ -1,9 +1,15 @@
 import unittest
 
 from app.providers.tencent import TencentQuoteClient
+from app.providers.tdx import TdxProvider
 
 
 class TencentQuoteClientTests(unittest.TestCase):
+    def test_tdx_provider_keeps_tencent_quotes_direct_when_system_proxy_selected(self):
+        provider = TdxProvider(proxy_mode="system")
+
+        self.assertFalse(provider._session.trust_env)
+
     def test_symbol_normalizes_a_share_markets(self):
         self.assertEqual(TencentQuoteClient.tencent_symbol("600000.SH"), "sh600000")
         self.assertEqual(TencentQuoteClient.tencent_symbol("300750.SZ"), "sz300750")

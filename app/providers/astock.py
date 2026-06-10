@@ -9,7 +9,7 @@ import pandas as pd
 import requests
 
 from app.providers.akshare import AkShareProvider
-from app.providers.base import PROXY_MODE_NONE, StockProvider, env_float, env_int, normalize_proxy_mode
+from app.providers.base import StockProvider, env_float, env_int, normalize_proxy_mode
 from app.providers.eastmoney import EastmoneyProvider
 from app.providers.tencent import TencentQuoteClient
 from app.schemas import FinancialIndicatorSection, MinuteBar, OrderBookSnapshot, StockItem, StockRelation
@@ -29,7 +29,7 @@ class AStockDataProvider(StockProvider):
         self.cache_path = cache_path or os.getenv("ASTOCK_CACHE", "data/cache/astock_stocks.csv")
         self.timeout = env_float("ASTOCK_TIMEOUT", 10, minimum=0.1)
         self._session = requests.Session()
-        self._session.trust_env = self.proxy_mode != PROXY_MODE_NONE
+        self._session.trust_env = False
         self._session.headers.update({"User-Agent": "Mozilla/5.0"})
         self._tencent = TencentQuoteClient(
             self._session,

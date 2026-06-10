@@ -1385,7 +1385,7 @@ function stockSearchHeaders() {
 }
 
 function getSelectedProxyMode() {
-  return dataSource.proxy?.value || "system";
+  return dataSource.proxy?.value || "none";
 }
 
 function updateSourceStatus() {
