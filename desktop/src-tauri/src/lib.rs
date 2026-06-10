@@ -19,7 +19,7 @@ use std::{
 };
 
 #[cfg(not(mobile))]
-use tauri::{WebviewUrl, WebviewWindowBuilder};
+use tauri::{webview::PageLoadEvent, WebviewUrl, WebviewWindowBuilder};
 #[cfg(not(mobile))]
 use tauri_plugin_shell::{process::CommandChild, ShellExt};
 
@@ -510,6 +510,13 @@ fn setup_desktop(app: &mut tauri::App) -> tauri::Result<()> {
     .title("GP Assistant")
     .inner_size(1280.0, 860.0)
     .min_inner_size(960.0, 680.0)
+    .visible(false)
+    .on_page_load(|window, payload| {
+        if matches!(payload.event(), PageLoadEvent::Finished) {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    })
     .build()?;
 
     let app_handle = app.handle().clone();
