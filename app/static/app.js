@@ -172,6 +172,7 @@ const TAURI_MOBILE_POST_ROUTES = {
     invokeCoreWithMobileData(invoke, "core_backtest_with_data", "request", payload),
   "/api/agent": async ({ invoke, payload }) =>
     invokeCoreWithMobileData(invoke, "core_agent_with_data", "message", payload?.message || ""),
+  "/api/news-rag": async ({ invoke, payload }) => analyzeMobileNewsRag(invoke, payload),
   "/api/upstream-rag/mobile/import": async ({ invoke, payload }) => invoke("core_upstream_rag_import", { payload }),
   "/api/upstream-rag/mobile/detail": async ({ invoke, payload }) => invoke("core_upstream_rag_detail", { payload }),
   "/api/upstream-rag/mobile/rollback": async ({ invoke, payload }) => invoke("core_upstream_rag_rollback", { payload }),
@@ -184,6 +185,167 @@ async function invokeCoreWithMobileData(invoke, command, payloadKey, payloadValu
       [payloadKey]: payloadValue,
     },
   });
+}
+
+async function analyzeMobileNewsRag(invoke, payload = {}) {
+  const requestedCode = normalizeStockCode(payload?.code || payload?.seed_codes?.[0] || "");
+  const detail = await loadMobileNewsRagManifest(invoke, requestedCode);
+  const manifest = detail?.manifest || detail || {};
+  const manifestCode = normalizeStockCode(manifest.target_stock_code || "");
+
+  if (requestedCode && manifestCode && stockCodeDigits(requestedCode) !== stockCodeDigits(manifestCode)) {
+    throw new Error(`当前手机 RAG 包是 ${manifestCode}，不是 ${requestedCode}。请先导入目标股票的同步包。`);
+  }
+
+  const sources = mobileNewsRagSourcesFromManifest(manifest, payload?.max_items || 24);
+  const skill = await invoke("core_mobile_stock_skill", {
+    payload: {
+      stock_code: manifestCode || requestedCode,
+      stock_name: manifest.target_stock_name || "",
+      question: "分析上下游消息利好利空",
+      sources,
+    },
+  });
+  return mobileNewsSkillToNewsRagResult(skill, manifest, sources, detail?.notes || []);
+}
+
+async function loadMobileNewsRagManifest(invoke, requestedCode) {
+  try {
+    return await invoke("core_upstream_rag_detail", {
+      payload: {
+        stock_code: requestedCode || "",
+        pack_version: "",
+      },
+    });
+  } catch (error) {
+    if (requestedCode) {
+      throw new Error(`手机端没有 ${requestedCode} 的上下游 RAG 包。请先在桌面端构建同步包，再扫码导入手机。`);
+    }
+    throw new Error("手机端尚未导入上下游 RAG 包。请先在桌面端构建同步包，再扫码导入手机。");
+  }
+}
+
+function mobileNewsRagSourcesFromManifest(manifest, maxItems = 24) {
+  const sources = [];
+  const relationEdges = Array.isArray(manifest.relation_edges) ? manifest.relation_edges : [];
+  const evidenceChunks = Array.isArray(manifest.evidence_chunks) ? manifest.evidence_chunks : [];
+
+  relationEdges.forEach((edge) => {
+    const evidence = String(edge.evidence_text || edge.source_ref || "").trim();
+    if (!evidence) return;
+    sources.push({
+      title: mobileRelationSourceTitle(edge),
+      summary: evidence,
+      source_tier: edge.source_tier || "manual_url",
+      source_name: edge.source_name || "RAG 关系边",
+      published_at: edge.published_at || null,
+      source_url: edge.source_url || null,
+      evidence,
+    });
+  });
+
+  evidenceChunks.forEach((chunk) => {
+    const evidence = String(chunk.evidence_text || chunk.title || "").trim();
+    if (!evidence) return;
+    sources.push({
+      title: chunk.title || "RAG 证据片段",
+      summary: evidence,
+      source_tier: chunk.source_tier || "manual_url",
+      source_name: chunk.source_name || "RAG 证据",
+      published_at: chunk.published_at || null,
+      source_url: chunk.source_url || null,
+      evidence,
+    });
+  });
+
+  return dedupeMobileNewsRagSources(sources).slice(0, clampInt(maxItems, 1, 80, 24));
+}
+
+function mobileRelationSourceTitle(edge) {
+  const source = edge.source_entity?.entity_name || edge.source_entity?.stock_code || "上游/关联方";
+  const target = edge.target_entity?.entity_name || edge.target_entity?.stock_code || "目标股票";
+  const relation = relationTypeLabel(edge.relation_type);
+  const status = relationStatusLabel(edge.status);
+  return `${source} ${relation} ${target}（${status}）`;
+}
+
+function dedupeMobileNewsRagSources(sources) {
+  const seen = new Set();
+  return sources.filter((source) => {
+    const key = [source.title, source.source_name, source.evidence].join("\n");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function mobileNewsSkillToNewsRagResult(skill, manifest, sources, detailNotes) {
+  const overview = skill?.overview || {};
+  const code = normalizeStockCode(overview.stock_code || manifest.target_stock_code || "");
+  const name = overview.stock_name || manifest.target_stock_name || "";
+  const target = `${name || code || "目标股票"}${code ? `（${code}）` : ""}`;
+  const findings = [
+    ...mobileSkillFindingsToNewsFindings(skill?.positive_factors, "利好", target, code),
+    ...mobileSkillFindingsToNewsFindings(skill?.negative_factors, "利空", target, code),
+    ...mobileSkillFindingsToNewsFindings(skill?.neutral_information, "中性", target, code),
+    ...mobileSkillFindingsToNewsFindings(skill?.unverified_leads, "不确定", target, code),
+  ];
+  const notes = uniqueCompactStrings([
+    overview.summary,
+    "移动端使用已导入本机 RAG 包离线分析，不会在手机端抓取公告或新闻。",
+    sources.length ? "" : "当前 RAG 包没有可分析证据，请在桌面端重建包含证据片段的同步包。",
+    ...(Array.isArray(skill?.notes) ? skill.notes : []),
+    ...(Array.isArray(manifest.notes) ? manifest.notes : []),
+    ...(Array.isArray(detailNotes) ? detailNotes : []),
+  ]);
+  return {
+    scope_codes: code ? [code] : [],
+    relation_count: manifest.relation_edge_count ?? (manifest.relation_edges || []).length ?? 0,
+    message_count: sources.length,
+    findings,
+    notes,
+  };
+}
+
+function mobileSkillFindingsToNewsFindings(items, direction, target, code) {
+  return (Array.isArray(items) ? items : []).map((item) => ({
+    target,
+    direction,
+    confidence: mobileConfidenceLabel(item.confidence),
+    impact_chain: item.summary || item.risk_note || item.title || "",
+    evidence: [
+      {
+        title: item.title || "-",
+        source: item.source_name || "-",
+        source_tier: item.source_tier || "manual_url",
+        published_at: item.published_at || null,
+        url: item.source_url || null,
+        stock_codes: code ? [code] : [],
+        relation_types: [],
+        sentiment: mobileSentimentFromDirection(direction),
+      },
+    ],
+    pending_checks: uniqueCompactStrings([item.risk_note]),
+  }));
+}
+
+function mobileConfidenceLabel(value) {
+  const score = Number(value);
+  if (!Number.isFinite(score)) return "低";
+  if (score >= 0.75) return "高";
+  if (score >= 0.5) return "中";
+  return "低";
+}
+
+function mobileSentimentFromDirection(direction) {
+  if (direction === "利好") return "positive";
+  if (direction === "利空") return "negative";
+  if (direction === "中性") return "mixed";
+  return "uncertain";
+}
+
+function uniqueCompactStrings(values) {
+  return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
 initTheme();
@@ -556,12 +718,24 @@ async function handlePanelEmptyAction(action, trigger) {
 }
 
 async function runNewsRag() {
-  const timer = startPanelProgress(panels.newsRag, "上下游消息分析中", [
-    [18, "读取已有关系图"],
-    [38, "更新本地消息缓存"],
-    [62, "检索证据"],
-    [82, "生成影响判断"],
-  ]);
+  const mobileRuntime = isMobileTauriRuntime();
+  const timer = startPanelProgress(
+    panels.newsRag,
+    mobileRuntime ? "手机端 RAG 分析中" : "上下游消息分析中",
+    mobileRuntime
+      ? [
+          [18, "读取本机 RAG 包"],
+          [42, "抽取离线证据"],
+          [66, "运行本地分析"],
+          [86, "生成影响判断"],
+        ]
+      : [
+          [18, "读取已有关系图"],
+          [38, "更新本地消息缓存"],
+          [62, "检索证据"],
+          [82, "生成影响判断"],
+        ],
+  );
   const code = readStockCode("newsCode");
   if (code) $("#newsCode").value = code;
   const payload = {
