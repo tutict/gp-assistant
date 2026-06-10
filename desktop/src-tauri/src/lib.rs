@@ -487,7 +487,7 @@ pub fn run() {
 
     builder
         .run(tauri::generate_context!())
-        .expect("error while running GP Assistant");
+        .expect("error while running A股选股智能体");
 }
 
 #[cfg(not(mobile))]
@@ -507,7 +507,7 @@ fn setup_desktop(app: &mut tauri::App) -> tauri::Result<()> {
         "main",
         WebviewUrl::External(backend_url.parse().expect("valid backend URL")),
     )
-    .title("GP Assistant")
+    .title("A股选股智能体")
     .inner_size(1280.0, 860.0)
     .min_inner_size(960.0, 680.0)
     .visible(false)

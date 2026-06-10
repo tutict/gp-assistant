@@ -144,6 +144,18 @@ Initialize-AndroidEnvironment
 Assert-EnvPath "ANDROID_HOME" "Install Android SDK and set ANDROID_HOME to the SDK directory."
 Assert-EnvPath "NDK_HOME" "Install Android NDK and set NDK_HOME to the NDK directory."
 
+Push-Location $DesktopDir
+try {
+    if (-not (Test-Path -LiteralPath $AndroidProjectDir)) {
+        Invoke-Checked "Initialize Tauri Android project" "npm.cmd" @(
+            "run",
+            "android:init"
+        )
+    }
+} finally {
+    Pop-Location
+}
+
 Invoke-Checked "Prepare Tauri Android frontend assets" "powershell.exe" @(
     "-NoProfile",
     "-ExecutionPolicy",
@@ -154,12 +166,6 @@ Invoke-Checked "Prepare Tauri Android frontend assets" "powershell.exe" @(
 
 Push-Location $DesktopDir
 try {
-    if (-not (Test-Path -LiteralPath $AndroidProjectDir)) {
-        Invoke-Checked "Initialize Tauri Android project" "npm.cmd" @(
-            "run",
-            "android:init"
-        )
-    }
     Update-AndroidProjectForLanImport
     Use-LocalGradleDistribution
 

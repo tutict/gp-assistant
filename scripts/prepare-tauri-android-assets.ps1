@@ -10,6 +10,9 @@ $MobileDataScript = Join-Path $PSScriptRoot "build-mobile-tdx-dataset.py"
 $MobileDataOutput = Join-Path $StaticOutputDir "mobile-market-data.json"
 $AndroidManifest = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\AndroidManifest.xml"
 $AndroidBuildGradle = Join-Path $Root "desktop\src-tauri\gen\android\app\build.gradle.kts"
+$AndroidResDir = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\res"
+$AndroidIconSource = Join-Path $Root "desktop\src-tauri\icons\icon.png"
+$AndroidAppName = -join @("A", [char]0x80A1, [char]0x9009, [char]0x80A1, [char]0x667A, [char]0x80FD, [char]0x4F53)
 
 function Resolve-Python {
     $candidates = @(
@@ -68,6 +71,110 @@ function Update-AndroidProjectForLanImport {
     }
 }
 
+function Resize-Png {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Source,
+        [Parameter(Mandatory = $true)]
+        [string] $Destination,
+        [Parameter(Mandatory = $true)]
+        [int] $Size
+    )
+
+    Add-Type -AssemblyName System.Drawing
+    $sourceImage = [System.Drawing.Image]::FromFile($Source)
+    try {
+        $bitmap = New-Object System.Drawing.Bitmap $Size, $Size
+        try {
+            $bitmap.SetResolution($sourceImage.HorizontalResolution, $sourceImage.VerticalResolution)
+            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            try {
+                $graphics.Clear([System.Drawing.Color]::Transparent)
+                $graphics.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceOver
+                $graphics.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+                $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+                $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+                $graphics.DrawImage($sourceImage, 0, 0, $Size, $Size)
+            } finally {
+                $graphics.Dispose()
+            }
+
+            $directory = Split-Path -Parent $Destination
+            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+            $bitmap.Save($Destination, [System.Drawing.Imaging.ImageFormat]::Png)
+        } finally {
+            $bitmap.Dispose()
+        }
+    } finally {
+        $sourceImage.Dispose()
+    }
+}
+
+function Update-AndroidProjectBranding {
+    if (-not (Test-Path -LiteralPath $AndroidResDir)) {
+        return
+    }
+    if (-not (Test-Path -LiteralPath $AndroidIconSource)) {
+        throw "Android icon source does not exist: $AndroidIconSource"
+    }
+
+    $valuesDir = Join-Path $AndroidResDir "values"
+    New-Item -ItemType Directory -Path $valuesDir -Force | Out-Null
+    $escapedAppName = [System.Security.SecurityElement]::Escape($AndroidAppName)
+    $stringsXml = @(
+        "<resources>",
+        "    <string name=`"app_name`">$escapedAppName</string>",
+        "    <string name=`"main_activity_title`">$escapedAppName</string>",
+        "</resources>"
+    ) -join "`r`n"
+    Set-Content -LiteralPath (Join-Path $valuesDir "strings.xml") -Value $stringsXml -Encoding UTF8
+
+    $colorsPath = Join-Path $valuesDir "colors.xml"
+    if (Test-Path -LiteralPath $colorsPath) {
+        $colorsXml = Get-Content -LiteralPath $colorsPath -Raw
+        if ($colorsXml -notmatch 'name="ic_launcher_background"') {
+            $launcherBackgroundColor = '    <color name="ic_launcher_background">#121A22</color>' + "`r`n</resources>"
+            $colorsXml = $colorsXml -replace '</resources>', $launcherBackgroundColor
+            Set-Content -LiteralPath $colorsPath -Value $colorsXml -Encoding UTF8
+        }
+    } else {
+        $colorsXml = @(
+            "<?xml version=`"1.0`" encoding=`"utf-8`"?>",
+            "<resources>",
+            "    <color name=`"ic_launcher_background`">#121A22</color>",
+            "</resources>"
+        ) -join "`r`n"
+        Set-Content -LiteralPath $colorsPath -Value $colorsXml -Encoding UTF8
+    }
+
+    $launcherSizes = @{
+        "mipmap-mdpi" = 48
+        "mipmap-hdpi" = 72
+        "mipmap-xhdpi" = 96
+        "mipmap-xxhdpi" = 144
+        "mipmap-xxxhdpi" = 192
+    }
+    foreach ($entry in $launcherSizes.GetEnumerator()) {
+        $directory = Join-Path $AndroidResDir $entry.Key
+        foreach ($fileName in @("ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png")) {
+            Resize-Png $AndroidIconSource (Join-Path $directory $fileName) $entry.Value
+        }
+    }
+
+    $adaptiveIconDir = Join-Path $AndroidResDir "mipmap-anydpi-v26"
+    New-Item -ItemType Directory -Path $adaptiveIconDir -Force | Out-Null
+    $adaptiveIconXml = @(
+        "<?xml version=`"1.0`" encoding=`"utf-8`"?>",
+        "<adaptive-icon xmlns:android=`"http://schemas.android.com/apk/res/android`">",
+        "    <background android:drawable=`"@color/ic_launcher_background`" />",
+        "    <foreground android:drawable=`"@mipmap/ic_launcher_foreground`" />",
+        "</adaptive-icon>"
+    ) -join "`r`n"
+    Set-Content -LiteralPath (Join-Path $adaptiveIconDir "ic_launcher.xml") -Value $adaptiveIconXml -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $adaptiveIconDir "ic_launcher_round.xml") -Value $adaptiveIconXml -Encoding UTF8
+}
+
 if (-not (Test-Path -LiteralPath $SourceDir)) {
     throw "Frontend source directory does not exist: $SourceDir"
 }
@@ -95,5 +202,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Update-AndroidProjectForLanImport
+Update-AndroidProjectBranding
 
 Write-Host "Prepared Tauri Android assets at: $OutputDir"

@@ -8,7 +8,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "GP Assistant",
+        "title": "A股选股智能体",
         "url": "index.html"
       }
     ],
@@ -17,6 +17,7 @@
     }
   },
   "bundle": {
+    "icon": ["icons/icon.png"],
     "android": {
       "minSdkVersion": 24,
       "versionCode": 2
