@@ -103,9 +103,13 @@ button:hover {
 }
 
 button:disabled {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: 0.72;
   transform: none;
+}
+
+button.is-busy:disabled {
+  cursor: wait;
 }
 
 .app-shell {
@@ -6680,15 +6684,17 @@ button,
     position: fixed;
     z-index: 80;
     top: auto;
-    right: 0;
-    bottom: 0;
-    left: 0;
+    right: 8px;
+    bottom: calc(74px + env(safe-area-inset-bottom));
+    left: 8px;
     height: auto;
-    width: 100%;
-    max-height: min(82vh, 720px);
+    width: auto;
+    max-height: min(64dvh, 560px);
     overflow: auto;
     margin: 0;
-    border-radius: 14px 14px 0 0;
+    border-radius: 14px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.42);
+    overscroll-behavior: contain;
     transform: translateY(calc(100% + 24px));
   }
 
@@ -7224,6 +7230,81 @@ button,
   .bottom-tabbar {
     min-height: 64px;
     padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  }
+
+  #sectionFilters .criteria-panel-heading {
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  #sectionFilters .criteria-panel-heading h2 {
+    font-size: 1rem;
+    line-height: 1.1;
+  }
+
+  #sectionFilters .criteria-panel-heading button {
+    min-height: 38px;
+    border-radius: 8px;
+    padding: 0 12px;
+    font-size: 0.86rem;
+  }
+
+  #sectionFilters .data-health {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 0;
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+
+  #sectionFilters .data-health > div:not(.data-health-actions),
+  #sectionFilters .data-health > p,
+  #sectionFilters .refresh-progress {
+    padding: 9px 12px;
+  }
+
+  #sectionFilters .data-health span {
+    font-size: 0.68rem;
+  }
+
+  #sectionFilters .data-health strong {
+    font-size: clamp(1.05rem, 5vw, 1.34rem);
+    line-height: 1.1;
+  }
+
+  #sectionFilters .data-health em,
+  #sectionFilters .data-health p {
+    font-size: 0.72rem;
+    line-height: 1.32;
+  }
+
+  #sectionFilters .data-health-actions {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 9px 12px;
+  }
+
+  #sectionFilters .data-health-actions button {
+    width: 100%;
+    min-height: 38px;
+    border-radius: 7px;
+    padding: 0 10px;
+    font-size: 0.84rem;
+  }
+
+  #sectionFilters .data-health > p {
+    max-height: 4.1em;
+    overflow: auto;
+  }
+
+  #sectionFilters .progress-track {
+    height: 6px;
+  }
+
+  #sectionFilters .rail-section {
+    padding: 12px;
   }
 }
 

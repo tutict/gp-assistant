@@ -2,9 +2,10 @@ use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::Manager;
 
@@ -15,7 +16,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::Mutex,
     thread,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 #[cfg(not(mobile))]
@@ -29,6 +30,11 @@ const APP_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 8010;
 #[cfg(not(mobile))]
 const BACKEND_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+const MOBILE_MARKET_DATA_FILE: &str = "mobile-market-data.json";
+const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
+const TENCENT_BATCH_SIZE: usize = 180;
+const TENCENT_DEFAULT_MAX_CANDIDATES: usize = 16_000;
 
 #[cfg(not(mobile))]
 struct BackendState(Mutex<Option<BackendProcess>>);
@@ -107,6 +113,81 @@ fn core_mobile_stock_skill(payload: Value) -> Result<Value, String> {
 #[tauri::command]
 fn core_validate_data_source(payload: Value) -> Result<Value, String> {
     gp_core::validate_data_source_value(payload).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn core_mobile_market_data_read(app: tauri::AppHandle) -> Result<Value, String> {
+    read_mobile_market_data(&app)
+}
+
+#[tauri::command]
+fn core_mobile_market_data_write(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    write_mobile_market_data(&app, payload)
+}
+
+#[tauri::command]
+fn core_mobile_market_data_clear(app: tauri::AppHandle) -> Result<Value, String> {
+    let path = mobile_market_data_path(&app)?;
+    if !path.exists() {
+        return Ok(json!({
+            "removed": false,
+            "removed_bytes": 0,
+            "notes": ["mobile market cache is already empty"]
+        }));
+    }
+    let removed_bytes = fs::metadata(&path).map(|metadata| metadata.len()).unwrap_or(0);
+    fs::remove_file(&path).map_err(|error| {
+        format!(
+            "remove mobile market cache failed: {}: {error}",
+            path.display()
+        )
+    })?;
+    Ok(json!({
+        "removed": true,
+        "removed_bytes": removed_bytes,
+        "notes": ["mobile market cache removed"]
+    }))
+}
+
+#[tauri::command]
+async fn core_mobile_market_data_refresh_tencent(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    let seed = payload.get("seed").cloned().unwrap_or_else(|| json!({}));
+    let scan_candidates = payload
+        .get("scan_candidates")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let use_previous_close = payload
+        .get("use_previous_close")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let max_candidates = payload
+        .get("max_candidates")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(TENCENT_DEFAULT_MAX_CANDIDATES);
+
+    let refresh =
+        refresh_tencent_market_data(seed, scan_candidates, max_candidates, use_previous_close)
+            .await?;
+    let cache = write_mobile_market_data(&app, refresh.dataset)?;
+    Ok(json!({
+        "refreshed": true,
+        "source": "tencent",
+        "requested": refresh.requested,
+        "fetched": refresh.fetched,
+        "failed_batches": refresh.failed_batches,
+        "status": cache,
+        "notes": [
+            format!(
+                "Tencent quote refresh finished: fetched {} of {} candidates",
+                refresh.fetched, refresh.requested
+            )
+        ]
+    }))
 }
 
 #[tauri::command]
@@ -338,6 +419,475 @@ fn core_upstream_rag_rollback(app: tauri::AppHandle, payload: Value) -> Result<V
     }))
 }
 
+struct TencentRefreshResult {
+    dataset: Value,
+    requested: usize,
+    fetched: usize,
+    failed_batches: usize,
+}
+
+async fn refresh_tencent_market_data(
+    seed: Value,
+    scan_candidates: bool,
+    max_candidates: usize,
+    use_previous_close: bool,
+) -> Result<TencentRefreshResult, String> {
+    let (seed_stocks, seed_codes) = seed_stock_maps(&seed);
+    let mut candidate_codes = seed_codes;
+    if scan_candidates {
+        append_tencent_candidate_codes(&mut candidate_codes);
+    }
+    dedupe_stock_codes(&mut candidate_codes);
+    if candidate_codes.len() > max_candidates {
+        candidate_codes.truncate(max_candidates);
+    }
+    if candidate_codes.is_empty() {
+        return Err("mobile market refresh has no candidate stock codes".to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .user_agent("Mozilla/5.0 GP-Assistant/0.2 mobile")
+        .build()
+        .map_err(|error| format!("create Tencent HTTP client failed: {error}"))?;
+
+    let mut stocks = Vec::new();
+    let mut seen = HashSet::new();
+    let mut failed_batches = 0usize;
+    for batch in candidate_codes.chunks(TENCENT_BATCH_SIZE) {
+        match fetch_tencent_quotes(&client, batch).await {
+            Ok(text) => {
+                for mut stock in parse_tencent_quotes(&text, &seed_stocks, use_previous_close) {
+                    let Some(code) = stock
+                        .get("code")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                    else {
+                        continue;
+                    };
+                    if seen.insert(code) {
+                        stocks.push(Value::Object(std::mem::take(&mut stock)));
+                    }
+                }
+            }
+            Err(_) => {
+                failed_batches += 1;
+            }
+        }
+    }
+    if stocks.is_empty() {
+        return Err("Tencent quote refresh returned no valid stocks".to_string());
+    }
+    stocks.sort_by(|left, right| {
+        left.get("code")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .cmp(right.get("code").and_then(Value::as_str).unwrap_or(""))
+    });
+    let valid_codes: HashSet<String> = stocks
+        .iter()
+        .filter_map(|stock| stock.get("code").and_then(Value::as_str).map(str::to_string))
+        .collect();
+
+    let dataset = json!({
+        "source": "tencent",
+        "generated_at": epoch_millis().to_string(),
+        "generated_at_epoch_ms": epoch_millis(),
+        "notes": [
+            "mobile online refresh via Tencent quote",
+            "industry and slow-changing metrics are merged from the previous local dataset",
+            if use_previous_close {
+                "price policy: previous close before market close"
+            } else {
+                "price policy: latest Tencent quote"
+            }
+        ],
+        "stocks": stocks,
+        "relations": filter_seed_relations(&seed, &valid_codes),
+        "histories": filter_seed_histories(&seed, &valid_codes)
+    });
+
+    Ok(TencentRefreshResult {
+        requested: candidate_codes.len(),
+        fetched: valid_codes.len(),
+        failed_batches,
+        dataset,
+    })
+}
+
+async fn fetch_tencent_quotes(client: &reqwest::Client, codes: &[String]) -> Result<String, String> {
+    let symbols: Vec<String> = codes
+        .iter()
+        .filter_map(|code| tencent_symbol(code))
+        .collect();
+    if symbols.is_empty() {
+        return Ok(String::new());
+    }
+    let url = format!("{TENCENT_QUOTE_ENDPOINT}{}", symbols.join(","));
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("Tencent quote request failed: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!("Tencent quote HTTP {}", response.status()));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| format!("Tencent quote body read failed: {error}"))?;
+    let (text, _, _) = encoding_rs::GBK.decode(&bytes);
+    Ok(text.into_owned())
+}
+
+fn parse_tencent_quotes(
+    text: &str,
+    seed_stocks: &HashMap<String, serde_json::Map<String, Value>>,
+    use_previous_close: bool,
+) -> Vec<serde_json::Map<String, Value>> {
+    let mut stocks = Vec::new();
+    for raw_line in text.split(';') {
+        let line = raw_line.trim();
+        if line.is_empty() || !line.contains('=') || !line.contains('"') {
+            continue;
+        }
+        let Some(left) = line.split('=').next() else {
+            continue;
+        };
+        let key = left.rsplit('_').next().unwrap_or("").trim();
+        let Some(code) = normalize_stock_code(key) else {
+            continue;
+        };
+        let values: Vec<&str> = line
+            .split('"')
+            .nth(1)
+            .unwrap_or("")
+            .split('~')
+            .collect();
+        if values.len() < 53 {
+            continue;
+        }
+        let name = values.get(1).map(|value| value.trim()).unwrap_or("");
+        if name.is_empty() {
+            continue;
+        }
+        let price = if use_previous_close {
+            parse_number(values.get(4))
+                .filter(|value| *value > 0.0)
+                .or_else(|| parse_number(values.get(3)).filter(|value| *value > 0.0))
+        } else {
+            parse_number(values.get(3))
+                .filter(|value| *value > 0.0)
+                .or_else(|| parse_number(values.get(4)).filter(|value| *value > 0.0))
+        };
+        let Some(price) = price else {
+            continue;
+        };
+
+        let existing = seed_stocks.get(&code);
+        let mut stock = existing.cloned().unwrap_or_default();
+        let pe = first_positive_number(&[values.get(39), values.get(52)])
+            .or_else(|| existing.and_then(|object| object_f64(object, "pe")));
+        let pb = parse_number(values.get(46))
+            .filter(|value| *value > 0.0)
+            .or_else(|| existing.and_then(|object| object_f64(object, "pb")));
+        let market_cap = parse_number(values.get(44))
+            .filter(|value| *value > 0.0)
+            .or_else(|| existing.and_then(|object| object_f64(object, "market_cap_billion")));
+        let roe = existing
+            .and_then(|object| object_f64(object, "roe"))
+            .or_else(|| estimate_roe(pe, pb));
+        let industry = existing
+            .and_then(|object| object_string(object, "industry"))
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| board_label(&code).to_string());
+        let is_st = name.to_ascii_uppercase().contains("ST")
+            || existing
+                .and_then(|object| object.get("is_st"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+
+        stock.insert("code".to_string(), json!(code));
+        stock.insert("name".to_string(), json!(name));
+        stock.insert("industry".to_string(), json!(industry));
+        stock.insert("is_st".to_string(), json!(is_st));
+        stock.insert("price".to_string(), json!(price));
+        stock.insert("pe".to_string(), json!(pe));
+        stock.insert("pb".to_string(), json!(pb));
+        stock.insert("roe".to_string(), json!(roe));
+        stock.insert("market_cap_billion".to_string(), json!(market_cap));
+        stock.insert(
+            "dividend_yield".to_string(),
+            json!(existing.and_then(|object| object_f64(object, "dividend_yield"))),
+        );
+        stocks.push(stock);
+    }
+    stocks
+}
+
+fn seed_stock_maps(seed: &Value) -> (HashMap<String, serde_json::Map<String, Value>>, Vec<String>) {
+    let mut stocks = HashMap::new();
+    let mut codes = Vec::new();
+    if let Some(items) = seed.get("stocks").and_then(Value::as_array) {
+        for item in items {
+            let Some(object) = item.as_object() else {
+                continue;
+            };
+            let Some(code) = object
+                .get("code")
+                .and_then(Value::as_str)
+                .and_then(normalize_stock_code)
+            else {
+                continue;
+            };
+            codes.push(code.clone());
+            stocks.insert(code, object.clone());
+        }
+    }
+    (stocks, codes)
+}
+
+fn append_tencent_candidate_codes(codes: &mut Vec<String>) {
+    append_range(codes, "SZ", 1, 3999);
+    append_range(codes, "SZ", 300000, 301999);
+    append_range(codes, "SH", 600000, 605999);
+    append_range(codes, "SH", 688000, 689999);
+    append_range(codes, "BJ", 920000, 920999);
+}
+
+fn append_range(codes: &mut Vec<String>, market: &str, start: u32, end: u32) {
+    for value in start..=end {
+        codes.push(format!("{value:06}.{market}"));
+    }
+}
+
+fn dedupe_stock_codes(codes: &mut Vec<String>) {
+    let mut seen = HashSet::new();
+    codes.retain(|code| seen.insert(code.clone()));
+}
+
+fn tencent_symbol(code: &str) -> Option<String> {
+    let normalized = normalize_stock_code(code)?;
+    let digits = &normalized[..6];
+    if normalized.ends_with(".SH") {
+        Some(format!("sh{digits}"))
+    } else if normalized.ends_with(".BJ") {
+        Some(format!("bj{digits}"))
+    } else {
+        Some(format!("sz{digits}"))
+    }
+}
+
+fn normalize_stock_code(value: &str) -> Option<String> {
+    let raw = value.trim().to_ascii_uppercase();
+    if raw.is_empty() {
+        return None;
+    }
+    if let Some(digits) = raw.strip_prefix("SH").filter(|digits| valid_digits(digits)) {
+        return Some(format!("{digits}.SH"));
+    }
+    if let Some(digits) = raw.strip_prefix("SZ").filter(|digits| valid_digits(digits)) {
+        return Some(format!("{digits}.SZ"));
+    }
+    if let Some(digits) = raw.strip_prefix("BJ").filter(|digits| valid_digits(digits)) {
+        return Some(format!("{digits}.BJ"));
+    }
+    if let Some((digits, market)) = raw.split_once('.') {
+        if valid_digits(digits) && matches!(market, "SH" | "SZ" | "BJ") {
+            return Some(format!("{digits}.{market}"));
+        }
+    }
+    let digits: String = raw.chars().filter(|ch| ch.is_ascii_digit()).take(6).collect();
+    if !valid_digits(&digits) {
+        return None;
+    }
+    Some(format!("{}.{}", digits, infer_market(&digits)))
+}
+
+fn valid_digits(value: &str) -> bool {
+    value.len() == 6 && value.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn infer_market(digits: &str) -> &'static str {
+    if digits.starts_with('6') || digits.starts_with('9') || digits.starts_with('5') {
+        "SH"
+    } else if digits.starts_with('4') || digits.starts_with('8') {
+        "BJ"
+    } else {
+        "SZ"
+    }
+}
+
+fn board_label(code: &str) -> &'static str {
+    let digits = &code[..6];
+    if code.ends_with(".BJ") {
+        "Beijing Stock Exchange"
+    } else if digits.starts_with("688") {
+        "STAR Market"
+    } else if digits.starts_with("300") || digits.starts_with("301") {
+        "ChiNext"
+    } else if code.ends_with(".SH") {
+        "Shanghai A Share"
+    } else {
+        "Shenzhen A Share"
+    }
+}
+
+fn parse_number(value: Option<&&str>) -> Option<f64> {
+    let raw = value?.trim();
+    if raw.is_empty() || matches!(raw, "-" | "None" | "nan") {
+        return None;
+    }
+    raw.parse::<f64>().ok().filter(|value| value.is_finite())
+}
+
+fn first_positive_number(values: &[Option<&&str>]) -> Option<f64> {
+    values
+        .iter()
+        .find_map(|value| parse_number(*value).filter(|number| *number > 0.0))
+}
+
+fn estimate_roe(pe: Option<f64>, pb: Option<f64>) -> Option<f64> {
+    let pe = pe.filter(|value| *value > 0.0)?;
+    let pb = pb.filter(|value| *value > 0.0)?;
+    Some(pb / pe)
+}
+
+fn object_f64(object: &serde_json::Map<String, Value>, key: &str) -> Option<f64> {
+    object
+        .get(key)
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+}
+
+fn object_string(object: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
+    object
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn filter_seed_relations(seed: &Value, valid_codes: &HashSet<String>) -> Value {
+    let mut relations = Vec::new();
+    if let Some(items) = seed.get("relations").and_then(Value::as_array) {
+        for item in items {
+            let source = item
+                .get("source_code")
+                .and_then(Value::as_str)
+                .and_then(normalize_stock_code);
+            let target = item
+                .get("target_code")
+                .and_then(Value::as_str)
+                .and_then(normalize_stock_code);
+            if source
+                .as_ref()
+                .map(|code| valid_codes.contains(code))
+                .unwrap_or(false)
+                && target
+                    .as_ref()
+                    .map(|code| valid_codes.contains(code))
+                    .unwrap_or(false)
+            {
+                relations.push(item.clone());
+            }
+        }
+    }
+    Value::Array(relations)
+}
+
+fn filter_seed_histories(seed: &Value, valid_codes: &HashSet<String>) -> Value {
+    let mut histories = serde_json::Map::new();
+    if let Some(items) = seed.get("histories").and_then(Value::as_object) {
+        for (raw_code, history) in items {
+            let Some(code) = normalize_stock_code(raw_code) else {
+                continue;
+            };
+            if valid_codes.contains(&code) {
+                histories.insert(code, history.clone());
+            }
+        }
+    }
+    Value::Object(histories)
+}
+
+fn read_mobile_market_data(app: &tauri::AppHandle) -> Result<Value, String> {
+    let path = mobile_market_data_path(app)?;
+    if !path.exists() {
+        return Ok(json!({
+            "exists": false,
+            "bytes": 0,
+            "path": path.display().to_string(),
+            "notes": ["mobile market cache is empty"]
+        }));
+    }
+    let data = read_json_file(&path)?;
+    let summary = gp_core::validate_data_source_value(data.clone())
+        .map_err(|error| format!("cached mobile market data is invalid: {error}"))?;
+    let bytes = fs::metadata(&path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    Ok(json!({
+        "exists": true,
+        "bytes": bytes,
+        "path": path.display().to_string(),
+        "updated_at_epoch_ms": file_modified_millis(&path),
+        "summary": summary,
+        "data": data,
+        "notes": ["mobile market cache loaded"]
+    }))
+}
+
+fn write_mobile_market_data(app: &tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let summary = gp_core::validate_data_source_value(payload.clone())
+        .map_err(|error| format!("mobile market data validation failed: {error}"))?;
+    let path = mobile_market_data_path(app)?;
+    let root = path
+        .parent()
+        .ok_or_else(|| "mobile market cache path has no parent".to_string())?;
+    fs::create_dir_all(root)
+        .map_err(|error| format!("create mobile market cache dir failed: {error}"))?;
+    let tmp_path = root.join(format!("{}.tmp-{}", MOBILE_MARKET_DATA_FILE, epoch_millis()));
+    let bytes = serde_json::to_vec(&payload)
+        .map_err(|error| format!("serialize mobile market data failed: {error}"))?;
+    fs::write(&tmp_path, &bytes)
+        .map_err(|error| format!("write mobile market cache temp failed: {error}"))?;
+    if path.exists() {
+        fs::remove_file(&path)
+            .map_err(|error| format!("replace old mobile market cache failed: {error}"))?;
+    }
+    fs::rename(&tmp_path, &path)
+        .map_err(|error| format!("commit mobile market cache failed: {error}"))?;
+    Ok(json!({
+        "exists": true,
+        "bytes": bytes.len(),
+        "path": path.display().to_string(),
+        "updated_at_epoch_ms": file_modified_millis(&path),
+        "summary": summary,
+        "data": payload,
+        "notes": ["mobile market cache written"]
+    }))
+}
+
+fn mobile_market_data_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let mut root = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("get app data dir failed: {error}"))?;
+    root.push("market");
+    root.push(MOBILE_MARKET_DATA_FILE);
+    Ok(root)
+}
+
+fn file_modified_millis(path: &Path) -> Option<u128> {
+    fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis())
+}
+
 fn upstream_rag_mobile_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let mut root = app
         .path()
@@ -465,6 +1015,10 @@ pub fn run() {
         core_agent_with_data,
         core_mobile_stock_skill,
         core_validate_data_source,
+        core_mobile_market_data_read,
+        core_mobile_market_data_write,
+        core_mobile_market_data_clear,
+        core_mobile_market_data_refresh_tencent,
         core_upstream_rag_import,
         core_upstream_rag_list,
         core_upstream_rag_detail,
