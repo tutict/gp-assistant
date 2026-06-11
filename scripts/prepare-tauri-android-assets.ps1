@@ -11,6 +11,9 @@ $AndroidBuildGradle = Join-Path $Root "desktop\src-tauri\gen\android\app\build.g
 $AndroidResDir = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\res"
 $AndroidIconSource = Join-Path $Root "desktop\src-tauri\icons\icon.png"
 $AndroidAppName = -join @("A", [char]0x80A1, [char]0x9009, [char]0x80A1, [char]0x667A, [char]0x80FD, [char]0x4F53)
+$AndroidThemeName = "GpAssistantTheme"
+$AndroidBootColor = "#101418"
+$AndroidLauncherColor = "#121A22"
 
 function Assert-WorkspaceChildPath {
     param(
@@ -33,12 +36,17 @@ function Update-AndroidProjectForLanImport {
     if (Test-Path -LiteralPath $AndroidManifest) {
         $manifest = Get-Content -LiteralPath $AndroidManifest -Raw
         if ($manifest -notmatch "android\.permission\.CAMERA") {
-            $manifest = $manifest -replace (
-                [regex]::Escape('    <uses-permission android:name="android.permission.INTERNET" />'),
-                "    <uses-permission android:name=`"android.permission.INTERNET`" />`r`n" +
-                "    <uses-permission android:name=`"android.permission.CAMERA`" />`r`n" +
+            $internetPermissionPattern = [regex]::Escape('    <uses-permission android:name="android.permission.INTERNET" />')
+            $lanImportPermissions = @(
+                "    <uses-permission android:name=`"android.permission.INTERNET`" />",
+                "    <uses-permission android:name=`"android.permission.CAMERA`" />",
                 "    <uses-feature android:name=`"android.hardware.camera`" android:required=`"false`" />"
-            )
+            ) -join "`r`n"
+            $manifest = $manifest -replace $internetPermissionPattern, $lanImportPermissions
+            if ($manifest -notmatch "android\.permission\.CAMERA") {
+                $manifestRootPattern = "<manifest([^>]*)>"
+                $manifest = $manifest -replace $manifestRootPattern, "<manifest`$1>`r`n$lanImportPermissions"
+            }
             Set-Content -LiteralPath $AndroidManifest -Value $manifest -Encoding UTF8
         }
     }
@@ -92,6 +100,121 @@ function Resize-Png {
     }
 }
 
+function Set-AndroidColorResource {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $ValuesDir,
+        [Parameter(Mandatory = $true)]
+        [string] $Name,
+        [Parameter(Mandatory = $true)]
+        [string] $Value
+    )
+
+    New-Item -ItemType Directory -Path $ValuesDir -Force | Out-Null
+    $colorsPath = Join-Path $ValuesDir "colors.xml"
+    if (Test-Path -LiteralPath $colorsPath) {
+        $colorsXml = Get-Content -LiteralPath $colorsPath -Raw
+    } else {
+        $colorsXml = @(
+            "<?xml version=`"1.0`" encoding=`"utf-8`"?>",
+            "<resources>",
+            "</resources>"
+        ) -join "`r`n"
+    }
+
+    $colorLine = "    <color name=`"$Name`">$Value</color>"
+    $colorPattern = "<color\s+name=`"$([regex]::Escape($Name))`">[^<]*</color>"
+    if ($colorsXml -match $colorPattern) {
+        $colorsXml = [regex]::Replace($colorsXml, $colorPattern, $colorLine)
+    } else {
+        $colorsXml = $colorsXml -replace "</resources>", "$colorLine`r`n</resources>"
+    }
+
+    Set-Content -LiteralPath $colorsPath -Value $colorsXml -Encoding UTF8
+}
+
+function Write-AndroidStartupTheme {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $ValuesDir,
+        [switch] $UseAndroid12Splash
+    )
+
+    New-Item -ItemType Directory -Path $ValuesDir -Force | Out-Null
+
+    $themeItems = @(
+        "        <item name=`"android:windowNoTitle`">true</item>",
+        "        <item name=`"android:windowActionBar`">false</item>",
+        "        <item name=`"android:windowBackground`">@color/gp_boot_background</item>",
+        "        <item name=`"android:colorBackground`">@color/gp_boot_background</item>",
+        "        <item name=`"android:windowDisablePreview`">true</item>",
+        "        <item name=`"android:forceDarkAllowed`">false</item>",
+        "        <item name=`"android:statusBarColor`">@color/gp_boot_background</item>",
+        "        <item name=`"android:navigationBarColor`">@color/gp_boot_background</item>",
+        "        <item name=`"android:windowLightStatusBar`">false</item>",
+        "        <item name=`"android:windowLightNavigationBar`">false</item>"
+    )
+
+    if ($UseAndroid12Splash) {
+        $themeItems += @(
+            "        <item name=`"android:windowSplashScreenBackground`">@color/gp_boot_background</item>",
+            "        <item name=`"android:windowSplashScreenAnimatedIcon`">@mipmap/ic_launcher</item>"
+        )
+    }
+
+    $styleLines = @(
+        "<?xml version=`"1.0`" encoding=`"utf-8`"?>",
+        "<resources>",
+        "    <style name=`"$AndroidThemeName`" parent=`"@android:style/Theme.Material.NoActionBar`">"
+    )
+    $styleLines += $themeItems
+    $styleLines += @(
+        "    </style>",
+        "</resources>"
+    )
+    $stylesXml = $styleLines -join "`r`n"
+
+    Set-Content -LiteralPath (Join-Path $ValuesDir "styles.xml") -Value $stylesXml -Encoding UTF8
+}
+
+function Update-AndroidManifestStartupTheme {
+    if (-not (Test-Path -LiteralPath $AndroidManifest)) {
+        return
+    }
+
+    $manifest = Get-Content -LiteralPath $AndroidManifest -Raw
+    $themeAttribute = "android:theme=`"@style/$AndroidThemeName`""
+    if ($manifest -match "android:theme=`"[^`"]+`"") {
+        $manifest = [regex]::Replace($manifest, "android:theme=`"[^`"]+`"", $themeAttribute)
+    } elseif ($manifest -match "<application(\s|>)") {
+        $manifest = $manifest -replace "<application(\s|>)", "<application $themeAttribute`$1"
+    }
+
+    Set-Content -LiteralPath $AndroidManifest -Value $manifest -Encoding UTF8
+}
+
+function Update-AndroidStartupTheme {
+    if (-not (Test-Path -LiteralPath $AndroidResDir)) {
+        return
+    }
+
+    $valuesDirs = @(
+        (Join-Path $AndroidResDir "values"),
+        (Join-Path $AndroidResDir "values-night"),
+        (Join-Path $AndroidResDir "values-v31")
+    )
+
+    foreach ($valuesDir in $valuesDirs) {
+        Set-AndroidColorResource $valuesDir "ic_launcher_background" $AndroidLauncherColor
+        Set-AndroidColorResource $valuesDir "gp_boot_background" $AndroidBootColor
+    }
+
+    Write-AndroidStartupTheme (Join-Path $AndroidResDir "values")
+    Write-AndroidStartupTheme (Join-Path $AndroidResDir "values-night")
+    Write-AndroidStartupTheme (Join-Path $AndroidResDir "values-v31") -UseAndroid12Splash
+    Update-AndroidManifestStartupTheme
+}
+
 function Update-AndroidProjectBranding {
     if (-not (Test-Path -LiteralPath $AndroidResDir)) {
         return
@@ -111,23 +234,7 @@ function Update-AndroidProjectBranding {
     ) -join "`r`n"
     Set-Content -LiteralPath (Join-Path $valuesDir "strings.xml") -Value $stringsXml -Encoding UTF8
 
-    $colorsPath = Join-Path $valuesDir "colors.xml"
-    if (Test-Path -LiteralPath $colorsPath) {
-        $colorsXml = Get-Content -LiteralPath $colorsPath -Raw
-        if ($colorsXml -notmatch 'name="ic_launcher_background"') {
-            $launcherBackgroundColor = '    <color name="ic_launcher_background">#121A22</color>' + "`r`n</resources>"
-            $colorsXml = $colorsXml -replace '</resources>', $launcherBackgroundColor
-            Set-Content -LiteralPath $colorsPath -Value $colorsXml -Encoding UTF8
-        }
-    } else {
-        $colorsXml = @(
-            "<?xml version=`"1.0`" encoding=`"utf-8`"?>",
-            "<resources>",
-            "    <color name=`"ic_launcher_background`">#121A22</color>",
-            "</resources>"
-        ) -join "`r`n"
-        Set-Content -LiteralPath $colorsPath -Value $colorsXml -Encoding UTF8
-    }
+    Set-AndroidColorResource $valuesDir "ic_launcher_background" $AndroidLauncherColor
 
     $launcherSizes = @{
         "mipmap-mdpi" = 48
@@ -178,5 +285,6 @@ Get-ChildItem -LiteralPath $SourceDir -Force |
 
 Update-AndroidProjectForLanImport
 Update-AndroidProjectBranding
+Update-AndroidStartupTheme
 
 Write-Host "Prepared Tauri Android assets at: $OutputDir"

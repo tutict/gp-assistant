@@ -113,6 +113,47 @@ function Use-LocalGradleDistribution {
     Set-Content -LiteralPath $WrapperProperties -Value $Updated -Encoding ASCII
 }
 
+function Remove-CheckedDirectory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Path,
+        [Parameter(Mandatory = $true)]
+        [string] $Parent
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    $parentFullPath = [System.IO.Path]::GetFullPath($Parent).TrimEnd("\", "/")
+    $childFullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd("\", "/")
+    $prefix = $parentFullPath + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $childFullPath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove path outside expected parent: $childFullPath"
+    }
+
+    Remove-Item -LiteralPath $childFullPath -Recurse -Force
+}
+
+function Clear-TauriAndroidPluginCache {
+    $CargoHome = [Environment]::GetEnvironmentVariable("CARGO_HOME")
+    if (-not $CargoHome) {
+        $CargoHome = Join-Path $env:USERPROFILE ".cargo"
+    }
+
+    $RegistrySrc = Join-Path $CargoHome "registry\src"
+    if (-not (Test-Path -LiteralPath $RegistrySrc)) {
+        return
+    }
+
+    Get-ChildItem -LiteralPath $RegistrySrc -Directory | ForEach-Object {
+        Get-ChildItem -LiteralPath $_.FullName -Directory -Filter "tauri-plugin-*" | ForEach-Object {
+            $TauriApiCache = Join-Path $_.FullName "android\.tauri\tauri-api"
+            Remove-CheckedDirectory $TauriApiCache $RegistrySrc
+        }
+    }
+}
+
 function Update-AndroidProjectForLanImport {
     $AndroidManifest = Join-Path $AndroidProjectDir "app\src\main\AndroidManifest.xml"
     $AndroidBuildGradle = Join-Path $AndroidProjectDir "app\build.gradle.kts"
@@ -120,12 +161,17 @@ function Update-AndroidProjectForLanImport {
     if (Test-Path -LiteralPath $AndroidManifest) {
         $manifest = Get-Content -LiteralPath $AndroidManifest -Raw
         if ($manifest -notmatch "android\.permission\.CAMERA") {
-            $manifest = $manifest -replace (
-                [regex]::Escape('    <uses-permission android:name="android.permission.INTERNET" />'),
-                "    <uses-permission android:name=`"android.permission.INTERNET`" />`r`n" +
-                "    <uses-permission android:name=`"android.permission.CAMERA`" />`r`n" +
+            $internetPermissionPattern = [regex]::Escape('    <uses-permission android:name="android.permission.INTERNET" />')
+            $lanImportPermissions = @(
+                "    <uses-permission android:name=`"android.permission.INTERNET`" />",
+                "    <uses-permission android:name=`"android.permission.CAMERA`" />",
                 "    <uses-feature android:name=`"android.hardware.camera`" android:required=`"false`" />"
-            )
+            ) -join "`r`n"
+            $manifest = $manifest -replace $internetPermissionPattern, $lanImportPermissions
+            if ($manifest -notmatch "android\.permission\.CAMERA") {
+                $manifestRootPattern = "<manifest([^>]*)>"
+                $manifest = $manifest -replace $manifestRootPattern, "<manifest`$1>`r`n$lanImportPermissions"
+            }
             Set-Content -LiteralPath $AndroidManifest -Value $manifest -Encoding UTF8
         }
     }
@@ -168,6 +214,7 @@ Push-Location $DesktopDir
 try {
     Update-AndroidProjectForLanImport
     Use-LocalGradleDistribution
+    Clear-TauriAndroidPluginCache
 
     if ($InitOnly) {
         Write-Host "Android project is initialized at: $AndroidProjectDir"
