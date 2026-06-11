@@ -67,7 +67,8 @@ function Resize-Png {
         [Parameter(Mandatory = $true)]
         [string] $Destination,
         [Parameter(Mandatory = $true)]
-        [int] $Size
+        [int] $Size,
+        [double] $ContentScale = 1.0
     )
 
     Add-Type -AssemblyName System.Drawing
@@ -84,7 +85,9 @@ function Resize-Png {
                 $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
                 $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
                 $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-                $graphics.DrawImage($sourceImage, 0, 0, $Size, $Size)
+                $contentSize = [Math]::Max(1, [int][Math]::Round($Size * $ContentScale))
+                $offset = [int][Math]::Round(($Size - $contentSize) / 2)
+                $graphics.DrawImage($sourceImage, $offset, $offset, $contentSize, $contentSize)
             } finally {
                 $graphics.Dispose()
             }
@@ -133,10 +136,25 @@ function Set-AndroidColorResource {
     Set-Content -LiteralPath $colorsPath -Value $colorsXml -Encoding UTF8
 }
 
+function Resolve-AndroidThemeParent {
+    $themesPath = Join-Path (Join-Path $AndroidResDir "values") "themes.xml"
+    if (Test-Path -LiteralPath $themesPath) {
+        $themesXml = Get-Content -LiteralPath $themesPath -Raw
+        $match = [regex]::Match($themesXml, '<style\s+name="([^"]+)"\s+parent="([^"]+)"')
+        if ($match.Success -and $match.Groups[1].Value -ne $AndroidThemeName) {
+            return "@style/$($match.Groups[1].Value)"
+        }
+    }
+
+    return "Theme.MaterialComponents.DayNight.NoActionBar"
+}
+
 function Write-AndroidStartupTheme {
     param(
         [Parameter(Mandatory = $true)]
         [string] $ValuesDir,
+        [Parameter(Mandatory = $true)]
+        [string] $ThemeParent,
         [switch] $UseAndroid12Splash
     )
 
@@ -147,7 +165,6 @@ function Write-AndroidStartupTheme {
         "        <item name=`"android:windowActionBar`">false</item>",
         "        <item name=`"android:windowBackground`">@color/gp_boot_background</item>",
         "        <item name=`"android:colorBackground`">@color/gp_boot_background</item>",
-        "        <item name=`"android:windowDisablePreview`">true</item>",
         "        <item name=`"android:forceDarkAllowed`">false</item>",
         "        <item name=`"android:statusBarColor`">@color/gp_boot_background</item>",
         "        <item name=`"android:navigationBarColor`">@color/gp_boot_background</item>",
@@ -158,14 +175,14 @@ function Write-AndroidStartupTheme {
     if ($UseAndroid12Splash) {
         $themeItems += @(
             "        <item name=`"android:windowSplashScreenBackground`">@color/gp_boot_background</item>",
-            "        <item name=`"android:windowSplashScreenAnimatedIcon`">@mipmap/ic_launcher</item>"
+            "        <item name=`"android:windowSplashScreenAnimatedIcon`">@mipmap/gp_splash_icon</item>"
         )
     }
 
     $styleLines = @(
         "<?xml version=`"1.0`" encoding=`"utf-8`"?>",
         "<resources>",
-        "    <style name=`"$AndroidThemeName`" parent=`"@android:style/Theme.Material.NoActionBar`">"
+        "    <style name=`"$AndroidThemeName`" parent=`"$ThemeParent`">"
     )
     $styleLines += $themeItems
     $styleLines += @(
@@ -209,9 +226,10 @@ function Update-AndroidStartupTheme {
         Set-AndroidColorResource $valuesDir "gp_boot_background" $AndroidBootColor
     }
 
-    Write-AndroidStartupTheme (Join-Path $AndroidResDir "values")
-    Write-AndroidStartupTheme (Join-Path $AndroidResDir "values-night")
-    Write-AndroidStartupTheme (Join-Path $AndroidResDir "values-v31") -UseAndroid12Splash
+    $themeParent = Resolve-AndroidThemeParent
+    Write-AndroidStartupTheme (Join-Path $AndroidResDir "values") $themeParent
+    Write-AndroidStartupTheme (Join-Path $AndroidResDir "values-night") $themeParent
+    Write-AndroidStartupTheme (Join-Path $AndroidResDir "values-v31") $themeParent -UseAndroid12Splash
     Update-AndroidManifestStartupTheme
 }
 
@@ -245,9 +263,11 @@ function Update-AndroidProjectBranding {
     }
     foreach ($entry in $launcherSizes.GetEnumerator()) {
         $directory = Join-Path $AndroidResDir $entry.Key
-        foreach ($fileName in @("ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png")) {
+        foreach ($fileName in @("ic_launcher.png", "ic_launcher_round.png")) {
             Resize-Png $AndroidIconSource (Join-Path $directory $fileName) $entry.Value
         }
+        Resize-Png $AndroidIconSource (Join-Path $directory "ic_launcher_foreground.png") $entry.Value 0.76
+        Resize-Png $AndroidIconSource (Join-Path $directory "gp_splash_icon.png") $entry.Value 0.68
     }
 
     $adaptiveIconDir = Join-Path $AndroidResDir "mipmap-anydpi-v26"
