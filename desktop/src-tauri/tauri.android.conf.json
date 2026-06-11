@@ -9,7 +9,9 @@
       {
         "label": "main",
         "title": "A股选股智能体",
-        "url": "index.html"
+        "url": "index.html",
+        "theme": "Dark",
+        "backgroundColor": "#101418"
       }
     ],
     "security": {

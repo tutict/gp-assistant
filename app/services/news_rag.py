@@ -10,10 +10,11 @@ from datetime import datetime, timedelta
 from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import Any, Iterable, List, Sequence
 
 from app.providers.base import StockProvider
 from app.schemas import (
+    LlmClientConfig,
     NewsEvidence,
     NewsImpactFinding,
     NewsRagRequest,
@@ -30,6 +31,18 @@ CACHE_PATH = Path(os.getenv("GP_NEWS_CACHE", "data/cache/news.sqlite"))
 CHAIN_RELATION_TYPES = {"supply_chain", "manufacturing_chain", "upstream_material"}
 SOURCE_TIER_NEWS = "news"
 SOURCE_TIER_COMMUNITY = "community"
+
+
+@dataclass(frozen=True)
+class _ResolvedNewsLlmConfig:
+    api_key: str | None
+    base_url: str | None
+    model: str
+    temperature: float
+    timeout_seconds: float
+    json_mode: bool
+    organization: str | None
+    project: str | None
 
 
 @dataclass(frozen=True)
@@ -72,9 +85,18 @@ def analyze_supply_chain_news(provider: StockProvider, request: NewsRagRequest) 
         conn.close()
 
     findings = _build_findings(scope_codes, chain_relations, evidence, stock_by_code)
+    findings, llm_notes = _apply_llm_analysis(
+        request,
+        scope_codes,
+        chain_relations,
+        evidence,
+        stock_by_code,
+        findings,
+    )
     notes = [
         *screen_notes,
         *adapter_notes,
+        *llm_notes,
         "RAG 只在已有股票关系图范围内分析消息，不从新闻自动发明上下游关系。",
         f"消息缓存：{CACHE_PATH}。",
     ]
@@ -140,7 +162,7 @@ def _fetch_news_items(
 ) -> tuple[List[RawNewsItem], List[str]]:
     notes: List[str] = []
     items: List[RawNewsItem] = []
-    if _env_enabled("GP_NEWS_ENABLE_GUBA", default=False):
+    if _env_enabled("GP_NEWS_ENABLE_GUBA", default=True):
         adapter = _EastmoneyGubaCommunityAdapter()
         try:
             guba_items = adapter.fetch(stocks, relations, days)
@@ -162,16 +184,18 @@ def _fetch_news_items(
         except Exception as exc:
             notes.append(f"雪球社区适配器不可用，已继续使用其他消息源：{str(exc)[:120]}")
 
-    if os.getenv("GP_NEWS_ENABLE_AKSHARE", "").strip().lower() in {"1", "true", "yes", "on"}:
+    if _env_enabled("GP_NEWS_ENABLE_AKSHARE", default=True):
         try:
             akshare_items = _AkshareStockNewsAdapter().fetch(stocks, relations, days)
             items.extend(akshare_items)
             if akshare_items:
                 notes.append("已通过 AkShare 东方财富个股新闻接口抓取并缓存消息。")
+            else:
+                notes.append("已尝试通过 AkShare 东方财富个股新闻接口抓取，当前窗口未命中消息。")
         except Exception as exc:
             notes.append(f"AkShare 新闻抓取不可用，已继续使用其他消息源：{str(exc)[:120]}")
     else:
-        notes.append("AkShare 新闻抓取未启用；可设置 GP_NEWS_ENABLE_AKSHARE=true 后接入真实个股新闻。")
+        notes.append("AkShare 东方财富个股新闻抓取已关闭；可设置 GP_NEWS_ENABLE_AKSHARE=true 后重新启用。")
 
     return items, notes
 
@@ -509,6 +533,7 @@ def _row_to_evidence(conn: sqlite3.Connection, row: sqlite3.Row) -> NewsEvidence
     ).fetchall()
     return NewsEvidence(
         title=row["title"],
+        summary=row["summary"],
         source=row["source"],
         source_tier=row["source_tier"] or SOURCE_TIER_NEWS,
         published_at=row["published_at"],
@@ -621,6 +646,363 @@ def _pending_checks(direction: str, evidence: Sequence[NewsEvidence] = ()) -> Li
     if direction in {"利空", "中性"}:
         checks.append("关注成本压力、库存和需求下滑风险。")
     return checks
+
+
+def _apply_llm_analysis(
+    request: NewsRagRequest,
+    scope_codes: Sequence[str],
+    relations: Sequence[StockRelation],
+    evidence: Sequence[NewsEvidence],
+    stock_by_code: dict[str, StockItem],
+    findings: Sequence[NewsImpactFinding],
+) -> tuple[List[NewsImpactFinding], List[str]]:
+    base_findings = list(findings)
+    if not base_findings:
+        return base_findings, ["RAG 没有可分析目标，未调用模型。"]
+
+    config = _resolve_news_llm_config(request.llm)
+    if not config.api_key:
+        return base_findings, ["未配置 OPENAI_API_KEY 或自定义模型密钥，RAG 已使用本地规则完成影响判断。"]
+
+    try:
+        llm_result = _call_news_llm(
+            config,
+            scope_codes,
+            relations,
+            evidence,
+            stock_by_code,
+            base_findings,
+        )
+    except Exception as exc:
+        return base_findings, [f"RAG 模型分析失败，已回退到本地规则判断：{_safe_llm_error(exc)}"]
+
+    merged = _merge_llm_findings(base_findings, llm_result)
+    notes = [f"已调用模型 {config.model} 基于检索证据参与上下游影响判断。"]
+    for note in _safe_string_list(llm_result.get("notes"), limit=4, max_chars=140):
+        notes.append(note)
+    return merged, notes
+
+
+def _call_news_llm(
+    config: _ResolvedNewsLlmConfig,
+    scope_codes: Sequence[str],
+    relations: Sequence[StockRelation],
+    evidence: Sequence[NewsEvidence],
+    stock_by_code: dict[str, StockItem],
+    findings: Sequence[NewsImpactFinding],
+) -> dict[str, Any]:
+    from openai import OpenAI
+
+    client_kwargs: dict[str, Any] = {
+        "api_key": config.api_key,
+        "timeout": config.timeout_seconds,
+    }
+    if config.base_url:
+        client_kwargs["base_url"] = config.base_url
+    if config.organization:
+        client_kwargs["organization"] = config.organization
+    if config.project:
+        client_kwargs["project"] = config.project
+    client = OpenAI(**client_kwargs)
+
+    request: dict[str, Any] = {
+        "model": config.model,
+        "messages": [
+            {"role": "system", "content": _news_llm_system_prompt()},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    _news_llm_payload(scope_codes, relations, evidence, stock_by_code, findings),
+                    ensure_ascii=False,
+                ),
+            },
+        ],
+        "temperature": config.temperature,
+    }
+    if config.json_mode:
+        request["response_format"] = {"type": "json_object"}
+
+    completion = _create_news_chat_completion(client, request)
+    content = completion.choices[0].message.content or "{}"
+    parsed = _parse_llm_json_response(content)
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _create_news_chat_completion(client: Any, request: dict[str, Any]) -> Any:
+    try:
+        return client.chat.completions.create(**request)
+    except Exception:
+        fallback = dict(request)
+        if "response_format" not in fallback:
+            raise
+        fallback.pop("response_format", None)
+        return client.chat.completions.create(**fallback)
+
+
+def _news_llm_system_prompt() -> str:
+    return (
+        "你是A股上下游消息RAG分析器，只能基于用户提供的关系边和证据判断。"
+        "不要编造公告、客户、供应商、订单或新闻；不要给交易建议。"
+        "community证据只能作为情绪、传闻或待核查线索，不能单独支撑确定性利好/利空。"
+        "输出严格JSON："
+        "{\"findings\":[{\"target\":\"与输入target一致\",\"direction\":\"利好|利空|中性|不确定\","
+        "\"confidence\":\"低|中|高\",\"impact_chain\":\"一句中文解释\","
+        "\"pending_checks\":[\"待核查项\"]}],\"notes\":[\"简短说明\"]}。"
+    )
+
+
+def _news_llm_payload(
+    scope_codes: Sequence[str],
+    relations: Sequence[StockRelation],
+    evidence: Sequence[NewsEvidence],
+    stock_by_code: dict[str, StockItem],
+    findings: Sequence[NewsImpactFinding],
+) -> dict[str, Any]:
+    return {
+        "scope_codes": list(scope_codes),
+        "stocks": [
+            {
+                "code": code,
+                "name": stock_by_code[code].name,
+                "industry": stock_by_code[code].industry,
+            }
+            for code in scope_codes
+            if code in stock_by_code
+        ],
+        "relations": [
+            {
+                "source_code": relation.source_code,
+                "target_code": relation.target_code,
+                "relation_type": relation.relation_type,
+                "weight": relation.weight,
+                "description": relation.description,
+            }
+            for relation in relations[:30]
+        ],
+        "evidence": [
+            {
+                "id": f"E{index + 1}",
+                "title": item.title,
+                "summary": item.summary,
+                "source": item.source,
+                "source_tier": item.source_tier,
+                "published_at": item.published_at,
+                "stock_codes": item.stock_codes,
+                "relation_types": item.relation_types,
+                "sentiment": item.sentiment,
+            }
+            for index, item in enumerate(evidence[:30])
+        ],
+        "rule_findings": [
+            {
+                "target": finding.target,
+                "direction": finding.direction,
+                "confidence": finding.confidence,
+                "impact_chain": finding.impact_chain,
+                "evidence_titles": [item.title for item in finding.evidence],
+                "pending_checks": finding.pending_checks,
+            }
+            for finding in findings
+        ],
+    }
+
+
+def _merge_llm_findings(
+    base_findings: Sequence[NewsImpactFinding],
+    llm_result: dict[str, Any],
+) -> List[NewsImpactFinding]:
+    rows = llm_result.get("findings")
+    if not isinstance(rows, list):
+        return list(base_findings)
+
+    merged: List[NewsImpactFinding] = []
+    for finding in base_findings:
+        row = _matching_llm_finding(finding, rows)
+        if not row:
+            merged.append(finding)
+            continue
+        update: dict[str, Any] = {}
+        direction = _normalize_direction(row.get("direction"))
+        confidence = _normalize_confidence(row.get("confidence"))
+        impact_chain = _safe_string(row.get("impact_chain"), max_chars=420)
+        pending_checks = _safe_string_list(row.get("pending_checks"), limit=5, max_chars=120)
+        if direction:
+            update["direction"] = direction
+        if confidence:
+            update["confidence"] = confidence
+        if impact_chain:
+            update["impact_chain"] = impact_chain
+        if pending_checks:
+            update["pending_checks"] = pending_checks
+        merged.append(finding.model_copy(update=update) if update else finding)
+    return merged
+
+
+def _matching_llm_finding(finding: NewsImpactFinding, rows: Sequence[Any]) -> dict[str, Any] | None:
+    target = finding.target
+    code_match = re.search(r"\b\d{6}\.(?:SH|SZ|BJ)\b", target)
+    code = code_match.group(0) if code_match else ""
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_target = str(row.get("target") or "")
+        if row_target == target or (row_target and (row_target in target or target in row_target)):
+            return row
+        if code and code in row_target:
+            return row
+    return None
+
+
+def _normalize_direction(value: object) -> str | None:
+    text = str(value or "").strip().lower()
+    mapping = {
+        "positive": "利好",
+        "bullish": "利好",
+        "利好": "利好",
+        "negative": "利空",
+        "bearish": "利空",
+        "利空": "利空",
+        "neutral": "中性",
+        "中性": "中性",
+        "uncertain": "不确定",
+        "unknown": "不确定",
+        "不确定": "不确定",
+    }
+    return mapping.get(text)
+
+
+def _normalize_confidence(value: object) -> str | None:
+    text = str(value or "").strip().lower()
+    mapping = {
+        "high": "高",
+        "高": "高",
+        "medium": "中",
+        "mid": "中",
+        "中": "中",
+        "low": "低",
+        "低": "低",
+    }
+    return mapping.get(text)
+
+
+def _safe_string(value: object, max_chars: int) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    if not text:
+        return ""
+    return _truncate_chars(text, max_chars)
+
+
+def _truncate_chars(value: str, max_chars: int) -> str:
+    result = ""
+    for index, char in enumerate(value):
+        if index >= max_chars:
+            return f"{result}..."
+        result += char
+    return result
+
+
+def _safe_string_list(value: object, limit: int, max_chars: int) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    result: List[str] = []
+    for item in value:
+        text = _safe_string(item, max_chars)
+        if text:
+            result.append(text)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _parse_llm_json_response(content: str) -> Any:
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", content, flags=re.DOTALL)
+        if not match:
+            raise
+        return json.loads(match.group(0))
+
+
+def _resolve_news_llm_config(override: LlmClientConfig | None) -> _ResolvedNewsLlmConfig:
+    api_key = _coalesce_str(override.api_key if override else None, os.getenv("OPENAI_API_KEY"))
+    model = _coalesce_str(override.model if override else None, os.getenv("OPENAI_MODEL"), "gpt-4o-mini")
+    temperature = _coalesce_float(
+        override.temperature if override else None,
+        os.getenv("OPENAI_TEMPERATURE"),
+        0.2,
+    )
+    timeout_seconds = _coalesce_float(
+        override.timeout_seconds if override else None,
+        os.getenv("OPENAI_TIMEOUT_SECONDS"),
+        30.0,
+    )
+    return _ResolvedNewsLlmConfig(
+        api_key=api_key,
+        base_url=_normalize_base_url(
+            _coalesce_str(override.base_url if override else None, os.getenv("OPENAI_BASE_URL"))
+        ),
+        model=model or "gpt-4o-mini",
+        temperature=min(max(temperature, 0.0), 2.0),
+        timeout_seconds=min(max(timeout_seconds, 1.0), 180.0),
+        json_mode=_coalesce_bool(override.json_mode if override else None, os.getenv("OPENAI_JSON_MODE"), True),
+        organization=_coalesce_str(override.organization if override else None, os.getenv("OPENAI_ORG_ID")),
+        project=_coalesce_str(override.project if override else None, os.getenv("OPENAI_PROJECT_ID")),
+    )
+
+
+def _coalesce_str(*values: object) -> str | None:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _coalesce_float(*values: object) -> float:
+    fallback = float(values[-1])
+    for value in values[:-1]:
+        if value is None or value == "":
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return fallback
+
+
+def _coalesce_bool(*values: object) -> bool:
+    fallback = bool(values[-1])
+    for value in values[:-1]:
+        if value is None or value == "":
+            continue
+        if isinstance(value, bool):
+            return value
+        lowered = str(value).strip().lower()
+        if lowered in {"1", "true", "yes", "y", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "n", "off"}:
+            return False
+    return fallback
+
+
+def _normalize_base_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    return value.rstrip("/")
+
+
+def _safe_llm_error(exc: Exception) -> str:
+    text = str(exc)
+    for secret in [os.getenv("OPENAI_API_KEY", "")]:
+        if secret:
+            text = text.replace(secret, "[redacted]")
+    text = re.sub(r"sk-[A-Za-z0-9_-]{8,}", "sk-[redacted]", text)
+    return text[:180]
 
 
 def _dedupe_evidence(evidence: Sequence[NewsEvidence]) -> List[NewsEvidence]:

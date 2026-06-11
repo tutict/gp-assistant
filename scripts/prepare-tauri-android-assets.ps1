@@ -6,30 +6,11 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $SourceDir = Join-Path $Root "app\static"
 $OutputDir = Join-Path $Root "desktop\mobile-dist"
 $StaticOutputDir = Join-Path $OutputDir "static"
-$MobileDataScript = Join-Path $PSScriptRoot "build-mobile-tdx-dataset.py"
-$MobileDataOutput = Join-Path $StaticOutputDir "mobile-market-data.json"
 $AndroidManifest = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\AndroidManifest.xml"
 $AndroidBuildGradle = Join-Path $Root "desktop\src-tauri\gen\android\app\build.gradle.kts"
 $AndroidResDir = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\res"
 $AndroidIconSource = Join-Path $Root "desktop\src-tauri\icons\icon.png"
 $AndroidAppName = -join @("A", [char]0x80A1, [char]0x9009, [char]0x80A1, [char]0x667A, [char]0x80FD, [char]0x4F53)
-
-function Resolve-Python {
-    $candidates = @(
-        (Join-Path $Root ".venv-cpython\Scripts\python.exe"),
-        (Join-Path $Root ".venv\Scripts\python.exe"),
-        "python"
-    )
-
-    foreach ($candidate in $candidates) {
-        $command = Get-Command $candidate -ErrorAction SilentlyContinue
-        if ($command) {
-            return $command.Source
-        }
-    }
-
-    throw "Python was not found. Create .venv-cpython or .venv, or add python to PATH."
-}
 
 function Assert-WorkspaceChildPath {
     param(
@@ -194,12 +175,6 @@ Get-ChildItem -LiteralPath $SourceDir -Force |
     ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination $StaticOutputDir -Recurse -Force
     }
-
-$Python = Resolve-Python
-& $Python $MobileDataScript --output $MobileDataOutput
-if ($LASTEXITCODE -ne 0) {
-    throw "Build mobile TDX data set failed with exit code $LASTEXITCODE."
-}
 
 Update-AndroidProjectForLanImport
 Update-AndroidProjectBranding

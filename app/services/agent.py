@@ -493,6 +493,8 @@ def _news_rag_node(state: AgentState) -> AgentState:
     request = state.get("news_rag") or NewsRagRequest(
         criteria=state.get("criteria") or ScreenCriteria()
     )
+    if request.llm is None and state.get("llm_config") is not None:
+        request = request.model_copy(update={"llm": state.get("llm_config")})
     result = analyze_supply_chain_news(state["provider"], request)
     return {
         "news_rag": request,

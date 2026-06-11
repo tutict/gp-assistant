@@ -42,8 +42,9 @@ const DEFAULT_PER_SECTOR_LIMIT = 3;
 const SECTOR_SCREEN_POOL_MULTIPLIER = 8;
 const STOCK_SEARCH_LIMIT = 3;
 const DEFAULT_DATA_SOURCE = "tdx";
-const MOBILE_MARKET_DATA_URL = "/static/mobile-market-data.json";
 const MOBILE_TENCENT_MAX_CANDIDATES = 16000;
+const MOBILE_TENCENT_MAX_FAILED_BATCHES = 4;
+const MOBILE_TENCENT_MAX_REFRESH_SECS = 45;
 const DEFAULT_TODAY_DATE_INPUT_IDS = new Set(["trendEnd", "btEnd", "observeEnd"]);
 let mobileMarketDataPromise = null;
 let mobileMarketDataSummary = null;
@@ -133,7 +134,22 @@ const TAURI_MOBILE_POST_ROUTES = {
   "/api/screen": async ({ invoke, payload }) =>
     invokeCoreWithMobileData(invoke, "core_screen_with_data", "criteria", payload),
   "/api/data-sources/auto-refresh-universe": async ({ invoke }) => {
+    const cache = await readMobileMarketDataCache(invoke).catch(() => null);
     const tradingDay = isLikelyTradingDay();
+    if (!cache) {
+      const status = await refreshMobileMarketData(invoke, { seed: null });
+      return {
+        source: DEFAULT_DATA_SOURCE,
+        checked_at: new Date().toISOString(),
+        trading_day: tradingDay,
+        after_close: !shouldUsePreviousCloseForMobileRefresh(),
+        due: true,
+        refreshed: true,
+        initial_refresh: true,
+        status,
+        notes: mobileRefreshNotes(status, "首次安装已联网生成手机本地股票池。"),
+      };
+    }
     if (!tradingDay) {
       return {
         source: DEFAULT_DATA_SOURCE,
@@ -146,6 +162,7 @@ const TAURI_MOBILE_POST_ROUTES = {
         notes: ["今天不是交易日，移动端不自动刷新股票池。"],
       };
     }
+    const status = await refreshMobileMarketData(invoke);
     return {
       source: DEFAULT_DATA_SOURCE,
       checked_at: new Date().toISOString(),
@@ -153,16 +170,19 @@ const TAURI_MOBILE_POST_ROUTES = {
       after_close: !shouldUsePreviousCloseForMobileRefresh(),
       due: true,
       refreshed: true,
-      status: await refreshMobileMarketData(invoke),
-      notes: ["移动端已按交易日策略联网更新股票池。"],
+      status,
+      notes: mobileRefreshNotes(status, "移动端已按交易日策略联网更新股票池。"),
     };
   },
-  "/api/data-sources/refresh-universe": async ({ invoke }) => ({
-    source: DEFAULT_DATA_SOURCE,
-    refreshed: true,
-    status: await refreshMobileMarketData(invoke),
-    notes: ["已通过腾讯行情联网更新股票池，并写入手机本地缓存。"],
-  }),
+  "/api/data-sources/refresh-universe": async ({ invoke }) => {
+    const status = await refreshMobileMarketData(invoke);
+    return {
+      source: DEFAULT_DATA_SOURCE,
+      refreshed: true,
+      status,
+      notes: mobileRefreshNotes(status, "已通过腾讯行情联网更新股票池，并写入手机本地缓存。"),
+    };
+  },
   "/api/data-sources/prune-cache": async ({ invoke }) => pruneMobileMarketData(invoke),
   "/api/sector-screen": async ({ invoke, payload }) => buildTauriSectorScreen(invoke, payload),
   "/api/graph-screen": async ({ invoke, payload }) =>
@@ -361,6 +381,7 @@ initLlmSettings();
 initFormControls();
 initStickyOffsets();
 bindActions();
+dismissBootSplash();
 
 function bindActions() {
   buttons.screen.addEventListener("click", () => runTask(buttons.screen, panels.screen, runScreen));
@@ -471,6 +492,13 @@ function bindActions() {
     llmSettings.timeout,
     llmSettings.jsonMode,
   ].forEach((input) => input?.addEventListener("input", updateLlmStatus));
+}
+
+function dismissBootSplash() {
+  window.requestAnimationFrame(() => {
+    document.documentElement.classList.add("app-ready");
+    $("#bootSplash")?.remove();
+  });
 }
 
 function initRuntimeSurface() {
@@ -750,6 +778,8 @@ async function runNewsRag() {
     days: clampInt($("#newsDays")?.value, 1, 365, 30),
     max_items: 24,
   };
+  const llm = buildLlmConfig();
+  if (llm) payload.llm = llm;
   try {
     const data = await postJson("/api/news-rag", payload, panels.newsRag);
     if (data) renderNewsRagResult(panels.newsRag, data);
@@ -1426,7 +1456,8 @@ async function loadDataStatus() {
 async function maybeAutoRefreshUniverse(trigger = "startup") {
   if (!shouldCheckAutoRefreshUniverse()) return;
   autoRefreshInFlight = true;
-  localStorage.setItem(AUTO_REFRESH_CHECK_KEY, String(Date.now()));
+  const progress = isMobileTauriRuntime() && trigger === "startup" ? startRefreshProgress() : null;
+  if (progress) setMaintenanceNote("首次安装正在联网生成股票池");
   try {
     const data = await requestJson("POST", "/api/data-sources/auto-refresh-universe", {
       mode: "light",
@@ -1434,9 +1465,11 @@ async function maybeAutoRefreshUniverse(trigger = "startup") {
       daily_days: 500,
       minute_days: 3,
     });
+    localStorage.setItem(AUTO_REFRESH_CHECK_KEY, String(Date.now()));
     renderDataStatus(data.status);
     const notes = data.notes || [];
     if (data.refreshed) {
+      if (progress) finishRefreshProgress(data.initial_refresh ? "股票池初始化完成" : "股票池刷新完成");
       setMaintenanceNote(notes.join(" ") || "交易日收盘后已自动刷新基础股票池。");
     } else if (data.due) {
       setMaintenanceNote(notes.join(" ") || "交易日自动刷新未完成，可手动刷新。");
@@ -1444,9 +1477,11 @@ async function maybeAutoRefreshUniverse(trigger = "startup") {
       setMaintenanceNote(notes.join(" "));
     }
   } catch (err) {
-    setMaintenanceNote(`交易日自动刷新检查失败：${err.message}`);
+    if (progress) failRefreshProgress("股票池初始化失败");
+    setMaintenanceNote(`股票池自动刷新检查失败：${err.message}`);
   } finally {
     autoRefreshInFlight = false;
+    if (progress) window.setTimeout(() => stopRefreshProgress(progress), 900);
   }
 }
 
@@ -1458,7 +1493,7 @@ function shouldCheckAutoRefreshUniverse() {
 
 async function refreshUniverse() {
   const mobileRuntime = isMobileTauriRuntime();
-  const progress = startRefreshProgress("remote");
+  const progress = startRefreshProgress();
   setMaintenanceNote(mobileRuntime ? "正在联网更新股票池" : "刷新股票池中，真实数据源可能需要几十秒");
   try {
     const data = await requestJson("POST", "/api/data-sources/refresh-universe", {
@@ -1498,23 +1533,15 @@ function setMaintenanceNote(text) {
   if (dataSource.note) dataSource.note.textContent = text;
 }
 
-function startRefreshProgress(mode = "remote") {
+function startRefreshProgress() {
   if (!dataSource.progress) return null;
-  const stages =
-    mode === "bundled"
-      ? [
-          [20, "读取内置数据包"],
-          [46, "校验股票池"],
-          [68, "同步本地状态"],
-          [86, "准备完成"],
-        ]
-      : [
-          [15, "准备数据源"],
-          [32, "获取股票池"],
-          [54, "写入本地缓存"],
-          [72, "检查缓存占用"],
-          [85, "等待数据源返回"],
-        ];
+  const stages = [
+    [15, "准备数据源"],
+    [32, "获取股票池"],
+    [54, "写入本地缓存"],
+    [72, "检查缓存占用"],
+    [85, "等待腾讯行情返回"],
+  ];
   let index = 0;
   dataSource.progress.hidden = false;
   setRefreshProgress(8, "准备刷新");
@@ -2415,17 +2442,14 @@ async function loadMobileMarketData(invoke, options = {}) {
   }
   if (!mobileMarketDataPromise) {
     mobileMarketDataPromise = (async () => {
-      if (!options.bundledOnly) {
-        try {
-          const cached = await invoke("core_mobile_market_data_read");
-          if (cached?.exists && cached.data) {
-            return applyMobileMarketDataRecord(cached, "cache");
-          }
-        } catch {
-          // Fall back to the packaged seed; manual refresh will surface network errors.
-        }
+      try {
+        return await loadCachedMobileMarketData(invoke);
+      } catch (error) {
+        if (options.cacheOnly) throw error;
       }
-      return await loadBundledMobileMarketData(invoke, options);
+      await refreshMobileMarketData(invoke, { seed: null });
+      if (mobileMarketDataPromise) return await mobileMarketDataPromise;
+      return await loadCachedMobileMarketData(invoke);
     })().catch((error) => {
       mobileMarketDataPromise = null;
       throw error;
@@ -2434,19 +2458,15 @@ async function loadMobileMarketData(invoke, options = {}) {
   return await mobileMarketDataPromise;
 }
 
-async function loadBundledMobileMarketData(invoke, options = {}) {
-  const url = options.force ? `${MOBILE_MARKET_DATA_URL}?t=${Date.now()}` : MOBILE_MARKET_DATA_URL;
-  const response = await fetch(url, { cache: options.force ? "reload" : "default" });
-  if (!response.ok) throw new Error(`移动端未内置股票池数据：HTTP ${response.status}`);
-  const data = await response.json();
-  const summary = await invoke("core_validate_data_source", { payload: data });
-  mobileMarketDataSummary = summary;
-  mobileMarketDataMeta = {
-    source: "bundled",
-    bytes: 0,
-    updatedAt: data.generated_at || null,
-  };
-  return data;
+async function readMobileMarketDataCache(invoke) {
+  const cached = await invoke("core_mobile_market_data_read");
+  return cached?.exists && cached.data ? cached : null;
+}
+
+async function loadCachedMobileMarketData(invoke) {
+  const cached = await readMobileMarketDataCache(invoke);
+  if (!cached) throw new Error("手机本地股票池为空，需要联网生成。");
+  return applyMobileMarketDataRecord(cached, "cache");
 }
 
 function applyMobileMarketDataRecord(record, source) {
@@ -2479,12 +2499,14 @@ function shouldUsePreviousCloseForMobileRefresh(now = new Date()) {
   return minutes < 15 * 60 + 5;
 }
 
-async function refreshMobileMarketData(invoke) {
-  let seed = null;
-  try {
-    seed = await loadMobileMarketData(invoke);
-  } catch {
-    seed = await loadBundledMobileMarketData(invoke, { force: true, bundledOnly: true });
+async function refreshMobileMarketData(invoke, options = {}) {
+  let seed = Object.prototype.hasOwnProperty.call(options, "seed") ? options.seed : null;
+  if (!Object.prototype.hasOwnProperty.call(options, "seed")) {
+    try {
+      seed = await loadCachedMobileMarketData(invoke);
+    } catch {
+      seed = null;
+    }
   }
   mobileMarketDataPromise = null;
   mobileMarketDataSummary = null;
@@ -2494,6 +2516,8 @@ async function refreshMobileMarketData(invoke) {
       seed,
       scan_candidates: true,
       max_candidates: MOBILE_TENCENT_MAX_CANDIDATES,
+      max_failed_batches: MOBILE_TENCENT_MAX_FAILED_BATCHES,
+      max_refresh_secs: MOBILE_TENCENT_MAX_REFRESH_SECS,
       use_previous_close: shouldUsePreviousCloseForMobileRefresh(),
     },
   });
@@ -2501,7 +2525,32 @@ async function refreshMobileMarketData(invoke) {
     const data = applyMobileMarketDataRecord(result.status, "cache");
     mobileMarketDataPromise = Promise.resolve(data);
   }
-  return await mobileDataStatus(invoke);
+  const status = await mobileDataStatus(invoke);
+  status.refresh_result = result;
+  status.notes = [...mobileRefreshNotes(status, "联网刷新完成"), ...(status.notes || [])];
+  return status;
+}
+
+function mobileRefreshNotes(status, fallback = "") {
+  const refresh = status?.refresh_result;
+  if (!refresh) return fallback ? [fallback] : [];
+  const fetched = Number(refresh.fetched || 0);
+  const requested = Number(refresh.requested || 0);
+  const preserved = Number(refresh.preserved || 0);
+  const failed = Number(refresh.failed_batches || 0);
+  const stoppedEarly = Boolean(refresh.stopped_early);
+  const stopReason = String(refresh.stop_reason || "");
+  const stockCount = Number(status?.stock_count || 0);
+  const base =
+    fetched > 0
+      ? `已联网更新 ${fetched} 只股票行情，保留 ${preserved} 只本地股票，候选 ${requested} 只。`
+      : `腾讯行情暂未返回有效股票，已保留 ${preserved || stockCount} 只本地股票。`;
+  if (stoppedEarly && stopReason === "timeout") {
+    return [`${base} 已达到 ${MOBILE_TENCENT_MAX_REFRESH_SECS} 秒移动端刷新上限，避免长时间等待。`];
+  }
+  if (stoppedEarly) return [`${base} 连续失败 ${failed} 批后提前停止，避免移动端长时间等待。`];
+  if (failed > 0) return [`${base} 失败批次 ${failed} 批，其余股票已继续处理。`];
+  return [base];
 }
 
 async function pruneMobileMarketData(invoke) {
@@ -2514,28 +2563,25 @@ async function pruneMobileMarketData(invoke) {
     removed_files: cleared?.removed ? 1 : 0,
     removed_bytes: Number(cleared?.removed_bytes || 0),
     status,
-    notes: [cleared?.removed ? "已清理手机本地股票池缓存，当前回退到内置兜底数据。" : "手机本地股票池缓存为空。"],
+    notes: [cleared?.removed ? "已清理手机本地股票池缓存，需要联网重新生成。" : "手机本地股票池缓存为空。"],
   };
 }
 
 async function mobileDataStatus(invoke) {
   try {
-    const data = await loadMobileMarketData(invoke);
+    const data = await loadMobileMarketData(invoke, { cacheOnly: true });
     const summary = mobileMarketDataSummary || { stock_count: data.stocks?.length || 0, warnings: [] };
     const meta = mobileMarketDataMeta || {};
-    const bundled = meta.source === "bundled";
     const stockCount = summary.stock_count || data.stocks?.length || 0;
     return {
-      source: bundled ? "tdx" : "tencent",
+      source: "tencent",
       universe_count: stockCount,
       cache_bytes: Number(meta.bytes || 0),
       cache_limit_bytes: 0,
       universe_updated_at: meta.updatedAt || data.generated_at || null,
-      policy: { mode: bundled ? "bundled" : "mobile_online", source: meta.source || "unknown" },
+      policy: { mode: "mobile_online", source: meta.source || "cache" },
       notes: [
-        bundled
-          ? `移动端当前使用安装包内置股票池 ${stockCount} 只；点击“联网更新股票池”会从腾讯行情更新并写入手机缓存。`
-          : `移动端当前使用手机本地股票池 ${stockCount} 只，来源为腾讯联网更新。`,
+        `移动端当前使用手机本地股票池 ${stockCount} 只，来源为腾讯联网更新。`,
         ...((data.notes || []).slice(0, 2)),
         ...(summary.warnings || []),
       ],
@@ -2547,8 +2593,8 @@ async function mobileDataStatus(invoke) {
       cache_bytes: 0,
       cache_limit_bytes: 0,
       universe_updated_at: null,
-      policy: { mode: "error" },
-      notes: [`移动端股票池不可用：${error.message}`],
+      policy: { mode: "empty" },
+      notes: [`移动端股票池尚未生成：${error.message}`, "首次安装会联网生成股票池；也可以点击“联网更新股票池”重试。"],
     };
   }
 }
@@ -2556,13 +2602,13 @@ async function mobileDataStatus(invoke) {
 function renderDataStatus(status) {
   if (!status || !dataSource.universe) return;
   const policy = status.policy || {};
-  const bundled = policy.mode === "bundled";
+  const empty = policy.mode === "empty";
   dataSource.universe.textContent = `${formatNumber(status.universe_count)} 只`;
   dataSource.cache.textContent = formatBytes(status.cache_bytes);
   dataSource.updated.textContent = status.universe_updated_at ? formatDateTime(status.universe_updated_at) : "-";
-  if (dataSource.cacheLabel) dataSource.cacheLabel.textContent = bundled ? "本地缓存" : "手机缓存";
+  if (dataSource.cacheLabel) dataSource.cacheLabel.textContent = "手机缓存";
   if (dataSource.policy) {
-    dataSource.policy.textContent = bundled ? "内置兜底 · 可联网更新" : "手机本地 · 腾讯联网更新";
+    dataSource.policy.textContent = empty ? "未初始化 · 需联网生成" : "手机本地 · 腾讯联网更新";
   }
   if (dataSource.refreshUniverse) dataSource.refreshUniverse.textContent = "联网更新股票池";
   if (dataSource.pruneCache) {
@@ -3147,6 +3193,7 @@ function renderEvidenceList(items) {
                 <span class="source-tier ${sourceTierClass(item.source_tier)}">${escapeHtml(sourceTierLabel(item.source_tier))}</span>
                 ${escapeHtml(item.source || "-")} · ${escapeHtml(item.published_at || "-")}
               </span>
+              ${item.summary ? `<p>${escapeHtml(item.summary)}</p>` : ""}
               <em>${escapeHtml((item.stock_codes || []).join(" · "))}</em>
             </article>
           `,

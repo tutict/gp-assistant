@@ -33,8 +33,11 @@ const BACKEND_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 const MOBILE_MARKET_DATA_FILE: &str = "mobile-market-data.json";
 const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
-const TENCENT_BATCH_SIZE: usize = 180;
+const TENCENT_BATCH_SIZE: usize = 500;
 const TENCENT_DEFAULT_MAX_CANDIDATES: usize = 16_000;
+const TENCENT_DEFAULT_MAX_FAILED_BATCHES: usize = 4;
+const TENCENT_DEFAULT_MAX_REFRESH_SECS: u64 = 45;
+const TENCENT_REQUEST_TIMEOUT_SECS: u64 = 8;
 
 #[cfg(not(mobile))]
 struct BackendState(Mutex<Option<BackendProcess>>);
@@ -135,7 +138,9 @@ fn core_mobile_market_data_clear(app: tauri::AppHandle) -> Result<Value, String>
             "notes": ["mobile market cache is already empty"]
         }));
     }
-    let removed_bytes = fs::metadata(&path).map(|metadata| metadata.len()).unwrap_or(0);
+    let removed_bytes = fs::metadata(&path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
     fs::remove_file(&path).map_err(|error| {
         format!(
             "remove mobile market cache failed: {}: {error}",
@@ -169,24 +174,58 @@ async fn core_mobile_market_data_refresh_tencent(
         .and_then(|value| usize::try_from(value).ok())
         .filter(|value| *value > 0)
         .unwrap_or(TENCENT_DEFAULT_MAX_CANDIDATES);
+    let max_failed_batches = payload
+        .get("max_failed_batches")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(TENCENT_DEFAULT_MAX_FAILED_BATCHES);
+    let max_refresh_secs = payload
+        .get("max_refresh_secs")
+        .and_then(Value::as_u64)
+        .filter(|value| *value > 0)
+        .unwrap_or(TENCENT_DEFAULT_MAX_REFRESH_SECS);
 
-    let refresh =
-        refresh_tencent_market_data(seed, scan_candidates, max_candidates, use_previous_close)
-            .await?;
+    let refresh = refresh_tencent_market_data(
+        seed,
+        scan_candidates,
+        max_candidates,
+        use_previous_close,
+        max_failed_batches,
+        max_refresh_secs,
+    )
+    .await?;
     let cache = write_mobile_market_data(&app, refresh.dataset)?;
+    let mut notes = vec![format!(
+        "Tencent quote refresh finished: fetched {} of {} candidates, preserved {} local rows",
+        refresh.fetched, refresh.requested, refresh.preserved
+    )];
+    match refresh.stop_reason.as_deref() {
+        Some("failed_batches") => {
+            notes.push(format!(
+                "Tencent quote refresh stopped early after {} failed batches",
+                refresh.failed_batches
+            ));
+        }
+        Some("timeout") => {
+            notes.push(format!(
+                "Tencent quote refresh stopped after {} seconds",
+                max_refresh_secs
+            ));
+        }
+        _ => {}
+    }
     Ok(json!({
         "refreshed": true,
         "source": "tencent",
         "requested": refresh.requested,
         "fetched": refresh.fetched,
+        "preserved": refresh.preserved,
         "failed_batches": refresh.failed_batches,
+        "stopped_early": refresh.stopped_early,
+        "stop_reason": refresh.stop_reason,
         "status": cache,
-        "notes": [
-            format!(
-                "Tencent quote refresh finished: fetched {} of {} candidates",
-                refresh.fetched, refresh.requested
-            )
-        ]
+        "notes": notes
     }))
 }
 
@@ -423,7 +462,10 @@ struct TencentRefreshResult {
     dataset: Value,
     requested: usize,
     fetched: usize,
+    preserved: usize,
     failed_batches: usize,
+    stopped_early: bool,
+    stop_reason: Option<String>,
 }
 
 async fn refresh_tencent_market_data(
@@ -431,6 +473,8 @@ async fn refresh_tencent_market_data(
     scan_candidates: bool,
     max_candidates: usize,
     use_previous_close: bool,
+    max_failed_batches: usize,
+    max_refresh_secs: u64,
 ) -> Result<TencentRefreshResult, String> {
     let (seed_stocks, seed_codes) = seed_stock_maps(&seed);
     let mut candidate_codes = seed_codes;
@@ -446,7 +490,7 @@ async fn refresh_tencent_market_data(
     }
 
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(TENCENT_REQUEST_TIMEOUT_SECS))
         .user_agent("Mozilla/5.0 GP-Assistant/0.2 mobile")
         .build()
         .map_err(|error| format!("create Tencent HTTP client failed: {error}"))?;
@@ -454,9 +498,20 @@ async fn refresh_tencent_market_data(
     let mut stocks = Vec::new();
     let mut seen = HashSet::new();
     let mut failed_batches = 0usize;
+    let mut consecutive_failed_batches = 0usize;
+    let mut stopped_early = false;
+    let mut stop_reason = None;
+    let started_at = std::time::Instant::now();
+    let max_refresh_duration = Duration::from_secs(max_refresh_secs);
     for batch in candidate_codes.chunks(TENCENT_BATCH_SIZE) {
+        if started_at.elapsed() >= max_refresh_duration {
+            stopped_early = true;
+            stop_reason = Some("timeout".to_string());
+            break;
+        }
         match fetch_tencent_quotes(&client, batch).await {
             Ok(text) => {
+                consecutive_failed_batches = 0;
                 for mut stock in parse_tencent_quotes(&text, &seed_stocks, use_previous_close) {
                     let Some(code) = stock
                         .get("code")
@@ -472,9 +527,18 @@ async fn refresh_tencent_market_data(
             }
             Err(_) => {
                 failed_batches += 1;
+                consecutive_failed_batches += 1;
+                if consecutive_failed_batches >= max_failed_batches {
+                    stopped_early = true;
+                    stop_reason = Some("failed_batches".to_string());
+                    break;
+                }
             }
         }
     }
+    let fetched = seen.len();
+    let preserved =
+        append_preserved_seed_stocks(&candidate_codes, &seed_stocks, &mut stocks, &mut seen);
     if stocks.is_empty() {
         return Err("Tencent quote refresh returned no valid stocks".to_string());
     }
@@ -486,7 +550,12 @@ async fn refresh_tencent_market_data(
     });
     let valid_codes: HashSet<String> = stocks
         .iter()
-        .filter_map(|stock| stock.get("code").and_then(Value::as_str).map(str::to_string))
+        .filter_map(|stock| {
+            stock
+                .get("code")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .collect();
 
     let dataset = json!({
@@ -509,13 +578,52 @@ async fn refresh_tencent_market_data(
 
     Ok(TencentRefreshResult {
         requested: candidate_codes.len(),
-        fetched: valid_codes.len(),
+        fetched,
+        preserved,
         failed_batches,
+        stopped_early,
+        stop_reason,
         dataset,
     })
 }
 
-async fn fetch_tencent_quotes(client: &reqwest::Client, codes: &[String]) -> Result<String, String> {
+fn append_preserved_seed_stocks(
+    candidate_codes: &[String],
+    seed_stocks: &HashMap<String, serde_json::Map<String, Value>>,
+    stocks: &mut Vec<Value>,
+    seen: &mut HashSet<String>,
+) -> usize {
+    let mut preserved = 0usize;
+    for code in candidate_codes {
+        if seen.contains(code) {
+            continue;
+        }
+        let Some(existing) = seed_stocks.get(code) else {
+            continue;
+        };
+        let mut stock = existing.clone();
+        stock.insert("code".to_string(), json!(code));
+        if stock
+            .get("industry")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+        {
+            stock.insert("industry".to_string(), json!(board_label(code)));
+        }
+        if seen.insert(code.clone()) {
+            stocks.push(Value::Object(stock));
+            preserved += 1;
+        }
+    }
+    preserved
+}
+
+async fn fetch_tencent_quotes(
+    client: &reqwest::Client,
+    codes: &[String],
+) -> Result<String, String> {
     let symbols: Vec<String> = codes
         .iter()
         .filter_map(|code| tencent_symbol(code))
@@ -558,12 +666,7 @@ fn parse_tencent_quotes(
         let Some(code) = normalize_stock_code(key) else {
             continue;
         };
-        let values: Vec<&str> = line
-            .split('"')
-            .nth(1)
-            .unwrap_or("")
-            .split('~')
-            .collect();
+        let values: Vec<&str> = line.split('"').nth(1).unwrap_or("").split('~').collect();
         if values.len() < 53 {
             continue;
         }
@@ -697,7 +800,11 @@ fn normalize_stock_code(value: &str) -> Option<String> {
             return Some(format!("{digits}.{market}"));
         }
     }
-    let digits: String = raw.chars().filter(|ch| ch.is_ascii_digit()).take(6).collect();
+    let digits: String = raw
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .take(6)
+        .collect();
     if !valid_digits(&digits) {
         return None;
     }
@@ -761,10 +868,7 @@ fn object_f64(object: &serde_json::Map<String, Value>, key: &str) -> Option<f64>
 }
 
 fn object_string(object: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
-    object
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
+    object.get(key).and_then(Value::as_str).map(str::to_string)
 }
 
 fn filter_seed_relations(seed: &Value, valid_codes: &HashSet<String>) -> Value {
@@ -846,7 +950,11 @@ fn write_mobile_market_data(app: &tauri::AppHandle, payload: Value) -> Result<Va
         .ok_or_else(|| "mobile market cache path has no parent".to_string())?;
     fs::create_dir_all(root)
         .map_err(|error| format!("create mobile market cache dir failed: {error}"))?;
-    let tmp_path = root.join(format!("{}.tmp-{}", MOBILE_MARKET_DATA_FILE, epoch_millis()));
+    let tmp_path = root.join(format!(
+        "{}.tmp-{}",
+        MOBILE_MARKET_DATA_FILE,
+        epoch_millis()
+    ));
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize mobile market data failed: {error}"))?;
     fs::write(&tmp_path, &bytes)
@@ -1213,5 +1321,67 @@ fn stop_backend(app: &tauri::AppHandle) {
         .take()
     {
         process.kill();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_preserved_seed_stocks_keeps_seed_rows_and_fills_missing_industry() {
+        let seed = json!({
+            "stocks": [
+                {"code": "000001.SZ", "name": "Ping An Bank", "industry": "", "price": 10.0},
+                {"code": "600000.SH", "name": "SPD Bank", "industry": "Banking", "price": 8.0}
+            ]
+        });
+        let (seed_stocks, seed_codes) = seed_stock_maps(&seed);
+        let mut stocks = Vec::new();
+        let mut seen = HashSet::new();
+
+        let preserved =
+            append_preserved_seed_stocks(&seed_codes, &seed_stocks, &mut stocks, &mut seen);
+
+        assert_eq!(preserved, 2);
+        assert_eq!(stocks.len(), 2);
+        let sz_stock = stocks
+            .iter()
+            .find(|stock| stock.get("code").and_then(Value::as_str) == Some("000001.SZ"))
+            .expect("SZ stock should be preserved");
+        assert_eq!(
+            sz_stock.get("industry").and_then(Value::as_str),
+            Some("Shenzhen A Share")
+        );
+        let sh_stock = stocks
+            .iter()
+            .find(|stock| stock.get("code").and_then(Value::as_str) == Some("600000.SH"))
+            .expect("SH stock should be preserved");
+        assert_eq!(
+            sh_stock.get("industry").and_then(Value::as_str),
+            Some("Banking")
+        );
+    }
+
+    #[test]
+    fn append_preserved_seed_stocks_skips_already_fetched_rows() {
+        let seed = json!({
+            "stocks": [
+                {"code": "000001.SZ", "name": "Ping An Bank", "price": 10.0},
+                {"code": "600000.SH", "name": "SPD Bank", "price": 8.0}
+            ]
+        });
+        let (seed_stocks, seed_codes) = seed_stock_maps(&seed);
+        let mut stocks = vec![json!({"code": "000001.SZ", "name": "Live Quote"})];
+        let mut seen = HashSet::from(["000001.SZ".to_string()]);
+
+        let preserved =
+            append_preserved_seed_stocks(&seed_codes, &seed_stocks, &mut stocks, &mut seen);
+
+        assert_eq!(preserved, 1);
+        assert_eq!(stocks.len(), 2);
+        assert!(stocks
+            .iter()
+            .any(|stock| stock.get("code").and_then(Value::as_str) == Some("600000.SH")));
     }
 }

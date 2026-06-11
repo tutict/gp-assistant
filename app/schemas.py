@@ -285,16 +285,29 @@ class BacktestResult(BaseModel):
     notes: List[str] = Field(default_factory=list)
 
 
+class LlmClientConfig(BaseModel):
+    api_key: Optional[str] = Field(default=None, max_length=4096)
+    base_url: Optional[str] = Field(default=None, max_length=512)
+    model: Optional[str] = Field(default=None, max_length=128)
+    temperature: Optional[float] = Field(default=None, ge=0, le=2)
+    timeout_seconds: Optional[float] = Field(default=None, gt=0, le=180)
+    json_mode: Optional[bool] = None
+    organization: Optional[str] = Field(default=None, max_length=256)
+    project: Optional[str] = Field(default=None, max_length=256)
+
+
 class NewsRagRequest(BaseModel):
     code: Optional[str] = Field(default=None, max_length=16)
     criteria: ScreenCriteria = Field(default_factory=ScreenCriteria)
     seed_codes: List[str] = Field(default_factory=list, max_length=20)
     days: int = Field(default=30, ge=1, le=365)
     max_items: int = Field(default=24, ge=1, le=100)
+    llm: Optional[LlmClientConfig] = None
 
 
 class NewsEvidence(BaseModel):
     title: str
+    summary: Optional[str] = None
     source: str
     source_tier: str = "news"
     published_at: Optional[str] = None
@@ -486,17 +499,6 @@ class CachePruneResult(BaseModel):
     removed_bytes: int
     status: DataCacheStatus
     notes: List[str] = Field(default_factory=list)
-
-
-class LlmClientConfig(BaseModel):
-    api_key: Optional[str] = Field(default=None, max_length=4096)
-    base_url: Optional[str] = Field(default=None, max_length=512)
-    model: Optional[str] = Field(default=None, max_length=128)
-    temperature: Optional[float] = Field(default=None, ge=0, le=2)
-    timeout_seconds: Optional[float] = Field(default=None, gt=0, le=180)
-    json_mode: Optional[bool] = None
-    organization: Optional[str] = Field(default=None, max_length=256)
-    project: Optional[str] = Field(default=None, max_length=256)
 
 
 class AgentRequest(BaseModel):

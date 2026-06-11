@@ -1803,7 +1803,39 @@ fn score_stock(stock: &StockItem, reasons: &[String]) -> f64 {
     if let Some(dividend_yield) = stock.dividend_yield.filter(|value| *value != 0.0) {
         score += (dividend_yield * 10.0).min(1.0);
     }
+    score += hot_sector_bonus(&stock.industry);
     score
+}
+
+fn hot_sector_bonus(industry: &str) -> f64 {
+    let normalized = industry.trim().to_lowercase();
+    if normalized.is_empty() {
+        return 0.0;
+    }
+    let keywords = [
+        ("半导体", 0.55),
+        ("芯片", 0.55),
+        ("算力", 0.5),
+        ("人工智能", 0.5),
+        ("ai", 0.5),
+        ("机器人", 0.46),
+        ("软件", 0.44),
+        ("通信", 0.42),
+        ("科技", 0.42),
+        ("电子", 0.38),
+        ("新能源", 0.46),
+        ("电池", 0.44),
+        ("储能", 0.42),
+        ("光伏", 0.4),
+        ("电力", 0.34),
+        ("能源", 0.34),
+        ("油气", 0.28),
+        ("煤炭", 0.24),
+    ];
+    keywords
+        .iter()
+        .filter_map(|(keyword, weight)| normalized.contains(keyword).then_some(*weight))
+        .fold(0.0, f64::max)
 }
 
 fn sort_value(item: &ScreenedStock, sort_by: &str) -> Option<f64> {
@@ -3440,6 +3472,49 @@ mod tests {
                 .map(|item| item.stock.code.as_str())
                 .collect::<Vec<_>>(),
             vec!["600036.SH", "600000.SH", "000001.SZ"]
+        );
+    }
+
+    #[test]
+    fn score_sort_biases_toward_hot_energy_and_tech_sectors() {
+        let base = StockItem {
+            code: "000001.SZ".to_string(),
+            name: "平安银行".to_string(),
+            industry: "银行".to_string(),
+            is_st: false,
+            price: 10.0,
+            pe: Some(10.0),
+            pb: Some(1.0),
+            roe: Some(0.1),
+            market_cap_billion: Some(100.0),
+            dividend_yield: None,
+        };
+        let mut chip = base.clone();
+        chip.code = "688001.SH".to_string();
+        chip.name = "芯片公司".to_string();
+        chip.industry = "半导体".to_string();
+        let mut solar = base.clone();
+        solar.code = "601012.SH".to_string();
+        solar.name = "光伏公司".to_string();
+        solar.industry = "光伏".to_string();
+
+        let result = screen_stocks(
+            &[base, chip, solar],
+            &ScreenCriteria {
+                sort_by: "score".to_string(),
+                sort_dir: "desc".to_string(),
+                ..ScreenCriteria::default()
+            },
+        );
+
+        assert_eq!(
+            result
+                .items
+                .iter()
+                .take(2)
+                .map(|item| item.stock.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["688001.SH", "601012.SH"]
         );
     }
 

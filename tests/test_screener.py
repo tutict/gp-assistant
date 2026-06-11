@@ -45,6 +45,17 @@ class ScreenerIndustryTests(unittest.TestCase):
 
         self.assertEqual([item.stock.code for item in result.items], ["600000.SH", "600036.SH", "000001.SZ"])
 
+    def test_score_sort_biases_toward_hot_energy_and_tech_sectors(self):
+        universe = [
+            StockItem(code="000001.SZ", name="平安银行", industry="银行", price=10.0, pe=10.0, pb=1.0, roe=0.1),
+            StockItem(code="688001.SH", name="芯片公司", industry="半导体", price=10.0, pe=10.0, pb=1.0, roe=0.1),
+            StockItem(code="601012.SH", name="光伏公司", industry="光伏", price=10.0, pe=10.0, pb=1.0, roe=0.1),
+        ]
+
+        result = screen_stocks(universe, ScreenCriteria(sort_by="score", sort_dir="desc"))
+
+        self.assertEqual([item.stock.code for item in result.items[:2]], ["688001.SH", "601012.SH"])
+
     def test_sector_screen_defaults_return_more_groups_with_three_stocks_each(self):
         universe = []
         for sector_index in range(13):

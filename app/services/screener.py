@@ -12,6 +12,28 @@ from app.schemas import (
 )
 
 
+HOT_SECTOR_KEYWORDS: tuple[tuple[str, float], ...] = (
+    ("半导体", 0.55),
+    ("芯片", 0.55),
+    ("算力", 0.5),
+    ("人工智能", 0.5),
+    ("ai", 0.5),
+    ("机器人", 0.46),
+    ("软件", 0.44),
+    ("通信", 0.42),
+    ("科技", 0.42),
+    ("电子", 0.38),
+    ("新能源", 0.46),
+    ("电池", 0.44),
+    ("储能", 0.42),
+    ("光伏", 0.4),
+    ("电力", 0.34),
+    ("能源", 0.34),
+    ("油气", 0.28),
+    ("煤炭", 0.24),
+)
+
+
 def screening_universe(provider: StockProvider) -> tuple[List[StockItem], List[str]]:
     return provider.list_stocks_for_screen()
 
@@ -67,7 +89,15 @@ def _score(stock: StockItem, reasons: List[str]) -> float:
         score += stock.roe * 2
     if stock.dividend_yield:
         score += min(stock.dividend_yield * 10, 1.0)
+    score += _hot_sector_bonus(stock.industry)
     return score
+
+
+def _hot_sector_bonus(industry: str) -> float:
+    normalized = (industry or "").strip().lower()
+    if not normalized:
+        return 0.0
+    return max((weight for keyword, weight in HOT_SECTOR_KEYWORDS if keyword in normalized), default=0.0)
 
 
 def _screened_stocks(universe: List[StockItem], criteria: ScreenCriteria) -> List[ScreenedStock]:

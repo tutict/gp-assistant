@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mock_provider import MockProvider
-from app.schemas import NewsRagRequest, StockItem
+from app.schemas import LlmClientConfig, NewsRagRequest, StockItem
 from app.services import news_rag
 from app.services.agent import run_agent
 
@@ -62,6 +62,95 @@ class NewsRagTests(unittest.TestCase):
         self.assertTrue(result.findings)
         self.assertTrue(result.findings[0].evidence)
         self.assertTrue(any("已有股票关系图" in note for note in result.notes))
+
+    def test_default_sources_try_eastmoney_community_and_news(self):
+        stock = StockItem(code="300750.SZ", name="宁德时代", industry="动力电池", price=195.0)
+        guba_item = news_rag.RawNewsItem(
+            title="宁德时代股吧讨论订单改善",
+            summary="投资者讨论订单改善，需要公告验证。",
+            source="东方财富股吧",
+            url="local://guba",
+            published_at=datetime.now().isoformat(timespec="seconds"),
+            stock_codes=("300750.SZ",),
+            industries=("动力电池",),
+            relation_types=("supply_chain",),
+            sentiment="positive",
+            source_tier="community",
+        )
+        news_item = news_rag.RawNewsItem(
+            title="宁德时代获供应链订单",
+            summary="公开新闻提到供应链订单。",
+            source="AkShare 东方财富个股新闻",
+            url="local://news",
+            published_at=datetime.now().isoformat(timespec="seconds"),
+            stock_codes=("300750.SZ",),
+            industries=("动力电池",),
+            relation_types=("supply_chain",),
+            sentiment="positive",
+        )
+
+        class FakeGubaAdapter:
+            errors: list[str] = []
+
+            def fetch(self, stocks, relations, days):
+                return [guba_item]
+
+        class FakeAkshareAdapter:
+            def fetch(self, stocks, relations, days):
+                return [news_item]
+
+        with patch.dict(os.environ, {"GP_NEWS_ENABLE_XUEQIU": "false"}), patch.object(
+            news_rag,
+            "_EastmoneyGubaCommunityAdapter",
+            FakeGubaAdapter,
+        ), patch.object(news_rag, "_AkshareStockNewsAdapter", FakeAkshareAdapter):
+            os.environ.pop("GP_NEWS_ENABLE_GUBA", None)
+            os.environ.pop("GP_NEWS_ENABLE_AKSHARE", None)
+            items, notes = news_rag._fetch_news_items([stock], [], 30)
+
+        self.assertEqual([item.source_tier for item in items], ["community", "news"])
+        self.assertTrue(any("东方财富股吧" in note for note in notes))
+        self.assertTrue(any("东方财富个股新闻" in note for note in notes))
+
+    def test_news_rag_uses_llm_for_final_impact_judgment(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            DISABLE_NETWORK_NEWS,
+        ):
+            news_rag.CACHE_PATH = Path(tmp) / "news.sqlite"
+            seed_news_cache()
+            with patch.object(
+                news_rag,
+                "_call_news_llm",
+                return_value={
+                    "findings": [
+                        {
+                            "target": "宁德时代（300750.SZ）",
+                            "direction": "中性",
+                            "confidence": "中",
+                            "impact_chain": "模型认为订单消息仍需交付和毛利率验证。",
+                            "pending_checks": ["核对公告订单金额。"],
+                        }
+                    ],
+                    "notes": ["模型仅引用已有证据。"],
+                },
+            ) as llm_call:
+                result = news_rag.analyze_supply_chain_news(
+                    MockProvider(),
+                    NewsRagRequest(
+                        code="300750.SZ",
+                        seed_codes=["300750.SZ"],
+                        days=30,
+                        max_items=10,
+                        llm=LlmClientConfig(api_key="test-key", model="test-model"),
+                    ),
+                )
+
+        llm_call.assert_called_once()
+        self.assertEqual(result.findings[0].direction, "中性")
+        self.assertEqual(result.findings[0].confidence, "中")
+        self.assertTrue(any("test-model" in note for note in result.notes))
+        self.assertTrue(any("模型仅引用已有证据" in note for note in result.notes))
 
     def test_agent_routes_upstream_news_to_news_rag(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
