@@ -751,6 +751,12 @@ async function handlePanelEmptyAction(action, trigger) {
 }
 
 async function runNewsRag() {
+  const code = readStockCode("newsCode");
+  if (!code) {
+    setError(panels.newsRag, "请输入目标股票代码", "上下游消息分析需要明确的单只目标股票，例如：300750.SZ。");
+    return;
+  }
+  $("#newsCode").value = code;
   const mobileRuntime = isMobileTauriRuntime();
   const timer = startPanelProgress(
     panels.newsRag,
@@ -769,12 +775,10 @@ async function runNewsRag() {
           [82, "生成影响判断"],
         ],
   );
-  const code = readStockCode("newsCode");
-  if (code) $("#newsCode").value = code;
   const payload = {
     criteria: buildCriteria({ limit: 100 }),
-    code: code || null,
-    seed_codes: code ? [code] : parseCodes($("#seedCodes")?.value || ""),
+    code,
+    seed_codes: [code],
     days: clampInt($("#newsDays")?.value, 1, 365, 30),
     max_items: 24,
   };
@@ -832,7 +836,7 @@ async function runUpstreamRagBuildAndTransfer() {
     [76, "抽取关系和证据"],
     [90, "生成 manifest 和二维码"],
   ]);
-  const code = readStockCode("newsCode") || parseCodes($("#seedCodes")?.value || "")[0] || "";
+  const code = readStockCode("newsCode");
   if (!code) {
     if (timer) window.clearInterval(timer);
     setError(panels.newsRag, "请输入目标股票代码", "构建手机同步包需要明确的单只股票，例如：300750.SZ。");

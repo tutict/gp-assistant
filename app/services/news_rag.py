@@ -19,12 +19,11 @@ from app.schemas import (
     NewsImpactFinding,
     NewsRagRequest,
     NewsRagResult,
-    ScreenedStock,
     StockItem,
     StockRelation,
 )
 from app.services.knowledge_graph import build_knowledge_graph
-from app.services.screener import screen_stocks, screening_universe
+from app.services.screener import screening_universe
 
 
 CACHE_PATH = Path(os.getenv("GP_NEWS_CACHE", "data/cache/news.sqlite"))
@@ -64,6 +63,17 @@ def analyze_supply_chain_news(provider: StockProvider, request: NewsRagRequest) 
     stock_by_code = {stock.code: stock for stock in universe}
     graph = build_knowledge_graph(universe, provider.list_relations())
     scope_codes = _scope_codes(provider, request, universe, stock_by_code)
+    if not scope_codes:
+        return NewsRagResult(
+            scope_codes=[],
+            relation_count=0,
+            message_count=0,
+            findings=[],
+            notes=[
+                *screen_notes,
+                "请输入目标股票代码后再分析上下游消息；不会再用当前筛选结果自动代替目标股票。",
+            ],
+        )
     chain_relations = _scope_chain_relations(scope_codes, graph.relations)
     related_codes = sorted(
         set(scope_codes)
@@ -125,11 +135,7 @@ def _scope_codes(
     if explicit_codes:
         return explicit_codes[:10]
 
-    screened: List[ScreenedStock] = screen_stocks(
-        list(universe),
-        request.criteria.model_copy(update={"limit": min(max(request.criteria.limit, 5), 20)}),
-    ).items
-    return [item.stock.code for item in screened[:10]]
+    return []
 
 
 def _dedupe_codes(codes: Sequence[str]) -> List[str]:

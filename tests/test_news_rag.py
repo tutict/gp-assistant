@@ -63,6 +63,25 @@ class NewsRagTests(unittest.TestCase):
         self.assertTrue(result.findings[0].evidence)
         self.assertTrue(any("已有股票关系图" in note for note in result.notes))
 
+    def test_news_rag_requires_explicit_target_stock(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            DISABLE_NETWORK_NEWS,
+        ):
+            news_rag.CACHE_PATH = Path(tmp) / "news.sqlite"
+            with patch.object(news_rag, "_fetch_news_items") as fetch_news:
+                result = news_rag.analyze_supply_chain_news(
+                    MockProvider(),
+                    NewsRagRequest(days=30, max_items=10),
+                )
+
+        fetch_news.assert_not_called()
+        self.assertEqual(result.scope_codes, [])
+        self.assertEqual(result.relation_count, 0)
+        self.assertEqual(result.message_count, 0)
+        self.assertEqual(result.findings, [])
+        self.assertTrue(any("目标股票" in note for note in result.notes))
+
     def test_default_sources_try_eastmoney_community_and_news(self):
         stock = StockItem(code="300750.SZ", name="宁德时代", industry="动力电池", price=195.0)
         guba_item = news_rag.RawNewsItem(
