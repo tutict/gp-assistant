@@ -35,13 +35,30 @@ HOT_SECTOR_KEYWORDS: tuple[tuple[str, float], ...] = (
 
 HOT_SECTOR_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
+        "preferred",
+        ("多氟多", "氟化工", "氟材料", "锂电材料", "电解液", "六氟磷酸锂", "新能材"),
+    ),
+    (
         "tech",
         ("半导体", "芯片", "算力", "人工智能", "ai", "机器人", "软件", "通信", "科技", "电子"),
     ),
     ("energy", ("新能源", "电池", "储能", "光伏", "电力", "能源", "油气", "煤炭")),
 )
 
-HOT_SECTOR_PROMOTION_ORDER = ("tech", "energy")
+HOT_STOCK_CODES = {"002407.SZ"}
+HOT_STOCK_NAME_KEYWORDS = ("多氟多",)
+HOT_SECTOR_PROMOTION_ORDER = ("preferred", "tech", "energy")
+COLD_SECTOR_KEYWORDS = (
+    "银行",
+    "基建",
+    "建筑",
+    "建筑装饰",
+    "工程建设",
+    "基础建设",
+    "水泥",
+    "铁路",
+    "公路",
+)
 
 
 def screening_universe(provider: StockProvider) -> tuple[List[StockItem], List[str]]:
@@ -100,6 +117,8 @@ def _score(stock: StockItem, reasons: List[str]) -> float:
     if stock.dividend_yield:
         score += min(stock.dividend_yield * 10, 1.0)
     score += _hot_sector_bonus(stock.industry)
+    score += _preferred_hot_stock_bonus(stock)
+    score -= _cold_sector_penalty(stock.industry)
     return score
 
 
@@ -110,8 +129,32 @@ def _hot_sector_bonus(industry: str) -> float:
     return max((weight for keyword, weight in HOT_SECTOR_KEYWORDS if keyword in normalized), default=0.0)
 
 
-def _hot_sector_category(industry: str) -> Optional[str]:
+def _preferred_hot_stock_bonus(stock: StockItem) -> float:
+    if stock.code in HOT_STOCK_CODES:
+        return 1.2
+    normalized_name = (stock.name or "").strip().lower()
+    if any(keyword in normalized_name for keyword in HOT_STOCK_NAME_KEYWORDS):
+        return 1.0
+    return 0.0
+
+
+def _cold_sector_penalty(industry: str) -> float:
+    return 1.1 if _is_cold_sector(industry) else 0.0
+
+
+def _is_cold_sector(industry: str) -> bool:
     normalized = (industry or "").strip().lower()
+    return bool(normalized) and any(keyword in normalized for keyword in COLD_SECTOR_KEYWORDS)
+
+
+def _hot_pick_category(stock: StockItem) -> Optional[str]:
+    if _preferred_hot_stock_bonus(stock) > 0:
+        return "preferred"
+    return _hot_sector_category(f"{stock.name} {stock.industry}")
+
+
+def _hot_sector_category(text: str) -> Optional[str]:
+    normalized = (text or "").strip().lower()
     if not normalized:
         return None
     for category, keywords in HOT_SECTOR_CATEGORIES:
@@ -138,31 +181,40 @@ def _promote_hot_sector_items(
 
     promoted: List[ScreenedStock] = []
     used_codes: set[str] = set()
+    changed = False
     for category in HOT_SECTOR_PROMOTION_ORDER:
         candidate = next(
             (
                 item
                 for item in screened
-                if item.stock.code not in used_codes and _hot_sector_category(item.stock.industry) == category
+                if item.stock.code not in used_codes and _hot_pick_category(item.stock) == category
             ),
             None,
         )
         if candidate is not None:
             promoted.append(candidate)
             used_codes.add(candidate.stock.code)
+            changed = True
             if len(promoted) >= limit:
-                return promoted, True
-
-    if not promoted:
-        return screened[:limit], False
+                return promoted, changed
 
     for item in screened:
         if item.stock.code in used_codes:
             continue
+        if _is_cold_sector(item.stock.industry):
+            changed = True
+            continue
+        promoted.append(item)
+        if len(promoted) >= limit:
+            return promoted, changed
+
+    for item in screened:
+        if item.stock.code in used_codes or any(existing.stock.code == item.stock.code for existing in promoted):
+            continue
         promoted.append(item)
         if len(promoted) >= limit:
             break
-    return promoted, True
+    return promoted, changed
 
 
 def _screened_stocks(universe: List[StockItem], criteria: ScreenCriteria) -> List[ScreenedStock]:
@@ -202,7 +254,7 @@ def screen_stocks(
     items, promoted = _promote_hot_sector_items(screened, criteria)
     result_notes = [*(notes or [])]
     if promoted:
-        result_notes.append("已优先推送科技与能源热门板块候选。")
+        result_notes.append("已优先推送多氟多等新能材、科技与能源热门候选，并降低银行/基建优先级。")
     return ScreenResult(total=len(screened), returned=len(items), items=items, notes=result_notes)
 
 
@@ -233,7 +285,7 @@ def screen_stocks_by_sector(
             )
         )
 
-    groups.sort(key=lambda group: (-group.average_score, -group.total, group.sector))
+    groups.sort(key=lambda group: (_is_cold_sector(group.sector), -group.average_score, -group.total, group.sector))
     groups = groups[: request.max_sectors]
     returned = sum(group.returned for group in groups)
     result_notes = [*(notes or []), "按股票行业字段作为板块分组。"]

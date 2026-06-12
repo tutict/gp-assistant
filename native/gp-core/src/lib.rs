@@ -1809,6 +1809,8 @@ fn score_stock(stock: &StockItem, reasons: &[String]) -> f64 {
         score += (dividend_yield * 10.0).min(1.0);
     }
     score += hot_sector_bonus(&stock.industry);
+    score += preferred_hot_stock_bonus(stock);
+    score -= cold_sector_penalty(&stock.industry);
     score
 }
 
@@ -1848,7 +1850,19 @@ fn hot_sector_category(industry: &str) -> Option<&'static str> {
     if normalized.is_empty() {
         return None;
     }
-    let categories: [(&str, &[&str]); 2] = [
+    let categories: [(&str, &[&str]); 3] = [
+        (
+            "preferred",
+            &[
+                "多氟多",
+                "氟化工",
+                "氟材料",
+                "锂电材料",
+                "电解液",
+                "六氟磷酸锂",
+                "新能材",
+            ],
+        ),
         (
             "tech",
             &[
@@ -1886,6 +1900,51 @@ fn hot_sector_category(industry: &str) -> Option<&'static str> {
     })
 }
 
+fn preferred_hot_stock_bonus(stock: &StockItem) -> f64 {
+    if stock.code.eq_ignore_ascii_case("002407.SZ") {
+        return 1.2;
+    }
+    if stock.name.contains("多氟多") {
+        return 1.0;
+    }
+    0.0
+}
+
+fn cold_sector_penalty(industry: &str) -> f64 {
+    if is_cold_sector(industry) {
+        1.1
+    } else {
+        0.0
+    }
+}
+
+fn is_cold_sector(industry: &str) -> bool {
+    let normalized = industry.trim().to_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    [
+        "银行",
+        "基建",
+        "建筑",
+        "建筑装饰",
+        "工程建设",
+        "基础建设",
+        "水泥",
+        "铁路",
+        "公路",
+    ]
+    .iter()
+    .any(|keyword| normalized.contains(keyword))
+}
+
+fn hot_pick_category(stock: &StockItem) -> Option<&'static str> {
+    if preferred_hot_stock_bonus(stock) > 0.0 {
+        return Some("preferred");
+    }
+    hot_sector_category(&format!("{} {}", stock.name, stock.industry))
+}
+
 fn should_promote_hot_sectors(criteria: &ScreenCriteria) -> bool {
     criteria.industry.as_deref().unwrap_or("").trim().is_empty()
         && criteria.sort_by.trim().eq_ignore_ascii_case("score")
@@ -1903,10 +1962,10 @@ fn promote_hot_sector_items(
 
     let mut promoted = Vec::new();
     let mut used_codes = HashSet::new();
-    for category in ["tech", "energy"] {
+    for category in ["preferred", "tech", "energy"] {
         if let Some(candidate) = screened.iter().find(|item| {
             !used_codes.contains(&item.stock.code)
-                && hot_sector_category(&item.stock.industry) == Some(category)
+                && hot_pick_category(&item.stock) == Some(category)
         }) {
             promoted.push(candidate.clone());
             used_codes.insert(candidate.stock.code.clone());
@@ -1916,12 +1975,25 @@ fn promote_hot_sector_items(
         }
     }
 
-    if promoted.is_empty() {
-        return screened.iter().take(limit).cloned().collect();
+    for item in screened {
+        if used_codes.contains(&item.stock.code) {
+            continue;
+        }
+        if is_cold_sector(&item.stock.industry) {
+            continue;
+        }
+        promoted.push(item.clone());
+        if promoted.len() >= limit {
+            return promoted;
+        }
     }
 
     for item in screened {
-        if used_codes.contains(&item.stock.code) {
+        if used_codes.contains(&item.stock.code)
+            || promoted
+                .iter()
+                .any(|promoted_item| promoted_item.stock.code == item.stock.code)
+        {
             continue;
         }
         promoted.push(item.clone());
@@ -3664,6 +3736,66 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["688001.SH", "601012.SH"]
         );
+    }
+
+    #[test]
+    fn score_sort_promotes_duofuduo_like_hot_picks_and_deprioritizes_bank_infra() {
+        let bank = StockItem {
+            code: "000001.SZ".to_string(),
+            name: "高分银行".to_string(),
+            industry: "银行".to_string(),
+            is_st: false,
+            price: 10.0,
+            pe: Some(2.0),
+            pb: Some(0.2),
+            roe: Some(0.3),
+            market_cap_billion: Some(100.0),
+            dividend_yield: None,
+        };
+        let mut infra = bank.clone();
+        infra.code = "601668.SH".to_string();
+        infra.name = "中国建筑".to_string();
+        infra.industry = "建筑装饰".to_string();
+        infra.pe = Some(3.0);
+        infra.pb = Some(0.4);
+        infra.roe = Some(0.2);
+        let mut duofuduo = bank.clone();
+        duofuduo.code = "002407.SZ".to_string();
+        duofuduo.name = "多氟多".to_string();
+        duofuduo.industry = "化工".to_string();
+        duofuduo.pe = Some(70.0);
+        duofuduo.pb = Some(8.0);
+        duofuduo.roe = Some(0.03);
+        let mut chip = duofuduo.clone();
+        chip.code = "688001.SH".to_string();
+        chip.name = "芯片公司".to_string();
+        chip.industry = "半导体".to_string();
+        chip.pe = Some(60.0);
+        let mut solar = chip.clone();
+        solar.code = "601012.SH".to_string();
+        solar.name = "光伏公司".to_string();
+        solar.industry = "光伏".to_string();
+        solar.pe = Some(50.0);
+        solar.pb = Some(7.0);
+
+        let result = screen_stocks(
+            &[bank, infra, duofuduo, chip, solar],
+            &ScreenCriteria {
+                sort_by: "score".to_string(),
+                sort_dir: "desc".to_string(),
+                limit: 3,
+                ..ScreenCriteria::default()
+            },
+        );
+
+        let codes = result
+            .items
+            .iter()
+            .map(|item| item.stock.code.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(codes, vec!["002407.SZ", "688001.SH", "601012.SH"]);
+        assert!(!codes.contains(&"000001.SZ"));
+        assert!(!codes.contains(&"601668.SH"));
     }
 
     #[test]
