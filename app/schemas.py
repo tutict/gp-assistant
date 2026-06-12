@@ -265,6 +265,16 @@ class CapitalEvidenceItem(BaseModel):
     note: Optional[str] = None
 
 
+class CapitalEvidenceSection(BaseModel):
+    key: str
+    title: str
+    score: Optional[float] = None
+    weight: float = Field(default=0.0, ge=0, le=1)
+    available: bool = False
+    summary: Optional[str] = None
+    items: List[CapitalEvidenceItem] = Field(default_factory=list)
+
+
 class CapitalEvidenceResult(BaseModel):
     stock_code: str
     generated_at: str
@@ -275,6 +285,7 @@ class CapitalEvidenceResult(BaseModel):
     freshness: str = "unknown"
     contributions: dict = Field(default_factory=dict)
     summary: Optional[str] = None
+    sections: List[CapitalEvidenceSection] = Field(default_factory=list)
     items: List[CapitalEvidenceItem] = Field(default_factory=list)
     notes: List[str] = Field(default_factory=list)
 

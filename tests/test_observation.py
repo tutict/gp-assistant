@@ -185,6 +185,8 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         self.assertTrue(any(item.category == "news_rag" for item in result.items))
         self.assertIn("消息情绪", result.contributions)
         self.assertTrue(result.contributions["消息情绪"]["available"])
+        self.assertTrue(any(section.key == "message_sentiment" for section in result.sections))
+        self.assertTrue(any(section.items for section in result.sections if section.key == "message_sentiment"))
 
     def test_capital_evidence_llm_enhancement_is_optional(self):
         provider = MockProvider()

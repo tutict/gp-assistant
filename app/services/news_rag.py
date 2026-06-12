@@ -23,25 +23,28 @@ from app.schemas import (
     StockRelation,
 )
 from app.services.knowledge_graph import build_knowledge_graph
+from app.services.llm_support import (
+    create_chat_completion as _create_news_chat_completion,
+    create_openai_client,
+    parse_json_response as _parse_llm_json_response,
+    resolve_llm_config as _resolve_news_llm_config,
+    safe_llm_error as _safe_llm_error,
+)
+from app.services.runtime_config import (
+    env_bool as _env_enabled,
+    env_float as _env_float,
+    env_int as _env_int,
+    safe_string as _safe_string,
+    safe_string_list as _safe_string_list,
+)
 from app.services.screener import screening_universe
+from app.services.stock_code import normalize_stock_code as _normalize_code
 
 
 CACHE_PATH = Path(os.getenv("GP_NEWS_CACHE", "data/cache/news.sqlite"))
 CHAIN_RELATION_TYPES = {"supply_chain", "manufacturing_chain", "upstream_material"}
 SOURCE_TIER_NEWS = "news"
 SOURCE_TIER_COMMUNITY = "community"
-
-
-@dataclass(frozen=True)
-class _ResolvedNewsLlmConfig:
-    api_key: str | None
-    base_url: str | None
-    model: str
-    temperature: float
-    timeout_seconds: float
-    json_mode: bool
-    organization: str | None
-    project: str | None
 
 
 @dataclass(frozen=True)
@@ -532,6 +535,18 @@ def _query_evidence(
     return [_row_to_evidence(conn, row) for row in rows]
 
 
+def query_cached_evidence(codes: Sequence[str], days: int, limit: int) -> List[NewsEvidence]:
+    normalized_codes = [code for code in (_normalize_code(code) for code in codes) if code]
+    if not normalized_codes or not CACHE_PATH.exists():
+        return []
+    conn = _connect()
+    try:
+        _init_db(conn)
+        return _query_evidence(conn, normalized_codes, days, limit)
+    finally:
+        conn.close()
+
+
 def _row_to_evidence(conn: sqlite3.Connection, row: sqlite3.Row) -> NewsEvidence:
     entities = conn.execute(
         "SELECT entity_type, entity_value, relation_type FROM news_entities WHERE news_id = ?",
@@ -690,26 +705,14 @@ def _apply_llm_analysis(
 
 
 def _call_news_llm(
-    config: _ResolvedNewsLlmConfig,
+    config: Any,
     scope_codes: Sequence[str],
     relations: Sequence[StockRelation],
     evidence: Sequence[NewsEvidence],
     stock_by_code: dict[str, StockItem],
     findings: Sequence[NewsImpactFinding],
 ) -> dict[str, Any]:
-    from openai import OpenAI
-
-    client_kwargs: dict[str, Any] = {
-        "api_key": config.api_key,
-        "timeout": config.timeout_seconds,
-    }
-    if config.base_url:
-        client_kwargs["base_url"] = config.base_url
-    if config.organization:
-        client_kwargs["organization"] = config.organization
-    if config.project:
-        client_kwargs["project"] = config.project
-    client = OpenAI(**client_kwargs)
+    client = create_openai_client(config)
 
     request: dict[str, Any] = {
         "model": config.model,
@@ -732,17 +735,6 @@ def _call_news_llm(
     content = completion.choices[0].message.content or "{}"
     parsed = _parse_llm_json_response(content)
     return parsed if isinstance(parsed, dict) else {}
-
-
-def _create_news_chat_completion(client: Any, request: dict[str, Any]) -> Any:
-    try:
-        return client.chat.completions.create(**request)
-    except Exception:
-        fallback = dict(request)
-        if "response_format" not in fallback:
-            raise
-        fallback.pop("response_format", None)
-        return client.chat.completions.create(**fallback)
 
 
 def _news_llm_system_prompt() -> str:
@@ -891,126 +883,6 @@ def _normalize_confidence(value: object) -> str | None:
     return mapping.get(text)
 
 
-def _safe_string(value: object, max_chars: int) -> str:
-    if not isinstance(value, str):
-        return ""
-    text = value.strip()
-    if not text:
-        return ""
-    return _truncate_chars(text, max_chars)
-
-
-def _truncate_chars(value: str, max_chars: int) -> str:
-    result = ""
-    for index, char in enumerate(value):
-        if index >= max_chars:
-            return f"{result}..."
-        result += char
-    return result
-
-
-def _safe_string_list(value: object, limit: int, max_chars: int) -> List[str]:
-    if not isinstance(value, list):
-        return []
-    result: List[str] = []
-    for item in value:
-        text = _safe_string(item, max_chars)
-        if text:
-            result.append(text)
-        if len(result) >= limit:
-            break
-    return result
-
-
-def _parse_llm_json_response(content: str) -> Any:
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", content, flags=re.DOTALL)
-        if not match:
-            raise
-        return json.loads(match.group(0))
-
-
-def _resolve_news_llm_config(override: LlmClientConfig | None) -> _ResolvedNewsLlmConfig:
-    api_key = _coalesce_str(override.api_key if override else None, os.getenv("OPENAI_API_KEY"))
-    model = _coalesce_str(override.model if override else None, os.getenv("OPENAI_MODEL"), "gpt-4o-mini")
-    temperature = _coalesce_float(
-        override.temperature if override else None,
-        os.getenv("OPENAI_TEMPERATURE"),
-        0.2,
-    )
-    timeout_seconds = _coalesce_float(
-        override.timeout_seconds if override else None,
-        os.getenv("OPENAI_TIMEOUT_SECONDS"),
-        30.0,
-    )
-    return _ResolvedNewsLlmConfig(
-        api_key=api_key,
-        base_url=_normalize_base_url(
-            _coalesce_str(override.base_url if override else None, os.getenv("OPENAI_BASE_URL"))
-        ),
-        model=model or "gpt-4o-mini",
-        temperature=min(max(temperature, 0.0), 2.0),
-        timeout_seconds=min(max(timeout_seconds, 1.0), 180.0),
-        json_mode=_coalesce_bool(override.json_mode if override else None, os.getenv("OPENAI_JSON_MODE"), True),
-        organization=_coalesce_str(override.organization if override else None, os.getenv("OPENAI_ORG_ID")),
-        project=_coalesce_str(override.project if override else None, os.getenv("OPENAI_PROJECT_ID")),
-    )
-
-
-def _coalesce_str(*values: object) -> str | None:
-    for value in values:
-        if value is None:
-            continue
-        text = str(value).strip()
-        if text:
-            return text
-    return None
-
-
-def _coalesce_float(*values: object) -> float:
-    fallback = float(values[-1])
-    for value in values[:-1]:
-        if value is None or value == "":
-            continue
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            continue
-    return fallback
-
-
-def _coalesce_bool(*values: object) -> bool:
-    fallback = bool(values[-1])
-    for value in values[:-1]:
-        if value is None or value == "":
-            continue
-        if isinstance(value, bool):
-            return value
-        lowered = str(value).strip().lower()
-        if lowered in {"1", "true", "yes", "y", "on"}:
-            return True
-        if lowered in {"0", "false", "no", "n", "off"}:
-            return False
-    return fallback
-
-
-def _normalize_base_url(value: str | None) -> str | None:
-    if not value:
-        return None
-    return value.rstrip("/")
-
-
-def _safe_llm_error(exc: Exception) -> str:
-    text = str(exc)
-    for secret in [os.getenv("OPENAI_API_KEY", "")]:
-        if secret:
-            text = text.replace(secret, "[redacted]")
-    text = re.sub(r"sk-[A-Za-z0-9_-]{8,}", "sk-[redacted]", text)
-    return text[:180]
-
-
 def _dedupe_evidence(evidence: Sequence[NewsEvidence]) -> List[NewsEvidence]:
     seen: set[tuple[str, str]] = set()
     unique: List[NewsEvidence] = []
@@ -1029,33 +901,6 @@ def _relation_map(relations: Sequence[StockRelation]) -> dict[str, set[str]]:
         result.setdefault(relation.source_code, set()).add(relation.relation_type)
         result.setdefault(relation.target_code, set()).add(relation.relation_type)
     return result
-
-
-def _env_enabled(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _env_int(name: str, default: int, minimum: int | None = None) -> int:
-    try:
-        value = int(os.getenv(name, str(default)))
-    except ValueError:
-        value = default
-    if minimum is not None:
-        return max(value, minimum)
-    return value
-
-
-def _env_float(name: str, default: float, minimum: float | None = None) -> float:
-    try:
-        value = float(os.getenv(name, str(default)))
-    except ValueError:
-        value = default
-    if minimum is not None:
-        return max(value, minimum)
-    return value
 
 
 def _configured_urls(env_name: str) -> List[str]:
@@ -1212,20 +1057,6 @@ def _infer_sentiment(text: str) -> str:
 def _news_key(item: RawNewsItem) -> str:
     raw = "|".join([item.source, item.title, item.url or "", item.published_at or ""])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
-
-
-def _normalize_code(code: str) -> str:
-    raw = (code or "").strip().upper()
-    if "." in raw:
-        return raw
-    digits = "".join(char for char in raw if char.isdigit())
-    if len(digits) != 6:
-        return raw
-    if digits.startswith("6"):
-        return f"{digits}.SH"
-    if digits.startswith(("4", "8")):
-        return f"{digits}.BJ"
-    return f"{digits}.SZ"
 
 
 def _code_digits(code: str) -> str:

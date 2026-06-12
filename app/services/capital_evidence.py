@@ -4,7 +4,6 @@ import concurrent.futures
 import json
 import math
 import os
-import sqlite3
 from datetime import date, datetime, time, timedelta
 from numbers import Real
 from pathlib import Path
@@ -12,7 +11,17 @@ from typing import Any, Iterable, Sequence
 
 import pandas as pd
 
-from app.schemas import CapitalEvidenceItem, CapitalEvidenceResult, LlmClientConfig, StockItem
+from app.schemas import CapitalEvidenceItem, CapitalEvidenceResult, CapitalEvidenceSection, LlmClientConfig, StockItem
+from app.services.llm_support import (
+    create_chat_completion,
+    create_openai_client,
+    parse_json_response,
+    resolve_llm_config,
+    safe_llm_error,
+)
+from app.services.runtime_config import env_bool, env_float, env_int, safe_string_list
+from app.services.sqlite_json_cache import SQLiteJsonCache
+from app.services.stock_code import compact_date, market_prefix, normalize_stock_code, stock_digits
 
 
 CACHE_PATH = Path(os.getenv("GP_CAPITAL_CACHE", "data/cache/capital_evidence.sqlite"))
@@ -39,10 +48,10 @@ def fetch_capital_evidence(
     if cached is not None:
         cached.freshness = FRESHNESS_CACHE
         cached.notes = [f"已读取资金证据缓存：{CACHE_PATH}。", *cached.notes]
-        return cached
+        return _ensure_sections(cached)
 
     result = CapitalEvidenceResult(
-        stock_code=_normalize_code(stock.code),
+        stock_code=normalize_stock_code(stock.code),
         generated_at=datetime.now().isoformat(timespec="seconds"),
         as_of_trade_date=as_of_trade_date,
         freshness=FRESHNESS_REFRESHED,
@@ -69,11 +78,12 @@ def fetch_capital_evidence(
                 *result.notes,
                 *stale.notes,
             ]
-            return stale
+            return _ensure_sections(stale)
 
     if not result.items:
         result.notes.append("未取得资金、消息或技术证据，综合资金证据分保持低置信。")
 
+    _ensure_sections(result)
     _store_cached_result(result)
     return result
 
@@ -95,7 +105,7 @@ def effective_trade_date(value: str | None, *, now: datetime | None = None) -> s
 def _fetch_external_capital_items(stock: StockItem, start_date: str, end_date: str) -> list[CapitalEvidenceItem]:
     notes: list[str] = []
     items: list[CapitalEvidenceItem] = []
-    if os.getenv("GP_CAPITAL_ENABLE_EXTERNAL", "true").strip().lower() in {"0", "false", "no", "off"}:
+    if not env_bool("GP_CAPITAL_ENABLE_EXTERNAL", True):
         return [
             CapitalEvidenceItem(
                 category="external_status",
@@ -160,7 +170,7 @@ def _fetch_external_capital_items(stock: StockItem, start_date: str, end_date: s
 
 
 def _call_fetcher_with_timeout(fetcher: Any, ak: Any, stock: StockItem, start_date: str, end_date: str):
-    timeout_seconds = _env_float("GP_CAPITAL_FETCH_TIMEOUT", 5.0, minimum=0.5, maximum=30.0)
+    timeout_seconds = env_float("GP_CAPITAL_FETCH_TIMEOUT", 5.0, minimum=0.5, maximum=30.0)
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = executor.submit(fetcher, ak, stock, start_date, end_date)
     try:
@@ -173,10 +183,10 @@ def _call_fetcher_with_timeout(fetcher: Any, ak: Any, stock: StockItem, start_da
 
 
 def _fetch_individual_fund_flow(ak: Any, stock: StockItem, _start_date: str, _end_date: str) -> CapitalEvidenceItem | None:
-    digits = _stock_digits(stock.code)
+    digits = stock_digits(stock.code)
     if not digits:
         return None
-    frame = ak.stock_individual_fund_flow(stock=digits, market=_market_prefix(stock.code))
+    frame = ak.stock_individual_fund_flow(stock=digits, market=market_prefix(stock.code))
     row = _last_valid_row(frame)
     if row is None:
         return None
@@ -205,7 +215,7 @@ def _fetch_individual_fund_flow(ak: Any, stock: StockItem, _start_date: str, _en
 
 
 def _fetch_institution_lhb(ak: Any, stock: StockItem, start_date: str, end_date: str) -> CapitalEvidenceItem | None:
-    frame = ak.stock_lhb_jgmmtj_em(start_date=_compact_date(start_date), end_date=_compact_date(end_date))
+    frame = ak.stock_lhb_jgmmtj_em(start_date=compact_date(start_date), end_date=compact_date(end_date))
     row = _matching_last_row(frame, stock)
     if row is None:
         return None
@@ -233,24 +243,18 @@ def _fetch_institution_lhb(ak: Any, stock: StockItem, start_date: str, end_date:
 
 
 def _load_news_cache_items(stock: StockItem) -> tuple[list[CapitalEvidenceItem], list[str]]:
-    if os.getenv("GP_CAPITAL_ENABLE_NEWS_EVIDENCE", "true").strip().lower() in {"0", "false", "no", "off"}:
+    if not env_bool("GP_CAPITAL_ENABLE_NEWS_EVIDENCE", True):
         return [], ["消息/股吧证据融合已关闭。"]
     try:
         from app.services import news_rag
 
         if not news_rag.CACHE_PATH.exists():
             return [], [f"消息缓存不存在，未纳入股吧/新闻证据：{news_rag.CACHE_PATH}。"]
-        conn = news_rag._connect()
-        try:
-            news_rag._init_db(conn)
-            evidence = news_rag._query_evidence(
-                conn,
-                [_normalize_code(stock.code)],
-                _env_int("GP_CAPITAL_NEWS_DAYS", 30, minimum=1, maximum=365),
-                _env_int("GP_CAPITAL_NEWS_LIMIT", 8, minimum=1, maximum=50),
-            )
-        finally:
-            conn.close()
+        evidence = news_rag.query_cached_evidence(
+            [normalize_stock_code(stock.code)],
+            env_int("GP_CAPITAL_NEWS_DAYS", 30, minimum=1, maximum=365),
+            env_int("GP_CAPITAL_NEWS_LIMIT", 8, minimum=1, maximum=50),
+        )
     except Exception as exc:
         return [], [f"消息缓存证据不可用：{exc}"]
 
@@ -351,9 +355,53 @@ def _apply_rule_score(result: CapitalEvidenceResult) -> None:
     result.notes.append("未调用模型，综合资金证据分由本地规则生成。")
 
 
+def _ensure_sections(result: CapitalEvidenceResult) -> CapitalEvidenceResult:
+    if result.sections:
+        return result
+    result.sections = [
+        _build_section(result, "fund_flow", "资金流", "资金流", {"fund_flow"}),
+        _build_section(result, "institution_lhb", "机构席位", "机构席位", {"institution_lhb"}),
+        _build_section(result, "message_sentiment", "消息情绪", "消息情绪", {"news_rag", "community_sentiment"}),
+        _build_section(result, "technical_behavior", "技术推断", "技术推断", {"technical_behavior"}),
+        _build_section(result, "external_status", "接口状态", None, {"external_status"}),
+    ]
+    return result
+
+
+def _build_section(
+    result: CapitalEvidenceResult,
+    key: str,
+    title: str,
+    contribution_key: str | None,
+    categories: set[str],
+) -> CapitalEvidenceSection:
+    items = [item for item in result.items if item.category in categories]
+    contribution = result.contributions.get(contribution_key or "", {}) if result.contributions else {}
+    score = contribution.get("score") if isinstance(contribution, dict) else None
+    weight = contribution.get("weight", 0.0) if isinstance(contribution, dict) else 0.0
+    available = (bool(items) or bool(contribution.get("available"))) if isinstance(contribution, dict) else bool(items)
+    return CapitalEvidenceSection(
+        key=key,
+        title=title,
+        score=score,
+        weight=weight,
+        available=available,
+        summary=_section_summary(title, score, available, len(items)),
+        items=items,
+    )
+
+
+def _section_summary(title: str, score: Any, available: bool, item_count: int) -> str:
+    if available and score is not None:
+        return f"{title}证据分 {float(score):.1f}，命中 {item_count} 条证据。"
+    if available:
+        return f"{title}有 {item_count} 条状态或辅助证据。"
+    return f"{title}暂无可用证据。"
+
+
 def _apply_llm_enhancement(stock: StockItem, result: CapitalEvidenceResult, llm: LlmClientConfig | None) -> None:
     try:
-        config = _resolve_llm_config(llm)
+        config = resolve_llm_config(llm)
     except Exception as exc:
         result.notes.append(f"资金证据模型配置不可用，已保留本地规则分：{exc}")
         return
@@ -362,7 +410,7 @@ def _apply_llm_enhancement(stock: StockItem, result: CapitalEvidenceResult, llm:
     try:
         llm_result = _call_capital_llm(config, stock, result)
     except Exception as exc:
-        result.notes.append(f"资金证据模型分析失败，已保留本地规则分：{_safe_error(exc)}")
+        result.notes.append(f"资金证据模型分析失败，已保留本地规则分：{safe_llm_error(exc)}")
         return
 
     llm_score = _finite_float(llm_result.get("composite_score"))
@@ -374,23 +422,14 @@ def _apply_llm_enhancement(stock: StockItem, result: CapitalEvidenceResult, llm:
     summary = str(llm_result.get("summary") or "").strip()
     if summary:
         result.summary = summary[:240]
-    for note in _safe_string_list(llm_result.get("notes"), 3):
+    for note in safe_string_list(llm_result.get("notes"), 3):
         result.notes.append(note)
     result.model_used = True
     result.notes.append(f"已调用模型 {config.model} 基于资金、消息和技术证据参与综合判断。")
 
 
 def _call_capital_llm(config: Any, stock: StockItem, result: CapitalEvidenceResult) -> dict[str, Any]:
-    from openai import OpenAI
-
-    client_kwargs: dict[str, Any] = {"api_key": config.api_key, "timeout": config.timeout_seconds}
-    if config.base_url:
-        client_kwargs["base_url"] = config.base_url
-    if config.organization:
-        client_kwargs["organization"] = config.organization
-    if config.project:
-        client_kwargs["project"] = config.project
-    client = OpenAI(**client_kwargs)
+    client = create_openai_client(config)
     request: dict[str, Any] = {
         "model": config.model,
         "messages": [
@@ -438,27 +477,10 @@ def _call_capital_llm(config: Any, stock: StockItem, result: CapitalEvidenceResu
     }
     if config.json_mode:
         request["response_format"] = {"type": "json_object"}
-    completion = _create_chat_completion(client, request)
+    completion = create_chat_completion(client, request)
     content = completion.choices[0].message.content or "{}"
-    parsed = json.loads(content)
+    parsed = parse_json_response(content)
     return parsed if isinstance(parsed, dict) else {}
-
-
-def _resolve_llm_config(override: LlmClientConfig | None) -> Any:
-    from app.services import news_rag
-
-    return news_rag._resolve_news_llm_config(override)
-
-
-def _create_chat_completion(client: Any, request: dict[str, Any]) -> Any:
-    try:
-        return client.chat.completions.create(**request)
-    except Exception:
-        fallback = dict(request)
-        if "response_format" not in fallback:
-            raise
-        fallback.pop("response_format", None)
-        return client.chat.completions.create(**fallback)
 
 
 def _scores_for(items: Sequence[CapitalEvidenceItem], categories: set[str]) -> list[float]:
@@ -494,63 +516,23 @@ def _rule_summary(result: CapitalEvidenceResult) -> str:
 
 
 def _load_cached_result(stock_code: str, as_of_trade_date: str) -> CapitalEvidenceResult | None:
-    if not CACHE_PATH.exists():
-        return None
     try:
-        conn = _connect_cache()
-        try:
-            _init_cache(conn)
-            row = conn.execute(
-                """
-                SELECT payload
-                FROM capital_evidence_cache
-                WHERE stock_code = ? AND as_of_trade_date = ?
-                """,
-                (_normalize_code(stock_code), as_of_trade_date),
-            ).fetchone()
-        finally:
-            conn.close()
-    except Exception:
-        return None
-    if not row:
-        return None
-    try:
-        return CapitalEvidenceResult.model_validate_json(row["payload"])
+        return _cache_adapter().load(
+            CapitalEvidenceResult,
+            {"stock_code": normalize_stock_code(stock_code), "as_of_trade_date": as_of_trade_date},
+        )
     except Exception:
         return None
 
 
 def _load_latest_cached_result(stock_code: str, *, exclude_trade_date: str | None = None) -> CapitalEvidenceResult | None:
-    if not CACHE_PATH.exists():
-        return None
+    exclude = {"as_of_trade_date": exclude_trade_date} if exclude_trade_date else None
     try:
-        conn = _connect_cache()
-        try:
-            _init_cache(conn)
-            params: list[str] = [_normalize_code(stock_code)]
-            clause = ""
-            if exclude_trade_date:
-                clause = "AND as_of_trade_date <> ?"
-                params.append(exclude_trade_date)
-            row = conn.execute(
-                f"""
-                SELECT payload
-                FROM capital_evidence_cache
-                WHERE stock_code = ?
-                {clause}
-                ORDER BY as_of_trade_date DESC, generated_at DESC
-                LIMIT 1
-                """,
-                params,
-            ).fetchone()
-        finally:
-            conn.close()
-    except Exception:
-        return None
-    if not row:
-        return None
-    try:
-        return CapitalEvidenceResult.model_validate_json(row["payload"])
+        return _cache_adapter().load_latest(
+            CapitalEvidenceResult,
+            {"stock_code": normalize_stock_code(stock_code)},
+            exclude=exclude,
+        )
     except Exception:
         return None
 
@@ -559,49 +541,25 @@ def _store_cached_result(result: CapitalEvidenceResult) -> None:
     if not result.as_of_trade_date:
         return
     try:
-        conn = _connect_cache()
-        try:
-            _init_cache(conn)
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO capital_evidence_cache
-                (stock_code, as_of_trade_date, generated_at, payload)
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    _normalize_code(result.stock_code),
-                    result.as_of_trade_date,
-                    result.generated_at,
-                    result.model_dump_json(),
-                ),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        _cache_adapter().store(
+            {
+                "stock_code": normalize_stock_code(result.stock_code),
+                "as_of_trade_date": result.as_of_trade_date,
+            },
+            result.generated_at,
+            result,
+        )
     except Exception:
         return
 
 
-def _connect_cache() -> sqlite3.Connection:
-    CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(CACHE_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def _init_cache(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS capital_evidence_cache (
-            stock_code TEXT NOT NULL,
-            as_of_trade_date TEXT NOT NULL,
-            generated_at TEXT NOT NULL,
-            payload TEXT NOT NULL,
-            PRIMARY KEY (stock_code, as_of_trade_date)
-        )
-        """
+def _cache_adapter() -> SQLiteJsonCache:
+    return SQLiteJsonCache(
+        CACHE_PATH,
+        "capital_evidence_cache",
+        ("stock_code", "as_of_trade_date"),
+        order_columns=("as_of_trade_date", "generated_at"),
     )
-    conn.commit()
 
 
 def _pick_metrics(row: pd.Series, specs: Iterable[tuple[str, tuple[str, ...]]]) -> tuple[dict[str, str], dict[str, float]]:
@@ -620,7 +578,7 @@ def _pick_metrics(row: pd.Series, specs: Iterable[tuple[str, tuple[str, ...]]]) 
 def _matching_last_row(frame: Any, stock: StockItem) -> pd.Series | None:
     if not isinstance(frame, pd.DataFrame) or frame.empty:
         return None
-    digits = _stock_digits(stock.code)
+    digits = stock_digits(stock.code)
     name = (stock.name or "").strip()
     matched = frame
     if digits:
@@ -760,35 +718,8 @@ def _metric_or_dash(value: float | None) -> str:
     return "-" if value is None else f"{value:.2f}"
 
 
-def _stock_digits(code: str) -> str:
-    return "".join(char for char in (code or "") if char.isdigit())[:6]
-
-
-def _normalize_code(code: str) -> str:
-    digits = _stock_digits(code)
-    normalized = (code or "").upper()
-    if normalized.endswith(".SH") or digits.startswith("6"):
-        return f"{digits}.SH"
-    if normalized.endswith(".BJ") or digits.startswith(("8", "4")):
-        return f"{digits}.BJ"
-    return f"{digits}.SZ" if digits else normalized
-
-
-def _market_prefix(code: str) -> str:
-    normalized = (code or "").upper()
-    if normalized.endswith(".SH") or normalized.startswith("6"):
-        return "sh"
-    if normalized.endswith(".BJ") or normalized.startswith(("8", "4")):
-        return "bj"
-    return "sz"
-
-
-def _compact_date(value: str) -> str:
-    return "".join(char for char in (value or "") if char.isdigit())[:8]
-
-
 def _parse_date(value: str | None) -> date | None:
-    raw = _compact_date(value or "")
+    raw = compact_date(value or "")
     if len(raw) != 8:
         return None
     try:
@@ -806,49 +737,6 @@ def _previous_weekday(day: date) -> date:
 
 def _prior_weekday(day: date) -> date:
     return _previous_weekday(day - timedelta(days=1))
-
-
-def _env_int(name: str, default: int, *, minimum: int | None = None, maximum: int | None = None) -> int:
-    try:
-        value = int(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
-        value = default
-    if minimum is not None:
-        value = max(minimum, value)
-    if maximum is not None:
-        value = min(maximum, value)
-    return value
-
-
-def _env_float(name: str, default: float, *, minimum: float | None = None, maximum: float | None = None) -> float:
-    try:
-        value = float(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
-        value = default
-    if minimum is not None:
-        value = max(minimum, value)
-    if maximum is not None:
-        value = min(maximum, value)
-    return value
-
-
-def _safe_error(exc: Exception) -> str:
-    text = str(exc)
-    secret = os.getenv("OPENAI_API_KEY")
-    if secret:
-        text = text.replace(secret, "***")
-    return text[:180]
-
-
-def _safe_string_list(value: Any, limit: int) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    result: list[str] = []
-    for item in value[:limit]:
-        text = str(item).strip()
-        if text:
-            result.append(text[:160])
-    return result
 
 
 def _category_label(category: str) -> str:

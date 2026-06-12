@@ -1569,6 +1569,45 @@ input[type="date"] {
   gap: 10px;
 }
 
+.capital-evidence-sections {
+  display: grid;
+  gap: 10px;
+}
+
+.capital-evidence-section {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  padding: 10px;
+}
+
+.capital-evidence-section > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.capital-evidence-section > header strong {
+  display: block;
+  color: var(--text);
+  font-size: 0.86rem;
+}
+
+.capital-evidence-section > header span,
+.capital-evidence-section > header em {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-style: normal;
+}
+
+.capital-evidence-section.available > header em {
+  color: var(--accent-strong);
+  font-weight: 780;
+}
+
 .capital-evidence-item {
   display: grid;
   gap: 8px;
@@ -1688,6 +1727,7 @@ input[type="date"] {
   }
 
   .capital-evidence-item header,
+  .capital-evidence-section > header,
   .capital-behavior header,
   .capital-evidence > header {
     flex-direction: column;

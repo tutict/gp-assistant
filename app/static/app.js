@@ -3994,10 +3994,139 @@ function renderDragonCell(value) {
   return `<i class="${tone}" style="--heat:${(0.28 + heat / 140).toFixed(3)}" title="${formatNumber(heat)}"></i>`;
 }
 
+function normalizeCapitalEvidenceSections(evidence) {
+  if (Array.isArray(evidence?.sections) && evidence.sections.length) {
+    return evidence.sections;
+  }
+  return buildFallbackEvidenceSections(evidence);
+}
+
+function buildFallbackEvidenceSections(evidence) {
+  const items = evidence?.items || [];
+  const contributions = evidence?.contributions || {};
+  if (!items.length && !Object.keys(contributions).length) return [];
+  const definitions = [
+    { key: "fund_flow", title: "资金流", contribution: "资金流", categories: ["fund_flow"] },
+    { key: "institution_lhb", title: "机构席位", contribution: "机构席位", categories: ["institution_lhb"] },
+    {
+      key: "message_sentiment",
+      title: "消息情绪",
+      contribution: "消息情绪",
+      categories: ["news_rag", "community_sentiment"],
+    },
+    { key: "technical_behavior", title: "技术推断", contribution: "技术推断", categories: ["technical_behavior"] },
+    { key: "external_status", title: "接口状态", contribution: null, categories: ["external_status"] },
+  ];
+  return definitions
+    .map((definition) => {
+      const sectionItems = items.filter((item) => definition.categories.includes(item.category));
+      const contribution = definition.contribution ? contributions[definition.contribution] || {} : {};
+      const score = Number(contribution.score);
+      const available = Boolean(sectionItems.length || contribution.available);
+      return {
+        key: definition.key,
+        title: definition.title,
+        score: Number.isFinite(score) ? score : null,
+        weight: contribution.weight || 0,
+        available,
+        summary: available ? `${definition.title}命中 ${sectionItems.length} 条证据` : `${definition.title}暂无证据`,
+        items: sectionItems,
+      };
+    })
+    .filter((section) => section.available || section.items.length || section.weight);
+}
+
+function renderEvidenceSummary(evidence, sections) {
+  if (!sections.length) return renderCapitalContributions(evidence?.contributions || {});
+  return `
+    <div class="capital-contributions">
+      ${sections
+        .map((section) => {
+          const score = Number(section.score);
+          const weight = Number(section.weight);
+          return `
+            <div class="capital-contribution ${section.available ? "available" : "missing"}">
+              <span>${escapeHtml(section.title || capitalCategoryLabel(section.key))}</span>
+              <strong>${Number.isFinite(score) ? formatNumber(score) : "缺证据"}</strong>
+              <em>${Number.isFinite(weight) && weight > 0 ? `权重 ${Math.round(weight * 100)}%` : capitalSectionStatus(section)}</em>
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderEvidenceSections(sections) {
+  if (!sections.length) return "";
+  return `
+    <div class="capital-evidence-sections">
+      ${sections
+        .map((section) => {
+          const items = section.items || [];
+          const score = Number(section.score);
+          return `
+            <section class="capital-evidence-section ${section.available ? "available" : "missing"}">
+              <header>
+                <div>
+                  <strong>${escapeHtml(section.title || capitalCategoryLabel(section.key))}</strong>
+                  ${section.summary ? `<span>${escapeHtml(section.summary)}</span>` : ""}
+                </div>
+                <em>${Number.isFinite(score) ? formatNumber(score) : capitalSectionStatus(section)}</em>
+              </header>
+              ${
+                items.length
+                  ? `<div class="capital-evidence-list compact">${items.map(renderEvidenceItem).join("")}</div>`
+                  : renderEmpty("暂无证据")
+              }
+            </section>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderMetricPills(metrics) {
+  const entries = Object.entries(metrics || {});
+  if (!entries.length) return "";
+  return `<div class="mini-metrics">${entries
+    .map(([label, value]) => `<span>${escapeHtml(label)} ${escapeHtml(String(value))}</span>`)
+    .join("")}</div>`;
+}
+
+function renderEvidenceItem(item) {
+  const score = Number(item.score);
+  return `
+    <article class="capital-evidence-item">
+      <header>
+        <div>
+          <strong>${escapeHtml(item.title || item.category || "资金证据")}</strong>
+          <span>${escapeHtml(capitalCategoryLabel(item.category))} · ${escapeHtml(item.source || "")}</span>
+        </div>
+        <em>${escapeHtml(item.date || "")}</em>
+      </header>
+      <div class="capital-evidence-tags">
+        <span>${escapeHtml(sentimentLabel(item.sentiment))}</span>
+        <span>${escapeHtml(item.confidence || "低")}置信</span>
+        ${Number.isFinite(score) ? `<span>分 ${formatNumber(score)}</span>` : ""}
+      </div>
+      ${renderMetricPills(item.metrics) || renderEmpty("没有可展示指标")}
+      ${item.note ? `<p>${escapeHtml(item.note)}</p>` : ""}
+      ${item.url ? `<a class="evidence-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">查看来源</a>` : ""}
+    </article>
+  `;
+}
+
+function capitalSectionStatus(section) {
+  return section.available ? "有证据" : "缺证据";
+}
+
 function renderCapitalEvidence(evidence) {
+  const sections = normalizeCapitalEvidenceSections(evidence);
   const items = evidence?.items || [];
   const notes = evidence?.notes || [];
-  if (!items.length && !notes.length) return "";
+  if (!items.length && !notes.length && !sections.length) return "";
   const score = Number(evidence.composite_score);
   const modelLabel = evidence.model_used ? "模型参与" : "规则分";
   return `
@@ -4017,9 +4146,11 @@ function renderCapitalEvidence(evidence) {
         <span>${escapeHtml(capitalFreshnessLabel(evidence.freshness))}</span>
         <span>${escapeHtml(evidence.generated_at ? formatDateTime(evidence.generated_at) : "")}</span>
       </div>
-      ${renderCapitalContributions(evidence.contributions || {})}
+      ${renderEvidenceSummary(evidence, sections)}
       ${
-        items.length
+        sections.length
+          ? renderEvidenceSections(sections)
+          : items.length
           ? `<div class="capital-evidence-list">${items.map(renderCapitalEvidenceItem).join("")}</div>`
           : ""
       }
@@ -4029,31 +4160,7 @@ function renderCapitalEvidence(evidence) {
 }
 
 function renderCapitalEvidenceItem(item) {
-  const metrics = Object.entries(item.metrics || {});
-  const score = Number(item.score);
-  return `
-    <article class="capital-evidence-item">
-      <header>
-        <div>
-          <strong>${escapeHtml(item.title || item.category || "资金证据")}</strong>
-          <span>${escapeHtml(capitalCategoryLabel(item.category))} · ${escapeHtml(item.source || "")}</span>
-        </div>
-        <em>${escapeHtml(item.date || "")}</em>
-      </header>
-      <div class="capital-evidence-tags">
-        <span>${escapeHtml(sentimentLabel(item.sentiment))}</span>
-        <span>${escapeHtml(item.confidence || "低")}置信</span>
-        ${Number.isFinite(score) ? `<span>分 ${formatNumber(score)}</span>` : ""}
-      </div>
-      ${
-        metrics.length
-          ? `<div class="mini-metrics">${metrics.map(([label, value]) => `<span>${escapeHtml(label)} ${escapeHtml(String(value))}</span>`).join("")}</div>`
-          : renderEmpty("没有可展示指标")
-      }
-      ${item.note ? `<p>${escapeHtml(item.note)}</p>` : ""}
-      ${item.url ? `<a class="evidence-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">查看来源</a>` : ""}
-    </article>
-  `;
+  return renderEvidenceItem(item);
 }
 
 function renderCapitalContributions(contributions) {

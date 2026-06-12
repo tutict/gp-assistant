@@ -240,6 +240,15 @@ class NewsRagTests(unittest.TestCase):
 
         self.assertEqual(evidence[0].source_tier, "news")
 
+    def test_query_cached_evidence_exposes_public_cache_lookup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            news_rag.CACHE_PATH = Path(tmp) / "news.sqlite"
+            seed_news_cache()
+            evidence = news_rag.query_cached_evidence(["300750"], 30, 5)
+
+        self.assertTrue(evidence)
+        self.assertIn("300750.SZ", evidence[0].stock_codes)
+
     def test_guba_article_parser_marks_community_evidence(self):
         html = """
         <script>var post_article={

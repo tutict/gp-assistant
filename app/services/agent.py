@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import json
-import os
 import re
 import sys
-from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional, TypedDict
@@ -24,6 +21,13 @@ from app.schemas import (
 )
 from app.services.backtest import backtest_hold
 from app.services.data_maintenance import data_source_status, prune_cache, refresh_universe
+from app.services.llm_support import (
+    create_chat_completion as _create_chat_completion,
+    create_openai_client,
+    parse_json_response as _parse_json_response,
+    resolve_llm_config as _resolve_llm_config,
+    safe_llm_error as _safe_error,
+)
 from app.services.news_rag import analyze_supply_chain_news
 from app.services.observation import observe_stock
 from app.services.screener import screen_stocks, screen_stocks_by_sector, screening_universe
@@ -186,18 +190,6 @@ OBSERVE_INTENT_KEYWORDS = [
     "valuation",
     "order book",
 ]
-
-
-@dataclass(frozen=True)
-class ResolvedLlmConfig:
-    api_key: Optional[str]
-    base_url: Optional[str]
-    model: str
-    temperature: float
-    timeout_seconds: float
-    json_mode: bool
-    organization: Optional[str]
-    project: Optional[str]
 
 
 class AgentState(TypedDict, total=False):
@@ -580,20 +572,8 @@ def _call_llm(message: str, override: Optional[LlmClientConfig] = None) -> Dict[
         )
         return result
 
-    from openai import OpenAI
-
     try:
-        client_kwargs: Dict[str, Any] = {
-            "api_key": config.api_key,
-            "timeout": config.timeout_seconds,
-        }
-        if config.base_url:
-            client_kwargs["base_url"] = config.base_url
-        if config.organization:
-            client_kwargs["organization"] = config.organization
-        if config.project:
-            client_kwargs["project"] = config.project
-        client = OpenAI(**client_kwargs)
+        client = create_openai_client(config)
 
         request: Dict[str, Any] = {
             "model": config.model,
@@ -614,27 +594,6 @@ def _call_llm(message: str, override: Optional[LlmClientConfig] = None) -> Dict[
             f"{result.get('reply', '已处理。')}（LLM 调用失败，已使用本地规则解析：{_safe_error(exc)}）"
         )
         return result
-
-
-def _create_chat_completion(client: Any, request: Dict[str, Any]) -> Any:
-    try:
-        return client.chat.completions.create(**request)
-    except Exception:
-        fallback = dict(request)
-        if "response_format" not in fallback:
-            raise
-        fallback.pop("response_format", None)
-        return client.chat.completions.create(**fallback)
-
-
-def _parse_json_response(content: str) -> Dict[str, Any]:
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", content, flags=re.DOTALL)
-        if not match:
-            raise
-        return json.loads(match.group(0))
 
 
 def _system_prompt() -> str:
@@ -671,103 +630,6 @@ def _research_reply(reply: str, action: str) -> str:
 
 def _contains_forbidden_advice(text: str) -> bool:
     return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in FORBIDDEN_ADVICE_PATTERNS)
-
-
-def _resolve_llm_config(override: Optional[LlmClientConfig]) -> ResolvedLlmConfig:
-    api_key = _coalesce_str(
-        override.api_key if override else None,
-        os.getenv("OPENAI_API_KEY"),
-    )
-    base_url = _normalize_base_url(
-        _coalesce_str(override.base_url if override else None, os.getenv("OPENAI_BASE_URL"))
-    )
-    model = _coalesce_str(
-        override.model if override else None,
-        os.getenv("OPENAI_MODEL"),
-        "gpt-4o-mini",
-    )
-    temperature = _coalesce_float(
-        override.temperature if override else None,
-        os.getenv("OPENAI_TEMPERATURE"),
-        0.2,
-    )
-    timeout_seconds = _coalesce_float(
-        override.timeout_seconds if override else None,
-        os.getenv("OPENAI_TIMEOUT_SECONDS"),
-        30.0,
-    )
-    json_mode = _coalesce_bool(
-        override.json_mode if override else None,
-        os.getenv("OPENAI_JSON_MODE"),
-        True,
-    )
-    organization = _coalesce_str(
-        override.organization if override else None,
-        os.getenv("OPENAI_ORG_ID"),
-    )
-    project = _coalesce_str(
-        override.project if override else None,
-        os.getenv("OPENAI_PROJECT_ID"),
-    )
-    return ResolvedLlmConfig(
-        api_key=api_key,
-        base_url=base_url,
-        model=model,
-        temperature=min(max(temperature, 0.0), 2.0),
-        timeout_seconds=min(max(timeout_seconds, 1.0), 180.0),
-        json_mode=json_mode,
-        organization=organization,
-        project=project,
-    )
-
-
-def _coalesce_str(*values: Optional[str]) -> Optional[str]:
-    for value in values:
-        if value is None:
-            continue
-        stripped = str(value).strip()
-        if stripped:
-            return stripped
-    return None
-
-
-def _coalesce_float(*values: Any) -> float:
-    fallback = float(values[-1])
-    for value in values[:-1]:
-        if value is None or value == "":
-            continue
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            continue
-    return fallback
-
-
-def _coalesce_bool(*values: Any) -> bool:
-    fallback = bool(values[-1])
-    for value in values[:-1]:
-        if value is None or value == "":
-            continue
-        if isinstance(value, bool):
-            return value
-        lowered = str(value).strip().lower()
-        if lowered in {"1", "true", "yes", "y", "on"}:
-            return True
-        if lowered in {"0", "false", "no", "n", "off"}:
-            return False
-    return fallback
-
-
-def _normalize_base_url(value: Optional[str]) -> Optional[str]:
-    if not value:
-        return None
-    return value.rstrip("/")
-
-
-def _safe_error(exc: Exception) -> str:
-    text = str(exc).replace(os.getenv("OPENAI_API_KEY", "") or "\0", "[redacted]")
-    text = re.sub(r"sk-[A-Za-z0-9_-]{8,}", "sk-[redacted]", text)
-    return text[:180]
 
 
 def _heuristic_parse(message: str) -> Dict[str, Any]:
