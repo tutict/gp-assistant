@@ -93,6 +93,17 @@ class StockRelation(BaseModel):
     description: Optional[str] = None
 
 
+class LlmClientConfig(BaseModel):
+    api_key: Optional[str] = Field(default=None, max_length=4096)
+    base_url: Optional[str] = Field(default=None, max_length=512)
+    model: Optional[str] = Field(default=None, max_length=128)
+    temperature: Optional[float] = Field(default=None, ge=0, le=2)
+    timeout_seconds: Optional[float] = Field(default=None, gt=0, le=180)
+    json_mode: Optional[bool] = None
+    organization: Optional[str] = Field(default=None, max_length=256)
+    project: Optional[str] = Field(default=None, max_length=256)
+
+
 class GraphScreenRequest(BaseModel):
     criteria: ScreenCriteria = Field(default_factory=ScreenCriteria)
     seed_codes: List[str] = Field(default_factory=list, max_length=50)
@@ -136,6 +147,7 @@ class StockObserveRequest(BaseModel):
     minute_end: Optional[str] = None
     minute_limit: int = Field(default=160, ge=1, le=500)
     include_order_book: bool = True
+    llm: Optional[LlmClientConfig] = None
 
 
 class TrendIndicatorPoint(BaseModel):
@@ -143,6 +155,14 @@ class TrendIndicatorPoint(BaseModel):
     close: float
     swl: Optional[float] = None
     sws: Optional[float] = None
+    accumulation_index: Optional[float] = None
+    accumulation_strength: Optional[float] = None
+    swing_opportunity: Optional[float] = None
+    rebound_signal: Optional[float] = None
+    trend_heat: Optional[float] = None
+    volume_price_heat: Optional[float] = None
+    anomaly_heat: Optional[float] = None
+    popularity_heat: Optional[float] = None
     red_hold: bool = False
     cyan_watch: bool = False
     short_buy: bool = False
@@ -231,11 +251,40 @@ class OrderBookSnapshot(BaseModel):
     metrics: dict = Field(default_factory=dict)
 
 
+class CapitalEvidenceItem(BaseModel):
+    category: str
+    source: str
+    title: str
+    date: Optional[str] = None
+    metrics: dict = Field(default_factory=dict)
+    sentiment: str = "uncertain"
+    weight: float = Field(default=0.0, ge=0, le=1)
+    confidence: str = "低"
+    url: Optional[str] = None
+    score: Optional[float] = None
+    note: Optional[str] = None
+
+
+class CapitalEvidenceResult(BaseModel):
+    stock_code: str
+    generated_at: str
+    composite_score: Optional[float] = None
+    confidence: str = "低"
+    model_used: bool = False
+    as_of_trade_date: Optional[str] = None
+    freshness: str = "unknown"
+    contributions: dict = Field(default_factory=dict)
+    summary: Optional[str] = None
+    items: List[CapitalEvidenceItem] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
+
+
 class StockObservation(BaseModel):
     source: str
     stock: StockItem
     financial_indicators: Optional[FinancialIndicatorSection] = None
     trend: Optional[TrendIndicatorResult] = None
+    capital_evidence: Optional[CapitalEvidenceResult] = None
     minute_period: str = "1"
     minute_bars: List[MinuteBar] = Field(default_factory=list)
     order_book: Optional[OrderBookSnapshot] = None
@@ -283,17 +332,6 @@ class BacktestResult(BaseModel):
     benchmark_symbols: List[str] = Field(default_factory=list)
     rebalance_dates: List[str] = Field(default_factory=list)
     notes: List[str] = Field(default_factory=list)
-
-
-class LlmClientConfig(BaseModel):
-    api_key: Optional[str] = Field(default=None, max_length=4096)
-    base_url: Optional[str] = Field(default=None, max_length=512)
-    model: Optional[str] = Field(default=None, max_length=128)
-    temperature: Optional[float] = Field(default=None, ge=0, le=2)
-    timeout_seconds: Optional[float] = Field(default=None, gt=0, le=180)
-    json_mode: Optional[bool] = None
-    organization: Optional[str] = Field(default=None, max_length=256)
-    project: Optional[str] = Field(default=None, max_length=256)
 
 
 class NewsRagRequest(BaseModel):

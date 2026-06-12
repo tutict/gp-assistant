@@ -133,6 +133,15 @@ const TAURI_MOBILE_GET_PREFIX_ROUTES = [
 const TAURI_MOBILE_POST_ROUTES = {
   "/api/screen": async ({ invoke, payload }) =>
     invokeCoreWithMobileData(invoke, "core_screen_with_data", "criteria", payload),
+  "/api/observe": async ({ invoke, payload }) => {
+    const params = new URLSearchParams();
+    for (const key of ["start_date", "end_date", "minute_period", "series_limit", "minute_limit"]) {
+      if (payload?.[key] !== undefined && payload?.[key] !== null && payload?.[key] !== "") {
+        params.set(key, String(payload[key]));
+      }
+    }
+    return observeTauriStock(invoke, payload?.code || "", params);
+  },
   "/api/data-sources/auto-refresh-universe": async ({ invoke }) => {
     const cache = await readMobileMarketDataCache(invoke).catch(() => null);
     const tradingDay = isLikelyTradingDay();
@@ -1070,16 +1079,20 @@ async function runObserve(codeOverride) {
   $("#observeCode").value = code;
   activateWorkbenchView("observe", { href: "#sectionObserve", updateHash: true });
   setLoading(panels.observe, "观察行情和技术面");
-  const params = new URLSearchParams({
+  const payload = {
+    code,
     minute_period: $("#observeMinutePeriod").value || "1",
-    series_limit: "160",
-    minute_limit: "180",
-  });
+    series_limit: 160,
+    minute_limit: 180,
+    include_order_book: true,
+  };
   const startDate = readDateParam("observeStart", "");
   const endDate = readDateParam("observeEnd", "");
-  if (startDate) params.set("start_date", startDate);
-  if (endDate) params.set("end_date", endDate);
-  const data = await getJson(`/api/observe/${encodeURIComponent(code)}?${params}`, panels.observe);
+  if (startDate) payload.start_date = startDate;
+  if (endDate) payload.end_date = endDate;
+  const llm = buildLlmConfig();
+  if (llm && !mobileRuntime) payload.llm = llm;
+  const data = await postJson("/api/observe", payload, panels.observe);
   if (data) renderObserveResult(panels.observe, data);
 }
 
@@ -3309,6 +3322,8 @@ function renderObserveBody(data) {
     renderFinancialIndicators(data.financial_indicators),
     data.order_book ? renderOrderBook(data.order_book) : renderEmpty("没有可用盘口"),
     trend.signal ? renderSignalCard(stock, signal) : renderEmpty("没有可用日线技术面"),
+    series.length ? renderCapitalBehaviorPanel(series, signal) : "",
+    data.capital_evidence ? renderCapitalEvidence(data.capital_evidence) : "",
     minuteBars.length ? renderMinuteChart(minuteBars) : renderEmpty("没有可用分钟线"),
     series.length ? renderTrendChart(series) : "",
     data.notes?.length ? renderNotes(data.notes) : "",
@@ -3674,12 +3689,14 @@ function renderSignalCard(stock, signal) {
         <div><span>收盘价</span><strong>${formatNumber(signal.close)}</strong></div>
         <div><span>SWL/SWS 线</span><strong>${formatNumber(signal.swl)} / ${formatNumber(signal.sws)}</strong></div>
         <div><span>量化分</span><strong>${escapeHtml(String(signal.quant_score ?? 0))}/${escapeHtml(String(signal.quant_score_max ?? 90))}</strong></div>
+        <div><span>形态分</span><strong>${escapeHtml(String(signal.pattern_score ?? 0))}/${escapeHtml(String(signal.pattern_score_max ?? 100))}</strong></div>
         <div><span>支撑位</span><strong>${formatNumber(signal.support)}</strong></div>
         <div><span>阻力位</span><strong>${formatNumber(signal.resistance)}</strong></div>
         <div><span>突破位</span><strong>${formatNumber(signal.breakout)}</strong></div>
         <div><span>反转位</span><strong>${formatNumber(signal.reversal)}</strong></div>
         <div><span>等待线</span><strong>${formatNumber(signal.wait_line)}</strong></div>
       </div>
+      ${signal.pattern_signals?.length ? `<div class="tag-row">${signal.pattern_signals.map((reason) => `<span>${escapeHtml(reasonLabel(reason))}</span>`).join("")}</div>` : ""}
       ${signal.reasons?.length ? `<div class="tag-row">${signal.reasons.map((reason) => `<span>${escapeHtml(reasonLabel(reason))}</span>`).join("")}</div>` : ""}
     </section>
   `;
@@ -3829,6 +3846,269 @@ function renderTrendChart(series) {
   `;
 }
 
+function renderCapitalBehaviorPanel(series, signal = {}) {
+  const points = (series || []).filter((point) =>
+    ["accumulation_index", "accumulation_strength", "swing_opportunity", "rebound_signal"].some((key) =>
+      Number.isFinite(Number(point[key])),
+    ),
+  );
+  if (points.length < 2) return renderEmpty("吸筹分析点不足");
+
+  const latest = points[points.length - 1] || {};
+  const metrics = [
+    ["吸筹指标", latest.accumulation_index, "index"],
+    ["吸筹强度", latest.accumulation_strength, "strength"],
+    ["波段机会", latest.swing_opportunity, "swing"],
+    ["绝地反击", latest.rebound_signal, "rebound"],
+  ];
+
+  return `
+    <section class="capital-behavior">
+      <header>
+        <div>
+          <h3>资金行为分析</h3>
+          <p>${escapeHtml(latest.date || signal.date || "")}</p>
+        </div>
+        <span class="state-pill">形态 ${escapeHtml(String(signal.pattern_score ?? "-"))}</span>
+      </header>
+      <div class="capital-metrics">
+        ${metrics
+          .map(([label, value, tone]) => {
+            const numeric = Number(value);
+            const signed = tone === "index" && Number.isFinite(numeric) && numeric > 0 ? "+" : "";
+            return `
+              <div class="capital-metric ${tone}">
+                <span>${escapeHtml(label)}</span>
+                <strong>${signed}${formatNumber(value)}</strong>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+      ${renderAccumulationChart(points)}
+      ${renderDragonGrid(points)}
+    </section>
+  `;
+}
+
+function renderAccumulationChart(points) {
+  const width = 720;
+  const height = 185;
+  const values = points
+    .flatMap((point) => [
+      point.accumulation_index,
+      point.accumulation_strength,
+      point.swing_opportunity,
+      point.rebound_signal,
+    ])
+    .map(Number)
+    .filter(Number.isFinite);
+  if (values.length < 2) return "";
+
+  const min = Math.min(-35, ...values);
+  const max = Math.max(55, ...values);
+  const range = max - min || 1;
+  const yFor = (value) => height - ((Number(value) - min) / range) * height;
+  const xFor = (index) => (index / Math.max(points.length - 1, 1)) * width;
+  const linePoints = (key) =>
+    points
+      .map((point, index) => {
+        const value = Number(point[key]);
+        if (!Number.isFinite(value)) return null;
+        return `${xFor(index).toFixed(2)},${yFor(value).toFixed(2)}`;
+      })
+      .filter(Boolean)
+      .join(" ");
+  const barWidth = Math.max(width / Math.max(points.length, 1) - 1, 2);
+  const baseline = yFor(0);
+  const bars = points
+    .map((point, index) => {
+      const value = Number(point.accumulation_strength);
+      if (!Number.isFinite(value)) return "";
+      const x = xFor(index) - barWidth / 2;
+      const y = yFor(value);
+      const h = Math.max(1, baseline - y);
+      return `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${h.toFixed(2)}" rx="1.5" fill="var(--accent-soft)" opacity="0.58" />`;
+    })
+    .join("");
+
+  return `
+    <div class="chart-wrap accumulation-chart">
+      <div class="chart-legend">
+        <span style="color: var(--positive)">吸筹指标</span>
+        <span style="color: var(--danger)">吸筹强度</span>
+        <span style="color: var(--accent-strong)">波段机会</span>
+        <span style="color: var(--muted)">绝地反击</span>
+      </div>
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="吸筹分析曲线">
+        <line x1="0" y1="${baseline.toFixed(2)}" x2="${width}" y2="${baseline.toFixed(2)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="6 6" />
+        ${bars}
+        <polyline points="${linePoints("accumulation_index")}" fill="none" stroke="var(--positive)" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline points="${linePoints("accumulation_strength")}" fill="none" stroke="var(--danger)" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline points="${linePoints("swing_opportunity")}" fill="none" stroke="var(--accent-strong)" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline points="${linePoints("rebound_signal")}" fill="none" stroke="var(--muted)" stroke-width="2" stroke-dasharray="7 6" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      <div class="chart-labels">
+        <span>${escapeHtml(points[0]?.date || "")}</span>
+        <span>${escapeHtml(points[points.length - 1]?.date || "")}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderDragonGrid(points) {
+  const recent = points.slice(-48);
+  if (recent.length < 2) return "";
+  const dimensions = [
+    ["趋势", "trend_heat"],
+    ["量价", "volume_price_heat"],
+    ["异动", "anomaly_heat"],
+    ["人气", "popularity_heat"],
+  ];
+  return `
+    <div class="dragon-grid" role="img" aria-label="四维擒龙热度">
+      <header>
+        <strong>四维擒龙</strong>
+        <span>${escapeHtml(recent[0]?.date || "")} - ${escapeHtml(recent[recent.length - 1]?.date || "")}</span>
+      </header>
+      ${dimensions
+        .map(
+          ([label, key]) => `
+            <div class="dragon-row">
+              <span>${escapeHtml(label)}</span>
+              <div class="dragon-cells">
+                ${recent.map((point) => renderDragonCell(point[key])).join("")}
+              </div>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderDragonCell(value) {
+  const numeric = Number(value);
+  const heat = Number.isFinite(numeric) ? Math.max(0, Math.min(100, numeric)) : 0;
+  const tone = heat >= 62 ? "hot" : heat >= 42 ? "warm" : "cool";
+  return `<i class="${tone}" style="--heat:${(0.28 + heat / 140).toFixed(3)}" title="${formatNumber(heat)}"></i>`;
+}
+
+function renderCapitalEvidence(evidence) {
+  const items = evidence?.items || [];
+  const notes = evidence?.notes || [];
+  if (!items.length && !notes.length) return "";
+  const score = Number(evidence.composite_score);
+  const modelLabel = evidence.model_used ? "模型参与" : "规则分";
+  return `
+    <section class="capital-evidence">
+      <header>
+        <div>
+          <h3>综合资金证据</h3>
+          <p>${escapeHtml(evidence.summary || "资金流和机构席位优先，消息与技术线辅助。")}</p>
+        </div>
+        <div class="capital-evidence-score">
+          <strong>${Number.isFinite(score) ? formatNumber(score) : "-"}</strong>
+          <span>${escapeHtml(evidence.confidence || "低")}置信 · ${escapeHtml(modelLabel)}</span>
+        </div>
+      </header>
+      <div class="capital-evidence-meta">
+        <span>交易日 ${escapeHtml(evidence.as_of_trade_date || "-")}</span>
+        <span>${escapeHtml(capitalFreshnessLabel(evidence.freshness))}</span>
+        <span>${escapeHtml(evidence.generated_at ? formatDateTime(evidence.generated_at) : "")}</span>
+      </div>
+      ${renderCapitalContributions(evidence.contributions || {})}
+      ${
+        items.length
+          ? `<div class="capital-evidence-list">${items.map(renderCapitalEvidenceItem).join("")}</div>`
+          : ""
+      }
+      ${notes.length ? renderNotes(notes) : ""}
+    </section>
+  `;
+}
+
+function renderCapitalEvidenceItem(item) {
+  const metrics = Object.entries(item.metrics || {});
+  const score = Number(item.score);
+  return `
+    <article class="capital-evidence-item">
+      <header>
+        <div>
+          <strong>${escapeHtml(item.title || item.category || "资金证据")}</strong>
+          <span>${escapeHtml(capitalCategoryLabel(item.category))} · ${escapeHtml(item.source || "")}</span>
+        </div>
+        <em>${escapeHtml(item.date || "")}</em>
+      </header>
+      <div class="capital-evidence-tags">
+        <span>${escapeHtml(sentimentLabel(item.sentiment))}</span>
+        <span>${escapeHtml(item.confidence || "低")}置信</span>
+        ${Number.isFinite(score) ? `<span>分 ${formatNumber(score)}</span>` : ""}
+      </div>
+      ${
+        metrics.length
+          ? `<div class="mini-metrics">${metrics.map(([label, value]) => `<span>${escapeHtml(label)} ${escapeHtml(String(value))}</span>`).join("")}</div>`
+          : renderEmpty("没有可展示指标")
+      }
+      ${item.note ? `<p>${escapeHtml(item.note)}</p>` : ""}
+      ${item.url ? `<a class="evidence-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">查看来源</a>` : ""}
+    </article>
+  `;
+}
+
+function renderCapitalContributions(contributions) {
+  const entries = Object.entries(contributions || {});
+  if (!entries.length) return "";
+  return `
+    <div class="capital-contributions">
+      ${entries
+        .map(([label, value]) => {
+          const score = Number(value?.score);
+          const weight = Number(value?.weight);
+          return `
+            <div class="capital-contribution ${value?.available ? "available" : "missing"}">
+              <span>${escapeHtml(label)}</span>
+              <strong>${Number.isFinite(score) ? formatNumber(score) : "缺证据"}</strong>
+              <em>权重 ${Number.isFinite(weight) ? `${Math.round(weight * 100)}%` : "-"}</em>
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function capitalCategoryLabel(category) {
+  const labels = {
+    fund_flow: "主力资金流",
+    institution_lhb: "龙虎榜机构",
+    news_rag: "新闻证据",
+    community_sentiment: "社区情绪",
+    technical_behavior: "技术推断",
+    external_status: "接口状态",
+  };
+  return labels[category] || category || "证据";
+}
+
+function capitalFreshnessLabel(freshness) {
+  const labels = {
+    "fresh-cache": "缓存命中",
+    refreshed: "已刷新",
+    "stale-cache": "旧缓存",
+  };
+  return labels[freshness] || freshness || "-";
+}
+
+function sentimentLabel(sentiment) {
+  const labels = {
+    positive: "偏积极",
+    negative: "偏谨慎",
+    neutral: "中性",
+    uncertain: "不确定",
+  };
+  return labels[sentiment] || sentiment || "不确定";
+}
+
 function renderMetricLine(metrics) {
   return `
     <div class="metric-line">
@@ -3967,6 +4247,11 @@ function reasonLabel(reason) {
     white_exit: "白色离场",
     cyan_watch: "青色观望",
     oversold: "急速超跌",
+    accumulation_strength: "吸筹强度较高",
+    swing_opportunity: "波段机会",
+    bottom_accumulation: "底部吸筹",
+    rebound_signal: "绝地反击",
+    dragon_trend_volume: "趋势量价共振",
   };
   return labels[reason] || reason;
 }

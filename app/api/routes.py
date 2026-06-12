@@ -227,6 +227,17 @@ def observe_stock(
         raise HTTPException(status_code=404, detail="未找到股票")
 
 
+@router.post("/observe", response_model=StockObservation)
+def observe_stock_post(
+    request: StockObserveRequest,
+    provider=Depends(_provider_from_headers),
+):
+    try:
+        return build_stock_observation(provider, request)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="未找到股票")
+
+
 @router.get("/minutes/{code}", response_model=list[MinuteBar])
 def stock_minutes(
     code: str,

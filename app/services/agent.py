@@ -166,6 +166,13 @@ OBSERVE_INTENT_KEYWORDS = [
     "分时",
     "技术面",
     "日线",
+    "吸筹",
+    "底部吸筹",
+    "吸筹指标",
+    "四维擒龙",
+    "资金行为",
+    "波段机会",
+    "绝地反击",
     "支撑",
     "阻力",
     "趋势",
@@ -404,6 +411,8 @@ def _observe_stock_node(state: AgentState) -> AgentState:
             "data": None,
             "reply": state.get("reply") or "请给出要观察的 6 位 A 股代码，例如 000001 或 300750.SZ。",
         }
+    if request.llm is None and state.get("llm_config") is not None:
+        request = request.model_copy(update={"llm": state.get("llm_config")})
 
     try:
         result = observe_stock(state["provider"], request)

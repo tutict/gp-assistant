@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 
 from app.providers.base import StockProvider
 from app.schemas import StockObservation, StockObserveRequest, TrendIndicatorRequest
+from app.services.capital_evidence import fetch_capital_evidence
 from app.services.trend_indicator import analyze_trend
 
 
@@ -38,6 +39,18 @@ def observe_stock(provider: StockProvider, request: StockObserveRequest) -> Stoc
         trend = None
         notes.append(str(exc))
 
+    try:
+        capital_evidence = fetch_capital_evidence(
+            stock,
+            start_value,
+            end_value,
+            trend=trend,
+            llm=request.llm,
+        )
+    except Exception as exc:
+        capital_evidence = None
+        notes.append(f"资金证据不可用：{exc}")
+
     minute_period = request.minute_period if request.minute_period in {"1", "5", "15", "30", "60"} else "1"
     try:
         minute_bars = provider.get_minutes(
@@ -62,6 +75,7 @@ def observe_stock(provider: StockProvider, request: StockObserveRequest) -> Stoc
         stock=stock,
         financial_indicators=financial_indicators,
         trend=trend,
+        capital_evidence=capital_evidence,
         minute_period=minute_period,
         minute_bars=minute_bars,
         order_book=order_book,

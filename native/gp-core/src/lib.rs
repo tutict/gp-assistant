@@ -191,6 +191,22 @@ pub struct TrendIndicatorPoint {
     #[serde(default)]
     pub sws: Option<f64>,
     #[serde(default)]
+    pub accumulation_index: Option<f64>,
+    #[serde(default)]
+    pub accumulation_strength: Option<f64>,
+    #[serde(default)]
+    pub swing_opportunity: Option<f64>,
+    #[serde(default)]
+    pub rebound_signal: Option<f64>,
+    #[serde(default)]
+    pub trend_heat: Option<f64>,
+    #[serde(default)]
+    pub volume_price_heat: Option<f64>,
+    #[serde(default)]
+    pub anomaly_heat: Option<f64>,
+    #[serde(default)]
+    pub popularity_heat: Option<f64>,
+    #[serde(default)]
     pub red_hold: bool,
     #[serde(default)]
     pub cyan_watch: bool,
@@ -239,6 +255,12 @@ pub struct TrendIndicatorSignal {
     pub quant_score: i32,
     #[serde(default = "default_quant_score_max")]
     pub quant_score_max: i32,
+    #[serde(default)]
+    pub pattern_score: i32,
+    #[serde(default = "default_pattern_score_max")]
+    pub pattern_score_max: i32,
+    #[serde(default)]
+    pub pattern_signals: Vec<String>,
     pub status: String,
     #[serde(default)]
     pub reasons: Vec<String>,
@@ -512,6 +534,14 @@ struct ComputedTrendBar {
     close: f64,
     swl: f64,
     sws: f64,
+    accumulation_index: f64,
+    accumulation_strength: f64,
+    swing_opportunity: f64,
+    rebound_signal: f64,
+    trend_heat: f64,
+    volume_price_heat: f64,
+    anomaly_heat: f64,
+    popularity_heat: f64,
     star_line: f64,
     bull_line: f64,
     wait_line: f64,
@@ -646,6 +676,10 @@ fn default_trend_limit() -> usize {
 
 fn default_quant_score_max() -> i32 {
     90
+}
+
+fn default_pattern_score_max() -> i32 {
+    100
 }
 
 fn default_top_n() -> usize {
@@ -2355,6 +2389,7 @@ fn compute_trend_bars(bars: &[PreparedBar]) -> Vec<ComputedTrendBar> {
     let bull_line = ma(&close, 26);
     let star_line = star_line(&close, &open, &high, &low);
     let quant_score = quant_scores(&close, &high, &low, &volume);
+    let capital_behavior = capital_behavior_metrics(&close, &open, &high, &low, &volume);
 
     let mut computed = Vec::with_capacity(bars.len());
     for index in 0..bars.len() {
@@ -2376,6 +2411,14 @@ fn compute_trend_bars(bars: &[PreparedBar]) -> Vec<ComputedTrendBar> {
             close: close[index],
             swl: swl[index],
             sws: sws[index],
+            accumulation_index: capital_behavior[index].accumulation_index,
+            accumulation_strength: capital_behavior[index].accumulation_strength,
+            swing_opportunity: capital_behavior[index].swing_opportunity,
+            rebound_signal: capital_behavior[index].rebound_signal,
+            trend_heat: capital_behavior[index].trend_heat,
+            volume_price_heat: capital_behavior[index].volume_price_heat,
+            anomaly_heat: capital_behavior[index].anomaly_heat,
+            popularity_heat: capital_behavior[index].popularity_heat,
             star_line: star_line[index],
             bull_line: bull_line[index],
             wait_line,
@@ -2482,6 +2525,20 @@ fn rolling_sum(values: &[f64], window: usize) -> Vec<f64> {
             sum -= values[index - window];
         }
         output.push(sum);
+    }
+    output
+}
+
+fn rolling_mean_partial(values: &[f64], window: usize) -> Vec<f64> {
+    let mut output = Vec::with_capacity(values.len());
+    let mut sum = 0.0;
+    for index in 0..values.len() {
+        sum += values[index];
+        if index >= window {
+            sum -= values[index - window];
+        }
+        let count = (index + 1).min(window).max(1);
+        output.push(sum / count as f64);
     }
     output
 }
@@ -2609,6 +2666,223 @@ fn quant_scores(close: &[f64], high: &[f64], low: &[f64], volume: &[f64]) -> Vec
     scores
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct CapitalBehaviorBar {
+    accumulation_index: f64,
+    accumulation_strength: f64,
+    swing_opportunity: f64,
+    rebound_signal: f64,
+    trend_heat: f64,
+    volume_price_heat: f64,
+    anomaly_heat: f64,
+    popularity_heat: f64,
+}
+
+fn capital_behavior_metrics(
+    close: &[f64],
+    open: &[f64],
+    high: &[f64],
+    low: &[f64],
+    volume: &[f64],
+) -> Vec<CapitalBehaviorBar> {
+    let len = close.len();
+    if len == 0 {
+        return Vec::new();
+    }
+
+    let volume_ma20 = rolling_mean_partial(volume, 20);
+    let low_60 = rolling_min(low, 60);
+    let high_60 = rolling_max(high, 60);
+    let ma5 = ma(close, 5);
+    let ma10 = ma(close, 10);
+    let ma20 = ma(close, 20);
+    let ma60 = ma(close, 60);
+
+    let mut raw = Vec::with_capacity(len);
+    let mut low_zone_values = Vec::with_capacity(len);
+    let mut lower_shadow_values = Vec::with_capacity(len);
+    let mut close_recovery_values = Vec::with_capacity(len);
+    let mut volume_expansion_values = Vec::with_capacity(len);
+    let mut price_position_values = Vec::with_capacity(len);
+    let mut pct_change_values = Vec::with_capacity(len);
+    let mut amplitude_values = Vec::with_capacity(len);
+    let mut volume_ratio_values = Vec::with_capacity(len);
+
+    for index in 0..len {
+        let previous_close = if index > 0 && close[index - 1].abs() > f64::EPSILON {
+            close[index - 1]
+        } else {
+            close[index].max(0.01)
+        };
+        let price_range = (high[index] - low[index]).max(0.0);
+        let pct_change = close[index] / previous_close - 1.0;
+        let amplitude = if previous_close.abs() > f64::EPSILON {
+            price_range / previous_close
+        } else {
+            0.0
+        };
+        let volume_ratio = if volume_ma20[index].abs() > f64::EPSILON {
+            (volume[index] / volume_ma20[index]).clamp(0.0, 4.0)
+        } else {
+            1.0
+        };
+        let rolling_range = high_60[index] - low_60[index];
+        let price_position = if rolling_range.abs() > f64::EPSILON {
+            ((close[index] - low_60[index]) / rolling_range).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+        let low_zone = 1.0 - price_position;
+        let lower_shadow = if price_range.abs() > f64::EPSILON {
+            ((open[index].min(close[index]) - low[index]) / price_range).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let close_recovery = if price_range.abs() > f64::EPSILON {
+            ((close[index] - low[index]) / price_range).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+        let volume_expansion = ((volume_ratio - 1.0).clamp(0.0, 2.0) / 2.0).clamp(0.0, 1.0);
+        let positive_close = if close[index] >= open[index] {
+            1.0
+        } else {
+            0.0
+        };
+        let negative_close = if close[index] < open[index] { 1.0 } else { 0.0 };
+
+        raw.push(
+            low_zone * 44.0
+                + volume_expansion * 28.0
+                + lower_shadow * 18.0
+                + close_recovery * 8.0
+                + positive_close * 4.0
+                - price_position * 22.0
+                - negative_close * pct_change.abs().min(0.08) * 260.0
+                - if volume_ratio > 1.8 && close[index] < open[index] {
+                    12.0
+                } else {
+                    0.0
+                },
+        );
+        low_zone_values.push(low_zone);
+        lower_shadow_values.push(lower_shadow);
+        close_recovery_values.push(close_recovery);
+        volume_expansion_values.push(volume_expansion);
+        price_position_values.push(price_position);
+        pct_change_values.push(pct_change);
+        amplitude_values.push(amplitude);
+        volume_ratio_values.push(volume_ratio);
+    }
+
+    let accumulation_index: Vec<f64> = ema(&raw, 5)
+        .into_iter()
+        .map(|value| (value - 34.0).clamp(-100.0, 100.0))
+        .collect();
+
+    let mut strength_raw = Vec::with_capacity(len);
+    let mut swing_raw = Vec::with_capacity(len);
+    let mut rebound_raw = Vec::with_capacity(len);
+    let mut trend_heat = Vec::with_capacity(len);
+    let mut volume_price_heat = Vec::with_capacity(len);
+    let mut anomaly_heat = Vec::with_capacity(len);
+    let mut popularity_heat = Vec::with_capacity(len);
+
+    for index in 0..len {
+        let low_zone = low_zone_values[index];
+        let lower_shadow = lower_shadow_values[index];
+        let close_recovery = close_recovery_values[index];
+        let volume_expansion = volume_expansion_values[index];
+        let price_position = price_position_values[index];
+        let pct_change = pct_change_values[index];
+        let amplitude = amplitude_values[index];
+        let volume_ratio = volume_ratio_values[index];
+
+        strength_raw.push(
+            (accumulation_index[index].max(0.0) * 0.72
+                + low_zone * 18.0
+                + lower_shadow * 12.0
+                + volume_expansion * 18.0)
+                .clamp(0.0, 100.0),
+        );
+
+        let trend_turn = if ma5[index] > ma10[index] { 22.0 } else { 0.0 }
+            + if ma10[index] > ma20[index] { 18.0 } else { 0.0 }
+            + if close[index] > ma20[index] {
+                18.0
+            } else {
+                0.0
+            }
+            + if index >= 5 && (ma20[index] - ma20[index - 5]) > 0.0 {
+                14.0
+            } else {
+                0.0
+            };
+        swing_raw.push(
+            (strength_raw[index] * 0.48 + trend_turn * 0.46 + low_zone * 16.0
+                - price_position * 18.0)
+                .clamp(0.0, 100.0),
+        );
+        rebound_raw.push(
+            (low_zone * 32.0
+                + lower_shadow * 28.0
+                + volume_expansion * 20.0
+                + if pct_change > 0.0 { 12.0 } else { 0.0 }
+                + if index > 0 && pct_change_values[index - 1] < -0.025 {
+                    8.0
+                } else {
+                    0.0
+                })
+            .clamp(0.0, 100.0),
+        );
+
+        let trend_value = if close[index] > ma5[index] { 20.0 } else { 0.0 }
+            + if ma5[index] > ma10[index] { 25.0 } else { 0.0 }
+            + if ma10[index] > ma20[index] { 25.0 } else { 0.0 }
+            + if ma20[index] > ma60[index] { 15.0 } else { 0.0 }
+            + if index >= 5 && (ma20[index] - ma20[index - 5]) > 0.0 {
+                15.0
+            } else {
+                0.0
+            };
+        let volume_price_value = (volume_expansion * 42.0
+            + pct_change.clamp(0.0, 0.06) * 520.0
+            + close_recovery * 18.0
+            + if close[index] > open[index] { 8.0 } else { 0.0 })
+        .clamp(0.0, 100.0);
+        let anomaly_value = (amplitude.min(0.12) * 360.0
+            + (volume_ratio - 1.0).clamp(0.0, 3.0) * 20.0
+            + pct_change.abs().min(0.08) * 260.0)
+            .clamp(0.0, 100.0);
+        let popularity_value = ((volume_ratio.min(3.0) / 3.0) * 36.0
+            + amplitude.min(0.1) * 260.0
+            + pct_change.clamp(0.0, 0.06) * 360.0
+            + trend_value * 0.18)
+            .clamp(0.0, 100.0);
+        trend_heat.push(trend_value.clamp(0.0, 100.0));
+        volume_price_heat.push(volume_price_value);
+        anomaly_heat.push(anomaly_value);
+        popularity_heat.push(popularity_value);
+    }
+
+    let accumulation_strength = ema(&strength_raw, 3);
+    let swing_opportunity = ema(&swing_raw, 3);
+    let rebound_signal = ema(&rebound_raw, 3);
+
+    (0..len)
+        .map(|index| CapitalBehaviorBar {
+            accumulation_index: accumulation_index[index],
+            accumulation_strength: accumulation_strength[index].clamp(0.0, 100.0),
+            swing_opportunity: swing_opportunity[index].clamp(0.0, 100.0),
+            rebound_signal: rebound_signal[index].clamp(0.0, 100.0),
+            trend_heat: trend_heat[index],
+            volume_price_heat: volume_price_heat[index],
+            anomaly_heat: anomaly_heat[index],
+            popularity_heat: popularity_heat[index],
+        })
+        .collect()
+}
+
 fn star_line(close: &[f64], open: &[f64], high: &[f64], low: &[f64]) -> Vec<f64> {
     let ytsl: Vec<f64> = close
         .iter()
@@ -2650,6 +2924,9 @@ fn trend_signal_from_bar(code: &str, bar: &ComputedTrendBar) -> TrendIndicatorSi
         oversold: bar.oversold,
         quant_score: bar.quant_score,
         quant_score_max: default_quant_score_max(),
+        pattern_score: pattern_score(bar),
+        pattern_score_max: default_pattern_score_max(),
+        pattern_signals: pattern_signals(bar),
         status: trend_status(bar),
         reasons,
         notes: trend_notes(),
@@ -2662,6 +2939,14 @@ fn trend_point_from_bar(bar: &ComputedTrendBar) -> TrendIndicatorPoint {
         close: round4(bar.close),
         swl: finite_round4(bar.swl),
         sws: finite_round4(bar.sws),
+        accumulation_index: finite_round4(bar.accumulation_index),
+        accumulation_strength: finite_round4(bar.accumulation_strength),
+        swing_opportunity: finite_round4(bar.swing_opportunity),
+        rebound_signal: finite_round4(bar.rebound_signal),
+        trend_heat: finite_round4(bar.trend_heat),
+        volume_price_heat: finite_round4(bar.volume_price_heat),
+        anomaly_heat: finite_round4(bar.anomaly_heat),
+        popularity_heat: finite_round4(bar.popularity_heat),
         red_hold: bar.red_hold,
         cyan_watch: bar.cyan_watch,
         short_buy: bar.short_buy,
@@ -2692,7 +2977,42 @@ fn trend_reasons(bar: &ComputedTrendBar) -> Vec<String> {
     if bar.oversold {
         reasons.push("oversold".to_string());
     }
+    if bar.accumulation_strength >= 55.0 {
+        reasons.push("accumulation_strength".to_string());
+    }
+    if bar.swing_opportunity >= 60.0 {
+        reasons.push("swing_opportunity".to_string());
+    }
     reasons
+}
+
+fn pattern_score(bar: &ComputedTrendBar) -> i32 {
+    let values = [
+        bar.accumulation_strength,
+        bar.swing_opportunity,
+        bar.trend_heat,
+        bar.volume_price_heat,
+        bar.anomaly_heat,
+        bar.popularity_heat,
+    ];
+    (values.iter().sum::<f64>() / values.len().max(1) as f64).round() as i32
+}
+
+fn pattern_signals(bar: &ComputedTrendBar) -> Vec<String> {
+    let mut signals = Vec::new();
+    if bar.accumulation_index > 8.0 && bar.accumulation_strength >= 45.0 {
+        signals.push("bottom_accumulation".to_string());
+    }
+    if bar.swing_opportunity >= 60.0 {
+        signals.push("swing_opportunity".to_string());
+    }
+    if bar.rebound_signal >= 62.0 {
+        signals.push("rebound_signal".to_string());
+    }
+    if bar.trend_heat >= 65.0 && bar.volume_price_heat >= 55.0 {
+        signals.push("dragon_trend_volume".to_string());
+    }
+    signals
 }
 
 fn trend_status(bar: &ComputedTrendBar) -> String {
@@ -2757,6 +3077,8 @@ fn combined_trend_score(base_score: f64, trend_score: f64) -> f64 {
 
 fn trend_notes() -> Vec<String> {
     vec![
+        "Accumulation analysis is inferred from daily OHLCV only; real chip distribution, seat-level LHB, and main-fund flow are not included."
+            .to_string(),
         "WINNER(C) depends on chip-distribution data and is omitted; quant_score is scored out of 90."
             .to_string(),
         "SWS uses the formula's volume/capital term as a percent DMA coefficient and clips it to 1%-100%."
@@ -3426,6 +3748,13 @@ mod tests {
         assert_eq!(result.stock.code, "300750.SZ");
         assert!(!result.series.is_empty());
         assert!(result.signal.quant_score <= 90);
+        assert!(result.signal.pattern_score <= 100);
+        let latest = result.series.last().unwrap();
+        assert!(latest.accumulation_index.is_some());
+        assert!(latest.accumulation_strength.is_some());
+        assert!(latest.swing_opportunity.is_some());
+        assert!(latest.rebound_signal.is_some());
+        assert!(latest.trend_heat.is_some());
     }
 
     #[test]

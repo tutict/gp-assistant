@@ -20,6 +20,7 @@ from app.services.screener import screen_stocks, screening_universe
 
 QUANT_SCORE_MAX = 90
 TREND_NOTES = [
+    "吸筹分析基于日线量价 OHLCV 推断，未接入真实筹码分布、龙虎榜席位或主力资金明细。",
     "WINNER(C) 需要筹码分布数据，当前未纳入；量化分按 90 分制计算。",
     "SWS 使用公式中的成交量/流通股本项作为 DMA 百分比系数，并限制在 1%-100%。",
 ]
@@ -217,6 +218,7 @@ def _compute_indicator_frame(frame: pd.DataFrame, stock: StockItem) -> pd.DataFr
     result["reversal"] = e_value - (high - low)
 
     result["quant_score"] = _quant_score(close, high, low, volume)
+    _add_capital_behavior_columns(result, close, open_, high, low, volume)
     result["swl_above_sws"] = result["swl"] > result["sws"]
     result["trend_score"] = result.apply(lambda row: _trend_score(_row_to_signal(stock.code, row)), axis=1)
     return result
@@ -314,6 +316,103 @@ def _quant_score(close: pd.Series, high: pd.Series, low: pd.Series, volume: pd.S
     return scores.astype(int)
 
 
+def _add_capital_behavior_columns(
+    result: pd.DataFrame,
+    close: pd.Series,
+    open_: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    volume: pd.Series,
+) -> None:
+    price_range = (high - low).replace(0, np.nan)
+    previous_close = close.shift(1).replace(0, np.nan)
+    pct_change = (close / previous_close - 1).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    amplitude = ((high - low) / previous_close).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    volume_ma20 = volume.rolling(20, min_periods=1).mean().replace(0, np.nan)
+    volume_ratio = (volume / volume_ma20).replace([np.inf, -np.inf], np.nan).fillna(1.0).clip(lower=0, upper=4)
+
+    low_60 = _llv(low, 60)
+    high_60 = _hhv(high, 60)
+    price_position = ((close - low_60) / (high_60 - low_60).replace(0, np.nan)).clip(lower=0, upper=1).fillna(0.5)
+    low_zone = 1 - price_position
+    lower_shadow = ((pd.concat([open_, close], axis=1).min(axis=1) - low) / price_range).clip(lower=0, upper=1).fillna(0)
+    close_recovery = ((close - low) / price_range).clip(lower=0, upper=1).fillna(0.5)
+    volume_expansion = ((volume_ratio - 1).clip(lower=0, upper=2) / 2).fillna(0)
+    positive_close = (close >= open_).astype(float)
+    negative_close = (close < open_).astype(float)
+
+    accumulation_raw = (
+        low_zone * 44
+        + volume_expansion * 28
+        + lower_shadow * 18
+        + close_recovery * 8
+        + positive_close * 4
+        - price_position * 22
+        - negative_close * pct_change.abs().clip(upper=0.08) * 260
+        - (volume_ratio > 1.8).astype(float) * (close < open_).astype(float) * 12
+    )
+    accumulation_index = (_ema(accumulation_raw, 5) - 34).clip(lower=-100, upper=100)
+    accumulation_strength = (
+        accumulation_index.clip(lower=0) * 0.72
+        + low_zone * 18
+        + lower_shadow * 12
+        + volume_expansion * 18
+    ).clip(lower=0, upper=100)
+
+    ma5 = _ma(close, 5)
+    ma10 = _ma(close, 10)
+    ma20 = _ma(close, 20)
+    ma60 = _ma(close, 60)
+    trend_turn = (
+        (ma5 > ma10).astype(float) * 22
+        + (ma10 > ma20).astype(float) * 18
+        + (close > ma20).astype(float) * 18
+        + ((ma20 - ma20.shift(5)) > 0).astype(float) * 14
+    )
+    swing_opportunity = (
+        accumulation_strength * 0.48
+        + trend_turn * 0.46
+        + low_zone * 16
+        - price_position * 18
+    ).clip(lower=0, upper=100)
+    rebound_signal = (
+        low_zone * 32
+        + lower_shadow * 28
+        + volume_expansion * 20
+        + (pct_change > 0).astype(float) * 12
+        + (pct_change.shift(1) < -0.025).astype(float) * 8
+    ).clip(lower=0, upper=100)
+
+    result["accumulation_index"] = accumulation_index
+    result["accumulation_strength"] = _ema(accumulation_strength, 3).clip(lower=0, upper=100)
+    result["swing_opportunity"] = _ema(swing_opportunity, 3).clip(lower=0, upper=100)
+    result["rebound_signal"] = _ema(rebound_signal, 3).clip(lower=0, upper=100)
+    result["trend_heat"] = (
+        (close > ma5).astype(float) * 20
+        + (ma5 > ma10).astype(float) * 25
+        + (ma10 > ma20).astype(float) * 25
+        + (ma20 > ma60).astype(float) * 15
+        + ((ma20 - ma20.shift(5)) > 0).astype(float) * 15
+    ).clip(lower=0, upper=100)
+    result["volume_price_heat"] = (
+        volume_expansion * 42
+        + pct_change.clip(lower=0, upper=0.06) * 520
+        + close_recovery * 18
+        + (close > open_).astype(float) * 8
+    ).clip(lower=0, upper=100)
+    result["anomaly_heat"] = (
+        amplitude.clip(upper=0.12) * 360
+        + (volume_ratio - 1).clip(lower=0, upper=3) * 20
+        + pct_change.abs().clip(upper=0.08) * 260
+    ).clip(lower=0, upper=100)
+    result["popularity_heat"] = (
+        (volume_ratio.clip(upper=3) / 3) * 36
+        + amplitude.clip(upper=0.1) * 260
+        + pct_change.clip(lower=0, upper=0.06) * 360
+        + result["trend_heat"] * 0.18
+    ).clip(lower=0, upper=100)
+
+
 def _latest_signal(code: str, frame: pd.DataFrame) -> TrendIndicatorSignal:
     return _row_to_signal(code, frame.iloc[-1])
 
@@ -341,6 +440,9 @@ def _row_to_signal(code: str, row: Any) -> TrendIndicatorSignal:
         oversold=bool(row.get("oversold", False)),
         quant_score=int(row.get("quant_score", 0) or 0),
         quant_score_max=QUANT_SCORE_MAX,
+        pattern_score=_pattern_score(row),
+        pattern_score_max=100,
+        pattern_signals=_pattern_signals(row),
         status=_signal_status(row),
         reasons=reasons,
         notes=list(TREND_NOTES),
@@ -363,7 +465,36 @@ def _signal_reasons(row: Any) -> List[str]:
         reasons.append("cyan_watch")
     if bool(row.get("oversold", False)):
         reasons.append("oversold")
+    if _finite_value(row.get("accumulation_strength")) >= 55:
+        reasons.append("accumulation_strength")
+    if _finite_value(row.get("swing_opportunity")) >= 60:
+        reasons.append("swing_opportunity")
     return reasons
+
+
+def _pattern_score(row: Any) -> int:
+    values = [
+        _finite_value(row.get("accumulation_strength")),
+        _finite_value(row.get("swing_opportunity")),
+        _finite_value(row.get("trend_heat")),
+        _finite_value(row.get("volume_price_heat")),
+        _finite_value(row.get("anomaly_heat")),
+        _finite_value(row.get("popularity_heat")),
+    ]
+    return int(round(sum(values) / max(len(values), 1)))
+
+
+def _pattern_signals(row: Any) -> List[str]:
+    signals: List[str] = []
+    if _finite_value(row.get("accumulation_index")) > 8 and _finite_value(row.get("accumulation_strength")) >= 45:
+        signals.append("bottom_accumulation")
+    if _finite_value(row.get("swing_opportunity")) >= 60:
+        signals.append("swing_opportunity")
+    if _finite_value(row.get("rebound_signal")) >= 62:
+        signals.append("rebound_signal")
+    if _finite_value(row.get("trend_heat")) >= 65 and _finite_value(row.get("volume_price_heat")) >= 55:
+        signals.append("dragon_trend_volume")
+    return signals
 
 
 def _signal_status(row: Any) -> str:
@@ -417,6 +548,14 @@ def _series_points(frame: pd.DataFrame, limit: int) -> List[TrendIndicatorPoint]
                 close=_rounded(row["close"]) or 0.0,
                 swl=_rounded(row.get("swl")),
                 sws=_rounded(row.get("sws")),
+                accumulation_index=_rounded(row.get("accumulation_index")),
+                accumulation_strength=_rounded(row.get("accumulation_strength")),
+                swing_opportunity=_rounded(row.get("swing_opportunity")),
+                rebound_signal=_rounded(row.get("rebound_signal")),
+                trend_heat=_rounded(row.get("trend_heat")),
+                volume_price_heat=_rounded(row.get("volume_price_heat")),
+                anomaly_heat=_rounded(row.get("anomaly_heat")),
+                popularity_heat=_rounded(row.get("popularity_heat")),
                 red_hold=bool(row.get("red_hold", False)),
                 cyan_watch=bool(row.get("cyan_watch", False)),
                 short_buy=bool(row.get("short_buy", False)),
@@ -434,6 +573,16 @@ def _rounded(value: Any) -> Optional[float]:
     if not np.isfinite(number):
         return None
     return round(number, 4)
+
+
+def _finite_value(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not np.isfinite(number):
+        return 0.0
+    return number
 
 
 def _format_date(value: Any) -> str:
