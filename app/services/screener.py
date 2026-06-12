@@ -31,6 +31,11 @@ HOT_SECTOR_KEYWORDS: tuple[tuple[str, float], ...] = (
     ("能源", 0.34),
     ("油气", 0.28),
     ("煤炭", 0.24),
+    ("游戏", 0.42),
+    ("手游", 0.4),
+    ("电竞", 0.36),
+    ("云游戏", 0.36),
+    ("互动娱乐", 0.34),
 )
 
 HOT_SECTOR_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -43,11 +48,12 @@ HOT_SECTOR_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("半导体", "芯片", "算力", "人工智能", "ai", "机器人", "软件", "通信", "科技", "电子"),
     ),
     ("energy", ("新能源", "电池", "储能", "光伏", "电力", "能源", "油气", "煤炭")),
+    ("game", ("游戏", "网络游戏", "手游", "电竞", "云游戏", "互动娱乐", "文化传媒")),
 )
 
 HOT_STOCK_CODES = {"002407.SZ"}
 HOT_STOCK_NAME_KEYWORDS = ("多氟多",)
-HOT_SECTOR_PROMOTION_ORDER = ("preferred", "tech", "energy")
+HOT_SECTOR_PROMOTION_ORDER = ("preferred", "tech", "energy", "game")
 COLD_SECTOR_KEYWORDS = (
     "银行",
     "基建",
@@ -254,7 +260,7 @@ def screen_stocks(
     items, promoted = _promote_hot_sector_items(screened, criteria)
     result_notes = [*(notes or [])]
     if promoted:
-        result_notes.append("已优先推送多氟多等新能材、科技与能源热门候选，并降低银行/基建优先级。")
+        result_notes.append("已优先推送多氟多等新能材、科技与能源、游戏热门候选，并降低银行/基建优先级。")
     return ScreenResult(total=len(screened), returned=len(items), items=items, notes=result_notes)
 
 

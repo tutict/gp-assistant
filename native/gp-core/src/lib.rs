@@ -1838,6 +1838,11 @@ fn hot_sector_bonus(industry: &str) -> f64 {
         ("能源", 0.34),
         ("油气", 0.28),
         ("煤炭", 0.24),
+        ("游戏", 0.42),
+        ("手游", 0.4),
+        ("电竞", 0.36),
+        ("云游戏", 0.36),
+        ("互动娱乐", 0.34),
     ];
     keywords
         .iter()
@@ -1850,7 +1855,7 @@ fn hot_sector_category(industry: &str) -> Option<&'static str> {
     if normalized.is_empty() {
         return None;
     }
-    let categories: [(&str, &[&str]); 3] = [
+    let categories: [(&str, &[&str]); 4] = [
         (
             "preferred",
             &[
@@ -1889,6 +1894,18 @@ fn hot_sector_category(industry: &str) -> Option<&'static str> {
                 "能源",
                 "油气",
                 "煤炭",
+            ],
+        ),
+        (
+            "game",
+            &[
+                "游戏",
+                "网络游戏",
+                "手游",
+                "电竞",
+                "云游戏",
+                "互动娱乐",
+                "文化传媒",
             ],
         ),
     ];
@@ -1962,7 +1979,7 @@ fn promote_hot_sector_items(
 
     let mut promoted = Vec::new();
     let mut used_codes = HashSet::new();
-    for category in ["preferred", "tech", "energy"] {
+    for category in ["preferred", "tech", "energy", "game"] {
         if let Some(candidate) = screened.iter().find(|item| {
             !used_codes.contains(&item.stock.code)
                 && hot_pick_category(&item.stock) == Some(category)
@@ -3796,6 +3813,74 @@ mod tests {
         assert_eq!(codes, vec!["002407.SZ", "688001.SH", "601012.SH"]);
         assert!(!codes.contains(&"000001.SZ"));
         assert!(!codes.contains(&"601668.SH"));
+    }
+
+    #[test]
+    fn score_sort_promotes_game_candidates_with_other_hot_sectors() {
+        let bank = StockItem {
+            code: "000001.SZ".to_string(),
+            name: "高分银行".to_string(),
+            industry: "银行".to_string(),
+            is_st: false,
+            price: 10.0,
+            pe: Some(2.0),
+            pb: Some(0.2),
+            roe: Some(0.3),
+            market_cap_billion: Some(100.0),
+            dividend_yield: None,
+        };
+        let mut infra = bank.clone();
+        infra.code = "601668.SH".to_string();
+        infra.name = "中国建筑".to_string();
+        infra.industry = "建筑装饰".to_string();
+        infra.pe = Some(3.0);
+        infra.pb = Some(0.4);
+        infra.roe = Some(0.2);
+        let mut duofuduo = bank.clone();
+        duofuduo.code = "002407.SZ".to_string();
+        duofuduo.name = "多氟多".to_string();
+        duofuduo.industry = "化工".to_string();
+        duofuduo.pe = Some(70.0);
+        duofuduo.pb = Some(8.0);
+        duofuduo.roe = Some(0.03);
+        let mut chip = duofuduo.clone();
+        chip.code = "688001.SH".to_string();
+        chip.name = "芯片公司".to_string();
+        chip.industry = "半导体".to_string();
+        chip.pe = Some(60.0);
+        let mut solar = chip.clone();
+        solar.code = "601012.SH".to_string();
+        solar.name = "光伏公司".to_string();
+        solar.industry = "光伏".to_string();
+        solar.pe = Some(50.0);
+        solar.pb = Some(7.0);
+        let mut game = chip.clone();
+        game.code = "002555.SZ".to_string();
+        game.name = "游戏公司".to_string();
+        game.industry = "网络游戏".to_string();
+        game.pe = Some(80.0);
+        game.pb = Some(9.0);
+        game.roe = Some(0.02);
+
+        let result = screen_stocks(
+            &[bank, infra, duofuduo, chip, solar, game],
+            &ScreenCriteria {
+                sort_by: "score".to_string(),
+                sort_dir: "desc".to_string(),
+                limit: 4,
+                ..ScreenCriteria::default()
+            },
+        );
+
+        let codes = result
+            .items
+            .iter()
+            .map(|item| item.stock.code.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            codes,
+            vec!["002407.SZ", "688001.SH", "601012.SH", "002555.SZ"]
+        );
     }
 
     #[test]
