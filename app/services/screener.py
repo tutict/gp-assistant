@@ -33,6 +33,16 @@ HOT_SECTOR_KEYWORDS: tuple[tuple[str, float], ...] = (
     ("煤炭", 0.24),
 )
 
+HOT_SECTOR_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "tech",
+        ("半导体", "芯片", "算力", "人工智能", "ai", "机器人", "软件", "通信", "科技", "电子"),
+    ),
+    ("energy", ("新能源", "电池", "储能", "光伏", "电力", "能源", "油气", "煤炭")),
+)
+
+HOT_SECTOR_PROMOTION_ORDER = ("tech", "energy")
+
 
 def screening_universe(provider: StockProvider) -> tuple[List[StockItem], List[str]]:
     return provider.list_stocks_for_screen()
@@ -100,6 +110,61 @@ def _hot_sector_bonus(industry: str) -> float:
     return max((weight for keyword, weight in HOT_SECTOR_KEYWORDS if keyword in normalized), default=0.0)
 
 
+def _hot_sector_category(industry: str) -> Optional[str]:
+    normalized = (industry or "").strip().lower()
+    if not normalized:
+        return None
+    for category, keywords in HOT_SECTOR_CATEGORIES:
+        if any(keyword in normalized for keyword in keywords):
+            return category
+    return None
+
+
+def _should_promote_hot_sectors(criteria: ScreenCriteria) -> bool:
+    return (
+        not (criteria.industry or "").strip()
+        and (criteria.sort_by or "score").strip().lower() == "score"
+        and (criteria.sort_dir or "desc").strip().lower() != "asc"
+    )
+
+
+def _promote_hot_sector_items(
+    screened: List[ScreenedStock],
+    criteria: ScreenCriteria,
+) -> tuple[List[ScreenedStock], bool]:
+    limit = criteria.limit
+    if not _should_promote_hot_sectors(criteria) or limit <= 0:
+        return screened[:limit], False
+
+    promoted: List[ScreenedStock] = []
+    used_codes: set[str] = set()
+    for category in HOT_SECTOR_PROMOTION_ORDER:
+        candidate = next(
+            (
+                item
+                for item in screened
+                if item.stock.code not in used_codes and _hot_sector_category(item.stock.industry) == category
+            ),
+            None,
+        )
+        if candidate is not None:
+            promoted.append(candidate)
+            used_codes.add(candidate.stock.code)
+            if len(promoted) >= limit:
+                return promoted, True
+
+    if not promoted:
+        return screened[:limit], False
+
+    for item in screened:
+        if item.stock.code in used_codes:
+            continue
+        promoted.append(item)
+        if len(promoted) >= limit:
+            break
+    return promoted, True
+
+
 def _screened_stocks(universe: List[StockItem], criteria: ScreenCriteria) -> List[ScreenedStock]:
     screened: List[ScreenedStock] = []
     for stock in universe:
@@ -134,8 +199,11 @@ def screen_stocks(
     notes: Optional[List[str]] = None,
 ) -> ScreenResult:
     screened = _screened_stocks(universe, criteria)
-    items = screened[: criteria.limit]
-    return ScreenResult(total=len(screened), returned=len(items), items=items, notes=notes or [])
+    items, promoted = _promote_hot_sector_items(screened, criteria)
+    result_notes = [*(notes or [])]
+    if promoted:
+        result_notes.append("已优先推送科技与能源热门板块候选。")
+    return ScreenResult(total=len(screened), returned=len(items), items=items, notes=result_notes)
 
 
 def screen_stocks_by_sector(
