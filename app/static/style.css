@@ -1451,6 +1451,57 @@ input[type="date"] {
   color: var(--text);
 }
 
+.chart-wrap.accumulation-chart.split svg {
+  height: 54px;
+}
+
+.capital-track-chart {
+  display: grid;
+  gap: 8px;
+}
+
+.capital-track {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.capital-track-label {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.capital-track-label strong {
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+.capital-track-label span {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.capital-track.index .capital-track-label span {
+  color: var(--positive);
+}
+
+.capital-track.strength .capital-track-label span {
+  color: var(--danger);
+}
+
+.capital-track.swing .capital-track-label span {
+  color: var(--accent-strong);
+}
+
+.capital-track svg {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
 .dragon-grid {
   display: grid;
   gap: 8px;
@@ -1716,6 +1767,15 @@ input[type="date"] {
   .dragon-row {
     grid-template-columns: 38px minmax(0, 1fr);
     gap: 6px;
+  }
+
+  .capital-track {
+    grid-template-columns: 68px minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  .capital-track-label strong {
+    font-size: 0.72rem;
   }
 
   .dragon-cells {

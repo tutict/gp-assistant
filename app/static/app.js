@@ -3780,7 +3780,7 @@ function renderMinuteChart(bars) {
         <span>${formatNumber(last?.close)}</span>
       </div>
       <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="分钟线">
-        <polyline points="${points}" fill="none" stroke="var(--accent-strong)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline points="${points}" fill="none" stroke="var(--accent-strong)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
       <div class="chart-labels">
         <span>${escapeHtml(bars[0]?.datetime || "")}</span>
@@ -3819,8 +3819,8 @@ function renderTrendChart(series) {
       if (!Number.isFinite(close)) return "";
       const cx = xFor(index).toFixed(2);
       const cy = yFor(close).toFixed(2);
-      if (point.short_buy) return `<circle cx="${cx}" cy="${cy}" r="4.5" fill="var(--positive)" />`;
-      if (point.white_exit) return `<circle cx="${cx}" cy="${cy}" r="4.5" fill="var(--danger)" />`;
+      if (point.short_buy) return `<circle cx="${cx}" cy="${cy}" r="3.2" fill="var(--positive)" stroke="var(--surface)" stroke-width="0.8" />`;
+      if (point.white_exit) return `<circle cx="${cx}" cy="${cy}" r="3.2" fill="var(--danger)" stroke="var(--surface)" stroke-width="0.8" />`;
       return "";
     })
     .join("");
@@ -3833,9 +3833,9 @@ function renderTrendChart(series) {
         <span style="color: var(--muted)">SWS</span>
       </div>
       <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="趋势指标曲线">
-        <polyline points="${linePoints("close")}" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
-        <polyline points="${linePoints("swl")}" fill="none" stroke="var(--accent-strong)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
-        <polyline points="${linePoints("sws")}" fill="none" stroke="var(--muted)" stroke-width="2" stroke-dasharray="7 6" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline points="${linePoints("close")}" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline points="${linePoints("swl")}" fill="none" stroke="var(--accent-strong)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline points="${linePoints("sws")}" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="6 7" stroke-linecap="round" stroke-linejoin="round" />
         ${markers}
       </svg>
       <div class="chart-labels">
@@ -3893,65 +3893,63 @@ function renderCapitalBehaviorPanel(series, signal = {}) {
 
 function renderAccumulationChart(points) {
   const width = 720;
-  const height = 185;
-  const values = points
-    .flatMap((point) => [
-      point.accumulation_index,
-      point.accumulation_strength,
-      point.swing_opportunity,
-      point.rebound_signal,
-    ])
-    .map(Number)
-    .filter(Number.isFinite);
-  if (values.length < 2) return "";
-
-  const min = Math.min(-35, ...values);
-  const max = Math.max(55, ...values);
-  const range = max - min || 1;
-  const yFor = (value) => height - ((Number(value) - min) / range) * height;
-  const xFor = (index) => (index / Math.max(points.length - 1, 1)) * width;
-  const linePoints = (key) =>
-    points
-      .map((point, index) => {
-        const value = Number(point[key]);
-        if (!Number.isFinite(value)) return null;
-        return `${xFor(index).toFixed(2)},${yFor(value).toFixed(2)}`;
-      })
-      .filter(Boolean)
-      .join(" ");
-  const barWidth = Math.max(width / Math.max(points.length, 1) - 1, 2);
-  const baseline = yFor(0);
-  const bars = points
-    .map((point, index) => {
-      const value = Number(point.accumulation_strength);
-      if (!Number.isFinite(value)) return "";
-      const x = xFor(index) - barWidth / 2;
-      const y = yFor(value);
-      const h = Math.max(1, baseline - y);
-      return `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${h.toFixed(2)}" rx="1.5" fill="var(--accent-soft)" opacity="0.58" />`;
-    })
+  const height = 54;
+  const tracks = [
+    { key: "accumulation_index", label: "吸筹指标", tone: "index", stroke: "var(--positive)" },
+    { key: "accumulation_strength", label: "吸筹强度", tone: "strength", stroke: "var(--danger)" },
+    { key: "swing_opportunity", label: "波段机会", tone: "swing", stroke: "var(--accent-strong)" },
+    { key: "rebound_signal", label: "绝地反击", tone: "rebound", stroke: "var(--muted)", dash: "6 7" },
+  ];
+  const renderedTracks = tracks
+    .map((track) => renderAccumulationTrack(points, track, width, height))
+    .filter(Boolean)
     .join("");
+  if (!renderedTracks) return "";
 
   return `
-    <div class="chart-wrap accumulation-chart">
-      <div class="chart-legend">
-        <span style="color: var(--positive)">吸筹指标</span>
-        <span style="color: var(--danger)">吸筹强度</span>
-        <span style="color: var(--accent-strong)">波段机会</span>
-        <span style="color: var(--muted)">绝地反击</span>
+    <div class="chart-wrap accumulation-chart split">
+      <div class="capital-track-chart">
+        ${renderedTracks}
       </div>
-      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="吸筹分析曲线">
-        <line x1="0" y1="${baseline.toFixed(2)}" x2="${width}" y2="${baseline.toFixed(2)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="6 6" />
-        ${bars}
-        <polyline points="${linePoints("accumulation_index")}" fill="none" stroke="var(--positive)" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
-        <polyline points="${linePoints("accumulation_strength")}" fill="none" stroke="var(--danger)" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" />
-        <polyline points="${linePoints("swing_opportunity")}" fill="none" stroke="var(--accent-strong)" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" />
-        <polyline points="${linePoints("rebound_signal")}" fill="none" stroke="var(--muted)" stroke-width="2" stroke-dasharray="7 6" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
       <div class="chart-labels">
         <span>${escapeHtml(points[0]?.date || "")}</span>
         <span>${escapeHtml(points[points.length - 1]?.date || "")}</span>
       </div>
+    </div>
+  `;
+}
+
+function renderAccumulationTrack(points, track, width, height) {
+  const values = points.map((point) => Number(point[track.key])).filter(Number.isFinite);
+  if (values.length < 2) return "";
+  const latest = values[values.length - 1];
+  const minValue = Math.min(0, ...values);
+  const maxValue = Math.max(0, ...values);
+  const padding = Math.max((maxValue - minValue) * 0.16, 4);
+  const min = minValue - padding;
+  const max = maxValue + padding;
+  const range = max - min || 1;
+  const yFor = (value) => height - ((Number(value) - min) / range) * height;
+  const xFor = (index) => (index / Math.max(points.length - 1, 1)) * width;
+  const baseline = yFor(0);
+  const linePoints = points
+    .map((point, index) => {
+      const value = Number(point[track.key]);
+      if (!Number.isFinite(value)) return null;
+      return `${xFor(index).toFixed(2)},${yFor(value).toFixed(2)}`;
+    })
+    .filter(Boolean)
+    .join(" ");
+  return `
+    <div class="capital-track ${escapeHtml(track.tone)}">
+      <div class="capital-track-label">
+        <strong>${escapeHtml(track.label)}</strong>
+        <span>${formatNumber(latest)}</span>
+      </div>
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(track.label)}趋势">
+        <line x1="0" y1="${baseline.toFixed(2)}" x2="${width}" y2="${baseline.toFixed(2)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="5 7" />
+        <polyline points="${linePoints}" fill="none" stroke="${track.stroke}" stroke-width="1.9" ${track.dash ? `stroke-dasharray="${track.dash}"` : ""} stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
     </div>
   `;
 }

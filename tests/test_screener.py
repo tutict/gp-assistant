@@ -67,20 +67,22 @@ class ScreenerIndustryTests(unittest.TestCase):
         result = screen_stocks(universe, ScreenCriteria(sort_by="score", sort_dir="desc", limit=2))
 
         self.assertEqual([item.stock.code for item in result.items], ["688001.SH", "601012.SH"])
-        self.assertTrue(any("科技与能源" in note for note in result.notes))
+        self.assertTrue(any("新能材" in note and "科技" in note and "能源" in note for note in result.notes))
 
-    def test_score_sort_promotes_duofuduo_like_hot_picks_and_deprioritizes_bank_infra(self):
+    def test_score_sort_promotes_duofuduo_like_hot_themes_and_deprioritizes_bank_infra(self):
         universe = [
             StockItem(code="000001.SZ", name="高分银行", industry="银行", price=10.0, pe=2.0, pb=0.2, roe=0.3),
             StockItem(code="601668.SH", name="中国建筑", industry="建筑装饰", price=10.0, pe=3.0, pb=0.4, roe=0.2),
             StockItem(code="002407.SZ", name="多氟多", industry="化工", price=10.0, pe=70.0, pb=8.0, roe=0.03),
+            StockItem(code="002408.SZ", name="氟材料公司", industry="锂电材料", price=10.0, pe=70.0, pb=8.0, roe=0.03),
             StockItem(code="688001.SH", name="芯片公司", industry="半导体", price=10.0, pe=60.0, pb=8.0, roe=0.03),
             StockItem(code="601012.SH", name="光伏公司", industry="光伏", price=10.0, pe=50.0, pb=7.0, roe=0.03),
         ]
 
         result = screen_stocks(universe, ScreenCriteria(sort_by="score", sort_dir="desc", limit=3))
 
-        self.assertEqual([item.stock.code for item in result.items], ["002407.SZ", "688001.SH", "601012.SH"])
+        self.assertEqual([item.stock.code for item in result.items], ["002408.SZ", "688001.SH", "601012.SH"])
+        self.assertNotIn("002407.SZ", {item.stock.code for item in result.items})
         self.assertNotIn("000001.SZ", {item.stock.code for item in result.items})
         self.assertNotIn("601668.SH", {item.stock.code for item in result.items})
 
@@ -88,7 +90,7 @@ class ScreenerIndustryTests(unittest.TestCase):
         universe = [
             StockItem(code="000001.SZ", name="高分银行", industry="银行", price=10.0, pe=2.0, pb=0.2, roe=0.3),
             StockItem(code="601668.SH", name="中国建筑", industry="建筑装饰", price=10.0, pe=3.0, pb=0.4, roe=0.2),
-            StockItem(code="002407.SZ", name="多氟多", industry="化工", price=10.0, pe=70.0, pb=8.0, roe=0.03),
+            StockItem(code="002408.SZ", name="氟材料公司", industry="锂电材料", price=10.0, pe=70.0, pb=8.0, roe=0.03),
             StockItem(code="688001.SH", name="芯片公司", industry="半导体", price=10.0, pe=60.0, pb=8.0, roe=0.03),
             StockItem(code="601012.SH", name="光伏公司", industry="光伏", price=10.0, pe=50.0, pb=7.0, roe=0.03),
             StockItem(code="002555.SZ", name="游戏公司", industry="网络游戏", price=10.0, pe=80.0, pb=9.0, roe=0.02),
@@ -96,7 +98,7 @@ class ScreenerIndustryTests(unittest.TestCase):
 
         result = screen_stocks(universe, ScreenCriteria(sort_by="score", sort_dir="desc", limit=4))
 
-        self.assertEqual([item.stock.code for item in result.items], ["002407.SZ", "688001.SH", "601012.SH", "002555.SZ"])
+        self.assertEqual([item.stock.code for item in result.items], ["002408.SZ", "688001.SH", "601012.SH", "002555.SZ"])
         self.assertTrue(any("游戏" in note for note in result.notes))
 
     def test_sector_screen_defaults_return_more_groups_with_three_stocks_each(self):

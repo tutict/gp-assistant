@@ -1842,8 +1842,8 @@ fn score_stock(stock: &StockItem, reasons: &[String]) -> f64 {
     if let Some(dividend_yield) = stock.dividend_yield.filter(|value| *value != 0.0) {
         score += (dividend_yield * 10.0).min(1.0);
     }
-    score += hot_sector_bonus(&stock.industry);
-    score += preferred_hot_stock_bonus(stock);
+    score += hot_sector_bonus(&format!("{} {}", stock.name, stock.industry));
+    score += hot_theme_bonus(stock);
     score -= cold_sector_penalty(&stock.industry);
     score
 }
@@ -1854,6 +1854,14 @@ fn hot_sector_bonus(industry: &str) -> f64 {
         return 0.0;
     }
     let keywords = [
+        ("氟化工", 0.58),
+        ("氟材料", 0.58),
+        ("锂电材料", 0.56),
+        ("电解液", 0.54),
+        ("六氟磷酸锂", 0.54),
+        ("新能材", 0.52),
+        ("新材料", 0.48),
+        ("固态电池", 0.48),
         ("半导体", 0.55),
         ("芯片", 0.55),
         ("算力", 0.5),
@@ -1891,15 +1899,16 @@ fn hot_sector_category(industry: &str) -> Option<&'static str> {
     }
     let categories: [(&str, &[&str]); 4] = [
         (
-            "preferred",
+            "materials",
             &[
-                "多氟多",
                 "氟化工",
                 "氟材料",
                 "锂电材料",
                 "电解液",
                 "六氟磷酸锂",
                 "新能材",
+                "新材料",
+                "固态电池",
             ],
         ),
         (
@@ -1951,14 +1960,12 @@ fn hot_sector_category(industry: &str) -> Option<&'static str> {
     })
 }
 
-fn preferred_hot_stock_bonus(stock: &StockItem) -> f64 {
-    if stock.code.eq_ignore_ascii_case("002407.SZ") {
-        return 1.2;
+fn hot_theme_bonus(stock: &StockItem) -> f64 {
+    if hot_sector_category(&format!("{} {}", stock.name, stock.industry)) == Some("materials") {
+        0.75
+    } else {
+        0.0
     }
-    if stock.name.contains("多氟多") {
-        return 1.0;
-    }
-    0.0
 }
 
 fn cold_sector_penalty(industry: &str) -> f64 {
@@ -1990,9 +1997,6 @@ fn is_cold_sector(industry: &str) -> bool {
 }
 
 fn hot_pick_category(stock: &StockItem) -> Option<&'static str> {
-    if preferred_hot_stock_bonus(stock) > 0.0 {
-        return Some("preferred");
-    }
     hot_sector_category(&format!("{} {}", stock.name, stock.industry))
 }
 
@@ -2013,13 +2017,28 @@ fn promote_hot_sector_items(
 
     let mut promoted = Vec::new();
     let mut used_codes = HashSet::new();
-    for category in ["preferred", "tech", "energy", "game"] {
+    for category in ["materials", "tech", "energy", "game"] {
         if let Some(candidate) = screened.iter().find(|item| {
             !used_codes.contains(&item.stock.code)
                 && hot_pick_category(&item.stock) == Some(category)
         }) {
             promoted.push(candidate.clone());
             used_codes.insert(candidate.stock.code.clone());
+            if promoted.len() >= limit {
+                return promoted;
+            }
+        }
+    }
+
+    for category in ["materials", "tech", "energy", "game"] {
+        for item in screened {
+            if used_codes.contains(&item.stock.code)
+                || hot_pick_category(&item.stock) != Some(category)
+            {
+                continue;
+            }
+            promoted.push(item.clone());
+            used_codes.insert(item.stock.code.clone());
             if promoted.len() >= limit {
                 return promoted;
             }
@@ -4085,7 +4104,7 @@ mod tests {
     }
 
     #[test]
-    fn score_sort_promotes_duofuduo_like_hot_picks_and_deprioritizes_bank_infra() {
+    fn score_sort_promotes_duofuduo_like_hot_themes_and_deprioritizes_bank_infra() {
         let bank = StockItem {
             code: "000001.SZ".to_string(),
             name: "高分银行".to_string(),
@@ -4112,6 +4131,10 @@ mod tests {
         duofuduo.pe = Some(70.0);
         duofuduo.pb = Some(8.0);
         duofuduo.roe = Some(0.03);
+        let mut material = duofuduo.clone();
+        material.code = "002408.SZ".to_string();
+        material.name = "氟材料公司".to_string();
+        material.industry = "锂电材料".to_string();
         let mut chip = duofuduo.clone();
         chip.code = "688001.SH".to_string();
         chip.name = "芯片公司".to_string();
@@ -4125,7 +4148,7 @@ mod tests {
         solar.pb = Some(7.0);
 
         let result = screen_stocks(
-            &[bank, infra, duofuduo, chip, solar],
+            &[bank, infra, duofuduo, material, chip, solar],
             &ScreenCriteria {
                 sort_by: "score".to_string(),
                 sort_dir: "desc".to_string(),
@@ -4139,7 +4162,8 @@ mod tests {
             .iter()
             .map(|item| item.stock.code.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(codes, vec!["002407.SZ", "688001.SH", "601012.SH"]);
+        assert_eq!(codes, vec!["002408.SZ", "688001.SH", "601012.SH"]);
+        assert!(!codes.contains(&"002407.SZ"));
         assert!(!codes.contains(&"000001.SZ"));
         assert!(!codes.contains(&"601668.SH"));
     }
@@ -4165,14 +4189,14 @@ mod tests {
         infra.pe = Some(3.0);
         infra.pb = Some(0.4);
         infra.roe = Some(0.2);
-        let mut duofuduo = bank.clone();
-        duofuduo.code = "002407.SZ".to_string();
-        duofuduo.name = "多氟多".to_string();
-        duofuduo.industry = "化工".to_string();
-        duofuduo.pe = Some(70.0);
-        duofuduo.pb = Some(8.0);
-        duofuduo.roe = Some(0.03);
-        let mut chip = duofuduo.clone();
+        let mut material = bank.clone();
+        material.code = "002408.SZ".to_string();
+        material.name = "氟材料公司".to_string();
+        material.industry = "锂电材料".to_string();
+        material.pe = Some(70.0);
+        material.pb = Some(8.0);
+        material.roe = Some(0.03);
+        let mut chip = material.clone();
         chip.code = "688001.SH".to_string();
         chip.name = "芯片公司".to_string();
         chip.industry = "半导体".to_string();
@@ -4192,7 +4216,7 @@ mod tests {
         game.roe = Some(0.02);
 
         let result = screen_stocks(
-            &[bank, infra, duofuduo, chip, solar, game],
+            &[bank, infra, material, chip, solar, game],
             &ScreenCriteria {
                 sort_by: "score".to_string(),
                 sort_dir: "desc".to_string(),
@@ -4208,7 +4232,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             codes,
-            vec!["002407.SZ", "688001.SH", "601012.SH", "002555.SZ"]
+            vec!["002408.SZ", "688001.SH", "601012.SH", "002555.SZ"]
         );
     }
 
