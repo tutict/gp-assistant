@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.schemas import CapitalEvidenceResult, LlmClientConfig
-from app.services.llm_support import parse_json_response, resolve_llm_config, safe_llm_error
+from app.services.llm_support import create_openai_client, parse_json_response, resolve_llm_config, safe_llm_error
 from app.services.runtime_config import coalesce_bool, coalesce_float, coalesce_str, env_bool, env_float, env_int
 from app.services.sqlite_json_cache import SQLiteJsonCache
 from app.services.stock_code import compact_date, market_prefix, normalize_stock_code, stock_digits
@@ -37,6 +37,17 @@ class SharedModuleTests(unittest.TestCase):
         self.assertEqual(config.api_key, "k")
         self.assertEqual(config.model, "m")
         self.assertFalse(config.json_mode)
+
+    def test_llm_local_base_url_bypasses_proxy_environment(self):
+        config = resolve_llm_config(
+            LlmClientConfig(api_key="k", base_url="http://127.0.0.1:11434/v1", model="m")
+        )
+        with patch("openai.OpenAI") as openai_client:
+            create_openai_client(config)
+
+        kwargs = openai_client.call_args.kwargs
+        self.assertEqual(kwargs["base_url"], "http://127.0.0.1:11434/v1")
+        self.assertIn("http_client", kwargs)
 
     def test_sqlite_json_cache_loads_exact_and_latest_payloads(self):
         with tempfile.TemporaryDirectory() as tmp:

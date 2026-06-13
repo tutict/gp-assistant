@@ -114,6 +114,21 @@ def redact_error(error: Exception | object, *, max_chars: int = 180, secrets: li
         if secret:
             text = text.replace(secret, "[redacted]")
     text = re.sub(r"sk-[A-Za-z0-9_-]{8,}", "sk-[redacted]", text)
+    lowered = text.lower()
+    if "socksio" in lowered or ("socks" in lowered and "not installed" in lowered):
+        return "代理配置缺少 SOCKS 支持，请关闭系统代理或安装 httpx[socks]。"
+    if "proxyerror" in lowered or "unable to connect to proxy" in lowered:
+        return "网络代理连接失败，已跳过本次外部请求。"
+    if "timeout" in lowered or "timed out" in lowered or re.search(r"超过\s*\d+(?:\.\d+)?s", text):
+        return "外部接口请求超时，已跳过本次请求。"
+    if "httpconnectionpool" in lowered or "httpsconnectionpool" in lowered:
+        return "外部接口网络连接失败，已跳过本次请求。"
+    if "remote disconnected" in lowered or "max retries exceeded" in lowered:
+        return "外部接口连接被远端关闭，已跳过本次请求。"
+    text = re.sub(r"https?://\S+", "[url]", text)
+    text = re.sub(r"\b/(api|qt|v\d)[^\s\"')]+", "/[path]", text)
+    text = re.sub(r"host='[^']+'", "host='[host]'", text)
+    text = re.sub(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", "[ip]", text)
     return truncate_chars(text, max_chars)
 
 

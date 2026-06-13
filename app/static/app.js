@@ -103,6 +103,7 @@ const llmSettings = {
   jsonMode: $("#llmJsonMode"),
   rememberKey: $("#llmRememberKey"),
   status: $("#llmStatus"),
+  hint: $("#llmHint"),
   save: $("#llmSaveBtn"),
   clear: $("#llmClearBtn"),
 };
@@ -795,7 +796,10 @@ async function runNewsRag() {
   if (llm) payload.llm = llm;
   try {
     const data = await postJson("/api/news-rag", payload, panels.newsRag);
-    if (data) renderNewsRagResult(panels.newsRag, data);
+    if (data) {
+      updateLlmStatusFromRagResult(data);
+      renderNewsRagResult(panels.newsRag, data);
+    }
   } finally {
     if (timer) window.clearInterval(timer);
   }
@@ -1064,7 +1068,10 @@ async function runAgent() {
   const llm = buildLlmConfig();
   if (llm) payload.llm = llm;
   const data = await postJson("/api/agent", payload, panels.agent);
-  if (data) renderAgentResult(panels.agent, data);
+  if (data) {
+    updateLlmStatusFromAgentResult(data);
+    renderAgentResult(panels.agent, data);
+  }
 }
 
 async function runObserve(codeOverride) {
@@ -1284,9 +1291,32 @@ function updateBacktestIdleState() {
       : canUseWatchlist
         ? { label: "切到自选观察池", action: "watchlist-backtest" }
         : { label: "先运行筛选", action: "run-screen" };
-  const text =
-    source === "watchlist" && canUseWatchlist ? "等待自选观察池回测结果" : canUseWatchlist ? `自选观察池已有 ${items.length} 只股票` : "等待回测";
-  panels.backtest.innerHTML = renderEmpty(text, action);
+  const title =
+    source === "watchlist" && canUseWatchlist
+      ? "等待自选组合回测"
+      : canUseWatchlist
+        ? `自选观察池已有 ${items.length} 只股票`
+        : "等待回测";
+  const detail =
+    source === "watchlist" && canUseWatchlist
+      ? "点击运行回测，验证收藏股票的组合表现。"
+      : canUseWatchlist
+        ? "可以继续用当前筛选条件回测，也可以切到自选观察池。"
+        : "先运行筛选生成候选组合，或从筛选结果收藏股票后回测。";
+  panels.backtest.innerHTML = renderBacktestEmptyState(title, detail, action);
+}
+
+function renderBacktestEmptyState(title, detail, action) {
+  const button = action
+    ? `<button type="button" data-empty-action="${escapeHtml(action.action)}">${escapeHtml(action.label)}</button>`
+    : "";
+  return `
+    <div class="backtest-empty-state">
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(detail)}</span>
+      ${button}
+    </div>
+  `;
 }
 
 function initSourceSelects() {
@@ -1662,7 +1692,7 @@ function saveLlmSettings() {
   const config = buildLlmConfig() || {};
   if (!llmSettings.rememberKey.checked) delete config.api_key;
   localStorage.setItem(LLM_SETTINGS_KEY, JSON.stringify(config));
-  updateLlmStatus("已保存");
+  updateLlmStatus("已保存", "ok", "设置已保存；运行智能体时会按当前配置尝试调用大模型。");
 }
 
 function clearLlmSettings() {
@@ -1677,23 +1707,71 @@ function clearLlmSettings() {
   updateLlmStatus();
 }
 
-function updateLlmStatus(customText) {
+function setLlmStatus(text, state = "neutral", hint = "") {
   if (!llmSettings.status) return;
+  llmSettings.status.textContent = text;
+  llmSettings.status.dataset.state = state;
+  if (llmSettings.hint) {
+    llmSettings.hint.textContent = hint;
+    llmSettings.hint.dataset.state = state;
+  }
+}
+
+function updateLlmStatus(customText, customState = "neutral", customHint = "") {
   if (customText) {
-    llmSettings.status.textContent = customText;
+    setLlmStatus(customText, customState, customHint);
     return;
   }
   const hasKey = Boolean(llmSettings.apiKey.value.trim());
-  const hasEndpoint = Boolean(llmSettings.baseUrl.value.trim() || llmSettings.model.value.trim());
-  if (hasKey && hasEndpoint) {
-    llmSettings.status.textContent = "自定义接口";
+  const hasBaseUrl = Boolean(llmSettings.baseUrl.value.trim());
+  const hasModel = Boolean(llmSettings.model.value.trim());
+  if (hasKey && (hasBaseUrl || hasModel)) {
+    setLlmStatus("自定义大模型", "ok", "将使用当前页面配置；调用失败会自动回退本地规则。");
   } else if (hasKey) {
-    llmSettings.status.textContent = "自定义密钥";
-  } else if (hasEndpoint) {
-    llmSettings.status.textContent = "服务端密钥";
+    setLlmStatus("已填 API Key", "ok", "将使用默认接口和模型；调用失败会自动回退本地规则。");
+  } else if (hasBaseUrl || hasModel) {
+    setLlmStatus("配置不完整", "warning", "已填写接口或模型，但缺少 API Key；本地规则会作为兜底。");
   } else {
-    llmSettings.status.textContent = "服务端默认";
+    setLlmStatus("本地未配置", "missing", "消息 RAG 和智能体共用此配置；模型不可用时会回退本地规则。");
   }
+}
+
+function updateLlmStatusFromAgentResult(data) {
+  updateLlmStatusFromText(collectAgentResultText(data));
+}
+
+function updateLlmStatusFromRagResult(data) {
+  updateLlmStatusFromText(collectRagResultText(data));
+}
+
+function updateLlmStatusFromText(text) {
+  if (!text) return;
+  if (text.includes("LLM 调用失败") || text.includes("大模型调用失败") || text.includes("RAG 模型分析失败")) {
+    setLlmStatus("大模型调用失败", "warning", "已回退本地规则；请检查代理、API Key 或模型服务。");
+  } else if (text.includes("未配置 OPENAI_API_KEY") || text.includes("未配置大模型")) {
+    setLlmStatus("未配置大模型", "missing", "本次未调用模型，已使用本地规则解析。");
+  } else if (text.includes("已调用模型")) {
+    setLlmStatus("模型已参与", "ok", "本次已基于检索证据调用大模型生成判断。");
+  }
+}
+
+function collectAgentResultText(data) {
+  const parts = [data?.reply];
+  const nested = data?.data || {};
+  if (Array.isArray(nested.notes)) parts.push(...nested.notes);
+  if (nested.summary) parts.push(nested.summary);
+  return parts.filter(Boolean).join(" ");
+}
+
+function collectRagResultText(data) {
+  const parts = [];
+  if (Array.isArray(data?.notes)) parts.push(...data.notes);
+  if (Array.isArray(data?.findings)) {
+    for (const finding of data.findings.slice(0, 8)) {
+      parts.push(finding?.summary, finding?.rationale, ...(finding?.evidence_titles || []));
+    }
+  }
+  return parts.filter(Boolean).join(" ");
 }
 
 function normalizeBaseUrl(value) {
@@ -3721,7 +3799,7 @@ function renderRelated(relations) {
 }
 
 function renderNotes(notes) {
-  return `<div class="notes">${notes.map((note) => `<p>${escapeHtml(note)}</p>`).join("")}</div>`;
+  return `<div class="notes">${notes.map((note) => `<p>${escapeHtml(sanitizeRuntimeMessage(note, 220))}</p>`).join("")}</div>`;
 }
 
 function renderSparkline(curve) {
@@ -3885,10 +3963,77 @@ function renderCapitalBehaviorPanel(series, signal = {}) {
           })
           .join("")}
       </div>
+      ${renderCapitalBehaviorGuide(metrics)}
       ${renderAccumulationChart(points)}
+      ${renderMacdChart(points)}
       ${renderDragonGrid(points)}
     </section>
   `;
+}
+
+function renderCapitalBehaviorGuide(metrics) {
+  return `
+    <section class="indicator-guide" aria-label="资金行为指标解释">
+      <header>
+        <strong>指标怎么读</strong>
+        <span>先看方向，再看强弱；四条线各自独立，不直接互相比大小。</span>
+      </header>
+      <div class="indicator-guide-grid">
+        ${metrics.map(([label, value, tone]) => renderIndicatorGuideItem(label, value, tone)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderIndicatorGuideItem(label, value, tone) {
+  const meaning = capitalMetricMeaning(tone);
+  const status = capitalMetricStatus(tone, value);
+  return `
+    <article class="indicator-guide-item ${escapeHtml(tone)}">
+      <div>
+        <strong>${escapeHtml(label)}</strong>
+        <span class="guide-status ${escapeHtml(status.tone)}">${escapeHtml(status.label)}</span>
+      </div>
+      <p>${escapeHtml(meaning)}</p>
+      <em>${escapeHtml(status.detail)}</em>
+    </article>
+  `;
+}
+
+function capitalMetricMeaning(tone) {
+  const meanings = {
+    index: "看资金是否在低位承接。正值偏承接，负值偏流出或弱势。",
+    strength: "看吸筹动作的强弱。越高越明显，但过高也要防短线兑现。",
+    swing: "看当前有没有波段交易空间。数值越高，越值得进入观察。",
+    rebound: "看超跌后的反抽概率。它是反弹提示，不等于趋势反转。",
+  };
+  return meanings[tone] || "辅助判断当前资金和技术状态。";
+}
+
+function capitalMetricStatus(tone, value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return { tone: "neutral", label: "无数据", detail: "当前没有足够数据判断。" };
+  if (tone === "index") {
+    if (numeric >= 8) return { tone: "strong", label: "承接明显", detail: "资金承接信号较强，可结合价格位置继续确认。" };
+    if (numeric > 0) return { tone: "watch", label: "轻度承接", detail: "资金承接为正，但力度还不算强。" };
+    return { tone: "weak", label: "承接偏弱", detail: "资金承接不足，先降低预期。" };
+  }
+  if (tone === "strength") {
+    if (numeric >= 60) return { tone: "strong", label: "吸筹强", detail: "吸筹动作明显，关注是否放量突破或高位兑现。" };
+    if (numeric >= 30) return { tone: "watch", label: "吸筹中等", detail: "有吸筹迹象，但还需要价格和成交量确认。" };
+    return { tone: "weak", label: "吸筹偏弱", detail: "目前吸筹力度有限，更适合观察而不是急着判断。" };
+  }
+  if (tone === "swing") {
+    if (numeric >= 60) return { tone: "strong", label: "机会强", detail: "波段机会较强，但仍要配合趋势线和风险位。" };
+    if (numeric >= 35) return { tone: "watch", label: "可观察", detail: "有一定波段空间，等待更明确触发信号。" };
+    return { tone: "weak", label: "机会弱", detail: "波段弹性不足，暂时不是主线机会。" };
+  }
+  if (tone === "rebound") {
+    if (numeric >= 60) return { tone: "strong", label: "反弹强", detail: "超跌反弹信号较强，重点看持续性。" };
+    if (numeric >= 35) return { tone: "watch", label: "反弹中等", detail: "存在反抽可能，但还不能当作趋势反转。" };
+    return { tone: "weak", label: "反弹弱", detail: "超跌反弹信号不明显。" };
+  }
+  return { tone: "neutral", label: "辅助", detail: "用于辅助判断，不单独构成买卖依据。" };
 }
 
 function renderAccumulationChart(points) {
@@ -3917,6 +4062,119 @@ function renderAccumulationChart(points) {
       </div>
     </div>
   `;
+}
+
+function renderMacdChart(points) {
+  const macd = calculateMacd(points);
+  const visible = macd.slice(-120);
+  if (visible.length < 35) return "";
+
+  const width = 720;
+  const height = 150;
+  const values = visible.flatMap((point) => [point.dif, point.dea, point.macd]).filter(Number.isFinite);
+  if (values.length < 3) return "";
+
+  const minValue = Math.min(0, ...values);
+  const maxValue = Math.max(0, ...values);
+  const padding = Math.max((maxValue - minValue) * 0.16, 0.08);
+  const min = minValue - padding;
+  const max = maxValue + padding;
+  const range = max - min || 1;
+  const xFor = (index) => (index / Math.max(visible.length - 1, 1)) * width;
+  const yFor = (value) => height - ((Number(value) - min) / range) * height;
+  const baseline = yFor(0);
+  const barWidth = Math.max(2, (width / visible.length) * 0.62);
+  const linePoints = (key) =>
+    visible
+      .map((point, index) => `${xFor(index).toFixed(2)},${yFor(point[key]).toFixed(2)}`)
+      .join(" ");
+  const bars = visible
+    .map((point, index) => {
+      const x = xFor(index) - barWidth / 2;
+      const y = yFor(Math.max(point.macd, 0));
+      const h = Math.abs(yFor(point.macd) - baseline);
+      const tone = point.macd >= 0 ? "positive" : "negative";
+      return `<rect class="macd-bar ${tone}" x="${x.toFixed(2)}" y="${Math.min(y, baseline).toFixed(2)}" width="${barWidth.toFixed(2)}" height="${Math.max(h, 1).toFixed(2)}" rx="1" />`;
+    })
+    .join("");
+  const latest = visible[visible.length - 1] || {};
+  const previous = visible[visible.length - 2] || {};
+  const status = macdStatus(latest, previous);
+
+  return `
+    <div class="chart-wrap macd-chart">
+      <header>
+        <div>
+          <strong>MACD 动能</strong>
+          <span>DIF 上穿 DEA 偏强，下穿偏弱；柱体变长代表动能增强。</span>
+        </div>
+        <em class="${escapeHtml(status.tone)}">${escapeHtml(status.label)}</em>
+      </header>
+      <div class="macd-metrics">
+        <span>DIF ${formatNumber(latest.dif)}</span>
+        <span>DEA ${formatNumber(latest.dea)}</span>
+        <span>MACD ${formatNumber(latest.macd)}</span>
+      </div>
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="MACD 12 26 9 指标">
+        <line x1="0" y1="${baseline.toFixed(2)}" x2="${width}" y2="${baseline.toFixed(2)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="5 7" />
+        <g class="macd-bars">${bars}</g>
+        <polyline points="${linePoints("dif")}" fill="none" stroke="var(--accent-strong)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline points="${linePoints("dea")}" fill="none" stroke="var(--warning)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      <div class="chart-labels">
+        <span>${escapeHtml(visible[0]?.date || "")}</span>
+        <span>${escapeHtml(latest.date || "")}</span>
+      </div>
+    </div>
+  `;
+}
+
+function calculateMacd(points) {
+  const rows = (points || [])
+    .map((point) => ({ date: point.date, close: Number(point.close) }))
+    .filter((point) => point.date && Number.isFinite(point.close));
+  if (rows.length < 35) return [];
+
+  const closes = rows.map((point) => point.close);
+  const ema12 = emaSeries(closes, 12);
+  const ema26 = emaSeries(closes, 26);
+  const dif = ema12.map((value, index) => value - ema26[index]);
+  const dea = emaSeries(dif, 9);
+  return rows.map((row, index) => ({
+    date: row.date,
+    dif: dif[index],
+    dea: dea[index],
+    macd: 2 * (dif[index] - dea[index]),
+  }));
+}
+
+function emaSeries(values, period) {
+  const k = 2 / (period + 1);
+  let previous = Number(values[0]) || 0;
+  return values.map((value, index) => {
+    const numeric = Number(value);
+    if (index === 0) {
+      previous = Number.isFinite(numeric) ? numeric : previous;
+      return previous;
+    }
+    previous = (Number.isFinite(numeric) ? numeric : previous) * k + previous * (1 - k);
+    return previous;
+  });
+}
+
+function macdStatus(latest, previous) {
+  if (![latest?.dif, latest?.dea, latest?.macd].every(Number.isFinite)) {
+    return { tone: "neutral", label: "动能不足" };
+  }
+  if (previous && previous.dif <= previous.dea && latest.dif > latest.dea) {
+    return { tone: "strong", label: "金叉转强" };
+  }
+  if (previous && previous.dif >= previous.dea && latest.dif < latest.dea) {
+    return { tone: "weak", label: "死叉转弱" };
+  }
+  if (latest.dif > latest.dea && latest.macd > 0) return { tone: "strong", label: "多头占优" };
+  if (latest.dif < latest.dea && latest.macd < 0) return { tone: "weak", label: "空头占优" };
+  return { tone: "watch", label: "震荡观察" };
 }
 
 function renderAccumulationTrack(points, track, width, height) {
@@ -3957,6 +4215,7 @@ function renderAccumulationTrack(points, track, width, height) {
 function renderDragonGrid(points) {
   const recent = points.slice(-48);
   if (recent.length < 2) return "";
+  const latest = recent[recent.length - 1] || {};
   const dimensions = [
     ["趋势", "trend_heat"],
     ["量价", "volume_price_heat"],
@@ -3964,32 +4223,60 @@ function renderDragonGrid(points) {
     ["人气", "popularity_heat"],
   ];
   return `
-    <div class="dragon-grid" role="img" aria-label="四维擒龙热度">
+    <div class="dragon-grid" role="img" aria-label="四维擒龙热度，红色为高热，蓝色为中等，深色为低位">
       <header>
-        <strong>四维擒龙</strong>
-        <span>${escapeHtml(recent[0]?.date || "")} - ${escapeHtml(recent[recent.length - 1]?.date || "")}</span>
+        <div class="dragon-heading">
+          <strong>四维擒龙</strong>
+          <span>${escapeHtml(recent[0]?.date || "")} - ${escapeHtml(recent[recent.length - 1]?.date || "")}</span>
+        </div>
+        ${renderDragonLegend()}
       </header>
       ${dimensions
-        .map(
-          ([label, key]) => `
+        .map(([label, key]) => {
+          const status = heatStatus(latest[key]);
+          return `
             <div class="dragon-row">
-              <span>${escapeHtml(label)}</span>
+              <div class="dragon-label">
+                <strong>${escapeHtml(label)}</strong>
+                <span class="heat-badge ${status.tone}">${escapeHtml(status.label)} ${formatHeatValue(status.heat)}</span>
+              </div>
               <div class="dragon-cells">
-                ${recent.map((point) => renderDragonCell(point[key])).join("")}
+                ${recent.map((point) => renderDragonCell(point[key], label)).join("")}
               </div>
             </div>
-          `,
-        )
+          `;
+        })
         .join("")}
     </div>
   `;
 }
 
-function renderDragonCell(value) {
+function renderDragonLegend() {
+  return `
+    <div class="dragon-legend" aria-hidden="true">
+      <span><i class="heat-dot cool"></i>低位 0-41</span>
+      <span><i class="heat-dot warm"></i>中等 42-61</span>
+      <span><i class="heat-dot hot"></i>高热 62+</span>
+    </div>
+  `;
+}
+
+function heatStatus(value) {
   const numeric = Number(value);
   const heat = Number.isFinite(numeric) ? Math.max(0, Math.min(100, numeric)) : 0;
-  const tone = heat >= 62 ? "hot" : heat >= 42 ? "warm" : "cool";
-  return `<i class="${tone}" style="--heat:${(0.28 + heat / 140).toFixed(3)}" title="${formatNumber(heat)}"></i>`;
+  if (heat >= 62) return { heat, tone: "hot", label: "高热" };
+  if (heat >= 42) return { heat, tone: "warm", label: "中等" };
+  return { heat, tone: "cool", label: "低位" };
+}
+
+function renderDragonCell(value, label = "热度") {
+  const status = heatStatus(value);
+  return `<i class="${status.tone}" style="--heat:${(0.28 + status.heat / 140).toFixed(3)}" title="${escapeHtml(label)} ${escapeHtml(status.label)} ${formatHeatValue(status.heat)}"></i>`;
+}
+
+function formatHeatValue(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? String(Math.round(number)) : "-";
 }
 
 function normalizeCapitalEvidenceSections(evidence) {
@@ -4089,7 +4376,7 @@ function renderMetricPills(metrics) {
   const entries = Object.entries(metrics || {});
   if (!entries.length) return "";
   return `<div class="mini-metrics">${entries
-    .map(([label, value]) => `<span>${escapeHtml(label)} ${escapeHtml(String(value))}</span>`)
+    .map(([label, value]) => `<span>${escapeHtml(label)} ${escapeHtml(sanitizeRuntimeMessage(value, 160))}</span>`)
     .join("")}</div>`;
 }
 
@@ -4099,8 +4386,8 @@ function renderEvidenceItem(item) {
     <article class="capital-evidence-item">
       <header>
         <div>
-          <strong>${escapeHtml(item.title || item.category || "资金证据")}</strong>
-          <span>${escapeHtml(capitalCategoryLabel(item.category))} · ${escapeHtml(item.source || "")}</span>
+          <strong>${escapeHtml(sanitizeRuntimeMessage(item.title || item.category || "资金证据", 80))}</strong>
+          <span>${escapeHtml(capitalCategoryLabel(item.category))} · ${escapeHtml(sanitizeRuntimeMessage(item.source || "", 80))}</span>
         </div>
         <em>${escapeHtml(item.date || "")}</em>
       </header>
@@ -4110,10 +4397,76 @@ function renderEvidenceItem(item) {
         ${Number.isFinite(score) ? `<span>分 ${formatNumber(score)}</span>` : ""}
       </div>
       ${renderMetricPills(item.metrics) || renderEmpty("没有可展示指标")}
-      ${item.note ? `<p>${escapeHtml(item.note)}</p>` : ""}
+      ${item.note ? `<p>${escapeHtml(sanitizeRuntimeMessage(item.note, 220))}</p>` : ""}
       ${item.url ? `<a class="evidence-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">查看来源</a>` : ""}
     </article>
   `;
+}
+
+function sanitizeRuntimeMessage(value, maxChars = 220) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  const parts = text.split("；").map((part) => part.trim()).filter(Boolean);
+  if (parts.length > 1) {
+    return parts.slice(0, 3).map((part) => sanitizeRuntimeMessage(part, maxChars)).join("；");
+  }
+  const [prefix, body] = splitRuntimeMessagePrefix(text);
+  if (looksLikeRuntimeError(body)) {
+    return `${prefix}${runtimeErrorSummary(body)}`;
+  }
+  return text.length > maxChars ? `${text.slice(0, maxChars)}...` : text;
+}
+
+function splitRuntimeMessagePrefix(text) {
+  const prefixes = [
+    "个股资金流不可用：",
+    "龙虎榜机构席位不可用：",
+    "资金证据模型配置不可用，已保留本地规则分：",
+    "资金证据模型分析失败，已保留本地规则分：",
+    "消息缓存证据不可用：",
+    "未抓取资金证据：",
+  ];
+  const prefix = prefixes.find((item) => text.startsWith(item)) || "";
+  return prefix ? [prefix, text.slice(prefix.length).trim()] : ["", text];
+}
+
+function looksLikeRuntimeError(text) {
+  const lowered = String(text || "").toLowerCase();
+  return (
+    lowered.includes("httpconnectionpool") ||
+    lowered.includes("httpsconnectionpool") ||
+    lowered.includes("proxyerror") ||
+    lowered.includes("remote disconnected") ||
+    lowered.includes("max retries exceeded") ||
+    lowered.includes("unable to connect to proxy") ||
+    lowered.includes("socksio") ||
+    lowered.includes("/api/") ||
+    lowered.includes("push2his") ||
+    lowered.includes("eastmoney") ||
+    String(text || "").includes("超过 ")
+  );
+}
+
+function runtimeErrorSummary(text) {
+  const lowered = String(text || "").toLowerCase();
+  if (lowered.includes("socksio") || (lowered.includes("socks") && lowered.includes("not installed"))) {
+    return "代理配置缺少 SOCKS 支持，请关闭系统代理或安装 httpx[socks]。";
+  }
+  if (lowered.includes("proxyerror") || lowered.includes("unable to connect to proxy")) {
+    return "网络代理连接失败，已跳过本次外部请求。";
+  }
+  if (lowered.includes("timeout") || lowered.includes("timed out") || String(text || "").includes("超过 ")) {
+    return "外部接口请求超时，已跳过本次请求。";
+  }
+  if (
+    lowered.includes("httpconnectionpool") ||
+    lowered.includes("httpsconnectionpool") ||
+    lowered.includes("remote disconnected") ||
+    lowered.includes("max retries exceeded")
+  ) {
+    return "外部接口网络连接失败，已跳过本次请求。";
+  }
+  return "外部接口暂不可用，已降级处理。";
 }
 
 function capitalSectionStatus(section) {

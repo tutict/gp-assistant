@@ -19,7 +19,7 @@ from app.services.llm_support import (
     resolve_llm_config,
     safe_llm_error,
 )
-from app.services.runtime_config import env_bool, env_float, env_int, safe_string_list
+from app.services.runtime_config import env_bool, env_float, env_int, redact_error, safe_string_list
 from app.services.sqlite_json_cache import SQLiteJsonCache
 from app.services.stock_code import compact_date, market_prefix, normalize_stock_code, stock_digits
 
@@ -48,7 +48,7 @@ def fetch_capital_evidence(
     if cached is not None:
         cached.freshness = FRESHNESS_CACHE
         cached.notes = [f"已读取资金证据缓存：{CACHE_PATH}。", *cached.notes]
-        return _ensure_sections(cached)
+        return _ensure_sections(_sanitize_result(cached))
 
     result = CapitalEvidenceResult(
         stock_code=normalize_stock_code(stock.code),
@@ -78,12 +78,12 @@ def fetch_capital_evidence(
                 *result.notes,
                 *stale.notes,
             ]
-            return _ensure_sections(stale)
+            return _ensure_sections(_sanitize_result(stale))
 
     if not result.items:
         result.notes.append("未取得资金、消息或技术证据，综合资金证据分保持低置信。")
 
-    _ensure_sections(result)
+    _ensure_sections(_sanitize_result(result))
     _store_cached_result(result)
     return result
 
@@ -100,6 +100,81 @@ def effective_trade_date(value: str | None, *, now: datetime | None = None) -> s
         else:
             requested = today
     return _previous_weekday(requested).isoformat()
+
+
+def _safe_external_error(error: Exception | object) -> str:
+    return redact_error(error, max_chars=120)
+
+
+def _sanitize_result(result: CapitalEvidenceResult) -> CapitalEvidenceResult:
+    result.notes = [_sanitize_evidence_text(note, max_chars=220) for note in result.notes if str(note or "").strip()]
+    for item in result.items:
+        _sanitize_evidence_item(item)
+    for section in result.sections:
+        if section.summary:
+            section.summary = _sanitize_evidence_text(section.summary, max_chars=180)
+        for item in section.items:
+            _sanitize_evidence_item(item)
+    return result
+
+
+def _sanitize_evidence_item(item: CapitalEvidenceItem) -> CapitalEvidenceItem:
+    item.source = _sanitize_evidence_text(item.source, max_chars=80)
+    item.title = _sanitize_evidence_text(item.title, max_chars=80)
+    if item.note:
+        item.note = _sanitize_evidence_text(item.note, max_chars=220)
+    item.metrics = {
+        str(label): _sanitize_evidence_text(value, max_chars=220) if isinstance(value, str) else value
+        for label, value in (item.metrics or {}).items()
+    }
+    return item
+
+
+def _sanitize_evidence_text(value: object, *, max_chars: int) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parts = [part.strip() for part in text.split("；") if part.strip()]
+    if len(parts) > 1:
+        return "；".join(_sanitize_evidence_text(part, max_chars=max_chars) for part in parts[:3])
+    prefix, body = _split_status_prefix(text)
+    if _looks_like_runtime_error(body):
+        return f"{prefix}{redact_error(body, max_chars=max_chars)}"
+    return redact_error(text, max_chars=max_chars)
+
+
+def _split_status_prefix(text: str) -> tuple[str, str]:
+    prefixes = (
+        "个股资金流不可用：",
+        "龙虎榜机构席位不可用：",
+        "资金证据模型配置不可用，已保留本地规则分：",
+        "资金证据模型分析失败，已保留本地规则分：",
+        "消息缓存证据不可用：",
+        "未抓取资金证据：",
+    )
+    for prefix in prefixes:
+        if text.startswith(prefix):
+            return prefix, text[len(prefix) :].strip()
+    return "", text
+
+
+def _looks_like_runtime_error(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        token in lowered
+        for token in (
+            "httpconnectionpool",
+            "httpsconnectionpool",
+            "proxyerror",
+            "remote disconnected",
+            "max retries exceeded",
+            "unable to connect to proxy",
+            "socksio",
+            "/api/",
+            "push2his",
+            "eastmoney",
+        )
+    ) or "超过 " in text
 
 
 def _fetch_external_capital_items(stock: StockItem, start_date: str, end_date: str) -> list[CapitalEvidenceItem]:
@@ -127,7 +202,7 @@ def _fetch_external_capital_items(stock: StockItem, start_date: str, end_date: s
                 title="AkShare 不可用",
                 sentiment="uncertain",
                 confidence="低",
-                note=f"未抓取资金证据：{exc}",
+                note=f"未抓取资金证据：{_safe_external_error(exc)}",
             )
         ]
 
@@ -139,7 +214,7 @@ def _fetch_external_capital_items(stock: StockItem, start_date: str, end_date: s
         try:
             item = _call_fetcher_with_timeout(fetcher, ak, stock, start_date, end_date)
         except Exception as exc:
-            notes.append(f"{_category_label(category)}不可用：{exc}")
+            notes.append(f"{_category_label(category)}不可用：{_safe_external_error(exc)}")
             continue
         if item is not None:
             items.append(item)

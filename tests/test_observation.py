@@ -146,6 +146,47 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         self.assertEqual(second.freshness, "fresh-cache")
         self.assertEqual(second.composite_score, first.composite_score)
 
+    def test_capital_evidence_sanitizes_external_interface_errors(self):
+        provider = MockProvider()
+        stock = provider.get_stock("300750.SZ")
+
+        class FakeAk:
+            @staticmethod
+            def stock_individual_fund_flow(stock, market):
+                raise RuntimeError(
+                    "HTTPSConnectionPool(host='push2his.eastmoney.com', port=443): "
+                    "Max retries exceeded with url: /api/qt/stock/fflow/daykline/get?secid=0.002448&fields1=f1 "
+                    "(Caused by ProxyError('Unable to connect to proxy', "
+                    "RemoteDisconnected('Remote end closed connection without response')))"
+                )
+
+            @staticmethod
+            def stock_lhb_jgmmtj_em(start_date, end_date):
+                raise TimeoutError("超过 5.0s")
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {
+                "GP_CAPITAL_ENABLE_EXTERNAL": "true",
+                **DISABLE_NETWORK_NEWS,
+            },
+        ), patch.dict("sys.modules", {"akshare": FakeAk}):
+            capital_evidence.CACHE_PATH = Path(tmp) / "capital.sqlite"
+            news_rag.CACHE_PATH = Path(tmp) / "news.sqlite"
+            result = capital_evidence.fetch_capital_evidence(stock, "20260101", "20260612")
+
+        status_parts = list(result.notes)
+        for item in result.items:
+            if item.category == "external_status":
+                status_parts.extend([item.source, item.title, str(item.metrics), str(item.note)])
+        status_text = "\n".join(status_parts)
+        self.assertIn("外部资金接口", status_text)
+        self.assertNotIn("HTTPConnectionPool", status_text)
+        self.assertNotIn("push2his", status_text)
+        self.assertNotIn("/api/qt/stock", status_text)
+        self.assertNotIn("ProxyError", status_text)
+        self.assertNotIn("RemoteDisconnected", status_text)
+
     def test_capital_evidence_merges_news_cache_as_auxiliary_evidence(self):
         provider = MockProvider()
         stock = provider.get_stock("300750.SZ")

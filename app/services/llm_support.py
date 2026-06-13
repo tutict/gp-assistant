@@ -5,6 +5,7 @@ import os
 import re
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 from app.schemas import LlmClientConfig
 from app.services.runtime_config import coalesce_bool, coalesce_float, coalesce_str, redact_error
@@ -54,7 +55,7 @@ def resolve_llm_config(
 
 
 def create_openai_client(config: ResolvedLlmConfig) -> Any:
-    from openai import OpenAI
+    from openai import DefaultHttpxClient, OpenAI
 
     client_kwargs: dict[str, Any] = {
         "api_key": config.api_key,
@@ -62,6 +63,8 @@ def create_openai_client(config: ResolvedLlmConfig) -> Any:
     }
     if config.base_url:
         client_kwargs["base_url"] = config.base_url
+        if _is_loopback_url(config.base_url):
+            client_kwargs["http_client"] = DefaultHttpxClient(trust_env=False)
     if config.organization:
         client_kwargs["organization"] = config.organization
     if config.project:
@@ -98,3 +101,12 @@ def _normalize_base_url(value: str | None) -> str | None:
     if not value:
         return None
     return value.rstrip("/")
+
+
+def _is_loopback_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    return host in {"localhost", "127.0.0.1", "::1"} or host.startswith("127.")
