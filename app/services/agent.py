@@ -50,7 +50,7 @@ Return this shape:
     "series_limit": 120,
     "minute_period": "1",
     "minute_limit": 160,
-    "include_order_book": true
+    "include_order_book": false
   } | null,
   "sector_screen": {
     "criteria": { ...ScreenCriteria fields... },
@@ -121,7 +121,7 @@ FORBIDDEN_ADVICE_PATTERNS = [
 ]
 
 DEFAULT_RESEARCH_REPLIES = {
-    "observe_stock": "已按选股研究口径整理个股行情、估值、盘口和技术面观察。",
+    "observe_stock": "已按选股研究口径整理个股行情、估值、股本和技术面观察。",
     "screen": "已按选股研究口径完成基础筛选。",
     "sector_screen": "已按选股研究口径完成板块分组选股。",
     "graph_screen": "已按选股研究口径完成关系图选股。",
@@ -351,7 +351,7 @@ def _parse_intent_node(state: AgentState) -> AgentState:
         if fallback_observe is not None:
             action = "observe_stock"
             observe_request = fallback_observe
-            response["reply"] = f"已为 {fallback_observe.code} 拉取行情、估值、盘口和技术面观察。"
+            response["reply"] = f"已为 {fallback_observe.code} 拉取行情、估值、股本和技术面观察。"
 
     if action == "screen" and criteria is None:
         criteria = ScreenCriteria()
@@ -420,7 +420,7 @@ def _observe_stock_node(state: AgentState) -> AgentState:
     return {
         "observe": request,
         "data": result.model_dump(),
-        "reply": state.get("reply") or f"已完成 {stock.name}（{stock.code}）的行情、估值、盘口和技术面观察。",
+        "reply": state.get("reply") or f"已完成 {stock.name}（{stock.code}）的行情、估值、股本和技术面观察。",
     }
 
 
@@ -696,7 +696,7 @@ def _heuristic_parse(message: str) -> Dict[str, Any]:
     if codes and _is_observe_intent(message):
         return {
             "action": "observe_stock",
-            "reply": f"已为 {codes[0]} 拉取行情、估值、盘口和技术面观察。",
+            "reply": f"已为 {codes[0]} 拉取行情、估值、股本和技术面观察。",
             "observe": _observe_request_dict(message, codes[0]),
         }
 
@@ -977,7 +977,8 @@ def _observe_request_dict(message: str, code: str) -> Dict[str, Any]:
             minimum=1,
             maximum=500,
         ),
-        "include_order_book": not _contains_any(message.lower(), ["不要盘口", "不看盘口", "no order book"]),
+        "include_order_book": _contains_any(message.lower(), ["盘口", "order book"])
+        and not _contains_any(message.lower(), ["不要盘口", "不看盘口", "no order book"]),
     }
 
 

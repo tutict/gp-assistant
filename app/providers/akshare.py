@@ -198,6 +198,7 @@ class AkShareProvider(StockProvider):
         period = None
         source_parts: list[str] = []
         notes: list[str] = []
+        indicator_df = None
 
         indicator_fn = getattr(ak, "stock_financial_analysis_indicator_em", None)
         if indicator_fn is not None:
@@ -205,6 +206,7 @@ class AkShareProvider(StockProvider):
                 with proxy_environment(self.proxy_mode):
                     df = indicator_fn(symbol=normalized_code, indicator="\u6309\u62a5\u544a\u671f")
                 if df is not None and not df.empty:
+                    indicator_df = df
                     row = df.iloc[0]
                     period = self._format_financial_period(row.get("REPORT_DATE"), row.get("SEASON_LABEL"))
                     source_parts.append("\u4e1c\u8d22F10")
@@ -284,6 +286,7 @@ class AkShareProvider(StockProvider):
             stock.dividend_yield * 100 if stock.dividend_yield is not None else None,
             self._format_percent,
         )
+        self._append_quarterly_eps(items, indicator_df)
 
         if not items:
             return None
@@ -293,6 +296,84 @@ class AkShareProvider(StockProvider):
             items=items,
             notes=notes,
         )
+
+    @classmethod
+    def _append_quarterly_eps(cls, items: list[FinancialIndicatorItem], df: pd.DataFrame | None) -> None:
+        if df is None or df.empty:
+            return
+
+        quarterly_points: list[tuple[str, float]] = []
+        seen_periods: set[str] = set()
+
+        for _, row in df.iterrows():
+            eps_value = cls._to_float(cls._row_value(row, ["EPSJB", "EPS", "BASIC_EPS"]))
+            period_key = cls._financial_period_key(row)
+            if period_key is None or eps_value is None or period_key in seen_periods:
+                continue
+            seen_periods.add(period_key)
+            quarterly_points.append((period_key, eps_value))
+            if len(quarterly_points) >= 12:
+                break
+
+        if not quarterly_points:
+            return
+
+        values_by_period = {period_key: eps_value for period_key, eps_value in quarterly_points}
+        for period_key, eps_value in quarterly_points:
+            previous_key = cls._previous_year_period(period_key)
+            previous_value = values_by_period.get(previous_key)
+            tone = "neutral"
+            if previous_value is not None:
+                tone = cls._growth_tone(eps_value - previous_value)
+            items.append(
+                FinancialIndicatorItem(
+                    label=f"{period_key} \u6bcf\u80a1\u6536\u76ca",
+                    value=cls._format_yuan(eps_value),
+                    raw_value=eps_value,
+                    unit="\u5143",
+                    tone=tone,
+                    metric_key="quarterly_eps",
+                    period=period_key,
+                )
+            )
+
+    @staticmethod
+    def _previous_year_period(period_key: str) -> str | None:
+        if len(period_key) != 6:
+            return None
+        year_part = period_key[:4]
+        if not (year_part.isdigit() and period_key[4] == "Q" and period_key[5].isdigit()):
+            return None
+        return f"{int(year_part) - 1:04d}Q{period_key[5]}"
+
+    @classmethod
+    def _financial_period_key(cls, row) -> str | None:
+        report_date = row.get("REPORT_DATE")
+        parsed_date = pd.to_datetime(report_date, errors="coerce")
+        if pd.notna(parsed_date):
+            month = int(parsed_date.month)
+            if month in {3, 6, 9, 12}:
+                quarter = (month - 1) // 3 + 1
+                return f"{int(parsed_date.year):04d}Q{quarter}"
+
+        season_label = str(row.get("SEASON_LABEL") or row.get("REPORT_PERIOD") or "").strip().upper()
+        if not season_label:
+            return None
+        year_text = "".join(char for char in str(report_date or "") if char.isdigit())[:4]
+        if len(year_text) != 4:
+            year_text = ""
+        quarter = None
+        if "Q1" in season_label or "1季" in season_label or "一季" in season_label:
+            quarter = 1
+        elif "Q2" in season_label or "2季" in season_label or "中报" in season_label:
+            quarter = 2
+        elif "Q3" in season_label or "3季" in season_label or "三季" in season_label:
+            quarter = 3
+        elif "Q4" in season_label or "4季" in season_label or "年报" in season_label or "四季" in season_label:
+            quarter = 4
+        if quarter is None or not year_text:
+            return None
+        return f"{year_text}Q{quarter}"
 
     def list_relations(self) -> List[StockRelation]:
         items = self.list_stocks()

@@ -1091,7 +1091,7 @@ async function runObserve(codeOverride) {
     minute_period: $("#observeMinutePeriod").value || "1",
     series_limit: 160,
     minute_limit: 180,
-    include_order_book: true,
+    include_order_book: false,
   };
   const startDate = readDateParam("observeStart", "");
   const endDate = readDateParam("observeEnd", "");
@@ -3398,7 +3398,7 @@ function renderObserveBody(data) {
   return [
     renderQuoteCard(stock),
     renderFinancialIndicators(data.financial_indicators),
-    data.order_book ? renderOrderBook(data.order_book) : renderEmpty("没有可用盘口"),
+    renderQuarterlyEpsPanel(stock, data.financial_indicators),
     trend.signal ? renderSignalCard(stock, signal) : renderEmpty("没有可用日线技术面"),
     series.length ? renderCapitalBehaviorPanel(series, signal) : "",
     data.capital_evidence ? renderCapitalEvidence(data.capital_evidence) : "",
@@ -3664,7 +3664,12 @@ function renderQuoteCard(stock) {
 
 function renderFinancialIndicators(financial) {
   const items = (financial?.items || []).filter(
-    (item) => item && item.value !== undefined && item.value !== null && item.value !== "",
+    (item) =>
+      item &&
+      item.metric_key !== "quarterly_eps" &&
+      item.value !== undefined &&
+      item.value !== null &&
+      item.value !== "",
   );
   if (!items.length) return "";
 
@@ -3693,6 +3698,159 @@ function renderFinancialIndicators(financial) {
       ${financial.notes?.length ? `<div class="financial-indicator-notes">${financial.notes.map(escapeHtml).join(" / ")}</div>` : ""}
     </section>
   `;
+}
+
+function renderQuarterlyEpsPanel(stock, financial) {
+  const currentYear = new Date().getFullYear();
+  const previousYear = currentYear - 1;
+  const points = collectQuarterlyEpsItems(financial);
+  const pointByPeriod = new Map(points.map((point) => [point.period, point]));
+  const latestEpsItem = findFinancialIndicator(financial, (item) => {
+    const label = String(item.label || "").toUpperCase();
+    return item.metric_key !== "quarterly_eps" && (label.includes("每股收益") || label.includes("EPS"));
+  });
+  const latestPoint = points[0];
+  const totalShares = estimateTotalSharesYi(stock);
+  const sourceMeta = [financial?.period, financial?.source].filter(Boolean).join(" · ");
+  const notes = [];
+  if (!points.length) notes.push("当前数据源没有返回季度 EPS 明细，先展示最新 EPS 与估算总股本。");
+  if (totalShares === null) notes.push("总股本需要总市值和最新价，当前数据不足。");
+
+  return `
+    <section class="eps-share-panel">
+      <header>
+        <div>
+          <h3>每股收益与股本</h3>
+          <p>${escapeHtml(sourceMeta || "报告期 EPS 对比今年和上一年；总股本按总市值 / 最新价估算。")}</p>
+        </div>
+      </header>
+      <div class="share-capital-grid">
+        <div>
+          <span>总股本</span>
+          <strong>${totalShares === null ? "-" : `${formatNumber(totalShares)} 亿股`}</strong>
+          <small>估算口径：总市值 / 最新价</small>
+        </div>
+        <div>
+          <span>最新每股收益</span>
+          <strong>${escapeHtml(latestEpsItem?.value || (latestPoint ? `${formatNumber(latestPoint.value)}元` : "-"))}</strong>
+          <small>${escapeHtml(latestEpsItem?.label || latestPoint?.period || "等待财报数据")}</small>
+        </div>
+      </div>
+      <div class="eps-table" role="table" aria-label="季度每股收益变化">
+        <div class="eps-table-head" role="row">
+          <span>报告期</span>
+          <span>Q1</span>
+          <span>Q2</span>
+          <span>Q3</span>
+          <span>Q4</span>
+        </div>
+        ${[currentYear, previousYear].map((year) => renderEpsYearRow(year, pointByPeriod)).join("")}
+      </div>
+      ${notes.length ? `<div class="eps-panel-notes">${notes.map(escapeHtml).join(" / ")}</div>` : ""}
+    </section>
+  `;
+}
+
+function renderEpsYearRow(year, pointByPeriod) {
+  return `
+    <div class="eps-table-row" role="row">
+      <strong>${year}</strong>
+      ${[1, 2, 3, 4].map((quarter) => renderEpsCell(year, quarter, pointByPeriod)).join("")}
+    </div>
+  `;
+}
+
+function renderEpsCell(year, quarter, pointByPeriod) {
+  const point = pointByPeriod.get(`${year}Q${quarter}`);
+  if (!point) return `<span class="eps-cell empty" role="cell"><em>-</em><small>未披露</small></span>`;
+  const previous = pointByPeriod.get(`${year - 1}Q${quarter}`);
+  const delta = previous && previous.value !== 0 ? (point.value - previous.value) / Math.abs(previous.value) : null;
+  const tone = delta === null ? "neutral" : delta >= 0 ? "rise" : "fall";
+  return `
+    <span class="eps-cell ${tone}" role="cell">
+      <strong>${formatNumber(point.value)}</strong>
+      <small>${delta === null ? "无同比" : `同比 ${formatSignedPercent(delta)}`}</small>
+    </span>
+  `;
+}
+
+function collectQuarterlyEpsItems(financial) {
+  const items = financial?.items || [];
+  const points = [];
+  for (const item of items) {
+    if (!item) continue;
+    const label = String(item.label || "").toUpperCase();
+    const isEps = item.metric_key === "quarterly_eps" || label.includes("每股收益") || label.includes("EPS");
+    if (!isEps) continue;
+    const period = normalizeFinancialPeriodKey(item.period || item.label || "");
+    const value = parseLooseNumber(item.raw_value ?? item.value);
+    if (!period || value === null) continue;
+    points.push({ period, value, tone: item.tone || "neutral" });
+  }
+  return points.sort((left, right) => right.period.localeCompare(left.period));
+}
+
+function normalizeFinancialPeriodKey(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  let match = raw.match(/(20\d{2})\s*[QＱ]\s*([1-4])/);
+  if (match) return `${match[1]}Q${match[2]}`;
+
+  match = raw.match(/(20\d{2})[-/.年](0?[369]|12)(?:[-/.月]\d{1,2})?/);
+  if (match) {
+    const month = Number(match[2]);
+    const quarter = month === 3 ? 1 : month === 6 ? 2 : month === 9 ? 3 : month === 12 ? 4 : null;
+    if (quarter) return `${match[1]}Q${quarter}`;
+  }
+
+  const year = raw.match(/(20\d{2})/)?.[1];
+  if (!year) return null;
+  if (raw.includes("一季") || raw.includes("1季") || raw.includes("Q1")) return `${year}Q1`;
+  if (raw.includes("中报") || raw.includes("二季") || raw.includes("2季") || raw.includes("Q2")) return `${year}Q2`;
+  if (raw.includes("三季") || raw.includes("3季") || raw.includes("Q3")) return `${year}Q3`;
+  if (raw.includes("年报") || raw.includes("四季") || raw.includes("4季") || raw.includes("Q4")) return `${year}Q4`;
+  return null;
+}
+
+function findFinancialIndicator(financial, predicate) {
+  return (financial?.items || []).find((item) => item && predicate(item));
+}
+
+function estimateTotalSharesYi(stock) {
+  const direct = firstFiniteNumber(
+    stock?.total_share_capital_billion,
+    stock?.total_shares_billion,
+    stock?.share_capital_billion,
+  );
+  if (direct !== null) return direct;
+  const marketCapYi = parseLooseNumber(stock?.market_cap_billion);
+  const price = parseLooseNumber(stock?.price);
+  if (marketCapYi === null || price === null || price <= 0) return null;
+  return marketCapYi / price;
+}
+
+function firstFiniteNumber(...values) {
+  for (const value of values) {
+    const number = parseLooseNumber(value);
+    if (number !== null) return number;
+  }
+  return null;
+}
+
+function parseLooseNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  if (Number.isFinite(number)) return number;
+  const match = String(value).replaceAll(",", "").match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatSignedPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  const sign = number > 0 ? "+" : "";
+  return `${sign}${(number * 100).toLocaleString("zh-CN", { maximumFractionDigits: 1 })}%`;
 }
 
 function renderOrderBook(book) {

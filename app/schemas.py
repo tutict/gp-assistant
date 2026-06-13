@@ -27,6 +27,8 @@ class FinancialIndicatorItem(BaseModel):
     raw_value: Optional[float] = None
     unit: Optional[str] = None
     tone: str = "neutral"
+    metric_key: Optional[str] = None
+    period: Optional[str] = None
 
 
 class FinancialIndicatorSection(BaseModel):

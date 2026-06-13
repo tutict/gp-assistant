@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
+from app.providers.akshare import AkShareProvider
 from app.providers.base import get_provider
 from app.providers.tdx import TdxProvider
 from app.schemas import StockItem
@@ -211,6 +212,24 @@ class TdxProviderTests(unittest.TestCase):
         self.assertEqual(labels["净资产收益率"], "16%")
         self.assertEqual(labels["市值"], "240亿")
         self.assertTrue(any("ROE 缺失" in note for note in section.notes))
+
+    def test_akshare_quarterly_eps_items_include_period_metadata(self):
+        rows = pd.DataFrame(
+            [
+                {"REPORT_DATE": "2026-03-31", "SEASON_LABEL": "\u4e00\u5b63\u62a5", "EPSJB": 0.88},
+                {"REPORT_DATE": "2025-12-31", "SEASON_LABEL": "\u5e74\u62a5", "EPSJB": 2.64},
+                {"REPORT_DATE": "2025-03-31", "SEASON_LABEL": "\u4e00\u5b63\u62a5", "EPSJB": 0.72},
+            ]
+        )
+        items = []
+
+        AkShareProvider._append_quarterly_eps(items, rows)
+
+        self.assertEqual(len(items), 3)
+        self.assertEqual(items[0].metric_key, "quarterly_eps")
+        self.assertEqual(items[0].period, "2026Q1")
+        self.assertEqual(items[0].raw_value, 0.88)
+        self.assertEqual(items[0].tone, "rise")
 
     def test_list_stocks_reads_tdx_cache_without_network(self):
         with tempfile.TemporaryDirectory() as temp_dir:
