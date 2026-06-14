@@ -45,6 +45,7 @@ class ScreenCriteria(BaseModel):
     max_pb: Optional[float] = None
     min_market_cap_billion: Optional[float] = None
     industry: Optional[str] = None
+    require_institution_buy_ratio_gt_sell_ratio: bool = False
     include_st: bool = False
     limit: int = Field(default=10, ge=1, le=200)
     sort_by: str = Field(default="score")

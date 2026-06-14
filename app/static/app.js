@@ -1848,6 +1848,7 @@ function initCriteriaSummary() {
     "btCostBps",
     "btBenchmark",
     "includeSt",
+    "requireInstitutionBuyRatio",
     "sectorMode",
     "sortBy",
     "sortDir",
@@ -2078,6 +2079,7 @@ function hideMarketConfirm(panel) {
 function buildCriteria(overrides = {}) {
   const criteria = {
     include_st: $("#includeSt").checked,
+    require_institution_buy_ratio_gt_sell_ratio: Boolean($("#requireInstitutionBuyRatio")?.checked),
     limit: readInt("resultLimit", DEFAULT_RESULT_LIMIT),
     sort_by: $("#sortBy").value,
     sort_dir: $("#sortDir").value,
@@ -2130,6 +2132,7 @@ function updateCriteriaSummary() {
     $("#minRoe")?.value ? `ROE ≥ ${formatPercent(Number($("#minRoe").value))}` : "",
     $("#maxPe")?.value ? `PE ≤ ${formatNumber($("#maxPe").value)}` : "",
     $("#minMcap")?.value ? `市值 ≥ ${formatNumber($("#minMcap").value)} 亿` : "",
+    $("#requireInstitutionBuyRatio")?.checked ? "机构净买入" : "",
     `返回 ${clampInt($("#resultLimit")?.value, 1, 200, DEFAULT_RESULT_LIMIT)} 只`,
     rebalanceLabel($("#btRebalance")?.value || "monthly"),
   ].filter(Boolean);

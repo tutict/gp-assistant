@@ -1,4 +1,8 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pandas as pd
 
 from app.schemas import ScreenCriteria, SectorScreenRequest, StockItem
 from app.services.screener import screen_stocks, screen_stocks_by_sector
@@ -100,6 +104,61 @@ class ScreenerIndustryTests(unittest.TestCase):
 
         self.assertEqual([item.stock.code for item in result.items], ["002408.SZ", "688001.SH", "601012.SH", "002555.SZ"])
         self.assertTrue(any("游戏" in note for note in result.notes))
+
+    def test_institution_buy_ratio_filter_keeps_only_net_buy_candidates(self):
+        universe = [
+            StockItem(code="300750.SZ", name="宁德时代", industry="电池", price=10.0),
+            StockItem(code="002594.SZ", name="比亚迪", industry="新能源车", price=10.0),
+            StockItem(code="000001.SZ", name="平安银行", industry="银行", price=10.0),
+        ]
+        fake_ak = SimpleNamespace(
+            stock_lhb_jgmmtj_em=lambda start_date, end_date: pd.DataFrame(
+                [
+                    {
+                        "代码": "300750",
+                        "日期": "2026-06-12",
+                        "机构买入总额": 200_000_000,
+                        "机构卖出总额": 80_000_000,
+                        "成交额": 1_000_000_000,
+                    },
+                    {
+                        "代码": "002594",
+                        "日期": "2026-06-12",
+                        "机构买入总额": 50_000_000,
+                        "机构卖出总额": 90_000_000,
+                        "成交额": 1_000_000_000,
+                    },
+                ]
+            )
+        )
+
+        with patch.dict("sys.modules", {"akshare": fake_ak}):
+            result = screen_stocks(
+                universe,
+                ScreenCriteria(require_institution_buy_ratio_gt_sell_ratio=True, limit=10),
+            )
+
+        self.assertEqual([item.stock.code for item in result.items], ["300750.SZ"])
+        self.assertIn("机构买入占比", result.items[0].reasons[-1])
+        self.assertTrue(any("机构买入占比规则" in note for note in result.notes))
+
+    def test_institution_buy_ratio_filter_fails_closed_when_source_unavailable(self):
+        universe = [
+            StockItem(code="300750.SZ", name="宁德时代", industry="电池", price=10.0),
+        ]
+        fake_ak = SimpleNamespace(
+            stock_lhb_jgmmtj_em=lambda start_date, end_date: (_ for _ in ()).throw(RuntimeError("blocked")),
+            stock_lhb_jgmx_sina=lambda: pd.DataFrame(),
+        )
+
+        with patch.dict("sys.modules", {"akshare": fake_ak}):
+            result = screen_stocks(
+                universe,
+                ScreenCriteria(require_institution_buy_ratio_gt_sell_ratio=True, limit=10),
+            )
+
+        self.assertEqual(result.returned, 0)
+        self.assertTrue(any("候选股未放行" in note for note in result.notes))
 
     def test_sector_screen_defaults_return_more_groups_with_three_stocks_each(self):
         universe = []
