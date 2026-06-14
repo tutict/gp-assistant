@@ -4418,7 +4418,7 @@ function renderAccumulationChart(points) {
 function renderMacdChart(points) {
   const macd = calculateMacd(points);
   const visible = macd.slice(-120);
-  if (visible.length < 35) return "";
+  if (visible.length < 8) return "";
 
   const width = 720;
   const height = 150;
@@ -4451,13 +4451,17 @@ function renderMacdChart(points) {
   const latest = visible[visible.length - 1] || {};
   const previous = visible[visible.length - 2] || {};
   const status = macdStatus(latest, previous);
+  const sampleHint =
+    visible.length < 35
+      ? "\u5f53\u524d\u6837\u672c\u5c11\uff0c\u53ea\u770b\u65b9\u5411\uff1b"
+      : "";
 
   return `
     <div class="chart-wrap macd-chart">
       <header>
         <div>
           <strong>MACD 动能</strong>
-          <span>DIF 上穿 DEA 偏强，下穿偏弱；柱体变长代表动能增强。</span>
+          <span>${sampleHint}DIF 上穿 DEA 偏强，下穿偏弱；柱体变长代表动能增强。</span>
         </div>
         <em class="${escapeHtml(status.tone)}">${escapeHtml(status.label)}</em>
       </header>
@@ -4484,7 +4488,7 @@ function calculateMacd(points) {
   const rows = (points || [])
     .map((point) => ({ date: point.date, close: Number(point.close) }))
     .filter((point) => point.date && Number.isFinite(point.close));
-  if (rows.length < 35) return [];
+  if (rows.length < 8) return [];
 
   const closes = rows.map((point) => point.close);
   const ema12 = emaSeries(closes, 12);
@@ -4744,6 +4748,7 @@ function renderTechnicalEvidenceSection(section, technicalContext = {}) {
         <span>${escapeHtml(latest.date || signal.date || "")}</span>
         <span>\u5f62\u6001 ${escapeHtml(String(patternScore))}</span>
       </div>
+      ${points.length >= 2 ? renderMacdChart(points) : ""}
       ${metrics.length ? renderCapitalMetricGrid(metrics) : renderEmpty("\u6280\u672f\u6307\u6807\u4e0d\u8db3")}
       ${metrics.length ? renderCapitalBehaviorGuide(metrics) : ""}
       ${points.length >= 2 ? renderDragonGrid(points) : ""}

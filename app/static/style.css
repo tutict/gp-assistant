@@ -2055,6 +2055,17 @@ input[type="date"] {
   padding: 0;
 }
 
+.technical-fusion .macd-chart {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.technical-fusion .macd-chart svg {
+  height: 128px;
+}
+
 .technical-fusion .dragon-grid {
   background: var(--surface);
 }

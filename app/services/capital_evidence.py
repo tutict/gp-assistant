@@ -5,6 +5,7 @@ import json
 import math
 import os
 from datetime import date, datetime, time, timedelta
+from io import StringIO
 from numbers import Real
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -26,8 +27,8 @@ from app.services.stock_code import compact_date, market_prefix, normalize_stock
 
 
 CACHE_PATH = Path(os.getenv("GP_CAPITAL_CACHE", "data/cache/capital_evidence.sqlite"))
-FUND_FLOW_WEIGHT = 0.0
-INSTITUTION_WEIGHT = 0.60
+FUND_FLOW_WEIGHT = 0.35
+INSTITUTION_WEIGHT = 0.25
 NEWS_WEIGHT = 0.15
 TECHNICAL_WEIGHT = 0.25
 FRESHNESS_CACHE = "fresh-cache"
@@ -218,10 +219,21 @@ def _fetch_external_capital_items(
             )
         ]
 
-    fetchers = (("institution_lhb", _fetch_institution_lhb),)
-    for category, fetcher in fetchers:
+    fetchers = (
+        ("fund_flow", _fetch_ths_individual_fund_flow, env_float("GP_CAPITAL_FUND_FLOW_TIMEOUT", 20.0, minimum=2.0, maximum=45.0)),
+        ("institution_lhb", _fetch_institution_lhb, env_float("GP_CAPITAL_LHB_TIMEOUT", 15.0, minimum=2.0, maximum=45.0)),
+    )
+    for category, fetcher, timeout_seconds in fetchers:
         try:
-            item = _call_fetcher_with_timeout(fetcher, ak, stock, start_date, end_date, proxy_mode=proxy_mode)
+            item = _call_fetcher_with_timeout(
+                fetcher,
+                ak,
+                stock,
+                start_date,
+                end_date,
+                proxy_mode=proxy_mode,
+                timeout_seconds=timeout_seconds,
+            )
         except Exception as exc:
             notes.append(f"{_category_label(category)}不可用：{_safe_external_error(exc)}")
             continue
@@ -265,8 +277,10 @@ def _call_fetcher_with_timeout(
     end_date: str,
     *,
     proxy_mode: str | None = None,
+    timeout_seconds: float | None = None,
 ):
-    timeout_seconds = env_float("GP_CAPITAL_FETCH_TIMEOUT", 5.0, minimum=0.5, maximum=30.0)
+    if timeout_seconds is None:
+        timeout_seconds = env_float("GP_CAPITAL_FETCH_TIMEOUT", 5.0, minimum=0.5, maximum=30.0)
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
     def run_fetcher():
@@ -281,6 +295,173 @@ def _call_fetcher_with_timeout(
         raise TimeoutError(f"超过 {timeout_seconds:.1f}s") from exc
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _fetch_ths_individual_fund_flow(
+    ak: Any,
+    stock: StockItem,
+    _start_date: str,
+    end_date: str,
+) -> CapitalEvidenceItem | None:
+    digits = stock_digits(stock.code)
+    if not digits:
+        return None
+    frame = None
+    if getattr(ak, "__name__", "") == "akshare" and env_bool("GP_CAPITAL_USE_THS_DIRECT", True):
+        frame = _fetch_ths_fund_flow_direct(stock)
+    if frame is None or frame.empty:
+        frame = ak.stock_fund_flow_individual(symbol="\u5373\u65f6")
+    row = _matching_last_row(frame, stock)
+    if row is None:
+        return None
+    latest_price = _row_text(row, ("\u6700\u65b0\u4ef7",))
+    change_pct = _row_text(row, ("\u6da8\u8dcc\u5e45",))
+    turnover = _row_text(row, ("\u6362\u624b\u7387",))
+    inflow = _row_text(row, ("\u6d41\u5165\u8d44\u91d1",))
+    outflow = _row_text(row, ("\u6d41\u51fa\u8d44\u91d1",))
+    net = _row_text(row, ("\u51c0\u989d",))
+    amount = _row_text(row, ("\u6210\u4ea4\u989d",))
+    metrics = {
+        label: value
+        for label, value in {
+            "\u6700\u65b0\u4ef7": latest_price,
+            "\u6da8\u8dcc\u5e45": change_pct,
+            "\u6362\u624b\u7387": turnover,
+            "\u6d41\u5165\u8d44\u91d1": inflow,
+            "\u6d41\u51fa\u8d44\u91d1": outflow,
+            "\u51c0\u989d": net,
+            "\u6210\u4ea4\u989d": amount,
+        }.items()
+        if value
+    }
+    raw = {
+        "\u6d41\u5165\u8d44\u91d1": _numeric_value(inflow),
+        "\u6d41\u51fa\u8d44\u91d1": _numeric_value(outflow),
+        "\u51c0\u989d": _numeric_value(net),
+        "\u6210\u4ea4\u989d": _numeric_value(amount),
+    }
+    raw = {key: value for key, value in raw.items() if value is not None}
+    score = _ths_fund_flow_score(raw)
+    metrics["\u8bc1\u636e\u5206"] = f"{score:.1f}"
+    return CapitalEvidenceItem(
+        category="fund_flow",
+        source="AkShare/\u540c\u82b1\u987a\u4e2a\u80a1\u8d44\u91d1\u6d41",
+        title="\u540c\u82b1\u987a\u4e2a\u80a1\u8d44\u91d1\u6d41",
+        date=effective_trade_date(end_date),
+        metrics=metrics,
+        sentiment=_score_sentiment(score),
+        weight=FUND_FLOW_WEIGHT,
+        confidence="\u4e2d" if "\u51c0\u989d" in raw else "\u4f4e",
+        score=score,
+        note="\u540c\u82b1\u987a\u4e2a\u80a1\u8d44\u91d1\u6d41\u5f53\u65e5\u5feb\u7167\uff0c\u7528\u4e8e\u8865\u9f50\u89c2\u5bdf\u9875\u8d44\u91d1\u6d41\u8bc1\u636e\uff0c\u4e0d\u7b49\u540c\u4e8e\u6301\u4ed3\u7ed3\u8bba\u3002",
+    )
+
+
+def _fetch_ths_fund_flow_direct(stock: StockItem) -> pd.DataFrame | None:
+    digits = stock_digits(stock.code)
+    if not digits:
+        return None
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+        from akshare.stock_feature import stock_fund_flow as ths_mod
+    except Exception:
+        return None
+
+    headers = _ths_headers(ths_mod)
+    first_frame, first_html = _read_ths_fund_page(1, headers)
+    page_count = _ths_page_count(first_html) or 110
+    target = int(digits)
+    low, high = 1, page_count
+    for _ in range(10):
+        if low > high:
+            break
+        page = (low + high) // 2
+        frame = first_frame if page == 1 else _read_ths_fund_page(page, headers)[0]
+        if frame is None or frame.empty:
+            refreshed_headers = _ths_headers(ths_mod)
+            frame = _read_ths_fund_page(page, refreshed_headers)[0]
+        code_column = _first_matching_column(frame, ("\u80a1\u7968\u4ee3\u7801", "\u4ee3\u7801"))
+        if frame is None or frame.empty or code_column is None:
+            return None
+        codes = frame[code_column].astype(str).str.extract(r"(\d{1,6})", expand=False).fillna("").str.zfill(6)
+        numbers = pd.to_numeric(codes, errors="coerce").dropna()
+        if numbers.empty:
+            return None
+        page_min = int(numbers.min())
+        page_max = int(numbers.max())
+        matched = frame[codes == digits]
+        if not matched.empty:
+            return matched
+        if target < page_min:
+            high = page - 1
+        elif target > page_max:
+            low = page + 1
+        else:
+            return None
+    return None
+
+
+def _ths_headers(ths_mod: Any) -> dict[str, str]:
+    js_code = ths_mod.py_mini_racer.MiniRacer()
+    js_code.eval(ths_mod._get_file_content_ths("ths.js"))
+    v_code = js_code.call("v")
+    return {
+        "Accept": "text/html, */*; q=0.01",
+        "Accept-Encoding": "gzip, deflate",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "hexin-v": v_code,
+        "Host": "data.10jqka.com.cn",
+        "Pragma": "no-cache",
+        "Referer": "http://data.10jqka.com.cn/funds/hyzjl/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+
+
+def _read_ths_fund_page(page: int, headers: dict[str, str]) -> tuple[pd.DataFrame | None, str]:
+    import requests
+
+    url = (
+        "http://data.10jqka.com.cn/funds/ggzjl/"
+        f"field/code/order/asc/page/{max(1, page)}/ajax/1/free/1/"
+    )
+    response = requests.get(url, headers=headers, timeout=env_float("GP_CAPITAL_THS_PAGE_TIMEOUT", 8.0, minimum=1.0, maximum=20.0))
+    html = response.text
+    if response.status_code >= 400 or "<table" not in html:
+        return None, html
+    try:
+        tables = pd.read_html(StringIO(html))
+    except Exception:
+        return None, html
+    if not tables:
+        return None, html
+    return tables[0], html
+
+
+def _ths_page_count(html: str) -> int | None:
+    try:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html or "", "lxml")
+        raw = soup.find(name="span", attrs={"class": "page_info"})
+        if raw is None:
+            return None
+        parts = raw.text.strip().split("/")
+        return int(parts[-1]) if parts and parts[-1].isdigit() else None
+    except Exception:
+        return None
+
+
+def _first_matching_column(frame: pd.DataFrame | None, keywords: tuple[str, ...]) -> Any | None:
+    if frame is None:
+        return None
+    for column in frame.columns:
+        if any(keyword in str(column) for keyword in keywords):
+            return column
+    return None
 
 
 def _fetch_individual_fund_flow(ak: Any, stock: StockItem, _start_date: str, _end_date: str) -> CapitalEvidenceItem | None:
@@ -319,10 +500,13 @@ def _fetch_institution_lhb(ak: Any, stock: StockItem, start_date: str, end_date:
     try:
         frame = ak.stock_lhb_jgmmtj_em(start_date=compact_date(start_date), end_date=compact_date(end_date))
     except Exception:
-        return _fetch_sina_institution_lhb(ak, stock, start_date, end_date)
-    row = _matching_last_row(frame, stock)
+        return _safe_fetch_sina_institution_lhb(ak, stock, start_date, end_date)
+    try:
+        row = _matching_last_row(frame, stock)
+    except Exception:
+        row = None
     if row is None:
-        return _fetch_sina_institution_lhb(ak, stock, start_date, end_date)
+        return _safe_fetch_sina_institution_lhb(ak, stock, start_date, end_date)
     modern_item = _institution_lhb_item_from_row(
         row,
         source="AkShare/\u4e1c\u65b9\u8d22\u5bcc\u9f99\u864e\u699c\u673a\u6784\u7edf\u8ba1",
@@ -411,6 +595,18 @@ def _institution_lhb_item_from_row(
     )
 
 
+def _safe_fetch_sina_institution_lhb(
+    ak: Any,
+    stock: StockItem,
+    start_date: str,
+    end_date: str,
+) -> CapitalEvidenceItem | None:
+    try:
+        return _fetch_sina_institution_lhb(ak, stock, start_date, end_date)
+    except Exception:
+        return None
+
+
 def _fetch_sina_institution_lhb(
     ak: Any,
     stock: StockItem,
@@ -457,20 +653,24 @@ def _load_news_cache_items(stock: StockItem) -> tuple[list[CapitalEvidenceItem],
     try:
         from app.services import news_rag
 
-        if not news_rag.CACHE_PATH.exists():
-            return [], [f"消息缓存不存在，未纳入股吧/新闻证据：{news_rag.CACHE_PATH}。"]
-        evidence = news_rag.query_cached_evidence(
-            [normalize_stock_code(stock.code)],
-            env_int("GP_CAPITAL_NEWS_DAYS", 30, minimum=1, maximum=365),
-            env_int("GP_CAPITAL_NEWS_LIMIT", 8, minimum=1, maximum=50),
-        )
+        days = env_int("GP_CAPITAL_NEWS_DAYS", 30, minimum=1, maximum=365)
+        limit = env_int("GP_CAPITAL_NEWS_LIMIT", 8, minimum=1, maximum=50)
+        notes: list[str] = []
+        evidence = []
+        if news_rag.CACHE_PATH.exists():
+            evidence = news_rag.query_cached_evidence([normalize_stock_code(stock.code)], days, limit)
+        else:
+            notes.append(f"消息缓存不存在，观察页将按需抓取新闻/股吧证据：{news_rag.CACHE_PATH}。")
+        if not evidence and env_bool("GP_CAPITAL_NEWS_ON_DEMAND", True):
+            evidence, fetch_notes = news_rag.fetch_and_cache_stock_evidence([stock], days, limit)
+            notes.extend(fetch_notes)
     except Exception as exc:
         return [], [f"消息缓存证据不可用：{exc}"]
 
     items = [_news_evidence_item(item) for item in evidence]
     if not items:
-        return [], ["当前股票未命中可用股吧/新闻缓存证据。"]
-    return items, [f"已纳入股吧/新闻缓存证据 {len(items)} 条；消息只作辅助确认或风险提示。"]
+        return [], [*notes, "当前股票未命中可用股吧/新闻证据。"]
+    return items, [*notes, f"已纳入股吧/新闻证据 {len(items)} 条；消息只作辅助确认或风险提示。"]
 
 
 def _news_evidence_item(item: Any) -> CapitalEvidenceItem:
@@ -802,7 +1002,8 @@ def _matching_last_row(frame: Any, stock: StockItem) -> pd.Series | None:
         if code_columns:
             mask = pd.Series(False, index=frame.index)
             for column in code_columns:
-                mask = mask | frame[column].astype(str).str.contains(digits, na=False)
+                extracted = frame[column].astype(str).str.extract(r"(\d{1,6})", expand=False).fillna("")
+                mask = mask | (extracted.str.zfill(6) == digits)
             matched = frame[mask]
     if matched.empty and name:
         name_columns = [column for column in frame.columns if "名称" in str(column) or "股票" in str(column)]
@@ -904,6 +1105,24 @@ def _fund_flow_score(raw: dict[str, float]) -> float:
     if large_order is not None:
         value += _amount_signal(large_order, 60_000_000.0) * 0.20
     return _clamp_score(50.0 + value * 36.0)
+
+
+def _ths_fund_flow_score(raw: dict[str, float]) -> float:
+    net = raw.get("\u51c0\u989d")
+    amount = raw.get("\u6210\u4ea4\u989d")
+    inflow = raw.get("\u6d41\u5165\u8d44\u91d1")
+    outflow = raw.get("\u6d41\u51fa\u8d44\u91d1")
+    value = 0.0
+    if net is not None:
+        value += _amount_signal(net, 300_000_000.0) * 0.62
+    if net is not None and amount:
+        ratio = max(-0.08, min(0.08, net / max(abs(amount), 1.0))) / 0.08
+        value += ratio * 0.28
+    if inflow is not None and outflow is not None:
+        denominator = max(inflow + outflow, 1.0)
+        balance = max(-0.12, min(0.12, (inflow - outflow) / denominator)) / 0.12
+        value += balance * 0.10
+    return _clamp_score(50.0 + value * 38.0)
 
 
 def _institution_score(raw: dict[str, float]) -> float:

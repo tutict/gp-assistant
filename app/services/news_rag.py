@@ -547,6 +547,26 @@ def query_cached_evidence(codes: Sequence[str], days: int, limit: int) -> List[N
         conn.close()
 
 
+def fetch_and_cache_stock_evidence(
+    stocks: Sequence[StockItem],
+    days: int,
+    limit: int,
+) -> tuple[List[NewsEvidence], List[str]]:
+    target_stocks = [stock for stock in stocks if _normalize_code(stock.code)]
+    if not target_stocks:
+        return [], ["缺少明确股票代码，未抓取新闻/股吧证据。"]
+    fetched, notes = _fetch_news_items(target_stocks, [], days)
+    target_codes = [_normalize_code(stock.code) for stock in target_stocks]
+    conn = _connect()
+    try:
+        _init_db(conn)
+        _store_news(conn, fetched)
+        evidence = _query_evidence(conn, target_codes, days, limit)
+    finally:
+        conn.close()
+    return evidence, notes
+
+
 def _row_to_evidence(conn: sqlite3.Connection, row: sqlite3.Row) -> NewsEvidence:
     entities = conn.execute(
         "SELECT entity_type, entity_value, relation_type FROM news_entities WHERE news_id = ?",

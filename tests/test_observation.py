@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from mock_provider import MockProvider
-from app.schemas import LlmClientConfig, StockObserveRequest
+from app.schemas import LlmClientConfig, NewsEvidence, StockItem, StockObserveRequest
 from app.services import capital_evidence, news_rag
 from app.services.agent import run_agent
 from app.services.observation import _default_dates, observe_stock
@@ -142,13 +142,40 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         self.assertGreater(fund_item.score, 50)
         self.assertGreater(lhb_item.score, 50)
 
-    def test_capital_evidence_external_path_uses_lhb_without_fund_flow(self):
+    def test_capital_evidence_parses_ths_fund_flow_with_short_numeric_code(self):
+        stock = StockItem(code="002407.SZ", name="多氟多", industry="化学制品", price=39.67)
+        fake_ak = SimpleNamespace(
+            stock_fund_flow_individual=lambda symbol: pd.DataFrame(
+                [
+                    {
+                        "股票代码": 2407,
+                        "股票简称": "多氟多",
+                        "最新价": 39.67,
+                        "涨跌幅": "3.88%",
+                        "换手率": "25.11%",
+                        "流入资金": "54.35亿",
+                        "流出资金": "49.96亿",
+                        "净额": "4.40亿",
+                        "成交额": "104.30亿",
+                    }
+                ]
+            )
+        )
+
+        item = capital_evidence._fetch_ths_individual_fund_flow(fake_ak, stock, "20260601", "20260612")
+
+        self.assertIsNotNone(item)
+        self.assertEqual(item.source, "AkShare/同花顺个股资金流")
+        self.assertEqual(item.metrics["净额"], "4.40亿")
+        self.assertGreater(item.score, 60)
+
+    def test_capital_evidence_external_path_uses_ths_fund_flow_and_lhb(self):
         provider = MockProvider()
         stock = provider.get_stock("300750.SZ")
         calls = {"fund": 0, "lhb": 0}
 
         fake_ak = SimpleNamespace(
-            stock_individual_fund_flow=lambda stock, market: calls.__setitem__("fund", calls["fund"] + 1),
+            stock_fund_flow_individual=lambda symbol: self._fake_ths_fund_frame(calls),
             stock_lhb_jgmmtj_em=lambda start_date, end_date: self._fake_lhb_frame(calls),
             stock_lhb_jgmx_sina=lambda: pd.DataFrame(),
         )
@@ -164,8 +191,9 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
             news_rag.CACHE_PATH = Path(tmp) / "news.sqlite"
             result = capital_evidence.fetch_capital_evidence(stock, "20260101", "20260612")
 
-        self.assertEqual(calls["fund"], 0)
+        self.assertEqual(calls["fund"], 1)
         self.assertEqual(calls["lhb"], 1)
+        self.assertTrue(any(item.category == "fund_flow" for item in result.items))
         self.assertTrue(any(item.category == "institution_lhb" for item in result.items))
 
     def test_capital_evidence_falls_back_to_sina_lhb_when_eastmoney_misses(self):
@@ -201,6 +229,7 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         calls = {"lhb": 0}
 
         fake_ak = SimpleNamespace(
+            stock_fund_flow_individual=lambda symbol: self._fake_ths_fund_frame(calls),
             stock_lhb_jgmmtj_em=lambda start_date, end_date: self._fake_lhb_frame(calls),
             stock_lhb_jgmx_sina=lambda: pd.DataFrame(),
         )
@@ -326,6 +355,38 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         self.assertTrue(any(section.key == "message_sentiment" for section in result.sections))
         self.assertTrue(any(section.items for section in result.sections if section.key == "message_sentiment"))
 
+    def test_capital_evidence_fetches_news_on_cache_miss(self):
+        provider = MockProvider()
+        stock = provider.get_stock("300750.SZ")
+        evidence = NewsEvidence(
+            title="宁德时代股吧讨论升温",
+            summary="东方财富股吧和个股新闻出现订单与资金关注线索。",
+            source="东方财富股吧",
+            source_tier="community",
+            published_at=datetime.now().isoformat(timespec="seconds"),
+            url="local://guba",
+            stock_codes=["300750.SZ"],
+            sentiment="positive",
+        )
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {
+                "GP_CAPITAL_ENABLE_EXTERNAL": "false",
+                "GP_CAPITAL_NEWS_ON_DEMAND": "true",
+            },
+        ), patch.object(
+            news_rag,
+            "fetch_and_cache_stock_evidence",
+            return_value=([evidence], ["按需抓取东方财富新闻/股吧 1 条。"]),
+        ) as fetch_news:
+            capital_evidence.CACHE_PATH = Path(tmp) / "capital.sqlite"
+            news_rag.CACHE_PATH = Path(tmp) / "news.sqlite"
+            result = capital_evidence.fetch_capital_evidence(stock, "20260101", "20260612")
+
+        fetch_news.assert_called_once()
+        self.assertTrue(any(item.category == "community_sentiment" for item in result.items))
+        self.assertTrue(any(section.key == "message_sentiment" and section.items for section in result.sections))
+
     def test_capital_evidence_llm_enhancement_is_optional(self):
         provider = MockProvider()
         stock = provider.get_stock("300750.SZ")
@@ -378,6 +439,26 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
                     "日期": "2026-06-12",
                     "主力净流入-净额": 100000000,
                     "超大单净流入-净额": 30000000,
+                }
+            ]
+        )
+
+    @staticmethod
+    def _fake_ths_fund_frame(calls=None):
+        if calls is not None:
+            calls["fund"] = calls.get("fund", 0) + 1
+        return pd.DataFrame(
+            [
+                {
+                    "\u80a1\u7968\u4ee3\u7801": 300750,
+                    "\u80a1\u7968\u7b80\u79f0": "\u5b81\u5fb7\u65f6\u4ee3",
+                    "\u6700\u65b0\u4ef7": 394.85,
+                    "\u6da8\u8dcc\u5e45": "3.31%",
+                    "\u6362\u624b\u7387": "0.97%",
+                    "\u6d41\u5165\u8d44\u91d1": "87.07\u4ebf",
+                    "\u6d41\u51fa\u8d44\u91d1": "75.72\u4ebf",
+                    "\u51c0\u989d": "11.35\u4ebf",
+                    "\u6210\u4ea4\u989d": "162.79\u4ebf",
                 }
             ]
         )
