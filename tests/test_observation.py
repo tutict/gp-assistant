@@ -12,7 +12,7 @@ from mock_provider import MockProvider
 from app.schemas import LlmClientConfig, StockObserveRequest
 from app.services import capital_evidence, news_rag
 from app.services.agent import run_agent
-from app.services.observation import observe_stock
+from app.services.observation import _default_dates, observe_stock
 
 
 DISABLE_NETWORK_NEWS = {
@@ -23,6 +23,29 @@ DISABLE_NETWORK_NEWS = {
 
 
 class ObservationCapitalBehaviorTests(unittest.TestCase):
+    def test_observation_default_dates_cover_ten_trading_days(self):
+        self.assertEqual(_default_dates(None, "20260614"), ("20260601", "20260614"))
+        self.assertEqual(_default_dates(None, "20260615"), ("20260602", "20260615"))
+
+    def test_observation_passes_proxy_mode_to_capital_evidence(self):
+        provider = MockProvider()
+        provider.proxy_mode = "none"
+
+        with patch("app.services.observation.fetch_capital_evidence", return_value=None) as fetch:
+            observe_stock(
+                provider,
+                StockObserveRequest(
+                    code="300750.SZ",
+                    start_date="20260601",
+                    end_date="20260612",
+                    series_limit=20,
+                    minute_limit=5,
+                    include_order_book=False,
+                ),
+            )
+
+        self.assertEqual(fetch.call_args.kwargs["proxy_mode"], "none")
+
     def test_observation_includes_capital_behavior_and_rule_evidence_score(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             os.environ,
@@ -119,14 +142,67 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         self.assertGreater(fund_item.score, 50)
         self.assertGreater(lhb_item.score, 50)
 
+    def test_capital_evidence_external_path_uses_lhb_without_fund_flow(self):
+        provider = MockProvider()
+        stock = provider.get_stock("300750.SZ")
+        calls = {"fund": 0, "lhb": 0}
+
+        fake_ak = SimpleNamespace(
+            stock_individual_fund_flow=lambda stock, market: calls.__setitem__("fund", calls["fund"] + 1),
+            stock_lhb_jgmmtj_em=lambda start_date, end_date: self._fake_lhb_frame(calls),
+            stock_lhb_jgmx_sina=lambda: pd.DataFrame(),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {
+                "GP_CAPITAL_ENABLE_EXTERNAL": "true",
+                **DISABLE_NETWORK_NEWS,
+            },
+        ), patch.dict("sys.modules", {"akshare": fake_ak}):
+            capital_evidence.CACHE_PATH = Path(tmp) / "capital.sqlite"
+            news_rag.CACHE_PATH = Path(tmp) / "news.sqlite"
+            result = capital_evidence.fetch_capital_evidence(stock, "20260101", "20260612")
+
+        self.assertEqual(calls["fund"], 0)
+        self.assertEqual(calls["lhb"], 1)
+        self.assertTrue(any(item.category == "institution_lhb" for item in result.items))
+
+    def test_capital_evidence_falls_back_to_sina_lhb_when_eastmoney_misses(self):
+        provider = MockProvider()
+        stock = provider.get_stock("300750.SZ")
+
+        fake_ak = SimpleNamespace(
+            stock_lhb_jgmmtj_em=lambda start_date, end_date: pd.DataFrame(),
+            stock_lhb_jgmx_sina=lambda: pd.DataFrame(
+                [
+                    {
+                        "\u80a1\u7968\u4ee3\u7801": "300750",
+                        "\u80a1\u7968\u540d\u79f0": "\u5b81\u5fb7\u65f6\u4ee3",
+                        "\u4ea4\u6613\u65e5\u671f": "2026-06-12",
+                        "\u673a\u6784\u5e2d\u4f4d\u4e70\u5165\u989d": 230000000,
+                        "\u673a\u6784\u5e2d\u4f4d\u5356\u51fa\u989d": 80000000,
+                        "\u7c7b\u578b": "\u673a\u6784\u51c0\u4e70",
+                    }
+                ]
+            ),
+        )
+
+        item = capital_evidence._fetch_institution_lhb(fake_ak, stock, "20260101", "20260612")
+
+        self.assertIsNotNone(item)
+        self.assertEqual(item.source, "AkShare/\u65b0\u6d6a\u9f99\u864e\u699c\u673a\u6784\u5e2d\u4f4d")
+        self.assertEqual(item.metrics["\u673a\u6784\u51c0\u4e70\u989d"], "1.50 \u4ebf")
+        self.assertGreater(item.score, 50)
+
     def test_capital_evidence_uses_fresh_cache_before_external_fetch(self):
         provider = MockProvider()
         stock = provider.get_stock("300750.SZ")
-        calls = {"fund": 0}
+        calls = {"lhb": 0}
 
         fake_ak = SimpleNamespace(
-            stock_individual_fund_flow=lambda stock, market: self._fake_fund_frame(calls),
-            stock_lhb_jgmmtj_em=lambda start_date, end_date: self._fake_lhb_frame(),
+            stock_lhb_jgmmtj_em=lambda start_date, end_date: self._fake_lhb_frame(calls),
+            stock_lhb_jgmx_sina=lambda: pd.DataFrame(),
         )
 
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
@@ -141,7 +217,7 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
             first = capital_evidence.fetch_capital_evidence(stock, "20260101", "20260612")
             second = capital_evidence.fetch_capital_evidence(stock, "20260101", "20260612")
 
-        self.assertEqual(calls["fund"], 1)
+        self.assertEqual(calls["lhb"], 1)
         self.assertEqual(first.freshness, "refreshed")
         self.assertEqual(second.freshness, "fresh-cache")
         self.assertEqual(second.composite_score, first.composite_score)
@@ -186,6 +262,27 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         self.assertNotIn("/api/qt/stock", status_text)
         self.assertNotIn("ProxyError", status_text)
         self.assertNotIn("RemoteDisconnected", status_text)
+
+    def test_capital_fetch_timeout_runner_honors_direct_proxy_mode(self):
+        provider = MockProvider()
+        stock = provider.get_stock("300750.SZ")
+
+        def fetcher(_ak, _stock, _start_date, _end_date):
+            return os.environ.get("HTTP_PROXY")
+
+        with patch.dict(os.environ, {"HTTP_PROXY": "http://127.0.0.1:9999"}, clear=False):
+            observed_proxy = capital_evidence._call_fetcher_with_timeout(
+                fetcher,
+                object(),
+                stock,
+                "20260101",
+                "20260612",
+                proxy_mode="none",
+            )
+            restored_proxy = os.environ.get("HTTP_PROXY")
+
+        self.assertIsNone(observed_proxy)
+        self.assertEqual(restored_proxy, "http://127.0.0.1:9999")
 
     def test_capital_evidence_merges_news_cache_as_auxiliary_evidence(self):
         provider = MockProvider()
@@ -286,7 +383,9 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _fake_lhb_frame():
+    def _fake_lhb_frame(calls=None):
+        if calls is not None:
+            calls["lhb"] += 1
         return pd.DataFrame(
             [
                 {

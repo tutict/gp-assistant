@@ -11,6 +11,7 @@ from typing import Any, Iterable, Sequence
 
 import pandas as pd
 
+from app.providers.base import proxy_environment
 from app.schemas import CapitalEvidenceItem, CapitalEvidenceResult, CapitalEvidenceSection, LlmClientConfig, StockItem
 from app.services.llm_support import (
     create_chat_completion,
@@ -25,13 +26,17 @@ from app.services.stock_code import compact_date, market_prefix, normalize_stock
 
 
 CACHE_PATH = Path(os.getenv("GP_CAPITAL_CACHE", "data/cache/capital_evidence.sqlite"))
-FUND_FLOW_WEIGHT = 0.35
-INSTITUTION_WEIGHT = 0.25
+FUND_FLOW_WEIGHT = 0.0
+INSTITUTION_WEIGHT = 0.60
 NEWS_WEIGHT = 0.15
 TECHNICAL_WEIGHT = 0.25
 FRESHNESS_CACHE = "fresh-cache"
 FRESHNESS_REFRESHED = "refreshed"
 FRESHNESS_STALE = "stale-cache"
+INSTITUTION_BUY_LABEL = "\u673a\u6784\u4e70\u5165\u989d"
+INSTITUTION_SELL_LABEL = "\u673a\u6784\u5356\u51fa\u989d"
+INSTITUTION_NET_LABEL = "\u673a\u6784\u51c0\u4e70\u989d"
+LHB_REASON_LABEL = "\u4e0a\u699c\u539f\u56e0"
 
 
 def fetch_capital_evidence(
@@ -42,6 +47,7 @@ def fetch_capital_evidence(
     trend: Any | None = None,
     llm: LlmClientConfig | None = None,
     refresh: bool = False,
+    proxy_mode: str | None = None,
 ) -> CapitalEvidenceResult:
     as_of_trade_date = effective_trade_date(end_date)
     cached = None if refresh else _load_cached_result(stock.code, as_of_trade_date)
@@ -58,7 +64,7 @@ def fetch_capital_evidence(
         notes=[f"资金证据按交易日 {as_of_trade_date} 汇总；缓存：{CACHE_PATH}。"],
     )
 
-    result.items.extend(_fetch_external_capital_items(stock, start_date, end_date))
+    result.items.extend(_fetch_external_capital_items(stock, start_date, end_date, proxy_mode=proxy_mode))
     news_items, news_notes = _load_news_cache_items(stock)
     result.items.extend(news_items)
     result.notes.extend(news_notes)
@@ -177,7 +183,13 @@ def _looks_like_runtime_error(text: str) -> bool:
     ) or "超过 " in text
 
 
-def _fetch_external_capital_items(stock: StockItem, start_date: str, end_date: str) -> list[CapitalEvidenceItem]:
+def _fetch_external_capital_items(
+    stock: StockItem,
+    start_date: str,
+    end_date: str,
+    *,
+    proxy_mode: str | None = None,
+) -> list[CapitalEvidenceItem]:
     notes: list[str] = []
     items: list[CapitalEvidenceItem] = []
     if not env_bool("GP_CAPITAL_ENABLE_EXTERNAL", True):
@@ -206,13 +218,10 @@ def _fetch_external_capital_items(stock: StockItem, start_date: str, end_date: s
             )
         ]
 
-    fetchers = (
-        ("fund_flow", _fetch_individual_fund_flow),
-        ("institution_lhb", _fetch_institution_lhb),
-    )
+    fetchers = (("institution_lhb", _fetch_institution_lhb),)
     for category, fetcher in fetchers:
         try:
-            item = _call_fetcher_with_timeout(fetcher, ak, stock, start_date, end_date)
+            item = _call_fetcher_with_timeout(fetcher, ak, stock, start_date, end_date, proxy_mode=proxy_mode)
         except Exception as exc:
             notes.append(f"{_category_label(category)}不可用：{_safe_external_error(exc)}")
             continue
@@ -241,13 +250,30 @@ def _fetch_external_capital_items(stock: StockItem, start_date: str, end_date: s
                 note="未取得龙虎榜机构席位或个股资金流证据，资金侧结论保持低置信。",
             )
         )
+        items[-1].note = (
+            "\u672a\u53d6\u5f97\u4e1c\u65b9\u8d22\u5bcc/\u65b0\u6d6a\u9f99\u864e\u699c\u673a\u6784\u5e2d\u4f4d\u8bc1\u636e\uff0c"
+            "\u8d44\u91d1\u4fa7\u7ed3\u8bba\u4fdd\u6301\u4f4e\u7f6e\u4fe1\u3002"
+        )
     return items
 
 
-def _call_fetcher_with_timeout(fetcher: Any, ak: Any, stock: StockItem, start_date: str, end_date: str):
+def _call_fetcher_with_timeout(
+    fetcher: Any,
+    ak: Any,
+    stock: StockItem,
+    start_date: str,
+    end_date: str,
+    *,
+    proxy_mode: str | None = None,
+):
     timeout_seconds = env_float("GP_CAPITAL_FETCH_TIMEOUT", 5.0, minimum=0.5, maximum=30.0)
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(fetcher, ak, stock, start_date, end_date)
+
+    def run_fetcher():
+        with proxy_environment(proxy_mode):
+            return fetcher(ak, stock, start_date, end_date)
+
+    future = executor.submit(run_fetcher)
     try:
         return future.result(timeout=timeout_seconds)
     except concurrent.futures.TimeoutError as exc:
@@ -290,10 +316,21 @@ def _fetch_individual_fund_flow(ak: Any, stock: StockItem, _start_date: str, _en
 
 
 def _fetch_institution_lhb(ak: Any, stock: StockItem, start_date: str, end_date: str) -> CapitalEvidenceItem | None:
-    frame = ak.stock_lhb_jgmmtj_em(start_date=compact_date(start_date), end_date=compact_date(end_date))
+    try:
+        frame = ak.stock_lhb_jgmmtj_em(start_date=compact_date(start_date), end_date=compact_date(end_date))
+    except Exception:
+        return _fetch_sina_institution_lhb(ak, stock, start_date, end_date)
     row = _matching_last_row(frame, stock)
     if row is None:
-        return None
+        return _fetch_sina_institution_lhb(ak, stock, start_date, end_date)
+    modern_item = _institution_lhb_item_from_row(
+        row,
+        source="AkShare/\u4e1c\u65b9\u8d22\u5bcc\u9f99\u864e\u699c\u673a\u6784\u7edf\u8ba1",
+        title="\u4e1c\u65b9\u8d22\u5bcc\u9f99\u864e\u699c\u673a\u6784\u5e2d\u4f4d",
+        fallback_note="\u4e1c\u65b9\u8d22\u5bcc\u9f99\u864e\u699c\u673a\u6784\u5e2d\u4f4d\u7edf\u8ba1\uff0c\u4e0d\u7b49\u540c\u4e8e\u5168\u90e8\u673a\u6784\u6301\u4ed3\u53d8\u5316\u3002",
+    )
+    if modern_item is not None:
+        return modern_item
     specs = (
         ("机构买入额", ("机构买入额", "机构买入金额", "买入额")),
         ("机构卖出额", ("机构卖出额", "机构卖出金额", "卖出额")),
@@ -314,6 +351,103 @@ def _fetch_institution_lhb(ak: Any, stock: StockItem, start_date: str, end_date:
         confidence="高" if raw.get("机构净买额") is not None else "中",
         score=score,
         note="仅代表龙虎榜公开席位统计，不等同于全部机构持仓变化。",
+    )
+
+
+def _institution_lhb_item_from_row(
+    row: pd.Series,
+    *,
+    source: str,
+    title: str,
+    fallback_note: str,
+) -> CapitalEvidenceItem | None:
+    specs = (
+        (
+            INSTITUTION_BUY_LABEL,
+            (
+                "\u673a\u6784\u4e70\u5165\u603b\u989d",
+                "\u673a\u6784\u5e2d\u4f4d\u4e70\u5165\u989d",
+                "\u673a\u6784\u4e70\u5165\u989d",
+                "\u7d2f\u79ef\u4e70\u5165\u989d",
+                "\u4e70\u5165\u989d",
+            ),
+        ),
+        (
+            INSTITUTION_SELL_LABEL,
+            (
+                "\u673a\u6784\u5356\u51fa\u603b\u989d",
+                "\u673a\u6784\u5e2d\u4f4d\u5356\u51fa\u989d",
+                "\u673a\u6784\u5356\u51fa\u989d",
+                "\u7d2f\u79ef\u5356\u51fa\u989d",
+                "\u5356\u51fa\u989d",
+            ),
+        ),
+        (INSTITUTION_NET_LABEL, ("\u673a\u6784\u51c0\u4e70\u989d", "\u51c0\u4e70\u989d", "\u51c0\u989d")),
+        (LHB_REASON_LABEL, ("\u4e0a\u699c\u539f\u56e0", "\u89e3\u8bfb", "\u7c7b\u578b")),
+    )
+    metrics, raw = _pick_metrics(row, specs)
+    if raw.get(INSTITUTION_NET_LABEL) is None:
+        buy = raw.get(INSTITUTION_BUY_LABEL)
+        sell = raw.get(INSTITUTION_SELL_LABEL)
+        if buy is not None and sell is not None:
+            net = buy - sell
+            raw[INSTITUTION_NET_LABEL] = net
+            metrics[INSTITUTION_NET_LABEL] = _format_metric(net)
+    if not metrics and not raw:
+        return None
+    score = _institution_score(raw)
+    metrics["\u8bc1\u636e\u5206"] = f"{score:.1f}"
+    return CapitalEvidenceItem(
+        category="institution_lhb",
+        source=source,
+        title=title,
+        date=_row_text(row, ("\u4ea4\u6613\u65e5\u671f", "\u65e5\u671f", "\u4e0a\u699c\u65e5")),
+        metrics=metrics,
+        sentiment=_score_sentiment(score),
+        weight=INSTITUTION_WEIGHT,
+        confidence="\u9ad8" if raw.get(INSTITUTION_NET_LABEL) is not None else "\u4e2d",
+        score=score,
+        note=fallback_note,
+    )
+
+
+def _fetch_sina_institution_lhb(
+    ak: Any,
+    stock: StockItem,
+    _start_date: str,
+    _end_date: str,
+) -> CapitalEvidenceItem | None:
+    frame = ak.stock_lhb_jgmx_sina()
+    row = _matching_last_row(frame, stock)
+    if row is None:
+        return None
+    specs = (
+        (INSTITUTION_BUY_LABEL, ("\u673a\u6784\u5e2d\u4f4d\u4e70\u5165\u989d", "\u7d2f\u79ef\u4e70\u5165\u989d", INSTITUTION_BUY_LABEL)),
+        (INSTITUTION_SELL_LABEL, ("\u673a\u6784\u5e2d\u4f4d\u5356\u51fa\u989d", "\u7d2f\u79ef\u5356\u51fa\u989d", INSTITUTION_SELL_LABEL)),
+        (INSTITUTION_NET_LABEL, (INSTITUTION_NET_LABEL, "\u51c0\u989d")),
+        (LHB_REASON_LABEL, ("\u7c7b\u578b", "\u89e3\u8bfb", LHB_REASON_LABEL)),
+    )
+    metrics, raw = _pick_metrics(row, specs)
+    if raw.get(INSTITUTION_NET_LABEL) is None:
+        buy = raw.get(INSTITUTION_BUY_LABEL)
+        sell = raw.get(INSTITUTION_SELL_LABEL)
+        if buy is not None and sell is not None:
+            net = buy - sell
+            raw[INSTITUTION_NET_LABEL] = net
+            metrics[INSTITUTION_NET_LABEL] = _format_metric(net)
+    score = _institution_score(raw)
+    metrics["\u8bc1\u636e\u5206"] = f"{score:.1f}"
+    return CapitalEvidenceItem(
+        category="institution_lhb",
+        source="AkShare/\u65b0\u6d6a\u9f99\u864e\u699c\u673a\u6784\u5e2d\u4f4d",
+        title="\u65b0\u6d6a\u9f99\u864e\u699c\u673a\u6784\u5e2d\u4f4d",
+        date=_row_text(row, ("\u4ea4\u6613\u65e5\u671f", "\u65e5\u671f", "\u4e0a\u699c\u65e5")),
+        metrics=metrics,
+        sentiment=_score_sentiment(score),
+        weight=INSTITUTION_WEIGHT,
+        confidence="\u4e2d" if raw else "\u4f4e",
+        score=score,
+        note="\u4e1c\u65b9\u8d22\u5bcc\u9f99\u864e\u699c\u672a\u547d\u4e2d\u6216\u4e0d\u53ef\u7528\u65f6\uff0c\u4f7f\u7528\u65b0\u6d6a\u673a\u6784\u5e2d\u4f4d\u660e\u7ec6\u4f5c\u5907\u7528\u8bc1\u636e\u3002",
     )
 
 
@@ -657,6 +791,13 @@ def _matching_last_row(frame: Any, stock: StockItem) -> pd.Series | None:
     name = (stock.name or "").strip()
     matched = frame
     if digits:
+        exact_code_mask = pd.Series(False, index=frame.index)
+        for column in frame.columns:
+            extracted = frame[column].astype(str).str.extract(r"(\d{6})", expand=False)
+            exact_code_mask = exact_code_mask | (extracted == digits)
+        if exact_code_mask.any():
+            return _last_valid_row(frame[exact_code_mask])
+    if digits:
         code_columns = [column for column in frame.columns if "代码" in str(column)]
         if code_columns:
             mask = pd.Series(False, index=frame.index)
@@ -707,12 +848,21 @@ def _has_value(value: Any) -> bool:
 def _format_metric(value: Any) -> str:
     number = _numeric_value(value)
     if number is not None:
+        return _format_amount(number)
         if abs(number) >= 100_000_000:
             return f"{number / 100_000_000:.2f} 亿"
         if abs(number) >= 10_000:
             return f"{number / 10_000:.2f} 万"
         return f"{number:.2f}"
     return str(value).strip()
+
+
+def _format_amount(number: float) -> str:
+    if abs(number) >= 100_000_000:
+        return f"{number / 100_000_000:.2f} \u4ebf"
+    if abs(number) >= 10_000:
+        return f"{number / 10_000:.2f} \u4e07"
+    return f"{number:.2f}"
 
 
 def _numeric_value(value: Any) -> float | None:
@@ -723,6 +873,12 @@ def _numeric_value(value: Any) -> float | None:
     if not text or text in {"-", "None", "nan"}:
         return None
     multiplier = 1.0
+    if text.endswith("\u4ebf"):
+        multiplier = 100_000_000.0
+        text = text[:-1]
+    elif text.endswith("\u4e07"):
+        multiplier = 10_000.0
+        text = text[:-1]
     if text.endswith("亿"):
         multiplier = 100_000_000.0
         text = text[:-1]
@@ -751,6 +907,13 @@ def _fund_flow_score(raw: dict[str, float]) -> float:
 
 
 def _institution_score(raw: dict[str, float]) -> float:
+    canonical_net = raw.get(INSTITUTION_NET_LABEL)
+    canonical_buy = raw.get(INSTITUTION_BUY_LABEL)
+    canonical_sell = raw.get(INSTITUTION_SELL_LABEL)
+    if canonical_net is None and canonical_buy is not None and canonical_sell is not None:
+        canonical_net = canonical_buy - canonical_sell
+    if canonical_net is not None:
+        return _clamp_score(50.0 + _amount_signal(canonical_net, 150_000_000.0) * 38.0)
     net = raw.get("机构净买额")
     if net is None and raw.get("机构买入额") is not None and raw.get("机构卖出额") is not None:
         net = raw["机构买入额"] - raw["机构卖出额"]

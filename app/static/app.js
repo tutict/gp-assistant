@@ -41,6 +41,7 @@ const DEFAULT_SECTOR_GROUP_LIMIT = 12;
 const DEFAULT_PER_SECTOR_LIMIT = 3;
 const SECTOR_SCREEN_POOL_MULTIPLIER = 8;
 const STOCK_SEARCH_LIMIT = 3;
+const DEFAULT_OBSERVE_TRADING_DAYS = 10;
 const DEFAULT_DATA_SOURCE = "tdx";
 const MOBILE_TENCENT_MAX_CANDIDATES = 16000;
 const MOBILE_TENCENT_MAX_FAILED_BATCHES = 4;
@@ -1093,10 +1094,9 @@ async function runObserve(codeOverride) {
     minute_limit: 180,
     include_order_book: false,
   };
-  const startDate = readDateParam("observeStart", "");
-  const endDate = readDateParam("observeEnd", "");
-  if (startDate) payload.start_date = startDate;
-  if (endDate) payload.end_date = endDate;
+  const observeEndInput = $("#observeEnd")?.value || currentSystemDateInputValue();
+  payload.start_date = readDateParam("observeStart", defaultObserveStartCompact(observeEndInput));
+  payload.end_date = readDateParam("observeEnd", currentSystemDateCompact());
   const llm = buildLlmConfig();
   if (llm && !mobileRuntime) payload.llm = llm;
   const data = await postJson("/api/observe", payload, panels.observe);
@@ -2024,10 +2024,30 @@ function initDateInputs() {
     if (dateValue) input.value = dateValue;
     input.addEventListener("click", () => showDatePicker(input));
   });
+  initObserveDateRangeDefaults();
 }
 
 function defaultDateInputValue(input) {
+  if (input.id === "observeStart") return defaultObserveStartDateInputValue();
   return DEFAULT_TODAY_DATE_INPUT_IDS.has(input.id) ? currentSystemDateInputValue() : "";
+}
+
+function initObserveDateRangeDefaults() {
+  const startInput = $("#observeStart");
+  const endInput = $("#observeEnd");
+  if (!startInput) return;
+
+  const setAutoDefault = () => {
+    const previousAuto = startInput.dataset.autoDefault || "";
+    const nextAuto = defaultObserveStartDateInputValue(endInput?.value);
+    if (!startInput.value || startInput.value === previousAuto) {
+      startInput.value = nextAuto;
+    }
+    startInput.dataset.autoDefault = nextAuto;
+  };
+
+  setAutoDefault();
+  endInput?.addEventListener("change", setAutoDefault);
 }
 
 function showDatePicker(input) {
@@ -2212,6 +2232,54 @@ function currentSystemDateInputValue() {
 
 function currentSystemDateCompact() {
   return currentSystemDateInputValue().replaceAll("-", "");
+}
+
+function defaultObserveStartDateInputValue(referenceValue = "") {
+  return tradingWindowStartDateInputValue(referenceValue || currentSystemDateInputValue(), DEFAULT_OBSERVE_TRADING_DAYS);
+}
+
+function defaultObserveStartCompact(referenceValue = "") {
+  return normalizeDateParam(defaultObserveStartDateInputValue(referenceValue), currentSystemDateCompact());
+}
+
+function tradingWindowStartDateInputValue(referenceValue, tradingDays) {
+  const endDate = parseDateInputValue(referenceValue) || parseDateInputValue(currentSystemDateInputValue());
+  const targetCount = Math.max(1, Number(tradingDays) || DEFAULT_OBSERVE_TRADING_DAYS);
+  const cursor = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+  let counted = 0;
+
+  while (counted < targetCount) {
+    if (isWeekday(cursor)) counted += 1;
+    if (counted >= targetCount) break;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  return formatDateInputValue(cursor);
+}
+
+function parseDateInputValue(value) {
+  const raw = String(value || "").trim();
+  let match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) match = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  if (date.getFullYear() !== Number(match[1]) || date.getMonth() !== Number(match[2]) - 1 || date.getDate() !== Number(match[3])) {
+    return null;
+  }
+  return date;
+}
+
+function isWeekday(date) {
+  const day = date.getDay();
+  return day >= 1 && day <= 5;
+}
+
+function formatDateInputValue(date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
 function normalizeDateParam(value, fallback = "") {
@@ -3396,12 +3464,10 @@ function renderObserveBody(data) {
   const series = trend.series || [];
   const minuteBars = data.minute_bars || [];
   return [
-    renderQuoteCard(stock),
-    renderFinancialIndicators(data.financial_indicators),
+    renderObservationOverview(stock, data.financial_indicators),
     renderQuarterlyEpsPanel(stock, data.financial_indicators),
     trend.signal ? renderSignalCard(stock, signal) : renderEmpty("没有可用日线技术面"),
-    series.length ? renderCapitalBehaviorPanel(series, signal) : "",
-    data.capital_evidence ? renderCapitalEvidence(data.capital_evidence) : "",
+    data.capital_evidence ? renderCapitalEvidence(data.capital_evidence, { series, signal }) : "",
     minuteBars.length ? renderMinuteChart(minuteBars) : renderEmpty("没有可用分钟线"),
     series.length ? renderTrendChart(series) : "",
     data.notes?.length ? renderNotes(data.notes) : "",
@@ -3640,6 +3706,49 @@ function renderStockRow(item) {
   `;
 }
 
+function renderObservationOverview(stock, financial) {
+  const sourceMeta = [financial?.period, financial?.source].filter(Boolean).join(" · ");
+  const metrics = [
+    ["市盈率(TTM)", formatNumber(stock.pe)],
+    ["市净率", formatNumber(stock.pb)],
+    ["ROE", formatPercent(stock.roe), Number(stock.roe || 0) >= 0 ? "rise" : "fall"],
+    ["市值", formatMarketCapYi(stock.market_cap_billion)],
+    ["股息率", formatPercent(stock.dividend_yield)],
+    ["ST", stock.is_st ? "是" : "否"],
+  ].filter(([, value]) => value !== "-");
+
+  return `
+    <section class="observe-overview">
+      <header class="observe-overview-header">
+        <div>
+          <h3>${escapeHtml(stock.name || stock.code || "-")}</h3>
+          <p>${escapeHtml([stock.code, stock.industry].filter(Boolean).join(" · ") || "未知行业")}</p>
+          ${sourceMeta ? `<small>${escapeHtml(sourceMeta)}</small>` : ""}
+        </div>
+        <strong class="overview-price">${formatNumber(stock.price)}</strong>
+      </header>
+      <div class="overview-metric-grid">
+        ${metrics
+          .map(([label, value, tone]) => {
+            const safeTone = ["rise", "fall"].includes(tone) ? tone : "neutral";
+            return `
+              <div class="overview-metric ${safeTone}">
+                <span>${escapeHtml(label)}</span>
+                <strong>${escapeHtml(value)}</strong>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function formatMarketCapYi(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${formatNumber(number)} 亿` : "-";
+}
+
 function renderQuoteCard(stock) {
   return `
     <section class="quote-card">
@@ -3709,6 +3818,10 @@ function renderQuarterlyEpsPanel(stock, financial) {
     const label = String(item.label || "").toUpperCase();
     return item.metric_key !== "quarterly_eps" && (label.includes("每股收益") || label.includes("EPS"));
   });
+  const latestBpsItem = findFinancialIndicator(financial, (item) => {
+    const label = String(item.label || "").toUpperCase();
+    return label.includes("每股净资产") || label.includes("BPS");
+  });
   const latestPoint = points[0];
   const totalShares = estimateTotalSharesYi(stock);
   const sourceMeta = [financial?.period, financial?.source].filter(Boolean).join(" · ");
@@ -3720,7 +3833,7 @@ function renderQuarterlyEpsPanel(stock, financial) {
     <section class="eps-share-panel">
       <header>
         <div>
-          <h3>每股收益与股本</h3>
+          <h3>盈利与股本</h3>
           <p>${escapeHtml(sourceMeta || "报告期 EPS 对比今年和上一年；总股本按总市值 / 最新价估算。")}</p>
         </div>
       </header>
@@ -3734,6 +3847,11 @@ function renderQuarterlyEpsPanel(stock, financial) {
           <span>最新每股收益</span>
           <strong>${escapeHtml(latestEpsItem?.value || (latestPoint ? `${formatNumber(latestPoint.value)}元` : "-"))}</strong>
           <small>${escapeHtml(latestEpsItem?.label || latestPoint?.period || "等待财报数据")}</small>
+        </div>
+        <div>
+          <span>每股净资产</span>
+          <strong>${escapeHtml(latestBpsItem?.value || "-")}</strong>
+          <small>${escapeHtml(latestBpsItem?.label || "等待财报数据")}</small>
         </div>
       </div>
       <div class="eps-table" role="table" aria-label="季度每股收益变化">
@@ -4078,7 +4196,34 @@ function renderTrendChart(series) {
         <span>${escapeHtml(series[0]?.date || "")}</span>
         <span>${escapeHtml(series[series.length - 1]?.date || "")}</span>
       </div>
+      ${renderTrendChartExplanation(series)}
     </div>
+  `;
+}
+
+function renderTrendChartExplanation(series) {
+  const latest = (series || []).filter((point) => Number.isFinite(Number(point.close))).slice(-1)[0] || {};
+  const close = Number(latest.close);
+  const swl = Number(latest.swl);
+  const sws = Number(latest.sws);
+  const closeState =
+    Number.isFinite(close) && Number.isFinite(swl)
+      ? close >= swl
+        ? "\u6536\u76d8\u4ef7\u5728 SWL \u4e0a\u65b9\uff0c\u77ed\u7ebf\u76f8\u5bf9\u5360\u4f18\u3002"
+        : "\u6536\u76d8\u4ef7\u5728 SWL \u4e0b\u65b9\uff0c\u77ed\u7ebf\u4ecd\u7136\u504f\u5f31\u3002"
+      : "\u6536\u76d8\u4ef7\u548c SWL \u6570\u636e\u4e0d\u8db3\uff0c\u5148\u4e0d\u5224\u65ad\u77ed\u7ebf\u5f3a\u5f31\u3002";
+  const trendState =
+    Number.isFinite(swl) && Number.isFinite(sws)
+      ? swl >= sws
+        ? "SWL \u9ad8\u4e8e SWS\uff0c\u77ed\u7ebf\u4e2d\u67a2\u6ca1\u6709\u660e\u663e\u8dcc\u7834\u4e2d\u671f\u53c2\u8003\u7ebf\u3002"
+        : "SWL \u4f4e\u4e8e SWS\uff0c\u77ed\u7ebf\u5f31\u4e8e\u4e2d\u671f\u53c2\u8003\uff0c\u9700\u8981\u7b49\u5f85\u4fee\u590d\u3002"
+      : "SWL/SWS \u6570\u636e\u4e0d\u8db3\uff0c\u6682\u4e0d\u5224\u65ad\u7ebf\u95f4\u5f3a\u5f31\u3002";
+  return `
+    <section class="trend-explain" aria-label="\u8d8b\u52bf\u6307\u6807\u8bf4\u660e">
+      <strong>\u8d8b\u52bf\u56fe\u600e\u4e48\u770b</strong>
+      <p>\u767d\u7ebf\u662f\u6536\u76d8\u4ef7\uff0c\u770b\u5b9e\u9645\u4ef7\u683c\u8d70\u52bf\uff1bSWL \u662f\u77ed\u7ebf\u53c2\u8003\u7ebf\uff0c\u7528\u6765\u770b\u4ef7\u683c\u6709\u6ca1\u6709\u8d70\u5f3a\uff1bSWS \u662f\u4e2d\u671f\u53c2\u8003\u7ebf\uff0c\u7528\u6765\u770b\u8d8b\u52bf\u5e95\u90e8\u662f\u5426\u8fd8\u7a33\u3002</p>
+      <p>${escapeHtml(closeState)}${escapeHtml(trendState)}</p>
+    </section>
   `;
 }
 
@@ -4126,6 +4271,42 @@ function renderCapitalBehaviorPanel(series, signal = {}) {
       ${renderMacdChart(points)}
       ${renderDragonGrid(points)}
     </section>
+  `;
+}
+
+function collectCapitalBehaviorMetrics(series) {
+  const points = (series || []).filter((point) =>
+    ["accumulation_index", "accumulation_strength", "swing_opportunity", "rebound_signal"].some((key) =>
+      Number.isFinite(Number(point[key])),
+    ),
+  );
+  const latest = points[points.length - 1] || {};
+  const metrics = [
+    ["\u5438\u7b79\u6307\u6807", latest.accumulation_index, "index"],
+    ["\u5438\u7b79\u5f3a\u5ea6", latest.accumulation_strength, "strength"],
+    ["\u6ce2\u6bb5\u673a\u4f1a", latest.swing_opportunity, "swing"],
+    ["\u7edd\u5730\u53cd\u51fb", latest.rebound_signal, "rebound"],
+  ];
+  return { points, latest, metrics };
+}
+
+function renderCapitalMetricGrid(metrics) {
+  if (!metrics.length) return "";
+  return `
+    <div class="capital-metrics">
+      ${metrics
+        .map(([label, value, tone]) => {
+          const numeric = Number(value);
+          const signed = tone === "index" && Number.isFinite(numeric) && numeric > 0 ? "+" : "";
+          return `
+            <div class="capital-metric ${escapeHtml(tone)}">
+              <span>${escapeHtml(label)}</span>
+              <strong>${signed}${formatNumber(value)}</strong>
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
   `;
 }
 
@@ -4211,6 +4392,18 @@ function renderAccumulationChart(points) {
 
   return `
     <div class="chart-wrap accumulation-chart split">
+      <div class="capital-track-legend" aria-hidden="true">
+        ${tracks
+          .map(
+            (track) => `
+              <span>
+                <i class="${escapeHtml(track.tone)}"></i>
+                ${escapeHtml(track.label)}
+              </span>
+            `,
+          )
+          .join("")}
+      </div>
       <div class="capital-track-chart">
         ${renderedTracks}
       </div>
@@ -4338,7 +4531,6 @@ function macdStatus(latest, previous) {
 function renderAccumulationTrack(points, track, width, height) {
   const values = points.map((point) => Number(point[track.key])).filter(Number.isFinite);
   if (values.length < 2) return "";
-  const latest = values[values.length - 1];
   const minValue = Math.min(0, ...values);
   const maxValue = Math.max(0, ...values);
   const padding = Math.max((maxValue - minValue) * 0.16, 4);
@@ -4358,10 +4550,6 @@ function renderAccumulationTrack(points, track, width, height) {
     .join(" ");
   return `
     <div class="capital-track ${escapeHtml(track.tone)}">
-      <div class="capital-track-label">
-        <strong>${escapeHtml(track.label)}</strong>
-        <span>${formatNumber(latest)}</span>
-      </div>
       <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(track.label)}趋势">
         <line x1="0" y1="${baseline.toFixed(2)}" x2="${width}" y2="${baseline.toFixed(2)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="5 7" />
         <polyline points="${linePoints}" fill="none" stroke="${track.stroke}" stroke-width="1.9" ${track.dash ? `stroke-dasharray="${track.dash}"` : ""} stroke-linecap="round" stroke-linejoin="round" />
@@ -4500,12 +4688,15 @@ function renderEvidenceSummary(evidence, sections) {
   `;
 }
 
-function renderEvidenceSections(sections) {
+function renderEvidenceSections(sections, technicalContext = {}) {
   if (!sections.length) return "";
   return `
     <div class="capital-evidence-sections">
       ${sections
         .map((section) => {
+          if (section.key === "technical_behavior") {
+            return renderTechnicalEvidenceSection(section, technicalContext);
+          }
           const items = section.items || [];
           const score = Number(section.score);
           return `
@@ -4527,6 +4718,37 @@ function renderEvidenceSections(sections) {
         })
         .join("")}
     </div>
+  `;
+}
+
+function renderTechnicalEvidenceSection(section, technicalContext = {}) {
+  const items = section.items || [];
+  const score = Number(section.score);
+  const { points, latest, metrics } = collectCapitalBehaviorMetrics(technicalContext.series || []);
+  const signal = technicalContext.signal || {};
+  const evidenceNotes = items
+    .map((item) => item.note || item.title || "")
+    .filter(Boolean)
+    .slice(0, 2);
+  const patternScore = signal.pattern_score ?? latest.pattern_score ?? "-";
+  return `
+    <section class="capital-evidence-section technical-fusion ${section.available ? "available" : "missing"}">
+      <header>
+        <div>
+          <strong>${escapeHtml(section.title || "\u6280\u672f\u63a8\u65ad")}</strong>
+          ${section.summary ? `<span>${escapeHtml(section.summary)}</span>` : ""}
+        </div>
+        <em>${Number.isFinite(score) ? formatNumber(score) : capitalSectionStatus(section)}</em>
+      </header>
+      <div class="technical-fusion-meta">
+        <span>${escapeHtml(latest.date || signal.date || "")}</span>
+        <span>\u5f62\u6001 ${escapeHtml(String(patternScore))}</span>
+      </div>
+      ${metrics.length ? renderCapitalMetricGrid(metrics) : renderEmpty("\u6280\u672f\u6307\u6807\u4e0d\u8db3")}
+      ${metrics.length ? renderCapitalBehaviorGuide(metrics) : ""}
+      ${points.length >= 2 ? renderDragonGrid(points) : ""}
+      ${evidenceNotes.length ? `<div class="technical-fusion-notes">${evidenceNotes.map((note) => `<p>${escapeHtml(sanitizeRuntimeMessage(note, 220))}</p>`).join("")}</div>` : ""}
+    </section>
   `;
 }
 
@@ -4631,7 +4853,7 @@ function capitalSectionStatus(section) {
   return section.available ? "有证据" : "缺证据";
 }
 
-function renderCapitalEvidence(evidence) {
+function renderCapitalEvidence(evidence, technicalContext = {}) {
   const sections = normalizeCapitalEvidenceSections(evidence);
   const items = evidence?.items || [];
   const notes = evidence?.notes || [];
@@ -4658,7 +4880,7 @@ function renderCapitalEvidence(evidence) {
       ${renderEvidenceSummary(evidence, sections)}
       ${
         sections.length
-          ? renderEvidenceSections(sections)
+          ? renderEvidenceSections(sections, technicalContext)
           : items.length
           ? `<div class="capital-evidence-list">${items.map(renderCapitalEvidenceItem).join("")}</div>`
           : ""

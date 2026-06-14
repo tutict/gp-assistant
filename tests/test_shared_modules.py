@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from app.schemas import CapitalEvidenceResult, LlmClientConfig
 from app.services.llm_support import create_openai_client, parse_json_response, resolve_llm_config, safe_llm_error
-from app.services.runtime_config import coalesce_bool, coalesce_float, coalesce_str, env_bool, env_float, env_int
+from app.services.runtime_config import coalesce_bool, coalesce_float, coalesce_str, env_bool, env_float, env_int, redact_error
 from app.services.sqlite_json_cache import SQLiteJsonCache
 from app.services.stock_code import compact_date, market_prefix, normalize_stock_code, stock_digits
 
@@ -28,6 +28,12 @@ class SharedModuleTests(unittest.TestCase):
         self.assertEqual(coalesce_str(None, "", "ok"), "ok")
         self.assertEqual(coalesce_float(None, "2.5", 1.0), 2.5)
         self.assertTrue(coalesce_bool(None, "on", False))
+
+    def test_runtime_config_redacts_remote_disconnected_errors(self):
+        redacted = redact_error("('Connection aborted.', RemoteDisconnected('Remote end closed connection'))")
+        self.assertNotIn("RemoteDisconnected", redacted)
+        self.assertNotIn("Connection aborted", redacted)
+        self.assertTrue(redacted)
 
     def test_llm_support_parses_json_and_redacts_errors(self):
         self.assertEqual(parse_json_response("prefix {\"ok\": true} suffix"), {"ok": True})

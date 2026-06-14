@@ -123,7 +123,13 @@ def redact_error(error: Exception | object, *, max_chars: int = 180, secrets: li
         return "外部接口请求超时，已跳过本次请求。"
     if "httpconnectionpool" in lowered or "httpsconnectionpool" in lowered:
         return "外部接口网络连接失败，已跳过本次请求。"
-    if "remote disconnected" in lowered or "max retries exceeded" in lowered:
+    if (
+        "remote disconnected" in lowered
+        or "remotedisconnected" in lowered
+        or "connection aborted" in lowered
+        or "remote end closed connection" in lowered
+        or "max retries exceeded" in lowered
+    ):
         return "外部接口连接被远端关闭，已跳过本次请求。"
     text = re.sub(r"https?://\S+", "[url]", text)
     text = re.sub(r"\b/(api|qt|v\d)[^\s\"')]+", "/[path]", text)

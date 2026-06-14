@@ -8,6 +8,9 @@ from app.services.capital_evidence import fetch_capital_evidence
 from app.services.trend_indicator import analyze_trend
 
 
+DEFAULT_OBSERVE_TRADING_DAYS = 10
+
+
 def observe_stock(provider: StockProvider, request: StockObserveRequest) -> StockObservation:
     start_value, end_value = _default_dates(request.start_date, request.end_date)
     minute_start_value, minute_end_value = _default_minute_range(
@@ -46,6 +49,7 @@ def observe_stock(provider: StockProvider, request: StockObserveRequest) -> Stoc
             end_value,
             trend=trend,
             llm=request.llm,
+            proxy_mode=getattr(provider, "proxy_mode", None),
         )
     except Exception as exc:
         capital_evidence = None
@@ -94,10 +98,33 @@ def _provider_display_name(source: str) -> str:
 
 
 def _default_dates(start_date: str | None, end_date: str | None) -> tuple[str, str]:
-    today = date.today()
-    end_value = end_date or today.strftime("%Y%m%d")
-    start_value = start_date or (today - timedelta(days=420)).strftime("%Y%m%d")
+    end_base = _parse_compact_date(end_date) or date.today()
+    end_value = end_date or end_base.strftime("%Y%m%d")
+    start_value = start_date or _trading_window_start(end_base, DEFAULT_OBSERVE_TRADING_DAYS).strftime("%Y%m%d")
     return start_value, end_value
+
+
+def _trading_window_start(end_date: date, trading_days: int) -> date:
+    target_count = max(1, trading_days)
+    cursor = end_date
+    counted = 0
+    while counted < target_count:
+        if cursor.weekday() < 5:
+            counted += 1
+        if counted >= target_count:
+            return cursor
+        cursor -= timedelta(days=1)
+    return cursor
+
+
+def _parse_compact_date(value: str | None) -> date | None:
+    raw = str(value or "").replace("-", "").strip()
+    if len(raw) != 8 or not raw.isdigit():
+        return None
+    try:
+        return datetime.strptime(raw, "%Y%m%d").date()
+    except ValueError:
+        return None
 
 
 def _default_minute_range(
