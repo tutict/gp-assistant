@@ -437,6 +437,12 @@ function bindActions() {
   watchlistUi.clear?.addEventListener("click", clearWatchlist);
   document.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+    const external = target?.closest("[data-external-url]");
+    if (external) {
+      event.preventDefault();
+      openExternalUrl(external.dataset.externalUrl || external.getAttribute("href") || "");
+      return;
+    }
     const watch = target?.closest("[data-watchlist-code]");
     if (watch) {
       event.preventDefault();
@@ -2399,6 +2405,30 @@ function isDesktopBackendOrigin() {
   );
 }
 
+async function openExternalUrl(rawUrl) {
+  const url = normalizeExternalUrl(rawUrl);
+  if (!url) return;
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (invoke) {
+    try {
+      await invoke("open_external_url", { url });
+      return;
+    } catch (error) {
+      console.warn("open_external_url failed, falling back to window.open", error);
+    }
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function normalizeExternalUrl(rawUrl) {
+  try {
+    const url = new URL(String(rawUrl || "").trim(), window.location.href);
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : "";
+  } catch (_error) {
+    return "";
+  }
+}
+
 function parseUpstreamManualUrls() {
   return String($("#upstreamManualUrls")?.value || "")
     .split(/\r?\n/)
@@ -3292,6 +3322,7 @@ function renderUpstreamEvidenceChunks(chunks) {
                   ${escapeHtml(item.source_name || "-")} · ${escapeHtml(item.published_at || "-")}
                 </span>
                 <p>${escapeHtml(item.evidence_text || "")}</p>
+                ${renderExternalSourceLink(item.source_url)}
               </article>
             `,
           )
@@ -3361,6 +3392,7 @@ function renderEvidenceList(items) {
               </span>
               ${item.summary ? `<p>${escapeHtml(item.summary)}</p>` : ""}
               <em>${escapeHtml((item.stock_codes || []).join(" · "))}</em>
+              ${renderExternalSourceLink(item.url)}
             </article>
           `,
         )
@@ -3371,6 +3403,12 @@ function renderEvidenceList(items) {
 
 function renderChecklist(items) {
   return `<div class="checklist">${items.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>`;
+}
+
+function renderExternalSourceLink(url) {
+  const normalized = normalizeExternalUrl(url);
+  if (!normalized) return "";
+  return `<a class="evidence-link" href="${escapeHtml(normalized)}" data-external-url="${escapeHtml(normalized)}" target="_blank" rel="noreferrer">查看来源</a>`;
 }
 
 function impactClass(direction) {
@@ -4181,19 +4219,50 @@ function renderTrendChart(series) {
       return "";
     })
     .join("");
+  const latestPoint = (key) => {
+    for (let index = series.length - 1; index >= 0; index -= 1) {
+      const value = Number(series[index]?.[key]);
+      if (Number.isFinite(value)) {
+        return {
+          x: xFor(index),
+          y: yFor(value),
+          value,
+        };
+      }
+    }
+    return null;
+  };
+  const latestClose = latestPoint("close");
+  const closeLabel = latestClose
+    ? (() => {
+        const labelWidth = 112;
+        const labelHeight = 24;
+        const labelX = Math.min(Math.max(latestClose.x + 8, 4), width - labelWidth - 4);
+        const labelY = Math.min(Math.max(latestClose.y - labelHeight - 8, 4), height - labelHeight - 4);
+        return `
+          <circle class="trend-close-point" cx="${latestClose.x.toFixed(2)}" cy="${latestClose.y.toFixed(2)}" r="4.2" />
+          <line class="trend-close-label-line" x1="${latestClose.x.toFixed(2)}" y1="${latestClose.y.toFixed(2)}" x2="${labelX.toFixed(2)}" y2="${(labelY + labelHeight / 2).toFixed(2)}" />
+          <g class="trend-close-label">
+            <rect x="${labelX.toFixed(2)}" y="${labelY.toFixed(2)}" width="${labelWidth}" height="${labelHeight}" rx="6" />
+            <text x="${(labelX + 8).toFixed(2)}" y="${(labelY + 16).toFixed(2)}">收盘价 ${escapeHtml(formatNumber(latestClose.value))}</text>
+          </g>
+        `;
+      })()
+    : "";
 
   return `
     <div class="chart-wrap trend-chart">
       <div class="chart-legend">
-        <span>收盘价</span>
-        <span style="color: var(--accent-strong)">SWL</span>
-        <span style="color: var(--muted)">SWS</span>
+        <span class="trend-legend-close">收盘价</span>
+        <span class="trend-legend-swl">SWL</span>
+        <span class="trend-legend-sws">SWS</span>
       </div>
       <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="趋势指标曲线">
-        <polyline points="${linePoints("close")}" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" />
-        <polyline points="${linePoints("swl")}" fill="none" stroke="var(--accent-strong)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-        <polyline points="${linePoints("sws")}" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="6 7" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline class="trend-close-line" points="${linePoints("close")}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline class="trend-swl-line" points="${linePoints("swl")}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline class="trend-sws-line" points="${linePoints("sws")}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
         ${markers}
+        ${closeLabel}
       </svg>
       <div class="chart-labels">
         <span>${escapeHtml(series[0]?.date || "")}</span>
@@ -4786,7 +4855,7 @@ function renderEvidenceItem(item) {
       </div>
       ${renderMetricPills(item.metrics) || renderEmpty("没有可展示指标")}
       ${item.note ? `<p>${escapeHtml(sanitizeRuntimeMessage(item.note, 220))}</p>` : ""}
-      ${item.url ? `<a class="evidence-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">查看来源</a>` : ""}
+      ${renderExternalSourceLink(item.url)}
     </article>
   `;
 }

@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::Manager;
+use tauri::{AppHandle, Manager};
 
 #[cfg(not(mobile))]
 use std::{
@@ -22,7 +22,8 @@ use std::{
 #[cfg(not(mobile))]
 use tauri::{webview::PageLoadEvent, WebviewUrl, WebviewWindowBuilder};
 #[cfg(not(mobile))]
-use tauri_plugin_shell::{process::CommandChild, ShellExt};
+use tauri_plugin_shell::process::CommandChild;
+use tauri_plugin_shell::ShellExt;
 
 #[cfg(not(mobile))]
 const APP_HOST: &str = "127.0.0.1";
@@ -456,6 +457,19 @@ fn core_upstream_rag_rollback(app: tauri::AppHandle, payload: Value) -> Result<V
         "manifest": manifest,
         "notes": ["已切换到上一个 RAG 包。"]
     }))
+}
+
+#[tauri::command]
+#[allow(deprecated)]
+fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    let parsed = reqwest::Url::parse(trimmed).map_err(|_| "来源链接格式不正确".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("只允许打开 http/https 来源链接".to_string());
+    }
+    app.shell()
+        .open(parsed.as_str().to_string(), None)
+        .map_err(|error| error.to_string())
 }
 
 struct TencentRefreshResult {
@@ -1130,12 +1144,13 @@ pub fn run() {
         core_upstream_rag_import,
         core_upstream_rag_list,
         core_upstream_rag_detail,
-        core_upstream_rag_rollback
-    ]);
+        core_upstream_rag_rollback,
+        open_external_url
+    ])
+    .plugin(tauri_plugin_shell::init());
 
     #[cfg(not(mobile))]
     let builder = builder
-        .plugin(tauri_plugin_shell::init())
         .manage(BackendState(Mutex::new(None)))
         .setup(|app| setup_desktop(app).map_err(Into::into))
         .on_window_event(|window, event| {

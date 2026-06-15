@@ -1519,6 +1519,60 @@ input[type="date"] {
   color: var(--text);
 }
 
+.trend-chart .trend-legend-close {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.trend-chart .trend-legend-swl {
+  color: var(--accent-strong);
+}
+
+.trend-chart .trend-legend-sws {
+  color: var(--muted);
+}
+
+.trend-close-line {
+  stroke: var(--text);
+  stroke-width: 2.8;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--surface) 65%, transparent));
+}
+
+.trend-swl-line {
+  stroke: var(--accent-strong);
+  stroke-width: 1.7;
+}
+
+.trend-sws-line {
+  stroke: var(--muted);
+  stroke-width: 1.25;
+  stroke-dasharray: 6 7;
+  opacity: 0.82;
+}
+
+.trend-close-point {
+  fill: var(--danger);
+  stroke: var(--text);
+  stroke-width: 1.2;
+}
+
+.trend-close-label-line {
+  stroke: color-mix(in srgb, var(--text) 70%, transparent);
+  stroke-width: 1;
+}
+
+.trend-close-label rect {
+  fill: color-mix(in srgb, var(--surface) 82%, var(--text) 18%);
+  stroke: color-mix(in srgb, var(--text) 55%, transparent);
+  stroke-width: 1;
+}
+
+.trend-close-label text {
+  fill: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .trend-explain {
   display: grid;
   gap: 5px;
