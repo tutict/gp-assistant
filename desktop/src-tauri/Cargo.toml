@@ -1,6 +1,6 @@
 [package]
 name = "gp-assistant-desktop"
-version = "0.2.0"
+version = "0.3.0"
 description = "Desktop shell for A股选股智能体"
 authors = ["A股选股智能体"]
 edition = "2021"

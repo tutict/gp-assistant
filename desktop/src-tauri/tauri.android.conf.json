@@ -22,7 +22,7 @@
     "icon": ["icons/icon.png"],
     "android": {
       "minSdkVersion": 24,
-      "versionCode": 2
+      "versionCode": 3
     }
   }
 }

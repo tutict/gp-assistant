@@ -20,15 +20,15 @@
 
 ## 当前稳定版
 
-当前稳定版为 `v0.2.0`，发布页见 <https://github.com/tutict/gp-assistant/releases/tag/v0.2.0>。
+当前稳定版为 `v0.3.0`，发布页见 <https://github.com/tutict/gp-assistant/releases/tag/v0.3.0>。
 
 发布页提供：
 
-- Windows 安装包：`GP-Assistant_0.2.0_windows-x64-setup.exe`
-- Android 可安装测试包：`GP-Assistant_0.2.0_android-aarch64-debug.apk`
-- Android 未签名 release 包：`GP-Assistant_0.2.0_android-aarch64-release-unsigned.apk`
-- Linux 安装包：`GP-Assistant_0.2.0_linux-amd64.deb`
-- Linux 便携包：`GP-Assistant_0.2.0_linux-amd64.AppImage`
+- Windows 安装包：`GP-Assistant_0.3.0_windows-x64-setup.exe`
+- Android 可安装测试包：`GP-Assistant_0.3.0_android-aarch64-debug.apk`
+- Android 未签名 release 包：`GP-Assistant_0.3.0_android-aarch64-release-unsigned.apk`
+- Linux 安装包：`GP-Assistant_0.3.0_linux-amd64.deb`
+- Linux 便携包：`GP-Assistant_0.3.0_linux-amd64.AppImage`
 - `SHA256SUMS.txt`：发布产物 SHA-256 校验值
 
 Android 的 `release-unsigned.apk` 需要接入正式 keystore 后再签名分发；普通手机安装验证优先使用 debug APK。
