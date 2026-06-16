@@ -227,7 +227,7 @@ def _fetch_external_capital_items(
 
     fetchers = (
         ("fund_flow", _fetch_ths_individual_fund_flow, env_float("GP_CAPITAL_FUND_FLOW_TIMEOUT", 20.0, minimum=2.0, maximum=45.0)),
-        ("institution_lhb", _fetch_institution_lhb, env_float("GP_CAPITAL_LHB_TIMEOUT", 15.0, minimum=2.0, maximum=45.0)),
+        ("institution_lhb", _fetch_institution_lhb, env_float("GP_CAPITAL_LHB_TIMEOUT", 30.0, minimum=2.0, maximum=60.0)),
     )
     for category, fetcher, timeout_seconds in fetchers:
         try:
@@ -575,6 +575,7 @@ def _institution_lhb_item_from_row(
                 "\u673a\u6784\u5e2d\u4f4d\u4e70\u5165\u989d",
                 "\u673a\u6784\u4e70\u5165\u989d",
                 "\u7d2f\u79ef\u4e70\u5165\u989d",
+                "\u7d2f\u8ba1\u4e70\u5165\u989d",
                 "\u4e70\u5165\u989d",
             ),
         ),
@@ -585,10 +586,11 @@ def _institution_lhb_item_from_row(
                 "\u673a\u6784\u5e2d\u4f4d\u5356\u51fa\u989d",
                 "\u673a\u6784\u5356\u51fa\u989d",
                 "\u7d2f\u79ef\u5356\u51fa\u989d",
+                "\u7d2f\u8ba1\u5356\u51fa\u989d",
                 "\u5356\u51fa\u989d",
             ),
         ),
-        (INSTITUTION_NET_LABEL, ("\u673a\u6784\u51c0\u4e70\u989d", "\u51c0\u4e70\u989d", "\u51c0\u989d")),
+        (INSTITUTION_NET_LABEL, ("\u673a\u6784\u51c0\u4e70\u989d", "\u673a\u6784\u4e70\u5165\u51c0\u989d", "\u51c0\u4e70\u989d", "\u51c0\u989d")),
         (LHB_REASON_LABEL, ("\u4e0a\u699c\u539f\u56e0", "\u89e3\u8bfb", "\u7c7b\u578b")),
     )
     metrics, raw = _pick_metrics(row, specs)
@@ -640,9 +642,9 @@ def _fetch_sina_institution_lhb(
     if row is None:
         return None
     specs = (
-        (INSTITUTION_BUY_LABEL, ("\u673a\u6784\u5e2d\u4f4d\u4e70\u5165\u989d", "\u7d2f\u79ef\u4e70\u5165\u989d", INSTITUTION_BUY_LABEL)),
-        (INSTITUTION_SELL_LABEL, ("\u673a\u6784\u5e2d\u4f4d\u5356\u51fa\u989d", "\u7d2f\u79ef\u5356\u51fa\u989d", INSTITUTION_SELL_LABEL)),
-        (INSTITUTION_NET_LABEL, (INSTITUTION_NET_LABEL, "\u51c0\u989d")),
+        (INSTITUTION_BUY_LABEL, ("\u673a\u6784\u5e2d\u4f4d\u4e70\u5165\u989d", "\u7d2f\u79ef\u4e70\u5165\u989d", "\u7d2f\u8ba1\u4e70\u5165\u989d", INSTITUTION_BUY_LABEL)),
+        (INSTITUTION_SELL_LABEL, ("\u673a\u6784\u5e2d\u4f4d\u5356\u51fa\u989d", "\u7d2f\u79ef\u5356\u51fa\u989d", "\u7d2f\u8ba1\u5356\u51fa\u989d", INSTITUTION_SELL_LABEL)),
+        (INSTITUTION_NET_LABEL, (INSTITUTION_NET_LABEL, "\u673a\u6784\u4e70\u5165\u51c0\u989d", "\u51c0\u989d")),
         (LHB_REASON_LABEL, ("\u7c7b\u578b", "\u89e3\u8bfb", LHB_REASON_LABEL)),
     )
     metrics, raw = _pick_metrics(row, specs)

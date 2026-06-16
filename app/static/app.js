@@ -1193,7 +1193,7 @@ async function runObserve(codeOverride) {
     code,
     minute_period: $("#observeMinutePeriod").value || "1",
     series_limit: 160,
-    minute_limit: 180,
+    minute_limit: 500,
     include_order_book: false,
     include_chip_distribution: true,
   };

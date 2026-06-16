@@ -20,7 +20,7 @@ from app.schemas import (
 )
 from app.services import capital_evidence, news_rag
 from app.services.agent import run_agent
-from app.services.observation import _default_dates, observe_stock
+from app.services.observation import _default_dates, _default_minute_range, observe_stock
 
 
 DISABLE_NETWORK_NEWS = {
@@ -34,6 +34,36 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
     def test_observation_default_dates_cover_ten_trading_days(self):
         self.assertEqual(_default_dates(None, "20260614"), ("20260601", "20260614"))
         self.assertEqual(_default_dates(None, "20260615"), ("20260602", "20260615"))
+
+    def test_observation_default_minutes_cover_selected_trading_day(self):
+        self.assertEqual(
+            _default_minute_range(None, None, "20260616"),
+            ("2026-06-16 09:30:00", "2026-06-16 15:00:00"),
+        )
+
+    def test_observation_default_minute_limit_keeps_full_intraday_series(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {
+                "GP_CAPITAL_ENABLE_EXTERNAL": "false",
+                **DISABLE_NETWORK_NEWS,
+            },
+        ):
+            capital_evidence.CACHE_PATH = Path(tmp) / "capital.sqlite"
+            news_rag.CACHE_PATH = Path(tmp) / "news.sqlite"
+            result = observe_stock(
+                MockProvider(),
+                StockObserveRequest(
+                    code="300750.SZ",
+                    end_date="20260616",
+                    series_limit=20,
+                    include_order_book=False,
+                ),
+            )
+
+        self.assertGreaterEqual(len(result.minute_bars), 240)
+        self.assertLessEqual(result.minute_bars[0].datetime[-8:], "09:35:00")
+        self.assertIn("15:00", result.minute_bars[-1].datetime)
 
     def test_observation_passes_proxy_mode_to_capital_evidence(self):
         provider = MockProvider()
@@ -236,6 +266,25 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         self.assertTrue(any(item.category == "fund_flow" for item in result.items))
         self.assertTrue(any(item.category == "institution_lhb" for item in result.items))
 
+    def test_capital_evidence_uses_extended_lhb_timeout_budget(self):
+        provider = MockProvider()
+        stock = provider.get_stock("300750.SZ")
+        seen: list[tuple[str, float | None]] = []
+        fake_ak = SimpleNamespace()
+
+        def fake_call(fetcher, ak, stock_arg, start_date, end_date, *, proxy_mode=None, timeout_seconds=None):
+            seen.append((fetcher.__name__, timeout_seconds))
+            return None
+
+        with patch.dict(os.environ, {"GP_CAPITAL_ENABLE_EXTERNAL": "true"}), patch.dict(
+            "sys.modules", {"akshare": fake_ak}
+        ), patch("app.services.capital_evidence._call_fetcher_with_timeout", side_effect=fake_call):
+            os.environ.pop("GP_CAPITAL_LHB_TIMEOUT", None)
+            capital_evidence._fetch_external_capital_items(stock, "20260603", "20260616")
+
+        lhb_budget = next(timeout for name, timeout in seen if name == "_fetch_institution_lhb")
+        self.assertGreaterEqual(lhb_budget, 30.0)
+
     def test_capital_evidence_falls_back_to_sina_lhb_when_eastmoney_misses(self):
         provider = MockProvider()
         stock = provider.get_stock("300750.SZ")
@@ -261,6 +310,33 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         self.assertIsNotNone(item)
         self.assertEqual(item.source, "AkShare/\u65b0\u6d6a\u9f99\u864e\u699c\u673a\u6784\u5e2d\u4f4d")
         self.assertEqual(item.metrics["\u673a\u6784\u51c0\u4e70\u989d"], "1.50 \u4ebf")
+        self.assertGreater(item.score, 50)
+
+    def test_capital_evidence_parses_sina_tracking_cumulative_columns(self):
+        provider = MockProvider()
+        stock = provider.get_stock("300750.SZ")
+
+        fake_ak = SimpleNamespace(
+            stock_lhb_jgmmtj_em=lambda start_date, end_date: pd.DataFrame(),
+            stock_lhb_jgmx_sina=lambda: pd.DataFrame(),
+            stock_lhb_jgzz_sina=lambda symbol: pd.DataFrame(
+                [
+                    {
+                        "股票代码": "300750",
+                        "股票名称": "宁德时代",
+                        "累计买入额": 230000000,
+                        "累计卖出额": 80000000,
+                    }
+                ]
+            ),
+        )
+
+        item = capital_evidence._fetch_institution_lhb(fake_ak, stock, "20260601", "20260612")
+
+        self.assertIsNotNone(item)
+        self.assertEqual(item.category, "institution_lhb")
+        self.assertEqual(item.source, "AkShare/新浪龙虎榜机构席位追踪")
+        self.assertEqual(item.metrics["机构净买额"], "1.50 亿")
         self.assertGreater(item.score, 50)
 
     def test_capital_evidence_reports_institution_no_listing_state(self):

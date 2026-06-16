@@ -163,7 +163,7 @@ class StockObserveRequest(BaseModel):
     minute_period: str = Field(default="1")
     minute_start: Optional[str] = None
     minute_end: Optional[str] = None
-    minute_limit: int = Field(default=160, ge=1, le=500)
+    minute_limit: int = Field(default=500, ge=1, le=500)
     include_order_book: bool = True
     include_chip_distribution: bool = True
     llm: Optional[LlmClientConfig] = None

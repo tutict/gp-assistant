@@ -142,7 +142,7 @@ def _default_minute_range(
     end_dt = _parse_date_or_datetime(minute_end or end_date) or datetime.now()
     if end_dt.hour == 0 and end_dt.minute == 0:
         end_dt = end_dt.replace(hour=15, minute=0, second=0)
-    start_dt = _parse_date_or_datetime(minute_start) or (end_dt - timedelta(days=5)).replace(
+    start_dt = _parse_date_or_datetime(minute_start) or end_dt.replace(
         hour=9,
         minute=30,
         second=0,

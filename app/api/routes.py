@@ -92,7 +92,7 @@ def _default_minute_range(
     end_dt = _parse_date_or_datetime(minute_end or end_date) or datetime.now()
     if end_dt.hour == 0 and end_dt.minute == 0:
         end_dt = end_dt.replace(hour=15, minute=0, second=0)
-    start_dt = _parse_date_or_datetime(minute_start) or (end_dt - timedelta(days=5)).replace(hour=9, minute=30, second=0)
+    start_dt = _parse_date_or_datetime(minute_start) or end_dt.replace(hour=9, minute=30, second=0)
     return start_dt.strftime("%Y-%m-%d %H:%M:%S"), end_dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -204,7 +204,7 @@ def observe_stock(
     minute_period: str = "1",
     minute_start: Optional[str] = None,
     minute_end: Optional[str] = None,
-    minute_limit: int = 160,
+    minute_limit: int = 500,
     include_order_book: bool = True,
     include_chip_distribution: bool = True,
     provider=Depends(_provider_from_headers),
@@ -246,7 +246,7 @@ def stock_minutes(
     start: Optional[str] = None,
     end: Optional[str] = None,
     period: str = "1",
-    limit: int = 240,
+    limit: int = 500,
     provider=Depends(_provider_from_headers),
 ):
     try:
