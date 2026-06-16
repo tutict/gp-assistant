@@ -38,8 +38,44 @@ const LLM_SETTINGS_KEY = "gp-assistant-llm-settings";
 const WATCHLIST_KEY = "gp-assistant-watchlist";
 const DEFAULT_RESULT_LIMIT = 10;
 const DEFAULT_SECTOR_GROUP_LIMIT = 12;
-const DEFAULT_PER_SECTOR_LIMIT = 3;
+const DEFAULT_PER_SECTOR_LIMIT = 5;
 const SECTOR_SCREEN_POOL_MULTIPLIER = 8;
+const SCREENING_RULES_URL = new URL("screening_rules.json", document.currentScript?.src || window.location.href).toString();
+const DEFAULT_SCREENING_RULES = {
+  version: 1,
+  score_scale: 20,
+  group_limit: 10,
+  potential_score_threshold: 10,
+  factor_weights: { theme: 0.24, fundamental: 0.24, valuation: 0.24, size: 0.14, risk: 0.14 },
+  theme_promotion_order: ["materials", "ai_chain", "tech", "energy", "game"],
+  theme_fill_order: ["ai_chain", "materials", "tech", "energy", "game"],
+  theme_categories: [
+    { key: "materials", label: "新材料", score: 0.96, keywords: ["氟化工", "氟材料", "锂电材料", "电解液", "六氟磷酸锂", "新能材", "新材料", "固态电池", "磁材"] },
+    { key: "ai_chain", label: "AI算力与芯片", score: 0.95, keywords: ["半导体", "芯片", "算力", "人工智能", "ai", "光模块", "cpo", "服务器", "液冷", "gpu", "hbm", "存储", "数据中心", "云计算", "大模型", "aigc", "边缘计算", "pcb", "封装", "封测", "eda", "soc"] },
+    { key: "tech", label: "科技制造", score: 0.84, keywords: ["机器人", "软件", "通信", "科技", "电子", "自动化", "高端制造", "智能制造"] },
+    { key: "energy", label: "新能源", score: 0.82, keywords: ["新能源", "电池", "储能", "光伏", "电力", "能源", "油气", "煤炭", "风电", "充电桩"] },
+    { key: "game", label: "游戏传媒", score: 0.78, keywords: ["游戏", "网络游戏", "手游", "电竞", "云游戏", "互动娱乐", "文化传媒", "传媒"] },
+  ],
+  concept_groups: [
+    { label: "AI算力与芯片", keywords: ["半导体", "芯片", "算力", "人工智能", "ai", "光模块", "cpo", "服务器", "液冷", "gpu", "hbm", "存储", "数据中心", "云计算", "大模型", "aigc", "边缘计算", "pcb", "封装", "封测", "eda", "soc"] },
+    { label: "新材料", keywords: ["氟化工", "氟材料", "锂电材料", "电解液", "六氟磷酸锂", "新能材", "新材料", "固态电池", "磁材"] },
+    { label: "新能源与储能", keywords: ["新能源", "电池", "储能", "光伏", "电力", "能源", "风电", "充电桩"] },
+    { label: "游戏传媒", keywords: ["游戏", "网络游戏", "手游", "电竞", "云游戏", "互动娱乐", "传媒", "广告营销"] },
+    { label: "机器人与高端制造", keywords: ["机器人", "工业母机", "自动化", "高端制造", "智能制造", "机械设备"] },
+    { label: "消费零售", keywords: ["食品", "饮料", "白酒", "休闲食品", "一般零售", "商贸零售", "家电", "旅游", "酒店", "餐饮"] },
+    { label: "医药医疗", keywords: ["医药", "医疗", "生物制品", "创新药", "中药", "化学制药", "医疗器械", "cro"] },
+    { label: "金融地产", keywords: ["银行", "证券", "保险", "房地产", "地产", "物业"] },
+    { label: "基建建筑", keywords: ["建筑", "房屋建设", "工程建设", "基础建设", "水泥", "铁路", "公路", "装修装饰"] },
+    { label: "周期资源", keywords: ["煤炭", "钢铁", "普钢", "有色", "金属", "化工", "石油", "油气", "矿业"] },
+    { label: "汽车产业链", keywords: ["汽车", "整车", "零部件", "轮胎", "智能驾驶", "无人驾驶", "汽车服务"] },
+    { label: "军工航天", keywords: ["军工", "航天", "航空", "卫星", "船舶", "无人机", "国防"] },
+    { label: "交运物流", keywords: ["物流", "航运", "港口", "机场", "航空运输", "铁路运输", "快递"] },
+    { label: "公用环保", keywords: ["环保", "水务", "燃气", "供热", "公用事业"] },
+  ],
+  cold_keywords: ["银行", "基建", "建筑", "建筑装饰", "工程建设", "基础建设", "水泥", "铁路", "公路"],
+};
+let screeningRules = normalizeScreeningRules(DEFAULT_SCREENING_RULES);
+const screeningRulesPromise = loadScreeningRules();
 const STOCK_SEARCH_LIMIT = 3;
 const DEFAULT_OBSERVE_TRADING_DAYS = 10;
 const DEFAULT_DATA_SOURCE = "tdx";
@@ -382,6 +418,66 @@ function uniqueCompactStrings(values) {
   return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
+async function loadScreeningRules() {
+  try {
+    const response = await fetch(SCREENING_RULES_URL, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    screeningRules = normalizeScreeningRules(await response.json());
+  } catch {
+    screeningRules = normalizeScreeningRules(DEFAULT_SCREENING_RULES);
+  }
+  return screeningRules;
+}
+
+function normalizeScreeningRules(payload = {}) {
+  const conceptGroups = (payload.concept_groups || [])
+    .map((group) => ({
+      label: String(group?.label || group?.key || "").trim(),
+      keywords: (group?.keywords || [])
+        .map((keyword) => String(keyword || "").trim().toLowerCase())
+        .filter(Boolean),
+    }))
+    .filter((group) => group.label && group.keywords.length);
+  const themeCategories = (payload.theme_categories || [])
+    .map((group) => ({
+      key: String(group?.key || "").trim(),
+      label: String(group?.label || group?.key || "").trim(),
+      score: Number(group?.score || 0),
+      keywords: (group?.keywords || [])
+        .map((keyword) => String(keyword || "").trim().toLowerCase())
+        .filter(Boolean),
+    }))
+    .filter((group) => group.key && group.label && group.keywords.length);
+  return {
+    version: Number(payload.version || 0),
+    score_scale: Number(payload.score_scale || 20),
+    group_limit: clampInt(payload.group_limit, 1, 50, 10),
+    potential_score_threshold: Number.isFinite(Number(payload.potential_score_threshold))
+      ? Number(payload.potential_score_threshold)
+      : 10,
+    factor_weights: {
+      theme: Number(payload.factor_weights?.theme || 0.24),
+      fundamental: Number(payload.factor_weights?.fundamental || 0.24),
+      valuation: Number(payload.factor_weights?.valuation || 0.24),
+      size: Number(payload.factor_weights?.size || 0.14),
+      risk: Number(payload.factor_weights?.risk || 0.14),
+    },
+    theme_promotion_order: (payload.theme_promotion_order || []).map((value) => String(value || "").trim()).filter(Boolean),
+    theme_fill_order: (payload.theme_fill_order || []).map((value) => String(value || "").trim()).filter(Boolean),
+    theme_categories: themeCategories,
+    concept_groups: conceptGroups,
+    cold_keywords: (payload.cold_keywords || []).map((value) => String(value || "").trim().toLowerCase()).filter(Boolean),
+  };
+}
+
+function getScreeningRules() {
+  return screeningRulesPromise || Promise.resolve(screeningRules);
+}
+
+function screeningConceptGroups(rules = screeningRules) {
+  return rules?.concept_groups || [];
+}
+
 initTheme();
 initRuntimeSurface();
 initMobileNav();
@@ -661,7 +757,7 @@ async function runScreen() {
 }
 
 async function runSectorScreen() {
-  setLoading(panels.screen, "按板块筛选中");
+  setLoading(panels.screen, "按概念筛选中");
   const maxSectors = clampInt($("#maxSectors")?.value, 1, 50, DEFAULT_SECTOR_GROUP_LIMIT);
   const perSectorLimit = clampInt($("#perSectorLimit")?.value, 1, 50, DEFAULT_PER_SECTOR_LIMIT);
   const payload = {
@@ -1099,6 +1195,7 @@ async function runObserve(codeOverride) {
     series_limit: 160,
     minute_limit: 180,
     include_order_book: false,
+    include_chip_distribution: true,
   };
   const observeEndInput = $("#observeEnd")?.value || currentSystemDateInputValue();
   payload.start_date = readDateParam("observeStart", defaultObserveStartCompact(observeEndInput));
@@ -2502,8 +2599,25 @@ function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function conceptGroupForStock(stock = {}, rules = screeningRules) {
+  const text = `${stock.name || ""} ${stock.industry || ""}`.trim().toLowerCase();
+  for (const group of screeningConceptGroups(rules)) {
+    if ((group.keywords || []).some((keyword) => text.includes(String(keyword).toLowerCase()))) {
+      return group.label;
+    }
+  }
+  return "其他概念";
+}
+
+function conceptRank(concept, rules = screeningRules) {
+  const groups = screeningConceptGroups(rules);
+  const index = groups.findIndex((group) => group.label === concept);
+  return index >= 0 ? index : groups.length;
+}
+
 async function buildTauriSectorScreen(invoke, payload = {}) {
   const data = await loadMobileMarketData(invoke);
+  const rules = await getScreeningRules();
   const maxSectors = clampInt(payload.max_sectors, 1, 50, DEFAULT_SECTOR_GROUP_LIMIT);
   const perSectorLimit = clampInt(payload.per_sector_limit, 1, 50, DEFAULT_PER_SECTOR_LIMIT);
   const minSectorCandidates = clampInt(payload.min_sector_candidates, 1, 500, perSectorLimit);
@@ -2515,7 +2629,7 @@ async function buildTauriSectorScreen(invoke, payload = {}) {
   const screen = await invoke("core_screen_with_data", { payload: { data, criteria } });
   const bySector = new Map();
   for (const item of screen.items || []) {
-    const sector = item.stock?.industry || "未分组";
+    const sector = conceptGroupForStock(item.stock, rules);
     if (!bySector.has(sector)) bySector.set(sector, []);
     bySector.get(sector).push(item);
   }
@@ -2528,14 +2642,14 @@ async function buildTauriSectorScreen(invoke, payload = {}) {
       average_score: items.reduce((sum, item) => sum + Number(item.score || 0), 0) / Math.max(items.length, 1),
       items: items.slice(0, perSectorLimit),
     }))
-    .sort((left, right) => right.average_score - left.average_score || right.total - left.total || left.sector.localeCompare(right.sector))
+    .sort((left, right) => conceptRank(left.sector, rules) - conceptRank(right.sector, rules) || right.average_score - left.average_score || right.total - left.total || left.sector.localeCompare(right.sector))
     .slice(0, maxSectors);
   return {
     total: screen.total || 0,
     returned: groups.reduce((sum, group) => sum + group.returned, 0),
     sector_count: groups.length,
     groups,
-    notes: ["移动端使用内置通达信数据集进行本地板块分组。"],
+    notes: ["移动端使用内置通达信数据集进行本地概念分组，未命中概念时归入其他概念。"],
   };
 }
 
@@ -2816,15 +2930,29 @@ function renderDataStatus(status) {
 
 function renderScreenResult(node, data) {
   const items = data.items || [];
+  const groups = (data.groups || []).filter((group) => (group.items || []).length);
+  const hotGroup = groups.find((group) => group.key === "hot");
+  const potentialGroup = groups.find((group) => group.key === "potential");
+  const hasGroups = groups.length > 0;
+  const groupReturned = groups.reduce((sum, group) => sum + (group.returned ?? group.items?.length ?? 0), 0);
+  const actionCount = hasGroups ? groupReturned : (data.returned ?? items.length);
   renderResult(node, {
-    summary: [
-      ["命中", data.returned ?? items.length],
-      ["候选", data.total ?? 0],
-      ["最高分", items[0] ? formatNumber(items[0].score) : "-"],
-    ],
+    summary: hasGroups
+      ? [
+          ["热门股", hotGroup?.returned ?? hotGroup?.items?.length ?? 0],
+          ["潜力股", potentialGroup?.returned ?? potentialGroup?.items?.length ?? 0],
+          ["候选", data.total ?? 0],
+        ]
+      : [
+          ["命中", data.returned ?? items.length],
+          ["候选", data.total ?? 0],
+          ["最高分", items[0] ? formatNumber(items[0].score) : "-"],
+        ],
     body: [
-      items.length ? renderResultActions("当前筛选条件", data.returned ?? items.length) : "",
-      items.length
+      hasGroups || items.length ? renderResultActions("当前筛选条件", actionCount) : "",
+      hasGroups
+        ? renderScreenGroups(groups)
+        : items.length
         ? renderStockList(items.map(screenItemToView))
         : renderEmpty("没有符合条件的股票", { label: "重跑筛选", action: "run-screen" }),
       data.notes?.length ? renderNotes(data.notes) : "",
@@ -2833,19 +2961,43 @@ function renderScreenResult(node, data) {
   });
 }
 
+function renderScreenGroups(groups) {
+  return `
+    <div class="screen-result-groups">
+      ${groups
+        .map((group) => {
+          const items = group.items || [];
+          return `
+            <section class="screen-result-group" data-group-key="${escapeHtml(group.key || "")}">
+              <header>
+                <div>
+                  <h3>${escapeHtml(group.title || "筛选结果")}</h3>
+                  ${group.description ? `<p>${escapeHtml(group.description)}</p>` : ""}
+                </div>
+                <strong>${formatNumber(group.returned ?? items.length)} / 10</strong>
+              </header>
+              ${items.length ? renderStockList(items.map(screenItemToView)) : renderEmpty("这一类暂时没有命中股票")}
+            </section>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
 function renderSectorScreenResult(node, data) {
   const groups = data.groups || [];
   renderResult(node, {
     summary: [
-      ["板块", data.sector_count ?? groups.length],
+      ["概念", data.sector_count ?? groups.length],
       ["展示", data.returned ?? 0],
       ["候选", data.total ?? 0],
     ],
     body: [
-      groups.length ? renderResultActions("当前分板块条件", data.returned ?? 0) : "",
+      groups.length ? renderResultActions("当前分概念条件", data.returned ?? 0) : "",
       groups.length
         ? renderSectorGroups(groups)
-        : renderEmpty("没有符合条件的板块", { label: "调整条件", action: "go-screen" }),
+        : renderEmpty("没有符合条件的概念", { label: "调整条件", action: "go-screen" }),
       data.notes?.length ? renderNotes(data.notes) : "",
     ].join(""),
     raw: data,
@@ -2862,12 +3014,12 @@ function renderSectorGroups(groups) {
             <section class="sector-group">
               <header>
                 <div>
-                  <h3>${escapeHtml(group.sector || "未知板块")}</h3>
+                  <h3>${escapeHtml(group.sector || "未知概念")}</h3>
                   <p>候选 ${formatNumber(group.total)} 只 · 展示 ${formatNumber(group.returned)} 只</p>
                 </div>
                 <strong>均分 ${formatNumber(group.average_score)}</strong>
               </header>
-              ${items.length ? renderStockList(items.map(screenItemToView)) : renderEmpty("该板块没有入选股票")}
+              ${items.length ? renderStockList(items.map(screenItemToView)) : renderEmpty("该概念没有入选股票")}
             </section>
           `;
         })
@@ -3510,7 +3662,7 @@ function renderObserveBody(data) {
     trend.signal ? renderSignalCard(stock, signal) : renderEmpty("没有可用日线技术面"),
     data.capital_evidence ? renderCapitalEvidence(data.capital_evidence, { series, signal }) : "",
     minuteBars.length ? renderMinuteChart(minuteBars) : renderEmpty("没有可用分钟线"),
-    series.length ? renderTrendChart(series) : "",
+    series.length ? renderTrendChart(series, trend.chip_distribution) : "",
     data.notes?.length ? renderNotes(data.notes) : "",
     signal.notes?.length ? renderNotes(signal.notes) : "",
   ].join("");
@@ -3526,7 +3678,7 @@ function renderAgentResult(node, data) {
   if (data.action === "observe_stock") {
     bodyParts.push(nested.stock ? renderObserveBody(nested) : renderEmpty("没有个股观察结果"));
   } else if (data.action === "sector_screen") {
-    bodyParts.push(nestedGroups.length ? renderSectorGroups(nestedGroups) : renderEmpty("没有分板块选股结果"));
+    bodyParts.push(nestedGroups.length ? renderSectorGroups(nestedGroups) : renderEmpty("没有分概念选股结果"));
     if (nested.notes?.length) bodyParts.push(renderNotes(nested.notes));
   } else if (data.action === "graph_screen") {
     bodyParts.push(
@@ -3567,7 +3719,7 @@ function renderAgentResult(node, data) {
     data.action === "observe_stock"
       ? ["最新价", formatNumber(nested.stock?.price)]
       : data.action === "sector_screen"
-      ? ["板块", nested.sector_count ?? nestedGroups.length ?? "-"]
+      ? ["概念", nested.sector_count ?? nestedGroups.length ?? "-"]
       : data.action === "graph_screen"
       ? ["关系边", nested.relation_count ?? "-"]
       : data.action === "trend_screen"
@@ -3617,6 +3769,10 @@ function screenItemToView(item) {
     score: item.score,
     scoreLabel: "综合分",
     reasons: item.reasons || [],
+    factorScores: item.factor_scores || {},
+    scoreExplanation: item.score_explanation || "",
+    concept: item.concept || "",
+    themeCategory: item.theme_category || "",
   };
 }
 
@@ -3697,6 +3853,7 @@ function renderStockRow(item) {
     ? `<div class="mini-metrics">${item.extra.map(([label, value]) => `<span>${escapeHtml(label)} ${formatNumber(value)}</span>`).join("")}</div>`
     : "";
   const signal = item.signal ? renderSignalSummary(item.signal) : "";
+  const factorSummary = renderFactorSummary(item);
   const weight = item.weight !== undefined ? `<span class="weight">${formatPercent(item.weight)}</span>` : "";
   const related = item.related?.length ? renderRelated(item.related) : "";
   const saved = isWatchlisted(stock.code);
@@ -3740,11 +3897,48 @@ function renderStockRow(item) {
         <div class="row-button-group">${watchButton}${observeButton}</div>
       </div>
       ${extra}
+      ${factorSummary}
       ${signal}
       ${reasons}
       ${related}
     </article>
   `;
+}
+
+function renderFactorSummary(item) {
+  const scores = item.factorScores || item.factor_scores || {};
+  const order = ["theme", "fundamental", "valuation", "size", "risk", "institution"];
+  const labels = {
+    theme: "主题",
+    fundamental: "基本面",
+    valuation: "估值",
+    size: "规模",
+    risk: "风险",
+    institution: "机构",
+  };
+  const pills = order
+    .filter((key) => Number.isFinite(Number(scores[key])))
+    .map((key) => `<span>${escapeHtml(labels[key] || key)} ${escapeHtml(factorTier(scores[key]))}</span>`)
+    .join("");
+  const explanation = String(item.scoreExplanation || item.score_explanation || "").trim();
+  if (!pills && !explanation && !item.concept) return "";
+  return `
+    <div class="factor-summary">
+      ${explanation ? `<p>${escapeHtml(explanation)}</p>` : ""}
+      <div class="tag-row factor-row">
+        ${item.concept ? `<span>概念 ${escapeHtml(item.concept)}</span>` : ""}
+        ${pills}
+      </div>
+    </div>
+  `;
+}
+
+function factorTier(value) {
+  const score = Number(value);
+  if (!Number.isFinite(score)) return "未知";
+  if (score >= 0.75) return "强";
+  if (score >= 0.5) return "中";
+  return "弱";
 }
 
 function renderObservationOverview(stock, financial) {
@@ -4152,40 +4346,111 @@ function renderSparkline(curve) {
 function renderMinuteChart(bars) {
   const width = 720;
   const height = 170;
-  const values = bars.map((bar) => Number(bar.close)).filter(Number.isFinite);
-  if (values.length < 2) return renderEmpty("分钟线点不足");
+  const points = bars
+    .map((bar) => ({
+      ...bar,
+      close: Number(bar.close),
+      volume: Number(bar.volume),
+      amount: Number(bar.amount),
+    }))
+    .filter((bar) => Number.isFinite(bar.close));
+  if (points.length < 2) return renderEmpty("分钟线点不足");
 
+  const averageValues = minuteAverageValues(points);
+  const values = [
+    ...points.map((point) => point.close),
+    ...averageValues,
+  ].filter(Number.isFinite);
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
-  const points = values
-    .map((value, index) => {
-      const x = (index / (values.length - 1)) * width;
-      const y = height - ((value - min) / range) * height;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
-  const last = bars[bars.length - 1];
+  const xFor = (index) => (index / Math.max(points.length - 1, 1)) * width;
+  const yFor = (value) => height - ((Number(value) - min) / range) * height;
+  const linePoints = (series) =>
+    series
+      .map((value, index) => {
+        if (!Number.isFinite(Number(value))) return null;
+        const x = xFor(index);
+        const y = yFor(value);
+        return `${x.toFixed(2)},${y.toFixed(2)}`;
+      })
+      .filter(Boolean)
+      .join(" ");
+  const closePoints = linePoints(points.map((point) => point.close));
+  const averagePoints = linePoints(averageValues);
+  const last = points[points.length - 1];
+  const lastAverage = [...averageValues].reverse().find((value) => Number.isFinite(Number(value)));
 
   return `
     <div class="chart-wrap minute-chart">
       <div class="chart-legend">
-        <span>分钟收盘</span>
-        <span>${escapeHtml(last?.datetime || "")}</span>
-        <span>${formatNumber(last?.close)}</span>
+        <span class="minute-legend-close">分钟收盘</span>
+        <span class="minute-legend-average">分时均线</span>
+        <span class="chart-meta">${escapeHtml(last?.datetime || "")}</span>
+        <span class="chart-meta">${formatNumber(last?.close)}</span>
+        ${Number.isFinite(lastAverage) ? `<span class="chart-meta">${formatNumber(lastAverage)}</span>` : ""}
       </div>
-      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="分钟线">
-        <polyline points="${points}" fill="none" stroke="var(--accent-strong)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="分钟线和分时均线">
+        <polyline class="minute-average-line" points="${averagePoints}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline class="minute-close-line" points="${closePoints}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
       <div class="chart-labels">
-        <span>${escapeHtml(bars[0]?.datetime || "")}</span>
+        <span>${escapeHtml(points[0]?.datetime || "")}</span>
         <span>${escapeHtml(last?.datetime || "")}</span>
       </div>
     </div>
   `;
 }
 
-function renderTrendChart(series) {
+function minuteAverageValues(points) {
+  const closeFallback = cumulativeCloseAverage(points);
+  const amountVolumeAverage = cumulativeAmountVolumeAverage(points, 1);
+  const amountHandAverage = cumulativeAmountVolumeAverage(points, 100);
+  const close = points[points.length - 1]?.close;
+  const directDistance = minuteAverageDistance(amountVolumeAverage, close);
+  const handDistance = minuteAverageDistance(amountHandAverage, close);
+  if (Number.isFinite(directDistance) || Number.isFinite(handDistance)) {
+    return directDistance <= handDistance ? amountVolumeAverage : amountHandAverage;
+  }
+  return closeFallback;
+}
+
+function cumulativeAmountVolumeAverage(points, volumeMultiplier) {
+  let amountTotal = 0;
+  let volumeTotal = 0;
+  return points.map((point) => {
+    const amount = Number(point.amount);
+    const volume = Number(point.volume);
+    if (Number.isFinite(amount) && amount > 0 && Number.isFinite(volume) && volume > 0) {
+      amountTotal += amount;
+      volumeTotal += volume * volumeMultiplier;
+    }
+    return amountTotal > 0 && volumeTotal > 0 ? amountTotal / volumeTotal : Number.NaN;
+  });
+}
+
+function cumulativeCloseAverage(points) {
+  let total = 0;
+  let count = 0;
+  return points.map((point) => {
+    const close = Number(point.close);
+    if (Number.isFinite(close)) {
+      total += close;
+      count += 1;
+    }
+    return count ? total / count : Number.NaN;
+  });
+}
+
+function minuteAverageDistance(values, close) {
+  const latest = [...values].reverse().find((value) => Number.isFinite(Number(value)));
+  if (!Number.isFinite(latest) || !Number.isFinite(close) || close <= 0) return Number.POSITIVE_INFINITY;
+  const ratio = latest / close;
+  if (ratio < 0.2 || ratio > 5) return Number.POSITIVE_INFINITY;
+  return Math.abs(Math.log(ratio));
+}
+
+function renderTrendChart(series, chipDistribution = null) {
   const width = 720;
   const height = 190;
   const values = series
@@ -4268,12 +4533,12 @@ function renderTrendChart(series) {
         <span>${escapeHtml(series[0]?.date || "")}</span>
         <span>${escapeHtml(series[series.length - 1]?.date || "")}</span>
       </div>
-      ${renderTrendChartExplanation(series)}
+      ${renderTrendChartExplanation(series, chipDistribution)}
     </div>
   `;
 }
 
-function renderTrendChartExplanation(series) {
+function renderTrendChartExplanation(series, chipDistribution = null) {
   const latest = (series || []).filter((point) => Number.isFinite(Number(point.close))).slice(-1)[0] || {};
   const close = Number(latest.close);
   const swl = Number(latest.swl);
@@ -4281,22 +4546,57 @@ function renderTrendChartExplanation(series) {
   const closeState =
     Number.isFinite(close) && Number.isFinite(swl)
       ? close >= swl
-        ? "\u6536\u76d8\u4ef7\u5728 SWL \u4e0a\u65b9\uff0c\u77ed\u7ebf\u76f8\u5bf9\u5360\u4f18\u3002"
-        : "\u6536\u76d8\u4ef7\u5728 SWL \u4e0b\u65b9\uff0c\u77ed\u7ebf\u4ecd\u7136\u504f\u5f31\u3002"
-      : "\u6536\u76d8\u4ef7\u548c SWL \u6570\u636e\u4e0d\u8db3\uff0c\u5148\u4e0d\u5224\u65ad\u77ed\u7ebf\u5f3a\u5f31\u3002";
+        ? "白线站上蓝线，短线先看转强。"
+        : "白线还压在蓝线下方，短线仍偏弱。"
+      : "白线和蓝线数据不够，先不下短线结论。";
   const trendState =
     Number.isFinite(swl) && Number.isFinite(sws)
       ? swl >= sws
-        ? "SWL \u9ad8\u4e8e SWS\uff0c\u77ed\u7ebf\u4e2d\u67a2\u6ca1\u6709\u660e\u663e\u8dcc\u7834\u4e2d\u671f\u53c2\u8003\u7ebf\u3002"
-        : "SWL \u4f4e\u4e8e SWS\uff0c\u77ed\u7ebf\u5f31\u4e8e\u4e2d\u671f\u53c2\u8003\uff0c\u9700\u8981\u7b49\u5f85\u4fee\u590d\u3002"
-      : "SWL/SWS \u6570\u636e\u4e0d\u8db3\uff0c\u6682\u4e0d\u5224\u65ad\u7ebf\u95f4\u5f3a\u5f31\u3002";
+        ? "蓝线在灰虚线上方，说明短线没有明显拖累中期。"
+        : "蓝线在灰虚线下方，说明短线比中期更弱，需要等修复。"
+      : "蓝线和灰虚线数据不够，先不下中期结论。";
+  const summaryState =
+    Number.isFinite(close) && Number.isFinite(swl) && Number.isFinite(sws)
+      ? close >= swl && swl >= sws
+        ? "整体是偏多结构。"
+        : close < swl && swl < sws
+          ? "整体还是偏弱结构，先等修复。"
+          : "结构还在分化，先看白线能不能重新站回蓝线上方。"
+      : "";
+  const chipText = renderChipDistributionText(chipDistribution);
   return `
     <section class="trend-explain" aria-label="\u8d8b\u52bf\u6307\u6807\u8bf4\u660e">
       <strong>\u8d8b\u52bf\u56fe\u600e\u4e48\u770b</strong>
-      <p>\u767d\u7ebf\u662f\u6536\u76d8\u4ef7\uff0c\u770b\u5b9e\u9645\u4ef7\u683c\u8d70\u52bf\uff1bSWL \u662f\u77ed\u7ebf\u53c2\u8003\u7ebf\uff0c\u7528\u6765\u770b\u4ef7\u683c\u6709\u6ca1\u6709\u8d70\u5f3a\uff1bSWS \u662f\u4e2d\u671f\u53c2\u8003\u7ebf\uff0c\u7528\u6765\u770b\u8d8b\u52bf\u5e95\u90e8\u662f\u5426\u8fd8\u7a33\u3002</p>
-      <p>${escapeHtml(closeState)}${escapeHtml(trendState)}</p>
+      <p>白线是收盘价，往上代表价格走强，往下代表价格走弱。</p>
+      <p>蓝线 SWL 是短线参考线，白线站上去，短线才算有转强迹象。</p>
+      <p>灰色虚线 SWS 是中期参考线，蓝线在它上面，说明短线还没有明显拖累中期。</p>
+      ${chipText ? `<p>${escapeHtml(chipText)}</p>` : ""}
+      <p>${escapeHtml(closeState)}${escapeHtml(trendState)}${escapeHtml(summaryState)}</p>
     </section>
   `;
+}
+
+function renderChipDistributionText(chipDistribution) {
+  if (!chipDistribution) return "";
+  if (chipDistribution.status === "available") {
+    const parts = [];
+    if (Number.isFinite(Number(chipDistribution.winner_ratio))) {
+      parts.push(`获利盘约 ${formatNumber(chipDistribution.winner_ratio)}%`);
+    }
+    if (Number.isFinite(Number(chipDistribution.avg_cost))) {
+      parts.push(`平均成本约 ${formatNumber(chipDistribution.avg_cost)}`);
+    }
+    if (Number.isFinite(Number(chipDistribution.cost_90_low)) && Number.isFinite(Number(chipDistribution.cost_90_high))) {
+      parts.push(`90%成本区间 ${formatNumber(chipDistribution.cost_90_low)} - ${formatNumber(chipDistribution.cost_90_high)}`);
+    }
+    if (Number.isFinite(Number(chipDistribution.concentration_90))) {
+      parts.push(`90%集中度 ${formatNumber(chipDistribution.concentration_90)}%`);
+    }
+    const suffix = parts.length ? `：${parts.join("，")}。` : "。";
+    return `筹码分布估算已生成${suffix}`;
+  }
+  const reason = chipDistribution.note || "筹码分布暂不可用";
+  return `筹码分布估算暂不可用：${reason}。当前仍按量价推断。`;
 }
 
 function renderCapitalBehaviorPanel(series, signal = {}) {
@@ -4324,21 +4624,7 @@ function renderCapitalBehaviorPanel(series, signal = {}) {
         </div>
         <span class="state-pill">形态 ${escapeHtml(String(signal.pattern_score ?? "-"))}</span>
       </header>
-      <div class="capital-metrics">
-        ${metrics
-          .map(([label, value, tone]) => {
-            const numeric = Number(value);
-            const signed = tone === "index" && Number.isFinite(numeric) && numeric > 0 ? "+" : "";
-            return `
-              <div class="capital-metric ${tone}">
-                <span>${escapeHtml(label)}</span>
-                <strong>${signed}${formatNumber(value)}</strong>
-              </div>
-            `;
-          })
-          .join("")}
-      </div>
-      ${renderCapitalBehaviorGuide(metrics)}
+      ${renderCapitalMetricExplainPanel(metrics)}
       ${renderAccumulationChart(points)}
       ${renderMacdChart(points)}
       ${renderDragonGrid(points)}
@@ -4362,63 +4648,97 @@ function collectCapitalBehaviorMetrics(series) {
   return { points, latest, metrics };
 }
 
-function renderCapitalMetricGrid(metrics) {
+function renderCapitalMetricExplainPanel(metrics, options = {}) {
   if (!metrics.length) return "";
+  const focusIndex = Number.isInteger(options.focusIndex) ? options.focusIndex : capitalMetricFocusIndex(metrics);
+  const title = options.title || "指标信息";
+  const hint = options.hint || "展示当前分数和一句话判断，分数只用于观察优先级。";
   return `
-    <div class="capital-metrics">
-      ${metrics
-        .map(([label, value, tone]) => {
-          const numeric = Number(value);
-          const signed = tone === "index" && Number.isFinite(numeric) && numeric > 0 ? "+" : "";
-          return `
-            <div class="capital-metric ${escapeHtml(tone)}">
-              <span>${escapeHtml(label)}</span>
-              <strong>${signed}${formatNumber(value)}</strong>
-            </div>
-          `;
-        })
-        .join("")}
-    </div>
-  `;
-}
-
-function renderCapitalBehaviorGuide(metrics) {
-  return `
-    <section class="indicator-guide" aria-label="资金行为指标解释">
+    <section class="capital-metric-panel" aria-label="资金行为指标信息">
       <header>
-        <strong>指标怎么读</strong>
-        <span>先看方向，再看强弱；四条线各自独立，不直接互相比大小。</span>
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(hint)}</span>
       </header>
-      <div class="indicator-guide-grid">
-        ${metrics.map(([label, value, tone]) => renderIndicatorGuideItem(label, value, tone)).join("")}
+      <div class="capital-metric-list">
+        ${metrics.map(([label, value, tone], index) => renderCapitalMetricExplainItem(label, value, tone, index === focusIndex)).join("")}
       </div>
     </section>
   `;
 }
 
-function renderIndicatorGuideItem(label, value, tone) {
-  const meaning = capitalMetricMeaning(tone);
+function renderCapitalMetricExplainItem(label, value, tone, focused = false) {
   const status = capitalMetricStatus(tone, value);
+  const numeric = Number(value);
+  const signed = tone === "index" && Number.isFinite(numeric) && numeric > 0 ? "+" : "";
+  const displayValue = `${signed}${formatNumber(value)}`;
+  const sentence = capitalMetricSentence(label, displayValue, tone, status, numeric);
   return `
-    <article class="indicator-guide-item ${escapeHtml(tone)}">
-      <div>
-        <strong>${escapeHtml(label)}</strong>
+    <article class="capital-metric-explain ${escapeHtml(tone)} ${focused ? "focused" : ""}">
+      <div class="capital-metric-row">
+        <span class="capital-metric-title">${escapeHtml(label)}</span>
+        <strong class="capital-metric-score">${escapeHtml(displayValue)}</strong>
         <span class="guide-status ${escapeHtml(status.tone)}">${escapeHtml(status.label)}</span>
       </div>
-      <p>${escapeHtml(meaning)}</p>
-      <em>${escapeHtml(status.detail)}</em>
+      <p class="capital-metric-one-line">${escapeHtml(sentence)}</p>
     </article>
   `;
 }
 
-function capitalMetricMeaning(tone) {
-  const meanings = {
-    index: "看资金是否在低位承接。正值偏承接，负值偏流出或弱势。",
-    strength: "看吸筹动作的强弱。越高越明显，但过高也要防短线兑现。",
-    swing: "看当前有没有波段交易空间。数值越高，越值得进入观察。",
-    rebound: "看超跌后的反抽概率。它是反弹提示，不等于趋势反转。",
+function renderCapitalMetricGrid(metrics) {
+  return renderCapitalMetricExplainPanel(metrics);
+}
+
+function renderCapitalBehaviorGuide(metrics) {
+  return renderCapitalMetricExplainPanel(metrics);
+}
+
+function capitalMetricFocusIndex(metrics) {
+  let bestIndex = 0;
+  let bestScore = -Infinity;
+  metrics.forEach(([, value, tone], index) => {
+    const status = capitalMetricStatus(tone, value);
+    const score = capitalMetricFocusScore(tone, value, status);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
+function capitalMetricFocusScore(tone, value, status) {
+  const statusRank = { strong: 300, watch: 200, weak: 100, neutral: 0 };
+  const numeric = Number(value);
+  const magnitude = Number.isFinite(numeric) ? Math.min(Math.abs(numeric), 100) : 0;
+  const valueBoost = tone === "index" ? magnitude : magnitude / 2;
+  return (statusRank[status.tone] ?? 0) + valueBoost;
+}
+
+function capitalMetricSentence(label, displayValue, tone, status, numeric) {
+  if (!Number.isFinite(numeric)) return `${label}暂无有效分数，暂不参与当前判断。`;
+  const templates = {
+    index: {
+      strong: `${label} ${displayValue}，资金低位承接明显，可继续看价格是否跟随走强。`,
+      watch: `${label} ${displayValue}，资金有轻度承接，但还没形成强确认。`,
+      weak: `${label} ${displayValue}，承接偏弱，当前更像流出或弱势整理。`,
+    },
+    strength: {
+      strong: `${label} ${displayValue}，吸筹动作较强，但高位要防短线兑现。`,
+      watch: `${label} ${displayValue}，吸筹力度中等，需要价格和成交量继续确认。`,
+      weak: `${label} ${displayValue}，吸筹力度有限，暂时只适合观察。`,
+    },
+    swing: {
+      strong: `${label} ${displayValue}，波段空间较好，适合加入重点观察。`,
+      watch: `${label} ${displayValue}，有一定波段弹性，等待更明确触发信号。`,
+      weak: `${label} ${displayValue}，波段机会偏弱，短线弹性不足。`,
+    },
+    rebound: {
+      strong: `${label} ${displayValue}，超跌反弹概率较高，但仍要看持续性。`,
+      watch: `${label} ${displayValue}，有反抽可能，但不能当作趋势反转。`,
+      weak: `${label} ${displayValue}，反弹信号不明显，暂不构成主要依据。`,
+    },
   };
-  return meanings[tone] || "辅助判断当前资金和技术状态。";
+  return templates[tone]?.[status.tone] || `${label} ${displayValue}，${status.detail}`;
 }
 
 function capitalMetricStatus(tone, value) {
@@ -4714,7 +5034,12 @@ function buildFallbackEvidenceSections(evidence) {
   if (!items.length && !Object.keys(contributions).length) return [];
   const definitions = [
     { key: "fund_flow", title: "资金流", contribution: "资金流", categories: ["fund_flow"] },
-    { key: "institution_lhb", title: "机构席位", contribution: "机构席位", categories: ["institution_lhb"] },
+    {
+      key: "institution_lhb",
+      title: "机构席位",
+      contribution: "机构席位",
+      categories: ["institution_lhb", "institution_lhb_status"],
+    },
     {
       key: "message_sentiment",
       title: "消息情绪",
@@ -4773,6 +5098,9 @@ function renderEvidenceSections(sections, technicalContext = {}) {
           if (section.key === "technical_behavior") {
             return renderTechnicalEvidenceSection(section, technicalContext);
           }
+          if (section.key === "institution_lhb") {
+            return renderInstitutionSeatSection(section);
+          }
           const items = section.items || [];
           const score = Number(section.score);
           return `
@@ -4821,12 +5149,118 @@ function renderTechnicalEvidenceSection(section, technicalContext = {}) {
         <span>\u5f62\u6001 ${escapeHtml(String(patternScore))}</span>
       </div>
       ${points.length >= 2 ? renderMacdChart(points) : ""}
-      ${metrics.length ? renderCapitalMetricGrid(metrics) : renderEmpty("\u6280\u672f\u6307\u6807\u4e0d\u8db3")}
-      ${metrics.length ? renderCapitalBehaviorGuide(metrics) : ""}
+      ${metrics.length ? renderCapitalMetricExplainPanel(metrics, { title: "\u6307\u6807\u4fe1\u606f", hint: "\u5148\u770b\u5206\u6570\u72b6\u6001\uff0c\u518d\u770b\u4e00\u53e5\u8bdd\u5224\u65ad\uff1b\u4e0d\u76f4\u63a5\u4f5c\u4e3a\u4e70\u5356\u7ed3\u8bba\u3002" }) : renderEmpty("\u6280\u672f\u6307\u6807\u4e0d\u8db3")}
       ${points.length >= 2 ? renderDragonGrid(points) : ""}
       ${evidenceNotes.length ? `<div class="technical-fusion-notes">${evidenceNotes.map((note) => `<p>${escapeHtml(sanitizeRuntimeMessage(note, 220))}</p>`).join("")}</div>` : ""}
     </section>
   `;
+}
+
+function renderInstitutionSeatSection(section) {
+  const items = section.items || [];
+  const hitItem = items.find((item) => item.category === "institution_lhb");
+  const statusItem = items.find((item) => item.category === "institution_lhb_status");
+  if (hitItem) {
+    return renderInstitutionSeatHit(section, hitItem);
+  }
+  return renderInstitutionSeatStatus(section, statusItem);
+}
+
+function renderInstitutionSeatHit(section, item) {
+  const metrics = item.metrics || {};
+  const score = Number(section.score);
+  const buy = evidenceMetric(metrics, ["机构买入额", "机构买入总额", "机构席位买入额", "累计买入额", "买入额"]);
+  const sell = evidenceMetric(metrics, ["机构卖出额", "机构卖出总额", "机构席位卖出额", "累计卖出额", "卖出额"]);
+  const net = evidenceMetric(metrics, ["机构净买额", "净买额", "净额"]);
+  const reason = evidenceMetric(metrics, ["上榜原因", "类型", "解读"]) || "龙虎榜机构专用席位记录";
+  return `
+    <section class="capital-evidence-section institution-seat hit available">
+      <header>
+        <div>
+          <strong>${escapeHtml(section.title || "机构席位")}</strong>
+          <span>${escapeHtml(item.title || "命中龙虎榜机构席位")}</span>
+        </div>
+        <em>${Number.isFinite(score) ? formatNumber(score) : "命中"}</em>
+      </header>
+      <div class="institution-seat-grid">
+        ${renderInstitutionSeatMetric("机构买入", buy || "-")}
+        ${renderInstitutionSeatMetric("机构卖出", sell || "-")}
+        ${renderInstitutionSeatMetric("机构净买", net || "-")}
+        ${renderInstitutionSeatMetric("上榜原因", reason, "wide")}
+        ${renderInstitutionSeatMetric("日期", item.date || "-")}
+      </div>
+      <div class="institution-seat-source">
+        <span>${escapeHtml(capitalCategoryLabel(item.category))}</span>
+        <span>${escapeHtml(sanitizeRuntimeMessage(item.source || "", 100))}</span>
+        <span>${escapeHtml(item.confidence || "中")}置信</span>
+      </div>
+      ${item.note ? `<p class="institution-seat-note">${escapeHtml(sanitizeRuntimeMessage(item.note, 220))}</p>` : ""}
+    </section>
+  `;
+}
+
+function renderInstitutionSeatStatus(section, item) {
+  const status = institutionSeatStatus(item);
+  const metrics = item?.metrics || {};
+  const title = status === "unavailable" ? "机构席位接口不可用" : "近 N 日未上龙虎榜机构席位";
+  const statusText =
+    evidenceMetric(metrics, ["状态"]) || (status === "unavailable" ? "接口不可用" : "近 N 日未上榜");
+  const note =
+    item?.note ||
+    (status === "unavailable"
+      ? "外部机构席位源暂不可用，资金侧结论不使用机构席位加分。"
+      : "没有龙虎榜机构专用席位记录，不代表机构没有买卖。");
+  return `
+    <section class="capital-evidence-section institution-seat ${status} ${section.available ? "available" : "missing"}">
+      <header>
+        <div>
+          <strong>${escapeHtml(section.title || "机构席位")}</strong>
+          <span>${escapeHtml(sanitizeRuntimeMessage(section.summary || title, 140))}</span>
+        </div>
+        <em>${escapeHtml(status === "unavailable" ? "接口不可用" : "未上榜")}</em>
+      </header>
+      <div class="institution-seat-state">
+        <strong>${escapeHtml(sanitizeRuntimeMessage(item?.title || title, 90))}</strong>
+        <span>${escapeHtml(statusText)}</span>
+        <p>${escapeHtml(sanitizeRuntimeMessage(note, 220))}</p>
+      </div>
+      <div class="institution-seat-grid compact">
+        ${renderInstitutionSeatMetric("查询窗口", evidenceMetric(metrics, ["查询窗口"]) || "-")}
+        ${renderInstitutionSeatMetric("已尝试信源", evidenceMetric(metrics, ["已尝试信源"]) || item?.source || "-", "wide")}
+        ${
+          status === "unavailable"
+            ? renderInstitutionSeatMetric("失败源", evidenceMetric(metrics, ["失败源", "失败原因"]) || "-", "wide")
+            : ""
+        }
+      </div>
+    </section>
+  `;
+}
+
+function renderInstitutionSeatMetric(label, value, extraClass = "") {
+  return `
+    <div class="institution-seat-metric ${extraClass}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(sanitizeRuntimeMessage(value, 180))}</strong>
+    </div>
+  `;
+}
+
+function institutionSeatStatus(item) {
+  const text = `${item?.title || ""} ${item?.metrics?.状态 || ""}`.toLowerCase();
+  if (text.includes("不可用") || text.includes("unavailable") || text.includes("失败")) return "unavailable";
+  if (text.includes("未上榜") || text.includes("未上龙虎榜")) return "no-hit";
+  return "no-hit";
+}
+
+function evidenceMetric(metrics, labels) {
+  if (!metrics) return "";
+  for (const label of labels) {
+    if (metrics[label] !== undefined && metrics[label] !== null && `${metrics[label]}`.trim()) {
+      return `${metrics[label]}`.trim();
+    }
+  }
+  return "";
 }
 
 function renderMetricPills(metrics) {
@@ -4997,6 +5431,7 @@ function capitalCategoryLabel(category) {
   const labels = {
     fund_flow: "主力资金流",
     institution_lhb: "龙虎榜机构",
+    institution_lhb_status: "机构席位状态",
     news_rag: "新闻证据",
     community_sentiment: "社区情绪",
     technical_behavior: "技术推断",
@@ -5110,7 +5545,7 @@ function actionLabel(action) {
   const labels = {
     screen: "普通选股",
     observe_stock: "个股观察",
-    sector_screen: "板块选股",
+    sector_screen: "概念选股",
     graph_screen: "关系图",
     trend_screen: "趋势选股",
     backtest: "回测",

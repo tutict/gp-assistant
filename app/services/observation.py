@@ -36,6 +36,7 @@ def observe_stock(provider: StockProvider, request: StockObserveRequest) -> Stoc
                 start_date=start_value,
                 end_date=end_value,
                 series_limit=max(20, min(request.series_limit, 500)),
+                include_chip_distribution=True,
             ),
         )
     except ValueError as exc:

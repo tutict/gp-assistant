@@ -9,7 +9,15 @@ from unittest.mock import patch
 import pandas as pd
 
 from mock_provider import MockProvider
-from app.schemas import LlmClientConfig, NewsEvidence, StockItem, StockObserveRequest
+from app.schemas import (
+    CapitalEvidenceItem,
+    CapitalEvidenceResult,
+    CapitalEvidenceSection,
+    LlmClientConfig,
+    NewsEvidence,
+    StockItem,
+    StockObserveRequest,
+)
 from app.services import capital_evidence, news_rag
 from app.services.agent import run_agent
 from app.services.observation import _default_dates, observe_stock
@@ -77,13 +85,45 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         self.assertIsNotNone(latest.rebound_signal)
         self.assertIsNotNone(latest.trend_heat)
         self.assertIsNotNone(result.trend.signal.pattern_score)
-        self.assertTrue(any("吸筹分析基于日线量价" in note for note in result.trend.signal.notes))
+        self.assertTrue(
+            any("吸筹分析基于日线量价" in note or "本地成本分布估算" in note for note in result.trend.signal.notes)
+        )
         self.assertIsNotNone(result.capital_evidence)
         self.assertIsNotNone(result.capital_evidence.composite_score)
         self.assertFalse(result.capital_evidence.model_used)
         self.assertIn("技术推断", result.capital_evidence.contributions)
         self.assertTrue(any(item.category == "technical_behavior" for item in result.capital_evidence.items))
         self.assertTrue(any(item.category == "external_status" for item in result.capital_evidence.items))
+
+    def test_observation_can_include_local_chip_distribution_estimate(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {
+                "GP_CAPITAL_ENABLE_EXTERNAL": "false",
+                **DISABLE_NETWORK_NEWS,
+            },
+        ):
+            capital_evidence.CACHE_PATH = Path(tmp) / "capital.sqlite"
+            news_rag.CACHE_PATH = Path(tmp) / "news.sqlite"
+            result = observe_stock(
+                MockProvider(),
+                StockObserveRequest(
+                    code="300750.SZ",
+                    start_date="20260601",
+                    end_date="20260612",
+                    series_limit=20,
+                    minute_limit=5,
+                    include_order_book=False,
+                ),
+            )
+
+        self.assertIsNotNone(result.trend)
+        self.assertIsNotNone(result.trend.chip_distribution)
+        self.assertEqual(result.trend.chip_distribution.status, "estimated")
+        self.assertEqual(result.trend.chip_distribution.source, "本地日线成本分布估算")
+        self.assertIsNotNone(result.trend.chip_distribution.winner_ratio)
+        self.assertIsNotNone(result.trend.chip_distribution.avg_cost)
+        self.assertTrue(any("本地成本分布估算" in note for note in result.trend.signal.notes))
 
     def test_agent_routes_capital_behavior_question_to_observation(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
@@ -222,6 +262,90 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         self.assertEqual(item.source, "AkShare/\u65b0\u6d6a\u9f99\u864e\u699c\u673a\u6784\u5e2d\u4f4d")
         self.assertEqual(item.metrics["\u673a\u6784\u51c0\u4e70\u989d"], "1.50 \u4ebf")
         self.assertGreater(item.score, 50)
+
+    def test_capital_evidence_reports_institution_no_listing_state(self):
+        provider = MockProvider()
+        stock = provider.get_stock("300750.SZ")
+
+        fake_ak = SimpleNamespace(
+            stock_lhb_jgmmtj_em=lambda start_date, end_date: pd.DataFrame(
+                [{"代码": "000001", "名称": "平安银行", "日期": "2026-06-12"}]
+            ),
+            stock_lhb_jgmx_sina=lambda: pd.DataFrame(
+                [{"股票代码": "000002", "股票名称": "万科A", "交易日期": "2026-06-12"}]
+            ),
+            stock_lhb_jgzz_sina=lambda symbol: pd.DataFrame(
+                [{"股票代码": "000006", "股票名称": "深振业A", "累计买入额": 1000}]
+            ),
+        )
+
+        item = capital_evidence._fetch_institution_lhb(fake_ak, stock, "20260601", "20260612")
+
+        self.assertIsNotNone(item)
+        self.assertEqual(item.category, "institution_lhb_status")
+        self.assertIn("未上龙虎榜机构席位", item.title)
+        self.assertIn("不代表机构没有买卖", item.note)
+        self.assertIn("东方财富龙虎榜机构统计", item.metrics["已尝试信源"])
+        self.assertIsNone(item.score)
+
+    def test_capital_evidence_reports_institution_interface_unavailable_state(self):
+        provider = MockProvider()
+        stock = provider.get_stock("300750.SZ")
+
+        class FakeAk:
+            @staticmethod
+            def stock_lhb_jgmmtj_em(start_date, end_date):
+                raise TimeoutError("超过 5.0s")
+
+            @staticmethod
+            def stock_lhb_jgmx_sina():
+                raise RuntimeError("sina unavailable")
+
+            @staticmethod
+            def stock_lhb_jgzz_sina(symbol):
+                raise RuntimeError("tracking unavailable")
+
+        item = capital_evidence._fetch_institution_lhb(FakeAk, stock, "20260601", "20260612")
+
+        self.assertIsNotNone(item)
+        self.assertEqual(item.category, "institution_lhb_status")
+        self.assertIn("接口不可用", item.title)
+        self.assertIn("东方财富龙虎榜机构统计", item.metrics["已尝试信源"])
+        self.assertIn("新浪龙虎榜机构席位明细", item.metrics["已尝试信源"])
+        self.assertIn("失败源", item.metrics)
+        self.assertIsNone(item.score)
+
+    def test_capital_evidence_backfills_institution_status_for_old_cached_sections(self):
+        result = CapitalEvidenceResult(
+            stock_code="300750.SZ",
+            generated_at="2026-06-12T15:01:00",
+            as_of_trade_date="2026-06-12",
+            items=[
+                CapitalEvidenceItem(
+                    category="external_status",
+                    source="外部资金接口",
+                    title="部分资金证据不可用",
+                    metrics={"说明": "龙虎榜机构席位不可用：外部接口请求超时，已跳过本次请求。"},
+                )
+            ],
+            sections=[
+                CapitalEvidenceSection(
+                    key="institution_lhb",
+                    title="机构席位",
+                    available=False,
+                    summary="机构席位暂无可用证据。",
+                    items=[],
+                )
+            ],
+        )
+
+        capital_evidence._ensure_sections(result)
+        section = next(section for section in result.sections if section.key == "institution_lhb")
+
+        self.assertTrue(section.available)
+        self.assertEqual(section.items[0].category, "institution_lhb_status")
+        self.assertIn("接口不可用", section.items[0].title)
+        self.assertIn("失败源", section.items[0].metrics)
 
     def test_capital_evidence_uses_fresh_cache_before_external_fetch(self):
         provider = MockProvider()

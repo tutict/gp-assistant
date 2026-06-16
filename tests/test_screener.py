@@ -6,6 +6,7 @@ import pandas as pd
 
 from app.schemas import ScreenCriteria, SectorScreenRequest, StockItem
 from app.services.screener import screen_stocks, screen_stocks_by_sector
+from app.services.screening_rules import concept_group_for_stock, is_cold_sector, load_screening_rules
 
 
 class ScreenerIndustryTests(unittest.TestCase):
@@ -71,7 +72,7 @@ class ScreenerIndustryTests(unittest.TestCase):
         result = screen_stocks(universe, ScreenCriteria(sort_by="score", sort_dir="desc", limit=2))
 
         self.assertEqual([item.stock.code for item in result.items], ["688001.SH", "601012.SH"])
-        self.assertTrue(any("新能材" in note and "科技" in note and "能源" in note for note in result.notes))
+        self.assertTrue(any("共享筛选规则" in note and "热门主题" in note for note in result.notes))
 
     def test_score_sort_promotes_duofuduo_like_hot_themes_and_deprioritizes_bank_infra(self):
         universe = [
@@ -103,7 +104,70 @@ class ScreenerIndustryTests(unittest.TestCase):
         result = screen_stocks(universe, ScreenCriteria(sort_by="score", sort_dir="desc", limit=4))
 
         self.assertEqual([item.stock.code for item in result.items], ["002408.SZ", "688001.SH", "601012.SH", "002555.SZ"])
-        self.assertTrue(any("游戏" in note for note in result.notes))
+        self.assertTrue(any("共享筛选规则" in note for note in result.notes))
+
+    def test_score_sort_promotes_ai_chain_candidates(self):
+        universe = [
+            StockItem(code="000001.SZ", name="high-score-bank", industry="银行", price=10.0, pe=2.0, pb=0.2, roe=0.3),
+            StockItem(code="300308.SZ", name="cpo-leader", industry="光模块", price=10.0, pe=80.0, pb=12.0, roe=0.02),
+            StockItem(code="002463.SZ", name="server-pcb", industry="PCB", price=10.0, pe=70.0, pb=9.0, roe=0.03),
+            StockItem(code="688256.SH", name="ai-chip", industry="半导体", price=10.0, pe=90.0, pb=15.0, roe=0.01),
+            StockItem(code="600845.SH", name="cloud-compute", industry="云计算", price=10.0, pe=50.0, pb=6.0, roe=0.05),
+        ]
+
+        result = screen_stocks(universe, ScreenCriteria(sort_by="score", sort_dir="desc", limit=4))
+
+        codes = [item.stock.code for item in result.items]
+        self.assertIn("300308.SZ", codes)
+        self.assertIn("002463.SZ", codes)
+        self.assertIn("688256.SH", codes)
+        self.assertNotIn("000001.SZ", codes)
+        hot_group = next(group for group in result.groups if group.key == "hot")
+        self.assertTrue(any(item.stock.industry in {"光模块", "PCB", "半导体", "云计算"} for item in hot_group.items))
+
+    def test_shared_rules_classify_concepts_and_cold_sectors(self):
+        rules = load_screening_rules()
+        chip = StockItem(code="688001.SH", name="AI芯片公司", industry="半导体", price=10.0)
+
+        self.assertGreaterEqual(rules.group_limit, 10)
+        self.assertEqual(concept_group_for_stock(chip, rules), "AI算力与芯片")
+        self.assertTrue(is_cold_sector("银行", rules))
+
+    def test_screened_stock_includes_factor_breakdown_and_explanation(self):
+        universe = [
+            StockItem(code="688001.SH", name="AI芯片公司", industry="半导体", price=10.0, pe=60.0, pb=8.0, roe=0.03),
+        ]
+
+        result = screen_stocks(universe, ScreenCriteria(limit=1))
+
+        item = result.items[0]
+        self.assertIn("theme", item.factor_scores)
+        self.assertIn("valuation", item.factor_scores)
+        self.assertEqual(item.concept, "AI算力与芯片")
+        self.assertEqual(item.theme_category, "ai_chain")
+        self.assertIn("主题命中", item.score_explanation)
+
+    def test_missing_optional_metrics_use_neutral_factor_defaults(self):
+        universe = [
+            StockItem(code="300001.SZ", name="未知公司", industry="未知行业", price=10.0),
+        ]
+
+        result = screen_stocks(universe, ScreenCriteria(limit=1))
+
+        self.assertEqual(result.returned, 1)
+        self.assertGreater(result.items[0].score, 0)
+        self.assertTrue(result.items[0].score_explanation)
+
+    def test_cold_sector_is_deprioritized_but_not_deleted(self):
+        universe = [
+            StockItem(code="000001.SZ", name="高分银行", industry="银行", price=10.0, pe=2.0, pb=0.2, roe=0.3),
+        ]
+
+        result = screen_stocks(universe, ScreenCriteria(limit=1))
+
+        self.assertEqual(result.returned, 1)
+        self.assertEqual(result.items[0].stock.code, "000001.SZ")
+        self.assertIn("低热度降权", result.items[0].reasons)
 
     def test_institution_buy_ratio_filter_keeps_only_net_buy_candidates(self):
         universe = [
@@ -160,10 +224,50 @@ class ScreenerIndustryTests(unittest.TestCase):
         self.assertEqual(result.returned, 0)
         self.assertTrue(any("候选股未放行" in note for note in result.notes))
 
-    def test_sector_screen_defaults_return_more_groups_with_three_stocks_each(self):
+    def test_basic_screen_returns_hot_and_potential_groups(self):
+        universe = [
+            *[
+                StockItem(
+                    code=f"688{index:03d}.SH",
+                    name=f"AI-hot-{index}",
+                    industry="AI software",
+                    price=10.0,
+                    pe=60.0,
+                    pb=8.0,
+                    roe=0.03,
+                )
+                for index in range(12)
+            ],
+            *[
+                StockItem(
+                    code=f"300{index:03d}.SZ",
+                    name=f"potential-{index}",
+                    industry="consumer",
+                    price=10.0,
+                    pe=1.0,
+                    pb=0.2,
+                    roe=6.0 - index * 0.1,
+                )
+                for index in range(12)
+            ],
+        ]
+
+        result = screen_stocks(universe, ScreenCriteria(limit=10))
+
+        groups = {group.key: group for group in result.groups}
+        self.assertEqual(len(groups["hot"].items), 10)
+        self.assertEqual(len(groups["potential"].items), 10)
+        self.assertTrue(all("AI" in item.stock.industry for item in groups["hot"].items))
+        self.assertTrue(all(item.score > 10 for item in groups["potential"].items))
+        self.assertFalse(
+            {item.stock.code for item in groups["hot"].items}
+            & {item.stock.code for item in groups["potential"].items}
+        )
+
+    def test_concept_screen_merges_unknown_industries_into_other_concept(self):
         universe = []
         for sector_index in range(13):
-            for stock_index in range(3):
+            for stock_index in range(5):
                 universe.append(
                     StockItem(
                         code=f"{sector_index:03d}{stock_index:03d}.SZ",
@@ -181,9 +285,35 @@ class ScreenerIndustryTests(unittest.TestCase):
 
         result = screen_stocks_by_sector(universe, SectorScreenRequest())
 
-        self.assertEqual(result.sector_count, 12)
-        self.assertTrue(all(group.returned == 3 for group in result.groups))
-        self.assertNotIn("small-sector", {group.sector for group in result.groups})
+        self.assertEqual(result.sector_count, 1)
+        self.assertEqual(result.groups[0].sector, "其他概念")
+        self.assertEqual(result.groups[0].returned, 5)
+        self.assertEqual(result.groups[0].total, len(universe))
+
+    def test_sector_screen_groups_by_concept_before_industry(self):
+        universe = [
+            StockItem(code="300001.SZ", name="chip-a", industry="半导体", price=10.0),
+            StockItem(code="300002.SZ", name="optical-cpo", industry="光模块", price=11.0),
+            StockItem(code="300003.SZ", name="server-pcb", industry="PCB", price=12.0),
+            StockItem(code="300004.SZ", name="ai-server", industry="服务器", price=13.0),
+            StockItem(code="300005.SZ", name="gpu-cooling", industry="液冷", price=14.0),
+            StockItem(code="300006.SZ", name="battery-a", industry="储能", price=15.0),
+            StockItem(code="300007.SZ", name="battery-b", industry="电池", price=16.0),
+            StockItem(code="300008.SZ", name="solar-a", industry="光伏", price=17.0),
+            StockItem(code="300009.SZ", name="wind-a", industry="风电", price=18.0),
+            StockItem(code="300010.SZ", name="new-energy", industry="新能源", price=19.0),
+        ]
+
+        result = screen_stocks_by_sector(universe, SectorScreenRequest())
+
+        groups = {group.sector: group for group in result.groups}
+        self.assertIn("AI算力与芯片", groups)
+        self.assertIn("新能源与储能", groups)
+        self.assertEqual(groups["AI算力与芯片"].returned, 5)
+        self.assertEqual(
+            {item.stock.code for item in groups["AI算力与芯片"].items},
+            {"300001.SZ", "300002.SZ", "300003.SZ", "300004.SZ", "300005.SZ"},
+        )
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from typing import List, Optional
 import pandas as pd
 import requests
 
+from app.providers.akshare import AkShareProvider
 from app.providers.base import StockProvider, env_float, env_int, normalize_proxy_mode
 from app.providers.tencent import TencentQuoteClient
 from app.schemas import (
@@ -185,6 +186,9 @@ class TdxProvider(StockProvider):
             return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "amount"])
         return pd.DataFrame(rows).drop_duplicates(subset=["date"]).sort_values("date").reset_index(drop=True)
 
+    def get_chip_distribution(self, code: str):
+        return AkShareProvider(proxy_mode=self.proxy_mode).get_chip_distribution(code)
+
     def get_minutes(
         self,
         code: str,
@@ -257,6 +261,7 @@ class TdxProvider(StockProvider):
 
     def get_financial_indicators(self, stock: StockItem) -> FinancialIndicatorSection | None:
         items: list[FinancialIndicatorItem] = []
+        source_parts = ["\u817e\u8baf/\u901a\u8fbe\u4fe1/\u672c\u5730\u7f13\u5b58"]
         estimated_roe = False
         roe = stock.roe
         if roe is None and stock.pe and stock.pb:
@@ -291,13 +296,32 @@ class TdxProvider(StockProvider):
             return None
 
         notes = ["ROE 缺失时按 市净率 / 市盈率 估算。"] if estimated_roe else []
-        return FinancialIndicatorSection(
+        quarterly_items, quarterly_source, _quarterly_period, quarterly_notes = self._quarterly_eps_from_financial_source(
+            stock
+        )
+        if quarterly_items:
+            items.extend(quarterly_items)
+            if quarterly_source:
+                source_parts.append(quarterly_source)
+        notes.extend(quarterly_notes)
+        section = FinancialIndicatorSection(
             title="最新指标",
             period="行情估值",
             source="腾讯/通达信/本地缓存",
             items=items,
             notes=notes,
         )
+        section.source = " / ".join(dict.fromkeys(source_parts))
+        return section
+
+    def _quarterly_eps_from_financial_source(
+        self, stock: StockItem
+    ) -> tuple[list[FinancialIndicatorItem], str | None, str | None, list[str]]:
+        try:
+            provider = AkShareProvider(proxy_mode=self.proxy_mode)
+            return provider.get_quarterly_eps_indicators(stock.code)
+        except Exception as exc:
+            return [], None, None, [f"\u5355\u5b63\u5ea6 EPS \u8d22\u62a5\u4fe1\u6e90\u6682\u4e0d\u53ef\u7528\uff1a{exc}"]
 
     def list_relations(self) -> List[StockRelation]:
         return []

@@ -102,6 +102,9 @@ class StockProvider:
     def get_financial_indicators(self, stock: StockItem) -> FinancialIndicatorSection | None:
         return None
 
+    def get_chip_distribution(self, code: str):
+        return None
+
     def list_relations(self) -> List[StockRelation]:
         return []
 

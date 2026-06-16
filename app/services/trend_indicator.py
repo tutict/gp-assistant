@@ -6,6 +6,7 @@ import pandas as pd
 from app.providers.base import StockProvider
 from app.schemas import (
     ScreenCriteria,
+    ChipDistributionResult,
     StockItem,
     TrendIndicatorPoint,
     TrendIndicatorRequest,
@@ -15,15 +16,132 @@ from app.schemas import (
     TrendScreenResult,
     TrendStockSignal,
 )
+from app.services.chip_distribution import estimate_chip_distribution_from_history
 from app.services.screener import screen_stocks, screening_universe
+from app.services.runtime_config import redact_error
 
 
 QUANT_SCORE_MAX = 90
 TREND_NOTES = [
-    "吸筹分析基于日线量价 OHLCV 推断，未接入真实筹码分布、龙虎榜席位或主力资金明细。",
-    "WINNER(C) 需要筹码分布数据，当前未纳入；量化分按 90 分制计算。",
+    "吸筹分析基于日线量价 OHLCV 推断；筹码分布优先用本地日线和股本估算，东方财富只作备用。",
+    "WINNER(C) 依赖筹码分布模型，当前使用成本分布估算；量化分按 90 分制计算。",
     "SWS 使用公式中的成交量/流通股本项作为 DMA 百分比系数，并限制在 1%-100%。",
 ]
+
+
+def _trend_notes(chip_distribution: ChipDistributionResult | None) -> List[str]:
+    if chip_distribution is None:
+        return list(TREND_NOTES)
+    if chip_distribution.status in {"available", "estimated"}:
+        parts: List[str] = []
+        if chip_distribution.winner_ratio is not None:
+            parts.append(f"获利盘约 {chip_distribution.winner_ratio:.1f}%")
+        if chip_distribution.avg_cost is not None:
+            parts.append(f"平均成本约 {chip_distribution.avg_cost:.2f}")
+        if chip_distribution.cost_90_low is not None and chip_distribution.cost_90_high is not None:
+            parts.append(f"90%成本区间 {chip_distribution.cost_90_low:.2f} - {chip_distribution.cost_90_high:.2f}")
+        if chip_distribution.concentration_90 is not None:
+            parts.append(f"90%集中度 {chip_distribution.concentration_90:.1f}%")
+        summary = "，".join(parts) if parts else "已生成筹码分布"
+        source = "本地成本分布估算" if chip_distribution.status == "estimated" else "东方财富筹码分布"
+        return [
+            f"{source}：{summary}。",
+            "筹码分布只用于理解成本密集区，不等同真实主力持仓或买卖结论。",
+            "SWS 使用公式中的成交量/流通股本项作为 DMA 百分比系数，并限制在 1%-100%。",
+        ]
+
+    reason = chip_distribution.note or "筹码分布暂不可用"
+    return [
+        f"吸筹分析基于日线量价 OHLCV 推断；筹码分布暂不可用：{reason}",
+        "WINNER(C) 需要筹码分布数据，当前回退为量价近似。",
+        "SWS 使用公式中的成交量/流通股本项作为 DMA 百分比系数，并限制在 1%-100%。",
+    ]
+
+
+def _chip_distribution_from_history(provider: StockProvider, stock: StockItem, request: TrendIndicatorRequest, frame: pd.DataFrame) -> ChipDistributionResult:
+    chip_frame = frame
+    if len(frame) < 120:
+        try:
+            chip_start = _chip_history_start(request.end_date)
+            chip_history = provider.get_history(stock.code, chip_start, request.end_date)
+            chip_frame = _prepare_history(chip_history, stock)
+        except Exception:
+            chip_frame = frame
+
+    local = estimate_chip_distribution_from_history(chip_frame)
+    if local.status != "unavailable":
+        return local
+    return _fetch_chip_distribution(provider, stock.code)
+
+
+def _chip_history_start(end_date: str) -> str:
+    parsed = pd.to_datetime(end_date, errors="coerce")
+    if pd.isna(parsed):
+        parsed = pd.Timestamp.today()
+    start = parsed - pd.Timedelta(days=360)
+    return start.strftime("%Y%m%d")
+
+
+def _fetch_chip_distribution(provider: StockProvider, code: str) -> ChipDistributionResult:
+    fetcher = getattr(provider, "get_chip_distribution", None)
+    if fetcher is None:
+        return ChipDistributionResult(status="unavailable", note="当前数据源不支持筹码分布接口")
+
+    try:
+        raw = fetcher(code)
+    except Exception as exc:
+        return ChipDistributionResult(status="unavailable", note=redact_error(exc, max_chars=120))
+
+    frame = pd.DataFrame(raw).copy() if raw is not None else pd.DataFrame()
+    if frame.empty:
+        return ChipDistributionResult(status="unavailable", note="筹码分布接口未返回数据")
+
+    latest = frame.dropna(how="all").iloc[-1]
+    values = list(latest.values.tolist())
+
+    return ChipDistributionResult(
+        source="东方财富筹码分布",
+        status="available",
+        date=_extract_chip_date(values),
+        winner_ratio=_scale_percent(_safe_float(_chip_value(values, 1))),
+        avg_cost=_safe_float(_chip_value(values, 2)),
+        cost_90_low=_safe_float(_chip_value(values, 3)),
+        cost_90_high=_safe_float(_chip_value(values, 4)),
+        concentration_90=_scale_percent(_safe_float(_chip_value(values, 5))),
+        note="",
+    )
+
+
+def _chip_value(values: List[Any], index: int) -> Any:
+    if index < len(values):
+        return values[index]
+    return None
+
+
+def _extract_chip_date(values: List[Any]) -> str | None:
+    raw = _chip_value(values, 0)
+    parsed = pd.to_datetime(raw, errors="coerce")
+    if pd.isna(parsed):
+        return str(raw) if raw is not None else None
+    return parsed.strftime("%Y-%m-%d")
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(numeric):
+        return None
+    return float(numeric)
+
+
+def _scale_percent(value: float | None) -> float | None:
+    if value is None:
+        return None
+    if 0 <= value <= 1:
+        return value * 100
+    return value
 
 
 def analyze_trend(provider: StockProvider, request: TrendIndicatorRequest) -> TrendIndicatorResult:
@@ -36,7 +154,9 @@ def analyze_trend(provider: StockProvider, request: TrendIndicatorRequest) -> Tr
     computed = _compute_indicator_frame(frame, stock)
     signal = _latest_signal(stock.code, computed)
     series = _series_points(computed, request.series_limit)
-    return TrendIndicatorResult(stock=stock, signal=signal, series=series)
+    chip_distribution = _chip_distribution_from_history(provider, stock, request, frame) if request.include_chip_distribution else None
+    signal.notes = _trend_notes(chip_distribution)
+    return TrendIndicatorResult(stock=stock, signal=signal, series=series, chip_distribution=chip_distribution)
 
 
 def trend_screen_stocks(provider: StockProvider, request: TrendScreenRequest) -> TrendScreenResult:
@@ -118,6 +238,7 @@ def _prepare_history(history: Any, stock: StockItem) -> pd.DataFrame:
     frame["high"] = _numeric_or_default(frame, "high", frame[["open", "close"]].max(axis=1))
     frame["low"] = _numeric_or_default(frame, "low", frame[["open", "close"]].min(axis=1))
     frame["volume"] = _numeric_or_default(frame, "volume", pd.Series(0.0, index=frame.index))
+    frame["amount"] = _numeric_or_default(frame, "amount", pd.Series(np.nan, index=frame.index))
 
     if "capital" in frame:
         frame["capital"] = pd.to_numeric(frame["capital"], errors="coerce")
@@ -150,6 +271,10 @@ def _normalize_columns(frame: pd.DataFrame) -> pd.DataFrame:
         "成交量": "volume",
         "volume": "volume",
         "vol": "volume",
+        "成交额": "amount",
+        "成交金额": "amount",
+        "amount": "amount",
+        "volume_money": "amount",
         "总股本": "capital",
         "流通股本": "capital",
         "capital": "capital",

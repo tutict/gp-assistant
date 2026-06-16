@@ -8,7 +8,7 @@ import pandas as pd
 from app.providers.akshare import AkShareProvider
 from app.providers.base import get_provider
 from app.providers.tdx import TdxProvider
-from app.schemas import StockItem
+from app.schemas import FinancialIndicatorItem, StockItem
 
 
 class TdxProviderTests(unittest.TestCase):
@@ -230,6 +230,69 @@ class TdxProviderTests(unittest.TestCase):
         self.assertEqual(items[0].period, "2026Q1")
         self.assertEqual(items[0].raw_value, 0.88)
         self.assertEqual(items[0].tone, "rise")
+
+    def test_akshare_quarterly_eps_prefers_ths_single_quarter_value(self):
+        rows = pd.DataFrame(
+            [
+                {
+                    "report_date": "2026-03-31",
+                    "metric_name": "basic_eps",
+                    "value": 0.30,
+                    "single": 0.12,
+                },
+                {
+                    "report_date": "2025-03-31",
+                    "metric_name": "basic_eps",
+                    "value": 0.20,
+                    "single": 0.08,
+                },
+                {
+                    "report_date": "2026-03-31",
+                    "metric_name": "operating_income_total",
+                    "value": 100,
+                    "single": 100,
+                },
+            ]
+        )
+        items = []
+
+        AkShareProvider._append_quarterly_eps(items, rows)
+
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0].period, "2026Q1")
+        self.assertEqual(items[0].raw_value, 0.12)
+        self.assertEqual(items[0].tone, "rise")
+
+    def test_tdx_financial_indicators_merge_quarterly_eps_source(self):
+        stock = StockItem(
+            code="300115.SZ",
+            name="\u957f\u76c8\u7cbe\u5bc6",
+            industry="\u6d88\u8d39\u7535\u5b50",
+            price=29.0,
+            pe=20.0,
+            pb=3.0,
+            market_cap_billion=400.0,
+        )
+        eps_item = FinancialIndicatorItem(
+            label="2026Q1 \u6bcf\u80a1\u6536\u76ca",
+            value="0.12\u5143",
+            raw_value=0.12,
+            unit="\u5143",
+            metric_key="quarterly_eps",
+            period="2026Q1",
+        )
+
+        with patch.object(
+            TdxProvider,
+            "_quarterly_eps_from_financial_source",
+            return_value=([eps_item], "\u540c\u82b1\u987a\u8d22\u62a5(\u5355\u5b63EPS)", "2026Q1", []),
+        ):
+            section = TdxProvider().get_financial_indicators(stock)
+
+        self.assertIsNotNone(section)
+        assert section is not None
+        self.assertIn("\u540c\u82b1\u987a\u8d22\u62a5", section.source or "")
+        self.assertTrue(any(item.metric_key == "quarterly_eps" for item in section.items))
 
     def test_list_stocks_reads_tdx_cache_without_network(self):
         with tempfile.TemporaryDirectory() as temp_dir:

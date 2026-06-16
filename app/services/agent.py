@@ -37,7 +37,7 @@ from app.services.trend_indicator import trend_screen_stocks
 
 SYSTEM_PROMPT = """You are an A-share stock assistant. You must respond in JSON.
 The current system date is __CURRENT_DATE_YYYYMMDD__. When the user omits an end_date, use this current system date instead of any fixed historical date.
-Decide whether the user wants an individual stock observation, basic stock screen, sector-grouped screen, relation-aware graph screen, trend screen, backtest, or clarification.
+Decide whether the user wants an individual stock observation, basic stock screen, concept-grouped screen, relation-aware graph screen, trend screen, backtest, or clarification.
 LangGraph is only the workflow/state orchestration layer. Stock-to-stock relationships must be handled by the graph_screen tool, which uses a stock knowledge graph and GNN-style relation scoring.
 Return this shape:
 {
@@ -54,9 +54,9 @@ Return this shape:
   } | null,
   "sector_screen": {
     "criteria": { ...ScreenCriteria fields... },
-    "per_sector_limit": 3,
+    "per_sector_limit": 5,
     "max_sectors": 12,
-    "min_sector_candidates": 3
+    "min_sector_candidates": 5
   } | null,
   "graph_screen": {
     "criteria": { ...ScreenCriteria fields... },
@@ -90,7 +90,7 @@ Return this shape:
   "reply": "short Chinese reply to the user"
 }
 Use action "observe_stock" when the user asks about one stock's quote, valuation, PE/PB, order book, intraday bars, daily technical trend, support/resistance, or asks to look at/check/analyze a specific stock code.
-Use action "sector_screen" when the user asks to group by sector/industry/board, pick stocks from each sector, or diversify across sectors.
+Use action "sector_screen" when the user asks to group by concept/theme/sector/industry/board, pick stocks from each concept, or diversify across concepts.
 Use action "graph_screen" when the user mentions stock relations, industry chain, upstream/downstream,
 supply chain, peer linkage, GNN, knowledge graph, graph learning, or LangGraph-related stock relation analysis.
 Use action "trend_screen" when the user asks for uptrend, trend indicator, SWL/SWS, short-buy,
@@ -123,7 +123,7 @@ FORBIDDEN_ADVICE_PATTERNS = [
 DEFAULT_RESEARCH_REPLIES = {
     "observe_stock": "已按选股研究口径整理个股行情、估值、股本和技术面观察。",
     "screen": "已按选股研究口径完成基础筛选。",
-    "sector_screen": "已按选股研究口径完成板块分组选股。",
+    "sector_screen": "已按选股研究口径完成概念分组选股。",
     "graph_screen": "已按选股研究口径完成关系图选股。",
     "trend_screen": "已按选股研究口径完成趋势指标排序。",
     "backtest": "已按选股研究口径完成历史回测。",
@@ -445,7 +445,7 @@ def _sector_screen_node(state: AgentState) -> AgentState:
         "sector_screen": request,
         "criteria": request.criteria,
         "data": result.model_dump(),
-        "reply": state.get("reply") or "已按板块分组选股。",
+        "reply": state.get("reply") or "已按概念分组选股。",
     }
 
 
@@ -702,28 +702,28 @@ def _heuristic_parse(message: str) -> Dict[str, Any]:
 
     if _contains_any(
         lower,
-        ["板块分组", "按板块", "每个板块", "分板块", "行业分组", "每个行业", "分行业", "sector"],
+        ["概念分组", "按概念", "每个概念", "分概念", "板块分组", "按板块", "每个板块", "分板块", "行业分组", "每个行业", "分行业", "concept", "sector"],
     ):
         return {
             "action": "sector_screen",
-            "reply": "已按板块分组选股，每个板块返回排名靠前的候选股票。",
+            "reply": "已按概念分组选股，每个概念返回排名靠前的候选股票。",
             "sector_screen": {
                 "criteria": criteria,
                 "max_sectors": _extract_limited_int(
                     message,
-                    ["最多板块", "板块数量", "行业数量", "max sectors"],
+                    ["最多概念", "概念数量", "最多板块", "板块数量", "行业数量", "max concepts", "max sectors"],
                     default=12,
                     minimum=1,
                     maximum=50,
                 ),
                 "per_sector_limit": _extract_limited_int(
                     message,
-                    ["每板块", "每个板块", "每行业", "每个行业", "per sector"],
-                    default=3,
+                    ["每概念", "每个概念", "每板块", "每个板块", "每行业", "每个行业", "per concept", "per sector"],
+                    default=5,
                     minimum=1,
                     maximum=50,
                 ),
-                "min_sector_candidates": 3,
+                "min_sector_candidates": 5,
             },
         }
 

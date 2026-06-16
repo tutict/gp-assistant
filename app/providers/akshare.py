@@ -4,8 +4,9 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 import pandas as pd
+import requests
 
-from app.providers.base import StockProvider, normalize_proxy_mode, proxy_environment
+from app.providers.base import StockProvider, env_float, normalize_proxy_mode, proxy_environment
 from app.schemas import (
     FinancialIndicatorItem,
     FinancialIndicatorSection,
@@ -15,6 +16,7 @@ from app.schemas import (
     StockItem,
     StockRelation,
 )
+from app.services.chip_distribution import eastmoney_klines_to_chip_frame
 
 
 class AkShareProvider(StockProvider):
@@ -93,6 +95,30 @@ class AkShareProvider(StockProvider):
         df = df[selected].rename(columns=renamed)
         df["date"] = df["date"].astype(str)
         return df
+
+    def get_chip_distribution(self, code: str):
+        timeout = env_float("GP_CHIP_DISTRIBUTION_TIMEOUT", 6, minimum=1, maximum=20)
+        symbol = self._normalize_code(code).split(".")[0]
+        market_code = 1 if symbol.startswith("6") else 0
+        params = {
+            "secid": f"{market_code}.{symbol}",
+            "fields1": "f1,f2,f3,f4,f5,f6",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+            "klt": "101",
+            "fqt": "0",
+            "end": datetime.now().date().strftime("%Y%m%d"),
+            "lmt": "210",
+        }
+        with proxy_environment(self.proxy_mode):
+            response = requests.get(
+                "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+                params=params,
+                timeout=timeout,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+        response.raise_for_status()
+        data = response.json().get("data") or {}
+        return eastmoney_klines_to_chip_frame(data.get("klines") or [])
 
     def get_minutes(
         self,
@@ -198,7 +224,7 @@ class AkShareProvider(StockProvider):
         period = None
         source_parts: list[str] = []
         notes: list[str] = []
-        indicator_df = None
+        quarterly_eps_items: list[FinancialIndicatorItem] = []
 
         indicator_fn = getattr(ak, "stock_financial_analysis_indicator_em", None)
         if indicator_fn is not None:
@@ -206,7 +232,6 @@ class AkShareProvider(StockProvider):
                 with proxy_environment(self.proxy_mode):
                     df = indicator_fn(symbol=normalized_code, indicator="\u6309\u62a5\u544a\u671f")
                 if df is not None and not df.empty:
-                    indicator_df = df
                     row = df.iloc[0]
                     period = self._format_financial_period(row.get("REPORT_DATE"), row.get("SEASON_LABEL"))
                     source_parts.append("\u4e1c\u8d22F10")
@@ -226,6 +251,13 @@ class AkShareProvider(StockProvider):
                     period = period or abstract_period
             except Exception as exc:
                 notes.append(f"\u65b0\u6d6a\u8d22\u62a5\u6458\u8981\u6682\u4e0d\u53ef\u7528\uff1a{exc}")
+
+        eps_items, eps_source, eps_period, eps_notes = self.get_quarterly_eps_indicators(normalized_code)
+        quarterly_eps_items.extend(eps_items)
+        notes.extend(eps_notes)
+        if eps_source and eps_items:
+            source_parts.append(eps_source)
+            period = period or eps_period
 
         items: list[FinancialIndicatorItem] = []
         if stock.pe is not None or stock.pb is not None or stock.market_cap_billion is not None:
@@ -286,7 +318,7 @@ class AkShareProvider(StockProvider):
             stock.dividend_yield * 100 if stock.dividend_yield is not None else None,
             self._format_percent,
         )
-        self._append_quarterly_eps(items, indicator_df)
+        items.extend(quarterly_eps_items)
 
         if not items:
             return None
@@ -297,23 +329,51 @@ class AkShareProvider(StockProvider):
             notes=notes,
         )
 
+    def get_quarterly_eps_indicators(
+        self, code: str
+    ) -> tuple[list[FinancialIndicatorItem], str | None, str | None, list[str]]:
+        ak = self._import_akshare()
+        normalized_code = self._normalize_code(code)
+        df, source, period, notes = self._fetch_quarterly_eps_frame(ak, normalized_code)
+        items: list[FinancialIndicatorItem] = []
+        self._append_quarterly_eps(items, df)
+        if not items and not notes:
+            notes.append("\u5355\u5b63\u5ea6 EPS \u6570\u636e\u672a\u8fd4\u56de\u53ef\u8bc6\u522b\u5b57\u6bb5\u3002")
+        return items, source, period, notes
+
+    def _fetch_quarterly_eps_frame(self, ak, normalized_code: str):
+        notes: list[str] = []
+        digits = normalized_code.split(".")[0]
+
+        ths_new_fn = getattr(ak, "stock_financial_abstract_new_ths", None)
+        if ths_new_fn is not None:
+            try:
+                with proxy_environment(self.proxy_mode):
+                    df = ths_new_fn(symbol=digits, indicator="\u6309\u62a5\u544a\u671f")
+                points = self._quarterly_eps_points(df)
+                if points:
+                    return df, "\u540c\u82b1\u987a\u8d22\u62a5(\u5355\u5b63EPS)", points[0][0], notes
+            except Exception as exc:
+                notes.append(f"\u540c\u82b1\u987a\u5355\u5b63 EPS \u6682\u4e0d\u53ef\u7528\uff1a{exc}")
+
+        indicator_fn = getattr(ak, "stock_financial_analysis_indicator_em", None)
+        if indicator_fn is not None:
+            try:
+                with proxy_environment(self.proxy_mode):
+                    df = indicator_fn(symbol=normalized_code, indicator="\u6309\u5355\u5b63\u5ea6")
+                points = self._quarterly_eps_points(df)
+                if points:
+                    return df, "\u4e1c\u65b9\u8d22\u5bccF10(\u5355\u5b63EPS)", points[0][0], notes
+            except Exception as exc:
+                notes.append(f"\u4e1c\u65b9\u8d22\u5bcc\u5355\u5b63 EPS \u6682\u4e0d\u53ef\u7528\uff1a{exc}")
+
+        if not notes:
+            notes.append("\u5355\u5b63\u5ea6 EPS \u4fe1\u6e90\u6682\u65e0\u53ef\u7528\u660e\u7ec6\u3002")
+        return None, None, None, notes
+
     @classmethod
     def _append_quarterly_eps(cls, items: list[FinancialIndicatorItem], df: pd.DataFrame | None) -> None:
-        if df is None or df.empty:
-            return
-
-        quarterly_points: list[tuple[str, float]] = []
-        seen_periods: set[str] = set()
-
-        for _, row in df.iterrows():
-            eps_value = cls._to_float(cls._row_value(row, ["EPSJB", "EPS", "BASIC_EPS"]))
-            period_key = cls._financial_period_key(row)
-            if period_key is None or eps_value is None or period_key in seen_periods:
-                continue
-            seen_periods.add(period_key)
-            quarterly_points.append((period_key, eps_value))
-            if len(quarterly_points) >= 12:
-                break
+        quarterly_points = cls._quarterly_eps_points(df)
 
         if not quarterly_points:
             return
@@ -337,6 +397,48 @@ class AkShareProvider(StockProvider):
                 )
             )
 
+    @classmethod
+    def _quarterly_eps_points(cls, df: pd.DataFrame | None) -> list[tuple[str, float]]:
+        if df is None or df.empty:
+            return []
+
+        quarterly_points: list[tuple[str, float]] = []
+        seen_periods: set[str] = set()
+
+        for _, row in df.iterrows():
+            eps_value = cls._quarterly_eps_value(row)
+            period_key = cls._financial_period_key(row)
+            if period_key is None or eps_value is None or period_key in seen_periods:
+                continue
+            seen_periods.add(period_key)
+            quarterly_points.append((period_key, eps_value))
+            if len(quarterly_points) >= 12:
+                break
+        return quarterly_points
+
+    @classmethod
+    def _quarterly_eps_value(cls, row) -> Optional[float]:
+        metric_name = str(row.get("metric_name") or "").strip().lower()
+        if metric_name and metric_name not in {"basic_eps", "epsjb", "eps", "basic_earnings_per_share"}:
+            return None
+        single_value = cls._to_float(row.get("single"))
+        if single_value is not None:
+            return single_value
+        return cls._to_float(
+            cls._row_value(
+                row,
+                [
+                    "EPSJB",
+                    "EPS",
+                    "BASIC_EPS",
+                    "\u57fa\u672c\u6bcf\u80a1\u6536\u76ca",
+                    "\u644a\u8584\u6bcf\u80a1\u6536\u76ca(\u5143)",
+                    "\u52a0\u6743\u6bcf\u80a1\u6536\u76ca(\u5143)",
+                    "value",
+                ],
+            )
+        )
+
     @staticmethod
     def _previous_year_period(period_key: str) -> str | None:
         if len(period_key) != 6:
@@ -348,7 +450,12 @@ class AkShareProvider(StockProvider):
 
     @classmethod
     def _financial_period_key(cls, row) -> str | None:
-        report_date = row.get("REPORT_DATE")
+        report_date = (
+            row.get("REPORT_DATE")
+            or row.get("report_date")
+            or row.get("\u65e5\u671f")
+            or row.get("date")
+        )
         parsed_date = pd.to_datetime(report_date, errors="coerce")
         if pd.notna(parsed_date):
             month = int(parsed_date.month)
@@ -356,7 +463,15 @@ class AkShareProvider(StockProvider):
                 quarter = (month - 1) // 3 + 1
                 return f"{int(parsed_date.year):04d}Q{quarter}"
 
-        season_label = str(row.get("SEASON_LABEL") or row.get("REPORT_PERIOD") or "").strip().upper()
+        season_label = str(
+            row.get("SEASON_LABEL")
+            or row.get("REPORT_PERIOD")
+            or row.get("REPORT_DATE_NAME")
+            or row.get("report_name")
+            or row.get("quarter_name")
+            or row.get("report_period")
+            or ""
+        ).strip().upper()
         if not season_label:
             return None
         year_text = "".join(char for char in str(report_date or "") if char.isdigit())[:4]

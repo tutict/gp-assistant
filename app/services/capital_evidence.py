@@ -38,6 +38,12 @@ INSTITUTION_BUY_LABEL = "\u673a\u6784\u4e70\u5165\u989d"
 INSTITUTION_SELL_LABEL = "\u673a\u6784\u5356\u51fa\u989d"
 INSTITUTION_NET_LABEL = "\u673a\u6784\u51c0\u4e70\u989d"
 LHB_REASON_LABEL = "\u4e0a\u699c\u539f\u56e0"
+INSTITUTION_STATUS_CATEGORY = "institution_lhb_status"
+INSTITUTION_SOURCE_NAMES = (
+    "东方财富龙虎榜机构统计",
+    "新浪龙虎榜机构席位明细",
+    "新浪龙虎榜机构席位追踪",
+)
 
 
 def fetch_capital_evidence(
@@ -236,6 +242,15 @@ def _fetch_external_capital_items(
             )
         except Exception as exc:
             notes.append(f"{_category_label(category)}不可用：{_safe_external_error(exc)}")
+            if category == "institution_lhb":
+                items.append(
+                    _institution_lhb_unavailable_item(
+                        start_date,
+                        end_date,
+                        INSTITUTION_SOURCE_NAMES,
+                        [f"机构席位抓取：{_safe_external_error(exc)}"],
+                    )
+                )
             continue
         if item is not None:
             items.append(item)
@@ -497,45 +512,52 @@ def _fetch_individual_fund_flow(ak: Any, stock: StockItem, _start_date: str, _en
 
 
 def _fetch_institution_lhb(ak: Any, stock: StockItem, start_date: str, end_date: str) -> CapitalEvidenceItem | None:
+    attempted_sources: list[str] = []
+    successful_sources: list[str] = []
+    failures: list[str] = []
+
+    source = INSTITUTION_SOURCE_NAMES[0]
+    attempted_sources.append(source)
     try:
         frame = ak.stock_lhb_jgmmtj_em(start_date=compact_date(start_date), end_date=compact_date(end_date))
-    except Exception:
-        return _safe_fetch_sina_institution_lhb(ak, stock, start_date, end_date)
-    try:
-        row = _matching_last_row(frame, stock)
-    except Exception:
-        row = None
-    if row is None:
-        return _safe_fetch_sina_institution_lhb(ak, stock, start_date, end_date)
-    modern_item = _institution_lhb_item_from_row(
-        row,
-        source="AkShare/\u4e1c\u65b9\u8d22\u5bcc\u9f99\u864e\u699c\u673a\u6784\u7edf\u8ba1",
-        title="\u4e1c\u65b9\u8d22\u5bcc\u9f99\u864e\u699c\u673a\u6784\u5e2d\u4f4d",
-        fallback_note="\u4e1c\u65b9\u8d22\u5bcc\u9f99\u864e\u699c\u673a\u6784\u5e2d\u4f4d\u7edf\u8ba1\uff0c\u4e0d\u7b49\u540c\u4e8e\u5168\u90e8\u673a\u6784\u6301\u4ed3\u53d8\u5316\u3002",
+    except Exception as exc:
+        failures.append(f"{source}：{_safe_external_error(exc)}")
+    else:
+        successful_sources.append(source)
+        try:
+            row = _matching_last_row(frame, stock)
+        except Exception as exc:
+            row = None
+            failures.append(f"{source}解析：{_safe_external_error(exc)}")
+        if row is not None:
+            modern_item = _institution_lhb_item_from_row(
+                row,
+                source="AkShare/\u4e1c\u65b9\u8d22\u5bcc\u9f99\u864e\u699c\u673a\u6784\u7edf\u8ba1",
+                title="\u4e1c\u65b9\u8d22\u5bcc\u9f99\u864e\u699c\u673a\u6784\u5e2d\u4f4d",
+                fallback_note="\u4e1c\u65b9\u8d22\u5bcc\u9f99\u864e\u699c\u673a\u6784\u5e2d\u4f4d\u7edf\u8ba1\uff0c\u4e0d\u7b49\u540c\u4e8e\u5168\u90e8\u673a\u6784\u6301\u4ed3\u53d8\u5316\u3002",
+            )
+            if modern_item is not None:
+                return modern_item
+            failures.append(f"{source}：命中股票但缺少可读席位指标")
+
+    sina_fetchers = (
+        (INSTITUTION_SOURCE_NAMES[1], _fetch_sina_institution_lhb),
+        (INSTITUTION_SOURCE_NAMES[2], _fetch_sina_institution_lhb_tracking),
     )
-    if modern_item is not None:
-        return modern_item
-    specs = (
-        ("机构买入额", ("机构买入额", "机构买入金额", "买入额")),
-        ("机构卖出额", ("机构卖出额", "机构卖出金额", "卖出额")),
-        ("机构净买额", ("机构净买额", "净买额", "净额")),
-        ("上榜原因", ("上榜原因", "解读")),
-    )
-    metrics, raw = _pick_metrics(row, specs)
-    score = _institution_score(raw)
-    metrics["证据分"] = f"{score:.1f}"
-    return CapitalEvidenceItem(
-        category="institution_lhb",
-        source="AkShare/龙虎榜机构统计",
-        title="龙虎榜机构席位",
-        date=_row_text(row, ("日期", "交易日期", "上榜日")),
-        metrics=metrics,
-        sentiment=_score_sentiment(score),
-        weight=INSTITUTION_WEIGHT,
-        confidence="高" if raw.get("机构净买额") is not None else "中",
-        score=score,
-        note="仅代表龙虎榜公开席位统计，不等同于全部机构持仓变化。",
-    )
+    for source, fetcher in sina_fetchers:
+        attempted_sources.append(source)
+        try:
+            item = fetcher(ak, stock, start_date, end_date)
+        except Exception as exc:
+            failures.append(f"{source}：{_safe_external_error(exc)}")
+            continue
+        successful_sources.append(source)
+        if item is not None:
+            return item
+
+    if successful_sources:
+        return _institution_lhb_no_hit_item(stock, start_date, end_date, attempted_sources)
+    return _institution_lhb_unavailable_item(start_date, end_date, attempted_sources, failures)
 
 
 def _institution_lhb_item_from_row(
@@ -647,6 +669,87 @@ def _fetch_sina_institution_lhb(
     )
 
 
+def _fetch_sina_institution_lhb_tracking(
+    ak: Any,
+    stock: StockItem,
+    start_date: str,
+    end_date: str,
+) -> CapitalEvidenceItem | None:
+    days = _window_days(start_date, end_date)
+    if days <= 30:
+        symbol = "30"
+    elif days <= 60:
+        symbol = "60"
+    else:
+        symbol = "120"
+    frame = ak.stock_lhb_jgzz_sina(symbol=symbol)
+    row = _matching_last_row(frame, stock)
+    if row is None:
+        return None
+    item = _institution_lhb_item_from_row(
+        row,
+        source="AkShare/新浪龙虎榜机构席位追踪",
+        title="新浪龙虎榜机构席位追踪",
+        fallback_note=f"新浪龙虎榜机构席位追踪按近 {symbol} 日统计，作为东方财富龙虎榜机构统计的备用证据。",
+    )
+    if item is not None:
+        item.date = item.date or _window_date_label(start_date, end_date)
+        item.metrics.setdefault(LHB_REASON_LABEL, f"近 {symbol} 日机构席位追踪")
+    return item
+
+
+def _institution_lhb_no_hit_item(
+    stock: StockItem,
+    start_date: str,
+    end_date: str,
+    attempted_sources: Sequence[str],
+) -> CapitalEvidenceItem:
+    days = _window_days(start_date, end_date)
+    window = _window_date_label(start_date, end_date)
+    return CapitalEvidenceItem(
+        category=INSTITUTION_STATUS_CATEGORY,
+        source="东方财富龙虎榜 / 新浪龙虎榜",
+        title=f"近 {days} 日未上龙虎榜机构席位",
+        date=effective_trade_date(end_date),
+        metrics={
+            "状态": f"近 {days} 日未上榜",
+            "查询窗口": window,
+            "已尝试信源": "、".join(attempted_sources),
+            "股票": f"{stock.name or stock.code} {normalize_stock_code(stock.code)}",
+        },
+        sentiment="uncertain",
+        weight=INSTITUTION_WEIGHT,
+        confidence="中",
+        note="没有龙虎榜机构专用席位记录，不代表机构没有买卖；它只说明查询窗口内未公开上榜。",
+    )
+
+
+def _institution_lhb_unavailable_item(
+    start_date: str,
+    end_date: str,
+    attempted_sources: Sequence[str],
+    failures: Sequence[str],
+) -> CapitalEvidenceItem:
+    metrics = {
+        "状态": "接口不可用",
+        "查询窗口": _window_date_label(start_date, end_date),
+        "已尝试信源": "、".join(attempted_sources),
+    }
+    if failures:
+        metrics["失败源"] = "；".join(failures[:3])
+    return CapitalEvidenceItem(
+        category=INSTITUTION_STATUS_CATEGORY,
+        source="东方财富龙虎榜 / 新浪龙虎榜",
+        title="机构席位接口不可用",
+        date=effective_trade_date(end_date),
+        metrics=metrics,
+        sentiment="uncertain",
+        weight=INSTITUTION_WEIGHT,
+        confidence="低",
+        note="已跳过本次机构席位外部请求，资金侧结论不使用机构席位加分。",
+    )
+
+
 def _load_news_cache_items(stock: StockItem) -> tuple[list[CapitalEvidenceItem], list[str]]:
     if not env_bool("GP_CAPITAL_ENABLE_NEWS_EVIDENCE", True):
         return [], ["消息/股吧证据融合已关闭。"]
@@ -732,7 +835,7 @@ def _technical_evidence_item(trend: Any | None) -> CapitalEvidenceItem | None:
         weight=TECHNICAL_WEIGHT,
         confidence="中",
         score=score,
-        note="技术线只作为辅助解释，不等同于真实筹码分布或主力持仓变化。",
+        note="技术线只作为辅助解释，不等同于成本分布估算或主力持仓变化。",
     )
 
 
@@ -765,16 +868,69 @@ def _apply_rule_score(result: CapitalEvidenceResult) -> None:
 
 
 def _ensure_sections(result: CapitalEvidenceResult) -> CapitalEvidenceResult:
-    if result.sections:
-        return result
+    _backfill_institution_status(result)
     result.sections = [
         _build_section(result, "fund_flow", "资金流", "资金流", {"fund_flow"}),
-        _build_section(result, "institution_lhb", "机构席位", "机构席位", {"institution_lhb"}),
+        _build_section(
+            result,
+            "institution_lhb",
+            "机构席位",
+            "机构席位",
+            {"institution_lhb", INSTITUTION_STATUS_CATEGORY},
+        ),
         _build_section(result, "message_sentiment", "消息情绪", "消息情绪", {"news_rag", "community_sentiment"}),
         _build_section(result, "technical_behavior", "技术推断", "技术推断", {"technical_behavior"}),
         _build_section(result, "external_status", "接口状态", None, {"external_status"}),
     ]
     return result
+
+
+def _backfill_institution_status(result: CapitalEvidenceResult) -> None:
+    if any(item.category in {"institution_lhb", INSTITUTION_STATUS_CATEGORY} for item in result.items):
+        return
+    context = " ".join(
+        str(part)
+        for part in [
+            result.summary or "",
+            *result.notes,
+            *[item.title for item in result.items if item.category == "external_status"],
+            *[str(item.metrics) for item in result.items if item.category == "external_status"],
+        ]
+        if str(part or "").strip()
+    )
+    if any(
+        keyword in context
+        for keyword in ("机构席位不可用", "龙虎榜机构席位不可用", "机构席位抓取", "抓取已关闭", "AkShare 不可用", "超时", "timeout")
+    ):
+        failure_parts = [part for part in safe_string_list(result.notes, 4) if "机构席位" in part]
+        for item in result.items:
+            if item.category != "external_status":
+                continue
+            if item.metrics:
+                for value in item.metrics.values():
+                    if "机构席位" in str(value) or "龙虎榜" in str(value):
+                        failure_parts.append(str(value))
+            if item.note and ("机构席位" in item.note or "龙虎榜" in item.note):
+                failure_parts.append(item.note)
+        if not failure_parts:
+            failure_parts.append("机构席位状态来自旧缓存或本地配置，缺少可复原的失败明细。")
+        result.items.append(
+            _institution_lhb_unavailable_item(
+                result.as_of_trade_date or effective_trade_date(None),
+                result.as_of_trade_date or effective_trade_date(None),
+                INSTITUTION_SOURCE_NAMES,
+                failure_parts[:3],
+            )
+        )
+        return
+    result.items.append(
+        _institution_lhb_no_hit_item(
+            StockItem(code=result.stock_code, name="", industry="", price=0.0),
+            result.as_of_trade_date or effective_trade_date(None),
+            result.as_of_trade_date or effective_trade_date(None),
+            INSTITUTION_SOURCE_NAMES,
+        )
+    )
 
 
 def _build_section(
@@ -1185,6 +1341,26 @@ def _parse_date(value: str | None) -> date | None:
         return None
 
 
+def _window_days(start_date: str | None, end_date: str | None) -> int:
+    start = _parse_date(start_date)
+    end = _parse_date(end_date)
+    if start is None or end is None:
+        return env_int("GP_CAPITAL_LHB_LOOKBACK_DAYS", 30, minimum=1, maximum=365)
+    if end < start:
+        start, end = end, start
+    return max(1, min(365, (end - start).days + 1))
+
+
+def _window_date_label(start_date: str | None, end_date: str | None) -> str:
+    start = _parse_date(start_date)
+    end = _parse_date(end_date)
+    if start is None or end is None:
+        return "最近可用交易窗口"
+    if end < start:
+        start, end = end, start
+    return f"{start.isoformat()} 至 {end.isoformat()}"
+
+
 def _previous_weekday(day: date) -> date:
     current = day
     while current.weekday() >= 5:
@@ -1200,5 +1376,6 @@ def _category_label(category: str) -> str:
     labels = {
         "fund_flow": "个股资金流",
         "institution_lhb": "龙虎榜机构席位",
+        INSTITUTION_STATUS_CATEGORY: "机构席位状态",
     }
     return labels.get(category, category)

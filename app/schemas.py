@@ -1,5 +1,5 @@
 from datetime import date
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -56,20 +56,34 @@ class ScreenedStock(BaseModel):
     stock: StockItem
     score: float
     reasons: List[str]
+    factor_scores: Dict[str, float] = Field(default_factory=dict)
+    score_explanation: str = ""
+    concept: Optional[str] = None
+    theme_category: Optional[str] = None
+
+
+class ScreenResultGroup(BaseModel):
+    key: str
+    title: str
+    description: str = ""
+    total: int = 0
+    returned: int = 0
+    items: List[ScreenedStock] = Field(default_factory=list)
 
 
 class ScreenResult(BaseModel):
     total: int
     returned: int
     items: List[ScreenedStock]
+    groups: List[ScreenResultGroup] = Field(default_factory=list)
     notes: List[str] = Field(default_factory=list)
 
 
 class SectorScreenRequest(BaseModel):
     criteria: ScreenCriteria = Field(default_factory=ScreenCriteria)
-    per_sector_limit: int = Field(default=3, ge=1, le=50)
+    per_sector_limit: int = Field(default=5, ge=1, le=50)
     max_sectors: int = Field(default=12, ge=1, le=50)
-    min_sector_candidates: int = Field(default=3, ge=1, le=500)
+    min_sector_candidates: int = Field(default=5, ge=1, le=500)
 
 
 class SectorScreenGroup(BaseModel):
@@ -138,6 +152,7 @@ class TrendIndicatorRequest(BaseModel):
     start_date: str = Field(default="20200101", description="YYYYMMDD")
     end_date: str = Field(default_factory=current_system_date_yyyymmdd, description="YYYYMMDD")
     series_limit: int = Field(default=120, ge=20, le=500)
+    include_chip_distribution: bool = False
 
 
 class StockObserveRequest(BaseModel):
@@ -150,6 +165,7 @@ class StockObserveRequest(BaseModel):
     minute_end: Optional[str] = None
     minute_limit: int = Field(default=160, ge=1, le=500)
     include_order_book: bool = True
+    include_chip_distribution: bool = True
     llm: Optional[LlmClientConfig] = None
 
 
@@ -201,10 +217,23 @@ class TrendIndicatorSignal(BaseModel):
     notes: List[str] = Field(default_factory=list)
 
 
+class ChipDistributionResult(BaseModel):
+    source: str = "成本分布估算"
+    status: str = "unavailable"
+    date: Optional[str] = None
+    winner_ratio: Optional[float] = None
+    avg_cost: Optional[float] = None
+    cost_90_low: Optional[float] = None
+    cost_90_high: Optional[float] = None
+    concentration_90: Optional[float] = None
+    note: Optional[str] = None
+
+
 class TrendIndicatorResult(BaseModel):
     stock: StockItem
     signal: TrendIndicatorSignal
     series: List[TrendIndicatorPoint] = Field(default_factory=list)
+    chip_distribution: Optional[ChipDistributionResult] = None
 
 
 class TrendScreenRequest(BaseModel):

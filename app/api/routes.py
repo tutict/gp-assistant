@@ -206,6 +206,7 @@ def observe_stock(
     minute_end: Optional[str] = None,
     minute_limit: int = 160,
     include_order_book: bool = True,
+    include_chip_distribution: bool = True,
     provider=Depends(_provider_from_headers),
 ):
     try:
@@ -221,6 +222,7 @@ def observe_stock(
                 minute_end=minute_end,
                 minute_limit=minute_limit,
                 include_order_book=include_order_book,
+                include_chip_distribution=include_chip_distribution,
             ),
         )
     except KeyError:
