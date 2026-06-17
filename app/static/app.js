@@ -42,21 +42,23 @@ const DEFAULT_PER_SECTOR_LIMIT = 5;
 const SECTOR_SCREEN_POOL_MULTIPLIER = 8;
 const SCREENING_RULES_URL = new URL("screening_rules.json", document.currentScript?.src || window.location.href).toString();
 const DEFAULT_SCREENING_RULES = {
-  version: 1,
+  version: 2,
   score_scale: 20,
   group_limit: 10,
   potential_score_threshold: 10,
   factor_weights: { theme: 0.24, fundamental: 0.24, valuation: 0.24, size: 0.14, risk: 0.14 },
-  theme_promotion_order: ["materials", "ai_chain", "tech", "energy", "game"],
-  theme_fill_order: ["ai_chain", "materials", "tech", "energy", "game"],
+  theme_promotion_order: ["materials", "ai_chain", "semiconductor_wafer", "tech", "energy", "game"],
+  theme_fill_order: ["ai_chain", "semiconductor_wafer", "materials", "tech", "energy", "game"],
   theme_categories: [
     { key: "materials", label: "新材料", score: 0.96, keywords: ["氟化工", "氟材料", "锂电材料", "电解液", "六氟磷酸锂", "新能材", "新材料", "固态电池", "磁材"] },
+    { key: "semiconductor_wafer", label: "半导体晶圆", score: 0.9, keywords: ["半导体晶圆", "晶圆", "晶圆代工", "晶圆制造", "晶圆厂", "硅晶圆", "硅片", "外延片", "外延硅片", "半导体衬底", "衬底", "碳化硅衬底", "sic衬底", "抛光片", "8英寸", "12英寸"] },
     { key: "ai_chain", label: "AI算力与芯片", score: 0.95, keywords: ["半导体", "芯片", "算力", "人工智能", "ai", "光模块", "cpo", "服务器", "液冷", "gpu", "hbm", "存储", "数据中心", "云计算", "大模型", "aigc", "边缘计算", "pcb", "封装", "封测", "eda", "soc"] },
     { key: "tech", label: "科技制造", score: 0.84, keywords: ["机器人", "软件", "通信", "科技", "电子", "自动化", "高端制造", "智能制造"] },
     { key: "energy", label: "新能源", score: 0.82, keywords: ["新能源", "电池", "储能", "光伏", "电力", "能源", "油气", "煤炭", "风电", "充电桩"] },
     { key: "game", label: "游戏传媒", score: 0.78, keywords: ["游戏", "网络游戏", "手游", "电竞", "云游戏", "互动娱乐", "文化传媒", "传媒"] },
   ],
   concept_groups: [
+    { label: "半导体晶圆", keywords: ["半导体晶圆", "晶圆", "晶圆代工", "晶圆制造", "晶圆厂", "硅晶圆", "硅片", "外延片", "外延硅片", "半导体衬底", "衬底", "碳化硅衬底", "sic衬底", "抛光片", "8英寸", "12英寸"] },
     { label: "AI算力与芯片", keywords: ["半导体", "芯片", "算力", "人工智能", "ai", "光模块", "cpo", "服务器", "液冷", "gpu", "hbm", "存储", "数据中心", "云计算", "大模型", "aigc", "边缘计算", "pcb", "封装", "封测", "eda", "soc"] },
     { label: "新材料", keywords: ["氟化工", "氟材料", "锂电材料", "电解液", "六氟磷酸锂", "新能材", "新材料", "固态电池", "磁材"] },
     { label: "新能源与储能", keywords: ["新能源", "电池", "储能", "光伏", "电力", "能源", "风电", "充电桩"] },

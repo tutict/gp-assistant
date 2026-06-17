@@ -6,7 +6,12 @@ import pandas as pd
 
 from app.schemas import ScreenCriteria, SectorScreenRequest, StockItem
 from app.services.screener import screen_stocks, screen_stocks_by_sector
-from app.services.screening_rules import concept_group_for_stock, is_cold_sector, load_screening_rules
+from app.services.screening_rules import (
+    concept_group_for_stock,
+    is_cold_sector,
+    load_screening_rules,
+    theme_category_for_stock,
+)
 
 
 class ScreenerIndustryTests(unittest.TestCase):
@@ -189,9 +194,12 @@ class ScreenerIndustryTests(unittest.TestCase):
     def test_shared_rules_classify_concepts_and_cold_sectors(self):
         rules = load_screening_rules()
         chip = StockItem(code="688001.SH", name="AI芯片公司", industry="半导体", price=10.0)
+        wafer = StockItem(code="688002.SH", name="晶圆制造公司", industry="硅片", price=10.0)
 
         self.assertGreaterEqual(rules.group_limit, 10)
         self.assertEqual(concept_group_for_stock(chip, rules), "AI算力与芯片")
+        self.assertEqual(concept_group_for_stock(wafer, rules), "半导体晶圆")
+        self.assertEqual(theme_category_for_stock(wafer, rules), "semiconductor_wafer")
         self.assertTrue(is_cold_sector("银行", rules))
 
     def test_screened_stock_includes_factor_breakdown_and_explanation(self):
