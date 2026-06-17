@@ -34,11 +34,12 @@ const BACKEND_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 const MOBILE_MARKET_DATA_FILE: &str = "mobile-market-data.json";
 const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
-const TENCENT_BATCH_SIZE: usize = 500;
-const TENCENT_DEFAULT_MAX_CANDIDATES: usize = 16_000;
+const TENCENT_BATCH_SIZE: usize = 120;
+const TENCENT_DEFAULT_MAX_CANDIDATES: usize = 8_000;
 const TENCENT_DEFAULT_MAX_FAILED_BATCHES: usize = 4;
 const TENCENT_DEFAULT_MAX_REFRESH_SECS: u64 = 45;
-const TENCENT_REQUEST_TIMEOUT_SECS: u64 = 8;
+const TENCENT_CONNECT_TIMEOUT_SECS: u64 = 3;
+const TENCENT_REQUEST_TIMEOUT_SECS: u64 = 6;
 
 #[cfg(not(mobile))]
 struct BackendState(Mutex<Option<BackendProcess>>);
@@ -505,6 +506,7 @@ async fn refresh_tencent_market_data(
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(TENCENT_REQUEST_TIMEOUT_SECS))
+        .connect_timeout(Duration::from_secs(TENCENT_CONNECT_TIMEOUT_SECS))
         .user_agent("Mozilla/5.0 GP-Assistant/0.2 mobile")
         .build()
         .map_err(|error| format!("create Tencent HTTP client failed: {error}"))?;
@@ -523,7 +525,15 @@ async fn refresh_tencent_market_data(
             stop_reason = Some("timeout".to_string());
             break;
         }
-        match fetch_tencent_quotes(&client, batch).await {
+        let request_timeout = max_refresh_duration
+            .saturating_sub(started_at.elapsed())
+            .min(Duration::from_secs(TENCENT_REQUEST_TIMEOUT_SECS));
+        if request_timeout.is_zero() {
+            stopped_early = true;
+            stop_reason = Some("timeout".to_string());
+            break;
+        }
+        match fetch_tencent_quotes(&client, batch, request_timeout).await {
             Ok(text) => {
                 consecutive_failed_batches = 0;
                 for mut stock in parse_tencent_quotes(&text, &seed_stocks, use_previous_close) {
@@ -637,6 +647,7 @@ fn append_preserved_seed_stocks(
 async fn fetch_tencent_quotes(
     client: &reqwest::Client,
     codes: &[String],
+    request_timeout: Duration,
 ) -> Result<String, String> {
     let symbols: Vec<String> = codes
         .iter()
@@ -648,6 +659,7 @@ async fn fetch_tencent_quotes(
     let url = format!("{TENCENT_QUOTE_ENDPOINT}{}", symbols.join(","));
     let response = client
         .get(url)
+        .timeout(request_timeout)
         .send()
         .await
         .map_err(|error| format!("Tencent quote request failed: {error}"))?;
@@ -765,16 +777,31 @@ fn seed_stock_maps(seed: &Value) -> (HashMap<String, serde_json::Map<String, Val
 }
 
 fn append_tencent_candidate_codes(codes: &mut Vec<String>) {
-    append_range(codes, "SZ", 1, 3999);
-    append_range(codes, "SZ", 300000, 301999);
-    append_range(codes, "SH", 600000, 605999);
-    append_range(codes, "SH", 688000, 689999);
-    append_range(codes, "BJ", 920000, 920999);
+    append_interleaved_ranges(
+        codes,
+        &[
+            ("SZ", 1, 3999),
+            ("SH", 600000, 605999),
+            ("SZ", 300000, 301999),
+            ("SH", 688000, 689999),
+            ("BJ", 920000, 920999),
+        ],
+    );
 }
 
-fn append_range(codes: &mut Vec<String>, market: &str, start: u32, end: u32) {
-    for value in start..=end {
-        codes.push(format!("{value:06}.{market}"));
+fn append_interleaved_ranges(codes: &mut Vec<String>, ranges: &[(&str, u32, u32)]) {
+    let max_len = ranges
+        .iter()
+        .map(|(_, start, end)| end.saturating_sub(*start))
+        .max()
+        .unwrap_or(0);
+    for offset in 0..=max_len {
+        for (market, start, end) in ranges {
+            let value = start.saturating_add(offset);
+            if value <= *end {
+                codes.push(format!("{value:06}.{market}"));
+            }
+        }
     }
 }
 
@@ -1398,5 +1425,27 @@ mod tests {
         assert!(stocks
             .iter()
             .any(|stock| stock.get("code").and_then(Value::as_str) == Some("600000.SH")));
+    }
+
+    #[test]
+    fn tencent_candidates_are_interleaved_across_markets() {
+        let mut codes = Vec::new();
+
+        append_tencent_candidate_codes(&mut codes);
+
+        assert_eq!(
+            &codes[..5],
+            &[
+                "000001.SZ".to_string(),
+                "600000.SH".to_string(),
+                "300000.SZ".to_string(),
+                "688000.SH".to_string(),
+                "920000.BJ".to_string(),
+            ]
+        );
+        assert!(codes.iter().position(|code| code == "600010.SH").unwrap() < 64);
+        assert!(codes.iter().position(|code| code == "300010.SZ").unwrap() < 64);
+        assert!(codes.iter().position(|code| code == "688010.SH").unwrap() < 64);
+        assert!(codes.iter().position(|code| code == "920010.BJ").unwrap() < 64);
     }
 }

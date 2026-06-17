@@ -79,9 +79,10 @@ const screeningRulesPromise = loadScreeningRules();
 const STOCK_SEARCH_LIMIT = 3;
 const DEFAULT_OBSERVE_TRADING_DAYS = 10;
 const DEFAULT_DATA_SOURCE = "tdx";
-const MOBILE_TENCENT_MAX_CANDIDATES = 16000;
+const MOBILE_TENCENT_MAX_CANDIDATES = 6000;
 const MOBILE_TENCENT_MAX_FAILED_BATCHES = 4;
 const MOBILE_TENCENT_MAX_REFRESH_SECS = 45;
+const MOBILE_TENCENT_INVOKE_TIMEOUT_MS = (MOBILE_TENCENT_MAX_REFRESH_SECS + 15) * 1000;
 const DEFAULT_TODAY_DATE_INPUT_IDS = new Set(["trendEnd", "btEnd", "observeEnd"]);
 let mobileMarketDataPromise = null;
 let mobileMarketDataSummary = null;
@@ -2424,6 +2425,18 @@ function clampFloat(raw, min, max, fallback) {
   return Math.min(Math.max(value, min), max);
 }
 
+function withTimeout(promise, timeoutMs, message) {
+  let timer = null;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timer) window.clearTimeout(timer);
+  });
+}
+
 async function postJson(url, payload, resultNode) {
   try {
     return await requestJson("POST", url, payload);
@@ -2821,16 +2834,20 @@ async function refreshMobileMarketData(invoke, options = {}) {
   mobileMarketDataPromise = null;
   mobileMarketDataSummary = null;
   mobileMarketDataMeta = null;
-  const result = await invoke("core_mobile_market_data_refresh_tencent", {
-    payload: {
-      seed,
-      scan_candidates: true,
-      max_candidates: MOBILE_TENCENT_MAX_CANDIDATES,
-      max_failed_batches: MOBILE_TENCENT_MAX_FAILED_BATCHES,
-      max_refresh_secs: MOBILE_TENCENT_MAX_REFRESH_SECS,
-      use_previous_close: shouldUsePreviousCloseForMobileRefresh(),
-    },
-  });
+  const result = await withTimeout(
+    invoke("core_mobile_market_data_refresh_tencent", {
+      payload: {
+        seed,
+        scan_candidates: true,
+        max_candidates: MOBILE_TENCENT_MAX_CANDIDATES,
+        max_failed_batches: MOBILE_TENCENT_MAX_FAILED_BATCHES,
+        max_refresh_secs: MOBILE_TENCENT_MAX_REFRESH_SECS,
+        use_previous_close: shouldUsePreviousCloseForMobileRefresh(),
+      },
+    }),
+    MOBILE_TENCENT_INVOKE_TIMEOUT_MS,
+    `腾讯行情刷新超过 ${Math.round(MOBILE_TENCENT_INVOKE_TIMEOUT_MS / 1000)} 秒未返回，已停止等待。请确认手机网络可访问腾讯行情后重试。`,
+  );
   if (result?.status?.data) {
     const data = applyMobileMarketDataRecord(result.status, "cache");
     mobileMarketDataPromise = Promise.resolve(data);
