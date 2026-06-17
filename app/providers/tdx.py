@@ -289,6 +289,9 @@ class TdxProvider(StockProvider):
         if stock.pb:
             add("每股净资产", stock.price / stock.pb, self._format_indicator_yuan, "元")
         add("净资产收益率", roe, self._format_indicator_ratio_percent, tone="rise" if (roe or 0) >= 0 else "fall")
+        add("扣非净利润", stock.deducted_net_profit_billion, self._format_indicator_yi, "亿")
+        deducted_margin = self._as_percent(stock.deducted_net_profit_margin)
+        add("扣非净利率", deducted_margin, self._format_indicator_percent_points)
         add("市值", stock.market_cap_billion, self._format_indicator_yi, "亿")
         add("股息率", stock.dividend_yield, self._format_indicator_ratio_percent)
 
@@ -493,6 +496,8 @@ class TdxProvider(StockProvider):
             roe=cls._to_float(row.get("roe")),
             market_cap_billion=cls._non_negative(row.get("market_cap_billion")),
             dividend_yield=cls._non_negative(row.get("dividend_yield")),
+            deducted_net_profit_billion=cls._deducted_net_profit_billion_from_row(row),
+            deducted_net_profit_margin=cls._deducted_net_profit_margin_from_row(row),
         )
 
     @classmethod
@@ -519,6 +524,8 @@ class TdxProvider(StockProvider):
             roe=cls._to_float(row.get("roe")),
             market_cap_billion=cls._non_negative(market_cap),
             dividend_yield=cls._non_negative(row.get("dividend_yield")),
+            deducted_net_profit_billion=cls._deducted_net_profit_billion_from_row(row),
+            deducted_net_profit_margin=cls._deducted_net_profit_margin_from_row(row),
         )
 
     def _stock_with_quote(self, item: StockItem, quote: Optional[dict], price_field: str) -> StockItem | None:
@@ -589,6 +596,16 @@ class TdxProvider(StockProvider):
             ),
             "dividend_yield": (
                 fundamental.dividend_yield if fundamental.dividend_yield is not None else item.dividend_yield
+            ),
+            "deducted_net_profit_billion": (
+                fundamental.deducted_net_profit_billion
+                if fundamental.deducted_net_profit_billion is not None
+                else item.deducted_net_profit_billion
+            ),
+            "deducted_net_profit_margin": (
+                fundamental.deducted_net_profit_margin
+                if fundamental.deducted_net_profit_margin is not None
+                else item.deducted_net_profit_margin
             ),
         }
         used = (
@@ -806,6 +823,16 @@ class TdxProvider(StockProvider):
         return f"{value * 100:.2f}".rstrip("0").rstrip(".") + "%"
 
     @staticmethod
+    def _format_indicator_percent_points(value: float) -> str:
+        return f"{value:.2f}".rstrip("0").rstrip(".") + "%"
+
+    @staticmethod
+    def _as_percent(value: float | None) -> float | None:
+        if value is None:
+            return None
+        return value * 100 if -1 <= value <= 1 else value
+
+    @staticmethod
     def _is_risk_labeled_name(name: object) -> bool:
         value = str(name or "").strip().upper()
         return "ST" in value or "退市" in value
@@ -818,6 +845,44 @@ class TdxProvider(StockProvider):
     def _non_negative(value) -> Optional[float]:
         result = TdxProvider._to_float(value)
         return result if result is not None and result >= 0 else None
+
+    @classmethod
+    def _deducted_net_profit_billion_from_row(cls, row) -> Optional[float]:
+        value = cls._first_float(
+            row,
+            [
+                "deducted_net_profit_billion",
+                "扣非净利润_亿",
+                "扣非净利润",
+                "DEDU_PARENT_PROFIT",
+                "KCFJCXSYJLR",
+            ],
+        )
+        if value is None:
+            return None
+        return value / 1e8 if abs(value) > 1e6 else value
+
+    @classmethod
+    def _deducted_net_profit_margin_from_row(cls, row) -> Optional[float]:
+        value = cls._first_float(row, ["deducted_net_profit_margin", "扣非净利润率", "扣非净利率"])
+        if value is not None:
+            return value
+        profit = cls._deducted_net_profit_billion_from_row(row)
+        revenue = cls._first_float(row, ["revenue_billion", "营业总收入_亿", "营业总收入", "TOTALOPERATEREVE"])
+        if profit is None or revenue is None:
+            return None
+        revenue_billion = revenue / 1e8 if abs(revenue) > 1e6 else revenue
+        if revenue_billion <= 0:
+            return None
+        return profit / revenue_billion * 100
+
+    @classmethod
+    def _first_float(cls, row, keys: list[str]) -> Optional[float]:
+        for key in keys:
+            value = cls._to_float(row.get(key))
+            if value is not None:
+                return value
+        return None
 
     @staticmethod
     def _positive_float(value) -> Optional[float]:

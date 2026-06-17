@@ -19,6 +19,8 @@ class StockItem(BaseModel):
     roe: Optional[float] = None
     market_cap_billion: Optional[float] = None
     dividend_yield: Optional[float] = None
+    deducted_net_profit_billion: Optional[float] = None
+    deducted_net_profit_margin: Optional[float] = None
 
 
 class FinancialIndicatorItem(BaseModel):
@@ -44,6 +46,8 @@ class ScreenCriteria(BaseModel):
     max_pe: Optional[float] = None
     max_pb: Optional[float] = None
     min_market_cap_billion: Optional[float] = None
+    min_deducted_net_profit_billion: Optional[float] = None
+    min_deducted_net_profit_margin: Optional[float] = None
     industry: Optional[str] = None
     require_institution_buy_ratio_gt_sell_ratio: bool = False
     include_st: bool = False

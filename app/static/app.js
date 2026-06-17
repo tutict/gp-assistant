@@ -2184,6 +2184,8 @@ function buildCriteria(overrides = {}) {
   const criteria = {
     include_st: $("#includeSt").checked,
     require_institution_buy_ratio_gt_sell_ratio: Boolean($("#requireInstitutionBuyRatio")?.checked),
+    min_deducted_net_profit_billion: 0,
+    min_deducted_net_profit_margin: 10,
     limit: readInt("resultLimit", DEFAULT_RESULT_LIMIT),
     sort_by: $("#sortBy").value,
     sort_dir: $("#sortDir").value,
@@ -2236,6 +2238,8 @@ function updateCriteriaSummary() {
     $("#minRoe")?.value ? `ROE ≥ ${formatPercent(Number($("#minRoe").value))}` : "",
     $("#maxPe")?.value ? `PE ≤ ${formatNumber($("#maxPe").value)}` : "",
     $("#minMcap")?.value ? `市值 ≥ ${formatNumber($("#minMcap").value)} 亿` : "",
+    "扣非净利润 > 0",
+    "扣非净利率 > 10%",
     $("#requireInstitutionBuyRatio")?.checked ? "机构净买入" : "",
     `返回 ${clampInt($("#resultLimit")?.value, 1, 200, DEFAULT_RESULT_LIMIT)} 只`,
     rebalanceLabel($("#btRebalance")?.value || "monthly"),
@@ -2662,7 +2666,10 @@ async function buildTauriSectorScreen(invoke, payload = {}) {
     returned: groups.reduce((sum, group) => sum + group.returned, 0),
     sector_count: groups.length,
     groups,
-    notes: ["移动端使用内置通达信数据集进行本地概念分组，未命中概念时归入其他概念。"],
+    notes: [
+      ...(screen.notes || []),
+      "移动端使用内置通达信数据集进行本地概念分组，未命中概念时归入其他概念。",
+    ],
   };
 }
 
@@ -2734,6 +2741,8 @@ function buildMobileFinancialIndicators(stock) {
   if (stock.pe) add("每股收益(计算)", Number(stock.price || 0) / Number(stock.pe), (value) => `${formatNumber(value)}元`);
   if (stock.pb) add("每股净资产", Number(stock.price || 0) / Number(stock.pb), (value) => `${formatNumber(value)}元`);
   add("净资产收益率", stock.roe, formatPercent, Number(stock.roe || 0) >= 0 ? "rise" : "fall");
+  add("扣非净利润", stock.deducted_net_profit_billion, (value) => `${formatNumber(value)}亿`, Number(stock.deducted_net_profit_billion || 0) > 0 ? "rise" : "fall");
+  add("扣非净利率", stock.deducted_net_profit_margin, (value) => `${formatNumber(Math.abs(value) <= 1 ? value * 100 : value)}%`);
   add("市值", stock.market_cap_billion, (value) => `${formatNumber(value)}亿`);
   add("股息率", stock.dividend_yield, formatPercent);
 
@@ -5605,6 +5614,8 @@ function reasonLabel(reason) {
     pe_ok: "市盈率达标",
     pb_ok: "市净率达标",
     mcap_ok: "市值达标",
+    deducted_net_profit_ok: "扣非净利润达标",
+    deducted_net_profit_margin_ok: "扣非净利率达标",
     strong_relation_signal: "强关系信号",
     moderate_relation_signal: "中等关系信号",
     short_buy_signal: "短买",

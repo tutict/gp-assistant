@@ -268,7 +268,25 @@ class AkShareProvider(StockProvider):
         pick = lambda keys, default=None: self._row_value(row, keys, default)
         self._append_indicator(items, "\u6bcf\u80a1\u6536\u76ca(\u8ba1\u7b97)", pick(["EPSJB"]), self._format_yuan)
         self._append_indicator(items, "\u6bcf\u80a1\u51c0\u8d44\u4ea7", pick(["BPS"]), self._format_yuan)
-        self._append_indicator(items, "\u8425\u4e1a\u603b\u6536\u5165", pick(["TOTALOPERATEREVE"]), self._format_yi_from_yuan)
+        revenue = pick(["TOTALOPERATEREVE"])
+        deducted_profit = pick(["DEDU_PARENT_PROFIT", "KCFJCXSYJLR"])
+        if revenue is None and stock.deducted_net_profit_margin is not None and stock.deducted_net_profit_billion:
+            margin = stock.deducted_net_profit_margin
+            margin_percent = margin * 100 if -1 <= margin <= 1 else margin
+            if margin_percent:
+                revenue = stock.deducted_net_profit_billion * 1e8 / (margin_percent / 100)
+        if deducted_profit is None and stock.deducted_net_profit_billion is not None:
+            deducted_profit = stock.deducted_net_profit_billion * 1e8
+        deducted_margin = stock.deducted_net_profit_margin
+        if deducted_margin is not None and -1 <= deducted_margin <= 1:
+            deducted_margin *= 100
+        if deducted_margin is None:
+            revenue_value = self._to_float(revenue)
+            profit_value = self._to_float(deducted_profit)
+            if revenue_value and revenue_value > 0 and profit_value is not None:
+                deducted_margin = profit_value / revenue_value * 100
+
+        self._append_indicator(items, "\u8425\u4e1a\u603b\u6536\u5165", revenue, self._format_yi_from_yuan)
         self._append_indicator(
             items,
             "\u603b\u8425\u6536\u540c\u6bd4",
@@ -287,9 +305,10 @@ class AkShareProvider(StockProvider):
         self._append_indicator(
             items,
             "\u6263\u975e\u51c0\u5229\u6da6",
-            pick(["DEDU_PARENT_PROFIT", "KCFJCXSYJLR"]),
+            deducted_profit,
             self._format_yi_from_yuan,
         )
+        self._append_indicator(items, "\u6263\u975e\u51c0\u5229\u7387", deducted_margin, self._format_percent)
         self._append_indicator(
             items,
             "\u6263\u975e\u51c0\u5229\u540c\u6bd4",
@@ -585,6 +604,8 @@ class AkShareProvider(StockProvider):
             roe=None,
             market_cap_billion=market_cap_billion,
             dividend_yield=None,
+            deducted_net_profit_billion=self._deducted_net_profit_billion_from_row(row),
+            deducted_net_profit_margin=self._deducted_net_profit_margin_from_row(row),
         )
 
     @staticmethod
@@ -610,6 +631,44 @@ class AkShareProvider(StockProvider):
             return None
         result = value * ratio
         return result if math.isfinite(result) and result >= 0 else None
+
+    @classmethod
+    def _deducted_net_profit_billion_from_row(cls, row) -> Optional[float]:
+        value = cls._first_float(
+            row,
+            [
+                "deducted_net_profit_billion",
+                "扣非净利润_亿",
+                "扣非净利润",
+                "DEDU_PARENT_PROFIT",
+                "KCFJCXSYJLR",
+            ],
+        )
+        if value is None:
+            return None
+        return value / 1e8 if abs(value) > 1e6 else value
+
+    @classmethod
+    def _deducted_net_profit_margin_from_row(cls, row) -> Optional[float]:
+        value = cls._first_float(row, ["deducted_net_profit_margin", "扣非净利润率", "扣非净利率"])
+        if value is not None:
+            return value
+        profit = cls._deducted_net_profit_billion_from_row(row)
+        revenue = cls._first_float(row, ["revenue_billion", "营业总收入_亿", "营业总收入", "TOTALOPERATEREVE"])
+        if profit is None or revenue is None:
+            return None
+        revenue_billion = revenue / 1e8 if abs(revenue) > 1e6 else revenue
+        if revenue_billion <= 0:
+            return None
+        return profit / revenue_billion * 100
+
+    @classmethod
+    def _first_float(cls, row, keys: list[str]) -> Optional[float]:
+        for key in keys:
+            value = cls._to_float(row.get(key))
+            if value is not None:
+                return value
+        return None
 
     @staticmethod
     def _first_present(row: pd.Series, options: List[str]) -> str:

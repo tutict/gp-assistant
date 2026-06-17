@@ -50,6 +50,67 @@ class ScreenerIndustryTests(unittest.TestCase):
 
         self.assertEqual([item.stock.code for item in result.items], ["600000.SH", "600036.SH", "000001.SZ"])
 
+    def test_deducted_profit_rule_requires_positive_profit_and_margin_above_ten_percent(self):
+        universe = [
+            StockItem(
+                code="300001.SZ",
+                name="达标公司",
+                industry="半导体",
+                price=10.0,
+                deducted_net_profit_billion=1.2,
+                deducted_net_profit_margin=12.0,
+            ),
+            StockItem(
+                code="300002.SZ",
+                name="低净利率公司",
+                industry="半导体",
+                price=10.0,
+                deducted_net_profit_billion=1.1,
+                deducted_net_profit_margin=9.9,
+            ),
+            StockItem(
+                code="300003.SZ",
+                name="亏损公司",
+                industry="半导体",
+                price=10.0,
+                deducted_net_profit_billion=-0.1,
+                deducted_net_profit_margin=15.0,
+            ),
+            StockItem(code="300004.SZ", name="缺财务公司", industry="半导体", price=10.0),
+        ]
+
+        result = screen_stocks(
+            universe,
+            ScreenCriteria(
+                min_deducted_net_profit_billion=0,
+                min_deducted_net_profit_margin=10,
+                limit=10,
+            ),
+        )
+
+        self.assertEqual([item.stock.code for item in result.items], ["300001.SZ"])
+        self.assertIn("deducted_net_profit_ok", result.items[0].reasons)
+        self.assertIn("deducted_net_profit_margin_ok", result.items[0].reasons)
+
+    def test_deducted_profit_margin_accepts_ratio_values(self):
+        universe = [
+            StockItem(
+                code="300001.SZ",
+                name="达标公司",
+                industry="半导体",
+                price=10.0,
+                deducted_net_profit_billion=1.2,
+                deducted_net_profit_margin=0.12,
+            )
+        ]
+
+        result = screen_stocks(
+            universe,
+            ScreenCriteria(min_deducted_net_profit_billion=0, min_deducted_net_profit_margin=10),
+        )
+
+        self.assertEqual(result.returned, 1)
+
     def test_score_sort_biases_toward_hot_energy_and_tech_sectors(self):
         universe = [
             StockItem(code="000001.SZ", name="平安银行", industry="银行", price=10.0, pe=10.0, pb=1.0, roe=0.1),

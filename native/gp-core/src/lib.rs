@@ -58,6 +58,10 @@ pub struct StockItem {
     pub market_cap_billion: Option<f64>,
     #[serde(default)]
     pub dividend_yield: Option<f64>,
+    #[serde(default)]
+    pub deducted_net_profit_billion: Option<f64>,
+    #[serde(default)]
+    pub deducted_net_profit_margin: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -70,6 +74,10 @@ pub struct ScreenCriteria {
     pub max_pb: Option<f64>,
     #[serde(default)]
     pub min_market_cap_billion: Option<f64>,
+    #[serde(default)]
+    pub min_deducted_net_profit_billion: Option<f64>,
+    #[serde(default)]
+    pub min_deducted_net_profit_margin: Option<f64>,
     #[serde(default)]
     pub industry: Option<String>,
     #[serde(default)]
@@ -89,6 +97,8 @@ impl Default for ScreenCriteria {
             max_pe: None,
             max_pb: None,
             min_market_cap_billion: None,
+            min_deducted_net_profit_billion: None,
+            min_deducted_net_profit_margin: None,
             industry: None,
             include_st: false,
             limit: default_screen_limit(),
@@ -110,6 +120,8 @@ pub struct ScreenResult {
     pub total: usize,
     pub returned: usize,
     pub items: Vec<ScreenedStock>,
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1085,6 +1097,7 @@ pub fn trend_screen_with_source(
     items.sort_by(|left, right| right.final_score.total_cmp(&left.final_score));
     items.truncate(request.limit.clamp(1, 100));
     let mut notes = trend_notes();
+    notes.extend(deducted_profit_rule_notes(&universe, &request.criteria));
     if skipped > 0 {
         notes.push(format!(
             "Skipped {skipped} stocks without usable OHLC history."
@@ -1487,6 +1500,7 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 
 pub fn screen_stocks(universe: &[StockItem], criteria: &ScreenCriteria) -> ScreenResult {
     let mut screened = Vec::new();
+    let notes = deducted_profit_rule_notes(universe, criteria);
 
     for stock in universe {
         let Some(reasons) = matches_stock(stock, criteria) else {
@@ -1525,6 +1539,30 @@ pub fn screen_stocks(universe: &[StockItem], criteria: &ScreenCriteria) -> Scree
         total: screened.len(),
         returned: items.len(),
         items,
+        notes,
+    }
+}
+
+fn deducted_profit_rule_notes(universe: &[StockItem], criteria: &ScreenCriteria) -> Vec<String> {
+    if criteria.min_deducted_net_profit_billion.is_none()
+        && criteria.min_deducted_net_profit_margin.is_none()
+    {
+        return Vec::new();
+    }
+    let with_metrics = universe
+        .iter()
+        .filter(|stock| {
+            stock.deducted_net_profit_billion.is_some()
+                && stock.deducted_net_profit_margin.is_some()
+        })
+        .count();
+    if with_metrics < universe.len() {
+        vec![format!(
+            "扣非净利润规则已启用；当前股票池 {with_metrics}/{} 只股票带扣非财务字段，缺字段股票按不达标处理。",
+            universe.len()
+        )]
+    } else {
+        Vec::new()
     }
 }
 
@@ -1582,6 +1620,7 @@ pub fn graph_screen_stocks(
         "关系图是轻量传播评分层，不是 LangGraph 工作流编排。".to_string(),
         "LangGraph 用于智能体状态流；股票关系由图学习或知识图谱数据建模。".to_string(),
     ];
+    notes.extend(deducted_profit_rule_notes(universe, &request.criteria));
     if relations.is_empty() {
         notes.push("当前没有可用股票关系，结果已回退为基础选股分。".to_string());
     }
@@ -1608,6 +1647,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
             roe: Some(0.32),
             market_cap_billion: Some(2200.0),
             dividend_yield: Some(0.02),
+            deducted_net_profit_billion: Some(680.0),
+            deducted_net_profit_margin: Some(48.0),
         },
         StockItem {
             code: "000001.SZ".to_string(),
@@ -1620,6 +1661,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
             roe: Some(0.12),
             market_cap_billion: Some(240.0),
             dividend_yield: Some(0.05),
+            deducted_net_profit_billion: Some(450.0),
+            deducted_net_profit_margin: Some(38.0),
         },
         StockItem {
             code: "300750.SZ".to_string(),
@@ -1632,6 +1675,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
             roe: Some(0.18),
             market_cap_billion: Some(900.0),
             dividend_yield: Some(0.01),
+            deducted_net_profit_billion: Some(380.0),
+            deducted_net_profit_margin: Some(16.0),
         },
         StockItem {
             code: "002594.SZ".to_string(),
@@ -1644,6 +1689,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
             roe: Some(0.22),
             market_cap_billion: Some(720.0),
             dividend_yield: Some(0.006),
+            deducted_net_profit_billion: Some(250.0),
+            deducted_net_profit_margin: Some(12.0),
         },
         StockItem {
             code: "002475.SZ".to_string(),
@@ -1656,6 +1703,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
             roe: Some(0.17),
             market_cap_billion: Some(260.0),
             dividend_yield: Some(0.008),
+            deducted_net_profit_billion: Some(95.0),
+            deducted_net_profit_margin: Some(11.0),
         },
         StockItem {
             code: "600036.SH".to_string(),
@@ -1668,6 +1717,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
             roe: Some(0.14),
             market_cap_billion: Some(900.0),
             dividend_yield: Some(0.04),
+            deducted_net_profit_billion: Some(1300.0),
+            deducted_net_profit_margin: Some(42.0),
         },
         StockItem {
             code: "600000.SH".to_string(),
@@ -1680,6 +1731,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
             roe: Some(0.11),
             market_cap_billion: Some(170.0),
             dividend_yield: Some(0.06),
+            deducted_net_profit_billion: Some(320.0),
+            deducted_net_profit_margin: Some(36.0),
         },
         StockItem {
             code: "601012.SH".to_string(),
@@ -1692,6 +1745,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
             roe: Some(0.13),
             market_cap_billion: Some(140.0),
             dividend_yield: Some(0.012),
+            deducted_net_profit_billion: Some(90.0),
+            deducted_net_profit_margin: Some(10.5),
         },
         StockItem {
             code: "600309.SH".to_string(),
@@ -1704,6 +1759,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
             roe: Some(0.19),
             market_cap_billion: Some(245.0),
             dividend_yield: Some(0.025),
+            deducted_net_profit_billion: Some(160.0),
+            deducted_net_profit_margin: Some(13.0),
         },
         StockItem {
             code: "600887.SH".to_string(),
@@ -1716,6 +1773,8 @@ pub fn mock_stocks() -> Vec<StockItem> {
             roe: Some(0.16),
             market_cap_billion: Some(185.0),
             dividend_yield: Some(0.035),
+            deducted_net_profit_billion: Some(100.0),
+            deducted_net_profit_margin: Some(9.0),
         },
     ]
 }
@@ -1774,6 +1833,17 @@ pub fn mock_relations() -> Vec<StockRelation> {
     ]
 }
 
+fn as_percent(value: f64) -> Option<f64> {
+    if !value.is_finite() {
+        return None;
+    }
+    Some(if (-1.0..=1.0).contains(&value) {
+        value * 100.0
+    } else {
+        value
+    })
+}
+
 fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Option<Vec<String>> {
     let mut reasons = Vec::new();
     if !criteria.include_st && stock.is_st {
@@ -1825,6 +1895,29 @@ fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Option<Vec<Str
         reasons.push("mcap_ok".to_string());
     }
 
+    if let Some(min_profit) = criteria.min_deducted_net_profit_billion {
+        if stock
+            .deducted_net_profit_billion
+            .map(|profit| profit <= min_profit)
+            .unwrap_or(true)
+        {
+            return None;
+        }
+        reasons.push("deducted_net_profit_ok".to_string());
+    }
+
+    if let Some(min_margin) = criteria.min_deducted_net_profit_margin {
+        if stock
+            .deducted_net_profit_margin
+            .and_then(as_percent)
+            .map(|margin| margin <= min_margin)
+            .unwrap_or(true)
+        {
+            return None;
+        }
+        reasons.push("deducted_net_profit_margin_ok".to_string());
+    }
+
     Some(reasons)
 }
 
@@ -1841,6 +1934,21 @@ fn score_stock(stock: &StockItem, reasons: &[String]) -> f64 {
     }
     if let Some(dividend_yield) = stock.dividend_yield.filter(|value| *value != 0.0) {
         score += (dividend_yield * 10.0).min(1.0);
+    }
+    if stock
+        .deducted_net_profit_billion
+        .map(|profit| profit > 0.0)
+        .unwrap_or(false)
+    {
+        score += 0.4;
+    }
+    if stock
+        .deducted_net_profit_margin
+        .and_then(as_percent)
+        .map(|margin| margin >= 10.0)
+        .unwrap_or(false)
+    {
+        score += 0.4;
     }
     score += hot_sector_bonus(&format!("{} {}", stock.name, stock.industry));
     score += hot_theme_bonus(stock);
@@ -3639,6 +3747,8 @@ mod tests {
                 roe: Some(0.15),
                 market_cap_billion: Some(100.0),
                 dividend_yield: Some(0.04),
+                deducted_net_profit_billion: Some(8.0),
+                deducted_net_profit_margin: Some(12.0),
             },
             StockItem {
                 code: "222222.SZ".to_string(),
@@ -3651,6 +3761,8 @@ mod tests {
                 roe: Some(0.08),
                 market_cap_billion: Some(60.0),
                 dividend_yield: Some(0.01),
+                deducted_net_profit_billion: Some(3.0),
+                deducted_net_profit_margin: Some(8.0),
             },
         ];
         let relations = vec![StockRelation {
@@ -3887,6 +3999,28 @@ mod tests {
     }
 
     #[test]
+    fn screens_with_deducted_profit_quality_rule() {
+        let result = screen_with_data(
+            &sample_data_set(),
+            &ScreenCriteria {
+                min_deducted_net_profit_billion: Some(0.0),
+                min_deducted_net_profit_margin: Some(10.0),
+                ..ScreenCriteria::default()
+            },
+        )
+        .expect("native data screen should run");
+
+        assert_eq!(result.returned, 1);
+        assert_eq!(result.items[0].stock.code, "111111.SZ");
+        assert!(result.items[0]
+            .reasons
+            .contains(&"deducted_net_profit_ok".to_string()));
+        assert!(result.items[0]
+            .reasons
+            .contains(&"deducted_net_profit_margin_ok".to_string()));
+    }
+
+    #[test]
     fn screens_native_data_with_partial_industry_match() {
         let mut data = sample_data_set();
         data.stocks[0].industry = "银行服务".to_string();
@@ -3917,6 +4051,8 @@ mod tests {
             roe: Some(0.16),
             market_cap_billion: Some(240.0),
             dividend_yield: None,
+            deducted_net_profit_billion: None,
+            deducted_net_profit_margin: None,
         }];
 
         let result = screen_stocks(
@@ -3944,6 +4080,8 @@ mod tests {
                 roe: None,
                 market_cap_billion: None,
                 dividend_yield: None,
+                deducted_net_profit_billion: None,
+                deducted_net_profit_margin: None,
             },
             StockItem {
                 code: "600000.SH".to_string(),
@@ -3956,6 +4094,8 @@ mod tests {
                 roe: Some(0.11),
                 market_cap_billion: Some(170.0),
                 dividend_yield: None,
+                deducted_net_profit_billion: None,
+                deducted_net_profit_margin: None,
             },
             StockItem {
                 code: "600036.SH".to_string(),
@@ -3968,6 +4108,8 @@ mod tests {
                 roe: Some(0.14),
                 market_cap_billion: Some(900.0),
                 dividend_yield: None,
+                deducted_net_profit_billion: None,
+                deducted_net_profit_margin: None,
             },
         ];
 
@@ -4019,6 +4161,8 @@ mod tests {
             roe: Some(0.1),
             market_cap_billion: Some(100.0),
             dividend_yield: None,
+            deducted_net_profit_billion: None,
+            deducted_net_profit_margin: None,
         };
         let mut chip = base.clone();
         chip.code = "688001.SH".to_string();
@@ -4062,6 +4206,8 @@ mod tests {
             roe: Some(0.3),
             market_cap_billion: Some(100.0),
             dividend_yield: None,
+            deducted_net_profit_billion: None,
+            deducted_net_profit_margin: None,
         };
         let mut ordinary_bank = bank.clone();
         ordinary_bank.code = "600000.SH".to_string();
@@ -4116,6 +4262,8 @@ mod tests {
             roe: Some(0.3),
             market_cap_billion: Some(100.0),
             dividend_yield: None,
+            deducted_net_profit_billion: None,
+            deducted_net_profit_margin: None,
         };
         let mut infra = bank.clone();
         infra.code = "601668.SH".to_string();
@@ -4181,6 +4329,8 @@ mod tests {
             roe: Some(0.3),
             market_cap_billion: Some(100.0),
             dividend_yield: None,
+            deducted_net_profit_billion: None,
+            deducted_net_profit_margin: None,
         };
         let mut infra = bank.clone();
         infra.code = "601668.SH".to_string();

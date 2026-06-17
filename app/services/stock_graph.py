@@ -16,7 +16,7 @@ from app.services.screener import screen_stocks, screening_universe
 
 def graph_screen_stocks(provider: StockProvider, request: GraphScreenRequest) -> GraphScreenResult:
     universe, screen_notes = screening_universe(provider)
-    candidate_pool = _screen_candidate_pool(universe, request.criteria, request.limit)
+    candidate_pool, criteria_notes = _screen_candidate_pool(universe, request.criteria, request.limit)
     candidate_by_code = {item.stock.code: item for item in candidate_pool}
     all_stocks = {stock.code: stock for stock in universe}
 
@@ -51,6 +51,7 @@ def graph_screen_stocks(provider: StockProvider, request: GraphScreenRequest) ->
 
     notes = [
         *screen_notes,
+        *criteria_notes,
         *graph_notes(graph),
         "LangGraph 负责智能体状态和工具编排，股票关系由知识图谱和关系评分层建模。",
     ]
@@ -70,10 +71,11 @@ def _screen_candidate_pool(
     universe: List[StockItem],
     criteria: ScreenCriteria,
     requested_limit: int,
-) -> List[ScreenedStock]:
+) -> tuple[List[ScreenedStock], List[str]]:
     pool_size = min(200, max(requested_limit * 5, criteria.limit, 50))
     expanded_criteria = criteria.model_copy(update={"limit": pool_size})
-    return screen_stocks(universe, expanded_criteria).items
+    result = screen_stocks(universe, expanded_criteria)
+    return result.items, result.notes
 
 
 def _normalize_scores(scores: Dict[str, float]) -> Dict[str, float]:

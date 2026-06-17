@@ -161,7 +161,7 @@ def analyze_trend(provider: StockProvider, request: TrendIndicatorRequest) -> Tr
 
 def trend_screen_stocks(provider: StockProvider, request: TrendScreenRequest) -> TrendScreenResult:
     universe, screen_notes = screening_universe(provider)
-    candidate_pool = _screen_candidate_pool(universe, request.criteria, request.limit)
+    candidate_pool, criteria_notes = _screen_candidate_pool(universe, request.criteria, request.limit)
 
     items: List[TrendStockSignal] = []
     skipped = 0
@@ -195,7 +195,7 @@ def trend_screen_stocks(provider: StockProvider, request: TrendScreenRequest) ->
 
     items.sort(key=lambda item: item.final_score, reverse=True)
     selected = items[: request.limit]
-    notes = [*screen_notes, *TREND_NOTES]
+    notes = [*screen_notes, *criteria_notes, *TREND_NOTES]
     if skipped:
         notes.append(f"Skipped {skipped} stocks without usable OHLC history.")
 
@@ -214,7 +214,8 @@ def _screen_candidate_pool(
 ):
     pool_size = min(200, max(requested_limit * 5, criteria.limit, 50))
     expanded_criteria = criteria.model_copy(update={"limit": pool_size})
-    return screen_stocks(universe, expanded_criteria).items
+    result = screen_stocks(universe, expanded_criteria)
+    return result.items, result.notes
 
 
 def _prepare_history(history: Any, stock: StockItem) -> pd.DataFrame:

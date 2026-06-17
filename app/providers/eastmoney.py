@@ -230,6 +230,8 @@ class EastmoneyProvider(StockProvider):
             "f20": stock.market_cap_billion,
             "f23": stock.pb,
             "f100": stock.industry,
+            "deducted_net_profit_billion": stock.deducted_net_profit_billion,
+            "deducted_net_profit_margin": stock.deducted_net_profit_margin,
         }
 
     def _row_to_stock(self, row: pd.Series, use_previous_close: bool = False) -> StockItem | None:
@@ -265,12 +267,52 @@ class EastmoneyProvider(StockProvider):
             roe=None,
             market_cap_billion=market_cap_billion,
             dividend_yield=None,
+            deducted_net_profit_billion=self._deducted_net_profit_billion_from_row(row),
+            deducted_net_profit_margin=self._deducted_net_profit_margin_from_row(row),
         )
 
     @staticmethod
     def _non_negative(value) -> Optional[float]:
         result = EastmoneyProvider._to_float(value)
         return result if result is not None and result >= 0 else None
+
+    @classmethod
+    def _deducted_net_profit_billion_from_row(cls, row) -> Optional[float]:
+        value = cls._first_float(
+            row,
+            [
+                "deducted_net_profit_billion",
+                "扣非净利润_亿",
+                "扣非净利润",
+                "DEDU_PARENT_PROFIT",
+                "KCFJCXSYJLR",
+            ],
+        )
+        if value is None:
+            return None
+        return value / 1e8 if abs(value) > 1e6 else value
+
+    @classmethod
+    def _deducted_net_profit_margin_from_row(cls, row) -> Optional[float]:
+        value = cls._first_float(row, ["deducted_net_profit_margin", "扣非净利润率", "扣非净利率"])
+        if value is not None:
+            return value
+        profit = cls._deducted_net_profit_billion_from_row(row)
+        revenue = cls._first_float(row, ["revenue_billion", "营业总收入_亿", "营业总收入", "TOTALOPERATEREVE"])
+        if profit is None or revenue is None:
+            return None
+        revenue_billion = revenue / 1e8 if abs(revenue) > 1e6 else revenue
+        if revenue_billion <= 0:
+            return None
+        return profit / revenue_billion * 100
+
+    @classmethod
+    def _first_float(cls, row, keys: list[str]) -> Optional[float]:
+        for key in keys:
+            value = cls._to_float(row.get(key))
+            if value is not None:
+                return value
+        return None
 
     @staticmethod
     def _positive_float(value) -> Optional[float]:

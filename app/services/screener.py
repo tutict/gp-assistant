@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import List, Optional
 
 from app.providers.base import StockProvider
@@ -35,6 +36,7 @@ def screen_stocks(
 ) -> ScreenResult:
     rules = load_screening_rules()
     result_notes = [*(notes or [])]
+    _append_deducted_profit_rule_note(universe, criteria, result_notes)
     screened = _screened_stocks(universe, criteria, result_notes, rules=rules)
     items, promoted = _primary_items(screened, criteria, rules)
     groups = _screen_result_groups(screened, rules)
@@ -53,6 +55,7 @@ def screen_stocks_by_sector(
 ) -> SectorScreenResult:
     rules = load_screening_rules()
     result_notes = [*(notes or []), "按共享筛选规则中的股票名称和行业关键词映射概念分组；未命中概念时归入其他概念。"]
+    _append_deducted_profit_rule_note(universe, request.criteria, result_notes)
     screened = _screened_stocks(universe, request.criteria, result_notes, rules=rules)
     by_concept: dict[str, List[ScreenedStock]] = {}
     for item in screened:
@@ -137,7 +140,42 @@ def _matches(stock: StockItem, criteria: ScreenCriteria) -> Optional[List[str]]:
             return None
         reasons.append("mcap_ok")
 
+    if criteria.min_deducted_net_profit_billion is not None:
+        if (
+            stock.deducted_net_profit_billion is None
+            or stock.deducted_net_profit_billion <= criteria.min_deducted_net_profit_billion
+        ):
+            return None
+        reasons.append("deducted_net_profit_ok")
+
+    if criteria.min_deducted_net_profit_margin is not None:
+        margin = _as_percent(stock.deducted_net_profit_margin)
+        if margin is None or margin <= criteria.min_deducted_net_profit_margin:
+            return None
+        reasons.append("deducted_net_profit_margin_ok")
+
     return reasons
+
+
+def _append_deducted_profit_rule_note(
+    universe: List[StockItem],
+    criteria: ScreenCriteria,
+    notes: list[str],
+) -> None:
+    if (
+        criteria.min_deducted_net_profit_billion is None
+        and criteria.min_deducted_net_profit_margin is None
+    ):
+        return
+    with_metrics = sum(
+        1
+        for stock in universe
+        if stock.deducted_net_profit_billion is not None and stock.deducted_net_profit_margin is not None
+    )
+    if with_metrics < len(universe):
+        notes.append(
+            f"扣非净利润规则已启用；当前股票池 {with_metrics}/{len(universe)} 只股票带扣非财务字段，缺字段股票按不达标处理。"
+        )
 
 
 def _industry_matches(stock_industry: str, selected_industry: str) -> bool:
@@ -175,6 +213,18 @@ def _optional_sort_key(value: Optional[float], descending: bool) -> tuple[int, f
     if value is None:
         return (1, 0.0)
     return (0, -value if descending else value)
+
+
+def _as_percent(value: float | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric):
+        return None
+    return numeric * 100 if -1 <= numeric <= 1 else numeric
 
 
 def _primary_items(

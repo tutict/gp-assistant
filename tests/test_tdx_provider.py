@@ -155,6 +155,8 @@ class TdxProviderTests(unittest.TestCase):
                         "f20": 24_000_000_000,
                         "f23": 0.8,
                         "f100": "银行",
+                        "DEDU_PARENT_PROFIT": 1_200_000_000,
+                        "TOTALOPERATEREVE": 8_000_000_000,
                     }
                 ]
             ).to_csv(fundamental_cache_path, index=False)
@@ -187,6 +189,8 @@ class TdxProviderTests(unittest.TestCase):
         self.assertAlmostEqual(items[0].pb or 0, 0.88)
         self.assertAlmostEqual(items[0].market_cap_billion or 0, 264.0)
         self.assertAlmostEqual(items[0].roe or 0, 0.16)
+        self.assertAlmostEqual(items[0].deducted_net_profit_billion or 0, 12.0)
+        self.assertAlmostEqual(items[0].deducted_net_profit_margin or 0, 15.0)
         self.assertTrue(any("基础指标补充" in note for note in notes))
 
     def test_get_financial_indicators_uses_enriched_stock_values(self):

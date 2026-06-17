@@ -102,7 +102,13 @@ def _fundamental_score(stock: StockItem) -> float:
 
     dividend = _as_percent(stock.dividend_yield)
     dividend_bonus = 0.0 if dividend is None else min(max(dividend, 0.0) / 6.0, 1.0) * 0.12
-    return _clamp(roe_score + dividend_bonus)
+    quality_bonus = 0.0
+    if stock.deducted_net_profit_billion is not None and stock.deducted_net_profit_billion > 0:
+        quality_bonus += 0.08
+    deducted_margin = _as_percent(stock.deducted_net_profit_margin)
+    if deducted_margin is not None and deducted_margin >= 10:
+        quality_bonus += 0.08
+    return _clamp(roe_score + dividend_bonus + quality_bonus)
 
 
 def _valuation_score(stock: StockItem) -> float:
