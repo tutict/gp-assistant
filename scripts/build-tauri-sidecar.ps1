@@ -68,6 +68,8 @@ $PyInstallerArgs = @(
     "--name",
     "gp-assistant-backend",
     "--collect-all",
+    "akshare",
+    "--collect-all",
     "onnxruntime",
     "--collect-all",
     "tokenizers",

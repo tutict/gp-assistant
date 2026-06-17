@@ -217,6 +217,133 @@ class TdxProviderTests(unittest.TestCase):
         self.assertEqual(labels["市值"], "240亿")
         self.assertTrue(any("ROE 缺失" in note for note in section.notes))
 
+    def test_get_history_uses_fast_eastmoney_http_before_tdx(self):
+        provider = TdxProvider()
+
+        def fake_get(url, params=None, timeout=None, **_kwargs):
+            self.assertIn("kline/get", url)
+            self.assertEqual(params["secid"], "0.002582")
+            self.assertEqual(timeout, 4.0)
+            return _JsonResponse(
+                {
+                    "data": {
+                        "klines": [
+                            "2026-06-15,9.50,9.61,9.70,9.45,10000,9500000,0,0,0,0",
+                            "2026-06-16,9.55,9.37,9.60,9.34,12000,11700000,0,0,0,0",
+                        ]
+                    }
+                }
+            )
+
+        provider._session.get = fake_get
+        with patch.object(provider, "_with_connected_api", side_effect=AssertionError("tdx fallback should not run")):
+            frame = provider.get_history("002582.SZ", "20260615", "20260616")
+
+        self.assertEqual(frame["date"].tolist(), ["2026-06-15", "2026-06-16"])
+        self.assertEqual(frame.iloc[-1]["close"], 9.37)
+        self.assertEqual(frame.iloc[-1]["amount"], 11700000.0)
+
+    def test_get_history_uses_tencent_when_eastmoney_fails(self):
+        provider = TdxProvider()
+
+        def fake_get(url, params=None, timeout=None, **_kwargs):
+            if "push2his.eastmoney.com" in url:
+                raise RuntimeError("eastmoney unavailable")
+            self.assertIn("fqkline/get", url)
+            self.assertEqual(params["param"], "sz002582,day,2026-06-15,2026-06-16,320,")
+            self.assertEqual(timeout, 4.0)
+            return _JsonResponse(
+                {
+                    "data": {
+                        "sz002582": {
+                            "day": [
+                                ["2026-06-15", "9.50", "9.61", "9.70", "9.45", "10000.000"],
+                                ["2026-06-16", "9.55", "9.37", "9.60", "9.34", "12000.000"],
+                            ]
+                        }
+                    }
+                }
+            )
+
+        provider._session.get = fake_get
+        with patch.object(provider, "_with_connected_api", side_effect=AssertionError("tdx fallback should not run")):
+            frame = provider.get_history("002582.SZ", "20260615", "20260616")
+
+        self.assertEqual(frame["date"].tolist(), ["2026-06-15", "2026-06-16"])
+        self.assertEqual(frame.iloc[-1]["close"], 9.37)
+        self.assertIsNone(frame.iloc[-1]["amount"])
+
+    def test_get_minutes_uses_fast_eastmoney_trends_before_tdx(self):
+        provider = TdxProvider()
+
+        def fake_get(url, params=None, timeout=None, **_kwargs):
+            self.assertIn("trends2/get", url)
+            self.assertEqual(params["secid"], "0.002582")
+            self.assertEqual(timeout, 4.0)
+            return _JsonResponse(
+                {
+                    "data": {
+                        "trends": [
+                            "2026-06-16 09:31,9.55,9.47,9.55,9.47,100,95000,9.50",
+                            "2026-06-16 15:00,9.37,9.37,9.38,9.36,200,187000,9.40",
+                        ]
+                    }
+                }
+            )
+
+        provider._session.get = fake_get
+        with patch.object(provider, "_with_connected_api", side_effect=AssertionError("tdx fallback should not run")):
+            bars = provider.get_minutes("002582.SZ", "2026-06-16 09:30:00", "2026-06-16 15:00:00", "1")
+
+        self.assertEqual(len(bars), 2)
+        self.assertEqual(bars[0].datetime, "2026-06-16 09:31:00")
+        self.assertEqual(bars[-1].close, 9.37)
+
+    def test_get_minutes_uses_tencent_when_eastmoney_fails(self):
+        provider = TdxProvider()
+
+        def fake_get(url, params=None, timeout=None, **_kwargs):
+            if "push2his.eastmoney.com" in url:
+                raise RuntimeError("eastmoney unavailable")
+            self.assertIn("kline/mkline", url)
+            self.assertEqual(params["param"], "sz002582,m1,,800")
+            self.assertEqual(timeout, 4.0)
+            return _JsonResponse(
+                {
+                    "data": {
+                        "sz002582": {
+                            "m1": [
+                                ["202606160931", "9.55", "9.47", "9.55", "9.47", "100.00"],
+                                ["202606161500", "9.37", "9.37", "9.38", "9.36", "200.00"],
+                                ["202606171500", "9.10", "9.10", "9.11", "9.09", "300.00"],
+                            ]
+                        }
+                    }
+                }
+            )
+
+        provider._session.get = fake_get
+        with patch.object(provider, "_with_connected_api", side_effect=AssertionError("tdx fallback should not run")):
+            bars = provider.get_minutes("002582.SZ", "2026-06-16 09:30:00", "2026-06-16 15:00:00", "1")
+
+        self.assertEqual(len(bars), 2)
+        self.assertEqual(bars[0].datetime, "2026-06-16 09:31:00")
+        self.assertEqual(bars[-1].close, 9.37)
+
+    def test_get_minutes_caps_tdx_fallback_when_eastmoney_fails(self):
+        provider = TdxProvider()
+
+        def fake_get(*_args, **_kwargs):
+            raise RuntimeError("eastmoney unavailable")
+
+        provider._session.get = fake_get
+        with patch.object(provider, "_with_connected_api", return_value=None) as connected:
+            bars = provider.get_minutes("002582.SZ", "2026-06-16 09:30:00", "2026-06-16 15:00:00", "1")
+
+        self.assertEqual(bars, [])
+        self.assertEqual(connected.call_args.kwargs["host_limit"], 3)
+        self.assertEqual(connected.call_args.kwargs["timeout"], 1.5)
+
     def test_akshare_quarterly_eps_items_include_period_metadata(self):
         rows = pd.DataFrame(
             [
@@ -324,6 +451,17 @@ class TdxProviderTests(unittest.TestCase):
         self.assertEqual(items[0].code, "600000.SH")
         self.assertEqual(items[0].price, 9.8)
         self.assertIsNone(items[0].pe)
+
+
+class _JsonResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
 
 
 if __name__ == "__main__":

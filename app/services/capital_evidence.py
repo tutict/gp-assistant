@@ -226,8 +226,8 @@ def _fetch_external_capital_items(
         ]
 
     fetchers = (
-        ("fund_flow", _fetch_ths_individual_fund_flow, env_float("GP_CAPITAL_FUND_FLOW_TIMEOUT", 20.0, minimum=2.0, maximum=45.0)),
-        ("institution_lhb", _fetch_institution_lhb, env_float("GP_CAPITAL_LHB_TIMEOUT", 30.0, minimum=2.0, maximum=60.0)),
+        ("fund_flow", _fetch_ths_individual_fund_flow, env_float("GP_CAPITAL_FUND_FLOW_TIMEOUT", 8.0, minimum=2.0, maximum=45.0)),
+        ("institution_lhb", _fetch_institution_lhb, env_float("GP_CAPITAL_LHB_TIMEOUT", 12.0, minimum=2.0, maximum=60.0)),
     )
     for category, fetcher, timeout_seconds in fetchers:
         try:

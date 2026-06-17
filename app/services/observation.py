@@ -39,9 +39,9 @@ def observe_stock(provider: StockProvider, request: StockObserveRequest) -> Stoc
                 include_chip_distribution=True,
             ),
         )
-    except ValueError as exc:
+    except Exception as exc:
         trend = None
-        notes.append(str(exc))
+        notes.append(f"\u8d8b\u52bf\u6307\u6807\u4e0d\u53ef\u7528\uff1a{exc}")
 
     try:
         capital_evidence = fetch_capital_evidence(

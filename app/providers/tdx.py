@@ -152,6 +152,19 @@ class TdxProvider(StockProvider):
         return enriched
 
     def get_history(self, code: str, start_date: str, end_date: str):
+        try:
+            fast_history = self._eastmoney_history(code, start_date, end_date)
+            if not fast_history.empty:
+                return fast_history
+        except Exception:
+            pass
+        try:
+            tencent_history = self._tencent_history(code, start_date, end_date)
+            if not tencent_history.empty:
+                return tencent_history
+        except Exception:
+            pass
+
         market = self._tdx_market_code(code)
         if market is None:
             return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "amount"])
@@ -181,7 +194,11 @@ class TdxProvider(StockProvider):
                 if start_key and oldest_key and oldest_key <= start_key:
                     break
 
-        self._with_connected_api(fetch)
+        self._with_connected_api(
+            fetch,
+            host_limit=self._observe_fallback_host_limit(),
+            timeout=self._observe_fallback_timeout(),
+        )
         if not rows:
             return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "amount"])
         return pd.DataFrame(rows).drop_duplicates(subset=["date"]).sort_values("date").reset_index(drop=True)
@@ -196,6 +213,19 @@ class TdxProvider(StockProvider):
         end_datetime: str,
         period: str = "1",
     ) -> List[MinuteBar]:
+        try:
+            fast_bars = self._eastmoney_minutes(code, start_datetime, end_datetime, period)
+            if fast_bars:
+                return fast_bars
+        except Exception:
+            pass
+        try:
+            tencent_bars = self._tencent_minutes(code, start_datetime, end_datetime, period)
+            if tencent_bars:
+                return tencent_bars
+        except Exception:
+            pass
+
         market = self._tdx_market_code(code)
         if market is None:
             return []
@@ -227,8 +257,172 @@ class TdxProvider(StockProvider):
                     )
                 )
 
-        self._with_connected_api(fetch)
+        self._with_connected_api(
+            fetch,
+            host_limit=self._observe_fallback_host_limit(),
+            timeout=self._observe_fallback_timeout(),
+        )
         return bars
+
+    def _eastmoney_history(self, code: str, start_date: str, end_date: str) -> pd.DataFrame:
+        digits = self._code_digits(code)
+        market = self._eastmoney_market_code(code)
+        if not digits or market is None:
+            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "amount"])
+        params = {
+            "fields1": "f1,f2,f3,f4,f5,f6",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+            "ut": "7eea3edcaed734bea9cbfc24409ed989",
+            "klt": "101",
+            "fqt": "0",
+            "secid": f"{market}.{digits}",
+            "beg": self._date_key(start_date) or "0",
+            "end": self._date_key(end_date) or "20500000",
+        }
+        response = self._session.get(
+            "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+            params=params,
+            timeout=self._eastmoney_timeout(),
+        )
+        response.raise_for_status()
+        data = response.json().get("data") or {}
+        rows = [self._eastmoney_kline_row(item) for item in data.get("klines") or []]
+        rows = [row for row in rows if row is not None]
+        if not rows:
+            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "amount"])
+        return pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
+
+    def _eastmoney_minutes(
+        self,
+        code: str,
+        start_datetime: str,
+        end_datetime: str,
+        period: str = "1",
+    ) -> list[MinuteBar]:
+        period = str(period or "1")
+        if period not in {"1", "5", "15", "30", "60"}:
+            period = "1"
+        digits = self._code_digits(code)
+        market = self._eastmoney_market_code(code)
+        if not digits or market is None:
+            return []
+        if period == "1":
+            rows = self._eastmoney_minute_trends(market, digits)
+        else:
+            rows = self._eastmoney_minute_klines(market, digits, period)
+        start_key = self._datetime_key(start_datetime)
+        end_key = self._datetime_key(end_datetime)
+        return [
+            row
+            for row in rows
+            if (not start_key or self._datetime_key(row.datetime) >= start_key)
+            and (not end_key or self._datetime_key(row.datetime) <= end_key)
+        ]
+
+    def _eastmoney_minute_trends(self, market: int, digits: str) -> list[MinuteBar]:
+        response = self._session.get(
+            "https://push2his.eastmoney.com/api/qt/stock/trends2/get",
+            params={
+                "fields1": "f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13",
+                "fields2": "f51,f52,f53,f54,f55,f56,f57,f58",
+                "ut": "7eea3edcaed734bea9cbfc24409ed989",
+                "ndays": "5",
+                "iscr": "0",
+                "secid": f"{market}.{digits}",
+            },
+            timeout=self._eastmoney_timeout(),
+        )
+        response.raise_for_status()
+        data = response.json().get("data") or {}
+        rows = [self._eastmoney_minute_row(item) for item in data.get("trends") or []]
+        return [row for row in rows if row is not None]
+
+    def _eastmoney_minute_klines(self, market: int, digits: str, period: str) -> list[MinuteBar]:
+        response = self._session.get(
+            "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+            params={
+                "fields1": "f1,f2,f3,f4,f5,f6",
+                "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+                "ut": "7eea3edcaed734bea9cbfc24409ed989",
+                "klt": period,
+                "fqt": "0",
+                "secid": f"{market}.{digits}",
+                "beg": "0",
+                "end": "20500000",
+            },
+            timeout=self._eastmoney_timeout(),
+        )
+        response.raise_for_status()
+        data = response.json().get("data") or {}
+        rows = [self._eastmoney_minute_row(item) for item in data.get("klines") or []]
+        return [row for row in rows if row is not None]
+
+    def _tencent_history(self, code: str, start_date: str, end_date: str) -> pd.DataFrame:
+        symbol = TencentQuoteClient.tencent_symbol(code)
+        if not symbol:
+            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "amount"])
+        start_key = self._date_key(start_date)
+        end_key = self._date_key(end_date)
+        start_param = self._tencent_date(start_date)
+        end_param = self._tencent_date(end_date)
+        response = self._session.get(
+            "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+            params={"param": f"{symbol},day,{start_param},{end_param},320,"},
+            timeout=self._tencent_timeout(),
+        )
+        response.raise_for_status()
+        data = response.json().get("data") or {}
+        rows = [
+            self._tencent_kline_row(item)
+            for item in (data.get(symbol) or {}).get("day")
+            or []
+        ]
+        rows = [
+            row
+            for row in rows
+            if row is not None
+            and (not start_key or self._date_key(row["date"]) >= start_key)
+            and (not end_key or self._date_key(row["date"]) <= end_key)
+        ]
+        if not rows:
+            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "amount"])
+        return pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
+
+    def _tencent_minutes(
+        self,
+        code: str,
+        start_datetime: str,
+        end_datetime: str,
+        period: str = "1",
+    ) -> list[MinuteBar]:
+        period = str(period or "1")
+        if period not in {"1", "5", "15", "30", "60"}:
+            period = "1"
+        symbol = TencentQuoteClient.tencent_symbol(code)
+        if not symbol:
+            return []
+        key = f"m{period}"
+        response = self._session.get(
+            "https://ifzq.gtimg.cn/appstock/app/kline/mkline",
+            params={"param": f"{symbol},{key},,{self._tencent_minute_count()}"},
+            timeout=self._tencent_timeout(),
+        )
+        response.raise_for_status()
+        data = response.json().get("data") or {}
+        rows = [
+            self._tencent_minute_row(item)
+            for item in (data.get(symbol) or {}).get(key)
+            or []
+        ]
+        start_key = self._datetime_key(start_datetime)
+        end_key = self._datetime_key(end_datetime)
+        return [
+            row
+            for row in rows
+            if row is not None
+            and (not start_key or self._datetime_key(row.datetime) >= start_key)
+            and (not end_key or self._datetime_key(row.datetime) <= end_key)
+        ]
 
     def get_order_book(self, code: str) -> OrderBookSnapshot | None:
         normalized_code = self._normalize_code(code)
@@ -414,19 +608,35 @@ class TdxProvider(StockProvider):
         fallback_field = "last_close" if price_field == "price" else "price"
         return self._positive_float(quote.get(fallback_field))
 
-    def _with_connected_api(self, callback):
+    def _with_connected_api(self, callback, *, host_limit: int | None = None, timeout: float | None = None):
         from pytdx.hq import TdxHq_API
 
         last_error: Exception | None = None
-        for host, port in self._hosts():
+        hosts = self._hosts()
+        if host_limit is not None:
+            hosts = hosts[: max(1, host_limit)]
+        connection_timeout = timeout if timeout is not None else self.timeout
+        for host, port in hosts:
             api = TdxHq_API(raise_exception=True, auto_retry=False)
             try:
-                with api.connect(host, port, time_out=self.timeout):
+                with api.connect(host, port, time_out=connection_timeout):
                     return callback(api)
             except Exception as exc:
                 last_error = exc
                 continue
         raise RuntimeError(f"所有通达信服务器连接失败，最近错误：{last_error}")
+
+    def _observe_fallback_host_limit(self) -> int:
+        return env_int("TDX_OBSERVE_FALLBACK_HOST_LIMIT", 3, minimum=1, maximum=30)
+
+    def _observe_fallback_timeout(self) -> float:
+        return env_float("TDX_OBSERVE_FALLBACK_TIMEOUT", min(self.timeout, 1.5), minimum=0.2, maximum=10.0)
+
+    def _tencent_timeout(self) -> float:
+        return env_float("TDX_TENCENT_TIMEOUT", min(self.timeout, 4.0), minimum=0.5, maximum=15.0)
+
+    def _tencent_minute_count(self) -> int:
+        return env_int("TDX_TENCENT_MINUTE_COUNT", 800, minimum=100, maximum=800)
 
     def _read_cached_universe(self) -> list[StockItem] | None:
         if not os.path.exists(self.cache_path):
@@ -728,6 +938,113 @@ class TdxProvider(StockProvider):
         if normalized.endswith(".SZ") or digits.startswith(("0", "2", "3")):
             return 0
         return None
+
+    @staticmethod
+    def _eastmoney_market_code(code: str) -> Optional[int]:
+        normalized = TdxProvider._normalize_code(code)
+        digits = TdxProvider._code_digits(normalized)
+        if normalized.endswith(".SH") or digits.startswith(("6", "9")):
+            return 1
+        if normalized.endswith(".SZ") or digits.startswith(("0", "2", "3")):
+            return 0
+        if normalized.endswith(".BJ") or digits.startswith(("4", "8")):
+            return 0
+        return None
+
+    @staticmethod
+    def _eastmoney_timeout() -> float:
+        return env_float("TDX_EASTMONEY_TIMEOUT", 4.0, minimum=0.5, maximum=15.0)
+
+    @classmethod
+    def _eastmoney_kline_row(cls, raw: str) -> dict | None:
+        parts = str(raw or "").split(",")
+        if len(parts) < 7:
+            return None
+        close = cls._to_float(parts[2])
+        if close is None:
+            return None
+        return {
+            "date": parts[0],
+            "open": cls._to_float(parts[1]) or close,
+            "close": close,
+            "high": cls._to_float(parts[3]) or close,
+            "low": cls._to_float(parts[4]) or close,
+            "volume": cls._to_float(parts[5]),
+            "amount": cls._to_float(parts[6]),
+        }
+
+    @classmethod
+    def _eastmoney_minute_row(cls, raw: str) -> MinuteBar | None:
+        parts = str(raw or "").split(",")
+        if len(parts) < 7:
+            return None
+        close = cls._to_float(parts[2])
+        if close is None:
+            return None
+        return MinuteBar(
+            datetime=cls._normalize_eastmoney_datetime(parts[0]),
+            open=cls._to_float(parts[1]) or close,
+            close=close,
+            high=cls._to_float(parts[3]) or close,
+            low=cls._to_float(parts[4]) or close,
+            volume=cls._to_float(parts[5]),
+            amount=cls._to_float(parts[6]),
+        )
+
+    @staticmethod
+    def _normalize_eastmoney_datetime(value: str) -> str:
+        raw = str(value or "").strip()
+        if len(raw) == 16 and raw[4] == "-" and raw[13] == ":":
+            return f"{raw}:00"
+        return raw
+
+    @classmethod
+    def _tencent_kline_row(cls, raw: list | tuple) -> dict | None:
+        if not isinstance(raw, (list, tuple)) or len(raw) < 6:
+            return None
+        close = cls._to_float(raw[2])
+        if close is None:
+            return None
+        return {
+            "date": str(raw[0]),
+            "open": cls._to_float(raw[1]) or close,
+            "close": close,
+            "high": cls._to_float(raw[3]) or close,
+            "low": cls._to_float(raw[4]) or close,
+            "volume": cls._to_float(raw[5]),
+            "amount": None,
+        }
+
+    @classmethod
+    def _tencent_minute_row(cls, raw: list | tuple) -> MinuteBar | None:
+        if not isinstance(raw, (list, tuple)) or len(raw) < 6:
+            return None
+        close = cls._to_float(raw[2])
+        if close is None:
+            return None
+        return MinuteBar(
+            datetime=cls._normalize_tencent_datetime(str(raw[0])),
+            open=cls._to_float(raw[1]) or close,
+            close=close,
+            high=cls._to_float(raw[3]) or close,
+            low=cls._to_float(raw[4]) or close,
+            volume=cls._to_float(raw[5]),
+            amount=None,
+        )
+
+    @staticmethod
+    def _normalize_tencent_datetime(value: str) -> str:
+        raw = str(value or "").strip()
+        if len(raw) >= 12 and raw[:12].isdigit():
+            return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]} {raw[8:10]}:{raw[10:12]}:00"
+        return raw
+
+    @staticmethod
+    def _tencent_date(value: str) -> str:
+        raw = TdxProvider._date_key(value)
+        if len(raw) == 8 and raw.isdigit():
+            return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}"
+        return str(value or "")
 
     @staticmethod
     def _normalize_code(code: str, market: int | None = None) -> str:

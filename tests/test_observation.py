@@ -125,6 +125,35 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         self.assertTrue(any(item.category == "technical_behavior" for item in result.capital_evidence.items))
         self.assertTrue(any(item.category == "external_status" for item in result.capital_evidence.items))
 
+    def test_observation_keeps_financial_and_capital_data_when_trend_fails(self):
+        provider = MockProvider()
+        provider.get_history = lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("history timeout"))
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {
+                "GP_CAPITAL_ENABLE_EXTERNAL": "false",
+                **DISABLE_NETWORK_NEWS,
+            },
+        ):
+            capital_evidence.CACHE_PATH = Path(tmp) / "capital.sqlite"
+            news_rag.CACHE_PATH = Path(tmp) / "news.sqlite"
+            result = observe_stock(
+                provider,
+                StockObserveRequest(
+                    code="300750.SZ",
+                    start_date="20200101",
+                    end_date="20200630",
+                    series_limit=80,
+                    minute_limit=20,
+                    include_order_book=False,
+                ),
+            )
+
+        self.assertIsNone(result.trend)
+        self.assertIsNotNone(result.financial_indicators)
+        self.assertIsNotNone(result.capital_evidence)
+        self.assertTrue(any("趋势指标不可用" in note for note in result.notes))
+
     def test_observation_can_include_local_chip_distribution_estimate(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             os.environ,
@@ -266,7 +295,7 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         self.assertTrue(any(item.category == "fund_flow" for item in result.items))
         self.assertTrue(any(item.category == "institution_lhb" for item in result.items))
 
-    def test_capital_evidence_uses_extended_lhb_timeout_budget(self):
+    def test_capital_evidence_uses_interactive_timeout_budget(self):
         provider = MockProvider()
         stock = provider.get_stock("300750.SZ")
         seen: list[tuple[str, float | None]] = []
@@ -282,8 +311,10 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
             os.environ.pop("GP_CAPITAL_LHB_TIMEOUT", None)
             capital_evidence._fetch_external_capital_items(stock, "20260603", "20260616")
 
+        fund_budget = next(timeout for name, timeout in seen if name == "_fetch_ths_individual_fund_flow")
         lhb_budget = next(timeout for name, timeout in seen if name == "_fetch_institution_lhb")
-        self.assertGreaterEqual(lhb_budget, 30.0)
+        self.assertEqual(fund_budget, 8.0)
+        self.assertEqual(lhb_budget, 12.0)
 
     def test_capital_evidence_falls_back_to_sina_lhb_when_eastmoney_misses(self):
         provider = MockProvider()
