@@ -2,7 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>A股选股智能体</title>
     <link rel="icon" href="data:," />
     <script>
@@ -61,7 +61,7 @@
         transition: opacity 0.16s ease;
       }
     </style>
-    <link rel="stylesheet" href="/static/style.css?v=20260618-design-refresh-1" />
+    <link rel="stylesheet" href="/static/style.css?v=20260619-responsive-switching" />
   </head>
   <body>
     <div id="bootSplash" aria-hidden="true">
@@ -257,7 +257,7 @@
           </nav>
         </aside>
         <div id="criteriaOverlay" class="criteria-overlay" hidden></div>
-        <aside id="sectionFilters" class="control-rail" aria-label="当前研究条件">
+        <aside id="sectionFilters" class="control-rail" aria-label="当前研究条件" aria-hidden="true" hidden>
           <div class="criteria-panel-heading">
             <div>
               <p>研究上下文</p>
@@ -861,6 +861,6 @@
       </a>
     </nav>
     <script src="/static/vendor/jsQR.js"></script>
-    <script src="/static/app.js?v=20260618-agent-chat"></script>
+    <script src="/static/app.js?v=20260619-responsive-switching"></script>
   </body>
 </html>

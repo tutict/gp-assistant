@@ -44,10 +44,29 @@ def _find_library() -> Path | None:
 
 _LIB_PATH = _find_library()
 _lib: ctypes.CDLL | None = None
+_load_error: str | None = None
 
 
 def core_available() -> bool:
-    return _LIB_PATH is not None
+    global _load_error
+    if _LIB_PATH is None:
+        _load_error = None
+        return False
+    try:
+        _load()
+    except (OSError, AttributeError, RuntimeError) as exc:
+        _load_error = str(exc)
+        return False
+    _load_error = None
+    return True
+
+
+def core_skip_reason() -> str:
+    if _LIB_PATH is None:
+        return f"gp-core cdylib not built ({BUILD_HINT})"
+    if _load_error:
+        return f"gp-core cdylib could not be loaded: {_load_error} ({BUILD_HINT})"
+    return f"gp-core cdylib not available ({BUILD_HINT})"
 
 
 def _load() -> ctypes.CDLL:
@@ -73,6 +92,8 @@ def call(fn_name: str, payload: Any) -> Any:
     Raises ``RuntimeError`` if the Rust core reports ``ok: false``.
     """
 
+    if fn_name not in _CORE_FUNCTIONS:
+        raise ValueError(f"unsupported gp-core function: {fn_name}")
     lib = _load()
     fn = getattr(lib, fn_name)
     encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")

@@ -123,6 +123,7 @@ const workbench = {
   criteriaOpen: $("#openCriteriaBtn"),
   criteriaClose: $("#closeCriteriaBtn"),
   criteriaOverlay: $("#criteriaOverlay"),
+  criteriaPanel: $("#sectionFilters"),
   criteriaSummary: $("#criteriaSummary"),
 };
 const watchlistUi = {
@@ -731,6 +732,11 @@ function setActiveNavLink(activeView) {
 
 function setCriteriaPanelOpen(isOpen) {
   document.body.classList.toggle("criteria-open", Boolean(isOpen));
+  if (workbench.criteriaPanel) {
+    workbench.criteriaPanel.hidden = !isOpen;
+    workbench.criteriaPanel.toggleAttribute("inert", !isOpen);
+    workbench.criteriaPanel.setAttribute("aria-hidden", String(!isOpen));
+  }
   if (workbench.criteriaOverlay) {
     workbench.criteriaOverlay.hidden = !isOpen;
   }

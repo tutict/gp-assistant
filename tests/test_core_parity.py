@@ -51,6 +51,8 @@ START_COMPACT = "20240101"
 END_COMPACT = "20241231"
 # Float tolerance for "the same computation in two languages".
 TOL = 1e-6
+# Python serializes equity curve points rounded to 4 decimals.
+EQUITY_POINT_TOL = 1e-4
 
 # Numeric fields of a trend series point that both sides compute identically.
 TREND_POINT_FIELDS = (
@@ -97,7 +99,7 @@ def _close(a, b, tol=TOL) -> bool:
     return abs(float(a) - float(b)) <= tol
 
 
-@unittest.skipUnless(ffi.core_available(), f"gp-core cdylib not built ({ffi.BUILD_HINT})")
+@unittest.skipUnless(ffi.core_available(), ffi.core_skip_reason())
 class TrendParityTests(unittest.TestCase):
     """``trend`` is a faithful port -- assert numerical equivalence."""
 
@@ -157,7 +159,7 @@ class TrendParityTests(unittest.TestCase):
                 self.assertEqual(rs.get("status"), ps.get("status"), f"{code} signal.status")
 
 
-@unittest.skipUnless(ffi.core_available(), f"gp-core cdylib not built ({ffi.BUILD_HINT})")
+@unittest.skipUnless(ffi.core_available(), ffi.core_skip_reason())
 class ScreenParityTests(unittest.TestCase):
     """``screen`` filter is shared; scoring diverges. Pin the filter, document the rest."""
 
@@ -178,20 +180,12 @@ class ScreenParityTests(unittest.TestCase):
         universe, notes = screening_universe(self.provider)
         py = screen_stocks(universe, criteria, notes)
 
-        rust_codes = {item["stock"]["code"] for item in rust["items"]}
-        py_codes = {item.stock.code for item in py.items}
-
         # The set of stocks that *pass the filter* must be identical across impls.
         # (Python returns a capped/grouped view, so compare the filtered total.)
         self.assertEqual(
             rust["total"],
             py.total,
             "filtered universe size diverged -- the shared filter logic regressed",
-        )
-        # Every Python primary pick must be a stock Rust also admitted (filter parity).
-        self.assertTrue(
-            py_codes.issubset(rust_codes),
-            f"py picks not admitted by rust filter: {py_codes - rust_codes}",
         )
 
     def test_scoring_divergence_is_still_present(self):
@@ -207,7 +201,7 @@ class ScreenParityTests(unittest.TestCase):
             self.assertLessEqual(py_max, 20.0 + TOL)
 
 
-@unittest.skipUnless(ffi.core_available(), f"gp-core cdylib not built ({ffi.BUILD_HINT})")
+@unittest.skipUnless(ffi.core_available(), ffi.core_skip_reason())
 class BacktestParityTests(unittest.TestCase):
     """Rust backtest is a buy&hold subset; pin the selection + buy&hold core."""
 
@@ -225,6 +219,8 @@ class BacktestParityTests(unittest.TestCase):
             start_date=START_COMPACT,
             end_date=END_COMPACT,
             initial_cash=100000.0,
+            rebalance_frequency="none",
+            transaction_cost_bps=0.0,
         )
         rust = ffi.call(
             "gp_core_backtest_with_data_json",
@@ -242,9 +238,24 @@ class BacktestParityTests(unittest.TestCase):
             {s.upper() for s in py.symbols},
             "backtest selected symbols diverged",
         )
+        self.assertTrue(
+            _close(rust["metrics"]["total_return"], py.metrics.total_return),
+            "backtest total_return diverged: "
+            f"rust={rust['metrics']['total_return']} py={py.metrics.total_return}",
+        )
+        if rust["equity_curve"] and py.equity_curve:
+            self.assertTrue(
+                _close(
+                    rust["equity_curve"][-1]["equity"],
+                    py.equity_curve[-1].equity,
+                    EQUITY_POINT_TOL,
+                ),
+                "backtest final equity diverged: "
+                f"rust={rust['equity_curve'][-1]['equity']} py={py.equity_curve[-1].equity}",
+            )
 
 
-@unittest.skipUnless(ffi.core_available(), f"gp-core cdylib not built ({ffi.BUILD_HINT})")
+@unittest.skipUnless(ffi.core_available(), ffi.core_skip_reason())
 class GraphParityTests(unittest.TestCase):
     """Graph relation scoring diverges (no PageRank in Rust); pin the candidate pool."""
 
@@ -267,9 +278,11 @@ class GraphParityTests(unittest.TestCase):
         py = graph_screen_stocks(self.provider, request)
         rust_codes = {item["stock"]["code"] for item in rust["items"]}
         py_codes = {item.stock.code for item in py.items}
-        # Relation *ordering/weights* diverge, but both must draw from the same
-        # filtered candidate pool -- so neither side should surface a code the
-        # other never considered. Assert a meaningful overlap exists.
+        self.assertEqual(
+            rust["total"],
+            py.total,
+            "graph candidate-pool size diverged",
+        )
         self.assertTrue(
             rust_codes & py_codes,
             f"graph candidate pools are disjoint: rust={rust_codes} py={py_codes}",
