@@ -9,6 +9,7 @@ from typing import Any
 from app.schemas import ScreenCriteria, ScreenedStock
 from app.services.runtime_config import env_int, redact_error
 from app.services.stock_code import stock_digits
+from app.services.text_utils import format_amount
 
 
 INSTITUTION_BUY_COLUMNS = (
@@ -326,8 +327,4 @@ def _to_percent(value: Any) -> float | None:
 
 
 def _format_amount(value: float) -> str:
-    if abs(value) >= 100_000_000:
-        return f"{value / 100_000_000:.2f} 亿"
-    if abs(value) >= 10_000:
-        return f"{value / 10_000:.2f} 万"
-    return f"{value:.0f}"
+    return format_amount(value, decimals=0)

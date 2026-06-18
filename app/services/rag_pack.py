@@ -23,6 +23,7 @@ from app.schemas import (
     RagPackQueryResult,
     RagPackStatusResult,
 )
+from app.services.stock_code import normalize_stock_code
 
 
 DEFAULT_PACK_PATH = "data/cache/rag_pack.sqlite"
@@ -886,14 +887,4 @@ def _news_row_to_document(conn: sqlite3.Connection, row: sqlite3.Row) -> RagPack
 
 
 def _normalize_code(code: str) -> str:
-    raw = (code or "").strip().upper()
-    if "." in raw:
-        return raw
-    digits = "".join(char for char in raw if char.isdigit())
-    if len(digits) != 6:
-        return raw
-    if digits.startswith("6"):
-        return f"{digits}.SH"
-    if digits.startswith(("4", "8")):
-        return f"{digits}.BJ"
-    return f"{digits}.SZ"
+    return normalize_stock_code(code)

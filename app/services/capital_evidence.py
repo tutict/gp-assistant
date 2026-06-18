@@ -24,6 +24,7 @@ from app.services.llm_support import (
 from app.services.runtime_config import env_bool, env_float, env_int, redact_error, safe_string_list
 from app.services.sqlite_json_cache import SQLiteJsonCache
 from app.services.stock_code import compact_date, market_prefix, normalize_stock_code, stock_digits
+from app.services.text_utils import format_amount
 
 
 CACHE_PATH = Path(os.getenv("GP_CAPITAL_CACHE", "data/cache/capital_evidence.sqlite"))
@@ -1208,20 +1209,11 @@ def _format_metric(value: Any) -> str:
     number = _numeric_value(value)
     if number is not None:
         return _format_amount(number)
-        if abs(number) >= 100_000_000:
-            return f"{number / 100_000_000:.2f} 亿"
-        if abs(number) >= 10_000:
-            return f"{number / 10_000:.2f} 万"
-        return f"{number:.2f}"
     return str(value).strip()
 
 
 def _format_amount(number: float) -> str:
-    if abs(number) >= 100_000_000:
-        return f"{number / 100_000_000:.2f} \u4ebf"
-    if abs(number) >= 10_000:
-        return f"{number / 10_000:.2f} \u4e07"
-    return f"{number:.2f}"
+    return format_amount(number, decimals=2)
 
 
 def _numeric_value(value: Any) -> float | None:

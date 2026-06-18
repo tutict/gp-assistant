@@ -7,8 +7,6 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from html import unescape
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Iterable, List, Sequence
 
@@ -39,6 +37,10 @@ from app.services.runtime_config import (
 )
 from app.services.screener import screening_universe
 from app.services.stock_code import normalize_stock_code as _normalize_code
+from app.services.text_utils import (
+    coalesce_row as _coalesce_row,
+    strip_html as _strip_html,
+)
 
 
 CACHE_PATH = Path(os.getenv("GP_NEWS_CACHE", "data/cache/news.sqlite"))
@@ -985,25 +987,6 @@ def _extract_embedded_object(html: str, var_name: str) -> str:
     return ""
 
 
-class _HtmlTextExtractor(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.parts: list[str] = []
-
-    def handle_data(self, data: str) -> None:
-        if data.strip():
-            self.parts.append(data.strip())
-
-    def text(self) -> str:
-        return unescape(" ".join(self.parts)).strip()
-
-
-def _strip_html(value: str) -> str:
-    parser = _HtmlTextExtractor()
-    parser.feed(value or "")
-    return parser.text()
-
-
 def _first_class_text(html: str, class_name: str) -> str:
     match = re.search(
         rf'<[^>]*class=["\'][^"\']*\b{re.escape(class_name)}\b[^"\']*["\'][^>]*>(.*?)</[^>]+>',
@@ -1032,14 +1015,6 @@ def _optional_int(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
-
-
-def _coalesce_row(row: dict[str, object], keys: Sequence[str]) -> str:
-    for key in keys:
-        value = row.get(key)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return ""
 
 
 def _parse_news_time(value: str) -> str:

@@ -1,4 +1,6 @@
 .venv*/
+.android-ndk-r27c
+.android-sdk/
 __pycache__/
 *.pyc
 .env

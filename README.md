@@ -112,11 +112,32 @@ cmd /c npm run android:init
 cmd /c npm run build:android
 ```
 
+前端只有 `app/static/` 一份源码，桌面端与移动端共用：运行时通过 `isMobileTauriRuntime()` 判断环境，桌面/Web 走 HTTP `/api/*`，移动端改走 Tauri command（见 `app/static/app.js` 的 `MOBILE_API_HANDLERS` 路由表）。`desktop/mobile-dist/` 不是手工维护的副本，而是由 `scripts/prepare-tauri-android-assets.ps1` 从 `app/static/` 全量生成的产物（已 gitignore）。该脚本被接入 `tauri.android.conf.json` 的 `beforeBuildCommand`/`beforeDevCommand`，因此无论通过 `build-android.ps1` 还是直接 `npm run build:android`/`tauri android dev` 构建，移动端前端都会在打包前自动从 `app/static/` 重新生成，不会出现陈旧漂移。**所有前端改动只改 `app/static/`，切勿手改 `mobile-dist`。**
+
 Android 端不会启动 Python/FastAPI sidecar，会加载本地静态前端，并通过 Tauri command 调用 `native/gp-core`。股票池不再随安装包预制：用户首次安装打开后，移动端会通过腾讯行情联网生成手机本地股票池；后续“联网更新股票池”会直接刷新手机缓存，不需要重新构建或重新安装移动包。当前移动端已覆盖基础筛选、分板块筛选、关系图筛选、趋势、观察、收藏、自选观察池回测、本地智能体路由和 RAG 包扫码导入。
 
 如需构建指定移动端目标，可设置 `GP_CORE_TARGET`，例如安装 Rust target 和 Android NDK 后使用 `aarch64-linux-android`。
 
 Rust 核心目前包含关系图选股、SWL/SWS 趋势选股、确定性回测和本地启发式智能体路由。移动端可以把 SQLite、内置 JSON 或远端接口拿到的股票、关系、历史行情统一封装为 `CoreDataSet` 后传入 Rust 核心。
+
+### Python ↔ Rust 双实现与一致性护栏
+
+选股 / 趋势 / 回测 / 关系图这几块逻辑同时存在两份实现：
+
+- **Python（`app/services/*`）是权威源**：功能最全（因子加权打分、PageRank+图嵌入关系评分、带再平衡和基准的组合回测、筹码分布等），桌面端与 Web 后端使用它。
+- **Rust（`native/gp-core`）是移动端实现**：手机端无法运行 Python/pandas/akshare，所以核心算法在 Rust 里另写一份。它是刚需，不能删，但目前是 Python 的**简化子集**：
+  - `trend`（趋势）：与 Python **数值等价**，是认真对齐的移植（仅缺 Python 的筹码分布旁路）。
+  - `screen`（选股）：**过滤条件一致**，但打分口径不同（Rust 加法启发式 vs Python 因子加权制），分数与排序会不同。
+  - `graph`（关系图）：候选池一致，但 Rust 只实现了局部邻域评分，**缺 PageRank 与图嵌入**。
+  - `backtest`（回测）：选标的与等权 buy&hold 一致，但 Rust **没有再平衡 / 交易成本 / 基准曲线**。
+
+`tests/test_core_parity.py` 通过 `ctypes` 直接加载 `gp-core` 的 cdylib（无需 PyO3），用同一份 mock 数据喂给两套实现做对拍：`trend` 断言数值容差内相等，`screen/graph/backtest` 断言共享部分（过滤、选标的、候选池）不漂移，并把已知算法差异钉成显式契约。**改动任一侧的共享逻辑时，请保持对拍测试通过**；若有意改变某条差异（例如把 Rust 打分对齐到 Python），需同步更新该测试。运行前先构建 cdylib：
+
+```bash
+cargo build --release --manifest-path native/gp-core/Cargo.toml
+```
+
+未构建时对拍测试会自动跳过（带构建提示），不会让无 Rust 工具链的环境失败。
 
 ## 数据源
 
