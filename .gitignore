@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 .env
 .idea/
+.claude/
 .playwright-cli/
 data/
 build/

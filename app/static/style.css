@@ -10625,11 +10625,14 @@ textarea {
 }
 
 .workspace-nav,
-.control-rail,
 .module,
 .agent-chat-main,
 .agent-detail-drawer {
   position: relative;
+}
+
+#sectionFilters.control-rail {
+  position: fixed;
 }
 
 .workspace-nav::before,
@@ -10828,5 +10831,46 @@ textarea {
   .backtest-empty-state {
     min-height: 96px;
     padding: 16px;
+  }
+}
+
+/* Keep stock score badges optically centered inside the pill. */
+.stock-grid {
+  align-items: center;
+}
+
+.stock-grid .score-badge {
+  display: grid;
+  min-width: 108px;
+  min-height: 42px;
+  align-content: center;
+  justify-items: center;
+  justify-self: end;
+  gap: 1px;
+  padding: 5px 18px 6px;
+  text-align: center;
+}
+
+.stock-grid .score-badge small,
+.stock-grid .score-badge b,
+.stock-grid .score-badge .weight {
+  width: 100%;
+  text-align: center;
+}
+
+.stock-grid .score-badge small {
+  line-height: 1.05;
+}
+
+.stock-grid .score-badge b {
+  font-family: "Fira Code", ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.12;
+}
+
+@media (max-width: 420px) {
+  .stock-grid .score-badge {
+    min-width: 96px;
+    padding-inline: 12px;
   }
 }
