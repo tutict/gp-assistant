@@ -8,6 +8,7 @@ onnxruntime>=1.18,<2
 tokenizers>=0.15,<1
 huggingface-hub>=0.23,<1
 openai>=1.43,<2
+httpx[socks]>=0.27,<1
 langgraph>=1.0,<2
 python-dotenv>=1.0,<2
 requests>=2.32,<3

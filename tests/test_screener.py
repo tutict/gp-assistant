@@ -55,7 +55,7 @@ class ScreenerIndustryTests(unittest.TestCase):
 
         self.assertEqual([item.stock.code for item in result.items], ["600000.SH", "600036.SH", "000001.SZ"])
 
-    def test_deducted_profit_rule_requires_positive_profit_and_margin_above_ten_percent(self):
+    def test_deducted_profit_rule_requires_positive_profit_and_growth_above_ten_percent(self):
         universe = [
             StockItem(
                 code="300001.SZ",
@@ -64,6 +64,7 @@ class ScreenerIndustryTests(unittest.TestCase):
                 price=10.0,
                 deducted_net_profit_billion=1.2,
                 deducted_net_profit_margin=12.0,
+                deducted_net_profit_growth_rate=12.0,
             ),
             StockItem(
                 code="300002.SZ",
@@ -71,7 +72,8 @@ class ScreenerIndustryTests(unittest.TestCase):
                 industry="半导体",
                 price=10.0,
                 deducted_net_profit_billion=1.1,
-                deducted_net_profit_margin=9.9,
+                deducted_net_profit_margin=30.0,
+                deducted_net_profit_growth_rate=9.9,
             ),
             StockItem(
                 code="300003.SZ",
@@ -80,6 +82,7 @@ class ScreenerIndustryTests(unittest.TestCase):
                 price=10.0,
                 deducted_net_profit_billion=-0.1,
                 deducted_net_profit_margin=15.0,
+                deducted_net_profit_growth_rate=15.0,
             ),
             StockItem(code="300004.SZ", name="缺财务公司", industry="半导体", price=10.0),
         ]
@@ -88,16 +91,16 @@ class ScreenerIndustryTests(unittest.TestCase):
             universe,
             ScreenCriteria(
                 min_deducted_net_profit_billion=0,
-                min_deducted_net_profit_margin=10,
+                min_deducted_net_profit_growth_rate=10,
                 limit=10,
             ),
         )
 
         self.assertEqual([item.stock.code for item in result.items], ["300001.SZ"])
         self.assertIn("deducted_net_profit_ok", result.items[0].reasons)
-        self.assertIn("deducted_net_profit_margin_ok", result.items[0].reasons)
+        self.assertIn("deducted_net_profit_growth_rate_ok", result.items[0].reasons)
 
-    def test_deducted_profit_margin_accepts_ratio_values(self):
+    def test_deducted_profit_growth_accepts_ratio_values(self):
         universe = [
             StockItem(
                 code="300001.SZ",
@@ -105,13 +108,13 @@ class ScreenerIndustryTests(unittest.TestCase):
                 industry="半导体",
                 price=10.0,
                 deducted_net_profit_billion=1.2,
-                deducted_net_profit_margin=0.12,
+                deducted_net_profit_growth_rate=0.12,
             )
         ]
 
         result = screen_stocks(
             universe,
-            ScreenCriteria(min_deducted_net_profit_billion=0, min_deducted_net_profit_margin=10),
+            ScreenCriteria(min_deducted_net_profit_billion=0, min_deducted_net_profit_growth_rate=10),
         )
 
         self.assertEqual(result.returned, 1)

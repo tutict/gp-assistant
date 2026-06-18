@@ -154,6 +154,12 @@ def _matches(stock: StockItem, criteria: ScreenCriteria) -> Optional[List[str]]:
             return None
         reasons.append("deducted_net_profit_margin_ok")
 
+    if criteria.min_deducted_net_profit_growth_rate is not None:
+        growth = _as_percent(stock.deducted_net_profit_growth_rate)
+        if growth is None or growth <= criteria.min_deducted_net_profit_growth_rate:
+            return None
+        reasons.append("deducted_net_profit_growth_rate_ok")
+
     return reasons
 
 
@@ -165,17 +171,31 @@ def _append_deducted_profit_rule_note(
     if (
         criteria.min_deducted_net_profit_billion is None
         and criteria.min_deducted_net_profit_margin is None
+        and criteria.min_deducted_net_profit_growth_rate is None
     ):
         return
     with_metrics = sum(
         1
         for stock in universe
-        if stock.deducted_net_profit_billion is not None and stock.deducted_net_profit_margin is not None
+        if _has_deducted_profit_rule_metrics(stock, criteria)
     )
     if with_metrics < len(universe):
         notes.append(
             f"扣非净利润规则已启用；当前股票池 {with_metrics}/{len(universe)} 只股票带扣非财务字段，缺字段股票按不达标处理。"
         )
+
+
+def _has_deducted_profit_rule_metrics(stock: StockItem, criteria: ScreenCriteria) -> bool:
+    if criteria.min_deducted_net_profit_billion is not None and stock.deducted_net_profit_billion is None:
+        return False
+    if criteria.min_deducted_net_profit_margin is not None and stock.deducted_net_profit_margin is None:
+        return False
+    if (
+        criteria.min_deducted_net_profit_growth_rate is not None
+        and stock.deducted_net_profit_growth_rate is None
+    ):
+        return False
+    return True
 
 
 def _industry_matches(stock_industry: str, selected_industry: str) -> bool:

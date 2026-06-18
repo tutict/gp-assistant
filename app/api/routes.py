@@ -1,8 +1,10 @@
+import json
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi.responses import StreamingResponse
 
 from app.providers.base import get_provider
 from app.schemas import (
@@ -44,7 +46,7 @@ from app.schemas import (
     UpstreamRagTransferResult,
     UpstreamRagTransferStartRequest,
 )
-from app.services.agent import run_agent
+from app.services.agent import run_agent, run_agent_stream
 from app.services.backtest import backtest_hold
 from app.services.data_maintenance import auto_refresh_universe_after_close, data_source_status, prune_cache, refresh_universe
 from app.services.news_rag import analyze_supply_chain_news
@@ -387,3 +389,14 @@ def upstream_rag_transfer_start(request: UpstreamRagTransferStartRequest):
 @router.post("/agent", response_model=AgentResponse)
 def agent(request: AgentRequest, provider=Depends(_provider_from_headers)):
     return run_agent(provider, request.message, request.llm)
+
+
+@router.post("/agent/stream")
+def agent_stream(request: AgentRequest, provider=Depends(_provider_from_headers)):
+    def events():
+        for event in run_agent_stream(provider, request.message, request.llm, request.run_id):
+            event_type = str(event.get("type") or "message")
+            data = json.dumps(event, ensure_ascii=False)
+            yield f"event: {event_type}\ndata: {data}\n\n"
+
+    return StreamingResponse(events(), media_type="text/event-stream")

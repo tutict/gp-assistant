@@ -105,8 +105,8 @@ def _fundamental_score(stock: StockItem) -> float:
     quality_bonus = 0.0
     if stock.deducted_net_profit_billion is not None and stock.deducted_net_profit_billion > 0:
         quality_bonus += 0.08
-    deducted_margin = _as_percent(stock.deducted_net_profit_margin)
-    if deducted_margin is not None and deducted_margin >= 10:
+    deducted_growth = _as_percent(stock.deducted_net_profit_growth_rate)
+    if deducted_growth is not None and deducted_growth >= 10:
         quality_bonus += 0.08
     return _clamp(roe_score + dividend_bonus + quality_bonus)
 

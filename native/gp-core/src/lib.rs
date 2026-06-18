@@ -62,6 +62,8 @@ pub struct StockItem {
     pub deducted_net_profit_billion: Option<f64>,
     #[serde(default)]
     pub deducted_net_profit_margin: Option<f64>,
+    #[serde(default)]
+    pub deducted_net_profit_growth_rate: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -78,6 +80,8 @@ pub struct ScreenCriteria {
     pub min_deducted_net_profit_billion: Option<f64>,
     #[serde(default)]
     pub min_deducted_net_profit_margin: Option<f64>,
+    #[serde(default)]
+    pub min_deducted_net_profit_growth_rate: Option<f64>,
     #[serde(default)]
     pub industry: Option<String>,
     #[serde(default)]
@@ -99,6 +103,7 @@ impl Default for ScreenCriteria {
             min_market_cap_billion: None,
             min_deducted_net_profit_billion: None,
             min_deducted_net_profit_margin: None,
+            min_deducted_net_profit_growth_rate: None,
             industry: None,
             include_st: false,
             limit: default_screen_limit(),
@@ -455,6 +460,33 @@ pub struct AgentWithDataRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AgentStreamWithDataRequest {
+    pub data: CoreDataSet,
+    pub message: String,
+    #[serde(default)]
+    pub run_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AgentStreamEvent {
+    pub run_id: String,
+    #[serde(rename = "type")]
+    pub event_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub percent: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response: Option<AgentResponse>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MobileStockSourceItem {
     pub title: String,
     #[serde(default)]
@@ -766,6 +798,15 @@ pub fn agent_value(payload: Value) -> CoreResult<Value> {
 pub fn agent_with_data_value(payload: Value) -> CoreResult<Value> {
     let request: AgentWithDataRequest = serde_json::from_value(payload)?;
     serde_json::to_value(run_agent_with_data(&request.data, &request.message)?).map_err(Into::into)
+}
+
+pub fn agent_stream_with_data_events_value(payload: Value) -> CoreResult<Vec<AgentStreamEvent>> {
+    let request: AgentStreamWithDataRequest = serde_json::from_value(payload)?;
+    Ok(run_agent_stream_with_data_events(
+        &request.data,
+        &request.message,
+        request.run_id.as_deref(),
+    ))
 }
 
 pub fn mobile_stock_skill_value(payload: Value) -> CoreResult<Value> {
@@ -1120,6 +1161,15 @@ pub fn run_agent_with_data(data: &CoreDataSet, message: &str) -> CoreResult<Agen
     run_agent_with_source(&source, message)
 }
 
+pub fn run_agent_stream_with_data_events(
+    data: &CoreDataSet,
+    message: &str,
+    run_id: Option<&str>,
+) -> Vec<AgentStreamEvent> {
+    let source = StaticDataSource::new(data.clone());
+    run_agent_stream_with_source_events(&source, message, run_id)
+}
+
 pub fn run_agent_with_source(
     source: &impl MarketDataSource,
     message: &str,
@@ -1247,6 +1297,82 @@ pub fn run_agent_with_source(
         trend_screen: None,
         data: None,
     })
+}
+
+pub fn run_agent_stream_with_source_events(
+    source: &impl MarketDataSource,
+    message: &str,
+    run_id: Option<&str>,
+) -> Vec<AgentStreamEvent> {
+    let run_id = run_id.unwrap_or("gp-agent-run").to_string();
+    let mut events = vec![
+        agent_status_event(&run_id, "understand", "理解意图", 8, None),
+        agent_status_event(&run_id, "intent", "识别动作", 24, None),
+        agent_status_event(&run_id, "execute", "执行本地智能体", 64, None),
+    ];
+
+    match run_agent_with_source(source, message) {
+        Ok(response) => {
+            let action = response.action.clone();
+            events.push(agent_status_event(
+                &run_id,
+                "format",
+                "整理结果",
+                88,
+                Some(action.as_str()),
+            ));
+            events.push(agent_status_event(
+                &run_id,
+                "complete",
+                "完成",
+                100,
+                Some(action.as_str()),
+            ));
+            events.push(AgentStreamEvent {
+                run_id,
+                event_type: "result".to_string(),
+                stage: None,
+                label: None,
+                percent: None,
+                action: Some(action),
+                response: Some(response),
+                message: None,
+            });
+        }
+        Err(error) => {
+            events.push(AgentStreamEvent {
+                run_id,
+                event_type: "error".to_string(),
+                stage: None,
+                label: None,
+                percent: None,
+                action: None,
+                response: None,
+                message: Some(error.to_string()),
+            });
+        }
+    }
+
+    events
+}
+
+fn agent_status_event(
+    run_id: &str,
+    stage: &str,
+    label: &str,
+    percent: u8,
+    action: Option<&str>,
+) -> AgentStreamEvent {
+    AgentStreamEvent {
+        run_id: run_id.to_string(),
+        event_type: "status".to_string(),
+        stage: Some(stage.to_string()),
+        label: Some(label.to_string()),
+        percent: Some(percent),
+        action: action.map(ToOwned::to_owned),
+        response: None,
+        message: None,
+    }
 }
 
 pub fn run_mobile_stock_skill(request: &MobileStockSkillRequest) -> MobileStockSkillResult {
@@ -1546,15 +1672,13 @@ pub fn screen_stocks(universe: &[StockItem], criteria: &ScreenCriteria) -> Scree
 fn deducted_profit_rule_notes(universe: &[StockItem], criteria: &ScreenCriteria) -> Vec<String> {
     if criteria.min_deducted_net_profit_billion.is_none()
         && criteria.min_deducted_net_profit_margin.is_none()
+        && criteria.min_deducted_net_profit_growth_rate.is_none()
     {
         return Vec::new();
     }
     let with_metrics = universe
         .iter()
-        .filter(|stock| {
-            stock.deducted_net_profit_billion.is_some()
-                && stock.deducted_net_profit_margin.is_some()
-        })
+        .filter(|stock| has_deducted_profit_rule_metrics(stock, criteria))
         .count();
     if with_metrics < universe.len() {
         vec![format!(
@@ -1564,6 +1688,25 @@ fn deducted_profit_rule_notes(universe: &[StockItem], criteria: &ScreenCriteria)
     } else {
         Vec::new()
     }
+}
+
+fn has_deducted_profit_rule_metrics(stock: &StockItem, criteria: &ScreenCriteria) -> bool {
+    if criteria.min_deducted_net_profit_billion.is_some()
+        && stock.deducted_net_profit_billion.is_none()
+    {
+        return false;
+    }
+    if criteria.min_deducted_net_profit_margin.is_some()
+        && stock.deducted_net_profit_margin.is_none()
+    {
+        return false;
+    }
+    if criteria.min_deducted_net_profit_growth_rate.is_some()
+        && stock.deducted_net_profit_growth_rate.is_none()
+    {
+        return false;
+    }
+    true
 }
 
 pub fn graph_screen_stocks(
@@ -1649,6 +1792,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             dividend_yield: Some(0.02),
             deducted_net_profit_billion: Some(680.0),
             deducted_net_profit_margin: Some(48.0),
+            deducted_net_profit_growth_rate: Some(12.0),
         },
         StockItem {
             code: "000001.SZ".to_string(),
@@ -1663,6 +1807,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             dividend_yield: Some(0.05),
             deducted_net_profit_billion: Some(450.0),
             deducted_net_profit_margin: Some(38.0),
+            deducted_net_profit_growth_rate: Some(6.0),
         },
         StockItem {
             code: "300750.SZ".to_string(),
@@ -1677,6 +1822,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             dividend_yield: Some(0.01),
             deducted_net_profit_billion: Some(380.0),
             deducted_net_profit_margin: Some(16.0),
+            deducted_net_profit_growth_rate: Some(18.0),
         },
         StockItem {
             code: "002594.SZ".to_string(),
@@ -1691,6 +1837,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             dividend_yield: Some(0.006),
             deducted_net_profit_billion: Some(250.0),
             deducted_net_profit_margin: Some(12.0),
+            deducted_net_profit_growth_rate: Some(15.0),
         },
         StockItem {
             code: "002475.SZ".to_string(),
@@ -1705,6 +1852,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             dividend_yield: Some(0.008),
             deducted_net_profit_billion: Some(95.0),
             deducted_net_profit_margin: Some(11.0),
+            deducted_net_profit_growth_rate: Some(11.0),
         },
         StockItem {
             code: "600036.SH".to_string(),
@@ -1719,6 +1867,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             dividend_yield: Some(0.04),
             deducted_net_profit_billion: Some(1300.0),
             deducted_net_profit_margin: Some(42.0),
+            deducted_net_profit_growth_rate: Some(5.0),
         },
         StockItem {
             code: "600000.SH".to_string(),
@@ -1733,6 +1882,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             dividend_yield: Some(0.06),
             deducted_net_profit_billion: Some(320.0),
             deducted_net_profit_margin: Some(36.0),
+            deducted_net_profit_growth_rate: Some(4.0),
         },
         StockItem {
             code: "601012.SH".to_string(),
@@ -1747,6 +1897,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             dividend_yield: Some(0.012),
             deducted_net_profit_billion: Some(90.0),
             deducted_net_profit_margin: Some(10.5),
+            deducted_net_profit_growth_rate: Some(12.0),
         },
         StockItem {
             code: "600309.SH".to_string(),
@@ -1761,6 +1912,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             dividend_yield: Some(0.025),
             deducted_net_profit_billion: Some(160.0),
             deducted_net_profit_margin: Some(13.0),
+            deducted_net_profit_growth_rate: Some(14.0),
         },
         StockItem {
             code: "600887.SH".to_string(),
@@ -1775,6 +1927,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             dividend_yield: Some(0.035),
             deducted_net_profit_billion: Some(100.0),
             deducted_net_profit_margin: Some(9.0),
+            deducted_net_profit_growth_rate: Some(8.0),
         },
     ]
 }
@@ -1918,6 +2071,18 @@ fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Option<Vec<Str
         reasons.push("deducted_net_profit_margin_ok".to_string());
     }
 
+    if let Some(min_growth) = criteria.min_deducted_net_profit_growth_rate {
+        if stock
+            .deducted_net_profit_growth_rate
+            .and_then(as_percent)
+            .map(|growth| growth <= min_growth)
+            .unwrap_or(true)
+        {
+            return None;
+        }
+        reasons.push("deducted_net_profit_growth_rate_ok".to_string());
+    }
+
     Some(reasons)
 }
 
@@ -1943,9 +2108,9 @@ fn score_stock(stock: &StockItem, reasons: &[String]) -> f64 {
         score += 0.4;
     }
     if stock
-        .deducted_net_profit_margin
+        .deducted_net_profit_growth_rate
         .and_then(as_percent)
-        .map(|margin| margin >= 10.0)
+        .map(|growth| growth >= 10.0)
         .unwrap_or(false)
     {
         score += 0.4;
@@ -3749,6 +3914,7 @@ mod tests {
                 dividend_yield: Some(0.04),
                 deducted_net_profit_billion: Some(8.0),
                 deducted_net_profit_margin: Some(12.0),
+                deducted_net_profit_growth_rate: Some(12.0),
             },
             StockItem {
                 code: "222222.SZ".to_string(),
@@ -3763,6 +3929,7 @@ mod tests {
                 dividend_yield: Some(0.01),
                 deducted_net_profit_billion: Some(3.0),
                 deducted_net_profit_margin: Some(8.0),
+                deducted_net_profit_growth_rate: Some(8.0),
             },
         ];
         let relations = vec![StockRelation {
@@ -3918,6 +4085,22 @@ mod tests {
     }
 
     #[test]
+    fn agent_stream_with_data_emits_status_and_result() {
+        let events = run_agent_stream_with_data_events(
+            &sample_data_set(),
+            "screen bank stocks",
+            Some("native-run"),
+        );
+        assert!(events.iter().any(|event| event.event_type == "status"));
+        let result = events
+            .iter()
+            .find(|event| event.event_type == "result")
+            .expect("agent stream should return result event");
+        assert_eq!(result.run_id, "native-run");
+        assert_eq!(result.response.as_ref().unwrap().action, "screen");
+    }
+
+    #[test]
     fn mobile_stock_skill_classifies_sources_with_guardrails() {
         let result = run_mobile_stock_skill(&MobileStockSkillRequest {
             stock_code: "300750.SZ".to_string(),
@@ -4004,7 +4187,7 @@ mod tests {
             &sample_data_set(),
             &ScreenCriteria {
                 min_deducted_net_profit_billion: Some(0.0),
-                min_deducted_net_profit_margin: Some(10.0),
+                min_deducted_net_profit_growth_rate: Some(10.0),
                 ..ScreenCriteria::default()
             },
         )
@@ -4017,7 +4200,7 @@ mod tests {
             .contains(&"deducted_net_profit_ok".to_string()));
         assert!(result.items[0]
             .reasons
-            .contains(&"deducted_net_profit_margin_ok".to_string()));
+            .contains(&"deducted_net_profit_growth_rate_ok".to_string()));
     }
 
     #[test]
@@ -4053,6 +4236,7 @@ mod tests {
             dividend_yield: None,
             deducted_net_profit_billion: None,
             deducted_net_profit_margin: None,
+            deducted_net_profit_growth_rate: None,
         }];
 
         let result = screen_stocks(
@@ -4082,6 +4266,7 @@ mod tests {
                 dividend_yield: None,
                 deducted_net_profit_billion: None,
                 deducted_net_profit_margin: None,
+                deducted_net_profit_growth_rate: None,
             },
             StockItem {
                 code: "600000.SH".to_string(),
@@ -4096,6 +4281,7 @@ mod tests {
                 dividend_yield: None,
                 deducted_net_profit_billion: None,
                 deducted_net_profit_margin: None,
+                deducted_net_profit_growth_rate: None,
             },
             StockItem {
                 code: "600036.SH".to_string(),
@@ -4110,6 +4296,7 @@ mod tests {
                 dividend_yield: None,
                 deducted_net_profit_billion: None,
                 deducted_net_profit_margin: None,
+                deducted_net_profit_growth_rate: None,
             },
         ];
 
@@ -4163,6 +4350,7 @@ mod tests {
             dividend_yield: None,
             deducted_net_profit_billion: None,
             deducted_net_profit_margin: None,
+            deducted_net_profit_growth_rate: None,
         };
         let mut chip = base.clone();
         chip.code = "688001.SH".to_string();
@@ -4208,6 +4396,7 @@ mod tests {
             dividend_yield: None,
             deducted_net_profit_billion: None,
             deducted_net_profit_margin: None,
+            deducted_net_profit_growth_rate: None,
         };
         let mut ordinary_bank = bank.clone();
         ordinary_bank.code = "600000.SH".to_string();
@@ -4264,6 +4453,7 @@ mod tests {
             dividend_yield: None,
             deducted_net_profit_billion: None,
             deducted_net_profit_margin: None,
+            deducted_net_profit_growth_rate: None,
         };
         let mut infra = bank.clone();
         infra.code = "601668.SH".to_string();
@@ -4331,6 +4521,7 @@ mod tests {
             dividend_yield: None,
             deducted_net_profit_billion: None,
             deducted_net_profit_margin: None,
+            deducted_net_profit_growth_rate: None,
         };
         let mut infra = bank.clone();
         infra.code = "601668.SH".to_string();

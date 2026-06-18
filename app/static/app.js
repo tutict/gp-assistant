@@ -148,6 +148,17 @@ const llmSettings = {
   clear: $("#llmClearBtn"),
 };
 
+const agentUi = {
+  thread: $("#agentChatThread"),
+  detail: $("#agentResult"),
+  input: $("#agentMsg"),
+  settingsButton: $("#agentSettingsBtn"),
+  settingsPanel: $("#llmSettingsPanel"),
+  modelStatus: $("#agentModelStatus"),
+  quickPrompts: document.querySelectorAll("[data-agent-prompt]"),
+};
+const agentRuns = new Map();
+
 const TAURI_MOBILE_GET_ROUTES = {
   "/api/data-sources/status": async ({ invoke }) => mobileDataStatus(invoke),
   "/api/upstream-rag/mobile/list": async ({ invoke }) => invoke("core_upstream_rag_list"),
@@ -510,6 +521,19 @@ function bindActions() {
   buttons.upstreamScan?.addEventListener("click", () => runTask(buttons.upstreamScan, panels.newsRag, runUpstreamQrScan));
   buttons.upstreamImport?.addEventListener("click", () => runTask(buttons.upstreamImport, panels.newsRag, runUpstreamRagImport));
   buttons.agent.addEventListener("click", () => runTask(buttons.agent, panels.agent, runAgent));
+  agentUi.settingsButton?.addEventListener("click", () => toggleAgentSettings());
+  agentUi.input?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || (!event.ctrlKey && !event.metaKey)) return;
+    event.preventDefault();
+    runTask(buttons.agent, panels.agent, runAgent);
+  });
+  agentUi.quickPrompts.forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!agentUi.input) return;
+      agentUi.input.value = button.dataset.agentPrompt || "";
+      agentUi.input.focus();
+    });
+  });
   buttons.observe?.addEventListener("click", () => runTask(buttons.observe, panels.observe, () => runObserve()));
   dataSource.select?.addEventListener("change", () => {
     localStorage.setItem(DATA_SOURCE_KEY, getSelectedDataSource());
@@ -753,14 +777,32 @@ async function runScreen() {
     return;
   }
 
-  setLoading(panels.screen, "筛选中");
+  const timer = startPanelProgress(panels.screen, "全市场筛选中", [
+    [14, "读取股票池缓存"],
+    [30, "批量获取行情价格"],
+    [48, "合并东财财报指标"],
+    [66, "应用扣非净利润规则"],
+    [84, "计算综合评分"],
+    [94, "生成热门股和潜力股"],
+  ]);
   const payload = buildCriteria();
-  const data = await postJson("/api/screen", payload, panels.screen);
-  if (data) renderScreenResult(panels.screen, data);
+  try {
+    const data = await postJson("/api/screen", payload, panels.screen);
+    if (data) renderScreenResult(panels.screen, data);
+  } finally {
+    if (timer) window.clearInterval(timer);
+  }
 }
 
 async function runSectorScreen() {
-  setLoading(panels.screen, "按概念筛选中");
+  const timer = startPanelProgress(panels.screen, "按概念筛选中", [
+    [14, "读取股票池缓存"],
+    [30, "批量获取行情价格"],
+    [48, "合并东财财报指标"],
+    [66, "应用当前研究条件"],
+    [84, "按概念汇总候选"],
+    [94, "生成分组结果"],
+  ]);
   const maxSectors = clampInt($("#maxSectors")?.value, 1, 50, DEFAULT_SECTOR_GROUP_LIMIT);
   const perSectorLimit = clampInt($("#perSectorLimit")?.value, 1, 50, DEFAULT_PER_SECTOR_LIMIT);
   const payload = {
@@ -769,8 +811,12 @@ async function runSectorScreen() {
     per_sector_limit: perSectorLimit,
     min_sector_candidates: perSectorLimit,
   };
-  const data = await postJson("/api/sector-screen", payload, panels.screen);
-  if (data) renderSectorScreenResult(panels.screen, data);
+  try {
+    const data = await postJson("/api/sector-screen", payload, panels.screen);
+    if (data) renderSectorScreenResult(panels.screen, data);
+  } finally {
+    if (timer) window.clearInterval(timer);
+  }
 }
 
 async function runGraph() {
@@ -1163,7 +1209,7 @@ async function runUpstreamRagRollback(stockCode) {
   if (data) renderUpstreamRagDetailResult(panels.newsRag, data);
 }
 
-async function runAgent() {
+async function runAgentLegacy() {
   const message = $("#agentMsg").value.trim();
   if (!message) {
     setError(panels.agent, "请输入智能体指令", "例如：用产业链关系筛选新能源股票，市盈率低于 25。");
@@ -1178,6 +1224,288 @@ async function runAgent() {
     updateLlmStatusFromAgentResult(data);
     renderAgentResult(panels.agent, data);
   }
+}
+
+async function runAgent() {
+  const input = agentUi.input || $("#agentMsg");
+  const message = String(input?.value || "").trim();
+  if (!message) {
+    setError(panels.agent, "请输入助手指令", "例如：筛选银行股，PE 低于 10。");
+    input?.focus();
+    return;
+  }
+
+  const runId = createAgentRunId();
+  appendAgentUserMessage(message);
+  const run = createAgentAssistantRun(runId);
+  setLoading(panels.agent, "等待智能体结果流");
+  if (input) input.value = "";
+
+  const payload = { message };
+  const llm = buildLlmConfig();
+  if (llm) payload.llm = llm;
+
+  try {
+    await requestAgentStream(runId, payload, (event) => handleAgentStreamEvent(run, event));
+  } catch (error) {
+    failAgentAssistantRun(run, error.message || "智能体运行失败");
+    setError(panels.agent, "智能体运行失败", error.message || "请求没有返回可展示结果。");
+  }
+}
+
+function toggleAgentSettings() {
+  if (!agentUi.settingsPanel) return;
+  agentUi.settingsPanel.open = !agentUi.settingsPanel.open;
+  if (agentUi.settingsPanel.open) {
+    agentUi.settingsPanel.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+}
+
+function createAgentRunId() {
+  return window.crypto?.randomUUID?.() || `agent-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function appendAgentUserMessage(message) {
+  if (!agentUi.thread) return;
+  const article = document.createElement("article");
+  article.className = "agent-message user";
+  article.innerHTML = `
+    <div class="agent-message-meta">
+      <span>你</span>
+      <time>${escapeHtml(agentTimeLabel())}</time>
+    </div>
+    <div class="agent-message-body"><p>${escapeHtml(message)}</p></div>
+  `;
+  agentUi.thread.appendChild(article);
+  scrollAgentThreadToBottom();
+}
+
+function createAgentAssistantRun(runId) {
+  const article = document.createElement("article");
+  article.className = "agent-message assistant active";
+  article.dataset.agentRunId = runId;
+  article.innerHTML = `
+    <div class="agent-message-meta">
+      <span>助手</span>
+      <time>${escapeHtml(agentTimeLabel())}</time>
+    </div>
+    <div class="agent-message-body">
+      <div class="agent-stream-steps"></div>
+      <p class="agent-final-reply">正在准备...</p>
+    </div>
+  `;
+  const run = {
+    id: runId,
+    article,
+    stepsNode: article.querySelector(".agent-stream-steps"),
+    replyNode: article.querySelector(".agent-final-reply"),
+    steps: [],
+    response: null,
+  };
+  article.addEventListener("click", () => {
+    if (run.response) renderAgentResult(panels.agent, run.response);
+  });
+  agentRuns.set(runId, run);
+  agentUi.thread?.appendChild(article);
+  scrollAgentThreadToBottom();
+  return run;
+}
+
+function handleAgentStreamEvent(run, rawEvent) {
+  const event = normalizeAgentStreamEvent(rawEvent);
+  if (!event) return;
+  if (event.type === "status") {
+    appendAgentStreamStep(run, event);
+    return;
+  }
+  if (event.type === "result") {
+    finishAgentAssistantRun(run, event.response || {});
+    return;
+  }
+  if (event.type === "error") {
+    failAgentAssistantRun(run, event.message || "智能体返回错误");
+  }
+}
+
+function normalizeAgentStreamEvent(rawEvent) {
+  if (!rawEvent) return null;
+  const event = rawEvent.payload || rawEvent;
+  if (typeof event === "string") {
+    try {
+      return JSON.parse(event);
+    } catch {
+      return null;
+    }
+  }
+  return event;
+}
+
+function appendAgentStreamStep(run, event) {
+  const stage = String(event.stage || `stage-${run.steps.length}`);
+  const existing = run.steps.find((item) => item.stage === stage);
+  const step = {
+    stage,
+    label: event.label || stage,
+    percent: Number(event.percent || 0),
+    action: event.action || "",
+  };
+  if (existing) Object.assign(existing, step);
+  else run.steps.push(step);
+  renderAgentStreamSteps(run);
+  if (run.replyNode) {
+    run.replyNode.textContent = step.label;
+  }
+  scrollAgentThreadToBottom();
+}
+
+function renderAgentStreamSteps(run) {
+  if (!run.stepsNode) return;
+  run.stepsNode.innerHTML = run.steps
+    .map(
+      (step) => `
+        <div class="agent-stream-step">
+          <span>${escapeHtml(step.label)}</span>
+          <strong>${Math.max(0, Math.min(100, step.percent || 0))}%</strong>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+function finishAgentAssistantRun(run, response) {
+  run.response = response;
+  run.article?.classList.remove("active");
+  run.article?.classList.add("complete");
+  if (run.replyNode) {
+    const action = response.action ? ` · ${actionLabel(response.action)}` : "";
+    run.replyNode.innerHTML = `${escapeHtml(response.reply || "已完成。")}${escapeHtml(action)}`;
+  }
+  updateLlmStatusFromAgentResult(response);
+  renderAgentResult(panels.agent, response);
+  scrollAgentThreadToBottom();
+}
+
+function failAgentAssistantRun(run, message) {
+  run.article?.classList.remove("active");
+  run.article?.classList.add("error");
+  if (run.replyNode) {
+    run.replyNode.textContent = sanitizeRuntimeMessage(message || "运行失败", 180);
+  }
+  scrollAgentThreadToBottom();
+}
+
+async function requestAgentStream(runId, payload, onEvent) {
+  const requestPayload = { ...payload, run_id: runId };
+  try {
+    if (isMobileTauriRuntime()) {
+      await requestTauriAgentStream(runId, requestPayload, onEvent);
+    } else {
+      await requestDesktopAgentStream(requestPayload, onEvent);
+    }
+  } catch (streamError) {
+    onEvent({
+      run_id: runId,
+      type: "status",
+      stage: "fallback",
+      label: "流式接口不可用，切换同步接口",
+      percent: 72,
+    });
+    const fallback = await postJson("/api/agent", requestPayload, panels.agent);
+    if (!fallback) throw streamError;
+    onEvent({ run_id: runId, type: "result", response: fallback });
+  }
+}
+
+async function requestDesktopAgentStream(payload, onEvent) {
+  const response = await fetch("/api/agent/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...dataSourceHeaders() },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP ${response.status}`);
+  }
+  if (!response.body?.getReader) throw new Error("浏览器不支持流式读取。");
+  await consumeSseResponse(response, onEvent);
+}
+
+async function requestTauriAgentStream(runId, payload, onEvent) {
+  const invoke = window.__TAURI__?.core?.invoke;
+  const listen = window.__TAURI__?.event?.listen;
+  if (!invoke || !listen) throw new Error("移动端事件接口不可用。");
+
+  let unlisten = null;
+  let sawResult = false;
+  try {
+    unlisten = await listen("agent-stream-event", (event) => {
+      const payloadEvent = normalizeAgentStreamEvent(event);
+      if (!payloadEvent || payloadEvent.run_id !== runId) return;
+      if (payloadEvent.type === "result") sawResult = true;
+      onEvent(payloadEvent);
+    });
+    const response = await invoke("core_agent_stream_with_data", {
+      payload: {
+        data: await loadMobileMarketData(invoke),
+        message: payload.message || "",
+        run_id: runId,
+      },
+    });
+    if (!sawResult && response) {
+      onEvent({ run_id: runId, type: "result", response });
+    }
+  } finally {
+    if (typeof unlisten === "function") unlisten();
+  }
+}
+
+async function consumeSseResponse(response, onEvent) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() || "";
+    for (const block of blocks) {
+      const event = parseSseBlock(block);
+      if (event) onEvent(event);
+    }
+  }
+  buffer += decoder.decode();
+  const trailing = parseSseBlock(buffer);
+  if (trailing) onEvent(trailing);
+}
+
+function parseSseBlock(block) {
+  const lines = String(block || "").split(/\r?\n/);
+  let eventType = "message";
+  const dataLines = [];
+  for (const line of lines) {
+    if (line.startsWith("event:")) eventType = line.slice(6).trim();
+    if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+  }
+  if (!dataLines.length) return null;
+  try {
+    const payload = JSON.parse(dataLines.join("\n"));
+    if (!payload.type) payload.type = eventType;
+    return payload;
+  } catch {
+    return { type: eventType, message: dataLines.join("\n") };
+  }
+}
+
+function agentTimeLabel() {
+  return new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+}
+
+function scrollAgentThreadToBottom() {
+  if (!agentUi.thread) return;
+  window.requestAnimationFrame(() => {
+    agentUi.thread.scrollTop = agentUi.thread.scrollHeight;
+  });
 }
 
 async function runObserve(codeOverride) {
@@ -1821,6 +2149,13 @@ function setLlmStatus(text, state = "neutral", hint = "") {
     llmSettings.hint.textContent = hint;
     llmSettings.hint.dataset.state = state;
   }
+  syncAgentModelStatus();
+}
+
+function syncAgentModelStatus() {
+  if (!agentUi.modelStatus || !llmSettings.status) return;
+  agentUi.modelStatus.textContent = llmSettings.status.textContent || "本地规则兜底";
+  agentUi.modelStatus.dataset.state = llmSettings.status.dataset.state || "neutral";
 }
 
 function updateLlmStatus(customText, customState = "neutral", customHint = "") {
@@ -2187,7 +2522,7 @@ function buildCriteria(overrides = {}) {
     include_st: $("#includeSt").checked,
     require_institution_buy_ratio_gt_sell_ratio: Boolean($("#requireInstitutionBuyRatio")?.checked),
     min_deducted_net_profit_billion: 0,
-    min_deducted_net_profit_margin: 10,
+    min_deducted_net_profit_growth_rate: 10,
     limit: readInt("resultLimit", DEFAULT_RESULT_LIMIT),
     sort_by: $("#sortBy").value,
     sort_dir: $("#sortDir").value,
@@ -2241,7 +2576,7 @@ function updateCriteriaSummary() {
     $("#maxPe")?.value ? `PE ≤ ${formatNumber($("#maxPe").value)}` : "",
     $("#minMcap")?.value ? `市值 ≥ ${formatNumber($("#minMcap").value)} 亿` : "",
     "扣非净利润 > 0",
-    "扣非净利率 > 10%",
+    "扣非净利润增长率 > 10%",
     $("#requireInstitutionBuyRatio")?.checked ? "机构净买入" : "",
     `返回 ${clampInt($("#resultLimit")?.value, 1, 200, DEFAULT_RESULT_LIMIT)} 只`,
     rebalanceLabel($("#btRebalance")?.value || "monthly"),
@@ -2745,6 +3080,7 @@ function buildMobileFinancialIndicators(stock) {
   add("净资产收益率", stock.roe, formatPercent, Number(stock.roe || 0) >= 0 ? "rise" : "fall");
   add("扣非净利润", stock.deducted_net_profit_billion, (value) => `${formatNumber(value)}亿`, Number(stock.deducted_net_profit_billion || 0) > 0 ? "rise" : "fall");
   add("扣非净利率", stock.deducted_net_profit_margin, (value) => `${formatNumber(Math.abs(value) <= 1 ? value * 100 : value)}%`);
+  add("扣非净利润增长率", stock.deducted_net_profit_growth_rate, (value) => `${formatNumber(Math.abs(value) <= 1 ? value * 100 : value)}%`, Number(stock.deducted_net_profit_growth_rate || 0) >= 0 ? "rise" : "fall");
   add("市值", stock.market_cap_billion, (value) => `${formatNumber(value)}亿`);
   add("股息率", stock.dividend_yield, formatPercent);
 
@@ -5618,6 +5954,7 @@ function reasonLabel(reason) {
     mcap_ok: "市值达标",
     deducted_net_profit_ok: "扣非净利润达标",
     deducted_net_profit_margin_ok: "扣非净利率达标",
+    deducted_net_profit_growth_rate_ok: "扣非净利润增长率达标",
     strong_relation_signal: "强关系信号",
     moderate_relation_signal: "中等关系信号",
     short_buy_signal: "短买",

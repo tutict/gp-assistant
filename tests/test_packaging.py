@@ -15,3 +15,4 @@ def test_requirements_include_socks_proxy_support():
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8").lower()
 
     assert "pysocks" in requirements or "requests[socks]" in requirements
+    assert "httpx[socks]" in requirements or "socksio" in requirements

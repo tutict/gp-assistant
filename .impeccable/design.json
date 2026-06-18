@@ -1,0 +1,159 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-18T00:00:00+08:00",
+  "title": "Design System: GP Assistant",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Exchange Cyan",
+        "canonical": "#48BFD2",
+        "tonalRamp": ["#06262C", "#0B4A54", "#0F7B8A", "#2095A6", "#48BFD2", "#86D8E4", "#BDEEF4", "#E9FAFC"]
+      },
+      "accent": {
+        "role": "secondary",
+        "displayName": "Audit Amber",
+        "canonical": "#D97706",
+        "tonalRamp": ["#2A1302", "#5B2A04", "#8B4505", "#B95E05", "#D97706", "#F0A942", "#F7D39A", "#FFF3DD"]
+      },
+      "background-dark": {
+        "role": "neutral",
+        "displayName": "Graphite Background",
+        "canonical": "#0D1116",
+        "tonalRamp": ["#06080B", "#0D1116", "#151B22", "#1D252D", "#2B3844", "#556675", "#9BAAB7", "#F2F7FA"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Workbench Heading",
+        "purpose": "Orientation headings only."
+      },
+      "data": {
+        "displayName": "Tabular Data",
+        "purpose": "Stock codes, prices, timestamps, percentages, and compact metrics."
+      }
+    },
+    "shadows": [
+      {
+        "name": "sticky-header",
+        "value": "0 14px 34px rgba(3, 8, 13, 0.28)",
+        "purpose": "Top app header and fixed mobile chrome."
+      },
+      {
+        "name": "floating-sheet",
+        "value": "0 24px 60px rgba(3, 8, 13, 0.38)",
+        "purpose": "Mobile criteria drawer, menus, and modal-like overlays."
+      },
+      {
+        "name": "raised-result",
+        "value": "0 12px 28px rgba(3, 8, 13, 0.22)",
+        "purpose": "Selected assistant or result details only."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state-fast",
+        "value": "160ms cubic-bezier(0.2, 0, 0, 1)",
+        "purpose": "Hover, focus, selected, and small state changes."
+      },
+      {
+        "name": "panel-enter",
+        "value": "220ms cubic-bezier(0.2, 0, 0, 1)",
+        "purpose": "Mobile sheet and drawer reveal."
+      }
+    ],
+    "breakpoints": [
+      { "name": "phone", "value": "640px" },
+      { "name": "tablet", "value": "980px" },
+      { "name": "desktop", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary command for running research actions.",
+      "html": "<button class=\"ds-btn-primary\">运行筛选</button>",
+      "css": ".ds-btn-primary { min-height: 40px; border: 0; border-radius: 4px; background: #0F7B8A; color: #fff; padding: 10px 14px; font: 700 14px/1.2 Fira Sans, Inter, system-ui, sans-serif; cursor: pointer; transition: background 160ms cubic-bezier(0.2,0,0,1), box-shadow 160ms cubic-bezier(0.2,0,0,1); } .ds-btn-primary:hover { background: #0B6470; } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(72,191,210,.28); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary command that does not compete with the main run action.",
+      "html": "<button class=\"ds-btn-ghost\">修改条件</button>",
+      "css": ".ds-btn-ghost { min-height: 40px; border: 1px solid #2B3844; border-radius: 4px; background: transparent; color: #48BFD2; padding: 9px 12px; font: 700 14px/1.2 Fira Sans, Inter, system-ui, sans-serif; cursor: pointer; transition: border-color 160ms cubic-bezier(0.2,0,0,1), background 160ms cubic-bezier(0.2,0,0,1); } .ds-btn-ghost:hover { border-color: #48BFD2; background: rgba(72,191,210,.09); } .ds-btn-ghost:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(72,191,210,.28); }"
+    },
+    {
+      "name": "Research Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Compact field for codes, prompts, and numeric criteria.",
+      "html": "<label class=\"ds-field\"><span>股票代码</span><input value=\"300750.SZ\" /></label>",
+      "css": ".ds-field { display: grid; gap: 6px; color: #9BAAB7; font: 700 12px/1.3 Fira Sans, Inter, system-ui, sans-serif; } .ds-field input { min-height: 40px; border: 1px solid #2B3844; border-radius: 4px; background: #151B22; color: #F2F7FA; padding: 10px 12px; font: 500 13px/1.35 Fira Code, ui-monospace, monospace; } .ds-field input:focus { outline: none; border-color: #48BFD2; box-shadow: 0 0 0 3px rgba(72,191,210,.22); }"
+    },
+    {
+      "name": "Navigation Item",
+      "kind": "nav",
+      "refersTo": "navigation",
+      "description": "Persistent workbench destination with icon, label, and compact hint.",
+      "html": "<a class=\"ds-nav-item ds-nav-item-active\" href=\"#\"><span>筛</span><strong>筛选</strong><em>基础 / 概念 / 趋势</em></a>",
+      "css": ".ds-nav-item { display: grid; grid-template-columns: 32px 1fr; gap: 8px 10px; align-items: center; min-height: 48px; border: 1px solid transparent; border-radius: 8px; color: #9BAAB7; padding: 8px; text-decoration: none; } .ds-nav-item span { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid #2B3844; border-radius: 6px; color: #48BFD2; } .ds-nav-item strong { color: #F2F7FA; font: 700 14px/1.2 Fira Sans, Inter, system-ui, sans-serif; } .ds-nav-item em { grid-column: 2; color: #9BAAB7; font: 500 12px/1.2 Fira Sans, Inter, system-ui, sans-serif; font-style: normal; } .ds-nav-item-active { border-color: rgba(72,191,210,.35); background: rgba(72,191,210,.09); }"
+    },
+    {
+      "name": "Result Panel",
+      "kind": "card",
+      "refersTo": "result-panel",
+      "description": "Evidence-first container for screening, observation, and assistant results.",
+      "html": "<section class=\"ds-result-panel\"><header><span>结果</span><strong>候选 8 / 概念 4</strong></header><p>筛选完成，已按概念分组展示。</p></section>",
+      "css": ".ds-result-panel { border: 1px solid #2B3844; border-radius: 8px; background: #151B22; color: #F2F7FA; padding: 16px; } .ds-result-panel header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; } .ds-result-panel span { color: #9BAAB7; font: 700 12px/1.3 Fira Sans, Inter, system-ui, sans-serif; } .ds-result-panel strong { font: 600 13px/1.35 Fira Code, ui-monospace, monospace; } .ds-result-panel p { margin: 0; color: #C8D3DC; font: 400 14px/1.55 Fira Sans, Inter, system-ui, sans-serif; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Research Desk Terminal",
+    "overview": "The interface should feel like a focused research desk: quiet, structured, and built around evidence. It uses a restrained dark-first workbench, strong text contrast, compact controls, and a single cyan action color so data and status remain louder than decoration.",
+    "keyCharacteristics": [
+      "Dense product UI with stable navigation, filters, result panels, and evidence blocks.",
+      "Dark-first palette with a light mode equivalent, semantic rise/fall/warning colors, and no decorative gradients.",
+      "4px to 10px radii, thin borders, tonal layering, and shadows only for sticky or elevated overlays.",
+      "Single sans family for UI, monospace only for codes, values, timestamps, and tabular data."
+    ],
+    "rules": [
+      {
+        "name": "The One Action Color Rule",
+        "body": "Cyan is reserved for action, selection, focus, and progress. It is not decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "The Semantic Market Rule",
+        "body": "Red and green only describe market direction or positive/negative evidence, and must be paired with text.",
+        "section": "colors"
+      },
+      {
+        "name": "The No Display Labels Rule",
+        "body": "UI labels, buttons, and data never use display styling. Large type is for orientation, not routine controls.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-at-Rest Rule",
+        "body": "Routine modules do not use decorative shadow. Use border, tone, and spacing first.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep the current conditions and data source visible near the working surface.",
+      "Do use cyan only for action, selection, focus, and progress.",
+      "Do pair red/green market colors with text labels, arrows, or context.",
+      "Do keep controls at 44px minimum touch target on mobile.",
+      "Do preserve reduced-motion support and use motion only for state changes."
+    ],
+    "donts": [
+      "Don't build marketing-style hero sections, decorative metric strips, or sales copy.",
+      "Don't use purple-blue gradients, glassmorphism, glowing blobs, or ornamental background effects.",
+      "Don't use thick side-stripe borders on cards or alerts.",
+      "Don't rely on red/green alone to convey meaning.",
+      "Don't write investment-advice language such as “必涨”, “稳赢”, “立即买入”, “目标价”, or “满仓”."
+    ]
+  }
+}

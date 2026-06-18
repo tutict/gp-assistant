@@ -61,7 +61,7 @@
         transition: opacity 0.16s ease;
       }
     </style>
-    <link rel="stylesheet" href="/static/style.css?v=20260615-external-source-link" />
+    <link rel="stylesheet" href="/static/style.css?v=20260618-design-refresh-1" />
   </head>
   <body>
     <div id="bootSplash" aria-hidden="true">
@@ -495,7 +495,7 @@
             </div>
             <button id="openCriteriaBtn" type="button">修改条件</button>
           </div>
-          <details class="agent-settings workbench-llm-settings">
+          <details id="llmSettingsPanel" class="agent-settings workbench-llm-settings">
             <summary>
               <div class="llm-status-copy">
                 <span>大模型接口</span>
@@ -541,26 +541,51 @@
             </div>
           </details>
           <section id="sectionAgent" class="agent-console workbench-view" data-view="agent">
-            <div class="module-heading">
+            <div class="agent-workbench-header">
               <div>
-                <p>指令</p>
-                <h2>智能指令台</h2>
+                <p>AI 助手</p>
+                <h2>聊天式工作台</h2>
               </div>
-              <span>结构化动作</span>
+              <div class="agent-header-actions">
+                <span id="agentModelStatus">本地规则兜底</span>
+                <button id="agentSettingsBtn" class="ghost-action" type="button">模型设置</button>
+              </div>
             </div>
-            <div class="agent-input-row">
-              <textarea
-                id="agentMsg"
-                rows="3"
-                placeholder="例如：用产业链关系筛选新能源股票，市盈率低于 25，净资产收益率高于 10%"
-              ></textarea>
-              <button id="agentBtn" class="primary-action" type="button">运行智能体</button>
-            </div>
-            <div id="agentResult" class="result-panel compact empty" data-large="true">
-              <div class="empty-state">输入指令后查看智能体动作与结果</div>
+            <div class="agent-chat-shell">
+              <div class="agent-chat-main">
+                <div id="agentChatThread" class="agent-chat-thread" aria-live="polite">
+                  <article class="agent-message assistant">
+                    <div class="agent-message-meta">
+                      <span>助手</span>
+                      <time>就绪</time>
+                    </div>
+                    <div class="agent-message-body">
+                      <p>可以直接描述筛选、观察、回测、消息分析或数据状态任务。结果会显示在右侧详情面板。</p>
+                    </div>
+                  </article>
+                </div>
+                <div class="agent-quick-prompts" aria-label="快捷意图">
+                  <button type="button" data-agent-prompt="筛选银行股，PE 低于 10">普通筛选</button>
+                  <button type="button" data-agent-prompt="按概念分组筛选半导体晶圆，返回每组 3 只">分概念筛选</button>
+                  <button type="button" data-agent-prompt="观察 300750.SZ 的行情、估值和资金证据">观察个股</button>
+                  <button type="button" data-agent-prompt="回测银行股，持仓 5 只，月度再平衡">回测</button>
+                  <button type="button" data-agent-prompt="分析 300750.SZ 上下游消息情绪">消息分析</button>
+                  <button type="button" data-agent-prompt="查看数据源和缓存状态">数据状态</button>
+                </div>
+                <div class="agent-composer">
+                  <textarea
+                    id="agentMsg"
+                    rows="3"
+                    placeholder="输入任务，例如：筛选银行股，PE 低于 10，并按扣非净利润增长率过滤"
+                  ></textarea>
+                  <button id="agentBtn" class="primary-action" type="button">发送</button>
+                </div>
+              </div>
+              <aside id="agentResult" class="agent-detail-drawer result-panel compact empty" data-large="true" aria-label="助手结果详情">
+                <div class="empty-state">选择或运行一条助手回复后查看详情</div>
+              </aside>
             </div>
           </section>
-
           <section id="sectionObserve" class="module observe-module workbench-view detail-view" data-view="observe">
             <div class="module-heading">
               <div>
@@ -836,6 +861,6 @@
       </a>
     </nav>
     <script src="/static/vendor/jsQR.js"></script>
-    <script src="/static/app.js?v=20260615-external-source-link"></script>
+    <script src="/static/app.js?v=20260618-agent-chat"></script>
   </body>
 </html>

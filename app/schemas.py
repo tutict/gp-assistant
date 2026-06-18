@@ -21,6 +21,7 @@ class StockItem(BaseModel):
     dividend_yield: Optional[float] = None
     deducted_net_profit_billion: Optional[float] = None
     deducted_net_profit_margin: Optional[float] = None
+    deducted_net_profit_growth_rate: Optional[float] = None
 
 
 class FinancialIndicatorItem(BaseModel):
@@ -48,6 +49,7 @@ class ScreenCriteria(BaseModel):
     min_market_cap_billion: Optional[float] = None
     min_deducted_net_profit_billion: Optional[float] = None
     min_deducted_net_profit_margin: Optional[float] = None
+    min_deducted_net_profit_growth_rate: Optional[float] = None
     industry: Optional[str] = None
     require_institution_buy_ratio_gt_sell_ratio: bool = False
     include_st: bool = False
@@ -589,6 +591,7 @@ class CachePruneResult(BaseModel):
 class AgentRequest(BaseModel):
     message: str
     llm: Optional[LlmClientConfig] = None
+    run_id: Optional[str] = None
 
 
 class AgentResponse(BaseModel):

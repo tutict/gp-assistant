@@ -232,6 +232,7 @@ class EastmoneyProvider(StockProvider):
             "f100": stock.industry,
             "deducted_net_profit_billion": stock.deducted_net_profit_billion,
             "deducted_net_profit_margin": stock.deducted_net_profit_margin,
+            "deducted_net_profit_growth_rate": stock.deducted_net_profit_growth_rate,
         }
 
     def _row_to_stock(self, row: pd.Series, use_previous_close: bool = False) -> StockItem | None:
@@ -269,6 +270,7 @@ class EastmoneyProvider(StockProvider):
             dividend_yield=None,
             deducted_net_profit_billion=self._deducted_net_profit_billion_from_row(row),
             deducted_net_profit_margin=self._deducted_net_profit_margin_from_row(row),
+            deducted_net_profit_growth_rate=self._deducted_net_profit_growth_rate_from_row(row),
         )
 
     @staticmethod
@@ -305,6 +307,22 @@ class EastmoneyProvider(StockProvider):
         if revenue_billion <= 0:
             return None
         return profit / revenue_billion * 100
+
+    @classmethod
+    def _deducted_net_profit_growth_rate_from_row(cls, row) -> Optional[float]:
+        return cls._first_float(
+            row,
+            [
+                "deducted_net_profit_growth_rate",
+                "扣非净利润增长率",
+                "扣非净利润同比增长率",
+                "扣非净利润同比增长",
+                "扣非净利润同比",
+                "扣非净利润增速",
+                "DPNP_YOY_RATIO",
+                "KCFJCXSYJLRTZ",
+            ],
+        )
 
     @classmethod
     def _first_float(cls, row, keys: list[str]) -> Optional[float]:

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional, TypedDict
+from uuid import uuid4
 
 from app.providers.base import StockProvider
 from app.schemas import (
@@ -226,6 +228,57 @@ def run_agent(
     return _state_to_response(final_state)
 
 
+def run_agent_stream(
+    provider: StockProvider,
+    message: str,
+    llm_config: Optional[LlmClientConfig] = None,
+    run_id: Optional[str] = None,
+) -> Iterator[dict[str, Any]]:
+    """Yield coarse-grained agent progress events followed by the final result."""
+    current_run_id = run_id or uuid4().hex
+
+    def status(stage: str, label: str, percent: int, action: Optional[str] = None) -> dict[str, Any]:
+        event: dict[str, Any] = {
+            "run_id": current_run_id,
+            "type": "status",
+            "stage": stage,
+            "label": label,
+            "percent": percent,
+        }
+        if action:
+            event["action"] = action
+        return event
+
+    state: AgentState = {
+        "provider": provider,
+        "message": message,
+        "llm_config": llm_config,
+    }
+    try:
+        yield status("understand", "理解意图", 8)
+        yield status("intent", "识别动作", 24)
+        state.update(_parse_intent_node(state))
+        action = _route_action(state)
+        action_label = _agent_action_label(action)
+        yield status("route", f"识别为{action_label}", 38, action)
+        yield status("execute", f"执行{action_label}", 64, action)
+        state.update(_execute_agent_action(action, state))
+        yield status("format", "整理结果", 88, action)
+        response = _state_to_response(state)
+        yield status("complete", "完成", 100, action)
+        yield {
+            "run_id": current_run_id,
+            "type": "result",
+            "response": response.model_dump(),
+        }
+    except Exception as exc:
+        yield {
+            "run_id": current_run_id,
+            "type": "error",
+            "message": _safe_error(exc),
+        }
+
+
 @lru_cache(maxsize=1)
 def _get_langgraph_workflow() -> Any:
     try:
@@ -286,29 +339,49 @@ def _run_agent_state_machine(initial_state: AgentState) -> AgentState:
     state: AgentState = dict(initial_state)
     state.update(_parse_intent_node(state))
     action = _route_action(state)
-    if action == "observe_stock":
-        state.update(_observe_stock_node(state))
-    elif action == "screen":
-        state.update(_screen_node(state))
-    elif action == "sector_screen":
-        state.update(_sector_screen_node(state))
-    elif action == "graph_screen":
-        state.update(_graph_screen_node(state))
-    elif action == "trend_screen":
-        state.update(_trend_screen_node(state))
-    elif action == "backtest":
-        state.update(_backtest_node(state))
-    elif action == "news_rag":
-        state.update(_news_rag_node(state))
-    elif action == "data_status":
-        state.update(_data_status_node(state))
-    elif action == "refresh_data":
-        state.update(_refresh_data_node(state))
-    elif action == "prune_cache":
-        state.update(_prune_cache_node(state))
-    else:
-        state.update(_clarify_node(state))
+    state.update(_execute_agent_action(action, state))
     return state
+
+
+def _execute_agent_action(action: str, state: AgentState) -> AgentState:
+    if action == "observe_stock":
+        return _observe_stock_node(state)
+    elif action == "screen":
+        return _screen_node(state)
+    elif action == "sector_screen":
+        return _sector_screen_node(state)
+    elif action == "graph_screen":
+        return _graph_screen_node(state)
+    elif action == "trend_screen":
+        return _trend_screen_node(state)
+    elif action == "backtest":
+        return _backtest_node(state)
+    elif action == "news_rag":
+        return _news_rag_node(state)
+    elif action == "data_status":
+        return _data_status_node(state)
+    elif action == "refresh_data":
+        return _refresh_data_node(state)
+    elif action == "prune_cache":
+        return _prune_cache_node(state)
+    else:
+        return _clarify_node(state)
+
+
+def _agent_action_label(action: str) -> str:
+    return {
+        "observe_stock": "个股观察",
+        "screen": "普通筛选",
+        "sector_screen": "分概念筛选",
+        "graph_screen": "关系图筛选",
+        "trend_screen": "趋势筛选",
+        "backtest": "回测",
+        "news_rag": "消息分析",
+        "data_status": "数据状态",
+        "refresh_data": "数据刷新",
+        "prune_cache": "缓存清理",
+        "clarify": "澄清问题",
+    }.get(action, "澄清问题")
 
 
 def _parse_intent_node(state: AgentState) -> AgentState:
@@ -564,12 +637,13 @@ def _state_to_response(state: AgentState) -> AgentResponse:
 
 
 def _call_llm(message: str, override: Optional[LlmClientConfig] = None) -> Dict[str, Any]:
+    if _should_skip_llm(message):
+        return _heuristic_parse(message)
+
     config = _resolve_llm_config(override)
     if not config.api_key:
         result = _heuristic_parse(message)
-        result["reply"] = (
-            f"{result.get('reply', '已处理。')}（未配置 OPENAI_API_KEY，已使用本地规则解析。）"
-        )
+        result["reply"] = _llm_fallback_reply(result, "未配置模型，已使用本地规则解析。")
         return result
 
     try:
@@ -588,13 +662,25 @@ def _call_llm(message: str, override: Optional[LlmClientConfig] = None) -> Dict[
         completion = _create_chat_completion(client, request)
         content = completion.choices[0].message.content or "{}"
         return _parse_json_response(content)
-    except Exception as exc:
+    except Exception:
         result = _heuristic_parse(message)
-        result["reply"] = (
-            f"{result.get('reply', '已处理。')}（LLM 调用失败，已使用本地规则解析：{_safe_error(exc)}）"
-        )
+        result["reply"] = _llm_fallback_reply(result, "模型暂不可用，已使用本地规则解析。")
         return result
 
+
+def _should_skip_llm(message: str) -> bool:
+    normalized = re.sub(r"[\s，。！？!?.、~～]+", "", str(message or "").strip().lower())
+    return normalized in {"你好", "您好", "嗨", "哈喽", "hello", "hi", "hey", "在吗", "在不在"}
+
+
+def _llm_fallback_reply(result: Dict[str, Any], note: str) -> str:
+    action = str(result.get("action") or "clarify")
+    reply = str(result.get("reply") or DEFAULT_RESEARCH_REPLIES.get(action) or "已处理。").strip()
+    if action == "clarify":
+        return reply
+    if "本地规则" in reply or "模型暂不可用" in reply or "OPENAI_API_KEY" in reply:
+        return reply
+    return f"{reply}（{note}）"
 
 def _system_prompt() -> str:
     base_prompt = SYSTEM_PROMPT.replace("__CURRENT_DATE_YYYYMMDD__", current_system_date_yyyymmdd())

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import math
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import List, Optional
 
 import pandas as pd
@@ -41,6 +41,9 @@ class TdxProvider(StockProvider):
         self.tencent_batch_size = env_int("TDX_TENCENT_BATCH_SIZE", 80, minimum=1)
         self.history_batch_size = env_int("TDX_HISTORY_BATCH_SIZE", 800, minimum=1, maximum=800)
         self.history_pages = env_int("TDX_HISTORY_PAGES", 8, minimum=1)
+        self.fundamental_page_size = env_int("TDX_FUNDAMENTAL_PAGE_SIZE", 500, minimum=50, maximum=1000)
+        self.fundamental_max_pages = env_int("TDX_FUNDAMENTAL_MAX_PAGES", 30, minimum=1)
+        self.fundamental_min_rows = env_int("TDX_FUNDAMENTAL_MIN_ROWS", 1000, minimum=1)
         self.proxy_mode = normalize_proxy_mode(proxy_mode)
         self.fundamental_cache_path = self._resolve_fundamental_cache_path()
         self._session = requests.Session()
@@ -486,6 +489,8 @@ class TdxProvider(StockProvider):
         add("扣非净利润", stock.deducted_net_profit_billion, self._format_indicator_yi, "亿")
         deducted_margin = self._as_percent(stock.deducted_net_profit_margin)
         add("扣非净利率", deducted_margin, self._format_indicator_percent_points)
+        deducted_growth = self._as_percent(stock.deducted_net_profit_growth_rate)
+        add("扣非净利同比", deducted_growth, self._format_indicator_percent_points)
         add("市值", stock.market_cap_billion, self._format_indicator_yi, "亿")
         add("股息率", stock.dividend_yield, self._format_indicator_ratio_percent)
 
@@ -658,20 +663,151 @@ class TdxProvider(StockProvider):
         raise KeyError(f"未找到股票 {normalized_code}")
 
     def _cached_fundamentals_for_screen(self) -> tuple[dict[str, StockItem], str | None]:
-        if not os.path.exists(self.fundamental_cache_path):
-            return {}, None
-        try:
-            df = pd.read_csv(self.fundamental_cache_path, dtype={"f12": str, "code": str})
-        except Exception as exc:
-            return {}, f"本地基础指标缓存不可用：{exc}"
+        lookup = self._read_fundamental_cache(self.fundamental_cache_path)
+        if lookup is not None and (lookup or os.getenv("TDX_FUNDAMENTAL_CACHE")):
+            return lookup, None
 
-        items = [item for _, row in df.iterrows() if (item := self._stock_from_fundamental_row(row)) is not None]
+        try:
+            frame, note = self._fetch_eastmoney_fundamentals_for_screen()
+        except Exception as exc:
+            legacy = self._read_legacy_fundamental_caches()
+            if legacy is not None:
+                return legacy, f"\u4e1c\u8d22\u6570\u636e\u4e2d\u5fc3\u8d22\u62a5\u63a5\u53e3\u4e0d\u53ef\u7528\uff0c\u5df2\u56de\u9000\u5230\u65e7\u7f13\u5b58\uff1a{exc}"
+            return {}, f"\u4e1c\u8d22\u6570\u636e\u4e2d\u5fc3\u8d22\u62a5\u63a5\u53e3\u4e0d\u53ef\u7528\uff1a{exc}"
+
+        if frame.empty:
+            legacy = self._read_legacy_fundamental_caches()
+            if legacy is not None:
+                return legacy, "\u4e1c\u8d22\u6570\u636e\u4e2d\u5fc3\u672a\u8fd4\u56de\u5168\u5e02\u573a\u8d22\u62a5\u6570\u636e\uff0c\u5df2\u56de\u9000\u5230\u65e7\u7f13\u5b58\u3002"
+            return {}, "\u4e1c\u8d22\u6570\u636e\u4e2d\u5fc3\u672a\u8fd4\u56de\u5168\u5e02\u573a\u8d22\u62a5\u6570\u636e\u3002"
+
+        self._write_fundamental_cache(frame)
+        return self._fundamental_lookup_from_frame(frame), note
+
+    def _read_fundamental_cache(self, path: str) -> dict[str, StockItem] | None:
+        if not os.path.exists(path):
+            return None
+        try:
+            frame = pd.read_csv(
+                path,
+                dtype={"f12": str, "code": str, "SECUCODE": str, "SECURITY_CODE": str},
+            )
+        except Exception:
+            return None
+        return self._fundamental_lookup_from_frame(frame)
+
+    def _read_legacy_fundamental_caches(self) -> dict[str, StockItem] | None:
+        for path in self._legacy_fundamental_cache_paths():
+            lookup = self._read_fundamental_cache(path)
+            if lookup:
+                return lookup
+        return None
+
+    def _fundamental_lookup_from_frame(self, frame: pd.DataFrame) -> dict[str, StockItem]:
+        items = [item for _, row in frame.iterrows() if (item := self._stock_from_fundamental_row(row)) is not None]
         lookup: dict[str, StockItem] = {}
         for item in items:
             normalized = self._normalize_code(item.code)
             if normalized:
                 lookup[normalized] = item
-        return lookup, None
+        return lookup
+
+    def _write_fundamental_cache(self, frame: pd.DataFrame) -> None:
+        directory = os.path.dirname(self.fundamental_cache_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        frame.to_csv(self.fundamental_cache_path, index=False)
+
+    def _fetch_eastmoney_fundamentals_for_screen(self) -> tuple[pd.DataFrame, str]:
+        last_frame = pd.DataFrame()
+        last_period: str | None = None
+        for report_date in self._fundamental_report_date_candidates():
+            frame = self._fetch_eastmoney_fundamentals_for_report_date(report_date)
+            if not frame.empty:
+                last_frame = frame
+                last_period = report_date
+            if len(frame) >= self.fundamental_min_rows:
+                return frame, (
+                    f"\u4e1c\u8d22\u6570\u636e\u4e2d\u5fc3\u8d22\u62a5\u6307\u6807\u5df2\u7f13\u5b58\uff1a"
+                    f"{report_date} \u62a5\u544a\u671f\uff0c\u8986\u76d6 {len(frame)} \u53ea A \u80a1\u3002"
+                )
+        if last_period is not None:
+            return last_frame, (
+                f"\u4e1c\u8d22\u6570\u636e\u4e2d\u5fc3\u8d22\u62a5\u6307\u6807\u5df2\u7f13\u5b58\uff1a"
+                f"{last_period} \u62a5\u544a\u671f\uff0c\u4ec5\u8986\u76d6 {len(last_frame)} \u53ea A \u80a1\u3002"
+            )
+        return last_frame, "\u4e1c\u8d22\u6570\u636e\u4e2d\u5fc3\u6682\u65e0\u53ef\u7528\u8d22\u62a5\u6307\u6807\u3002"
+
+    def _fetch_eastmoney_fundamentals_for_report_date(self, report_date: str) -> pd.DataFrame:
+        rows: list[dict] = []
+        page_count = 1
+        for page in range(1, self.fundamental_max_pages + 1):
+            response = self._session.get(
+                "https://datacenter.eastmoney.com/securities/api/data/get",
+                params={
+                    "type": "RPT_F10_FINANCE_MAINFINADATA",
+                    "sty": "APP_F10_MAINFINADATA",
+                    "filter": f"(REPORT_DATE='{report_date}')",
+                    "p": page,
+                    "ps": self.fundamental_page_size,
+                    "sr": "-1",
+                    "st": "REPORT_DATE",
+                    "source": "HSF10",
+                    "client": "PC",
+                },
+                headers={"Referer": "https://emweb.securities.eastmoney.com/"},
+                timeout=self._eastmoney_timeout(),
+            )
+            response.raise_for_status()
+            payload = response.json()
+            result = (payload.get("result") or {}) if isinstance(payload, dict) else {}
+            page_rows = result.get("data") or []
+            rows.extend([row for row in page_rows if isinstance(row, dict)])
+            try:
+                page_count = int(result.get("pages") or page_count or 1)
+            except (TypeError, ValueError):
+                page_count = page_count or 1
+            if page >= page_count or not page_rows:
+                break
+
+        if not rows:
+            return pd.DataFrame()
+        frame = pd.DataFrame(rows)
+        code_column = (
+            "SECUCODE"
+            if "SECUCODE" in frame.columns
+            else "SECURITY_CODE"
+            if "SECURITY_CODE" in frame.columns
+            else None
+        )
+        if code_column:
+            frame = frame[frame[code_column].map(lambda value: self._is_a_share_code(self._code_digits(str(value))))]
+            frame = frame.drop_duplicates(subset=[code_column], keep="first")
+        return frame.reset_index(drop=True)
+
+    def _fundamental_report_date_candidates(self, today: date | None = None) -> list[str]:
+        today = today or datetime.now(self._CHINA_TZ).date()
+        report_dates: list[date] = []
+        for year in range(today.year, today.year - 3, -1):
+            report_dates.extend(
+                [
+                    date(year, 9, 30),
+                    date(year, 6, 30),
+                    date(year, 3, 31),
+                    date(year - 1, 12, 31),
+                ]
+            )
+        seen: set[str] = set()
+        candidates: list[str] = []
+        for item in sorted((item for item in report_dates if item <= today), reverse=True):
+            key = item.isoformat()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(key)
+            if len(candidates) >= 6:
+                break
+        return candidates
 
     @classmethod
     def _stock_from_security_list_item(cls, item: dict, market: int) -> StockItem | None:
@@ -708,15 +844,22 @@ class TdxProvider(StockProvider):
             dividend_yield=cls._non_negative(row.get("dividend_yield")),
             deducted_net_profit_billion=cls._deducted_net_profit_billion_from_row(row),
             deducted_net_profit_margin=cls._deducted_net_profit_margin_from_row(row),
+            deducted_net_profit_growth_rate=cls._deducted_net_profit_growth_rate_from_row(row),
         )
 
     @classmethod
     def _stock_from_fundamental_row(cls, row) -> StockItem | None:
-        raw_code = str(row.get("code") or row.get("f12") or "").strip()
+        raw_code = str(
+            row.get("code")
+            or row.get("SECUCODE")
+            or row.get("SECURITY_CODE")
+            or row.get("f12")
+            or ""
+        ).strip()
         if not raw_code:
             return None
         code = cls._normalize_code(raw_code)
-        name = str(row.get("name") or row.get("f14") or raw_code).strip() or raw_code
+        name = str(row.get("name") or row.get("SECURITY_NAME_ABBR") or row.get("f14") or raw_code).strip() or raw_code
         latest_price = cls._positive_float(row.get("price")) or cls._positive_float(row.get("f2")) or 0.0
         market_cap = cls._to_float(row.get("market_cap_billion"))
         if market_cap is None:
@@ -726,7 +869,8 @@ class TdxProvider(StockProvider):
         return StockItem(
             code=code,
             name=name,
-            industry=str(row.get("industry") or row.get("f100") or "未知行业").strip() or "未知行业",
+            industry=str(row.get("industry") or row.get("f100") or row.get("INDUSTRY_NAME") or "未知行业").strip()
+            or "未知行业",
             is_st=cls._bool_value(row.get("is_st")) or cls._is_risk_labeled_name(name),
             price=latest_price,
             pe=cls._non_negative(row.get("pe")) or cls._non_negative(row.get("f9")),
@@ -736,6 +880,7 @@ class TdxProvider(StockProvider):
             dividend_yield=cls._non_negative(row.get("dividend_yield")),
             deducted_net_profit_billion=cls._deducted_net_profit_billion_from_row(row),
             deducted_net_profit_margin=cls._deducted_net_profit_margin_from_row(row),
+            deducted_net_profit_growth_rate=cls._deducted_net_profit_growth_rate_from_row(row),
         )
 
     def _stock_with_quote(self, item: StockItem, quote: Optional[dict], price_field: str) -> StockItem | None:
@@ -786,11 +931,13 @@ class TdxProvider(StockProvider):
 
         pe = self._scale_optional(fundamental.pe, ratio)
         pb = self._scale_optional(fundamental.pb, ratio)
+        final_pe = pe if pe is not None else item.pe
+        final_pb = pb if pb is not None else item.pb
         market_cap_billion = self._scale_optional(fundamental.market_cap_billion, ratio)
-        roe = fundamental.roe
+        roe = fundamental.roe if fundamental.roe is not None else item.roe
         estimated_roe = False
-        if roe is None and pe and pb:
-            roe = pb / pe
+        if roe is None and final_pe and final_pb:
+            roe = final_pb / final_pe
             estimated_roe = True
 
         industry = self._preferred_industry(item.industry, fundamental.industry)
@@ -798,8 +945,8 @@ class TdxProvider(StockProvider):
             "price": target_price if used_fundamental_price and target_price else item.price,
             "industry": industry,
             "is_st": item.is_st or self._is_risk_labeled_name(fundamental.name),
-            "pe": pe if pe is not None else item.pe,
-            "pb": pb if pb is not None else item.pb,
+            "pe": final_pe,
+            "pb": final_pb,
             "roe": roe if roe is not None else item.roe,
             "market_cap_billion": (
                 market_cap_billion if market_cap_billion is not None else item.market_cap_billion
@@ -816,6 +963,11 @@ class TdxProvider(StockProvider):
                 fundamental.deducted_net_profit_margin
                 if fundamental.deducted_net_profit_margin is not None
                 else item.deducted_net_profit_margin
+            ),
+            "deducted_net_profit_growth_rate": (
+                fundamental.deducted_net_profit_growth_rate
+                if fundamental.deducted_net_profit_growth_rate is not None
+                else item.deducted_net_profit_growth_rate
             ),
         }
         used = (
@@ -1096,16 +1248,20 @@ class TdxProvider(StockProvider):
         explicit = os.getenv("TDX_FUNDAMENTAL_CACHE")
         if explicit:
             return explicit
-        candidates = [
-            os.getenv("ASTOCK_CACHE"),
-            "data/cache/astock_stocks.csv",
-            os.getenv("EASTMONEY_CACHE"),
-            "data/cache/eastmoney_stocks.csv",
-        ]
-        for path in candidates:
-            if path and os.path.exists(path):
-                return path
         return "data/cache/tdx_fundamentals.csv"
+
+    @staticmethod
+    def _legacy_fundamental_cache_paths() -> list[str]:
+        return [
+            path
+            for path in [
+                os.getenv("ASTOCK_CACHE"),
+                "data/cache/astock_stocks.csv",
+                os.getenv("EASTMONEY_CACHE"),
+                "data/cache/eastmoney_stocks.csv",
+            ]
+            if path
+        ]
 
     @staticmethod
     def _preferred_industry(current: str, candidate: str) -> str:
@@ -1172,6 +1328,7 @@ class TdxProvider(StockProvider):
                 "扣非净利润_亿",
                 "扣非净利润",
                 "DEDU_PARENT_PROFIT",
+                "DEDUCT_PARENT_NETPROFIT",
                 "KCFJCXSYJLR",
             ],
         )
@@ -1192,6 +1349,24 @@ class TdxProvider(StockProvider):
         if revenue_billion <= 0:
             return None
         return profit / revenue_billion * 100
+
+    @classmethod
+    def _deducted_net_profit_growth_rate_from_row(cls, row) -> Optional[float]:
+        return cls._first_float(
+            row,
+            [
+                "deducted_net_profit_growth_rate",
+                "扣非净利润增长率",
+                "扣非净利润同比增长率",
+                "扣非净利润同比增长",
+                "扣非净利润同比",
+                "扣非净利润增速",
+                "DPNP_YOY_RATIO",
+                "DEDUCT_PARENT_NETPROFIT_YOY",
+                "DJD_DEDUCTDPNP_YOY",
+                "KCFJCXSYJLRTZ",
+            ],
+        )
 
     @classmethod
     def _first_float(cls, row, keys: list[str]) -> Optional[float]:
@@ -1216,3 +1391,4 @@ class TdxProvider(StockProvider):
             return float(value)
         except (TypeError, ValueError):
             return None
+

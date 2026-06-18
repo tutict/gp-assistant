@@ -156,6 +156,7 @@ class TdxProviderTests(unittest.TestCase):
                         "f23": 0.8,
                         "f100": "银行",
                         "DEDU_PARENT_PROFIT": 1_200_000_000,
+                        "DPNP_YOY_RATIO": 16.0,
                         "TOTALOPERATEREVE": 8_000_000_000,
                     }
                 ]
@@ -191,7 +192,134 @@ class TdxProviderTests(unittest.TestCase):
         self.assertAlmostEqual(items[0].roe or 0, 0.16)
         self.assertAlmostEqual(items[0].deducted_net_profit_billion or 0, 12.0)
         self.assertAlmostEqual(items[0].deducted_net_profit_margin or 0, 15.0)
+        self.assertAlmostEqual(items[0].deducted_net_profit_growth_rate or 0, 16.0)
         self.assertTrue(any("基础指标补充" in note for note in notes))
+
+    def test_list_stocks_for_screen_estimates_roe_from_quote_pe_pb_when_fundamental_lacks_ratios(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fundamental_cache_path = os.path.join(temp_dir, "fundamentals.csv")
+            pd.DataFrame(
+                [
+                    {
+                        "f12": "000001",
+                        "f14": "Ping An Bank",
+                        "f100": "Bank",
+                        "DEDU_PARENT_PROFIT": 1_200_000_000,
+                        "DPNP_YOY_RATIO": 16.0,
+                        "TOTALOPERATEREVE": 8_000_000_000,
+                    }
+                ]
+            ).to_csv(fundamental_cache_path, index=False)
+
+            with patch.dict(os.environ, {"TDX_FUNDAMENTAL_CACHE": fundamental_cache_path}):
+                provider = TdxProvider()
+                provider.list_stocks = lambda: [
+                    StockItem(code="000001.SZ", name="Ping An Bank", industry="A-share", price=10.0)
+                ]
+                provider._screen_price_policy = lambda: ("price", "after close")
+                provider._tencent_quotes_batched = lambda codes: (
+                    {
+                        "000001": {
+                            "code": "000001",
+                            "name": "Ping An Bank",
+                            "price": 10.0,
+                            "last_close": 10.0,
+                            "pe_ttm": 5.0,
+                            "pb": 0.8,
+                        }
+                    },
+                    0,
+                )
+                provider._quotes_batched = lambda codes: ({}, 0, None)
+
+                items, notes = provider.list_stocks_for_screen()
+
+        self.assertAlmostEqual(items[0].pe or 0, 5.0)
+        self.assertAlmostEqual(items[0].pb or 0, 0.8)
+        self.assertAlmostEqual(items[0].roe or 0, 0.16)
+        self.assertTrue(any("ROE" in note for note in notes))
+
+    def test_fetch_eastmoney_full_market_fundamentals_for_screen(self):
+        provider = TdxProvider()
+        provider.fundamental_page_size = 2
+        provider.fundamental_min_rows = 1
+        provider._fundamental_report_date_candidates = lambda: ["2026-03-31"]
+        requests = []
+
+        def fake_get(url, params=None, timeout=None, **kwargs):
+            requests.append((url, params, timeout, kwargs))
+            return _JsonResponse(
+                {
+                    "result": {
+                        "pages": 1,
+                        "data": [
+                            {
+                                "SECUCODE": "000001.SZ",
+                                "SECURITY_CODE": "000001",
+                                "SECURITY_NAME_ABBR": "平安银行",
+                                "REPORT_DATE": "2026-03-31 00:00:00",
+                                "KCFJCXSYJLR": 1_200_000_000,
+                                "KCFJCXSYJLRTZ": 16.0,
+                                "TOTALOPERATEREVE": 8_000_000_000,
+                            },
+                            {
+                                "SECUCODE": "430000.BJ",
+                                "SECURITY_CODE": "430000",
+                                "SECURITY_NAME_ABBR": "北交样本",
+                                "REPORT_DATE": "2026-03-31 00:00:00",
+                                "KCFJCXSYJLR": 500_000_000,
+                                "KCFJCXSYJLRTZ": 20.0,
+                            },
+                        ],
+                    }
+                }
+            )
+
+        provider._session.get = fake_get
+
+        frame, note = provider._fetch_eastmoney_fundamentals_for_screen()
+        item = provider._stock_from_fundamental_row(frame.iloc[0])
+
+        self.assertEqual(len(frame), 1)
+        self.assertEqual(requests[0][0], "https://datacenter.eastmoney.com/securities/api/data/get")
+        self.assertEqual(requests[0][1]["type"], "RPT_F10_FINANCE_MAINFINADATA")
+        self.assertEqual(requests[0][1]["filter"], "(REPORT_DATE='2026-03-31')")
+        self.assertEqual(requests[0][1]["ps"], 2)
+        self.assertIn("2026-03-31", note)
+        self.assertIsNotNone(item)
+        assert item is not None
+        self.assertEqual(item.code, "000001.SZ")
+        self.assertEqual(item.name, "平安银行")
+        self.assertAlmostEqual(item.deducted_net_profit_billion or 0, 12.0)
+        self.assertAlmostEqual(item.deducted_net_profit_margin or 0, 15.0)
+        self.assertAlmostEqual(item.deducted_net_profit_growth_rate or 0, 16.0)
+
+    def test_missing_fundamental_cache_fetches_and_writes_eastmoney_data(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fundamental_cache_path = os.path.join(temp_dir, "fundamentals.csv")
+            with patch.dict(os.environ, {"TDX_FUNDAMENTAL_CACHE": fundamental_cache_path}):
+                provider = TdxProvider()
+                provider._fetch_eastmoney_fundamentals_for_screen = lambda: (
+                    pd.DataFrame(
+                        [
+                            {
+                                "SECUCODE": "000001.SZ",
+                                "SECURITY_NAME_ABBR": "平安银行",
+                                "KCFJCXSYJLR": 1_200_000_000,
+                                "KCFJCXSYJLRTZ": 16.0,
+                                "TOTALOPERATEREVE": 8_000_000_000,
+                            }
+                        ]
+                    ),
+                    "东财数据中心财报指标已缓存：2026-03-31 报告期，覆盖 1 只 A 股。",
+                )
+
+                lookup, note = provider._cached_fundamentals_for_screen()
+
+                self.assertTrue(os.path.exists(fundamental_cache_path))
+                self.assertIn("000001.SZ", lookup)
+                self.assertIn("2026-03-31", note or "")
+                self.assertAlmostEqual(lookup["000001.SZ"].deducted_net_profit_growth_rate or 0, 16.0)
 
     def test_get_financial_indicators_uses_enriched_stock_values(self):
         stock = StockItem(

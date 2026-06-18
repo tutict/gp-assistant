@@ -9,6 +9,7 @@ build/
 dist/
 logs/
 output/
+.tmp/
 models/*
 !models/.gitkeep
 desktop/node_modules/
