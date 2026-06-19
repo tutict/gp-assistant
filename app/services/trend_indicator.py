@@ -343,6 +343,15 @@ def _compute_indicator_frame(frame: pd.DataFrame, stock: StockItem) -> pd.DataFr
     result["breakout"] = e_value + (high - low)
     result["reversal"] = e_value - (high - low)
 
+    k, d, j = _kdj(close, high, low)
+    result["k"] = k
+    result["d"] = d
+    result["j"] = j
+    result["kdj_golden_cross"] = (k > d) & (k.shift(1) <= d.shift(1))
+    result["kdj_dead_cross"] = (k < d) & (k.shift(1) >= d.shift(1))
+    result["kdj_overbought"] = (k >= 80) | (d >= 80) | (j >= 100)
+    result["kdj_oversold"] = (k <= 20) | (d <= 20) | (j <= 0)
+
     result["quant_score"] = _quant_score(close, high, low, volume)
     _add_capital_behavior_columns(result, close, open_, high, low, volume)
     result["swl_above_sws"] = result["swl"] > result["sws"]
@@ -551,6 +560,9 @@ def _row_to_signal(code: str, row: Any) -> TrendIndicatorSignal:
         close=_rounded(row["close"]) or 0.0,
         swl=_rounded(row.get("swl")),
         sws=_rounded(row.get("sws")),
+        k=_rounded(row.get("k")),
+        d=_rounded(row.get("d")),
+        j=_rounded(row.get("j")),
         star_line=_rounded(row.get("star_line")),
         bull_line=_rounded(row.get("bull_line")),
         wait_line=_rounded(row.get("wait_line")),
@@ -559,6 +571,10 @@ def _row_to_signal(code: str, row: Any) -> TrendIndicatorSignal:
         breakout=_rounded(row.get("breakout")),
         reversal=_rounded(row.get("reversal")),
         swl_above_sws=bool(row.get("swl_above_sws", False)),
+        kdj_golden_cross=bool(row.get("kdj_golden_cross", False)),
+        kdj_dead_cross=bool(row.get("kdj_dead_cross", False)),
+        kdj_overbought=bool(row.get("kdj_overbought", False)),
+        kdj_oversold=bool(row.get("kdj_oversold", False)),
         red_hold=bool(row.get("red_hold", False)),
         cyan_watch=bool(row.get("cyan_watch", False)),
         short_buy=bool(row.get("short_buy", False)),
@@ -583,6 +599,14 @@ def _signal_reasons(row: Any) -> List[str]:
         reasons.append("red_hold")
     if bool(row.get("swl_above_sws", False)):
         reasons.append("swl_above_sws")
+    if bool(row.get("kdj_golden_cross", False)):
+        reasons.append("kdj_golden_cross")
+    if bool(row.get("kdj_dead_cross", False)):
+        reasons.append("kdj_dead_cross")
+    if bool(row.get("kdj_oversold", False)):
+        reasons.append("kdj_oversold")
+    if bool(row.get("kdj_overbought", False)):
+        reasons.append("kdj_overbought")
     if int(row.get("quant_score", 0) or 0) >= 60:
         reasons.append("high_quant_score")
     if bool(row.get("white_exit", False)):
@@ -674,6 +698,9 @@ def _series_points(frame: pd.DataFrame, limit: int) -> List[TrendIndicatorPoint]
                 close=_rounded(row["close"]) or 0.0,
                 swl=_rounded(row.get("swl")),
                 sws=_rounded(row.get("sws")),
+                k=_rounded(row.get("k")),
+                d=_rounded(row.get("d")),
+                j=_rounded(row.get("j")),
                 accumulation_index=_rounded(row.get("accumulation_index")),
                 accumulation_strength=_rounded(row.get("accumulation_strength")),
                 swing_opportunity=_rounded(row.get("swing_opportunity")),

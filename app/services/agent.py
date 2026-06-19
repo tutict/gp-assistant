@@ -50,8 +50,6 @@ Return this shape:
     "start_date": null,
     "end_date": null,
     "series_limit": 120,
-    "minute_period": "1",
-    "minute_limit": 160,
     "include_order_book": false
   } | null,
   "sector_screen": {
@@ -1055,14 +1053,6 @@ def _observe_request_dict(message: str, code: str) -> Dict[str, Any]:
             minimum=20,
             maximum=500,
         ),
-        "minute_period": _extract_minute_period(message),
-        "minute_limit": _extract_limited_int(
-            message,
-            ["分钟线数量", "分钟数量", "minute limit"],
-            default=160,
-            minimum=1,
-            maximum=500,
-        ),
         "include_order_book": _contains_any(message.lower(), ["盘口", "order book"])
         and not _contains_any(message.lower(), ["不要盘口", "不看盘口", "no order book"]),
     }
@@ -1073,13 +1063,6 @@ def _observe_request_from_message(message: str) -> Optional[StockObserveRequest]
     if not codes:
         return None
     return _parse_observe(_observe_request_dict(message, codes[0]))
-
-
-def _extract_minute_period(message: str) -> str:
-    match = re.search(r"(?<!\d)(60|30|15|5|1)\s*(?:m|min|分钟|分)(?!\d)", message, flags=re.IGNORECASE)
-    if match:
-        return match.group(1)
-    return "1"
 
 
 def _parse_criteria(data: Optional[Dict[str, Any]]) -> Optional[ScreenCriteria]:

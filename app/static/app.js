@@ -188,7 +188,7 @@ const TAURI_MOBILE_POST_ROUTES = {
     invokeCoreWithMobileData(invoke, "core_screen_with_data", "criteria", payload),
   "/api/observe": async ({ invoke, payload }) => {
     const params = new URLSearchParams();
-    for (const key of ["start_date", "end_date", "minute_period", "series_limit", "minute_limit"]) {
+    for (const key of ["start_date", "end_date", "series_limit"]) {
       if (payload?.[key] !== undefined && payload?.[key] !== null && payload?.[key] !== "") {
         params.set(key, String(payload[key]));
       }
@@ -1528,9 +1528,7 @@ async function runObserve(codeOverride) {
   setLoading(panels.observe, "观察行情和技术面");
   const payload = {
     code,
-    minute_period: $("#observeMinutePeriod").value || "1",
     series_limit: 160,
-    minute_limit: 500,
     include_order_book: false,
     include_chip_distribution: true,
   };
@@ -3046,16 +3044,11 @@ async function observeTauriStock(invoke, rawCode, params) {
     notes.push("当前移动数据包未内置历史 K 线，已展示基础行情和估值快照。");
   }
 
-  const minutePeriod = ["1", "5", "15", "30", "60"].includes(params.get("minute_period"))
-    ? params.get("minute_period")
-    : "1";
   return {
     source: "tdx",
     stock,
     financial_indicators: buildMobileFinancialIndicators(stock),
     trend,
-    minute_period: minutePeriod,
-    minute_bars: [],
     order_book: null,
     notes,
   };
@@ -4012,11 +4005,12 @@ function renderObserveResult(node, data) {
 
 function observeSummary(data) {
   const stock = data.stock || {};
-  const minuteBars = data.minute_bars || [];
+  const signal = data.trend?.signal || {};
+  const kdjValues = [signal.k, signal.d, signal.j].map(formatNumber).join(" / ");
   return [
     ["数据源", sourceLabel(data.source)],
     ["最新价", formatNumber(stock.price)],
-    ["分钟线", `${data.minute_period || "1"}m · ${minuteBars.length}`],
+    ["KDJ", kdjValues],
   ];
 }
 
@@ -4025,13 +4019,12 @@ function renderObserveBody(data) {
   const trend = data.trend || {};
   const signal = trend.signal || {};
   const series = trend.series || [];
-  const minuteBars = data.minute_bars || [];
   return [
     renderObservationOverview(stock, data.financial_indicators),
     renderQuarterlyEpsPanel(stock, data.financial_indicators),
     trend.signal ? renderSignalCard(stock, signal) : renderEmpty("没有可用日线技术面"),
     data.capital_evidence ? renderCapitalEvidence(data.capital_evidence, { series, signal }) : "",
-    minuteBars.length ? renderMinuteChart(minuteBars) : renderEmpty("没有可用分钟线"),
+    series.length ? renderKdjChart(series, signal) : renderEmpty("没有可用 KDJ 数据"),
     series.length ? renderTrendChart(series, trend.chip_distribution) : "",
     data.notes?.length ? renderNotes(data.notes) : "",
     signal.notes?.length ? renderNotes(signal.notes) : "",
@@ -4628,6 +4621,7 @@ function renderSignalSummary(signal) {
       <span>量化 ${escapeHtml(String(signal.quant_score ?? 0))}/${escapeHtml(String(signal.quant_score_max ?? 90))}</span>
       <span>SWL ${formatNumber(signal.swl)}</span>
       <span>SWS ${formatNumber(signal.sws)}</span>
+      <span>KDJ ${formatNumber(signal.k)} / ${formatNumber(signal.d)} / ${formatNumber(signal.j)}</span>
       <span>支撑 ${formatNumber(signal.support)}</span>
       <span>阻力 ${formatNumber(signal.resistance)}</span>
     </div>
@@ -4647,6 +4641,7 @@ function renderSignalCard(stock, signal) {
       <div class="signal-grid">
         <div><span>收盘价</span><strong>${formatNumber(signal.close)}</strong></div>
         <div><span>SWL/SWS 线</span><strong>${formatNumber(signal.swl)} / ${formatNumber(signal.sws)}</strong></div>
+        <div><span>KDJ</span><strong>${formatNumber(signal.k)} / ${formatNumber(signal.d)} / ${formatNumber(signal.j)}</strong></div>
         <div><span>量化分</span><strong>${escapeHtml(String(signal.quant_score ?? 0))}/${escapeHtml(String(signal.quant_score_max ?? 90))}</strong></div>
         <div><span>形态分</span><strong>${escapeHtml(String(signal.pattern_score ?? 0))}/${escapeHtml(String(signal.pattern_score_max ?? 100))}</strong></div>
         <div><span>支撑位</span><strong>${formatNumber(signal.support)}</strong></div>
@@ -4713,111 +4708,120 @@ function renderSparkline(curve) {
   `;
 }
 
-function renderMinuteChart(bars) {
+function renderKdjChart(series, signal = {}) {
   const width = 720;
-  const height = 170;
-  const points = bars
-    .map((bar) => ({
-      ...bar,
-      close: Number(bar.close),
-      volume: Number(bar.volume),
-      amount: Number(bar.amount),
+  const height = 180;
+  const points = (series || [])
+    .map((point) => ({
+      date: point.date,
+      k: Number(point.k),
+      d: Number(point.d),
+      j: Number(point.j),
     }))
-    .filter((bar) => Number.isFinite(bar.close));
-  if (points.length < 2) return renderEmpty("分钟线点不足");
+    .filter((point) => [point.k, point.d, point.j].some(Number.isFinite));
+  if (points.length < 2) return renderEmpty("KDJ 点不足");
 
-  const averageValues = minuteAverageValues(points);
-  const values = [
-    ...points.map((point) => point.close),
-    ...averageValues,
-  ].filter(Number.isFinite);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  const values = points.flatMap((point) => [point.k, point.d, point.j]).filter(Number.isFinite);
+  const min = Math.min(0, ...values);
+  const max = Math.max(100, ...values);
   const range = max - min || 1;
   const xFor = (index) => (index / Math.max(points.length - 1, 1)) * width;
   const yFor = (value) => height - ((Number(value) - min) / range) * height;
-  const linePoints = (series) =>
-    series
-      .map((value, index) => {
-        if (!Number.isFinite(Number(value))) return null;
-        const x = xFor(index);
-        const y = yFor(value);
-        return `${x.toFixed(2)},${y.toFixed(2)}`;
+  const linePoints = (key) =>
+    points
+      .map((point, index) => {
+        const value = Number(point[key]);
+        if (!Number.isFinite(value)) return null;
+        return `${xFor(index).toFixed(2)},${yFor(value).toFixed(2)}`;
       })
       .filter(Boolean)
       .join(" ");
-  const closePoints = linePoints(points.map((point) => point.close));
-  const averagePoints = linePoints(averageValues);
-  const last = points[points.length - 1];
-  const lastAverage = [...averageValues].reverse().find((value) => Number.isFinite(Number(value)));
+  const guideLine = (value, className) => {
+    const y = yFor(value).toFixed(2);
+    return `<line class="${className}" x1="0" y1="${y}" x2="${width}" y2="${y}" />`;
+  };
+  const latest = points[points.length - 1] || {};
 
   return `
-    <div class="chart-wrap minute-chart">
-      <div class="chart-legend">
-        <span class="minute-legend-close">分钟收盘</span>
-        <span class="minute-legend-average">分时均线</span>
-        <span class="chart-meta">${escapeHtml(last?.datetime || "")}</span>
-        <span class="chart-meta">${formatNumber(last?.close)}</span>
-        ${Number.isFinite(lastAverage) ? `<span class="chart-meta">${formatNumber(lastAverage)}</span>` : ""}
+    <section class="kdj-panel">
+      <header>
+        <div>
+          <h3>KDJ 动量观察</h3>
+          <p>${escapeHtml(latest.date || signal.date || "")}</p>
+        </div>
+        <span class="state-pill">${escapeHtml(kdjStateLabel(signal, latest))}</span>
+      </header>
+      <div class="chart-wrap kdj-chart">
+        <div class="chart-legend">
+          <span class="kdj-legend-k">K ${formatNumber(latest.k)}</span>
+          <span class="kdj-legend-d">D ${formatNumber(latest.d)}</span>
+          <span class="kdj-legend-j">J ${formatNumber(latest.j)}</span>
+        </div>
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="KDJ 指标曲线">
+          ${guideLine(80, "kdj-guide kdj-guide-high")}
+          ${guideLine(20, "kdj-guide kdj-guide-low")}
+          <polyline class="kdj-k-line" points="${linePoints("k")}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+          <polyline class="kdj-d-line" points="${linePoints("d")}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+          <polyline class="kdj-j-line" points="${linePoints("j")}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <div class="chart-labels">
+          <span>${escapeHtml(points[0]?.date || "")}</span>
+          <span>${escapeHtml(latest.date || "")}</span>
+        </div>
       </div>
-      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="分钟线和分时均线">
-        <polyline class="minute-average-line" points="${averagePoints}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
-        <polyline class="minute-close-line" points="${closePoints}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
-      <div class="chart-labels">
-        <span>${escapeHtml(points[0]?.datetime || "")}</span>
-        <span>${escapeHtml(last?.datetime || "")}</span>
-      </div>
-    </div>
+      ${renderKdjAnalysis(points, signal)}
+    </section>
   `;
 }
 
-function minuteAverageValues(points) {
-  const closeFallback = cumulativeCloseAverage(points);
-  const amountVolumeAverage = cumulativeAmountVolumeAverage(points, 1);
-  const amountHandAverage = cumulativeAmountVolumeAverage(points, 100);
-  const close = points[points.length - 1]?.close;
-  const directDistance = minuteAverageDistance(amountVolumeAverage, close);
-  const handDistance = minuteAverageDistance(amountHandAverage, close);
-  if (Number.isFinite(directDistance) || Number.isFinite(handDistance)) {
-    return directDistance <= handDistance ? amountVolumeAverage : amountHandAverage;
-  }
-  return closeFallback;
+function kdjStateLabel(signal = {}, latest = {}) {
+  if (signal.kdj_golden_cross) return "KDJ 金叉";
+  if (signal.kdj_dead_cross) return "KDJ 死叉";
+  if (signal.kdj_oversold) return "低位钝化";
+  if (signal.kdj_overbought) return "高位警戒";
+  const k = Number(latest.k ?? signal.k);
+  const d = Number(latest.d ?? signal.d);
+  if (Number.isFinite(k) && Number.isFinite(d)) return k >= d ? "动量偏强" : "动量偏弱";
+  return "等待数据";
 }
 
-function cumulativeAmountVolumeAverage(points, volumeMultiplier) {
-  let amountTotal = 0;
-  let volumeTotal = 0;
-  return points.map((point) => {
-    const amount = Number(point.amount);
-    const volume = Number(point.volume);
-    if (Number.isFinite(amount) && amount > 0 && Number.isFinite(volume) && volume > 0) {
-      amountTotal += amount;
-      volumeTotal += volume * volumeMultiplier;
-    }
-    return amountTotal > 0 && volumeTotal > 0 ? amountTotal / volumeTotal : Number.NaN;
-  });
-}
+function renderKdjAnalysis(points, signal = {}) {
+  const latest = points[points.length - 1] || {};
+  const previous = points.length > 1 ? points[points.length - 2] || {} : {};
+  const k = Number(latest.k);
+  const d = Number(latest.d);
+  const j = Number(latest.j);
+  const prevK = Number(previous.k);
+  const prevD = Number(previous.d);
+  const slopeText = Number.isFinite(k) && Number.isFinite(prevK) && Number.isFinite(d) && Number.isFinite(prevD)
+    ? k >= prevK && d >= prevD
+      ? "K 与 D 同步上行，短线动量正在抬升。"
+      : k < prevK && d < prevD
+        ? "K 与 D 同步回落，短线动量在降温。"
+        : "K 与 D 方向不一致，短线动量还在拉扯。"
+    : "KDJ 数据还不够完整，先观察下一根日线确认。";
+  const crossText = signal.kdj_golden_cross
+    ? "K 线上穿 D 线，属于偏积极的金叉信号，但仍要看价格是否同步站回关键均线。"
+    : signal.kdj_dead_cross
+      ? "K 线跌破 D 线，属于偏谨慎的死叉信号，短线追涨性价比下降。"
+      : Number.isFinite(k) && Number.isFinite(d)
+        ? k >= d
+          ? "K 仍在 D 上方，动量结构偏强。"
+          : "K 位于 D 下方，动量结构偏弱。"
+        : "暂时无法判断 K/D 相对位置。";
+  const zoneText = signal.kdj_oversold || (Number.isFinite(k) && k <= 20) || (Number.isFinite(d) && d <= 20)
+    ? "指标处在低位区，容易出现修复反弹，但需要金叉或价格确认。"
+    : signal.kdj_overbought || (Number.isFinite(k) && k >= 80) || (Number.isFinite(d) && d >= 80) || (Number.isFinite(j) && j >= 100)
+      ? "指标处在高位区，趋势可以延续，但波动和回撤风险同步上升。"
+      : "指标处在中性区，重点看 K/D 方向和 J 线是否继续扩张。";
 
-function cumulativeCloseAverage(points) {
-  let total = 0;
-  let count = 0;
-  return points.map((point) => {
-    const close = Number(point.close);
-    if (Number.isFinite(close)) {
-      total += close;
-      count += 1;
-    }
-    return count ? total / count : Number.NaN;
-  });
-}
-
-function minuteAverageDistance(values, close) {
-  const latest = [...values].reverse().find((value) => Number.isFinite(Number(value)));
-  if (!Number.isFinite(latest) || !Number.isFinite(close) || close <= 0) return Number.POSITIVE_INFINITY;
-  const ratio = latest / close;
-  if (ratio < 0.2 || ratio > 5) return Number.POSITIVE_INFINITY;
-  return Math.abs(Math.log(ratio));
+  return `
+    <section class="kdj-analysis" aria-label="KDJ 分析">
+      <strong>KDJ 怎么看</strong>
+      <p>K 线反映短线价格动量，D 线更平滑，J 线放大拐点。金叉偏积极，死叉偏谨慎；80 上方看高位风险，20 下方看修复机会。</p>
+      <p>${escapeHtml(crossText)}${escapeHtml(slopeText)}${escapeHtml(zoneText)}</p>
+    </section>
+  `;
 }
 
 function renderTrendChart(series, chipDistribution = null) {
@@ -5966,6 +5970,10 @@ function reasonLabel(reason) {
     short_buy_signal: "短买",
     red_hold: "红色持股",
     swl_above_sws: "SWL 强于 SWS",
+    kdj_golden_cross: "KDJ 金叉",
+    kdj_dead_cross: "KDJ 死叉",
+    kdj_oversold: "KDJ 低位",
+    kdj_overbought: "KDJ 高位",
     high_quant_score: "量化分较高",
     white_exit: "白色离场",
     cyan_watch: "青色观望",
