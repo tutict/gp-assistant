@@ -4022,10 +4022,8 @@ function renderObserveBody(data) {
   return [
     renderObservationOverview(stock, data.financial_indicators),
     renderQuarterlyEpsPanel(stock, data.financial_indicators),
-    trend.signal ? renderSignalCard(stock, signal) : renderEmpty("没有可用日线技术面"),
+    trend.signal ? renderSignalCard(stock, signal, { series, chipDistribution: trend.chip_distribution }) : renderEmpty("没有可用日线技术面"),
     data.capital_evidence ? renderCapitalEvidence(data.capital_evidence, { series, signal }) : "",
-    series.length ? renderKdjChart(series, signal) : renderEmpty("没有可用 KDJ 数据"),
-    series.length ? renderTrendChart(series, trend.chip_distribution) : "",
     data.notes?.length ? renderNotes(data.notes) : "",
     signal.notes?.length ? renderNotes(signal.notes) : "",
   ].join("");
@@ -4628,7 +4626,12 @@ function renderSignalSummary(signal) {
   `;
 }
 
-function renderSignalCard(stock, signal) {
+function renderSignalCard(stock, signal, options = {}) {
+  const series = options.series || [];
+  const chipDistribution = options.chipDistribution || null;
+  const charts = series.length
+    ? `<div class="signal-chart-stack">${renderKdjChart(series, signal)}${renderTrendChart(series, chipDistribution)}</div>`
+    : "";
   return `
     <section class="signal-card">
       <header>
@@ -4652,6 +4655,7 @@ function renderSignalCard(stock, signal) {
       </div>
       ${signal.pattern_signals?.length ? `<div class="tag-row">${signal.pattern_signals.map((reason) => `<span>${escapeHtml(reasonLabel(reason))}</span>`).join("")}</div>` : ""}
       ${signal.reasons?.length ? `<div class="tag-row">${signal.reasons.map((reason) => `<span>${escapeHtml(reasonLabel(reason))}</span>`).join("")}</div>` : ""}
+      ${charts}
     </section>
   `;
 }

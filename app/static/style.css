@@ -2607,6 +2607,51 @@ input[type="date"] {
   margin-bottom: 6px;
   color: var(--text);
 }
+.signal-card .signal-chart-stack {
+  display: grid;
+  gap: 14px;
+  border-top: 1px solid var(--line);
+  margin-top: 2px;
+  padding-top: 12px;
+}
+
+.signal-card .kdj-panel,
+.signal-card .chart-wrap.trend-chart {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.signal-card .kdj-panel > header {
+  margin-bottom: 8px;
+}
+
+.signal-card .kdj-panel .state-pill {
+  display: none;
+}
+
+.signal-card .chart-wrap {
+  box-shadow: none;
+}
+
+.signal-card .kdj-chart,
+.signal-card .trend-chart svg {
+  overflow: visible;
+}
+
+.signal-card .kdj-chart svg {
+  height: 160px;
+}
+
+.signal-card .chart-wrap.trend-chart svg {
+  height: 170px;
+}
+
+.signal-card .trend-chart {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
 
 
 .chart-labels {
