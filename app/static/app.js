@@ -90,6 +90,12 @@ let mobileMarketDataPromise = null;
 let mobileMarketDataSummary = null;
 let mobileMarketDataMeta = null;
 let autoRefreshInFlight = false;
+let observeRequestId = 0;
+let observeTaskId = 0;
+let activeObserveController = null;
+const OBSERVE_REQUEST_TIMEOUT_MS = 180 * 1000;
+const panelProgressTimers = new WeakMap();
+const buttonTaskStates = new WeakMap();
 const dataSource = {
   select: $("#dataSourceSelect"),
   refresh: $("#refreshSource"),
@@ -535,7 +541,7 @@ function bindActions() {
       agentUi.input.focus();
     });
   });
-  buttons.observe?.addEventListener("click", () => runTask(buttons.observe, panels.observe, () => runObserve()));
+  buttons.observe?.addEventListener("click", () => runObserveTask());
   dataSource.select?.addEventListener("change", () => {
     localStorage.setItem(DATA_SOURCE_KEY, getSelectedDataSource());
     updateSourceStatus();
@@ -576,7 +582,7 @@ function bindActions() {
     const action = target?.closest("[data-observe-code]");
     if (!action) return;
     event.preventDefault();
-    runObserve(action.dataset.observeCode);
+    runObserveTask(action.dataset.observeCode);
   });
   document.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : event.target?.parentElement;
@@ -765,14 +771,29 @@ function initStickyOffsets() {
 }
 
 async function runTask(button, panel, task) {
-  const original = button.textContent;
+  if (!button) {
+    try {
+      await task();
+    } finally {
+      updateCriteriaSummary();
+    }
+    return;
+  }
+
+  const state = buttonTaskStates.get(button) || { original: button.textContent, active: 0 };
+  state.active += 1;
+  buttonTaskStates.set(button, state);
   button.disabled = true;
   button.textContent = "运行中";
   try {
     await task();
   } finally {
-    button.disabled = false;
-    button.textContent = original;
+    state.active -= 1;
+    if (state.active <= 0) {
+      button.disabled = false;
+      button.textContent = state.original;
+      buttonTaskStates.delete(button);
+    }
     updateCriteriaSummary();
   }
 }
@@ -796,7 +817,7 @@ async function runScreen() {
     const data = await postJson("/api/screen", payload, panels.screen);
     if (data) renderScreenResult(panels.screen, data);
   } finally {
-    if (timer) window.clearInterval(timer);
+    stopPanelProgress(panels.screen, timer);
   }
 }
 
@@ -821,7 +842,7 @@ async function runSectorScreen() {
     const data = await postJson("/api/sector-screen", payload, panels.screen);
     if (data) renderSectorScreenResult(panels.screen, data);
   } finally {
-    if (timer) window.clearInterval(timer);
+    stopPanelProgress(panels.screen, timer);
   }
 }
 
@@ -959,7 +980,7 @@ async function runNewsRag() {
       renderNewsRagResult(panels.newsRag, data);
     }
   } finally {
-    if (timer) window.clearInterval(timer);
+    stopPanelProgress(panels.newsRag, timer);
   }
 }
 
@@ -1009,7 +1030,7 @@ async function runUpstreamRagBuildAndTransfer() {
   ]);
   const code = readStockCode("newsCode");
   if (!code) {
-    if (timer) window.clearInterval(timer);
+    stopPanelProgress(panels.newsRag, timer);
     setError(panels.newsRag, "请输入目标股票代码", "构建手机同步包需要明确的单只股票，例如：300750.SZ。");
     return;
   }
@@ -1029,7 +1050,7 @@ async function runUpstreamRagBuildAndTransfer() {
       : null;
     renderUpstreamRagBuildResult(panels.newsRag, build, transfer);
   } finally {
-    if (timer) window.clearInterval(timer);
+    stopPanelProgress(panels.newsRag, timer);
   }
 }
 
@@ -1514,9 +1535,35 @@ function scrollAgentThreadToBottom() {
   });
 }
 
-async function runObserve(codeOverride) {
+async function runObserveTask(codeOverride) {
+  const taskId = ++observeTaskId;
+  if (activeObserveController) activeObserveController.abort(createRequestAbortError("观察请求已切换", "AbortError"));
+  const button = buttons.observe;
+  if (button && !button.dataset.originalText) button.dataset.originalText = button.textContent;
+  if (button) {
+    button.disabled = true;
+    button.textContent = "运行中";
+  }
+  try {
+    await runObserve(codeOverride, taskId);
+  } finally {
+    if (taskId === observeTaskId && button) {
+      button.disabled = false;
+      button.textContent = button.dataset.originalText || "观察";
+      delete button.dataset.originalText;
+    }
+    updateCriteriaSummary();
+  }
+}
+
+async function runObserve(codeOverride, taskId = observeTaskId) {
   const code = normalizeStockCode(codeOverride || $("#observeCode").value);
   if (!code) {
+    observeRequestId += 1;
+    if (activeObserveController) {
+      activeObserveController.abort(createRequestAbortError("观察请求已取消", "AbortError"));
+      activeObserveController = null;
+    }
     setError(panels.observe, "请输入股票代码", "例如：300750.SZ", {
       label: "回到筛选页选一只观察",
       action: "go-observe-screen",
@@ -1525,7 +1572,16 @@ async function runObserve(codeOverride) {
   }
   $("#observeCode").value = code;
   activateWorkbenchView("observe", { href: "#sectionObserve", updateHash: true });
-  setLoading(panels.observe, "观察行情和技术面");
+  const requestId = ++observeRequestId;
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  activeObserveController = controller;
+  const timer = startPanelProgress(panels.observe, "观察分析中", [
+    [14, "校验股票代码"],
+    [32, "读取日线行情"],
+    [52, "计算 KDJ 与趋势推断"],
+    [74, "拉取资金与机构席位信息"],
+    [94, "整理统一观察结果"],
+  ]);
   const payload = {
     code,
     series_limit: 160,
@@ -1536,9 +1592,20 @@ async function runObserve(codeOverride) {
   payload.start_date = readDateParam("observeStart", defaultObserveStartCompact(observeEndInput));
   payload.end_date = readDateParam("observeEnd", currentSystemDateCompact());
   const llm = buildLlmConfig();
+  const mobileRuntime = isMobileTauriRuntime();
   if (llm && !mobileRuntime) payload.llm = llm;
-  const data = await postJson("/api/observe", payload, panels.observe);
-  if (data) renderObserveResult(panels.observe, data);
+  try {
+    const data = await requestJson("POST", "/api/observe", payload, dataSourceHeaders(), {
+      signal: controller?.signal,
+      timeoutMs: OBSERVE_REQUEST_TIMEOUT_MS,
+    });
+    if (requestId === observeRequestId && data) renderObserveResult(panels.observe, data);
+  } catch (err) {
+    if (err.name !== "AbortError" && requestId === observeRequestId) setError(panels.observe, "请求异常", err.message);
+  } finally {
+    if (activeObserveController === controller) activeObserveController = null;
+    if (requestId === observeRequestId) stopPanelProgress(panels.observe, timer);
+  }
 }
 
 function initDataSource() {
@@ -2063,6 +2130,8 @@ function setRefreshProgress(value, label) {
 
 function startPanelProgress(node, title, stages) {
   if (!node) return null;
+  stopPanelProgress(node);
+  const safeStages = Array.isArray(stages) && stages.length ? stages : [[92, "整理结果"]];
   let index = 0;
   node.className = `${basePanelClass(node)} loading progress-loading`;
   node.innerHTML = `
@@ -2075,8 +2144,8 @@ function startPanelProgress(node, title, stages) {
       <p data-progress-label>准备分析</p>
     </div>
   `;
-  return window.setInterval(() => {
-    const [value, label] = stages[Math.min(index, stages.length - 1)];
+  const timer = window.setInterval(() => {
+    const [value, label] = safeStages[Math.min(index, safeStages.length - 1)];
     const percent = Math.min(Math.max(Number(value) || 0, 0), 100);
     const valueNode = node.querySelector("[data-progress-value]");
     const barNode = node.querySelector("[data-progress-bar]");
@@ -2086,6 +2155,20 @@ function startPanelProgress(node, title, stages) {
     if (labelNode) labelNode.textContent = label;
     index += 1;
   }, 700);
+  panelProgressTimers.set(node, timer);
+  return timer;
+}
+
+function stopPanelProgress(node, timer) {
+  if (!node) {
+    if (timer) window.clearInterval(timer);
+    return;
+  }
+  const activeTimer = panelProgressTimers.get(node);
+  if (timer && activeTimer && activeTimer !== timer) return;
+  const timerToStop = timer || activeTimer;
+  if (timerToStop) window.clearInterval(timerToStop);
+  if (!timer || activeTimer === timer) panelProgressTimers.delete(node);
 }
 
 function initLlmSettings() {
@@ -2800,22 +2883,83 @@ async function getJson(url, resultNode) {
   }
 }
 
-async function requestJson(method, url, payload, headers = dataSourceHeaders()) {
-  const tauriResult = await requestTauriJson(method, url, payload);
-  if (tauriResult.handled) return tauriResult.data;
+async function requestJson(method, url, payload, headers = dataSourceHeaders(), options = {}) {
+  const timeoutSignal = createTimeoutSignal(options.timeoutMs);
+  const signal = combineAbortSignals(options.signal, timeoutSignal.signal);
+  try {
+    const tauriResult = await withAbortSignal(requestTauriJson(method, url, payload), signal);
+    if (tauriResult.handled) return tauriResult.data;
 
-  const request = {
-    method,
-    headers: method === "POST" ? { "Content-Type": "application/json", ...headers } : headers,
-  };
-  if (payload !== undefined) request.body = JSON.stringify(payload);
+    const request = {
+      method,
+      headers: method === "POST" ? { "Content-Type": "application/json", ...headers } : headers,
+    };
+    if (signal) request.signal = signal;
+    if (payload !== undefined) request.body = JSON.stringify(payload);
 
-  const resp = await fetch(url, request);
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(text || `HTTP ${resp.status}`);
+    const resp = await fetch(url, request);
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(text || `HTTP ${resp.status}`);
+    }
+    return await resp.json();
+  } finally {
+    timeoutSignal.cancel();
   }
-  return await resp.json();
+}
+
+function withAbortSignal(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(abortReason(signal));
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      signal.addEventListener("abort", () => reject(abortReason(signal)), { once: true });
+    }),
+  ]);
+}
+
+function createTimeoutSignal(timeoutMs) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || typeof AbortController === "undefined") {
+    return { signal: null, cancel: () => {} };
+  }
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => {
+    controller.abort(createRequestAbortError(`请求超过 ${Math.round(timeoutMs / 1000)} 秒未返回`, "TimeoutError"));
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    cancel: () => window.clearTimeout(timer),
+  };
+}
+
+function combineAbortSignals(...signals) {
+  const activeSignals = signals.filter(Boolean);
+  if (!activeSignals.length || typeof AbortController === "undefined") return activeSignals[0] || null;
+  if (activeSignals.length === 1) return activeSignals[0];
+  const controller = new AbortController();
+  const abort = (event) => {
+    if (!controller.signal.aborted) controller.abort(abortReason(event.target));
+  };
+  activeSignals.forEach((signal) => {
+    if (signal.aborted) abort({ target: signal });
+    else signal.addEventListener("abort", abort, { once: true });
+  });
+  return controller.signal;
+}
+
+function abortReason(signal) {
+  return signal?.reason || createRequestAbortError("请求已取消", "AbortError");
+}
+
+function createRequestAbortError(message, name = "AbortError") {
+  try {
+    return new DOMException(message, name);
+  } catch (_error) {
+    const error = new Error(message);
+    error.name = name;
+    return error;
+  }
 }
 
 async function requestTauriJson(method, url, payload) {
@@ -5855,11 +5999,13 @@ function renderEmpty(text, action) {
 }
 
 function setLoading(node, text) {
+  stopPanelProgress(node);
   node.className = `${basePanelClass(node)} loading`;
   node.innerHTML = `<div class="loader"></div><span>${escapeHtml(text)}</span>`;
 }
 
 function setError(node, title, detail, action) {
+  stopPanelProgress(node);
   node.className = `${basePanelClass(node)} error`;
   const button = action
     ? `<button type="button" data-empty-action="${escapeHtml(action.action)}">${escapeHtml(action.label)}</button>`

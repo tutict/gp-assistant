@@ -227,20 +227,24 @@ def _fetch_external_capital_items(
         ]
 
     fetchers = (
-        ("fund_flow", _fetch_ths_individual_fund_flow, env_float("GP_CAPITAL_FUND_FLOW_TIMEOUT", 8.0, minimum=2.0, maximum=45.0)),
-        ("institution_lhb", _fetch_institution_lhb, env_float("GP_CAPITAL_LHB_TIMEOUT", 12.0, minimum=2.0, maximum=60.0)),
+        ("fund_flow", _fetch_ths_individual_fund_flow, env_float("GP_CAPITAL_FUND_FLOW_TIMEOUT", 8.0, minimum=2.0, maximum=45.0), True),
+        ("institution_lhb", _fetch_institution_lhb, env_float("GP_CAPITAL_LHB_TIMEOUT", 12.0, minimum=2.0, maximum=60.0), env_bool("GP_CAPITAL_LHB_FAST_TIMEOUT", False)),
     )
-    for category, fetcher, timeout_seconds in fetchers:
+    for category, fetcher, timeout_seconds, use_timeout in fetchers:
         try:
-            item = _call_fetcher_with_timeout(
-                fetcher,
-                ak,
-                stock,
-                start_date,
-                end_date,
-                proxy_mode=proxy_mode,
-                timeout_seconds=timeout_seconds,
-            )
+            if use_timeout:
+                item = _call_fetcher_with_timeout(
+                    fetcher,
+                    ak,
+                    stock,
+                    start_date,
+                    end_date,
+                    proxy_mode=proxy_mode,
+                    timeout_seconds=timeout_seconds,
+                )
+            else:
+                with proxy_environment(proxy_mode):
+                    item = fetcher(ak, stock, start_date, end_date)
         except Exception as exc:
             notes.append(f"{_category_label(category)}不可用：{_safe_external_error(exc)}")
             if category == "institution_lhb":

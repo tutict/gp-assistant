@@ -333,7 +333,11 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         provider = MockProvider()
         stock = provider.get_stock("300750.SZ")
         seen: list[tuple[str, float | None]] = []
-        fake_ak = SimpleNamespace()
+        fake_ak = SimpleNamespace(
+            stock_lhb_jgmmtj_em=lambda start_date, end_date: pd.DataFrame(),
+            stock_lhb_jgmx_sina=lambda: pd.DataFrame(),
+            stock_lhb_jgzz_sina=lambda symbol: pd.DataFrame(),
+        )
 
         def fake_call(fetcher, ak, stock_arg, start_date, end_date, *, proxy_mode=None, timeout_seconds=None):
             seen.append((fetcher.__name__, timeout_seconds))
@@ -346,9 +350,28 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
             capital_evidence._fetch_external_capital_items(stock, "20260603", "20260616")
 
         fund_budget = next(timeout for name, timeout in seen if name == "_fetch_ths_individual_fund_flow")
-        lhb_budget = next(timeout for name, timeout in seen if name == "_fetch_institution_lhb")
         self.assertEqual(fund_budget, 8.0)
-        self.assertEqual(lhb_budget, 12.0)
+        self.assertFalse(any(name == "_fetch_institution_lhb" for name, _timeout in seen))
+
+    def test_capital_evidence_waits_for_institution_lhb_by_default(self):
+        provider = MockProvider()
+        stock = provider.get_stock("300750.SZ")
+        calls = {"lhb": 0}
+        fake_ak = SimpleNamespace(
+            stock_lhb_jgmmtj_em=lambda start_date, end_date: self._fake_lhb_frame(calls),
+            stock_lhb_jgmx_sina=lambda: pd.DataFrame(),
+            stock_lhb_jgzz_sina=lambda symbol: pd.DataFrame(),
+        )
+
+        with patch.dict(os.environ, {"GP_CAPITAL_ENABLE_EXTERNAL": "true"}), patch.dict(
+            "sys.modules", {"akshare": fake_ak}
+        ), patch("app.services.capital_evidence._call_fetcher_with_timeout", return_value=None) as timed_call:
+            items = capital_evidence._fetch_external_capital_items(stock, "20260603", "20260616")
+
+        timed_fetchers = [call.args[0].__name__ for call in timed_call.call_args_list]
+        self.assertNotIn("_fetch_institution_lhb", timed_fetchers)
+        self.assertEqual(calls["lhb"], 1)
+        self.assertTrue(any(item.category == "institution_lhb" for item in items))
 
     def test_capital_evidence_falls_back_to_sina_lhb_when_eastmoney_misses(self):
         provider = MockProvider()
