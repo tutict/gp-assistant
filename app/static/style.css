@@ -11157,3 +11157,56 @@ textarea {
     grid-template-columns: 1fr;
   }
 }
+
+/* Final desktop override for the agent workbench:
+   keep the chat column and detail drawer on the same visual plane. */
+@media (min-width: 861px) {
+  #sectionAgent {
+    --agent-workbench-height: clamp(540px, calc(100dvh - var(--sticky-top, 88px) - 72px), 760px);
+  }
+
+  .agent-chat-shell {
+    grid-template-columns: minmax(0, 1.58fr) minmax(360px, 0.92fr);
+    align-items: stretch;
+  }
+
+  .agent-chat-main,
+  .agent-detail-drawer,
+  #agentResult.agent-detail-drawer {
+    min-height: var(--agent-workbench-height) !important;
+    height: var(--agent-workbench-height);
+  }
+
+  .agent-chat-main {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .agent-detail-drawer {
+    position: relative;
+    top: 0;
+    margin-top: 0 !important;
+    align-self: stretch;
+    max-height: none;
+  }
+
+  .agent-detail-drawer.empty .empty-state,
+  #agentResult.agent-detail-drawer.empty .empty-state {
+    min-height: calc(var(--agent-workbench-height) - 28px) !important;
+  }
+}
+
+/* The research context bar belongs only to the screening workspace. */
+.research-context-bar {
+  top: calc(var(--sticky-top, 88px) + 10px);
+  margin-bottom: 10px;
+}
+
+.workbench:not([data-active-view="screen"]) .research-context-bar {
+  display: none !important;
+}
+
+/* Keep header popovers usable above the research context bar. */
+.app-header {
+  overflow: visible;
+}

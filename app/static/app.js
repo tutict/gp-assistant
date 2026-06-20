@@ -29,8 +29,6 @@ const panels = {
 const themeToggle = $("#themeToggle");
 const themeText = $("#themeText");
 const THEME_KEY = "gp-assistant-theme";
-const DATA_SOURCE_KEY = "gp-assistant-data-source";
-const DATA_REFRESH_KEY = "gp-assistant-source-refresh";
 const DATA_PROXY_KEY = "gp-assistant-proxy-mode";
 const AUTO_REFRESH_CHECK_KEY = "gp-assistant-auto-refresh-last-check";
 const AUTO_REFRESH_CHECK_INTERVAL_MS = 30 * 60 * 1000;
@@ -97,8 +95,6 @@ const OBSERVE_REQUEST_TIMEOUT_MS = 180 * 1000;
 const panelProgressTimers = new WeakMap();
 const buttonTaskStates = new WeakMap();
 const dataSource = {
-  select: $("#dataSourceSelect"),
-  refresh: $("#refreshSource"),
   proxy: $("#proxyModeSelect"),
   status: $("#sourceStatus"),
   universe: $("#universeCount"),
@@ -126,6 +122,7 @@ const workbench = {
   root: $(".workbench"),
   navLinks: document.querySelectorAll("[data-workbench-nav]"),
   viewLinks: document.querySelectorAll("[data-view-link]"),
+  contextBar: $(".research-context-bar"),
   criteriaOpen: $("#openCriteriaBtn"),
   criteriaClose: $("#closeCriteriaBtn"),
   criteriaOverlay: $("#criteriaOverlay"),
@@ -542,15 +539,6 @@ function bindActions() {
     });
   });
   buttons.observe?.addEventListener("click", () => runObserveTask());
-  dataSource.select?.addEventListener("change", () => {
-    localStorage.setItem(DATA_SOURCE_KEY, getSelectedDataSource());
-    updateSourceStatus();
-    loadDataStatus();
-  });
-  dataSource.refresh?.addEventListener("change", () => {
-    localStorage.setItem(DATA_REFRESH_KEY, dataSource.refresh.checked ? "true" : "false");
-    updateSourceStatus();
-  });
   dataSource.proxy?.addEventListener("change", () => {
     localStorage.setItem(DATA_PROXY_KEY, getSelectedProxyMode());
     updateSourceStatus();
@@ -698,6 +686,7 @@ function activateWorkbenchView(view = "screen", options = {}) {
   const href = options.href || hrefForView(normalized);
   workbench.root?.setAttribute("data-active-view", normalized);
   document.body.dataset.activeView = normalized;
+  syncResearchContextBar(normalized);
   setActiveNavLink(normalized);
   if (options.updateHash && window.location.hash !== href) {
     history.replaceState(null, "", href);
@@ -748,15 +737,23 @@ function setCriteriaPanelOpen(isOpen) {
   }
 }
 
+function syncResearchContextBar(activeView) {
+  if (!workbench.contextBar) return;
+  const visible = activeView === "screen";
+  workbench.contextBar.hidden = !visible;
+  workbench.contextBar.setAttribute("aria-hidden", String(!visible));
+  window.dispatchEvent(new Event("resize"));
+}
+
 function initStickyOffsets() {
   const shell = $(".app-shell");
   const header = $(".app-header");
-  const contextBar = $(".research-context-bar");
+  const contextBar = workbench.contextBar;
   if (!shell || !header) return;
 
   const update = () => {
     const headerHeight = Math.ceil(header.getBoundingClientRect().height);
-    const contextHeight = contextBar ? Math.ceil(contextBar.getBoundingClientRect().height) : 0;
+    const contextHeight = contextBar && !contextBar.hidden ? Math.ceil(contextBar.getBoundingClientRect().height) : 0;
     shell.style.setProperty("--app-header-height", `${headerHeight}px`);
     shell.style.setProperty("--research-context-height", `${contextHeight}px`);
   };
@@ -1631,17 +1628,6 @@ async function runObserve(codeOverride, taskId = observeTaskId) {
 }
 
 function initDataSource() {
-  if (!dataSource.select) return;
-  const savedSource = normalizeDataSource(localStorage.getItem(DATA_SOURCE_KEY));
-  if (savedSource && [...dataSource.select.options].some((option) => option.value === savedSource)) {
-    dataSource.select.value = savedSource;
-  } else {
-    dataSource.select.value = DEFAULT_DATA_SOURCE;
-    localStorage.setItem(DATA_SOURCE_KEY, DEFAULT_DATA_SOURCE);
-  }
-  if (dataSource.refresh) {
-    dataSource.refresh.checked = localStorage.getItem(DATA_REFRESH_KEY) === "true";
-  }
   const savedProxy = localStorage.getItem(DATA_PROXY_KEY);
   if (dataSource.proxy && savedProxy && [...dataSource.proxy.options].some((option) => option.value === savedProxy)) {
     dataSource.proxy.value = savedProxy;
@@ -1965,7 +1951,7 @@ function closeSourceSelects() {
 }
 
 function getSelectedDataSource() {
-  return normalizeDataSource(dataSource.select?.value);
+  return DEFAULT_DATA_SOURCE;
 }
 
 function normalizeDataSource(source) {
@@ -1976,7 +1962,6 @@ function normalizeDataSource(source) {
 
 function dataSourceHeaders() {
   const headers = { "X-Stock-Provider": getSelectedDataSource() };
-  if (dataSource.refresh?.checked) headers["X-Stock-Refresh"] = "true";
   headers["X-Stock-Proxy"] = getSelectedProxyMode();
   return headers;
 }
@@ -1996,10 +1981,8 @@ function updateSourceStatus() {
   if (!dataSource.status) return;
   const source = getSelectedDataSource();
   const label = sourceLabel(source);
-  const suffix = dataSource.refresh?.checked ? " 刷新" : "";
   const proxySuffix = getSelectedProxyMode() === "none" ? " 直连" : "";
-  dataSource.status.innerHTML = `<i aria-hidden="true"></i>${escapeHtml(label + suffix + proxySuffix)}`;
-  if (dataSource.select) syncSourceSelect(dataSource.select);
+  dataSource.status.innerHTML = `<i aria-hidden="true"></i>${escapeHtml(label + proxySuffix)}`;
   if (dataSource.proxy) syncSourceSelect(dataSource.proxy);
 }
 
