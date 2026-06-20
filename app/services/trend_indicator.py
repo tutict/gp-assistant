@@ -15,6 +15,8 @@ from app.schemas import (
     TrendScreenRequest,
     TrendScreenResult,
     TrendStockSignal,
+    ScoreContribution,
+    SelectionExplanation,
 )
 from app.services.chip_distribution import estimate_chip_distribution_from_history
 from app.services.screener import screen_stocks, screening_universe
@@ -180,8 +182,8 @@ def trend_screen_stocks(provider: StockProvider, request: TrendScreenRequest) ->
             skipped += 1
             continue
 
-        trend_score = _trend_score(analysis.signal)
-        final_score = _combined_score(candidate.score, trend_score)
+        trend_score = _short_buy_score(analysis.signal)
+        final_score = _combined_short_buy_score(candidate.score, trend_score)
         items.append(
             TrendStockSignal(
                 stock=candidate.stock,
@@ -190,6 +192,7 @@ def trend_screen_stocks(provider: StockProvider, request: TrendScreenRequest) ->
                 final_score=round(final_score, 6),
                 signal=analysis.signal,
                 reasons=[*candidate.reasons, *analysis.signal.reasons],
+                explanation=_trend_screen_explanation(candidate, analysis.signal, trend_score, final_score),
             )
         )
 
@@ -197,12 +200,13 @@ def trend_screen_stocks(provider: StockProvider, request: TrendScreenRequest) ->
     selected = items[: request.limit]
     notes = [*screen_notes, *criteria_notes, *TREND_NOTES]
     if skipped:
-        notes.append(f"Skipped {skipped} stocks without usable OHLC history.")
+        notes.append(f"已跳过 {skipped} 只缺少可用 OHLC 行情的股票。")
 
     return TrendScreenResult(
         total=len(candidate_pool),
         returned=len(selected),
         items=selected,
+        screen_style="short_buy",
         notes=notes,
     )
 
@@ -664,30 +668,138 @@ def _signal_status(row: Any) -> str:
 
 
 def _trend_score(signal: TrendIndicatorSignal) -> float:
-    score = (signal.quant_score / max(signal.quant_score_max, 1)) * 58
-    if signal.swl_above_sws:
-        score += 10
-    if signal.red_hold:
-        score += 12
+    return _short_buy_score(signal)
+
+
+def _short_buy_score(signal: TrendIndicatorSignal) -> float:
+    score = (signal.quant_score / max(signal.quant_score_max, 1)) * 28
     if signal.short_buy:
-        score += 16
+        score += 24
+    if signal.kdj_golden_cross:
+        score += 14
+    if signal.kdj_oversold:
+        score += 10
+    if "bottom_accumulation" in signal.pattern_signals:
+        score += 10
+    if "swing_opportunity" in signal.pattern_signals:
+        score += 12
+    if "rebound_signal" in signal.pattern_signals:
+        score += 10
+    if signal.swl_above_sws:
+        score += 6
+    if signal.red_hold:
+        score += 4
     if signal.close and signal.star_line and signal.close > signal.star_line:
-        score += 4
-    if signal.close and signal.bull_line and signal.close > signal.bull_line:
-        score += 4
+        score += 3
     if signal.white_exit:
-        score -= 26
+        score -= 30
+    if signal.kdj_dead_cross:
+        score -= 20
+    if signal.kdj_overbought:
+        score -= 12
     if signal.cyan_watch:
-        score -= 10
-    if signal.oversold:
-        score -= 8
+        score -= 12
     return min(max(score, 0.0), 100.0)
 
 
 def _combined_score(base_score: float, trend_score: float) -> float:
-    base_component = min(max(base_score, 0.0), 10.0) * 4
+    return _combined_short_buy_score(base_score, trend_score)
+
+
+def _combined_short_buy_score(base_score: float, trend_score: float) -> float:
+    base_component = min(max(base_score, 0.0), 20.0) / 20.0 * 25
     return min(base_component + trend_score * 0.75, 100.0)
 
+
+def _trend_screen_explanation(
+    candidate,
+    signal: TrendIndicatorSignal,
+    trend_score: float,
+    final_score: float,
+) -> SelectionExplanation:
+    basis = [
+        f"通过当前基础筛选，原始基础分 {candidate.score:.2f}。",
+        _short_buy_basis_text(signal),
+    ]
+    pattern_text = _pattern_basis_text(signal)
+    if pattern_text:
+        basis.append(pattern_text)
+
+    base_component = min(max(candidate.score, 0.0), 20.0) / 20.0 * 25
+    trend_component = trend_score * 0.75
+    return SelectionExplanation(
+        basis=basis,
+        score_breakdown=[
+            ScoreContribution(
+                key="base_score",
+                label="基础筛选",
+                value=round(candidate.score, 6),
+                contribution=round(base_component, 6),
+                tone="strong" if candidate.score >= 14 else "watch" if candidate.score >= 9 else "weak",
+            ),
+            ScoreContribution(
+                key="short_buy_score",
+                label="短线买点",
+                value=round(trend_score, 6),
+                contribution=round(trend_component, 6),
+                tone="strong" if trend_score >= 70 else "watch" if trend_score >= 45 else "weak",
+            ),
+            ScoreContribution(
+                key="final_score",
+                label="最终分",
+                value=round(final_score, 6),
+                contribution=round(final_score, 6),
+                tone="strong" if final_score >= 70 else "watch" if final_score >= 45 else "weak",
+            ),
+        ],
+        risk_checks=_short_buy_risk_checks(signal),
+        verification=[
+            "交叉查看图谱选股，确认是否属于更强的主题中心。",
+            "把它作为可执行买点前，先确认次日 K/D 方向、成交量和收盘价。",
+        ],
+    )
+
+
+def _short_buy_basis_text(signal: TrendIndicatorSignal) -> str:
+    if signal.short_buy:
+        return "短买信号已触发，是当前最高优先级的择时触发点。"
+    if signal.kdj_golden_cross:
+        return "KDJ 金叉显示短线动能正在修复。"
+    if signal.kdj_oversold:
+        return "KDJ 处于低位，当前更偏修复观察而非趋势确认。"
+    if "swing_opportunity" in signal.pattern_signals:
+        return "波段机会信号较强，适合纳入短线观察。"
+    return "没有明确短买触发，入选主要依赖量化分和基础条件。"
+
+
+def _pattern_basis_text(signal: TrendIndicatorSignal) -> str:
+    labels = []
+    if "bottom_accumulation" in signal.pattern_signals:
+        labels.append("底部蓄势")
+    if "swing_opportunity" in signal.pattern_signals:
+        labels.append("波段机会")
+    if "rebound_signal" in signal.pattern_signals:
+        labels.append("反弹修复")
+    if "dragon_trend_volume" in signal.pattern_signals:
+        labels.append("量价共振")
+    if not labels:
+        return ""
+    return f"形态信号：{'、'.join(labels)}。"
+
+
+def _short_buy_risk_checks(signal: TrendIndicatorSignal) -> List[str]:
+    risks: List[str] = []
+    if signal.white_exit:
+        risks.append("白线卖出信号仍在，短买失效风险高。")
+    if signal.kdj_dead_cross:
+        risks.append("KDJ 死叉显示动能转弱，需要等待修复后再行动。")
+    if signal.kdj_overbought:
+        risks.append("KDJ 处于高位或超买区，追高和回撤风险较高。")
+    if signal.cyan_watch:
+        risks.append("青色观望状态说明趋势确认不足。")
+    if not risks:
+        risks.append("当前没有主要卖出或高位风险，但仍需要次日量价确认。")
+    return risks
 
 def _series_points(frame: pd.DataFrame, limit: int) -> List[TrendIndicatorPoint]:
     points = []

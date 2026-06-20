@@ -78,7 +78,7 @@ const DEFAULT_SCREENING_RULES = {
 };
 let screeningRules = normalizeScreeningRules(DEFAULT_SCREENING_RULES);
 const screeningRulesPromise = loadScreeningRules();
-const STOCK_SEARCH_LIMIT = 3;
+const STOCK_SEARCH_LIMIT = 5;
 const DEFAULT_OBSERVE_TRADING_DAYS = 10;
 const DEFAULT_DATA_SOURCE = "tdx";
 const MOBILE_TENCENT_MAX_CANDIDATES = 6000;
@@ -847,20 +847,29 @@ async function runSectorScreen() {
 }
 
 async function runGraph() {
-  setLoading(panels.graph, "关系传播中");
+  const timer = startPanelProgress(panels.graph, "图谱选股中", [
+    [18, "构建基础候选池"],
+    [42, "解析种子/主题中心"],
+    [68, "计算关系传播分"],
+    [90, "生成解释信息"],
+  ]);
   const payload = {
     criteria: buildCriteria({ limit: 100 }),
-    seed_codes: parseCodes($("#seedCodes").value),
+    seed_codes: await resolveStockCodeListInput("seedCodes", panels.graph),
     relation_depth: clampInt($("#relationDepth").value, 1, 3, 1),
     relation_weight: clampFloat($("#relationWeight").value, 0, 1, 0.4),
     limit: Math.min(readInt("resultLimit", DEFAULT_RESULT_LIMIT), 100),
   };
-  const data = await postJson("/api/graph-screen", payload, panels.graph);
-  if (data) renderGraphResult(panels.graph, data);
+  try {
+    const data = await postJson("/api/graph-screen", payload, panels.graph);
+    if (data) renderGraphResult(panels.graph, data);
+  } finally {
+    stopPanelProgress(panels.graph, timer);
+  }
 }
 
 async function runTrendAnalysis() {
-  const code = readStockCode("trendCode");
+  const code = await resolveStockCodeInput("trendCode", panels.trend);
   if (!code) {
     setError(panels.trend, "请输入股票代码", "例如：300750.SZ");
     return;
@@ -878,15 +887,24 @@ async function runTrendAnalysis() {
 }
 
 async function runTrendScreen() {
-  setLoading(panels.trend, "趋势选股中");
+  const timer = startPanelProgress(panels.trend, "趋势择时选股中", [
+    [18, "构建基础候选池"],
+    [42, "计算日线指标"],
+    [68, "排序短线买点"],
+    [90, "生成解释信息"],
+  ]);
   const payload = {
     criteria: buildCriteria({ limit: 100 }),
     start_date: readDateParam("trendStart", "20200101"),
     end_date: readDateParam("trendEnd", currentSystemDateCompact()),
     limit: Math.min(readInt("resultLimit", DEFAULT_RESULT_LIMIT), 100),
   };
-  const data = await postJson("/api/trend-screen", payload, panels.trend);
-  if (data) renderTrendScreenResult(panels.trend, data);
+  try {
+    const data = await postJson("/api/trend-screen", payload, panels.trend);
+    if (data) renderTrendScreenResult(panels.trend, data);
+  } finally {
+    stopPanelProgress(panels.trend, timer);
+  }
 }
 
 async function runBacktest() {
@@ -940,7 +958,7 @@ async function handlePanelEmptyAction(action, trigger) {
 }
 
 async function runNewsRag() {
-  const code = readStockCode("newsCode");
+  const code = await resolveStockCodeInput("newsCode", panels.newsRag);
   if (!code) {
     setError(panels.newsRag, "请输入目标股票代码", "上下游消息分析需要明确的单只目标股票，例如：300750.SZ。");
     return;
@@ -949,7 +967,7 @@ async function runNewsRag() {
   const mobileRuntime = isMobileTauriRuntime();
   const timer = startPanelProgress(
     panels.newsRag,
-    mobileRuntime ? "手机端 RAG 分析中" : "上下游消息分析中",
+    mobileRuntime ? "手机端消息分析中" : "拉取利好/利空消息中",
     mobileRuntime
       ? [
           [18, "读取本机 RAG 包"],
@@ -960,8 +978,8 @@ async function runNewsRag() {
       : [
           [18, "读取已有关系图"],
           [38, "更新本地消息缓存"],
-          [62, "检索证据"],
-          [82, "生成影响判断"],
+          [62, "检索消息证据"],
+          [82, "整理利好/利空"],
         ],
   );
   const payload = {
@@ -986,7 +1004,7 @@ async function runNewsRag() {
 
 async function runRagPackBuildFromNewsCache() {
   setLoading(panels.newsRag, "构建离线 RAG pack");
-  const code = readStockCode("newsCode");
+  const code = await resolveStockCodeInput("newsCode", panels.newsRag);
   if (code) $("#newsCode").value = code;
   const payload = {
     pack_version: `local-news-${new Date().toISOString().slice(0, 10)}`,
@@ -1003,7 +1021,7 @@ async function runRagPackBuildFromNewsCache() {
 }
 
 async function runRagPackQuery() {
-  const code = readStockCode("newsCode");
+  const code = await resolveStockCodeInput("newsCode", panels.newsRag);
   if (code) $("#newsCode").value = code;
   const query =
     $("#ragPackQuery")?.value.trim() ||
@@ -1028,7 +1046,7 @@ async function runUpstreamRagBuildAndTransfer() {
     [76, "抽取关系和证据"],
     [90, "生成 manifest 和二维码"],
   ]);
-  const code = readStockCode("newsCode");
+  const code = await resolveStockCodeInput("newsCode", panels.newsRag);
   if (!code) {
     stopPanelProgress(panels.newsRag, timer);
     setError(panels.newsRag, "请输入目标股票代码", "构建手机同步包需要明确的单只股票，例如：300750.SZ。");
@@ -1557,7 +1575,11 @@ async function runObserveTask(codeOverride) {
 }
 
 async function runObserve(codeOverride, taskId = observeTaskId) {
-  const code = normalizeStockCode(codeOverride || $("#observeCode").value);
+  if (codeOverride) {
+    const overrideCode = normalizeStockCode(codeOverride);
+    if (overrideCode) $("#observeCode").value = overrideCode;
+  }
+  const code = codeOverride ? normalizeStockCode(codeOverride) : await resolveStockCodeInput("observeCode", panels.observe);
   if (!code) {
     observeRequestId += 1;
     if (activeObserveController) {
@@ -2398,7 +2420,7 @@ function initMarketConfirmers() {
     if (!input || !panel) return;
 
     input.addEventListener("input", () => {
-      input.value = sanitizeStockCodeInput(input.value);
+      input.value = sanitizeStockLookupInput(input.value);
       updateMarketConfirm(input, panel);
     });
     input.addEventListener("focus", () => updateMarketConfirm(input, panel));
@@ -2426,13 +2448,15 @@ function initMarketConfirmers() {
 }
 
 function initStockSuggesters() {
-  const inputs = [...document.querySelectorAll("input[data-code-confirm]")];
+  const inputs = [...document.querySelectorAll("input[data-code-confirm], input[data-stock-list-suggest]")];
   if (!inputs.length) return;
 
   inputs.forEach((input) => {
     const field = input.closest(".market-field") || input.parentElement;
     if (!field) return;
 
+    const isListInput = input.hasAttribute("data-stock-list-suggest");
+    field.classList.add("stock-suggest-field");
     const panel = document.createElement("div");
     panel.className = "stock-suggest";
     panel.hidden = true;
@@ -2453,7 +2477,7 @@ function initStockSuggesters() {
 
     const choose = (stock) => {
       if (!stock?.code) return;
-      input.value = stock.code;
+      input.value = isListInput ? appendStockCodeToken(input.value, stock.code) : stock.code;
       hide();
       input.dispatchEvent(new Event("change", { bubbles: true }));
       input.focus();
@@ -2500,7 +2524,7 @@ function initStockSuggesters() {
     };
 
     const search = async () => {
-      const query = input.value.trim();
+      const query = isListInput ? lastStockLookupToken(input.value) : input.value.trim();
       if (!query) {
         hide();
         return;
@@ -2545,6 +2569,28 @@ function initStockSuggesters() {
     input.addEventListener("blur", () => window.setTimeout(hide, 120));
     panel.addEventListener("mousedown", (event) => event.preventDefault());
   });
+}
+
+
+function lastStockLookupToken(value) {
+  const parts = String(value || "").split(/[,，;；\s]+/).map((item) => sanitizeStockLookupInput(item));
+  return parts.filter(Boolean).pop() || "";
+}
+
+function appendStockCodeToken(value, code) {
+  const normalized = normalizeStockCode(code);
+  if (!normalized) return String(value || "");
+  const parts = String(value || "").split(/[,，;；\s]+/).map((item) => sanitizeStockLookupInput(item)).filter(Boolean);
+  if (parts.length) parts.pop();
+  const codes = [];
+  const seen = new Set();
+  for (const part of [...parts, normalized]) {
+    const parsed = normalizeStockCode(part) || part;
+    if (seen.has(parsed)) continue;
+    seen.add(parsed);
+    codes.push(parsed);
+  }
+  return codes.join(", ");
 }
 
 function initDateInputs() {
@@ -2711,6 +2757,60 @@ function readStockCode(id) {
   return normalizeStockCode($(`#${id}`)?.value);
 }
 
+async function resolveStockCodeInput(id, resultNode) {
+  const input = $(`#${id}`);
+  const raw = input?.value || "";
+  const direct = normalizeStockCode(raw);
+  if (direct) return direct;
+
+  const query = sanitizeStockLookupInput(raw);
+  if (!query) return "";
+
+  const stock = await findStockByLookup(query, resultNode);
+  if (!stock?.code) return "";
+  const code = normalizeStockCode(stock.code);
+  if (code && input) {
+    input.value = code;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  return code;
+}
+
+async function findStockByLookup(query, resultNode) {
+  const params = new URLSearchParams({ q: query, limit: "1" });
+  try {
+    const items = await requestJson("GET", `/api/stock-search?${params}`, undefined, stockSearchHeaders());
+    return Array.isArray(items) ? items[0] : null;
+  } catch (err) {
+    if (resultNode) setError(resultNode, "股票搜索不可用", err.message);
+    return null;
+  }
+}
+
+async function resolveStockCodeListInput(id, resultNode) {
+  const input = $(`#${id}`);
+  const raw = input?.value || "";
+  const parts = raw
+    .split(/[,，;；\s]+/)
+    .map((item) => sanitizeStockLookupInput(item))
+    .filter(Boolean);
+
+  const codes = [];
+  const seen = new Set();
+  for (const part of parts) {
+    let code = normalizeStockCode(part);
+    if (!code) {
+      const stock = await findStockByLookup(part, resultNode);
+      code = normalizeStockCode(stock?.code || "");
+    }
+    if (code && !seen.has(code)) {
+      seen.add(code);
+      codes.push(code);
+    }
+  }
+  if (input && codes.length) input.value = codes.join(", ");
+  return codes;
+}
 function normalizeStockCode(value, market) {
   const raw = sanitizeStockCodeInput(value);
   if (!raw) return "";
@@ -2731,6 +2831,13 @@ function sanitizeStockCodeInput(value) {
     .trim()
     .toUpperCase()
     .replace(/[^\dA-Z.]/g, "");
+}
+
+function sanitizeStockLookupInput(value) {
+  return String(value || "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 function stockCodeDigits(value) {
@@ -3313,8 +3420,8 @@ function shouldUsePreviousCloseForMobileRefresh(now = new Date()) {
 }
 
 async function refreshMobileMarketData(invoke, options = {}) {
-  let seed = Object.prototype.hasOwnProperty.call(options, "seed") ? options.seed : null;
-  if (!Object.prototype.hasOwnProperty.call(options, "seed")) {
+  let seed = Object.prototype.hasOwnProperty.call(options, "种子股") ? options.seed : null;
+  if (!Object.prototype.hasOwnProperty.call(options, "种子股")) {
     try {
       seed = await loadCachedMobileMarketData(invoke);
     } catch {
@@ -3537,16 +3644,18 @@ function renderSectorGroups(groups) {
 
 function renderGraphResult(node, data) {
   const items = data.items || [];
+  const center = data.center_context || {};
   renderResult(node, {
     summary: [
       ["返回", data.returned ?? items.length],
       ["关系边", data.relation_count ?? 0],
+      ["中心", center.mode === "theme_center" ? center.label || "主题" : "种子股"],
       ["最高分", items[0] ? formatNumber(items[0].final_score) : "-"],
     ],
     body: [
       items.length
         ? renderStockList(items.map(graphItemToView))
-        : renderEmpty("没有可传播的关系信号"),
+        : renderEmpty("当前条件下没有匹配的关系信号"),
       data.notes?.length ? renderNotes(data.notes) : "",
     ].join(""),
     raw: data,
@@ -3571,18 +3680,25 @@ function renderTrendAnalysis(node, data) {
   });
 }
 
+function trendScreenStyleLabel(value) {
+  const labels = {
+    short_buy: "短线买点",
+  };
+  return labels[value] || value || "短线买点";
+}
 function renderTrendScreenResult(node, data) {
   const items = data.items || [];
   renderResult(node, {
     summary: [
       ["返回", data.returned ?? items.length],
       ["候选", data.total ?? 0],
+      ["口径", trendScreenStyleLabel(data.screen_style)],
       ["最高分", items[0] ? formatNumber(items[0].final_score) : "-"],
     ],
     body: [
       items.length
         ? renderStockList(items.map(trendItemToView))
-        : renderEmpty("没有趋势信号匹配当前条件"),
+        : renderEmpty("当前条件下没有匹配的趋势买点"),
       data.notes?.length ? renderNotes(data.notes) : "",
     ].join(""),
     raw: data,
@@ -3681,24 +3797,67 @@ function curveReturn(curve) {
 }
 
 function renderNewsRagResult(node, data) {
+  const groups = normalizeNewsSentimentGroups(data.sentiment_groups);
+  const hasSentimentGroups = Boolean(data.sentiment_groups);
   renderResult(node, {
     summary: [
       ["范围", (data.scope_codes || []).length],
       ["关系边", data.relation_count ?? 0],
       ["消息", data.message_count ?? 0],
-      ["判断", (data.findings || []).length],
+      ["模式", hasSentimentGroups ? newsAnalysisModeLabel(groups.mode) : "影响判断"],
     ],
-    body: renderNewsRagBody(data),
+    body: renderNewsRagBody(data, groups),
     raw: data,
   });
 }
 
-function renderNewsRagBody(data) {
+function renderNewsRagBody(data, groups = normalizeNewsSentimentGroups(data.sentiment_groups)) {
   const findings = data.findings || [];
+  const hasPlainNewsGroups = Boolean(data.sentiment_groups) && groups.mode === "plain_news";
+  const body = hasPlainNewsGroups
+    ? renderPlainNewsGroups(groups)
+    : (findings.length ? renderNewsFindings(findings) : renderEmpty("没有命中的上下游消息"));
   return [
-    findings.length ? renderNewsFindings(findings) : renderEmpty("没有命中的上下游消息"),
+    body,
     data.notes?.length ? renderNotes(data.notes) : "",
   ].join("");
+}
+
+function normalizeNewsSentimentGroups(groups) {
+  const normalized = groups || {};
+  return {
+    mode: normalized.mode === "llm_analysis" ? "llm_analysis" : "plain_news",
+    positive: Array.isArray(normalized.positive) ? normalized.positive : [],
+    negative: Array.isArray(normalized.negative) ? normalized.negative : [],
+    mixed: Array.isArray(normalized.mixed) ? normalized.mixed : [],
+    uncertain: Array.isArray(normalized.uncertain) ? normalized.uncertain : [],
+  };
+}
+
+function newsAnalysisModeLabel(mode) {
+  return mode === "llm_analysis" ? "模型分析" : "本地消息";
+}
+
+function renderPlainNewsGroups(groups) {
+  const secondary = [...groups.mixed, ...groups.uncertain];
+  return `
+    <div class="plain-news-groups">
+      <section class="plain-news-column positive">
+        <header><h3>利好消息</h3><span>${formatNumber(groups.positive.length)}</span></header>
+        ${groups.positive.length ? renderEvidenceList(groups.positive, { emptyText: "暂无利好消息", showSentiment: true }) : renderEmpty("暂无利好消息")}
+      </section>
+      <section class="plain-news-column negative">
+        <header><h3>利空消息</h3><span>${formatNumber(groups.negative.length)}</span></header>
+        ${groups.negative.length ? renderEvidenceList(groups.negative, { emptyText: "暂无利空消息", showSentiment: true }) : renderEmpty("暂无利空消息")}
+      </section>
+      ${secondary.length ? `
+        <details class="plain-news-secondary">
+          <summary><span>中性 / 待核验消息 ${formatNumber(secondary.length)}</span><b class="plain-news-toggle" aria-hidden="true"></b></summary>
+          ${renderEvidenceList(secondary, { emptyText: "暂无待核验消息", showSentiment: true })}
+        </details>
+      ` : ""}
+    </div>
+  `;
 }
 
 function renderRagPackBuildResult(node, data) {
@@ -4036,8 +4195,10 @@ function renderNewsFindings(findings) {
   `;
 }
 
-function renderEvidenceList(items) {
-  if (!items.length) return renderEmpty("没有可引用证据");
+function renderEvidenceList(items, options = {}) {
+  const emptyText = options.emptyText || "没有可引用证据";
+  const showSentiment = Boolean(options.showSentiment);
+  if (!items.length) return renderEmpty(emptyText);
   return `
     <div class="evidence-list">
       ${items
@@ -4047,10 +4208,12 @@ function renderEvidenceList(items) {
               <strong>${escapeHtml(item.title || "-")}</strong>
               <span class="evidence-source">
                 <span class="source-tier ${sourceTierClass(item.source_tier)}">${escapeHtml(sourceTierLabel(item.source_tier))}</span>
-                ${escapeHtml(item.source || "-")} · ${escapeHtml(item.published_at || "-")}
+                ${showSentiment ? `<span class="impact-pill ${sentimentClass(item.sentiment)}">${escapeHtml(newsSentimentLabel(item.sentiment))}</span>` : ""}
+                <span>来源：${escapeHtml(item.source || "未知来源")}</span>
+                <span>发布时间：${escapeHtml(item.published_at || "未知时间")}</span>
               </span>
               ${item.summary ? `<p>${escapeHtml(item.summary)}</p>` : ""}
-              <em>${escapeHtml((item.stock_codes || []).join(" · "))}</em>
+              <em>关联股票：${escapeHtml((item.stock_codes || []).length ? item.stock_codes.join(" · ") : "未标注")}</em>
               ${renderExternalSourceLink(item.url)}
             </article>
           `,
@@ -4081,9 +4244,10 @@ function sourceTierLabel(tier) {
   if (tier === "filing") return "公告 / 事实";
   if (tier === "financial_snapshot") return "通达信 / 财务";
   if (tier === "research") return "研报 / 摘要";
-  if (tier === "manual_url") return "公开 URL";
-  if (tier === "community") return "社区 / 待核查";
-  return "新闻 / 事实";
+  if (tier === "manual_url") return "公开资料";
+  if (tier === "community") return "社区 / 待核验";
+  if (tier === "news") return "新闻 / 事实";
+  return "未知来源";
 }
 
 function sourceTierClass(tier) {
@@ -4091,6 +4255,23 @@ function sourceTierClass(tier) {
   if (tier === "financial_snapshot") return "filing";
   if (tier === "manual_url" || tier === "research") return "news";
   return tier === "community" ? "community" : "news";
+}
+
+function newsSentimentLabel(sentiment) {
+  const labels = {
+    positive: "利好",
+    negative: "利空",
+    mixed: "中性",
+    uncertain: "待核验",
+  };
+  return labels[sentiment] || "待核验";
+}
+
+function sentimentClass(sentiment) {
+  if (sentiment === "positive") return "positive";
+  if (sentiment === "negative") return "negative";
+  if (sentiment === "mixed") return "neutral";
+  return "uncertain";
 }
 
 function renderResultActions(scope, count) {
@@ -4293,6 +4474,7 @@ function graphItemToView(item) {
       ["关系", item.relation_score],
     ],
     related: item.related || [],
+    explanation: item.explanation || null,
   };
 }
 
@@ -4306,9 +4488,10 @@ function trendItemToView(item) {
     signal,
     extra: [
       ["基础", item.base_score],
-      ["趋势", item.trend_score],
+      ["短买", item.trend_score],
       ["量化", signal.quant_score],
     ],
+    explanation: item.explanation || null,
   };
 }
 
@@ -4361,6 +4544,7 @@ function renderStockRow(item) {
   const factorSummary = renderFactorSummary(item);
   const weight = item.weight !== undefined ? `<span class="weight">${formatPercent(item.weight)}</span>` : "";
   const related = item.related?.length ? renderRelated(item.related) : "";
+  const explanation = renderSelectionExplanation(item.explanation);
   const saved = isWatchlisted(stock.code);
   const watchLabel = saved ? "已收藏" : "收藏";
   const watchButton = stock.code
@@ -4406,10 +4590,39 @@ function renderStockRow(item) {
       ${signal}
       ${reasons}
       ${related}
+      ${explanation}
     </article>
   `;
 }
 
+function renderSelectionExplanation(explanation) {
+  if (!explanation) return "";
+  const basis = Array.isArray(explanation.basis) ? explanation.basis.filter(Boolean) : [];
+  const risks = Array.isArray(explanation.risk_checks) ? explanation.risk_checks.filter(Boolean) : [];
+  const verification = Array.isArray(explanation.verification) ? explanation.verification.filter(Boolean) : [];
+  const breakdown = Array.isArray(explanation.score_breakdown) ? explanation.score_breakdown : [];
+  if (!basis.length && !risks.length && !verification.length && !breakdown.length) return "";
+  const section = (title, items) => items.length ? `<div><strong>${escapeHtml(title)}</strong>${items.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>` : "";
+  return `
+    <section class="selection-explain">
+      ${section("入选依据", basis)}
+      ${breakdown.length ? `<div><strong>分数拆解</strong><div class="explain-score-row">${breakdown.map(renderScoreContribution).join("")}</div></div>` : ""}
+      ${section("风险验证", risks)}
+      ${section("验证点", verification)}
+    </section>
+  `;
+}
+
+function renderScoreContribution(item) {
+  const tone = ["strong", "watch", "weak"].includes(item?.tone) ? item.tone : "neutral";
+  return `
+    <span class="score-contribution ${tone}">
+      <em>${escapeHtml(item?.label || item?.key || "分数拆解")}</em>
+      <b>${formatNumber(item?.value)}</b>
+      <small>${formatNumber(item?.contribution)}</small>
+    </span>
+  `;
+}
 function renderFactorSummary(item) {
   const scores = item.factorScores || item.factor_scores || {};
   const order = ["theme", "fundamental", "valuation", "size", "risk", "institution"];

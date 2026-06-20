@@ -9,7 +9,7 @@ if not exist "%POWERSHELL_EXE%" set "POWERSHELL_EXE=powershell.exe"
 
 REM One-click foreground dev launcher. Backend logs and tracebacks stream
 REM live in this window so you can watch for errors. Press Ctrl+C to stop.
-REM Pass extra args through, e.g.:  start-dev.bat -Reload -Open -LogLevel debug
+REM Hot reload is enabled by default. Pass extra args through, e.g.:  start-dev.bat -Open -LogLevel debug
 
 echo.
 echo [gp-dev] ============================================================
@@ -39,6 +39,7 @@ call :WhereFirst py
 call :WhereFirst node
 call :WhereFirst git
 echo.
+echo [gp-dev] Tip: hot reload is enabled by default; use -NoReload for single-process debugging.
 echo [gp-dev] Tip: use -LogLevel debug for request/import detail, -Port 8011 if 8010 is busy.
 echo [gp-dev] Tip: use -DiagnosticsOnly to print environment checks without starting the server.
 echo [gp-dev] Tip: use -SkipSyntaxCheck only when you need to bypass startup checks temporarily.
@@ -74,6 +75,7 @@ if "%EXIT_CODE%"=="9009" (
 echo [gp-dev] Useful retries:
 echo [gp-dev]   start-dev.bat -DiagnosticsOnly -LogLevel debug
 echo [gp-dev]   start-dev.bat -LogLevel debug
+echo [gp-dev]   start-dev.bat -NoReload -LogLevel debug
 echo [gp-dev]   start-dev.bat -Port 8011 -LogLevel debug
 echo [gp-dev]   set GP_CAPITAL_ENABLE_EXTERNAL=false ^&^& start-dev.bat -LogLevel debug
 echo [gp-dev]   start-dev.bat -SkipSyntaxCheck -LogLevel debug

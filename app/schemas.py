@@ -116,6 +116,27 @@ class StockRelation(BaseModel):
     description: Optional[str] = None
 
 
+class ScoreContribution(BaseModel):
+    key: str
+    label: str
+    value: Optional[float] = None
+    contribution: Optional[float] = None
+    tone: str = "neutral"
+
+
+class SelectionExplanation(BaseModel):
+    basis: List[str] = Field(default_factory=list)
+    score_breakdown: List[ScoreContribution] = Field(default_factory=list)
+    risk_checks: List[str] = Field(default_factory=list)
+    verification: List[str] = Field(default_factory=list)
+
+
+class GraphCenterContext(BaseModel):
+    mode: str = "seed_codes"
+    label: str = ""
+    codes: List[str] = Field(default_factory=list)
+
+
 class LlmClientConfig(BaseModel):
     api_key: Optional[str] = Field(default=None, max_length=4096)
     base_url: Optional[str] = Field(default=None, max_length=512)
@@ -143,6 +164,7 @@ class GraphStockSignal(BaseModel):
     suggested_weight: float
     reasons: List[str]
     related: List[StockRelation] = Field(default_factory=list)
+    explanation: SelectionExplanation = Field(default_factory=SelectionExplanation)
 
 
 class GraphScreenResult(BaseModel):
@@ -150,6 +172,7 @@ class GraphScreenResult(BaseModel):
     returned: int
     relation_count: int
     items: List[GraphStockSignal]
+    center_context: GraphCenterContext = Field(default_factory=GraphCenterContext)
     notes: List[str] = Field(default_factory=list)
 
 
@@ -262,12 +285,14 @@ class TrendStockSignal(BaseModel):
     final_score: float
     signal: TrendIndicatorSignal
     reasons: List[str] = Field(default_factory=list)
+    explanation: SelectionExplanation = Field(default_factory=SelectionExplanation)
 
 
 class TrendScreenResult(BaseModel):
     total: int
     returned: int
     items: List[TrendStockSignal]
+    screen_style: str = "short_buy"
     notes: List[str] = Field(default_factory=list)
 
 
@@ -417,11 +442,20 @@ class NewsImpactFinding(BaseModel):
     pending_checks: List[str] = Field(default_factory=list)
 
 
+class NewsSentimentGroups(BaseModel):
+    mode: str = "plain_news"
+    positive: List[NewsEvidence] = Field(default_factory=list)
+    negative: List[NewsEvidence] = Field(default_factory=list)
+    mixed: List[NewsEvidence] = Field(default_factory=list)
+    uncertain: List[NewsEvidence] = Field(default_factory=list)
+
+
 class NewsRagResult(BaseModel):
     scope_codes: List[str] = Field(default_factory=list)
     relation_count: int = 0
     message_count: int = 0
     findings: List[NewsImpactFinding] = Field(default_factory=list)
+    sentiment_groups: NewsSentimentGroups = Field(default_factory=NewsSentimentGroups)
     notes: List[str] = Field(default_factory=list)
 
 

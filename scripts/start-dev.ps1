@@ -10,6 +10,7 @@ param(
     [string]$LogLevel = "info",
 
     [switch]$Reload,
+    [switch]$NoReload,
     [switch]$NoInstall,
     [switch]$Open,
     [switch]$SkipSyntaxCheck,
@@ -26,6 +27,16 @@ $HostName = "127.0.0.1"
 $BaseUrl = "http://${HostName}:$Port"
 $HealthUrl = "$BaseUrl/health"
 $ScriptStartedAt = Get-Date
+
+if ($Reload -and $NoReload) {
+    Write-Host "[gp-dev] ERROR: Use either -Reload or -NoReload, not both." -ForegroundColor Red
+    exit 2
+}
+
+# Reload is the default for local development. Keep -Reload as a backwards
+# compatible explicit flag, and use -NoReload when debugging single-process
+# startup behavior.
+$ReloadEnabled = -not [bool]$NoReload
 
 function Write-Step {
     param([string]$Message)
@@ -330,7 +341,9 @@ function Write-ConfigDiagnostics {
     Write-Host "  Health: $HealthUrl"
     Write-Host "  Provider: $Provider"
     Write-Host "  Log level: $LogLevel"
-    Write-Host "  Reload: $([bool]$Reload)"
+    Write-Host "  Reload: $(if ($ReloadEnabled) { 'enabled' } else { 'disabled' })"
+    Write-Host "  Reload flag: $([bool]$Reload)"
+    Write-Host "  No reload: $([bool]$NoReload)"
     Write-Host "  Open browser: $([bool]$Open)"
     Write-Host "  No install: $([bool]$NoInstall)"
     Write-Host "  Skip syntax check: $([bool]$SkipSyntaxCheck)"
@@ -456,24 +469,30 @@ try {
     Write-Step "Starting FastAPI on $BaseUrl  (provider=$Provider, log-level=$LogLevel)"
     Write-Step "Health: $HealthUrl"
     Write-Step "UI: $BaseUrl/#sectionAgent   |   Press Ctrl+C to stop."
-    if ($Reload) {
-        Write-Info "Command: $Python -m uvicorn app.main:app --host $HostName --port $Port --log-level $LogLevel --reload --reload-dir app"
+    $ReloadDir = Join-Path $RepoRoot "app"
+    if ($ReloadEnabled) {
+        Write-Info "Hot reload: enabled; watching $ReloadDir"
+        Write-Info "Command: $Python -m uvicorn app.main:app --host $HostName --port $Port --log-level $LogLevel --reload --reload-dir `"$ReloadDir`""
     } else {
-        Write-Info "Command: $Python -m app.desktop_server  (env GP_ASSISTANT_HOST/PORT/LOG_LEVEL already set)"
+        Write-Info "Hot reload: disabled by -NoReload."
+        Write-Info "Command: $Python -m uvicorn app.main:app --host $HostName --port $Port --log-level $LogLevel"
     }
     Write-Host ""
 
     # Run uvicorn in the FOREGROUND so all output streams to this console.
-    if ($Reload) {
+    if ($ReloadEnabled) {
         # Reload needs the import-string form; serves the same app object.
         & $Python -m uvicorn app.main:app `
             --host $HostName `
             --port $Port `
             --log-level $LogLevel `
             --reload `
-            --reload-dir (Join-Path $RepoRoot "app")
+            --reload-dir $ReloadDir
     } else {
-        & $Python -m app.desktop_server
+        & $Python -m uvicorn app.main:app `
+            --host $HostName `
+            --port $Port `
+            --log-level $LogLevel
     }
 
     $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }

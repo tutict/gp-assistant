@@ -551,7 +551,8 @@ textarea::placeholder {
   color: var(--button-text);
 }
 
-.market-field {
+.market-field,
+.stock-suggest-field {
   position: relative;
   z-index: 3;
 }
@@ -621,7 +622,8 @@ textarea::placeholder {
   z-index: 34;
   top: calc(100% + 6px);
   left: 0;
-  width: min(320px, calc(100vw - 32px));
+  width: 100%;
+  max-width: min(420px, calc(100vw - 32px));
   display: grid;
   gap: 2px;
   overflow: hidden;
@@ -7040,6 +7042,94 @@ h1 {
   font-size: 0.76rem;
   line-height: 1.45;
 }
+.plain-news-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.plain-news-column,
+.plain-news-secondary {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.plain-news-column > header,
+.plain-news-secondary > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 10px 12px;
+}
+
+.plain-news-column h3 {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 860;
+}
+
+.plain-news-column > header span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 820;
+}
+
+.plain-news-column.positive > header h3 {
+  color: var(--rise);
+}
+
+.plain-news-column.negative > header h3 {
+  color: var(--fall);
+}
+
+.plain-news-secondary {
+  grid-column: 1 / -1;
+}
+
+.plain-news-secondary > summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 820;
+}
+
+.plain-news-secondary > summary::-webkit-details-marker {
+  display: none;
+}
+
+.plain-news-secondary > summary::marker {
+  content: "";
+}
+
+.plain-news-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--accent-strong);
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 840;
+  line-height: 1;
+  padding: 5px 8px;
+}
+
+.plain-news-toggle::before {
+  content: "展开";
+}
+
+.plain-news-secondary[open] .plain-news-toggle::before {
+  content: "收起";
+}
 
 .impact-pill {
   border: 1px solid var(--line);
@@ -7575,6 +7665,9 @@ h1 {
 
   .news-controls,
   .news-finding header {
+    grid-template-columns: 1fr;
+  }
+  .plain-news-groups {
     grid-template-columns: 1fr;
   }
 
@@ -10981,5 +11074,86 @@ textarea {
   .stock-grid .score-badge {
     min-width: 96px;
     padding-inline: 12px;
+  }
+}
+
+.selection-explain {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-2) 82%, transparent);
+  padding: 10px;
+}
+
+.selection-explain > div {
+  min-width: 0;
+}
+
+.selection-explain strong {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text);
+  font-size: 0.76rem;
+  font-weight: 840;
+}
+
+.selection-explain p {
+  margin: 3px 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.explain-score-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.score-contribution {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  padding: 7px 8px;
+}
+
+.score-contribution em,
+.score-contribution small {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.score-contribution b {
+  display: block;
+  margin: 2px 0;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.score-contribution.strong b {
+  color: var(--positive);
+}
+
+.score-contribution.watch b {
+  color: var(--accent-strong);
+}
+
+.score-contribution.weak b {
+  color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .explain-score-row {
+    grid-template-columns: 1fr;
   }
 }

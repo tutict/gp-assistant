@@ -63,6 +63,55 @@ class NewsRagTests(unittest.TestCase):
         self.assertTrue(result.findings[0].evidence)
         self.assertTrue(any("已有股票关系图" in note for note in result.notes))
 
+    def test_plain_news_groups_without_llm_include_target_and_upstream_messages(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            DISABLE_NETWORK_NEWS,
+        ):
+            news_rag.CACHE_PATH = Path(tmp) / "news.sqlite"
+            conn = news_rag._connect()
+            try:
+                news_rag._init_db(conn)
+                news_rag._store_news(
+                    conn,
+                    [
+                        news_rag.RawNewsItem(
+                            title="宁德时代供应链订单改善",
+                            summary="公开消息显示目标股订单改善。",
+                            source="测试新闻源",
+                            url="local://positive-target",
+                            published_at=datetime.now().isoformat(timespec="seconds"),
+                            stock_codes=("300750.SZ",),
+                            industries=("动力电池",),
+                            relation_types=("supply_chain",),
+                            sentiment="positive",
+                        ),
+                        news_rag.RawNewsItem(
+                            title="上游材料成本承压",
+                            summary="上游材料涨价可能压缩盈利。",
+                            source="测试新闻源",
+                            url="local://negative-upstream",
+                            published_at=datetime.now().isoformat(timespec="seconds"),
+                            stock_codes=("600309.SH",),
+                            industries=("化工",),
+                            relation_types=("upstream_material",),
+                            sentiment="negative",
+                        ),
+                    ],
+                )
+            finally:
+                conn.close()
+
+            result = news_rag.analyze_supply_chain_news(
+                MockProvider(),
+                NewsRagRequest(code="300750.SZ", seed_codes=["300750.SZ"], days=30, max_items=10),
+            )
+
+        self.assertEqual(result.sentiment_groups.mode, "plain_news")
+        self.assertTrue(any(item.title == "宁德时代供应链订单改善" for item in result.sentiment_groups.positive))
+        self.assertTrue(any(item.title == "上游材料成本承压" for item in result.sentiment_groups.negative))
+        self.assertTrue(any("未接入模型" in note for note in result.notes))
+
     def test_news_rag_requires_explicit_target_stock(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             os.environ,

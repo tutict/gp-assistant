@@ -38,11 +38,12 @@ from app.schemas import (
     GraphScreenRequest,
     ScreenCriteria,
     TrendIndicatorRequest,
+    TrendScreenRequest,
 )
 from app.services.backtest import backtest_hold
 from app.services.screener import screen_stocks, screening_universe
 from app.services.stock_graph import graph_screen_stocks
-from app.services.trend_indicator import analyze_trend
+from app.services.trend_indicator import analyze_trend, trend_screen_stocks
 
 START = "2024-01-01"
 END = "2024-12-31"
@@ -158,6 +159,29 @@ class TrendParityTests(unittest.TestCase):
                     )
                 self.assertEqual(rs.get("status"), ps.get("status"), f"{code} signal.status")
 
+
+    def test_trend_screen_explanation_shape_is_available_on_both_sides(self):
+        code = self.codes[0]
+        data = ffi.core_dataset_from_provider(
+            self.provider, histories=_history_map(self.provider, [code])
+        )
+        request = TrendScreenRequest(
+            criteria=ScreenCriteria(),
+            start_date=START,
+            end_date=END,
+            limit=1,
+        )
+        rust = ffi.call(
+            "gp_core_trend_screen_with_data_json",
+            {"data": data, "request": request.model_dump()},
+        )
+        py = trend_screen_stocks(self.provider, request)
+        self.assertEqual(rust["screen_style"], "short_buy")
+        self.assertEqual(py.screen_style, "short_buy")
+        self.assertTrue(rust["items"][0]["explanation"]["basis"])
+        self.assertTrue(rust["items"][0]["explanation"]["score_breakdown"])
+        self.assertTrue(py.items[0].explanation.basis)
+        self.assertTrue(py.items[0].explanation.score_breakdown)
 
 @unittest.skipUnless(ffi.core_available(), ffi.core_skip_reason())
 class ScreenParityTests(unittest.TestCase):
@@ -283,6 +307,11 @@ class GraphParityTests(unittest.TestCase):
             py.total,
             "graph candidate-pool size diverged",
         )
+        self.assertEqual(rust["center_context"]["mode"], py.center_context.mode)
+        self.assertTrue(rust["items"][0]["explanation"]["basis"])
+        self.assertTrue(rust["items"][0]["explanation"]["score_breakdown"])
+        self.assertTrue(py.items[0].explanation.basis)
+        self.assertTrue(py.items[0].explanation.score_breakdown)
         self.assertTrue(
             rust_codes & py_codes,
             f"graph candidate pools are disjoint: rust={rust_codes} py={py_codes}",

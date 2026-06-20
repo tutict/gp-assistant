@@ -597,7 +597,7 @@
             <div class="observe-controls">
               <label class="field market-field">
                 <span>股票代码</span>
-                <input id="observeCode" inputmode="numeric" autocomplete="off" placeholder="300750" data-code-confirm />
+                <input id="observeCode" autocomplete="off" placeholder="&#36755;&#20837;&#32929;&#31080;&#20195;&#30721;&#25110;&#21517;&#31216;" data-code-confirm />
                 <div class="market-confirm" hidden>
                   <button type="button" data-market="SH"><strong>上海股</strong><span>600 / 688</span></button>
                   <button type="button" data-market="SZ"><strong>深圳股</strong><span>000 / 300</span></button>
@@ -645,7 +645,7 @@
               </div>
               <label class="field">
                 <span>种子股票</span>
-                <input id="seedCodes" placeholder="300750.SZ, 002594.SZ" />
+                <input id="seedCodes" autocomplete="off" placeholder="&#21487;&#36873;&#65306;&#36755;&#20837;&#31181;&#23376;&#32929;&#20195;&#30721;&#25110;&#21517;&#31216;&#65292;&#30041;&#31354;&#21017;&#20351;&#29992;&#20027;&#39064;&#20013;&#24515;" data-stock-list-suggest />
               </label>
               <div class="field-pair">
                 <label class="field">
@@ -666,10 +666,10 @@
               <div class="module-heading">
                 <div>
                   <p>消息</p>
-                  <h2>上下游消息</h2>
+                  <h2>利好 / 利空消息</h2>
                 </div>
                 <div class="button-row">
-                  <button id="newsRagBtn" type="button" data-desktop-only>分析消息</button>
+                  <button id="newsRagBtn" type="button" data-desktop-only>拉取消息</button>
                   <button id="ragPackBuildBtn" type="button" data-desktop-only>构建同步包</button>
                   <button id="ragPackQueryBtn" type="button">查看同步包</button>
                   <button id="upstreamScanBtn" type="button" data-mobile-only>扫码导入</button>
@@ -679,7 +679,7 @@
               <div class="news-controls">
                 <label class="field market-field">
                   <span>目标股票</span>
-                  <input id="newsCode" inputmode="numeric" autocomplete="off" placeholder="输入单只股票代码，例如 300750.SZ" data-code-confirm />
+                  <input id="newsCode" autocomplete="off" placeholder="&#36755;&#20837;&#21333;&#21482;&#32929;&#31080;&#20195;&#30721;&#25110;&#21517;&#31216;" data-code-confirm />
                   <div class="market-confirm" hidden>
                     <button type="button" data-market="SH"><strong>上海股</strong><span>600 / 688</span></button>
                     <button type="button" data-market="SZ"><strong>深圳股</strong><span>000 / 300</span></button>
@@ -708,7 +708,7 @@
                 </label>
               </div>
               <div id="newsRagResult" class="result-panel empty">
-                <div class="empty-state">按已有上下游关系图检索消息，并给出影响判断和证据</div>
+                <div class="empty-state">按目标个股和上下游关系拉取消息，并分栏展示利好与利空</div>
               </div>
             </article>
 
@@ -726,7 +726,7 @@
               <div class="trend-controls">
                 <label class="field market-field">
                   <span>股票代码</span>
-                  <input id="trendCode" inputmode="numeric" autocomplete="off" value="300750.SZ" placeholder="300750" data-code-confirm />
+                  <input id="trendCode" autocomplete="off" placeholder="&#36755;&#20837;&#32929;&#31080;&#20195;&#30721;&#25110;&#21517;&#31216;" data-code-confirm />
                   <div class="market-confirm" hidden>
                     <button type="button" data-market="SH"><strong>上海股</strong><span>600 / 688</span></button>
                     <button type="button" data-market="SZ"><strong>深圳股</strong><span>000 / 300</span></button>

@@ -141,6 +141,40 @@ pub struct StockRelation {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ScoreContribution {
+    pub key: String,
+    pub label: String,
+    #[serde(default)]
+    pub value: Option<f64>,
+    #[serde(default)]
+    pub contribution: Option<f64>,
+    #[serde(default = "default_tone")]
+    pub tone: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SelectionExplanation {
+    #[serde(default)]
+    pub basis: Vec<String>,
+    #[serde(default)]
+    pub score_breakdown: Vec<ScoreContribution>,
+    #[serde(default)]
+    pub risk_checks: Vec<String>,
+    #[serde(default)]
+    pub verification: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct GraphCenterContext {
+    #[serde(default = "default_graph_center_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub codes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GraphScreenRequest {
     #[serde(default)]
     pub criteria: ScreenCriteria,
@@ -176,6 +210,8 @@ pub struct GraphStockSignal {
     pub reasons: Vec<String>,
     #[serde(default)]
     pub related: Vec<StockRelation>,
+    #[serde(default)]
+    pub explanation: SelectionExplanation,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -184,6 +220,8 @@ pub struct GraphScreenResult {
     pub returned: usize,
     pub relation_count: usize,
     pub items: Vec<GraphStockSignal>,
+    #[serde(default)]
+    pub center_context: GraphCenterContext,
     #[serde(default)]
     pub notes: Vec<String>,
 }
@@ -314,6 +352,8 @@ pub struct TrendStockSignal {
     pub signal: TrendIndicatorSignal,
     #[serde(default)]
     pub reasons: Vec<String>,
+    #[serde(default)]
+    pub explanation: SelectionExplanation,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -321,6 +361,8 @@ pub struct TrendScreenResult {
     pub total: usize,
     pub returned: usize,
     pub items: Vec<TrendStockSignal>,
+    #[serde(default = "default_trend_screen_style")]
+    pub screen_style: String,
     #[serde(default)]
     pub notes: Vec<String>,
 }
@@ -692,6 +734,18 @@ fn default_relation_depth() -> usize {
 
 fn default_relation_weight_param() -> f64 {
     0.35
+}
+
+fn default_tone() -> String {
+    "neutral".to_string()
+}
+
+fn default_graph_center_mode() -> String {
+    "seed_codes".to_string()
+}
+
+fn default_trend_screen_style() -> String {
+    "short_buy".to_string()
 }
 
 fn default_graph_limit() -> usize {
@@ -1130,8 +1184,9 @@ pub fn trend_screen_with_source(
             base_score: round6(candidate.score),
             trend_score: round6(trend_score),
             final_score: round6(final_score),
-            signal: analysis.signal,
+            signal: analysis.signal.clone(),
             reasons,
+            explanation: trend_screen_explanation(candidate, &analysis.signal, trend_score, final_score),
         });
     }
 
@@ -1148,6 +1203,7 @@ pub fn trend_screen_with_source(
         total: candidate_pool.len(),
         returned: items.len(),
         items,
+        screen_style: "short_buy".to_string(),
         notes,
     })
 }
@@ -1715,6 +1771,7 @@ pub fn graph_screen_stocks(
     request: &GraphScreenRequest,
 ) -> GraphScreenResult {
     let candidate_pool = screen_candidate_pool(universe, &request.criteria, request.limit);
+    let center_context = resolve_center_context(&candidate_pool, &request.seed_codes);
     let candidate_by_code: HashMap<String, ScreenedStock> = candidate_pool
         .iter()
         .map(|item| (item.stock.code.clone(), item.clone()))
@@ -1734,7 +1791,7 @@ pub fn graph_screen_stocks(
             .map(|(code, item)| (code.clone(), item.score))
             .collect(),
     );
-    let seed_codes: HashSet<String> = request.seed_codes.iter().cloned().collect();
+    let seed_codes: HashSet<String> = center_context.codes.iter().cloned().collect();
     let max_depth = request.relation_depth.clamp(1, 3);
     let relation_weight = request.relation_weight.clamp(0.0, 1.0);
 
@@ -1744,6 +1801,7 @@ pub fn graph_screen_stocks(
             relation_score(&code, &base_scores, &adjacency, &seed_codes, max_depth);
         let base_score = *base_scores.get(&code).unwrap_or(&0.0);
         let final_score = (1.0 - relation_weight) * base_score + relation_weight * relation_score;
+        let related = top_related(&code, &relations, &all_stocks, 5);
         signals.push(GraphStockSignal {
             stock: screened.stock.clone(),
             base_score: round6(base_score),
@@ -1751,7 +1809,16 @@ pub fn graph_screen_stocks(
             final_score: round6(final_score),
             suggested_weight: 0.0,
             reasons: graph_reasons(&screened, relation_score),
-            related: top_related(&code, &relations, &all_stocks, 5),
+            related: related.clone(),
+            explanation: graph_explanation(
+                &screened,
+                base_score,
+                relation_score,
+                final_score,
+                relation_weight,
+                &center_context,
+                &related,
+            ),
         });
     }
 
@@ -1760,12 +1827,18 @@ pub fn graph_screen_stocks(
     assign_weights(&mut signals);
 
     let mut notes = vec![
-        "关系图是轻量传播评分层，不是 LangGraph 工作流编排。".to_string(),
-        "LangGraph 用于智能体状态流；股票关系由图学习或知识图谱数据建模。".to_string(),
+        "Graph screening uses lightweight relation propagation in gp-core.".to_string(),
+        "LangGraph is only agent orchestration; stock relations are modeled by relation scoring.".to_string(),
     ];
     notes.extend(deducted_profit_rule_notes(universe, &request.criteria));
+    if center_context.mode == "theme_center" {
+        notes.push(format!(
+            "No seed codes were provided; graph scoring used {}.",
+            center_context.label
+        ));
+    }
     if relations.is_empty() {
-        notes.push("当前没有可用股票关系，结果已回退为基础选股分。".to_string());
+        notes.push("No stock relations are available; results fall back to the base screen score.".to_string());
     }
 
     GraphScreenResult {
@@ -1773,6 +1846,7 @@ pub fn graph_screen_stocks(
         returned: signals.len(),
         relation_count: relations.len(),
         items: signals,
+        center_context,
         notes,
     }
 }
@@ -2367,6 +2441,82 @@ fn screen_candidate_pool(
     screen_stocks(universe, &expanded_criteria).items
 }
 
+fn resolve_center_context(candidate_pool: &[ScreenedStock], seed_codes: &[String]) -> GraphCenterContext {
+    let normalized_seed_codes: Vec<String> = seed_codes
+        .iter()
+        .map(|code| normalize_stock_code(code))
+        .filter(|code| !code.is_empty())
+        .take(50)
+        .collect();
+    if !normalized_seed_codes.is_empty() {
+        return GraphCenterContext {
+            mode: "seed_codes".to_string(),
+            label: "seed-code center".to_string(),
+            codes: normalized_seed_codes,
+        };
+    }
+
+    if candidate_pool.is_empty() {
+        return GraphCenterContext {
+            mode: "theme_center".to_string(),
+            label: "empty theme center".to_string(),
+            codes: Vec::new(),
+        };
+    }
+
+    let mut groups: HashMap<String, Vec<ScreenedStock>> = HashMap::new();
+    let mut labels: HashMap<String, String> = HashMap::new();
+    for item in candidate_pool {
+        let (key, label) = center_group_key(item);
+        groups.entry(key.clone()).or_default().push(item.clone());
+        labels.insert(key, label);
+    }
+
+    let mut ranked: Vec<(String, Vec<ScreenedStock>)> = groups.into_iter().collect();
+    ranked.sort_by(|(left_key, left_items), (right_key, right_items)| {
+        let left_avg = average_screen_score(left_items);
+        let right_avg = average_screen_score(right_items);
+        right_items
+            .len()
+            .cmp(&left_items.len())
+            .then_with(|| right_avg.total_cmp(&left_avg))
+            .then_with(|| labels.get(right_key).cmp(&labels.get(left_key)))
+    });
+    let Some((selected_key, mut selected_items)) = ranked.into_iter().next() else {
+        return GraphCenterContext::default();
+    };
+    selected_items.sort_by(|left, right| right.score.total_cmp(&left.score));
+    selected_items.truncate(5);
+    GraphCenterContext {
+        mode: "theme_center".to_string(),
+        label: labels.get(&selected_key).cloned().unwrap_or(selected_key),
+        codes: selected_items.into_iter().map(|item| item.stock.code).collect(),
+    }
+}
+
+fn average_screen_score(items: &[ScreenedStock]) -> f64 {
+    if items.is_empty() {
+        0.0
+    } else {
+        items.iter().map(|item| item.score).sum::<f64>() / items.len() as f64
+    }
+}
+
+fn center_group_key(item: &ScreenedStock) -> (String, String) {
+    if let Some(category) = hot_pick_category(&item.stock) {
+        return (
+            format!("theme:{category}"),
+            format!("theme center: {category}"),
+        );
+    }
+    if !item.stock.industry.trim().is_empty() {
+        return (
+            format!("industry:{}", item.stock.industry),
+            format!("industry center: {}", item.stock.industry),
+        );
+    }
+    ("industry:unknown".to_string(), "industry center: unknown".to_string())
+}
 fn merge_relations(relations: &[StockRelation]) -> Vec<StockRelation> {
     let mut merged: HashMap<(String, String, String), StockRelation> = HashMap::new();
     for relation in relations {
@@ -2594,6 +2744,88 @@ fn graph_reasons(screened: &ScreenedStock, relation_score: f64) -> Vec<String> {
     reasons
 }
 
+fn graph_explanation(
+    screened: &ScreenedStock,
+    base_score: f64,
+    relation_score: f64,
+    final_score: f64,
+    relation_weight: f64,
+    center_context: &GraphCenterContext,
+    related: &[StockRelation],
+) -> SelectionExplanation {
+    let center_codes = if center_context.codes.is_empty() {
+        "none".to_string()
+    } else {
+        center_context.codes.join(", ")
+    };
+    let mut basis = vec![
+        format!("Passed the current base screen with raw score {:.2}.", screened.score),
+        format!(
+            "Relation propagation center: {}; center codes: {}.",
+            center_context.label, center_codes
+        ),
+    ];
+    if let Some(strongest) = related.first() {
+        basis.push(format!(
+            "Strongest displayed edge is {} with weight {:.2}.",
+            strongest.relation_type, strongest.weight
+        ));
+    } else {
+        basis.push("No direct relation edge is displayed; ranking relies on base score and graph propagation score.".to_string());
+    }
+
+    let base_component = (1.0 - relation_weight) * base_score;
+    let relation_component = relation_weight * relation_score;
+    let mut risk_checks = Vec::new();
+    if relation_score >= 0.65 {
+        risk_checks.push("Relation signal is strong; verify that the relation is still supported by recent business evidence.".to_string());
+    } else if relation_score >= 0.35 {
+        risk_checks.push("Relation signal is moderate; use it as candidate expansion rather than a standalone buy reason.".to_string());
+    } else {
+        risk_checks.push("Relation signal is weak; selection is driven more by the base screen score.".to_string());
+    }
+    if related.is_empty() {
+        risk_checks.push("No direct relation edge is available; refresh or enrich relation data before relying on graph evidence.".to_string());
+    }
+
+    SelectionExplanation {
+        basis,
+        score_breakdown: vec![
+            score_contribution("base_score", "Base score", base_score, base_component, 0.7, 0.35),
+            score_contribution("relation_score", "Relation score", relation_score, relation_component, 0.65, 0.35),
+            score_contribution("final_score", "Final score", final_score, final_score, 0.65, 0.35),
+        ],
+        risk_checks,
+        verification: vec![
+            "Cross-check with trend timing for short-buy or exit signals.".to_string(),
+            "Open the related edges and verify peer, supply-chain, or theme evidence.".to_string(),
+        ],
+    }
+}
+
+fn score_contribution(
+    key: &str,
+    label: &str,
+    value: f64,
+    contribution: f64,
+    strong_threshold: f64,
+    watch_threshold: f64,
+) -> ScoreContribution {
+    ScoreContribution {
+        key: key.to_string(),
+        label: label.to_string(),
+        value: Some(round6(value)),
+        contribution: Some(round6(contribution)),
+        tone: if value >= strong_threshold {
+            "strong"
+        } else if value >= watch_threshold {
+            "watch"
+        } else {
+            "weak"
+        }
+        .to_string(),
+    }
+}
 fn assign_weights(signals: &mut [GraphStockSignal]) {
     if signals.is_empty() {
         return;
@@ -3327,44 +3559,131 @@ fn trend_status(bar: &ComputedTrendBar) -> String {
 }
 
 fn trend_score(signal: &TrendIndicatorSignal) -> f64 {
-    let mut score = (signal.quant_score as f64 / signal.quant_score_max.max(1) as f64) * 58.0;
-    if signal.swl_above_sws {
+    short_buy_score(signal)
+}
+
+fn short_buy_score(signal: &TrendIndicatorSignal) -> f64 {
+    let mut score = (signal.quant_score as f64 / signal.quant_score_max.max(1) as f64) * 28.0;
+    if signal.short_buy {
+        score += 24.0;
+    }
+    if signal.pattern_signals.iter().any(|value| value == "bottom_accumulation") {
         score += 10.0;
     }
-    if signal.red_hold {
+    if signal.pattern_signals.iter().any(|value| value == "swing_opportunity") {
         score += 12.0;
     }
-    if signal.short_buy {
-        score += 16.0;
+    if signal.pattern_signals.iter().any(|value| value == "rebound_signal") {
+        score += 10.0;
+    }
+    if signal.swl_above_sws {
+        score += 6.0;
+    }
+    if signal.red_hold {
+        score += 4.0;
     }
     if signal
         .star_line
         .map(|star_line| signal.close > star_line)
         .unwrap_or(false)
     {
-        score += 4.0;
-    }
-    if signal
-        .bull_line
-        .map(|bull_line| signal.close > bull_line)
-        .unwrap_or(false)
-    {
-        score += 4.0;
+        score += 3.0;
     }
     if signal.white_exit {
-        score -= 26.0;
+        score -= 30.0;
     }
     if signal.cyan_watch {
-        score -= 10.0;
-    }
-    if signal.oversold {
-        score -= 8.0;
+        score -= 12.0;
     }
     score.clamp(0.0, 100.0)
 }
 
 fn combined_trend_score(base_score: f64, trend_score: f64) -> f64 {
-    (base_score.clamp(0.0, 10.0) * 4.0 + trend_score * 0.75).min(100.0)
+    combined_short_buy_score(base_score, trend_score)
+}
+
+fn combined_short_buy_score(base_score: f64, trend_score: f64) -> f64 {
+    let base_component = base_score.clamp(0.0, 20.0) / 20.0 * 25.0;
+    (base_component + trend_score * 0.75).min(100.0)
+}
+
+fn trend_screen_explanation(
+    candidate: &ScreenedStock,
+    signal: &TrendIndicatorSignal,
+    trend_score: f64,
+    final_score: f64,
+) -> SelectionExplanation {
+    let mut basis = vec![
+        format!("Passed the current base screen with raw score {:.2}.", candidate.score),
+        short_buy_basis_text(signal),
+    ];
+    if let Some(pattern_text) = pattern_basis_text(signal) {
+        basis.push(pattern_text);
+    }
+
+    let base_component = candidate.score.clamp(0.0, 20.0) / 20.0 * 25.0;
+    let trend_component = trend_score * 0.75;
+    SelectionExplanation {
+        basis,
+        score_breakdown: vec![
+            score_contribution("base_score", "Base screen", candidate.score, base_component, 14.0, 9.0),
+            score_contribution("short_buy_score", "Short-buy setup", trend_score, trend_component, 70.0, 45.0),
+            score_contribution("final_score", "Final score", final_score, final_score, 70.0, 45.0),
+        ],
+        risk_checks: short_buy_risk_checks(signal),
+        verification: vec![
+            "Cross-check graph screening to confirm whether the stock belongs to a stronger theme center.".to_string(),
+            "Watch the next trading day direction, volume, and close for setup confirmation.".to_string(),
+        ],
+    }
+}
+
+fn short_buy_basis_text(signal: &TrendIndicatorSignal) -> String {
+    if signal.short_buy {
+        return "Short-buy signal is active; this is the highest-priority timing trigger.".to_string();
+    }
+    if signal.pattern_signals.iter().any(|value| value == "swing_opportunity") {
+        return "Swing-opportunity signal is strong enough for short-term watchlist inclusion.".to_string();
+    }
+    if signal.pattern_signals.iter().any(|value| value == "rebound_signal") {
+        return "Rebound signal is active and supports a short-term repair watch.".to_string();
+    }
+    "No explicit short-buy trigger is active; selection relies on quant score and base conditions.".to_string()
+}
+
+fn pattern_basis_text(signal: &TrendIndicatorSignal) -> Option<String> {
+    let mut labels = Vec::new();
+    if signal.pattern_signals.iter().any(|value| value == "bottom_accumulation") {
+        labels.push("bottom accumulation");
+    }
+    if signal.pattern_signals.iter().any(|value| value == "swing_opportunity") {
+        labels.push("swing opportunity");
+    }
+    if signal.pattern_signals.iter().any(|value| value == "rebound_signal") {
+        labels.push("rebound signal");
+    }
+    if signal.pattern_signals.iter().any(|value| value == "dragon_trend_volume") {
+        labels.push("trend-volume resonance");
+    }
+    if labels.is_empty() {
+        None
+    } else {
+        Some(format!("Pattern signals: {}.", labels.join(", ")))
+    }
+}
+
+fn short_buy_risk_checks(signal: &TrendIndicatorSignal) -> Vec<String> {
+    let mut risks = Vec::new();
+    if signal.white_exit {
+        risks.push("White-exit signal is active; short-buy setup has high invalidation risk.".to_string());
+    }
+    if signal.cyan_watch {
+        risks.push("Cyan-watch state means trend confirmation is insufficient.".to_string());
+    }
+    if risks.is_empty() {
+        risks.push("No major exit/high-zone risk is active, but next-day price-volume confirmation is still required.".to_string());
+    }
+    risks
 }
 
 fn trend_notes() -> Vec<String> {
