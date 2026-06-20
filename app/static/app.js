@@ -5545,7 +5545,7 @@ function formatHeatValue(value) {
 
 function normalizeCapitalEvidenceSections(evidence) {
   if (Array.isArray(evidence?.sections) && evidence.sections.length) {
-    return evidence.sections;
+    return evidence.sections.filter((section) => section.key !== "external_status");
   }
   return buildFallbackEvidenceSections(evidence);
 }
@@ -5569,7 +5569,6 @@ function buildFallbackEvidenceSections(evidence) {
       categories: ["news_rag", "community_sentiment"],
     },
     { key: "technical_behavior", title: "技术推断", contribution: "技术推断", categories: ["technical_behavior"] },
-    { key: "external_status", title: "接口状态", contribution: null, categories: ["external_status"] },
   ];
   return definitions
     .map((definition) => {
@@ -5889,8 +5888,9 @@ function capitalSectionStatus(section) {
 function renderCapitalEvidence(evidence, technicalContext = {}) {
   const sections = normalizeCapitalEvidenceSections(evidence);
   const items = evidence?.items || [];
+  const displayItems = items.filter((item) => item.category !== "external_status");
   const notes = evidence?.notes || [];
-  if (!items.length && !notes.length && !sections.length) return "";
+  if (!displayItems.length && !notes.length && !sections.length) return "";
   const score = Number(evidence.composite_score);
   const modelLabel = evidence.model_used ? "模型参与" : "规则分";
   return `
@@ -5914,8 +5914,8 @@ function renderCapitalEvidence(evidence, technicalContext = {}) {
       ${
         sections.length
           ? renderEvidenceSections(sections, technicalContext)
-          : items.length
-          ? `<div class="capital-evidence-list">${items.map(renderCapitalEvidenceItem).join("")}</div>`
+          : displayItems.length
+          ? `<div class="capital-evidence-list">${displayItems.map(renderCapitalEvidenceItem).join("")}</div>`
           : ""
       }
       ${notes.length ? renderNotes(notes) : ""}
@@ -5957,7 +5957,6 @@ function capitalCategoryLabel(category) {
     news_rag: "新闻证据",
     community_sentiment: "社区情绪",
     technical_behavior: "技术推断",
-    external_status: "接口状态",
   };
   return labels[category] || category || "证据";
 }

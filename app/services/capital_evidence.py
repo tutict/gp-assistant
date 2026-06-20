@@ -887,7 +887,6 @@ def _ensure_sections(result: CapitalEvidenceResult) -> CapitalEvidenceResult:
         ),
         _build_section(result, "message_sentiment", "消息情绪", "消息情绪", {"news_rag", "community_sentiment"}),
         _build_section(result, "technical_behavior", "技术推断", "技术推断", {"technical_behavior"}),
-        _build_section(result, "external_status", "接口状态", None, {"external_status"}),
     ]
     return result
 

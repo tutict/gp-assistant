@@ -160,6 +160,7 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         self.assertIn("技术推断", result.capital_evidence.contributions)
         self.assertTrue(any(item.category == "technical_behavior" for item in result.capital_evidence.items))
         self.assertTrue(any(item.category == "external_status" for item in result.capital_evidence.items))
+        self.assertFalse(any(section.key == "external_status" for section in result.capital_evidence.sections))
 
     def test_observation_keeps_financial_and_capital_data_when_trend_fails(self):
         provider = MockProvider()
