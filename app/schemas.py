@@ -116,6 +116,27 @@ class StockRelation(BaseModel):
     description: Optional[str] = None
 
 
+class ScoreContribution(BaseModel):
+    key: str
+    label: str
+    value: Optional[float] = None
+    contribution: Optional[float] = None
+    tone: str = "neutral"
+
+
+class SelectionExplanation(BaseModel):
+    basis: List[str] = Field(default_factory=list)
+    score_breakdown: List[ScoreContribution] = Field(default_factory=list)
+    risk_checks: List[str] = Field(default_factory=list)
+    verification: List[str] = Field(default_factory=list)
+
+
+class GraphCenterContext(BaseModel):
+    mode: str = "seed_codes"
+    label: str = ""
+    codes: List[str] = Field(default_factory=list)
+
+
 class LlmClientConfig(BaseModel):
     api_key: Optional[str] = Field(default=None, max_length=4096)
     base_url: Optional[str] = Field(default=None, max_length=512)
@@ -143,6 +164,7 @@ class GraphStockSignal(BaseModel):
     suggested_weight: float
     reasons: List[str]
     related: List[StockRelation] = Field(default_factory=list)
+    explanation: SelectionExplanation = Field(default_factory=SelectionExplanation)
 
 
 class GraphScreenResult(BaseModel):
@@ -150,6 +172,7 @@ class GraphScreenResult(BaseModel):
     returned: int
     relation_count: int
     items: List[GraphStockSignal]
+    center_context: GraphCenterContext = Field(default_factory=GraphCenterContext)
     notes: List[str] = Field(default_factory=list)
 
 
@@ -166,10 +189,6 @@ class StockObserveRequest(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     series_limit: int = Field(default=120, ge=20, le=500)
-    minute_period: str = Field(default="1")
-    minute_start: Optional[str] = None
-    minute_end: Optional[str] = None
-    minute_limit: int = Field(default=500, ge=1, le=500)
     include_order_book: bool = True
     include_chip_distribution: bool = True
     llm: Optional[LlmClientConfig] = None
@@ -180,6 +199,9 @@ class TrendIndicatorPoint(BaseModel):
     close: float
     swl: Optional[float] = None
     sws: Optional[float] = None
+    k: Optional[float] = None
+    d: Optional[float] = None
+    j: Optional[float] = None
     accumulation_index: Optional[float] = None
     accumulation_strength: Optional[float] = None
     swing_opportunity: Optional[float] = None
@@ -200,6 +222,9 @@ class TrendIndicatorSignal(BaseModel):
     close: float
     swl: Optional[float] = None
     sws: Optional[float] = None
+    k: Optional[float] = None
+    d: Optional[float] = None
+    j: Optional[float] = None
     star_line: Optional[float] = None
     bull_line: Optional[float] = None
     wait_line: Optional[float] = None
@@ -208,6 +233,10 @@ class TrendIndicatorSignal(BaseModel):
     breakout: Optional[float] = None
     reversal: Optional[float] = None
     swl_above_sws: bool = False
+    kdj_golden_cross: bool = False
+    kdj_dead_cross: bool = False
+    kdj_overbought: bool = False
+    kdj_oversold: bool = False
     red_hold: bool = False
     cyan_watch: bool = False
     short_buy: bool = False
@@ -256,12 +285,14 @@ class TrendStockSignal(BaseModel):
     final_score: float
     signal: TrendIndicatorSignal
     reasons: List[str] = Field(default_factory=list)
+    explanation: SelectionExplanation = Field(default_factory=SelectionExplanation)
 
 
 class TrendScreenResult(BaseModel):
     total: int
     returned: int
     items: List[TrendStockSignal]
+    screen_style: str = "short_buy"
     notes: List[str] = Field(default_factory=list)
 
 
@@ -334,8 +365,6 @@ class StockObservation(BaseModel):
     financial_indicators: Optional[FinancialIndicatorSection] = None
     trend: Optional[TrendIndicatorResult] = None
     capital_evidence: Optional[CapitalEvidenceResult] = None
-    minute_period: str = "1"
-    minute_bars: List[MinuteBar] = Field(default_factory=list)
     order_book: Optional[OrderBookSnapshot] = None
     notes: List[str] = Field(default_factory=list)
 
@@ -413,11 +442,20 @@ class NewsImpactFinding(BaseModel):
     pending_checks: List[str] = Field(default_factory=list)
 
 
+class NewsSentimentGroups(BaseModel):
+    mode: str = "plain_news"
+    positive: List[NewsEvidence] = Field(default_factory=list)
+    negative: List[NewsEvidence] = Field(default_factory=list)
+    mixed: List[NewsEvidence] = Field(default_factory=list)
+    uncertain: List[NewsEvidence] = Field(default_factory=list)
+
+
 class NewsRagResult(BaseModel):
     scope_codes: List[str] = Field(default_factory=list)
     relation_count: int = 0
     message_count: int = 0
     findings: List[NewsImpactFinding] = Field(default_factory=list)
+    sentiment_groups: NewsSentimentGroups = Field(default_factory=NewsSentimentGroups)
     notes: List[str] = Field(default_factory=list)
 
 

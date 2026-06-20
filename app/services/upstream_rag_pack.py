@@ -9,8 +9,6 @@ import sqlite3
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from html import unescape
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import Sequence
 
@@ -19,6 +17,11 @@ import requests
 from app.providers.base import StockProvider
 from app.providers.tdx import TdxProvider
 from app.schemas import StockItem
+from app.services.text_utils import (
+    clean_text as _clean_text,
+    coalesce_row as _coalesce_row,
+    strip_html as _strip_html,
+)
 
 
 UPSTREAM_RAG_SCHEMA_VERSION = "upstream-rag-pack-v1"
@@ -1216,14 +1219,6 @@ def _code_digits(code: str) -> str:
     return "".join(ch for ch in raw if ch.isdigit())[:6]
 
 
-def _coalesce_row(row: dict, keys: Sequence[str]) -> str:
-    for key in keys:
-        value = row.get(key)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return ""
-
-
 def _safe_path_part(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value or "unknown")[:120]
 
@@ -1232,44 +1227,9 @@ def _safe_error(error: Exception) -> str:
     return re.sub(r"\s+", " ", str(error)).strip()[:180]
 
 
-def _clean_text(value: str) -> str:
-    return re.sub(r"\s+", " ", value or "").strip()
-
-
 def _host_from_url(url: str) -> str:
     match = re.match(r"https?://([^/]+)", url or "", flags=re.I)
     return match.group(1) if match else ""
-
-
-class _HtmlTextExtractor(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.parts: list[str] = []
-        self._skip_depth = 0
-
-    def handle_starttag(self, tag: str, attrs) -> None:
-        if tag.lower() in {"script", "style", "noscript"}:
-            self._skip_depth += 1
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag.lower() in {"script", "style", "noscript"} and self._skip_depth:
-            self._skip_depth -= 1
-
-    def handle_data(self, data: str) -> None:
-        if self._skip_depth:
-            return
-        text = data.strip()
-        if text:
-            self.parts.append(text)
-
-    def text(self) -> str:
-        return unescape(" ".join(self.parts)).strip()
-
-
-def _strip_html(value: str) -> str:
-    parser = _HtmlTextExtractor()
-    parser.feed(value or "")
-    return parser.text()
 
 
 def _html_title(value: str) -> str:

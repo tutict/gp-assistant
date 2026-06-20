@@ -1,8 +1,11 @@
 .venv*/
+.android-ndk-r27c
+.android-sdk/
 __pycache__/
 *.pyc
 .env
 .idea/
+.claude/
 .playwright-cli/
 data/
 build/

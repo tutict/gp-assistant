@@ -7,8 +7,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
+from fastapi.testclient import TestClient
 
 from mock_provider import MockProvider
+from app.api.routes import _provider_from_headers
+from app.main import app
 from app.schemas import (
     CapitalEvidenceItem,
     CapitalEvidenceResult,
@@ -20,7 +23,7 @@ from app.schemas import (
 )
 from app.services import capital_evidence, news_rag
 from app.services.agent import run_agent
-from app.services.observation import _default_dates, _default_minute_range, observe_stock
+from app.services.observation import _default_dates, observe_stock
 
 
 DISABLE_NETWORK_NEWS = {
@@ -35,13 +38,7 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         self.assertEqual(_default_dates(None, "20260614"), ("20260601", "20260614"))
         self.assertEqual(_default_dates(None, "20260615"), ("20260602", "20260615"))
 
-    def test_observation_default_minutes_cover_selected_trading_day(self):
-        self.assertEqual(
-            _default_minute_range(None, None, "20260616"),
-            ("2026-06-16 09:30:00", "2026-06-16 15:00:00"),
-        )
-
-    def test_observation_default_minute_limit_keeps_full_intraday_series(self):
+    def test_observation_exposes_kdj_from_daily_trend_series(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             os.environ,
             {
@@ -61,9 +58,50 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
                 ),
             )
 
-        self.assertGreaterEqual(len(result.minute_bars), 240)
-        self.assertLessEqual(result.minute_bars[0].datetime[-8:], "09:35:00")
-        self.assertIn("15:00", result.minute_bars[-1].datetime)
+        self.assertIsNotNone(result.trend)
+        self.assertIsNotNone(result.trend.signal.k)
+        self.assertIsNotNone(result.trend.signal.d)
+        self.assertIsNotNone(result.trend.signal.j)
+        self.assertGreaterEqual(len(result.trend.series), 2)
+        latest = result.trend.series[-1]
+        self.assertIsNotNone(latest.k)
+        self.assertIsNotNone(latest.d)
+        self.assertIsNotNone(latest.j)
+
+    def test_observe_api_accepts_legacy_minute_payload_and_returns_kdj(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {
+                "GP_CAPITAL_ENABLE_EXTERNAL": "false",
+                **DISABLE_NETWORK_NEWS,
+            },
+        ):
+            capital_evidence.CACHE_PATH = Path(tmp) / "capital.sqlite"
+            news_rag.CACHE_PATH = Path(tmp) / "news.sqlite"
+            app.dependency_overrides[_provider_from_headers] = lambda: MockProvider()
+            try:
+                response = TestClient(app).post(
+                    "/api/observe",
+                    json={
+                        "code": "300750.SZ",
+                        "start_date": "20260601",
+                        "end_date": "20260616",
+                        "series_limit": 20,
+                        "minute_period": "1",
+                        "minute_limit": 500,
+                        "include_order_book": False,
+                    },
+                )
+            finally:
+                app.dependency_overrides.pop(_provider_from_headers, None)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertNotIn("minute_bars", payload)
+        self.assertNotIn("minute_period", payload)
+        self.assertIsNotNone(payload["trend"]["signal"]["k"])
+        self.assertIsNotNone(payload["trend"]["signal"]["d"])
+        self.assertIsNotNone(payload["trend"]["signal"]["j"])
 
     def test_observation_passes_proxy_mode_to_capital_evidence(self):
         provider = MockProvider()
@@ -77,7 +115,6 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
                     start_date="20260601",
                     end_date="20260612",
                     series_limit=20,
-                    minute_limit=5,
                     include_order_book=False,
                 ),
             )
@@ -101,7 +138,6 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
                     start_date="20200101",
                     end_date="20200630",
                     series_limit=80,
-                    minute_limit=20,
                     include_order_book=False,
                 ),
             )
@@ -124,6 +160,7 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         self.assertIn("技术推断", result.capital_evidence.contributions)
         self.assertTrue(any(item.category == "technical_behavior" for item in result.capital_evidence.items))
         self.assertTrue(any(item.category == "external_status" for item in result.capital_evidence.items))
+        self.assertFalse(any(section.key == "external_status" for section in result.capital_evidence.sections))
 
     def test_observation_keeps_financial_and_capital_data_when_trend_fails(self):
         provider = MockProvider()
@@ -144,7 +181,6 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
                     start_date="20200101",
                     end_date="20200630",
                     series_limit=80,
-                    minute_limit=20,
                     include_order_book=False,
                 ),
             )
@@ -171,7 +207,6 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
                     start_date="20260601",
                     end_date="20260612",
                     series_limit=20,
-                    minute_limit=5,
                     include_order_book=False,
                 ),
             )
@@ -299,7 +334,11 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         provider = MockProvider()
         stock = provider.get_stock("300750.SZ")
         seen: list[tuple[str, float | None]] = []
-        fake_ak = SimpleNamespace()
+        fake_ak = SimpleNamespace(
+            stock_lhb_jgmmtj_em=lambda start_date, end_date: pd.DataFrame(),
+            stock_lhb_jgmx_sina=lambda: pd.DataFrame(),
+            stock_lhb_jgzz_sina=lambda symbol: pd.DataFrame(),
+        )
 
         def fake_call(fetcher, ak, stock_arg, start_date, end_date, *, proxy_mode=None, timeout_seconds=None):
             seen.append((fetcher.__name__, timeout_seconds))
@@ -312,9 +351,28 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
             capital_evidence._fetch_external_capital_items(stock, "20260603", "20260616")
 
         fund_budget = next(timeout for name, timeout in seen if name == "_fetch_ths_individual_fund_flow")
-        lhb_budget = next(timeout for name, timeout in seen if name == "_fetch_institution_lhb")
         self.assertEqual(fund_budget, 8.0)
-        self.assertEqual(lhb_budget, 12.0)
+        self.assertFalse(any(name == "_fetch_institution_lhb" for name, _timeout in seen))
+
+    def test_capital_evidence_waits_for_institution_lhb_by_default(self):
+        provider = MockProvider()
+        stock = provider.get_stock("300750.SZ")
+        calls = {"lhb": 0}
+        fake_ak = SimpleNamespace(
+            stock_lhb_jgmmtj_em=lambda start_date, end_date: self._fake_lhb_frame(calls),
+            stock_lhb_jgmx_sina=lambda: pd.DataFrame(),
+            stock_lhb_jgzz_sina=lambda symbol: pd.DataFrame(),
+        )
+
+        with patch.dict(os.environ, {"GP_CAPITAL_ENABLE_EXTERNAL": "true"}), patch.dict(
+            "sys.modules", {"akshare": fake_ak}
+        ), patch("app.services.capital_evidence._call_fetcher_with_timeout", return_value=None) as timed_call:
+            items = capital_evidence._fetch_external_capital_items(stock, "20260603", "20260616")
+
+        timed_fetchers = [call.args[0].__name__ for call in timed_call.call_args_list]
+        self.assertNotIn("_fetch_institution_lhb", timed_fetchers)
+        self.assertEqual(calls["lhb"], 1)
+        self.assertTrue(any(item.category == "institution_lhb" for item in items))
 
     def test_capital_evidence_falls_back_to_sina_lhb_when_eastmoney_misses(self):
         provider = MockProvider()

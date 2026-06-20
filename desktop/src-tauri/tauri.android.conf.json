@@ -1,6 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "build": {
+    "beforeDevCommand": "npm run prepare:android",
+    "beforeBuildCommand": "npm run prepare:android",
     "frontendDist": "../mobile-dist"
   },
   "app": {

@@ -24,6 +24,7 @@ from app.services.llm_support import (
 from app.services.runtime_config import env_bool, env_float, env_int, redact_error, safe_string_list
 from app.services.sqlite_json_cache import SQLiteJsonCache
 from app.services.stock_code import compact_date, market_prefix, normalize_stock_code, stock_digits
+from app.services.text_utils import format_amount
 
 
 CACHE_PATH = Path(os.getenv("GP_CAPITAL_CACHE", "data/cache/capital_evidence.sqlite"))
@@ -226,20 +227,24 @@ def _fetch_external_capital_items(
         ]
 
     fetchers = (
-        ("fund_flow", _fetch_ths_individual_fund_flow, env_float("GP_CAPITAL_FUND_FLOW_TIMEOUT", 8.0, minimum=2.0, maximum=45.0)),
-        ("institution_lhb", _fetch_institution_lhb, env_float("GP_CAPITAL_LHB_TIMEOUT", 12.0, minimum=2.0, maximum=60.0)),
+        ("fund_flow", _fetch_ths_individual_fund_flow, env_float("GP_CAPITAL_FUND_FLOW_TIMEOUT", 8.0, minimum=2.0, maximum=45.0), True),
+        ("institution_lhb", _fetch_institution_lhb, env_float("GP_CAPITAL_LHB_TIMEOUT", 12.0, minimum=2.0, maximum=60.0), env_bool("GP_CAPITAL_LHB_FAST_TIMEOUT", False)),
     )
-    for category, fetcher, timeout_seconds in fetchers:
+    for category, fetcher, timeout_seconds, use_timeout in fetchers:
         try:
-            item = _call_fetcher_with_timeout(
-                fetcher,
-                ak,
-                stock,
-                start_date,
-                end_date,
-                proxy_mode=proxy_mode,
-                timeout_seconds=timeout_seconds,
-            )
+            if use_timeout:
+                item = _call_fetcher_with_timeout(
+                    fetcher,
+                    ak,
+                    stock,
+                    start_date,
+                    end_date,
+                    proxy_mode=proxy_mode,
+                    timeout_seconds=timeout_seconds,
+                )
+            else:
+                with proxy_environment(proxy_mode):
+                    item = fetcher(ak, stock, start_date, end_date)
         except Exception as exc:
             notes.append(f"{_category_label(category)}不可用：{_safe_external_error(exc)}")
             if category == "institution_lhb":
@@ -882,7 +887,6 @@ def _ensure_sections(result: CapitalEvidenceResult) -> CapitalEvidenceResult:
         ),
         _build_section(result, "message_sentiment", "消息情绪", "消息情绪", {"news_rag", "community_sentiment"}),
         _build_section(result, "technical_behavior", "技术推断", "技术推断", {"technical_behavior"}),
-        _build_section(result, "external_status", "接口状态", None, {"external_status"}),
     ]
     return result
 
@@ -1208,20 +1212,11 @@ def _format_metric(value: Any) -> str:
     number = _numeric_value(value)
     if number is not None:
         return _format_amount(number)
-        if abs(number) >= 100_000_000:
-            return f"{number / 100_000_000:.2f} 亿"
-        if abs(number) >= 10_000:
-            return f"{number / 10_000:.2f} 万"
-        return f"{number:.2f}"
     return str(value).strip()
 
 
 def _format_amount(number: float) -> str:
-    if abs(number) >= 100_000_000:
-        return f"{number / 100_000_000:.2f} \u4ebf"
-    if abs(number) >= 10_000:
-        return f"{number / 10_000:.2f} \u4e07"
-    return f"{number:.2f}"
+    return format_amount(number, decimals=2)
 
 
 def _numeric_value(value: Any) -> float | None:

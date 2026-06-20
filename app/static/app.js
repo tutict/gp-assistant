@@ -29,8 +29,6 @@ const panels = {
 const themeToggle = $("#themeToggle");
 const themeText = $("#themeText");
 const THEME_KEY = "gp-assistant-theme";
-const DATA_SOURCE_KEY = "gp-assistant-data-source";
-const DATA_REFRESH_KEY = "gp-assistant-source-refresh";
 const DATA_PROXY_KEY = "gp-assistant-proxy-mode";
 const AUTO_REFRESH_CHECK_KEY = "gp-assistant-auto-refresh-last-check";
 const AUTO_REFRESH_CHECK_INTERVAL_MS = 30 * 60 * 1000;
@@ -78,7 +76,7 @@ const DEFAULT_SCREENING_RULES = {
 };
 let screeningRules = normalizeScreeningRules(DEFAULT_SCREENING_RULES);
 const screeningRulesPromise = loadScreeningRules();
-const STOCK_SEARCH_LIMIT = 3;
+const STOCK_SEARCH_LIMIT = 5;
 const DEFAULT_OBSERVE_TRADING_DAYS = 10;
 const DEFAULT_DATA_SOURCE = "tdx";
 const MOBILE_TENCENT_MAX_CANDIDATES = 6000;
@@ -90,9 +88,13 @@ let mobileMarketDataPromise = null;
 let mobileMarketDataSummary = null;
 let mobileMarketDataMeta = null;
 let autoRefreshInFlight = false;
+let observeRequestId = 0;
+let observeTaskId = 0;
+let activeObserveController = null;
+const OBSERVE_REQUEST_TIMEOUT_MS = 180 * 1000;
+const panelProgressTimers = new WeakMap();
+const buttonTaskStates = new WeakMap();
 const dataSource = {
-  select: $("#dataSourceSelect"),
-  refresh: $("#refreshSource"),
   proxy: $("#proxyModeSelect"),
   status: $("#sourceStatus"),
   universe: $("#universeCount"),
@@ -120,9 +122,11 @@ const workbench = {
   root: $(".workbench"),
   navLinks: document.querySelectorAll("[data-workbench-nav]"),
   viewLinks: document.querySelectorAll("[data-view-link]"),
+  contextBar: $(".research-context-bar"),
   criteriaOpen: $("#openCriteriaBtn"),
   criteriaClose: $("#closeCriteriaBtn"),
   criteriaOverlay: $("#criteriaOverlay"),
+  criteriaPanel: $("#sectionFilters"),
   criteriaSummary: $("#criteriaSummary"),
 };
 const watchlistUi = {
@@ -187,7 +191,7 @@ const TAURI_MOBILE_POST_ROUTES = {
     invokeCoreWithMobileData(invoke, "core_screen_with_data", "criteria", payload),
   "/api/observe": async ({ invoke, payload }) => {
     const params = new URLSearchParams();
-    for (const key of ["start_date", "end_date", "minute_period", "series_limit", "minute_limit"]) {
+    for (const key of ["start_date", "end_date", "series_limit"]) {
       if (payload?.[key] !== undefined && payload?.[key] !== null && payload?.[key] !== "") {
         params.set(key, String(payload[key]));
       }
@@ -534,16 +538,7 @@ function bindActions() {
       agentUi.input.focus();
     });
   });
-  buttons.observe?.addEventListener("click", () => runTask(buttons.observe, panels.observe, () => runObserve()));
-  dataSource.select?.addEventListener("change", () => {
-    localStorage.setItem(DATA_SOURCE_KEY, getSelectedDataSource());
-    updateSourceStatus();
-    loadDataStatus();
-  });
-  dataSource.refresh?.addEventListener("change", () => {
-    localStorage.setItem(DATA_REFRESH_KEY, dataSource.refresh.checked ? "true" : "false");
-    updateSourceStatus();
-  });
+  buttons.observe?.addEventListener("click", () => runObserveTask());
   dataSource.proxy?.addEventListener("change", () => {
     localStorage.setItem(DATA_PROXY_KEY, getSelectedProxyMode());
     updateSourceStatus();
@@ -575,7 +570,7 @@ function bindActions() {
     const action = target?.closest("[data-observe-code]");
     if (!action) return;
     event.preventDefault();
-    runObserve(action.dataset.observeCode);
+    runObserveTask(action.dataset.observeCode);
   });
   document.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : event.target?.parentElement;
@@ -691,6 +686,7 @@ function activateWorkbenchView(view = "screen", options = {}) {
   const href = options.href || hrefForView(normalized);
   workbench.root?.setAttribute("data-active-view", normalized);
   document.body.dataset.activeView = normalized;
+  syncResearchContextBar(normalized);
   setActiveNavLink(normalized);
   if (options.updateHash && window.location.hash !== href) {
     history.replaceState(null, "", href);
@@ -731,20 +727,33 @@ function setActiveNavLink(activeView) {
 
 function setCriteriaPanelOpen(isOpen) {
   document.body.classList.toggle("criteria-open", Boolean(isOpen));
+  if (workbench.criteriaPanel) {
+    workbench.criteriaPanel.hidden = !isOpen;
+    workbench.criteriaPanel.toggleAttribute("inert", !isOpen);
+    workbench.criteriaPanel.setAttribute("aria-hidden", String(!isOpen));
+  }
   if (workbench.criteriaOverlay) {
     workbench.criteriaOverlay.hidden = !isOpen;
   }
 }
 
+function syncResearchContextBar(activeView) {
+  if (!workbench.contextBar) return;
+  const visible = activeView === "screen";
+  workbench.contextBar.hidden = !visible;
+  workbench.contextBar.setAttribute("aria-hidden", String(!visible));
+  window.dispatchEvent(new Event("resize"));
+}
+
 function initStickyOffsets() {
   const shell = $(".app-shell");
   const header = $(".app-header");
-  const contextBar = $(".research-context-bar");
+  const contextBar = workbench.contextBar;
   if (!shell || !header) return;
 
   const update = () => {
     const headerHeight = Math.ceil(header.getBoundingClientRect().height);
-    const contextHeight = contextBar ? Math.ceil(contextBar.getBoundingClientRect().height) : 0;
+    const contextHeight = contextBar && !contextBar.hidden ? Math.ceil(contextBar.getBoundingClientRect().height) : 0;
     shell.style.setProperty("--app-header-height", `${headerHeight}px`);
     shell.style.setProperty("--research-context-height", `${contextHeight}px`);
   };
@@ -759,14 +768,29 @@ function initStickyOffsets() {
 }
 
 async function runTask(button, panel, task) {
-  const original = button.textContent;
+  if (!button) {
+    try {
+      await task();
+    } finally {
+      updateCriteriaSummary();
+    }
+    return;
+  }
+
+  const state = buttonTaskStates.get(button) || { original: button.textContent, active: 0 };
+  state.active += 1;
+  buttonTaskStates.set(button, state);
   button.disabled = true;
   button.textContent = "运行中";
   try {
     await task();
   } finally {
-    button.disabled = false;
-    button.textContent = original;
+    state.active -= 1;
+    if (state.active <= 0) {
+      button.disabled = false;
+      button.textContent = state.original;
+      buttonTaskStates.delete(button);
+    }
     updateCriteriaSummary();
   }
 }
@@ -790,7 +814,7 @@ async function runScreen() {
     const data = await postJson("/api/screen", payload, panels.screen);
     if (data) renderScreenResult(panels.screen, data);
   } finally {
-    if (timer) window.clearInterval(timer);
+    stopPanelProgress(panels.screen, timer);
   }
 }
 
@@ -815,25 +839,34 @@ async function runSectorScreen() {
     const data = await postJson("/api/sector-screen", payload, panels.screen);
     if (data) renderSectorScreenResult(panels.screen, data);
   } finally {
-    if (timer) window.clearInterval(timer);
+    stopPanelProgress(panels.screen, timer);
   }
 }
 
 async function runGraph() {
-  setLoading(panels.graph, "关系传播中");
+  const timer = startPanelProgress(panels.graph, "图谱选股中", [
+    [18, "构建基础候选池"],
+    [42, "解析种子/主题中心"],
+    [68, "计算关系传播分"],
+    [90, "生成解释信息"],
+  ]);
   const payload = {
     criteria: buildCriteria({ limit: 100 }),
-    seed_codes: parseCodes($("#seedCodes").value),
+    seed_codes: await resolveStockCodeListInput("seedCodes", panels.graph),
     relation_depth: clampInt($("#relationDepth").value, 1, 3, 1),
     relation_weight: clampFloat($("#relationWeight").value, 0, 1, 0.4),
     limit: Math.min(readInt("resultLimit", DEFAULT_RESULT_LIMIT), 100),
   };
-  const data = await postJson("/api/graph-screen", payload, panels.graph);
-  if (data) renderGraphResult(panels.graph, data);
+  try {
+    const data = await postJson("/api/graph-screen", payload, panels.graph);
+    if (data) renderGraphResult(panels.graph, data);
+  } finally {
+    stopPanelProgress(panels.graph, timer);
+  }
 }
 
 async function runTrendAnalysis() {
-  const code = readStockCode("trendCode");
+  const code = await resolveStockCodeInput("trendCode", panels.trend);
   if (!code) {
     setError(panels.trend, "请输入股票代码", "例如：300750.SZ");
     return;
@@ -851,15 +884,24 @@ async function runTrendAnalysis() {
 }
 
 async function runTrendScreen() {
-  setLoading(panels.trend, "趋势选股中");
+  const timer = startPanelProgress(panels.trend, "趋势择时选股中", [
+    [18, "构建基础候选池"],
+    [42, "计算日线指标"],
+    [68, "排序短线买点"],
+    [90, "生成解释信息"],
+  ]);
   const payload = {
     criteria: buildCriteria({ limit: 100 }),
     start_date: readDateParam("trendStart", "20200101"),
     end_date: readDateParam("trendEnd", currentSystemDateCompact()),
     limit: Math.min(readInt("resultLimit", DEFAULT_RESULT_LIMIT), 100),
   };
-  const data = await postJson("/api/trend-screen", payload, panels.trend);
-  if (data) renderTrendScreenResult(panels.trend, data);
+  try {
+    const data = await postJson("/api/trend-screen", payload, panels.trend);
+    if (data) renderTrendScreenResult(panels.trend, data);
+  } finally {
+    stopPanelProgress(panels.trend, timer);
+  }
 }
 
 async function runBacktest() {
@@ -913,7 +955,7 @@ async function handlePanelEmptyAction(action, trigger) {
 }
 
 async function runNewsRag() {
-  const code = readStockCode("newsCode");
+  const code = await resolveStockCodeInput("newsCode", panels.newsRag);
   if (!code) {
     setError(panels.newsRag, "请输入目标股票代码", "上下游消息分析需要明确的单只目标股票，例如：300750.SZ。");
     return;
@@ -922,7 +964,7 @@ async function runNewsRag() {
   const mobileRuntime = isMobileTauriRuntime();
   const timer = startPanelProgress(
     panels.newsRag,
-    mobileRuntime ? "手机端 RAG 分析中" : "上下游消息分析中",
+    mobileRuntime ? "手机端消息分析中" : "拉取利好/利空消息中",
     mobileRuntime
       ? [
           [18, "读取本机 RAG 包"],
@@ -933,8 +975,8 @@ async function runNewsRag() {
       : [
           [18, "读取已有关系图"],
           [38, "更新本地消息缓存"],
-          [62, "检索证据"],
-          [82, "生成影响判断"],
+          [62, "检索消息证据"],
+          [82, "整理利好/利空"],
         ],
   );
   const payload = {
@@ -953,13 +995,13 @@ async function runNewsRag() {
       renderNewsRagResult(panels.newsRag, data);
     }
   } finally {
-    if (timer) window.clearInterval(timer);
+    stopPanelProgress(panels.newsRag, timer);
   }
 }
 
 async function runRagPackBuildFromNewsCache() {
   setLoading(panels.newsRag, "构建离线 RAG pack");
-  const code = readStockCode("newsCode");
+  const code = await resolveStockCodeInput("newsCode", panels.newsRag);
   if (code) $("#newsCode").value = code;
   const payload = {
     pack_version: `local-news-${new Date().toISOString().slice(0, 10)}`,
@@ -976,7 +1018,7 @@ async function runRagPackBuildFromNewsCache() {
 }
 
 async function runRagPackQuery() {
-  const code = readStockCode("newsCode");
+  const code = await resolveStockCodeInput("newsCode", panels.newsRag);
   if (code) $("#newsCode").value = code;
   const query =
     $("#ragPackQuery")?.value.trim() ||
@@ -1001,9 +1043,9 @@ async function runUpstreamRagBuildAndTransfer() {
     [76, "抽取关系和证据"],
     [90, "生成 manifest 和二维码"],
   ]);
-  const code = readStockCode("newsCode");
+  const code = await resolveStockCodeInput("newsCode", panels.newsRag);
   if (!code) {
-    if (timer) window.clearInterval(timer);
+    stopPanelProgress(panels.newsRag, timer);
     setError(panels.newsRag, "请输入目标股票代码", "构建手机同步包需要明确的单只股票，例如：300750.SZ。");
     return;
   }
@@ -1023,7 +1065,7 @@ async function runUpstreamRagBuildAndTransfer() {
       : null;
     renderUpstreamRagBuildResult(panels.newsRag, build, transfer);
   } finally {
-    if (timer) window.clearInterval(timer);
+    stopPanelProgress(panels.newsRag, timer);
   }
 }
 
@@ -1508,9 +1550,39 @@ function scrollAgentThreadToBottom() {
   });
 }
 
-async function runObserve(codeOverride) {
-  const code = normalizeStockCode(codeOverride || $("#observeCode").value);
+async function runObserveTask(codeOverride) {
+  const taskId = ++observeTaskId;
+  if (activeObserveController) activeObserveController.abort(createRequestAbortError("观察请求已切换", "AbortError"));
+  const button = buttons.observe;
+  if (button && !button.dataset.originalText) button.dataset.originalText = button.textContent;
+  if (button) {
+    button.disabled = true;
+    button.textContent = "运行中";
+  }
+  try {
+    await runObserve(codeOverride, taskId);
+  } finally {
+    if (taskId === observeTaskId && button) {
+      button.disabled = false;
+      button.textContent = button.dataset.originalText || "观察";
+      delete button.dataset.originalText;
+    }
+    updateCriteriaSummary();
+  }
+}
+
+async function runObserve(codeOverride, taskId = observeTaskId) {
+  if (codeOverride) {
+    const overrideCode = normalizeStockCode(codeOverride);
+    if (overrideCode) $("#observeCode").value = overrideCode;
+  }
+  const code = codeOverride ? normalizeStockCode(codeOverride) : await resolveStockCodeInput("observeCode", panels.observe);
   if (!code) {
+    observeRequestId += 1;
+    if (activeObserveController) {
+      activeObserveController.abort(createRequestAbortError("观察请求已取消", "AbortError"));
+      activeObserveController = null;
+    }
     setError(panels.observe, "请输入股票代码", "例如：300750.SZ", {
       label: "回到筛选页选一只观察",
       action: "go-observe-screen",
@@ -1519,12 +1591,19 @@ async function runObserve(codeOverride) {
   }
   $("#observeCode").value = code;
   activateWorkbenchView("observe", { href: "#sectionObserve", updateHash: true });
-  setLoading(panels.observe, "观察行情和技术面");
+  const requestId = ++observeRequestId;
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  activeObserveController = controller;
+  const timer = startPanelProgress(panels.observe, "观察分析中", [
+    [14, "校验股票代码"],
+    [32, "读取日线行情"],
+    [52, "计算 KDJ 与趋势推断"],
+    [74, "拉取资金与机构席位信息"],
+    [94, "整理统一观察结果"],
+  ]);
   const payload = {
     code,
-    minute_period: $("#observeMinutePeriod").value || "1",
     series_limit: 160,
-    minute_limit: 500,
     include_order_book: false,
     include_chip_distribution: true,
   };
@@ -1532,23 +1611,23 @@ async function runObserve(codeOverride) {
   payload.start_date = readDateParam("observeStart", defaultObserveStartCompact(observeEndInput));
   payload.end_date = readDateParam("observeEnd", currentSystemDateCompact());
   const llm = buildLlmConfig();
+  const mobileRuntime = isMobileTauriRuntime();
   if (llm && !mobileRuntime) payload.llm = llm;
-  const data = await postJson("/api/observe", payload, panels.observe);
-  if (data) renderObserveResult(panels.observe, data);
+  try {
+    const data = await requestJson("POST", "/api/observe", payload, dataSourceHeaders(), {
+      signal: controller?.signal,
+      timeoutMs: OBSERVE_REQUEST_TIMEOUT_MS,
+    });
+    if (requestId === observeRequestId && data) renderObserveResult(panels.observe, data);
+  } catch (err) {
+    if (err.name !== "AbortError" && requestId === observeRequestId) setError(panels.observe, "请求异常", err.message);
+  } finally {
+    if (activeObserveController === controller) activeObserveController = null;
+    if (requestId === observeRequestId) stopPanelProgress(panels.observe, timer);
+  }
 }
 
 function initDataSource() {
-  if (!dataSource.select) return;
-  const savedSource = normalizeDataSource(localStorage.getItem(DATA_SOURCE_KEY));
-  if (savedSource && [...dataSource.select.options].some((option) => option.value === savedSource)) {
-    dataSource.select.value = savedSource;
-  } else {
-    dataSource.select.value = DEFAULT_DATA_SOURCE;
-    localStorage.setItem(DATA_SOURCE_KEY, DEFAULT_DATA_SOURCE);
-  }
-  if (dataSource.refresh) {
-    dataSource.refresh.checked = localStorage.getItem(DATA_REFRESH_KEY) === "true";
-  }
   const savedProxy = localStorage.getItem(DATA_PROXY_KEY);
   if (dataSource.proxy && savedProxy && [...dataSource.proxy.options].some((option) => option.value === savedProxy)) {
     dataSource.proxy.value = savedProxy;
@@ -1872,7 +1951,7 @@ function closeSourceSelects() {
 }
 
 function getSelectedDataSource() {
-  return normalizeDataSource(dataSource.select?.value);
+  return DEFAULT_DATA_SOURCE;
 }
 
 function normalizeDataSource(source) {
@@ -1883,7 +1962,6 @@ function normalizeDataSource(source) {
 
 function dataSourceHeaders() {
   const headers = { "X-Stock-Provider": getSelectedDataSource() };
-  if (dataSource.refresh?.checked) headers["X-Stock-Refresh"] = "true";
   headers["X-Stock-Proxy"] = getSelectedProxyMode();
   return headers;
 }
@@ -1903,10 +1981,8 @@ function updateSourceStatus() {
   if (!dataSource.status) return;
   const source = getSelectedDataSource();
   const label = sourceLabel(source);
-  const suffix = dataSource.refresh?.checked ? " 刷新" : "";
   const proxySuffix = getSelectedProxyMode() === "none" ? " 直连" : "";
-  dataSource.status.innerHTML = `<i aria-hidden="true"></i>${escapeHtml(label + suffix + proxySuffix)}`;
-  if (dataSource.select) syncSourceSelect(dataSource.select);
+  dataSource.status.innerHTML = `<i aria-hidden="true"></i>${escapeHtml(label + proxySuffix)}`;
   if (dataSource.proxy) syncSourceSelect(dataSource.proxy);
 }
 
@@ -2059,6 +2135,8 @@ function setRefreshProgress(value, label) {
 
 function startPanelProgress(node, title, stages) {
   if (!node) return null;
+  stopPanelProgress(node);
+  const safeStages = Array.isArray(stages) && stages.length ? stages : [[92, "整理结果"]];
   let index = 0;
   node.className = `${basePanelClass(node)} loading progress-loading`;
   node.innerHTML = `
@@ -2071,8 +2149,8 @@ function startPanelProgress(node, title, stages) {
       <p data-progress-label>准备分析</p>
     </div>
   `;
-  return window.setInterval(() => {
-    const [value, label] = stages[Math.min(index, stages.length - 1)];
+  const timer = window.setInterval(() => {
+    const [value, label] = safeStages[Math.min(index, safeStages.length - 1)];
     const percent = Math.min(Math.max(Number(value) || 0, 0), 100);
     const valueNode = node.querySelector("[data-progress-value]");
     const barNode = node.querySelector("[data-progress-bar]");
@@ -2082,6 +2160,20 @@ function startPanelProgress(node, title, stages) {
     if (labelNode) labelNode.textContent = label;
     index += 1;
   }, 700);
+  panelProgressTimers.set(node, timer);
+  return timer;
+}
+
+function stopPanelProgress(node, timer) {
+  if (!node) {
+    if (timer) window.clearInterval(timer);
+    return;
+  }
+  const activeTimer = panelProgressTimers.get(node);
+  if (timer && activeTimer && activeTimer !== timer) return;
+  const timerToStop = timer || activeTimer;
+  if (timerToStop) window.clearInterval(timerToStop);
+  if (!timer || activeTimer === timer) panelProgressTimers.delete(node);
 }
 
 function initLlmSettings() {
@@ -2311,7 +2403,7 @@ function initMarketConfirmers() {
     if (!input || !panel) return;
 
     input.addEventListener("input", () => {
-      input.value = sanitizeStockCodeInput(input.value);
+      input.value = sanitizeStockLookupInput(input.value);
       updateMarketConfirm(input, panel);
     });
     input.addEventListener("focus", () => updateMarketConfirm(input, panel));
@@ -2339,13 +2431,15 @@ function initMarketConfirmers() {
 }
 
 function initStockSuggesters() {
-  const inputs = [...document.querySelectorAll("input[data-code-confirm]")];
+  const inputs = [...document.querySelectorAll("input[data-code-confirm], input[data-stock-list-suggest]")];
   if (!inputs.length) return;
 
   inputs.forEach((input) => {
     const field = input.closest(".market-field") || input.parentElement;
     if (!field) return;
 
+    const isListInput = input.hasAttribute("data-stock-list-suggest");
+    field.classList.add("stock-suggest-field");
     const panel = document.createElement("div");
     panel.className = "stock-suggest";
     panel.hidden = true;
@@ -2366,7 +2460,7 @@ function initStockSuggesters() {
 
     const choose = (stock) => {
       if (!stock?.code) return;
-      input.value = stock.code;
+      input.value = isListInput ? appendStockCodeToken(input.value, stock.code) : stock.code;
       hide();
       input.dispatchEvent(new Event("change", { bubbles: true }));
       input.focus();
@@ -2413,7 +2507,7 @@ function initStockSuggesters() {
     };
 
     const search = async () => {
-      const query = input.value.trim();
+      const query = isListInput ? lastStockLookupToken(input.value) : input.value.trim();
       if (!query) {
         hide();
         return;
@@ -2458,6 +2552,28 @@ function initStockSuggesters() {
     input.addEventListener("blur", () => window.setTimeout(hide, 120));
     panel.addEventListener("mousedown", (event) => event.preventDefault());
   });
+}
+
+
+function lastStockLookupToken(value) {
+  const parts = String(value || "").split(/[,，;；\s]+/).map((item) => sanitizeStockLookupInput(item));
+  return parts.filter(Boolean).pop() || "";
+}
+
+function appendStockCodeToken(value, code) {
+  const normalized = normalizeStockCode(code);
+  if (!normalized) return String(value || "");
+  const parts = String(value || "").split(/[,，;；\s]+/).map((item) => sanitizeStockLookupInput(item)).filter(Boolean);
+  if (parts.length) parts.pop();
+  const codes = [];
+  const seen = new Set();
+  for (const part of [...parts, normalized]) {
+    const parsed = normalizeStockCode(part) || part;
+    if (seen.has(parsed)) continue;
+    seen.add(parsed);
+    codes.push(parsed);
+  }
+  return codes.join(", ");
 }
 
 function initDateInputs() {
@@ -2624,6 +2740,60 @@ function readStockCode(id) {
   return normalizeStockCode($(`#${id}`)?.value);
 }
 
+async function resolveStockCodeInput(id, resultNode) {
+  const input = $(`#${id}`);
+  const raw = input?.value || "";
+  const direct = normalizeStockCode(raw);
+  if (direct) return direct;
+
+  const query = sanitizeStockLookupInput(raw);
+  if (!query) return "";
+
+  const stock = await findStockByLookup(query, resultNode);
+  if (!stock?.code) return "";
+  const code = normalizeStockCode(stock.code);
+  if (code && input) {
+    input.value = code;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  return code;
+}
+
+async function findStockByLookup(query, resultNode) {
+  const params = new URLSearchParams({ q: query, limit: "1" });
+  try {
+    const items = await requestJson("GET", `/api/stock-search?${params}`, undefined, stockSearchHeaders());
+    return Array.isArray(items) ? items[0] : null;
+  } catch (err) {
+    if (resultNode) setError(resultNode, "股票搜索不可用", err.message);
+    return null;
+  }
+}
+
+async function resolveStockCodeListInput(id, resultNode) {
+  const input = $(`#${id}`);
+  const raw = input?.value || "";
+  const parts = raw
+    .split(/[,，;；\s]+/)
+    .map((item) => sanitizeStockLookupInput(item))
+    .filter(Boolean);
+
+  const codes = [];
+  const seen = new Set();
+  for (const part of parts) {
+    let code = normalizeStockCode(part);
+    if (!code) {
+      const stock = await findStockByLookup(part, resultNode);
+      code = normalizeStockCode(stock?.code || "");
+    }
+    if (code && !seen.has(code)) {
+      seen.add(code);
+      codes.push(code);
+    }
+  }
+  if (input && codes.length) input.value = codes.join(", ");
+  return codes;
+}
 function normalizeStockCode(value, market) {
   const raw = sanitizeStockCodeInput(value);
   if (!raw) return "";
@@ -2644,6 +2814,13 @@ function sanitizeStockCodeInput(value) {
     .trim()
     .toUpperCase()
     .replace(/[^\dA-Z.]/g, "");
+}
+
+function sanitizeStockLookupInput(value) {
+  return String(value || "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 function stockCodeDigits(value) {
@@ -2796,22 +2973,83 @@ async function getJson(url, resultNode) {
   }
 }
 
-async function requestJson(method, url, payload, headers = dataSourceHeaders()) {
-  const tauriResult = await requestTauriJson(method, url, payload);
-  if (tauriResult.handled) return tauriResult.data;
+async function requestJson(method, url, payload, headers = dataSourceHeaders(), options = {}) {
+  const timeoutSignal = createTimeoutSignal(options.timeoutMs);
+  const signal = combineAbortSignals(options.signal, timeoutSignal.signal);
+  try {
+    const tauriResult = await withAbortSignal(requestTauriJson(method, url, payload), signal);
+    if (tauriResult.handled) return tauriResult.data;
 
-  const request = {
-    method,
-    headers: method === "POST" ? { "Content-Type": "application/json", ...headers } : headers,
-  };
-  if (payload !== undefined) request.body = JSON.stringify(payload);
+    const request = {
+      method,
+      headers: method === "POST" ? { "Content-Type": "application/json", ...headers } : headers,
+    };
+    if (signal) request.signal = signal;
+    if (payload !== undefined) request.body = JSON.stringify(payload);
 
-  const resp = await fetch(url, request);
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(text || `HTTP ${resp.status}`);
+    const resp = await fetch(url, request);
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(text || `HTTP ${resp.status}`);
+    }
+    return await resp.json();
+  } finally {
+    timeoutSignal.cancel();
   }
-  return await resp.json();
+}
+
+function withAbortSignal(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(abortReason(signal));
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      signal.addEventListener("abort", () => reject(abortReason(signal)), { once: true });
+    }),
+  ]);
+}
+
+function createTimeoutSignal(timeoutMs) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || typeof AbortController === "undefined") {
+    return { signal: null, cancel: () => {} };
+  }
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => {
+    controller.abort(createRequestAbortError(`请求超过 ${Math.round(timeoutMs / 1000)} 秒未返回`, "TimeoutError"));
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    cancel: () => window.clearTimeout(timer),
+  };
+}
+
+function combineAbortSignals(...signals) {
+  const activeSignals = signals.filter(Boolean);
+  if (!activeSignals.length || typeof AbortController === "undefined") return activeSignals[0] || null;
+  if (activeSignals.length === 1) return activeSignals[0];
+  const controller = new AbortController();
+  const abort = (event) => {
+    if (!controller.signal.aborted) controller.abort(abortReason(event.target));
+  };
+  activeSignals.forEach((signal) => {
+    if (signal.aborted) abort({ target: signal });
+    else signal.addEventListener("abort", abort, { once: true });
+  });
+  return controller.signal;
+}
+
+function abortReason(signal) {
+  return signal?.reason || createRequestAbortError("请求已取消", "AbortError");
+}
+
+function createRequestAbortError(message, name = "AbortError") {
+  try {
+    return new DOMException(message, name);
+  } catch (_error) {
+    const error = new Error(message);
+    error.name = name;
+    return error;
+  }
 }
 
 async function requestTauriJson(method, url, payload) {
@@ -3040,16 +3278,11 @@ async function observeTauriStock(invoke, rawCode, params) {
     notes.push("当前移动数据包未内置历史 K 线，已展示基础行情和估值快照。");
   }
 
-  const minutePeriod = ["1", "5", "15", "30", "60"].includes(params.get("minute_period"))
-    ? params.get("minute_period")
-    : "1";
   return {
     source: "tdx",
     stock,
     financial_indicators: buildMobileFinancialIndicators(stock),
     trend,
-    minute_period: minutePeriod,
-    minute_bars: [],
     order_book: null,
     notes,
   };
@@ -3170,8 +3403,8 @@ function shouldUsePreviousCloseForMobileRefresh(now = new Date()) {
 }
 
 async function refreshMobileMarketData(invoke, options = {}) {
-  let seed = Object.prototype.hasOwnProperty.call(options, "seed") ? options.seed : null;
-  if (!Object.prototype.hasOwnProperty.call(options, "seed")) {
+  let seed = Object.prototype.hasOwnProperty.call(options, "种子股") ? options.seed : null;
+  if (!Object.prototype.hasOwnProperty.call(options, "种子股")) {
     try {
       seed = await loadCachedMobileMarketData(invoke);
     } catch {
@@ -3394,16 +3627,18 @@ function renderSectorGroups(groups) {
 
 function renderGraphResult(node, data) {
   const items = data.items || [];
+  const center = data.center_context || {};
   renderResult(node, {
     summary: [
       ["返回", data.returned ?? items.length],
       ["关系边", data.relation_count ?? 0],
+      ["中心", center.mode === "theme_center" ? center.label || "主题" : "种子股"],
       ["最高分", items[0] ? formatNumber(items[0].final_score) : "-"],
     ],
     body: [
       items.length
         ? renderStockList(items.map(graphItemToView))
-        : renderEmpty("没有可传播的关系信号"),
+        : renderEmpty("当前条件下没有匹配的关系信号"),
       data.notes?.length ? renderNotes(data.notes) : "",
     ].join(""),
     raw: data,
@@ -3428,18 +3663,25 @@ function renderTrendAnalysis(node, data) {
   });
 }
 
+function trendScreenStyleLabel(value) {
+  const labels = {
+    short_buy: "短线买点",
+  };
+  return labels[value] || value || "短线买点";
+}
 function renderTrendScreenResult(node, data) {
   const items = data.items || [];
   renderResult(node, {
     summary: [
       ["返回", data.returned ?? items.length],
       ["候选", data.total ?? 0],
+      ["口径", trendScreenStyleLabel(data.screen_style)],
       ["最高分", items[0] ? formatNumber(items[0].final_score) : "-"],
     ],
     body: [
       items.length
         ? renderStockList(items.map(trendItemToView))
-        : renderEmpty("没有趋势信号匹配当前条件"),
+        : renderEmpty("当前条件下没有匹配的趋势买点"),
       data.notes?.length ? renderNotes(data.notes) : "",
     ].join(""),
     raw: data,
@@ -3538,24 +3780,67 @@ function curveReturn(curve) {
 }
 
 function renderNewsRagResult(node, data) {
+  const groups = normalizeNewsSentimentGroups(data.sentiment_groups);
+  const hasSentimentGroups = Boolean(data.sentiment_groups);
   renderResult(node, {
     summary: [
       ["范围", (data.scope_codes || []).length],
       ["关系边", data.relation_count ?? 0],
       ["消息", data.message_count ?? 0],
-      ["判断", (data.findings || []).length],
+      ["模式", hasSentimentGroups ? newsAnalysisModeLabel(groups.mode) : "影响判断"],
     ],
-    body: renderNewsRagBody(data),
+    body: renderNewsRagBody(data, groups),
     raw: data,
   });
 }
 
-function renderNewsRagBody(data) {
+function renderNewsRagBody(data, groups = normalizeNewsSentimentGroups(data.sentiment_groups)) {
   const findings = data.findings || [];
+  const hasPlainNewsGroups = Boolean(data.sentiment_groups) && groups.mode === "plain_news";
+  const body = hasPlainNewsGroups
+    ? renderPlainNewsGroups(groups)
+    : (findings.length ? renderNewsFindings(findings) : renderEmpty("没有命中的上下游消息"));
   return [
-    findings.length ? renderNewsFindings(findings) : renderEmpty("没有命中的上下游消息"),
+    body,
     data.notes?.length ? renderNotes(data.notes) : "",
   ].join("");
+}
+
+function normalizeNewsSentimentGroups(groups) {
+  const normalized = groups || {};
+  return {
+    mode: normalized.mode === "llm_analysis" ? "llm_analysis" : "plain_news",
+    positive: Array.isArray(normalized.positive) ? normalized.positive : [],
+    negative: Array.isArray(normalized.negative) ? normalized.negative : [],
+    mixed: Array.isArray(normalized.mixed) ? normalized.mixed : [],
+    uncertain: Array.isArray(normalized.uncertain) ? normalized.uncertain : [],
+  };
+}
+
+function newsAnalysisModeLabel(mode) {
+  return mode === "llm_analysis" ? "模型分析" : "本地消息";
+}
+
+function renderPlainNewsGroups(groups) {
+  const secondary = [...groups.mixed, ...groups.uncertain];
+  return `
+    <div class="plain-news-groups">
+      <section class="plain-news-column positive">
+        <header><h3>利好消息</h3><span>${formatNumber(groups.positive.length)}</span></header>
+        ${groups.positive.length ? renderEvidenceList(groups.positive, { emptyText: "暂无利好消息", showSentiment: true }) : renderEmpty("暂无利好消息")}
+      </section>
+      <section class="plain-news-column negative">
+        <header><h3>利空消息</h3><span>${formatNumber(groups.negative.length)}</span></header>
+        ${groups.negative.length ? renderEvidenceList(groups.negative, { emptyText: "暂无利空消息", showSentiment: true }) : renderEmpty("暂无利空消息")}
+      </section>
+      ${secondary.length ? `
+        <details class="plain-news-secondary">
+          <summary><span>中性 / 待核验消息 ${formatNumber(secondary.length)}</span><b class="plain-news-toggle" aria-hidden="true"></b></summary>
+          ${renderEvidenceList(secondary, { emptyText: "暂无待核验消息", showSentiment: true })}
+        </details>
+      ` : ""}
+    </div>
+  `;
 }
 
 function renderRagPackBuildResult(node, data) {
@@ -3893,8 +4178,10 @@ function renderNewsFindings(findings) {
   `;
 }
 
-function renderEvidenceList(items) {
-  if (!items.length) return renderEmpty("没有可引用证据");
+function renderEvidenceList(items, options = {}) {
+  const emptyText = options.emptyText || "没有可引用证据";
+  const showSentiment = Boolean(options.showSentiment);
+  if (!items.length) return renderEmpty(emptyText);
   return `
     <div class="evidence-list">
       ${items
@@ -3904,10 +4191,12 @@ function renderEvidenceList(items) {
               <strong>${escapeHtml(item.title || "-")}</strong>
               <span class="evidence-source">
                 <span class="source-tier ${sourceTierClass(item.source_tier)}">${escapeHtml(sourceTierLabel(item.source_tier))}</span>
-                ${escapeHtml(item.source || "-")} · ${escapeHtml(item.published_at || "-")}
+                ${showSentiment ? `<span class="impact-pill ${sentimentClass(item.sentiment)}">${escapeHtml(newsSentimentLabel(item.sentiment))}</span>` : ""}
+                <span>来源：${escapeHtml(item.source || "未知来源")}</span>
+                <span>发布时间：${escapeHtml(item.published_at || "未知时间")}</span>
               </span>
               ${item.summary ? `<p>${escapeHtml(item.summary)}</p>` : ""}
-              <em>${escapeHtml((item.stock_codes || []).join(" · "))}</em>
+              <em>关联股票：${escapeHtml((item.stock_codes || []).length ? item.stock_codes.join(" · ") : "未标注")}</em>
               ${renderExternalSourceLink(item.url)}
             </article>
           `,
@@ -3938,9 +4227,10 @@ function sourceTierLabel(tier) {
   if (tier === "filing") return "公告 / 事实";
   if (tier === "financial_snapshot") return "通达信 / 财务";
   if (tier === "research") return "研报 / 摘要";
-  if (tier === "manual_url") return "公开 URL";
-  if (tier === "community") return "社区 / 待核查";
-  return "新闻 / 事实";
+  if (tier === "manual_url") return "公开资料";
+  if (tier === "community") return "社区 / 待核验";
+  if (tier === "news") return "新闻 / 事实";
+  return "未知来源";
 }
 
 function sourceTierClass(tier) {
@@ -3948,6 +4238,23 @@ function sourceTierClass(tier) {
   if (tier === "financial_snapshot") return "filing";
   if (tier === "manual_url" || tier === "research") return "news";
   return tier === "community" ? "community" : "news";
+}
+
+function newsSentimentLabel(sentiment) {
+  const labels = {
+    positive: "利好",
+    negative: "利空",
+    mixed: "中性",
+    uncertain: "待核验",
+  };
+  return labels[sentiment] || "待核验";
+}
+
+function sentimentClass(sentiment) {
+  if (sentiment === "positive") return "positive";
+  if (sentiment === "negative") return "negative";
+  if (sentiment === "mixed") return "neutral";
+  return "uncertain";
 }
 
 function renderResultActions(scope, count) {
@@ -4006,11 +4313,12 @@ function renderObserveResult(node, data) {
 
 function observeSummary(data) {
   const stock = data.stock || {};
-  const minuteBars = data.minute_bars || [];
+  const signal = data.trend?.signal || {};
+  const kdjValues = [signal.k, signal.d, signal.j].map(formatNumber).join(" / ");
   return [
     ["数据源", sourceLabel(data.source)],
     ["最新价", formatNumber(stock.price)],
-    ["分钟线", `${data.minute_period || "1"}m · ${minuteBars.length}`],
+    ["KDJ", kdjValues],
   ];
 }
 
@@ -4019,14 +4327,11 @@ function renderObserveBody(data) {
   const trend = data.trend || {};
   const signal = trend.signal || {};
   const series = trend.series || [];
-  const minuteBars = data.minute_bars || [];
   return [
     renderObservationOverview(stock, data.financial_indicators),
     renderQuarterlyEpsPanel(stock, data.financial_indicators),
-    trend.signal ? renderSignalCard(stock, signal) : renderEmpty("没有可用日线技术面"),
+    trend.signal ? renderSignalCard(stock, signal, { series, chipDistribution: trend.chip_distribution }) : renderEmpty("没有可用日线技术面"),
     data.capital_evidence ? renderCapitalEvidence(data.capital_evidence, { series, signal }) : "",
-    minuteBars.length ? renderMinuteChart(minuteBars) : renderEmpty("没有可用分钟线"),
-    series.length ? renderTrendChart(series, trend.chip_distribution) : "",
     data.notes?.length ? renderNotes(data.notes) : "",
     signal.notes?.length ? renderNotes(signal.notes) : "",
   ].join("");
@@ -4152,6 +4457,7 @@ function graphItemToView(item) {
       ["关系", item.relation_score],
     ],
     related: item.related || [],
+    explanation: item.explanation || null,
   };
 }
 
@@ -4165,9 +4471,10 @@ function trendItemToView(item) {
     signal,
     extra: [
       ["基础", item.base_score],
-      ["趋势", item.trend_score],
+      ["短买", item.trend_score],
       ["量化", signal.quant_score],
     ],
+    explanation: item.explanation || null,
   };
 }
 
@@ -4220,6 +4527,7 @@ function renderStockRow(item) {
   const factorSummary = renderFactorSummary(item);
   const weight = item.weight !== undefined ? `<span class="weight">${formatPercent(item.weight)}</span>` : "";
   const related = item.related?.length ? renderRelated(item.related) : "";
+  const explanation = renderSelectionExplanation(item.explanation);
   const saved = isWatchlisted(stock.code);
   const watchLabel = saved ? "已收藏" : "收藏";
   const watchButton = stock.code
@@ -4265,10 +4573,39 @@ function renderStockRow(item) {
       ${signal}
       ${reasons}
       ${related}
+      ${explanation}
     </article>
   `;
 }
 
+function renderSelectionExplanation(explanation) {
+  if (!explanation) return "";
+  const basis = Array.isArray(explanation.basis) ? explanation.basis.filter(Boolean) : [];
+  const risks = Array.isArray(explanation.risk_checks) ? explanation.risk_checks.filter(Boolean) : [];
+  const verification = Array.isArray(explanation.verification) ? explanation.verification.filter(Boolean) : [];
+  const breakdown = Array.isArray(explanation.score_breakdown) ? explanation.score_breakdown : [];
+  if (!basis.length && !risks.length && !verification.length && !breakdown.length) return "";
+  const section = (title, items) => items.length ? `<div><strong>${escapeHtml(title)}</strong>${items.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>` : "";
+  return `
+    <section class="selection-explain">
+      ${section("入选依据", basis)}
+      ${breakdown.length ? `<div><strong>分数拆解</strong><div class="explain-score-row">${breakdown.map(renderScoreContribution).join("")}</div></div>` : ""}
+      ${section("风险验证", risks)}
+      ${section("验证点", verification)}
+    </section>
+  `;
+}
+
+function renderScoreContribution(item) {
+  const tone = ["strong", "watch", "weak"].includes(item?.tone) ? item.tone : "neutral";
+  return `
+    <span class="score-contribution ${tone}">
+      <em>${escapeHtml(item?.label || item?.key || "分数拆解")}</em>
+      <b>${formatNumber(item?.value)}</b>
+      <small>${formatNumber(item?.contribution)}</small>
+    </span>
+  `;
+}
 function renderFactorSummary(item) {
   const scores = item.factorScores || item.factor_scores || {};
   const order = ["theme", "fundamental", "valuation", "size", "risk", "institution"];
@@ -4622,13 +4959,19 @@ function renderSignalSummary(signal) {
       <span>量化 ${escapeHtml(String(signal.quant_score ?? 0))}/${escapeHtml(String(signal.quant_score_max ?? 90))}</span>
       <span>SWL ${formatNumber(signal.swl)}</span>
       <span>SWS ${formatNumber(signal.sws)}</span>
+      <span>KDJ ${formatNumber(signal.k)} / ${formatNumber(signal.d)} / ${formatNumber(signal.j)}</span>
       <span>支撑 ${formatNumber(signal.support)}</span>
       <span>阻力 ${formatNumber(signal.resistance)}</span>
     </div>
   `;
 }
 
-function renderSignalCard(stock, signal) {
+function renderSignalCard(stock, signal, options = {}) {
+  const series = options.series || [];
+  const chipDistribution = options.chipDistribution || null;
+  const charts = series.length
+    ? `<div class="signal-chart-stack">${renderKdjChart(series, signal)}${renderTrendChart(series, chipDistribution)}</div>`
+    : "";
   return `
     <section class="signal-card">
       <header>
@@ -4641,6 +4984,7 @@ function renderSignalCard(stock, signal) {
       <div class="signal-grid">
         <div><span>收盘价</span><strong>${formatNumber(signal.close)}</strong></div>
         <div><span>SWL/SWS 线</span><strong>${formatNumber(signal.swl)} / ${formatNumber(signal.sws)}</strong></div>
+        <div><span>KDJ</span><strong>${formatNumber(signal.k)} / ${formatNumber(signal.d)} / ${formatNumber(signal.j)}</strong></div>
         <div><span>量化分</span><strong>${escapeHtml(String(signal.quant_score ?? 0))}/${escapeHtml(String(signal.quant_score_max ?? 90))}</strong></div>
         <div><span>形态分</span><strong>${escapeHtml(String(signal.pattern_score ?? 0))}/${escapeHtml(String(signal.pattern_score_max ?? 100))}</strong></div>
         <div><span>支撑位</span><strong>${formatNumber(signal.support)}</strong></div>
@@ -4651,6 +4995,7 @@ function renderSignalCard(stock, signal) {
       </div>
       ${signal.pattern_signals?.length ? `<div class="tag-row">${signal.pattern_signals.map((reason) => `<span>${escapeHtml(reasonLabel(reason))}</span>`).join("")}</div>` : ""}
       ${signal.reasons?.length ? `<div class="tag-row">${signal.reasons.map((reason) => `<span>${escapeHtml(reasonLabel(reason))}</span>`).join("")}</div>` : ""}
+      ${charts}
     </section>
   `;
 }
@@ -4707,111 +5052,151 @@ function renderSparkline(curve) {
   `;
 }
 
-function renderMinuteChart(bars) {
+function renderKdjChart(series, signal = {}) {
   const width = 720;
-  const height = 170;
-  const points = bars
-    .map((bar) => ({
-      ...bar,
-      close: Number(bar.close),
-      volume: Number(bar.volume),
-      amount: Number(bar.amount),
+  const height = 180;
+  const points = (series || [])
+    .map((point) => ({
+      date: point.date,
+      k: Number(point.k),
+      d: Number(point.d),
+      j: Number(point.j),
     }))
-    .filter((bar) => Number.isFinite(bar.close));
-  if (points.length < 2) return renderEmpty("分钟线点不足");
+    .filter((point) => [point.k, point.d, point.j].some(Number.isFinite));
+  if (points.length < 2) return renderEmpty("KDJ 点不足");
 
-  const averageValues = minuteAverageValues(points);
-  const values = [
-    ...points.map((point) => point.close),
-    ...averageValues,
-  ].filter(Number.isFinite);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  const values = points.flatMap((point) => [point.k, point.d, point.j]).filter(Number.isFinite);
+  const min = Math.min(0, ...values);
+  const max = Math.max(100, ...values);
   const range = max - min || 1;
   const xFor = (index) => (index / Math.max(points.length - 1, 1)) * width;
   const yFor = (value) => height - ((Number(value) - min) / range) * height;
-  const linePoints = (series) =>
-    series
-      .map((value, index) => {
-        if (!Number.isFinite(Number(value))) return null;
-        const x = xFor(index);
-        const y = yFor(value);
-        return `${x.toFixed(2)},${y.toFixed(2)}`;
+  const linePoints = (key) =>
+    points
+      .map((point, index) => {
+        const value = Number(point[key]);
+        if (!Number.isFinite(value)) return null;
+        return `${xFor(index).toFixed(2)},${yFor(value).toFixed(2)}`;
       })
       .filter(Boolean)
       .join(" ");
-  const closePoints = linePoints(points.map((point) => point.close));
-  const averagePoints = linePoints(averageValues);
-  const last = points[points.length - 1];
-  const lastAverage = [...averageValues].reverse().find((value) => Number.isFinite(Number(value)));
+  const guideLine = (value, className) => {
+    const y = yFor(value).toFixed(2);
+    return `<line class="${className}" x1="0" y1="${y}" x2="${width}" y2="${y}" />`;
+  };
+  const latest = points[points.length - 1] || {};
 
   return `
-    <div class="chart-wrap minute-chart">
-      <div class="chart-legend">
-        <span class="minute-legend-close">分钟收盘</span>
-        <span class="minute-legend-average">分时均线</span>
-        <span class="chart-meta">${escapeHtml(last?.datetime || "")}</span>
-        <span class="chart-meta">${formatNumber(last?.close)}</span>
-        ${Number.isFinite(lastAverage) ? `<span class="chart-meta">${formatNumber(lastAverage)}</span>` : ""}
+    <section class="kdj-panel">
+      <header>
+        <div>
+          <h3>KDJ 动量观察</h3>
+          <p>${escapeHtml(latest.date || signal.date || "")}</p>
+        </div>
+        <span class="state-pill">${escapeHtml(kdjStateLabel(signal, latest))}</span>
+      </header>
+      <div class="chart-wrap kdj-chart">
+        <div class="chart-legend">
+          <span class="kdj-legend-k">K ${formatNumber(latest.k)}</span>
+          <span class="kdj-legend-d">D ${formatNumber(latest.d)}</span>
+          <span class="kdj-legend-j">J ${formatNumber(latest.j)}</span>
+        </div>
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="KDJ 指标曲线">
+          ${guideLine(80, "kdj-guide kdj-guide-high")}
+          ${guideLine(20, "kdj-guide kdj-guide-low")}
+          <polyline class="kdj-k-line" points="${linePoints("k")}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+          <polyline class="kdj-d-line" points="${linePoints("d")}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+          <polyline class="kdj-j-line" points="${linePoints("j")}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <div class="chart-labels">
+          <span>${escapeHtml(points[0]?.date || "")}</span>
+          <span>${escapeHtml(latest.date || "")}</span>
+        </div>
       </div>
-      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="分钟线和分时均线">
-        <polyline class="minute-average-line" points="${averagePoints}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
-        <polyline class="minute-close-line" points="${closePoints}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
-      <div class="chart-labels">
-        <span>${escapeHtml(points[0]?.datetime || "")}</span>
-        <span>${escapeHtml(last?.datetime || "")}</span>
-      </div>
-    </div>
+      ${renderKdjAnalysis(points, signal)}
+    </section>
   `;
 }
 
-function minuteAverageValues(points) {
-  const closeFallback = cumulativeCloseAverage(points);
-  const amountVolumeAverage = cumulativeAmountVolumeAverage(points, 1);
-  const amountHandAverage = cumulativeAmountVolumeAverage(points, 100);
-  const close = points[points.length - 1]?.close;
-  const directDistance = minuteAverageDistance(amountVolumeAverage, close);
-  const handDistance = minuteAverageDistance(amountHandAverage, close);
-  if (Number.isFinite(directDistance) || Number.isFinite(handDistance)) {
-    return directDistance <= handDistance ? amountVolumeAverage : amountHandAverage;
-  }
-  return closeFallback;
+function kdjStateLabel(signal = {}, latest = {}) {
+  if (signal.kdj_golden_cross) return "KDJ 金叉";
+  if (signal.kdj_dead_cross) return "KDJ 死叉";
+  if (signal.kdj_oversold) return "低位钝化";
+  if (signal.kdj_overbought) return "高位警戒";
+  const k = Number(latest.k ?? signal.k);
+  const d = Number(latest.d ?? signal.d);
+  if (Number.isFinite(k) && Number.isFinite(d)) return k >= d ? "动量偏强" : "动量偏弱";
+  return "等待数据";
 }
 
-function cumulativeAmountVolumeAverage(points, volumeMultiplier) {
-  let amountTotal = 0;
-  let volumeTotal = 0;
-  return points.map((point) => {
-    const amount = Number(point.amount);
-    const volume = Number(point.volume);
-    if (Number.isFinite(amount) && amount > 0 && Number.isFinite(volume) && volume > 0) {
-      amountTotal += amount;
-      volumeTotal += volume * volumeMultiplier;
-    }
-    return amountTotal > 0 && volumeTotal > 0 ? amountTotal / volumeTotal : Number.NaN;
-  });
+function renderKdjAnalysis(points, signal = {}) {
+  const latest = points[points.length - 1] || {};
+  const previous = points.length > 1 ? points[points.length - 2] || {} : {};
+  const k = Number(latest.k);
+  const d = Number(latest.d);
+  const j = Number(latest.j);
+  const prevK = Number(previous.k);
+  const prevD = Number(previous.d);
+  const prevJ = Number(previous.j);
+  const dateText = latest.date || signal.date ? `${latest.date || signal.date}：` : "";
+  const valueParts = [
+    Number.isFinite(k) ? `K ${formatNumber(k)}` : "",
+    Number.isFinite(d) ? `D ${formatNumber(d)}` : "",
+    Number.isFinite(j) ? `J ${formatNumber(j)}` : "",
+  ].filter(Boolean);
+  const valueText = valueParts.length ? `${valueParts.join("，")}。` : "KDJ 当前数值不完整。";
+  const kdRelation = Number.isFinite(k) && Number.isFinite(d)
+    ? k >= d
+      ? "K 高于 D，短线动量仍占优。"
+      : "K 低于 D，短线动量偏弱。"
+    : "K/D 关系暂时无法判断。";
+  const jRelation = Number.isFinite(j) && Number.isFinite(k) && Number.isFinite(d)
+    ? j > Math.max(k, d)
+      ? "J 线在 K/D 上方，拐点放大偏积极。"
+      : j < Math.min(k, d)
+        ? "J 线落在 K/D 下方，拐点放大偏谨慎。"
+        : "J 线贴近 K/D 区间，拐点信号不极端。"
+    : "";
+  const inferredGoldenCross = Number.isFinite(prevK) && Number.isFinite(prevD) && Number.isFinite(k) && Number.isFinite(d) && prevK < prevD && k >= d;
+  const inferredDeadCross = Number.isFinite(prevK) && Number.isFinite(prevD) && Number.isFinite(k) && Number.isFinite(d) && prevK >= prevD && k < d;
+  const crossText = signal.kdj_golden_cross || inferredGoldenCross
+    ? "本次 K 上穿 D，当前标记为金叉。"
+    : signal.kdj_dead_cross || inferredDeadCross
+      ? "本次 K 跌破 D，当前标记为死叉。"
+      : Number.isFinite(k) && Number.isFinite(d)
+        ? "本次没有新的 K/D 交叉。"
+        : "交叉信号暂不完整。";
+  const moveText = [
+    kdjMoveText("K", k, prevK),
+    kdjMoveText("D", d, prevD),
+    kdjMoveText("J", j, prevJ),
+  ].filter(Boolean).join("，");
+  const momentumText = moveText ? `${moveText}。` : "缺少上一交易日 KDJ，暂不判断变化方向。";
+  const zoneText = signal.kdj_oversold || (Number.isFinite(k) && k <= 20) || (Number.isFinite(d) && d <= 20)
+    ? "K/D 位于低位区，修复机会存在，但需要价格和金叉确认。"
+    : signal.kdj_overbought || (Number.isFinite(k) && k >= 80) || (Number.isFinite(d) && d >= 80) || (Number.isFinite(j) && j >= 100)
+      ? "K/D 或 J 进入高位区，趋势可以延续，但回撤风险同步上升。"
+      : "K/D 位于 20-80 中性区，当前重点看 K 能否重新压过 D。";
+  const conclusionText = signal.kdj_golden_cross || inferredGoldenCross || (Number.isFinite(k) && Number.isFinite(d) && k >= d && Number.isFinite(prevK) && k >= prevK)
+    ? "当前 KDJ 偏向动量修复，仍要看收盘价是否配合站回短线参考线。"
+    : signal.kdj_dead_cross || inferredDeadCross || (Number.isFinite(k) && Number.isFinite(d) && k < d)
+      ? "当前 KDJ 偏向动量降温，未重新上穿 D 前不宜把它当作强势信号。"
+      : "当前 KDJ 还在中性拉扯，下一步看 K/D 是否形成同向扩张。";
+
+  return `
+    <section class="kdj-analysis" aria-label="KDJ 当前指标解读">
+      <strong>当前 KDJ 解读</strong>
+      <p>${escapeHtml(`${dateText}${valueText}${kdRelation}${jRelation}`)}</p>
+      <p>${escapeHtml(`${crossText}${momentumText}${zoneText}${conclusionText}`)}</p>
+    </section>
+  `;
 }
 
-function cumulativeCloseAverage(points) {
-  let total = 0;
-  let count = 0;
-  return points.map((point) => {
-    const close = Number(point.close);
-    if (Number.isFinite(close)) {
-      total += close;
-      count += 1;
-    }
-    return count ? total / count : Number.NaN;
-  });
-}
-
-function minuteAverageDistance(values, close) {
-  const latest = [...values].reverse().find((value) => Number.isFinite(Number(value)));
-  if (!Number.isFinite(latest) || !Number.isFinite(close) || close <= 0) return Number.POSITIVE_INFINITY;
-  const ratio = latest / close;
-  if (ratio < 0.2 || ratio > 5) return Number.POSITIVE_INFINITY;
-  return Math.abs(Math.log(ratio));
+function kdjMoveText(label, current, previous) {
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) return "";
+  const diff = current - previous;
+  if (Math.abs(diff) < 0.2) return `${label} 较上一交易日基本走平`;
+  return `${label} 较上一交易日${diff > 0 ? "上行" : "回落"} ${formatNumber(Math.abs(diff))}`;
 }
 
 function renderTrendChart(series, chipDistribution = null) {
@@ -4903,41 +5288,70 @@ function renderTrendChart(series, chipDistribution = null) {
 }
 
 function renderTrendChartExplanation(series, chipDistribution = null) {
-  const latest = (series || []).filter((point) => Number.isFinite(Number(point.close))).slice(-1)[0] || {};
+  const valid = (series || []).filter((point) => Number.isFinite(Number(point.close)));
+  const latest = valid[valid.length - 1] || {};
+  const previous = valid.length > 1 ? valid[valid.length - 2] || {} : {};
   const close = Number(latest.close);
   const swl = Number(latest.swl);
   const sws = Number(latest.sws);
-  const closeState =
-    Number.isFinite(close) && Number.isFinite(swl)
-      ? close >= swl
-        ? "白线站上蓝线，短线先看转强。"
-        : "白线还压在蓝线下方，短线仍偏弱。"
-      : "白线和蓝线数据不够，先不下短线结论。";
-  const trendState =
-    Number.isFinite(swl) && Number.isFinite(sws)
-      ? swl >= sws
-        ? "蓝线在灰虚线上方，说明短线没有明显拖累中期。"
-        : "蓝线在灰虚线下方，说明短线比中期更弱，需要等修复。"
-      : "蓝线和灰虚线数据不够，先不下中期结论。";
-  const summaryState =
-    Number.isFinite(close) && Number.isFinite(swl) && Number.isFinite(sws)
-      ? close >= swl && swl >= sws
-        ? "整体是偏多结构。"
-        : close < swl && swl < sws
-          ? "整体还是偏弱结构，先等修复。"
-          : "结构还在分化，先看白线能不能重新站回蓝线上方。"
-      : "";
+  const prevClose = Number(previous.close);
+  const prevSwl = Number(previous.swl);
+  const prevSws = Number(previous.sws);
+  const dateText = latest.date ? `${latest.date}：` : "";
+  const valueParts = [
+    Number.isFinite(close) ? `收盘价 ${formatNumber(close)}` : "",
+    Number.isFinite(swl) ? `SWL ${formatNumber(swl)}` : "",
+    Number.isFinite(sws) ? `SWS ${formatNumber(sws)}` : "",
+  ].filter(Boolean);
+  const valueText = valueParts.length ? `${valueParts.join("，")}。` : "当前趋势数值不完整。";
+  const closeState = Number.isFinite(close) && Number.isFinite(swl)
+    ? close >= swl
+      ? `收盘价高于 SWL ${trendGapText(close, swl)}，短线价格站在参考线之上。`
+      : `收盘价低于 SWL ${trendGapText(close, swl)}，短线价格仍被参考线压制。`
+    : "收盘价与 SWL 数据不完整，暂不判断短线强弱。";
+  const trendState = Number.isFinite(swl) && Number.isFinite(sws)
+    ? swl >= sws
+      ? `SWL 高于 SWS ${trendGapText(swl, sws)}，短线参考线没有拖累中期。`
+      : `SWL 低于 SWS ${trendGapText(swl, sws)}，短线参考线弱于中期。`
+    : "SWL 与 SWS 数据不完整，暂不判断中期结构。";
+  const moveText = [
+    trendMoveText("收盘价", close, prevClose),
+    trendMoveText("SWL", swl, prevSwl),
+    trendMoveText("SWS", sws, prevSws),
+  ].filter(Boolean).join("，");
+  const summaryState = Number.isFinite(close) && Number.isFinite(swl) && Number.isFinite(sws)
+    ? close >= swl && swl >= sws
+      ? "当前是价格、短线、中期顺序偏多的结构，重点看收盘价能否继续留在 SWL 上方。"
+      : close < swl && swl < sws
+        ? "当前是价格低于短线、短线弱于中期的偏弱结构，先等收盘价收复 SWL。"
+        : close < swl && swl >= sws
+          ? "中期参考线尚未明显走坏，但价格已回到 SWL 下方，当前先按短线走弱处理。"
+          : "价格开始修复到 SWL 上方，但 SWL 仍低于 SWS，当前更像弱势修复初段。"
+    : "趋势指标不完整，先等待下一组日线数据。";
   const chipText = renderChipDistributionText(chipDistribution);
   return `
-    <section class="trend-explain" aria-label="\u8d8b\u52bf\u6307\u6807\u8bf4\u660e">
-      <strong>\u8d8b\u52bf\u56fe\u600e\u4e48\u770b</strong>
-      <p>白线是收盘价，往上代表价格走强，往下代表价格走弱。</p>
-      <p>蓝线 SWL 是短线参考线，白线站上去，短线才算有转强迹象。</p>
-      <p>灰色虚线 SWS 是中期参考线，蓝线在它上面，说明短线还没有明显拖累中期。</p>
+    <section class="trend-explain" aria-label="趋势当前指标解读">
+      <strong>当前趋势解读</strong>
+      <p>${escapeHtml(`${dateText}${valueText}${closeState}${trendState}`)}</p>
+      ${moveText ? `<p>${escapeHtml(`${moveText}。`)}</p>` : ""}
       ${chipText ? `<p>${escapeHtml(chipText)}</p>` : ""}
-      <p>${escapeHtml(closeState)}${escapeHtml(trendState)}${escapeHtml(summaryState)}</p>
+      <p>${escapeHtml(summaryState)}</p>
     </section>
   `;
+}
+
+function trendGapText(value, reference) {
+  if (!Number.isFinite(value) || !Number.isFinite(reference)) return "";
+  const diff = Math.abs(value - reference);
+  const pct = reference ? Math.abs((value - reference) / reference) * 100 : null;
+  return Number.isFinite(pct) ? `${formatNumber(diff)}（${formatNumber(pct)}%）` : formatNumber(diff);
+}
+
+function trendMoveText(label, current, previous) {
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) return "";
+  const diff = current - previous;
+  if (Math.abs(diff) < 0.01) return `${label}较上一交易日基本走平`;
+  return `${label}较上一交易日${diff > 0 ? "上行" : "回落"} ${formatNumber(Math.abs(diff))}`;
 }
 
 function renderChipDistributionText(chipDistribution) {
@@ -5387,7 +5801,7 @@ function formatHeatValue(value) {
 
 function normalizeCapitalEvidenceSections(evidence) {
   if (Array.isArray(evidence?.sections) && evidence.sections.length) {
-    return evidence.sections;
+    return evidence.sections.filter((section) => section.key !== "external_status");
   }
   return buildFallbackEvidenceSections(evidence);
 }
@@ -5411,7 +5825,6 @@ function buildFallbackEvidenceSections(evidence) {
       categories: ["news_rag", "community_sentiment"],
     },
     { key: "technical_behavior", title: "技术推断", contribution: "技术推断", categories: ["technical_behavior"] },
-    { key: "external_status", title: "接口状态", contribution: null, categories: ["external_status"] },
   ];
   return definitions
     .map((definition) => {
@@ -5731,8 +6144,9 @@ function capitalSectionStatus(section) {
 function renderCapitalEvidence(evidence, technicalContext = {}) {
   const sections = normalizeCapitalEvidenceSections(evidence);
   const items = evidence?.items || [];
+  const displayItems = items.filter((item) => item.category !== "external_status");
   const notes = evidence?.notes || [];
-  if (!items.length && !notes.length && !sections.length) return "";
+  if (!displayItems.length && !notes.length && !sections.length) return "";
   const score = Number(evidence.composite_score);
   const modelLabel = evidence.model_used ? "模型参与" : "规则分";
   return `
@@ -5756,8 +6170,8 @@ function renderCapitalEvidence(evidence, technicalContext = {}) {
       ${
         sections.length
           ? renderEvidenceSections(sections, technicalContext)
-          : items.length
-          ? `<div class="capital-evidence-list">${items.map(renderCapitalEvidenceItem).join("")}</div>`
+          : displayItems.length
+          ? `<div class="capital-evidence-list">${displayItems.map(renderCapitalEvidenceItem).join("")}</div>`
           : ""
       }
       ${notes.length ? renderNotes(notes) : ""}
@@ -5799,7 +6213,6 @@ function capitalCategoryLabel(category) {
     news_rag: "新闻证据",
     community_sentiment: "社区情绪",
     technical_behavior: "技术推断",
-    external_status: "接口状态",
   };
   return labels[category] || category || "证据";
 }
@@ -5841,11 +6254,13 @@ function renderEmpty(text, action) {
 }
 
 function setLoading(node, text) {
+  stopPanelProgress(node);
   node.className = `${basePanelClass(node)} loading`;
   node.innerHTML = `<div class="loader"></div><span>${escapeHtml(text)}</span>`;
 }
 
 function setError(node, title, detail, action) {
+  stopPanelProgress(node);
   node.className = `${basePanelClass(node)} error`;
   const button = action
     ? `<button type="button" data-empty-action="${escapeHtml(action.action)}">${escapeHtml(action.label)}</button>`
@@ -5960,6 +6375,10 @@ function reasonLabel(reason) {
     short_buy_signal: "短买",
     red_hold: "红色持股",
     swl_above_sws: "SWL 强于 SWS",
+    kdj_golden_cross: "KDJ 金叉",
+    kdj_dead_cross: "KDJ 死叉",
+    kdj_oversold: "KDJ 低位",
+    kdj_overbought: "KDJ 高位",
     high_quant_score: "量化分较高",
     white_exit: "白色离场",
     cyan_watch: "青色观望",

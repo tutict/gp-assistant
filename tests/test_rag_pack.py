@@ -39,6 +39,21 @@ class RagPackTests(unittest.TestCase):
         self.assertEqual(chunks[0].relation_types, ("supply_chain",))
         self.assertTrue(chunks[0].text[-20:] in chunks[1].text)
 
+    def test_chunk_document_normalizes_shanghai_b_share_to_sh(self):
+        document = RagPackDocument(
+            source="公告",
+            source_tier="filing",
+            title="沪市 B 股公告",
+            text="沪市 B 股相关信息。",
+            stock_codes=["900957"],
+            relation_types=[],
+            published_at="2026-06-01",
+        )
+
+        chunks = chunk_document(document, target_chars=80, overlap_chars=20)
+
+        self.assertEqual(chunks[0].stock_codes, ("900957.SH",))
+
     def test_build_pack_writes_manifest_documents_chunks_and_embeddings(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "rag_pack.sqlite"

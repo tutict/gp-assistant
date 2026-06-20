@@ -7,8 +7,6 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from html import unescape
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Iterable, List, Sequence
 
@@ -19,6 +17,7 @@ from app.schemas import (
     NewsImpactFinding,
     NewsRagRequest,
     NewsRagResult,
+    NewsSentimentGroups,
     StockItem,
     StockRelation,
 )
@@ -39,6 +38,10 @@ from app.services.runtime_config import (
 )
 from app.services.screener import screening_universe
 from app.services.stock_code import normalize_stock_code as _normalize_code
+from app.services.text_utils import (
+    coalesce_row as _coalesce_row,
+    strip_html as _strip_html,
+)
 
 
 CACHE_PATH = Path(os.getenv("GP_NEWS_CACHE", "data/cache/news.sqlite"))
@@ -98,7 +101,7 @@ def analyze_supply_chain_news(provider: StockProvider, request: NewsRagRequest) 
         conn.close()
 
     findings = _build_findings(scope_codes, chain_relations, evidence, stock_by_code)
-    findings, llm_notes = _apply_llm_analysis(
+    findings, llm_notes, analysis_mode = _apply_llm_analysis(
         request,
         scope_codes,
         chain_relations,
@@ -106,6 +109,7 @@ def analyze_supply_chain_news(provider: StockProvider, request: NewsRagRequest) 
         stock_by_code,
         findings,
     )
+    sentiment_groups = _sentiment_groups(evidence, analysis_mode)
     notes = [
         *screen_notes,
         *adapter_notes,
@@ -123,6 +127,7 @@ def analyze_supply_chain_news(provider: StockProvider, request: NewsRagRequest) 
         relation_count=len(chain_relations),
         message_count=len(evidence),
         findings=findings,
+        sentiment_groups=sentiment_groups,
         notes=notes,
     )
 
@@ -637,6 +642,20 @@ def _build_findings(
     return findings
 
 
+def _sentiment_groups(evidence: Sequence[NewsEvidence], mode: str) -> NewsSentimentGroups:
+    grouped = {
+        "positive": [],
+        "negative": [],
+        "mixed": [],
+        "uncertain": [],
+    }
+    for item in _dedupe_evidence(evidence):
+        sentiment = item.sentiment if item.sentiment in grouped else "uncertain"
+        grouped[sentiment].append(item)
+    return NewsSentimentGroups(mode=mode, **grouped)
+
+
+
 def _impact_chain(
     code: str,
     stock_name: str,
@@ -696,14 +715,14 @@ def _apply_llm_analysis(
     evidence: Sequence[NewsEvidence],
     stock_by_code: dict[str, StockItem],
     findings: Sequence[NewsImpactFinding],
-) -> tuple[List[NewsImpactFinding], List[str]]:
+) -> tuple[List[NewsImpactFinding], List[str], str]:
     base_findings = list(findings)
     if not base_findings:
-        return base_findings, ["RAG 没有可分析目标，未调用模型。"]
+        return base_findings, ["没有可分析目标，未调用模型。"], "plain_news"
 
     config = _resolve_news_llm_config(request.llm)
     if not config.api_key:
-        return base_findings, ["未配置 OPENAI_API_KEY 或自定义模型密钥，RAG 已使用本地规则完成影响判断。"]
+        return base_findings, ["未接入模型，已按本地规则展示个股及上下游利好/利空消息。"], "plain_news"
 
     try:
         llm_result = _call_news_llm(
@@ -715,13 +734,13 @@ def _apply_llm_analysis(
             base_findings,
         )
     except Exception as exc:
-        return base_findings, [f"RAG 模型分析失败，已回退到本地规则判断：{_safe_llm_error(exc)}"]
+        return base_findings, [f"模型分析失败，已回退为个股及上下游利好/利空消息：{_safe_llm_error(exc)}"], "plain_news"
 
     merged = _merge_llm_findings(base_findings, llm_result)
     notes = [f"已调用模型 {config.model} 基于检索证据参与上下游影响判断。"]
     for note in _safe_string_list(llm_result.get("notes"), limit=4, max_chars=140):
         notes.append(note)
-    return merged, notes
+    return merged, notes, "llm_analysis"
 
 
 def _call_news_llm(
@@ -985,25 +1004,6 @@ def _extract_embedded_object(html: str, var_name: str) -> str:
     return ""
 
 
-class _HtmlTextExtractor(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.parts: list[str] = []
-
-    def handle_data(self, data: str) -> None:
-        if data.strip():
-            self.parts.append(data.strip())
-
-    def text(self) -> str:
-        return unescape(" ".join(self.parts)).strip()
-
-
-def _strip_html(value: str) -> str:
-    parser = _HtmlTextExtractor()
-    parser.feed(value or "")
-    return parser.text()
-
-
 def _first_class_text(html: str, class_name: str) -> str:
     match = re.search(
         rf'<[^>]*class=["\'][^"\']*\b{re.escape(class_name)}\b[^"\']*["\'][^>]*>(.*?)</[^>]+>',
@@ -1032,14 +1032,6 @@ def _optional_int(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
-
-
-def _coalesce_row(row: dict[str, object], keys: Sequence[str]) -> str:
-    for key in keys:
-        value = row.get(key)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return ""
 
 
 def _parse_news_time(value: str) -> str:
