@@ -4941,35 +4941,66 @@ function renderKdjAnalysis(points, signal = {}) {
   const j = Number(latest.j);
   const prevK = Number(previous.k);
   const prevD = Number(previous.d);
-  const slopeText = Number.isFinite(k) && Number.isFinite(prevK) && Number.isFinite(d) && Number.isFinite(prevD)
-    ? k >= prevK && d >= prevD
-      ? "K 与 D 同步上行，短线动量正在抬升。"
-      : k < prevK && d < prevD
-        ? "K 与 D 同步回落，短线动量在降温。"
-        : "K 与 D 方向不一致，短线动量还在拉扯。"
-    : "KDJ 数据还不够完整，先观察下一根日线确认。";
-  const crossText = signal.kdj_golden_cross
-    ? "K 线上穿 D 线，属于偏积极的金叉信号，但仍要看价格是否同步站回关键均线。"
-    : signal.kdj_dead_cross
-      ? "K 线跌破 D 线，属于偏谨慎的死叉信号，短线追涨性价比下降。"
+  const prevJ = Number(previous.j);
+  const dateText = latest.date || signal.date ? `${latest.date || signal.date}：` : "";
+  const valueParts = [
+    Number.isFinite(k) ? `K ${formatNumber(k)}` : "",
+    Number.isFinite(d) ? `D ${formatNumber(d)}` : "",
+    Number.isFinite(j) ? `J ${formatNumber(j)}` : "",
+  ].filter(Boolean);
+  const valueText = valueParts.length ? `${valueParts.join("，")}。` : "KDJ 当前数值不完整。";
+  const kdRelation = Number.isFinite(k) && Number.isFinite(d)
+    ? k >= d
+      ? "K 高于 D，短线动量仍占优。"
+      : "K 低于 D，短线动量偏弱。"
+    : "K/D 关系暂时无法判断。";
+  const jRelation = Number.isFinite(j) && Number.isFinite(k) && Number.isFinite(d)
+    ? j > Math.max(k, d)
+      ? "J 线在 K/D 上方，拐点放大偏积极。"
+      : j < Math.min(k, d)
+        ? "J 线落在 K/D 下方，拐点放大偏谨慎。"
+        : "J 线贴近 K/D 区间，拐点信号不极端。"
+    : "";
+  const inferredGoldenCross = Number.isFinite(prevK) && Number.isFinite(prevD) && Number.isFinite(k) && Number.isFinite(d) && prevK < prevD && k >= d;
+  const inferredDeadCross = Number.isFinite(prevK) && Number.isFinite(prevD) && Number.isFinite(k) && Number.isFinite(d) && prevK >= prevD && k < d;
+  const crossText = signal.kdj_golden_cross || inferredGoldenCross
+    ? "本次 K 上穿 D，当前标记为金叉。"
+    : signal.kdj_dead_cross || inferredDeadCross
+      ? "本次 K 跌破 D，当前标记为死叉。"
       : Number.isFinite(k) && Number.isFinite(d)
-        ? k >= d
-          ? "K 仍在 D 上方，动量结构偏强。"
-          : "K 位于 D 下方，动量结构偏弱。"
-        : "暂时无法判断 K/D 相对位置。";
+        ? "本次没有新的 K/D 交叉。"
+        : "交叉信号暂不完整。";
+  const moveText = [
+    kdjMoveText("K", k, prevK),
+    kdjMoveText("D", d, prevD),
+    kdjMoveText("J", j, prevJ),
+  ].filter(Boolean).join("，");
+  const momentumText = moveText ? `${moveText}。` : "缺少上一交易日 KDJ，暂不判断变化方向。";
   const zoneText = signal.kdj_oversold || (Number.isFinite(k) && k <= 20) || (Number.isFinite(d) && d <= 20)
-    ? "指标处在低位区，容易出现修复反弹，但需要金叉或价格确认。"
+    ? "K/D 位于低位区，修复机会存在，但需要价格和金叉确认。"
     : signal.kdj_overbought || (Number.isFinite(k) && k >= 80) || (Number.isFinite(d) && d >= 80) || (Number.isFinite(j) && j >= 100)
-      ? "指标处在高位区，趋势可以延续，但波动和回撤风险同步上升。"
-      : "指标处在中性区，重点看 K/D 方向和 J 线是否继续扩张。";
+      ? "K/D 或 J 进入高位区，趋势可以延续，但回撤风险同步上升。"
+      : "K/D 位于 20-80 中性区，当前重点看 K 能否重新压过 D。";
+  const conclusionText = signal.kdj_golden_cross || inferredGoldenCross || (Number.isFinite(k) && Number.isFinite(d) && k >= d && Number.isFinite(prevK) && k >= prevK)
+    ? "当前 KDJ 偏向动量修复，仍要看收盘价是否配合站回短线参考线。"
+    : signal.kdj_dead_cross || inferredDeadCross || (Number.isFinite(k) && Number.isFinite(d) && k < d)
+      ? "当前 KDJ 偏向动量降温，未重新上穿 D 前不宜把它当作强势信号。"
+      : "当前 KDJ 还在中性拉扯，下一步看 K/D 是否形成同向扩张。";
 
   return `
-    <section class="kdj-analysis" aria-label="KDJ 分析">
-      <strong>KDJ 怎么看</strong>
-      <p>K 线反映短线价格动量，D 线更平滑，J 线放大拐点。金叉偏积极，死叉偏谨慎；80 上方看高位风险，20 下方看修复机会。</p>
-      <p>${escapeHtml(crossText)}${escapeHtml(slopeText)}${escapeHtml(zoneText)}</p>
+    <section class="kdj-analysis" aria-label="KDJ 当前指标解读">
+      <strong>当前 KDJ 解读</strong>
+      <p>${escapeHtml(`${dateText}${valueText}${kdRelation}${jRelation}`)}</p>
+      <p>${escapeHtml(`${crossText}${momentumText}${zoneText}${conclusionText}`)}</p>
     </section>
   `;
+}
+
+function kdjMoveText(label, current, previous) {
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) return "";
+  const diff = current - previous;
+  if (Math.abs(diff) < 0.2) return `${label} 较上一交易日基本走平`;
+  return `${label} 较上一交易日${diff > 0 ? "上行" : "回落"} ${formatNumber(Math.abs(diff))}`;
 }
 
 function renderTrendChart(series, chipDistribution = null) {
@@ -5061,41 +5092,70 @@ function renderTrendChart(series, chipDistribution = null) {
 }
 
 function renderTrendChartExplanation(series, chipDistribution = null) {
-  const latest = (series || []).filter((point) => Number.isFinite(Number(point.close))).slice(-1)[0] || {};
+  const valid = (series || []).filter((point) => Number.isFinite(Number(point.close)));
+  const latest = valid[valid.length - 1] || {};
+  const previous = valid.length > 1 ? valid[valid.length - 2] || {} : {};
   const close = Number(latest.close);
   const swl = Number(latest.swl);
   const sws = Number(latest.sws);
-  const closeState =
-    Number.isFinite(close) && Number.isFinite(swl)
-      ? close >= swl
-        ? "白线站上蓝线，短线先看转强。"
-        : "白线还压在蓝线下方，短线仍偏弱。"
-      : "白线和蓝线数据不够，先不下短线结论。";
-  const trendState =
-    Number.isFinite(swl) && Number.isFinite(sws)
-      ? swl >= sws
-        ? "蓝线在灰虚线上方，说明短线没有明显拖累中期。"
-        : "蓝线在灰虚线下方，说明短线比中期更弱，需要等修复。"
-      : "蓝线和灰虚线数据不够，先不下中期结论。";
-  const summaryState =
-    Number.isFinite(close) && Number.isFinite(swl) && Number.isFinite(sws)
-      ? close >= swl && swl >= sws
-        ? "整体是偏多结构。"
-        : close < swl && swl < sws
-          ? "整体还是偏弱结构，先等修复。"
-          : "结构还在分化，先看白线能不能重新站回蓝线上方。"
-      : "";
+  const prevClose = Number(previous.close);
+  const prevSwl = Number(previous.swl);
+  const prevSws = Number(previous.sws);
+  const dateText = latest.date ? `${latest.date}：` : "";
+  const valueParts = [
+    Number.isFinite(close) ? `收盘价 ${formatNumber(close)}` : "",
+    Number.isFinite(swl) ? `SWL ${formatNumber(swl)}` : "",
+    Number.isFinite(sws) ? `SWS ${formatNumber(sws)}` : "",
+  ].filter(Boolean);
+  const valueText = valueParts.length ? `${valueParts.join("，")}。` : "当前趋势数值不完整。";
+  const closeState = Number.isFinite(close) && Number.isFinite(swl)
+    ? close >= swl
+      ? `收盘价高于 SWL ${trendGapText(close, swl)}，短线价格站在参考线之上。`
+      : `收盘价低于 SWL ${trendGapText(close, swl)}，短线价格仍被参考线压制。`
+    : "收盘价与 SWL 数据不完整，暂不判断短线强弱。";
+  const trendState = Number.isFinite(swl) && Number.isFinite(sws)
+    ? swl >= sws
+      ? `SWL 高于 SWS ${trendGapText(swl, sws)}，短线参考线没有拖累中期。`
+      : `SWL 低于 SWS ${trendGapText(swl, sws)}，短线参考线弱于中期。`
+    : "SWL 与 SWS 数据不完整，暂不判断中期结构。";
+  const moveText = [
+    trendMoveText("收盘价", close, prevClose),
+    trendMoveText("SWL", swl, prevSwl),
+    trendMoveText("SWS", sws, prevSws),
+  ].filter(Boolean).join("，");
+  const summaryState = Number.isFinite(close) && Number.isFinite(swl) && Number.isFinite(sws)
+    ? close >= swl && swl >= sws
+      ? "当前是价格、短线、中期顺序偏多的结构，重点看收盘价能否继续留在 SWL 上方。"
+      : close < swl && swl < sws
+        ? "当前是价格低于短线、短线弱于中期的偏弱结构，先等收盘价收复 SWL。"
+        : close < swl && swl >= sws
+          ? "中期参考线尚未明显走坏，但价格已回到 SWL 下方，当前先按短线走弱处理。"
+          : "价格开始修复到 SWL 上方，但 SWL 仍低于 SWS，当前更像弱势修复初段。"
+    : "趋势指标不完整，先等待下一组日线数据。";
   const chipText = renderChipDistributionText(chipDistribution);
   return `
-    <section class="trend-explain" aria-label="\u8d8b\u52bf\u6307\u6807\u8bf4\u660e">
-      <strong>\u8d8b\u52bf\u56fe\u600e\u4e48\u770b</strong>
-      <p>白线是收盘价，往上代表价格走强，往下代表价格走弱。</p>
-      <p>蓝线 SWL 是短线参考线，白线站上去，短线才算有转强迹象。</p>
-      <p>灰色虚线 SWS 是中期参考线，蓝线在它上面，说明短线还没有明显拖累中期。</p>
+    <section class="trend-explain" aria-label="趋势当前指标解读">
+      <strong>当前趋势解读</strong>
+      <p>${escapeHtml(`${dateText}${valueText}${closeState}${trendState}`)}</p>
+      ${moveText ? `<p>${escapeHtml(`${moveText}。`)}</p>` : ""}
       ${chipText ? `<p>${escapeHtml(chipText)}</p>` : ""}
-      <p>${escapeHtml(closeState)}${escapeHtml(trendState)}${escapeHtml(summaryState)}</p>
+      <p>${escapeHtml(summaryState)}</p>
     </section>
   `;
+}
+
+function trendGapText(value, reference) {
+  if (!Number.isFinite(value) || !Number.isFinite(reference)) return "";
+  const diff = Math.abs(value - reference);
+  const pct = reference ? Math.abs((value - reference) / reference) * 100 : null;
+  return Number.isFinite(pct) ? `${formatNumber(diff)}（${formatNumber(pct)}%）` : formatNumber(diff);
+}
+
+function trendMoveText(label, current, previous) {
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) return "";
+  const diff = current - previous;
+  if (Math.abs(diff) < 0.01) return `${label}较上一交易日基本走平`;
+  return `${label}较上一交易日${diff > 0 ? "上行" : "回落"} ${formatNumber(Math.abs(diff))}`;
 }
 
 function renderChipDistributionText(chipDistribution) {
