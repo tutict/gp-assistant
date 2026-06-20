@@ -8165,6 +8165,13 @@ button,
   grid-row: 4;
 }
 
+.workbench[data-active-view="agent"] #sectionAgent,
+.workbench[data-active-view="observe"] #sectionObserve,
+.workbench[data-active-view="backtest"] #sectionBacktest,
+.workbench[data-active-view="news"] #sectionNewsRag {
+  margin-top: 12px;
+}
+
 .primary-view,
 .secondary-view,
 .workbench[data-active-view="agent"] #sectionAgent,
