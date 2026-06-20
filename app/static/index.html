@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>A股选股智能体</title>
+    <title>股选优</title>
     <link rel="icon" href="data:," />
     <script>
       const requestedTheme = new URLSearchParams(window.location.search).get("theme");
       const savedTheme =
         requestedTheme === "dark" || requestedTheme === "light"
           ? requestedTheme
-          : localStorage.getItem("gp-assistant-theme");
+          : localStorage.getItem("stock-optimizer-theme");
       document.documentElement.dataset.theme = savedTheme || "dark";
     </script>
     <style>

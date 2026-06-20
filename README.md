@@ -1,4 +1,4 @@
-# A股选股智能体
+# 股选优
 
 这是一个面向 A 股的选股智能体项目，后端使用 FastAPI，前端提供行情观察、基础选股、关系图选股、趋势指标选股和回测界面。项目同时包含 Tauri 桌面壳、移动端可嵌入的 Rust 核心模块，以及可切换的数据源适配层。
 
@@ -20,15 +20,15 @@
 
 ## 当前稳定版
 
-当前稳定版为 `v0.3.0`，发布页见 <https://github.com/tutict/gp-assistant/releases/tag/v0.3.0>。
+当前稳定版为 `v0.3.0`，发布页见 <https://github.com/tutict/stock-optimizer/releases/tag/v0.3.0>。
 
 发布页提供：
 
-- Windows 安装包：`GP-Assistant_0.3.0_windows-x64-setup.exe`
-- Android 可安装测试包：`GP-Assistant_0.3.0_android-aarch64-debug.apk`
-- Android 未签名 release 包：`GP-Assistant_0.3.0_android-aarch64-release-unsigned.apk`
-- Linux 安装包：`GP-Assistant_0.3.0_linux-amd64.deb`
-- Linux 便携包：`GP-Assistant_0.3.0_linux-amd64.AppImage`
+- Windows 安装包：`StockOptimizer_0.3.0_windows-x64-setup.exe`
+- Android 可安装测试包：`StockOptimizer_0.3.0_android-aarch64-debug.apk`
+- Android 未签名 release 包：`StockOptimizer_0.3.0_android-aarch64-release-unsigned.apk`
+- Linux 安装包：`StockOptimizer_0.3.0_linux-amd64.deb`
+- Linux 便携包：`StockOptimizer_0.3.0_linux-amd64.AppImage`
 - `SHA256SUMS.txt`：发布产物 SHA-256 校验值
 
 Android 的 `release-unsigned.apk` 需要接入正式 keystore 后再签名分发；普通手机安装验证优先使用 debug APK。
@@ -71,12 +71,12 @@ sidecar 构建使用 PyInstaller，输出到 `desktop/src-tauri/binaries/`。
 Linux 桌面包需要在 Linux 环境中构建，推荐使用 WSL Ubuntu。先准备 Rust stable、Node.js、Python/PyInstaller，以及 Tauri Linux 依赖（WebKitGTK、GTK、AppIndicator、librsvg、patchelf 等），并生成 Linux 平台 sidecar：
 
 ```bash
-python -m PyInstaller --clean --onefile --name gp-assistant-backend \
+python -m PyInstaller --clean --onefile --name stock-optimizer-backend \
   --collect-all onnxruntime --collect-all tokenizers --collect-all pytdx \
   --add-data app/static:app/static \
   --add-data app/prompts:app/prompts \
   app/desktop_server.py
-cp dist/gp-assistant-backend desktop/src-tauri/binaries/gp-assistant-backend-x86_64-unknown-linux-gnu
+cp dist/stock-optimizer-backend desktop/src-tauri/binaries/stock-optimizer-backend-x86_64-unknown-linux-gnu
 ```
 
 然后在 `desktop/` 下打包 Linux 安装包：

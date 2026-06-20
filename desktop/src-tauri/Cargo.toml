@@ -1,8 +1,8 @@
 [package]
-name = "gp-assistant-desktop"
+name = "stock-optimizer-desktop"
 version = "0.3.0"
-description = "Desktop shell for A股选股智能体"
-authors = ["A股选股智能体"]
+description = "Desktop shell for 股选优"
+authors = ["股选优"]
 edition = "2021"
 
 [lib]
@@ -14,7 +14,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 anyhow = "1"
 base64 = "0.22"
-gp-core = { path = "../../native/gp-core" }
+stock-optimizer-core = { path = "../../native/gp-core" }
 encoding_rs = "0.8"
 reqwest = "0.13.4"
 serde_json = "1"

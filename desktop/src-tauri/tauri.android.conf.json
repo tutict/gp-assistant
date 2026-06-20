@@ -10,7 +10,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "A股选股智能体",
+        "title": "股选优",
         "url": "index.html",
         "theme": "Dark",
         "backgroundColor": "#101418"

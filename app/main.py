@@ -9,7 +9,7 @@ from app.api.routes import router as api_router
 
 load_dotenv()
 
-app = FastAPI(title="A股选股智能体", version="0.3.0")
+app = FastAPI(title="股选优", version="0.3.0")
 
 @app.middleware("http")
 async def no_cache_static_assets(request, call_next):

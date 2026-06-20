@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "A股选股智能体",
+  "productName": "股选优",
   "version": "0.3.0",
-  "identifier": "com.tutict.gpassistant",
+  "identifier": "com.tutict.stockoptimizer",
   "build": {
     "beforeDevCommand": "",
     "beforeBuildCommand": "",
@@ -26,7 +26,7 @@
         "installerHooks": "installer-hooks.nsh",
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
-        "startMenuFolder": "A股选股智能体"
+        "startMenuFolder": "股选优"
       }
     }
   }

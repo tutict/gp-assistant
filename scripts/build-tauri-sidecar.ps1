@@ -66,7 +66,7 @@ $PyInstallerArgs = @(
     "--clean",
     "--onefile",
     "--name",
-    "gp-assistant-backend",
+    "stock-optimizer-backend",
     "--collect-all",
     "akshare",
     "--collect-all",

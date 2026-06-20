@@ -1,8 +1,8 @@
 [package]
-name = "gp-core"
+name = "stock-optimizer-core"
 version = "0.3.0"
 edition = "2021"
-description = "Embeddable stock screening core for GP Assistant"
+description = "Embeddable stock screening core for Stock Optimizer"
 
 [lib]
 crate-type = ["rlib", "staticlib", "cdylib"]

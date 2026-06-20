@@ -1,5 +1,5 @@
 {
   "bundle": {
-    "externalBin": ["binaries/gp-assistant-backend"]
+    "externalBin": ["binaries/stock-optimizer-backend"]
   }
 }

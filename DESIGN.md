@@ -1,5 +1,5 @@
 ---
-name: GP Assistant
+name: 股选优
 description: A professional A-share research workbench for screening, evidence, observation, and backtesting.
 colors:
   primary: "#48BFD2"

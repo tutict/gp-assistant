@@ -28,12 +28,12 @@ const panels = {
 
 const themeToggle = $("#themeToggle");
 const themeText = $("#themeText");
-const THEME_KEY = "gp-assistant-theme";
-const DATA_PROXY_KEY = "gp-assistant-proxy-mode";
-const AUTO_REFRESH_CHECK_KEY = "gp-assistant-auto-refresh-last-check";
+const THEME_KEY = "stock-optimizer-theme";
+const DATA_PROXY_KEY = "stock-optimizer-proxy-mode";
+const AUTO_REFRESH_CHECK_KEY = "stock-optimizer-auto-refresh-last-check";
 const AUTO_REFRESH_CHECK_INTERVAL_MS = 30 * 60 * 1000;
-const LLM_SETTINGS_KEY = "gp-assistant-llm-settings";
-const WATCHLIST_KEY = "gp-assistant-watchlist";
+const LLM_SETTINGS_KEY = "stock-optimizer-llm-settings";
+const WATCHLIST_KEY = "stock-optimizer-watchlist";
 const DEFAULT_RESULT_LIMIT = 10;
 const DEFAULT_SECTOR_GROUP_LIMIT = 12;
 const DEFAULT_PER_SECTOR_LIMIT = 5;
