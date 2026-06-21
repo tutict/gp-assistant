@@ -1,6 +1,7 @@
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use stock_optimizer_core as gp_core;
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -1172,7 +1173,7 @@ pub fn run() {
 
     builder
         .run(tauri::generate_context!())
-        .expect("error while running A股选股智能体");
+        .expect("error while running 股选优");
 }
 
 #[cfg(not(mobile))]
@@ -1192,7 +1193,7 @@ fn setup_desktop(app: &mut tauri::App) -> tauri::Result<()> {
         "main",
         WebviewUrl::External(backend_url.parse().expect("valid backend URL")),
     )
-    .title("A股选股智能体")
+    .title("股选优")
     .inner_size(1280.0, 860.0)
     .min_inner_size(960.0, 680.0)
     .visible(false)
@@ -1225,12 +1226,45 @@ fn backend_port() -> u16 {
 #[cfg(not(mobile))]
 fn start_backend(app: &tauri::App, port: u16) -> tauri::Result<BackendProcess> {
     if should_use_sidecar() {
+        let data_root = desktop_data_root();
+        let cache_root = data_root.join("cache");
+        fs::create_dir_all(&cache_root).map_err(tauri::Error::from)?;
+        let data_root_value = data_root.display().to_string();
+        let cache_root_value = cache_root.display().to_string();
         let child = app
             .shell()
-            .sidecar("gp-assistant-backend")
+            .sidecar("stock-optimizer-backend")
             .map_err(shell_error)?
             .env("GP_ASSISTANT_HOST", APP_HOST)
             .env("GP_ASSISTANT_PORT", port.to_string())
+            .env("GP_ASSISTANT_DATA_ROOT", data_root_value)
+            .env("GP_CACHE_DIR", cache_root_value.clone())
+            .env("TDX_CACHE", cache_root.join("tdx_stocks.csv").display().to_string())
+            .env(
+                "EASTMONEY_CACHE",
+                cache_root.join("eastmoney_stocks.csv").display().to_string(),
+            )
+            .env("AKSHARE_CACHE", cache_root.join("stocks.csv").display().to_string())
+            .env(
+                "TDX_FUNDAMENTAL_CACHE",
+                cache_root.join("tdx_fundamentals.csv").display().to_string(),
+            )
+            .env(
+                "GP_NEWS_CACHE",
+                cache_root.join("news.sqlite").display().to_string(),
+            )
+            .env(
+                "GP_CAPITAL_CACHE",
+                cache_root.join("capital_evidence.sqlite").display().to_string(),
+            )
+            .env(
+                "GP_RAG_PACK_PATH",
+                cache_root.join("rag_pack.sqlite").display().to_string(),
+            )
+            .env(
+                "GP_UPSTREAM_RAG_ROOT",
+                cache_root.join("upstream_rag").display().to_string(),
+            )
             .env(
                 "STOCK_PROVIDER",
                 env::var("STOCK_PROVIDER").unwrap_or_else(|_| "tdx".to_string()),
@@ -1242,6 +1276,14 @@ fn start_backend(app: &tauri::App, port: u16) -> tauri::Result<BackendProcess> {
     } else {
         start_python_backend(port).map(BackendProcess::Python)
     }
+}
+
+#[cfg(not(mobile))]
+fn desktop_data_root() -> PathBuf {
+    env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.join("data")))
+        .unwrap_or_else(|| PathBuf::from("data"))
 }
 
 #[cfg(not(mobile))]

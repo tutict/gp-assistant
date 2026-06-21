@@ -16,8 +16,8 @@
     <style>
       html,
       body {
-        background: #101418;
-        color: #edf2f6;
+        background: #120e0d;
+        color: #fff4ef;
       }
 
       #bootSplash {
@@ -26,8 +26,8 @@
         z-index: 9999;
         display: grid;
         place-items: center;
-        background: #101418;
-        color: #edf2f6;
+        background: #120e0d;
+        color: #fff4ef;
         font-family:
           Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
           "Microsoft YaHei", sans-serif;
@@ -45,8 +45,8 @@
         height: 52px;
         place-items: center;
         border-radius: 14px;
-        background: #55c2d0;
-        color: #061216;
+        background: linear-gradient(145deg, #ff6a57, #d9251d);
+        color: #fff7f3;
         font-weight: 860;
       }
 
@@ -61,13 +61,59 @@
         transition: opacity 0.16s ease;
       }
     </style>
-    <link rel="stylesheet" href="/static/style.css?v=20260619-responsive-switching" />
+    <link rel="stylesheet" href="/static/style.css?v=20260621-red-theme" />
   </head>
   <body>
+    <svg class="icon-sprite" aria-hidden="true" focusable="false">
+      <symbol id="icon-screen" viewBox="0 0 24 24">
+        <path d="M4 5h16l-6.4 7.2v4.4l-3.2 1.9v-6.3L4 5Z" />
+        <path d="M6.5 19h11" />
+        <path d="M8 14.5v4" />
+        <path d="M16 13.5v5" />
+      </symbol>
+      <symbol id="icon-observe" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="7" />
+        <circle cx="12" cy="12" r="2.4" />
+        <path d="M12 3v2" />
+        <path d="M12 19v2" />
+        <path d="M3 12h2" />
+        <path d="M19 12h2" />
+        <path d="m16.8 7.2-1.4 1.4" />
+        <path d="m8.6 15.4-1.4 1.4" />
+      </symbol>
+      <symbol id="icon-backtest" viewBox="0 0 24 24">
+        <path d="M4 17.5 9 12l4 3 7-8" />
+        <path d="M15 7h5v5" />
+        <path d="M6.5 6.5a7.5 7.5 0 0 1 8.3-1.2" />
+        <path d="M5 4.5v3h3" />
+      </symbol>
+      <symbol id="icon-news" viewBox="0 0 24 24">
+        <path d="M5 4h10.5L19 7.5V20H5Z" />
+        <path d="M15 4v4h4" />
+        <path d="M8 11h8" />
+        <path d="M8 15h6" />
+        <path d="M17.5 12.5 20 10l-2.5-2.5" />
+      </symbol>
+      <symbol id="icon-agent" viewBox="0 0 24 24">
+        <rect width="16" height="13" x="4" y="6" rx="3" />
+        <path d="m8.5 11 2.5 2-2.5 2" />
+        <path d="M13.5 15h3.5" />
+        <path d="M9 3v3" />
+        <path d="M15 3v3" />
+      </symbol>
+      <symbol id="icon-graph" viewBox="0 0 24 24">
+        <circle cx="6" cy="7" r="2.3" />
+        <circle cx="18" cy="7" r="2.3" />
+        <circle cx="12" cy="18" r="2.3" />
+        <path d="M8.1 8.1 10.8 16" />
+        <path d="M15.9 8.1 13.2 16" />
+        <path d="M8.4 7h7.2" />
+      </symbol>
+    </svg>
     <div id="bootSplash" aria-hidden="true">
       <div class="boot-splash-card">
-        <div class="boot-splash-mark">股</div>
-        <div class="boot-splash-title">股票选股终端</div>
+        <div class="boot-splash-mark">涨</div>
+        <div class="boot-splash-title">股选优</div>
       </div>
     </div>
     <button
@@ -92,59 +138,40 @@
       <a href="#sectionScreen" data-mobile-nav-link data-view-link="screen">
         <span class="nav-icon-box">
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M21 4h-7" />
-            <path d="M10 4H3" />
-            <path d="M21 12h-9" />
-            <path d="M8 12H3" />
-            <path d="M21 20h-5" />
-            <path d="M12 20H3" />
-            <path d="M14 2v4" />
-            <path d="M8 10v4" />
-            <path d="M16 18v4" />
-          </svg>
+                  <use href="#icon-screen"></use>
+                </svg>
         </span>
         筛选
       </a>
       <a href="#sectionObserve" data-mobile-nav-link data-view-link="observe">
         <span class="nav-icon-box">
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0" />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
+                  <use href="#icon-observe"></use>
+                </svg>
         </span>
         观察
       </a>
       <a href="#sectionBacktest" data-mobile-nav-link data-view-link="backtest">
         <span class="nav-icon-box">
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M16 7h6v6" />
-            <path d="m22 7-8.5 8.5-5-5L2 17" />
-          </svg>
+                  <use href="#icon-backtest"></use>
+                </svg>
         </span>
         回测
       </a>
       <a href="#sectionNewsRag" data-mobile-nav-link data-view-link="news">
         <span class="nav-icon-box">
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M4 22a2 2 0 0 0 2-2V6a2 2 0 0 1 2-2h14v16a2 2 0 0 1-2 2H4Z" />
-            <path d="M4 22a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2h2" />
-            <path d="M10 6h8v4h-8Z" />
-            <path d="M10 14h8" />
-            <path d="M10 18h5" />
-          </svg>
+                  <use href="#icon-news"></use>
+                </svg>
         </span>
         消息
       </a>
       <a href="#sectionAgent" data-mobile-nav-link data-view-link="agent">
         <span class="nav-icon-box">
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M12 8V4H8" />
-            <rect width="16" height="12" x="4" y="8" rx="2" />
-            <path d="M2 14h2" />
-            <path d="M20 14h2" />
-            <path d="M9 13v2" />
-            <path d="M15 13v2" />
-          </svg>
+                  <use href="#icon-agent"></use>
+                </svg>
         </span>
         助手
       </a>
@@ -152,10 +179,10 @@
     <main class="app-shell">
       <header class="app-header">
         <div class="brand-lockup">
-          <div class="brand-mark" aria-hidden="true">股</div>
+          <div class="brand-mark" aria-hidden="true">涨</div>
           <div>
             <p class="eyebrow">A股研究</p>
-            <h1>股票选股终端</h1>
+            <h1>股选优</h1>
           </div>
         </div>
         <div class="top-actions">
@@ -183,15 +210,7 @@
             <a href="#sectionScreen" class="active" data-workbench-nav data-view-link="screen">
               <span class="nav-icon-box">
                 <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M21 4h-7" />
-                  <path d="M10 4H3" />
-                  <path d="M21 12h-9" />
-                  <path d="M8 12H3" />
-                  <path d="M21 20h-5" />
-                  <path d="M12 20H3" />
-                  <path d="M14 2v4" />
-                  <path d="M8 10v4" />
-                  <path d="M16 18v4" />
+                  <use href="#icon-screen"></use>
                 </svg>
               </span>
               <strong>筛选</strong>
@@ -200,8 +219,7 @@
             <a href="#sectionObserve" data-workbench-nav data-view-link="observe">
               <span class="nav-icon-box">
                 <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0" />
-                  <circle cx="12" cy="12" r="3" />
+                  <use href="#icon-observe"></use>
                 </svg>
               </span>
               <strong>观察</strong>
@@ -210,8 +228,7 @@
             <a href="#sectionBacktest" data-workbench-nav data-view-link="backtest">
               <span class="nav-icon-box">
                 <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M16 7h6v6" />
-                  <path d="m22 7-8.5 8.5-5-5L2 17" />
+                  <use href="#icon-backtest"></use>
                 </svg>
               </span>
               <strong>回测</strong>
@@ -220,11 +237,7 @@
             <a href="#sectionNewsRag" data-workbench-nav data-view-link="news">
               <span class="nav-icon-box">
                 <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M4 22a2 2 0 0 0 2-2V6a2 2 0 0 1 2-2h14v16a2 2 0 0 1-2 2H4Z" />
-                  <path d="M4 22a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2h2" />
-                  <path d="M10 6h8v4h-8Z" />
-                  <path d="M10 14h8" />
-                  <path d="M10 18h5" />
+                  <use href="#icon-news"></use>
                 </svg>
               </span>
               <strong>消息</strong>
@@ -233,12 +246,7 @@
             <a href="#sectionAgent" data-workbench-nav data-view-link="agent">
               <span class="nav-icon-box">
                 <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M12 8V4H8" />
-                  <rect width="16" height="12" x="4" y="8" rx="2" />
-                  <path d="M2 14h2" />
-                  <path d="M20 14h2" />
-                  <path d="M9 13v2" />
-                  <path d="M15 13v2" />
+                  <use href="#icon-agent"></use>
                 </svg>
               </span>
               <strong>助手</strong>
@@ -259,15 +267,7 @@
             <a href="#sectionScreen">
               <span class="nav-icon-box">
                 <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M21 4h-7" />
-                  <path d="M10 4H3" />
-                  <path d="M21 12h-9" />
-                  <path d="M8 12H3" />
-                  <path d="M21 20h-5" />
-                  <path d="M12 20H3" />
-                  <path d="M14 2v4" />
-                  <path d="M8 10v4" />
-                  <path d="M16 18v4" />
+                  <use href="#icon-screen"></use>
                 </svg>
               </span>
               <strong>筛选候选</strong>
@@ -276,8 +276,7 @@
             <a href="#sectionObserve">
               <span class="nav-icon-box">
                 <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0" />
-                  <circle cx="12" cy="12" r="3" />
+                  <use href="#icon-observe"></use>
                 </svg>
               </span>
               <strong>观察个股</strong>
@@ -286,8 +285,7 @@
             <a href="#sectionBacktest">
               <span class="nav-icon-box">
                 <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M16 7h6v6" />
-                  <path d="m22 7-8.5 8.5-5-5L2 17" />
+                  <use href="#icon-backtest"></use>
                 </svg>
               </span>
               <strong>回测验证</strong>
@@ -296,12 +294,7 @@
             <a href="#sectionGraph">
               <span class="nav-icon-box">
                 <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <circle cx="6" cy="6" r="2" />
-                  <circle cx="18" cy="6" r="2" />
-                  <circle cx="12" cy="18" r="2" />
-                  <path d="M8 7.2 10.6 16" />
-                  <path d="M16 7.2 13.4 16" />
-                  <path d="M8 6h8" />
+                  <use href="#icon-graph"></use>
                 </svg>
               </span>
               <strong>增强分析</strong>
@@ -792,50 +785,31 @@
     <nav class="bottom-tabbar" aria-label="底部导航">
       <a href="#sectionScreen" class="active" data-bottom-nav-link data-view-link="screen">
         <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M21 4h-7" />
-          <path d="M10 4H3" />
-          <path d="M21 12h-9" />
-          <path d="M8 12H3" />
-          <path d="M21 20h-5" />
-          <path d="M12 20H3" />
-          <path d="M14 2v4" />
-          <path d="M8 10v4" />
-          <path d="M16 18v4" />
+          <use href="#icon-screen"></use>
         </svg>
         <strong>筛选</strong>
       </a>
       <a href="#sectionObserve" data-bottom-nav-link data-view-link="observe">
         <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0" />
-          <circle cx="12" cy="12" r="3" />
+          <use href="#icon-observe"></use>
         </svg>
         <strong>观察</strong>
       </a>
       <a href="#sectionBacktest" data-bottom-nav-link data-view-link="backtest">
         <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M16 7h6v6" />
-          <path d="m22 7-8.5 8.5-5-5L2 17" />
+          <use href="#icon-backtest"></use>
         </svg>
         <strong>回测</strong>
       </a>
       <a href="#sectionNewsRag" data-bottom-nav-link data-view-link="news">
         <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M4 22a2 2 0 0 0 2-2V6a2 2 0 0 1 2-2h14v16a2 2 0 0 1-2 2H4Z" />
-          <path d="M4 22a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2h2" />
-          <path d="M10 6h8v4h-8Z" />
-          <path d="M10 14h8" />
-          <path d="M10 18h5" />
+          <use href="#icon-news"></use>
         </svg>
         <strong>消息</strong>
       </a>
       <a href="#sectionAgent" data-bottom-nav-link data-view-link="agent">
         <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M12 8V4H8" />
-          <rect width="16" height="12" x="4" y="8" rx="2" />
-          <path d="M2 14h2" />
-          <path d="M20 14h2" />
-          <path d="M9 13v2" />
-          <path d="M15 13v2" />
+          <use href="#icon-agent"></use>
         </svg>
         <strong>助手</strong>
       </a>

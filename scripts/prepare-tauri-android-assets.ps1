@@ -10,10 +10,10 @@ $AndroidManifest = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\A
 $AndroidBuildGradle = Join-Path $Root "desktop\src-tauri\gen\android\app\build.gradle.kts"
 $AndroidResDir = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\res"
 $AndroidIconSource = Join-Path $Root "desktop\src-tauri\icons\icon.png"
-$AndroidAppName = -join @("A", [char]0x80A1, [char]0x9009, [char]0x80A1, [char]0x667A, [char]0x80FD, [char]0x4F53)
+$AndroidAppName = -join @([char]0x80A1, [char]0x9009, [char]0x4F18)
 $AndroidThemeName = "GpAssistantTheme"
-$AndroidBootColor = "#101418"
-$AndroidLauncherColor = "#121A22"
+$AndroidBootColor = "#120E0D"
+$AndroidLauncherColor = "#D9251D"
 
 function Assert-WorkspaceChildPath {
     param(
@@ -233,6 +233,42 @@ function Update-AndroidStartupTheme {
     Update-AndroidManifestStartupTheme
 }
 
+function Write-AndroidLauncherFallbackVectors {
+    $drawableDir = Join-Path $AndroidResDir "drawable"
+    $drawableV24Dir = Join-Path $AndroidResDir "drawable-v24"
+    New-Item -ItemType Directory -Path $drawableDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $drawableV24Dir -Force | Out-Null
+
+    $backgroundVector = @(
+        "<?xml version=`"1.0`" encoding=`"utf-8`"?>",
+        "<vector xmlns:android=`"http://schemas.android.com/apk/res/android`"",
+        "    android:width=`"108dp`"",
+        "    android:height=`"108dp`"",
+        "    android:viewportWidth=`"108`"",
+        "    android:viewportHeight=`"108`">",
+        "    <path android:fillColor=`"$AndroidLauncherColor`" android:pathData=`"M0,0h108v108h-108z`" />",
+        "    <path android:fillColor=`"#00000000`" android:pathData=`"M12,0L12,108`" android:strokeWidth=`"0.8`" android:strokeColor=`"#24FFF7F3`" />",
+        "    <path android:fillColor=`"#00000000`" android:pathData=`"M36,0L36,108`" android:strokeWidth=`"0.8`" android:strokeColor=`"#20FFF7F3`" />",
+        "    <path android:fillColor=`"#00000000`" android:pathData=`"M60,0L60,108`" android:strokeWidth=`"0.8`" android:strokeColor=`"#20FFF7F3`" />",
+        "    <path android:fillColor=`"#00000000`" android:pathData=`"M84,0L84,108`" android:strokeWidth=`"0.8`" android:strokeColor=`"#24FFF7F3`" />",
+        "</vector>"
+    ) -join "`r`n"
+    Set-Content -LiteralPath (Join-Path $drawableDir "ic_launcher_background.xml") -Value $backgroundVector -Encoding UTF8
+
+    $foregroundVector = @(
+        "<?xml version=`"1.0`" encoding=`"utf-8`"?>",
+        "<vector xmlns:android=`"http://schemas.android.com/apk/res/android`"",
+        "    android:width=`"108dp`"",
+        "    android:height=`"108dp`"",
+        "    android:viewportWidth=`"108`"",
+        "    android:viewportHeight=`"108`">",
+        "    <path android:fillColor=`"#FFF7F3`" android:pathData=`"M54,18L83,76H70L64,64H44L38,76H25L54,18zM49,52h10l-5,-12z`" />",
+        "    <path android:fillColor=`"#FFF7F3`" android:pathData=`"M28,84h52v8h-52z`" />",
+        "</vector>"
+    ) -join "`r`n"
+    Set-Content -LiteralPath (Join-Path $drawableV24Dir "ic_launcher_foreground.xml") -Value $foregroundVector -Encoding UTF8
+}
+
 function Update-AndroidProjectBranding {
     if (-not (Test-Path -LiteralPath $AndroidResDir)) {
         return
@@ -253,6 +289,7 @@ function Update-AndroidProjectBranding {
     Set-Content -LiteralPath (Join-Path $valuesDir "strings.xml") -Value $stringsXml -Encoding UTF8
 
     Set-AndroidColorResource $valuesDir "ic_launcher_background" $AndroidLauncherColor
+    Write-AndroidLauncherFallbackVectors
 
     $launcherSizes = @{
         "mipmap-mdpi" = 48

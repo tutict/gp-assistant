@@ -1,8 +1,34 @@
 import os
+import sys
+from pathlib import Path
 
 import uvicorn
 
-from app.main import app
+
+def _runtime_base_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1]
+
+
+def _configure_runtime_paths() -> None:
+    data_root = Path(os.getenv("GP_ASSISTANT_DATA_ROOT") or (_runtime_base_dir() / "data")).resolve()
+    cache_root = data_root / "cache"
+    os.environ.setdefault("GP_ASSISTANT_DATA_ROOT", str(data_root))
+    os.environ.setdefault("GP_CACHE_DIR", str(cache_root))
+    os.environ.setdefault("TDX_CACHE", str(cache_root / "tdx_stocks.csv"))
+    os.environ.setdefault("TDX_FUNDAMENTAL_CACHE", str(cache_root / "tdx_fundamentals.csv"))
+    os.environ.setdefault("EASTMONEY_CACHE", str(cache_root / "eastmoney_stocks.csv"))
+    os.environ.setdefault("AKSHARE_CACHE", str(cache_root / "stocks.csv"))
+    os.environ.setdefault("GP_NEWS_CACHE", str(cache_root / "news.sqlite"))
+    os.environ.setdefault("GP_CAPITAL_CACHE", str(cache_root / "capital_evidence.sqlite"))
+    os.environ.setdefault("GP_RAG_PACK_PATH", str(cache_root / "rag_pack.sqlite"))
+    os.environ.setdefault("GP_UPSTREAM_RAG_ROOT", str(cache_root / "upstream_rag"))
+
+
+_configure_runtime_paths()
+
+from app.main import app  # noqa: E402
 
 
 def main() -> None:

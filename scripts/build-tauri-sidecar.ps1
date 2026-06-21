@@ -104,8 +104,8 @@ if ($IsWindows -or $env:OS -eq "Windows_NT") {
     $Extension = ".exe"
 }
 
-$Source = Join-Path $DistDir "gp-assistant-backend$Extension"
-$Target = Join-Path $BinariesDir "gp-assistant-backend-$HostTriple$Extension"
+$Source = Join-Path $DistDir "stock-optimizer-backend$Extension"
+$Target = Join-Path $BinariesDir "stock-optimizer-backend-$HostTriple$Extension"
 Copy-Item -LiteralPath $Source -Destination $Target -Force
 
 Write-Host "Created Tauri sidecar: $Target"

@@ -1205,32 +1205,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gp-assistant-desktop"
-version = "0.3.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "encoding_rs",
- "gp-core",
- "reqwest",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-shell",
-]
-
-[[package]]
-name = "gp-core"
-version = "0.3.0"
-dependencies = [
- "chrono",
- "regex",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "gtk"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3338,6 +3312,32 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "stock-optimizer-core"
+version = "0.3.0"
+dependencies = [
+ "chrono",
+ "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "stock-optimizer-desktop"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "encoding_rs",
+ "reqwest",
+ "serde_json",
+ "sha2",
+ "stock-optimizer-core",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-shell",
+]
 
 [[package]]
 name = "string_cache"
