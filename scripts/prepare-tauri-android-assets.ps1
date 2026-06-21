@@ -8,6 +8,7 @@ $OutputDir = Join-Path $Root "desktop\mobile-dist"
 $StaticOutputDir = Join-Path $OutputDir "static"
 $AndroidManifest = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\AndroidManifest.xml"
 $AndroidBuildGradle = Join-Path $Root "desktop\src-tauri\gen\android\app\build.gradle.kts"
+$AndroidMainActivity = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\java\com\tutict\stockoptimizer\MainActivity.kt"
 $AndroidResDir = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\res"
 $AndroidIconSource = Join-Path $Root "desktop\src-tauri\icons\icon.png"
 $AndroidAppName = -join @([char]0x80A1, [char]0x9009, [char]0x4F18)
@@ -210,6 +211,45 @@ function Update-AndroidManifestStartupTheme {
     Set-Content -LiteralPath $AndroidManifest -Value $manifest -Encoding UTF8
 }
 
+function Update-AndroidSafeAreaInsets {
+    $mainActivityDir = Split-Path -Parent $AndroidMainActivity
+    if (-not (Test-Path -LiteralPath $mainActivityDir)) {
+        return
+    }
+
+    $mainActivity = @(
+        "package com.tutict.stockoptimizer",
+        "",
+        "import android.os.Bundle",
+        "import android.view.View",
+        "import androidx.activity.enableEdgeToEdge",
+        "import androidx.core.view.ViewCompat",
+        "import androidx.core.view.WindowInsetsCompat",
+        "",
+        "class MainActivity : TauriActivity() {",
+        "  override fun onCreate(savedInstanceState: Bundle?) {",
+        "    enableEdgeToEdge()",
+        "    super.onCreate(savedInstanceState)",
+        "    applyTopSystemBarInset()",
+        "  }",
+        "",
+        "  private fun applyTopSystemBarInset() {",
+        "    val contentView = findViewById<View>(android.R.id.content) ?: return",
+        "    ViewCompat.setOnApplyWindowInsetsListener(contentView) { view, insets ->",
+        "      val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())",
+        "      val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())",
+        "      val topInset = maxOf(systemBars.top, cutout.top)",
+        "      view.setPadding(view.paddingLeft, topInset, view.paddingRight, view.paddingBottom)",
+        "      insets",
+        "    }",
+        "    ViewCompat.requestApplyInsets(contentView)",
+        "  }",
+        "}",
+        ""
+    ) -join "`r`n"
+
+    Set-Content -LiteralPath $AndroidMainActivity -Value $mainActivity -Encoding UTF8
+}
 function Update-AndroidStartupTheme {
     if (-not (Test-Path -LiteralPath $AndroidResDir)) {
         return
@@ -343,5 +383,6 @@ Get-ChildItem -LiteralPath $SourceDir -Force |
 Update-AndroidProjectForLanImport
 Update-AndroidProjectBranding
 Update-AndroidStartupTheme
+Update-AndroidSafeAreaInsets
 
 Write-Host "Prepared Tauri Android assets at: $OutputDir"
