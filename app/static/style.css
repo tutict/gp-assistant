@@ -1,51 +1,3 @@
-:root {
-  color-scheme: light;
-  --bg: #f3f5f7;
-  --surface: #ffffff;
-  --surface-2: #f8fafb;
-  --surface-3: #eef2f5;
-  --text: #16212b;
-  --muted: #687583;
-  --line: #d9e1e7;
-  --line-strong: #c5d0d8;
-  --accent: #0f7b8a;
-  --accent-strong: #0a5d68;
-  --rise: #d83b32;
-  --fall: #16854d;
-  --positive: #247a4d;
-  --warning: #a86116;
-  --danger: #b42318;
-  --button-text: #ffffff;
-  --raw-bg: #111827;
-  --raw-text: #e5edf3;
-  --shadow: 0 16px 42px rgba(26, 42, 57, 0.08);
-  --focus: 0 0 0 3px rgba(15, 123, 138, 0.16);
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --bg: #101418;
-  --surface: #171c21;
-  --surface-2: #12171c;
-  --surface-3: #202832;
-  --text: #edf2f6;
-  --muted: #95a2ad;
-  --line: #2a343e;
-  --line-strong: #394654;
-  --accent: #55c2d0;
-  --accent-strong: #8bdbe4;
-  --rise: #ff6b61;
-  --fall: #46c982;
-  --positive: #63c489;
-  --warning: #e0ad62;
-  --danger: #ff8a80;
-  --button-text: #061216;
-  --raw-bg: #080b0f;
-  --raw-text: #d8e1ea;
-  --shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
-  --focus: 0 0 0 3px rgba(85, 194, 208, 0.2);
-}
-
 * {
   box-sizing: border-box;
 }
@@ -2988,53 +2940,6 @@ input[type="date"] {
   }
 }
 
-/* Fluent / WinUI-style shell refresh */
-:root {
-  --bg: #f6f7fb;
-  --surface: #ffffff;
-  --surface-2: #f3f6fa;
-  --surface-3: #ebf0f6;
-  --mica: rgba(255, 255, 255, 0.82);
-  --nav: rgba(255, 255, 255, 0.72);
-  --text: #1b1f24;
-  --muted: #5d6673;
-  --line: #dde3ea;
-  --line-strong: #c9d2dc;
-  --accent: #0067c0;
-  --accent-strong: #004f99;
-  --rise: #c42b1c;
-  --fall: #107c41;
-  --positive: #107c41;
-  --warning: #9d5d00;
-  --danger: #c42b1c;
-  --button-text: #ffffff;
-  --shadow: 0 8px 24px rgba(30, 42, 58, 0.08);
-  --focus: 0 0 0 3px rgba(0, 103, 192, 0.18);
-}
-
-:root[data-theme="dark"] {
-  --bg: #202225;
-  --surface: #2b2d31;
-  --surface-2: #25272b;
-  --surface-3: #33363b;
-  --mica: rgba(43, 45, 49, 0.86);
-  --nav: rgba(39, 41, 45, 0.78);
-  --text: #f3f3f3;
-  --muted: #b5bbc4;
-  --line: #3b3f46;
-  --line-strong: #505661;
-  --accent: #60cdff;
-  --accent-strong: #8ddcff;
-  --rise: #ff99a4;
-  --fall: #6ccb8f;
-  --positive: #6ccb8f;
-  --warning: #f2cc60;
-  --danger: #ff99a4;
-  --button-text: #05131a;
-  --shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
-  --focus: 0 0 0 3px rgba(96, 205, 255, 0.22);
-}
-
 html,
 body {
   background: var(--bg);
@@ -4950,10 +4855,10 @@ button:focus-visible,
   --muted: #a4afbe;
   --line: #2a333e;
   --line-strong: #3d4856;
-  --accent: #4fc3f7;
-  --accent-strong: #7ddcff;
-  --accent-soft: rgba(79, 195, 247, 0.12);
-  --accent-line: rgba(79, 195, 247, 0.38);
+  --accent: #ff5a5f;
+  --accent-strong: #ff7b7f;
+  --accent-soft: rgba(255, 90, 95, 0.12);
+  --accent-line: rgba(255, 90, 95, 0.38);
   --rise: #ff5757;
   --fall: #16c784;
   --positive: #16c784;
@@ -4989,10 +4894,10 @@ button:focus-visible,
   --muted: #5b6878;
   --line: #dde4ec;
   --line-strong: #c3cedb;
-  --accent: #087ea8;
-  --accent-strong: #006991;
-  --accent-soft: rgba(8, 126, 168, 0.1);
-  --accent-line: rgba(8, 126, 168, 0.32);
+  --accent: #d9363e;
+  --accent-strong: #c72933;
+  --accent-soft: rgba(217, 54, 62, 0.1);
+  --accent-line: rgba(217, 54, 62, 0.32);
   --rise: #d92d36;
   --fall: #078a50;
   --positive: #078a50;
@@ -8168,9 +8073,12 @@ button,
 
 .workbench[data-active-view="agent"] #sectionAgent,
 .workbench[data-active-view="observe"] #sectionObserve,
-.workbench[data-active-view="backtest"] #sectionBacktest,
-.workbench[data-active-view="news"] #sectionNewsRag {
+.workbench[data-active-view="backtest"] #sectionBacktest {
   margin-top: 12px;
+}
+
+.workbench[data-active-view="news"] #sectionNewsRag {
+  margin-top: 0;
 }
 
 .primary-view,
@@ -10673,7 +10581,7 @@ body {
 }
 
 :root {
-  --signal-cyan: #48bfd2;
+  --signal-cyan: #ff858a;
   --signal-green: #35b779;
   --signal-amber: #d7a441;
   --signal-red: #f25d52;
@@ -10694,7 +10602,7 @@ body {
 }
 
 :root[data-theme="light"] {
-  --signal-cyan: #0f7b8a;
+  --signal-cyan: #d9363e;
   --signal-green: #16854d;
   --signal-amber: #a86116;
   --signal-red: #d83b32;
