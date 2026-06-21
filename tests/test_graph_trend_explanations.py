@@ -65,6 +65,9 @@ class GraphTrendExplanationTests(unittest.TestCase):
         self.assertTrue(first.explanation.risk_checks)
         self.assertTrue(first.explanation.verification)
         self.assertTrue(any(item.key == "short_buy_score" for item in first.explanation.score_breakdown))
+        self.assertIsNotNone(first.signal.previous_close)
+        self.assertIsNotNone(first.signal.close_change)
+        self.assertIsNotNone(first.signal.close_change_pct)
 
     def test_trend_screen_skips_history_runtime_errors(self):
         result = trend_screen_stocks(

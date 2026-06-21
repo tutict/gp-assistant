@@ -638,6 +638,8 @@ function dismissBootSplash() {
 
 function initRuntimeSurface() {
   const mobileRuntime = isMobileTauriRuntime();
+  document.documentElement.classList.toggle("mobile-tauri", mobileRuntime);
+  document.documentElement.classList.toggle("desktop-runtime", !mobileRuntime);
   document.body.classList.toggle("mobile-tauri", mobileRuntime);
   document.body.classList.toggle("desktop-runtime", !mobileRuntime);
   if (buttons.ragPackQuery) {
@@ -4328,7 +4330,7 @@ function renderObserveBody(data) {
   const signal = trend.signal || {};
   const series = trend.series || [];
   return [
-    renderObservationOverview(stock, data.financial_indicators),
+    renderObservationOverview(stock, data.financial_indicators, trend),
     renderQuarterlyEpsPanel(stock, data.financial_indicators),
     trend.signal ? renderSignalCard(stock, signal, { series, chipDistribution: trend.chip_distribution }) : renderEmpty("没有可用日线技术面"),
     data.capital_evidence ? renderCapitalEvidence(data.capital_evidence, { series, signal }) : "",
@@ -4465,6 +4467,7 @@ function trendItemToView(item) {
   const signal = item.signal || {};
   return {
     stock: item.stock,
+    priceMove: priceMoveFromSignal(signal),
     score: item.final_score,
     scoreLabel: "趋势分",
     reasons: item.reasons || [],
@@ -4562,7 +4565,7 @@ function renderStockRow(item) {
       </div>
       <div class="row-actions">
         <div class="stock-meta">
-          <span>价格 ${formatNumber(stock.price)}</span>
+          ${renderPriceMeta(stock.price, item.priceMove)}
           <span>净资产收益率 ${formatPercent(stock.roe)}</span>
           <span>市值 ${formatNumber(stock.market_cap_billion)} 亿</span>
         </div>
@@ -4642,7 +4645,7 @@ function factorTier(value) {
   return "弱";
 }
 
-function renderObservationOverview(stock, financial) {
+function renderObservationOverview(stock, financial, trend = {}) {
   const sourceMeta = [financial?.period, financial?.source].filter(Boolean).join(" · ");
   const metrics = [
     ["市盈率(TTM)", formatNumber(stock.pe)],
@@ -4652,6 +4655,10 @@ function renderObservationOverview(stock, financial) {
     ["股息率", formatPercent(stock.dividend_yield)],
     ["ST", stock.is_st ? "是" : "否"],
   ].filter(([, value]) => value !== "-");
+  const priceMove = priceMoveFromSeries(trend?.series, trend?.signal) || priceMoveFromSignal(trend?.signal);
+  const priceTone = priceMove?.tone || "neutral";
+  const priceValue = priceMove?.value ?? stock.price;
+  const priceSummary = priceMove?.summary || "缺少上一交易日对比";
 
   return `
     <section class="observe-overview">
@@ -4661,7 +4668,10 @@ function renderObservationOverview(stock, financial) {
           <p>${escapeHtml([stock.code, stock.industry].filter(Boolean).join(" · ") || "未知行业")}</p>
           ${sourceMeta ? `<small>${escapeHtml(sourceMeta)}</small>` : ""}
         </div>
-        <strong class="overview-price">${formatNumber(stock.price)}</strong>
+        <div class="overview-price-block ${escapeHtml(priceTone)}">
+          <strong class="overview-price">${formatNumber(priceValue)}</strong>
+          <span>${escapeHtml(priceSummary)}</span>
+        </div>
       </header>
       <div class="overview-metric-grid">
         ${metrics
@@ -4969,6 +4979,10 @@ function renderSignalSummary(signal) {
 function renderSignalCard(stock, signal, options = {}) {
   const series = options.series || [];
   const chipDistribution = options.chipDistribution || null;
+  const priceMove = priceMoveFromSeries(series, signal) || priceMoveFromSignal(signal);
+  const priceTone = priceMove?.tone || "neutral";
+  const priceValue = priceMove?.value ?? signal.close;
+  const priceSummary = priceMove?.summary || "缺少上一交易日对比";
   const charts = series.length
     ? `<div class="signal-chart-stack">${renderKdjChart(series, signal)}${renderTrendChart(series, chipDistribution)}</div>`
     : "";
@@ -4982,7 +4996,7 @@ function renderSignalCard(stock, signal, options = {}) {
         <span class="state-pill">${escapeHtml(statusLabel(signal.status))}</span>
       </header>
       <div class="signal-grid">
-        <div><span>收盘价</span><strong>${formatNumber(signal.close)}</strong></div>
+        <div class="signal-price-cell ${escapeHtml(priceTone)}"><span>收盘价</span><strong>${formatNumber(priceValue)}</strong><small>${escapeHtml(priceSummary)}</small></div>
         <div><span>SWL/SWS 线</span><strong>${formatNumber(signal.swl)} / ${formatNumber(signal.sws)}</strong></div>
         <div><span>KDJ</span><strong>${formatNumber(signal.k)} / ${formatNumber(signal.d)} / ${formatNumber(signal.j)}</strong></div>
         <div><span>量化分</span><strong>${escapeHtml(String(signal.quant_score ?? 0))}/${escapeHtml(String(signal.quant_score_max ?? 90))}</strong></div>
@@ -5247,18 +5261,23 @@ function renderTrendChart(series, chipDistribution = null) {
     return null;
   };
   const latestClose = latestPoint("close");
+  const closeMove = priceMoveFromSeries(series, {});
+  const closeTone = closeMove?.tone || "neutral";
   const closeLabel = latestClose
     ? (() => {
-        const labelWidth = 112;
+        const labelText = closeMove?.shortText
+          ? `收盘 ${formatNumber(latestClose.value)} ${closeMove.shortText}`
+          : `收盘 ${formatNumber(latestClose.value)}`;
+        const labelWidth = closeMove?.shortText ? 172 : 96;
         const labelHeight = 24;
         const labelX = Math.min(Math.max(latestClose.x + 8, 4), width - labelWidth - 4);
         const labelY = Math.min(Math.max(latestClose.y - labelHeight - 8, 4), height - labelHeight - 4);
         return `
-          <circle class="trend-close-point" cx="${latestClose.x.toFixed(2)}" cy="${latestClose.y.toFixed(2)}" r="4.2" />
-          <line class="trend-close-label-line" x1="${latestClose.x.toFixed(2)}" y1="${latestClose.y.toFixed(2)}" x2="${labelX.toFixed(2)}" y2="${(labelY + labelHeight / 2).toFixed(2)}" />
-          <g class="trend-close-label">
+          <circle class="trend-close-point ${escapeHtml(closeTone)}" cx="${latestClose.x.toFixed(2)}" cy="${latestClose.y.toFixed(2)}" r="4.8" />
+          <line class="trend-close-label-line ${escapeHtml(closeTone)}" x1="${latestClose.x.toFixed(2)}" y1="${latestClose.y.toFixed(2)}" x2="${labelX.toFixed(2)}" y2="${(labelY + labelHeight / 2).toFixed(2)}" />
+          <g class="trend-close-label ${escapeHtml(closeTone)}">
             <rect x="${labelX.toFixed(2)}" y="${labelY.toFixed(2)}" width="${labelWidth}" height="${labelHeight}" rx="6" />
-            <text x="${(labelX + 8).toFixed(2)}" y="${(labelY + 16).toFixed(2)}">收盘价 ${escapeHtml(formatNumber(latestClose.value))}</text>
+            <text x="${(labelX + 8).toFixed(2)}" y="${(labelY + 16).toFixed(2)}">${escapeHtml(labelText)}</text>
           </g>
         `;
       })()
@@ -5350,8 +5369,10 @@ function trendGapText(value, reference) {
 function trendMoveText(label, current, previous) {
   if (!Number.isFinite(current) || !Number.isFinite(previous)) return "";
   const diff = current - previous;
-  if (Math.abs(diff) < 0.01) return `${label}较上一交易日基本走平`;
-  return `${label}较上一交易日${diff > 0 ? "上行" : "回落"} ${formatNumber(Math.abs(diff))}`;
+  const pct = previous ? diff / previous : null;
+  const pctText = Number.isFinite(pct) ? `（${formatSignedPercentPrecise(pct)}）` : "";
+  if (Math.abs(diff) < 0.01) return `${label}较上一交易日基本走平${pctText}`;
+  return `${label}较上一交易日${diff > 0 ? "上行" : "回落"} ${formatNumber(Math.abs(diff))}${pctText}`;
 }
 
 function renderChipDistributionText(chipDistribution) {
@@ -5643,8 +5664,8 @@ function renderMacdChart(points) {
       <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="MACD 12 26 9 指标">
         <line x1="0" y1="${baseline.toFixed(2)}" x2="${width}" y2="${baseline.toFixed(2)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="5 7" />
         <g class="macd-bars">${bars}</g>
-        <polyline points="${linePoints("dif")}" fill="none" stroke="var(--accent-strong)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-        <polyline points="${linePoints("dea")}" fill="none" stroke="var(--warning)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline class="macd-dif-line" points="${linePoints("dif")}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline class="macd-dea-line" points="${linePoints("dea")}" fill="none" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
       <div class="chart-labels">
         <span>${escapeHtml(visible[0]?.date || "")}</span>
@@ -6273,6 +6294,83 @@ function basePanelClass(node) {
   if (node.dataset.large === "true") classes.push("compact");
   if (node.classList.contains("medium")) classes.push("medium");
   return classes.join(" ");
+}
+
+function renderPriceMeta(price, move, options = {}) {
+  if (!move) return `<span>价格 ${formatNumber(price)}</span>`;
+  const value = move.value ?? price;
+  const tone = ["rise", "fall", "flat"].includes(move.tone) ? move.tone : "neutral";
+  const label = options.label || "收盘价";
+  const summary = move.summary || "缺少涨跌对比";
+  return `
+    <span class="price-meta ${escapeHtml(tone)}" aria-label="${escapeHtml(`${label} ${formatNumber(value)}，${summary}`)}">
+      <em>${escapeHtml(label)}</em>
+      <strong>${formatNumber(value)}</strong>
+      <small>${escapeHtml(summary)}</small>
+    </span>
+  `;
+}
+
+function priceMoveFromSeries(series = [], signal = {}) {
+  const valid = (series || [])
+    .map((point) => ({ date: point?.date, close: firstFiniteNumber(point?.close) }))
+    .filter((point) => point.close !== null);
+  const latest = valid[valid.length - 1] || {};
+  const previous = valid.length > 1 ? valid[valid.length - 2] || {} : {};
+  const close = firstFiniteNumber(signal?.close, latest.close);
+  const previousClose = firstFiniteNumber(signal?.previous_close, signal?.prev_close, signal?.pre_close, previous.close);
+  return buildPriceMove(close, previousClose, {
+    change: firstFiniteNumber(signal?.close_change, signal?.change),
+    percent: firstFiniteNumber(signal?.close_change_pct, signal?.change_pct, signal?.pct_chg),
+  });
+}
+
+function priceMoveFromSignal(signal = {}) {
+  const close = firstFiniteNumber(signal?.close);
+  const previousClose = firstFiniteNumber(signal?.previous_close, signal?.prev_close, signal?.pre_close);
+  return buildPriceMove(close, previousClose, {
+    change: firstFiniteNumber(signal?.close_change, signal?.change),
+    percent: firstFiniteNumber(signal?.close_change_pct, signal?.change_pct, signal?.pct_chg),
+  });
+}
+
+function buildPriceMove(close, previousClose, fallback = {}) {
+  if (close === null) return null;
+  let change = firstFiniteNumber(fallback.change);
+  let percent = normalizePercent(firstFiniteNumber(fallback.percent));
+  if (previousClose !== null && previousClose > 0) {
+    change = close - previousClose;
+    percent = change / previousClose;
+  }
+  if (change === null && percent === null) return null;
+  const directionValue = change !== null ? change : percent;
+  const tone = Math.abs(directionValue) < 0.0001 ? "flat" : directionValue > 0 ? "rise" : "fall";
+  const direction = tone === "rise" ? "上涨" : tone === "fall" ? "下跌" : "持平";
+  const changeText = change !== null ? ` ${formatNumber(Math.abs(change))}` : "";
+  const percentText = percent !== null ? `（${formatSignedPercentPrecise(percent)}）` : "";
+  const shortText = percent !== null ? `${direction} ${formatSignedPercentPrecise(percent)}` : direction;
+  return {
+    value: close,
+    previous: previousClose,
+    change,
+    percent,
+    tone,
+    direction,
+    summary: `${direction}${changeText}${percentText}`,
+    shortText,
+  };
+}
+
+function normalizePercent(value) {
+  if (value === null) return null;
+  return Math.abs(value) > 1.5 ? value / 100 : value;
+}
+
+function formatSignedPercentPrecise(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  const sign = number > 0 ? "+" : number < 0 ? "-" : "";
+  return `${sign}${(Math.abs(number) * 100).toLocaleString("zh-CN", { maximumFractionDigits: 2 })}%`;
 }
 
 function formatNumber(value) {

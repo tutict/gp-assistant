@@ -561,15 +561,25 @@ def _add_capital_behavior_columns(
 
 
 def _latest_signal(code: str, frame: pd.DataFrame) -> TrendIndicatorSignal:
-    return _row_to_signal(code, frame.iloc[-1])
+    previous_close = _rounded(frame.iloc[-2]["close"]) if len(frame) > 1 else None
+    return _row_to_signal(code, frame.iloc[-1], previous_close=previous_close)
 
 
-def _row_to_signal(code: str, row: Any) -> TrendIndicatorSignal:
+def _row_to_signal(code: str, row: Any, previous_close: float | None = None) -> TrendIndicatorSignal:
     reasons = _signal_reasons(row)
+    close = _rounded(row["close"]) or 0.0
+    close_change = None
+    close_change_pct = None
+    if previous_close is not None and previous_close > 0:
+        close_change = close - previous_close
+        close_change_pct = close_change / previous_close
     return TrendIndicatorSignal(
         code=code,
         date=_format_date(row["date"]),
-        close=_rounded(row["close"]) or 0.0,
+        close=close,
+        previous_close=_rounded(previous_close),
+        close_change=_rounded(close_change),
+        close_change_pct=_rounded(close_change_pct),
         swl=_rounded(row.get("swl")),
         sws=_rounded(row.get("sws")),
         k=_rounded(row.get("k")),

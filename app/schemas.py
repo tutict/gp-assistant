@@ -220,6 +220,9 @@ class TrendIndicatorSignal(BaseModel):
     code: str
     date: str
     close: float
+    previous_close: Optional[float] = None
+    close_change: Optional[float] = None
+    close_change_pct: Optional[float] = None
     swl: Optional[float] = None
     sws: Optional[float] = None
     k: Optional[float] = None

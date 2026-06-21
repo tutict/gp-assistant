@@ -276,6 +276,12 @@ pub struct TrendIndicatorSignal {
     pub code: String,
     pub date: String,
     pub close: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_close: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close_change: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close_change_pct: Option<f64>,
     #[serde(default)]
     pub swl: Option<f64>,
     #[serde(default)]
@@ -618,6 +624,9 @@ struct PreparedBar {
 struct ComputedTrendBar {
     date: NaiveDate,
     close: f64,
+    previous_close: Option<f64>,
+    close_change: Option<f64>,
+    close_change_pct: Option<f64>,
     swl: f64,
     sws: f64,
     accumulation_index: f64,
@@ -2930,9 +2939,21 @@ fn compute_trend_bars(bars: &[PreparedBar]) -> Vec<ComputedTrendBar> {
         } else {
             ma3[index]
         };
+        let previous_close = if index > 0 && close[index - 1].is_finite() {
+            Some(close[index - 1])
+        } else {
+            None
+        };
+        let close_change = previous_close.map(|previous| close[index] - previous);
+        let close_change_pct = previous_close
+            .filter(|previous| previous.abs() > f64::EPSILON)
+            .map(|previous| (close[index] - previous) / previous);
         computed.push(ComputedTrendBar {
             date: bars[index].date,
             close: close[index],
+            previous_close,
+            close_change,
+            close_change_pct,
             swl: swl[index],
             sws: sws[index],
             accumulation_index: capital_behavior[index].accumulation_index,
@@ -3431,6 +3452,9 @@ fn trend_signal_from_bar(code: &str, bar: &ComputedTrendBar) -> TrendIndicatorSi
         code: code.to_string(),
         date: bar.date.format("%Y-%m-%d").to_string(),
         close: round4(bar.close),
+        previous_close: bar.previous_close.and_then(finite_round4),
+        close_change: bar.close_change.and_then(finite_round4),
+        close_change_pct: bar.close_change_pct.and_then(finite_round4),
         swl: finite_round4(bar.swl),
         sws: finite_round4(bar.sws),
         star_line: finite_round4(bar.star_line),
