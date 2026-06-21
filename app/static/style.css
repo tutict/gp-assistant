@@ -11219,3 +11219,16 @@ button:hover {
   color: var(--text);
   box-shadow: none;
 }
+/* Make the brand seal read as a calligraphic A-share rise mark. */
+.brand-mark {
+  font-family: SimLi, LiSu, "隶书", STKaiti, KaiTi, serif;
+  font-size: 1.24rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+@media (max-width: 860px) {
+  .brand-mark {
+    font-size: 1.14rem;
+  }
+}

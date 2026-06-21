@@ -167,6 +167,7 @@ def trend_screen_stocks(provider: StockProvider, request: TrendScreenRequest) ->
 
     items: List[TrendStockSignal] = []
     skipped = 0
+    skipped_errors: List[str] = []
     for candidate in candidate_pool:
         try:
             analysis = analyze_trend(
@@ -180,6 +181,11 @@ def trend_screen_stocks(provider: StockProvider, request: TrendScreenRequest) ->
             )
         except (KeyError, ValueError):
             skipped += 1
+            continue
+        except Exception as exc:
+            skipped += 1
+            if len(skipped_errors) < 3:
+                skipped_errors.append(f"{candidate.stock.code}: {redact_error(exc, max_chars=80)}")
             continue
 
         trend_score = _short_buy_score(analysis.signal)
@@ -201,6 +207,8 @@ def trend_screen_stocks(provider: StockProvider, request: TrendScreenRequest) ->
     notes = [*screen_notes, *criteria_notes, *TREND_NOTES]
     if skipped:
         notes.append(f"已跳过 {skipped} 只缺少可用 OHLC 行情的股票。")
+    if skipped_errors:
+        notes.append(f"部分股票历史行情拉取失败，已跳过：{'；'.join(skipped_errors)}。")
 
     return TrendScreenResult(
         total=len(candidate_pool),

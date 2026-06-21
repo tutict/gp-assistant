@@ -7,6 +7,11 @@ from app.services.stock_graph import graph_screen_stocks
 from app.services.trend_indicator import trend_screen_stocks
 
 
+class HistoryFailureProvider(MockProvider):
+    def get_history(self, code: str, start_date: str, end_date: str):
+        raise RuntimeError("history timeout")
+
+
 class GraphTrendExplanationTests(unittest.TestCase):
     def setUp(self):
         self.provider = MockProvider()
@@ -61,6 +66,21 @@ class GraphTrendExplanationTests(unittest.TestCase):
         self.assertTrue(first.explanation.verification)
         self.assertTrue(any(item.key == "short_buy_score" for item in first.explanation.score_breakdown))
 
+    def test_trend_screen_skips_history_runtime_errors(self):
+        result = trend_screen_stocks(
+            HistoryFailureProvider(),
+            TrendScreenRequest(
+                criteria=ScreenCriteria(min_roe=0.10),
+                start_date="20240101",
+                end_date="20241231",
+                limit=5,
+            ),
+        )
+
+        self.assertGreater(result.total, 0)
+        self.assertEqual(result.returned, 0)
+        self.assertTrue(any("已跳过" in note for note in result.notes))
+        self.assertTrue(any("历史行情拉取失败" in note for note in result.notes))
 
 if __name__ == "__main__":
     unittest.main()
