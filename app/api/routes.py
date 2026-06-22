@@ -9,7 +9,6 @@ from fastapi.responses import StreamingResponse
 from app.providers.base import get_provider
 from app.schemas import (
     AgentRequest,
-    AgentResponse,
     AutoRefreshResult,
     BacktestRequest,
     BacktestResult,
@@ -46,7 +45,7 @@ from app.schemas import (
     UpstreamRagTransferResult,
     UpstreamRagTransferStartRequest,
 )
-from app.services.agent import run_agent, run_agent_stream
+from app.services.agent import run_agent_stream
 from app.services.backtest import backtest_hold
 from app.services.data_maintenance import auto_refresh_universe_after_close, data_source_status, prune_cache, refresh_universe
 from app.services.news_rag import analyze_supply_chain_news
@@ -71,13 +70,10 @@ def _parse_bool(value: Optional[str]) -> Optional[bool]:
 def _provider_from_headers(
     x_stock_provider: Optional[str] = Header(default=None),
     x_stock_refresh: Optional[str] = Header(default=None),
-    x_akshare_refresh: Optional[str] = Header(default=None),
     x_stock_proxy: Optional[str] = Header(default=None),
 ):
     try:
         refresh = _parse_bool(x_stock_refresh)
-        if refresh is None:
-            refresh = _parse_bool(x_akshare_refresh)
         return get_provider(x_stock_provider, refresh=refresh, proxy_mode=x_stock_proxy)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -219,17 +215,6 @@ def observe_stock(
                 include_chip_distribution=include_chip_distribution,
             ),
         )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="未找到股票")
-
-
-@router.post("/observe", response_model=StockObservation)
-def observe_stock_post(
-    request: StockObserveRequest,
-    provider=Depends(_provider_from_headers),
-):
-    try:
-        return build_stock_observation(provider, request)
     except KeyError:
         raise HTTPException(status_code=404, detail="未找到股票")
 
@@ -376,11 +361,6 @@ def upstream_rag_transfer_start(request: UpstreamRagTransferStartRequest):
         return start_upstream_rag_transfer(request.ttl_minutes)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.post("/agent", response_model=AgentResponse)
-def agent(request: AgentRequest, provider=Depends(_provider_from_headers)):
-    return run_agent(provider, request.message, request.llm)
 
 
 @router.post("/agent/stream")

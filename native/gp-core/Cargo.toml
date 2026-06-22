@@ -2,7 +2,7 @@
 name = "stock-optimizer-core"
 version = "0.3.0"
 edition = "2021"
-description = "Embeddable stock screening core for Stock Optimizer"
+description = "Embeddable A-share screening core for 股选优"
 
 [lib]
 crate-type = ["rlib", "staticlib", "cdylib"]

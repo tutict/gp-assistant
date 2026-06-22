@@ -68,40 +68,22 @@ class ObservationCapitalBehaviorTests(unittest.TestCase):
         self.assertIsNotNone(latest.d)
         self.assertIsNotNone(latest.j)
 
-    def test_observe_api_accepts_legacy_minute_payload_and_returns_kdj(self):
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(
-            os.environ,
-            {
-                "GP_CAPITAL_ENABLE_EXTERNAL": "false",
-                **DISABLE_NETWORK_NEWS,
-            },
-        ):
-            capital_evidence.CACHE_PATH = Path(tmp) / "capital.sqlite"
-            news_rag.CACHE_PATH = Path(tmp) / "news.sqlite"
-            app.dependency_overrides[_provider_from_headers] = lambda: MockProvider()
-            try:
-                response = TestClient(app).post(
-                    "/api/observe",
-                    json={
-                        "code": "300750.SZ",
-                        "start_date": "20260601",
-                        "end_date": "20260616",
-                        "series_limit": 20,
-                        "minute_period": "1",
-                        "minute_limit": 500,
-                        "include_order_book": False,
-                    },
-                )
-            finally:
-                app.dependency_overrides.pop(_provider_from_headers, None)
+    def test_observe_post_api_is_removed(self):
+        app.dependency_overrides[_provider_from_headers] = lambda: MockProvider()
+        try:
+            response = TestClient(app).post(
+                "/api/observe",
+                json={
+                    "code": "300750.SZ",
+                    "start_date": "20260601",
+                    "end_date": "20260616",
+                    "series_limit": 20,
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(_provider_from_headers, None)
 
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        self.assertNotIn("minute_bars", payload)
-        self.assertNotIn("minute_period", payload)
-        self.assertIsNotNone(payload["trend"]["signal"]["k"])
-        self.assertIsNotNone(payload["trend"]["signal"]["d"])
-        self.assertIsNotNone(payload["trend"]["signal"]["j"])
+        self.assertEqual(response.status_code, 404)
 
     def test_observation_passes_proxy_mode_to_capital_evidence(self):
         provider = MockProvider()

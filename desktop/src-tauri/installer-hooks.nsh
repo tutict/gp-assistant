@@ -10,7 +10,6 @@
   !insertmacro GP_ASSISTANT_KILL_PROCESS "stock-optimizer-backend.exe"
   !insertmacro GP_ASSISTANT_KILL_PROCESS "gp-assistant-backend.exe"
   !insertmacro GP_ASSISTANT_KILL_PROCESS "app-assistant-backend.exe"
-  !insertmacro GP_ASSISTANT_KILL_PROCESS "GP Assistant.exe"
   Sleep 800
 !macroend
 
@@ -28,8 +27,6 @@
   StrCmp $0 "" 0 +2
   StrCpy $0 "$INSTDIR\.."
   StrCpy $1 "$0\股选优"
-  Delete "$DESKTOP\A股选股智能体.lnk"
-  RMDir /r "$SMPROGRAMS\A股选股智能体"
   CreateDirectory "$SMPROGRAMS\股选优"
   SetOutPath "$1"
   CreateShortCut "$DESKTOP\股选优.lnk" "$WINDIR\explorer.exe" '"$1\${MAINBINARYNAME}.exe"' "$1\${MAINBINARYNAME}.exe" 0

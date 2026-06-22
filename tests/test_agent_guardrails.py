@@ -49,7 +49,7 @@ class AgentGuardrailTests(unittest.TestCase):
         self.assertEqual(result["response"]["action"], "clarify")
         self.assertNotIn("SOCKS", result["response"]["reply"])
 
-    def test_agent_stream_api_returns_sse_events_and_old_api_still_works(self):
+    def test_agent_stream_api_returns_sse_events_and_old_api_is_removed(self):
         client = TestClient(app)
         with patch("app.api.routes.get_provider", return_value=MockProvider()):
             stream_response = client.post("/api/agent/stream", json={"message": "\u4f60\u597d"})
@@ -61,8 +61,7 @@ class AgentGuardrailTests(unittest.TestCase):
         self.assertIn("event: status", body)
         self.assertIn("event: result", body)
         self.assertNotIn("SOCKS", body)
-        self.assertEqual(old_response.status_code, 200)
-        self.assertEqual(old_response.json()["action"], "clarify")
+        self.assertEqual(old_response.status_code, 404)
 
     def test_agent_hides_llm_transport_error_when_using_local_fallback(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test1234567890"}), patch(

@@ -177,9 +177,9 @@ def prune_cache(source: str, policy: CachePolicy | None = None) -> CachePruneRes
 
 def _normalize_source(source: str | None) -> str:
     value = (source or os.getenv("STOCK_PROVIDER", "tdx")).strip().lower()
-    if value in {"tdx", "astock", "akshare", "eastmoney"}:
+    if value == "tdx":
         return "tdx"
-    return "tdx"
+    raise ValueError(f"不支持的数据源：{value}；当前仅支持 tdx")
 
 
 def _universe_count(source: str, cache_path: Path | None) -> int:

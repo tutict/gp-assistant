@@ -12,13 +12,17 @@ from app.schemas import FinancialIndicatorItem, StockItem
 
 
 class TdxProviderTests(unittest.TestCase):
-    def test_get_provider_maps_legacy_data_source_ids_to_tdx(self):
+    def test_get_provider_accepts_only_tdx(self):
         with patch.dict(os.environ, {"STOCK_PROVIDER": "tdx"}):
-            for source in (None, "tdx", "astock", "akshare", "eastmoney"):
+            for source in (None, "tdx"):
                 provider = get_provider(source)
 
                 self.assertIsInstance(provider, TdxProvider)
                 self.assertEqual(provider.name, "tdx")
+
+            for source in ("astock", "akshare", "eastmoney"):
+                with self.assertRaises(ValueError):
+                    get_provider(source)
 
     def test_invalid_numeric_env_uses_safe_defaults(self):
         with patch.dict(

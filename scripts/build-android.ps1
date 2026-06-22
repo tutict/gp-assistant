@@ -1,5 +1,6 @@
-param(
+﻿param(
     [switch] $InitOnly,
+    [switch] $PreflightOnly,
     [switch] $Debug,
     [switch] $Aab,
     [switch] $SplitPerAbi,
@@ -77,6 +78,66 @@ function Assert-EnvPath {
     if (-not $value -or -not (Test-Path -LiteralPath $value)) {
         throw "$Name is not set or does not exist. $InstallHint"
     }
+}
+
+
+function Resolve-JavaExecutable {
+    $JavaHome = [Environment]::GetEnvironmentVariable("JAVA_HOME")
+    if ($JavaHome) {
+        $candidate = Join-Path $JavaHome "bin\java.exe"
+        if (Test-Path -LiteralPath $candidate) {
+            return $candidate
+        }
+    }
+
+    $javaCommand = Get-Command java -ErrorAction SilentlyContinue
+    if ($javaCommand) {
+        return $javaCommand.Source
+    }
+
+    throw "未找到 java.exe。请安装 JDK 17/21，或设置 GP_ANDROID_JAVA_HOME 指向对应 JDK。"
+}
+
+function Get-JavaMajorVersion {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $JavaExe
+    )
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $versionOutput = & $JavaExe -version 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -ne 0) {
+        throw "Java 版本检查失败：$($versionOutput -join ' ')"
+    }
+
+    $versionText = ($versionOutput | ForEach-Object { [string]$_ }) -join "`n"
+    $versionText = $versionText.Trim()
+    $firstLine = [string]($versionOutput | Select-Object -First 1)
+    if ($firstLine -match '"(?<major>[0-9]+)(?:\.(?<minor>[0-9]+))?') {
+        $major = [int]$Matches.major
+        if ($major -eq 1 -and $Matches.minor) {
+            return [int]$Matches.minor
+        }
+        return $major
+    }
+
+    throw "无法识别 Java 版本：$versionText"
+}
+
+function Assert-AndroidJavaVersion {
+    $javaExe = Resolve-JavaExecutable
+    $major = Get-JavaMajorVersion $javaExe
+    if ($major -ne 17 -and $major -ne 21) {
+        throw "Android 构建需要 JDK 17 或 21；当前检测到 JDK $major：$javaExe。请安装 JDK 17/21，或设置 GP_ANDROID_JAVA_HOME 指向对应 JDK 后重试。"
+    }
+
+    Write-Host "Android Java OK: JDK $major ($javaExe)"
 }
 
 function Invoke-Checked {
@@ -189,6 +250,12 @@ Initialize-AndroidEnvironment
 
 Assert-EnvPath "ANDROID_HOME" "Install Android SDK and set ANDROID_HOME to the SDK directory."
 Assert-EnvPath "NDK_HOME" "Install Android NDK and set NDK_HOME to the NDK directory."
+Assert-AndroidJavaVersion
+
+if ($PreflightOnly) {
+    Write-Host "Android preflight completed; build was not started."
+    return
+}
 
 Push-Location $DesktopDir
 try {

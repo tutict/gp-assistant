@@ -1240,10 +1240,6 @@ fn start_backend(app: &tauri::App, port: u16) -> tauri::Result<BackendProcess> {
             .env("GP_ASSISTANT_DATA_ROOT", data_root_value)
             .env("GP_CACHE_DIR", cache_root_value.clone())
             .env("TDX_CACHE", cache_root.join("tdx_stocks.csv").display().to_string())
-            .env(
-                "EASTMONEY_CACHE",
-                cache_root.join("eastmoney_stocks.csv").display().to_string(),
-            )
             .env("AKSHARE_CACHE", cache_root.join("stocks.csv").display().to_string())
             .env(
                 "TDX_FUNDAMENTAL_CACHE",

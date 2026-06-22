@@ -14,7 +14,7 @@ from app.services.data_maintenance import data_source_status, prune_cache, refre
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Maintain GP Assistant market-data cache.")
+    parser = argparse.ArgumentParser(description="Maintain 股选优 market-data cache.")
     parser.add_argument("--source", default="tdx", choices=["tdx"])
     parser.add_argument("--refresh", action="store_true", help="Refresh the stock universe cache.")
     parser.add_argument("--prune", action="store_true", help="Prune disposable cache files.")

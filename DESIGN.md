@@ -77,7 +77,7 @@ components:
     padding: "10px 12px"
 ---
 
-# Design System: GP Assistant
+# Design System: 股选优
 
 ## 1. Overview
 

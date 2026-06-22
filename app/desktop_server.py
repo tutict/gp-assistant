@@ -18,7 +18,6 @@ def _configure_runtime_paths() -> None:
     os.environ.setdefault("GP_CACHE_DIR", str(cache_root))
     os.environ.setdefault("TDX_CACHE", str(cache_root / "tdx_stocks.csv"))
     os.environ.setdefault("TDX_FUNDAMENTAL_CACHE", str(cache_root / "tdx_fundamentals.csv"))
-    os.environ.setdefault("EASTMONEY_CACHE", str(cache_root / "eastmoney_stocks.csv"))
     os.environ.setdefault("AKSHARE_CACHE", str(cache_root / "stocks.csv"))
     os.environ.setdefault("GP_NEWS_CACHE", str(cache_root / "news.sqlite"))
     os.environ.setdefault("GP_CAPITAL_CACHE", str(cache_root / "capital_evidence.sqlite"))

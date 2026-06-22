@@ -2,6 +2,7 @@
 .android-ndk-r27c
 .android-sdk/
 __pycache__/
+.pytest_cache/
 *.pyc
 .env
 .idea/

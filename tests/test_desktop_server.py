@@ -13,7 +13,6 @@ class DesktopServerRuntimePathTests(unittest.TestCase):
             "GP_CACHE_DIR",
             "TDX_CACHE",
             "TDX_FUNDAMENTAL_CACHE",
-            "EASTMONEY_CACHE",
             "AKSHARE_CACHE",
             "GP_NEWS_CACHE",
             "GP_CAPITAL_CACHE",

@@ -20,15 +20,13 @@
 
 ## 当前稳定版
 
-当前稳定版为 `v0.3.0`，发布页见 <https://github.com/tutict/stock-optimizer/releases/tag/v0.3.0>。
+当前稳定版为 `v0.3.0`，发布页见 <https://github.com/tutict/gp-assistant/releases/tag/v0.3.0>。
 
 发布页提供：
 
-- Windows 安装包：`StockOptimizer_0.3.0_windows-x64-setup.exe`
-- Android 可安装测试包：`StockOptimizer_0.3.0_android-aarch64-debug.apk`
-- Android 未签名 release 包：`StockOptimizer_0.3.0_android-aarch64-release-unsigned.apk`
-- Linux 安装包：`StockOptimizer_0.3.0_linux-amd64.deb`
-- Linux 便携包：`StockOptimizer_0.3.0_linux-amd64.AppImage`
+- Windows 安装包：`股选优_0.3.0_x64-setup.exe`
+- Android 可安装测试包：`股选优_0.3.0_android-aarch64-debug.apk`
+- Android 未签名 release 包：`股选优_0.3.0_android-aarch64-release-unsigned.apk`
 - `SHA256SUMS.txt`：发布产物 SHA-256 校验值
 
 Android 的 `release-unsigned.apk` 需要接入正式 keystore 后再签名分发；普通手机安装验证优先使用 debug APK。
@@ -141,7 +139,7 @@ cargo build --release --manifest-path native/gp-core/Cargo.toml
 
 ## 数据源
 
-桌面端和 Web 后端统一使用 `tdx` 数据源组合：通达信负责 A 股股票池、日线和分钟线，筛选行情与盘口优先走腾讯股票。旧版本保存过的 `astock`、`akshare`、`eastmoney` 配置会自动迁移到 `tdx`，不会再作为可选数据源显示。
+桌面端和 Web 后端统一使用 `tdx` 数据源组合：通达信负责 A 股股票池、日线和分钟线，筛选行情与盘口优先走腾讯股票。数据源对外只保留 `tdx`；旧版本保存过的 `astock`、`akshare`、`eastmoney` 配置已不再兼容，发布版遇到这些值会明确拒绝。
 
 API 客户端可以通过请求头显式指定通达信数据源：
 

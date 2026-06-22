@@ -355,7 +355,6 @@ function Write-ConfigDiagnostics {
     Write-Host "  GP_CAPITAL_FUND_FLOW_TIMEOUT: $(Get-ShortValue (Value-OrDefault $env:GP_CAPITAL_FUND_FLOW_TIMEOUT "<default:8>"))"
     Write-Host "  GP_CAPITAL_LHB_TIMEOUT: $(Get-ShortValue (Value-OrDefault $env:GP_CAPITAL_LHB_TIMEOUT "<default:12>"))"
     Write-Host "  TDX_HOSTS: $(Get-ShortValue $env:TDX_HOSTS)"
-    Write-Host "  ASTOCK_TDX_HOSTS: $(Get-ShortValue $env:ASTOCK_TDX_HOSTS)"
     Write-Host "  HTTP_PROXY: $(Get-RedactedValue $env:HTTP_PROXY)"
     Write-Host "  HTTPS_PROXY: $(Get-RedactedValue $env:HTTPS_PROXY)"
     Write-Host "  NO_PROXY: $(Get-ShortValue $env:NO_PROXY)"
@@ -434,7 +433,7 @@ try {
     Set-Location -LiteralPath $RepoRoot
 
     Write-Host ""
-    Write-Step "Starting GP Assistant dev server diagnostics..."
+    Write-Step "Starting 股选优 dev server diagnostics..."
     Write-SystemDiagnostics
     Write-ConfigDiagnostics
     Write-PortDiagnostics -TargetPort $Port

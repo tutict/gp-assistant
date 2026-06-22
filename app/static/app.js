@@ -189,15 +189,6 @@ const TAURI_MOBILE_GET_PREFIX_ROUTES = [
 const TAURI_MOBILE_POST_ROUTES = {
   "/api/screen": async ({ invoke, payload }) =>
     invokeCoreWithMobileData(invoke, "core_screen_with_data", "criteria", payload),
-  "/api/observe": async ({ invoke, payload }) => {
-    const params = new URLSearchParams();
-    for (const key of ["start_date", "end_date", "series_limit"]) {
-      if (payload?.[key] !== undefined && payload?.[key] !== null && payload?.[key] !== "") {
-        params.set(key, String(payload[key]));
-      }
-    }
-    return observeTauriStock(invoke, payload?.code || "", params);
-  },
   "/api/data-sources/auto-refresh-universe": async ({ invoke }) => {
     const cache = await readMobileMarketDataCache(invoke).catch(() => null);
     const tradingDay = isLikelyTradingDay();
@@ -258,8 +249,6 @@ const TAURI_MOBILE_POST_ROUTES = {
     invokeCoreWithMobileData(invoke, "core_trend_screen_with_data", "request", payload),
   "/api/backtest": async ({ invoke, payload }) =>
     invokeCoreWithMobileData(invoke, "core_backtest_with_data", "request", payload),
-  "/api/agent": async ({ invoke, payload }) =>
-    invokeCoreWithMobileData(invoke, "core_agent_with_data", "message", payload?.message || ""),
   "/api/news-rag": async ({ invoke, payload }) => analyzeMobileNewsRag(invoke, payload),
   "/api/upstream-rag/mobile/import": async ({ invoke, payload }) => invoke("core_upstream_rag_import", { payload }),
   "/api/upstream-rag/mobile/detail": async ({ invoke, payload }) => invoke("core_upstream_rag_detail", { payload }),
@@ -1253,23 +1242,6 @@ async function runUpstreamRagRollback(stockCode) {
   if (data) renderUpstreamRagDetailResult(panels.newsRag, data);
 }
 
-async function runAgentLegacy() {
-  const message = $("#agentMsg").value.trim();
-  if (!message) {
-    setError(panels.agent, "请输入智能体指令", "例如：用产业链关系筛选新能源股票，市盈率低于 25。");
-    return;
-  }
-  setLoading(panels.agent, "智能体分析中");
-  const payload = { message };
-  const llm = buildLlmConfig();
-  if (llm) payload.llm = llm;
-  const data = await postJson("/api/agent", payload, panels.agent);
-  if (data) {
-    updateLlmStatusFromAgentResult(data);
-    renderAgentResult(panels.agent, data);
-  }
-}
-
 async function runAgent() {
   const input = agentUi.input || $("#agentMsg");
   const message = String(input?.value || "").trim();
@@ -1440,23 +1412,10 @@ function failAgentAssistantRun(run, message) {
 
 async function requestAgentStream(runId, payload, onEvent) {
   const requestPayload = { ...payload, run_id: runId };
-  try {
-    if (isMobileTauriRuntime()) {
-      await requestTauriAgentStream(runId, requestPayload, onEvent);
-    } else {
-      await requestDesktopAgentStream(requestPayload, onEvent);
-    }
-  } catch (streamError) {
-    onEvent({
-      run_id: runId,
-      type: "status",
-      stage: "fallback",
-      label: "流式接口不可用，切换同步接口",
-      percent: 72,
-    });
-    const fallback = await postJson("/api/agent", requestPayload, panels.agent);
-    if (!fallback) throw streamError;
-    onEvent({ run_id: runId, type: "result", response: fallback });
+  if (isMobileTauriRuntime()) {
+    await requestTauriAgentStream(runId, requestPayload, onEvent);
+  } else {
+    await requestDesktopAgentStream(requestPayload, onEvent);
   }
 }
 
@@ -1603,20 +1562,16 @@ async function runObserve(codeOverride, taskId = observeTaskId) {
     [74, "拉取资金与机构席位信息"],
     [94, "整理统一观察结果"],
   ]);
-  const payload = {
-    code,
-    series_limit: 160,
-    include_order_book: false,
-    include_chip_distribution: true,
-  };
   const observeEndInput = $("#observeEnd")?.value || currentSystemDateInputValue();
-  payload.start_date = readDateParam("observeStart", defaultObserveStartCompact(observeEndInput));
-  payload.end_date = readDateParam("observeEnd", currentSystemDateCompact());
-  const llm = buildLlmConfig();
-  const mobileRuntime = isMobileTauriRuntime();
-  if (llm && !mobileRuntime) payload.llm = llm;
+  const query = new URLSearchParams({
+    series_limit: "160",
+    include_order_book: "false",
+    include_chip_distribution: "true",
+    start_date: readDateParam("observeStart", defaultObserveStartCompact(observeEndInput)),
+    end_date: readDateParam("observeEnd", currentSystemDateCompact()),
+  });
   try {
-    const data = await requestJson("POST", "/api/observe", payload, dataSourceHeaders(), {
+    const data = await requestJson("GET", `/api/observe/${encodeURIComponent(code)}?${query}`, undefined, dataSourceHeaders(), {
       signal: controller?.signal,
       timeoutMs: OBSERVE_REQUEST_TIMEOUT_MS,
     });
@@ -1958,7 +1913,7 @@ function getSelectedDataSource() {
 
 function normalizeDataSource(source) {
   const value = String(source || "").trim().toLowerCase();
-  if (["tdx", "astock", "akshare", "eastmoney"].includes(value)) return "tdx";
+  if (value === "tdx") return "tdx";
   return DEFAULT_DATA_SOURCE;
 }
 
@@ -6438,9 +6393,6 @@ function actionLabel(action) {
 function sourceLabel(source) {
   const labels = {
     tdx: "通达信",
-    akshare: "通达信",
-    eastmoney: "通达信",
-    astock: "通达信",
     tencent: "腾讯行情",
   };
   return labels[source] || source || "-";

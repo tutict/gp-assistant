@@ -670,16 +670,10 @@ class TdxProvider(StockProvider):
         try:
             frame, note = self._fetch_eastmoney_fundamentals_for_screen()
         except Exception as exc:
-            legacy = self._read_legacy_fundamental_caches()
-            if legacy is not None:
-                return legacy, f"\u4e1c\u8d22\u6570\u636e\u4e2d\u5fc3\u8d22\u62a5\u63a5\u53e3\u4e0d\u53ef\u7528\uff0c\u5df2\u56de\u9000\u5230\u65e7\u7f13\u5b58\uff1a{exc}"
-            return {}, f"\u4e1c\u8d22\u6570\u636e\u4e2d\u5fc3\u8d22\u62a5\u63a5\u53e3\u4e0d\u53ef\u7528\uff1a{exc}"
+            return {}, f"东财数据中心财报接口不可用：{exc}"
 
         if frame.empty:
-            legacy = self._read_legacy_fundamental_caches()
-            if legacy is not None:
-                return legacy, "\u4e1c\u8d22\u6570\u636e\u4e2d\u5fc3\u672a\u8fd4\u56de\u5168\u5e02\u573a\u8d22\u62a5\u6570\u636e\uff0c\u5df2\u56de\u9000\u5230\u65e7\u7f13\u5b58\u3002"
-            return {}, "\u4e1c\u8d22\u6570\u636e\u4e2d\u5fc3\u672a\u8fd4\u56de\u5168\u5e02\u573a\u8d22\u62a5\u6570\u636e\u3002"
+            return {}, "东财数据中心未返回全市场财报数据。"
 
         self._write_fundamental_cache(frame)
         return self._fundamental_lookup_from_frame(frame), note
@@ -696,12 +690,6 @@ class TdxProvider(StockProvider):
             return None
         return self._fundamental_lookup_from_frame(frame)
 
-    def _read_legacy_fundamental_caches(self) -> dict[str, StockItem] | None:
-        for path in self._legacy_fundamental_cache_paths():
-            lookup = self._read_fundamental_cache(path)
-            if lookup:
-                return lookup
-        return None
 
     def _fundamental_lookup_from_frame(self, frame: pd.DataFrame) -> dict[str, StockItem]:
         items = [item for _, row in frame.iterrows() if (item := self._stock_from_fundamental_row(row)) is not None]
@@ -1034,7 +1022,7 @@ class TdxProvider(StockProvider):
 
     @staticmethod
     def _hosts() -> list[tuple[str, int]]:
-        env_hosts = os.getenv("TDX_HOSTS", os.getenv("ASTOCK_TDX_HOSTS", "")).strip()
+        env_hosts = os.getenv("TDX_HOSTS", "").strip()
         hosts: list[tuple[str, int]] = []
         if env_hosts:
             for item in env_hosts.split(","):
@@ -1250,18 +1238,6 @@ class TdxProvider(StockProvider):
             return explicit
         return "data/cache/tdx_fundamentals.csv"
 
-    @staticmethod
-    def _legacy_fundamental_cache_paths() -> list[str]:
-        return [
-            path
-            for path in [
-                os.getenv("ASTOCK_CACHE"),
-                "data/cache/astock_stocks.csv",
-                os.getenv("EASTMONEY_CACHE"),
-                "data/cache/eastmoney_stocks.csv",
-            ]
-            if path
-        ]
 
     @staticmethod
     def _preferred_industry(current: str, candidate: str) -> str:
