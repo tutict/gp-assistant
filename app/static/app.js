@@ -91,16 +91,18 @@ const MOBILE_DEDUCTED_FINANCIAL_FIELDS = [
   "deducted_net_profit_margin",
   "deducted_net_profit_growth_rate",
 ];
-const MOBILE_DEDUCTED_FINANCIAL_SKIP_NOTE =
-  "\u79fb\u52a8\u7aef\u884c\u60c5\u6c60\u6ca1\u6709\u6263\u975e\u8d22\u52a1\u5b57\u6bb5\uff0c\u5df2\u8df3\u8fc7\u6263\u975e\u51c0\u5229\u6da6\u6761\u4ef6\uff1b\u5982\u9700\u6309\u5b8c\u6574\u8d22\u52a1\u6307\u6807\u7b5b\u9009\uff0c\u8bf7\u4f7f\u7528 Windows \u7aef\u5b8c\u6574\u6570\u636e\u6e90\u3002";
+const MOBILE_DEDUCTED_FINANCIAL_MISSING_NOTE =
+  "\u79fb\u52a8\u7aef\u6263\u975e\u8d22\u52a1\u5feb\u7167\u4e0d\u53ef\u7528\uff1b\u6263\u975e\u89c4\u5219\u4e0d\u4f1a\u8df3\u8fc7\uff0c\u7f3a\u5b57\u6bb5\u80a1\u7968\u6309\u4e0d\u8fbe\u6807\u5904\u7406\u3002";
 const MOBILE_DEDUCTED_FINANCIAL_STATUS_NOTE =
-  "\u5f53\u524d\u79fb\u52a8\u884c\u60c5\u6c60\u53ea\u5305\u542b\u884c\u60c5\u4f30\u503c\uff0c\u4e0d\u5305\u542b\u6263\u975e\u51c0\u5229\u6da6\u7b49\u5b8c\u6574\u8d22\u52a1\u5b57\u6bb5\uff0c\u79fb\u52a8\u7aef\u7b5b\u9009\u4f1a\u81ea\u52a8\u8df3\u8fc7\u8fd9\u7c7b\u6761\u4ef6\u3002";
+  "\u79fb\u52a8\u7aef\u6263\u975e\u8d22\u52a1\u5feb\u7167\u4e0d\u53ef\u7528\uff0c\u6263\u975e\u7b5b\u9009\u4ecd\u4f1a\u6267\u884c\uff0c\u7f3a\u5b57\u6bb5\u80a1\u7968\u6309\u4e0d\u8fbe\u6807\u5904\u7406\u3002";
+const MOBILE_FINANCIAL_SNAPSHOT_URL = "mobile-financial-snapshot.json";
 const DEFAULT_TODAY_DATE_INPUT_IDS = new Set(["trendEnd", "btEnd", "observeEnd"]);
 let mobileMarketDataPromise = null;
 let mobileMarketDataSummary = null;
 let mobileMarketDataMeta = null;
 let mobileMarketRefreshJob = null;
 let mobileMarketRefreshProgress = null;
+let mobileFinancialSnapshotPromise = null;
 const mobileMarketRefreshListeners = new Set();
 let autoRefreshInFlight = false;
 let observeRequestId = 0;
@@ -303,10 +305,7 @@ function adaptMobileCorePayload(payloadKey, payloadValue, data) {
 function adaptCriteriaForMobileData(criteria = {}, data, notes = []) {
   const adjusted = { ...(criteria || {}) };
   if (mobileCriteriaUsesDeductedFinancialFields(adjusted) && !mobileDataHasDeductedFinancialFields(data)) {
-    MOBILE_DEDUCTED_FINANCIAL_FIELDS.forEach((field) => {
-      delete adjusted[`min_${field}`];
-    });
-    notes.push(MOBILE_DEDUCTED_FINANCIAL_SKIP_NOTE);
+    notes.push(MOBILE_DEDUCTED_FINANCIAL_MISSING_NOTE);
   }
   return adjusted;
 }
@@ -322,6 +321,82 @@ function mobileDataHasDeductedFinancialFields(data = {}) {
   return (Array.isArray(data?.stocks) ? data.stocks : []).some((stock) =>
     MOBILE_DEDUCTED_FINANCIAL_FIELDS.some((field) => Number.isFinite(Number(stock?.[field]))),
   );
+}
+
+async function loadMobileFinancialSnapshot() {
+  if (mobileFinancialSnapshotPromise) return await mobileFinancialSnapshotPromise;
+  mobileFinancialSnapshotPromise = (async () => {
+    try {
+      const response = await fetch(MOBILE_FINANCIAL_SNAPSHOT_URL, { cache: "no-store" });
+      if (!response.ok) return null;
+      const snapshot = await response.json();
+      const byCode = new Map();
+      (Array.isArray(snapshot?.stocks) ? snapshot.stocks : []).forEach((stock) => {
+        const code = normalizeMobileStockCode(stock?.code);
+        if (!code) return;
+        const item = { code };
+        MOBILE_DEDUCTED_FINANCIAL_FIELDS.forEach((field) => {
+          const value = Number(stock?.[field]);
+          if (Number.isFinite(value)) item[field] = value;
+        });
+        if (Object.keys(item).length > 1) byCode.set(code, item);
+      });
+      return {
+        ...snapshot,
+        stocks: Array.from(byCode.values()),
+      };
+    } catch (_error) {
+      return null;
+    }
+  })();
+  return await mobileFinancialSnapshotPromise;
+}
+
+async function hydrateMobileMarketDataRecord(record) {
+  const data = record?.data || record;
+  if (!data || !Array.isArray(data.stocks) || !data.stocks.length) return record;
+  const snapshot = await loadMobileFinancialSnapshot();
+  if (!snapshot?.stocks?.length) return record;
+
+  const snapshotByCode = new Map(
+    snapshot.stocks
+      .map((stock) => [normalizeMobileStockCode(stock?.code), stock])
+      .filter(([code]) => code),
+  );
+  let mergedCount = 0;
+  const stocks = data.stocks.map((stock) => {
+    const code = normalizeMobileStockCode(stock?.code);
+    const snapshotStock = code ? snapshotByCode.get(code) : null;
+    if (!snapshotStock) return stock;
+    const merged = { ...stock };
+    let changed = false;
+    MOBILE_DEDUCTED_FINANCIAL_FIELDS.forEach((field) => {
+      if (Number.isFinite(Number(merged[field]))) return;
+      const value = Number(snapshotStock[field]);
+      if (Number.isFinite(value)) {
+        merged[field] = value;
+        changed = true;
+      }
+    });
+    if (changed) mergedCount += 1;
+    return changed ? merged : stock;
+  });
+  if (!mergedCount) return record;
+
+  const note = `\u79fb\u52a8\u7aef\u5df2\u5408\u5e76\u968f\u5305\u6263\u975e\u8d22\u52a1\u5feb\u7167\uff1a${mergedCount}/${stocks.length} \u53ea\u80a1\u7968\u3002`;
+  const mergedData = {
+    ...data,
+    stocks,
+    notes: uniqueNotes([...(Array.isArray(data.notes) ? data.notes : []), note]),
+  };
+  if (record?.data) {
+    return {
+      ...record,
+      data: mergedData,
+      summary: record.summary ? { ...record.summary, stock_count: record.summary.stock_count || stocks.length } : record.summary,
+    };
+  }
+  return mergedData;
 }
 
 function appendMobilePayloadNotes(result, notes = []) {
@@ -2806,14 +2881,13 @@ function updateResearchSummaries() {
 
 function updateCriteriaSummary() {
   if (!workbench.criteriaSummary) return;
-  const includeDeductedCriteria = !isMobileTauriRuntime() || mobileMarketDataMeta?.hasDeductedFinancialFields !== false;
   const parts = [
     $("#industry")?.value ? `\u884c\u4e1a ${$("#industry").value}` : "\u5168\u90e8\u884c\u4e1a",
     $("#minRoe")?.value ? `ROE \u2265 ${formatPercent(Number($("#minRoe").value))}` : "",
     $("#maxPe")?.value ? `PE \u2264 ${formatNumber($("#maxPe").value)}` : "",
     $("#minMcap")?.value ? `\u5e02\u503c \u2265 ${formatNumber($("#minMcap").value)} \u4ebf` : "",
-    includeDeductedCriteria ? "\u6263\u975e\u51c0\u5229\u6da6 > 0" : "\u79fb\u52a8\u7aef\u8df3\u8fc7\u6263\u975e\u8d22\u52a1",
-    includeDeductedCriteria ? "\u6263\u975e\u51c0\u5229\u6da6\u589e\u957f\u7387 > 10%" : "",
+    "\u6263\u975e\u51c0\u5229\u6da6 > 0",
+    "\u6263\u975e\u51c0\u5229\u6da6\u589e\u957f\u7387 > 10%",
     $("#requireInstitutionBuyRatio")?.checked ? "\u673a\u6784\u51c0\u4e70\u5165" : "",
     `\u8fd4\u56de ${clampInt($("#resultLimit")?.value, 1, 200, DEFAULT_RESULT_LIMIT)} \u53ea`,
     rebalanceLabel($("#btRebalance")?.value || "monthly"),
@@ -3511,8 +3585,9 @@ async function readMobileMarketDataCache(invoke) {
 
 async function loadCachedMobileMarketData(invoke) {
   const cached = await readMobileMarketDataCache(invoke);
-  if (!cached) throw new Error("手机本地股票池为空，需要联网生成。");
-  return applyMobileMarketDataRecord(cached, "cache");
+  if (!cached) throw new Error("\u624b\u673a\u672c\u5730\u80a1\u7968\u6c60\u4e3a\u7a7a\uff0c\u9700\u8981\u8054\u7f51\u751f\u6210\u3002");
+  const hydrated = await hydrateMobileMarketDataRecord(cached);
+  return applyMobileMarketDataRecord(hydrated, "cache");
 }
 
 function applyMobileMarketDataRecord(record, source) {
@@ -3809,7 +3884,7 @@ async function refreshMobileMarketDataViaWebView(invoke, seed) {
   stocks.sort((left, right) => String(left.code || "").localeCompare(String(right.code || "")));
   const validCodes = new Set(stocks.map((stock) => stock.code));
   const now = Date.now();
-  const dataset = {
+  let dataset = {
     source: "tencent-webview",
     generated_at: new Date(now).toISOString(),
     generated_at_epoch_ms: now,
@@ -3823,6 +3898,8 @@ async function refreshMobileMarketDataViaWebView(invoke, seed) {
     relations: Array.isArray(seed?.relations) ? seed.relations.filter((relation) => validCodes.has(relation.source_code) && validCodes.has(relation.target_code)) : [],
     histories: filterMobileSeedHistories(seed?.histories, validCodes),
   };
+  const hydratedRecord = await hydrateMobileMarketDataRecord({ data: dataset });
+  dataset = hydratedRecord?.data || dataset;
   const status = await invoke("core_mobile_market_data_write", { payload: dataset });
   const writtenData = applyMobileMarketDataRecord(status, "webview");
   mobileMarketDataPromise = Promise.resolve(writtenData);
@@ -5149,10 +5226,10 @@ function renderStockRow(item) {
   const saved = isWatchlisted(stock.code);
   const watchLabel = saved ? "已收藏" : "收藏";
   const watchButton = stock.code
-    ? `<button class="watchlist-action${saved ? " saved" : ""}" type="button" data-watchlist-code="${escapeHtml(stock.code)}" data-watchlist-name="${escapeHtml(stock.name || stock.code)}" data-watchlist-industry="${escapeHtml(stock.industry || "")}" data-watchlist-source="screen" aria-pressed="${saved ? "true" : "false"}" aria-label="${escapeHtml(watchLabel)} ${escapeHtml(stock.name || stock.code)}" title="${escapeHtml(watchLabel)}"><span class="watchlist-icon" aria-hidden="true">${saved ? "★" : "☆"}</span><span class="watchlist-label">${escapeHtml(watchLabel)}</span></button>`
+    ? `<button class="stock-row-action watchlist-action${saved ? " saved" : ""}" type="button" data-watchlist-code="${escapeHtml(stock.code)}" data-watchlist-name="${escapeHtml(stock.name || stock.code)}" data-watchlist-industry="${escapeHtml(stock.industry || "")}" data-watchlist-source="screen" aria-pressed="${saved ? "true" : "false"}" aria-label="${escapeHtml(watchLabel)} ${escapeHtml(stock.name || stock.code)}" title="${escapeHtml(watchLabel)}"><span class="watchlist-icon" aria-hidden="true">${saved ? "★" : "☆"}</span><span class="watchlist-label">${escapeHtml(watchLabel)}</span></button>`
     : "";
   const observeButton = stock.code
-    ? `<button class="observe-action" type="button" data-observe-code="${escapeHtml(stock.code)}">观察</button>`
+    ? `<button class="stock-row-action observe-action" type="button" data-observe-code="${escapeHtml(stock.code)}">观察</button>`
     : "";
 
   return `

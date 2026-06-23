@@ -11652,3 +11652,237 @@ body.mobile-tauri #sectionFilters .criteria-panel-heading{background:linear-grad
 .refresh-log-line.error .refresh-log-message{color:#ff6b61;}
 body.mobile-tauri .refresh-log{max-height:190px;border:1px solid rgba(239,78,66,.22);border-radius:8px;background:#090504;box-shadow:inset 0 1px 0 rgba(255,244,238,.04);}
 @media (min-width:900px) and (orientation:landscape){body.mobile-tauri .refresh-log{max-height:220px;}}
+
+
+/* Unified stock-row action buttons for desktop and Android. */
+.stock-row .row-button-group {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.stock-row .stock-row-action {
+  display: inline-grid;
+  grid-auto-flow: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 86px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: 999px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, var(--surface)), color-mix(in srgb, var(--surface) 94%, var(--accent) 6%));
+  color: var(--accent-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 244, 238, 0.08);
+  font-size: 0.82rem;
+  font-weight: 840;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.stock-row .stock-row-action:hover {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 14%, var(--surface)), color-mix(in srgb, var(--surface) 88%, var(--accent) 12%));
+  color: var(--accent-strong);
+}
+
+.stock-row .stock-row-action:active {
+  transform: translateY(1px);
+  filter: brightness(0.97);
+}
+
+.stock-row .watchlist-action.saved {
+  border-color: color-mix(in srgb, var(--rise) 56%, var(--line));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--rise) 18%, var(--surface)), color-mix(in srgb, var(--surface) 88%, var(--rise) 12%));
+  color: var(--rise);
+}
+
+.stock-row .watchlist-icon {
+  width: 1em;
+  font-size: 0.96rem;
+  line-height: 1;
+  text-align: center;
+}
+
+.stock-row .watchlist-label {
+  line-height: 1;
+}
+
+@media (max-width: 860px) {
+  .stock-row .stock-row-action {
+    min-height: 40px;
+    padding: 0 12px;
+  }
+}
+
+@media (pointer: coarse) {
+  .stock-row .stock-row-action {
+    min-height: 44px;
+  }
+}
+
+body.mobile-tauri .stock-row .row-button-group {
+  gap: 8px;
+}
+
+body.mobile-tauri .stock-row .stock-row-action {
+  min-height: 44px !important;
+  border-radius: 999px !important;
+  border-color: rgba(239, 78, 66, 0.42) !important;
+  background: linear-gradient(180deg, rgba(75, 27, 22, 0.95), rgba(45, 16, 14, 0.96)) !important;
+  color: #fff1ec !important;
+  box-shadow: inset 0 1px 0 rgba(255, 244, 238, 0.07) !important;
+}
+
+body.mobile-tauri .stock-row .stock-row-action:hover {
+  border-color: rgba(239, 78, 66, 0.58) !important;
+  background: linear-gradient(180deg, rgba(89, 31, 26, 0.98), rgba(54, 19, 16, 0.98)) !important;
+}
+
+body.mobile-tauri .stock-row .watchlist-action.saved {
+  border-color: rgba(255, 122, 108, 0.66) !important;
+  background: linear-gradient(180deg, rgba(92, 35, 29, 0.98), rgba(62, 21, 18, 0.98)) !important;
+  color: #ff8e82 !important;
+}
+
+
+/* Android assistant compact layout. */
+body.mobile-tauri #sectionAgent.agent-console {
+  padding: 12px !important;
+  overflow: visible !important;
+}
+
+body.mobile-tauri .agent-workbench-header {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  margin-bottom: 10px !important;
+  padding: 0 !important;
+}
+
+body.mobile-tauri .agent-workbench-header p {
+  display: none !important;
+}
+
+body.mobile-tauri .agent-workbench-header h2 {
+  font-size: 1.08rem !important;
+  line-height: 1.2 !important;
+  margin: 0 !important;
+}
+
+body.mobile-tauri .agent-header-actions {
+  margin-left: auto !important;
+  gap: 6px !important;
+}
+
+body.mobile-tauri .agent-header-actions span {
+  min-height: 30px !important;
+  padding: 0 10px !important;
+  font-size: 0.7rem !important;
+}
+
+body.mobile-tauri #agentSettingsBtn {
+  min-height: 34px !important;
+  padding: 0 10px !important;
+  border-radius: 999px !important;
+}
+
+body.mobile-tauri .agent-chat-shell {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 10px !important;
+}
+
+body.mobile-tauri .agent-chat-main,
+body.mobile-tauri .agent-detail-drawer,
+body.mobile-tauri #agentResult.agent-detail-drawer {
+  min-height: 0 !important;
+  border-color: rgba(255, 190, 178, 0.28) !important;
+  border-radius: 10px !important;
+  background: linear-gradient(180deg, rgba(17, 8, 7, 0.96), rgba(9, 5, 4, 0.98)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 244, 238, 0.04) !important;
+}
+
+body.mobile-tauri .agent-chat-thread {
+  flex: 0 1 auto !important;
+  min-height: 178px !important;
+  max-height: min(34dvh, 260px) !important;
+  gap: 9px !important;
+  padding: 10px !important;
+}
+
+body.mobile-tauri .agent-message {
+  width: 100% !important;
+  border-radius: 9px !important;
+  padding: 12px !important;
+}
+
+body.mobile-tauri .agent-message-body p {
+  font-size: 0.92rem !important;
+  line-height: 1.55 !important;
+}
+
+body.mobile-tauri .agent-quick-prompts {
+  display: flex !important;
+  gap: 8px !important;
+  overflow-x: auto !important;
+  border-top: 1px solid rgba(255, 207, 196, 0.12) !important;
+  padding: 10px 10px 0 !important;
+  scrollbar-width: none;
+}
+
+body.mobile-tauri .agent-quick-prompts::-webkit-scrollbar {
+  display: none;
+}
+
+body.mobile-tauri .agent-quick-prompts button {
+  flex: 0 0 auto !important;
+  min-height: 36px !important;
+  padding: 0 13px !important;
+  border-radius: 999px !important;
+  font-size: 0.78rem !important;
+  white-space: nowrap !important;
+}
+
+body.mobile-tauri .agent-composer {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 86px !important;
+  gap: 8px !important;
+  padding: 10px !important;
+}
+
+body.mobile-tauri .agent-composer textarea {
+  min-height: 58px !important;
+  max-height: 112px !important;
+  border-radius: 10px !important;
+  padding: 10px 12px !important;
+  font-size: 0.88rem !important;
+  line-height: 1.45 !important;
+}
+
+body.mobile-tauri .agent-composer button {
+  min-height: 58px !important;
+  border-radius: 10px !important;
+  padding: 0 12px !important;
+}
+
+body.mobile-tauri .agent-detail-drawer {
+  padding: 10px !important;
+}
+
+body.mobile-tauri .agent-detail-drawer.empty .empty-state,
+body.mobile-tauri #agentResult.agent-detail-drawer.empty .empty-state {
+  min-height: 120px !important;
+  padding: 12px !important;
+}
+
+@media (max-width: 420px) {
+  body.mobile-tauri .agent-composer {
+    grid-template-columns: minmax(0, 1fr) 72px !important;
+  }
+}

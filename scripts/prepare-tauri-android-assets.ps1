@@ -360,6 +360,131 @@ function Update-AndroidProjectBranding {
     Set-Content -LiteralPath (Join-Path $adaptiveIconDir "ic_launcher_round.xml") -Value $adaptiveIconXml -Encoding UTF8
 }
 
+
+function ConvertTo-MobileSnapshotNumber {
+    param([object] $Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    $text = ([string] $Value).Trim()
+    if ([string]::IsNullOrWhiteSpace($text) -or $text -eq "-") {
+        return $null
+    }
+
+    $style = [System.Globalization.NumberStyles]::Float -bor [System.Globalization.NumberStyles]::AllowThousands
+    $culture = [System.Globalization.CultureInfo]::InvariantCulture
+    [double] $number = 0
+    if ([double]::TryParse($text, $style, $culture, [ref] $number)) {
+        if ([double]::IsNaN($number) -or [double]::IsInfinity($number)) {
+            return $null
+        }
+        return $number
+    }
+
+    return $null
+}
+
+function ConvertTo-MobileSnapshotBillion {
+    param([object] $Value)
+
+    $number = ConvertTo-MobileSnapshotNumber $Value
+    if ($null -eq $number) {
+        return $null
+    }
+    if ([Math]::Abs($number) -gt 1000000) {
+        return $number / 100000000
+    }
+    return $number
+}
+
+function Normalize-MobileSnapshotCode {
+    param([object] $Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+    $raw = ([string] $Value).Trim().ToUpperInvariant()
+    if (-not $raw) {
+        return $null
+    }
+    if ($raw -match '^(?<digits>\d{6})\.(?<market>SH|SZ|BJ)$') {
+        return "$($Matches.digits).$($Matches.market)"
+    }
+    if ($raw -match '^(?<market>SH|SZ|BJ)(?<digits>\d{6})$') {
+        return "$($Matches.digits).$($Matches.market)"
+    }
+    if ($raw -match '(?<digits>\d{6})') {
+        $digits = $Matches.digits
+        $market = "SZ"
+        if ($digits -match '^[695]') {
+            $market = "SH"
+        } elseif ($digits -match '^[48]') {
+            $market = "BJ"
+        }
+        return "$digits.$market"
+    }
+    return $null
+}
+
+function Export-MobileFinancialSnapshot {
+    $snapshotPath = Join-Path $OutputDir "mobile-financial-snapshot.json"
+    $fundamentalsPath = Join-Path $Root "data\cache\tdx_fundamentals.csv"
+    $stocks = New-Object System.Collections.Generic.List[object]
+    $seen = @{}
+    $source = $null
+    $notes = New-Object System.Collections.Generic.List[string]
+
+    if (Test-Path -LiteralPath $fundamentalsPath) {
+        $source = "data/cache/tdx_fundamentals.csv"
+        $rows = Import-Csv -LiteralPath $fundamentalsPath -Encoding UTF8
+        foreach ($row in $rows) {
+            $code = Normalize-MobileSnapshotCode $row.SECUCODE
+            if (-not $code) {
+                $code = Normalize-MobileSnapshotCode $row.SECURITY_CODE
+            }
+            if (-not $code -or $seen.ContainsKey($code)) {
+                continue
+            }
+
+            $profitBillion = ConvertTo-MobileSnapshotBillion $row.KCFJCXSYJLR
+            $revenueBillion = ConvertTo-MobileSnapshotBillion $row.TOTALOPERATEREVE
+            $margin = $null
+            if ($null -ne $profitBillion -and $null -ne $revenueBillion -and $revenueBillion -gt 0) {
+                $margin = ($profitBillion / $revenueBillion) * 100
+            }
+            $growth = ConvertTo-MobileSnapshotNumber $row.KCFJCXSYJLRTZ
+            if ($null -eq $profitBillion -and $null -eq $margin -and $null -eq $growth) {
+                continue
+            }
+
+            $seen[$code] = $true
+            $stocks.Add([pscustomobject][ordered]@{
+                code = $code
+                deducted_net_profit_billion = if ($null -eq $profitBillion) { $null } else { [Math]::Round($profitBillion, 6) }
+                deducted_net_profit_margin = if ($null -eq $margin) { $null } else { [Math]::Round($margin, 6) }
+                deducted_net_profit_growth_rate = if ($null -eq $growth) { $null } else { [Math]::Round($growth, 6) }
+            }) | Out-Null
+        }
+        $notes.Add("tdx fundamentals snapshot exported for mobile deducted financial filters") | Out-Null
+    } else {
+        $notes.Add("tdx_fundamentals.csv not found; mobile deducted financial filters will rely on existing cache fields") | Out-Null
+    }
+
+    $snapshot = [pscustomobject][ordered]@{
+        schema_version = "mobile-financial-snapshot/v1"
+        generated_at = (Get-Date).ToUniversalTime().ToString("o")
+        source = $source
+        stock_count = $stocks.Count
+        stocks = $stocks
+        notes = $notes
+    }
+    $json = $snapshot | ConvertTo-Json -Depth 6 -Compress
+    Set-Content -LiteralPath $snapshotPath -Value $json -Encoding UTF8
+    Write-Host "Prepared mobile financial snapshot: $($stocks.Count) rows at $snapshotPath"
+}
+
 if (-not (Test-Path -LiteralPath $SourceDir)) {
     throw "Frontend source directory does not exist: $SourceDir"
 }
@@ -379,6 +504,8 @@ Get-ChildItem -LiteralPath $SourceDir -Force |
     ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination $StaticOutputDir -Recurse -Force
     }
+
+Export-MobileFinancialSnapshot
 
 Update-AndroidProjectForLanImport
 Update-AndroidProjectBranding
