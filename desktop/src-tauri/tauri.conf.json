@@ -4,9 +4,9 @@
   "version": "0.3.0",
   "identifier": "com.tutict.stockoptimizer",
   "build": {
-    "beforeDevCommand": "",
-    "beforeBuildCommand": "",
-    "frontendDist": "../public"
+    "beforeDevCommand": "npm run prepare:android",
+    "beforeBuildCommand": "npm run prepare:android",
+    "frontendDist": "../mobile-dist"
   },
   "app": {
     "windows": [],

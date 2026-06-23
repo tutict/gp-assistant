@@ -181,9 +181,10 @@ const agentUi = {
 };
 const agentRuns = new Map();
 
-const TAURI_MOBILE_GET_ROUTES = {
-  "/api/data-sources/status": async ({ invoke }) => mobileDataStatus(invoke),
+const TAURI_GET_ROUTES = {
+  "/api/data-sources/status": async ({ invoke }) => invoke("api_market_status"),
   "/api/upstream-rag/mobile/list": async ({ invoke }) => invoke("core_upstream_rag_list"),
+  "/api/upstream-rag/status": async ({ invoke }) => invoke("core_upstream_rag_list"),
   "/api/upstream-rag/mobile/detail": async ({ invoke, parsed }) =>
     invoke("core_upstream_rag_detail", {
       payload: {
@@ -191,90 +192,80 @@ const TAURI_MOBILE_GET_ROUTES = {
         pack_version: parsed.searchParams.get("pack_version") || "",
       },
     }),
-  "/api/stock-search": async ({ invoke, parsed }) => searchTauriStocks(invoke, parsed.searchParams),
+  "/api/stock-search": async ({ invoke, parsed }) =>
+    invoke("api_stock_search", {
+      payload: {
+        q: parsed.searchParams.get("q") || "",
+        limit: parsed.searchParams.get("limit") || STOCK_SEARCH_LIMIT,
+      },
+    }),
 };
 
-const TAURI_MOBILE_GET_PREFIX_ROUTES = [
+const TAURI_GET_PREFIX_ROUTES = [
   {
     prefix: "/api/observe/",
     handler: async ({ invoke, path, parsed }) => {
       const code = decodeURIComponent(path.slice("/api/observe/".length));
-      return observeTauriStock(invoke, code, parsed.searchParams);
+      return invoke("api_observe", {
+        payload: {
+          code,
+          start_date: normalizeDateParam(parsed.searchParams.get("start_date"), "20200101"),
+          end_date: normalizeDateParam(parsed.searchParams.get("end_date"), currentSystemDateCompact()),
+          series_limit: clampInt(parsed.searchParams.get("series_limit"), 20, 500, 120),
+          include_order_book: parsed.searchParams.get("include_order_book") === "true",
+        },
+      });
     },
   },
 ];
 
-const TAURI_MOBILE_POST_ROUTES = {
-  "/api/screen": async ({ invoke, payload }) =>
-    invokeCoreWithMobileData(invoke, "core_screen_with_data", "criteria", payload),
-  "/api/data-sources/auto-refresh-universe": async ({ invoke }) => {
-    const cache = await readMobileMarketDataCache(invoke).catch(() => null);
-    const tradingDay = isLikelyTradingDay();
-    if (!cache) {
-      startMobileMarketRefreshJob(invoke, { seed: null, reason: "\u9996\u6b21\u5b89\u88c5\u540e\u53f0\u751f\u6210\u80a1\u7968\u6c60" });
-      return {
-        source: DEFAULT_DATA_SOURCE,
-        checked_at: new Date().toISOString(),
-        trading_day: tradingDay,
-        after_close: !shouldUsePreviousCloseForMobileRefresh(),
-        due: true,
-        refreshed: false,
-        background_refresh: true,
-        initial_refresh: true,
-        status: await mobileDataStatus(invoke),
-        notes: ["\u9996\u6b21\u5b89\u88c5\u6b63\u5728\u540e\u53f0\u8054\u7f51\u751f\u6210\u80a1\u7968\u6c60\uff0c\u9875\u9762\u53ef\u4ee5\u5148\u64cd\u4f5c\uff1b\u751f\u6210\u5b8c\u6210\u540e\u4f1a\u81ea\u52a8\u66f4\u65b0\u72b6\u6001\u3002"],
-      };
-    }
-    if (!tradingDay) {
-      return {
-        source: DEFAULT_DATA_SOURCE,
-        checked_at: new Date().toISOString(),
-        trading_day: false,
-        after_close: false,
-        due: false,
-        refreshed: false,
-        status: await mobileDataStatus(invoke),
-        notes: ["\u4eca\u5929\u4e0d\u662f\u4ea4\u6613\u65e5\uff0c\u79fb\u52a8\u7aef\u4e0d\u81ea\u52a8\u5237\u65b0\u80a1\u7968\u6c60\u3002"],
-      };
-    }
-    startMobileMarketRefreshJob(invoke, { reason: "\u4ea4\u6613\u65e5\u540e\u53f0\u5237\u65b0\u80a1\u7968\u6c60" });
-    return {
-      source: DEFAULT_DATA_SOURCE,
-      checked_at: new Date().toISOString(),
-      trading_day: true,
-      after_close: !shouldUsePreviousCloseForMobileRefresh(),
-      due: true,
-      refreshed: false,
-      background_refresh: true,
-      status: await mobileDataStatus(invoke),
-      notes: ["\u4ea4\u6613\u65e5\u540e\u53f0\u5237\u65b0\u5df2\u542f\u52a8\uff0c\u73b0\u6709\u7f13\u5b58\u4f1a\u7ee7\u7eed\u53ef\u7528\u3002"],
-    };
-  },
-  "/api/data-sources/refresh-universe": async ({ invoke }) => {
-    const status = await refreshMobileMarketData(invoke);
-    return {
-      source: DEFAULT_DATA_SOURCE,
-      refreshed: true,
-      status,
-      notes: mobileRefreshNotes(status, "已通过腾讯行情联网更新股票池，并写入手机本地缓存。"),
-    };
-  },
-  "/api/data-sources/prune-cache": async ({ invoke }) => pruneMobileMarketData(invoke),
-  "/api/sector-screen": async ({ invoke, payload }) => buildTauriSectorScreen(invoke, payload),
-  "/api/graph-screen": async ({ invoke, payload }) =>
-    invokeCoreWithMobileData(invoke, "core_graph_screen_with_data", "request", payload),
-  "/api/trend": async ({ invoke, payload }) =>
-    invokeCoreWithMobileData(invoke, "core_trend_with_data", "request", payload),
-  "/api/trend-screen": async ({ invoke, payload }) =>
-    invokeCoreWithMobileData(invoke, "core_trend_screen_with_data", "request", payload),
-  "/api/backtest": async ({ invoke, payload }) =>
-    invokeCoreWithMobileData(invoke, "core_backtest_with_data", "request", payload),
-  "/api/news-rag": async ({ invoke, payload }) => analyzeMobileNewsRag(invoke, payload),
+const TAURI_POST_ROUTES = {
+  "/api/screen": async ({ invoke, payload }) => invoke("api_screen", { payload }),
+  "/api/sector-screen": async ({ invoke, payload }) => invoke("api_sector_screen", { payload }),
+  "/api/graph-screen": async ({ invoke, payload }) => invoke("api_graph_screen", { payload }),
+  "/api/trend": async ({ invoke, payload }) => invoke("api_trend_analyze", { payload }),
+  "/api/trend-screen": async ({ invoke, payload }) => invoke("api_trend_screen", { payload }),
+  "/api/backtest": async ({ invoke, payload }) => invoke("api_backtest", { payload }),
+  "/api/news-rag": async ({ invoke, payload }) => invoke("api_news_rag", { payload }),
+  "/api/data-sources/auto-refresh-universe": async ({ invoke }) => tauriAutoRefreshUniverse(invoke),
+  "/api/data-sources/refresh-universe": async ({ invoke }) => tauriRefreshUniverse(invoke),
+  "/api/data-sources/prune-cache": async ({ invoke }) => invoke("api_market_clear_cache"),
   "/api/upstream-rag/mobile/import": async ({ invoke, payload }) => invoke("core_upstream_rag_import", { payload }),
   "/api/upstream-rag/mobile/detail": async ({ invoke, payload }) => invoke("core_upstream_rag_detail", { payload }),
   "/api/upstream-rag/mobile/rollback": async ({ invoke, payload }) => invoke("core_upstream_rag_rollback", { payload }),
 };
 
+async function tauriAutoRefreshUniverse(invoke) {
+  const status = await invoke("api_market_status");
+  const empty = status?.policy?.mode === "empty" || Number(status?.universe_count || 0) <= 0;
+  if (empty) {
+    startMobileMarketRefreshJob(invoke, { seed: null, reason: "首次安装后台生成股票池" });
+  }
+  return {
+    source: DEFAULT_DATA_SOURCE,
+    checked_at: new Date().toISOString(),
+    trading_day: isLikelyTradingDay(),
+    after_close: !shouldUsePreviousCloseForMobileRefresh(),
+    due: empty,
+    refreshed: false,
+    background_refresh: empty,
+    initial_refresh: empty,
+    status,
+    notes: empty
+      ? ["首次安装正在后台联网生成股票池，页面可以先操作；生成完成后会自动更新状态。"]
+      : ["已读取 Tauri/Rust 本地股票池缓存。"],
+  };
+}
+
+async function tauriRefreshUniverse(invoke) {
+  const status = await refreshMobileMarketData(invoke);
+  return {
+    source: DEFAULT_DATA_SOURCE,
+    refreshed: true,
+    status,
+    notes: mobileRefreshNotes(status, "已通过 Tauri/Rust 统一接口联网更新股票池。"),
+  };
+}
 async function invokeCoreWithMobileData(invoke, command, payloadKey, payloadValue) {
   const data = await loadMobileMarketData(invoke);
   const adjusted = adaptMobileCorePayload(payloadKey, payloadValue, data);
@@ -1563,13 +1554,12 @@ function failAgentAssistantRun(run, message) {
 
 async function requestAgentStream(runId, payload, onEvent) {
   const requestPayload = { ...payload, run_id: runId };
-  if (isMobileTauriRuntime()) {
+  if (isTauriApiRuntime()) {
     await requestTauriAgentStream(runId, requestPayload, onEvent);
   } else {
     await requestDesktopAgentStream(requestPayload, onEvent);
   }
 }
-
 async function requestDesktopAgentStream(payload, onEvent) {
   const response = await fetch("/api/agent/stream", {
     method: "POST",
@@ -1587,7 +1577,7 @@ async function requestDesktopAgentStream(payload, onEvent) {
 async function requestTauriAgentStream(runId, payload, onEvent) {
   const invoke = window.__TAURI__?.core?.invoke;
   const listen = window.__TAURI__?.event?.listen;
-  if (!invoke || !listen) throw new Error("移动端事件接口不可用。");
+  if (!invoke || !listen) throw new Error("Tauri 事件接口不可用。");
 
   let unlisten = null;
   let sawResult = false;
@@ -1598,9 +1588,8 @@ async function requestTauriAgentStream(runId, payload, onEvent) {
       if (payloadEvent.type === "result") sawResult = true;
       onEvent(payloadEvent);
     });
-    const response = await invoke("core_agent_stream_with_data", {
+    const response = await invoke("api_agent_stream", {
       payload: {
-        data: await loadMobileMarketData(invoke),
         message: payload.message || "",
         run_id: runId,
       },
@@ -1612,7 +1601,6 @@ async function requestTauriAgentStream(runId, payload, onEvent) {
     if (typeof unlisten === "function") unlisten();
   }
 }
-
 async function consumeSseResponse(response, onEvent) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -3249,37 +3237,39 @@ function createRequestAbortError(message, name = "AbortError") {
 
 async function requestTauriJson(method, url, payload) {
   const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke || !isMobileTauriRuntime()) return { handled: false };
+  if (!invoke || !isTauriApiRuntime()) return { handled: false };
 
   const normalizedMethod = String(method || "GET").toUpperCase();
   const parsed = new URL(url, window.location.href);
   const path = parsed.pathname;
-  const handler = tauriMobileRouteHandler(normalizedMethod, path);
+  const handler = tauriRouteHandler(normalizedMethod, path);
   if (handler) return { handled: true, data: await handler({ invoke, parsed, path, payload }) };
   if (normalizedMethod === "GET" || normalizedMethod === "POST") throw new Error(`移动端暂不支持该接口：${path}`);
   return { handled: false };
 }
 
-function tauriMobileRouteHandler(method, path) {
+function tauriRouteHandler(method, path) {
   if (method === "GET") {
     return (
-      TAURI_MOBILE_GET_ROUTES[path] ||
-      TAURI_MOBILE_GET_PREFIX_ROUTES.find((route) => path.startsWith(route.prefix))?.handler ||
+      TAURI_GET_ROUTES[path] ||
+      TAURI_GET_PREFIX_ROUTES.find((route) => path.startsWith(route.prefix))?.handler ||
       null
     );
   }
-  if (method === "POST") return TAURI_MOBILE_POST_ROUTES[path] || null;
+  if (method === "POST") return TAURI_POST_ROUTES[path] || null;
   return null;
 }
-
 function isTauriRuntime() {
   return Boolean(window.__TAURI__?.core?.invoke);
 }
 
-function isMobileTauriRuntime() {
+function isTauriApiRuntime() {
   return isTauriRuntime() && !isDesktopBackendOrigin();
 }
 
+function isMobileTauriRuntime() {
+  return isTauriRuntime() && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+}
 function isDesktopBackendOrigin() {
   const protocol = window.location.protocol;
   const hostname = window.location.hostname;
@@ -3384,148 +3374,6 @@ function arrayBufferToBase64(buffer) {
 
 function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function conceptGroupForStock(stock = {}, rules = screeningRules) {
-  const text = `${stock.name || ""} ${stock.industry || ""}`.trim().toLowerCase();
-  for (const group of screeningConceptGroups(rules)) {
-    if ((group.keywords || []).some((keyword) => text.includes(String(keyword).toLowerCase()))) {
-      return group.label;
-    }
-  }
-  return "其他概念";
-}
-
-function conceptRank(concept, rules = screeningRules) {
-  const groups = screeningConceptGroups(rules);
-  const index = groups.findIndex((group) => group.label === concept);
-  return index >= 0 ? index : groups.length;
-}
-
-async function buildTauriSectorScreen(invoke, payload = {}) {
-  const data = await loadMobileMarketData(invoke);
-  const rules = await getScreeningRules();
-  const maxSectors = clampInt(payload.max_sectors, 1, 50, DEFAULT_SECTOR_GROUP_LIMIT);
-  const perSectorLimit = clampInt(payload.per_sector_limit, 1, 50, DEFAULT_PER_SECTOR_LIMIT);
-  const minSectorCandidates = clampInt(payload.min_sector_candidates, 1, 500, perSectorLimit);
-  const poolLimit = maxSectors * Math.max(perSectorLimit, minSectorCandidates) * SECTOR_SCREEN_POOL_MULTIPLIER;
-  const notes = [];
-  const criteria = adaptCriteriaForMobileData(
-    {
-      ...(payload.criteria || {}),
-      limit: Math.max(Number(payload.criteria?.limit || 0), poolLimit),
-    },
-    data,
-    notes,
-  );
-  const screen = await invoke("core_screen_with_data", { payload: { data, criteria } });
-  const bySector = new Map();
-  for (const item of screen.items || []) {
-    const sector = conceptGroupForStock(item.stock, rules);
-    if (!bySector.has(sector)) bySector.set(sector, []);
-    bySector.get(sector).push(item);
-  }
-  const groups = [...bySector.entries()]
-    .filter(([, items]) => items.length >= minSectorCandidates)
-    .map(([sector, items]) => ({
-      sector,
-      total: items.length,
-      returned: Math.min(items.length, perSectorLimit),
-      average_score: items.reduce((sum, item) => sum + Number(item.score || 0), 0) / Math.max(items.length, 1),
-      items: items.slice(0, perSectorLimit),
-    }))
-    .sort((left, right) => conceptRank(left.sector, rules) - conceptRank(right.sector, rules) || right.average_score - left.average_score || right.total - left.total || left.sector.localeCompare(right.sector))
-    .slice(0, maxSectors);
-  return {
-    total: screen.total || 0,
-    returned: groups.reduce((sum, group) => sum + group.returned, 0),
-    sector_count: groups.length,
-    groups,
-    notes: [
-      ...(screen.notes || []),
-      ...notes,
-      "移动端使用内置通达信数据集进行本地概念分组，未命中概念时归入其他概念。",
-    ],
-  };
-}
-
-async function observeTauriStock(invoke, rawCode, params) {
-  const code = normalizeStockCode(rawCode);
-  if (!code) throw new Error(`股票代码无效：${rawCode || ""}`);
-
-  const data = await loadMobileMarketData(invoke);
-  const stock = findMobileStock(data, code);
-  if (!stock) throw new Error(`未找到股票 ${code}`);
-
-  const notes = ["数据源：通达信移动数据包。"];
-  let trend = null;
-  try {
-    trend = await invoke("core_trend_with_data", {
-      payload: {
-        data,
-        request: {
-          code: stock.code,
-          start_date: normalizeDateParam(params.get("start_date"), "20200101"),
-          end_date: normalizeDateParam(params.get("end_date"), currentSystemDateCompact()),
-          series_limit: clampInt(params.get("series_limit"), 20, 500, 120),
-        },
-      },
-    });
-  } catch (error) {
-    notes.push(`日线技术面不可用：${error?.message || error}`);
-  }
-
-  if (!Object.keys(data.histories || {}).length) {
-    notes.push("当前移动数据包未内置历史 K 线，已展示基础行情和估值快照。");
-  }
-
-  return {
-    source: "tdx",
-    stock,
-    financial_indicators: buildMobileFinancialIndicators(stock),
-    trend,
-    order_book: null,
-    notes,
-  };
-}
-
-function findMobileStock(data, rawCode) {
-  const normalized = normalizeStockCode(rawCode);
-  const digits = stockCodeDigits(rawCode);
-  return (data.stocks || []).find((stock) => {
-    const stockCode = stock?.code || "";
-    return normalizeStockCode(stockCode) === normalized || stockCodeDigits(stockCode) === digits;
-  });
-}
-
-function buildMobileFinancialIndicators(stock) {
-  const items = [];
-  const add = (label, rawValue, formatter, tone = "neutral") => {
-    if (rawValue === null || rawValue === undefined || rawValue === "") return;
-    const value = Number(rawValue);
-    if (!Number.isFinite(value)) return;
-    items.push({ label, value: formatter(value), raw_value: value, tone });
-  };
-
-  add("市盈率(TTM)", stock.pe, formatNumber);
-  add("市净率(最新)", stock.pb, formatNumber);
-  if (stock.pe) add("每股收益(计算)", Number(stock.price || 0) / Number(stock.pe), (value) => `${formatNumber(value)}元`);
-  if (stock.pb) add("每股净资产", Number(stock.price || 0) / Number(stock.pb), (value) => `${formatNumber(value)}元`);
-  add("净资产收益率", stock.roe, formatPercent, Number(stock.roe || 0) >= 0 ? "rise" : "fall");
-  add("扣非净利润", stock.deducted_net_profit_billion, (value) => `${formatNumber(value)}亿`, Number(stock.deducted_net_profit_billion || 0) > 0 ? "rise" : "fall");
-  add("扣非净利率", stock.deducted_net_profit_margin, (value) => `${formatNumber(Math.abs(value) <= 1 ? value * 100 : value)}%`);
-  add("扣非净利润增长率", stock.deducted_net_profit_growth_rate, (value) => `${formatNumber(Math.abs(value) <= 1 ? value * 100 : value)}%`, Number(stock.deducted_net_profit_growth_rate || 0) >= 0 ? "rise" : "fall");
-  add("市值", stock.market_cap_billion, (value) => `${formatNumber(value)}亿`);
-  add("股息率", stock.dividend_yield, formatPercent);
-
-  if (!items.length) return null;
-  return {
-    title: "最新指标",
-    period: "移动数据包",
-    source: "行情估值",
-    items,
-    notes: [],
-  };
 }
 
 async function searchTauriStocks(invoke, params) {
@@ -3789,168 +3637,39 @@ function formatMobileProbeError(error) {
 async function refreshMobileMarketData(invoke, options = {}) {
   let seed = Object.prototype.hasOwnProperty.call(options, "seed") ? options.seed : null;
   if (!Object.prototype.hasOwnProperty.call(options, "seed")) {
-    appendRefreshLog("\u8bfb\u53d6\u624b\u673a\u672c\u5730\u80a1\u7968\u6c60\u7f13\u5b58\u3002");
+    appendRefreshLog("读取 Tauri/Rust 本地股票池缓存。");
     try {
       seed = await loadCachedMobileMarketData(invoke);
-      appendRefreshLog(`\u5df2\u8bfb\u53d6\u672c\u5730\u7f13\u5b58\uff1a${seed?.stocks?.length || 0} \u53ea\u80a1\u7968\u3002`, "ok");
+      appendRefreshLog(`已读取本地缓存：${seed?.stocks?.length || 0} 只股票。`, "ok");
     } catch (error) {
       seed = null;
-      appendRefreshLog(`\u672a\u8bfb\u5230\u53ef\u7528\u672c\u5730\u7f13\u5b58\uff1a${error.message}`, "warn");
+      appendRefreshLog(`未读到可用本地缓存：${error.message}`, "warn");
     }
   } else {
-    appendRefreshLog(`\u4f7f\u7528\u4f20\u5165\u7684\u79cd\u5b50\u7f13\u5b58\uff1a${seed?.stocks?.length || 0} \u53ea\u80a1\u7968\u3002`);
-  }
-  return await refreshMobileMarketDataViaWebView(invoke, seed || { stocks: [], relations: [], histories: {} });
-}
-
-async function refreshMobileMarketDataViaWebView(invoke, seed) {
-  appendRefreshLog("\u6539\u7528 WebView \u884c\u60c5\u811a\u672c\u901a\u9053\uff0c\u7ed5\u8fc7 Rust \u7f51\u7edc\u8bf7\u6c42\u3002");
-  mobileMarketDataPromise = null;
-  mobileMarketDataSummary = null;
-  mobileMarketDataMeta = null;
-
-  const seedStocks = buildMobileSeedStockMap(seed);
-  const candidateCodes = buildMobileTencentCandidateCodes(seed).slice(0, MOBILE_TENCENT_MAX_CANDIDATES);
-  const totalBatches = Math.ceil(candidateCodes.length / MOBILE_TENCENT_SCRIPT_BATCH_SIZE);
-  const stocks = [];
-  const seen = new Set();
-  let aggregate = null;
-  let consecutiveFailedBatches = 0;
-  const errorSamples = [];
-
-  appendRefreshLog(`WebView \u5019\u9009\u4e0a\u9650 ${candidateCodes.length} \u53ea\uff0c\u5171 ${totalBatches} \u6279\uff0c\u6bcf\u6279\u7b49\u5f85\u4e0a\u9650 ${Math.round(MOBILE_TENCENT_SCRIPT_TIMEOUT_MS / 1000)} \u79d2\u3002`);
-
-  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex += 1) {
-    const batchCodes = candidateCodes.slice(batchIndex * MOBILE_TENCENT_SCRIPT_BATCH_SIZE, (batchIndex + 1) * MOBILE_TENCENT_SCRIPT_BATCH_SIZE);
-    appendRefreshLog(`WebView \u8bf7\u6c42 Tencent \u6279\u6b21 ${batchIndex + 1}/${totalBatches}\uff0c${batchCodes.length} \u53ea\u5019\u9009\u3002`);
-    let batchStocks = [];
-    let failed = 0;
-    let empty = 0;
-    try {
-      const rows = await loadTencentQuoteScriptBatch(batchCodes, MOBILE_TENCENT_SCRIPT_TIMEOUT_MS);
-      batchStocks = parseMobileTencentQuoteRows(rows, seedStocks, shouldUsePreviousCloseForMobileRefresh());
-      if (!batchStocks.length) {
-        empty = 1;
-        consecutiveFailedBatches = 0;
-        appendRefreshLog(`WebView \u6279\u6b21 ${batchIndex + 1} \u6ca1\u6709\u53ef\u7528\u80a1\u7968\u884c\uff0c\u53ef\u80fd\u662f\u672a\u4e0a\u5e02\u4ee3\u7801\u6bb5\uff0c\u7ee7\u7eed\u626b\u63cf\u3002`, "warn");
-      } else {
-        consecutiveFailedBatches = 0;
-        appendRefreshLog(`WebView \u6279\u6b21 ${batchIndex + 1} \u8fd4\u56de ${batchStocks.length} \u53ea\u6709\u6548\u80a1\u7968\u3002`, "ok");
-      }
-    } catch (error) {
-      failed = 1;
-      consecutiveFailedBatches += 1;
-      const message = formatMobileProbeError(error.message);
-      errorSamples.push(message);
-      appendRefreshLog(`WebView \u6279\u6b21 ${batchIndex + 1} \u5931\u8d25\uff1a${message}`, "error");
-    }
-
-    batchStocks.forEach((stock) => {
-      if (stock?.code && !seen.has(stock.code)) {
-        seen.add(stock.code);
-        stocks.push(stock);
-      }
-    });
-
-    const result = {
-      requested: candidateCodes.length,
-      fetched: batchStocks.length,
-      preserved: 0,
-      failed_batches: failed,
-      empty_batches: empty,
-      error_samples: errorSamples.slice(-3),
-      stopped_early: consecutiveFailedBatches >= MOBILE_TENCENT_MAX_FAILED_BATCHES,
-      stop_reason: consecutiveFailedBatches >= MOBILE_TENCENT_MAX_FAILED_BATCHES ? "webview_failed_batches" : null,
-      batch_start: batchIndex,
-      batch_count: 1,
-      next_batch_start: batchIndex + 1,
-      total_batches: totalBatches,
-      done: batchIndex + 1 >= totalBatches || consecutiveFailedBatches >= MOBILE_TENCENT_MAX_FAILED_BATCHES,
-      processed_codes: batchCodes.length,
-      total_candidates: candidateCodes.length,
-    };
-    logMobileRefreshResult(result);
-    aggregate = mergeMobileRefreshResult(aggregate, result);
-    emitMobileMarketRefreshProgress(aggregate);
-    if (result.stopped_early) break;
-    await yieldToBrowser();
+    appendRefreshLog(`使用传入的种子缓存：${seed?.stocks?.length || 0} 只股票。`);
   }
 
-  const preserved = appendPreservedMobileSeedStocks(seedStocks, stocks, seen);
-  if (aggregate) aggregate.preserved = preserved;
-  if (!stocks.length) {
-    throw new Error(`WebView \u884c\u60c5\u901a\u9053\u672a\u8fd4\u56de\u6709\u6548\u80a1\u7968\uff1a${errorSamples.slice(-3).join(" | ") || "unknown error"}`);
-  }
-  stocks.sort((left, right) => String(left.code || "").localeCompare(String(right.code || "")));
-  const validCodes = new Set(stocks.map((stock) => stock.code));
-  const now = Date.now();
-  let dataset = {
-    source: "tencent-webview",
-    generated_at: new Date(now).toISOString(),
-    generated_at_epoch_ms: now,
-    notes: [
-      "mobile online refresh via WebView Tencent script",
-      "Rust network request was bypassed on Android",
-      "WebView \u884c\u60c5\u6c60\u53ea\u5305\u542b\u4ef7\u683c\u3001\u4f30\u503c\u548c\u5e02\u503c\uff0c\u4e0d\u5305\u542b\u6263\u975e\u51c0\u5229\u6da6\u7b49\u5b8c\u6574\u8d22\u52a1\u5b57\u6bb5",
-      shouldUsePreviousCloseForMobileRefresh() ? "price policy: previous close before market close" : "price policy: latest Tencent quote",
-    ],
-    stocks,
-    relations: Array.isArray(seed?.relations) ? seed.relations.filter((relation) => validCodes.has(relation.source_code) && validCodes.has(relation.target_code)) : [],
-    histories: filterMobileSeedHistories(seed?.histories, validCodes),
-  };
-  const hydratedRecord = await hydrateMobileMarketDataRecord({ data: dataset });
-  dataset = hydratedRecord?.data || dataset;
-  const status = await invoke("core_mobile_market_data_write", { payload: dataset });
-  const writtenData = applyMobileMarketDataRecord(status, "webview");
-  mobileMarketDataPromise = Promise.resolve(writtenData);
-  const stockCount = Number(status?.summary?.stock_count || writtenData?.stocks?.length || stocks.length || 0);
-  status.source = "tencent";
-  status.stock_count = stockCount;
-  status.universe_count = stockCount;
-  status.cache_bytes = Number(status.bytes || 0);
-  status.cache_limit_bytes = 0;
-  status.universe_updated_at = mobileRecordUpdatedAt(status) || dataset.generated_at;
-  status.policy = { mode: "mobile_online", source: "webview" };
-  status.refresh_result = aggregate;
-  status.notes = [...mobileRefreshNotes(status, "\u8054\u7f51\u5237\u65b0\u5b8c\u6210"), ...(status.notes || [])];
-  appendRefreshLog(`WebView \u5237\u65b0\u5b8c\u6210\uff1a\u5199\u5165 ${stocks.length} \u53ea\u80a1\u7968\uff0c\u4fdd\u7559 ${preserved} \u53ea\u672c\u5730\u884c\u3002`, "ok");
+  appendRefreshLog("请求 Tauri/Rust 行情刷新命令。");
+  const refresh = await invoke("api_market_refresh", {
+    payload: {
+      seed: seed || { stocks: [], relations: [], histories: {} },
+      scan_candidates: true,
+      max_candidates: MOBILE_TENCENT_MAX_CANDIDATES,
+      max_failed_batches: MOBILE_TENCENT_MAX_FAILED_BATCHES,
+      use_previous_close: shouldUsePreviousCloseForMobileRefresh(),
+    },
+  });
+  const cache = refresh?.status || {};
+  const writtenData = cache?.data ? applyMobileMarketDataRecord(cache, "tauri") : null;
+  if (writtenData) mobileMarketDataPromise = Promise.resolve(writtenData);
+  const status = await invoke("api_market_status");
+  status.refresh_result = refresh;
+  status.notes = [...mobileRefreshNotes(status, "Tauri/Rust 联网刷新完成。"), ...(status.notes || [])];
+  logMobileRefreshResult(refresh);
+  emitMobileMarketRefreshProgress(refresh);
+  appendRefreshLog(`Tauri/Rust 刷新完成：写入 ${status.universe_count || 0} 只股票。`, "ok");
   return status;
 }
-
-function buildMobileSeedStockMap(seed) {
-  const map = new Map();
-  (Array.isArray(seed?.stocks) ? seed.stocks : []).forEach((stock) => {
-    const code = normalizeMobileStockCode(stock?.code);
-    if (code) map.set(code, { ...stock, code });
-  });
-  return map;
-}
-
-function buildMobileTencentCandidateCodes(seed) {
-  const codes = [];
-  (Array.isArray(seed?.stocks) ? seed.stocks : []).forEach((stock) => {
-    const code = normalizeMobileStockCode(stock?.code);
-    if (code) codes.push(code);
-  });
-  appendMobileSequentialRanges(codes, [
-    ["SZ", 1, 3999],
-    ["SH", 600000, 605999],
-    ["SZ", 300000, 301999],
-    ["SH", 688000, 689999],
-    ["BJ", 920000, 920999],
-  ]);
-  const seen = new Set();
-  return codes.filter((code) => code && !seen.has(code) && seen.add(code));
-}
-
-function appendMobileSequentialRanges(codes, ranges) {
-  ranges.forEach(([market, start, end]) => {
-    for (let value = start; value <= end; value += 1) {
-      codes.push(`${String(value).padStart(6, "0")}.${market}`);
-    }
-  });
-}
-
 function normalizeMobileStockCode(value) {
   const raw = String(value || "").trim().toUpperCase();
   if (!raw) return null;
@@ -3974,155 +3693,6 @@ function inferMobileMarket(digits) {
   if (/^[695]/.test(digits)) return "SH";
   if (/^[48]/.test(digits)) return "BJ";
   return "SZ";
-}
-
-function mobileTencentSymbol(code) {
-  const normalized = normalizeMobileStockCode(code);
-  if (!normalized) return null;
-  const digits = normalized.slice(0, 6);
-  if (normalized.endsWith(".SH")) return `sh${digits}`;
-  if (normalized.endsWith(".BJ")) return `bj${digits}`;
-  return `sz${digits}`;
-}
-
-async function loadTencentQuoteScriptBatch(codes, timeoutMs) {
-  const symbols = codes.map(mobileTencentSymbol).filter(Boolean);
-  if (!symbols.length) return [];
-  const endpoints = ["https://qt.gtimg.cn/q=", "http://qt.gtimg.cn/q="];
-  let lastError = null;
-  for (const endpoint of endpoints) {
-    try {
-      return await loadTencentQuoteScriptFromEndpoint(endpoint, symbols, timeoutMs);
-    } catch (error) {
-      lastError = error;
-      appendRefreshLog(`WebView \u811a\u672c\u7aef\u70b9\u5931\u8d25\uff1a${endpoint} ${formatMobileProbeError(error.message)}`, "warn");
-    }
-  }
-  throw lastError || new Error("Tencent script request failed");
-}
-
-function loadTencentQuoteScriptFromEndpoint(endpoint, symbols, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const variableNames = symbols.map((symbol) => `v_${symbol}`);
-    variableNames.forEach((name) => {
-      try { delete window[name]; } catch (_error) { window[name] = undefined; }
-    });
-    const script = document.createElement("script");
-    let settled = false;
-    let timer = null;
-    const cleanup = () => {
-      if (timer) window.clearTimeout(timer);
-      script.onload = null;
-      script.onerror = null;
-      script.remove();
-    };
-    const settle = (callback) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      callback();
-    };
-    script.async = true;
-    script.charset = "gbk";
-    script.setAttribute("charset", "gbk");
-    script.onload = () => settle(() => {
-      const rows = variableNames
-        .map((name) => {
-          const value = window[name];
-          try { delete window[name]; } catch (_error) { window[name] = undefined; }
-          return value ? `${name}="${String(value)}"` : "";
-        })
-        .filter(Boolean);
-      resolve(rows);
-    });
-    script.onerror = () => settle(() => reject(new Error(`${endpoint} script load failed`)));
-    timer = window.setTimeout(() => settle(() => reject(new Error(`${endpoint} script timed out after ${Math.round(timeoutMs / 1000)} seconds`))), timeoutMs);
-    script.src = `${endpoint}${symbols.join(",")}&_=${Date.now()}`;
-    document.head.appendChild(script);
-  });
-}
-
-function parseMobileTencentQuoteRows(rows, seedStocks, usePreviousClose) {
-  const stocks = [];
-  rows.forEach((line) => {
-    const key = String(line.split("=")[0] || "").split("_").pop();
-    const code = normalizeMobileStockCode(key);
-    const values = String(line.split('"')[1] || "").split("~");
-    if (!code || values.length < 53) return;
-    const name = String(values[1] || "").trim();
-    if (!name) return;
-    const price = usePreviousClose
-      ? firstMobilePositiveNumber(values[4], values[3])
-      : firstMobilePositiveNumber(values[3], values[4]);
-    if (!Number.isFinite(price) || price <= 0) return;
-    const existing = seedStocks.get(code) || {};
-    const pe = firstMobilePositiveNumber(values[39], values[52], existing.pe);
-    const pb = firstMobilePositiveNumber(values[46], existing.pb);
-    const marketCap = firstMobilePositiveNumber(values[44], existing.market_cap_billion);
-    const roe = Number.isFinite(Number(existing.roe)) ? Number(existing.roe) : estimateMobileRoe(pe, pb);
-    stocks.push({
-      ...existing,
-      code,
-      name,
-      industry: String(existing.industry || "").trim() || mobileBoardLabel(code),
-      is_st: /ST/i.test(name) || Boolean(existing.is_st),
-      price,
-      pe: Number.isFinite(pe) ? pe : null,
-      pb: Number.isFinite(pb) ? pb : null,
-      roe: Number.isFinite(roe) ? roe : null,
-      market_cap_billion: Number.isFinite(marketCap) ? marketCap : null,
-      dividend_yield: Number.isFinite(Number(existing.dividend_yield)) ? Number(existing.dividend_yield) : null,
-    });
-  });
-  return stocks;
-}
-
-function parseMobileQuoteNumber(value) {
-  const raw = String(value ?? "").trim();
-  if (!raw || raw === "-" || raw.toLowerCase() === "nan" || raw.toLowerCase() === "none") return null;
-  const number = Number(raw);
-  return Number.isFinite(number) ? number : null;
-}
-
-function firstMobilePositiveNumber(...values) {
-  for (const value of values) {
-    const number = parseMobileQuoteNumber(value);
-    if (Number.isFinite(number) && number > 0) return number;
-  }
-  return null;
-}
-
-function estimateMobileRoe(pe, pb) {
-  return Number.isFinite(pe) && pe > 0 && Number.isFinite(pb) && pb > 0 ? (pb / pe) * 100 : null;
-}
-
-function mobileBoardLabel(code) {
-  const digits = String(code || "").slice(0, 6);
-  if (String(code).endsWith(".BJ")) return "\u5317\u4ea4\u6240";
-  if (digits.startsWith("688")) return "\u79d1\u521b\u677f";
-  if (digits.startsWith("300") || digits.startsWith("301")) return "\u521b\u4e1a\u677f";
-  if (String(code).endsWith(".SH")) return "\u6caa\u5e02A\u80a1";
-  return "\u6df1\u5e02A\u80a1";
-}
-
-function appendPreservedMobileSeedStocks(seedStocks, stocks, seen) {
-  let preserved = 0;
-  Array.from(seedStocks.keys()).sort().forEach((code) => {
-    if (seen.has(code)) return;
-    const stock = { ...seedStocks.get(code), code };
-    if (!String(stock.industry || "").trim()) stock.industry = mobileBoardLabel(code);
-    if (Number.isFinite(Number(stock.price)) && Number(stock.price) > 0) {
-      stocks.push(stock);
-      seen.add(code);
-      preserved += 1;
-    }
-  });
-  return preserved;
-}
-
-function filterMobileSeedHistories(histories, validCodes) {
-  if (!histories || typeof histories !== "object") return {};
-  return Object.fromEntries(Object.entries(histories).filter(([code]) => validCodes.has(normalizeMobileStockCode(code) || code)));
 }
 
 function mobileRefreshNotes(status, fallback = "") {

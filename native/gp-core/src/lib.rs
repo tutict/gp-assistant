@@ -154,6 +154,47 @@ pub struct ScreenResult {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SectorScreenRequest {
+    #[serde(default)]
+    pub criteria: ScreenCriteria,
+    #[serde(default = "default_sector_group_limit")]
+    pub max_sectors: usize,
+    #[serde(default = "default_per_sector_limit")]
+    pub per_sector_limit: usize,
+    #[serde(default = "default_min_sector_candidates")]
+    pub min_sector_candidates: usize,
+}
+
+impl Default for SectorScreenRequest {
+    fn default() -> Self {
+        Self {
+            criteria: ScreenCriteria::default(),
+            max_sectors: default_sector_group_limit(),
+            per_sector_limit: default_per_sector_limit(),
+            min_sector_candidates: default_min_sector_candidates(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SectorScreenGroup {
+    pub sector: String,
+    pub total: usize,
+    pub returned: usize,
+    pub average_score: f64,
+    pub items: Vec<ScreenedStock>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SectorScreenResult {
+    pub total: usize,
+    pub returned: usize,
+    pub sector_count: usize,
+    pub groups: Vec<SectorScreenGroup>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StockRelation {
     pub source_code: String,
     pub target_code: String,
@@ -362,6 +403,52 @@ pub struct TrendIndicatorResult {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StockObserveRequest {
+    pub code: String,
+    #[serde(default = "default_start_date")]
+    pub start_date: String,
+    #[serde(default = "default_end_date")]
+    pub end_date: String,
+    #[serde(default = "default_series_limit")]
+    pub series_limit: usize,
+    #[serde(default)]
+    pub include_order_book: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FinancialIndicatorItem {
+    pub label: String,
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_value: Option<f64>,
+    #[serde(default = "default_tone")]
+    pub tone: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FinancialIndicators {
+    pub title: String,
+    pub period: String,
+    pub source: String,
+    pub items: Vec<FinancialIndicatorItem>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StockObservation {
+    pub source: String,
+    pub stock: StockItem,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub financial_indicators: Option<FinancialIndicators>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trend: Option<TrendIndicatorResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_book: Option<Value>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TrendScreenRequest {
     #[serde(default)]
     pub criteria: ScreenCriteria,
@@ -501,6 +588,12 @@ pub struct ScreenWithDataRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SectorScreenWithDataRequest {
+    pub data: CoreDataSet,
+    #[serde(default)]
+    pub request: SectorScreenRequest,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GraphScreenWithDataRequest {
     pub data: CoreDataSet,
     #[serde(default)]
@@ -519,6 +612,11 @@ pub struct TrendWithDataRequest {
     pub request: TrendIndicatorRequest,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ObserveWithDataRequest {
+    pub data: CoreDataSet,
+    pub request: StockObserveRequest,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TrendScreenWithDataRequest {
     pub data: CoreDataSet,
@@ -785,6 +883,17 @@ fn default_graph_limit() -> usize {
     10
 }
 
+fn default_sector_group_limit() -> usize {
+    12
+}
+
+fn default_per_sector_limit() -> usize {
+    5
+}
+
+fn default_min_sector_candidates() -> usize {
+    1
+}
 fn default_start_date() -> String {
     "20200101".to_string()
 }
@@ -830,11 +939,20 @@ pub fn screen_value(payload: Value) -> CoreResult<Value> {
     serde_json::to_value(screen_with_mock(&criteria)).map_err(Into::into)
 }
 
+pub fn sector_screen_value(payload: Value) -> CoreResult<Value> {
+    let request: SectorScreenRequest = serde_json::from_value(payload)?;
+    serde_json::to_value(sector_screen_with_mock(&request)).map_err(Into::into)
+}
 pub fn screen_with_data_value(payload: Value) -> CoreResult<Value> {
     let request: ScreenWithDataRequest = serde_json::from_value(payload)?;
     serde_json::to_value(screen_with_data(&request.data, &request.criteria)?).map_err(Into::into)
 }
 
+pub fn sector_screen_with_data_value(payload: Value) -> CoreResult<Value> {
+    let request: SectorScreenWithDataRequest = serde_json::from_value(payload)?;
+    serde_json::to_value(sector_screen_with_data(&request.data, &request.request)?)
+        .map_err(Into::into)
+}
 pub fn graph_screen_value(payload: Value) -> CoreResult<Value> {
     let request: GraphScreenRequest = serde_json::from_value(payload)?;
     serde_json::to_value(graph_screen_with_mock(&request)).map_err(Into::into)
@@ -861,11 +979,19 @@ pub fn trend_value(payload: Value) -> CoreResult<Value> {
     serde_json::to_value(trend_with_mock(&request)?).map_err(Into::into)
 }
 
+pub fn observe_value(payload: Value) -> CoreResult<Value> {
+    let request: StockObserveRequest = serde_json::from_value(payload)?;
+    serde_json::to_value(observe_with_mock(&request)?).map_err(Into::into)
+}
 pub fn trend_with_data_value(payload: Value) -> CoreResult<Value> {
     let request: TrendWithDataRequest = serde_json::from_value(payload)?;
     serde_json::to_value(trend_with_data(&request.data, &request.request)?).map_err(Into::into)
 }
 
+pub fn observe_with_data_value(payload: Value) -> CoreResult<Value> {
+    let request: ObserveWithDataRequest = serde_json::from_value(payload)?;
+    serde_json::to_value(observe_with_data(&request.data, &request.request)?).map_err(Into::into)
+}
 pub fn trend_screen_value(payload: Value) -> CoreResult<Value> {
     let request: TrendScreenRequest = serde_json::from_value(payload)?;
     serde_json::to_value(trend_screen_with_mock(&request)?).map_err(Into::into)
@@ -910,6 +1036,10 @@ pub fn screen_with_mock(criteria: &ScreenCriteria) -> ScreenResult {
     screen_with_source(&MockDataSource, criteria).expect("mock data source should be valid")
 }
 
+pub fn sector_screen_with_mock(request: &SectorScreenRequest) -> SectorScreenResult {
+    let universe = mock_stocks();
+    sector_screen_stocks(&universe, request)
+}
 pub fn screen_with_data(data: &CoreDataSet, criteria: &ScreenCriteria) -> CoreResult<ScreenResult> {
     let source = StaticDataSource::new(data.clone());
     screen_with_source(&source, criteria)
@@ -923,6 +1053,94 @@ pub fn screen_with_source(
     Ok(screen_stocks(&universe, criteria))
 }
 
+pub fn sector_screen_with_data(
+    data: &CoreDataSet,
+    request: &SectorScreenRequest,
+) -> CoreResult<SectorScreenResult> {
+    let source = StaticDataSource::new(data.clone());
+    let universe = source.list_stocks()?;
+    Ok(sector_screen_stocks(&universe, request))
+}
+
+pub fn sector_screen_stocks(
+    universe: &[StockItem],
+    request: &SectorScreenRequest,
+) -> SectorScreenResult {
+    let max_sectors = request.max_sectors.clamp(1, 50);
+    let per_sector_limit = request.per_sector_limit.clamp(1, 50);
+    let min_sector_candidates = request.min_sector_candidates.clamp(1, 500);
+    let mut screened = Vec::new();
+    let mut notes = deducted_profit_rule_notes(universe, &request.criteria);
+
+    for stock in universe {
+        let Some(reasons) = matches_stock(stock, &request.criteria) else {
+            continue;
+        };
+        screened.push(score_stock(stock, &reasons));
+    }
+    sort_screened(&mut screened, &request.criteria);
+
+    let mut by_sector: HashMap<String, Vec<ScreenedStock>> = HashMap::new();
+    for item in &screened {
+        let sector = item
+            .concept
+            .clone()
+            .unwrap_or_else(|| concept_group_for_stock(&item.stock));
+        by_sector.entry(sector).or_default().push(item.clone());
+    }
+
+    let mut groups: Vec<SectorScreenGroup> = by_sector
+        .into_iter()
+        .filter(|(_, items)| items.len() >= min_sector_candidates)
+        .map(|(sector, mut items)| {
+            let total = items.len();
+            items.truncate(per_sector_limit);
+            let returned = items.len();
+            let average_score = if returned == 0 {
+                0.0
+            } else {
+                items.iter().map(|item| item.score).sum::<f64>() / returned as f64
+            };
+            SectorScreenGroup {
+                sector,
+                total,
+                returned,
+                average_score: (average_score * 1_000_000.0).round() / 1_000_000.0,
+                items,
+            }
+        })
+        .collect();
+    groups.sort_by(|left, right| {
+        concept_rank(&left.sector)
+            .cmp(&concept_rank(&right.sector))
+            .then_with(|| right.average_score.total_cmp(&left.average_score))
+            .then_with(|| right.total.cmp(&left.total))
+            .then_with(|| left.sector.cmp(&right.sector))
+    });
+    groups.truncate(max_sectors);
+    let returned = groups.iter().map(|group| group.returned).sum();
+    if request
+        .criteria
+        .industry
+        .as_deref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        notes.push(format!(
+            "{}{}",
+            "\u{5df2}\u{9650}\u{5b9a}\u{884c}\u{4e1a}\u{ff1a}",
+            request.criteria.industry.as_deref().unwrap_or_default()
+        ));
+    }
+    notes.push("\u{5206}\u{6982}\u{5ff5}\u{7b5b}\u{9009}\u{5df2}\u{5728} Rust gp-core \u{4e2d}\u{57fa}\u{4e8e}\u{5b8c}\u{6574}\u{5019}\u{9009}\u{6c60}\u{5206}\u{7ec4}\u{ff0c}\u{4e0d}\u{518d}\u{4f9d}\u{8d56}\u{524d}\u{7aef}\u{79fb}\u{52a8}\u{7aef}\u{4e8c}\u{6b21}\u{5206}\u{7ec4}\u{3002}".to_string());
+    SectorScreenResult {
+        total: screened.len(),
+        returned,
+        sector_count: groups.len(),
+        groups,
+        notes,
+    }
+}
 pub fn graph_screen_with_mock(request: &GraphScreenRequest) -> GraphScreenResult {
     graph_screen_with_source(&MockDataSource, request).expect("mock data source should be valid")
 }
@@ -1112,7 +1330,7 @@ fn normalize_stock_code(code: &str) -> String {
         return String::new();
     }
     if let Some((digits, suffix)) = text.split_once('.') {
-        if digits.chars().all(|ch| ch.is_ascii_digit()) && matches!(suffix, "SH" | "SZ") {
+        if digits.chars().all(|ch| ch.is_ascii_digit()) && matches!(suffix, "SH" | "SZ" | "BJ") {
             return format!("{:0>6}.{}", digits, suffix);
         }
         return text;
@@ -1123,6 +1341,8 @@ fn normalize_stock_code(code: &str) -> String {
     }
     let suffix = if digits.starts_with('5') || digits.starts_with('6') || digits.starts_with('9') {
         "SH"
+    } else if digits.starts_with('4') || digits.starts_with('8') {
+        "BJ"
     } else {
         "SZ"
     };
@@ -1172,6 +1392,192 @@ pub fn trend_with_source(
     })
 }
 
+pub fn observe_with_mock(request: &StockObserveRequest) -> CoreResult<StockObservation> {
+    observe_with_source(&MockDataSource, request)
+}
+
+pub fn observe_with_data(
+    data: &CoreDataSet,
+    request: &StockObserveRequest,
+) -> CoreResult<StockObservation> {
+    let source = StaticDataSource::new(data.clone());
+    observe_with_source(&source, request)
+}
+
+pub fn observe_with_source(
+    source: &impl MarketDataSource,
+    request: &StockObserveRequest,
+) -> CoreResult<StockObservation> {
+    let code = normalize_stock_code(&request.code);
+    let universe = source.list_stocks()?;
+    let stock = universe
+        .iter()
+        .find(|stock| normalize_stock_code(&stock.code) == code)
+        .cloned()
+        .ok_or_else(|| {
+            CoreError::new(format!(
+                "{}{}",
+                "\u{672a}\u{627e}\u{5230}\u{80a1}\u{7968}\u{ff1a}", request.code
+            ))
+        })?;
+    let mut notes = vec!["\u{6570}\u{636e}\u{6e90}\u{ff1a}Tauri/Rust \u{7edf}\u{4e00}\u{672c}\u{5730}\u{884c}\u{60c5}\u{7f13}\u{5b58}\u{3002}".to_string()];
+    let financial_indicators = build_observation_financial_indicators(&stock);
+    let trend_request = TrendIndicatorRequest {
+        code: stock.code.clone(),
+        start_date: request.start_date.clone(),
+        end_date: request.end_date.clone(),
+        series_limit: request.series_limit.clamp(20, 500),
+    };
+    let trend = match trend_with_source(source, &trend_request) {
+        Ok(result) => Some(result),
+        Err(error) => {
+            notes.push(format!(
+                "{}{}",
+                "\u{8d8b}\u{52bf}\u{6307}\u{6807}\u{4e0d}\u{53ef}\u{7528}\u{ff1a}", error
+            ));
+            None
+        }
+    };
+    if request.include_order_book {
+        notes.push("\u{76d8}\u{53e3}\u{6570}\u{636e}\u{5c1a}\u{672a}\u{8fc1}\u{79fb}\u{5230} Rust \u{884c}\u{60c5}\u{6e90}\u{ff0c}\u{5df2}\u{8fd4}\u{56de}\u{7a7a}\u{76d8}\u{53e3}\u{3002}".to_string());
+    }
+    Ok(StockObservation {
+        source: "tdx".to_string(),
+        stock,
+        financial_indicators: Some(financial_indicators),
+        trend,
+        order_book: None,
+        notes,
+    })
+}
+
+fn build_observation_financial_indicators(stock: &StockItem) -> FinancialIndicators {
+    let mut items = Vec::new();
+    push_indicator(
+        &mut items,
+        "\u{5e02}\u{76c8}\u{7387}(TTM)",
+        stock.pe,
+        |value| format_number(value),
+        "neutral",
+    );
+    push_indicator(
+        &mut items,
+        "\u{5e02}\u{51c0}\u{7387}",
+        stock.pb,
+        |value| format_number(value),
+        "neutral",
+    );
+    push_indicator(
+        &mut items,
+        "ROE",
+        stock.roe,
+        |value| format_percent(value),
+        indicator_tone(stock.roe),
+    );
+    push_indicator(
+        &mut items,
+        "\u{5e02}\u{503c}",
+        stock.market_cap_billion,
+        |value| format!("{}\u{4ebf}", format_number(value)),
+        "neutral",
+    );
+    push_indicator(
+        &mut items,
+        "\u{80a1}\u{606f}\u{7387}",
+        stock.dividend_yield,
+        |value| format_percent(value),
+        "neutral",
+    );
+    push_indicator(
+        &mut items,
+        "\u{6263}\u{975e}\u{51c0}\u{5229}\u{6da6}",
+        stock.deducted_net_profit_billion,
+        |value| format!("{}\u{4ebf}", format_number(value)),
+        indicator_tone(stock.deducted_net_profit_billion),
+    );
+    push_indicator(
+        &mut items,
+        "\u{6263}\u{975e}\u{51c0}\u{5229}\u{7387}",
+        stock.deducted_net_profit_margin,
+        |value| format_percent(value),
+        "neutral",
+    );
+    push_indicator(
+        &mut items,
+        "\u{6263}\u{975e}\u{51c0}\u{5229}\u{6da6}\u{589e}\u{957f}\u{7387}",
+        stock.deducted_net_profit_growth_rate,
+        |value| format_percent(value),
+        indicator_tone(stock.deducted_net_profit_growth_rate),
+    );
+    if let Some(pe) = stock.pe.filter(|value| value.abs() > f64::EPSILON) {
+        let eps = stock.price / pe;
+        push_indicator(
+            &mut items,
+            "\u{6bcf}\u{80a1}\u{6536}\u{76ca}(\u{4f30}\u{7b97})",
+            Some(eps),
+            |value| format!("{}\u{5143}", format_number(value)),
+            indicator_tone(Some(eps)),
+        );
+    }
+    if let Some(pb) = stock.pb.filter(|value| value.abs() > f64::EPSILON) {
+        let bps = stock.price / pb;
+        push_indicator(
+            &mut items,
+            "\u{6bcf}\u{80a1}\u{51c0}\u{8d44}\u{4ea7}(\u{4f30}\u{7b97})",
+            Some(bps),
+            |value| format!("{}\u{5143}", format_number(value)),
+            "neutral",
+        );
+    }
+    FinancialIndicators {
+        title: "\u{6700}\u{65b0}\u{6307}\u{6807}".to_string(),
+        period: "\u{672c}\u{5730}\u{884c}\u{60c5}\u{5feb}\u{7167}".to_string(),
+        source: "Tauri/Rust".to_string(),
+        items,
+        notes: Vec::new(),
+    }
+}
+
+fn push_indicator(
+    items: &mut Vec<FinancialIndicatorItem>,
+    label: &str,
+    raw_value: Option<f64>,
+    formatter: impl Fn(f64) -> String,
+    tone: &str,
+) {
+    let Some(value) = raw_value.filter(|value| value.is_finite()) else {
+        return;
+    };
+    items.push(FinancialIndicatorItem {
+        label: label.to_string(),
+        value: formatter(value),
+        raw_value: Some(value),
+        tone: tone.to_string(),
+    });
+}
+
+fn format_number(value: f64) -> String {
+    if value.abs() >= 100.0 {
+        format!("{value:.0}")
+    } else if value.abs() >= 10.0 {
+        format!("{value:.2}")
+    } else {
+        format!("{value:.3}")
+    }
+}
+
+fn format_percent(value: f64) -> String {
+    let percent = as_percent(value).unwrap_or(value);
+    format!("{}%", format_number(percent))
+}
+
+fn indicator_tone(value: Option<f64>) -> &'static str {
+    match value {
+        Some(value) if value.is_finite() && value >= 0.0 => "rise",
+        Some(value) if value.is_finite() => "fall",
+        _ => "neutral",
+    }
+}
 pub fn trend_screen_with_mock(request: &TrendScreenRequest) -> CoreResult<TrendScreenResult> {
     trend_screen_with_source(&MockDataSource, request)
 }
@@ -1215,7 +1621,12 @@ pub fn trend_screen_with_source(
             final_score: round6(final_score),
             signal: analysis.signal.clone(),
             reasons,
-            explanation: trend_screen_explanation(candidate, &analysis.signal, trend_score, final_score),
+            explanation: trend_screen_explanation(
+                candidate,
+                &analysis.signal,
+                trend_score,
+                final_score,
+            ),
         });
     }
 
@@ -1847,7 +2258,8 @@ pub fn graph_screen_stocks(
 
     let mut notes = vec![
         "Graph screening uses lightweight relation propagation in gp-core.".to_string(),
-        "LangGraph is only agent orchestration; stock relations are modeled by relation scoring.".to_string(),
+        "LangGraph is only agent orchestration; stock relations are modeled by relation scoring."
+            .to_string(),
     ];
     notes.extend(deducted_profit_rule_notes(universe, &request.criteria));
     if center_context.mode == "theme_center" {
@@ -2182,40 +2594,372 @@ fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Option<Vec<Str
 const SCREEN_GROUP_LIMIT: usize = 10;
 const POTENTIAL_SCORE_THRESHOLD: f64 = 10.0;
 const SCREEN_SCORE_SCALE: f64 = 20.0;
-const THEME_PROMOTION_ORDER: [&str; 6] = ["materials", "ai_chain", "semiconductor_wafer", "tech", "energy", "game"];
-const THEME_FILL_ORDER: [&str; 6] = ["ai_chain", "semiconductor_wafer", "materials", "tech", "energy", "game"];
+const THEME_PROMOTION_ORDER: [&str; 6] = [
+    "materials",
+    "ai_chain",
+    "semiconductor_wafer",
+    "tech",
+    "energy",
+    "game",
+];
+const THEME_FILL_ORDER: [&str; 6] = [
+    "ai_chain",
+    "semiconductor_wafer",
+    "materials",
+    "tech",
+    "energy",
+    "game",
+];
 const THEME_RULES: [(&str, &str, f64, &[&str]); 6] = [
-        ("materials", "\u{65b0}\u{6750}\u{6599}", 0.96, &["\u{6c1f}\u{5316}\u{5de5}", "\u{6c1f}\u{6750}\u{6599}", "\u{9502}\u{7535}\u{6750}\u{6599}", "\u{7535}\u{89e3}\u{6db2}", "\u{516d}\u{6c1f}\u{78f7}\u{9178}\u{9502}", "\u{65b0}\u{80fd}\u{6750}", "\u{65b0}\u{6750}\u{6599}", "\u{56fa}\u{6001}\u{7535}\u{6c60}", "\u{78c1}\u{6750}"]),
-        ("semiconductor_wafer", "\u{534a}\u{5bfc}\u{4f53}\u{6676}\u{5706}", 0.9, &["\u{534a}\u{5bfc}\u{4f53}\u{6676}\u{5706}", "\u{6676}\u{5706}", "\u{6676}\u{5706}\u{4ee3}\u{5de5}", "\u{6676}\u{5706}\u{5236}\u{9020}", "\u{6676}\u{5706}\u{5382}", "\u{7845}\u{6676}\u{5706}", "\u{7845}\u{7247}", "\u{5916}\u{5ef6}\u{7247}", "\u{5916}\u{5ef6}\u{7845}\u{7247}", "\u{534a}\u{5bfc}\u{4f53}\u{886c}\u{5e95}", "\u{886c}\u{5e95}", "\u{78b3}\u{5316}\u{7845}\u{886c}\u{5e95}", "sic\u{886c}\u{5e95}", "\u{629b}\u{5149}\u{7247}", "8\u{82f1}\u{5bf8}", "12\u{82f1}\u{5bf8}"]),
-        ("ai_chain", "AI\u{7b97}\u{529b}\u{4e0e}\u{82af}\u{7247}", 0.95, &["\u{534a}\u{5bfc}\u{4f53}", "\u{82af}\u{7247}", "\u{7b97}\u{529b}", "\u{4eba}\u{5de5}\u{667a}\u{80fd}", "ai", "\u{5149}\u{6a21}\u{5757}", "cpo", "\u{670d}\u{52a1}\u{5668}", "\u{6db2}\u{51b7}", "gpu", "hbm", "\u{5b58}\u{50a8}", "\u{6570}\u{636e}\u{4e2d}\u{5fc3}", "\u{4e91}\u{8ba1}\u{7b97}", "\u{5927}\u{6a21}\u{578b}", "aigc", "\u{8fb9}\u{7f18}\u{8ba1}\u{7b97}", "pcb", "\u{5c01}\u{88c5}", "\u{5c01}\u{6d4b}", "eda", "soc"]),
-        ("tech", "\u{79d1}\u{6280}\u{5236}\u{9020}", 0.84, &["\u{673a}\u{5668}\u{4eba}", "\u{8f6f}\u{4ef6}", "\u{901a}\u{4fe1}", "\u{79d1}\u{6280}", "\u{7535}\u{5b50}", "\u{81ea}\u{52a8}\u{5316}", "\u{9ad8}\u{7aef}\u{5236}\u{9020}", "\u{667a}\u{80fd}\u{5236}\u{9020}"]),
-        ("energy", "\u{65b0}\u{80fd}\u{6e90}", 0.82, &["\u{65b0}\u{80fd}\u{6e90}", "\u{7535}\u{6c60}", "\u{50a8}\u{80fd}", "\u{5149}\u{4f0f}", "\u{7535}\u{529b}", "\u{80fd}\u{6e90}", "\u{6cb9}\u{6c14}", "\u{7164}\u{70ad}", "\u{98ce}\u{7535}", "\u{5145}\u{7535}\u{6869}"]),
-        ("game", "\u{6e38}\u{620f}\u{4f20}\u{5a92}", 0.78, &["\u{6e38}\u{620f}", "\u{7f51}\u{7edc}\u{6e38}\u{620f}", "\u{624b}\u{6e38}", "\u{7535}\u{7ade}", "\u{4e91}\u{6e38}\u{620f}", "\u{4e92}\u{52a8}\u{5a31}\u{4e50}", "\u{6587}\u{5316}\u{4f20}\u{5a92}", "\u{4f20}\u{5a92}"]),
+    (
+        "materials",
+        "\u{65b0}\u{6750}\u{6599}",
+        0.96,
+        &[
+            "\u{6c1f}\u{5316}\u{5de5}",
+            "\u{6c1f}\u{6750}\u{6599}",
+            "\u{9502}\u{7535}\u{6750}\u{6599}",
+            "\u{7535}\u{89e3}\u{6db2}",
+            "\u{516d}\u{6c1f}\u{78f7}\u{9178}\u{9502}",
+            "\u{65b0}\u{80fd}\u{6750}",
+            "\u{65b0}\u{6750}\u{6599}",
+            "\u{56fa}\u{6001}\u{7535}\u{6c60}",
+            "\u{78c1}\u{6750}",
+        ],
+    ),
+    (
+        "semiconductor_wafer",
+        "\u{534a}\u{5bfc}\u{4f53}\u{6676}\u{5706}",
+        0.9,
+        &[
+            "\u{534a}\u{5bfc}\u{4f53}\u{6676}\u{5706}",
+            "\u{6676}\u{5706}",
+            "\u{6676}\u{5706}\u{4ee3}\u{5de5}",
+            "\u{6676}\u{5706}\u{5236}\u{9020}",
+            "\u{6676}\u{5706}\u{5382}",
+            "\u{7845}\u{6676}\u{5706}",
+            "\u{7845}\u{7247}",
+            "\u{5916}\u{5ef6}\u{7247}",
+            "\u{5916}\u{5ef6}\u{7845}\u{7247}",
+            "\u{534a}\u{5bfc}\u{4f53}\u{886c}\u{5e95}",
+            "\u{886c}\u{5e95}",
+            "\u{78b3}\u{5316}\u{7845}\u{886c}\u{5e95}",
+            "sic\u{886c}\u{5e95}",
+            "\u{629b}\u{5149}\u{7247}",
+            "8\u{82f1}\u{5bf8}",
+            "12\u{82f1}\u{5bf8}",
+        ],
+    ),
+    (
+        "ai_chain",
+        "AI\u{7b97}\u{529b}\u{4e0e}\u{82af}\u{7247}",
+        0.95,
+        &[
+            "\u{534a}\u{5bfc}\u{4f53}",
+            "\u{82af}\u{7247}",
+            "\u{7b97}\u{529b}",
+            "\u{4eba}\u{5de5}\u{667a}\u{80fd}",
+            "ai",
+            "\u{5149}\u{6a21}\u{5757}",
+            "cpo",
+            "\u{670d}\u{52a1}\u{5668}",
+            "\u{6db2}\u{51b7}",
+            "gpu",
+            "hbm",
+            "\u{5b58}\u{50a8}",
+            "\u{6570}\u{636e}\u{4e2d}\u{5fc3}",
+            "\u{4e91}\u{8ba1}\u{7b97}",
+            "\u{5927}\u{6a21}\u{578b}",
+            "aigc",
+            "\u{8fb9}\u{7f18}\u{8ba1}\u{7b97}",
+            "pcb",
+            "\u{5c01}\u{88c5}",
+            "\u{5c01}\u{6d4b}",
+            "eda",
+            "soc",
+        ],
+    ),
+    (
+        "tech",
+        "\u{79d1}\u{6280}\u{5236}\u{9020}",
+        0.84,
+        &[
+            "\u{673a}\u{5668}\u{4eba}",
+            "\u{8f6f}\u{4ef6}",
+            "\u{901a}\u{4fe1}",
+            "\u{79d1}\u{6280}",
+            "\u{7535}\u{5b50}",
+            "\u{81ea}\u{52a8}\u{5316}",
+            "\u{9ad8}\u{7aef}\u{5236}\u{9020}",
+            "\u{667a}\u{80fd}\u{5236}\u{9020}",
+        ],
+    ),
+    (
+        "energy",
+        "\u{65b0}\u{80fd}\u{6e90}",
+        0.82,
+        &[
+            "\u{65b0}\u{80fd}\u{6e90}",
+            "\u{7535}\u{6c60}",
+            "\u{50a8}\u{80fd}",
+            "\u{5149}\u{4f0f}",
+            "\u{7535}\u{529b}",
+            "\u{80fd}\u{6e90}",
+            "\u{6cb9}\u{6c14}",
+            "\u{7164}\u{70ad}",
+            "\u{98ce}\u{7535}",
+            "\u{5145}\u{7535}\u{6869}",
+        ],
+    ),
+    (
+        "game",
+        "\u{6e38}\u{620f}\u{4f20}\u{5a92}",
+        0.78,
+        &[
+            "\u{6e38}\u{620f}",
+            "\u{7f51}\u{7edc}\u{6e38}\u{620f}",
+            "\u{624b}\u{6e38}",
+            "\u{7535}\u{7ade}",
+            "\u{4e91}\u{6e38}\u{620f}",
+            "\u{4e92}\u{52a8}\u{5a31}\u{4e50}",
+            "\u{6587}\u{5316}\u{4f20}\u{5a92}",
+            "\u{4f20}\u{5a92}",
+        ],
+    ),
 ];
 const CONCEPT_GROUP_RULES: [(&str, &[&str]); 15] = [
-        ("\u{534a}\u{5bfc}\u{4f53}\u{6676}\u{5706}", &["\u{534a}\u{5bfc}\u{4f53}\u{6676}\u{5706}", "\u{6676}\u{5706}", "\u{6676}\u{5706}\u{4ee3}\u{5de5}", "\u{6676}\u{5706}\u{5236}\u{9020}", "\u{6676}\u{5706}\u{5382}", "\u{7845}\u{6676}\u{5706}", "\u{7845}\u{7247}", "\u{5916}\u{5ef6}\u{7247}", "\u{5916}\u{5ef6}\u{7845}\u{7247}", "\u{534a}\u{5bfc}\u{4f53}\u{886c}\u{5e95}", "\u{886c}\u{5e95}", "\u{78b3}\u{5316}\u{7845}\u{886c}\u{5e95}", "sic\u{886c}\u{5e95}", "\u{629b}\u{5149}\u{7247}", "8\u{82f1}\u{5bf8}", "12\u{82f1}\u{5bf8}"]),
-        ("AI\u{7b97}\u{529b}\u{4e0e}\u{82af}\u{7247}", &["\u{534a}\u{5bfc}\u{4f53}", "\u{82af}\u{7247}", "\u{7b97}\u{529b}", "\u{4eba}\u{5de5}\u{667a}\u{80fd}", "ai", "\u{5149}\u{6a21}\u{5757}", "cpo", "\u{670d}\u{52a1}\u{5668}", "\u{6db2}\u{51b7}", "gpu", "hbm", "\u{5b58}\u{50a8}", "\u{6570}\u{636e}\u{4e2d}\u{5fc3}", "\u{4e91}\u{8ba1}\u{7b97}", "\u{5927}\u{6a21}\u{578b}", "aigc", "\u{8fb9}\u{7f18}\u{8ba1}\u{7b97}", "pcb", "\u{5c01}\u{88c5}", "\u{5c01}\u{6d4b}", "eda", "soc"]),
-        ("\u{65b0}\u{6750}\u{6599}", &["\u{6c1f}\u{5316}\u{5de5}", "\u{6c1f}\u{6750}\u{6599}", "\u{9502}\u{7535}\u{6750}\u{6599}", "\u{7535}\u{89e3}\u{6db2}", "\u{516d}\u{6c1f}\u{78f7}\u{9178}\u{9502}", "\u{65b0}\u{80fd}\u{6750}", "\u{65b0}\u{6750}\u{6599}", "\u{56fa}\u{6001}\u{7535}\u{6c60}", "\u{78c1}\u{6750}"]),
-        ("\u{65b0}\u{80fd}\u{6e90}\u{4e0e}\u{50a8}\u{80fd}", &["\u{65b0}\u{80fd}\u{6e90}", "\u{7535}\u{6c60}", "\u{50a8}\u{80fd}", "\u{5149}\u{4f0f}", "\u{7535}\u{529b}", "\u{80fd}\u{6e90}", "\u{98ce}\u{7535}", "\u{5145}\u{7535}\u{6869}"]),
-        ("\u{6e38}\u{620f}\u{4f20}\u{5a92}", &["\u{6e38}\u{620f}", "\u{7f51}\u{7edc}\u{6e38}\u{620f}", "\u{624b}\u{6e38}", "\u{7535}\u{7ade}", "\u{4e91}\u{6e38}\u{620f}", "\u{4e92}\u{52a8}\u{5a31}\u{4e50}", "\u{4f20}\u{5a92}", "\u{5e7f}\u{544a}\u{8425}\u{9500}"]),
-        ("\u{673a}\u{5668}\u{4eba}\u{4e0e}\u{9ad8}\u{7aef}\u{5236}\u{9020}", &["\u{673a}\u{5668}\u{4eba}", "\u{5de5}\u{4e1a}\u{6bcd}\u{673a}", "\u{81ea}\u{52a8}\u{5316}", "\u{9ad8}\u{7aef}\u{5236}\u{9020}", "\u{667a}\u{80fd}\u{5236}\u{9020}", "\u{673a}\u{68b0}\u{8bbe}\u{5907}"]),
-        ("\u{6d88}\u{8d39}\u{96f6}\u{552e}", &["\u{98df}\u{54c1}", "\u{996e}\u{6599}", "\u{767d}\u{9152}", "\u{4f11}\u{95f2}\u{98df}\u{54c1}", "\u{4e00}\u{822c}\u{96f6}\u{552e}", "\u{5546}\u{8d38}\u{96f6}\u{552e}", "\u{5bb6}\u{7535}", "\u{65c5}\u{6e38}", "\u{9152}\u{5e97}", "\u{9910}\u{996e}"]),
-        ("\u{533b}\u{836f}\u{533b}\u{7597}", &["\u{533b}\u{836f}", "\u{533b}\u{7597}", "\u{751f}\u{7269}\u{5236}\u{54c1}", "\u{521b}\u{65b0}\u{836f}", "\u{4e2d}\u{836f}", "\u{5316}\u{5b66}\u{5236}\u{836f}", "\u{533b}\u{7597}\u{5668}\u{68b0}", "cro"]),
-        ("\u{91d1}\u{878d}\u{5730}\u{4ea7}", &["\u{94f6}\u{884c}", "\u{8bc1}\u{5238}", "\u{4fdd}\u{9669}", "\u{623f}\u{5730}\u{4ea7}", "\u{5730}\u{4ea7}", "\u{7269}\u{4e1a}"]),
-        ("\u{57fa}\u{5efa}\u{5efa}\u{7b51}", &["\u{5efa}\u{7b51}", "\u{623f}\u{5c4b}\u{5efa}\u{8bbe}", "\u{5de5}\u{7a0b}\u{5efa}\u{8bbe}", "\u{57fa}\u{7840}\u{5efa}\u{8bbe}", "\u{6c34}\u{6ce5}", "\u{94c1}\u{8def}", "\u{516c}\u{8def}", "\u{88c5}\u{4fee}\u{88c5}\u{9970}"]),
-        ("\u{5468}\u{671f}\u{8d44}\u{6e90}", &["\u{7164}\u{70ad}", "\u{94a2}\u{94c1}", "\u{666e}\u{94a2}", "\u{6709}\u{8272}", "\u{91d1}\u{5c5e}", "\u{5316}\u{5de5}", "\u{77f3}\u{6cb9}", "\u{6cb9}\u{6c14}", "\u{77ff}\u{4e1a}"]),
-        ("\u{6c7d}\u{8f66}\u{4ea7}\u{4e1a}\u{94fe}", &["\u{6c7d}\u{8f66}", "\u{6574}\u{8f66}", "\u{96f6}\u{90e8}\u{4ef6}", "\u{8f6e}\u{80ce}", "\u{667a}\u{80fd}\u{9a7e}\u{9a76}", "\u{65e0}\u{4eba}\u{9a7e}\u{9a76}", "\u{6c7d}\u{8f66}\u{670d}\u{52a1}"]),
-        ("\u{519b}\u{5de5}\u{822a}\u{5929}", &["\u{519b}\u{5de5}", "\u{822a}\u{5929}", "\u{822a}\u{7a7a}", "\u{536b}\u{661f}", "\u{8239}\u{8236}", "\u{65e0}\u{4eba}\u{673a}", "\u{56fd}\u{9632}"]),
-        ("\u{4ea4}\u{8fd0}\u{7269}\u{6d41}", &["\u{7269}\u{6d41}", "\u{822a}\u{8fd0}", "\u{6e2f}\u{53e3}", "\u{673a}\u{573a}", "\u{822a}\u{7a7a}\u{8fd0}\u{8f93}", "\u{94c1}\u{8def}\u{8fd0}\u{8f93}", "\u{5feb}\u{9012}"]),
-        ("\u{516c}\u{7528}\u{73af}\u{4fdd}", &["\u{73af}\u{4fdd}", "\u{6c34}\u{52a1}", "\u{71c3}\u{6c14}", "\u{4f9b}\u{70ed}", "\u{516c}\u{7528}\u{4e8b}\u{4e1a}"]),
+    (
+        "\u{534a}\u{5bfc}\u{4f53}\u{6676}\u{5706}",
+        &[
+            "\u{534a}\u{5bfc}\u{4f53}\u{6676}\u{5706}",
+            "\u{6676}\u{5706}",
+            "\u{6676}\u{5706}\u{4ee3}\u{5de5}",
+            "\u{6676}\u{5706}\u{5236}\u{9020}",
+            "\u{6676}\u{5706}\u{5382}",
+            "\u{7845}\u{6676}\u{5706}",
+            "\u{7845}\u{7247}",
+            "\u{5916}\u{5ef6}\u{7247}",
+            "\u{5916}\u{5ef6}\u{7845}\u{7247}",
+            "\u{534a}\u{5bfc}\u{4f53}\u{886c}\u{5e95}",
+            "\u{886c}\u{5e95}",
+            "\u{78b3}\u{5316}\u{7845}\u{886c}\u{5e95}",
+            "sic\u{886c}\u{5e95}",
+            "\u{629b}\u{5149}\u{7247}",
+            "8\u{82f1}\u{5bf8}",
+            "12\u{82f1}\u{5bf8}",
+        ],
+    ),
+    (
+        "AI\u{7b97}\u{529b}\u{4e0e}\u{82af}\u{7247}",
+        &[
+            "\u{534a}\u{5bfc}\u{4f53}",
+            "\u{82af}\u{7247}",
+            "\u{7b97}\u{529b}",
+            "\u{4eba}\u{5de5}\u{667a}\u{80fd}",
+            "ai",
+            "\u{5149}\u{6a21}\u{5757}",
+            "cpo",
+            "\u{670d}\u{52a1}\u{5668}",
+            "\u{6db2}\u{51b7}",
+            "gpu",
+            "hbm",
+            "\u{5b58}\u{50a8}",
+            "\u{6570}\u{636e}\u{4e2d}\u{5fc3}",
+            "\u{4e91}\u{8ba1}\u{7b97}",
+            "\u{5927}\u{6a21}\u{578b}",
+            "aigc",
+            "\u{8fb9}\u{7f18}\u{8ba1}\u{7b97}",
+            "pcb",
+            "\u{5c01}\u{88c5}",
+            "\u{5c01}\u{6d4b}",
+            "eda",
+            "soc",
+        ],
+    ),
+    (
+        "\u{65b0}\u{6750}\u{6599}",
+        &[
+            "\u{6c1f}\u{5316}\u{5de5}",
+            "\u{6c1f}\u{6750}\u{6599}",
+            "\u{9502}\u{7535}\u{6750}\u{6599}",
+            "\u{7535}\u{89e3}\u{6db2}",
+            "\u{516d}\u{6c1f}\u{78f7}\u{9178}\u{9502}",
+            "\u{65b0}\u{80fd}\u{6750}",
+            "\u{65b0}\u{6750}\u{6599}",
+            "\u{56fa}\u{6001}\u{7535}\u{6c60}",
+            "\u{78c1}\u{6750}",
+        ],
+    ),
+    (
+        "\u{65b0}\u{80fd}\u{6e90}\u{4e0e}\u{50a8}\u{80fd}",
+        &[
+            "\u{65b0}\u{80fd}\u{6e90}",
+            "\u{7535}\u{6c60}",
+            "\u{50a8}\u{80fd}",
+            "\u{5149}\u{4f0f}",
+            "\u{7535}\u{529b}",
+            "\u{80fd}\u{6e90}",
+            "\u{98ce}\u{7535}",
+            "\u{5145}\u{7535}\u{6869}",
+        ],
+    ),
+    (
+        "\u{6e38}\u{620f}\u{4f20}\u{5a92}",
+        &[
+            "\u{6e38}\u{620f}",
+            "\u{7f51}\u{7edc}\u{6e38}\u{620f}",
+            "\u{624b}\u{6e38}",
+            "\u{7535}\u{7ade}",
+            "\u{4e91}\u{6e38}\u{620f}",
+            "\u{4e92}\u{52a8}\u{5a31}\u{4e50}",
+            "\u{4f20}\u{5a92}",
+            "\u{5e7f}\u{544a}\u{8425}\u{9500}",
+        ],
+    ),
+    (
+        "\u{673a}\u{5668}\u{4eba}\u{4e0e}\u{9ad8}\u{7aef}\u{5236}\u{9020}",
+        &[
+            "\u{673a}\u{5668}\u{4eba}",
+            "\u{5de5}\u{4e1a}\u{6bcd}\u{673a}",
+            "\u{81ea}\u{52a8}\u{5316}",
+            "\u{9ad8}\u{7aef}\u{5236}\u{9020}",
+            "\u{667a}\u{80fd}\u{5236}\u{9020}",
+            "\u{673a}\u{68b0}\u{8bbe}\u{5907}",
+        ],
+    ),
+    (
+        "\u{6d88}\u{8d39}\u{96f6}\u{552e}",
+        &[
+            "\u{98df}\u{54c1}",
+            "\u{996e}\u{6599}",
+            "\u{767d}\u{9152}",
+            "\u{4f11}\u{95f2}\u{98df}\u{54c1}",
+            "\u{4e00}\u{822c}\u{96f6}\u{552e}",
+            "\u{5546}\u{8d38}\u{96f6}\u{552e}",
+            "\u{5bb6}\u{7535}",
+            "\u{65c5}\u{6e38}",
+            "\u{9152}\u{5e97}",
+            "\u{9910}\u{996e}",
+        ],
+    ),
+    (
+        "\u{533b}\u{836f}\u{533b}\u{7597}",
+        &[
+            "\u{533b}\u{836f}",
+            "\u{533b}\u{7597}",
+            "\u{751f}\u{7269}\u{5236}\u{54c1}",
+            "\u{521b}\u{65b0}\u{836f}",
+            "\u{4e2d}\u{836f}",
+            "\u{5316}\u{5b66}\u{5236}\u{836f}",
+            "\u{533b}\u{7597}\u{5668}\u{68b0}",
+            "cro",
+        ],
+    ),
+    (
+        "\u{91d1}\u{878d}\u{5730}\u{4ea7}",
+        &[
+            "\u{94f6}\u{884c}",
+            "\u{8bc1}\u{5238}",
+            "\u{4fdd}\u{9669}",
+            "\u{623f}\u{5730}\u{4ea7}",
+            "\u{5730}\u{4ea7}",
+            "\u{7269}\u{4e1a}",
+        ],
+    ),
+    (
+        "\u{57fa}\u{5efa}\u{5efa}\u{7b51}",
+        &[
+            "\u{5efa}\u{7b51}",
+            "\u{623f}\u{5c4b}\u{5efa}\u{8bbe}",
+            "\u{5de5}\u{7a0b}\u{5efa}\u{8bbe}",
+            "\u{57fa}\u{7840}\u{5efa}\u{8bbe}",
+            "\u{6c34}\u{6ce5}",
+            "\u{94c1}\u{8def}",
+            "\u{516c}\u{8def}",
+            "\u{88c5}\u{4fee}\u{88c5}\u{9970}",
+        ],
+    ),
+    (
+        "\u{5468}\u{671f}\u{8d44}\u{6e90}",
+        &[
+            "\u{7164}\u{70ad}",
+            "\u{94a2}\u{94c1}",
+            "\u{666e}\u{94a2}",
+            "\u{6709}\u{8272}",
+            "\u{91d1}\u{5c5e}",
+            "\u{5316}\u{5de5}",
+            "\u{77f3}\u{6cb9}",
+            "\u{6cb9}\u{6c14}",
+            "\u{77ff}\u{4e1a}",
+        ],
+    ),
+    (
+        "\u{6c7d}\u{8f66}\u{4ea7}\u{4e1a}\u{94fe}",
+        &[
+            "\u{6c7d}\u{8f66}",
+            "\u{6574}\u{8f66}",
+            "\u{96f6}\u{90e8}\u{4ef6}",
+            "\u{8f6e}\u{80ce}",
+            "\u{667a}\u{80fd}\u{9a7e}\u{9a76}",
+            "\u{65e0}\u{4eba}\u{9a7e}\u{9a76}",
+            "\u{6c7d}\u{8f66}\u{670d}\u{52a1}",
+        ],
+    ),
+    (
+        "\u{519b}\u{5de5}\u{822a}\u{5929}",
+        &[
+            "\u{519b}\u{5de5}",
+            "\u{822a}\u{5929}",
+            "\u{822a}\u{7a7a}",
+            "\u{536b}\u{661f}",
+            "\u{8239}\u{8236}",
+            "\u{65e0}\u{4eba}\u{673a}",
+            "\u{56fd}\u{9632}",
+        ],
+    ),
+    (
+        "\u{4ea4}\u{8fd0}\u{7269}\u{6d41}",
+        &[
+            "\u{7269}\u{6d41}",
+            "\u{822a}\u{8fd0}",
+            "\u{6e2f}\u{53e3}",
+            "\u{673a}\u{573a}",
+            "\u{822a}\u{7a7a}\u{8fd0}\u{8f93}",
+            "\u{94c1}\u{8def}\u{8fd0}\u{8f93}",
+            "\u{5feb}\u{9012}",
+        ],
+    ),
+    (
+        "\u{516c}\u{7528}\u{73af}\u{4fdd}",
+        &[
+            "\u{73af}\u{4fdd}",
+            "\u{6c34}\u{52a1}",
+            "\u{71c3}\u{6c14}",
+            "\u{4f9b}\u{70ed}",
+            "\u{516c}\u{7528}\u{4e8b}\u{4e1a}",
+        ],
+    ),
 ];
-const COLD_SECTOR_KEYWORDS: [&str; 9] = ["\u{94f6}\u{884c}", "\u{57fa}\u{5efa}", "\u{5efa}\u{7b51}", "\u{5efa}\u{7b51}\u{88c5}\u{9970}", "\u{5de5}\u{7a0b}\u{5efa}\u{8bbe}", "\u{57fa}\u{7840}\u{5efa}\u{8bbe}", "\u{6c34}\u{6ce5}", "\u{94c1}\u{8def}", "\u{516c}\u{8def}"];
+const COLD_SECTOR_KEYWORDS: [&str; 9] = [
+    "\u{94f6}\u{884c}",
+    "\u{57fa}\u{5efa}",
+    "\u{5efa}\u{7b51}",
+    "\u{5efa}\u{7b51}\u{88c5}\u{9970}",
+    "\u{5de5}\u{7a0b}\u{5efa}\u{8bbe}",
+    "\u{57fa}\u{7840}\u{5efa}\u{8bbe}",
+    "\u{6c34}\u{6ce5}",
+    "\u{94c1}\u{8def}",
+    "\u{516c}\u{8def}",
+];
 
 fn score_stock(stock: &StockItem, reasons: &[String]) -> ScreenedStock {
     let theme = theme_match_for_stock(stock);
     let cold = is_cold_sector(&stock.industry);
     let factor_scores = BTreeMap::from([
-        ("theme".to_string(), theme.as_ref().map(|(_, _, score)| *score).unwrap_or(0.35)),
+        (
+            "theme".to_string(),
+            theme.as_ref().map(|(_, _, score)| *score).unwrap_or(0.35),
+        ),
         ("fundamental".to_string(), fundamental_score(stock)),
         ("valuation".to_string(), valuation_score(stock)),
         ("size".to_string(), size_score(stock)),
@@ -2255,12 +2999,23 @@ fn fundamental_score(stock: &StockItem) -> f64 {
         Some(_) => 0.2,
     };
     let dividend = stock.dividend_yield.and_then(as_percent);
-    let dividend_bonus = dividend.map(|value| value.max(0.0).min(6.0) / 6.0 * 0.12).unwrap_or(0.0);
+    let dividend_bonus = dividend
+        .map(|value| value.max(0.0).min(6.0) / 6.0 * 0.12)
+        .unwrap_or(0.0);
     let mut quality_bonus = 0.0;
-    if stock.deducted_net_profit_billion.map(|value| value > 0.0).unwrap_or(false) {
+    if stock
+        .deducted_net_profit_billion
+        .map(|value| value > 0.0)
+        .unwrap_or(false)
+    {
         quality_bonus += 0.08;
     }
-    if stock.deducted_net_profit_growth_rate.and_then(as_percent).map(|value| value >= 10.0).unwrap_or(false) {
+    if stock
+        .deducted_net_profit_growth_rate
+        .and_then(as_percent)
+        .map(|value| value >= 10.0)
+        .unwrap_or(false)
+    {
         quality_bonus += 0.08;
     }
     (roe_score + dividend_bonus + quality_bonus).clamp(0.0, 1.0)
@@ -2314,7 +3069,11 @@ fn risk_score(stock: &StockItem, cold: bool) -> f64 {
     }
 }
 
-fn factor_reasons(theme: Option<&(&'static str, &'static str, f64)>, cold: bool, factor_scores: &BTreeMap<String, f64>) -> Vec<String> {
+fn factor_reasons(
+    theme: Option<&(&'static str, &'static str, f64)>,
+    cold: bool,
+    factor_scores: &BTreeMap<String, f64>,
+) -> Vec<String> {
     let mut reasons = Vec::new();
     if let Some((_, label, _)) = theme {
         reasons.push(format!("{}{label}", "\u{4e3b}\u{9898}:"));
@@ -2345,12 +3104,26 @@ fn explain_score(
     } else {
         parts.push("\u{4e3b}\u{9898}\u{70ed}\u{5ea6}\u{4e00}\u{822c}".to_string());
     }
-    parts.push(format!("{}{}", "\u{4f30}\u{503c}", tier_word(factor_scores.get("valuation").copied().unwrap_or(0.0))));
-    parts.push(format!("{}{}", "\u{57fa}\u{672c}\u{9762}", tier_word(factor_scores.get("fundamental").copied().unwrap_or(0.0))));
+    parts.push(format!(
+        "{}{}",
+        "\u{4f30}\u{503c}",
+        tier_word(factor_scores.get("valuation").copied().unwrap_or(0.0))
+    ));
+    parts.push(format!(
+        "{}{}",
+        "\u{57fa}\u{672c}\u{9762}",
+        tier_word(factor_scores.get("fundamental").copied().unwrap_or(0.0))
+    ));
     if stock.market_cap_billion.is_none() {
-        parts.push("\u{5e02}\u{503c}\u{7f3a}\u{5931}\u{6309}\u{4e2d}\u{6027}\u{5904}\u{7406}".to_string());
+        parts.push(
+            "\u{5e02}\u{503c}\u{7f3a}\u{5931}\u{6309}\u{4e2d}\u{6027}\u{5904}\u{7406}".to_string(),
+        );
     } else {
-        parts.push(format!("{}{}", "\u{5e02}\u{503c}\u{89c4}\u{6a21}", tier_word(factor_scores.get("size").copied().unwrap_or(0.0))));
+        parts.push(format!(
+            "{}{}",
+            "\u{5e02}\u{503c}\u{89c4}\u{6a21}",
+            tier_word(factor_scores.get("size").copied().unwrap_or(0.0))
+        ));
     }
     parts.push(if cold { "\u{94f6}\u{884c}/\u{57fa}\u{5efa}\u{7b49}\u{4f4e}\u{70ed}\u{5ea6}\u{65b9}\u{5411}\u{5df2}\u{964d}\u{6743}".to_string() } else { "\u{98ce}\u{9669}\u{60e9}\u{7f5a}\u{4f4e}".to_string() });
     format!("{}{}", parts.join("\u{ff1b}"), "\u{3002}")
@@ -2376,6 +3149,12 @@ fn concept_group_for_stock(stock: &StockItem) -> String {
     "\u{5176}\u{4ed6}\u{6982}\u{5ff5}".to_string()
 }
 
+fn concept_rank(concept: &str) -> usize {
+    CONCEPT_GROUP_RULES
+        .iter()
+        .position(|(label, _)| *label == concept)
+        .unwrap_or(CONCEPT_GROUP_RULES.len())
+}
 fn theme_match_for_stock(stock: &StockItem) -> Option<(&'static str, &'static str, f64)> {
     theme_match_for_text(&stock_text(stock))
 }
@@ -2402,7 +3181,9 @@ fn is_cold_sector(industry: &str) -> bool {
     if normalized.is_empty() {
         return false;
     }
-    COLD_SECTOR_KEYWORDS.iter().any(|keyword| normalized.contains(keyword))
+    COLD_SECTOR_KEYWORDS
+        .iter()
+        .any(|keyword| normalized.contains(keyword))
 }
 
 fn hot_pick_category(stock: &StockItem) -> Option<&'static str> {
@@ -2524,8 +3305,16 @@ fn primary_screen_items(
 
 fn screen_result_groups(screened: &[ScreenedStock]) -> Vec<ScreenResultGroup> {
     let hot_items = hot_group_items(screened, SCREEN_GROUP_LIMIT);
-    let hot_codes: HashSet<String> = hot_items.iter().map(|item| item.stock.code.clone()).collect();
-    let potential_items = potential_group_items(screened, SCREEN_GROUP_LIMIT, &hot_codes, POTENTIAL_SCORE_THRESHOLD);
+    let hot_codes: HashSet<String> = hot_items
+        .iter()
+        .map(|item| item.stock.code.clone())
+        .collect();
+    let potential_items = potential_group_items(
+        screened,
+        SCREEN_GROUP_LIMIT,
+        &hot_codes,
+        POTENTIAL_SCORE_THRESHOLD,
+    );
     vec![
         ScreenResultGroup {
             key: "hot".to_string(),
@@ -2550,7 +3339,12 @@ fn hot_group_items(screened: &[ScreenedStock], limit: usize) -> Vec<ScreenedStoc
     let mut selected = Vec::new();
     let mut used_codes = HashSet::new();
     let mut by_score = screened.to_vec();
-    by_score.sort_by(|left, right| right.score.total_cmp(&left.score).then_with(|| left.stock.code.cmp(&right.stock.code)));
+    by_score.sort_by(|left, right| {
+        right
+            .score
+            .total_cmp(&left.score)
+            .then_with(|| left.stock.code.cmp(&right.stock.code))
+    });
     for category in THEME_PROMOTION_ORDER {
         if let Some(candidate) = first_by_theme(&by_score, category, &used_codes) {
             append_selected(&mut selected, &mut used_codes, candidate);
@@ -2561,7 +3355,9 @@ fn hot_group_items(screened: &[ScreenedStock], limit: usize) -> Vec<ScreenedStoc
     }
     for category in THEME_FILL_ORDER {
         for item in &by_score {
-            if used_codes.contains(&item.stock.code) || item.theme_category.as_deref() != Some(category) {
+            if used_codes.contains(&item.stock.code)
+                || item.theme_category.as_deref() != Some(category)
+            {
                 continue;
             }
             append_selected(&mut selected, &mut used_codes, item.clone());
@@ -2580,7 +3376,12 @@ fn potential_group_items(
     threshold: f64,
 ) -> Vec<ScreenedStock> {
     let mut ranked = screened.to_vec();
-    ranked.sort_by(|left, right| right.score.total_cmp(&left.score).then_with(|| left.stock.code.cmp(&right.stock.code)));
+    ranked.sort_by(|left, right| {
+        right
+            .score
+            .total_cmp(&left.score)
+            .then_with(|| left.stock.code.cmp(&right.stock.code))
+    });
     let mut selected = Vec::new();
     for item in ranked {
         if exclude_codes.contains(&item.stock.code) || item.score <= threshold {
@@ -2601,11 +3402,18 @@ fn first_by_theme(
 ) -> Option<ScreenedStock> {
     screened
         .iter()
-        .find(|item| !used_codes.contains(&item.stock.code) && item.theme_category.as_deref() == Some(category))
+        .find(|item| {
+            !used_codes.contains(&item.stock.code)
+                && item.theme_category.as_deref() == Some(category)
+        })
         .cloned()
 }
 
-fn append_selected(selected: &mut Vec<ScreenedStock>, used_codes: &mut HashSet<String>, item: ScreenedStock) {
+fn append_selected(
+    selected: &mut Vec<ScreenedStock>,
+    used_codes: &mut HashSet<String>,
+    item: ScreenedStock,
+) {
     used_codes.insert(item.stock.code.clone());
     selected.push(item);
 }
@@ -2630,7 +3438,10 @@ fn screen_candidate_pool(
     screen_stocks(universe, &expanded_criteria).items
 }
 
-fn resolve_center_context(candidate_pool: &[ScreenedStock], seed_codes: &[String]) -> GraphCenterContext {
+fn resolve_center_context(
+    candidate_pool: &[ScreenedStock],
+    seed_codes: &[String],
+) -> GraphCenterContext {
     let normalized_seed_codes: Vec<String> = seed_codes
         .iter()
         .map(|code| normalize_stock_code(code))
@@ -2679,7 +3490,10 @@ fn resolve_center_context(candidate_pool: &[ScreenedStock], seed_codes: &[String
     GraphCenterContext {
         mode: "theme_center".to_string(),
         label: labels.get(&selected_key).cloned().unwrap_or(selected_key),
-        codes: selected_items.into_iter().map(|item| item.stock.code).collect(),
+        codes: selected_items
+            .into_iter()
+            .map(|item| item.stock.code)
+            .collect(),
     }
 }
 
@@ -2704,7 +3518,10 @@ fn center_group_key(item: &ScreenedStock) -> (String, String) {
             format!("industry center: {}", item.stock.industry),
         );
     }
-    ("industry:unknown".to_string(), "industry center: unknown".to_string())
+    (
+        "industry:unknown".to_string(),
+        "industry center: unknown".to_string(),
+    )
 }
 fn merge_relations(relations: &[StockRelation]) -> Vec<StockRelation> {
     let mut merged: HashMap<(String, String, String), StockRelation> = HashMap::new();
@@ -2948,7 +3765,10 @@ fn graph_explanation(
         center_context.codes.join(", ")
     };
     let mut basis = vec![
-        format!("Passed the current base screen with raw score {:.2}.", screened.score),
+        format!(
+            "Passed the current base screen with raw score {:.2}.",
+            screened.score
+        ),
         format!(
             "Relation propagation center: {}; center codes: {}.",
             center_context.label, center_codes
@@ -2971,7 +3791,10 @@ fn graph_explanation(
     } else if relation_score >= 0.35 {
         risk_checks.push("Relation signal is moderate; use it as candidate expansion rather than a standalone buy reason.".to_string());
     } else {
-        risk_checks.push("Relation signal is weak; selection is driven more by the base screen score.".to_string());
+        risk_checks.push(
+            "Relation signal is weak; selection is driven more by the base screen score."
+                .to_string(),
+        );
     }
     if related.is_empty() {
         risk_checks.push("No direct relation edge is available; refresh or enrich relation data before relying on graph evidence.".to_string());
@@ -2980,9 +3803,30 @@ fn graph_explanation(
     SelectionExplanation {
         basis,
         score_breakdown: vec![
-            score_contribution("base_score", "Base score", base_score, base_component, 0.7, 0.35),
-            score_contribution("relation_score", "Relation score", relation_score, relation_component, 0.65, 0.35),
-            score_contribution("final_score", "Final score", final_score, final_score, 0.65, 0.35),
+            score_contribution(
+                "base_score",
+                "Base score",
+                base_score,
+                base_component,
+                0.7,
+                0.35,
+            ),
+            score_contribution(
+                "relation_score",
+                "Relation score",
+                relation_score,
+                relation_component,
+                0.65,
+                0.35,
+            ),
+            score_contribution(
+                "final_score",
+                "Final score",
+                final_score,
+                final_score,
+                0.65,
+                0.35,
+            ),
         ],
         risk_checks,
         verification: vec![
@@ -3771,13 +4615,25 @@ fn short_buy_score(signal: &TrendIndicatorSignal) -> f64 {
     if signal.short_buy {
         score += 24.0;
     }
-    if signal.pattern_signals.iter().any(|value| value == "bottom_accumulation") {
+    if signal
+        .pattern_signals
+        .iter()
+        .any(|value| value == "bottom_accumulation")
+    {
         score += 10.0;
     }
-    if signal.pattern_signals.iter().any(|value| value == "swing_opportunity") {
+    if signal
+        .pattern_signals
+        .iter()
+        .any(|value| value == "swing_opportunity")
+    {
         score += 12.0;
     }
-    if signal.pattern_signals.iter().any(|value| value == "rebound_signal") {
+    if signal
+        .pattern_signals
+        .iter()
+        .any(|value| value == "rebound_signal")
+    {
         score += 10.0;
     }
     if signal.swl_above_sws {
@@ -3818,7 +4674,10 @@ fn trend_screen_explanation(
     final_score: f64,
 ) -> SelectionExplanation {
     let mut basis = vec![
-        format!("Passed the current base screen with raw score {:.2}.", candidate.score),
+        format!(
+            "Passed the current base screen with raw score {:.2}.",
+            candidate.score
+        ),
         short_buy_basis_text(signal),
     ];
     if let Some(pattern_text) = pattern_basis_text(signal) {
@@ -3844,29 +4703,56 @@ fn trend_screen_explanation(
 
 fn short_buy_basis_text(signal: &TrendIndicatorSignal) -> String {
     if signal.short_buy {
-        return "Short-buy signal is active; this is the highest-priority timing trigger.".to_string();
+        return "Short-buy signal is active; this is the highest-priority timing trigger."
+            .to_string();
     }
-    if signal.pattern_signals.iter().any(|value| value == "swing_opportunity") {
-        return "Swing-opportunity signal is strong enough for short-term watchlist inclusion.".to_string();
+    if signal
+        .pattern_signals
+        .iter()
+        .any(|value| value == "swing_opportunity")
+    {
+        return "Swing-opportunity signal is strong enough for short-term watchlist inclusion."
+            .to_string();
     }
-    if signal.pattern_signals.iter().any(|value| value == "rebound_signal") {
+    if signal
+        .pattern_signals
+        .iter()
+        .any(|value| value == "rebound_signal")
+    {
         return "Rebound signal is active and supports a short-term repair watch.".to_string();
     }
-    "No explicit short-buy trigger is active; selection relies on quant score and base conditions.".to_string()
+    "No explicit short-buy trigger is active; selection relies on quant score and base conditions."
+        .to_string()
 }
 
 fn pattern_basis_text(signal: &TrendIndicatorSignal) -> Option<String> {
     let mut labels = Vec::new();
-    if signal.pattern_signals.iter().any(|value| value == "bottom_accumulation") {
+    if signal
+        .pattern_signals
+        .iter()
+        .any(|value| value == "bottom_accumulation")
+    {
         labels.push("bottom accumulation");
     }
-    if signal.pattern_signals.iter().any(|value| value == "swing_opportunity") {
+    if signal
+        .pattern_signals
+        .iter()
+        .any(|value| value == "swing_opportunity")
+    {
         labels.push("swing opportunity");
     }
-    if signal.pattern_signals.iter().any(|value| value == "rebound_signal") {
+    if signal
+        .pattern_signals
+        .iter()
+        .any(|value| value == "rebound_signal")
+    {
         labels.push("rebound signal");
     }
-    if signal.pattern_signals.iter().any(|value| value == "dragon_trend_volume") {
+    if signal
+        .pattern_signals
+        .iter()
+        .any(|value| value == "dragon_trend_volume")
+    {
         labels.push("trend-volume resonance");
     }
     if labels.is_empty() {
@@ -3879,7 +4765,9 @@ fn pattern_basis_text(signal: &TrendIndicatorSignal) -> Option<String> {
 fn short_buy_risk_checks(signal: &TrendIndicatorSignal) -> Vec<String> {
     let mut risks = Vec::new();
     if signal.white_exit {
-        risks.push("White-exit signal is active; short-buy setup has high invalidation risk.".to_string());
+        risks.push(
+            "White-exit signal is active; short-buy setup has high invalidation risk.".to_string(),
+        );
     }
     if signal.cyan_watch {
         risks.push("Cyan-watch state means trend confirmation is insufficient.".to_string());
@@ -4510,10 +5398,25 @@ mod tests {
         });
         assert_eq!(result.returned, 3);
         assert_eq!(result.total, 3);
-        assert!(result.items.iter().all(|item| item.stock.pe.map(|pe| pe <= 10.0).unwrap_or(false)));
-        assert!(result.items.iter().all(|item| item.stock.roe.and_then(as_percent).map(|roe| roe >= 10.0).unwrap_or(false)));
-        assert!(result.items.iter().all(|item| item.reasons.contains(&"pe_ok".to_string())));
-        assert!(result.items.windows(2).all(|pair| pair[0].score >= pair[1].score));
+        assert!(result.items.iter().all(|item| item
+            .stock
+            .pe
+            .map(|pe| pe <= 10.0)
+            .unwrap_or(false)));
+        assert!(result.items.iter().all(|item| item
+            .stock
+            .roe
+            .and_then(as_percent)
+            .map(|roe| roe >= 10.0)
+            .unwrap_or(false)));
+        assert!(result
+            .items
+            .iter()
+            .all(|item| item.reasons.contains(&"pe_ok".to_string())));
+        assert!(result
+            .items
+            .windows(2)
+            .all(|pair| pair[0].score >= pair[1].score));
     }
 
     #[test]
@@ -4594,6 +5497,82 @@ mod tests {
         assert!(result.items[0].final_score >= result.items[4].final_score);
     }
 
+    #[test]
+    fn sector_screen_uses_full_filtered_universe_before_grouping() {
+        let stocks: Vec<StockItem> = (0..260)
+            .map(|idx| StockItem {
+                code: format!("300{:03}.SZ", idx),
+                name: format!("{}{:03}", "\u{7b97}\u{529b}\u{82af}\u{7247}", idx),
+                industry: "\u{534a}\u{5bfc}\u{4f53}".to_string(),
+                is_st: false,
+                price: 20.0 + idx as f64 / 100.0,
+                pe: Some(18.0),
+                pb: Some(2.2),
+                roe: Some(0.16),
+                market_cap_billion: Some(80.0),
+                dividend_yield: Some(0.02),
+                deducted_net_profit_billion: Some(3.0),
+                deducted_net_profit_margin: Some(12.0),
+                deducted_net_profit_growth_rate: Some(18.0),
+            })
+            .collect();
+        let result = sector_screen_stocks(
+            &stocks,
+            &SectorScreenRequest {
+                criteria: ScreenCriteria {
+                    min_roe: Some(0.1),
+                    limit: 10,
+                    ..ScreenCriteria::default()
+                },
+                max_sectors: 1,
+                per_sector_limit: 7,
+                min_sector_candidates: 1,
+            },
+        );
+
+        assert_eq!(result.total, 260);
+        assert_eq!(result.sector_count, 1);
+        assert_eq!(result.groups[0].total, 260);
+        assert_eq!(result.groups[0].returned, 7);
+    }
+
+    #[test]
+    fn observe_with_data_returns_financial_and_trend_payloads() {
+        let mut data = sample_data_set();
+        let history: Vec<HistoryBar> = (0..45)
+            .map(|idx| {
+                let close = 10.0 + idx as f64 * 0.12;
+                HistoryBar {
+                    date: format!("2020-{:02}-{:02}", 2 + idx / 28, idx % 28 + 1),
+                    open: Some(close - 0.05),
+                    high: Some(close + 0.2),
+                    low: Some(close - 0.2),
+                    close,
+                    volume: Some(1_000_000.0 + idx as f64 * 10_000.0),
+                    capital: Some(1_000_000_000.0),
+                }
+            })
+            .collect();
+        data.histories.insert("111111.SZ".to_string(), history);
+
+        let result = observe_with_data(
+            &data,
+            &StockObserveRequest {
+                code: "111111".to_string(),
+                start_date: "20200201".to_string(),
+                end_date: "20200331".to_string(),
+                series_limit: 40,
+                include_order_book: true,
+            },
+        )
+        .expect("observation should run from the shared data set");
+
+        assert_eq!(result.stock.code, "111111.SZ");
+        assert!(result.financial_indicators.as_ref().unwrap().items.len() >= 6);
+        assert!(result.trend.as_ref().unwrap().series.len() <= 40);
+        assert!(result.order_book.is_none());
+        assert!(result.notes.iter().any(|note| note.contains("Tauri/Rust")));
+    }
     #[test]
     fn agent_routes_graph_request() {
         let response = run_agent_with_mock("用关系图分析 300750.SZ 产业链选股").unwrap();

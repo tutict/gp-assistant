@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
-    "build:sidecar": "powershell -ExecutionPolicy Bypass -File ../scripts/build-tauri-sidecar.ps1",
-    "build:windows": "npm run build:sidecar && tauri build --config src-tauri/tauri.sidecar.conf.json",
+    "build:windows": "tauri build",
     "android:init": "tauri android init --ci --skip-targets-install",
     "prepare:android": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/prepare-tauri-android-assets.ps1",
     "build:android": "tauri android build --apk --target aarch64 --ci"

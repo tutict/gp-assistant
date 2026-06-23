@@ -11,25 +11,11 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager};
 
-#[cfg(not(mobile))]
-use std::{
-    env,
-    process::{Child, Command, Stdio},
-    sync::Mutex,
-    thread,
-    time::Instant,
-};
 
 #[cfg(not(mobile))]
 use tauri::{webview::PageLoadEvent, WebviewUrl, WebviewWindowBuilder};
-#[cfg(not(mobile))]
-use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
 
-#[cfg(not(mobile))]
-const APP_HOST: &str = "127.0.0.1";
-#[cfg(not(mobile))]
-const DEFAULT_PORT: u16 = 8010;
 
 const MOBILE_MARKET_DATA_FILE: &str = "mobile-market-data.json";
 const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
@@ -43,15 +29,6 @@ const TENCENT_CONNECT_TIMEOUT_SECS: u64 = 3;
 const TENCENT_REQUEST_TIMEOUT_SECS: u64 = 6;
 const TENCENT_BATCH_TIMEOUT_SECS: u64 = 8;
 const TENCENT_NETWORK_PROBE_TIMEOUT_SECS: u64 = 4;
-
-#[cfg(not(mobile))]
-struct BackendState(Mutex<Option<BackendProcess>>);
-
-#[cfg(not(mobile))]
-enum BackendProcess {
-    Python(Child),
-    Sidecar(Option<CommandChild>),
-}
 
 #[tauri::command]
 fn core_screen(payload: Value) -> Result<Value, String> {
@@ -143,6 +120,139 @@ fn core_mobile_stock_skill(payload: Value) -> Result<Value, String> {
     gp_core::mobile_stock_skill_value(payload).map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn api_market_status(app: tauri::AppHandle) -> Result<Value, String> {
+    market_data_status(&app)
+}
+
+#[tauri::command]
+async fn api_market_refresh(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    core_mobile_market_data_refresh_tencent(app, payload).await
+}
+
+#[tauri::command]
+fn api_market_clear_cache(app: tauri::AppHandle) -> Result<Value, String> {
+    let cleared = core_mobile_market_data_clear(app.clone())?;
+    Ok(json!({
+        "removed_files": if cleared.get("removed").and_then(Value::as_bool).unwrap_or(false) { 1 } else { 0 },
+        "removed_bytes": cleared.get("removed_bytes").and_then(Value::as_u64).unwrap_or(0),
+        "status": market_data_status(&app)?,
+        "notes": cleared.get("notes").cloned().unwrap_or_else(|| json!([]))
+    }))
+}
+
+#[tauri::command]
+fn api_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    gp_core::screen_with_data_value(core_payload_with_cached_data(&app, "criteria", payload)?)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn api_sector_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    gp_core::sector_screen_with_data_value(core_payload_with_cached_data(&app, "request", payload)?)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn api_graph_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    gp_core::graph_screen_with_data_value(core_payload_with_cached_data(&app, "request", payload)?)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn api_trend_analyze(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    gp_core::trend_with_data_value(core_payload_with_cached_data(&app, "request", payload)?)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn api_trend_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    gp_core::trend_screen_with_data_value(core_payload_with_cached_data(&app, "request", payload)?)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn api_observe(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    gp_core::observe_with_data_value(core_payload_with_cached_data(&app, "request", payload)?)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    gp_core::backtest_with_data_value(core_payload_with_cached_data(&app, "request", payload)?)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn api_stock_search(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let query = payload.get("q").and_then(Value::as_str).unwrap_or("").trim().to_lowercase();
+    let limit = payload
+        .get("limit")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(8)
+        .min(20);
+    if query.is_empty() {
+        return Ok(json!([]));
+    }
+    let data = cached_market_data(&app)?;
+    let items = data
+        .get("stocks")
+        .and_then(Value::as_array)
+        .map(|stocks| {
+            stocks
+                .iter()
+                .filter(|stock| {
+                    ["code", "name", "industry"]
+                        .iter()
+                        .filter_map(|key| stock.get(*key).and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .to_lowercase()
+                        .contains(&query)
+                })
+                .take(limit)
+                .cloned()
+                .collect::<Vec<Value>>()
+        })
+        .unwrap_or_default();
+    Ok(Value::Array(items))
+}
+
+#[tauri::command]
+fn api_news_rag(_app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let code = payload.get("stock_code").and_then(Value::as_str).unwrap_or("").to_string();
+    let scope_codes = if code.trim().is_empty() { Vec::new() } else { vec![code] };
+    Ok(json!({
+        "scope_codes": scope_codes,
+        "relation_count": 0,
+        "message_count": 0,
+        "findings": [],
+        "sentiment_groups": {
+            "mode": "plain_news",
+            "positive": [],
+            "negative": [],
+            "mixed": [],
+            "uncertain": []
+        },
+        "notes": ["Tauri/Rust 统一接口已接管消息页；新闻源和 LLM 分析正在迁移中，当前仅返回本地空分组。"]
+    }))
+}
+
+#[tauri::command]
+fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let data = cached_market_data(&app)?;
+    let message = payload.get("message").and_then(Value::as_str).unwrap_or("").to_string();
+    let run_id = payload.get("run_id").and_then(Value::as_str).map(ToOwned::to_owned);
+    let mut request = serde_json::Map::new();
+    request.insert("data".to_string(), data);
+    request.insert("message".to_string(), Value::String(message));
+    if let Some(run_id) = run_id {
+        request.insert("run_id".to_string(), Value::String(run_id));
+    }
+    core_agent_stream_with_data(app, Value::Object(request))
+}
 #[tauri::command]
 fn core_validate_data_source(payload: Value) -> Result<Value, String> {
     gp_core::validate_data_source_value(payload).map_err(|error| error.to_string())
@@ -1185,6 +1295,74 @@ fn filter_seed_histories(seed: &Value, valid_codes: &HashSet<String>) -> Value {
     Value::Object(histories)
 }
 
+
+fn cached_market_data(app: &tauri::AppHandle) -> Result<Value, String> {
+    let cache = read_mobile_market_data(app)?;
+    if !cache.get("exists").and_then(Value::as_bool).unwrap_or(false) {
+        return Err("股票池为空，请先联网更新股票池。".to_string());
+    }
+    cache
+        .get("data")
+        .cloned()
+        .ok_or_else(|| "股票池缓存缺少 data 字段，请清理缓存后重新联网更新。".to_string())
+}
+
+fn core_payload_with_cached_data(
+    app: &tauri::AppHandle,
+    payload_key: &str,
+    payload: Value,
+) -> Result<Value, String> {
+    let data = cached_market_data(app)?;
+    let mut request = serde_json::Map::new();
+    request.insert("data".to_string(), data);
+    request.insert(payload_key.to_string(), payload);
+    Ok(Value::Object(request))
+}
+
+fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String> {
+    let cache = read_mobile_market_data(app)?;
+    let exists = cache.get("exists").and_then(Value::as_bool).unwrap_or(false);
+    if !exists {
+        return Ok(json!({
+            "source": "tencent",
+            "universe_count": 0,
+            "cache_bytes": 0,
+            "cache_limit_bytes": 0,
+            "universe_updated_at": Value::Null,
+            "policy": { "mode": "empty" },
+            "notes": ["股票池尚未生成，请点击联网更新股票池。"]
+        }));
+    }
+    let summary = cache.get("summary").cloned().unwrap_or_else(|| json!({}));
+    let data = cache.get("data").cloned().unwrap_or_else(|| json!({}));
+    let stock_count = summary
+        .get("stock_count")
+        .and_then(Value::as_u64)
+        .or_else(|| data.get("stocks").and_then(Value::as_array).map(|stocks| stocks.len() as u64))
+        .unwrap_or(0);
+    let mut notes = vec![format!("Tauri/Rust 统一股票池当前包含 {stock_count} 只股票。")];
+    if let Some(data_notes) = data.get("notes").and_then(Value::as_array) {
+        notes.extend(
+            data_notes
+                .iter()
+                .filter_map(Value::as_str)
+                .take(2)
+                .map(ToOwned::to_owned),
+        );
+    }
+    if let Some(warnings) = summary.get("warnings").and_then(Value::as_array) {
+        notes.extend(warnings.iter().filter_map(Value::as_str).map(ToOwned::to_owned));
+    }
+    Ok(json!({
+        "source": "tencent",
+        "universe_count": stock_count,
+        "cache_bytes": cache.get("bytes").and_then(Value::as_u64).unwrap_or(0),
+        "cache_limit_bytes": 0,
+        "universe_updated_at": cache.get("updated_at_epoch_ms").cloned().or_else(|| data.get("generated_at").cloned()).unwrap_or(Value::Null),
+        "policy": { "mode": "tauri_native", "source": "cache" },
+        "notes": notes
+    }))
+}
 fn read_mobile_market_data(app: &tauri::AppHandle) -> Result<Value, String> {
     let path = mobile_market_data_path(app)?;
     if !path.exists() {
@@ -1318,22 +1496,6 @@ fn sanitize_path_part(value: &str) -> String {
     part
 }
 
-#[cfg(not(mobile))]
-impl BackendProcess {
-    fn terminate(&mut self) {
-        match self {
-            BackendProcess::Python(child) => {
-                let _ = child.kill();
-            }
-            BackendProcess::Sidecar(child) => {
-                if let Some(child) = child.take() {
-                    let _ = child.kill();
-                }
-            }
-        }
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default().invoke_handler(tauri::generate_handler![
@@ -1351,6 +1513,19 @@ pub fn run() {
         core_agent_with_data,
         core_agent_stream_with_data,
         core_mobile_stock_skill,
+        api_market_status,
+        api_market_refresh,
+        api_market_clear_cache,
+        api_screen,
+        api_sector_screen,
+        api_graph_screen,
+        api_trend_analyze,
+        api_trend_screen,
+        api_observe,
+        api_backtest,
+        api_stock_search,
+        api_news_rag,
+        api_agent_stream,
         core_validate_data_source,
         core_mobile_market_data_read,
         core_mobile_market_data_write,
@@ -1366,14 +1541,7 @@ pub fn run() {
     .plugin(tauri_plugin_shell::init());
 
     #[cfg(not(mobile))]
-    let builder = builder
-        .manage(BackendState(Mutex::new(None)))
-        .setup(|app| setup_desktop(app).map_err(Into::into))
-        .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-                stop_backend(&window.app_handle());
-            }
-        });
+    let builder = builder.setup(|app| setup_desktop(app).map_err(Into::into));
 
     #[cfg(mobile)]
     let builder = builder.setup(|_| Ok(()));
@@ -1385,20 +1553,10 @@ pub fn run() {
 
 #[cfg(not(mobile))]
 fn setup_desktop(app: &mut tauri::App) -> tauri::Result<()> {
-    let port = backend_port();
-    let backend_url = format!("http://{APP_HOST}:{port}");
-    let process = start_backend(app, port)?;
-    *app.state::<BackendState>()
-        .0
-        .lock()
-        .expect("backend lock poisoned") = Some(process);
-
-    wait_for_backend(port)?;
-
-    let window = WebviewWindowBuilder::new(
+    WebviewWindowBuilder::new(
         app,
         "main",
-        WebviewUrl::External(backend_url.parse().expect("valid backend URL")),
+        WebviewUrl::App("index.html".into()),
     )
     .title("股选优")
     .inner_size(1280.0, 860.0)
@@ -1412,184 +1570,7 @@ fn setup_desktop(app: &mut tauri::App) -> tauri::Result<()> {
     })
     .build()?;
 
-    let app_handle = app.handle().clone();
-    window.on_window_event(move |event| {
-        if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-            stop_backend(&app_handle);
-        }
-    });
-
     Ok(())
-}
-
-#[cfg(not(mobile))]
-fn backend_port() -> u16 {
-    env::var("GP_ASSISTANT_PORT")
-        .ok()
-        .and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(DEFAULT_PORT)
-}
-
-#[cfg(not(mobile))]
-fn start_backend(app: &tauri::App, port: u16) -> tauri::Result<BackendProcess> {
-    if should_use_sidecar() {
-        let data_root = desktop_data_root();
-        let cache_root = data_root.join("cache");
-        fs::create_dir_all(&cache_root).map_err(tauri::Error::from)?;
-        let data_root_value = data_root.display().to_string();
-        let cache_root_value = cache_root.display().to_string();
-        let child = app
-            .shell()
-            .sidecar("stock-optimizer-backend")
-            .map_err(shell_error)?
-            .env("GP_ASSISTANT_HOST", APP_HOST)
-            .env("GP_ASSISTANT_PORT", port.to_string())
-            .env("GP_ASSISTANT_DATA_ROOT", data_root_value)
-            .env("GP_CACHE_DIR", cache_root_value.clone())
-            .env("TDX_CACHE", cache_root.join("tdx_stocks.csv").display().to_string())
-            .env("AKSHARE_CACHE", cache_root.join("stocks.csv").display().to_string())
-            .env(
-                "TDX_FUNDAMENTAL_CACHE",
-                cache_root.join("tdx_fundamentals.csv").display().to_string(),
-            )
-            .env(
-                "GP_NEWS_CACHE",
-                cache_root.join("news.sqlite").display().to_string(),
-            )
-            .env(
-                "GP_CAPITAL_CACHE",
-                cache_root.join("capital_evidence.sqlite").display().to_string(),
-            )
-            .env(
-                "GP_RAG_PACK_PATH",
-                cache_root.join("rag_pack.sqlite").display().to_string(),
-            )
-            .env(
-                "GP_UPSTREAM_RAG_ROOT",
-                cache_root.join("upstream_rag").display().to_string(),
-            )
-            .env(
-                "STOCK_PROVIDER",
-                env::var("STOCK_PROVIDER").unwrap_or_else(|_| "tdx".to_string()),
-            )
-            .spawn()
-            .map_err(shell_error)?
-            .1;
-        Ok(BackendProcess::Sidecar(Some(child)))
-    } else {
-        start_python_backend(port).map(BackendProcess::Python)
-    }
-}
-
-#[cfg(not(mobile))]
-fn desktop_data_root() -> PathBuf {
-    env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(|parent| parent.join("data")))
-        .unwrap_or_else(|| PathBuf::from("data"))
-}
-
-#[cfg(not(mobile))]
-fn shell_error(error: tauri_plugin_shell::Error) -> tauri::Error {
-    tauri::Error::Anyhow(anyhow::Error::new(error))
-}
-
-#[cfg(not(mobile))]
-fn should_use_sidecar() -> bool {
-    env::var("GP_ASSISTANT_USE_SIDECAR")
-        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-        .unwrap_or(!cfg!(debug_assertions))
-}
-
-#[cfg(not(mobile))]
-fn start_python_backend(port: u16) -> tauri::Result<Child> {
-    let root = repo_root();
-    let python = python_path(&root);
-
-    let mut command = Command::new(python);
-    command
-        .current_dir(root)
-        .arg("-m")
-        .arg("uvicorn")
-        .arg("app.main:app")
-        .arg("--host")
-        .arg(APP_HOST)
-        .arg("--port")
-        .arg(port.to_string())
-        .env("GP_ASSISTANT_PORT", port.to_string())
-        .env(
-            "STOCK_PROVIDER",
-            env::var("STOCK_PROVIDER").unwrap_or_else(|_| "tdx".to_string()),
-        )
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-
-    command.spawn().map_err(Into::into)
-}
-
-#[cfg(not(mobile))]
-fn repo_root() -> PathBuf {
-    if let Ok(root) = env::var("GP_ASSISTANT_ROOT") {
-        return PathBuf::from(root);
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir
-        .parent()
-        .and_then(|desktop| desktop.parent())
-        .map(PathBuf::from)
-        .expect("src-tauri should live under desktop")
-}
-
-#[cfg(not(mobile))]
-fn python_path(root: &PathBuf) -> PathBuf {
-    if let Ok(python) = env::var("GP_ASSISTANT_PYTHON") {
-        return PathBuf::from(python);
-    }
-
-    let candidates = [
-        root.join(".venv-cpython")
-            .join("Scripts")
-            .join("python.exe"),
-        root.join(".venv").join("Scripts").join("python.exe"),
-    ];
-
-    candidates
-        .into_iter()
-        .find(|candidate| candidate.exists())
-        .unwrap_or_else(|| PathBuf::from("python"))
-}
-
-#[cfg(not(mobile))]
-fn wait_for_backend(port: u16) -> tauri::Result<()> {
-    let address: SocketAddr = format!("{APP_HOST}:{port}")
-        .parse()
-        .expect("valid backend socket address");
-    let deadline = Instant::now() + Duration::from_secs(30);
-
-    while Instant::now() < deadline {
-        if TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_ok() {
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(250));
-    }
-
-    Err(tauri::Error::Anyhow(anyhow::anyhow!(
-        "Timed out waiting for backend at {address}"
-    )))
-}
-
-#[cfg(not(mobile))]
-fn stop_backend(app: &tauri::AppHandle) {
-    if let Some(mut process) = app
-        .state::<BackendState>()
-        .0
-        .lock()
-        .expect("backend lock poisoned")
-        .take()
-    {
-        process.terminate();
-    }
 }
 
 #[cfg(test)]
