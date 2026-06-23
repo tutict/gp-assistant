@@ -1,7 +1,6 @@
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use stock_optimizer_core as gp_core;
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -9,13 +8,14 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use stock_optimizer_core as gp_core;
 use tauri::{AppHandle, Emitter, Manager};
-
 
 #[cfg(not(mobile))]
 use tauri::{webview::PageLoadEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::ShellExt;
 
+mod news_rag;
 
 const MOBILE_MARKET_DATA_FILE: &str = "mobile-market-data.json";
 const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
@@ -92,7 +92,8 @@ fn core_agent_with_data(payload: Value) -> Result<Value, String> {
 
 #[tauri::command]
 fn core_agent_stream_with_data(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let events = gp_core::agent_stream_with_data_events_value(payload).map_err(|error| error.to_string())?;
+    let events =
+        gp_core::agent_stream_with_data_events_value(payload).map_err(|error| error.to_string())?;
     let mut final_response: Option<Value> = None;
     let mut error_message: Option<String> = None;
 
@@ -185,7 +186,12 @@ fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, String> 
 
 #[tauri::command]
 fn api_stock_search(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let query = payload.get("q").and_then(Value::as_str).unwrap_or("").trim().to_lowercase();
+    let query = payload
+        .get("q")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
     let limit = payload
         .get("limit")
         .and_then(Value::as_u64)
@@ -221,30 +227,22 @@ fn api_stock_search(app: tauri::AppHandle, payload: Value) -> Result<Value, Stri
 }
 
 #[tauri::command]
-fn api_news_rag(_app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let code = payload.get("stock_code").and_then(Value::as_str).unwrap_or("").to_string();
-    let scope_codes = if code.trim().is_empty() { Vec::new() } else { vec![code] };
-    Ok(json!({
-        "scope_codes": scope_codes,
-        "relation_count": 0,
-        "message_count": 0,
-        "findings": [],
-        "sentiment_groups": {
-            "mode": "plain_news",
-            "positive": [],
-            "negative": [],
-            "mixed": [],
-            "uncertain": []
-        },
-        "notes": ["Tauri/Rust 统一接口已接管消息页；新闻源和 LLM 分析正在迁移中，当前仅返回本地空分组。"]
-    }))
+async fn api_news_rag(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    news_rag::api_news_rag_impl(app, payload).await
 }
 
 #[tauri::command]
 fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
     let data = cached_market_data(&app)?;
-    let message = payload.get("message").and_then(Value::as_str).unwrap_or("").to_string();
-    let run_id = payload.get("run_id").and_then(Value::as_str).map(ToOwned::to_owned);
+    let message = payload
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let run_id = payload
+        .get("run_id")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
     let mut request = serde_json::Map::new();
     request.insert("data".to_string(), data);
     request.insert("message".to_string(), Value::String(message));
@@ -299,17 +297,19 @@ async fn core_mobile_network_probe() -> Result<Value, String> {
     let tcp_timeout = Duration::from_secs(2);
     let http_timeout = Duration::from_secs(TENCENT_NETWORK_PROBE_TIMEOUT_SECS);
     let baidu_tcp = probe_tcp_addr("baidu_ip_tcp", BAIDU_FALLBACK_ADDR, tcp_timeout);
-    let tencent_tcp = probe_tcp_addr("tencent_ip_tcp", TENCENT_QUOTE_FALLBACK_ADDRS[0], tcp_timeout);
+    let tencent_tcp = probe_tcp_addr(
+        "tencent_ip_tcp",
+        TENCENT_QUOTE_FALLBACK_ADDRS[0],
+        tcp_timeout,
+    );
     let mut probes = vec![baidu_tcp, tencent_tcp];
     let ip_network_ok = probes
         .iter()
         .any(|probe| probe.get("ok").and_then(Value::as_bool).unwrap_or(false));
 
     if ip_network_ok {
-        let client = build_tencent_http_client(
-            "Mozilla/5.0 GuXuanYou/0.3 mobile probe",
-            http_timeout,
-        )?;
+        let client =
+            build_tencent_http_client("Mozilla/5.0 GuXuanYou/0.3 mobile probe", http_timeout)?;
         probes.push(
             probe_mobile_url(
                 &client,
@@ -409,7 +409,10 @@ fn tencent_fallback_addrs() -> Vec<SocketAddr> {
         .collect()
 }
 
-fn build_tencent_http_client(user_agent: &str, timeout: Duration) -> Result<reqwest::Client, String> {
+fn build_tencent_http_client(
+    user_agent: &str,
+    timeout: Duration,
+) -> Result<reqwest::Client, String> {
     let addrs = tencent_fallback_addrs();
     let mut builder = reqwest::Client::builder()
         .timeout(timeout)
@@ -830,7 +833,12 @@ async fn refresh_tencent_market_data(
             fetch_tencent_quotes(&client, batch, request_timeout),
         )
         .await
-        .map_err(|_| format!("Tencent quote batch timed out after {} seconds", batch_timeout.as_secs()))
+        .map_err(|_| {
+            format!(
+                "Tencent quote batch timed out after {} seconds",
+                batch_timeout.as_secs()
+            )
+        })
         .and_then(|result| result);
         match fetch_result {
             Ok(text) => {
@@ -870,7 +878,9 @@ async fn refresh_tencent_market_data(
         } else {
             format!("; recent errors: {}", error_samples.join(" | "))
         };
-        return Err(format!("Tencent quote refresh returned no valid stocks{suffix}"));
+        return Err(format!(
+            "Tencent quote refresh returned no valid stocks{suffix}"
+        ));
     }
     stocks.sort_by(|left, right| {
         left.get("code")
@@ -1295,10 +1305,13 @@ fn filter_seed_histories(seed: &Value, valid_codes: &HashSet<String>) -> Value {
     Value::Object(histories)
 }
 
-
 fn cached_market_data(app: &tauri::AppHandle) -> Result<Value, String> {
     let cache = read_mobile_market_data(app)?;
-    if !cache.get("exists").and_then(Value::as_bool).unwrap_or(false) {
+    if !cache
+        .get("exists")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         return Err("股票池为空，请先联网更新股票池。".to_string());
     }
     cache
@@ -1321,7 +1334,10 @@ fn core_payload_with_cached_data(
 
 fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String> {
     let cache = read_mobile_market_data(app)?;
-    let exists = cache.get("exists").and_then(Value::as_bool).unwrap_or(false);
+    let exists = cache
+        .get("exists")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     if !exists {
         return Ok(json!({
             "source": "tencent",
@@ -1338,9 +1354,15 @@ fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String> {
     let stock_count = summary
         .get("stock_count")
         .and_then(Value::as_u64)
-        .or_else(|| data.get("stocks").and_then(Value::as_array).map(|stocks| stocks.len() as u64))
+        .or_else(|| {
+            data.get("stocks")
+                .and_then(Value::as_array)
+                .map(|stocks| stocks.len() as u64)
+        })
         .unwrap_or(0);
-    let mut notes = vec![format!("Tauri/Rust 统一股票池当前包含 {stock_count} 只股票。")];
+    let mut notes = vec![format!(
+        "Tauri/Rust 统一股票池当前包含 {stock_count} 只股票。"
+    )];
     if let Some(data_notes) = data.get("notes").and_then(Value::as_array) {
         notes.extend(
             data_notes
@@ -1351,7 +1373,12 @@ fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String> {
         );
     }
     if let Some(warnings) = summary.get("warnings").and_then(Value::as_array) {
-        notes.extend(warnings.iter().filter_map(Value::as_str).map(ToOwned::to_owned));
+        notes.extend(
+            warnings
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned),
+        );
     }
     Ok(json!({
         "source": "tencent",
@@ -1498,47 +1525,48 @@ fn sanitize_path_part(value: &str) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default().invoke_handler(tauri::generate_handler![
-        core_screen,
-        core_screen_with_data,
-        core_graph_screen,
-        core_graph_screen_with_data,
-        core_backtest,
-        core_backtest_with_data,
-        core_trend,
-        core_trend_with_data,
-        core_trend_screen,
-        core_trend_screen_with_data,
-        core_agent,
-        core_agent_with_data,
-        core_agent_stream_with_data,
-        core_mobile_stock_skill,
-        api_market_status,
-        api_market_refresh,
-        api_market_clear_cache,
-        api_screen,
-        api_sector_screen,
-        api_graph_screen,
-        api_trend_analyze,
-        api_trend_screen,
-        api_observe,
-        api_backtest,
-        api_stock_search,
-        api_news_rag,
-        api_agent_stream,
-        core_validate_data_source,
-        core_mobile_market_data_read,
-        core_mobile_market_data_write,
-        core_mobile_market_data_clear,
-        core_mobile_network_probe,
-        core_mobile_market_data_refresh_tencent,
-        core_upstream_rag_import,
-        core_upstream_rag_list,
-        core_upstream_rag_detail,
-        core_upstream_rag_rollback,
-        open_external_url
-    ])
-    .plugin(tauri_plugin_shell::init());
+    let builder = tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            core_screen,
+            core_screen_with_data,
+            core_graph_screen,
+            core_graph_screen_with_data,
+            core_backtest,
+            core_backtest_with_data,
+            core_trend,
+            core_trend_with_data,
+            core_trend_screen,
+            core_trend_screen_with_data,
+            core_agent,
+            core_agent_with_data,
+            core_agent_stream_with_data,
+            core_mobile_stock_skill,
+            api_market_status,
+            api_market_refresh,
+            api_market_clear_cache,
+            api_screen,
+            api_sector_screen,
+            api_graph_screen,
+            api_trend_analyze,
+            api_trend_screen,
+            api_observe,
+            api_backtest,
+            api_stock_search,
+            api_news_rag,
+            api_agent_stream,
+            core_validate_data_source,
+            core_mobile_market_data_read,
+            core_mobile_market_data_write,
+            core_mobile_market_data_clear,
+            core_mobile_network_probe,
+            core_mobile_market_data_refresh_tencent,
+            core_upstream_rag_import,
+            core_upstream_rag_list,
+            core_upstream_rag_detail,
+            core_upstream_rag_rollback,
+            open_external_url
+        ])
+        .plugin(tauri_plugin_shell::init());
 
     #[cfg(not(mobile))]
     let builder = builder.setup(|app| setup_desktop(app).map_err(Into::into));
@@ -1553,22 +1581,18 @@ pub fn run() {
 
 #[cfg(not(mobile))]
 fn setup_desktop(app: &mut tauri::App) -> tauri::Result<()> {
-    WebviewWindowBuilder::new(
-        app,
-        "main",
-        WebviewUrl::App("index.html".into()),
-    )
-    .title("股选优")
-    .inner_size(1280.0, 860.0)
-    .min_inner_size(960.0, 680.0)
-    .visible(false)
-    .on_page_load(|window, payload| {
-        if matches!(payload.event(), PageLoadEvent::Finished) {
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
-    })
-    .build()?;
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("股选优")
+        .inner_size(1280.0, 860.0)
+        .min_inner_size(960.0, 680.0)
+        .visible(false)
+        .on_page_load(|window, payload| {
+            if matches!(payload.event(), PageLoadEvent::Finished) {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        })
+        .build()?;
 
     Ok(())
 }
