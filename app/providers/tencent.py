@@ -116,22 +116,23 @@ class TencentQuoteClient:
         digits = TencentQuoteClient.code_digits(normalized)
         if not digits:
             return ""
+        if normalized.endswith(".BJ") or digits.startswith(("4", "8", "920")):
+            return f"bj{digits}"
         if normalized.endswith(".SH") or digits.startswith(("6", "9")):
             return f"sh{digits}"
-        if normalized.endswith(".BJ") or digits.startswith(("4", "8")):
-            return f"bj{digits}"
         return f"sz{digits}"
 
     @staticmethod
     def normalize_code(code: str) -> str:
+        raw = str(code or "").strip().upper()
         digits = TencentQuoteClient.code_digits(code)
+        if not digits:
+            return ""
+        if raw.startswith("BJ") or raw.endswith(".BJ") or digits.startswith(("4", "8", "920")):
+            return f"{digits}.BJ"
         if digits.startswith(("6", "9")):
             return f"{digits}.SH"
-        if digits.startswith(("4", "8")):
-            return f"{digits}.BJ"
-        if digits:
-            return f"{digits}.SZ"
-        return digits
+        return f"{digits}.SZ"
 
     @staticmethod
     def code_digits(code: str) -> str:

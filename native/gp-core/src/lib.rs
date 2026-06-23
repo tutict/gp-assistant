@@ -118,6 +118,28 @@ pub struct ScreenedStock {
     pub stock: StockItem,
     pub score: f64,
     pub reasons: Vec<String>,
+    #[serde(default)]
+    pub factor_scores: BTreeMap<String, f64>,
+    #[serde(default)]
+    pub score_explanation: String,
+    #[serde(default)]
+    pub concept: Option<String>,
+    #[serde(default)]
+    pub theme_category: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ScreenResultGroup {
+    pub key: String,
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub total: usize,
+    #[serde(default)]
+    pub returned: usize,
+    #[serde(default)]
+    pub items: Vec<ScreenedStock>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -125,6 +147,8 @@ pub struct ScreenResult {
     pub total: usize,
     pub returned: usize,
     pub items: Vec<ScreenedStock>,
+    #[serde(default)]
+    pub groups: Vec<ScreenResultGroup>,
     #[serde(default)]
     pub notes: Vec<String>,
 }
@@ -1032,11 +1056,7 @@ fn selected_backtest_items(
     let mut missing = Vec::new();
     for code in codes.iter().take(request.top_n.clamp(1, 100)) {
         if let Some(stock) = by_code.get(code) {
-            selected.push(ScreenedStock {
-                stock: stock.clone(),
-                score: 0.0,
-                reasons: vec!["watchlist".to_string()],
-            });
+            selected.push(score_stock(stock, &["watchlist".to_string()]));
         } else {
             missing.push(code.clone());
         }
@@ -1697,39 +1717,29 @@ pub fn screen_stocks(universe: &[StockItem], criteria: &ScreenCriteria) -> Scree
         let Some(reasons) = matches_stock(stock, criteria) else {
             continue;
         };
-        let score = score_stock(stock, &reasons);
-        screened.push(ScreenedStock {
-            stock: stock.clone(),
-            score,
-            reasons,
-        });
+        screened.push(score_stock(stock, &reasons));
     }
 
-    let reverse = criteria.sort_dir.to_lowercase() != "asc";
-    screened.sort_by(|left, right| {
-        let left_value = sort_value(left, &criteria.sort_by);
-        let right_value = sort_value(right, &criteria.sort_by);
-        match (left_value, right_value) {
-            (Some(left_value), Some(right_value)) => {
-                let ordering = left_value.total_cmp(&right_value);
-                if reverse {
-                    ordering.reverse()
-                } else {
-                    ordering
-                }
-            }
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        }
-    });
+    sort_screened(&mut screened, criteria);
 
     let limit = criteria.limit.clamp(1, 200);
-    let items = promote_hot_sector_items(&screened, criteria, limit);
+    let (items, promoted) = primary_screen_items(&screened, criteria, limit);
+    let groups = screen_result_groups(&screened);
+    let mut notes = notes;
+    if promoted {
+        notes.push("\u{5df2}\u{6309}\u{5171}\u{4eab}\u{7b5b}\u{9009}\u{89c4}\u{5219}\u{5747}\u{8861}\u{8bc4}\u{4f30}\u{4e3b}\u{9898}\u{3001}\u{57fa}\u{672c}\u{9762}\u{3001}\u{4f30}\u{503c}\u{3001}\u{89c4}\u{6a21}\u{548c}\u{98ce}\u{9669}\u{ff0c}\u{5e76}\u{4f18}\u{5148}\u{5c55}\u{793a}\u{70ed}\u{95e8}\u{4e3b}\u{9898}\u{5019}\u{9009}\u{3002}".to_string());
+    }
+    notes.push(format!(
+        "{}{}{}",
+        "\u{666e}\u{901a}\u{7b5b}\u{9009}\u{5df2}\u{62c6}\u{6210}\u{70ed}\u{95e8}\u{80a1}\u{548c}\u{7efc}\u{5408}\u{5206}\u{5927}\u{4e8e} ",
+        POTENTIAL_SCORE_THRESHOLD,
+        " \u{7684}\u{6f5c}\u{529b}\u{80a1}\u{ff0c}\u{6bcf}\u{7c7b}\u{6700}\u{591a} 10 \u{53ea}\u{3002}",
+    ));
     ScreenResult {
         total: screened.len(),
         returned: items.len(),
         items,
+        groups,
         notes,
     }
 }
@@ -1842,12 +1852,12 @@ pub fn graph_screen_stocks(
     notes.extend(deducted_profit_rule_notes(universe, &request.criteria));
     if center_context.mode == "theme_center" {
         notes.push(format!(
-            "No seed codes were provided; graph scoring used {}.",
+            "\u{672a}\u{63d0}\u{4f9b}\u{79cd}\u{5b50}\u{80a1}\u{ff0c}\u{56fe}\u{8c31}\u{9009}\u{80a1}\u{4f7f}\u{7528}{}\u{3002}",
             center_context.label
         ));
     }
     if relations.is_empty() {
-        notes.push("No stock relations are available; results fall back to the base screen score.".to_string());
+        notes.push("\u{672a}\u{627e}\u{5230}\u{80a1}\u{7968}\u{5173}\u{7cfb}\u{6570}\u{636e}\u{ff0c}\u{7ed3}\u{679c}\u{5df2}\u{56de}\u{9000}\u{4e3a}\u{57fa}\u{7840}\u{7b5b}\u{9009}\u{5206}\u{3002}".to_string());
     }
 
     GraphScreenResult {
@@ -2169,167 +2179,222 @@ fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Option<Vec<Str
     Some(reasons)
 }
 
-fn score_stock(stock: &StockItem, reasons: &[String]) -> f64 {
-    let mut score = reasons.len() as f64;
-    if let Some(pe) = stock.pe.filter(|value| *value != 0.0) {
-        score += 0.0_f64.max(10.0 / pe);
+const SCREEN_GROUP_LIMIT: usize = 10;
+const POTENTIAL_SCORE_THRESHOLD: f64 = 10.0;
+const SCREEN_SCORE_SCALE: f64 = 20.0;
+const THEME_PROMOTION_ORDER: [&str; 6] = ["materials", "ai_chain", "semiconductor_wafer", "tech", "energy", "game"];
+const THEME_FILL_ORDER: [&str; 6] = ["ai_chain", "semiconductor_wafer", "materials", "tech", "energy", "game"];
+const THEME_RULES: [(&str, &str, f64, &[&str]); 6] = [
+        ("materials", "\u{65b0}\u{6750}\u{6599}", 0.96, &["\u{6c1f}\u{5316}\u{5de5}", "\u{6c1f}\u{6750}\u{6599}", "\u{9502}\u{7535}\u{6750}\u{6599}", "\u{7535}\u{89e3}\u{6db2}", "\u{516d}\u{6c1f}\u{78f7}\u{9178}\u{9502}", "\u{65b0}\u{80fd}\u{6750}", "\u{65b0}\u{6750}\u{6599}", "\u{56fa}\u{6001}\u{7535}\u{6c60}", "\u{78c1}\u{6750}"]),
+        ("semiconductor_wafer", "\u{534a}\u{5bfc}\u{4f53}\u{6676}\u{5706}", 0.9, &["\u{534a}\u{5bfc}\u{4f53}\u{6676}\u{5706}", "\u{6676}\u{5706}", "\u{6676}\u{5706}\u{4ee3}\u{5de5}", "\u{6676}\u{5706}\u{5236}\u{9020}", "\u{6676}\u{5706}\u{5382}", "\u{7845}\u{6676}\u{5706}", "\u{7845}\u{7247}", "\u{5916}\u{5ef6}\u{7247}", "\u{5916}\u{5ef6}\u{7845}\u{7247}", "\u{534a}\u{5bfc}\u{4f53}\u{886c}\u{5e95}", "\u{886c}\u{5e95}", "\u{78b3}\u{5316}\u{7845}\u{886c}\u{5e95}", "sic\u{886c}\u{5e95}", "\u{629b}\u{5149}\u{7247}", "8\u{82f1}\u{5bf8}", "12\u{82f1}\u{5bf8}"]),
+        ("ai_chain", "AI\u{7b97}\u{529b}\u{4e0e}\u{82af}\u{7247}", 0.95, &["\u{534a}\u{5bfc}\u{4f53}", "\u{82af}\u{7247}", "\u{7b97}\u{529b}", "\u{4eba}\u{5de5}\u{667a}\u{80fd}", "ai", "\u{5149}\u{6a21}\u{5757}", "cpo", "\u{670d}\u{52a1}\u{5668}", "\u{6db2}\u{51b7}", "gpu", "hbm", "\u{5b58}\u{50a8}", "\u{6570}\u{636e}\u{4e2d}\u{5fc3}", "\u{4e91}\u{8ba1}\u{7b97}", "\u{5927}\u{6a21}\u{578b}", "aigc", "\u{8fb9}\u{7f18}\u{8ba1}\u{7b97}", "pcb", "\u{5c01}\u{88c5}", "\u{5c01}\u{6d4b}", "eda", "soc"]),
+        ("tech", "\u{79d1}\u{6280}\u{5236}\u{9020}", 0.84, &["\u{673a}\u{5668}\u{4eba}", "\u{8f6f}\u{4ef6}", "\u{901a}\u{4fe1}", "\u{79d1}\u{6280}", "\u{7535}\u{5b50}", "\u{81ea}\u{52a8}\u{5316}", "\u{9ad8}\u{7aef}\u{5236}\u{9020}", "\u{667a}\u{80fd}\u{5236}\u{9020}"]),
+        ("energy", "\u{65b0}\u{80fd}\u{6e90}", 0.82, &["\u{65b0}\u{80fd}\u{6e90}", "\u{7535}\u{6c60}", "\u{50a8}\u{80fd}", "\u{5149}\u{4f0f}", "\u{7535}\u{529b}", "\u{80fd}\u{6e90}", "\u{6cb9}\u{6c14}", "\u{7164}\u{70ad}", "\u{98ce}\u{7535}", "\u{5145}\u{7535}\u{6869}"]),
+        ("game", "\u{6e38}\u{620f}\u{4f20}\u{5a92}", 0.78, &["\u{6e38}\u{620f}", "\u{7f51}\u{7edc}\u{6e38}\u{620f}", "\u{624b}\u{6e38}", "\u{7535}\u{7ade}", "\u{4e91}\u{6e38}\u{620f}", "\u{4e92}\u{52a8}\u{5a31}\u{4e50}", "\u{6587}\u{5316}\u{4f20}\u{5a92}", "\u{4f20}\u{5a92}"]),
+];
+const CONCEPT_GROUP_RULES: [(&str, &[&str]); 15] = [
+        ("\u{534a}\u{5bfc}\u{4f53}\u{6676}\u{5706}", &["\u{534a}\u{5bfc}\u{4f53}\u{6676}\u{5706}", "\u{6676}\u{5706}", "\u{6676}\u{5706}\u{4ee3}\u{5de5}", "\u{6676}\u{5706}\u{5236}\u{9020}", "\u{6676}\u{5706}\u{5382}", "\u{7845}\u{6676}\u{5706}", "\u{7845}\u{7247}", "\u{5916}\u{5ef6}\u{7247}", "\u{5916}\u{5ef6}\u{7845}\u{7247}", "\u{534a}\u{5bfc}\u{4f53}\u{886c}\u{5e95}", "\u{886c}\u{5e95}", "\u{78b3}\u{5316}\u{7845}\u{886c}\u{5e95}", "sic\u{886c}\u{5e95}", "\u{629b}\u{5149}\u{7247}", "8\u{82f1}\u{5bf8}", "12\u{82f1}\u{5bf8}"]),
+        ("AI\u{7b97}\u{529b}\u{4e0e}\u{82af}\u{7247}", &["\u{534a}\u{5bfc}\u{4f53}", "\u{82af}\u{7247}", "\u{7b97}\u{529b}", "\u{4eba}\u{5de5}\u{667a}\u{80fd}", "ai", "\u{5149}\u{6a21}\u{5757}", "cpo", "\u{670d}\u{52a1}\u{5668}", "\u{6db2}\u{51b7}", "gpu", "hbm", "\u{5b58}\u{50a8}", "\u{6570}\u{636e}\u{4e2d}\u{5fc3}", "\u{4e91}\u{8ba1}\u{7b97}", "\u{5927}\u{6a21}\u{578b}", "aigc", "\u{8fb9}\u{7f18}\u{8ba1}\u{7b97}", "pcb", "\u{5c01}\u{88c5}", "\u{5c01}\u{6d4b}", "eda", "soc"]),
+        ("\u{65b0}\u{6750}\u{6599}", &["\u{6c1f}\u{5316}\u{5de5}", "\u{6c1f}\u{6750}\u{6599}", "\u{9502}\u{7535}\u{6750}\u{6599}", "\u{7535}\u{89e3}\u{6db2}", "\u{516d}\u{6c1f}\u{78f7}\u{9178}\u{9502}", "\u{65b0}\u{80fd}\u{6750}", "\u{65b0}\u{6750}\u{6599}", "\u{56fa}\u{6001}\u{7535}\u{6c60}", "\u{78c1}\u{6750}"]),
+        ("\u{65b0}\u{80fd}\u{6e90}\u{4e0e}\u{50a8}\u{80fd}", &["\u{65b0}\u{80fd}\u{6e90}", "\u{7535}\u{6c60}", "\u{50a8}\u{80fd}", "\u{5149}\u{4f0f}", "\u{7535}\u{529b}", "\u{80fd}\u{6e90}", "\u{98ce}\u{7535}", "\u{5145}\u{7535}\u{6869}"]),
+        ("\u{6e38}\u{620f}\u{4f20}\u{5a92}", &["\u{6e38}\u{620f}", "\u{7f51}\u{7edc}\u{6e38}\u{620f}", "\u{624b}\u{6e38}", "\u{7535}\u{7ade}", "\u{4e91}\u{6e38}\u{620f}", "\u{4e92}\u{52a8}\u{5a31}\u{4e50}", "\u{4f20}\u{5a92}", "\u{5e7f}\u{544a}\u{8425}\u{9500}"]),
+        ("\u{673a}\u{5668}\u{4eba}\u{4e0e}\u{9ad8}\u{7aef}\u{5236}\u{9020}", &["\u{673a}\u{5668}\u{4eba}", "\u{5de5}\u{4e1a}\u{6bcd}\u{673a}", "\u{81ea}\u{52a8}\u{5316}", "\u{9ad8}\u{7aef}\u{5236}\u{9020}", "\u{667a}\u{80fd}\u{5236}\u{9020}", "\u{673a}\u{68b0}\u{8bbe}\u{5907}"]),
+        ("\u{6d88}\u{8d39}\u{96f6}\u{552e}", &["\u{98df}\u{54c1}", "\u{996e}\u{6599}", "\u{767d}\u{9152}", "\u{4f11}\u{95f2}\u{98df}\u{54c1}", "\u{4e00}\u{822c}\u{96f6}\u{552e}", "\u{5546}\u{8d38}\u{96f6}\u{552e}", "\u{5bb6}\u{7535}", "\u{65c5}\u{6e38}", "\u{9152}\u{5e97}", "\u{9910}\u{996e}"]),
+        ("\u{533b}\u{836f}\u{533b}\u{7597}", &["\u{533b}\u{836f}", "\u{533b}\u{7597}", "\u{751f}\u{7269}\u{5236}\u{54c1}", "\u{521b}\u{65b0}\u{836f}", "\u{4e2d}\u{836f}", "\u{5316}\u{5b66}\u{5236}\u{836f}", "\u{533b}\u{7597}\u{5668}\u{68b0}", "cro"]),
+        ("\u{91d1}\u{878d}\u{5730}\u{4ea7}", &["\u{94f6}\u{884c}", "\u{8bc1}\u{5238}", "\u{4fdd}\u{9669}", "\u{623f}\u{5730}\u{4ea7}", "\u{5730}\u{4ea7}", "\u{7269}\u{4e1a}"]),
+        ("\u{57fa}\u{5efa}\u{5efa}\u{7b51}", &["\u{5efa}\u{7b51}", "\u{623f}\u{5c4b}\u{5efa}\u{8bbe}", "\u{5de5}\u{7a0b}\u{5efa}\u{8bbe}", "\u{57fa}\u{7840}\u{5efa}\u{8bbe}", "\u{6c34}\u{6ce5}", "\u{94c1}\u{8def}", "\u{516c}\u{8def}", "\u{88c5}\u{4fee}\u{88c5}\u{9970}"]),
+        ("\u{5468}\u{671f}\u{8d44}\u{6e90}", &["\u{7164}\u{70ad}", "\u{94a2}\u{94c1}", "\u{666e}\u{94a2}", "\u{6709}\u{8272}", "\u{91d1}\u{5c5e}", "\u{5316}\u{5de5}", "\u{77f3}\u{6cb9}", "\u{6cb9}\u{6c14}", "\u{77ff}\u{4e1a}"]),
+        ("\u{6c7d}\u{8f66}\u{4ea7}\u{4e1a}\u{94fe}", &["\u{6c7d}\u{8f66}", "\u{6574}\u{8f66}", "\u{96f6}\u{90e8}\u{4ef6}", "\u{8f6e}\u{80ce}", "\u{667a}\u{80fd}\u{9a7e}\u{9a76}", "\u{65e0}\u{4eba}\u{9a7e}\u{9a76}", "\u{6c7d}\u{8f66}\u{670d}\u{52a1}"]),
+        ("\u{519b}\u{5de5}\u{822a}\u{5929}", &["\u{519b}\u{5de5}", "\u{822a}\u{5929}", "\u{822a}\u{7a7a}", "\u{536b}\u{661f}", "\u{8239}\u{8236}", "\u{65e0}\u{4eba}\u{673a}", "\u{56fd}\u{9632}"]),
+        ("\u{4ea4}\u{8fd0}\u{7269}\u{6d41}", &["\u{7269}\u{6d41}", "\u{822a}\u{8fd0}", "\u{6e2f}\u{53e3}", "\u{673a}\u{573a}", "\u{822a}\u{7a7a}\u{8fd0}\u{8f93}", "\u{94c1}\u{8def}\u{8fd0}\u{8f93}", "\u{5feb}\u{9012}"]),
+        ("\u{516c}\u{7528}\u{73af}\u{4fdd}", &["\u{73af}\u{4fdd}", "\u{6c34}\u{52a1}", "\u{71c3}\u{6c14}", "\u{4f9b}\u{70ed}", "\u{516c}\u{7528}\u{4e8b}\u{4e1a}"]),
+];
+const COLD_SECTOR_KEYWORDS: [&str; 9] = ["\u{94f6}\u{884c}", "\u{57fa}\u{5efa}", "\u{5efa}\u{7b51}", "\u{5efa}\u{7b51}\u{88c5}\u{9970}", "\u{5de5}\u{7a0b}\u{5efa}\u{8bbe}", "\u{57fa}\u{7840}\u{5efa}\u{8bbe}", "\u{6c34}\u{6ce5}", "\u{94c1}\u{8def}", "\u{516c}\u{8def}"];
+
+fn score_stock(stock: &StockItem, reasons: &[String]) -> ScreenedStock {
+    let theme = theme_match_for_stock(stock);
+    let cold = is_cold_sector(&stock.industry);
+    let factor_scores = BTreeMap::from([
+        ("theme".to_string(), theme.as_ref().map(|(_, _, score)| *score).unwrap_or(0.35)),
+        ("fundamental".to_string(), fundamental_score(stock)),
+        ("valuation".to_string(), valuation_score(stock)),
+        ("size".to_string(), size_score(stock)),
+        ("risk".to_string(), risk_score(stock, cold)),
+    ]);
+    let weighted = factor_scores.get("theme").copied().unwrap_or(0.35) * 0.24
+        + factor_scores.get("fundamental").copied().unwrap_or(0.5) * 0.24
+        + factor_scores.get("valuation").copied().unwrap_or(0.5) * 0.24
+        + factor_scores.get("size").copied().unwrap_or(0.55) * 0.14
+        + factor_scores.get("risk").copied().unwrap_or(1.0) * 0.14;
+    let score = (weighted * SCREEN_SCORE_SCALE).clamp(0.0, SCREEN_SCORE_SCALE);
+    let mut all_reasons = reasons.to_vec();
+    all_reasons.extend(factor_reasons(theme.as_ref(), cold, &factor_scores));
+    let score_explanation = explain_score(stock, theme.as_ref(), cold, &factor_scores);
+    let rounded_scores = factor_scores
+        .into_iter()
+        .map(|(key, value)| (key, (value * 10_000.0).round() / 10_000.0))
+        .collect();
+    ScreenedStock {
+        stock: stock.clone(),
+        score: (score * 1_000_000.0).round() / 1_000_000.0,
+        reasons: all_reasons,
+        factor_scores: rounded_scores,
+        score_explanation,
+        concept: Some(concept_group_for_stock(stock)),
+        theme_category: theme.map(|(key, _, _)| key.to_string()),
     }
-    if let Some(pb) = stock.pb.filter(|value| *value != 0.0) {
-        score += 0.0_f64.max(2.0 / pb);
-    }
-    if let Some(roe) = stock.roe.filter(|value| *value != 0.0) {
-        score += roe * 2.0;
-    }
-    if let Some(dividend_yield) = stock.dividend_yield.filter(|value| *value != 0.0) {
-        score += (dividend_yield * 10.0).min(1.0);
-    }
-    if stock
-        .deducted_net_profit_billion
-        .map(|profit| profit > 0.0)
-        .unwrap_or(false)
-    {
-        score += 0.4;
-    }
-    if stock
-        .deducted_net_profit_growth_rate
-        .and_then(as_percent)
-        .map(|growth| growth >= 10.0)
-        .unwrap_or(false)
-    {
-        score += 0.4;
-    }
-    score += hot_sector_bonus(&format!("{} {}", stock.name, stock.industry));
-    score += hot_theme_bonus(stock);
-    score -= cold_sector_penalty(&stock.industry);
-    score
 }
 
-fn hot_sector_bonus(industry: &str) -> f64 {
-    let normalized = industry.trim().to_lowercase();
-    if normalized.is_empty() {
-        return 0.0;
+fn fundamental_score(stock: &StockItem) -> f64 {
+    let roe_percent = stock.roe.and_then(as_percent);
+    let roe_score = match roe_percent {
+        None => 0.5,
+        Some(value) if value >= 15.0 => 1.0,
+        Some(value) if value >= 8.0 => 0.72 + (value - 8.0) / 7.0 * 0.18,
+        Some(value) if value >= 0.0 => 0.42 + value / 8.0 * 0.25,
+        Some(_) => 0.2,
+    };
+    let dividend = stock.dividend_yield.and_then(as_percent);
+    let dividend_bonus = dividend.map(|value| value.max(0.0).min(6.0) / 6.0 * 0.12).unwrap_or(0.0);
+    let mut quality_bonus = 0.0;
+    if stock.deducted_net_profit_billion.map(|value| value > 0.0).unwrap_or(false) {
+        quality_bonus += 0.08;
     }
-    let keywords = [
-        ("氟化工", 0.58),
-        ("氟材料", 0.58),
-        ("锂电材料", 0.56),
-        ("电解液", 0.54),
-        ("六氟磷酸锂", 0.54),
-        ("新能材", 0.52),
-        ("新材料", 0.48),
-        ("固态电池", 0.48),
-        ("半导体", 0.55),
-        ("芯片", 0.55),
-        ("算力", 0.5),
-        ("人工智能", 0.5),
-        ("ai", 0.5),
-        ("机器人", 0.46),
-        ("软件", 0.44),
-        ("通信", 0.42),
-        ("科技", 0.42),
-        ("电子", 0.38),
-        ("新能源", 0.46),
-        ("电池", 0.44),
-        ("储能", 0.42),
-        ("光伏", 0.4),
-        ("电力", 0.34),
-        ("能源", 0.34),
-        ("油气", 0.28),
-        ("煤炭", 0.24),
-        ("游戏", 0.42),
-        ("手游", 0.4),
-        ("电竞", 0.36),
-        ("云游戏", 0.36),
-        ("互动娱乐", 0.34),
-    ];
-    keywords
-        .iter()
-        .filter_map(|(keyword, weight)| normalized.contains(keyword).then_some(*weight))
-        .fold(0.0, f64::max)
+    if stock.deducted_net_profit_growth_rate.and_then(as_percent).map(|value| value >= 10.0).unwrap_or(false) {
+        quality_bonus += 0.08;
+    }
+    (roe_score + dividend_bonus + quality_bonus).clamp(0.0, 1.0)
+}
+
+fn valuation_score(stock: &StockItem) -> f64 {
+    ((pe_score(stock.pe) + pb_score(stock.pb)) / 2.0).clamp(0.0, 1.0)
+}
+
+fn pe_score(value: Option<f64>) -> f64 {
+    match value {
+        None => 0.52,
+        Some(value) if value <= 0.0 => 0.25,
+        Some(value) if value <= 15.0 => 1.0,
+        Some(value) if value <= 30.0 => 0.72,
+        Some(value) if value <= 60.0 => 0.45,
+        Some(_) => 0.28,
+    }
+}
+
+fn pb_score(value: Option<f64>) -> f64 {
+    match value {
+        None => 0.52,
+        Some(value) if value <= 0.0 => 0.25,
+        Some(value) if value <= 1.5 => 1.0,
+        Some(value) if value <= 3.0 => 0.74,
+        Some(value) if value <= 6.0 => 0.5,
+        Some(value) if value <= 10.0 => 0.34,
+        Some(_) => 0.22,
+    }
+}
+
+fn size_score(stock: &StockItem) -> f64 {
+    match stock.market_cap_billion {
+        None => 0.55,
+        Some(value) if value < 20.0 => 0.36,
+        Some(value) if value < 100.0 => 0.68,
+        Some(value) if value < 500.0 => 0.88,
+        Some(value) if value < 2000.0 => 0.78,
+        Some(_) => 0.62,
+    }
+}
+
+fn risk_score(stock: &StockItem, cold: bool) -> f64 {
+    if stock.is_st {
+        0.05
+    } else if cold {
+        0.36
+    } else {
+        1.0
+    }
+}
+
+fn factor_reasons(theme: Option<&(&'static str, &'static str, f64)>, cold: bool, factor_scores: &BTreeMap<String, f64>) -> Vec<String> {
+    let mut reasons = Vec::new();
+    if let Some((_, label, _)) = theme {
+        reasons.push(format!("{}{label}", "\u{4e3b}\u{9898}:"));
+    }
+    if factor_scores.get("valuation").copied().unwrap_or(0.0) >= 0.74 {
+        reasons.push("\u{4f30}\u{503c}\u{8f83}\u{4f4e}".to_string());
+    } else if factor_scores.get("valuation").copied().unwrap_or(0.0) <= 0.38 {
+        reasons.push("\u{4f30}\u{503c}\u{504f}\u{9ad8}".to_string());
+    }
+    if factor_scores.get("fundamental").copied().unwrap_or(0.0) >= 0.72 {
+        reasons.push("\u{57fa}\u{672c}\u{9762}\u{8f83}\u{5f3a}".to_string());
+    }
+    if cold {
+        reasons.push("\u{4f4e}\u{70ed}\u{5ea6}\u{964d}\u{6743}".to_string());
+    }
+    reasons
+}
+
+fn explain_score(
+    stock: &StockItem,
+    theme: Option<&(&'static str, &'static str, f64)>,
+    cold: bool,
+    factor_scores: &BTreeMap<String, f64>,
+) -> String {
+    let mut parts = Vec::new();
+    if let Some((_, label, _)) = theme {
+        parts.push(format!("{}{label}", "\u{4e3b}\u{9898}\u{547d}\u{4e2d}"));
+    } else {
+        parts.push("\u{4e3b}\u{9898}\u{70ed}\u{5ea6}\u{4e00}\u{822c}".to_string());
+    }
+    parts.push(format!("{}{}", "\u{4f30}\u{503c}", tier_word(factor_scores.get("valuation").copied().unwrap_or(0.0))));
+    parts.push(format!("{}{}", "\u{57fa}\u{672c}\u{9762}", tier_word(factor_scores.get("fundamental").copied().unwrap_or(0.0))));
+    if stock.market_cap_billion.is_none() {
+        parts.push("\u{5e02}\u{503c}\u{7f3a}\u{5931}\u{6309}\u{4e2d}\u{6027}\u{5904}\u{7406}".to_string());
+    } else {
+        parts.push(format!("{}{}", "\u{5e02}\u{503c}\u{89c4}\u{6a21}", tier_word(factor_scores.get("size").copied().unwrap_or(0.0))));
+    }
+    parts.push(if cold { "\u{94f6}\u{884c}/\u{57fa}\u{5efa}\u{7b49}\u{4f4e}\u{70ed}\u{5ea6}\u{65b9}\u{5411}\u{5df2}\u{964d}\u{6743}".to_string() } else { "\u{98ce}\u{9669}\u{60e9}\u{7f5a}\u{4f4e}".to_string() });
+    format!("{}{}", parts.join("\u{ff1b}"), "\u{3002}")
+}
+
+fn tier_word(value: f64) -> &'static str {
+    if value >= 0.72 {
+        "\u{5f3a}"
+    } else if value >= 0.5 {
+        "\u{4e2d}\u{6027}"
+    } else {
+        "\u{504f}\u{5f31}"
+    }
+}
+
+fn concept_group_for_stock(stock: &StockItem) -> String {
+    let text = stock_text(stock);
+    for (label, keywords) in CONCEPT_GROUP_RULES {
+        if contains_any(&text, keywords) {
+            return label.to_string();
+        }
+    }
+    "\u{5176}\u{4ed6}\u{6982}\u{5ff5}".to_string()
+}
+
+fn theme_match_for_stock(stock: &StockItem) -> Option<(&'static str, &'static str, f64)> {
+    theme_match_for_text(&stock_text(stock))
+}
+
+fn theme_match_for_text(text: &str) -> Option<(&'static str, &'static str, f64)> {
+    for (key, label, score, keywords) in THEME_RULES {
+        if contains_any(text, keywords) {
+            return Some((key, label, score));
+        }
+    }
+    None
+}
+
+fn stock_text(stock: &StockItem) -> String {
+    format!("{} {}", stock.name, stock.industry).to_lowercase()
 }
 
 fn hot_sector_category(industry: &str) -> Option<&'static str> {
-    let normalized = industry.trim().to_lowercase();
-    if normalized.is_empty() {
-        return None;
-    }
-    let categories: [(&str, &[&str]); 4] = [
-        (
-            "materials",
-            &[
-                "氟化工",
-                "氟材料",
-                "锂电材料",
-                "电解液",
-                "六氟磷酸锂",
-                "新能材",
-                "新材料",
-                "固态电池",
-            ],
-        ),
-        (
-            "tech",
-            &[
-                "半导体",
-                "芯片",
-                "算力",
-                "人工智能",
-                "ai",
-                "机器人",
-                "软件",
-                "通信",
-                "科技",
-                "电子",
-            ],
-        ),
-        (
-            "energy",
-            &[
-                "新能源",
-                "电池",
-                "储能",
-                "光伏",
-                "电力",
-                "能源",
-                "油气",
-                "煤炭",
-            ],
-        ),
-        (
-            "game",
-            &[
-                "游戏",
-                "网络游戏",
-                "手游",
-                "电竞",
-                "云游戏",
-                "互动娱乐",
-                "文化传媒",
-            ],
-        ),
-    ];
-    categories.iter().find_map(|(category, keywords)| {
-        keywords
-            .iter()
-            .any(|keyword| normalized.contains(keyword))
-            .then_some(*category)
-    })
-}
-
-fn hot_theme_bonus(stock: &StockItem) -> f64 {
-    if hot_sector_category(&format!("{} {}", stock.name, stock.industry)) == Some("materials") {
-        0.75
-    } else {
-        0.0
-    }
-}
-
-fn cold_sector_penalty(industry: &str) -> f64 {
-    if is_cold_sector(industry) {
-        1.1
-    } else {
-        0.0
-    }
+    theme_match_for_text(&industry.to_lowercase()).map(|(key, _, _)| key)
 }
 
 fn is_cold_sector(industry: &str) -> bool {
@@ -2337,19 +2402,7 @@ fn is_cold_sector(industry: &str) -> bool {
     if normalized.is_empty() {
         return false;
     }
-    [
-        "银行",
-        "基建",
-        "建筑",
-        "建筑装饰",
-        "工程建设",
-        "基础建设",
-        "水泥",
-        "铁路",
-        "公路",
-    ]
-    .iter()
-    .any(|keyword| normalized.contains(keyword))
+    COLD_SECTOR_KEYWORDS.iter().any(|keyword| normalized.contains(keyword))
 }
 
 fn hot_pick_category(stock: &StockItem) -> Option<&'static str> {
@@ -2373,10 +2426,10 @@ fn promote_hot_sector_items(
 
     let mut promoted = Vec::new();
     let mut used_codes = HashSet::new();
-    for category in ["materials", "tech", "energy", "game"] {
+    for category in THEME_PROMOTION_ORDER {
         if let Some(candidate) = screened.iter().find(|item| {
             !used_codes.contains(&item.stock.code)
-                && hot_pick_category(&item.stock) == Some(category)
+                && item.theme_category.as_deref() == Some(category)
         }) {
             promoted.push(candidate.clone());
             used_codes.insert(candidate.stock.code.clone());
@@ -2386,10 +2439,10 @@ fn promote_hot_sector_items(
         }
     }
 
-    for category in ["materials", "tech", "energy", "game"] {
+    for category in THEME_FILL_ORDER {
         for item in screened {
             if used_codes.contains(&item.stock.code)
-                || hot_pick_category(&item.stock) != Some(category)
+                || item.theme_category.as_deref() != Some(category)
             {
                 continue;
             }
@@ -2402,32 +2455,159 @@ fn promote_hot_sector_items(
     }
 
     for item in screened {
-        if used_codes.contains(&item.stock.code) {
-            continue;
-        }
-        if is_cold_sector(&item.stock.industry) {
+        if used_codes.contains(&item.stock.code) || is_cold_sector(&item.stock.industry) {
             continue;
         }
         promoted.push(item.clone());
+        used_codes.insert(item.stock.code.clone());
         if promoted.len() >= limit {
             return promoted;
         }
     }
 
     for item in screened {
-        if used_codes.contains(&item.stock.code)
-            || promoted
-                .iter()
-                .any(|promoted_item| promoted_item.stock.code == item.stock.code)
-        {
+        if used_codes.contains(&item.stock.code) {
             continue;
         }
         promoted.push(item.clone());
+        used_codes.insert(item.stock.code.clone());
         if promoted.len() >= limit {
             break;
         }
     }
     promoted
+}
+
+fn sort_screened(screened: &mut [ScreenedStock], criteria: &ScreenCriteria) {
+    let sort_by = criteria.sort_by.trim().to_ascii_lowercase();
+    let ascending = criteria.sort_dir.trim().eq_ignore_ascii_case("asc");
+    screened.sort_by(|left, right| {
+        let ordering = match (sort_value(left, &sort_by), sort_value(right, &sort_by)) {
+            (Some(left_value), Some(right_value)) => {
+                if ascending {
+                    left_value.total_cmp(&right_value)
+                } else {
+                    right_value.total_cmp(&left_value)
+                }
+            }
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        };
+        ordering
+            .then_with(|| right.score.total_cmp(&left.score))
+            .then_with(|| left.stock.code.cmp(&right.stock.code))
+    });
+}
+
+fn primary_screen_items(
+    screened: &[ScreenedStock],
+    criteria: &ScreenCriteria,
+    limit: usize,
+) -> (Vec<ScreenedStock>, bool) {
+    if !should_promote_hot_sectors(criteria) || limit == 0 {
+        let items = screened.iter().take(limit).cloned().collect::<Vec<_>>();
+        return (items, false);
+    }
+    let promoted = promote_hot_sector_items(screened, criteria, limit);
+    let promoted_flag = promoted
+        .iter()
+        .map(|item| item.stock.code.as_str())
+        .collect::<Vec<_>>()
+        != screened
+            .iter()
+            .take(limit)
+            .map(|item| item.stock.code.as_str())
+            .collect::<Vec<_>>();
+    (promoted, promoted_flag)
+}
+
+fn screen_result_groups(screened: &[ScreenedStock]) -> Vec<ScreenResultGroup> {
+    let hot_items = hot_group_items(screened, SCREEN_GROUP_LIMIT);
+    let hot_codes: HashSet<String> = hot_items.iter().map(|item| item.stock.code.clone()).collect();
+    let potential_items = potential_group_items(screened, SCREEN_GROUP_LIMIT, &hot_codes, POTENTIAL_SCORE_THRESHOLD);
+    vec![
+        ScreenResultGroup {
+            key: "hot".to_string(),
+            title: "\u{70ed}\u{95e8}\u{80a1}".to_string(),
+            description: "AI\u{4e0a}\u{4e0b}\u{6e38}\u{3001}\u{82af}\u{7247}\u{3001}\u{7b97}\u{529b}\u{3001}\u{80fd}\u{6e90}\u{3001}\u{65b0}\u{6750}\u{6599}\u{3001}\u{6e38}\u{620f}\u{7b49}\u{70ed}\u{95e8}\u{65b9}\u{5411}\u{ff0c}\u{6309}\u{7efc}\u{5408}\u{5206}\u{548c}\u{4e3b}\u{9898}\u{4f18}\u{5148}\u{7ea7}\u{5c55}\u{793a}\u{3002}".to_string(),
+            total: screened.iter().filter(|item| item.theme_category.is_some()).count(),
+            returned: hot_items.len(),
+            items: hot_items,
+        },
+        ScreenResultGroup {
+            key: "potential".to_string(),
+            title: "\u{6f5c}\u{529b}\u{80a1}".to_string(),
+            description: format!("{}{}{}", "\u{7efc}\u{5408}\u{5206}\u{5927}\u{4e8e} ", POTENTIAL_SCORE_THRESHOLD, " \u{7684}\u{5019}\u{9009}\u{ff0c}\u{5df2}\u{5c3d}\u{91cf}\u{907f}\u{514d}\u{4e0e}\u{70ed}\u{95e8}\u{80a1}\u{91cd}\u{590d}\u{3002}"),
+            total: screened.iter().filter(|item| item.score > POTENTIAL_SCORE_THRESHOLD).count(),
+            returned: potential_items.len(),
+            items: potential_items,
+        },
+    ]
+}
+
+fn hot_group_items(screened: &[ScreenedStock], limit: usize) -> Vec<ScreenedStock> {
+    let mut selected = Vec::new();
+    let mut used_codes = HashSet::new();
+    let mut by_score = screened.to_vec();
+    by_score.sort_by(|left, right| right.score.total_cmp(&left.score).then_with(|| left.stock.code.cmp(&right.stock.code)));
+    for category in THEME_PROMOTION_ORDER {
+        if let Some(candidate) = first_by_theme(&by_score, category, &used_codes) {
+            append_selected(&mut selected, &mut used_codes, candidate);
+            if selected.len() >= limit {
+                return selected;
+            }
+        }
+    }
+    for category in THEME_FILL_ORDER {
+        for item in &by_score {
+            if used_codes.contains(&item.stock.code) || item.theme_category.as_deref() != Some(category) {
+                continue;
+            }
+            append_selected(&mut selected, &mut used_codes, item.clone());
+            if selected.len() >= limit {
+                return selected;
+            }
+        }
+    }
+    selected
+}
+
+fn potential_group_items(
+    screened: &[ScreenedStock],
+    limit: usize,
+    exclude_codes: &HashSet<String>,
+    threshold: f64,
+) -> Vec<ScreenedStock> {
+    let mut ranked = screened.to_vec();
+    ranked.sort_by(|left, right| right.score.total_cmp(&left.score).then_with(|| left.stock.code.cmp(&right.stock.code)));
+    let mut selected = Vec::new();
+    for item in ranked {
+        if exclude_codes.contains(&item.stock.code) || item.score <= threshold {
+            continue;
+        }
+        selected.push(item);
+        if selected.len() >= limit {
+            break;
+        }
+    }
+    selected
+}
+
+fn first_by_theme(
+    screened: &[ScreenedStock],
+    category: &str,
+    used_codes: &HashSet<String>,
+) -> Option<ScreenedStock> {
+    screened
+        .iter()
+        .find(|item| !used_codes.contains(&item.stock.code) && item.theme_category.as_deref() == Some(category))
+        .cloned()
+}
+
+fn append_selected(selected: &mut Vec<ScreenedStock>, used_codes: &mut HashSet<String>, item: ScreenedStock) {
+    used_codes.insert(item.stock.code.clone());
+    selected.push(item);
 }
 
 fn sort_value(item: &ScreenedStock, sort_by: &str) -> Option<f64> {
@@ -2460,7 +2640,7 @@ fn resolve_center_context(candidate_pool: &[ScreenedStock], seed_codes: &[String
     if !normalized_seed_codes.is_empty() {
         return GraphCenterContext {
             mode: "seed_codes".to_string(),
-            label: "seed-code center".to_string(),
+            label: "\u{79cd}\u{5b50}\u{80a1}\u{4e2d}\u{5fc3}".to_string(),
             codes: normalized_seed_codes,
         };
     }
@@ -2468,7 +2648,7 @@ fn resolve_center_context(candidate_pool: &[ScreenedStock], seed_codes: &[String
     if candidate_pool.is_empty() {
         return GraphCenterContext {
             mode: "theme_center".to_string(),
-            label: "empty theme center".to_string(),
+            label: "\u{4e3b}\u{9898}\u{4e2d}\u{5fc3}\u{4e3a}\u{7a7a}".to_string(),
             codes: Vec::new(),
         };
     }
@@ -2515,7 +2695,7 @@ fn center_group_key(item: &ScreenedStock) -> (String, String) {
     if let Some(category) = hot_pick_category(&item.stock) {
         return (
             format!("theme:{category}"),
-            format!("theme center: {category}"),
+            format!("\u{4e3b}\u{9898}\u{4e2d}\u{5fc3}\u{ff1a}{category}"),
         );
     }
     if !item.stock.industry.trim().is_empty() {
@@ -3656,7 +3836,7 @@ fn trend_screen_explanation(
         ],
         risk_checks: short_buy_risk_checks(signal),
         verification: vec![
-            "Cross-check graph screening to confirm whether the stock belongs to a stronger theme center.".to_string(),
+            "\u{5efa}\u{8bae}\u{7528}\u{56fe}\u{8c31}\u{9009}\u{80a1}\u{4ea4}\u{53c9}\u{9a8c}\u{8bc1}\u{ff0c}\u{786e}\u{8ba4}\u{8be5}\u{80a1}\u{662f}\u{5426}\u{5904}\u{5728}\u{66f4}\u{5f3a}\u{7684}\u{4e3b}\u{9898}\u{4e2d}\u{5fc3}\u{3002}".to_string(),
             "Watch the next trading day direction, volume, and close for setup confirmation.".to_string(),
         ],
     }
@@ -4280,7 +4460,7 @@ mod tests {
             target_code: "222222.SZ".to_string(),
             relation_type: "custom_peer".to_string(),
             weight: 0.5,
-            description: Some("native supplied relation".to_string()),
+            description: Some("\u{672c}\u{5730}\u{6837}\u{672c}\u{5173}\u{7cfb}".to_string()),
         }];
         let histories = HashMap::from([(
             "111111.SZ".to_string(),
@@ -4329,8 +4509,11 @@ mod tests {
             ..ScreenCriteria::default()
         });
         assert_eq!(result.returned, 3);
-        assert_eq!(result.items[0].stock.code, "600000.SH");
-        assert!(result.items[0].reasons.contains(&"pe_ok".to_string()));
+        assert_eq!(result.total, 3);
+        assert!(result.items.iter().all(|item| item.stock.pe.map(|pe| pe <= 10.0).unwrap_or(false)));
+        assert!(result.items.iter().all(|item| item.stock.roe.and_then(as_percent).map(|roe| roe >= 10.0).unwrap_or(false)));
+        assert!(result.items.iter().all(|item| item.reasons.contains(&"pe_ok".to_string())));
+        assert!(result.items.windows(2).all(|pair| pair[0].score >= pair[1].score));
     }
 
     #[test]

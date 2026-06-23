@@ -11,6 +11,7 @@ from uuid import uuid4
 from app.providers.base import StockProvider
 from app.schemas import (
     AgentResponse,
+    CachePolicy,
     BacktestRequest,
     GraphScreenRequest,
     LlmClientConfig,
@@ -602,7 +603,7 @@ def _refresh_data_node(state: AgentState) -> AgentState:
 
 def _prune_cache_node(state: AgentState) -> AgentState:
     source = getattr(state["provider"], "name", state["provider"].__class__.__name__)
-    result = prune_cache(source)
+    result = prune_cache(source, CachePolicy(mode="clear"))
     return {
         "data": result.model_dump(),
         "reply": state.get("reply")

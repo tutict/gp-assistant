@@ -11564,3 +11564,91 @@ html.desktop-runtime body::-webkit-scrollbar {
 .signal-card .trend-chart .chart-legend {
   margin-bottom: 8px;
 }
+/* Android runtime shell hardening: Android WebView can report a desktop-width viewport in landscape. */
+body.mobile-tauri{min-height:100dvh;overflow-x:hidden;padding-top:env(safe-area-inset-top);}
+body.mobile-tauri .app-shell{width:100%;max-width:none;min-height:100dvh;padding:8px 8px calc(76px + env(safe-area-inset-bottom));}
+body.mobile-tauri .app-header{position:sticky;top:env(safe-area-inset-top);display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;min-height:56px;border-radius:var(--radius-md);padding:8px 10px;}
+body.mobile-tauri .brand-lockup{min-width:0;}
+body.mobile-tauri .brand-lockup .brand-title{font-size:clamp(1.34rem,4vw,1.58rem);}
+body.mobile-tauri .top-actions{position:static;width:auto;min-width:0;max-width:none;justify-content:flex-end;flex-wrap:nowrap;gap:8px;}
+body.mobile-tauri .app-header .status-pill,body.mobile-tauri .source-refresh{display:none!important;}
+body.mobile-tauri .source-control,body.mobile-tauri .theme-switch{width:auto;min-width:0;min-height:40px;padding-inline:10px;}
+body.mobile-tauri .workspace,body.mobile-tauri .workbench{display:block;width:100%;max-width:100%;}
+body.mobile-tauri .workspace-nav{display:none!important;}
+body.mobile-tauri .mobile-nav-toggle,body.mobile-tauri .mobile-nav,body.mobile-tauri .mobile-nav-overlay{display:none!important;}
+body.mobile-tauri .workbench-view{display:none;}
+body.mobile-tauri .workbench[data-active-view="screen"] #sectionScreen,body.mobile-tauri .workbench[data-active-view="screen"] #sectionGraph,body.mobile-tauri .workbench[data-active-view="screen"] #sectionTrend,body.mobile-tauri .workbench[data-active-view="observe"] #sectionObserve,body.mobile-tauri .workbench[data-active-view="backtest"] #sectionBacktest,body.mobile-tauri .workbench[data-active-view="news"] #sectionNewsRag,body.mobile-tauri .workbench[data-active-view="agent"] #sectionAgent{display:block;width:100%;max-width:100%;margin-top:var(--space-3);}
+body.mobile-tauri .research-context-bar{top:calc(env(safe-area-inset-top) + 58px);grid-template-columns:minmax(0,1fr) max-content;margin-bottom:10px;padding:10px;}
+body.mobile-tauri .research-context-bar strong{display:-webkit-box;overflow:hidden;white-space:normal;-webkit-box-orient:vertical;-webkit-line-clamp:2;}
+body.mobile-tauri .module,body.mobile-tauri .agent-console,body.mobile-tauri .result-panel{max-width:100%;border-radius:var(--radius-md);}
+body.mobile-tauri .bottom-tabbar{display:grid!important;padding-bottom:env(safe-area-inset-bottom);}
+body.mobile-tauri.criteria-open{overflow:hidden;}
+body.mobile-tauri .criteria-overlay{display:none;pointer-events:none;background:rgba(0,0,0,.48);} body.mobile-tauri.criteria-open .criteria-overlay:not([hidden]){display:block;pointer-events:auto;} body.mobile-tauri .criteria-overlay[hidden]{display:none!important;pointer-events:none!important;}
+body.mobile-tauri #sectionFilters.control-rail{position:fixed;z-index:90;top:auto;right:max(8px,env(safe-area-inset-right));bottom:calc(74px + env(safe-area-inset-bottom));left:max(8px,env(safe-area-inset-left));display:block;width:auto;height:auto;max-height:min(68dvh,560px);overflow:auto;margin:0;border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.42);overscroll-behavior:contain;transform:translateY(calc(100% + 24px));visibility:hidden;pointer-events:none;}
+body.mobile-tauri.criteria-open #sectionFilters.control-rail{transform:translateY(0);visibility:visible;pointer-events:auto;}
+body.mobile-tauri #sectionFilters .criteria-panel-heading{padding:12px;}
+@media (orientation:landscape){body.mobile-tauri .app-shell{padding:6px 8px calc(64px + env(safe-area-inset-bottom));}body.mobile-tauri .app-header{min-height:52px;}body.mobile-tauri .research-context-bar{top:calc(env(safe-area-inset-top) + 54px);}body.mobile-tauri #sectionFilters.control-rail{bottom:calc(62px + env(safe-area-inset-bottom));max-height:min(76dvh,520px);}}
+/* Android top bar visual parity: use direct colors because some WebViews render color-mix/font fallback differently. */
+body.mobile-tauri .app-header{border-color:rgba(239,78,66,.42)!important;background:linear-gradient(90deg,rgba(210,45,32,.16),rgba(18,9,8,.96) 34%),linear-gradient(180deg,#1b100e,#100807)!important;box-shadow:0 14px 34px rgba(0,0,0,.36),inset 0 1px 0 rgba(255,242,235,.06)!important;}
+body.mobile-tauri .brand-lockup{align-items:center!important;gap:12px!important;}
+body.mobile-tauri .brand-mark{display:grid!important;width:42px!important;height:42px!important;place-items:center!important;border:1px solid rgba(255,146,132,.72)!important;border-radius:9px 6px 10px 6px!important;background:repeating-linear-gradient(90deg,rgba(255,255,255,.12) 0 1px,transparent 1px 7px),linear-gradient(145deg,#ff675c,#d92d20)!important;color:#fff7f3!important;font-family:SimLi,LiSu,STXingkai,KaiTi,"Microsoft YaHei",serif!important;font-size:1.34rem!important;font-weight:900!important;line-height:1!important;text-shadow:0 1px 0 rgba(90,13,9,.58),0 0 12px rgba(255,232,221,.2)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.24),0 0 0 3px rgba(217,45,32,.16),0 10px 22px rgba(217,45,32,.24)!important;}
+body.mobile-tauri .brand-lockup .brand-title{color:#fff7f3!important;font-family:STXingkai,KaiTi,"Microsoft YaHei",serif!important;font-size:clamp(1.5rem,3.8vw,1.72rem)!important;font-weight:500!important;line-height:1!important;text-shadow:0 1px 0 rgba(90,13,9,.46),0 0 14px rgba(239,78,66,.22)!important;}
+body.mobile-tauri .source-control,body.mobile-tauri .theme-switch{border:1px solid rgba(239,78,66,.34)!important;border-radius:8px!important;background:linear-gradient(180deg,rgba(65,27,22,.9),rgba(35,15,13,.9))!important;color:#d8c1ba!important;box-shadow:inset 0 1px 0 rgba(255,244,238,.06)!important;}
+body.mobile-tauri .source-control select{color:#fff7f3!important;font-weight:800!important;background:transparent!important;}
+body.mobile-tauri .theme-switch .switch-track{border-color:rgba(239,78,66,.4)!important;background:rgba(78,35,30,.92)!important;}
+body.mobile-tauri .theme-switch .switch-thumb{background:#ef3b2d!important;box-shadow:0 0 0 3px rgba(239,59,45,.18),0 0 12px rgba(239,59,45,.32)!important;}
+body.mobile-tauri .research-context-bar button,body.mobile-tauri .module-heading>button,body.mobile-tauri .module-heading>.button-row button,body.mobile-tauri .button-row button{border-color:rgba(239,78,66,.42)!important;background:linear-gradient(180deg,rgba(75,27,22,.92),rgba(45,16,14,.94))!important;color:#fff1ec!important;box-shadow:inset 0 1px 0 rgba(255,244,238,.07)!important;}
+
+/* Android wide parity: tablet/landscape should stay visually close to the Windows workbench. */
+@media (min-width:900px) and (orientation:landscape){
+body.mobile-tauri{padding-top:0;background:radial-gradient(circle at 18% -18%,rgba(217,45,32,.18),transparent 38%),linear-gradient(135deg,#100807,#080504 54%,#120908)!important;}
+body.mobile-tauri .app-shell{width:min(calc(100vw - 24px),1640px)!important;max-width:1640px!important;min-height:100dvh;padding:10px 12px 14px!important;}
+body.mobile-tauri .app-header{display:flex!important;grid-template-columns:none!important;align-items:center!important;justify-content:space-between!important;gap:16px!important;min-height:64px!important;border-radius:8px!important;padding:10px 14px!important;}
+body.mobile-tauri .brand-mark{width:36px!important;height:36px!important;border-radius:7px 5px 8px 5px!important;font-size:1.16rem!important;}
+body.mobile-tauri .brand-lockup .brand-title{font-size:clamp(1.58rem,1.7vw,1.78rem)!important;}
+body.mobile-tauri .top-actions{display:flex!important;align-items:center!important;justify-content:flex-end!important;gap:8px!important;height:40px!important;margin-left:auto!important;}
+body.mobile-tauri .source-control,body.mobile-tauri .theme-switch{height:38px!important;min-height:38px!important;border-radius:7px!important;padding:0 10px!important;}
+body.mobile-tauri .workspace{display:grid!important;grid-template-columns:236px minmax(0,1fr)!important;gap:12px!important;align-items:start!important;width:100%!important;}
+body.mobile-tauri .workspace-nav{display:block!important;position:sticky!important;top:calc(env(safe-area-inset-top) + 76px)!important;min-height:calc(100dvh - 96px)!important;overflow:hidden!important;border:1px solid rgba(239,78,66,.32)!important;border-radius:8px!important;background:linear-gradient(180deg,rgba(35,17,15,.96),rgba(17,9,8,.98))!important;box-shadow:inset -1px 0 0 rgba(255,196,184,.08),0 12px 32px rgba(0,0,0,.28)!important;}
+body.mobile-tauri .terminal-nav{display:grid!important;padding:6px!important;}
+body.mobile-tauri .terminal-nav a{display:grid!important;grid-template-columns:34px minmax(0,1fr)!important;grid-template-rows:auto auto!important;min-height:78px!important;padding:12px!important;border-radius:6px!important;}
+body.mobile-tauri .terminal-nav a.active,body.mobile-tauri .terminal-nav a:hover{border-color:rgba(239,78,66,.36)!important;background:linear-gradient(90deg,rgba(239,78,66,.18),rgba(35,17,15,.78) 70%)!important;color:#fff7f3!important;}
+body.mobile-tauri .terminal-nav .nav-icon-box{width:30px!important;height:30px!important;border-color:rgba(239,78,66,.34)!important;background:rgba(12,7,6,.72)!important;color:#ff675c!important;}
+body.mobile-tauri .terminal-nav strong{font-size:.96rem!important;font-weight:860!important;}
+body.mobile-tauri .terminal-nav em{font-size:.74rem!important;}
+body.mobile-tauri .bottom-tabbar{display:none!important;}
+body.mobile-tauri .workbench{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:12px!important;width:100%!important;max-width:100%!important;}
+body.mobile-tauri .workbench-view{display:none;}
+body.mobile-tauri .workbench[data-active-view="screen"] #sectionScreen,body.mobile-tauri .workbench[data-active-view="screen"] #sectionGraph,body.mobile-tauri .workbench[data-active-view="screen"] #sectionTrend,body.mobile-tauri .workbench[data-active-view="observe"] #sectionObserve,body.mobile-tauri .workbench[data-active-view="backtest"] #sectionBacktest,body.mobile-tauri .workbench[data-active-view="news"] #sectionNewsRag,body.mobile-tauri .workbench[data-active-view="agent"] #sectionAgent{display:block!important;margin-top:0!important;}
+body.mobile-tauri .research-context-bar{top:calc(env(safe-area-inset-top) + 76px)!important;grid-template-columns:minmax(0,1fr) max-content!important;border-color:rgba(239,78,66,.36)!important;border-radius:8px!important;background:linear-gradient(180deg,rgba(32,15,13,.98),rgba(18,9,8,.96))!important;padding:10px 12px!important;box-shadow:0 12px 28px rgba(0,0,0,.24)!important;}
+body.mobile-tauri .research-context-bar strong{display:block!important;overflow:hidden!important;white-space:nowrap!important;text-overflow:ellipsis!important;-webkit-line-clamp:unset!important;}
+body.mobile-tauri .module,body.mobile-tauri .agent-console{position:relative!important;overflow:hidden!important;padding:18px!important;border:1px solid rgba(239,78,66,.30)!important;border-radius:8px!important;background:linear-gradient(180deg,rgba(27,13,11,.97),rgba(13,7,6,.98))!important;box-shadow:0 14px 34px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,239,232,.04)!important;}
+body.mobile-tauri .module::before,body.mobile-tauri .workspace-nav::before{content:"";position:absolute;top:-1px;right:12px;left:12px;height:2px;border-radius:999px;background:linear-gradient(90deg,rgba(239,59,45,.78),rgba(240,189,79,.58),rgba(239,59,45,.55));opacity:.72;pointer-events:none;}
+body.mobile-tauri .module-heading{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;padding-bottom:10px!important;border-bottom:1px solid rgba(255,207,196,.10)!important;}
+body.mobile-tauri .result-panel{border:1px solid rgba(255,190,178,.30)!important;border-radius:8px!important;background:linear-gradient(180deg,rgba(18,9,8,.88),rgba(8,5,4,.92))!important;box-shadow:inset 0 1px 0 rgba(255,244,238,.04)!important;}
+body.mobile-tauri #sectionScreen .result-panel,body.mobile-tauri #sectionGraph .result-panel{min-height:250px!important;}
+body.mobile-tauri #sectionFilters.control-rail{top:calc(env(safe-area-inset-top) + 76px)!important;right:16px!important;bottom:16px!important;left:auto!important;width:min(420px,calc(100vw - 32px))!important;max-height:none!important;border:1px solid rgba(239,78,66,.36)!important;border-radius:8px!important;background:linear-gradient(180deg,rgba(28,13,11,.98),rgba(13,7,6,.98))!important;transform:translateX(calc(100% + 24px))!important;}
+body.mobile-tauri.criteria-open #sectionFilters.control-rail{transform:translateX(0)!important;}
+}
+@media (min-width:900px) and (orientation:landscape) and (max-width:1180px){body.mobile-tauri .workspace{grid-template-columns:196px minmax(0,1fr)!important;}body.mobile-tauri .terminal-nav a{min-height:64px!important;padding:10px!important;}}
+
+/* Criteria panel opacity hardening: keep the condition editor readable over dense result pages. */
+.criteria-open .criteria-overlay:not([hidden]){background:rgba(0,0,0,.66)!important;backdrop-filter:blur(2px);}
+#sectionFilters.control-rail{background:#120908!important;border-color:rgba(239,78,66,.46)!important;box-shadow:0 22px 64px rgba(0,0,0,.62),0 0 0 1px rgba(255,214,204,.06),inset 0 1px 0 rgba(255,244,238,.06)!important;backdrop-filter:none!important;}
+#sectionFilters .criteria-panel-heading{background:linear-gradient(180deg,#24100d,#170908)!important;border-bottom-color:rgba(255,201,190,.16)!important;}
+#sectionFilters .market-strip,#sectionFilters .data-health,#sectionFilters .rail-section,#sectionFilters .advanced-section{background:linear-gradient(180deg,rgba(28,13,11,.98),rgba(16,8,7,.98))!important;border-color:rgba(239,78,66,.24)!important;}
+body.mobile-tauri.criteria-open .criteria-overlay:not([hidden]){background:rgba(0,0,0,.72)!important;backdrop-filter:blur(2px);}
+body.mobile-tauri #sectionFilters.control-rail{background:#120908!important;border-color:rgba(239,78,66,.50)!important;box-shadow:0 24px 72px rgba(0,0,0,.68),0 0 0 1px rgba(255,214,204,.07),inset 0 1px 0 rgba(255,244,238,.07)!important;backdrop-filter:none!important;}
+body.mobile-tauri #sectionFilters .criteria-panel-heading{background:linear-gradient(180deg,#26110e,#170908)!important;}
+
+/* Mobile refresh diagnostic log: visible network diagnostics for Android stock-pool refresh. */
+.refresh-log{grid-column:1/-1;max-height:170px;overflow:auto;border-top:1px solid rgba(255,207,196,.12);background:linear-gradient(180deg,rgba(8,5,4,.92),rgba(14,7,6,.96));padding:8px 12px;font-family:Consolas,"Microsoft YaHei",monospace;font-size:.72rem;line-height:1.45;color:#d8c1ba;}
+.refresh-log-line{display:grid;grid-template-columns:64px minmax(0,1fr);gap:8px;padding:2px 0;border-bottom:1px solid rgba(255,255,255,.03);}
+.refresh-log-line:last-child{border-bottom:0;}
+.refresh-log-time{color:#9d827a;font-variant-numeric:tabular-nums;}
+.refresh-log-message{overflow-wrap:anywhere;word-break:break-word;}
+.refresh-log-line.ok .refresh-log-message{color:#ffcfbf;}
+.refresh-log-line.warn .refresh-log-message{color:#f0bd4f;}
+.refresh-log-line.error .refresh-log-message{color:#ff6b61;}
+body.mobile-tauri .refresh-log{max-height:190px;border:1px solid rgba(239,78,66,.22);border-radius:8px;background:#090504;box-shadow:inset 0 1px 0 rgba(255,244,238,.04);}
+@media (min-width:900px) and (orientation:landscape){body.mobile-tauri .refresh-log{max-height:220px;}}

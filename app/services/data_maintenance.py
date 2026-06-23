@@ -51,10 +51,15 @@ def refresh_universe(source: str, policy: CachePolicy | None = None) -> DataRefr
     try:
         provider = get_provider(normalized_source, refresh=True)
         count = len(provider.list_stocks())
-        notes.append(f"Refreshed {count} stocks from {normalized_source}.")
+        notes.append(f"\u5df2\u5237\u65b0 {count} \u53ea\u80a1\u7968\u7684\u57fa\u7840\u80a1\u7968\u6c60\u3002")
+        refresh_screening_cache = getattr(provider, "refresh_screening_cache", None)
+        if callable(refresh_screening_cache):
+            screening_notes = refresh_screening_cache()
+            if screening_notes:
+                notes.extend(screening_notes)
     except Exception as exc:
         status = data_source_status(normalized_source, policy)
-        notes.append(f"Refresh failed: {exc}")
+        notes.append(f"\u5237\u65b0\u5931\u8d25\uff1a{exc}")
         return DataRefreshResult(source=normalized_source, refreshed=False, status=status, notes=notes)
 
     status = data_source_status(normalized_source, policy)
@@ -149,13 +154,14 @@ def prune_cache(source: str, policy: CachePolicy | None = None) -> CachePruneRes
     ]
     candidates.sort(key=lambda path: path.stat().st_mtime)
 
+    clear_all = str(getattr(policy, "mode", "")).strip().lower() in {"clear", "full", "all"}
     removed_files = 0
     removed_bytes = 0
     current_bytes = _directory_size(CACHE_DIR)
-    target_bytes = int(policy.max_bytes * 0.85)
+    target_bytes = 0 if clear_all else int(policy.max_bytes * 0.85)
 
     for path in candidates:
-        if current_bytes <= target_bytes:
+        if not clear_all and current_bytes <= target_bytes:
             break
         size = path.stat().st_size
         path.unlink(missing_ok=True)
@@ -164,16 +170,17 @@ def prune_cache(source: str, policy: CachePolicy | None = None) -> CachePruneRes
         removed_bytes += size
 
     status = data_source_status(source, policy)
-    notes = ["股票池缓存会被保留，只清理可丢弃的历史行情和分钟线缓存。"]
-    if not removed_files:
-        notes.append("No disposable cache files needed pruning.")
+    notes = ["已保留股票池核心缓存，已删除可丢弃缓存。"]
+    if clear_all:
+        notes[0] = "已按手动清理模式删除所有可丢弃缓存。"
+    elif not removed_files:
+        notes.append("未发现需要清理的可丢弃缓存文件。")
     return CachePruneResult(
         removed_files=removed_files,
         removed_bytes=removed_bytes,
         status=status,
         notes=notes,
     )
-
 
 def _normalize_source(source: str | None) -> str:
     value = (source or os.getenv("STOCK_PROVIDER", "tdx")).strip().lower()

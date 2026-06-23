@@ -4,6 +4,8 @@
     [switch] $Debug,
     [switch] $Aab,
     [switch] $SplitPerAbi,
+    [switch] $Signed,
+    [switch] $CreateSigningKey,
     [string[]] $Target = @("aarch64")
 )
 
@@ -13,6 +15,10 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $DesktopDir = Join-Path $Root "desktop"
 $AndroidProjectDir = Join-Path $Root "desktop\src-tauri\gen\android"
 $PrepareAssetsScript = Join-Path $PSScriptRoot "prepare-tauri-android-assets.ps1"
+$SigningDir = Join-Path $Root "desktop\src-tauri\keys"
+$SigningConfigPath = Join-Path $SigningDir "android-signing.local.json"
+$DefaultReleaseKeystore = Join-Path $SigningDir "guxuanyou-release.jks"
+$DefaultReleaseKeyAlias = "guxuanyou-release"
 
 function Use-EnvPathFallback {
     param(
@@ -156,6 +162,231 @@ function Invoke-Checked {
     }
 }
 
+function Get-RandomHexPassword {
+    $bytes = New-Object byte[] 24
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $rng.GetBytes($bytes)
+    } finally {
+        $rng.Dispose()
+    }
+    return ([System.BitConverter]::ToString($bytes) -replace "-", "").ToLowerInvariant()
+}
+
+function Resolve-KeytoolExecutable {
+    $JavaHome = [Environment]::GetEnvironmentVariable("JAVA_HOME")
+    if ($JavaHome) {
+        $candidate = Join-Path $JavaHome "bin\keytool.exe"
+        if (Test-Path -LiteralPath $candidate) {
+            return $candidate
+        }
+    }
+
+    $command = Get-Command keytool -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    throw "Android release signing requires keytool.exe. Set GP_ANDROID_JAVA_HOME to JDK 17/21 and retry."
+}
+
+function Resolve-AndroidBuildToolExecutable {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Name
+    )
+
+    $SdkRoot = [Environment]::GetEnvironmentVariable("ANDROID_HOME")
+    if (-not $SdkRoot) {
+        $SdkRoot = [Environment]::GetEnvironmentVariable("ANDROID_SDK_ROOT")
+    }
+    if (-not $SdkRoot) {
+        throw "ANDROID_HOME is not set; cannot locate Android build-tools for $Name."
+    }
+
+    $BuildToolsRoot = Join-Path $SdkRoot "build-tools"
+    if (-not (Test-Path -LiteralPath $BuildToolsRoot)) {
+        throw "Android build-tools not found under $BuildToolsRoot. Install build-tools with sdkmanager."
+    }
+
+    $tool = Get-ChildItem -LiteralPath $BuildToolsRoot -Directory |
+        Sort-Object Name -Descending |
+        ForEach-Object { Join-Path $_.FullName $Name } |
+        Where-Object { Test-Path -LiteralPath $_ } |
+        Select-Object -First 1
+    if (-not $tool) {
+        throw "Android build-tool $Name was not found under $BuildToolsRoot."
+    }
+    return $tool
+}
+
+function New-AndroidReleaseKeystore {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Keystore,
+        [Parameter(Mandatory = $true)]
+        [string] $Alias,
+        [Parameter(Mandatory = $true)]
+        [string] $StorePassword,
+        [Parameter(Mandatory = $true)]
+        [string] $KeyPassword
+    )
+
+    if (Test-Path -LiteralPath $Keystore) {
+        return
+    }
+
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Keystore) | Out-Null
+    $keytool = Resolve-KeytoolExecutable
+    Invoke-Checked "Create Android release keystore" $keytool @(
+        "-genkeypair",
+        "-v",
+        "-keystore", $Keystore,
+        "-alias", $Alias,
+        "-keyalg", "RSA",
+        "-keysize", "2048",
+        "-validity", "10000",
+        "-storepass", $StorePassword,
+        "-keypass", $KeyPassword,
+        "-dname", "CN=GuXuanYou, OU=Release, O=GuXuanYou, L=Shanghai, ST=Shanghai, C=CN"
+    )
+}
+
+function Get-AndroidSigningConfig {
+    $EnvKeystore = [Environment]::GetEnvironmentVariable("GP_ANDROID_KEYSTORE")
+    $EnvAlias = [Environment]::GetEnvironmentVariable("GP_ANDROID_KEY_ALIAS")
+    $EnvStorePassword = [Environment]::GetEnvironmentVariable("GP_ANDROID_KEYSTORE_PASSWORD")
+    $EnvKeyPassword = [Environment]::GetEnvironmentVariable("GP_ANDROID_KEY_PASSWORD")
+
+    if ($EnvKeystore -or $EnvAlias -or $EnvStorePassword -or $EnvKeyPassword) {
+        if (-not $EnvKeystore -or -not $EnvAlias -or -not $EnvStorePassword) {
+            throw "GP_ANDROID_KEYSTORE, GP_ANDROID_KEY_ALIAS, and GP_ANDROID_KEYSTORE_PASSWORD must all be set for env-based signing."
+        }
+        if (-not $EnvKeyPassword) {
+            $EnvKeyPassword = $EnvStorePassword
+        }
+        return [pscustomobject]@{
+            Keystore = $EnvKeystore
+            Alias = $EnvAlias
+            StorePassword = $EnvStorePassword
+            KeyPassword = $EnvKeyPassword
+            Source = "environment"
+        }
+    }
+
+    if (Test-Path -LiteralPath $SigningConfigPath) {
+        $config = Get-Content -LiteralPath $SigningConfigPath -Raw | ConvertFrom-Json
+        if (-not $config.keystore -or -not $config.alias -or -not $config.store_password) {
+            throw "Local Android signing config is incomplete: $SigningConfigPath"
+        }
+        if ($CreateSigningKey) {
+            New-AndroidReleaseKeystore $config.keystore $config.alias $config.store_password $config.store_password
+        }
+        return [pscustomobject]@{
+            Keystore = $config.keystore
+            Alias = $config.alias
+            StorePassword = $config.store_password
+            KeyPassword = $config.store_password
+            Source = "local"
+        }
+    }
+
+    if (-not $CreateSigningKey) {
+        throw "Signed Android build requested, but no signing config was found. Re-run with -CreateSigningKey, or set GP_ANDROID_KEYSTORE / GP_ANDROID_KEY_ALIAS / GP_ANDROID_KEYSTORE_PASSWORD / GP_ANDROID_KEY_PASSWORD."
+    }
+
+    New-Item -ItemType Directory -Force -Path $SigningDir | Out-Null
+    $storePassword = Get-RandomHexPassword
+    $keyPassword = $storePassword
+    New-AndroidReleaseKeystore $DefaultReleaseKeystore $DefaultReleaseKeyAlias $storePassword $keyPassword
+    $localConfig = [ordered]@{
+        keystore = $DefaultReleaseKeystore
+        alias = $DefaultReleaseKeyAlias
+        store_password = $storePassword
+        key_password = $storePassword
+    }
+    $localConfig | ConvertTo-Json | Set-Content -LiteralPath $SigningConfigPath -Encoding UTF8
+    Write-Host "Created local Android release signing config: $SigningConfigPath"
+    Write-Host "Keep this keystore and config. Future Android upgrades need the same signing key."
+
+    return [pscustomobject]@{
+        Keystore = $DefaultReleaseKeystore
+        Alias = $DefaultReleaseKeyAlias
+        StorePassword = $storePassword
+        KeyPassword = $storePassword
+        Source = "generated"
+    }
+}
+
+function Find-UnsignedReleaseApk {
+    $ApkOutputRoot = Join-Path $AndroidProjectDir "app\build\outputs\apk"
+    if (-not (Test-Path -LiteralPath $ApkOutputRoot)) {
+        throw "Android APK output directory not found: $ApkOutputRoot"
+    }
+
+    $apk = Get-ChildItem -LiteralPath $ApkOutputRoot -Recurse -File -Filter "*.apk" |
+        Where-Object { $_.Name -match "release" -and $_.Name -match "unsigned" } |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
+    if (-not $apk) {
+        throw "No unsigned release APK was found under $ApkOutputRoot."
+    }
+    return $apk
+}
+
+function Sign-AndroidReleaseApk {
+    if (-not $Signed) {
+        return $null
+    }
+    if ($Debug -or $Aab) {
+        throw "-Signed currently supports release APK builds only. Remove -Debug/-Aab or sign those artifacts with a dedicated flow."
+    }
+
+    $config = Get-AndroidSigningConfig
+    if (-not (Test-Path -LiteralPath $config.Keystore)) {
+        throw "Android release keystore does not exist: $($config.Keystore)"
+    }
+
+    $unsignedApk = Find-UnsignedReleaseApk
+    $zipalign = Resolve-AndroidBuildToolExecutable "zipalign.exe"
+    $apksigner = Resolve-AndroidBuildToolExecutable "apksigner.bat"
+    $alignedApk = Join-Path $unsignedApk.DirectoryName "guxuanyou-release-aligned.apk"
+    $signedApk = Join-Path $unsignedApk.DirectoryName "股选优_0.3.0_android_aarch64_release_signed.apk"
+
+    if (Test-Path -LiteralPath $alignedApk) {
+        Remove-Item -LiteralPath $alignedApk -Force
+    }
+    if (Test-Path -LiteralPath $signedApk) {
+        Remove-Item -LiteralPath $signedApk -Force
+    }
+
+    Invoke-Checked "zipalign Android release APK" $zipalign @(
+        "-f",
+        "-p",
+        "4",
+        $unsignedApk.FullName,
+        $alignedApk
+    )
+    Invoke-Checked "Sign Android release APK" $apksigner @(
+        "sign",
+        "--ks", $config.Keystore,
+        "--ks-key-alias", $config.Alias,
+        "--ks-pass", "pass:$($config.StorePassword)",
+        "--key-pass", "pass:$($config.KeyPassword)",
+        "--out", $signedApk,
+        $alignedApk
+    )
+    Invoke-Checked "Verify Android signed APK" $apksigner @(
+        "verify",
+        "--verbose",
+        "--print-certs",
+        $signedApk
+    )
+    Write-Host "Signed Android APK: $signedApk"
+    return $signedApk
+}
+
+
 function Use-LocalGradleDistribution {
     $GradleZip = "C:\tmp\gradle-8.14.3-bin.zip"
     $WrapperProperties = Join-Path $AndroidProjectDir "gradle\wrapper\gradle-wrapper.properties"
@@ -193,7 +424,11 @@ function Remove-CheckedDirectory {
         throw "Refusing to remove path outside expected parent: $childFullPath"
     }
 
-    Remove-Item -LiteralPath $childFullPath -Recurse -Force
+    try {
+        Remove-Item -LiteralPath $childFullPath -Recurse -Force
+    } catch {
+        Write-Warning "Skipping locked cleanup path: $childFullPath ($($_.Exception.Message))"
+    }
 }
 
 function Clear-TauriAndroidPluginCache {
@@ -221,10 +456,14 @@ function Update-AndroidProjectForLanImport {
 
     if (Test-Path -LiteralPath $AndroidManifest) {
         $manifest = Get-Content -LiteralPath $AndroidManifest -Raw
+        $manifestUpdated = $false
+        $internetPermissionPattern = [regex]::Escape('    <uses-permission android:name="android.permission.INTERNET" />')
+        $networkStatePermission = "    <uses-permission android:name=`"android.permission.ACCESS_NETWORK_STATE`" />"
+
         if ($manifest -notmatch "android\.permission\.CAMERA") {
-            $internetPermissionPattern = [regex]::Escape('    <uses-permission android:name="android.permission.INTERNET" />')
             $lanImportPermissions = @(
                 "    <uses-permission android:name=`"android.permission.INTERNET`" />",
+                $networkStatePermission,
                 "    <uses-permission android:name=`"android.permission.CAMERA`" />",
                 "    <uses-feature android:name=`"android.hardware.camera`" android:required=`"false`" />"
             ) -join "`r`n"
@@ -233,6 +472,20 @@ function Update-AndroidProjectForLanImport {
                 $manifestRootPattern = "<manifest([^>]*)>"
                 $manifest = $manifest -replace $manifestRootPattern, "<manifest`$1>`r`n$lanImportPermissions"
             }
+            $manifestUpdated = $true
+        }
+
+        if ($manifest -notmatch "android\.permission\.ACCESS_NETWORK_STATE") {
+            if ($manifest -match $internetPermissionPattern) {
+                $manifest = $manifest -replace $internetPermissionPattern, "    <uses-permission android:name=`"android.permission.INTERNET`" />`r`n$networkStatePermission"
+            } else {
+                $manifestRootPattern = "<manifest([^>]*)>"
+                $manifest = $manifest -replace $manifestRootPattern, "<manifest`$1>`r`n$networkStatePermission"
+            }
+            $manifestUpdated = $true
+        }
+
+        if ($manifestUpdated) {
             Set-Content -LiteralPath $AndroidManifest -Value $manifest -Encoding UTF8
         }
     }
@@ -282,6 +535,8 @@ try {
     Update-AndroidProjectForLanImport
     Use-LocalGradleDistribution
     Clear-TauriAndroidPluginCache
+    $GradleProblemsReportDir = Join-Path $AndroidProjectDir "build\reports\problems"
+    Remove-CheckedDirectory $GradleProblemsReportDir $AndroidProjectDir
 
     if ($InitOnly) {
         Write-Host "Android project is initialized at: $AndroidProjectDir"
@@ -308,6 +563,7 @@ try {
     $BuildArgs += "--ci"
 
     Invoke-Checked "Build Tauri Android package" "npm.cmd" $BuildArgs
+    Sign-AndroidReleaseApk | Out-Null
 } finally {
     Pop-Location
 }

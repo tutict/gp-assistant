@@ -79,14 +79,29 @@ const screeningRulesPromise = loadScreeningRules();
 const STOCK_SEARCH_LIMIT = 5;
 const DEFAULT_OBSERVE_TRADING_DAYS = 10;
 const DEFAULT_DATA_SOURCE = "tdx";
-const MOBILE_TENCENT_MAX_CANDIDATES = 6000;
+const MOBILE_TENCENT_MAX_CANDIDATES = 15000;
 const MOBILE_TENCENT_MAX_FAILED_BATCHES = 4;
-const MOBILE_TENCENT_MAX_REFRESH_SECS = 45;
-const MOBILE_TENCENT_INVOKE_TIMEOUT_MS = (MOBILE_TENCENT_MAX_REFRESH_SECS + 15) * 1000;
+const MOBILE_TENCENT_BATCHES_PER_STEP = 1;
+const MOBILE_TAURI_INVOKE_TIMEOUT_MS = 8000;
+const MOBILE_TENCENT_SCRIPT_BATCH_SIZE = 120;
+const MOBILE_TENCENT_SCRIPT_TIMEOUT_MS = 8000;
+const MOBILE_REFRESH_LOG_LIMIT = 80;
+const MOBILE_DEDUCTED_FINANCIAL_FIELDS = [
+  "deducted_net_profit_billion",
+  "deducted_net_profit_margin",
+  "deducted_net_profit_growth_rate",
+];
+const MOBILE_DEDUCTED_FINANCIAL_SKIP_NOTE =
+  "\u79fb\u52a8\u7aef\u884c\u60c5\u6c60\u6ca1\u6709\u6263\u975e\u8d22\u52a1\u5b57\u6bb5\uff0c\u5df2\u8df3\u8fc7\u6263\u975e\u51c0\u5229\u6da6\u6761\u4ef6\uff1b\u5982\u9700\u6309\u5b8c\u6574\u8d22\u52a1\u6307\u6807\u7b5b\u9009\uff0c\u8bf7\u4f7f\u7528 Windows \u7aef\u5b8c\u6574\u6570\u636e\u6e90\u3002";
+const MOBILE_DEDUCTED_FINANCIAL_STATUS_NOTE =
+  "\u5f53\u524d\u79fb\u52a8\u884c\u60c5\u6c60\u53ea\u5305\u542b\u884c\u60c5\u4f30\u503c\uff0c\u4e0d\u5305\u542b\u6263\u975e\u51c0\u5229\u6da6\u7b49\u5b8c\u6574\u8d22\u52a1\u5b57\u6bb5\uff0c\u79fb\u52a8\u7aef\u7b5b\u9009\u4f1a\u81ea\u52a8\u8df3\u8fc7\u8fd9\u7c7b\u6761\u4ef6\u3002";
 const DEFAULT_TODAY_DATE_INPUT_IDS = new Set(["trendEnd", "btEnd", "observeEnd"]);
 let mobileMarketDataPromise = null;
 let mobileMarketDataSummary = null;
 let mobileMarketDataMeta = null;
+let mobileMarketRefreshJob = null;
+let mobileMarketRefreshProgress = null;
+const mobileMarketRefreshListeners = new Set();
 let autoRefreshInFlight = false;
 let observeRequestId = 0;
 let observeTaskId = 0;
@@ -109,6 +124,7 @@ const dataSource = {
   progressLabel: $("#refreshProgressLabel"),
   progressValue: $("#refreshProgressValue"),
   progressBar: $("#refreshProgressBar"),
+  log: $("#refreshLog"),
 };
 const mobileNav = {
   toggle: $("#mobileNavToggle"),
@@ -193,17 +209,18 @@ const TAURI_MOBILE_POST_ROUTES = {
     const cache = await readMobileMarketDataCache(invoke).catch(() => null);
     const tradingDay = isLikelyTradingDay();
     if (!cache) {
-      const status = await refreshMobileMarketData(invoke, { seed: null });
+      startMobileMarketRefreshJob(invoke, { seed: null, reason: "\u9996\u6b21\u5b89\u88c5\u540e\u53f0\u751f\u6210\u80a1\u7968\u6c60" });
       return {
         source: DEFAULT_DATA_SOURCE,
         checked_at: new Date().toISOString(),
         trading_day: tradingDay,
         after_close: !shouldUsePreviousCloseForMobileRefresh(),
         due: true,
-        refreshed: true,
+        refreshed: false,
+        background_refresh: true,
         initial_refresh: true,
-        status,
-        notes: mobileRefreshNotes(status, "首次安装已联网生成手机本地股票池。"),
+        status: await mobileDataStatus(invoke),
+        notes: ["\u9996\u6b21\u5b89\u88c5\u6b63\u5728\u540e\u53f0\u8054\u7f51\u751f\u6210\u80a1\u7968\u6c60\uff0c\u9875\u9762\u53ef\u4ee5\u5148\u64cd\u4f5c\uff1b\u751f\u6210\u5b8c\u6210\u540e\u4f1a\u81ea\u52a8\u66f4\u65b0\u72b6\u6001\u3002"],
       };
     }
     if (!tradingDay) {
@@ -215,19 +232,20 @@ const TAURI_MOBILE_POST_ROUTES = {
         due: false,
         refreshed: false,
         status: await mobileDataStatus(invoke),
-        notes: ["今天不是交易日，移动端不自动刷新股票池。"],
+        notes: ["\u4eca\u5929\u4e0d\u662f\u4ea4\u6613\u65e5\uff0c\u79fb\u52a8\u7aef\u4e0d\u81ea\u52a8\u5237\u65b0\u80a1\u7968\u6c60\u3002"],
       };
     }
-    const status = await refreshMobileMarketData(invoke);
+    startMobileMarketRefreshJob(invoke, { reason: "\u4ea4\u6613\u65e5\u540e\u53f0\u5237\u65b0\u80a1\u7968\u6c60" });
     return {
       source: DEFAULT_DATA_SOURCE,
       checked_at: new Date().toISOString(),
       trading_day: true,
       after_close: !shouldUsePreviousCloseForMobileRefresh(),
       due: true,
-      refreshed: true,
-      status,
-      notes: mobileRefreshNotes(status, "移动端已按交易日策略联网更新股票池。"),
+      refreshed: false,
+      background_refresh: true,
+      status: await mobileDataStatus(invoke),
+      notes: ["\u4ea4\u6613\u65e5\u540e\u53f0\u5237\u65b0\u5df2\u542f\u52a8\uff0c\u73b0\u6709\u7f13\u5b58\u4f1a\u7ee7\u7eed\u53ef\u7528\u3002"],
     };
   },
   "/api/data-sources/refresh-universe": async ({ invoke }) => {
@@ -256,12 +274,70 @@ const TAURI_MOBILE_POST_ROUTES = {
 };
 
 async function invokeCoreWithMobileData(invoke, command, payloadKey, payloadValue) {
-  return invoke(command, {
+  const data = await loadMobileMarketData(invoke);
+  const adjusted = adaptMobileCorePayload(payloadKey, payloadValue, data);
+  const result = await invoke(command, {
     payload: {
-      data: await loadMobileMarketData(invoke),
-      [payloadKey]: payloadValue,
+      data,
+      [payloadKey]: adjusted.value,
     },
   });
+  return appendMobilePayloadNotes(result, adjusted.notes);
+}
+
+function adaptMobileCorePayload(payloadKey, payloadValue, data) {
+  const notes = [];
+  if (payloadKey === "criteria") {
+    return { value: adaptCriteriaForMobileData(payloadValue, data, notes), notes };
+  }
+  if (payloadKey === "request" && payloadValue && typeof payloadValue === "object" && !Array.isArray(payloadValue)) {
+    const request = { ...payloadValue };
+    if (request.criteria) {
+      request.criteria = adaptCriteriaForMobileData(request.criteria, data, notes);
+    }
+    return { value: request, notes };
+  }
+  return { value: payloadValue, notes };
+}
+
+function adaptCriteriaForMobileData(criteria = {}, data, notes = []) {
+  const adjusted = { ...(criteria || {}) };
+  if (mobileCriteriaUsesDeductedFinancialFields(adjusted) && !mobileDataHasDeductedFinancialFields(data)) {
+    MOBILE_DEDUCTED_FINANCIAL_FIELDS.forEach((field) => {
+      delete adjusted[`min_${field}`];
+    });
+    notes.push(MOBILE_DEDUCTED_FINANCIAL_SKIP_NOTE);
+  }
+  return adjusted;
+}
+
+function mobileCriteriaUsesDeductedFinancialFields(criteria = {}) {
+  return MOBILE_DEDUCTED_FINANCIAL_FIELDS.some((field) => {
+    const key = `min_${field}`;
+    return Object.prototype.hasOwnProperty.call(criteria, key) && criteria[key] !== null && criteria[key] !== undefined;
+  });
+}
+
+function mobileDataHasDeductedFinancialFields(data = {}) {
+  return (Array.isArray(data?.stocks) ? data.stocks : []).some((stock) =>
+    MOBILE_DEDUCTED_FINANCIAL_FIELDS.some((field) => Number.isFinite(Number(stock?.[field]))),
+  );
+}
+
+function appendMobilePayloadNotes(result, notes = []) {
+  const cleanNotes = uniqueNotes(notes);
+  if (!cleanNotes.length || !result || typeof result !== "object" || Array.isArray(result)) return result;
+  return {
+    ...result,
+    notes: uniqueNotes([...(Array.isArray(result.notes) ? result.notes : []), ...cleanNotes]),
+  };
+}
+
+function uniqueNotes(notes = []) {
+  const seen = new Set();
+  return notes
+    .map((note) => String(note || "").trim())
+    .filter((note) => note && !seen.has(note) && seen.add(note));
 }
 
 async function analyzeMobileNewsRag(invoke, payload = {}) {
@@ -1970,8 +2046,9 @@ async function loadDataStatus() {
 async function maybeAutoRefreshUniverse(trigger = "startup") {
   if (!shouldCheckAutoRefreshUniverse()) return;
   autoRefreshInFlight = true;
-  const progress = isMobileTauriRuntime() && trigger === "startup" ? startRefreshProgress() : null;
-  if (progress) setMaintenanceNote("首次安装正在联网生成股票池");
+  const mobileRuntime = isMobileTauriRuntime();
+  const progress = mobileRuntime && trigger === "startup" ? startRefreshProgress({ manual: true }) : null;
+  if (progress) setMaintenanceNote("\u80a1\u7968\u6c60\u540e\u53f0\u5237\u65b0\u5df2\u542f\u52a8\uff0c\u9875\u9762\u53ef\u4ee5\u5148\u64cd\u4f5c");
   try {
     const data = await requestJson("POST", "/api/data-sources/auto-refresh-universe", {
       mode: "light",
@@ -1982,64 +2059,83 @@ async function maybeAutoRefreshUniverse(trigger = "startup") {
     localStorage.setItem(AUTO_REFRESH_CHECK_KEY, String(Date.now()));
     renderDataStatus(data.status);
     const notes = data.notes || [];
-    if (data.refreshed) {
-      if (progress) finishRefreshProgress(data.initial_refresh ? "股票池初始化完成" : "股票池刷新完成");
-      setMaintenanceNote(notes.join(" ") || "交易日收盘后已自动刷新基础股票池。");
+    if (data.background_refresh) {
+      if (progress) {
+        const unsubscribe = watchMobileRefreshProgress((snapshot) => updateMobileRefreshProgress(snapshot));
+        mobileMarketRefreshJob?.finally(() => {
+          unsubscribe();
+          updateMobileRefreshProgress(mobileMarketRefreshProgress, true);
+          window.setTimeout(() => stopRefreshProgress(progress), 900);
+        });
+      }
+      setMaintenanceNote(notes.join(" ") || "\u80a1\u7968\u6c60\u540e\u53f0\u5237\u65b0\u5df2\u542f\u52a8\uff0c\u73b0\u6709\u7f13\u5b58\u4f1a\u7ee7\u7eed\u53ef\u7528\u3002");
+    } else if (data.refreshed) {
+      if (progress) finishRefreshProgress(data.initial_refresh ? "\u80a1\u7968\u6c60\u521d\u59cb\u5316\u5b8c\u6210" : "\u80a1\u7968\u6c60\u5237\u65b0\u5b8c\u6210");
+      setMaintenanceNote(notes.join(" ") || "\u4ea4\u6613\u65e5\u6536\u76d8\u540e\u5df2\u81ea\u52a8\u5237\u65b0\u57fa\u7840\u80a1\u7968\u6c60\u3002");
     } else if (data.due) {
-      setMaintenanceNote(notes.join(" ") || "交易日自动刷新未完成，可手动刷新。");
+      setMaintenanceNote(notes.join(" ") || "\u4ea4\u6613\u65e5\u81ea\u52a8\u5237\u65b0\u672a\u5b8c\u6210\uff0c\u53ef\u624b\u52a8\u5237\u65b0\u3002");
     } else if (notes.length && trigger === "startup") {
       setMaintenanceNote(notes.join(" "));
     }
   } catch (err) {
-    if (progress) failRefreshProgress("股票池初始化失败");
-    setMaintenanceNote(`股票池自动刷新检查失败：${err.message}`);
+    if (progress) failRefreshProgress("\u80a1\u7968\u6c60\u521d\u59cb\u5316\u5931\u8d25");
+    setMaintenanceNote(`\u80a1\u7968\u6c60\u81ea\u52a8\u5237\u65b0\u68c0\u67e5\u5931\u8d25\uff1a${err.message}`);
   } finally {
     autoRefreshInFlight = false;
-    if (progress) window.setTimeout(() => stopRefreshProgress(progress), 900);
+    if (progress && !mobileMarketRefreshJob) window.setTimeout(() => stopRefreshProgress(progress), 900);
   }
 }
 
 function shouldCheckAutoRefreshUniverse() {
-  if (!dataSource.universe || autoRefreshInFlight) return false;
+  if (!dataSource.universe || autoRefreshInFlight || mobileMarketRefreshJob) return false;
   const lastChecked = Number(localStorage.getItem(AUTO_REFRESH_CHECK_KEY) || 0);
   return !Number.isFinite(lastChecked) || Date.now() - lastChecked >= AUTO_REFRESH_CHECK_INTERVAL_MS;
 }
 
 async function refreshUniverse() {
   const mobileRuntime = isMobileTauriRuntime();
-  const progress = startRefreshProgress();
-  setMaintenanceNote(mobileRuntime ? "正在联网更新股票池" : "刷新股票池中，真实数据源可能需要几十秒");
+  const progress = startRefreshProgress({ manual: mobileRuntime });
+  setMaintenanceNote(mobileRuntime ? "\u6b63\u5728\u540e\u53f0\u5206\u6279\u66f4\u65b0\u80a1\u7968\u6c60" : "\u5237\u65b0\u80a1\u7968\u6c60\u4e2d\uff0c\u771f\u5b9e\u6570\u636e\u6e90\u53ef\u80fd\u9700\u8981\u51e0\u5341\u79d2");
   try {
+    if (mobileRuntime) {
+      const invoke = window.__TAURI__?.core?.invoke;
+      if (!invoke) throw new Error("\u79fb\u52a8\u7aef\u8fd0\u884c\u73af\u5883\u672a\u63d0\u4f9b Tauri \u8c03\u7528\u80fd\u529b\uff0c\u8bf7\u91cd\u542f\u5e94\u7528\u540e\u91cd\u8bd5\u3002");
+      const status = await refreshMobileUniverseWithProgress(invoke);
+      finishRefreshProgress("\u80a1\u7968\u6c60\u5237\u65b0\u5b8c\u6210");
+      renderDataStatus(status);
+      setMaintenanceNote((status.notes || []).join(" ") || "\u80a1\u7968\u6c60\u5237\u65b0\u5b8c\u6210");
+      return;
+    }
     const data = await requestJson("POST", "/api/data-sources/refresh-universe", {
       mode: "light",
       max_bytes: 209715200,
       daily_days: 500,
       minute_days: 3,
     });
-    finishRefreshProgress("股票池刷新完成");
+    finishRefreshProgress("\u80a1\u7968\u6c60\u5237\u65b0\u5b8c\u6210");
     renderDataStatus(data.status);
-    setMaintenanceNote((data.notes || []).join(" ") || "股票池刷新完成");
+    setMaintenanceNote((data.notes || []).join(" ") || "\u80a1\u7968\u6c60\u5237\u65b0\u5b8c\u6210");
   } catch (err) {
-    failRefreshProgress("股票池刷新失败");
-    setMaintenanceNote(`股票池刷新失败：${err.message}`);
+    failRefreshProgress("\u80a1\u7968\u6c60\u5237\u65b0\u5931\u8d25");
+    setMaintenanceNote(`\u80a1\u7968\u6c60\u5237\u65b0\u5931\u8d25\uff1a${err.message}`);
   } finally {
     window.setTimeout(() => stopRefreshProgress(progress), 900);
   }
 }
 
 async function pruneCache() {
-  setMaintenanceNote("清理可丢弃缓存中");
+  setMaintenanceNote("\u6b63\u5728\u6e05\u7406\u53ef\u4e22\u5f03\u7f13\u5b58");
   try {
     const data = await requestJson("POST", "/api/data-sources/prune-cache", {
-      mode: "light",
+      mode: "clear",
       max_bytes: 209715200,
       daily_days: 500,
       minute_days: 3,
     });
     renderDataStatus(data.status);
-    setMaintenanceNote(`已删除 ${data.removed_files || 0} 个文件，释放 ${formatBytes(data.removed_bytes || 0)}。`);
+    setMaintenanceNote(`\u5df2\u5220\u9664 ${data.removed_files || 0} \u4e2a\u53ef\u4e22\u5f03\u7f13\u5b58\u6587\u4ef6\uff0c\u91ca\u653e ${formatBytes(data.removed_bytes || 0)}\u3002`);
   } catch (err) {
-    setMaintenanceNote(`缓存清理失败：${err.message}`);
+    setMaintenanceNote(`\u7f13\u5b58\u6e05\u7406\u5931\u8d25\uff1a${err.message}`);
   }
 }
 
@@ -2047,18 +2143,85 @@ function setMaintenanceNote(text) {
   if (dataSource.note) dataSource.note.textContent = text;
 }
 
-function startRefreshProgress() {
+function resetRefreshLog(message) {
+  if (!dataSource.log) return;
+  dataSource.log.innerHTML = "";
+  dataSource.log.hidden = false;
+  appendRefreshLog(message || "\u5f00\u59cb\u8054\u7f51\u66f4\u65b0\u80a1\u7968\u6c60");
+}
+
+function appendRefreshLog(message, tone = "info") {
+  if (!dataSource.log) return;
+  dataSource.log.hidden = false;
+  const line = document.createElement("div");
+  line.className = `refresh-log-line ${tone || "info"}`;
+  const time = document.createElement("span");
+  time.className = "refresh-log-time";
+  time.textContent = formatRefreshLogTime(new Date());
+  const body = document.createElement("span");
+  body.className = "refresh-log-message";
+  body.textContent = String(message || "");
+  line.append(time, body);
+  dataSource.log.appendChild(line);
+  while (dataSource.log.children.length > MOBILE_REFRESH_LOG_LIMIT) {
+    dataSource.log.removeChild(dataSource.log.firstElementChild);
+  }
+  dataSource.log.scrollTop = dataSource.log.scrollHeight;
+}
+
+function formatRefreshLogTime(date) {
+  return date.toLocaleTimeString("zh-CN", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function logMobileRefreshResult(result) {
+  if (!result) {
+    appendRefreshLog("\u6279\u6b21\u8fd4\u56de\u4e3a\u7a7a\uff0c\u65e0\u6cd5\u5224\u65ad\u5237\u65b0\u72b6\u6001\u3002", "warn");
+    return;
+  }
+  const total = Number(result.total_batches || 0);
+  const start = Number(result.batch_start || 0) + 1;
+  const end = Number(result.next_batch_start || start);
+  const fetched = Number(result.fetched || 0);
+  const preserved = Number(result.preserved || 0);
+  const failed = Number(result.failed_batches || 0);
+  const empty = Number(result.empty_batches || 0);
+  const processed = Number(result.processed_codes || 0);
+  const totalText = total > 0 ? total : "?";
+  const tone = failed > 0 || result.stopped_early || empty > 0 ? "warn" : "ok";
+  appendRefreshLog(
+    `\u6279\u6b21 ${start}-${end}/${totalText} \u8fd4\u56de\uff1a\u65b0\u589e ${fetched} \u53ea\uff0c\u4fdd\u7559 ${preserved} \u53ea\uff0c\u7a7a\u6279\u6b21 ${empty} \u6279\uff0c\u5931\u8d25 ${failed} \u6279\uff0c\u5df2\u5904\u7406 ${processed} \u53ea\u5019\u9009\u3002`,
+    tone,
+  );
+  (Array.isArray(result.error_samples) ? result.error_samples : [])
+    .filter(Boolean)
+    .slice(0, 3)
+    .forEach((error) => appendRefreshLog(`\u7f51\u7edc\u9519\u8bef\uff1a${error}`, "error"));
+  if (result.stopped_early) {
+    appendRefreshLog(`\u5237\u65b0\u63d0\u524d\u505c\u6b62\uff1a${result.stop_reason || "\u672a\u77e5\u539f\u56e0"}`, "error");
+  }
+}
+
+function startRefreshProgress(options = {}) {
   if (!dataSource.progress) return null;
+  dataSource.progress.hidden = false;
+  if (options.manual) {
+    setRefreshProgress(5, "\u51c6\u5907\u6279\u6b21\u5237\u65b0");
+    return { manual: true };
+  }
   const stages = [
-    [15, "准备数据源"],
-    [32, "获取股票池"],
-    [54, "写入本地缓存"],
-    [72, "检查缓存占用"],
-    [85, "等待腾讯行情返回"],
+    [15, "\u51c6\u5907\u6570\u636e\u6e90"],
+    [32, "\u83b7\u53d6\u80a1\u7968\u6c60"],
+    [54, "\u5199\u5165\u672c\u5730\u7f13\u5b58"],
+    [72, "\u68c0\u67e5\u7f13\u5b58\u5360\u7528"],
+    [85, "\u7b49\u5f85\u884c\u60c5\u8fd4\u56de"],
   ];
   let index = 0;
-  dataSource.progress.hidden = false;
-  setRefreshProgress(8, "准备刷新");
+  setRefreshProgress(8, "\u51c6\u5907\u5237\u65b0");
   return window.setInterval(() => {
     const [value, label] = stages[Math.min(index, stages.length - 1)];
     setRefreshProgress(value, label);
@@ -2067,20 +2230,20 @@ function startRefreshProgress() {
 }
 
 function finishRefreshProgress(label) {
-  setRefreshProgress(100, label || "刷新完成");
+  setRefreshProgress(100, label || "\u5237\u65b0\u5b8c\u6210");
 }
 
 function failRefreshProgress(label) {
-  setRefreshProgress(100, label || "刷新失败");
+  setRefreshProgress(100, label || "\u5237\u65b0\u5931\u8d25");
   dataSource.progress?.classList.add("failed");
 }
 
 function stopRefreshProgress(timer) {
-  if (timer) window.clearInterval(timer);
+  if (timer && typeof timer === "number") window.clearInterval(timer);
   if (!dataSource.progress) return;
   dataSource.progress.hidden = true;
   dataSource.progress.classList.remove("failed");
-  setRefreshProgress(0, "准备刷新");
+  setRefreshProgress(0, "\u51c6\u5907\u5237\u65b0");
 }
 
 function setRefreshProgress(value, label) {
@@ -2643,18 +2806,19 @@ function updateResearchSummaries() {
 
 function updateCriteriaSummary() {
   if (!workbench.criteriaSummary) return;
+  const includeDeductedCriteria = !isMobileTauriRuntime() || mobileMarketDataMeta?.hasDeductedFinancialFields !== false;
   const parts = [
-    $("#industry")?.value ? `行业 ${$("#industry").value}` : "全部行业",
-    $("#minRoe")?.value ? `ROE ≥ ${formatPercent(Number($("#minRoe").value))}` : "",
-    $("#maxPe")?.value ? `PE ≤ ${formatNumber($("#maxPe").value)}` : "",
-    $("#minMcap")?.value ? `市值 ≥ ${formatNumber($("#minMcap").value)} 亿` : "",
-    "扣非净利润 > 0",
-    "扣非净利润增长率 > 10%",
-    $("#requireInstitutionBuyRatio")?.checked ? "机构净买入" : "",
-    `返回 ${clampInt($("#resultLimit")?.value, 1, 200, DEFAULT_RESULT_LIMIT)} 只`,
+    $("#industry")?.value ? `\u884c\u4e1a ${$("#industry").value}` : "\u5168\u90e8\u884c\u4e1a",
+    $("#minRoe")?.value ? `ROE \u2265 ${formatPercent(Number($("#minRoe").value))}` : "",
+    $("#maxPe")?.value ? `PE \u2264 ${formatNumber($("#maxPe").value)}` : "",
+    $("#minMcap")?.value ? `\u5e02\u503c \u2265 ${formatNumber($("#minMcap").value)} \u4ebf` : "",
+    includeDeductedCriteria ? "\u6263\u975e\u51c0\u5229\u6da6 > 0" : "\u79fb\u52a8\u7aef\u8df3\u8fc7\u6263\u975e\u8d22\u52a1",
+    includeDeductedCriteria ? "\u6263\u975e\u51c0\u5229\u6da6\u589e\u957f\u7387 > 10%" : "",
+    $("#requireInstitutionBuyRatio")?.checked ? "\u673a\u6784\u51c0\u4e70\u5165" : "",
+    `\u8fd4\u56de ${clampInt($("#resultLimit")?.value, 1, 200, DEFAULT_RESULT_LIMIT)} \u53ea`,
     rebalanceLabel($("#btRebalance")?.value || "monthly"),
   ].filter(Boolean);
-  workbench.criteriaSummary.textContent = parts.join(" · ");
+  workbench.criteriaSummary.textContent = parts.join(" \u00b7 ");
 }
 
 function rebalanceLabel(value) {
@@ -3171,10 +3335,15 @@ async function buildTauriSectorScreen(invoke, payload = {}) {
   const perSectorLimit = clampInt(payload.per_sector_limit, 1, 50, DEFAULT_PER_SECTOR_LIMIT);
   const minSectorCandidates = clampInt(payload.min_sector_candidates, 1, 500, perSectorLimit);
   const poolLimit = maxSectors * Math.max(perSectorLimit, minSectorCandidates) * SECTOR_SCREEN_POOL_MULTIPLIER;
-  const criteria = {
-    ...(payload.criteria || {}),
-    limit: Math.max(Number(payload.criteria?.limit || 0), poolLimit),
-  };
+  const notes = [];
+  const criteria = adaptCriteriaForMobileData(
+    {
+      ...(payload.criteria || {}),
+      limit: Math.max(Number(payload.criteria?.limit || 0), poolLimit),
+    },
+    data,
+    notes,
+  );
   const screen = await invoke("core_screen_with_data", { payload: { data, criteria } });
   const bySector = new Map();
   for (const item of screen.items || []) {
@@ -3200,6 +3369,7 @@ async function buildTauriSectorScreen(invoke, payload = {}) {
     groups,
     notes: [
       ...(screen.notes || []),
+      ...notes,
       "移动端使用内置通达信数据集进行本地概念分组，未命中概念时归入其他概念。",
     ],
   };
@@ -3307,8 +3477,12 @@ async function loadMobileMarketData(invoke, options = {}) {
       } catch (error) {
         if (options.cacheOnly) throw error;
       }
-      await refreshMobileMarketData(invoke, { seed: null });
-      if (mobileMarketDataPromise) return await mobileMarketDataPromise;
+      const job = mobileMarketRefreshJob || startMobileMarketRefreshJob(invoke, { seed: null, reason: "\u6309\u9700\u540e\u53f0\u751f\u6210\u80a1\u7968\u6c60" });
+      const partial = await waitForMobileMarketDataCache(invoke, 8000).catch(() => null);
+      if (partial) return partial;
+      const outcome = await job;
+      if (!outcome?.ok) throw outcome?.error || new Error("\u80a1\u7968\u6c60\u540e\u53f0\u5237\u65b0\u5931\u8d25");
+      mobileMarketDataPromise = null;
       return await loadCachedMobileMarketData(invoke);
     })().catch((error) => {
       mobileMarketDataPromise = null;
@@ -3316,6 +3490,18 @@ async function loadMobileMarketData(invoke, options = {}) {
     });
   }
   return await mobileMarketDataPromise;
+}
+
+async function waitForMobileMarketDataCache(invoke, timeoutMs = 8000) {
+  const startedAt = Date.now();
+  for (;;) {
+    try {
+      return await loadCachedMobileMarketData(invoke);
+    } catch (error) {
+      if (Date.now() - startedAt >= timeoutMs) throw error;
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+    }
+  }
 }
 
 async function readMobileMarketDataCache(invoke) {
@@ -3330,16 +3516,19 @@ async function loadCachedMobileMarketData(invoke) {
 }
 
 function applyMobileMarketDataRecord(record, source) {
+  const data = record.data || { stocks: [], relations: [], histories: {} };
   mobileMarketDataSummary = record.summary || {
-    stock_count: record.data?.stocks?.length || 0,
+    stock_count: data?.stocks?.length || 0,
     warnings: [],
   };
   mobileMarketDataMeta = {
     source,
     bytes: Number(record.bytes || 0),
-    updatedAt: mobileRecordUpdatedAt(record) || record.data?.generated_at || null,
+    updatedAt: mobileRecordUpdatedAt(record) || data?.generated_at || null,
+    hasDeductedFinancialFields: mobileDataHasDeductedFinancialFields(data),
   };
-  return record.data;
+  updateCriteriaSummary();
+  return data;
 }
 
 function mobileRecordUpdatedAt(record) {
@@ -3359,62 +3548,532 @@ function shouldUsePreviousCloseForMobileRefresh(now = new Date()) {
   return minutes < 15 * 60 + 5;
 }
 
+async function refreshMobileUniverseWithProgress(invoke) {
+  const unsubscribe = watchMobileRefreshProgress((snapshot) => updateMobileRefreshProgress(snapshot));
+  try {
+    const outcome = await (mobileMarketRefreshJob || startMobileMarketRefreshJob(invoke, { reason: "\u624b\u52a8\u5237\u65b0\u80a1\u7968\u6c60" }));
+    if (!outcome?.ok) throw outcome?.error || new Error("\u80a1\u7968\u6c60\u540e\u53f0\u5237\u65b0\u5931\u8d25");
+    updateMobileRefreshProgress(mobileMarketRefreshProgress, true);
+    return outcome.status || (await mobileDataStatus(invoke));
+  } finally {
+    unsubscribe();
+  }
+}
+
+function startMobileMarketRefreshJob(invoke, options = {}) {
+  if (mobileMarketRefreshJob) {
+    appendRefreshLog("\u5df2\u6709\u80a1\u7968\u6c60\u5237\u65b0\u4efb\u52a1\u5728\u8fd0\u884c\uff0c\u6b63\u5728\u590d\u7528\u5f53\u524d\u4efb\u52a1\u3002", "warn");
+    return mobileMarketRefreshJob;
+  }
+  resetRefreshLog(options.reason || "\u5f00\u59cb\u8054\u7f51\u66f4\u65b0\u80a1\u7968\u6c60");
+  appendRefreshLog(`腾讯行情源 QT.GTIMG.CN；候选上限 ${MOBILE_TENCENT_MAX_CANDIDATES} 只；每轮 ${MOBILE_TENCENT_BATCHES_PER_STEP} 批，单轮等待上限 ${Math.round(MOBILE_TAURI_INVOKE_TIMEOUT_MS / 1000)} 秒。`);
+  mobileMarketRefreshProgress = null;
+  mobileMarketRefreshJob = refreshMobileMarketData(invoke, options)
+    .then((status) => {
+      renderDataStatus(status);
+      setMaintenanceNote((status.notes || []).join(" ") || "\u80a1\u7968\u6c60\u540e\u53f0\u5237\u65b0\u5b8c\u6210");
+      return { ok: true, status };
+    })
+    .catch((error) => {
+      appendRefreshLog(`\u5237\u65b0\u4efb\u52a1\u5931\u8d25\uff1a${error.message}`, "error");
+      setMaintenanceNote(`\u79fb\u52a8\u7aef\u80a1\u7968\u6c60\u540e\u53f0\u5237\u65b0\u5931\u8d25\uff1a${error.message}`);
+      return { ok: false, error };
+    })
+    .finally(() => {
+      window.setTimeout(() => {
+        mobileMarketRefreshJob = null;
+      }, 1200);
+    });
+  return mobileMarketRefreshJob;
+}
+
+function watchMobileRefreshProgress(listener) {
+  mobileMarketRefreshListeners.add(listener);
+  if (mobileMarketRefreshProgress) listener(mobileMarketRefreshProgress);
+  return () => mobileMarketRefreshListeners.delete(listener);
+}
+
+function emitMobileMarketRefreshProgress(snapshot) {
+  mobileMarketRefreshProgress = snapshot;
+  mobileMarketRefreshListeners.forEach((listener) => listener(snapshot));
+}
+
+function mergeMobileRefreshResult(aggregate, result) {
+  const totalBatches = Number(result?.total_batches || aggregate?.total_batches || 0);
+  const nextBatchStart = Number(result?.next_batch_start || 0);
+  const processedBatches = Math.min(totalBatches || nextBatchStart, nextBatchStart);
+  const requested = Number(result?.requested || result?.total_candidates || aggregate?.requested || 0);
+  const aggregateErrors = Array.isArray(aggregate?.error_samples) ? aggregate.error_samples : [];
+  const resultErrors = Array.isArray(result?.error_samples) ? result.error_samples : [];
+  return {
+    requested,
+    total_candidates: Number(result?.total_candidates || aggregate?.total_candidates || requested),
+    fetched: Number(aggregate?.fetched || 0) + Number(result?.fetched || 0),
+    preserved: Number(result?.preserved || aggregate?.preserved || 0),
+    failed_batches: Number(aggregate?.failed_batches || 0) + Number(result?.failed_batches || 0),
+    empty_batches: Number(aggregate?.empty_batches || 0) + Number(result?.empty_batches || 0),
+    stopped_early: Boolean(result?.stopped_early || aggregate?.stopped_early),
+    stop_reason: result?.stop_reason || aggregate?.stop_reason || null,
+    batch_start: Number(result?.batch_start || 0),
+    batch_count: Number(result?.batch_count || 0),
+    next_batch_start: nextBatchStart,
+    total_batches: totalBatches,
+    completed_batches: processedBatches,
+    done: Boolean(result?.done || result?.stopped_early),
+    processed_codes: Number(aggregate?.processed_codes || 0) + Number(result?.processed_codes || 0),
+    error_samples: [...aggregateErrors, ...resultErrors].filter(Boolean).slice(-6),
+  };
+}
+
+function updateMobileRefreshProgress(snapshot, complete = false) {
+  if (!snapshot) return;
+  const total = Number(snapshot.total_batches || 0);
+  const completed = complete ? total : Number(snapshot.completed_batches || snapshot.next_batch_start || 0);
+  const percent = total > 0 ? Math.max(5, Math.min(98, Math.round((completed / total) * 100))) : 12;
+  const label = total > 0 ? `\u5df2\u5b8c\u6210 ${Math.min(completed, total)}/${total} \u6279` : "\u6b63\u5728\u51c6\u5907\u6279\u6b21\u5237\u65b0";
+  setRefreshProgress(complete ? 100 : percent, complete ? "\u80a1\u7968\u6c60\u5237\u65b0\u5b8c\u6210" : label);
+}
+
+function yieldToBrowser() {
+  return new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+async function probeMobileNetwork(invoke) {
+  appendRefreshLog("\u5148\u8fdb\u884c\u5b89\u5353\u7f51\u7edc\u63a2\u6d4b\uff1a\u5206\u522b\u8bbf\u95ee Baidu \u548c Tencent \u884c\u60c5\u57df\u540d\u3002");
+  let probe;
+  try {
+    probe = await withTimeout(
+      invoke("core_mobile_network_probe"),
+      10000,
+      "\u5b89\u5353\u7f51\u7edc\u63a2\u6d4b\u8d85\u8fc7 10 \u79d2\u672a\u8fd4\u56de\uff0c\u53ef\u80fd\u662f\u6a21\u62df\u5668\u7f51\u7edc\u3001\u4ee3\u7406\u3001DNS \u6216\u5e94\u7528\u7f51\u7edc\u6743\u9650\u5f02\u5e38\u3002",
+    );
+  } catch (error) {
+    const message = formatMobileProbeError(error.message);
+    appendRefreshLog(`\u5b89\u5353\u7f51\u7edc\u63a2\u6d4b\u547d\u4ee4\u5931\u8d25\uff1a${message}`, "error");
+    throw new Error(`\u5b89\u5353\u7f51\u7edc\u63a2\u6d4b\u5931\u8d25\uff1a${message}`);
+  }
+
+  const probes = Array.isArray(probe?.probes) ? probe.probes : [probe].filter(Boolean);
+  let anyIpOk = false;
+  let tencentFixedOk = false;
+  probes.forEach((item) => {
+    const label = formatMobileProbeLabel(item?.label || item?.url);
+    const detail = formatMobileProbeError(item?.error || "");
+    const target = item?.address || item?.url || "";
+    const statusText = item?.status ? `HTTP ${item.status}` : (item?.stage || "no-status");
+    if ((item?.label === "baidu_ip_tcp" || item?.label === "tencent_ip_tcp") && item?.ok) anyIpOk = true;
+    if (item?.label === "tencent_https_fixed" && item?.ok) tencentFixedOk = true;
+    appendRefreshLog(
+      item?.ok
+        ? `${label}\u63a2\u6d4b\u901a\u8fc7\uff1a${statusText}${target ? `\uff0c${target}` : ""}\u3002`
+        : `${label}\u63a2\u6d4b\u5931\u8d25\uff1a${statusText}${target ? `\uff0c${target}` : ""}\uff0c${detail || "\u672a\u8fd4\u56de\u5177\u4f53\u9519\u8bef"}\u3002`,
+      item?.ok ? "ok" : "error",
+    );
+  });
+
+  if (tencentFixedOk) {
+    appendRefreshLog("Tencent \u884c\u60c5\u56fa\u5b9a IP \u89e3\u6790\u53ef\u7528\uff0c\u5c06\u7ee7\u7eed\u5237\u65b0\u80a1\u7968\u6c60\u3002", "ok");
+    return probe;
+  }
+  if (anyIpOk) {
+    appendRefreshLog("IP \u76f4\u8fde\u53ef\u7528\uff0c\u4f46 Tencent HTTPS \u56fa\u5b9a\u89e3\u6790\u4ecd\u5931\u8d25\uff1b\u4f18\u5148\u68c0\u67e5 HTTPS/TLS\u3001\u4ee3\u7406\u6216\u8fd0\u8425\u5546\u62e6\u622a\u3002", "warn");
+    throw new Error("\u5b89\u5353 IP \u7f51\u7edc\u53ef\u7528\uff0c\u4f46 Tencent HTTPS \u8bbf\u95ee\u5931\u8d25\u3002");
+  }
+  appendRefreshLog("Baidu/Tencent IP \u76f4\u8fde\u5747\u5931\u8d25\uff1a\u5f88\u53ef\u80fd\u662f\u5b89\u5353\u7cfb\u7edf\u6216\u5e94\u7528\u5c42\u6ca1\u6709\u53ef\u7528\u7f51\u7edc\u3002", "error");
+  throw new Error("\u5b89\u5353\u7f51\u7edc\u63a2\u6d4b\u5931\u8d25\uff1aIP \u76f4\u8fde\u4e0d\u53ef\u8fbe\u3002");
+}
+
+function formatMobileProbeLabel(label) {
+  if (label === "baidu_ip_tcp") return "Baidu IP \u76f4\u8fde";
+  if (label === "tencent_ip_tcp") return "Tencent IP \u76f4\u8fde";
+  if (label === "tencent_https_fixed") return "Tencent HTTPS \u56fa\u5b9a\u89e3\u6790";
+  if (label === "baidu_https") return "Baidu \u901a\u7528\u8054\u7f51";
+  if (label === "tencent_https") return "Tencent \u884c\u60c5\u57df\u540d";
+  return "\u7f51\u7edc";
+}
+
+function formatMobileProbeError(error) {
+  const text = String(error || "");
+  const lowered = text.toLowerCase();
+  if (!text) return "";
+  if (lowered.includes("timeout") || lowered.includes("timed out") || text.includes("\u8d85\u8fc7")) {
+    return `\u8bf7\u6c42\u8d85\u65f6\uff1a${text}`;
+  }
+  if (lowered.includes("dns") || lowered.includes("lookup") || lowered.includes("resolve") || lowered.includes("no address")) {
+    return `DNS \u89e3\u6790\u5931\u8d25\uff1a${text}`;
+  }
+  if (lowered.includes("certificate") || lowered.includes("tls") || lowered.includes("ssl")) {
+    return `TLS/\u8bc1\u4e66\u6821\u9a8c\u5931\u8d25\uff1a${text}`;
+  }
+  if (lowered.includes("network is unreachable") || lowered.includes("failed to connect") || lowered.includes("connection refused")) {
+    return `\u7f51\u7edc\u8fde\u63a5\u5931\u8d25\uff1a${text}`;
+  }
+  return text;
+}
+
 async function refreshMobileMarketData(invoke, options = {}) {
-  let seed = Object.prototype.hasOwnProperty.call(options, "种子股") ? options.seed : null;
-  if (!Object.prototype.hasOwnProperty.call(options, "种子股")) {
+  let seed = Object.prototype.hasOwnProperty.call(options, "seed") ? options.seed : null;
+  if (!Object.prototype.hasOwnProperty.call(options, "seed")) {
+    appendRefreshLog("\u8bfb\u53d6\u624b\u673a\u672c\u5730\u80a1\u7968\u6c60\u7f13\u5b58\u3002");
     try {
       seed = await loadCachedMobileMarketData(invoke);
-    } catch {
+      appendRefreshLog(`\u5df2\u8bfb\u53d6\u672c\u5730\u7f13\u5b58\uff1a${seed?.stocks?.length || 0} \u53ea\u80a1\u7968\u3002`, "ok");
+    } catch (error) {
       seed = null;
+      appendRefreshLog(`\u672a\u8bfb\u5230\u53ef\u7528\u672c\u5730\u7f13\u5b58\uff1a${error.message}`, "warn");
     }
+  } else {
+    appendRefreshLog(`\u4f7f\u7528\u4f20\u5165\u7684\u79cd\u5b50\u7f13\u5b58\uff1a${seed?.stocks?.length || 0} \u53ea\u80a1\u7968\u3002`);
   }
+  return await refreshMobileMarketDataViaWebView(invoke, seed || { stocks: [], relations: [], histories: {} });
+}
+
+async function refreshMobileMarketDataViaWebView(invoke, seed) {
+  appendRefreshLog("\u6539\u7528 WebView \u884c\u60c5\u811a\u672c\u901a\u9053\uff0c\u7ed5\u8fc7 Rust \u7f51\u7edc\u8bf7\u6c42\u3002");
   mobileMarketDataPromise = null;
   mobileMarketDataSummary = null;
   mobileMarketDataMeta = null;
-  const result = await withTimeout(
-    invoke("core_mobile_market_data_refresh_tencent", {
-      payload: {
-        seed,
-        scan_candidates: true,
-        max_candidates: MOBILE_TENCENT_MAX_CANDIDATES,
-        max_failed_batches: MOBILE_TENCENT_MAX_FAILED_BATCHES,
-        max_refresh_secs: MOBILE_TENCENT_MAX_REFRESH_SECS,
-        use_previous_close: shouldUsePreviousCloseForMobileRefresh(),
-      },
-    }),
-    MOBILE_TENCENT_INVOKE_TIMEOUT_MS,
-    `腾讯行情刷新超过 ${Math.round(MOBILE_TENCENT_INVOKE_TIMEOUT_MS / 1000)} 秒未返回，已停止等待。请确认手机网络可访问腾讯行情后重试。`,
-  );
-  if (result?.status?.data) {
-    const data = applyMobileMarketDataRecord(result.status, "cache");
-    mobileMarketDataPromise = Promise.resolve(data);
+
+  const seedStocks = buildMobileSeedStockMap(seed);
+  const candidateCodes = buildMobileTencentCandidateCodes(seed).slice(0, MOBILE_TENCENT_MAX_CANDIDATES);
+  const totalBatches = Math.ceil(candidateCodes.length / MOBILE_TENCENT_SCRIPT_BATCH_SIZE);
+  const stocks = [];
+  const seen = new Set();
+  let aggregate = null;
+  let consecutiveFailedBatches = 0;
+  const errorSamples = [];
+
+  appendRefreshLog(`WebView \u5019\u9009\u4e0a\u9650 ${candidateCodes.length} \u53ea\uff0c\u5171 ${totalBatches} \u6279\uff0c\u6bcf\u6279\u7b49\u5f85\u4e0a\u9650 ${Math.round(MOBILE_TENCENT_SCRIPT_TIMEOUT_MS / 1000)} \u79d2\u3002`);
+
+  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex += 1) {
+    const batchCodes = candidateCodes.slice(batchIndex * MOBILE_TENCENT_SCRIPT_BATCH_SIZE, (batchIndex + 1) * MOBILE_TENCENT_SCRIPT_BATCH_SIZE);
+    appendRefreshLog(`WebView \u8bf7\u6c42 Tencent \u6279\u6b21 ${batchIndex + 1}/${totalBatches}\uff0c${batchCodes.length} \u53ea\u5019\u9009\u3002`);
+    let batchStocks = [];
+    let failed = 0;
+    let empty = 0;
+    try {
+      const rows = await loadTencentQuoteScriptBatch(batchCodes, MOBILE_TENCENT_SCRIPT_TIMEOUT_MS);
+      batchStocks = parseMobileTencentQuoteRows(rows, seedStocks, shouldUsePreviousCloseForMobileRefresh());
+      if (!batchStocks.length) {
+        empty = 1;
+        consecutiveFailedBatches = 0;
+        appendRefreshLog(`WebView \u6279\u6b21 ${batchIndex + 1} \u6ca1\u6709\u53ef\u7528\u80a1\u7968\u884c\uff0c\u53ef\u80fd\u662f\u672a\u4e0a\u5e02\u4ee3\u7801\u6bb5\uff0c\u7ee7\u7eed\u626b\u63cf\u3002`, "warn");
+      } else {
+        consecutiveFailedBatches = 0;
+        appendRefreshLog(`WebView \u6279\u6b21 ${batchIndex + 1} \u8fd4\u56de ${batchStocks.length} \u53ea\u6709\u6548\u80a1\u7968\u3002`, "ok");
+      }
+    } catch (error) {
+      failed = 1;
+      consecutiveFailedBatches += 1;
+      const message = formatMobileProbeError(error.message);
+      errorSamples.push(message);
+      appendRefreshLog(`WebView \u6279\u6b21 ${batchIndex + 1} \u5931\u8d25\uff1a${message}`, "error");
+    }
+
+    batchStocks.forEach((stock) => {
+      if (stock?.code && !seen.has(stock.code)) {
+        seen.add(stock.code);
+        stocks.push(stock);
+      }
+    });
+
+    const result = {
+      requested: candidateCodes.length,
+      fetched: batchStocks.length,
+      preserved: 0,
+      failed_batches: failed,
+      empty_batches: empty,
+      error_samples: errorSamples.slice(-3),
+      stopped_early: consecutiveFailedBatches >= MOBILE_TENCENT_MAX_FAILED_BATCHES,
+      stop_reason: consecutiveFailedBatches >= MOBILE_TENCENT_MAX_FAILED_BATCHES ? "webview_failed_batches" : null,
+      batch_start: batchIndex,
+      batch_count: 1,
+      next_batch_start: batchIndex + 1,
+      total_batches: totalBatches,
+      done: batchIndex + 1 >= totalBatches || consecutiveFailedBatches >= MOBILE_TENCENT_MAX_FAILED_BATCHES,
+      processed_codes: batchCodes.length,
+      total_candidates: candidateCodes.length,
+    };
+    logMobileRefreshResult(result);
+    aggregate = mergeMobileRefreshResult(aggregate, result);
+    emitMobileMarketRefreshProgress(aggregate);
+    if (result.stopped_early) break;
+    await yieldToBrowser();
   }
-  const status = await mobileDataStatus(invoke);
-  status.refresh_result = result;
-  status.notes = [...mobileRefreshNotes(status, "联网刷新完成"), ...(status.notes || [])];
+
+  const preserved = appendPreservedMobileSeedStocks(seedStocks, stocks, seen);
+  if (aggregate) aggregate.preserved = preserved;
+  if (!stocks.length) {
+    throw new Error(`WebView \u884c\u60c5\u901a\u9053\u672a\u8fd4\u56de\u6709\u6548\u80a1\u7968\uff1a${errorSamples.slice(-3).join(" | ") || "unknown error"}`);
+  }
+  stocks.sort((left, right) => String(left.code || "").localeCompare(String(right.code || "")));
+  const validCodes = new Set(stocks.map((stock) => stock.code));
+  const now = Date.now();
+  const dataset = {
+    source: "tencent-webview",
+    generated_at: new Date(now).toISOString(),
+    generated_at_epoch_ms: now,
+    notes: [
+      "mobile online refresh via WebView Tencent script",
+      "Rust network request was bypassed on Android",
+      "WebView \u884c\u60c5\u6c60\u53ea\u5305\u542b\u4ef7\u683c\u3001\u4f30\u503c\u548c\u5e02\u503c\uff0c\u4e0d\u5305\u542b\u6263\u975e\u51c0\u5229\u6da6\u7b49\u5b8c\u6574\u8d22\u52a1\u5b57\u6bb5",
+      shouldUsePreviousCloseForMobileRefresh() ? "price policy: previous close before market close" : "price policy: latest Tencent quote",
+    ],
+    stocks,
+    relations: Array.isArray(seed?.relations) ? seed.relations.filter((relation) => validCodes.has(relation.source_code) && validCodes.has(relation.target_code)) : [],
+    histories: filterMobileSeedHistories(seed?.histories, validCodes),
+  };
+  const status = await invoke("core_mobile_market_data_write", { payload: dataset });
+  const writtenData = applyMobileMarketDataRecord(status, "webview");
+  mobileMarketDataPromise = Promise.resolve(writtenData);
+  const stockCount = Number(status?.summary?.stock_count || writtenData?.stocks?.length || stocks.length || 0);
+  status.source = "tencent";
+  status.stock_count = stockCount;
+  status.universe_count = stockCount;
+  status.cache_bytes = Number(status.bytes || 0);
+  status.cache_limit_bytes = 0;
+  status.universe_updated_at = mobileRecordUpdatedAt(status) || dataset.generated_at;
+  status.policy = { mode: "mobile_online", source: "webview" };
+  status.refresh_result = aggregate;
+  status.notes = [...mobileRefreshNotes(status, "\u8054\u7f51\u5237\u65b0\u5b8c\u6210"), ...(status.notes || [])];
+  appendRefreshLog(`WebView \u5237\u65b0\u5b8c\u6210\uff1a\u5199\u5165 ${stocks.length} \u53ea\u80a1\u7968\uff0c\u4fdd\u7559 ${preserved} \u53ea\u672c\u5730\u884c\u3002`, "ok");
   return status;
+}
+
+function buildMobileSeedStockMap(seed) {
+  const map = new Map();
+  (Array.isArray(seed?.stocks) ? seed.stocks : []).forEach((stock) => {
+    const code = normalizeMobileStockCode(stock?.code);
+    if (code) map.set(code, { ...stock, code });
+  });
+  return map;
+}
+
+function buildMobileTencentCandidateCodes(seed) {
+  const codes = [];
+  (Array.isArray(seed?.stocks) ? seed.stocks : []).forEach((stock) => {
+    const code = normalizeMobileStockCode(stock?.code);
+    if (code) codes.push(code);
+  });
+  appendMobileSequentialRanges(codes, [
+    ["SZ", 1, 3999],
+    ["SH", 600000, 605999],
+    ["SZ", 300000, 301999],
+    ["SH", 688000, 689999],
+    ["BJ", 920000, 920999],
+  ]);
+  const seen = new Set();
+  return codes.filter((code) => code && !seen.has(code) && seen.add(code));
+}
+
+function appendMobileSequentialRanges(codes, ranges) {
+  ranges.forEach(([market, start, end]) => {
+    for (let value = start; value <= end; value += 1) {
+      codes.push(`${String(value).padStart(6, "0")}.${market}`);
+    }
+  });
+}
+
+function normalizeMobileStockCode(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return null;
+  let digits = "";
+  let market = "";
+  if (/^(SH|SZ|BJ)\d{6}$/.test(raw)) {
+    market = raw.slice(0, 2);
+    digits = raw.slice(2);
+  } else if (/^\d{6}\.(SH|SZ|BJ)$/.test(raw)) {
+    digits = raw.slice(0, 6);
+    market = raw.slice(7);
+  } else {
+    digits = (raw.match(/\d/g) || []).join("").slice(0, 6);
+    if (digits.length !== 6) return null;
+    market = inferMobileMarket(digits);
+  }
+  return digits.length === 6 ? `${digits}.${market || inferMobileMarket(digits)}` : null;
+}
+
+function inferMobileMarket(digits) {
+  if (/^[695]/.test(digits)) return "SH";
+  if (/^[48]/.test(digits)) return "BJ";
+  return "SZ";
+}
+
+function mobileTencentSymbol(code) {
+  const normalized = normalizeMobileStockCode(code);
+  if (!normalized) return null;
+  const digits = normalized.slice(0, 6);
+  if (normalized.endsWith(".SH")) return `sh${digits}`;
+  if (normalized.endsWith(".BJ")) return `bj${digits}`;
+  return `sz${digits}`;
+}
+
+async function loadTencentQuoteScriptBatch(codes, timeoutMs) {
+  const symbols = codes.map(mobileTencentSymbol).filter(Boolean);
+  if (!symbols.length) return [];
+  const endpoints = ["https://qt.gtimg.cn/q=", "http://qt.gtimg.cn/q="];
+  let lastError = null;
+  for (const endpoint of endpoints) {
+    try {
+      return await loadTencentQuoteScriptFromEndpoint(endpoint, symbols, timeoutMs);
+    } catch (error) {
+      lastError = error;
+      appendRefreshLog(`WebView \u811a\u672c\u7aef\u70b9\u5931\u8d25\uff1a${endpoint} ${formatMobileProbeError(error.message)}`, "warn");
+    }
+  }
+  throw lastError || new Error("Tencent script request failed");
+}
+
+function loadTencentQuoteScriptFromEndpoint(endpoint, symbols, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const variableNames = symbols.map((symbol) => `v_${symbol}`);
+    variableNames.forEach((name) => {
+      try { delete window[name]; } catch (_error) { window[name] = undefined; }
+    });
+    const script = document.createElement("script");
+    let settled = false;
+    let timer = null;
+    const cleanup = () => {
+      if (timer) window.clearTimeout(timer);
+      script.onload = null;
+      script.onerror = null;
+      script.remove();
+    };
+    const settle = (callback) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback();
+    };
+    script.async = true;
+    script.charset = "gbk";
+    script.setAttribute("charset", "gbk");
+    script.onload = () => settle(() => {
+      const rows = variableNames
+        .map((name) => {
+          const value = window[name];
+          try { delete window[name]; } catch (_error) { window[name] = undefined; }
+          return value ? `${name}="${String(value)}"` : "";
+        })
+        .filter(Boolean);
+      resolve(rows);
+    });
+    script.onerror = () => settle(() => reject(new Error(`${endpoint} script load failed`)));
+    timer = window.setTimeout(() => settle(() => reject(new Error(`${endpoint} script timed out after ${Math.round(timeoutMs / 1000)} seconds`))), timeoutMs);
+    script.src = `${endpoint}${symbols.join(",")}&_=${Date.now()}`;
+    document.head.appendChild(script);
+  });
+}
+
+function parseMobileTencentQuoteRows(rows, seedStocks, usePreviousClose) {
+  const stocks = [];
+  rows.forEach((line) => {
+    const key = String(line.split("=")[0] || "").split("_").pop();
+    const code = normalizeMobileStockCode(key);
+    const values = String(line.split('"')[1] || "").split("~");
+    if (!code || values.length < 53) return;
+    const name = String(values[1] || "").trim();
+    if (!name) return;
+    const price = usePreviousClose
+      ? firstMobilePositiveNumber(values[4], values[3])
+      : firstMobilePositiveNumber(values[3], values[4]);
+    if (!Number.isFinite(price) || price <= 0) return;
+    const existing = seedStocks.get(code) || {};
+    const pe = firstMobilePositiveNumber(values[39], values[52], existing.pe);
+    const pb = firstMobilePositiveNumber(values[46], existing.pb);
+    const marketCap = firstMobilePositiveNumber(values[44], existing.market_cap_billion);
+    const roe = Number.isFinite(Number(existing.roe)) ? Number(existing.roe) : estimateMobileRoe(pe, pb);
+    stocks.push({
+      ...existing,
+      code,
+      name,
+      industry: String(existing.industry || "").trim() || mobileBoardLabel(code),
+      is_st: /ST/i.test(name) || Boolean(existing.is_st),
+      price,
+      pe: Number.isFinite(pe) ? pe : null,
+      pb: Number.isFinite(pb) ? pb : null,
+      roe: Number.isFinite(roe) ? roe : null,
+      market_cap_billion: Number.isFinite(marketCap) ? marketCap : null,
+      dividend_yield: Number.isFinite(Number(existing.dividend_yield)) ? Number(existing.dividend_yield) : null,
+    });
+  });
+  return stocks;
+}
+
+function parseMobileQuoteNumber(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw === "-" || raw.toLowerCase() === "nan" || raw.toLowerCase() === "none") return null;
+  const number = Number(raw);
+  return Number.isFinite(number) ? number : null;
+}
+
+function firstMobilePositiveNumber(...values) {
+  for (const value of values) {
+    const number = parseMobileQuoteNumber(value);
+    if (Number.isFinite(number) && number > 0) return number;
+  }
+  return null;
+}
+
+function estimateMobileRoe(pe, pb) {
+  return Number.isFinite(pe) && pe > 0 && Number.isFinite(pb) && pb > 0 ? (pb / pe) * 100 : null;
+}
+
+function mobileBoardLabel(code) {
+  const digits = String(code || "").slice(0, 6);
+  if (String(code).endsWith(".BJ")) return "\u5317\u4ea4\u6240";
+  if (digits.startsWith("688")) return "\u79d1\u521b\u677f";
+  if (digits.startsWith("300") || digits.startsWith("301")) return "\u521b\u4e1a\u677f";
+  if (String(code).endsWith(".SH")) return "\u6caa\u5e02A\u80a1";
+  return "\u6df1\u5e02A\u80a1";
+}
+
+function appendPreservedMobileSeedStocks(seedStocks, stocks, seen) {
+  let preserved = 0;
+  Array.from(seedStocks.keys()).sort().forEach((code) => {
+    if (seen.has(code)) return;
+    const stock = { ...seedStocks.get(code), code };
+    if (!String(stock.industry || "").trim()) stock.industry = mobileBoardLabel(code);
+    if (Number.isFinite(Number(stock.price)) && Number(stock.price) > 0) {
+      stocks.push(stock);
+      seen.add(code);
+      preserved += 1;
+    }
+  });
+  return preserved;
+}
+
+function filterMobileSeedHistories(histories, validCodes) {
+  if (!histories || typeof histories !== "object") return {};
+  return Object.fromEntries(Object.entries(histories).filter(([code]) => validCodes.has(normalizeMobileStockCode(code) || code)));
 }
 
 function mobileRefreshNotes(status, fallback = "") {
   const refresh = status?.refresh_result;
   if (!refresh) return fallback ? [fallback] : [];
   const fetched = Number(refresh.fetched || 0);
-  const requested = Number(refresh.requested || 0);
+  const requested = Number(refresh.requested || refresh.total_candidates || 0);
+  const processed = Number(refresh.processed_codes || 0);
   const preserved = Number(refresh.preserved || 0);
   const failed = Number(refresh.failed_batches || 0);
+  const empty = Number(refresh.empty_batches || 0);
   const stoppedEarly = Boolean(refresh.stopped_early);
-  const stopReason = String(refresh.stop_reason || "");
+  const done = Boolean(refresh.done);
+  const totalBatches = Number(refresh.total_batches || 0);
+  const completedBatches = Math.min(totalBatches || Number(refresh.completed_batches || 0), Number(refresh.completed_batches || refresh.next_batch_start || 0));
   const stockCount = Number(status?.stock_count || 0);
+  const errors = Array.isArray(refresh.error_samples) ? refresh.error_samples.filter(Boolean).slice(-3) : [];
+  const errorText = errors.length ? ` \u6700\u8fd1\u7f51\u7edc\u9519\u8bef\uff1a${errors.join(" | ")}\u3002` : "";
+  const emptyText = empty > 0 ? `\u7a7a\u6279\u6b21 ${empty} \u6279\uff0c` : "";
+  const batchText = totalBatches > 0 ? `\u6279\u6b21 ${completedBatches}/${totalBatches}\uff0c${emptyText}\u5df2\u5904\u7406 ${processed} \u53ea\u5019\u9009\u3002` : "\u6279\u6b21\u4fe1\u606f\u6682\u4e0d\u53ef\u7528\u3002";
   const base =
     fetched > 0
-      ? `已联网更新 ${fetched} 只股票行情，保留 ${preserved} 只本地股票，候选 ${requested} 只。`
-      : `腾讯行情暂未返回有效股票，已保留 ${preserved || stockCount} 只本地股票。`;
-  if (stoppedEarly && stopReason === "timeout") {
-    return [`${base} 已达到 ${MOBILE_TENCENT_MAX_REFRESH_SECS} 秒移动端刷新上限，避免长时间等待。`];
-  }
-  if (stoppedEarly) return [`${base} 连续失败 ${failed} 批后提前停止，避免移动端长时间等待。`];
-  if (failed > 0) return [`${base} 失败批次 ${failed} 批，其余股票已继续处理。`];
-  return [base];
+      ? `\u5df2\u8054\u7f51\u66f4\u65b0 ${fetched} \u53ea\u80a1\u7968\u884c\u60c5\uff0c\u4fdd\u7559 ${preserved} \u53ea\u672c\u5730\u80a1\u7968\uff0c\u5019\u9009 ${requested} \u53ea\uff0c${batchText}`
+      : `\u817e\u8baf\u884c\u60c5\u6682\u672a\u8fd4\u56de\u6709\u6548\u80a1\u7968\uff0c\u5df2\u4fdd\u7559 ${preserved || stockCount} \u53ea\u672c\u5730\u80a1\u7968\uff0c${batchText}`;
+  if (stoppedEarly) return [`${base}${errorText} \u8fde\u7eed\u5931\u8d25 ${failed} \u6279\u540e\u63d0\u524d\u505c\u6b62\uff0c\u5df2\u4fdd\u7559\u53ef\u7528\u7f13\u5b58\u3002`];
+  if (failed > 0) return [`${base}${errorText} \u5931\u8d25\u6279\u6b21 ${failed} \u6279\uff0c\u5176\u4f59\u80a1\u7968\u5df2\u7ee7\u7eed\u5904\u7406\u3002`];
+  if (!done && totalBatches > 0) return [`${base}${errorText} \u540e\u53f0\u5237\u65b0\u4ecd\u5728\u7ee7\u7eed\uff0c\u9875\u9762\u53ef\u4ee5\u5148\u64cd\u4f5c\u3002`];
+  return [`${base}${errorText}`];
 }
 
 async function pruneMobileMarketData(invoke) {
@@ -3446,6 +4105,7 @@ async function mobileDataStatus(invoke) {
       policy: { mode: "mobile_online", source: meta.source || "cache" },
       notes: [
         `移动端当前使用手机本地股票池 ${stockCount} 只，来源为腾讯联网更新。`,
+        ...(mobileDataHasDeductedFinancialFields(data) ? [] : [MOBILE_DEDUCTED_FINANCIAL_STATUS_NOTE]),
         ...((data.notes || []).slice(0, 2)),
         ...(summary.warnings || []),
       ],

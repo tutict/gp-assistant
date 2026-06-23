@@ -44,6 +44,7 @@ class TdxProvider(StockProvider):
         self.fundamental_page_size = env_int("TDX_FUNDAMENTAL_PAGE_SIZE", 500, minimum=50, maximum=1000)
         self.fundamental_max_pages = env_int("TDX_FUNDAMENTAL_MAX_PAGES", 30, minimum=1)
         self.fundamental_min_rows = env_int("TDX_FUNDAMENTAL_MIN_ROWS", 1000, minimum=1)
+        self.tencent_universe_scan_limit = env_int("TDX_TENCENT_UNIVERSE_SCAN_LIMIT", 15000, minimum=0, maximum=50000)
         self.proxy_mode = normalize_proxy_mode(proxy_mode)
         self.fundamental_cache_path = self._resolve_fundamental_cache_path()
         self._session = requests.Session()
@@ -59,6 +60,16 @@ class TdxProvider(StockProvider):
         items = self._fetch_universe()
         self._write_cached_universe(items)
         return items
+
+    def refresh_screening_cache(self) -> list[str]:
+        try:
+            frame, note = self._fetch_eastmoney_fundamentals_for_screen()
+        except Exception as exc:
+            return [f"\u7b5b\u9009\u8d22\u52a1\u7f13\u5b58\u5237\u65b0\u5931\u8d25\uff1a{exc}\uff1b\u5df2\u4fdd\u7559\u73b0\u6709\u7f13\u5b58\u3002"]
+        if frame.empty:
+            return ["\u7b5b\u9009\u8d22\u52a1\u7f13\u5b58\u672a\u5237\u65b0\uff1a\u4e1c\u8d22\u6682\u65e0\u53ef\u7528\u8d22\u62a5\u6307\u6807\uff0c\u5df2\u4fdd\u7559\u73b0\u6709\u7f13\u5b58\u3002"]
+        self._write_fundamental_cache(frame)
+        return [note or f"\u7b5b\u9009\u8d22\u52a1\u7f13\u5b58\u5df2\u5237\u65b0\uff0c\u8986\u76d6 {len(frame)} \u53ea A \u80a1\u3002"]
 
     def list_stocks_for_screen(self) -> tuple[List[StockItem], List[str]]:
         try:
@@ -529,6 +540,9 @@ class TdxProvider(StockProvider):
         return []
 
     def _fetch_universe(self) -> list[StockItem]:
+        return self._merge_tencent_universe_candidates(self._fetch_tdx_universe())
+
+    def _fetch_tdx_universe(self) -> list[StockItem]:
         rows: list[StockItem] = []
 
         def fetch(api):
@@ -597,6 +611,77 @@ class TdxProvider(StockProvider):
 
     def _tencent_quote(self, codes: list[str]) -> dict[str, dict]:
         return self._tencent.quote(codes)
+
+    def _merge_tencent_universe_candidates(self, items: list[StockItem]) -> list[StockItem]:
+        by_code = {item.code: item for item in items if item.code}
+        if self.tencent_universe_scan_limit <= 0:
+            return sorted(by_code.values(), key=lambda item: item.code)
+
+        candidates = [
+            code
+            for code in self._tencent_universe_candidate_codes()
+            if self._normalize_code(code) not in by_code
+        ][: self.tencent_universe_scan_limit]
+        if not candidates:
+            return sorted(by_code.values(), key=lambda item: item.code)
+
+        try:
+            quotes, _failed_batches = self._tencent_quotes_batched(candidates)
+        except Exception:
+            return sorted(by_code.values(), key=lambda item: item.code)
+
+        for code in candidates:
+            stock = self._stock_from_tencent_universe_quote(code, quotes.get(self._code_digits(code)))
+            if stock is not None and stock.code not in by_code:
+                by_code[stock.code] = stock
+        return sorted(by_code.values(), key=lambda item: item.code)
+
+    def _stock_from_tencent_universe_quote(self, code: str, quote: Optional[dict]) -> StockItem | None:
+        if not quote:
+            return None
+        normalized = self._normalize_code(code)
+        price = self._screen_quote_price(quote, "price")
+        name = str(quote.get("name") or "").strip()
+        if not normalized or not name or price is None:
+            return None
+        digits = self._code_digits(normalized)
+        base = StockItem(
+            code=normalized,
+            name=name,
+            industry=self._board_label(digits, 1 if normalized.endswith(".SH") else 0),
+            is_st=self._is_risk_labeled_name(name),
+            price=price,
+            pe=None,
+            pb=None,
+            roe=None,
+            market_cap_billion=None,
+            dividend_yield=None,
+        )
+        return self._stock_with_quote(base, quote, "price") or base
+
+    @staticmethod
+    def _tencent_universe_candidate_codes() -> list[str]:
+        ranges = [
+            ("SZ", 1, 3999),
+            ("SH", 600000, 605999),
+            ("SZ", 300000, 301999),
+            ("SH", 688000, 689999),
+            ("BJ", 920000, 920999),
+        ]
+        max_len = max(end - start for _market, start, end in ranges)
+        codes: list[str] = []
+        seen: set[str] = set()
+        for offset in range(max_len + 1):
+            for market, start, end in ranges:
+                value = start + offset
+                if value > end:
+                    continue
+                code = f"{value:06}.{market}"
+                if code in seen:
+                    continue
+                seen.add(code)
+                codes.append(code)
+        return codes
 
     def _screen_price_policy(self) -> tuple[str, str]:
         checked_at = datetime.now(self._CHINA_TZ)
@@ -1057,13 +1142,17 @@ class TdxProvider(StockProvider):
 
     @staticmethod
     def _is_a_share_code(code: str) -> bool:
-        return code.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688"))
+        digits = TdxProvider._code_digits(code)
+        return digits.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688", "920"))
 
     @staticmethod
     def _board_label(code: str, market: int) -> str:
-        if code.startswith("688"):
+        digits = TdxProvider._code_digits(code)
+        if digits.startswith(("4", "8", "920")):
+            return "北交所"
+        if digits.startswith("688"):
             return "科创板"
-        if code.startswith(("300", "301")):
+        if digits.startswith(("300", "301")):
             return "创业板"
         if market == 1:
             return "沪市A股"
@@ -1073,6 +1162,8 @@ class TdxProvider(StockProvider):
     def _tdx_market_code(code: str) -> Optional[int]:
         normalized = TdxProvider._normalize_code(code)
         digits = TdxProvider._code_digits(normalized)
+        if normalized.endswith(".BJ") or digits.startswith(("4", "8", "920")):
+            return None
         if normalized.endswith(".SH") or digits.startswith(("6", "9")):
             return 1
         if normalized.endswith(".SZ") or digits.startswith(("0", "2", "3")):
@@ -1083,11 +1174,11 @@ class TdxProvider(StockProvider):
     def _eastmoney_market_code(code: str) -> Optional[int]:
         normalized = TdxProvider._normalize_code(code)
         digits = TdxProvider._code_digits(normalized)
+        if normalized.endswith(".BJ") or digits.startswith(("4", "8", "920")):
+            return 0
         if normalized.endswith(".SH") or digits.startswith(("6", "9")):
             return 1
         if normalized.endswith(".SZ") or digits.startswith(("0", "2", "3")):
-            return 0
-        if normalized.endswith(".BJ") or digits.startswith(("4", "8")):
             return 0
         return None
 
@@ -1188,16 +1279,17 @@ class TdxProvider(StockProvider):
 
     @staticmethod
     def _normalize_code(code: str, market: int | None = None) -> str:
+        raw = str(code or "").strip().upper()
         digits = TdxProvider._code_digits(code)
-        if market == 1 or digits.startswith("6"):
-            return f"{digits}.SH"
-        if market == 0 or digits.startswith(("0", "2", "3")):
-            return f"{digits}.SZ"
-        if digits.startswith(("4", "8")):
+        if not digits:
+            return digits
+        if raw.startswith("BJ") or raw.endswith(".BJ") or digits.startswith(("4", "8", "920")):
             return f"{digits}.BJ"
-        if digits:
+        if raw.startswith("SH") or raw.endswith(".SH") or market == 1 or digits.startswith(("6", "9")):
+            return f"{digits}.SH"
+        if raw.startswith("SZ") or raw.endswith(".SZ") or market == 0 or digits.startswith(("0", "2", "3")):
             return f"{digits}.SZ"
-        return digits
+        return f"{digits}.SZ"
 
     @staticmethod
     def _code_digits(code: str) -> str:

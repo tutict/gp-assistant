@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
@@ -50,6 +51,10 @@ class TdxProviderTests(unittest.TestCase):
             {"code": "300750", "name": "宁德时代", "pre_close": 195.0},
             market=0,
         )
+        bj_stock = TdxProvider._stock_from_security_list_item(
+            {"code": "920000", "name": "北交样本", "pre_close": 12.3},
+            market=0,
+        )
 
         self.assertIsNotNone(sh_stock)
         self.assertEqual(sh_stock.code, "600000.SH")
@@ -58,10 +63,37 @@ class TdxProviderTests(unittest.TestCase):
         self.assertIsNotNone(sz_stock)
         self.assertEqual(sz_stock.code, "300750.SZ")
         self.assertEqual(sz_stock.industry, "创业板")
+        self.assertIsNotNone(bj_stock)
+        self.assertEqual(bj_stock.code, "920000.BJ")
+        self.assertEqual(bj_stock.industry, "北交所")
         self.assertIsNone(TdxProvider._stock_from_security_list_item({"code": "430000", "name": "北交样本"}, 0))
         delisted = TdxProvider._stock_from_security_list_item({"code": "600001", "name": "退市样本"}, 1)
         self.assertIsNotNone(delisted)
         self.assertTrue(delisted.is_st)
+
+    def test_fetch_universe_merges_tencent_candidate_codes(self):
+        with patch.dict(os.environ, {"TDX_TENCENT_UNIVERSE_SCAN_LIMIT": "10"}):
+            provider = TdxProvider()
+            provider._fetch_tdx_universe = lambda: [
+                StockItem(code="600000.SH", name="浦发银行", industry="沪市A股", price=10.0)
+            ]
+            provider._tencent_universe_candidate_codes = lambda: [
+                "600000.SH",
+                "000001.SZ",
+                "920000.BJ",
+            ]
+            provider._tencent_quotes_batched = lambda codes: (
+                {
+                    "000001": {"code": "000001", "name": "平安银行", "price": 12.0, "last_close": 12.0},
+                    "920000": {"code": "920000", "name": "北交样本", "price": 8.5, "last_close": 8.5},
+                },
+                0,
+            )
+
+            items = provider._fetch_universe()
+
+        self.assertEqual([item.code for item in items], ["000001.SZ", "600000.SH", "920000.BJ"])
+        self.assertEqual(items[-1].industry, "北交所")
 
     def test_list_stocks_for_screen_uses_tencent_previous_close_before_market_close(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -297,6 +329,36 @@ class TdxProviderTests(unittest.TestCase):
         self.assertAlmostEqual(item.deducted_net_profit_billion or 0, 12.0)
         self.assertAlmostEqual(item.deducted_net_profit_margin or 0, 15.0)
         self.assertAlmostEqual(item.deducted_net_profit_growth_rate or 0, 16.0)
+
+
+    def test_refresh_screening_cache_rebuilds_fundamental_cache(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fundamental_cache_path = os.path.join(temp_dir, "fundamentals.csv")
+            Path(fundamental_cache_path).write_text("code,name\n000001.SZ,old\n", encoding="utf-8")
+            with patch.dict(os.environ, {"TDX_FUNDAMENTAL_CACHE": fundamental_cache_path}):
+                provider = TdxProvider()
+                provider._fetch_eastmoney_fundamentals_for_screen = lambda: (
+                    pd.DataFrame(
+                        [
+                            {
+                                "SECUCODE": "000001.SZ",
+                                "SECURITY_NAME_ABBR": "Ping An Bank",
+                                "KCFJCXSYJLR": 1_200_000_000,
+                                "KCFJCXSYJLRTZ": 16.0,
+                                "TOTALOPERATEREVE": 8_000_000_000,
+                            }
+                        ]
+                    ),
+                    "cached fundamentals refreshed",
+                )
+
+                notes = provider.refresh_screening_cache()
+                lookup = provider._read_fundamental_cache(fundamental_cache_path)
+
+            self.assertTrue(notes)
+            self.assertIn("000001.SZ", lookup or {})
+            self.assertAlmostEqual((lookup or {}).get("000001.SZ").deducted_net_profit_growth_rate or 0, 16.0)
+            self.assertIn("000001.SZ", Path(fundamental_cache_path).read_text(encoding="utf-8"))
 
     def test_missing_fundamental_cache_fetches_and_writes_eastmoney_data(self):
         with tempfile.TemporaryDirectory() as temp_dir:

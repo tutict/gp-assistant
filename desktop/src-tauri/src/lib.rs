@@ -5,6 +5,7 @@ use stock_optimizer_core as gp_core;
 use std::{
     collections::{HashMap, HashSet},
     fs,
+    net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -13,7 +14,6 @@ use tauri::{AppHandle, Emitter, Manager};
 #[cfg(not(mobile))]
 use std::{
     env,
-    net::{SocketAddr, TcpStream},
     process::{Child, Command, Stdio},
     sync::Mutex,
     thread,
@@ -33,12 +33,16 @@ const DEFAULT_PORT: u16 = 8010;
 
 const MOBILE_MARKET_DATA_FILE: &str = "mobile-market-data.json";
 const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
+const TENCENT_QUOTE_HOST: &str = "qt.gtimg.cn";
+const TENCENT_QUOTE_FALLBACK_ADDRS: &[&str] = &["183.232.91.60:443", "183.232.91.61:443"];
+const BAIDU_FALLBACK_ADDR: &str = "183.240.99.224:443";
 const TENCENT_BATCH_SIZE: usize = 120;
 const TENCENT_DEFAULT_MAX_CANDIDATES: usize = 8_000;
 const TENCENT_DEFAULT_MAX_FAILED_BATCHES: usize = 4;
-const TENCENT_DEFAULT_MAX_REFRESH_SECS: u64 = 45;
 const TENCENT_CONNECT_TIMEOUT_SECS: u64 = 3;
 const TENCENT_REQUEST_TIMEOUT_SECS: u64 = 6;
+const TENCENT_BATCH_TIMEOUT_SECS: u64 = 8;
+const TENCENT_NETWORK_PROBE_TIMEOUT_SECS: u64 = 4;
 
 #[cfg(not(mobile))]
 struct BackendState(Mutex<Option<BackendProcess>>);
@@ -181,6 +185,135 @@ fn core_mobile_market_data_clear(app: tauri::AppHandle) -> Result<Value, String>
 }
 
 #[tauri::command]
+async fn core_mobile_network_probe() -> Result<Value, String> {
+    let tcp_timeout = Duration::from_secs(2);
+    let http_timeout = Duration::from_secs(TENCENT_NETWORK_PROBE_TIMEOUT_SECS);
+    let baidu_tcp = probe_tcp_addr("baidu_ip_tcp", BAIDU_FALLBACK_ADDR, tcp_timeout);
+    let tencent_tcp = probe_tcp_addr("tencent_ip_tcp", TENCENT_QUOTE_FALLBACK_ADDRS[0], tcp_timeout);
+    let mut probes = vec![baidu_tcp, tencent_tcp];
+    let ip_network_ok = probes
+        .iter()
+        .any(|probe| probe.get("ok").and_then(Value::as_bool).unwrap_or(false));
+
+    if ip_network_ok {
+        let client = build_tencent_http_client(
+            "Mozilla/5.0 GuXuanYou/0.3 mobile probe",
+            http_timeout,
+        )?;
+        probes.push(
+            probe_mobile_url(
+                &client,
+                "tencent_https_fixed",
+                &format!("{TENCENT_QUOTE_ENDPOINT}sz000001"),
+                http_timeout,
+            )
+            .await,
+        );
+    }
+
+    let tencent_ok = probes.iter().any(|probe| {
+        probe.get("ok").and_then(Value::as_bool).unwrap_or(false)
+            && probe.get("label").and_then(Value::as_str) == Some("tencent_https_fixed")
+    });
+    Ok(json!({
+        "ok": tencent_ok,
+        "timeout_seconds": http_timeout.as_secs(),
+        "probes": probes,
+    }))
+}
+
+fn probe_tcp_addr(label: &str, address: &str, timeout: Duration) -> Value {
+    let started_at = epoch_millis();
+    match address.parse::<SocketAddr>() {
+        Ok(socket_addr) => match TcpStream::connect_timeout(&socket_addr, timeout) {
+            Ok(_) => json!({
+                "ok": true,
+                "label": label,
+                "stage": "tcp",
+                "address": address,
+                "elapsed_ms": epoch_millis().saturating_sub(started_at),
+                "error": ""
+            }),
+            Err(error) => json!({
+                "ok": false,
+                "label": label,
+                "stage": "tcp",
+                "address": address,
+                "elapsed_ms": epoch_millis().saturating_sub(started_at),
+                "error": error.to_string()
+            }),
+        },
+        Err(error) => json!({
+            "ok": false,
+            "label": label,
+            "stage": "tcp_parse",
+            "address": address,
+            "error": error.to_string()
+        }),
+    }
+}
+
+async fn probe_mobile_url(
+    client: &reqwest::Client,
+    label: &str,
+    url: &str,
+    timeout: Duration,
+) -> Value {
+    let result = tokio::time::timeout(timeout, client.get(url).send()).await;
+    match result {
+        Err(_) => json!({
+            "ok": false,
+            "label": label,
+            "stage": "timeout",
+            "url": url,
+            "timeout_seconds": timeout.as_secs(),
+            "error": format!("network probe timed out after {} seconds", timeout.as_secs())
+        }),
+        Ok(Err(error)) => json!({
+            "ok": false,
+            "label": label,
+            "stage": "request",
+            "url": url,
+            "timeout_seconds": timeout.as_secs(),
+            "error": error.to_string()
+        }),
+        Ok(Ok(response)) => {
+            let status = response.status();
+            json!({
+                "ok": status.is_success(),
+                "label": label,
+                "stage": "http",
+                "url": url,
+                "status": status.as_u16(),
+                "timeout_seconds": timeout.as_secs(),
+                "error": if status.is_success() { String::new() } else { format!("HTTP {}", status.as_u16()) }
+            })
+        }
+    }
+}
+
+fn tencent_fallback_addrs() -> Vec<SocketAddr> {
+    TENCENT_QUOTE_FALLBACK_ADDRS
+        .iter()
+        .filter_map(|address| address.parse::<SocketAddr>().ok())
+        .collect()
+}
+
+fn build_tencent_http_client(user_agent: &str, timeout: Duration) -> Result<reqwest::Client, String> {
+    let addrs = tencent_fallback_addrs();
+    let mut builder = reqwest::Client::builder()
+        .timeout(timeout)
+        .connect_timeout(Duration::from_secs(TENCENT_CONNECT_TIMEOUT_SECS))
+        .user_agent(user_agent);
+    if !addrs.is_empty() {
+        builder = builder.resolve_to_addrs(TENCENT_QUOTE_HOST, &addrs);
+    }
+    builder
+        .build()
+        .map_err(|error| format!("create Tencent HTTP client failed: {error}"))
+}
+
+#[tauri::command]
 async fn core_mobile_market_data_refresh_tencent(
     app: tauri::AppHandle,
     payload: Value,
@@ -206,19 +339,24 @@ async fn core_mobile_market_data_refresh_tencent(
         .and_then(|value| usize::try_from(value).ok())
         .filter(|value| *value > 0)
         .unwrap_or(TENCENT_DEFAULT_MAX_FAILED_BATCHES);
-    let max_refresh_secs = payload
-        .get("max_refresh_secs")
+    let batch_start = payload
+        .get("batch_start")
         .and_then(Value::as_u64)
-        .filter(|value| *value > 0)
-        .unwrap_or(TENCENT_DEFAULT_MAX_REFRESH_SECS);
-
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0);
+    let batch_count = payload
+        .get("batch_count")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0);
     let refresh = refresh_tencent_market_data(
         seed,
         scan_candidates,
         max_candidates,
         use_previous_close,
         max_failed_batches,
-        max_refresh_secs,
+        batch_start,
+        batch_count,
     )
     .await?;
     let cache = write_mobile_market_data(&app, refresh.dataset)?;
@@ -233,13 +371,13 @@ async fn core_mobile_market_data_refresh_tencent(
                 refresh.failed_batches
             ));
         }
-        Some("timeout") => {
-            notes.push(format!(
-                "Tencent quote refresh stopped after {} seconds",
-                max_refresh_secs
-            ));
-        }
         _ => {}
+    }
+    if !refresh.error_samples.is_empty() {
+        notes.push(format!(
+            "Recent Tencent network errors: {}",
+            refresh.error_samples.join(" | ")
+        ));
     }
     Ok(json!({
         "refreshed": true,
@@ -248,8 +386,16 @@ async fn core_mobile_market_data_refresh_tencent(
         "fetched": refresh.fetched,
         "preserved": refresh.preserved,
         "failed_batches": refresh.failed_batches,
+        "error_samples": refresh.error_samples.clone(),
         "stopped_early": refresh.stopped_early,
         "stop_reason": refresh.stop_reason,
+        "batch_start": refresh.batch_start,
+        "batch_count": refresh.batch_count,
+        "next_batch_start": refresh.next_batch_start,
+        "total_batches": refresh.total_batches,
+        "done": refresh.done,
+        "processed_codes": refresh.processed_codes,
+        "total_candidates": refresh.total_candidates,
         "status": cache,
         "notes": notes
     }))
@@ -503,8 +649,16 @@ struct TencentRefreshResult {
     fetched: usize,
     preserved: usize,
     failed_batches: usize,
+    error_samples: Vec<String>,
     stopped_early: bool,
     stop_reason: Option<String>,
+    batch_start: usize,
+    batch_count: usize,
+    next_batch_start: usize,
+    total_batches: usize,
+    done: bool,
+    processed_codes: usize,
+    total_candidates: usize,
 }
 
 async fn refresh_tencent_market_data(
@@ -513,7 +667,8 @@ async fn refresh_tencent_market_data(
     max_candidates: usize,
     use_previous_close: bool,
     max_failed_batches: usize,
-    max_refresh_secs: u64,
+    batch_start: usize,
+    batch_count: Option<usize>,
 ) -> Result<TencentRefreshResult, String> {
     let (seed_stocks, seed_codes) = seed_stock_maps(&seed);
     let mut candidate_codes = seed_codes;
@@ -528,36 +683,46 @@ async fn refresh_tencent_market_data(
         return Err("mobile market refresh has no candidate stock codes".to_string());
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(TENCENT_REQUEST_TIMEOUT_SECS))
-        .connect_timeout(Duration::from_secs(TENCENT_CONNECT_TIMEOUT_SECS))
-        .user_agent("Mozilla/5.0 GP-Assistant/0.2 mobile")
-        .build()
-        .map_err(|error| format!("create Tencent HTTP client failed: {error}"))?;
+    let client = build_tencent_http_client(
+        "Mozilla/5.0 GuXuanYou/0.3 mobile",
+        Duration::from_secs(TENCENT_REQUEST_TIMEOUT_SECS),
+    )?;
+
+    let (normalized_batch_start, batch_end, total_batches) =
+        candidate_batch_window(candidate_codes.len(), batch_start, batch_count);
+    let effective_batch_count = batch_end.saturating_sub(normalized_batch_start);
+    let requested_codes: Vec<String> = candidate_codes
+        .chunks(TENCENT_BATCH_SIZE)
+        .skip(normalized_batch_start)
+        .take(effective_batch_count)
+        .flat_map(|chunk| chunk.iter().cloned())
+        .collect();
 
     let mut stocks = Vec::new();
     let mut seen = HashSet::new();
     let mut failed_batches = 0usize;
     let mut consecutive_failed_batches = 0usize;
+    let mut error_samples = Vec::new();
     let mut stopped_early = false;
     let mut stop_reason = None;
-    let started_at = std::time::Instant::now();
-    let max_refresh_duration = Duration::from_secs(max_refresh_secs);
-    for batch in candidate_codes.chunks(TENCENT_BATCH_SIZE) {
-        if started_at.elapsed() >= max_refresh_duration {
-            stopped_early = true;
-            stop_reason = Some("timeout".to_string());
-            break;
-        }
-        let request_timeout = max_refresh_duration
-            .saturating_sub(started_at.elapsed())
-            .min(Duration::from_secs(TENCENT_REQUEST_TIMEOUT_SECS));
-        if request_timeout.is_zero() {
-            stopped_early = true;
-            stop_reason = Some("timeout".to_string());
-            break;
-        }
-        match fetch_tencent_quotes(&client, batch, request_timeout).await {
+    let mut next_batch_start = normalized_batch_start;
+    let request_timeout = Duration::from_secs(TENCENT_REQUEST_TIMEOUT_SECS);
+    let batch_timeout = Duration::from_secs(TENCENT_BATCH_TIMEOUT_SECS);
+    for (offset, batch) in candidate_codes
+        .chunks(TENCENT_BATCH_SIZE)
+        .enumerate()
+        .skip(normalized_batch_start)
+        .take(effective_batch_count)
+    {
+        next_batch_start = offset + 1;
+        let fetch_result = tokio::time::timeout(
+            batch_timeout,
+            fetch_tencent_quotes(&client, batch, request_timeout),
+        )
+        .await
+        .map_err(|_| format!("Tencent quote batch timed out after {} seconds", batch_timeout.as_secs()))
+        .and_then(|result| result);
+        match fetch_result {
             Ok(text) => {
                 consecutive_failed_batches = 0;
                 for mut stock in parse_tencent_quotes(&text, &seed_stocks, use_previous_close) {
@@ -573,7 +738,10 @@ async fn refresh_tencent_market_data(
                     }
                 }
             }
-            Err(_) => {
+            Err(error) => {
+                if error_samples.len() < 3 {
+                    error_samples.push(error);
+                }
                 failed_batches += 1;
                 consecutive_failed_batches += 1;
                 if consecutive_failed_batches >= max_failed_batches {
@@ -585,10 +753,14 @@ async fn refresh_tencent_market_data(
         }
     }
     let fetched = seen.len();
-    let preserved =
-        append_preserved_seed_stocks(&candidate_codes, &seed_stocks, &mut stocks, &mut seen);
+    let preserved = append_all_preserved_seed_stocks(&seed_stocks, &mut stocks, &mut seen);
     if stocks.is_empty() {
-        return Err("Tencent quote refresh returned no valid stocks".to_string());
+        let suffix = if error_samples.is_empty() {
+            String::new()
+        } else {
+            format!("; recent errors: {}", error_samples.join(" | "))
+        };
+        return Err(format!("Tencent quote refresh returned no valid stocks{suffix}"));
     }
     stocks.sort_by(|left, right| {
         left.get("code")
@@ -624,13 +796,22 @@ async fn refresh_tencent_market_data(
         "histories": filter_seed_histories(&seed, &valid_codes)
     });
 
+    let done = stopped_early || next_batch_start >= total_batches;
     Ok(TencentRefreshResult {
         requested: candidate_codes.len(),
         fetched,
         preserved,
         failed_batches,
+        error_samples,
         stopped_early,
         stop_reason,
+        batch_start: normalized_batch_start,
+        batch_count: effective_batch_count,
+        next_batch_start,
+        total_batches,
+        done,
+        processed_codes: requested_codes.len(),
+        total_candidates: candidate_codes.len(),
         dataset,
     })
 }
@@ -666,6 +847,31 @@ fn append_preserved_seed_stocks(
         }
     }
     preserved
+}
+
+fn append_all_preserved_seed_stocks(
+    seed_stocks: &HashMap<String, serde_json::Map<String, Value>>,
+    stocks: &mut Vec<Value>,
+    seen: &mut HashSet<String>,
+) -> usize {
+    let mut codes: Vec<String> = seed_stocks.keys().cloned().collect();
+    codes.sort();
+    append_preserved_seed_stocks(&codes, seed_stocks, stocks, seen)
+}
+
+fn candidate_batch_window(
+    total_codes: usize,
+    batch_start: usize,
+    batch_count: Option<usize>,
+) -> (usize, usize, usize) {
+    if total_codes == 0 {
+        return (0, 0, 0);
+    }
+    let total_batches = total_codes.div_ceil(TENCENT_BATCH_SIZE);
+    let start = batch_start.min(total_batches);
+    let count = batch_count.unwrap_or_else(|| total_batches.saturating_sub(start));
+    let end = start.saturating_add(count).min(total_batches);
+    (start, end, total_batches)
 }
 
 async fn fetch_tencent_quotes(
@@ -893,15 +1099,15 @@ fn infer_market(digits: &str) -> &'static str {
 fn board_label(code: &str) -> &'static str {
     let digits = &code[..6];
     if code.ends_with(".BJ") {
-        "Beijing Stock Exchange"
+        "\u{5317}\u{4ea4}\u{6240}"
     } else if digits.starts_with("688") {
-        "STAR Market"
+        "\u{79d1}\u{521b}\u{677f}"
     } else if digits.starts_with("300") || digits.starts_with("301") {
-        "ChiNext"
+        "\u{521b}\u{4e1a}\u{677f}"
     } else if code.ends_with(".SH") {
-        "Shanghai A Share"
+        "\u{6caa}\u{5e02}A\u{80a1}"
     } else {
-        "Shenzhen A Share"
+        "\u{6df1}\u{5e02}A\u{80a1}"
     }
 }
 
@@ -1149,6 +1355,7 @@ pub fn run() {
         core_mobile_market_data_read,
         core_mobile_market_data_write,
         core_mobile_market_data_clear,
+        core_mobile_network_probe,
         core_mobile_market_data_refresh_tencent,
         core_upstream_rag_import,
         core_upstream_rag_list,
@@ -1412,7 +1619,7 @@ mod tests {
             .expect("SZ stock should be preserved");
         assert_eq!(
             sz_stock.get("industry").and_then(Value::as_str),
-            Some("Shenzhen A Share")
+            Some("\u{6df1}\u{5e02}A\u{80a1}")
         );
         let sh_stock = stocks
             .iter()
@@ -1466,5 +1673,38 @@ mod tests {
         assert!(codes.iter().position(|code| code == "300010.SZ").unwrap() < 64);
         assert!(codes.iter().position(|code| code == "688010.SH").unwrap() < 64);
         assert!(codes.iter().position(|code| code == "920010.BJ").unwrap() < 64);
+    }
+
+    #[test]
+    fn candidate_batch_window_clamps_to_available_batches() {
+        assert_eq!(candidate_batch_window(0, 0, Some(4)), (0, 0, 0));
+        assert_eq!(candidate_batch_window(600, 0, Some(2)), (0, 2, 5));
+        assert_eq!(candidate_batch_window(600, 4, Some(4)), (4, 5, 5));
+        assert_eq!(candidate_batch_window(600, 9, Some(1)), (5, 5, 5));
+    }
+
+    #[test]
+    fn append_all_preserved_seed_stocks_keeps_rows_outside_current_batch() {
+        let seed = json!({
+            "stocks": [
+                {"code": "000001.SZ", "name": "Ping An Bank", "price": 10.0},
+                {"code": "600000.SH", "name": "SPD Bank", "price": 8.0},
+                {"code": "688001.SH", "name": "STAR", "price": 20.0}
+            ]
+        });
+        let (seed_stocks, _) = seed_stock_maps(&seed);
+        let mut stocks = vec![json!({"code": "000001.SZ", "name": "Live Quote"})];
+        let mut seen = HashSet::from(["000001.SZ".to_string()]);
+
+        let preserved = append_all_preserved_seed_stocks(&seed_stocks, &mut stocks, &mut seen);
+
+        assert_eq!(preserved, 2);
+        assert_eq!(stocks.len(), 3);
+        assert!(stocks
+            .iter()
+            .any(|stock| stock.get("code").and_then(Value::as_str) == Some("600000.SH")));
+        assert!(stocks
+            .iter()
+            .any(|stock| stock.get("code").and_then(Value::as_str) == Some("688001.SH")));
     }
 }

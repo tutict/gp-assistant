@@ -23,3 +23,5 @@ desktop/src-tauri/target/
 desktop/src-tauri/binaries/*
 !desktop/src-tauri/binaries/.gitkeep
 native/gp-core/target/
+desktop/src-tauri/keys/
+desktop/src-tauri/gen/android/app/build/outputs/apk/**/*-aligned.apk

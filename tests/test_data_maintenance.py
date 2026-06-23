@@ -118,12 +118,59 @@ class DataMaintenanceAutoRefreshTests(unittest.TestCase):
         self.assertTrue(any("交易日历不可用" in note for note in result.notes))
         refresh.assert_called_once()
 
+
+    def test_prune_cache_clear_mode_deletes_disposable_files(self):
+        self._write_cache(datetime(2026, 6, 8, 15, 45, tzinfo=maintenance.CHINA_TZ))
+        disposable = self.cache_dir / "tdx_fundamentals.csv"
+        nested_dir = self.cache_dir / "history"
+        nested_dir.mkdir()
+        nested = nested_dir / "000001.csv"
+        disposable.write_text("code,value\n000001,1\n", encoding="utf-8")
+        nested.write_text("date,close\n2026-06-08,10\n", encoding="utf-8")
+
+        with self._patched_cache():
+            result = maintenance.prune_cache("tdx", CachePolicy(mode="clear", auto_prune=False))
+
+        self.assertEqual(result.removed_files, 2)
+        self.assertGreater(result.removed_bytes, 0)
+        self.assertTrue(self.cache_path.exists())
+        self.assertFalse(disposable.exists())
+        self.assertFalse(nested.exists())
+
+    def test_prune_cache_light_mode_keeps_small_cache(self):
+        self._write_cache(datetime(2026, 6, 8, 15, 45, tzinfo=maintenance.CHINA_TZ))
+        disposable = self.cache_dir / "news.sqlite"
+        disposable.write_text("small", encoding="utf-8")
+
+        with self._patched_cache():
+            result = maintenance.prune_cache("tdx", CachePolicy(mode="light", max_bytes=1024 * 1024, auto_prune=False))
+
+        self.assertEqual(result.removed_files, 0)
+        self.assertTrue(disposable.exists())
+
     def _patched_cache(self):
         return patch.multiple(
             maintenance,
             CACHE_DIR=self.cache_dir,
             UNIVERSE_CACHE_FILES={"tdx": self.cache_path},
         )
+
+
+    def test_refresh_universe_invokes_screening_cache_refresh(self):
+        class FakeProvider:
+            name = "tdx"
+
+            def list_stocks(self):
+                return [object(), object(), object()]
+
+            def refresh_screening_cache(self):
+                return ["screening refreshed"]
+
+        with self._patched_cache(), patch.object(maintenance, "get_provider", return_value=FakeProvider()):
+            result = maintenance.refresh_universe("tdx", self.policy)
+
+        self.assertTrue(result.refreshed)
+        self.assertIn("screening refreshed", result.notes)
 
     def _write_cache(self, modified_at: datetime):
         self.cache_path.write_text("code,name\n000001.SZ,Sample\n", encoding="utf-8")

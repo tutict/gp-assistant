@@ -14,6 +14,7 @@ class TencentQuoteClientTests(unittest.TestCase):
         self.assertEqual(TencentQuoteClient.tencent_symbol("600000.SH"), "sh600000")
         self.assertEqual(TencentQuoteClient.tencent_symbol("300750.SZ"), "sz300750")
         self.assertEqual(TencentQuoteClient.tencent_symbol("430001.BJ"), "bj430001")
+        self.assertEqual(TencentQuoteClient.tencent_symbol("920000.BJ"), "bj920000")
         self.assertEqual(TencentQuoteClient.tencent_symbol("bj830799"), "bj830799")
 
     def test_symbol_rejects_invalid_codes(self):
