@@ -96,7 +96,7 @@ const MOBILE_DEDUCTED_FINANCIAL_MISSING_NOTE =
   "\u79fb\u52a8\u7aef\u6263\u975e\u8d22\u52a1\u5feb\u7167\u4e0d\u53ef\u7528\uff1b\u6263\u975e\u89c4\u5219\u4e0d\u4f1a\u8df3\u8fc7\uff0c\u7f3a\u5b57\u6bb5\u80a1\u7968\u6309\u4e0d\u8fbe\u6807\u5904\u7406\u3002";
 const MOBILE_DEDUCTED_FINANCIAL_STATUS_NOTE =
   "\u79fb\u52a8\u7aef\u6263\u975e\u8d22\u52a1\u5feb\u7167\u4e0d\u53ef\u7528\uff0c\u6263\u975e\u7b5b\u9009\u4ecd\u4f1a\u6267\u884c\uff0c\u7f3a\u5b57\u6bb5\u80a1\u7968\u6309\u4e0d\u8fbe\u6807\u5904\u7406\u3002";
-const MOBILE_FINANCIAL_SNAPSHOT_URL = "mobile-financial-snapshot.json";
+const MOBILE_FINANCIAL_SNAPSHOT_URL = new URL("mobile-financial-snapshot.json", window.location.href).toString();
 const DEFAULT_TODAY_DATE_INPUT_IDS = new Set(["trendEnd", "btEnd", "observeEnd"]);
 let mobileMarketDataPromise = null;
 let mobileMarketDataSummary = null;
@@ -2251,17 +2251,22 @@ function shouldCheckAutoRefreshUniverse() {
 }
 
 async function refreshUniverse() {
+  const tauriRuntime = isTauriRuntime();
   const mobileRuntime = isMobileTauriRuntime();
-  const progress = startRefreshProgress({ manual: mobileRuntime });
-  setMaintenanceNote(mobileRuntime ? "\u6b63\u5728\u540e\u53f0\u5206\u6279\u66f4\u65b0\u80a1\u7968\u6c60" : "\u5237\u65b0\u80a1\u7968\u6c60\u4e2d\uff0c\u771f\u5b9e\u6570\u636e\u6e90\u53ef\u80fd\u9700\u8981\u51e0\u5341\u79d2");
+  const progress = startRefreshProgress({ manual: tauriRuntime });
+  setMaintenanceNote(
+    tauriRuntime
+      ? (mobileRuntime ? "正在后台分批更新股票池" : "正在通过 Tauri/Rust 刷新股票池")
+      : "刷新股票池中，真实数据源可能需要几十秒"
+  );
   try {
-    if (mobileRuntime) {
+    if (tauriRuntime) {
       const invoke = window.__TAURI__?.core?.invoke;
-      if (!invoke) throw new Error("\u79fb\u52a8\u7aef\u8fd0\u884c\u73af\u5883\u672a\u63d0\u4f9b Tauri \u8c03\u7528\u80fd\u529b\uff0c\u8bf7\u91cd\u542f\u5e94\u7528\u540e\u91cd\u8bd5\u3002");
+      if (!invoke) throw new Error("Tauri 运行环境未提供 invoke 能力，请重启应用后重试。");
       const status = await refreshMobileUniverseWithProgress(invoke);
-      finishRefreshProgress("\u80a1\u7968\u6c60\u5237\u65b0\u5b8c\u6210");
+      finishRefreshProgress("股票池刷新完成");
       renderDataStatus(status);
-      setMaintenanceNote((status.notes || []).join(" ") || "\u80a1\u7968\u6c60\u5237\u65b0\u5b8c\u6210");
+      setMaintenanceNote((status.notes || []).join(" ") || "股票池刷新完成");
       return;
     }
     const data = await requestJson("POST", "/api/data-sources/refresh-universe", {
@@ -2270,12 +2275,12 @@ async function refreshUniverse() {
       daily_days: 500,
       minute_days: 3,
     });
-    finishRefreshProgress("\u80a1\u7968\u6c60\u5237\u65b0\u5b8c\u6210");
+    finishRefreshProgress("股票池刷新完成");
     renderDataStatus(data.status);
-    setMaintenanceNote((data.notes || []).join(" ") || "\u80a1\u7968\u6c60\u5237\u65b0\u5b8c\u6210");
+    setMaintenanceNote((data.notes || []).join(" ") || "股票池刷新完成");
   } catch (err) {
-    failRefreshProgress("\u80a1\u7968\u6c60\u5237\u65b0\u5931\u8d25");
-    setMaintenanceNote(`\u80a1\u7968\u6c60\u5237\u65b0\u5931\u8d25\uff1a${err.message}`);
+    failRefreshProgress("股票池刷新失败");
+    setMaintenanceNote(`股票池刷新失败：${err.message}`);
   } finally {
     window.setTimeout(() => stopRefreshProgress(progress), 900);
   }
