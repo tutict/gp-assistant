@@ -35,8 +35,17 @@ pub(crate) async fn api_news_rag_impl(
         }));
     }
 
-    let relations = scope_chain_relations(&data, &scope_codes);
-    let related_codes = related_codes(&scope_codes, &relations);
+    let stock_only = news_scope_mode(&payload) == "stock_only";
+    let relations = if stock_only {
+        Vec::new()
+    } else {
+        scope_chain_relations(&data, &scope_codes)
+    };
+    let related_codes = if stock_only {
+        scope_codes.clone()
+    } else {
+        related_codes(&scope_codes, &relations)
+    };
     let related_stocks = related_codes
         .iter()
         .filter_map(|code| stock_by_code.get(code).cloned())
@@ -51,23 +60,43 @@ pub(crate) async fn api_news_rag_impl(
     write_news_cache_items(&cache_path, &merged_cache)?;
     let evidence = query_evidence(&merged_cache, &related_codes, days, max_items);
 
-    let base_findings = build_findings(&scope_codes, &relations, &evidence, &stock_by_code);
-    let (findings, llm_notes, analysis_mode) = apply_llm_analysis(
-        payload.get("llm"),
-        &scope_codes,
-        &relations,
-        &evidence,
-        &stock_by_code,
-        &base_findings,
-    )
-    .await;
+    let base_findings = if stock_only {
+        build_stock_news_findings(&scope_codes, &evidence, &stock_by_code)
+    } else {
+        build_findings(&scope_codes, &relations, &evidence, &stock_by_code)
+    };
+    let (findings, llm_notes, analysis_mode) = if stock_only {
+        (
+            base_findings,
+            vec!["\u{5df2}\u{6309}\u{76ee}\u{6807}\u{4e2a}\u{80a1}\u{672c}\u{8eab}\u{6d88}\u{606f}\u{5206}\u{7ec4}\u{5c55}\u{793a}\u{5229}\u{597d}/\u{5229}\u{7a7a}\u{ff1b}\u{4e0a}\u{4e0b}\u{6e38} RAG \u{9700}\u{8981}\u{65f6}\u{8bf7}\u{5355}\u{72ec}\u{4f7f}\u{7528}\u{540c}\u{6b65}\u{5305}\u{6216}\u{5173}\u{7cfb}\u{56fe}\u{5206}\u{6790}\u{3002}".to_string()],
+            "plain_news".to_string(),
+        )
+    } else {
+        apply_llm_analysis(
+            payload.get("llm"),
+            &scope_codes,
+            &relations,
+            &evidence,
+            &stock_by_code,
+            &base_findings,
+        )
+        .await
+    };
     let mut notes = adapter_notes;
     notes.extend(llm_notes);
-    notes.push("RAG 只在已有股票关系图范围内分析消息，不从新闻自动发明上下游关系。".to_string());
-    notes.push(format!("消息缓存：{}。", cache_path.display()));
-    if relations.is_empty() {
-        notes.push("当前范围没有供应链、制造链或上游材料关系，结果仅保留可解释提示。".to_string());
+    if stock_only {
+        notes.push("\u{5f53}\u{524d}\u{4e3a}\u{4e2a}\u{80a1}\u{6d88}\u{606f}\u{6a21}\u{5f0f}\u{ff1a}\u{53ea}\u{62c9}\u{53d6}\u{76ee}\u{6807}\u{80a1}\u{672c}\u{8eab}\u{6d88}\u{606f}\u{5e76}\u{5206}\u{7ec4}\u{5229}\u{597d}/\u{5229}\u{7a7a}\u{ff0c}\u{672a}\u{8ba1}\u{7b97}\u{4e0a}\u{4e0b}\u{6e38}\u{5173}\u{8054}\u{5f71}\u{54cd}\u{3002}".to_string());
+        notes.push("\u{4e0a}\u{4e0b}\u{6e38} RAG \u{8bf7}\u{4f7f}\u{7528}\u{540c}\u{6b65}\u{5305}\u{3001}\u{5173}\u{7cfb}\u{56fe}\u{6216}\u{79bb}\u{7ebf} RAG \u{529f}\u{80fd}\u{5355}\u{72ec}\u{5206}\u{6790}\u{3002}".to_string());
+    } else {
+        notes.push("RAG \u{53ea}\u{5728}\u{5df2}\u{6709}\u{80a1}\u{7968}\u{5173}\u{7cfb}\u{56fe}\u{8303}\u{56f4}\u{5185}\u{5206}\u{6790}\u{6d88}\u{606f}\u{ff0c}\u{4e0d}\u{4ece}\u{65b0}\u{95fb}\u{81ea}\u{52a8}\u{53d1}\u{660e}\u{4e0a}\u{4e0b}\u{6e38}\u{5173}\u{7cfb}\u{3002}".to_string());
+        if relations.is_empty() {
+            notes.push("\u{5f53}\u{524d}\u{8303}\u{56f4}\u{6ca1}\u{6709}\u{4f9b}\u{5e94}\u{94fe}\u{3001}\u{5236}\u{9020}\u{94fe}\u{6216}\u{4e0a}\u{6e38}\u{6750}\u{6599}\u{5173}\u{7cfb}\u{ff0c}\u{7ed3}\u{679c}\u{4ec5}\u{4fdd}\u{7559}\u{53ef}\u{89e3}\u{91ca}\u{63d0}\u{793a}\u{3002}".to_string());
+        }
     }
+    notes.push(format!(
+        "\u{6d88}\u{606f}\u{7f13}\u{5b58}\u{ff1a}{}\u{3002}",
+        cache_path.display()
+    ));
     if evidence.is_empty() {
         notes.push("当前时间窗口没有命中可用消息。".to_string());
     }
@@ -96,6 +125,18 @@ fn stock_map(data: &Value) -> HashMap<String, Value> {
         }
     }
     result
+}
+
+fn news_scope_mode(payload: &Value) -> &'static str {
+    match payload
+        .get("scope_mode")
+        .or_else(|| payload.get("mode"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+    {
+        "stock_only" | "single_stock" | "plain_news" => "stock_only",
+        _ => "upstream",
+    }
 }
 
 fn scope_codes(payload: &Value, stock_by_code: &HashMap<String, Value>) -> Vec<String> {
@@ -713,6 +754,42 @@ fn build_findings(
         let direction = direction(&selected);
         let has_community = evidence_has_community(&selected);
         findings.push(json!({"target": format!("{stock_name}（{code}）"), "direction": direction, "confidence": confidence(&selected, &related), "impact_chain": impact_chain(code, stock_name, &related, stock_by_code, &selected), "evidence": selected, "pending_checks": pending_checks(&direction, has_community)}));
+    }
+    findings
+}
+
+fn build_stock_news_findings(
+    scope_codes: &[String],
+    evidence: &[Value],
+    stock_by_code: &HashMap<String, Value>,
+) -> Vec<Value> {
+    let mut findings = Vec::new();
+    for code in scope_codes.iter().take(8) {
+        let stock_name = stock_by_code
+            .get(code)
+            .and_then(|stock| stock.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or(code);
+        let selected = dedupe_news_items(
+            evidence
+                .iter()
+                .filter(|item| evidence_has_code(item, code))
+                .cloned()
+                .collect(),
+        )
+        .into_iter()
+        .take(8)
+        .collect::<Vec<_>>();
+        let direction = direction(&selected);
+        let has_community = evidence_has_community(&selected);
+        findings.push(json!({
+            "target": format!("{stock_name}\u{ff08}{code}\u{ff09}"),
+            "direction": direction,
+            "confidence": confidence(&selected, &[]),
+            "impact_chain": format!("{}\u{4e2a}\u{80a1}\u{6d88}\u{606f}\u{672c}\u{5730}\u{5f52}\u{7c7b}\u{4e3a}{}\u{ff1b}\u{672c}\u{6b21}\u{4e0d}\u{8ba1}\u{7b97}\u{4e0a}\u{4e0b}\u{6e38}\u{4f20}\u{5bfc}\u{5f71}\u{54cd}\u{3002}", stock_name, direction),
+            "evidence": selected,
+            "pending_checks": pending_checks(&direction, has_community),
+        }));
     }
     findings
 }
@@ -1615,6 +1692,36 @@ mod tests {
         let value: Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(value["re"][0]["post_title"], "订单增长");
     }
+    #[test]
+    fn news_scope_mode_supports_stock_only() {
+        assert_eq!(
+            news_scope_mode(&json!({"scope_mode":"stock_only"})),
+            "stock_only"
+        );
+        assert_eq!(news_scope_mode(&json!({"mode":"plain_news"})), "stock_only");
+        assert_eq!(news_scope_mode(&json!({})), "upstream");
+    }
+
+    #[test]
+    fn stock_news_findings_ignore_neighbor_evidence() {
+        let stocks = stock_map(&json!({"stocks":[
+            {"code":"300750.SZ", "name":"CATL", "industry":"battery"},
+            {"code":"002594.SZ", "name":"BYD", "industry":"auto"}
+        ]}));
+        let evidence = vec![
+            news_evidence(
+                &json!({"title":"target order", "source":"news", "sentiment":"positive", "stock_codes":["300750.SZ"], "relation_types":[]}),
+            ),
+            news_evidence(
+                &json!({"title":"neighbor pressure", "source":"news", "sentiment":"negative", "stock_codes":["002594.SZ"], "relation_types":["supply_chain"]}),
+            ),
+        ];
+        let findings = build_stock_news_findings(&["300750.SZ".to_string()], &evidence, &stocks);
+        let rows = findings[0]["evidence"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["stock_codes"][0], "300750.SZ");
+    }
+
     #[test]
     fn sentiment_groups_separate_positive_and_negative_news() {
         let items = vec![

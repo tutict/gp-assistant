@@ -613,6 +613,7 @@
                 </div>
                 <div class="button-row">
                   <button id="sectorScreenBtn" class="ghost-action" type="button">分概念筛选</button>
+                  <button id="boardScreenBtn" class="ghost-action" type="button">分板块选股</button>
                   <button id="screenBtn" type="button">运行筛选</button>
                 </div>
               </div>
@@ -655,9 +656,9 @@
                   <h2>利好 / 利空消息</h2>
                 </div>
                 <div class="button-row">
-                  <button id="newsRagBtn" type="button" data-desktop-only>拉取消息</button>
+                  <button id="newsRagBtn" type="button">拉取个股消息</button>
                   <button id="ragPackBuildBtn" type="button" data-desktop-only>构建同步包</button>
-                  <button id="ragPackQueryBtn" type="button">查看同步包</button>
+                  <button id="ragPackQueryBtn" type="button">上下游RAG包</button>
                   <button id="upstreamScanBtn" type="button" data-mobile-only>扫码导入</button>
                   <button id="upstreamImportBtn" type="button" data-mobile-only>导入到手机</button>
                 </div>
@@ -694,7 +695,7 @@
                 </label>
               </div>
               <div id="newsRagResult" class="result-panel empty">
-                <div class="empty-state">按目标个股和上下游关系拉取消息，并分栏展示利好与利空</div>
+                <div class="empty-state">先拉取目标个股自身利好/利空；上下游影响请单独使用 RAG 包分析</div>
               </div>
             </article>
 

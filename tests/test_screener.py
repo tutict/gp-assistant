@@ -388,5 +388,29 @@ class ScreenerIndustryTests(unittest.TestCase):
         )
 
 
+    def test_sector_screen_groups_by_board(self):
+        universe = [
+            StockItem(code="688001.SH", name="star-a", industry="chip", price=10.0),
+            StockItem(code="300001.SZ", name="growth-a", industry="device", price=11.0),
+            StockItem(code="830001.BJ", name="north-a", industry="special", price=12.0),
+            StockItem(code="600000.SH", name="main-a", industry="bank", price=13.0),
+            StockItem(code="002001.SZ", name="deep-a", industry="home", price=14.0),
+        ]
+
+        result = screen_stocks_by_sector(
+            universe,
+            SectorScreenRequest(group_by="board", min_sector_candidates=1, max_sectors=10, per_sector_limit=10),
+        )
+
+        self.assertEqual(
+            [group.sector for group in result.groups],
+            ["科创板", "创业板", "北交所", "沪主板", "深主板"],
+        )
+        self.assertEqual(result.sector_count, 5)
+
+    def test_sector_screen_rejects_unknown_group_by(self):
+        with self.assertRaises(Exception):
+            SectorScreenRequest(group_by="theme")
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,7 @@ const $ = (selector) => document.querySelector(selector);
 const buttons = {
   screen: $("#screenBtn"),
   sectorScreen: $("#sectorScreenBtn"),
+  boardScreen: $("#boardScreenBtn"),
   graph: $("#graphBtn"),
   trendAnalyze: $("#trendAnalyzeBtn"),
   trendScreen: $("#trendScreenBtn"),
@@ -82,7 +83,7 @@ const DEFAULT_DATA_SOURCE = "tdx";
 const MOBILE_TENCENT_MAX_CANDIDATES = 15000;
 const MOBILE_TENCENT_MAX_FAILED_BATCHES = 4;
 const MOBILE_TENCENT_BATCHES_PER_STEP = 1;
-const MOBILE_TAURI_INVOKE_TIMEOUT_MS = 8000;
+const MOBILE_TAURI_INVOKE_TIMEOUT_MS = 20000;
 const MOBILE_TENCENT_SCRIPT_BATCH_SIZE = 120;
 const MOBILE_TENCENT_SCRIPT_TIMEOUT_MS = 8000;
 const MOBILE_REFRESH_LOG_LIMIT = 80;
@@ -206,15 +207,16 @@ const TAURI_GET_PREFIX_ROUTES = [
     prefix: "/api/observe/",
     handler: async ({ invoke, path, parsed }) => {
       const code = decodeURIComponent(path.slice("/api/observe/".length));
-      return invoke("api_observe", {
-        payload: {
-          code,
-          start_date: normalizeDateParam(parsed.searchParams.get("start_date"), "20200101"),
-          end_date: normalizeDateParam(parsed.searchParams.get("end_date"), currentSystemDateCompact()),
-          series_limit: clampInt(parsed.searchParams.get("series_limit"), 20, 500, 120),
-          include_order_book: parsed.searchParams.get("include_order_book") === "true",
-        },
-      });
+      const payload = {
+        code,
+        start_date: normalizeDateParam(parsed.searchParams.get("start_date"), "20200101"),
+        end_date: normalizeDateParam(parsed.searchParams.get("end_date"), currentSystemDateCompact()),
+        series_limit: clampInt(parsed.searchParams.get("series_limit"), 20, 500, 120),
+        include_order_book: parsed.searchParams.get("include_order_book") === "true",
+      };
+      const webviewHistory = await fetchObserveDailyHistoryForTauri(payload).catch(() => null);
+      if (Array.isArray(webviewHistory) && webviewHistory.length) payload.history = webviewHistory;
+      return invoke("api_observe", { payload });
     },
   },
 ];
@@ -314,6 +316,53 @@ function mobileDataHasDeductedFinancialFields(data = {}) {
   );
 }
 
+function normalizeMobileFinancialSnapshotFinancial(source = {}, fallbackCode = "") {
+  const financial = {};
+  const latestEps = Number(source?.latest_eps ?? source?.eps);
+  if (Number.isFinite(latestEps)) financial.latest_eps = latestEps;
+  const latestBps = Number(source?.latest_bps ?? source?.bps);
+  if (Number.isFinite(latestBps)) financial.latest_bps = latestBps;
+  const period = normalizeFinancialPeriodKey(source?.period || source?.latest_period || "");
+  if (period) financial.period = period;
+  if (source?.source) financial.source = String(source.source);
+  const quarterly = (Array.isArray(source?.quarterly_eps) ? source.quarterly_eps : [])
+    .map((point) => {
+      const pointPeriod = normalizeFinancialPeriodKey(point?.period || "");
+      const value = Number(point?.value ?? point?.raw_value);
+      if (!pointPeriod || !Number.isFinite(value)) return null;
+      const normalized = { period: pointPeriod, value };
+      if (point?.source) normalized.source = String(point.source);
+      return normalized;
+    })
+    .filter(Boolean);
+  if (quarterly.length) {
+    const seen = new Set();
+    financial.quarterly_eps = quarterly.filter((point) => {
+      if (seen.has(point.period)) return false;
+      seen.add(point.period);
+      return true;
+    });
+    if (!financial.period) financial.period = financial.quarterly_eps[0]?.period;
+  }
+  return Object.keys(financial).length ? financial : null;
+}
+
+function normalizeMobileFinancialSnapshotStock(stock = {}) {
+  const code = normalizeMobileStockCode(stock?.code);
+  if (!code) return null;
+  const item = { code };
+  MOBILE_DEDUCTED_FINANCIAL_FIELDS.forEach((field) => {
+    const value = Number(stock?.[field]);
+    if (Number.isFinite(value)) item[field] = value;
+  });
+  const financial = normalizeMobileFinancialSnapshotFinancial(stock, code);
+  return {
+    code,
+    stock: Object.keys(item).length > 1 ? item : null,
+    financial,
+  };
+}
+
 async function loadMobileFinancialSnapshot() {
   if (mobileFinancialSnapshotPromise) return await mobileFinancialSnapshotPromise;
   mobileFinancialSnapshotPromise = (async () => {
@@ -322,19 +371,24 @@ async function loadMobileFinancialSnapshot() {
       if (!response.ok) return null;
       const snapshot = await response.json();
       const byCode = new Map();
+      const financials = {};
       (Array.isArray(snapshot?.stocks) ? snapshot.stocks : []).forEach((stock) => {
-        const code = normalizeMobileStockCode(stock?.code);
-        if (!code) return;
-        const item = { code };
-        MOBILE_DEDUCTED_FINANCIAL_FIELDS.forEach((field) => {
-          const value = Number(stock?.[field]);
-          if (Number.isFinite(value)) item[field] = value;
-        });
-        if (Object.keys(item).length > 1) byCode.set(code, item);
+        const normalized = normalizeMobileFinancialSnapshotStock(stock);
+        if (!normalized) return;
+        if (normalized.stock) byCode.set(normalized.code, normalized.stock);
+        if (normalized.financial) financials[normalized.code] = normalized.financial;
+      });
+      const rawFinancials = snapshot?.financials && typeof snapshot.financials === "object" ? snapshot.financials : {};
+      Object.entries(rawFinancials).forEach(([rawCode, value]) => {
+        const code = normalizeMobileStockCode(rawCode);
+        if (!code || !value || typeof value !== "object") return;
+        const financial = normalizeMobileFinancialSnapshotFinancial(value, code);
+        if (financial) financials[code] = financial;
       });
       return {
         ...snapshot,
         stocks: Array.from(byCode.values()),
+        financials,
       };
     } catch (_error) {
       return null;
@@ -342,15 +396,17 @@ async function loadMobileFinancialSnapshot() {
   })();
   return await mobileFinancialSnapshotPromise;
 }
-
 async function hydrateMobileMarketDataRecord(record) {
   const data = record?.data || record;
   if (!data || !Array.isArray(data.stocks) || !data.stocks.length) return record;
   const snapshot = await loadMobileFinancialSnapshot();
-  if (!snapshot?.stocks?.length) return record;
+  const hasSnapshotStocks = Array.isArray(snapshot?.stocks) && snapshot.stocks.length;
+  const snapshotFinancials = snapshot?.financials && typeof snapshot.financials === "object" ? snapshot.financials : {};
+  const hasSnapshotFinancials = Object.keys(snapshotFinancials).length > 0;
+  if (!hasSnapshotStocks && !hasSnapshotFinancials) return record;
 
   const snapshotByCode = new Map(
-    snapshot.stocks
+    (snapshot.stocks || [])
       .map((stock) => [normalizeMobileStockCode(stock?.code), stock])
       .filter(([code]) => code),
   );
@@ -372,12 +428,24 @@ async function hydrateMobileMarketDataRecord(record) {
     if (changed) mergedCount += 1;
     return changed ? merged : stock;
   });
-  if (!mergedCount) return record;
 
-  const note = `\u79fb\u52a8\u7aef\u5df2\u5408\u5e76\u968f\u5305\u6263\u975e\u8d22\u52a1\u5feb\u7167\uff1a${mergedCount}/${stocks.length} \u53ea\u80a1\u7968\u3002`;
+  const financials = { ...(data.financials && typeof data.financials === "object" ? data.financials : {}) };
+  let mergedFinancialCount = 0;
+  Object.entries(snapshotFinancials).forEach(([code, value]) => {
+    const normalizedCode = normalizeMobileStockCode(code);
+    if (!normalizedCode || !value || typeof value !== "object") return;
+    if (!financials[normalizedCode]) {
+      financials[normalizedCode] = value;
+      mergedFinancialCount += 1;
+    }
+  });
+  if (!mergedCount && !mergedFinancialCount) return record;
+
+  const note = `\u79fb\u52a8\u7aef\u5df2\u5408\u5e76\u968f\u5305\u8d22\u52a1\u5feb\u7167\uff1a\u6263\u975e\u5b57\u6bb5 ${mergedCount}/${stocks.length} \u53ea\uff0cEPS \u660e\u7ec6 ${mergedFinancialCount} \u53ea\u3002`;
   const mergedData = {
     ...data,
     stocks,
+    financials: Object.keys(financials).length ? financials : data.financials,
     notes: uniqueNotes([...(Array.isArray(data.notes) ? data.notes : []), note]),
   };
   if (record?.data) {
@@ -389,7 +457,6 @@ async function hydrateMobileMarketDataRecord(record) {
   }
   return mergedData;
 }
-
 function appendMobilePayloadNotes(result, notes = []) {
   const cleanNotes = uniqueNotes(notes);
   if (!cleanNotes.length || !result || typeof result !== "object" || Array.isArray(result)) return result;
@@ -644,6 +711,9 @@ function bindActions() {
   buttons.sectorScreen?.addEventListener("click", () =>
     runTask(buttons.sectorScreen, panels.screen, runSectorScreen),
   );
+  buttons.boardScreen?.addEventListener("click", () =>
+    runTask(buttons.boardScreen, panels.screen, runBoardScreen),
+  );
   buttons.graph.addEventListener("click", () => runTask(buttons.graph, panels.graph, runGraph));
   buttons.trendAnalyze.addEventListener("click", () => runTask(buttons.trendAnalyze, panels.trend, runTrendAnalysis));
   buttons.trendScreen.addEventListener("click", () => runTask(buttons.trendScreen, panels.trend, runTrendScreen));
@@ -774,7 +844,7 @@ function initRuntimeSurface() {
   document.body.classList.toggle("mobile-tauri", mobileRuntime);
   document.body.classList.toggle("desktop-runtime", !mobileRuntime);
   if (buttons.ragPackQuery) {
-    buttons.ragPackQuery.textContent = mobileRuntime ? "查看本机包" : "查看同步包";
+    buttons.ragPackQuery.textContent = "上下游RAG包";
   }
   if (mobileRuntime && dataSource.refreshUniverse) {
     dataSource.refreshUniverse.textContent = "联网更新股票池";
@@ -964,6 +1034,7 @@ async function runSectorScreen() {
   const perSectorLimit = clampInt($("#perSectorLimit")?.value, 1, 50, DEFAULT_PER_SECTOR_LIMIT);
   const payload = {
     criteria: buildCriteria(),
+    group_by: "concept",
     max_sectors: maxSectors,
     per_sector_limit: perSectorLimit,
     min_sector_candidates: perSectorLimit,
@@ -976,6 +1047,29 @@ async function runSectorScreen() {
   }
 }
 
+async function runBoardScreen() {
+  const timer = startPanelProgress(panels.screen, "\u6309\u677f\u5757\u9009\u80a1\u4e2d", [
+    [14, "\u8bfb\u53d6\u80a1\u7968\u6c60\u7f13\u5b58"],
+    [34, "\u5e94\u7528\u5f53\u524d\u7814\u7a76\u6761\u4ef6"],
+    [58, "\u6309\u4ea4\u6613\u677f\u5757\u5206\u7ec4"],
+    [80, "\u8ba1\u7b97\u677f\u5757\u5185\u6392\u5e8f"],
+    [94, "\u751f\u6210\u5206\u677f\u5757\u7ed3\u679c"],
+  ]);
+  const perSectorLimit = clampInt($("#perSectorLimit")?.value, 1, 50, DEFAULT_PER_SECTOR_LIMIT);
+  const payload = {
+    criteria: buildCriteria(),
+    group_by: "board",
+    max_sectors: 5,
+    per_sector_limit: perSectorLimit,
+    min_sector_candidates: 1,
+  };
+  try {
+    const data = await postJson("/api/sector-screen", payload, panels.screen);
+    if (data) renderBoardScreenResult(panels.screen, data);
+  } finally {
+    stopPanelProgress(panels.screen, timer);
+  }
+}
 async function runGraph() {
   const timer = startPanelProgress(panels.graph, "图谱选股中", [
     [18, "构建基础候选池"],
@@ -1090,25 +1184,25 @@ async function handlePanelEmptyAction(action, trigger) {
 async function runNewsRag() {
   const code = await resolveStockCodeInput("newsCode", panels.newsRag);
   if (!code) {
-    setError(panels.newsRag, "请输入目标股票代码", "上下游消息分析需要明确的单只目标股票，例如：300750.SZ。");
+    setError(panels.newsRag, "请输入目标股票代码", "个股利好/利空消息需要明确的单只目标股票，例如：300750.SZ。");
     return;
   }
   $("#newsCode").value = code;
   const mobileRuntime = isMobileTauriRuntime();
   const timer = startPanelProgress(
     panels.newsRag,
-    mobileRuntime ? "手机端消息分析中" : "拉取利好/利空消息中",
+    mobileRuntime ? "拉取手机端个股消息中" : "拉取个股利好/利空消息中",
     mobileRuntime
       ? [
-          [18, "读取本机 RAG 包"],
-          [42, "抽取离线证据"],
-          [66, "运行本地分析"],
-          [86, "生成影响判断"],
+          [18, "确认目标股票"],
+          [42, "联网拉取个股消息"],
+          [66, "本地利好/利空归类"],
+          [86, "整理消息分栏"],
         ]
       : [
-          [18, "读取已有关系图"],
-          [38, "更新本地消息缓存"],
-          [62, "检索消息证据"],
+          [18, "确认目标股票"],
+          [38, "更新个股消息缓存"],
+          [62, "检索个股消息"],
           [82, "整理利好/利空"],
         ],
   );
@@ -1116,11 +1210,12 @@ async function runNewsRag() {
     criteria: buildCriteria({ limit: 100 }),
     code,
     seed_codes: [code],
+    scope_mode: "stock_only",
     days: clampInt($("#newsDays")?.value, 1, 365, 30),
     max_items: 24,
   };
   const llm = buildLlmConfig();
-  if (llm) payload.llm = llm;
+  if (llm && payload.scope_mode !== "stock_only") payload.llm = llm;
   try {
     const data = await postJson("/api/news-rag", payload, panels.newsRag);
     if (data) {
@@ -3454,6 +3549,13 @@ function applyMobileMarketDataRecord(record, source) {
   return data;
 }
 
+function hasMobileMarketSeed(seed) {
+  if (!seed || typeof seed !== "object") return false;
+  if (Array.isArray(seed.stocks) && seed.stocks.length) return true;
+  if (Array.isArray(seed.relations) && seed.relations.length) return true;
+  return Boolean(seed.histories && typeof seed.histories === "object" && Object.keys(seed.histories).length);
+}
+
 function mobileRecordUpdatedAt(record) {
   const epochMs = Number(record?.updated_at_epoch_ms);
   if (Number.isFinite(epochMs) && epochMs > 0) return new Date(epochMs).toISOString();
@@ -3510,6 +3612,78 @@ function startMobileMarketRefreshJob(invoke, options = {}) {
   return mobileMarketRefreshJob;
 }
 
+async function startMarketRefreshLogListener() {
+  const listen = window.__TAURI__?.event?.listen;
+  if (!listen) return () => {};
+  try {
+    const unlisten = await listen("market-refresh-log", (event) => {
+      const payload = event?.payload || {};
+      const message = formatRustMarketRefreshLog(payload);
+      if (message) appendRefreshLog(message, payload.tone || "info");
+    });
+    return typeof unlisten === "function" ? unlisten : () => {};
+  } catch (error) {
+    appendRefreshLog("\u65e0\u6cd5\u76d1\u542c Rust \u5237\u65b0\u9636\u6bb5\u65e5\u5fd7\uff1a" + error.message, "warn");
+    return () => {};
+  }
+}
+
+function formatRustMarketRefreshLog(event = {}) {
+  const stage = String(event.stage || "");
+  const data = event.payload || {};
+  if (stage === "command_received") {
+    return "Rust \u547d\u4ee4\u5df2\u8fdb\u5165\uff1a\u79cd\u5b50 " + (data.seed_stock_count || 0) + " \u53ea\uff0c\u5019\u9009\u4e0a\u9650 " + (data.max_candidates || "-") + "\uff0c\u8bf7\u6c42\u6279\u6b21 " + (Number(data.batch_start || 0) + 1) + "\u3002";
+  }
+  if (stage === "candidate_ready") {
+    return "Rust \u5019\u9009\u6c60\u5df2\u751f\u6210\uff1a" + (data.candidate_count || 0) + " \u53ea\uff0c\u672c\u5730\u79cd\u5b50 " + (data.seed_candidate_count || 0) + " \u53ea\u3002";
+  }
+  if (stage === "webview_ingest_received") {
+    return "WebView \u8fdb\u5165 Rust \u5165\u5e93\uff1a\u79cd\u5b50 " + (data.seed_stock_count || 0) + " \u53ea\uff0c\u6279\u6b21 " + (Number(data.batch_start || 0) + 1) + "\u3002";
+  }
+  if (stage === "batch_window") {
+    if (data.transport === "webview") {
+      return "WebView \u5165\u5e93\u7a97\u53e3\uff1a" + (Number(data.batch_start || 0) + 1) + "-" + (data.batch_end || "?") + "/" + (data.total_batches || "?") + "\uff0c\u5df2\u901a\u8fc7 WebView \u4e0b\u8f7d\u3002";
+    }
+    return "Rust \u6279\u6b21\u7a97\u53e3\uff1a" + (Number(data.batch_start || 0) + 1) + "-" + (data.batch_end || "?") + "/" + (data.total_batches || "?") + "\uff0c\u5355\u6279\u8d85\u65f6 " + (data.batch_timeout_seconds || "?") + " \u79d2\u3002";
+  }
+  if (stage === "batch_request") {
+    return "Rust \u5f00\u59cb\u8bf7\u6c42\u6279\u6b21 " + (data.batch_index || "?") + "/" + (data.total_batches || "?") + "\uff1a" + (data.code_count || 0) + " \u53ea\uff0c" + (data.first_code || "-") + " -> " + (data.last_code || "-") + "\u3002";
+  }
+  if (stage === "batch_response") {
+    const transport = data.transport === "webview" ? "WebView" : "Rust";
+    return transport + " \u6279\u6b21 " + (data.batch_index || "?") + " \u5df2\u8fd4\u56de\uff1aHTTP " + (data.status || "-") + "\uff0c" + (data.byte_len || 0) + " B\uff0c\u89e3\u6790 " + (data.parsed_count || 0) + " \u53ea\uff0c\u8017\u65f6 " + (data.elapsed_ms || "?") + " ms\u3002";
+  }
+  if (stage === "batch_error") {
+    return "Rust \u6279\u6b21 " + (data.batch_index || "?") + " \u5931\u8d25\uff1a" + formatMobileProbeError(data.error || "") + "\uff0c\u8017\u65f6 " + (data.elapsed_ms || "?") + " ms\u3002";
+  }
+  if (stage === "command_complete") {
+    return "Rust \u5237\u65b0\u547d\u4ee4\u8fd4\u56de\uff1a\u65b0\u589e " + (data.fetched || 0) + " \u53ea\uff0c\u4fdd\u7559 " + (data.preserved || 0) + " \u53ea\uff0c\u4e0b\u4e00\u6279 " + (data.next_batch_start || 0) + "/" + (data.total_batches || "?") + "\u3002";
+  }
+  return stage ? "Rust \u9636\u6bb5 " + stage + "\uff1a" + JSON.stringify(data) : "";
+}
+
+async function probeWebviewTencentQuote() {
+  appendRefreshLog("\u5148\u8fdb\u884c WebView \u7f51\u7edc\u63a2\u9488\uff1a\u76f4\u63a5 fetch Tencent \u884c\u60c5\u5355\u80a1\u3002");
+  const started = Date.now();
+  try {
+    const response = await withTimeout(
+      fetch("https://qt.gtimg.cn/q=sz000001", { cache: "no-store" }),
+      8000,
+      "WebView fetch Tencent \u8d85\u8fc7 8 \u79d2\u672a\u8fd4\u56de\u3002",
+    );
+    const text = await response.text();
+    const hasQuote = text.includes("v_sz000001=") || text.includes("~");
+    appendRefreshLog(
+      "WebView Tencent \u63a2\u9488" + (hasQuote ? "\u901a\u8fc7" : "\u8fd4\u56de\u5f02\u5e38") + "\uff1aHTTP " + response.status + "\uff0c" + text.length + " \u5b57\u7b26\uff0c\u8017\u65f6 " + (Date.now() - started) + " ms\u3002",
+      hasQuote ? "ok" : "warn",
+    );
+    return hasQuote;
+  } catch (error) {
+    appendRefreshLog("WebView Tencent \u63a2\u9488\u5931\u8d25\uff1a" + formatMobileProbeError(error.message), "warn");
+    return false;
+  }
+}
+
 function watchMobileRefreshProgress(listener) {
   mobileMarketRefreshListeners.add(listener);
   if (mobileMarketRefreshProgress) listener(mobileMarketRefreshProgress);
@@ -3562,53 +3736,53 @@ function yieldToBrowser() {
 }
 
 async function probeMobileNetwork(invoke) {
-  appendRefreshLog("\u5148\u8fdb\u884c\u5b89\u5353\u7f51\u7edc\u63a2\u6d4b\uff1a\u5206\u522b\u8bbf\u95ee Baidu \u548c Tencent \u884c\u60c5\u57df\u540d\u3002");
+  appendRefreshLog("\u5148\u8fdb\u884c Rust \u7f51\u7edc\u63a2\u6d4b\uff1a\u901a\u8fc7 Tauri/Rust \u8bf7\u6c42 Baidu \u548c Tencent \u884c\u60c5\u57df\u540d\u3002");
   let probe;
   try {
     probe = await withTimeout(
       invoke("core_mobile_network_probe"),
       10000,
-      "\u5b89\u5353\u7f51\u7edc\u63a2\u6d4b\u8d85\u8fc7 10 \u79d2\u672a\u8fd4\u56de\uff0c\u53ef\u80fd\u662f\u6a21\u62df\u5668\u7f51\u7edc\u3001\u4ee3\u7406\u3001DNS \u6216\u5e94\u7528\u7f51\u7edc\u6743\u9650\u5f02\u5e38\u3002",
+      "Rust \u7f51\u7edc\u63a2\u6d4b\u8d85\u8fc7 10 \u79d2\u672a\u8fd4\u56de\uff0c\u53ef\u80fd\u662f Rust reqwest DNS/TLS/HTTP \u8def\u5f84\u5f02\u5e38\u3002",
     );
   } catch (error) {
     const message = formatMobileProbeError(error.message);
-    appendRefreshLog(`\u5b89\u5353\u7f51\u7edc\u63a2\u6d4b\u547d\u4ee4\u5931\u8d25\uff1a${message}`, "error");
-    throw new Error(`\u5b89\u5353\u7f51\u7edc\u63a2\u6d4b\u5931\u8d25\uff1a${message}`);
+    appendRefreshLog("Rust \u7f51\u7edc\u63a2\u6d4b\u547d\u4ee4\u5931\u8d25\uff1a" + message, "error");
+    throw new Error("Rust \u7f51\u7edc\u63a2\u6d4b\u5931\u8d25\uff1a" + message);
   }
 
   const probes = Array.isArray(probe?.probes) ? probe.probes : [probe].filter(Boolean);
-  let anyIpOk = false;
-  let tencentFixedOk = false;
+  let anyHttpOk = false;
+  let tencentOk = false;
   probes.forEach((item) => {
     const label = formatMobileProbeLabel(item?.label || item?.url);
     const detail = formatMobileProbeError(item?.error || "");
     const target = item?.address || item?.url || "";
-    const statusText = item?.status ? `HTTP ${item.status}` : (item?.stage || "no-status");
-    if ((item?.label === "baidu_ip_tcp" || item?.label === "tencent_ip_tcp") && item?.ok) anyIpOk = true;
-    if (item?.label === "tencent_https_fixed" && item?.ok) tencentFixedOk = true;
-    appendRefreshLog(
-      item?.ok
-        ? `${label}\u63a2\u6d4b\u901a\u8fc7\uff1a${statusText}${target ? `\uff0c${target}` : ""}\u3002`
-        : `${label}\u63a2\u6d4b\u5931\u8d25\uff1a${statusText}${target ? `\uff0c${target}` : ""}\uff0c${detail || "\u672a\u8fd4\u56de\u5177\u4f53\u9519\u8bef"}\u3002`,
-      item?.ok ? "ok" : "error",
-    );
+    const statusText = item?.status ? "HTTP " + item.status : (item?.stage || "no-status");
+    if (item?.ok) anyHttpOk = true;
+    if ((item?.label === "tencent_https_dns" || item?.label === "tencent_https_fixed") && item?.ok) tencentOk = true;
+    const elapsed = Number.isFinite(Number(item?.elapsed_ms)) ? "\uff0c\u8017\u65f6 " + item.elapsed_ms + " ms" : "";
+    const message = item?.ok
+      ? label + "\u63a2\u6d4b\u901a\u8fc7\uff1a" + statusText + (target ? "\uff0c" + target : "") + elapsed + "\u3002"
+      : label + "\u63a2\u6d4b\u5931\u8d25\uff1a" + statusText + (target ? "\uff0c" + target : "") + elapsed + "\uff0c" + (detail || "\u672a\u8fd4\u56de\u5177\u4f53\u9519\u8bef") + "\u3002";
+    appendRefreshLog(message, item?.ok ? "ok" : "error");
   });
 
-  if (tencentFixedOk) {
-    appendRefreshLog("Tencent \u884c\u60c5\u56fa\u5b9a IP \u89e3\u6790\u53ef\u7528\uff0c\u5c06\u7ee7\u7eed\u5237\u65b0\u80a1\u7968\u6c60\u3002", "ok");
+  if (tencentOk) {
+    appendRefreshLog("Rust Tencent \u884c\u60c5 HTTPS \u63a2\u6d4b\u901a\u8fc7\uff0c\u5c06\u7ee7\u7eed\u5237\u65b0\u80a1\u7968\u6c60\u3002", "ok");
     return probe;
   }
-  if (anyIpOk) {
-    appendRefreshLog("IP \u76f4\u8fde\u53ef\u7528\uff0c\u4f46 Tencent HTTPS \u56fa\u5b9a\u89e3\u6790\u4ecd\u5931\u8d25\uff1b\u4f18\u5148\u68c0\u67e5 HTTPS/TLS\u3001\u4ee3\u7406\u6216\u8fd0\u8425\u5546\u62e6\u622a\u3002", "warn");
-    throw new Error("\u5b89\u5353 IP \u7f51\u7edc\u53ef\u7528\uff0c\u4f46 Tencent HTTPS \u8bbf\u95ee\u5931\u8d25\u3002");
+  if (anyHttpOk) {
+    appendRefreshLog("Rust \u901a\u7528 HTTP \u53ef\u7528\uff0c\u4f46 Tencent \u884c\u60c5\u8bbf\u95ee\u5931\u8d25\uff1b\u5c06\u7ee7\u7eed\u8fdb\u5165\u771f\u5b9e\u6279\u6b21\u8bf7\u6c42\u4ee5\u5206\u8fa8 send/body/parse \u9636\u6bb5\u3002", "warn");
+    return probe;
   }
-  appendRefreshLog("Baidu/Tencent IP \u76f4\u8fde\u5747\u5931\u8d25\uff1a\u5f88\u53ef\u80fd\u662f\u5b89\u5353\u7cfb\u7edf\u6216\u5e94\u7528\u5c42\u6ca1\u6709\u53ef\u7528\u7f51\u7edc\u3002", "error");
-  throw new Error("\u5b89\u5353\u7f51\u7edc\u63a2\u6d4b\u5931\u8d25\uff1aIP \u76f4\u8fde\u4e0d\u53ef\u8fbe\u3002");
+  appendRefreshLog("Rust Baidu/Tencent HTTP \u5747\u5931\u8d25\uff1a\u95ee\u9898\u5728 Rust reqwest \u539f\u751f\u7f51\u7edc\u8def\u5f84\uff0c\u4e0d\u662f WebView \u6743\u9650\u3002", "error");
+  throw new Error("Rust \u7f51\u7edc\u63a2\u6d4b\u5931\u8d25\uff1aHTTP \u8def\u5f84\u4e0d\u53ef\u8fbe\u3002");
 }
 
 function formatMobileProbeLabel(label) {
   if (label === "baidu_ip_tcp") return "Baidu IP \u76f4\u8fde";
   if (label === "tencent_ip_tcp") return "Tencent IP \u76f4\u8fde";
+  if (label === "tencent_https_dns") return "Tencent HTTPS \u7cfb\u7edf DNS";
   if (label === "tencent_https_fixed") return "Tencent HTTPS \u56fa\u5b9a\u89e3\u6790";
   if (label === "baidu_https") return "Baidu \u901a\u7528\u8054\u7f51";
   if (label === "tencent_https") return "Tencent \u884c\u60c5\u57df\u540d";
@@ -3634,41 +3808,272 @@ function formatMobileProbeError(error) {
   return text;
 }
 
-async function refreshMobileMarketData(invoke, options = {}) {
-  let seed = Object.prototype.hasOwnProperty.call(options, "seed") ? options.seed : null;
-  if (!Object.prototype.hasOwnProperty.call(options, "seed")) {
-    appendRefreshLog("读取 Tauri/Rust 本地股票池缓存。");
-    try {
-      seed = await loadCachedMobileMarketData(invoke);
-      appendRefreshLog(`已读取本地缓存：${seed?.stocks?.length || 0} 只股票。`, "ok");
-    } catch (error) {
-      seed = null;
-      appendRefreshLog(`未读到可用本地缓存：${error.message}`, "warn");
-    }
-  } else {
-    appendRefreshLog(`使用传入的种子缓存：${seed?.stocks?.length || 0} 只股票。`);
+function buildMobileTencentCandidateCodes(maxCandidates = MOBILE_TENCENT_MAX_CANDIDATES, seedCodes = []) {
+  const ranges = [
+    ["SZ", 1, 3999],
+    ["SH", 600000, 605999],
+    ["SZ", 300000, 301999],
+    ["SH", 688000, 689999],
+    ["BJ", 920000, 920999],
+  ];
+  const codes = [];
+  const maxOffset = ranges.reduce((max, [, start, end]) => Math.max(max, end - start), 0);
+  for (let offset = 0; offset <= maxOffset; offset += 1) {
+    ranges.forEach(([market, start, end]) => {
+      const value = start + offset;
+      if (value <= end) codes.push(String(value).padStart(6, "0") + "." + market);
+    });
   }
-
-  appendRefreshLog("请求 Tauri/Rust 行情刷新命令。");
-  const refresh = await invoke("api_market_refresh", {
-    payload: {
-      seed: seed || { stocks: [], relations: [], histories: {} },
-      scan_candidates: true,
-      max_candidates: MOBILE_TENCENT_MAX_CANDIDATES,
-      max_failed_batches: MOBILE_TENCENT_MAX_FAILED_BATCHES,
-      use_previous_close: shouldUsePreviousCloseForMobileRefresh(),
-    },
+  seedCodes.forEach((code) => {
+    const normalized = normalizeMobileStockCode(code);
+    if (normalized) codes.push(normalized);
   });
-  const cache = refresh?.status || {};
-  const writtenData = cache?.data ? applyMobileMarketDataRecord(cache, "tauri") : null;
-  if (writtenData) mobileMarketDataPromise = Promise.resolve(writtenData);
-  const status = await invoke("api_market_status");
-  status.refresh_result = refresh;
-  status.notes = [...mobileRefreshNotes(status, "Tauri/Rust 联网刷新完成。"), ...(status.notes || [])];
-  logMobileRefreshResult(refresh);
-  emitMobileMarketRefreshProgress(refresh);
-  appendRefreshLog(`Tauri/Rust 刷新完成：写入 ${status.universe_count || 0} 只股票。`, "ok");
-  return status;
+  const seen = new Set();
+  const deduped = [];
+  codes.forEach((code) => {
+    if (!seen.has(code)) {
+      seen.add(code);
+      deduped.push(code);
+    }
+  });
+  return deduped.slice(0, Math.max(1, Number(maxCandidates || MOBILE_TENCENT_MAX_CANDIDATES)));
+}
+
+function mobileTencentSymbol(code) {
+  const normalized = normalizeMobileStockCode(code);
+  if (!normalized) return null;
+  const [digits, market] = normalized.split(".");
+  if (!digits || !market) return null;
+  return market.toLowerCase() + digits;
+}
+
+function decodeTencentQuoteBuffer(buffer) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const decoders = ["gb18030", "gbk", "utf-8"];
+  for (const label of decoders) {
+    try {
+      return new TextDecoder(label).decode(bytes);
+    } catch (_error) {
+      // Older WebViews may not expose every legacy decoder label.
+    }
+  }
+  let text = "";
+  bytes.forEach((byte) => {
+    text += String.fromCharCode(byte);
+  });
+  return text;
+}
+
+function observeTencentDailySymbol(code) {
+  return mobileTencentSymbol(code);
+}
+
+function observeHistoryDateParam(value, fallback) {
+  const normalized = normalizeDateParam(value, fallback || currentSystemDateCompact());
+  if (!normalized || normalized.length !== 8) return fallback || currentSystemDateCompact();
+  return normalized.slice(0, 4) + "-" + normalized.slice(4, 6) + "-" + normalized.slice(6, 8);
+}
+
+async function fetchObserveDailyHistoryForTauri(payload = {}) {
+  if (!isTauriRuntime()) return null;
+  const symbol = observeTencentDailySymbol(payload.code || "");
+  if (!symbol) return null;
+  const start = observeHistoryDateParam(payload.start_date, "20200101");
+  const end = observeHistoryDateParam(payload.end_date, currentSystemDateCompact());
+  const url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=" + encodeURIComponent(symbol + ",day," + start + "," + end + ",320,");
+  const response = await withTimeout(
+    fetch(url, { cache: "no-store" }),
+    8000,
+    "WebView Tencent \u65e5\u7ebf\u8d85\u8fc7 8 \u79d2\u672a\u8fd4\u56de\u3002",
+  );
+  if (!response.ok) throw new Error("WebView Tencent \u65e5\u7ebf HTTP " + response.status);
+  const data = await response.json();
+  const rows = data?.data?.[symbol]?.day || data?.data?.[symbol]?.qfqday || [];
+  return rows.map(observeTencentDailyRowToHistory).filter(Boolean);
+}
+
+function observeTencentDailyRowToHistory(row) {
+  if (!Array.isArray(row) || row.length < 6) return null;
+  const close = parseLooseNumber(row[2]);
+  if (!Number.isFinite(close)) return null;
+  return {
+    date: String(row[0] || ""),
+    open: parseLooseNumber(row[1]) ?? close,
+    close,
+    high: parseLooseNumber(row[3]) ?? close,
+    low: parseLooseNumber(row[4]) ?? close,
+    volume: parseLooseNumber(row[5]),
+  };
+}
+
+async function fetchWebviewTencentQuoteBatch(codes, batchIndex, totalBatches) {
+  const symbols = codes.map(mobileTencentSymbol).filter(Boolean);
+  if (!symbols.length) throw new Error("WebView Tencent batch has no valid stock symbols");
+  const started = Date.now();
+  appendRefreshLog("WebView \u8bf7\u6c42 Tencent \u6279\u6b21 " + batchIndex + "/" + totalBatches + "\uff1a" + symbols.length + " \u53ea\u3002");
+  const response = await withTimeout(
+    fetch("https://qt.gtimg.cn/q=" + symbols.join(","), { cache: "no-store" }),
+    MOBILE_TENCENT_SCRIPT_TIMEOUT_MS,
+    "WebView Tencent \u6279\u6b21 " + batchIndex + " \u8d85\u8fc7 " + Math.round(MOBILE_TENCENT_SCRIPT_TIMEOUT_MS / 1000) + " \u79d2\u672a\u8fd4\u56de\u3002",
+  );
+  if (!response.ok) throw new Error("WebView Tencent HTTP " + response.status);
+  const buffer = await withTimeout(
+    response.arrayBuffer(),
+    MOBILE_TENCENT_SCRIPT_TIMEOUT_MS,
+    "WebView Tencent \u6279\u6b21 " + batchIndex + " \u8bfb\u53d6\u54cd\u5e94\u4f53\u8d85\u65f6\u3002",
+  );
+  const text = decodeTencentQuoteBuffer(buffer);
+  const hasQuote = text.includes("~") && text.includes("=");
+  appendRefreshLog(
+    "WEBVIEW \u6279\u6b21 " + batchIndex + " \u8fd4\u56de\uff1aHTTP " + response.status + "\uff0c" + buffer.byteLength + " B\uff0c\u8017\u65f6 " + (Date.now() - started) + " ms" + (hasQuote ? "\u3002" : "\uff0c\u4f46\u6ca1\u6709\u68c0\u6d4b\u5230\u884c\u60c5\u5206\u9694\u7b26\u3002"),
+    hasQuote ? "ok" : "warn",
+  );
+  return {
+    quote_text: text,
+    quote_bytes_base64: arrayBufferToBase64(buffer),
+    webview_status: response.status,
+    webview_byte_len: buffer.byteLength,
+    webview_elapsed_ms: Date.now() - started,
+  };
+}
+
+async function refreshMobileMarketData(invoke, options = {}) {
+  const stopRustLog = await startMarketRefreshLogListener();
+  try {
+    let seed = Object.prototype.hasOwnProperty.call(options, "seed") ? options.seed : null;
+    if (hasMobileMarketSeed(seed)) {
+      appendRefreshLog("\u4f7f\u7528\u4f20\u5165\u7684\u79cd\u5b50\u7f13\u5b58\uff1a" + (seed?.stocks?.length || 0) + " \u53ea\u80a1\u7968\u3002\u9996\u6279\u5b8c\u6210\u540e\u5c06\u6539\u4e3a\u76f4\u63a5\u590d\u7528 Rust \u672c\u5730\u7f13\u5b58\u3002", "ok");
+    } else {
+      seed = null;
+      appendRefreshLog("\u5237\u65b0\u547d\u4ee4\u5c06\u4f18\u5148\u590d\u7528 Tauri/Rust \u672c\u5730\u7f13\u5b58\uff0c\u907f\u514d\u524d\u7aef\u91cd\u590d\u642c\u8fd0\u6574\u4efd\u80a1\u7968\u6c60\u3002", "info");
+    }
+
+    const financialSnapshot = await loadMobileFinancialSnapshot();
+    let financialSnapshotSent = false;
+    const financialSnapshotPayload = financialSnapshot && (
+      (Array.isArray(financialSnapshot.stocks) && financialSnapshot.stocks.length) ||
+      (financialSnapshot.financials && Object.keys(financialSnapshot.financials).length)
+    )
+      ? {
+          stocks: Array.isArray(financialSnapshot.stocks) ? financialSnapshot.stocks : [],
+          financials: financialSnapshot.financials && typeof financialSnapshot.financials === "object" ? financialSnapshot.financials : {},
+        }
+      : null;
+    if (financialSnapshotPayload) {
+      appendRefreshLog("\u5df2\u52a0\u8f7d\u968f\u5305\u8d22\u52a1\u5feb\u7167\uff1a" + (financialSnapshotPayload.stocks?.length || 0) + " \u53ea\u80a1\u7968\uff0cEPS \u660e\u7ec6 " + Object.keys(financialSnapshotPayload.financials || {}).length + " \u53ea\uff0c\u5c06\u5728\u9996\u6279\u5237\u65b0\u65f6\u4ea4\u7ed9 Rust \u5408\u5e76\u3002", "ok");
+    } else {
+      appendRefreshLog("\u672a\u627e\u5230\u53ef\u7528\u7684\u968f\u5305\u8d22\u52a1\u5feb\u7167\uff0cEPS \u548c\u6263\u975e\u7b5b\u9009\u5c06\u4f9d\u8d56\u672c\u5730\u7f13\u5b58\u5df2\u6709\u5b57\u6bb5\u3002", "warn");
+    }
+
+    const webviewTencentOk = await probeWebviewTencentQuote();
+    const useWebviewTencentTransport = Boolean(webviewTencentOk && isTauriRuntime());
+    if (useWebviewTencentTransport) {
+      appendRefreshLog("WebView Tencent \u5df2\u901a\u8fc7\uff1b\u672c\u8f6e\u4f7f\u7528 WebView \u4e0b\u8f7d\u884c\u60c5\uff0cRust/Tauri \u53ea\u8d1f\u8d23\u89e3\u6790\u548c\u5199\u5165\u7f13\u5b58\u3002", "ok");
+    } else {
+      await probeMobileNetwork(invoke);
+    }
+
+    appendRefreshLog(useWebviewTencentTransport ? "\u6309\u6279\u6b21\u4f7f\u7528 WebView \u62c9\u53d6\u884c\u60c5\uff0c\u518d\u4ea4\u7ed9 Rust/Tauri \u5165\u5e93\u3002" : "\u6309\u6279\u6b21\u8bf7\u6c42 Tauri/Rust \u884c\u60c5\u5237\u65b0\u547d\u4ee4\u3002");
+    let batchStart = Math.max(0, Number(options.batch_start || 0));
+    const batchCount = Math.max(1, Number(options.batch_count || MOBILE_TENCENT_BATCHES_PER_STEP || 1));
+    const webviewCandidateCodes = useWebviewTencentTransport ? buildMobileTencentCandidateCodes(MOBILE_TENCENT_MAX_CANDIDATES) : [];
+    const webviewTotalBatches = webviewCandidateCodes.length ? Math.ceil(webviewCandidateCodes.length / MOBILE_TENCENT_SCRIPT_BATCH_SIZE) : 0;
+    const maxLoopGuard = Math.ceil(MOBILE_TENCENT_MAX_CANDIDATES / MOBILE_TENCENT_SCRIPT_BATCH_SIZE) + 5;
+    let aggregate = null;
+    let lastRefresh = null;
+    let consecutiveFailedBatches = 0;
+
+    for (let loop = 0; loop < maxLoopGuard; loop += 1) {
+      appendRefreshLog((useWebviewTencentTransport ? "WebView/Tauri " : "Tauri/Rust ") + "\u884c\u60c5\u6279\u6b21 " + (batchStart + 1) + " \u8d77\uff0c\u5355\u6b21 " + batchCount + " \u6279\u3002");
+      const basePayload = {
+        seed: seed || { stocks: [], relations: [], histories: {} },
+        financial_snapshot: !financialSnapshotSent && financialSnapshotPayload ? financialSnapshotPayload : null,
+        scan_candidates: true,
+        max_candidates: MOBILE_TENCENT_MAX_CANDIDATES,
+        max_failed_batches: Math.max(1, MOBILE_TENCENT_MAX_FAILED_BATCHES),
+        batch_start: batchStart,
+        batch_count: batchCount,
+        use_previous_close: shouldUsePreviousCloseForMobileRefresh(),
+      };
+      if (basePayload.financial_snapshot) financialSnapshotSent = true;
+      let refresh;
+      if (useWebviewTencentTransport) {
+        const sliceStart = batchStart * MOBILE_TENCENT_SCRIPT_BATCH_SIZE;
+        const sliceEnd = Math.min(webviewCandidateCodes.length, sliceStart + batchCount * MOBILE_TENCENT_SCRIPT_BATCH_SIZE);
+        const batchCodes = webviewCandidateCodes.slice(sliceStart, sliceEnd);
+        if (!batchCodes.length) {
+          aggregate = { ...(aggregate || {}), done: true, next_batch_start: batchStart, total_batches: webviewTotalBatches, completed_batches: webviewTotalBatches };
+          break;
+        }
+        const webviewQuote = await fetchWebviewTencentQuoteBatch(batchCodes, batchStart + 1, webviewTotalBatches);
+        refresh = await withTimeout(
+          invoke("api_market_ingest_tencent_quotes", {
+            payload: {
+              ...basePayload,
+              ...webviewQuote,
+            },
+          }),
+          MOBILE_TAURI_INVOKE_TIMEOUT_MS,
+          "Rust/Tauri \u89e3\u6790\u5165\u5e93\u6279\u6b21 " + (batchStart + 1) + " \u8d85\u8fc7 " + Math.round(MOBILE_TAURI_INVOKE_TIMEOUT_MS / 1000) + " \u79d2\u672a\u8fd4\u56de\uff0c\u5df2\u505c\u6b62\u672c\u8f6e\u5237\u65b0\u3002",
+        );
+      } else {
+        refresh = await withTimeout(
+          invoke("api_market_refresh", { payload: basePayload }),
+          MOBILE_TAURI_INVOKE_TIMEOUT_MS,
+          "Tauri/Rust \u884c\u60c5\u6279\u6b21 " + (batchStart + 1) + " \u8d85\u8fc7 " + Math.round(MOBILE_TAURI_INVOKE_TIMEOUT_MS / 1000) + " \u79d2\u672a\u8fd4\u56de\uff0c\u5df2\u505c\u6b62\u672c\u8f6e\u5237\u65b0\u3002",
+        );
+      }
+
+      lastRefresh = refresh;
+      logMobileRefreshResult(refresh);
+      aggregate = mergeMobileRefreshResult(aggregate, refresh);
+      seed = null;
+      emitMobileMarketRefreshProgress(aggregate);
+
+      const failedThisRound = Number(refresh?.failed_batches || 0);
+      const fetchedThisRound = Number(refresh?.fetched || 0);
+      consecutiveFailedBatches = failedThisRound > 0 && fetchedThisRound === 0 ? consecutiveFailedBatches + failedThisRound : 0;
+      if (consecutiveFailedBatches >= MOBILE_TENCENT_MAX_FAILED_BATCHES) {
+        aggregate = { ...aggregate, stopped_early: true, stop_reason: "failed_batches", done: true };
+        appendRefreshLog("\u8fde\u7eed " + consecutiveFailedBatches + " \u6279\u5931\u8d25\uff0c\u5df2\u63d0\u524d\u505c\u6b62\u5237\u65b0\u5e76\u4fdd\u7559\u53ef\u7528\u7f13\u5b58\u3002", "error");
+        emitMobileMarketRefreshProgress(aggregate);
+        break;
+      }
+      if (refresh?.stopped_early || refresh?.done) break;
+      const nextStart = Number(refresh?.next_batch_start);
+      if (!Number.isFinite(nextStart) || nextStart <= batchStart) {
+        aggregate = { ...aggregate, stopped_early: true, stop_reason: "stalled_batches", done: true };
+        appendRefreshLog("\u6279\u6b21\u8fdb\u5ea6\u6ca1\u6709\u524d\u8fdb\uff0c\u5df2\u505c\u6b62\u5237\u65b0\u4ee5\u907f\u514d\u91cd\u590d\u8bf7\u6c42\u3002", "error");
+        emitMobileMarketRefreshProgress(aggregate);
+        break;
+      }
+      batchStart = nextStart;
+      await yieldToBrowser();
+    }
+
+    if (!lastRefresh) throw new Error("Tauri/Rust \u884c\u60c5\u5237\u65b0\u6ca1\u6709\u8fd4\u56de\u4efb\u4f55\u6279\u6b21\u7ed3\u679c\u3002");
+    if (!aggregate?.done && !aggregate?.stopped_early) {
+      aggregate = { ...aggregate, stopped_early: true, stop_reason: "loop_guard", done: true };
+      appendRefreshLog("\u6279\u6b21\u5faa\u73af\u8fbe\u5230\u5b89\u5168\u4e0a\u9650\uff0c\u5df2\u505c\u6b62\u5237\u65b0\u5e76\u4fdd\u7559\u5f53\u524d\u7f13\u5b58\u3002", "warn");
+    }
+
+    mobileMarketDataPromise = null;
+    try {
+      const finalData = await loadCachedMobileMarketData(invoke);
+      mobileMarketDataPromise = Promise.resolve(finalData);
+      appendRefreshLog("\u5df2\u56de\u8bfb Rust \u672c\u5730\u7f13\u5b58\uff1a" + (finalData?.stocks?.length || 0) + " \u53ea\u80a1\u7968\u3002", "ok");
+    } catch (error) {
+      appendRefreshLog("\u5237\u65b0\u5b8c\u6210\u540e\u56de\u8bfb\u672c\u5730\u7f13\u5b58\u5931\u8d25\uff1a" + error.message, "warn");
+    }
+
+    const status = await invoke("api_market_status");
+    status.refresh_result = aggregate || lastRefresh;
+    status.notes = [...mobileRefreshNotes(status, "Tauri/Rust \u8054\u7f51\u5237\u65b0\u5b8c\u6210\u3002"), ...(status.notes || [])];
+    appendRefreshLog("Tauri/Rust \u5237\u65b0\u5b8c\u6210\uff1a\u5f53\u524d\u7f13\u5b58 " + (status.universe_count || status.stock_count || 0) + " \u53ea\u80a1\u7968\u3002", "ok");
+    return status;
+  } finally {
+    stopRustLog?.();
+  }
 }
 function normalizeMobileStockCode(value) {
   const raw = String(value || "").trim().toUpperCase();
@@ -3846,6 +4251,48 @@ function renderScreenGroups(groups) {
   `;
 }
 
+function renderBoardScreenResult(node, data) {
+  const groups = data.groups || [];
+  renderResult(node, {
+    summary: [
+      ["\u677f\u5757", data.sector_count ?? groups.length],
+      ["\u5c55\u793a", data.returned ?? 0],
+      ["\u5019\u9009", data.total ?? 0],
+    ],
+    body: [
+      groups.length ? renderResultActions("\u5f53\u524d\u5206\u677f\u5757\u6761\u4ef6", data.returned ?? 0) : "",
+      groups.length
+        ? renderBoardGroups(groups)
+        : renderEmpty("\u6ca1\u6709\u7b26\u5408\u6761\u4ef6\u7684\u677f\u5757", { label: "\u8c03\u6574\u6761\u4ef6", action: "go-screen" }),
+      data.notes?.length ? renderNotes(data.notes) : "",
+    ].join(""),
+    raw: data,
+  });
+}
+
+function renderBoardGroups(groups) {
+  return `
+    <div class="sector-groups board-groups">
+      ${groups
+        .map((group) => {
+          const items = group.items || [];
+          return `
+            <section class="sector-group board-group">
+              <header>
+                <div>
+                  <h3>${escapeHtml(group.sector || "\u672a\u77e5\u677f\u5757")}</h3>
+                  <p>候选 ${formatNumber(group.total)} 只 · 展示 ${formatNumber(group.returned)} 只</p>
+                </div>
+                <strong>\u5747\u5206 ${formatNumber(group.average_score)}</strong>
+              </header>
+              ${items.length ? renderStockList(items.map(screenItemToView)) : renderEmpty("\u8be5\u677f\u5757\u6ca1\u6709\u5165\u9009\u80a1\u7968")}
+            </section>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
 function renderSectorScreenResult(node, data) {
   const groups = data.groups || [];
   renderResult(node, {
@@ -4593,6 +5040,7 @@ function renderObserveBody(data) {
   const series = trend.series || [];
   return [
     renderObservationOverview(stock, data.financial_indicators, trend),
+    renderFinancialIndicators(data.financial_indicators),
     renderQuarterlyEpsPanel(stock, data.financial_indicators),
     trend.signal ? renderSignalCard(stock, signal, { series, chipDistribution: trend.chip_distribution }) : renderEmpty("没有可用日线技术面"),
     data.capital_evidence ? renderCapitalEvidence(data.capital_evidence, { series, signal }) : "",

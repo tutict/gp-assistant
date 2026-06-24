@@ -1,5 +1,5 @@
 from datetime import date
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -90,6 +90,7 @@ class SectorScreenRequest(BaseModel):
     per_sector_limit: int = Field(default=5, ge=1, le=50)
     max_sectors: int = Field(default=12, ge=1, le=50)
     min_sector_candidates: int = Field(default=5, ge=1, le=500)
+    group_by: Literal["concept", "board", "market", "market_board"] = "concept"
 
 
 class SectorScreenGroup(BaseModel):

@@ -428,11 +428,68 @@ function Normalize-MobileSnapshotCode {
     return $null
 }
 
+function ConvertTo-MobileSnapshotPeriodKey {
+    param(
+        [object] $ReportDate,
+        [object] $ReportType
+    )
+
+    $text = ([string] $ReportDate).Trim()
+    $year = $null
+    $month = $null
+    if ($text -match '(?<year>20\d{2})[-/.年\s]*(?<month>0?[1-9]|1[0-2])') {
+        $year = [int] $Matches.year
+        $month = [int] $Matches.month
+    }
+
+    if ($null -eq $year -or $null -eq $month) {
+        $typeText = ([string] $ReportType).Trim()
+        if ($typeText -match '(?<year>20\d{2})') {
+            $year = [int] $Matches.year
+        }
+        if ($typeText -match 'Q\s*(?<quarter>[1-4])') {
+            return ('{0:D4}Q{1}' -f $year, [int] $Matches.quarter)
+        }
+        return $null
+    }
+
+    $quarter = switch ($month) {
+        3 { 1 }
+        6 { 2 }
+        9 { 3 }
+        12 { 4 }
+        default { $null }
+    }
+    if ($null -eq $quarter) {
+        return $null
+    }
+    return ('{0:D4}Q{1}' -f $year, $quarter)
+}
+
+function New-MobileFinancialEntry {
+    param([string] $Code)
+
+    return [ordered]@{
+        code = $Code
+        latest_period = $null
+        latest_eps = $null
+        latest_eps_period = $null
+        latest_bps = $null
+        latest_bps_period = $null
+        latest_financial_period = $null
+        deducted_net_profit_billion = $null
+        deducted_net_profit_margin = $null
+        deducted_net_profit_growth_rate = $null
+        periods = @{}
+    }
+}
+
 function Export-MobileFinancialSnapshot {
     $snapshotPath = Join-Path $OutputDir "mobile-financial-snapshot.json"
     $fundamentalsPath = Join-Path $Root "data\cache\tdx_fundamentals.csv"
     $stocks = New-Object System.Collections.Generic.List[object]
-    $seen = @{}
+    $financials = [ordered]@{}
+    $byCode = @{}
     $source = $null
     $notes = New-Object System.Collections.Generic.List[string]
 
@@ -444,10 +501,17 @@ function Export-MobileFinancialSnapshot {
             if (-not $code) {
                 $code = Normalize-MobileSnapshotCode $row.SECURITY_CODE
             }
-            if (-not $code -or $seen.ContainsKey($code)) {
+            if (-not $code) {
                 continue
             }
 
+            if (-not $byCode.ContainsKey($code)) {
+                $byCode[$code] = New-MobileFinancialEntry $code
+            }
+            $entry = $byCode[$code]
+            $periodKey = ConvertTo-MobileSnapshotPeriodKey $row.REPORT_DATE $row.REPORT_DATE_NAME
+            $eps = ConvertTo-MobileSnapshotNumber $row.EPSJB
+            $bps = ConvertTo-MobileSnapshotNumber $row.BPS
             $profitBillion = ConvertTo-MobileSnapshotBillion $row.KCFJCXSYJLR
             $revenueBillion = ConvertTo-MobileSnapshotBillion $row.TOTALOPERATEREVE
             $margin = $null
@@ -455,36 +519,96 @@ function Export-MobileFinancialSnapshot {
                 $margin = ($profitBillion / $revenueBillion) * 100
             }
             $growth = ConvertTo-MobileSnapshotNumber $row.KCFJCXSYJLRTZ
-            if ($null -eq $profitBillion -and $null -eq $margin -and $null -eq $growth) {
+
+            if ($periodKey) {
+                if ($null -eq $entry.latest_period -or [string] $periodKey -gt [string] $entry.latest_period) {
+                    $entry.latest_period = $periodKey
+                }
+                if ($null -ne $eps -and -not $entry.periods.ContainsKey($periodKey)) {
+                    $entry.periods[$periodKey] = $eps
+                }
+                if ($null -ne $eps -and ($null -eq $entry.latest_eps_period -or [string] $periodKey -gt [string] $entry.latest_eps_period)) {
+                    $entry.latest_eps = $eps
+                    $entry.latest_eps_period = $periodKey
+                }
+                if ($null -ne $bps -and ($null -eq $entry.latest_bps_period -or [string] $periodKey -gt [string] $entry.latest_bps_period)) {
+                    $entry.latest_bps = $bps
+                    $entry.latest_bps_period = $periodKey
+                }
+                if (($null -ne $profitBillion -or $null -ne $margin -or $null -ne $growth) -and ($null -eq $entry.latest_financial_period -or [string] $periodKey -gt [string] $entry.latest_financial_period)) {
+                    $entry.deducted_net_profit_billion = $profitBillion
+                    $entry.deducted_net_profit_margin = $margin
+                    $entry.deducted_net_profit_growth_rate = $growth
+                    $entry.latest_financial_period = $periodKey
+                }
+            }
+        }
+
+        foreach ($code in ($byCode.Keys | Sort-Object)) {
+            $entry = $byCode[$code]
+            $quarterly = New-Object System.Collections.Generic.List[object]
+            foreach ($period in ($entry.periods.Keys | Sort-Object -Descending | Select-Object -First 12)) {
+                $value = $entry.periods[$period]
+                if ($null -eq $value) {
+                    continue
+                }
+                $quarterly.Add([pscustomobject][ordered]@{
+                    period = $period
+                    value = [Math]::Round([double] $value, 6)
+                    source = $source
+                }) | Out-Null
+            }
+            if ($null -eq $entry.deducted_net_profit_billion -and
+                $null -eq $entry.deducted_net_profit_margin -and
+                $null -eq $entry.deducted_net_profit_growth_rate -and
+                $null -eq $entry.latest_eps -and
+                $null -eq $entry.latest_bps -and
+                $quarterly.Count -eq 0) {
                 continue
             }
 
-            $seen[$code] = $true
-            $stocks.Add([pscustomobject][ordered]@{
+            $period = $entry.latest_eps_period
+            if (-not $period) { $period = $entry.latest_bps_period }
+            if (-not $period) { $period = $entry.latest_period }
+            $stock = [ordered]@{
                 code = $code
-                deducted_net_profit_billion = if ($null -eq $profitBillion) { $null } else { [Math]::Round($profitBillion, 6) }
-                deducted_net_profit_margin = if ($null -eq $margin) { $null } else { [Math]::Round($margin, 6) }
-                deducted_net_profit_growth_rate = if ($null -eq $growth) { $null } else { [Math]::Round($growth, 6) }
-            }) | Out-Null
+                deducted_net_profit_billion = if ($null -eq $entry.deducted_net_profit_billion) { $null } else { [Math]::Round([double] $entry.deducted_net_profit_billion, 6) }
+                deducted_net_profit_margin = if ($null -eq $entry.deducted_net_profit_margin) { $null } else { [Math]::Round([double] $entry.deducted_net_profit_margin, 6) }
+                deducted_net_profit_growth_rate = if ($null -eq $entry.deducted_net_profit_growth_rate) { $null } else { [Math]::Round([double] $entry.deducted_net_profit_growth_rate, 6) }
+                latest_eps = if ($null -eq $entry.latest_eps) { $null } else { [Math]::Round([double] $entry.latest_eps, 6) }
+                latest_bps = if ($null -eq $entry.latest_bps) { $null } else { [Math]::Round([double] $entry.latest_bps, 6) }
+                period = $period
+                source = $source
+                quarterly_eps = $quarterly
+            }
+            $stocks.Add([pscustomobject]$stock) | Out-Null
+            $financials[$code] = [pscustomobject][ordered]@{
+                latest_eps = $stock.latest_eps
+                latest_bps = $stock.latest_bps
+                period = $stock.period
+                source = $stock.source
+                quarterly_eps = $stock.quarterly_eps
+            }
         }
-        $notes.Add("tdx fundamentals snapshot exported for mobile deducted financial filters") | Out-Null
+        $notes.Add("tdx fundamentals snapshot exported for mobile deducted filters and EPS indicators") | Out-Null
     } else {
-        $notes.Add("tdx_fundamentals.csv not found; mobile deducted financial filters will rely on existing cache fields") | Out-Null
+        $notes.Add("tdx_fundamentals.csv not found; mobile deducted financial filters and EPS indicators will rely on existing cache fields") | Out-Null
     }
 
     $snapshot = [pscustomobject][ordered]@{
-        schema_version = "mobile-financial-snapshot/v1"
+        schema_version = "mobile-financial-snapshot/v2"
         generated_at = (Get-Date).ToUniversalTime().ToString("o")
         source = $source
         stock_count = $stocks.Count
+        financial_count = $financials.Count
         stocks = $stocks
+        financials = $financials
         notes = $notes
     }
-    $json = $snapshot | ConvertTo-Json -Depth 6 -Compress
-    Set-Content -LiteralPath $snapshotPath -Value $json -Encoding UTF8
-    Write-Host "Prepared mobile financial snapshot: $($stocks.Count) rows at $snapshotPath"
+    $json = $snapshot | ConvertTo-Json -Depth 10 -Compress
+    [System.IO.File]::WriteAllText($snapshotPath, $json, [System.Text.UTF8Encoding]::new($false))
+    Write-Host "Prepared mobile financial snapshot: $($stocks.Count) rows, $($financials.Count) EPS entries at $snapshotPath"
 }
-
 if (-not (Test-Path -LiteralPath $SourceDir)) {
     throw "Frontend source directory does not exist: $SourceDir"
 }

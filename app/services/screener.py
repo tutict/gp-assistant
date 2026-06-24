@@ -54,23 +54,34 @@ def screen_stocks_by_sector(
     notes: Optional[List[str]] = None,
 ) -> SectorScreenResult:
     rules = load_screening_rules()
-    result_notes = [*(notes or []), "按共享筛选规则中的股票名称和行业关键词映射概念分组；未命中概念时归入其他概念。"]
+    group_by = (request.group_by or "concept").strip().lower()
+    board_mode = group_by in {"board", "market", "market_board"}
+    result_notes = [
+        *(notes or []),
+        "\u6309 A \u80a1\u4ea4\u6613\u677f\u5757\u5206\u7ec4\uff1a\u79d1\u521b\u677f\u3001\u521b\u4e1a\u677f\u3001\u5317\u4ea4\u6240\u3001\u6caa\u4e3b\u677f\u548c\u6df1\u4e3b\u677f\u3002"
+        if board_mode
+        else "\u6309\u5171\u4eab\u7b5b\u9009\u89c4\u5219\u4e2d\u7684\u80a1\u7968\u540d\u79f0\u548c\u884c\u4e1a\u5173\u952e\u8bcd\u6620\u5c04\u6982\u5ff5\u5206\u7ec4\uff1b\u672a\u547d\u4e2d\u6982\u5ff5\u65f6\u5f52\u5165\u5176\u4ed6\u6982\u5ff5\u3002",
+    ]
     _append_deducted_profit_rule_note(universe, request.criteria, result_notes)
     screened = _screened_stocks(universe, request.criteria, result_notes, rules=rules)
-    by_concept: dict[str, List[ScreenedStock]] = {}
+    grouped: dict[str, List[ScreenedStock]] = {}
     for item in screened:
-        concept = item.concept or concept_group_for_stock(item.stock, rules)
-        by_concept.setdefault(concept, []).append(item)
+        group_name = (
+            _board_group_for_stock(item.stock)
+            if board_mode
+            else item.concept or concept_group_for_stock(item.stock, rules)
+        )
+        grouped.setdefault(group_name, []).append(item)
 
     groups: List[SectorScreenGroup] = []
-    for concept, items in by_concept.items():
+    for group_name, items in grouped.items():
         if len(items) < request.min_sector_candidates:
             continue
         selected = items[: request.per_sector_limit]
         average_score = sum(item.score for item in selected) / len(selected)
         groups.append(
             SectorScreenGroup(
-                sector=concept,
+                sector=group_name,
                 total=len(items),
                 returned=len(selected),
                 average_score=average_score,
@@ -78,12 +89,23 @@ def screen_stocks_by_sector(
             )
         )
 
-    groups.sort(key=lambda group: (concept_rank(group.sector, rules), -group.average_score, -group.total, group.sector))
+    groups.sort(
+        key=lambda group: (
+            _board_rank(group.sector) if board_mode else concept_rank(group.sector, rules),
+            -group.average_score,
+            -group.total,
+            group.sector,
+        )
+    )
     groups = groups[: request.max_sectors]
     returned = sum(group.returned for group in groups)
     if request.criteria.industry:
-        result_notes.append(f"已限制行业：{request.criteria.industry}")
-    result_notes.append("分组口径为概念筛选，概念和关键词来自共享筛选规则。")
+        result_notes.append(f"\u5df2\u9650\u5b9a\u884c\u4e1a\uff1a{request.criteria.industry}")
+    result_notes.append(
+        "\u5206\u677f\u5757\u9009\u80a1\u5df2\u6309\u4ea4\u6613\u677f\u5757\u805a\u5408\u5b8c\u6574\u5019\u9009\u6c60\u3002"
+        if board_mode
+        else "\u5206\u6982\u5ff5\u7b5b\u9009\u5df2\u57fa\u4e8e\u5b8c\u6574\u5019\u9009\u6c60\u5206\u7ec4\u3002"
+    )
 
     return SectorScreenResult(
         total=len(screened),
@@ -93,6 +115,30 @@ def screen_stocks_by_sector(
         notes=result_notes,
     )
 
+
+def _board_group_for_stock(stock: StockItem) -> str:
+    code = (stock.code or "").strip().upper()
+    digits = code.split(".")[0]
+    if code.endswith(".BJ") or digits.startswith(("8", "4", "9")):
+        return "\u5317\u4ea4\u6240"
+    if digits.startswith("688"):
+        return "\u79d1\u521b\u677f"
+    if digits.startswith(("300", "301")):
+        return "\u521b\u4e1a\u677f"
+    if code.endswith(".SH") or digits.startswith("6"):
+        return "\u6caa\u4e3b\u677f"
+    return "\u6df1\u4e3b\u677f"
+
+
+def _board_rank(board: str) -> int:
+    order = {
+        "\u79d1\u521b\u677f": 0,
+        "\u521b\u4e1a\u677f": 1,
+        "\u5317\u4ea4\u6240": 2,
+        "\u6caa\u4e3b\u677f": 3,
+        "\u6df1\u4e3b\u677f": 4,
+    }
+    return order.get(board, 99)
 
 def _screened_stocks(
     universe: List[StockItem],

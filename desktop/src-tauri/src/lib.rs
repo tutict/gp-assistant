@@ -4,8 +4,8 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use stock_optimizer_core as gp_core;
@@ -19,9 +19,8 @@ mod news_rag;
 
 const MOBILE_MARKET_DATA_FILE: &str = "mobile-market-data.json";
 const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
-const TENCENT_QUOTE_HOST: &str = "qt.gtimg.cn";
-const TENCENT_QUOTE_FALLBACK_ADDRS: &[&str] = &["183.232.91.60:443", "183.232.91.61:443"];
-const BAIDU_FALLBACK_ADDR: &str = "183.240.99.224:443";
+const EASTMONEY_KLINE_ENDPOINT: &str = "https://push2his.eastmoney.com/api/qt/stock/kline/get";
+const TENCENT_DAILY_KLINE_ENDPOINT: &str = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get";
 const TENCENT_BATCH_SIZE: usize = 120;
 const TENCENT_DEFAULT_MAX_CANDIDATES: usize = 8_000;
 const TENCENT_DEFAULT_MAX_FAILED_BATCHES: usize = 4;
@@ -29,6 +28,25 @@ const TENCENT_CONNECT_TIMEOUT_SECS: u64 = 3;
 const TENCENT_REQUEST_TIMEOUT_SECS: u64 = 6;
 const TENCENT_BATCH_TIMEOUT_SECS: u64 = 8;
 const TENCENT_NETWORK_PROBE_TIMEOUT_SECS: u64 = 4;
+const OBSERVE_HISTORY_TIMEOUT_SECS: u64 = 8;
+const MIN_OBSERVE_HISTORY_BARS: usize = 3;
+const FINANCIAL_REQUEST_TIMEOUT_SECS: u64 = 6;
+const MAX_TENCENT_WEBVIEW_QUOTE_BYTES: usize = 1_048_576;
+const COMPLETE_QUARTERLY_EPS_POINTS: usize = 8;
+const EASTMONEY_FINANCIAL_ENDPOINT: &str =
+    "https://datacenter.eastmoney.com/securities/api/data/v1/get";
+const THS_FINANCIAL_ENDPOINT: &str =
+    "https://basic.10jqka.com.cn/basicapi/finance/index/v1/app_data/";
+const SINA_FINANCIAL_GUIDELINE_ENDPOINT: &str =
+    "https://money.finance.sina.com.cn/corp/go.php/vFD_FinancialGuideLine";
+const DEDUCTED_FINANCIAL_FIELDS: [&str; 3] = [
+    "deducted_net_profit_billion",
+    "deducted_net_profit_margin",
+    "deducted_net_profit_growth_rate",
+];
+
+static REFRESH_SEED_CACHE: OnceLock<Mutex<HashMap<PathBuf, Value>>> = OnceLock::new();
+static REFRESH_FINANCIAL_SNAPSHOT_CACHE: OnceLock<Mutex<HashMap<PathBuf, Value>>> = OnceLock::new();
 
 #[tauri::command]
 fn core_screen(payload: Value) -> Result<Value, String> {
@@ -132,6 +150,14 @@ async fn api_market_refresh(app: tauri::AppHandle, payload: Value) -> Result<Val
 }
 
 #[tauri::command]
+fn api_market_ingest_tencent_quotes(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    core_mobile_market_data_ingest_tencent_quotes(app, payload)
+}
+
+#[tauri::command]
 fn api_market_clear_cache(app: tauri::AppHandle) -> Result<Value, String> {
     let cleared = core_mobile_market_data_clear(app.clone())?;
     Ok(json!({
@@ -173,9 +199,14 @@ fn api_trend_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, Stri
 }
 
 #[tauri::command]
-fn api_observe(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    gp_core::observe_with_data_value(core_payload_with_cached_data(&app, "request", payload)?)
-        .map_err(|error| error.to_string())
+async fn api_observe(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let (core_payload, notes) = observe_core_payload_with_cached_history(&app, payload).await?;
+    let mut result =
+        gp_core::observe_with_data_value(core_payload).map_err(|error| error.to_string())?;
+    for note in notes {
+        append_observe_note(&mut result, note);
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -270,6 +301,7 @@ fn core_mobile_market_data_write(app: tauri::AppHandle, payload: Value) -> Resul
 fn core_mobile_market_data_clear(app: tauri::AppHandle) -> Result<Value, String> {
     let path = mobile_market_data_path(&app)?;
     if !path.exists() {
+        clear_refresh_seed(&app);
         return Ok(json!({
             "removed": false,
             "removed_bytes": 0,
@@ -285,6 +317,7 @@ fn core_mobile_market_data_clear(app: tauri::AppHandle) -> Result<Value, String>
             path.display()
         )
     })?;
+    clear_refresh_seed(&app);
     Ok(json!({
         "removed": true,
         "removed_bytes": removed_bytes,
@@ -294,73 +327,38 @@ fn core_mobile_market_data_clear(app: tauri::AppHandle) -> Result<Value, String>
 
 #[tauri::command]
 async fn core_mobile_network_probe() -> Result<Value, String> {
-    let tcp_timeout = Duration::from_secs(2);
     let http_timeout = Duration::from_secs(TENCENT_NETWORK_PROBE_TIMEOUT_SECS);
-    let baidu_tcp = probe_tcp_addr("baidu_ip_tcp", BAIDU_FALLBACK_ADDR, tcp_timeout);
-    let tencent_tcp = probe_tcp_addr(
-        "tencent_ip_tcp",
-        TENCENT_QUOTE_FALLBACK_ADDRS[0],
-        tcp_timeout,
+    let client = build_tencent_http_client("Mozilla/5.0 GuXuanYou/0.3 mobile probe", http_timeout)?;
+    let mut probes = Vec::new();
+    probes.push(
+        probe_mobile_url(
+            &client,
+            "baidu_https",
+            "https://www.baidu.com",
+            http_timeout,
+        )
+        .await,
     );
-    let mut probes = vec![baidu_tcp, tencent_tcp];
-    let ip_network_ok = probes
-        .iter()
-        .any(|probe| probe.get("ok").and_then(Value::as_bool).unwrap_or(false));
-
-    if ip_network_ok {
-        let client =
-            build_tencent_http_client("Mozilla/5.0 GuXuanYou/0.3 mobile probe", http_timeout)?;
-        probes.push(
-            probe_mobile_url(
-                &client,
-                "tencent_https_fixed",
-                &format!("{TENCENT_QUOTE_ENDPOINT}sz000001"),
-                http_timeout,
-            )
-            .await,
-        );
-    }
+    probes.push(
+        probe_mobile_url(
+            &client,
+            "tencent_https_dns",
+            &format!("{TENCENT_QUOTE_ENDPOINT}sz000001"),
+            http_timeout,
+        )
+        .await,
+    );
 
     let tencent_ok = probes.iter().any(|probe| {
         probe.get("ok").and_then(Value::as_bool).unwrap_or(false)
-            && probe.get("label").and_then(Value::as_str) == Some("tencent_https_fixed")
+            && probe.get("label").and_then(Value::as_str) == Some("tencent_https_dns")
     });
     Ok(json!({
         "ok": tencent_ok,
         "timeout_seconds": http_timeout.as_secs(),
+        "resolver": "system_dns",
         "probes": probes,
     }))
-}
-
-fn probe_tcp_addr(label: &str, address: &str, timeout: Duration) -> Value {
-    let started_at = epoch_millis();
-    match address.parse::<SocketAddr>() {
-        Ok(socket_addr) => match TcpStream::connect_timeout(&socket_addr, timeout) {
-            Ok(_) => json!({
-                "ok": true,
-                "label": label,
-                "stage": "tcp",
-                "address": address,
-                "elapsed_ms": epoch_millis().saturating_sub(started_at),
-                "error": ""
-            }),
-            Err(error) => json!({
-                "ok": false,
-                "label": label,
-                "stage": "tcp",
-                "address": address,
-                "elapsed_ms": epoch_millis().saturating_sub(started_at),
-                "error": error.to_string()
-            }),
-        },
-        Err(error) => json!({
-            "ok": false,
-            "label": label,
-            "stage": "tcp_parse",
-            "address": address,
-            "error": error.to_string()
-        }),
-    }
 }
 
 async fn probe_mobile_url(
@@ -369,6 +367,7 @@ async fn probe_mobile_url(
     url: &str,
     timeout: Duration,
 ) -> Value {
+    let started_at = epoch_millis();
     let result = tokio::time::timeout(timeout, client.get(url).send()).await;
     match result {
         Err(_) => json!({
@@ -377,6 +376,7 @@ async fn probe_mobile_url(
             "stage": "timeout",
             "url": url,
             "timeout_seconds": timeout.as_secs(),
+            "elapsed_ms": epoch_millis().saturating_sub(started_at),
             "error": format!("network probe timed out after {} seconds", timeout.as_secs())
         }),
         Ok(Err(error)) => json!({
@@ -385,6 +385,7 @@ async fn probe_mobile_url(
             "stage": "request",
             "url": url,
             "timeout_seconds": timeout.as_secs(),
+            "elapsed_ms": epoch_millis().saturating_sub(started_at),
             "error": error.to_string()
         }),
         Ok(Ok(response)) => {
@@ -396,32 +397,21 @@ async fn probe_mobile_url(
                 "url": url,
                 "status": status.as_u16(),
                 "timeout_seconds": timeout.as_secs(),
+                "elapsed_ms": epoch_millis().saturating_sub(started_at),
                 "error": if status.is_success() { String::new() } else { format!("HTTP {}", status.as_u16()) }
             })
         }
     }
 }
 
-fn tencent_fallback_addrs() -> Vec<SocketAddr> {
-    TENCENT_QUOTE_FALLBACK_ADDRS
-        .iter()
-        .filter_map(|address| address.parse::<SocketAddr>().ok())
-        .collect()
-}
-
 fn build_tencent_http_client(
     user_agent: &str,
     timeout: Duration,
 ) -> Result<reqwest::Client, String> {
-    let addrs = tencent_fallback_addrs();
-    let mut builder = reqwest::Client::builder()
+    reqwest::Client::builder()
         .timeout(timeout)
         .connect_timeout(Duration::from_secs(TENCENT_CONNECT_TIMEOUT_SECS))
-        .user_agent(user_agent);
-    if !addrs.is_empty() {
-        builder = builder.resolve_to_addrs(TENCENT_QUOTE_HOST, &addrs);
-    }
-    builder
+        .user_agent(user_agent)
         .build()
         .map_err(|error| format!("create Tencent HTTP client failed: {error}"))
 }
@@ -431,7 +421,8 @@ async fn core_mobile_market_data_refresh_tencent(
     app: tauri::AppHandle,
     payload: Value,
 ) -> Result<Value, String> {
-    let seed = payload.get("seed").cloned().unwrap_or_else(|| json!({}));
+    let seed = refresh_seed_payload(&app, &payload);
+    let financial_snapshot = refresh_financial_snapshot_payload(&app, &payload);
     let scan_candidates = payload
         .get("scan_candidates")
         .and_then(Value::as_bool)
@@ -462,7 +453,20 @@ async fn core_mobile_market_data_refresh_tencent(
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok())
         .filter(|value| *value > 0);
+    emit_market_refresh_log(
+        &app,
+        "command_received",
+        "info",
+        json!({
+            "seed_stock_count": seed.get("stocks").and_then(Value::as_array).map(|stocks| stocks.len()).unwrap_or(0),
+            "scan_candidates": scan_candidates,
+            "max_candidates": max_candidates,
+            "batch_start": batch_start,
+            "batch_count": batch_count,
+        }),
+    );
     let refresh = refresh_tencent_market_data(
+        &app,
         seed,
         scan_candidates,
         max_candidates,
@@ -470,9 +474,24 @@ async fn core_mobile_market_data_refresh_tencent(
         max_failed_batches,
         batch_start,
         batch_count,
+        financial_snapshot,
     )
     .await?;
-    let cache = write_mobile_market_data(&app, refresh.dataset)?;
+    emit_market_refresh_log(
+        &app,
+        "command_complete",
+        "ok",
+        json!({
+            "fetched": refresh.fetched,
+            "preserved": refresh.preserved,
+            "failed_batches": refresh.failed_batches,
+            "empty_batches": refresh.empty_batches,
+            "next_batch_start": refresh.next_batch_start,
+            "total_batches": refresh.total_batches,
+            "done": refresh.done,
+        }),
+    );
+    let cache = write_mobile_market_data_record(&app, refresh.dataset, false)?;
     let mut notes = vec![format!(
         "Tencent quote refresh finished: fetched {} of {} candidates, preserved {} local rows",
         refresh.fetched, refresh.requested, refresh.preserved
@@ -499,6 +518,7 @@ async fn core_mobile_market_data_refresh_tencent(
         "fetched": refresh.fetched,
         "preserved": refresh.preserved,
         "failed_batches": refresh.failed_batches,
+        "empty_batches": refresh.empty_batches,
         "error_samples": refresh.error_samples.clone(),
         "stopped_early": refresh.stopped_early,
         "stop_reason": refresh.stop_reason,
@@ -512,6 +532,287 @@ async fn core_mobile_market_data_refresh_tencent(
         "status": cache,
         "notes": notes
     }))
+}
+
+fn core_mobile_market_data_ingest_tencent_quotes(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    let seed = refresh_seed_payload(&app, &payload);
+    let financial_snapshot = refresh_financial_snapshot_payload(&app, &payload);
+    let scan_candidates = payload
+        .get("scan_candidates")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let use_previous_close = payload
+        .get("use_previous_close")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let max_candidates = payload
+        .get("max_candidates")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(TENCENT_DEFAULT_MAX_CANDIDATES);
+    let batch_start = payload
+        .get("batch_start")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0);
+    let batch_count = payload
+        .get("batch_count")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0);
+    let quote_bytes = payload
+        .get("quote_bytes_base64")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(|encoded| {
+            if encoded.len() > MAX_TENCENT_WEBVIEW_QUOTE_BYTES * 2 {
+                return Err("Tencent WebView quote payload is too large".to_string());
+            }
+            let bytes = general_purpose::STANDARD
+                .decode(encoded)
+                .map_err(|error| format!("decode Tencent WebView quote bytes failed: {error}"))?;
+            if bytes.len() > MAX_TENCENT_WEBVIEW_QUOTE_BYTES {
+                return Err("Tencent WebView quote payload is too large".to_string());
+            }
+            Ok(bytes)
+        })
+        .transpose()?;
+    let quote_text = if let Some(bytes) = quote_bytes.as_ref() {
+        let (text, _, _) = encoding_rs::GBK.decode(bytes);
+        text.into_owned()
+    } else {
+        let text = payload
+            .get("quote_text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "missing Tencent quote text from WebView".to_string())?
+            .to_string();
+        if text.len() > MAX_TENCENT_WEBVIEW_QUOTE_BYTES {
+            return Err("Tencent WebView quote payload is too large".to_string());
+        }
+        text
+    };
+    if quote_text.trim().is_empty() {
+        return Err("Tencent quote text from WebView is empty".to_string());
+    }
+    let webview_status = payload
+        .get("webview_status")
+        .and_then(Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or(200);
+    let webview_byte_len = payload
+        .get("webview_byte_len")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .or_else(|| quote_bytes.as_ref().map(Vec::len))
+        .unwrap_or_else(|| quote_text.len());
+    let webview_elapsed_ms = payload
+        .get("webview_elapsed_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+
+    emit_market_refresh_log(
+        &app,
+        "webview_ingest_received",
+        "info",
+        json!({
+            "seed_stock_count": seed.get("stocks").and_then(Value::as_array).map(|stocks| stocks.len()).unwrap_or(0),
+            "scan_candidates": scan_candidates,
+            "max_candidates": max_candidates,
+            "batch_start": batch_start,
+            "batch_count": batch_count,
+            "webview_status": webview_status,
+            "webview_byte_len": webview_byte_len,
+            "webview_elapsed_ms": webview_elapsed_ms,
+        }),
+    );
+
+    let refresh = ingest_tencent_market_data(
+        &app,
+        seed,
+        scan_candidates,
+        max_candidates,
+        use_previous_close,
+        batch_start,
+        batch_count,
+        &quote_text,
+        webview_status,
+        webview_byte_len,
+        webview_elapsed_ms,
+        financial_snapshot,
+    )?;
+    emit_market_refresh_log(
+        &app,
+        "command_complete",
+        "ok",
+        json!({
+            "fetched": refresh.fetched,
+            "preserved": refresh.preserved,
+            "failed_batches": refresh.failed_batches,
+            "empty_batches": refresh.empty_batches,
+            "next_batch_start": refresh.next_batch_start,
+            "total_batches": refresh.total_batches,
+            "done": refresh.done,
+        }),
+    );
+    let cache = write_mobile_market_data_record(&app, refresh.dataset, false)?;
+    Ok(json!({
+        "refreshed": true,
+        "source": "tencent-webview",
+        "requested": refresh.requested,
+        "fetched": refresh.fetched,
+        "preserved": refresh.preserved,
+        "failed_batches": refresh.failed_batches,
+        "empty_batches": refresh.empty_batches,
+        "error_samples": refresh.error_samples.clone(),
+        "stopped_early": refresh.stopped_early,
+        "stop_reason": refresh.stop_reason,
+        "batch_start": refresh.batch_start,
+        "batch_count": refresh.batch_count,
+        "next_batch_start": refresh.next_batch_start,
+        "total_batches": refresh.total_batches,
+        "done": refresh.done,
+        "processed_codes": refresh.processed_codes,
+        "total_candidates": refresh.total_candidates,
+        "status": cache,
+        "notes": [format!(
+            "Tencent WebView quote ingest finished: fetched {} of {} candidates, preserved {} local rows",
+            refresh.fetched, refresh.requested, refresh.preserved
+        )]
+    }))
+}
+
+fn refresh_seed_cache() -> &'static Mutex<HashMap<PathBuf, Value>> {
+    REFRESH_SEED_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn refresh_financial_snapshot_cache() -> &'static Mutex<HashMap<PathBuf, Value>> {
+    REFRESH_FINANCIAL_SNAPSHOT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cache_context_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    mobile_market_data_path(app).ok()
+}
+
+fn remember_refresh_seed(app: &tauri::AppHandle, seed: &Value) {
+    if !market_data_payload_present(seed) {
+        return;
+    }
+    let Some(path) = cache_context_path(app) else {
+        return;
+    };
+    if let Ok(mut slot) = refresh_seed_cache().lock() {
+        slot.insert(path, seed.clone());
+    }
+}
+
+fn clear_refresh_seed(app: &tauri::AppHandle) {
+    if let Some(path) = cache_context_path(app) {
+        if let Ok(mut slot) = refresh_seed_cache().lock() {
+            slot.remove(&path);
+        }
+        if let Ok(mut slot) = refresh_financial_snapshot_cache().lock() {
+            slot.remove(&path);
+        }
+    } else {
+        if let Ok(mut slot) = refresh_seed_cache().lock() {
+            slot.clear();
+        }
+        if let Ok(mut slot) = refresh_financial_snapshot_cache().lock() {
+            slot.clear();
+        }
+    }
+}
+
+fn remember_refresh_financial_snapshot(app: &tauri::AppHandle, snapshot: &Value) {
+    if !financial_snapshot_payload_present(snapshot) {
+        return;
+    }
+    let Some(path) = cache_context_path(app) else {
+        return;
+    };
+    if let Ok(mut slot) = refresh_financial_snapshot_cache().lock() {
+        slot.insert(path, snapshot.clone());
+    }
+}
+
+fn refresh_financial_snapshot_payload(app: &tauri::AppHandle, payload: &Value) -> Value {
+    let snapshot = payload
+        .get("financial_snapshot")
+        .cloned()
+        .unwrap_or(Value::Null);
+    if financial_snapshot_payload_present(&snapshot) {
+        remember_refresh_financial_snapshot(app, &snapshot);
+        return snapshot;
+    }
+    let Some(path) = cache_context_path(app) else {
+        return Value::Null;
+    };
+    if let Ok(slot) = refresh_financial_snapshot_cache().lock() {
+        if let Some(cached) = slot.get(&path) {
+            if financial_snapshot_payload_present(cached) {
+                return cached.clone();
+            }
+        }
+    }
+    Value::Null
+}
+
+fn financial_snapshot_payload_present(value: &Value) -> bool {
+    value
+        .get("stocks")
+        .and_then(Value::as_array)
+        .map(|stocks| !stocks.is_empty())
+        .unwrap_or(false)
+        || value
+            .get("financials")
+            .and_then(Value::as_object)
+            .map(|financials| !financials.is_empty())
+            .unwrap_or(false)
+}
+
+fn refresh_seed_payload(app: &tauri::AppHandle, payload: &Value) -> Value {
+    let seed = payload.get("seed").cloned().unwrap_or(Value::Null);
+    if market_data_payload_present(&seed) {
+        remember_refresh_seed(app, &seed);
+        return seed;
+    }
+    if let Some(path) = cache_context_path(app) {
+        if let Ok(slot) = refresh_seed_cache().lock() {
+            if let Some(cached) = slot.get(&path) {
+                if market_data_payload_present(cached) {
+                    return cached.clone();
+                }
+            }
+        }
+    }
+    let cached = read_mobile_market_data_record(app, true)
+        .ok()
+        .and_then(|record| record.get("data").cloned())
+        .unwrap_or_else(|| json!({}));
+    remember_refresh_seed(app, &cached);
+    cached
+}
+
+fn market_data_payload_present(value: &Value) -> bool {
+    value
+        .get("stocks")
+        .and_then(Value::as_array)
+        .map(|stocks| !stocks.is_empty())
+        .unwrap_or(false)
+        || value
+            .get("relations")
+            .and_then(Value::as_array)
+            .map(|relations| !relations.is_empty())
+            .unwrap_or(false)
+        || value
+            .get("histories")
+            .and_then(Value::as_object)
+            .map(|histories| !histories.is_empty())
+            .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -762,6 +1063,7 @@ struct TencentRefreshResult {
     fetched: usize,
     preserved: usize,
     failed_batches: usize,
+    empty_batches: usize,
     error_samples: Vec<String>,
     stopped_early: bool,
     stop_reason: Option<String>,
@@ -774,7 +1076,26 @@ struct TencentRefreshResult {
     total_candidates: usize,
 }
 
+struct TencentQuotePayload {
+    text: String,
+    byte_len: usize,
+    status: u16,
+}
+
+fn emit_market_refresh_log(app: &tauri::AppHandle, stage: &str, tone: &str, payload: Value) {
+    let _ = app.emit(
+        "market-refresh-log",
+        json!({
+            "stage": stage,
+            "tone": tone,
+            "payload": payload,
+            "timestamp_ms": epoch_millis(),
+        }),
+    );
+}
+
 async fn refresh_tencent_market_data(
+    app: &tauri::AppHandle,
     seed: Value,
     scan_candidates: bool,
     max_candidates: usize,
@@ -782,16 +1103,11 @@ async fn refresh_tencent_market_data(
     max_failed_batches: usize,
     batch_start: usize,
     batch_count: Option<usize>,
+    financial_snapshot: Value,
 ) -> Result<TencentRefreshResult, String> {
     let (seed_stocks, seed_codes) = seed_stock_maps(&seed);
-    let mut candidate_codes = seed_codes;
-    if scan_candidates {
-        append_tencent_candidate_codes(&mut candidate_codes);
-    }
-    dedupe_stock_codes(&mut candidate_codes);
-    if candidate_codes.len() > max_candidates {
-        candidate_codes.truncate(max_candidates);
-    }
+    let enriched_stocks = enriched_stock_maps(&seed_stocks, &financial_snapshot);
+    let candidate_codes = build_candidate_codes(&seed_codes, scan_candidates, max_candidates);
     if candidate_codes.is_empty() {
         return Err("mobile market refresh has no candidate stock codes".to_string());
     }
@@ -800,6 +1116,17 @@ async fn refresh_tencent_market_data(
         "Mozilla/5.0 GuXuanYou/0.3 mobile",
         Duration::from_secs(TENCENT_REQUEST_TIMEOUT_SECS),
     )?;
+
+    emit_market_refresh_log(
+        app,
+        "candidate_ready",
+        "info",
+        json!({
+            "candidate_count": candidate_codes.len(),
+            "seed_candidate_count": seed_stocks.len(),
+            "scan_candidates": scan_candidates,
+        }),
+    );
 
     let (normalized_batch_start, batch_end, total_batches) =
         candidate_batch_window(candidate_codes.len(), batch_start, batch_count);
@@ -814,6 +1141,7 @@ async fn refresh_tencent_market_data(
     let mut stocks = Vec::new();
     let mut seen = HashSet::new();
     let mut failed_batches = 0usize;
+    let mut empty_batches = 0usize;
     let mut consecutive_failed_batches = 0usize;
     let mut error_samples = Vec::new();
     let mut stopped_early = false;
@@ -821,6 +1149,19 @@ async fn refresh_tencent_market_data(
     let mut next_batch_start = normalized_batch_start;
     let request_timeout = Duration::from_secs(TENCENT_REQUEST_TIMEOUT_SECS);
     let batch_timeout = Duration::from_secs(TENCENT_BATCH_TIMEOUT_SECS);
+    emit_market_refresh_log(
+        app,
+        "batch_window",
+        "info",
+        json!({
+            "batch_start": normalized_batch_start,
+            "batch_end": batch_end,
+            "batch_count": effective_batch_count,
+            "total_batches": total_batches,
+            "request_timeout_seconds": request_timeout.as_secs(),
+            "batch_timeout_seconds": batch_timeout.as_secs(),
+        }),
+    );
     for (offset, batch) in candidate_codes
         .chunks(TENCENT_BATCH_SIZE)
         .enumerate()
@@ -828,22 +1169,57 @@ async fn refresh_tencent_market_data(
         .take(effective_batch_count)
     {
         next_batch_start = offset + 1;
-        let fetch_result = tokio::time::timeout(
+        let batch_started_at = epoch_millis();
+        emit_market_refresh_log(
+            app,
+            "batch_request",
+            "info",
+            json!({
+                "batch_index": offset + 1,
+                "total_batches": total_batches,
+                "code_count": batch.len(),
+                "first_code": batch.first(),
+                "last_code": batch.last(),
+            }),
+        );
+        let fetch_result = match tokio::time::timeout(
             batch_timeout,
             fetch_tencent_quotes(&client, batch, request_timeout),
         )
         .await
-        .map_err(|_| {
-            format!(
+        {
+            Ok(result) => result,
+            Err(_) => Err(format!(
                 "Tencent quote batch timed out after {} seconds",
                 batch_timeout.as_secs()
-            )
-        })
-        .and_then(|result| result);
+            )),
+        };
         match fetch_result {
-            Ok(text) => {
+            Ok(payload) => {
                 consecutive_failed_batches = 0;
-                for mut stock in parse_tencent_quotes(&text, &seed_stocks, use_previous_close) {
+                let parsed_stocks =
+                    parse_tencent_quotes(&payload.text, &enriched_stocks, use_previous_close);
+                if parsed_stocks.is_empty() {
+                    empty_batches += 1;
+                }
+                emit_market_refresh_log(
+                    app,
+                    "batch_response",
+                    if parsed_stocks.is_empty() {
+                        "warn"
+                    } else {
+                        "ok"
+                    },
+                    json!({
+                        "batch_index": offset + 1,
+                        "status": payload.status,
+                        "byte_len": payload.byte_len,
+                        "parsed_count": parsed_stocks.len(),
+                        "elapsed_ms": epoch_millis().saturating_sub(batch_started_at),
+                        "sample": payload.text.chars().take(120).collect::<String>(),
+                    }),
+                );
+                for mut stock in parsed_stocks {
                     let Some(code) = stock
                         .get("code")
                         .and_then(Value::as_str)
@@ -857,6 +1233,16 @@ async fn refresh_tencent_market_data(
                 }
             }
             Err(error) => {
+                emit_market_refresh_log(
+                    app,
+                    "batch_error",
+                    "error",
+                    json!({
+                        "batch_index": offset + 1,
+                        "elapsed_ms": epoch_millis().saturating_sub(batch_started_at),
+                        "error": error,
+                    }),
+                );
                 if error_samples.len() < 3 {
                     error_samples.push(error);
                 }
@@ -871,7 +1257,8 @@ async fn refresh_tencent_market_data(
         }
     }
     let fetched = seen.len();
-    let preserved = append_all_preserved_seed_stocks(&seed_stocks, &mut stocks, &mut seen);
+    let preserved =
+        append_all_preserved_seed_stocks(&seed_stocks, &enriched_stocks, &mut stocks, &mut seen);
     if stocks.is_empty() {
         let suffix = if error_samples.is_empty() {
             String::new()
@@ -913,7 +1300,8 @@ async fn refresh_tencent_market_data(
         ],
         "stocks": stocks,
         "relations": filter_seed_relations(&seed, &valid_codes),
-        "histories": filter_seed_histories(&seed, &valid_codes)
+        "histories": filter_seed_histories(&seed, &valid_codes),
+        "financials": filtered_financial_snapshot_map(&seed, &financial_snapshot, &valid_codes)
     });
 
     let done = stopped_early || next_batch_start >= total_batches;
@@ -922,6 +1310,7 @@ async fn refresh_tencent_market_data(
         fetched,
         preserved,
         failed_batches,
+        empty_batches,
         error_samples,
         stopped_early,
         stop_reason,
@@ -930,6 +1319,196 @@ async fn refresh_tencent_market_data(
         next_batch_start,
         total_batches,
         done,
+        processed_codes: requested_codes.len(),
+        total_candidates: candidate_codes.len(),
+        dataset,
+    })
+}
+
+fn ingest_tencent_market_data(
+    app: &tauri::AppHandle,
+    seed: Value,
+    scan_candidates: bool,
+    max_candidates: usize,
+    use_previous_close: bool,
+    batch_start: usize,
+    batch_count: Option<usize>,
+    quote_text: &str,
+    webview_status: u16,
+    webview_byte_len: usize,
+    webview_elapsed_ms: u64,
+    financial_snapshot: Value,
+) -> Result<TencentRefreshResult, String> {
+    let (seed_stocks, seed_codes) = seed_stock_maps(&seed);
+    let enriched_stocks = enriched_stock_maps(&seed_stocks, &financial_snapshot);
+    let candidate_codes = build_candidate_codes(&seed_codes, scan_candidates, max_candidates);
+    if candidate_codes.is_empty() {
+        return Err("mobile market refresh has no candidate stock codes".to_string());
+    }
+
+    emit_market_refresh_log(
+        app,
+        "candidate_ready",
+        "info",
+        json!({
+            "candidate_count": candidate_codes.len(),
+            "seed_candidate_count": seed_stocks.len(),
+            "scan_candidates": scan_candidates,
+        }),
+    );
+
+    let (normalized_batch_start, batch_end, total_batches) =
+        candidate_batch_window(candidate_codes.len(), batch_start, batch_count);
+    let effective_batch_count = batch_end.saturating_sub(normalized_batch_start);
+    let requested_codes: Vec<String> = candidate_codes
+        .chunks(TENCENT_BATCH_SIZE)
+        .skip(normalized_batch_start)
+        .take(effective_batch_count)
+        .flat_map(|chunk| chunk.iter().cloned())
+        .collect();
+
+    emit_market_refresh_log(
+        app,
+        "batch_window",
+        "info",
+        json!({
+            "batch_start": normalized_batch_start,
+            "batch_end": batch_end,
+            "batch_count": effective_batch_count,
+            "total_batches": total_batches,
+            "request_timeout_seconds": 0,
+            "batch_timeout_seconds": 0,
+            "transport": "webview",
+        }),
+    );
+
+    let parsed_stocks = parse_tencent_quotes(quote_text, &enriched_stocks, use_previous_close);
+    let empty_batches = if parsed_stocks.is_empty() && effective_batch_count > 0 {
+        effective_batch_count
+    } else {
+        0
+    };
+    emit_market_refresh_log(
+        app,
+        "batch_response",
+        if parsed_stocks.is_empty() {
+            "warn"
+        } else {
+            "ok"
+        },
+        json!({
+            "batch_index": normalized_batch_start + 1,
+            "status": webview_status,
+            "byte_len": webview_byte_len,
+            "parsed_count": parsed_stocks.len(),
+            "elapsed_ms": webview_elapsed_ms,
+            "transport": "webview",
+            "sample": quote_text.chars().take(120).collect::<String>(),
+        }),
+    );
+
+    let requested_set: HashSet<String> = requested_codes.iter().cloned().collect();
+    let mut stocks = Vec::new();
+    let mut seen = HashSet::new();
+    let mut ignored_quote_codes = Vec::new();
+    for mut stock in parsed_stocks {
+        let Some(code) = stock
+            .get("code")
+            .and_then(Value::as_str)
+            .and_then(normalize_stock_code)
+        else {
+            continue;
+        };
+        if !requested_set.contains(&code) {
+            if ignored_quote_codes.len() < 8 {
+                ignored_quote_codes.push(code);
+            }
+            continue;
+        }
+        stock.insert("code".to_string(), json!(code));
+        let code = stock
+            .get("code")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if seen.insert(code) {
+            stocks.push(Value::Object(std::mem::take(&mut stock)));
+        }
+    }
+    let fetched = seen.len();
+    let missing_requested_count = requested_set.len().saturating_sub(fetched);
+    if !ignored_quote_codes.is_empty() || missing_requested_count > 0 {
+        emit_market_refresh_log(
+            app,
+            "webview_batch_mismatch",
+            "warn",
+            json!({
+                "batch_index": normalized_batch_start + 1,
+                "requested_count": requested_set.len(),
+                "fetched_count": fetched,
+                "missing_requested_count": missing_requested_count,
+                "ignored_quote_codes": ignored_quote_codes,
+                "transport": "webview",
+            }),
+        );
+    }
+    let preserved =
+        append_all_preserved_seed_stocks(&seed_stocks, &enriched_stocks, &mut stocks, &mut seen);
+    if stocks.is_empty() {
+        return Err(format!(
+            "Tencent WebView quote returned no valid stocks; sample: {}",
+            quote_text.chars().take(160).collect::<String>()
+        ));
+    }
+    stocks.sort_by(|left, right| {
+        left.get("code")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .cmp(right.get("code").and_then(Value::as_str).unwrap_or(""))
+    });
+    let valid_codes: HashSet<String> = stocks
+        .iter()
+        .filter_map(|stock| {
+            stock
+                .get("code")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect();
+
+    let dataset = json!({
+        "source": "tencent",
+        "generated_at": epoch_millis().to_string(),
+        "generated_at_epoch_ms": epoch_millis(),
+        "notes": [
+            "mobile online refresh via WebView Tencent quote",
+            "industry and slow-changing metrics are merged from the previous local dataset",
+            if use_previous_close {
+                "price policy: previous close before market close"
+            } else {
+                "price policy: latest Tencent quote"
+            }
+        ],
+        "stocks": stocks,
+        "relations": filter_seed_relations(&seed, &valid_codes),
+        "histories": filter_seed_histories(&seed, &valid_codes),
+        "financials": filtered_financial_snapshot_map(&seed, &financial_snapshot, &valid_codes)
+    });
+
+    Ok(TencentRefreshResult {
+        requested: candidate_codes.len(),
+        fetched,
+        preserved,
+        failed_batches: 0,
+        empty_batches,
+        error_samples: Vec::new(),
+        stopped_early: false,
+        stop_reason: None,
+        batch_start: normalized_batch_start,
+        batch_count: effective_batch_count,
+        next_batch_start: batch_end,
+        total_batches,
+        done: batch_end >= total_batches,
         processed_codes: requested_codes.len(),
         total_candidates: candidate_codes.len(),
         dataset,
@@ -971,12 +1550,236 @@ fn append_preserved_seed_stocks(
 
 fn append_all_preserved_seed_stocks(
     seed_stocks: &HashMap<String, serde_json::Map<String, Value>>,
+    enriched_stocks: &HashMap<String, serde_json::Map<String, Value>>,
     stocks: &mut Vec<Value>,
     seen: &mut HashSet<String>,
 ) -> usize {
     let mut codes: Vec<String> = seed_stocks.keys().cloned().collect();
     codes.sort();
-    append_preserved_seed_stocks(&codes, seed_stocks, stocks, seen)
+    append_preserved_seed_stocks(&codes, enriched_stocks, stocks, seen)
+}
+
+fn enriched_stock_maps(
+    seed_stocks: &HashMap<String, serde_json::Map<String, Value>>,
+    financial_snapshot: &Value,
+) -> HashMap<String, serde_json::Map<String, Value>> {
+    let mut enriched = seed_stocks.clone();
+    let Some(snapshot_stocks) = financial_snapshot.get("stocks").and_then(Value::as_array) else {
+        return enriched;
+    };
+    for item in snapshot_stocks {
+        let Some(object) = item.as_object() else {
+            continue;
+        };
+        let Some(code) = object
+            .get("code")
+            .and_then(Value::as_str)
+            .and_then(normalize_stock_code)
+        else {
+            continue;
+        };
+        let target = enriched.entry(code.clone()).or_insert_with(|| {
+            let mut row = serde_json::Map::new();
+            row.insert("code".to_string(), json!(code));
+            row
+        });
+        for field in DEDUCTED_FINANCIAL_FIELDS {
+            if finite_object_number(target, field).is_some() {
+                continue;
+            }
+            if let Some(value) = finite_object_number(object, field) {
+                target.insert(field.to_string(), json!(value));
+            }
+        }
+    }
+    enriched
+}
+
+fn filtered_financial_snapshot_map(
+    seed: &Value,
+    financial_snapshot: &Value,
+    valid_codes: &HashSet<String>,
+) -> Value {
+    let mut entries = serde_json::Map::new();
+    merge_financials_object(&mut entries, seed.get("financials"));
+    merge_financials_object(&mut entries, financial_snapshot.get("financials"));
+    merge_financials_array(&mut entries, seed.get("stocks"));
+    merge_financials_array(&mut entries, financial_snapshot.get("stocks"));
+
+    let mut filtered = serde_json::Map::new();
+    for (code, value) in entries {
+        if valid_codes.contains(&code) {
+            filtered.insert(code, value);
+        }
+    }
+    Value::Object(filtered)
+}
+
+fn merge_financials_object(target: &mut serde_json::Map<String, Value>, value: Option<&Value>) {
+    let Some(object) = value.and_then(Value::as_object) else {
+        return;
+    };
+    for (raw_code, item) in object {
+        merge_financial_entry(target, raw_code, item);
+    }
+}
+
+fn merge_financials_array(target: &mut serde_json::Map<String, Value>, value: Option<&Value>) {
+    let Some(items) = value.and_then(Value::as_array) else {
+        return;
+    };
+    for item in items {
+        let Some(object) = item.as_object() else {
+            continue;
+        };
+        let Some(raw_code) = object.get("code").and_then(Value::as_str) else {
+            continue;
+        };
+        merge_financial_entry(target, raw_code, item);
+    }
+}
+
+fn merge_financial_entry(
+    target: &mut serde_json::Map<String, Value>,
+    raw_code: &str,
+    item: &Value,
+) {
+    let Some(code) = normalize_stock_code(raw_code) else {
+        return;
+    };
+    let Some(object) = item.as_object() else {
+        return;
+    };
+    let mut entry = target
+        .get(&code)
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+
+    if let Some(value) = finite_object_number_any(object, &["latest_eps", "eps", "EPSJB"]) {
+        entry.insert("latest_eps".to_string(), json!(value));
+    }
+    if let Some(value) = finite_object_number_any(object, &["latest_bps", "bps", "BPS"]) {
+        entry.insert("latest_bps".to_string(), json!(value));
+    }
+    if let Some(period) = object_string_any(object, &["period", "latest_period", "report_period"])
+        .filter(|value| !value.trim().is_empty())
+    {
+        entry.insert("period".to_string(), json!(period));
+    }
+    if let Some(source) =
+        object_string_any(object, &["source"]).filter(|value| !value.trim().is_empty())
+    {
+        entry.insert("source".to_string(), json!(source));
+    }
+    if let Some(note_values) = object.get("notes").and_then(Value::as_array) {
+        let mut notes = entry
+            .get("notes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut seen_notes: HashSet<String> = notes
+            .iter()
+            .filter_map(Value::as_str)
+            .map(ToOwned::to_owned)
+            .collect();
+        for note in note_values.iter().filter_map(Value::as_str) {
+            let trimmed = note.trim();
+            if !trimmed.is_empty() && seen_notes.insert(trimmed.to_string()) {
+                notes.push(Value::String(trimmed.to_string()));
+            }
+        }
+        if !notes.is_empty() {
+            entry.insert("notes".to_string(), Value::Array(notes));
+        }
+    }
+    let quarterly_eps = normalize_quarterly_eps(object.get("quarterly_eps"));
+    if !quarterly_eps.is_empty() {
+        if !entry.contains_key("period") {
+            if let Some(period) = quarterly_eps
+                .first()
+                .and_then(|item| item.get("period"))
+                .and_then(Value::as_str)
+            {
+                entry.insert("period".to_string(), json!(period));
+            }
+        }
+        entry.insert("quarterly_eps".to_string(), Value::Array(quarterly_eps));
+    }
+    if !entry.is_empty() {
+        target.insert(code, Value::Object(entry));
+    }
+}
+
+fn normalize_quarterly_eps(value: Option<&Value>) -> Vec<Value> {
+    let Some(items) = value.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::new();
+    for item in items {
+        let Some(object) = item.as_object() else {
+            continue;
+        };
+        let Some(period) = object
+            .get("period")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|period| valid_financial_period_key(period))
+        else {
+            continue;
+        };
+        let Some(value) = object
+            .get("value")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+        else {
+            continue;
+        };
+        if !seen.insert(period.to_string()) {
+            continue;
+        }
+        let mut row = serde_json::Map::new();
+        row.insert("period".to_string(), json!(period));
+        row.insert("value".to_string(), json!(value));
+        if let Some(source) =
+            object_string(object, "source").filter(|value| !value.trim().is_empty())
+        {
+            row.insert("source".to_string(), json!(source));
+        }
+        normalized.push(Value::Object(row));
+        if normalized.len() >= 12 {
+            break;
+        }
+    }
+    normalized
+}
+
+fn valid_financial_period_key(period: &str) -> bool {
+    let bytes = period.as_bytes();
+    bytes.len() == 6
+        && bytes[0..4].iter().all(|byte| byte.is_ascii_digit())
+        && bytes[4].eq_ignore_ascii_case(&b'Q')
+        && matches!(bytes[5], b'1'..=b'4')
+}
+
+fn finite_object_number_any(
+    object: &serde_json::Map<String, Value>,
+    fields: &[&str],
+) -> Option<f64> {
+    fields
+        .iter()
+        .find_map(|field| finite_object_number(object, field))
+}
+
+fn object_string_any(object: &serde_json::Map<String, Value>, fields: &[&str]) -> Option<String> {
+    fields.iter().find_map(|field| object_string(object, field))
+}
+fn finite_object_number(object: &serde_json::Map<String, Value>, field: &str) -> Option<f64> {
+    object
+        .get(field)
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
 }
 
 fn candidate_batch_window(
@@ -998,13 +1801,17 @@ async fn fetch_tencent_quotes(
     client: &reqwest::Client,
     codes: &[String],
     request_timeout: Duration,
-) -> Result<String, String> {
+) -> Result<TencentQuotePayload, String> {
     let symbols: Vec<String> = codes
         .iter()
         .filter_map(|code| tencent_symbol(code))
         .collect();
     if symbols.is_empty() {
-        return Ok(String::new());
+        return Ok(TencentQuotePayload {
+            text: String::new(),
+            byte_len: 0,
+            status: 0,
+        });
     }
     let url = format!("{TENCENT_QUOTE_ENDPOINT}{}", symbols.join(","));
     let response = client
@@ -1013,15 +1820,21 @@ async fn fetch_tencent_quotes(
         .send()
         .await
         .map_err(|error| format!("Tencent quote request failed: {error}"))?;
-    if !response.status().is_success() {
-        return Err(format!("Tencent quote HTTP {}", response.status()));
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("Tencent quote HTTP {status}"));
     }
     let bytes = response
         .bytes()
         .await
         .map_err(|error| format!("Tencent quote body read failed: {error}"))?;
+    let byte_len = bytes.len();
     let (text, _, _) = encoding_rs::GBK.decode(&bytes);
-    Ok(text.into_owned())
+    Ok(TencentQuotePayload {
+        text: text.into_owned(),
+        byte_len,
+        status: status.as_u16(),
+    })
 }
 
 fn parse_tencent_quotes(
@@ -1124,6 +1937,30 @@ fn seed_stock_maps(seed: &Value) -> (HashMap<String, serde_json::Map<String, Val
         }
     }
     (stocks, codes)
+}
+
+fn build_candidate_codes(
+    seed_codes: &[String],
+    scan_candidates: bool,
+    max_candidates: usize,
+) -> Vec<String> {
+    // The candidate list defines pagination windows. It MUST be stable across
+    // the repeated invocations of a single full rebuild, otherwise `batch_start`
+    // from the frontend drifts as the in-memory seed grows and codes get skipped
+    // or re-fetched. When scanning, always emit the deterministic scan order
+    // first and append only the seed-only codes (outside the scan ranges) at the
+    // end. Seed DATA is merged/preserved separately, so ordering here only
+    // decides which codes each batch fetches.
+    let mut candidate_codes = Vec::new();
+    if scan_candidates {
+        append_tencent_candidate_codes(&mut candidate_codes);
+    }
+    candidate_codes.extend(seed_codes.iter().cloned());
+    dedupe_stock_codes(&mut candidate_codes);
+    if candidate_codes.len() > max_candidates {
+        candidate_codes.truncate(max_candidates);
+    }
+    candidate_codes
 }
 
 fn append_tencent_candidate_codes(codes: &mut Vec<String>) {
@@ -1305,6 +2142,1105 @@ fn filter_seed_histories(seed: &Value, valid_codes: &HashSet<String>) -> Value {
     Value::Object(histories)
 }
 
+async fn observe_core_payload_with_cached_history(
+    app: &tauri::AppHandle,
+    payload: Value,
+) -> Result<(Value, Vec<String>), String> {
+    let mut data = cached_market_data(app)?;
+    let code = payload
+        .get("code")
+        .and_then(Value::as_str)
+        .and_then(normalize_stock_code)
+        .ok_or_else(|| "观察请求缺少有效股票代码。".to_string())?;
+    let start_date = payload
+        .get("start_date")
+        .and_then(Value::as_str)
+        .unwrap_or("20200101")
+        .to_string();
+    let end_date = payload
+        .get("end_date")
+        .and_then(Value::as_str)
+        .unwrap_or("20501231")
+        .to_string();
+    let mut notes = Vec::new();
+    let mut data_changed = false;
+
+    let (financial_changed, financial_notes) =
+        enrich_observe_financial_snapshot(&mut data, &code).await;
+    data_changed |= financial_changed;
+    notes.extend(financial_notes);
+
+    if let Some(rows) = payload_history_rows(&payload) {
+        let count = rows.len();
+        insert_history_rows(&mut data, &code, rows);
+        data_changed = true;
+        notes.push(format!(
+            "观察日线历史已通过 WebView 预取并写入本地缓存：{code} {count} 条。"
+        ));
+    } else if !history_cache_has_bars(
+        &data,
+        &code,
+        &start_date,
+        &end_date,
+        MIN_OBSERVE_HISTORY_BARS,
+    ) {
+        match fetch_observe_daily_history(&code, &start_date, &end_date).await {
+            Ok(rows) if !rows.is_empty() => {
+                let count = rows.len();
+                insert_history_rows(&mut data, &code, rows);
+                data_changed = true;
+                notes.push(format!(
+                    "观察日线历史已按需联网更新并写入本地缓存：{code} {count} 条。"
+                ));
+            }
+            Ok(_) => {
+                notes.push(format!("观察日线历史为空：{code}。"));
+            }
+            Err(error) => {
+                notes.push(format!("观察日线历史拉取失败：{error}"));
+            }
+        }
+    }
+
+    if data_changed {
+        if let Err(error) = write_mobile_market_data_record(app, data.clone(), false) {
+            notes.push(format!("观察缓存写入失败：{error}"));
+        }
+    }
+
+    let mut observe_request = payload.clone();
+    if let Some(map) = observe_request.as_object_mut() {
+        map.remove("history");
+    }
+    let mut request = serde_json::Map::new();
+    request.insert("data".to_string(), data);
+    request.insert("request".to_string(), observe_request);
+    Ok((Value::Object(request), notes))
+}
+
+fn append_observe_note(result: &mut Value, note: String) {
+    if let Some(notes) = result.get_mut("notes").and_then(Value::as_array_mut) {
+        notes.push(Value::String(note));
+    } else if let Some(object) = result.as_object_mut() {
+        object.insert("notes".to_string(), Value::Array(vec![Value::String(note)]));
+    }
+}
+
+struct QuarterlyEpsFetchResult {
+    points: Vec<Value>,
+    sources: Vec<String>,
+    errors: Vec<String>,
+}
+
+async fn enrich_observe_financial_snapshot(data: &mut Value, code: &str) -> (bool, Vec<String>) {
+    let mut changed = false;
+    let mut notes = Vec::new();
+    let cached_count = financial_quarterly_eps_count(data, code);
+
+    if merge_basic_financial_from_stock(data, code) {
+        changed = true;
+    }
+
+    let current_count = financial_quarterly_eps_count(data, code);
+    if current_count >= COMPLETE_QUARTERLY_EPS_POINTS {
+        return (changed, notes);
+    }
+
+    let fetch = fetch_quarterly_eps_chain(code).await;
+    if !fetch.points.is_empty() {
+        let before = financial_quarterly_eps_count(data, code);
+        merge_quarterly_eps_points(data, code, fetch.points);
+        let after = financial_quarterly_eps_count(data, code);
+        if after > before {
+            changed = true;
+        }
+        let sources = if fetch.sources.is_empty() {
+            "在线财报源".to_string()
+        } else {
+            fetch.sources.join(" / ")
+        };
+        let note = format!(
+            "季度 EPS 已按优先级补全：本地缓存 {cached_count} 期，通达信基础财务 {current_count} 期，{sources} 后当前 {after} 期。"
+        );
+        if push_financial_note(data, code, note.clone()) {
+            changed = true;
+        }
+        notes.push(note);
+    } else if current_count < COMPLETE_QUARTERLY_EPS_POINTS {
+        let detail = if fetch.errors.is_empty() {
+            "在线财报源没有返回可用 EPS 行".to_string()
+        } else {
+            fetch.errors.join("；")
+        };
+        let note = format!(
+            "季度 EPS 明细仍不足：本地缓存 {cached_count} 期，通达信基础财务 {current_count} 期；已尝试东方财富、同花顺和新浪财经，{detail}。"
+        );
+        if push_financial_note(data, code, note.clone()) {
+            changed = true;
+        }
+        notes.push(note);
+    }
+
+    (changed, notes)
+}
+
+async fn fetch_quarterly_eps_chain(code: &str) -> QuarterlyEpsFetchResult {
+    let timeout = Duration::from_secs(FINANCIAL_REQUEST_TIMEOUT_SECS);
+    let client = match build_tencent_http_client("Mozilla/5.0 GuXuanYou/0.3 financial", timeout) {
+        Ok(client) => client,
+        Err(error) => {
+            return QuarterlyEpsFetchResult {
+                points: Vec::new(),
+                sources: Vec::new(),
+                errors: vec![format!("财报 HTTP 客户端创建失败：{error}")],
+            };
+        }
+    };
+    let mut points = Vec::new();
+    let mut sources = Vec::new();
+    let mut errors = Vec::new();
+
+    match fetch_eastmoney_quarterly_eps(&client, code).await {
+        Ok(rows) if !rows.is_empty() => {
+            points.extend(rows);
+            sources.push("东方财富季度 EPS".to_string());
+        }
+        Ok(_) => errors.push("东方财富：返回空 EPS 明细".to_string()),
+        Err(error) => errors.push(format!("东方财富：{error}")),
+    }
+    points = sort_dedup_quarterly_eps(points);
+
+    if points.len() < COMPLETE_QUARTERLY_EPS_POINTS {
+        match fetch_ths_quarterly_eps(&client, code).await {
+            Ok(rows) if !rows.is_empty() => {
+                points.extend(rows);
+                sources.push("同花顺财务摘要".to_string());
+            }
+            Ok(_) => errors.push("同花顺：返回空 EPS 明细".to_string()),
+            Err(error) => errors.push(format!("同花顺：{error}")),
+        }
+        points = sort_dedup_quarterly_eps(points);
+    }
+
+    if points.len() < COMPLETE_QUARTERLY_EPS_POINTS {
+        match fetch_sina_quarterly_eps(&client, code).await {
+            Ok(rows) if !rows.is_empty() => {
+                points.extend(rows);
+                sources.push("新浪财经财务指标".to_string());
+            }
+            Ok(_) => errors.push("新浪财经：返回空 EPS 明细".to_string()),
+            Err(error) => errors.push(format!("新浪财经：{error}")),
+        }
+        points = sort_dedup_quarterly_eps(points);
+    }
+
+    QuarterlyEpsFetchResult {
+        points,
+        sources,
+        errors,
+    }
+}
+
+async fn fetch_eastmoney_quarterly_eps(
+    client: &reqwest::Client,
+    code: &str,
+) -> Result<Vec<Value>, String> {
+    let symbol =
+        eastmoney_security_code(code).ok_or_else(|| format!("无法识别东财财报代码：{code}"))?;
+    let filter = format!(r#"(SECUCODE="{symbol}")"#);
+    let url = reqwest::Url::parse_with_params(
+        EASTMONEY_FINANCIAL_ENDPOINT,
+        &[
+            ("reportName", "RPT_F10_QTR_MAINFINADATA"),
+            ("columns", "ALL"),
+            ("quoteColumns", ""),
+            ("filter", filter.as_str()),
+            ("pageNumber", "1"),
+            ("pageSize", "200"),
+            ("sortTypes", "-1"),
+            ("sortColumns", "REPORT_DATE"),
+            ("source", "HSF10"),
+            ("client", "PC"),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("HTTP {}", status.as_u16()));
+    }
+    let text = response.text().await.map_err(|error| error.to_string())?;
+    parse_eastmoney_quarterly_eps_json(&text)
+}
+
+fn parse_eastmoney_quarterly_eps_json(text: &str) -> Result<Vec<Value>, String> {
+    let value: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
+    let rows = value
+        .get("result")
+        .and_then(|result| result.get("data"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| "响应缺少 result.data".to_string())?;
+    let mut points = Vec::new();
+    for row in rows {
+        let Some(object) = row.as_object() else {
+            continue;
+        };
+        let Some(period) = object_string_any(
+            object,
+            &[
+                "REPORT_DATE",
+                "REPORTDATE",
+                "END_DATE",
+                "REPORT_PERIOD",
+                "REPORT_NAME",
+            ],
+        )
+        .and_then(|raw| financial_period_from_text(&raw)) else {
+            continue;
+        };
+        let Some(eps) = object_number_any_loose(
+            object,
+            &[
+                "BASIC_EPS",
+                "EPSJB",
+                "EPS",
+                "DILUTED_EPS",
+                "DEDUCT_BASIC_EPS",
+            ],
+        ) else {
+            continue;
+        };
+        points.push(quarterly_eps_value(&period, eps, "东方财富季度 EPS"));
+    }
+    Ok(sort_dedup_quarterly_eps(points))
+}
+
+async fn fetch_ths_quarterly_eps(
+    client: &reqwest::Client,
+    code: &str,
+) -> Result<Vec<Value>, String> {
+    let normalized =
+        normalize_stock_code(code).ok_or_else(|| format!("无法识别同花顺财报代码：{code}"))?;
+    let digits = normalized
+        .get(..6)
+        .ok_or_else(|| format!("无法识别同花顺财报代码：{code}"))?;
+    let market =
+        ths_market_code(&normalized).ok_or_else(|| format!("同花顺暂不支持该市场：{code}"))?;
+    let market_string = market.to_string();
+    let url = reqwest::Url::parse_with_params(
+        THS_FINANCIAL_ENDPOINT,
+        &[
+            ("code", digits),
+            ("id", "client_stock_importance"),
+            ("market", market_string.as_str()),
+            ("type", "stock"),
+            ("page", "1"),
+            ("size", "50"),
+            ("period", "0"),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("HTTP {}", status.as_u16()));
+    }
+    let text = response.text().await.map_err(|error| error.to_string())?;
+    parse_ths_quarterly_eps_json(&text)
+}
+
+fn parse_ths_quarterly_eps_json(text: &str) -> Result<Vec<Value>, String> {
+    let value: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
+    let rows = value
+        .get("data")
+        .and_then(|data| data.get("data"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| "响应缺少 data.data".to_string())?;
+    let mut points = Vec::new();
+    for row in rows {
+        let Some(object) = row.as_object() else {
+            continue;
+        };
+        let period = object_string_any(
+            object,
+            &[
+                "date",
+                "report_date",
+                "report",
+                "report_name",
+                "quarter_name",
+            ],
+        )
+        .and_then(|raw| financial_period_from_text(&raw));
+        let Some(period) = period else {
+            continue;
+        };
+        let Some(index_list) = object.get("index_list").and_then(Value::as_object) else {
+            continue;
+        };
+        for (metric_name, metric_values) in index_list {
+            if !financial_metric_is_eps(metric_name) {
+                continue;
+            }
+            if let Some(eps) = value_first_finite_number(metric_values) {
+                points.push(quarterly_eps_value(&period, eps, "同花顺财务摘要"));
+                break;
+            }
+        }
+    }
+    Ok(sort_dedup_quarterly_eps(points))
+}
+
+async fn fetch_sina_quarterly_eps(
+    client: &reqwest::Client,
+    code: &str,
+) -> Result<Vec<Value>, String> {
+    let normalized =
+        normalize_stock_code(code).ok_or_else(|| format!("无法识别新浪财报代码：{code}"))?;
+    let digits = normalized
+        .get(..6)
+        .ok_or_else(|| format!("无法识别新浪财报代码：{code}"))?;
+    let current_year = current_calendar_year_utc();
+    let mut points = Vec::new();
+    let mut errors = Vec::new();
+    for year in [current_year, current_year - 1, current_year - 2] {
+        let url = format!(
+            "{SINA_FINANCIAL_GUIDELINE_ENDPOINT}/stockid/{digits}/ctrl/{year}/displaytype/4.phtml"
+        );
+        match client.get(url).send().await {
+            Ok(response) if response.status().is_success() => match response.bytes().await {
+                Ok(bytes) => {
+                    let (text, _, _) = encoding_rs::GBK.decode(&bytes);
+                    points.extend(parse_sina_quarterly_eps_html(&text));
+                }
+                Err(error) => errors.push(error.to_string()),
+            },
+            Ok(response) => errors.push(format!("{} 年 HTTP {}", year, response.status().as_u16())),
+            Err(error) => errors.push(format!("{} 年 {}", year, error)),
+        }
+        points = sort_dedup_quarterly_eps(points);
+        if points.len() >= COMPLETE_QUARTERLY_EPS_POINTS {
+            break;
+        }
+    }
+    if points.is_empty() && !errors.is_empty() {
+        return Err(errors.join("；"));
+    }
+    Ok(points)
+}
+
+fn parse_sina_quarterly_eps_html(text: &str) -> Vec<Value> {
+    let html = text
+        .replace("<TR", "<tr")
+        .replace("</TR", "</tr")
+        .replace("<TD", "<td")
+        .replace("</TD", "</td")
+        .replace("<TH", "<th")
+        .replace("</TH", "</th");
+    let mut header_periods: Vec<String> = Vec::new();
+    let mut points = Vec::new();
+    for row in html.split("<tr") {
+        let cells = extract_html_cells(row);
+        if cells.is_empty() {
+            continue;
+        }
+        let periods = cells
+            .iter()
+            .filter_map(|cell| financial_period_from_text(cell))
+            .collect::<Vec<_>>();
+        if periods.len() >= 2 {
+            header_periods = periods;
+        }
+        let first = cells.first().map(String::as_str).unwrap_or("");
+        if !financial_metric_is_eps(first) || header_periods.is_empty() {
+            continue;
+        }
+        for (period, value_cell) in header_periods.iter().zip(cells.iter().skip(1)) {
+            if let Some(eps) = parse_f64_str(value_cell) {
+                points.push(quarterly_eps_value(period, eps, "新浪财经财务指标"));
+            }
+        }
+    }
+    sort_dedup_quarterly_eps(points)
+}
+
+fn extract_html_cells(row: &str) -> Vec<String> {
+    let lower = row.to_ascii_lowercase();
+    let mut cells = Vec::new();
+    let mut index = 0;
+    while index < lower.len() {
+        let next_td = lower[index..].find("<td").map(|pos| index + pos);
+        let next_th = lower[index..].find("<th").map(|pos| index + pos);
+        let Some(start) = (match (next_td, next_th) {
+            (Some(td), Some(th)) => Some(td.min(th)),
+            (Some(td), None) => Some(td),
+            (None, Some(th)) => Some(th),
+            (None, None) => None,
+        }) else {
+            break;
+        };
+        let tag = if lower[start..].starts_with("<th") {
+            "th"
+        } else {
+            "td"
+        };
+        let Some(content_start) = lower[start..].find('>').map(|pos| start + pos + 1) else {
+            break;
+        };
+        let close_tag = format!("</{tag}>");
+        let Some(content_end) = lower[content_start..]
+            .find(&close_tag)
+            .map(|pos| content_start + pos)
+        else {
+            break;
+        };
+        let cell = strip_html_tags(&row[content_start..content_end]);
+        if !cell.trim().is_empty() {
+            cells.push(cell);
+        }
+        index = content_end + close_tag.len();
+    }
+    cells
+}
+
+fn strip_html_tags(value: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for ch in value.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                out.push(' ');
+            }
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out.replace("&nbsp;", " ")
+        .replace("&#160;", " ")
+        .replace("&amp;", "&")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn merge_basic_financial_from_stock(data: &mut Value, code: &str) -> bool {
+    let Some(stock) = stock_object(data, code).cloned() else {
+        return false;
+    };
+    let mut changed = false;
+    let entry = financial_entry_mut(data, code);
+    if !entry_contains_number(entry, "latest_eps") {
+        if let Some(value) =
+            object_number_any_loose(&stock, &["latest_eps", "eps", "EPSJB", "BASIC_EPS"])
+        {
+            entry.insert("latest_eps".to_string(), json!(value));
+            changed = true;
+        }
+    }
+    if !entry_contains_number(entry, "latest_bps") {
+        if let Some(value) = object_number_any_loose(&stock, &["latest_bps", "bps", "BPS"]) {
+            entry.insert("latest_bps".to_string(), json!(value));
+            changed = true;
+        }
+    }
+    if !entry.contains_key("period") {
+        if let Some(period) =
+            object_string_any(&stock, &["period", "latest_period", "report_period"])
+                .and_then(|raw| financial_period_from_text(&raw))
+        {
+            entry.insert("period".to_string(), json!(period));
+            changed = true;
+        }
+    }
+    let period = object_string(entry, "period").and_then(|raw| financial_period_from_text(&raw));
+    let eps = object_number_any_loose(entry, &["latest_eps"]);
+    if let (Some(period), Some(eps)) = (period, eps) {
+        changed |= upsert_entry_quarterly_eps(entry, &period, eps, "通达信基础财务");
+    }
+    if changed {
+        append_financial_source(entry, "通达信基础财务");
+    }
+    changed
+}
+
+fn merge_quarterly_eps_points(data: &mut Value, code: &str, points: Vec<Value>) {
+    let entry = financial_entry_mut(data, code);
+    let mut merged = entry
+        .get("quarterly_eps")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    merged.extend(points);
+    let normalized = sort_dedup_quarterly_eps(merged);
+    if let Some(first) = normalized.first() {
+        if !entry_contains_number(entry, "latest_eps") {
+            if let Some(value) = first.get("value").and_then(Value::as_f64) {
+                entry.insert("latest_eps".to_string(), json!(value));
+            }
+        }
+        if !entry.contains_key("period") {
+            if let Some(period) = first.get("period").and_then(Value::as_str) {
+                entry.insert("period".to_string(), json!(period));
+            }
+        }
+    }
+    entry.insert("quarterly_eps".to_string(), Value::Array(normalized));
+    append_financial_source(entry, "东方财富/同花顺/新浪季度 EPS");
+}
+
+fn financial_quarterly_eps_count(data: &Value, code: &str) -> usize {
+    data.get("financials")
+        .and_then(Value::as_object)
+        .and_then(|financials| financials.get(code))
+        .and_then(|entry| entry.get("quarterly_eps"))
+        .and_then(Value::as_array)
+        .map(|rows| normalize_quarterly_eps(Some(&Value::Array(rows.clone()))).len())
+        .unwrap_or(0)
+}
+
+fn financial_entry_mut<'a>(
+    data: &'a mut Value,
+    code: &str,
+) -> &'a mut serde_json::Map<String, Value> {
+    if !data.is_object() {
+        *data = json!({});
+    }
+    let object = data.as_object_mut().expect("data object just initialized");
+    let financials = object
+        .entry("financials".to_string())
+        .or_insert_with(|| json!({}));
+    if !financials.is_object() {
+        *financials = json!({});
+    }
+    let entry = financials
+        .as_object_mut()
+        .expect("financials object just initialized")
+        .entry(code.to_string())
+        .or_insert_with(|| json!({}));
+    if !entry.is_object() {
+        *entry = json!({});
+    }
+    entry
+        .as_object_mut()
+        .expect("financial entry object just initialized")
+}
+
+fn stock_object<'a>(data: &'a Value, code: &str) -> Option<&'a serde_json::Map<String, Value>> {
+    data.get("stocks")?
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_object)
+        .find(|stock| {
+            stock
+                .get("code")
+                .and_then(Value::as_str)
+                .and_then(normalize_stock_code)
+                .as_deref()
+                == Some(code)
+        })
+}
+
+fn entry_contains_number(entry: &serde_json::Map<String, Value>, field: &str) -> bool {
+    entry
+        .get(field)
+        .and_then(|value| json_f64(Some(value)))
+        .map(|value| value.is_finite())
+        .unwrap_or(false)
+}
+
+fn upsert_entry_quarterly_eps(
+    entry: &mut serde_json::Map<String, Value>,
+    period: &str,
+    value: f64,
+    source: &str,
+) -> bool {
+    let mut rows = entry
+        .get("quarterly_eps")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if rows.iter().any(|row| {
+        row.get("period")
+            .and_then(Value::as_str)
+            .map(|existing| existing.eq_ignore_ascii_case(period))
+            .unwrap_or(false)
+    }) {
+        return false;
+    }
+    rows.push(quarterly_eps_value(period, value, source));
+    entry.insert(
+        "quarterly_eps".to_string(),
+        Value::Array(sort_dedup_quarterly_eps(rows)),
+    );
+    true
+}
+
+fn push_financial_note(data: &mut Value, code: &str, note: String) -> bool {
+    let entry = financial_entry_mut(data, code);
+    let notes = entry
+        .entry("notes".to_string())
+        .or_insert_with(|| json!([]));
+    if !notes.is_array() {
+        *notes = json!([]);
+    }
+    let rows = notes.as_array_mut().expect("notes array just initialized");
+    if rows.iter().any(|row| row.as_str() == Some(note.as_str())) {
+        return false;
+    }
+    rows.push(Value::String(note));
+    true
+}
+
+fn append_financial_source(entry: &mut serde_json::Map<String, Value>, source: &str) {
+    let mut sources = entry
+        .get("source")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .split('/')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if !sources.iter().any(|item| item == source) {
+        sources.push(source.to_string());
+    }
+    if !sources.is_empty() {
+        entry.insert("source".to_string(), json!(sources.join(" / ")));
+    }
+}
+
+fn sort_dedup_quarterly_eps(points: Vec<Value>) -> Vec<Value> {
+    let mut seen = HashSet::new();
+    let mut rows = Vec::new();
+    for point in points {
+        let Some(object) = point.as_object() else {
+            continue;
+        };
+        let Some(period) = object
+            .get("period")
+            .and_then(Value::as_str)
+            .and_then(financial_period_from_text)
+        else {
+            continue;
+        };
+        let Some(value) = object.get("value").and_then(|value| json_f64(Some(value))) else {
+            continue;
+        };
+        if !seen.insert(period.clone()) {
+            continue;
+        }
+        let source = object
+            .get("source")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("财报源");
+        rows.push(quarterly_eps_value(&period, value, source));
+    }
+    rows.sort_by(|left, right| {
+        let left_period = left.get("period").and_then(Value::as_str).unwrap_or("");
+        let right_period = right.get("period").and_then(Value::as_str).unwrap_or("");
+        right_period.cmp(left_period)
+    });
+    rows.truncate(12);
+    rows
+}
+
+fn quarterly_eps_value(period: &str, value: f64, source: &str) -> Value {
+    json!({
+        "period": period,
+        "value": value,
+        "source": source,
+    })
+}
+
+fn object_number_any_loose(
+    object: &serde_json::Map<String, Value>,
+    fields: &[&str],
+) -> Option<f64> {
+    fields
+        .iter()
+        .find_map(|field| object.get(*field).and_then(|value| json_f64(Some(value))))
+}
+
+fn value_first_finite_number(value: &Value) -> Option<f64> {
+    match value {
+        Value::Number(_) | Value::String(_) => json_f64(Some(value)),
+        Value::Array(items) => items.iter().find_map(value_first_finite_number),
+        Value::Object(object) => {
+            for key in ["value", "data", "val", "num", "latest"] {
+                if let Some(number) = object.get(key).and_then(value_first_finite_number) {
+                    return Some(number);
+                }
+            }
+            object.values().find_map(value_first_finite_number)
+        }
+        _ => None,
+    }
+}
+
+fn financial_metric_is_eps(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    (name.contains("每股收益") || upper.contains("EPS")) && !name.contains("每股净资产")
+}
+
+fn financial_period_from_text(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().to_ascii_uppercase();
+    if valid_financial_period_key(&trimmed) {
+        return Some(trimmed);
+    }
+    let digits = trimmed
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.len() >= 8 {
+        let year = digits.get(0..4)?.parse::<u32>().ok()?;
+        let month = digits.get(4..6)?.parse::<u32>().ok()?;
+        let quarter = match month {
+            1..=3 => 1,
+            4..=6 => 2,
+            7..=9 => 3,
+            10..=12 => 4,
+            _ => return None,
+        };
+        if (2000..=2099).contains(&year) {
+            return Some(format!("{year}Q{quarter}"));
+        }
+    }
+    let year = trimmed
+        .split(|ch: char| !ch.is_ascii_digit())
+        .find(|part| part.len() == 4 && part.starts_with("20"))?;
+    let quarter = if trimmed.contains("Q1") || trimmed.contains("一季") || trimmed.contains("第1季")
+    {
+        1
+    } else if trimmed.contains("Q2")
+        || trimmed.contains("二季")
+        || trimmed.contains("中报")
+        || trimmed.contains("半年")
+    {
+        2
+    } else if trimmed.contains("Q3") || trimmed.contains("三季") || trimmed.contains("第3季") {
+        3
+    } else if trimmed.contains("Q4")
+        || trimmed.contains("四季")
+        || trimmed.contains("年报")
+        || trimmed.contains("年度")
+    {
+        4
+    } else {
+        return None;
+    };
+    Some(format!("{year}Q{quarter}"))
+}
+
+fn eastmoney_security_code(code: &str) -> Option<String> {
+    normalize_stock_code(code)
+}
+
+fn ths_market_code(code: &str) -> Option<u16> {
+    let normalized = normalize_stock_code(code)?;
+    let digits = normalized.get(..6)?;
+    if digits.starts_with("000")
+        || digits.starts_with("001")
+        || digits.starts_with("002")
+        || digits.starts_with("003")
+        || digits.starts_with("300")
+        || digits.starts_with("301")
+    {
+        Some(33)
+    } else if digits.starts_with("600")
+        || digits.starts_with("601")
+        || digits.starts_with("603")
+        || digits.starts_with("605")
+        || digits.starts_with("688")
+    {
+        Some(17)
+    } else if digits.starts_with("920") || digits.starts_with("8") || digits.starts_with("4") {
+        Some(151)
+    } else {
+        None
+    }
+}
+
+fn current_calendar_year_utc() -> i32 {
+    let days = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| (duration.as_secs() / 86_400) as i64)
+        .unwrap_or(0);
+    civil_year_from_days(days)
+}
+
+fn civil_year_from_days(days_since_epoch: i64) -> i32 {
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    (y + if month <= 2 { 1 } else { 0 }) as i32
+}
+fn payload_history_rows(payload: &Value) -> Option<Vec<Value>> {
+    let rows = payload.get("history")?.as_array()?;
+    let normalized = rows
+        .iter()
+        .filter_map(normalize_history_bar_value)
+        .collect::<Vec<_>>();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn normalize_history_bar_value(row: &Value) -> Option<Value> {
+    let object = row.as_object()?;
+    let date = normalize_history_date(object.get("date")?.as_str()?)?;
+    let close = json_f64(object.get("close"))?;
+    Some(json!({
+        "date": date,
+        "open": json_f64(object.get("open")).unwrap_or(close),
+        "high": json_f64(object.get("high")).unwrap_or(close),
+        "low": json_f64(object.get("low")).unwrap_or(close),
+        "close": close,
+        "volume": json_f64(object.get("volume")),
+        "capital": json_f64(object.get("capital")),
+    }))
+}
+
+fn insert_history_rows(data: &mut Value, code: &str, rows: Vec<Value>) {
+    if !data.is_object() {
+        *data = json!({});
+    }
+    let object = data.as_object_mut().expect("data object just initialized");
+    let histories = object
+        .entry("histories".to_string())
+        .or_insert_with(|| json!({}));
+    if !histories.is_object() {
+        *histories = json!({});
+    }
+    histories
+        .as_object_mut()
+        .expect("histories object just initialized")
+        .insert(code.to_string(), Value::Array(rows));
+}
+
+fn history_cache_has_bars(
+    data: &Value,
+    code: &str,
+    start_date: &str,
+    end_date: &str,
+    min_bars: usize,
+) -> bool {
+    let Some(rows) = data
+        .get("histories")
+        .and_then(Value::as_object)
+        .and_then(|histories| histories.get(code))
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    let start_key = compact_date_key(start_date).unwrap_or_else(|| "00000000".to_string());
+    let end_key = compact_date_key(end_date).unwrap_or_else(|| "99999999".to_string());
+    rows.iter()
+        .filter_map(|row| row.get("date").and_then(Value::as_str))
+        .filter_map(compact_date_key)
+        .filter(|date| date >= &start_key && date <= &end_key)
+        .take(min_bars)
+        .count()
+        >= min_bars
+}
+
+async fn fetch_observe_daily_history(
+    code: &str,
+    start_date: &str,
+    end_date: &str,
+) -> Result<Vec<Value>, String> {
+    let timeout = Duration::from_secs(OBSERVE_HISTORY_TIMEOUT_SECS);
+    let client = build_tencent_http_client("Mozilla/5.0 GuXuanYou/0.3 observe history", timeout)?;
+    let mut errors = Vec::new();
+    match fetch_eastmoney_daily_history(&client, code, start_date, end_date).await {
+        Ok(rows) if !rows.is_empty() => return Ok(rows),
+        Ok(_) => errors.push("\u{4e1c}\u{65b9}\u{8d22}\u{5bcc}\u{65e5}\u{7ebf}\u{8fd4}\u{56de}\u{7a7a}\u{6570}\u{636e}".to_string()),
+        Err(error) => errors.push(format!("\u{4e1c}\u{65b9}\u{8d22}\u{5bcc}\u{65e5}\u{7ebf}\u{ff1a}{error}")),
+    }
+    match fetch_tencent_daily_history(&client, code, start_date, end_date).await {
+        Ok(rows) if !rows.is_empty() => return Ok(rows),
+        Ok(_) => errors.push(
+            "\u{817e}\u{8baf}\u{65e5}\u{7ebf}\u{8fd4}\u{56de}\u{7a7a}\u{6570}\u{636e}".to_string(),
+        ),
+        Err(error) => errors.push(format!("\u{817e}\u{8baf}\u{65e5}\u{7ebf}\u{ff1a}{error}")),
+    }
+    Err(errors.join("\u{ff1b}"))
+}
+
+async fn fetch_eastmoney_daily_history(
+    client: &reqwest::Client,
+    code: &str,
+    start_date: &str,
+    end_date: &str,
+) -> Result<Vec<Value>, String> {
+    let digits = code
+        .get(..6)
+        .ok_or_else(|| format!("\u{65e0}\u{6548}\u{80a1}\u{7968}\u{4ee3}\u{7801}\u{ff1a}{code}"))?;
+    let market = eastmoney_market_code(code).ok_or_else(|| {
+        format!("\u{65e0}\u{6cd5}\u{8bc6}\u{522b}\u{884c}\u{60c5}\u{4ee3}\u{7801}\u{ff1a}{code}")
+    })?;
+    let secid = format!("{market}.{digits}");
+    let beg = compact_date_key(start_date).unwrap_or_else(|| "0".to_string());
+    let end = compact_date_key(end_date).unwrap_or_else(|| "20500000".to_string());
+    let url = format!(
+        "{EASTMONEY_KLINE_ENDPOINT}?fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&ut=7eea3edcaed734bea9cbfc24409ed989&klt=101&fqt=0&secid={secid}&beg={beg}&end={end}",
+    );
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("HTTP {}", status.as_u16()));
+    }
+    let text = response.text().await.map_err(|error| error.to_string())?;
+    let value: Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    Ok(value
+        .get("data")
+        .and_then(|data| data.get("klines"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter_map(parse_eastmoney_kline_row)
+        .collect())
+}
+
+async fn fetch_tencent_daily_history(
+    client: &reqwest::Client,
+    code: &str,
+    start_date: &str,
+    end_date: &str,
+) -> Result<Vec<Value>, String> {
+    let symbol = tencent_symbol(code).ok_or_else(|| {
+        format!("\u{65e0}\u{6cd5}\u{8bc6}\u{522b}\u{884c}\u{60c5}\u{4ee3}\u{7801}\u{ff1a}{code}")
+    })?;
+    let start = hyphen_date_param(start_date).unwrap_or_else(|| "2020-01-01".to_string());
+    let end = hyphen_date_param(end_date).unwrap_or_else(|| "2050-12-31".to_string());
+    let param = format!("{symbol},day,{start},{end},320,");
+    let url = format!(
+        "{TENCENT_DAILY_KLINE_ENDPOINT}?param={}",
+        param.replace(',', "%2C")
+    );
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("HTTP {}", status.as_u16()));
+    }
+    let text = response.text().await.map_err(|error| error.to_string())?;
+    let value: Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    Ok(value
+        .get("data")
+        .and_then(|data| data.get(&symbol))
+        .and_then(|stock| stock.get("day").or_else(|| stock.get("qfqday")))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(parse_tencent_kline_row)
+        .collect())
+}
+
+fn eastmoney_market_code(code: &str) -> Option<u8> {
+    if code.ends_with(".SH") {
+        Some(1)
+    } else if code.ends_with(".SZ") || code.ends_with(".BJ") {
+        Some(0)
+    } else {
+        None
+    }
+}
+
+fn parse_eastmoney_kline_row(raw: &str) -> Option<Value> {
+    let parts = raw.split(',').collect::<Vec<_>>();
+    if parts.len() < 7 {
+        return None;
+    }
+    let close = parse_f64_str(parts.get(2).copied()?)?;
+    Some(json!({
+        "date": normalize_history_date(parts.first().copied()?)?,
+        "open": parse_f64_str(parts.get(1).copied()?).unwrap_or(close),
+        "close": close,
+        "high": parse_f64_str(parts.get(3).copied()?).unwrap_or(close),
+        "low": parse_f64_str(parts.get(4).copied()?).unwrap_or(close),
+        "volume": parse_f64_str(parts.get(5).copied()?),
+        "capital": Value::Null,
+    }))
+}
+
+fn parse_tencent_kline_row(raw: &Value) -> Option<Value> {
+    let parts = raw.as_array()?;
+    let close = json_f64(parts.get(2))?;
+    Some(json!({
+        "date": normalize_history_date(parts.first()?.as_str()?)?,
+        "open": json_f64(parts.get(1)).unwrap_or(close),
+        "close": close,
+        "high": json_f64(parts.get(3)).unwrap_or(close),
+        "low": json_f64(parts.get(4)).unwrap_or(close),
+        "volume": json_f64(parts.get(5)),
+        "capital": Value::Null,
+    }))
+}
+
+fn json_f64(value: Option<&Value>) -> Option<f64> {
+    match value? {
+        Value::Number(number) => number.as_f64().filter(|value| value.is_finite()),
+        Value::String(raw) => parse_f64_str(raw),
+        _ => None,
+    }
+}
+
+fn parse_f64_str(raw: &str) -> Option<f64> {
+    let value = raw.trim().replace(',', "");
+    if value.is_empty() || matches!(value.as_str(), "-" | "None" | "nan") {
+        return None;
+    }
+    value.parse::<f64>().ok().filter(|value| value.is_finite())
+}
+
+fn normalize_history_date(raw: &str) -> Option<String> {
+    let key = compact_date_key(raw)?;
+    Some(format!("{}-{}-{}", &key[..4], &key[4..6], &key[6..8]))
+}
+
+fn hyphen_date_param(raw: &str) -> Option<String> {
+    normalize_history_date(raw)
+}
+
+fn compact_date_key(raw: &str) -> Option<String> {
+    let digits = raw
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .take(8)
+        .collect::<String>();
+    if digits.len() == 8 {
+        Some(digits)
+    } else {
+        None
+    }
+}
+
 fn cached_market_data(app: &tauri::AppHandle) -> Result<Value, String> {
     let cache = read_mobile_market_data(app)?;
     if !cache
@@ -1333,7 +3269,7 @@ fn core_payload_with_cached_data(
 }
 
 fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String> {
-    let cache = read_mobile_market_data(app)?;
+    let cache = read_mobile_market_data_record(app, false)?;
     let exists = cache
         .get("exists")
         .and_then(Value::as_bool)
@@ -1346,24 +3282,19 @@ fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String> {
             "cache_limit_bytes": 0,
             "universe_updated_at": Value::Null,
             "policy": { "mode": "empty" },
-            "notes": ["股票池尚未生成，请点击联网更新股票池。"]
+            "notes": ["mobile market cache is empty; refresh is required"]
         }));
     }
     let summary = cache.get("summary").cloned().unwrap_or_else(|| json!({}));
-    let data = cache.get("data").cloned().unwrap_or_else(|| json!({}));
     let stock_count = summary
         .get("stock_count")
         .and_then(Value::as_u64)
-        .or_else(|| {
-            data.get("stocks")
-                .and_then(Value::as_array)
-                .map(|stocks| stocks.len() as u64)
-        })
+        .or_else(|| cache.get("stock_count").and_then(Value::as_u64))
         .unwrap_or(0);
     let mut notes = vec![format!(
-        "Tauri/Rust 统一股票池当前包含 {stock_count} 只股票。"
+        "Tauri/Rust cached universe currently contains {stock_count} stocks."
     )];
-    if let Some(data_notes) = data.get("notes").and_then(Value::as_array) {
+    if let Some(data_notes) = cache.get("data_notes").and_then(Value::as_array) {
         notes.extend(
             data_notes
                 .iter()
@@ -1385,12 +3316,24 @@ fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String> {
         "universe_count": stock_count,
         "cache_bytes": cache.get("bytes").and_then(Value::as_u64).unwrap_or(0),
         "cache_limit_bytes": 0,
-        "universe_updated_at": cache.get("updated_at_epoch_ms").cloned().or_else(|| data.get("generated_at").cloned()).unwrap_or(Value::Null),
+        "universe_updated_at": cache
+            .get("updated_at_epoch_ms")
+            .cloned()
+            .or_else(|| cache.get("generated_at").cloned())
+            .unwrap_or(Value::Null),
         "policy": { "mode": "tauri_native", "source": "cache" },
         "notes": notes
     }))
 }
+
 fn read_mobile_market_data(app: &tauri::AppHandle) -> Result<Value, String> {
+    read_mobile_market_data_record(app, true)
+}
+
+fn read_mobile_market_data_record(
+    app: &tauri::AppHandle,
+    include_data: bool,
+) -> Result<Value, String> {
     let path = mobile_market_data_path(app)?;
     if !path.exists() {
         return Ok(json!({
@@ -1406,18 +3349,26 @@ fn read_mobile_market_data(app: &tauri::AppHandle) -> Result<Value, String> {
     let bytes = fs::metadata(&path)
         .map(|metadata| metadata.len())
         .unwrap_or(0);
-    Ok(json!({
-        "exists": true,
-        "bytes": bytes,
-        "path": path.display().to_string(),
-        "updated_at_epoch_ms": file_modified_millis(&path),
-        "summary": summary,
-        "data": data,
-        "notes": ["mobile market cache loaded"]
-    }))
+    Ok(market_cache_record(
+        &path,
+        bytes,
+        file_modified_millis(&path),
+        summary,
+        &data,
+        include_data,
+        "mobile market cache loaded",
+    ))
 }
 
 fn write_mobile_market_data(app: &tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    write_mobile_market_data_record(app, payload, true)
+}
+
+fn write_mobile_market_data_record(
+    app: &tauri::AppHandle,
+    payload: Value,
+    include_data: bool,
+) -> Result<Value, String> {
     let summary = gp_core::validate_data_source_value(payload.clone())
         .map_err(|error| format!("mobile market data validation failed: {error}"))?;
     let path = mobile_market_data_path(app)?;
@@ -1441,15 +3392,61 @@ fn write_mobile_market_data(app: &tauri::AppHandle, payload: Value) -> Result<Va
     }
     fs::rename(&tmp_path, &path)
         .map_err(|error| format!("commit mobile market cache failed: {error}"))?;
-    Ok(json!({
-        "exists": true,
-        "bytes": bytes.len(),
-        "path": path.display().to_string(),
-        "updated_at_epoch_ms": file_modified_millis(&path),
-        "summary": summary,
-        "data": payload,
-        "notes": ["mobile market cache written"]
-    }))
+    remember_refresh_seed(app, &payload);
+    Ok(market_cache_record(
+        &path,
+        bytes.len() as u64,
+        file_modified_millis(&path),
+        summary,
+        &payload,
+        include_data,
+        "mobile market cache written",
+    ))
+}
+
+fn market_cache_record(
+    path: &Path,
+    bytes: u64,
+    updated_at_epoch_ms: Option<u128>,
+    summary: Value,
+    data: &Value,
+    include_data: bool,
+    note: &str,
+) -> Value {
+    let stock_count = summary
+        .get("stock_count")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            data.get("stocks")
+                .and_then(Value::as_array)
+                .map(|stocks| stocks.len() as u64)
+        })
+        .unwrap_or(0);
+    let generated_at = data
+        .get("generated_at_epoch_ms")
+        .cloned()
+        .or_else(|| data.get("generated_at").cloned())
+        .unwrap_or(Value::Null);
+    let data_notes = data.get("notes").cloned().unwrap_or_else(|| json!([]));
+    let mut record = serde_json::Map::new();
+    record.insert("exists".to_string(), json!(true));
+    record.insert("bytes".to_string(), json!(bytes));
+    record.insert("path".to_string(), json!(path.display().to_string()));
+    record.insert(
+        "updated_at_epoch_ms".to_string(),
+        updated_at_epoch_ms
+            .map(|value| json!(value))
+            .unwrap_or(Value::Null),
+    );
+    record.insert("summary".to_string(), summary);
+    record.insert("stock_count".to_string(), json!(stock_count));
+    record.insert("generated_at".to_string(), generated_at);
+    record.insert("data_notes".to_string(), data_notes);
+    if include_data {
+        record.insert("data".to_string(), data.clone());
+    }
+    record.insert("notes".to_string(), json!([note]));
+    Value::Object(record)
 }
 
 fn mobile_market_data_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -1543,6 +3540,7 @@ pub fn run() {
             core_mobile_stock_skill,
             api_market_status,
             api_market_refresh,
+            api_market_ingest_tencent_quotes,
             api_market_clear_cache,
             api_screen,
             api_sector_screen,
@@ -1689,6 +3687,297 @@ mod tests {
     }
 
     #[test]
+    fn build_candidate_codes_is_stable_as_seed_grows() {
+        // A full rebuild paginates with `batch_start`; the candidate list must
+        // not drift as freshly fetched codes accumulate into the in-memory seed.
+        let base = build_candidate_codes(&[], true, 100_000);
+        assert_eq!(base.first().map(String::as_str), Some("000001.SZ"));
+
+        // Seed codes already inside the scan ranges must not reorder the list.
+        let seed: Vec<String> = vec![
+            "600000.SH".to_string(),
+            "000001.SZ".to_string(),
+            "300500.SZ".to_string(),
+        ];
+        let with_seed = build_candidate_codes(&seed, true, 100_000);
+        assert_eq!(
+            base, with_seed,
+            "pagination windows drifted when the seed grew"
+        );
+
+        // Seed-only codes (outside the scan ranges) are appended at the end so
+        // the scan prefix — and therefore every batch window over it — is fixed.
+        let extra_seed: Vec<String> = vec!["830001.BJ".to_string()];
+        let with_extra = build_candidate_codes(&extra_seed, true, 100_000);
+        assert_eq!(&with_extra[..base.len()], &base[..]);
+        assert_eq!(with_extra.last().map(String::as_str), Some("830001.BJ"));
+    }
+
+    #[test]
+    fn build_candidate_codes_uses_seed_only_without_scan() {
+        let seed: Vec<String> = vec!["600000.SH".to_string(), "000001.SZ".to_string()];
+        let codes = build_candidate_codes(&seed, false, 100_000);
+        assert_eq!(codes, seed);
+    }
+
+    #[test]
+    fn paginated_rebuild_covers_every_candidate_without_drift() {
+        // Simulate the real full rebuild: the frontend walks `batch_start` 0..N
+        // while the in-memory seed grows each invocation. The candidate list is
+        // rebuilt from that growing seed every batch, so coverage is only correct
+        // if the windows do not drift. (Worst case for drift: 100% hit rate, so
+        // the seed grows as fast as possible.)
+        use std::collections::BTreeSet;
+        let max = 1_000usize;
+        let stable = build_candidate_codes(&[], true, max);
+        let total_batches = stable.len().div_ceil(TENCENT_BATCH_SIZE);
+        let mut fetched: BTreeSet<String> = BTreeSet::new();
+        for batch_start in 0..total_batches {
+            let seed: Vec<String> = fetched.iter().cloned().collect();
+            let candidates = build_candidate_codes(&seed, true, max);
+            let (start, end, _) = candidate_batch_window(candidates.len(), batch_start, Some(1));
+            for code in candidates
+                .chunks(TENCENT_BATCH_SIZE)
+                .skip(start)
+                .take(end - start)
+                .flatten()
+            {
+                fetched.insert(code.clone());
+            }
+        }
+        let expected: BTreeSet<String> = stable.into_iter().collect();
+        assert_eq!(fetched, expected, "rebuild missed or duplicated candidates");
+    }
+
+    #[test]
+    fn market_data_payload_present_detects_any_cached_section() {
+        assert!(market_data_payload_present(
+            &json!({"stocks": [{"code": "000001.SZ"}]})
+        ));
+        assert!(market_data_payload_present(
+            &json!({"relations": [{"source_code": "000001.SZ"}]})
+        ));
+        assert!(market_data_payload_present(
+            &json!({"histories": {"000001.SZ": []}})
+        ));
+        assert!(!market_data_payload_present(&json!({})));
+    }
+
+    #[test]
+    fn market_cache_record_can_omit_data_payload() {
+        let payload = json!({
+            "generated_at_epoch_ms": 123,
+            "notes": ["cached note"],
+            "stocks": [{"code": "000001.SZ"}],
+            "relations": [],
+            "histories": {}
+        });
+        let summary = json!({"stock_count": 1, "warnings": []});
+        let record = market_cache_record(
+            Path::new("cache.json"),
+            42,
+            Some(456),
+            summary,
+            &payload,
+            false,
+            "cache written",
+        );
+
+        assert!(record.get("data").is_none());
+        assert_eq!(record.get("stock_count").and_then(Value::as_u64), Some(1));
+        assert_eq!(
+            record.get("generated_at").and_then(Value::as_u64),
+            Some(123)
+        );
+        assert_eq!(
+            record
+                .get("data_notes")
+                .and_then(Value::as_array)
+                .map(|items| items.len()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn financial_snapshot_enriches_seed_without_preserving_snapshot_only_rows() {
+        let seed = json!({
+            "stocks": [
+                {"code": "000001.SZ", "name": "Ping An Bank", "price": 10.0}
+            ]
+        });
+        let snapshot = json!({
+            "stocks": [
+                {
+                    "code": "000001.SZ",
+                    "deducted_net_profit_billion": 1.2,
+                    "deducted_net_profit_growth_rate": 12.0,
+                    "latest_eps": 0.45,
+                    "latest_bps": 12.3,
+                    "period": "2026Q1",
+                    "source": "data/cache/tdx_fundamentals.csv",
+                    "notes": ["季度 EPS 明细来自缓存"],
+                    "quarterly_eps": [{"period": "2026Q1", "value": 0.45}]
+                },
+                {"code": "300001.SZ", "deducted_net_profit_billion": 0.8, "deducted_net_profit_growth_rate": 15.0, "latest_eps": 0.2}
+            ]
+        });
+        let (seed_stocks, _) = seed_stock_maps(&seed);
+        let enriched = enriched_stock_maps(&seed_stocks, &snapshot);
+
+        assert_eq!(
+            enriched
+                .get("000001.SZ")
+                .and_then(|stock| object_f64(stock, "deducted_net_profit_billion")),
+            Some(1.2)
+        );
+        assert!(enriched.contains_key("300001.SZ"));
+
+        let mut stocks = Vec::new();
+        let mut seen = HashSet::new();
+        let preserved =
+            append_all_preserved_seed_stocks(&seed_stocks, &enriched, &mut stocks, &mut seen);
+
+        assert_eq!(preserved, 1);
+        assert_eq!(stocks.len(), 1);
+        assert_eq!(
+            stocks[0].get("code").and_then(Value::as_str),
+            Some("000001.SZ")
+        );
+        assert_eq!(
+            stocks[0]
+                .get("deducted_net_profit_growth_rate")
+                .and_then(Value::as_f64),
+            Some(12.0)
+        );
+
+        let valid_codes = HashSet::from(["000001.SZ".to_string()]);
+        let financials = filtered_financial_snapshot_map(&seed, &snapshot, &valid_codes);
+        let item = financials
+            .get("000001.SZ")
+            .and_then(Value::as_object)
+            .expect("financial snapshot should be preserved for stock universe rows");
+        assert_eq!(item.get("latest_eps").and_then(Value::as_f64), Some(0.45));
+        assert_eq!(item.get("latest_bps").and_then(Value::as_f64), Some(12.3));
+        assert_eq!(item.get("period").and_then(Value::as_str), Some("2026Q1"));
+        assert_eq!(
+            item.get("notes")
+                .and_then(Value::as_array)
+                .and_then(|rows| rows.first())
+                .and_then(Value::as_str),
+            Some("季度 EPS 明细来自缓存")
+        );
+        assert_eq!(
+            item.get("quarterly_eps")
+                .and_then(Value::as_array)
+                .and_then(|rows| rows.first())
+                .and_then(|row| row.get("value"))
+                .and_then(Value::as_f64),
+            Some(0.45)
+        );
+        assert!(financials.get("300001.SZ").is_none());
+    }
+
+    #[test]
+    fn eastmoney_quarterly_eps_parser_extracts_basic_eps() {
+        let raw = json!({
+            "result": {
+                "data": [
+                    {"REPORT_DATE": "2026-03-31 00:00:00", "BASIC_EPS": "0.42"},
+                    {"REPORT_DATE": "2025-03-31 00:00:00", "BASIC_EPS": 0.36}
+                ]
+            }
+        })
+        .to_string();
+
+        let rows = parse_eastmoney_quarterly_eps_json(&raw).expect("eastmoney parser");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0].get("period").and_then(Value::as_str),
+            Some("2026Q1")
+        );
+        assert_eq!(rows[0].get("value").and_then(Value::as_f64), Some(0.42));
+    }
+
+    #[test]
+    fn ths_quarterly_eps_parser_extracts_metric_value() {
+        let raw = json!({
+            "data": {
+                "data": [
+                    {
+                        "date": "2026-06-30",
+                        "index_list": {
+                            "基本每股收益": {"value": "0.88"},
+                            "每股净资产": {"value": "5.2"}
+                        }
+                    }
+                ]
+            }
+        })
+        .to_string();
+
+        let rows = parse_ths_quarterly_eps_json(&raw).expect("ths parser");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].get("period").and_then(Value::as_str),
+            Some("2026Q2")
+        );
+        assert_eq!(rows[0].get("value").and_then(Value::as_f64), Some(0.88));
+    }
+
+    #[test]
+    fn sina_quarterly_eps_parser_extracts_table_cells() {
+        let html = r#"
+            <table>
+              <tr><th>指标</th><th>2026-03-31</th><th>2025-03-31</th></tr>
+              <tr><td>基本每股收益</td><td>0.42</td><td>0.36</td></tr>
+            </table>
+        "#;
+
+        let rows = parse_sina_quarterly_eps_html(html);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0].get("period").and_then(Value::as_str),
+            Some("2026Q1")
+        );
+        assert_eq!(
+            rows[1].get("period").and_then(Value::as_str),
+            Some("2025Q1")
+        );
+    }
+
+    #[test]
+    fn basic_financial_merge_adds_tdx_latest_eps_as_quarter() {
+        let mut data = json!({
+            "stocks": [
+                {
+                    "code": "000001.SZ",
+                    "latest_eps": 0.42,
+                    "latest_bps": 12.5,
+                    "period": "2026Q1"
+                }
+            ],
+            "financials": {}
+        });
+
+        assert!(merge_basic_financial_from_stock(&mut data, "000001.SZ"));
+        assert_eq!(financial_quarterly_eps_count(&data, "000001.SZ"), 1);
+        let entry = data
+            .get("financials")
+            .and_then(Value::as_object)
+            .and_then(|items| items.get("000001.SZ"))
+            .and_then(Value::as_object)
+            .expect("financial entry");
+        assert_eq!(entry.get("latest_eps").and_then(Value::as_f64), Some(0.42));
+        assert!(entry
+            .get("source")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .contains("通达信基础财务"));
+    }
+    #[test]
     fn append_all_preserved_seed_stocks_keeps_rows_outside_current_batch() {
         let seed = json!({
             "stocks": [
@@ -1701,7 +3990,8 @@ mod tests {
         let mut stocks = vec![json!({"code": "000001.SZ", "name": "Live Quote"})];
         let mut seen = HashSet::from(["000001.SZ".to_string()]);
 
-        let preserved = append_all_preserved_seed_stocks(&seed_stocks, &mut stocks, &mut seen);
+        let preserved =
+            append_all_preserved_seed_stocks(&seed_stocks, &seed_stocks, &mut stocks, &mut seen);
 
         assert_eq!(preserved, 2);
         assert_eq!(stocks.len(), 3);

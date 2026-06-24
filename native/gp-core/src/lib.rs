@@ -163,6 +163,8 @@ pub struct SectorScreenRequest {
     pub per_sector_limit: usize,
     #[serde(default = "default_min_sector_candidates")]
     pub min_sector_candidates: usize,
+    #[serde(default = "default_sector_group_by")]
+    pub group_by: String,
 }
 
 impl Default for SectorScreenRequest {
@@ -172,6 +174,7 @@ impl Default for SectorScreenRequest {
             max_sectors: default_sector_group_limit(),
             per_sector_limit: default_per_sector_limit(),
             min_sector_candidates: default_min_sector_candidates(),
+            group_by: default_sector_group_by(),
         }
     }
 }
@@ -311,6 +314,12 @@ pub struct TrendIndicatorPoint {
     #[serde(default)]
     pub sws: Option<f64>,
     #[serde(default)]
+    pub k: Option<f64>,
+    #[serde(default)]
+    pub d: Option<f64>,
+    #[serde(default)]
+    pub j: Option<f64>,
+    #[serde(default)]
     pub accumulation_index: Option<f64>,
     #[serde(default)]
     pub accumulation_strength: Option<f64>,
@@ -352,6 +361,12 @@ pub struct TrendIndicatorSignal {
     #[serde(default)]
     pub sws: Option<f64>,
     #[serde(default)]
+    pub k: Option<f64>,
+    #[serde(default)]
+    pub d: Option<f64>,
+    #[serde(default)]
+    pub j: Option<f64>,
+    #[serde(default)]
     pub star_line: Option<f64>,
     #[serde(default)]
     pub bull_line: Option<f64>,
@@ -367,6 +382,14 @@ pub struct TrendIndicatorSignal {
     pub reversal: Option<f64>,
     #[serde(default)]
     pub swl_above_sws: bool,
+    #[serde(default)]
+    pub kdj_golden_cross: bool,
+    #[serde(default)]
+    pub kdj_dead_cross: bool,
+    #[serde(default)]
+    pub kdj_overbought: bool,
+    #[serde(default)]
+    pub kdj_oversold: bool,
     #[serde(default)]
     pub red_hold: bool,
     #[serde(default)]
@@ -421,8 +444,14 @@ pub struct FinancialIndicatorItem {
     pub value: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
     #[serde(default = "default_tone")]
     pub tone: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metric_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub period: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -436,6 +465,71 @@ pub struct FinancialIndicators {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CapitalEvidenceItem {
+    pub category: String,
+    pub source: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    #[serde(default)]
+    pub metrics: BTreeMap<String, String>,
+    #[serde(default = "default_uncertain_sentiment")]
+    pub sentiment: String,
+    #[serde(default)]
+    pub weight: f64,
+    #[serde(default = "default_low_confidence")]
+    pub confidence: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CapitalEvidenceSection {
+    pub key: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<f64>,
+    #[serde(default)]
+    pub weight: f64,
+    #[serde(default)]
+    pub available: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub items: Vec<CapitalEvidenceItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CapitalEvidenceResult {
+    pub stock_code: String,
+    pub generated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composite_score: Option<f64>,
+    #[serde(default = "default_low_confidence")]
+    pub confidence: String,
+    #[serde(default)]
+    pub model_used: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_of_trade_date: Option<String>,
+    #[serde(default = "default_unknown_freshness")]
+    pub freshness: String,
+    #[serde(default)]
+    pub contributions: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub sections: Vec<CapitalEvidenceSection>,
+    #[serde(default)]
+    pub items: Vec<CapitalEvidenceItem>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StockObservation {
     pub source: String,
     pub stock: StockItem,
@@ -443,6 +537,8 @@ pub struct StockObservation {
     pub financial_indicators: Option<FinancialIndicators>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trend: Option<TrendIndicatorResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capital_evidence: Option<CapitalEvidenceResult>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order_book: Option<Value>,
     #[serde(default)]
@@ -561,6 +657,30 @@ pub struct HistoryBar {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct QuarterlyEpsPoint {
+    pub period: String,
+    pub value: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct StockFinancialSnapshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_eps: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_bps: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub period: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub quarterly_eps: Vec<QuarterlyEpsPoint>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CoreDataSet {
     #[serde(default)]
     pub stocks: Vec<StockItem>,
@@ -568,6 +688,8 @@ pub struct CoreDataSet {
     pub relations: Vec<StockRelation>,
     #[serde(default)]
     pub histories: HashMap<String, Vec<HistoryBar>>,
+    #[serde(default)]
+    pub financials: HashMap<String, StockFinancialSnapshot>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -751,6 +873,9 @@ struct ComputedTrendBar {
     close_change_pct: Option<f64>,
     swl: f64,
     sws: f64,
+    k: f64,
+    d: f64,
+    j: f64,
     accumulation_index: f64,
     accumulation_strength: f64,
     swing_opportunity: f64,
@@ -767,6 +892,10 @@ struct ComputedTrendBar {
     breakout: f64,
     reversal: f64,
     swl_above_sws: bool,
+    kdj_golden_cross: bool,
+    kdj_dead_cross: bool,
+    kdj_overbought: bool,
+    kdj_oversold: bool,
     red_hold: bool,
     cyan_watch: bool,
     short_buy: bool,
@@ -788,6 +917,10 @@ pub trait MarketDataSource {
         start_date: &str,
         end_date: &str,
     ) -> CoreResult<Vec<HistoryBar>>;
+
+    fn get_financial_snapshot(&self, _code: &str) -> Option<StockFinancialSnapshot> {
+        None
+    }
 }
 
 pub struct MockDataSource;
@@ -841,6 +974,15 @@ impl MarketDataSource for StaticDataSource {
         };
         history_bars_in_range(history, start_date, end_date)
     }
+
+    fn get_financial_snapshot(&self, code: &str) -> Option<StockFinancialSnapshot> {
+        let normalized = normalize_stock_code(code);
+        self.data
+            .financials
+            .get(code)
+            .cloned()
+            .or_else(|| self.data.financials.get(&normalized).cloned())
+    }
 }
 
 fn default_screen_limit() -> usize {
@@ -871,6 +1013,18 @@ fn default_tone() -> String {
     "neutral".to_string()
 }
 
+fn default_uncertain_sentiment() -> String {
+    "uncertain".to_string()
+}
+
+fn default_low_confidence() -> String {
+    "\u{4f4e}".to_string()
+}
+
+fn default_unknown_freshness() -> String {
+    "unknown".to_string()
+}
+
 fn default_graph_center_mode() -> String {
     "seed_codes".to_string()
 }
@@ -894,6 +1048,11 @@ fn default_per_sector_limit() -> usize {
 fn default_min_sector_candidates() -> usize {
     1
 }
+
+fn default_sector_group_by() -> String {
+    "concept".to_string()
+}
+
 fn default_start_date() -> String {
     "20200101".to_string()
 }
@@ -1069,6 +1228,8 @@ pub fn sector_screen_stocks(
     let max_sectors = request.max_sectors.clamp(1, 50);
     let per_sector_limit = request.per_sector_limit.clamp(1, 50);
     let min_sector_candidates = request.min_sector_candidates.clamp(1, 500);
+    let group_by = request.group_by.trim().to_ascii_lowercase();
+    let board_mode = matches!(group_by.as_str(), "board" | "market" | "market_board");
     let mut screened = Vec::new();
     let mut notes = deducted_profit_rule_notes(universe, &request.criteria);
 
@@ -1082,10 +1243,13 @@ pub fn sector_screen_stocks(
 
     let mut by_sector: HashMap<String, Vec<ScreenedStock>> = HashMap::new();
     for item in &screened {
-        let sector = item
-            .concept
-            .clone()
-            .unwrap_or_else(|| concept_group_for_stock(&item.stock));
+        let sector = if board_mode {
+            board_group_for_stock(&item.stock).to_string()
+        } else {
+            item.concept
+                .clone()
+                .unwrap_or_else(|| concept_group_for_stock(&item.stock))
+        };
         by_sector.entry(sector).or_default().push(item.clone());
     }
 
@@ -1111,8 +1275,18 @@ pub fn sector_screen_stocks(
         })
         .collect();
     groups.sort_by(|left, right| {
-        concept_rank(&left.sector)
-            .cmp(&concept_rank(&right.sector))
+        let left_rank = if board_mode {
+            board_rank(&left.sector)
+        } else {
+            concept_rank(&left.sector)
+        };
+        let right_rank = if board_mode {
+            board_rank(&right.sector)
+        } else {
+            concept_rank(&right.sector)
+        };
+        left_rank
+            .cmp(&right_rank)
             .then_with(|| right.average_score.total_cmp(&left.average_score))
             .then_with(|| right.total.cmp(&left.total))
             .then_with(|| left.sector.cmp(&right.sector))
@@ -1132,7 +1306,11 @@ pub fn sector_screen_stocks(
             request.criteria.industry.as_deref().unwrap_or_default()
         ));
     }
-    notes.push("\u{5206}\u{6982}\u{5ff5}\u{7b5b}\u{9009}\u{5df2}\u{5728} Rust gp-core \u{4e2d}\u{57fa}\u{4e8e}\u{5b8c}\u{6574}\u{5019}\u{9009}\u{6c60}\u{5206}\u{7ec4}\u{ff0c}\u{4e0d}\u{518d}\u{4f9d}\u{8d56}\u{524d}\u{7aef}\u{79fb}\u{52a8}\u{7aef}\u{4e8c}\u{6b21}\u{5206}\u{7ec4}\u{3002}".to_string());
+    if board_mode {
+        notes.push("\u{5206}\u{677f}\u{5757}\u{7b5b}\u{9009}\u{5df2}\u{6309} A \u{80a1}\u{4ea4}\u{6613}\u{677f}\u{5757}\u{5206}\u{7ec4}\u{ff1a}\u{79d1}\u{521b}\u{677f}\u{3001}\u{521b}\u{4e1a}\u{677f}\u{3001}\u{5317}\u{4ea4}\u{6240}\u{3001}\u{6caa}\u{4e3b}\u{677f}\u{548c}\u{6df1}\u{4e3b}\u{677f}\u{3002}".to_string());
+    } else {
+        notes.push("\u{5206}\u{6982}\u{5ff5}\u{7b5b}\u{9009}\u{5df2}\u{5728} Rust gp-core \u{4e2d}\u{57fa}\u{4e8e}\u{5b8c}\u{6574}\u{5019}\u{9009}\u{6c60}\u{5206}\u{7ec4}\u{ff0c}\u{4e0d}\u{518d}\u{4f9d}\u{8d56}\u{524d}\u{7aef}\u{79fb}\u{52a8}\u{7aef}\u{4e8c}\u{6b21}\u{5206}\u{7ec4}\u{3002}".to_string());
+    }
     SectorScreenResult {
         total: screened.len(),
         returned,
@@ -1421,7 +1599,9 @@ pub fn observe_with_source(
             ))
         })?;
     let mut notes = vec!["\u{6570}\u{636e}\u{6e90}\u{ff1a}Tauri/Rust \u{7edf}\u{4e00}\u{672c}\u{5730}\u{884c}\u{60c5}\u{7f13}\u{5b58}\u{3002}".to_string()];
-    let financial_indicators = build_observation_financial_indicators(&stock);
+    let financial_snapshot = source.get_financial_snapshot(&stock.code);
+    let financial_indicators =
+        build_observation_financial_indicators(&stock, financial_snapshot.as_ref());
     let trend_request = TrendIndicatorRequest {
         code: stock.code.clone(),
         start_date: request.start_date.clone(),
@@ -1441,18 +1621,49 @@ pub fn observe_with_source(
     if request.include_order_book {
         notes.push("\u{76d8}\u{53e3}\u{6570}\u{636e}\u{5c1a}\u{672a}\u{8fc1}\u{79fb}\u{5230} Rust \u{884c}\u{60c5}\u{6e90}\u{ff0c}\u{5df2}\u{8fd4}\u{56de}\u{7a7a}\u{76d8}\u{53e3}\u{3002}".to_string());
     }
+    let capital_evidence = build_observation_capital_evidence(
+        &stock,
+        &financial_indicators,
+        trend.as_ref(),
+        &request.end_date,
+    );
     Ok(StockObservation {
         source: "tdx".to_string(),
         stock,
         financial_indicators: Some(financial_indicators),
         trend,
+        capital_evidence: Some(capital_evidence),
         order_book: None,
         notes,
     })
 }
 
-fn build_observation_financial_indicators(stock: &StockItem) -> FinancialIndicators {
+fn build_observation_financial_indicators(
+    stock: &StockItem,
+    financial: Option<&StockFinancialSnapshot>,
+) -> FinancialIndicators {
     let mut items = Vec::new();
+    let mut notes = Vec::new();
+    let mut source_parts = vec!["Tauri/Rust".to_string()];
+    let mut period = "\u{672c}\u{5730}\u{884c}\u{60c5}\u{5feb}\u{7167}".to_string();
+
+    if let Some(snapshot) = financial {
+        if let Some(source) = snapshot
+            .source
+            .as_ref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            source_parts.push(source.clone());
+        }
+        if let Some(snapshot_period) = snapshot
+            .period
+            .as_ref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            period = snapshot_period.clone();
+        }
+    }
+
     push_indicator(
         &mut items,
         "\u{5e02}\u{76c8}\u{7387}(TTM)",
@@ -1509,41 +1720,153 @@ fn build_observation_financial_indicators(stock: &StockItem) -> FinancialIndicat
         |value| format_percent(value),
         indicator_tone(stock.deducted_net_profit_growth_rate),
     );
-    if let Some(pe) = stock.pe.filter(|value| value.abs() > f64::EPSILON) {
+
+    let snapshot_period = financial.and_then(|snapshot| snapshot.period.as_deref());
+    let latest_eps = financial.and_then(|snapshot| snapshot.latest_eps);
+    if latest_eps.is_some() {
+        push_indicator_with_meta(
+            &mut items,
+            "\u{6700}\u{65b0}\u{6bcf}\u{80a1}\u{6536}\u{76ca}",
+            latest_eps,
+            |value| format!("{}\u{5143}", format_number(value)),
+            indicator_tone(latest_eps),
+            Some("\u{5143}"),
+            Some("latest_eps"),
+            snapshot_period,
+        );
+    } else if let Some(pe) = stock.pe.filter(|value| value.abs() > f64::EPSILON) {
         let eps = stock.price / pe;
-        push_indicator(
+        push_indicator_with_meta(
             &mut items,
             "\u{6bcf}\u{80a1}\u{6536}\u{76ca}(\u{4f30}\u{7b97})",
             Some(eps),
             |value| format!("{}\u{5143}", format_number(value)),
             indicator_tone(Some(eps)),
+            Some("\u{5143}"),
+            Some("estimated_eps"),
+            None,
         );
     }
-    if let Some(pb) = stock.pb.filter(|value| value.abs() > f64::EPSILON) {
+
+    let latest_bps = financial.and_then(|snapshot| snapshot.latest_bps);
+    if latest_bps.is_some() {
+        push_indicator_with_meta(
+            &mut items,
+            "\u{6bcf}\u{80a1}\u{51c0}\u{8d44}\u{4ea7}",
+            latest_bps,
+            |value| format!("{}\u{5143}", format_number(value)),
+            "neutral",
+            Some("\u{5143}"),
+            Some("latest_bps"),
+            snapshot_period,
+        );
+    } else if let Some(pb) = stock.pb.filter(|value| value.abs() > f64::EPSILON) {
         let bps = stock.price / pb;
-        push_indicator(
+        push_indicator_with_meta(
             &mut items,
             "\u{6bcf}\u{80a1}\u{51c0}\u{8d44}\u{4ea7}(\u{4f30}\u{7b97})",
             Some(bps),
             |value| format!("{}\u{5143}", format_number(value)),
             "neutral",
+            Some("\u{5143}"),
+            Some("estimated_bps"),
+            None,
         );
     }
+
+    if let Some(snapshot) = financial {
+        notes.extend(snapshot.notes.iter().filter_map(|note| {
+            let trimmed = note.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }));
+        let mut points = snapshot
+            .quarterly_eps
+            .iter()
+            .filter(|point| {
+                point.value.is_finite() && normalize_period_key(&point.period).is_some()
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        points.sort_by(|left, right| right.period.cmp(&left.period));
+        points.dedup_by(|left, right| left.period == right.period);
+        let values_by_period: HashMap<String, f64> = points
+            .iter()
+            .map(|point| (point.period.clone(), point.value))
+            .collect();
+        for point in points.iter().take(12) {
+            let tone = previous_year_period(&point.period)
+                .and_then(|previous| values_by_period.get(&previous).copied())
+                .map(|previous| indicator_tone(Some(point.value - previous)))
+                .unwrap_or("neutral");
+            push_indicator_with_meta(
+                &mut items,
+                &format!("{} \u{6bcf}\u{80a1}\u{6536}\u{76ca}", point.period),
+                Some(point.value),
+                |value| format!("{}\u{5143}", format_number(value)),
+                tone,
+                Some("\u{5143}"),
+                Some("quarterly_eps"),
+                Some(point.period.as_str()),
+            );
+        }
+        if points.is_empty() {
+            notes.push("\u{5f53}\u{524d}\u{8d22}\u{62a5}\u{5feb}\u{7167}\u{6ca1}\u{6709}\u{5b63}\u{5ea6} EPS \u{660e}\u{7ec6}\u{ff0c}\u{5148}\u{5c55}\u{793a}\u{6700}\u{65b0} EPS \u{6216}\u{4f30}\u{7b97}\u{503c}\u{3002}".to_string());
+        }
+    } else {
+        notes.push("\u{5f53}\u{524d}\u{6570}\u{636e}\u{96c6}\u{672a}\u{63a5}\u{5165}\u{8d22}\u{62a5} EPS \u{5feb}\u{7167}\u{ff0c}\u{6bcf}\u{80a1}\u{6536}\u{76ca}\u{6309}\u{5e02}\u{76c8}\u{7387}\u{4f30}\u{7b97}\u{3002}".to_string());
+    }
+
     FinancialIndicators {
         title: "\u{6700}\u{65b0}\u{6307}\u{6807}".to_string(),
-        period: "\u{672c}\u{5730}\u{884c}\u{60c5}\u{5feb}\u{7167}".to_string(),
-        source: "Tauri/Rust".to_string(),
+        period,
+        source: source_parts.join(" / "),
         items,
-        notes: Vec::new(),
+        notes,
     }
 }
 
+fn previous_year_period(period: &str) -> Option<String> {
+    let normalized = normalize_period_key(period)?;
+    let year = normalized.get(0..4)?.parse::<i32>().ok()?;
+    let quarter = normalized.get(5..6)?;
+    Some(format!("{:04}Q{}", year - 1, quarter))
+}
+
+fn normalize_period_key(period: &str) -> Option<String> {
+    let raw = period.trim().to_ascii_uppercase();
+    let bytes = raw.as_bytes();
+    if bytes.len() == 6
+        && bytes[0..4].iter().all(|byte| byte.is_ascii_digit())
+        && bytes[4] == b'Q'
+        && matches!(bytes[5], b'1'..=b'4')
+    {
+        return Some(raw);
+    }
+    None
+}
 fn push_indicator(
     items: &mut Vec<FinancialIndicatorItem>,
     label: &str,
     raw_value: Option<f64>,
     formatter: impl Fn(f64) -> String,
     tone: &str,
+) {
+    push_indicator_with_meta(items, label, raw_value, formatter, tone, None, None, None);
+}
+
+fn push_indicator_with_meta(
+    items: &mut Vec<FinancialIndicatorItem>,
+    label: &str,
+    raw_value: Option<f64>,
+    formatter: impl Fn(f64) -> String,
+    tone: &str,
+    unit: Option<&str>,
+    metric_key: Option<&str>,
+    period: Option<&str>,
 ) {
     let Some(value) = raw_value.filter(|value| value.is_finite()) else {
         return;
@@ -1552,7 +1875,10 @@ fn push_indicator(
         label: label.to_string(),
         value: formatter(value),
         raw_value: Some(value),
+        unit: unit.map(str::to_string),
         tone: tone.to_string(),
+        metric_key: metric_key.map(str::to_string),
+        period: period.map(str::to_string),
     });
 }
 
@@ -1578,6 +1904,395 @@ fn indicator_tone(value: Option<f64>) -> &'static str {
         _ => "neutral",
     }
 }
+
+fn build_observation_capital_evidence(
+    stock: &StockItem,
+    _financial_indicators: &FinancialIndicators,
+    trend: Option<&TrendIndicatorResult>,
+    end_date: &str,
+) -> CapitalEvidenceResult {
+    const FUND_FLOW_WEIGHT: f64 = 0.35;
+    const INSTITUTION_WEIGHT: f64 = 0.25;
+    const NEWS_WEIGHT: f64 = 0.15;
+    const TECHNICAL_WEIGHT: f64 = 0.25;
+
+    let as_of_trade_date = capital_trade_date(end_date)
+        .or_else(|| trend.map(|trend| trend.signal.date.clone()))
+        .unwrap_or_else(|| Local::now().date_naive().format("%Y-%m-%d").to_string());
+    let mut items = Vec::new();
+    let technical_score = trend.map(technical_capital_score);
+    if let Some(trend) = trend {
+        items.push(technical_capital_evidence_item(
+            trend,
+            technical_score.unwrap_or(50.0),
+        ));
+    }
+    items.push(institution_status_evidence_item(&as_of_trade_date));
+
+    let buckets = [
+        ("\u{8d44}\u{91d1}\u{6d41}", FUND_FLOW_WEIGHT, None),
+        ("\u{673a}\u{6784}\u{5e2d}\u{4f4d}", INSTITUTION_WEIGHT, None),
+        ("\u{6d88}\u{606f}\u{60c5}\u{7eea}", NEWS_WEIGHT, None),
+        (
+            "\u{6280}\u{672f}\u{63a8}\u{65ad}",
+            TECHNICAL_WEIGHT,
+            technical_score,
+        ),
+    ];
+    let mut weighted_sum = 0.0;
+    let mut total_weight = 0.0;
+    let mut contributions = BTreeMap::new();
+    for (label, weight, score) in buckets {
+        let available = score.is_some();
+        let bucket_score = score.unwrap_or(50.0);
+        weighted_sum += bucket_score * weight;
+        total_weight += weight;
+        contributions.insert(
+            label.to_string(),
+            json!({
+                "score": score.map(round2),
+                "weight": weight,
+                "available": available,
+            }),
+        );
+    }
+    let composite_score = round2(weighted_sum / total_weight.max(0.01));
+    let confidence = if technical_score.is_some() {
+        "\u{4e2d}"
+    } else {
+        "\u{4f4e}"
+    }
+    .to_string();
+    let sections = build_capital_evidence_sections(&items, &contributions);
+    CapitalEvidenceResult {
+        stock_code: normalize_stock_code(&stock.code),
+        generated_at: Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
+        composite_score: Some(composite_score),
+        confidence,
+        model_used: false,
+        as_of_trade_date: Some(as_of_trade_date),
+        freshness: "refreshed".to_string(),
+        contributions,
+        summary: Some(format!(
+            "{} {}\u{ff0c}{}",
+            "\u{7efc}\u{5408}\u{8d44}\u{91d1}\u{8bc1}\u{636e}\u{5206}",
+            format_number(composite_score),
+            "\u{5f53}\u{524d}\u{4e3a} Tauri/Rust \u{672c}\u{5730}\u{89c4}\u{5219}\u{5206}\u{ff1b}\u{8d44}\u{91d1}\u{6d41}\u{3001}\u{673a}\u{6784}\u{5e2d}\u{4f4d}\u{548c}\u{6d88}\u{606f}\u{60c5}\u{7eea}\u{5c1a}\u{672a}\u{8fc1}\u{79fb}\u{5230} Rust\u{ff0c}\u{5148}\u{4ee5}\u{6280}\u{672f}\u{63a8}\u{65ad}\u{8f85}\u{52a9}\u{89c2}\u{5bdf}\u{3002}"
+        )),
+        sections,
+        items,
+        notes: vec![
+            "\u{672a}\u{8c03}\u{7528}\u{6a21}\u{578b}\u{ff0c}\u{7efc}\u{5408}\u{8d44}\u{91d1}\u{8bc1}\u{636e}\u{5206}\u{7531} Tauri/Rust \u{672c}\u{5730}\u{89c4}\u{5219}\u{751f}\u{6210}\u{3002}".to_string(),
+            "\u{5916}\u{90e8}\u{8d44}\u{91d1}\u{6d41}\u{3001}\u{9f99}\u{864e}\u{699c}\u{673a}\u{6784}\u{5e2d}\u{4f4d}\u{548c}\u{6d88}\u{606f}\u{7f13}\u{5b58}\u{8bc1}\u{636e}\u{4ecd}\u{5f85}\u{8fc1}\u{79fb}\u{5230} Rust/Tauri \u{7edf}\u{4e00}\u{8fd0}\u{884c}\u{65f6}\u{3002}".to_string(),
+        ],
+    }
+}
+
+fn technical_capital_score(trend: &TrendIndicatorResult) -> f64 {
+    let signal = &trend.signal;
+    let quant_max = signal.quant_score_max.max(1) as f64;
+    let pattern_max = signal.pattern_score_max.max(1) as f64;
+    let quant = (signal.quant_score as f64 / quant_max * 100.0).clamp(0.0, 100.0);
+    let pattern = (signal.pattern_score as f64 / pattern_max * 100.0).clamp(0.0, 100.0);
+    let mut score = quant * 0.55 + pattern * 0.45;
+    if signal.short_buy {
+        score += 8.0;
+    }
+    if signal.kdj_golden_cross {
+        score += 6.0;
+    }
+    if signal.kdj_oversold {
+        score += 5.0;
+    }
+    if signal.red_hold {
+        score += 4.0;
+    }
+    if signal.swl_above_sws {
+        score += 3.0;
+    }
+    if signal.white_exit {
+        score -= 12.0;
+    }
+    if signal.kdj_dead_cross {
+        score -= 10.0;
+    }
+    if signal.kdj_overbought {
+        score -= 8.0;
+    }
+    if signal.cyan_watch {
+        score -= 4.0;
+    }
+    round2(score.clamp(0.0, 100.0))
+}
+
+fn technical_capital_evidence_item(
+    trend: &TrendIndicatorResult,
+    score: f64,
+) -> CapitalEvidenceItem {
+    let signal = &trend.signal;
+    let mut metrics = BTreeMap::new();
+    metrics.insert(
+        "\u{6536}\u{76d8}\u{4ef7}".to_string(),
+        format_number(signal.close),
+    );
+    if let Some(change_pct) = signal.close_change_pct {
+        metrics.insert(
+            "\u{6da8}\u{8dcc}\u{5e45}".to_string(),
+            format_percent(change_pct),
+        );
+    }
+    metrics.insert(
+        "\u{91cf}\u{5316}\u{5206}".to_string(),
+        format!("{}/{}", signal.quant_score, signal.quant_score_max),
+    );
+    metrics.insert(
+        "\u{5f62}\u{6001}\u{5206}".to_string(),
+        format!("{}/{}", signal.pattern_score, signal.pattern_score_max),
+    );
+    if let (Some(k), Some(d), Some(j)) = (signal.k, signal.d, signal.j) {
+        metrics.insert(
+            "KDJ".to_string(),
+            format!(
+                "K {} / D {} / J {}",
+                format_number(k),
+                format_number(d),
+                format_number(j)
+            ),
+        );
+    }
+    if let (Some(swl), Some(sws)) = (signal.swl, signal.sws) {
+        metrics.insert(
+            "SWL/SWS".to_string(),
+            format!("{} / {}", format_number(swl), format_number(sws)),
+        );
+    }
+    metrics.insert("\u{72b6}\u{6001}".to_string(), signal.status.clone());
+    metrics.insert(
+        "\u{77ed}\u{7ebf}\u{4e70}\u{70b9}".to_string(),
+        if signal.short_buy {
+            "\u{662f}"
+        } else {
+            "\u{5426}"
+        }
+        .to_string(),
+    );
+    let risk_labels = capital_technical_risk_labels(signal);
+    if !risk_labels.is_empty() {
+        metrics.insert(
+            "\u{98ce}\u{9669}\u{4fe1}\u{53f7}".to_string(),
+            risk_labels.join("\u{3001}"),
+        );
+    }
+    CapitalEvidenceItem {
+        category: "technical_behavior".to_string(),
+        source: "Tauri/Rust \u{6280}\u{672f}\u{6307}\u{6807}".to_string(),
+        title: "\u{6280}\u{672f}\u{63a8}\u{65ad}\u{8d44}\u{91d1}\u{627f}\u{63a5}".to_string(),
+        date: Some(signal.date.clone()),
+        metrics,
+        sentiment: score_sentiment(score).to_string(),
+        weight: 0.25,
+        confidence: "\u{4e2d}".to_string(),
+        url: None,
+        score: Some(score),
+        note: Some(technical_capital_note(signal, score)),
+    }
+}
+
+fn institution_status_evidence_item(as_of_trade_date: &str) -> CapitalEvidenceItem {
+    let mut metrics = BTreeMap::new();
+    metrics.insert(
+        "\u{72b6}\u{6001}".to_string(),
+        "Rust \u{53d1}\u{5e03}\u{7248}\u{5c1a}\u{672a}\u{63a5}\u{5165}\u{9f99}\u{864e}\u{699c}\u{673a}\u{6784}\u{5e2d}\u{4f4d}".to_string(),
+    );
+    metrics.insert(
+        "\u{67e5}\u{8be2}\u{7a97}\u{53e3}".to_string(),
+        as_of_trade_date.to_string(),
+    );
+    metrics.insert(
+        "\u{5df2}\u{5c1d}\u{8bd5}\u{4fe1}\u{6e90}".to_string(),
+        "\u{5f85}\u{8fc1}\u{79fb}".to_string(),
+    );
+    CapitalEvidenceItem {
+        category: "institution_lhb_status".to_string(),
+        source: "Tauri/Rust".to_string(),
+        title: "\u{673a}\u{6784}\u{5e2d}\u{4f4d}\u{6682}\u{672a}\u{8fc1}\u{79fb}".to_string(),
+        date: Some(as_of_trade_date.to_string()),
+        metrics,
+        sentiment: "uncertain".to_string(),
+        weight: 0.25,
+        confidence: "\u{4f4e}".to_string(),
+        url: None,
+        score: None,
+        note: Some("\u{7edf}\u{4e00} Tauri/Rust \u{540e}\u{7aef}\u{5df2}\u{6062}\u{590d}\u{9762}\u{677f}\u{ff0c}\u{4f46}\u{5916}\u{90e8}\u{673a}\u{6784}\u{5e2d}\u{4f4d}\u{8bc1}\u{636e}\u{4ecd}\u{9700}\u{5355}\u{72ec}\u{8fc1}\u{79fb}\u{3002}".to_string()),
+    }
+}
+
+fn build_capital_evidence_sections(
+    items: &[CapitalEvidenceItem],
+    contributions: &BTreeMap<String, Value>,
+) -> Vec<CapitalEvidenceSection> {
+    let definitions = [
+        (
+            "fund_flow",
+            "\u{8d44}\u{91d1}\u{6d41}",
+            "\u{8d44}\u{91d1}\u{6d41}",
+            ["fund_flow", "", ""],
+        ),
+        (
+            "institution_lhb",
+            "\u{673a}\u{6784}\u{5e2d}\u{4f4d}",
+            "\u{673a}\u{6784}\u{5e2d}\u{4f4d}",
+            ["institution_lhb", "institution_lhb_status", ""],
+        ),
+        (
+            "message_sentiment",
+            "\u{6d88}\u{606f}\u{60c5}\u{7eea}",
+            "\u{6d88}\u{606f}\u{60c5}\u{7eea}",
+            ["news_rag", "community_sentiment", ""],
+        ),
+        (
+            "technical_behavior",
+            "\u{6280}\u{672f}\u{63a8}\u{65ad}",
+            "\u{6280}\u{672f}\u{63a8}\u{65ad}",
+            ["technical_behavior", "", ""],
+        ),
+    ];
+    definitions
+        .into_iter()
+        .map(|(key, title, contribution_key, categories)| {
+            let section_items = items
+                .iter()
+                .filter(|item| {
+                    categories
+                        .iter()
+                        .any(|category| !category.is_empty() && *category == item.category)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let contribution = contributions.get(contribution_key);
+            let score = contribution
+                .and_then(|value| value.get("score"))
+                .and_then(Value::as_f64);
+            let weight = contribution
+                .and_then(|value| value.get("weight"))
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            let contribution_available = contribution
+                .and_then(|value| value.get("available"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let available = contribution_available || !section_items.is_empty();
+            CapitalEvidenceSection {
+                key: key.to_string(),
+                title: title.to_string(),
+                score,
+                weight,
+                available,
+                summary: Some(capital_section_summary(
+                    title,
+                    score,
+                    available,
+                    section_items.len(),
+                )),
+                items: section_items,
+            }
+        })
+        .collect()
+}
+
+fn capital_section_summary(
+    title: &str,
+    score: Option<f64>,
+    available: bool,
+    item_count: usize,
+) -> String {
+    if available {
+        if let Some(score) = score {
+            return format!("{}\u{8bc1}\u{636e}\u{5206} {}\u{ff0c}\u{547d}\u{4e2d} {} \u{6761}\u{8bc1}\u{636e}\u{3002}", title, format_number(score), item_count);
+        }
+        return format!("{}\u{6709} {} \u{6761}\u{72b6}\u{6001}\u{6216}\u{8f85}\u{52a9}\u{8bc1}\u{636e}\u{3002}", title, item_count);
+    }
+    format!(
+        "{}\u{6682}\u{65e0}\u{53ef}\u{7528}\u{8bc1}\u{636e}\u{3002}",
+        title
+    )
+}
+
+fn capital_technical_risk_labels(signal: &TrendIndicatorSignal) -> Vec<String> {
+    let mut labels = Vec::new();
+    if signal.white_exit {
+        labels.push("\u{767d}\u{7ebf}\u{5356}\u{51fa}".to_string());
+    }
+    if signal.kdj_dead_cross {
+        labels.push("KDJ \u{6b7b}\u{53c9}".to_string());
+    }
+    if signal.kdj_overbought {
+        labels.push("KDJ \u{9ad8}\u{4f4d}\u{8d85}\u{4e70}".to_string());
+    }
+    if signal.cyan_watch {
+        labels.push("\u{9752}\u{8272}\u{89c2}\u{671b}".to_string());
+    }
+    labels
+}
+
+fn technical_capital_note(signal: &TrendIndicatorSignal, score: f64) -> String {
+    let mut parts = Vec::new();
+    if signal.short_buy {
+        parts.push("\u{77ed}\u{7ebf}\u{4e70}\u{70b9}\u{6210}\u{7acb}".to_string());
+    }
+    if signal.kdj_golden_cross {
+        parts.push("KDJ \u{91d1}\u{53c9}".to_string());
+    }
+    if signal.swl_above_sws {
+        parts.push("SWL \u{5728} SWS \u{4e0a}\u{65b9}".to_string());
+    }
+    if signal.white_exit || signal.kdj_dead_cross || signal.kdj_overbought {
+        parts.push("\u{5b58}\u{5728}\u{6280}\u{672f}\u{98ce}\u{9669}\u{4fe1}\u{53f7}".to_string());
+    }
+    if parts.is_empty() {
+        parts.push("\u{6280}\u{672f}\u{6307}\u{6807}\u{672a}\u{51fa}\u{73b0}\u{5f3a}\u{52bf}\u{627f}\u{63a5}".to_string());
+    }
+    format!(
+        "\u{6280}\u{672f}\u{63a8}\u{65ad}\u{5206} {}\u{ff1a}{}\u{3002}\u{8be5}\u{9879}\u{53ea}\u{4f5c}\u{8d44}\u{91d1}\u{884c}\u{4e3a}\u{7684}\u{8f85}\u{52a9}\u{89c2}\u{5bdf}\u{ff0c}\u{4e0d}\u{7b49}\u{540c}\u{4e8e}\u{771f}\u{5b9e}\u{8d44}\u{91d1}\u{6d41}\u{3002}",
+        format_number(score),
+        parts.join("\u{3001}")
+    )
+}
+
+fn score_sentiment(score: f64) -> &'static str {
+    if score >= 60.0 {
+        "positive"
+    } else if score <= 40.0 {
+        "negative"
+    } else {
+        "neutral"
+    }
+}
+
+fn capital_trade_date(value: &str) -> Option<String> {
+    let raw = value.trim();
+    if raw.len() >= 10
+        && raw.as_bytes().get(4) == Some(&b'-')
+        && raw.as_bytes().get(7) == Some(&b'-')
+    {
+        return Some(raw[..10].to_string());
+    }
+    let digits = raw
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.len() < 8 {
+        return None;
+    }
+    NaiveDate::parse_from_str(&digits[..8], "%Y%m%d")
+        .ok()
+        .map(|date| date.format("%Y-%m-%d").to_string())
+}
+
+fn round2(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
+}
+
 pub fn trend_screen_with_mock(request: &TrendScreenRequest) -> CoreResult<TrendScreenResult> {
     trend_screen_with_source(&MockDataSource, request)
 }
@@ -3155,6 +3870,38 @@ fn concept_rank(concept: &str) -> usize {
         .position(|(label, _)| *label == concept)
         .unwrap_or(CONCEPT_GROUP_RULES.len())
 }
+
+fn board_group_for_stock(stock: &StockItem) -> &'static str {
+    let code = stock.code.trim().to_ascii_uppercase();
+    let digits = code.split('.').next().unwrap_or("");
+    if code.ends_with(".BJ")
+        || digits.starts_with('8')
+        || digits.starts_with('4')
+        || digits.starts_with('9')
+    {
+        "\u{5317}\u{4ea4}\u{6240}"
+    } else if digits.starts_with("688") {
+        "\u{79d1}\u{521b}\u{677f}"
+    } else if digits.starts_with("300") || digits.starts_with("301") {
+        "\u{521b}\u{4e1a}\u{677f}"
+    } else if code.ends_with(".SH") || digits.starts_with('6') {
+        "\u{6caa}\u{4e3b}\u{677f}"
+    } else {
+        "\u{6df1}\u{4e3b}\u{677f}"
+    }
+}
+
+fn board_rank(board: &str) -> usize {
+    match board {
+        "\u{79d1}\u{521b}\u{677f}" => 0,
+        "\u{521b}\u{4e1a}\u{677f}" => 1,
+        "\u{5317}\u{4ea4}\u{6240}" => 2,
+        "\u{6caa}\u{4e3b}\u{677f}" => 3,
+        "\u{6df1}\u{4e3b}\u{677f}" => 4,
+        _ => 99,
+    }
+}
+
 fn theme_match_for_stock(stock: &StockItem) -> Option<(&'static str, &'static str, f64)> {
     theme_match_for_text(&stock_text(stock))
 }
@@ -3945,6 +4692,7 @@ fn compute_trend_bars(bars: &[PreparedBar]) -> Vec<ComputedTrendBar> {
     let ma3 = ma(&close, 3);
     let bull_line = ma(&close, 26);
     let star_line = star_line(&close, &open, &high, &low);
+    let (k, d, j) = kdj(&close, &high, &low);
     let quant_score = quant_scores(&close, &high, &low, &volume);
     let capital_behavior = capital_behavior_metrics(&close, &open, &high, &low, &volume);
 
@@ -3980,6 +4728,9 @@ fn compute_trend_bars(bars: &[PreparedBar]) -> Vec<ComputedTrendBar> {
             close_change_pct,
             swl: swl[index],
             sws: sws[index],
+            k: k[index],
+            d: d[index],
+            j: j[index],
             accumulation_index: capital_behavior[index].accumulation_index,
             accumulation_strength: capital_behavior[index].accumulation_strength,
             swing_opportunity: capital_behavior[index].swing_opportunity,
@@ -3996,6 +4747,10 @@ fn compute_trend_bars(bars: &[PreparedBar]) -> Vec<ComputedTrendBar> {
             breakout: e_value + (high[index] - low[index]),
             reversal: e_value - (high[index] - low[index]),
             swl_above_sws: swl[index] > sws[index],
+            kdj_golden_cross: index > 0 && k[index - 1] <= d[index - 1] && k[index] > d[index],
+            kdj_dead_cross: index > 0 && k[index - 1] >= d[index - 1] && k[index] < d[index],
+            kdj_overbought: k[index] >= 80.0 || d[index] >= 80.0 || j[index] >= 100.0,
+            kdj_oversold: k[index] <= 20.0 || d[index] <= 20.0 || j[index] <= 0.0,
             red_hold: red_hold[index],
             cyan_watch: cyan_watch[index],
             short_buy,
@@ -4481,6 +5236,9 @@ fn trend_signal_from_bar(code: &str, bar: &ComputedTrendBar) -> TrendIndicatorSi
         close_change_pct: bar.close_change_pct.and_then(finite_round4),
         swl: finite_round4(bar.swl),
         sws: finite_round4(bar.sws),
+        k: finite_round4(bar.k),
+        d: finite_round4(bar.d),
+        j: finite_round4(bar.j),
         star_line: finite_round4(bar.star_line),
         bull_line: finite_round4(bar.bull_line),
         wait_line: finite_round4(bar.wait_line),
@@ -4489,6 +5247,10 @@ fn trend_signal_from_bar(code: &str, bar: &ComputedTrendBar) -> TrendIndicatorSi
         breakout: finite_round4(bar.breakout),
         reversal: finite_round4(bar.reversal),
         swl_above_sws: bar.swl_above_sws,
+        kdj_golden_cross: bar.kdj_golden_cross,
+        kdj_dead_cross: bar.kdj_dead_cross,
+        kdj_overbought: bar.kdj_overbought,
+        kdj_oversold: bar.kdj_oversold,
         red_hold: bar.red_hold,
         cyan_watch: bar.cyan_watch,
         short_buy: bar.short_buy,
@@ -4511,6 +5273,9 @@ fn trend_point_from_bar(bar: &ComputedTrendBar) -> TrendIndicatorPoint {
         close: round4(bar.close),
         swl: finite_round4(bar.swl),
         sws: finite_round4(bar.sws),
+        k: finite_round4(bar.k),
+        d: finite_round4(bar.d),
+        j: finite_round4(bar.j),
         accumulation_index: finite_round4(bar.accumulation_index),
         accumulation_strength: finite_round4(bar.accumulation_strength),
         swing_opportunity: finite_round4(bar.swing_opportunity),
@@ -4536,6 +5301,18 @@ fn trend_reasons(bar: &ComputedTrendBar) -> Vec<String> {
     }
     if bar.swl_above_sws {
         reasons.push("swl_above_sws".to_string());
+    }
+    if bar.kdj_golden_cross {
+        reasons.push("kdj_golden_cross".to_string());
+    }
+    if bar.kdj_dead_cross {
+        reasons.push("kdj_dead_cross".to_string());
+    }
+    if bar.kdj_oversold {
+        reasons.push("kdj_oversold".to_string());
+    }
+    if bar.kdj_overbought {
+        reasons.push("kdj_overbought".to_string());
     }
     if bar.quant_score >= 60 {
         reasons.push("high_quant_score".to_string());
@@ -5386,6 +6163,28 @@ mod tests {
             stocks,
             relations,
             histories,
+            financials: HashMap::from([(
+                "111111.SZ".to_string(),
+                StockFinancialSnapshot {
+                    latest_eps: Some(0.42),
+                    latest_bps: Some(12.5),
+                    period: Some("2026Q1".to_string()),
+                    source: Some("data/cache/tdx_fundamentals.csv".to_string()),
+                    quarterly_eps: vec![
+                        QuarterlyEpsPoint {
+                            period: "2026Q1".to_string(),
+                            value: 0.42,
+                            source: None,
+                        },
+                        QuarterlyEpsPoint {
+                            period: "2025Q1".to_string(),
+                            value: 0.36,
+                            source: None,
+                        },
+                    ],
+                    notes: vec!["季度 EPS 明细来自缓存".to_string()],
+                },
+            )]),
         }
     }
 
@@ -5527,6 +6326,7 @@ mod tests {
                 max_sectors: 1,
                 per_sector_limit: 7,
                 min_sector_candidates: 1,
+                group_by: default_sector_group_by(),
             },
         );
 
@@ -5534,6 +6334,81 @@ mod tests {
         assert_eq!(result.sector_count, 1);
         assert_eq!(result.groups[0].total, 260);
         assert_eq!(result.groups[0].returned, 7);
+    }
+
+    #[test]
+    fn sector_screen_can_group_by_market_board() {
+        let stocks = vec![
+            StockItem {
+                code: "688001.SH".to_string(),
+                name: "star-a".to_string(),
+                industry: "chip".to_string(),
+                is_st: false,
+                price: 20.0,
+                pe: Some(18.0),
+                pb: Some(2.0),
+                roe: Some(0.16),
+                market_cap_billion: Some(80.0),
+                dividend_yield: Some(0.01),
+                deducted_net_profit_billion: Some(1.0),
+                deducted_net_profit_margin: Some(12.0),
+                deducted_net_profit_growth_rate: Some(18.0),
+            },
+            StockItem {
+                code: "300001.SZ".to_string(),
+                name: "growth-a".to_string(),
+                industry: "device".to_string(),
+                is_st: false,
+                price: 21.0,
+                pe: Some(17.0),
+                pb: Some(2.1),
+                roe: Some(0.17),
+                market_cap_billion: Some(90.0),
+                dividend_yield: Some(0.01),
+                deducted_net_profit_billion: Some(1.1),
+                deducted_net_profit_margin: Some(13.0),
+                deducted_net_profit_growth_rate: Some(19.0),
+            },
+            StockItem {
+                code: "600000.SH".to_string(),
+                name: "main-a".to_string(),
+                industry: "bank".to_string(),
+                is_st: false,
+                price: 10.0,
+                pe: Some(8.0),
+                pb: Some(0.8),
+                roe: Some(0.12),
+                market_cap_billion: Some(200.0),
+                dividend_yield: Some(0.03),
+                deducted_net_profit_billion: Some(2.0),
+                deducted_net_profit_margin: Some(20.0),
+                deducted_net_profit_growth_rate: Some(8.0),
+            },
+        ];
+        let result = sector_screen_stocks(
+            &stocks,
+            &SectorScreenRequest {
+                group_by: "board".to_string(),
+                max_sectors: 10,
+                per_sector_limit: 5,
+                min_sector_candidates: 1,
+                ..SectorScreenRequest::default()
+            },
+        );
+
+        let groups: Vec<&str> = result
+            .groups
+            .iter()
+            .map(|group| group.sector.as_str())
+            .collect();
+        assert_eq!(
+            groups,
+            vec![
+                "\u{79d1}\u{521b}\u{677f}",
+                "\u{521b}\u{4e1a}\u{677f}",
+                "\u{6caa}\u{4e3b}\u{677f}"
+            ]
+        );
     }
 
     #[test]
@@ -5568,8 +6443,36 @@ mod tests {
         .expect("observation should run from the shared data set");
 
         assert_eq!(result.stock.code, "111111.SZ");
-        assert!(result.financial_indicators.as_ref().unwrap().items.len() >= 6);
-        assert!(result.trend.as_ref().unwrap().series.len() <= 40);
+        let financial = result.financial_indicators.as_ref().unwrap();
+        assert!(financial
+            .notes
+            .iter()
+            .any(|note| note.contains("季度 EPS 明细来自缓存")));
+        let financial_items = &financial.items;
+        assert!(financial_items.len() >= 6);
+        assert!(financial_items
+            .iter()
+            .any(|item| item.metric_key.as_deref() == Some("quarterly_eps")
+                && item.period.as_deref() == Some("2026Q1")));
+        let trend = result.trend.as_ref().unwrap();
+        assert!(trend.series.len() <= 40);
+        assert!(trend
+            .series
+            .iter()
+            .any(|point| point.k.is_some() && point.d.is_some() && point.j.is_some()));
+        assert!(trend.signal.k.is_some());
+        assert!(trend.signal.d.is_some());
+        assert!(trend.signal.j.is_some());
+        let capital_evidence = result.capital_evidence.as_ref().unwrap();
+        assert!(capital_evidence.composite_score.is_some());
+        assert!(capital_evidence
+            .sections
+            .iter()
+            .any(|section| section.key == "technical_behavior" && section.available));
+        assert!(capital_evidence
+            .items
+            .iter()
+            .any(|item| item.category == "technical_behavior"));
         assert!(result.order_book.is_none());
         assert!(result.notes.iter().any(|note| note.contains("Tauri/Rust")));
     }
