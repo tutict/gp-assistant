@@ -148,11 +148,7 @@ API 客户端可以通过请求头显式指定通达信数据源：
 - 如果当天收盘后已经刷新过 `data/cache/tdx_stocks.csv`，本日不会重复刷新。
 - Web 页面会在启动后按间隔触发检查；Tauri 移动端首次安装无缓存时会立即联网生成股票池，之后按交易日规则刷新手机本地缓存。
 
-命令行定时维护示例：
-
-```bash
-python scripts\maintain_data.py --source tdx --refresh --prune
-```
+默认桌面端通过 Tauri 内置数据维护入口执行状态检查、刷新和清理，不再需要 Python/FastAPI 服务。`scripts\maintain_data.py` 仍保留为 legacy Python-only 工具；只有在显式运行旧 Python 环境时才使用。
 
 移动端存储较小，建议使用轻量缓存策略：保留股票池和最近需要观察的个股行情，定期清理历史行情和分钟线缓存。
 

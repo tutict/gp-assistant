@@ -1278,6 +1278,14 @@ async function runRagPackQuery() {
 }
 
 async function runUpstreamRagBuildAndTransfer() {
+  if (isTauriRuntime()) {
+    setError(
+      panels.newsRag,
+      "RAG 同步包构建尚未迁移",
+      "默认 Tauri/Rust 桌面端不再启动 FastAPI；/api/upstream-rag/build 和局域网传输仍是 legacy Python-only 路径。当前可用的是手机端 RAG 包导入、列表、详情和回滚。",
+    );
+    return;
+  }
   const timer = startPanelProgress(panels.newsRag, "构建上下游 RAG 同步包", [
     [16, "采集 CNINFO 公告"],
     [36, "读取通达信 F10"],
