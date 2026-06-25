@@ -1,6 +1,6 @@
 # 检索增强生成设计
 
-> 当前状态：本文中的 `/api/rag-pack/*` 构建、查询接口仍是 legacy Python/FastAPI 路径，尚未迁移到默认 Tauri/Rust 桌面端。Tauri 已覆盖 `POST /api/news-rag` 消息证据分析，以及手机端上游 RAG 包导入、列表、详情和回滚；桌面端构建 `rag_pack.sqlite` 与局域网传输仍需后续 Rust/Tauri 迁移或删除。
+> 当前状态：默认桌面端已把 `/api/rag-pack/*`、`/api/upstream-rag/status`、`/api/upstream-rag/build` 和 `/api/upstream-rag/transfer/start` 桥接到 Tauri/Rust command。Rust 路径提供轻量 lexical RAG pack、上游证据包构建和内联导入 JSON；legacy Python/FastAPI 的 ONNX/sqlite-vec 实现只作为参考保留。
 
 本文说明本项目中“有证据支撑的产业链检索增强生成”的产品设计和工程边界。当前实现支持限定范围的消息检索、SQLite 缓存、来源层级标签、基于规则的结论，以及可复用的离线数据包构建与查询路径。产品构建使用本地 `bge-small-zh-v1.5` ONNX/INT8 向量模型，并通过 ONNX Runtime 运行。确定性哈希向量器只作为显式测试夹具保留，默认不会用于产品路径。
 
@@ -149,7 +149,7 @@ Content-Type: application/json
 }
 ```
 
-也可以通过 `app.services.rag_pack` 直接在 Python 中调用：
+旧 Python/FastAPI 参考实现仍保留在 `app.services.rag_pack`，只用于 legacy 对照，不是默认 Tauri 路径：
 
 ```python
 from pathlib import Path

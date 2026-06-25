@@ -129,7 +129,7 @@ API 客户端可以通过请求头显式指定通达信数据源：
 
 上下游消息分析缓存路径为 `data/cache/news.sqlite`。证据会区分 `news` 与 `community` 两层：新闻/事实层用于事实证据，社区层用于市场讨论、风险传闻、情绪信号和待核查线索。桌面端默认尝试抓取东方财富股吧社区与 AkShare 东方财富个股新闻；如需关闭，可设置 `GP_NEWS_ENABLE_GUBA=false` 或 `GP_NEWS_ENABLE_AKSHARE=false`。雪球社区适配器已预留，设置 `GP_NEWS_ENABLE_XUEQIU=true` 后会检查 `GP_XUEQIU_COOKIE`，但在稳定授权抓取完成前不会混入不可靠数据。`POST /api/news-rag` 会把检索到的证据、已有关系边和本地规则判断交给已配置的 OpenAI 兼容模型复核；未配置模型密钥时会回退到本地规则。RAG 分析只在已有股票关系图范围内检索消息，不从新闻自动生成供应链关系。
 
-移动端 RAG 的使用方式和工程设计见 `docs/rag.md`。目标方案使用版本化只读 `rag_pack.sqlite`、`sqlite-vec` 和 `bge-small-zh` INT8；桌面端预计算文档向量，手机端只做查询向量和本地检索。
+移动端 RAG 的使用方式和工程设计见 `docs/rag.md`。默认 Tauri 桌面端已提供轻量 Rust RAG pack 构建/查询和上游 RAG 内联导入 JSON；legacy Python ONNX/sqlite-vec 路径仅作为参考保留。
 
 ## 数据维护
 
@@ -148,7 +148,9 @@ API 客户端可以通过请求头显式指定通达信数据源：
 - 如果当天收盘后已经刷新过 `data/cache/tdx_stocks.csv`，本日不会重复刷新。
 - Web 页面会在启动后按间隔触发检查；Tauri 移动端首次安装无缓存时会立即联网生成股票池，之后按交易日规则刷新手机本地缓存。
 
-默认桌面端通过 Tauri 内置数据维护入口执行状态检查、刷新和清理，不再需要 Python/FastAPI 服务。`scripts\maintain_data.py` 仍保留为 legacy Python-only 工具；只有在显式运行旧 Python 环境时才使用。
+默认桌面端通过 Tauri 内置数据维护入口执行状态检查、刷新和清理，不再需要 Python/FastAPI 服务。脚本层使用 `scripts\maintain-data-tauri.ps1` 查看/清理 Tauri AppData 缓存；联网刷新仍在桌面 App 内执行，因为刷新进度依赖 Tauri AppHandle 事件。`scripts\maintain_data.py` 仅保留为 legacy Python-only 对照。
+
+Legacy Python-only 回归测试（RAG pack、上游 RAG 构建、旧数据维护和 desktop server）已移到 `tests/legacy_python`，默认 `pytest` 不收集；如需核对旧路径，可显式运行 `pytest -c pytest.legacy-python.ini`。
 
 移动端存储较小，建议使用轻量缓存策略：保留股票池和最近需要观察的个股行情，定期清理历史行情和分钟线缓存。
 

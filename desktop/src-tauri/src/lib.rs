@@ -17,6 +17,7 @@ use tauri::{webview::PageLoadEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::ShellExt;
 
 mod news_rag;
+mod rag_pack;
 
 const MOBILE_MARKET_DATA_FILE: &str = "mobile-market-data.json";
 const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
@@ -312,6 +313,117 @@ fn api_stock_search(app: tauri::AppHandle, payload: Value) -> Result<Value, Stri
 #[tauri::command]
 async fn api_news_rag(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
     news_rag::api_news_rag_impl(app, payload).await
+}
+
+#[tauri::command]
+fn api_data_sources(app: tauri::AppHandle) -> Result<Value, String> {
+    Ok(json!({
+        "current": "tauri",
+        "available": [{"id": "tauri", "name": "Tauri/Rust", "description": "Tauri/Rust native market cache and Tencent refresh path."}],
+        "status": market_data_status(&app)?
+    }))
+}
+
+#[tauri::command]
+fn api_stock_get(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let code = payload
+        .get("code")
+        .and_then(Value::as_str)
+        .and_then(normalize_stock_code)
+        .ok_or_else(|| "code is required".to_string())?;
+    let data = cached_market_data(&app)?;
+    data.get("stocks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|stock| {
+            stock
+                .get("code")
+                .and_then(Value::as_str)
+                .and_then(normalize_stock_code)
+                .as_deref()
+                == Some(code.as_str())
+        })
+        .cloned()
+        .ok_or_else(|| "stock not found in Tauri/Rust cache".to_string())
+}
+
+#[tauri::command]
+fn api_minutes(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let code = payload
+        .get("code")
+        .and_then(Value::as_str)
+        .and_then(normalize_stock_code)
+        .ok_or_else(|| "code is required".to_string())?;
+    let limit = payload
+        .get("limit")
+        .and_then(Value::as_u64)
+        .and_then(|v| usize::try_from(v).ok())
+        .unwrap_or(500)
+        .clamp(1, 500);
+    let data = cached_market_data(&app)?;
+    let history = data
+        .get("histories")
+        .and_then(Value::as_object)
+        .and_then(|items| items.get(&code))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let rows = history.into_iter().rev().take(limit).map(|bar| json!({
+        "datetime": bar.get("date").or_else(|| bar.get("datetime")).and_then(Value::as_str).unwrap_or(""),
+        "open": bar.get("open").and_then(Value::as_f64).unwrap_or(0.0),
+        "high": bar.get("high").and_then(Value::as_f64).unwrap_or(0.0),
+        "low": bar.get("low").and_then(Value::as_f64).unwrap_or(0.0),
+        "close": bar.get("close").and_then(Value::as_f64).unwrap_or(0.0),
+        "volume": bar.get("volume").cloned().unwrap_or(Value::Null),
+        "amount": bar.get("amount").cloned().unwrap_or(Value::Null)
+    })).collect::<Vec<_>>();
+    Ok(Value::Array(rows.into_iter().rev().collect()))
+}
+
+#[tauri::command]
+fn api_order_book(_app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let code = payload
+        .get("code")
+        .and_then(Value::as_str)
+        .and_then(normalize_stock_code)
+        .ok_or_else(|| "code is required".to_string())?;
+    Ok(
+        json!({"code": code, "timestamp": Value::Null, "bids": [], "asks": [], "metrics": {}, "notes": ["Standalone order book is replaced by Tauri/Rust observe payload when available; no level-2 book is cached locally."]}),
+    )
+}
+
+#[tauri::command]
+fn api_rag_pack_status(app: tauri::AppHandle) -> Result<Value, String> {
+    rag_pack::rag_pack_status(app)
+}
+#[tauri::command]
+fn api_rag_pack_build(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    rag_pack::rag_pack_build(app, payload)
+}
+#[tauri::command]
+fn api_rag_pack_build_from_news_cache(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    rag_pack::rag_pack_build_from_news_cache(app, payload)
+}
+#[tauri::command]
+fn api_rag_pack_query(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    rag_pack::rag_pack_query(app, payload)
+}
+#[tauri::command]
+fn api_upstream_rag_status(app: tauri::AppHandle) -> Result<Value, String> {
+    rag_pack::upstream_rag_status(app)
+}
+#[tauri::command]
+fn api_upstream_rag_build(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let data = cached_market_data(&app)?;
+    rag_pack::upstream_rag_build(app, payload, data)
+}
+#[tauri::command]
+fn api_upstream_rag_transfer_start(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    rag_pack::upstream_rag_transfer_start(app, payload)
 }
 
 #[tauri::command]
@@ -4576,6 +4688,7 @@ pub fn run() {
             core_agent_stream_with_data,
             core_mobile_stock_skill,
             api_market_status,
+            api_data_sources,
             api_market_refresh,
             api_market_ingest_tencent_quotes,
             api_market_clear_cache,
@@ -4587,7 +4700,17 @@ pub fn run() {
             api_observe,
             api_backtest,
             api_stock_search,
+            api_stock_get,
+            api_minutes,
+            api_order_book,
             api_news_rag,
+            api_rag_pack_status,
+            api_rag_pack_build,
+            api_rag_pack_build_from_news_cache,
+            api_rag_pack_query,
+            api_upstream_rag_status,
+            api_upstream_rag_build,
+            api_upstream_rag_transfer_start,
             api_agent_stream,
             core_validate_data_source,
             core_mobile_market_data_read,

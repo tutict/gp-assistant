@@ -185,9 +185,11 @@ const agentUi = {
 const agentRuns = new Map();
 
 const TAURI_GET_ROUTES = {
+  "/api/data-sources": async ({ invoke }) => invoke("api_data_sources"),
   "/api/data-sources/status": async ({ invoke }) => invoke("api_market_status"),
+  "/api/rag-pack/status": async ({ invoke }) => invoke("api_rag_pack_status"),
   "/api/upstream-rag/mobile/list": async ({ invoke }) => invoke("core_upstream_rag_list"),
-  "/api/upstream-rag/status": async ({ invoke }) => invoke("core_upstream_rag_list"),
+  "/api/upstream-rag/status": async ({ invoke }) => invoke("api_upstream_rag_status"),
   "/api/upstream-rag/mobile/detail": async ({ invoke, parsed }) =>
     invoke("core_upstream_rag_detail", {
       payload: {
@@ -205,6 +207,35 @@ const TAURI_GET_ROUTES = {
 };
 
 const TAURI_GET_PREFIX_ROUTES = [
+  {
+    prefix: "/api/stocks/",
+    handler: async ({ invoke, path }) => {
+      const code = decodeURIComponent(path.slice("/api/stocks/".length));
+      return invoke("api_stock_get", { payload: { code } });
+    },
+  },
+  {
+    prefix: "/api/minutes/",
+    handler: async ({ invoke, path, parsed }) => {
+      const code = decodeURIComponent(path.slice("/api/minutes/".length));
+      return invoke("api_minutes", {
+        payload: {
+          code,
+          start: parsed.searchParams.get("start") || "",
+          end: parsed.searchParams.get("end") || "",
+          period: parsed.searchParams.get("period") || "1",
+          limit: parsed.searchParams.get("limit") || 500,
+        },
+      });
+    },
+  },
+  {
+    prefix: "/api/order-book/",
+    handler: async ({ invoke, path }) => {
+      const code = decodeURIComponent(path.slice("/api/order-book/".length));
+      return invoke("api_order_book", { payload: { code } });
+    },
+  },
   {
     prefix: "/api/observe/",
     handler: async ({ invoke, path, parsed }) => {
@@ -243,6 +274,11 @@ const TAURI_POST_ROUTES = {
   "/api/trend-screen": async ({ invoke, payload }) => invoke("api_trend_screen", { payload }),
   "/api/backtest": async ({ invoke, payload }) => invoke("api_backtest", { payload }),
   "/api/news-rag": async ({ invoke, payload }) => invoke("api_news_rag", { payload }),
+  "/api/rag-pack/build": async ({ invoke, payload }) => invoke("api_rag_pack_build", { payload }),
+  "/api/rag-pack/build-from-news-cache": async ({ invoke, payload }) => invoke("api_rag_pack_build_from_news_cache", { payload }),
+  "/api/rag-pack/query": async ({ invoke, payload }) => invoke("api_rag_pack_query", { payload }),
+  "/api/upstream-rag/build": async ({ invoke, payload }) => invoke("api_upstream_rag_build", { payload }),
+  "/api/upstream-rag/transfer/start": async ({ invoke, payload }) => invoke("api_upstream_rag_transfer_start", { payload }),
   "/api/data-sources/auto-refresh-universe": async ({ invoke }) => tauriAutoRefreshUniverse(invoke),
   "/api/data-sources/refresh-universe": async ({ invoke }) => tauriRefreshUniverse(invoke),
   "/api/data-sources/prune-cache": async ({ invoke }) => invoke("api_market_clear_cache"),
@@ -1278,14 +1314,6 @@ async function runRagPackQuery() {
 }
 
 async function runUpstreamRagBuildAndTransfer() {
-  if (isTauriRuntime()) {
-    setError(
-      panels.newsRag,
-      "RAG 同步包构建尚未迁移",
-      "默认 Tauri/Rust 桌面端不再启动 FastAPI；/api/upstream-rag/build 和局域网传输仍是 legacy Python-only 路径。当前可用的是手机端 RAG 包导入、列表、详情和回滚。",
-    );
-    return;
-  }
   const timer = startPanelProgress(panels.newsRag, "构建上下游 RAG 同步包", [
     [16, "采集 CNINFO 公告"],
     [36, "读取通达信 F10"],
@@ -1339,7 +1367,8 @@ async function runUpstreamRagImport() {
     return;
   }
   const descriptor = parseUpstreamImportDescriptor($("#upstreamImportPayload")?.value || "");
-  if (!descriptor.manifest_url) {
+  const hasInlinePayload = Boolean(descriptor.manifest && descriptor.pack_base64);
+  if (!descriptor.manifest_url && !hasInlinePayload) {
     setError(panels.newsRag, "缺少扫码内容", "请扫码或粘贴 manifest_url / 二维码 JSON。");
     return;
   }
@@ -3431,6 +3460,8 @@ function parseUpstreamImportDescriptor(rawValue) {
         manifest_url: parsed.manifest_url || parsed.manifestUrl || "",
         pack_url: parsed.pack_url || parsed.packUrl || "",
         token: parsed.token || "",
+        manifest: parsed.manifest || null,
+        pack_base64: parsed.pack_base64 || parsed.packBase64 || "",
       };
     }
   } catch {
@@ -3443,6 +3474,7 @@ function parseUpstreamImportDescriptor(rawValue) {
 }
 
 async function fetchUpstreamImportPayload(descriptor) {
+  if (descriptor.manifest && descriptor.pack_base64) return { manifest: descriptor.manifest, pack_base64: descriptor.pack_base64 };
   const manifestResponse = await fetch(descriptor.manifest_url, { cache: "no-store" });
   if (!manifestResponse.ok) {
     throw new Error(`manifest 下载失败：HTTP ${manifestResponse.status}`);
@@ -5074,8 +5106,20 @@ function renderUpstreamTransferBlock(transfer) {
         ["Manifest", transfer.manifest_url || "-"],
         ["RAG 包", transfer.pack_url || "-"],
       ])}
+      ${transfer.descriptor_json ? renderUpstreamInlineDescriptor(transfer.descriptor_json) : ""}
       ${transfer.notes?.length ? renderNotes(transfer.notes) : ""}
     </section>
+  `;
+}
+
+function renderUpstreamInlineDescriptor(descriptorJson) {
+  const value = String(descriptorJson || "");
+  if (!value) return "";
+  return `
+    <label class="field upstream-inline-descriptor">
+      <span>手机导入 JSON</span>
+      <textarea readonly rows="4">${escapeHtml(value)}</textarea>
+    </label>
   `;
 }
 
