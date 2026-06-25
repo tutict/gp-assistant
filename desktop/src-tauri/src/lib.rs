@@ -311,6 +311,29 @@ fn api_stock_search(app: tauri::AppHandle, payload: Value) -> Result<Value, Stri
 }
 
 #[tauri::command]
+fn api_health() -> Result<Value, String> {
+    Ok(json!({"status": "ok", "runtime": "tauri"}))
+}
+
+#[tauri::command]
+fn api_strategies() -> Result<Value, String> {
+    Ok(json!({
+        "strategies": [
+            {
+                "id": "quality_value",
+                "name": "质量价值",
+                "description": "低估值且净资产收益率为正。"
+            },
+            {
+                "id": "defensive_dividend",
+                "name": "防御分红",
+                "description": "盈利稳定、估值适中、分红较好。"
+            }
+        ]
+    }))
+}
+
+#[tauri::command]
 async fn api_news_rag(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
     news_rag::api_news_rag_impl(app, payload).await
 }
@@ -4687,6 +4710,8 @@ pub fn run() {
             core_agent_with_data,
             core_agent_stream_with_data,
             core_mobile_stock_skill,
+            api_health,
+            api_strategies,
             api_market_status,
             api_data_sources,
             api_market_refresh,

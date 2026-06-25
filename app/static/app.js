@@ -185,6 +185,8 @@ const agentUi = {
 const agentRuns = new Map();
 
 const TAURI_GET_ROUTES = {
+  "/health": async ({ invoke }) => invoke("api_health"),
+  "/api/strategies": async ({ invoke }) => invoke("api_strategies"),
   "/api/data-sources": async ({ invoke }) => invoke("api_data_sources"),
   "/api/data-sources/status": async ({ invoke }) => invoke("api_market_status"),
   "/api/rag-pack/status": async ({ invoke }) => invoke("api_rag_pack_status"),

@@ -20,8 +20,8 @@ This document tracks whether the retired FastAPI surface, RAG pack workflow, and
 | Old route | Default Tauri/Rust replacement | Status |
 | --- | --- | --- |
 | `GET /` | Static Tauri frontend | Replaced |
-| `GET /health` | Tauri process/preflight scripts | Retired, not needed by desktop app |
-| `GET /api/strategies` | None | Retired; no current frontend caller |
+| `GET /health` | `api_health` | Replaced |
+| `GET /api/strategies` | `api_strategies` | Replaced |
 | `GET /api/data-sources` | `api_data_sources` | Replaced |
 | `GET /api/data-sources/status` | `api_market_status` | Replaced |
 | `POST /api/data-sources/refresh-universe` | `tauriRefreshUniverse` -> `api_market_refresh` | Replaced |
