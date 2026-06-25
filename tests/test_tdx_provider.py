@@ -331,61 +331,46 @@ class TdxProviderTests(unittest.TestCase):
         self.assertAlmostEqual(item.deducted_net_profit_growth_rate or 0, 16.0)
 
 
-    def test_refresh_screening_cache_rebuilds_fundamental_cache(self):
+
+    def test_refresh_screening_cache_keeps_local_fundamental_cache(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             fundamental_cache_path = os.path.join(temp_dir, "fundamentals.csv")
-            Path(fundamental_cache_path).write_text("code,name\n000001.SZ,old\n", encoding="utf-8")
+            pd.DataFrame(
+                [
+                    {
+                        "SECUCODE": "000001.SZ",
+                        "SECURITY_NAME_ABBR": "Ping An Bank",
+                        "KCFJCXSYJLR": 1_200_000_000,
+                        "KCFJCXSYJLRTZ": 16.0,
+                        "TOTALOPERATEREVE": 8_000_000_000,
+                    }
+                ]
+            ).to_csv(fundamental_cache_path, index=False)
             with patch.dict(os.environ, {"TDX_FUNDAMENTAL_CACHE": fundamental_cache_path}):
                 provider = TdxProvider()
-                provider._fetch_eastmoney_fundamentals_for_screen = lambda: (
-                    pd.DataFrame(
-                        [
-                            {
-                                "SECUCODE": "000001.SZ",
-                                "SECURITY_NAME_ABBR": "Ping An Bank",
-                                "KCFJCXSYJLR": 1_200_000_000,
-                                "KCFJCXSYJLRTZ": 16.0,
-                                "TOTALOPERATEREVE": 8_000_000_000,
-                            }
-                        ]
-                    ),
-                    "cached fundamentals refreshed",
-                )
-
                 notes = provider.refresh_screening_cache()
                 lookup = provider._read_fundamental_cache(fundamental_cache_path)
 
             self.assertTrue(notes)
+            self.assertIn("在线东财财报重建已禁用", notes[0])
             self.assertIn("000001.SZ", lookup or {})
             self.assertAlmostEqual((lookup or {}).get("000001.SZ").deducted_net_profit_growth_rate or 0, 16.0)
-            self.assertIn("000001.SZ", Path(fundamental_cache_path).read_text(encoding="utf-8"))
 
-    def test_missing_fundamental_cache_fetches_and_writes_eastmoney_data(self):
+    def test_missing_fundamental_cache_returns_disabled_note_without_fetch(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             fundamental_cache_path = os.path.join(temp_dir, "fundamentals.csv")
             with patch.dict(os.environ, {"TDX_FUNDAMENTAL_CACHE": fundamental_cache_path}):
                 provider = TdxProvider()
-                provider._fetch_eastmoney_fundamentals_for_screen = lambda: (
-                    pd.DataFrame(
-                        [
-                            {
-                                "SECUCODE": "000001.SZ",
-                                "SECURITY_NAME_ABBR": "平安银行",
-                                "KCFJCXSYJLR": 1_200_000_000,
-                                "KCFJCXSYJLRTZ": 16.0,
-                                "TOTALOPERATEREVE": 8_000_000_000,
-                            }
-                        ]
-                    ),
-                    "东财数据中心财报指标已缓存：2026-03-31 报告期，覆盖 1 只 A 股。",
-                )
+                with patch.object(
+                    provider,
+                    "_fetch_eastmoney_fundamentals_for_screen",
+                    side_effect=AssertionError("eastmoney fundamentals should stay disabled"),
+                ):
+                    lookup, note = provider._cached_fundamentals_for_screen()
 
-                lookup, note = provider._cached_fundamentals_for_screen()
-
-                self.assertTrue(os.path.exists(fundamental_cache_path))
-                self.assertIn("000001.SZ", lookup)
-                self.assertIn("2026-03-31", note or "")
-                self.assertAlmostEqual(lookup["000001.SZ"].deducted_net_profit_growth_rate or 0, 16.0)
+            self.assertEqual(lookup, {})
+            self.assertEqual(note, "本地财务缓存缺失；在线东财财报数据已禁用。")
+            self.assertFalse(os.path.exists(fundamental_cache_path))
 
     def test_get_financial_indicators_uses_enriched_stock_values(self):
         stock = StockItem(
@@ -588,21 +573,54 @@ class TdxProviderTests(unittest.TestCase):
         self.assertEqual(items[0].raw_value, 0.12)
         self.assertEqual(items[0].tone, "rise")
 
+    def test_akshare_financial_indicators_skip_eastmoney_financial_report_calls(self):
+        provider = AkShareProvider()
+        stock = StockItem(
+            code="300115.SZ",
+            name="长盈精密",
+            industry="消费电子",
+            price=29.0,
+            pe=20.0,
+            pb=3.0,
+            market_cap_billion=400.0,
+        )
+
+        def disabled_indicator(*_args, **_kwargs):
+            raise AssertionError("eastmoney financial report should stay disabled")
+
+        fake_ak = type(
+            "FakeAk",
+            (),
+            {
+                "stock_financial_analysis_indicator_em": staticmethod(disabled_indicator),
+                "stock_financial_abstract": staticmethod(lambda symbol: pd.DataFrame()),
+                "stock_financial_abstract_new_ths": staticmethod(lambda symbol, indicator: pd.DataFrame()),
+            },
+        )()
+
+        with patch.object(provider, "_import_akshare", return_value=fake_ak):
+            section = provider.get_financial_indicators(stock)
+
+        self.assertIsNotNone(section)
+        assert section is not None
+        self.assertIn("东财 F10 财报指标已禁用", " / ".join(section.notes))
+        self.assertNotIn("东财F10", section.source or "")
+
     def test_tdx_financial_indicators_merge_quarterly_eps_source(self):
         stock = StockItem(
             code="300115.SZ",
-            name="\u957f\u76c8\u7cbe\u5bc6",
-            industry="\u6d88\u8d39\u7535\u5b50",
+            name="长盈精密",
+            industry="消费电子",
             price=29.0,
             pe=20.0,
             pb=3.0,
             market_cap_billion=400.0,
         )
         eps_item = FinancialIndicatorItem(
-            label="2026Q1 \u6bcf\u80a1\u6536\u76ca",
-            value="0.12\u5143",
+            label="2026Q1 每股收益",
+            value="0.12元",
             raw_value=0.12,
-            unit="\u5143",
+            unit="元",
             metric_key="quarterly_eps",
             period="2026Q1",
         )
@@ -610,14 +628,15 @@ class TdxProviderTests(unittest.TestCase):
         with patch.object(
             TdxProvider,
             "_quarterly_eps_from_financial_source",
-            return_value=([eps_item], "\u540c\u82b1\u987a\u8d22\u62a5(\u5355\u5b63EPS)", "2026Q1", []),
+            return_value=([eps_item], "同花顺财报(单季EPS)", "2026Q1", []),
         ):
             section = TdxProvider().get_financial_indicators(stock)
 
         self.assertIsNotNone(section)
         assert section is not None
-        self.assertIn("\u540c\u82b1\u987a\u8d22\u62a5", section.source or "")
+        self.assertIn("同花顺财报", section.source or "")
         self.assertTrue(any(item.metric_key == "quarterly_eps" for item in section.items))
+
 
     def test_list_stocks_reads_tdx_cache_without_network(self):
         with tempfile.TemporaryDirectory() as temp_dir:

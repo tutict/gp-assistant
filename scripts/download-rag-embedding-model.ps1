@@ -29,7 +29,7 @@ function Resolve-Python {
 $Python = Resolve-Python
 New-Item -ItemType Directory -Force -Path $Target | Out-Null
 
-& $Python -m pip install -r (Join-Path $Root "requirements.txt")
+& $Python -m pip install -r (Join-Path $Root "requirements.legacy-python.txt")
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to install Python requirements."
 }

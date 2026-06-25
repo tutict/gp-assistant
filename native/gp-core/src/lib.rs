@@ -471,7 +471,7 @@ pub struct CapitalEvidenceItem {
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_metrics")]
     pub metrics: BTreeMap<String, String>,
     #[serde(default = "default_uncertain_sentiment")]
     pub sentiment: String,
@@ -485,6 +485,28 @@ pub struct CapitalEvidenceItem {
     pub score: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+}
+
+fn deserialize_string_metrics<'de, D>(deserializer: D) -> Result<BTreeMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<BTreeMap<String, Value>>::deserialize(deserializer)?;
+    let Some(map) = value else {
+        return Ok(BTreeMap::new());
+    };
+    let mut metrics = BTreeMap::new();
+    for (key, value) in map {
+        let text = match value {
+            Value::Null => String::new(),
+            Value::String(value) => value,
+            Value::Bool(value) => value.to_string(),
+            Value::Number(value) => value.to_string(),
+            other => other.to_string(),
+        };
+        metrics.insert(key, text);
+    }
+    Ok(metrics)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -690,6 +712,8 @@ pub struct CoreDataSet {
     pub histories: HashMap<String, Vec<HistoryBar>>,
     #[serde(default)]
     pub financials: HashMap<String, StockFinancialSnapshot>,
+    #[serde(default)]
+    pub capital_evidence: HashMap<String, CapitalEvidenceResult>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -921,6 +945,10 @@ pub trait MarketDataSource {
     fn get_financial_snapshot(&self, _code: &str) -> Option<StockFinancialSnapshot> {
         None
     }
+
+    fn get_capital_evidence(&self, _code: &str) -> Option<CapitalEvidenceResult> {
+        None
+    }
 }
 
 pub struct MockDataSource;
@@ -982,6 +1010,15 @@ impl MarketDataSource for StaticDataSource {
             .get(code)
             .cloned()
             .or_else(|| self.data.financials.get(&normalized).cloned())
+    }
+
+    fn get_capital_evidence(&self, code: &str) -> Option<CapitalEvidenceResult> {
+        let normalized = normalize_stock_code(code);
+        self.data
+            .capital_evidence
+            .get(code)
+            .cloned()
+            .or_else(|| self.data.capital_evidence.get(&normalized).cloned())
     }
 }
 
@@ -1600,6 +1637,7 @@ pub fn observe_with_source(
         })?;
     let mut notes = vec!["\u{6570}\u{636e}\u{6e90}\u{ff1a}Tauri/Rust \u{7edf}\u{4e00}\u{672c}\u{5730}\u{884c}\u{60c5}\u{7f13}\u{5b58}\u{3002}".to_string()];
     let financial_snapshot = source.get_financial_snapshot(&stock.code);
+    let provided_capital_evidence = source.get_capital_evidence(&stock.code);
     let financial_indicators =
         build_observation_financial_indicators(&stock, financial_snapshot.as_ref());
     let trend_request = TrendIndicatorRequest {
@@ -1626,6 +1664,7 @@ pub fn observe_with_source(
         &financial_indicators,
         trend.as_ref(),
         &request.end_date,
+        provided_capital_evidence,
     );
     Ok(StockObservation {
         source: "tdx".to_string(),
@@ -1910,40 +1949,81 @@ fn build_observation_capital_evidence(
     _financial_indicators: &FinancialIndicators,
     trend: Option<&TrendIndicatorResult>,
     end_date: &str,
+    provided: Option<CapitalEvidenceResult>,
 ) -> CapitalEvidenceResult {
     const FUND_FLOW_WEIGHT: f64 = 0.35;
     const INSTITUTION_WEIGHT: f64 = 0.25;
     const NEWS_WEIGHT: f64 = 0.15;
     const TECHNICAL_WEIGHT: f64 = 0.25;
 
-    let as_of_trade_date = capital_trade_date(end_date)
+    let as_of_trade_date = provided
+        .as_ref()
+        .and_then(|evidence| evidence.as_of_trade_date.as_deref())
+        .filter(|value| !value.trim().is_empty())
+        .and_then(|value| capital_trade_date(value).or_else(|| Some(value.trim().to_string())))
+        .or_else(|| capital_trade_date(end_date))
         .or_else(|| trend.map(|trend| trend.signal.date.clone()))
         .unwrap_or_else(|| Local::now().date_naive().format("%Y-%m-%d").to_string());
-    let mut items = Vec::new();
+
+    let mut items = provided
+        .as_ref()
+        .map(|evidence| evidence.items.clone())
+        .unwrap_or_default();
+    items
+        .retain(|item| item.category != "external_status" && item.category != "technical_behavior");
+
     let technical_score = trend.map(technical_capital_score);
     if let Some(trend) = trend {
+        if !capital_bucket_has_evidence(&items, ["fund_flow", "", ""]) {
+            if let Some(item) = local_fund_flow_proxy_evidence_item(trend) {
+                items.push(item);
+            }
+        }
         items.push(technical_capital_evidence_item(
             trend,
             technical_score.unwrap_or(50.0),
         ));
     }
-    items.push(institution_status_evidence_item(&as_of_trade_date));
+    if !capital_bucket_has_evidence(&items, ["institution_lhb", "institution_lhb_status", ""]) {
+        items.push(institution_status_evidence_item(&as_of_trade_date));
+    }
+    if !capital_bucket_has_evidence(&items, ["news_rag", "community_sentiment", ""]) {
+        items.push(message_sentiment_status_evidence_item(&as_of_trade_date));
+    }
+    dedup_capital_items(&mut items);
 
     let buckets = [
-        ("\u{8d44}\u{91d1}\u{6d41}", FUND_FLOW_WEIGHT, None),
-        ("\u{673a}\u{6784}\u{5e2d}\u{4f4d}", INSTITUTION_WEIGHT, None),
-        ("\u{6d88}\u{606f}\u{60c5}\u{7eea}", NEWS_WEIGHT, None),
+        ("资金流", FUND_FLOW_WEIGHT, ["fund_flow", "", ""]),
         (
-            "\u{6280}\u{672f}\u{63a8}\u{65ad}",
-            TECHNICAL_WEIGHT,
-            technical_score,
+            "机构席位",
+            INSTITUTION_WEIGHT,
+            ["institution_lhb", "institution_lhb_status", ""],
         ),
+        (
+            "消息情绪",
+            NEWS_WEIGHT,
+            [
+                "news_rag",
+                "community_sentiment",
+                "message_sentiment_status",
+            ],
+        ),
+        ("技术推断", TECHNICAL_WEIGHT, ["technical_behavior", "", ""]),
     ];
     let mut weighted_sum = 0.0;
-    let mut total_weight = 0.0;
+    let mut total_weight: f64 = 0.0;
     let mut contributions = BTreeMap::new();
-    for (label, weight, score) in buckets {
-        let available = score.is_some();
+    let mut scored_labels = Vec::new();
+    let mut evidence_labels = Vec::new();
+    for (label, weight, categories) in buckets {
+        let score = capital_bucket_score(&items, categories);
+        let available = capital_bucket_has_evidence(&items, categories);
+        if score.is_some() {
+            scored_labels.push(label.to_string());
+        }
+        if available {
+            evidence_labels.push(label.to_string());
+        }
         let bucket_score = score.unwrap_or(50.0);
         weighted_sum += bucket_score * weight;
         total_weight += weight;
@@ -1957,35 +2037,237 @@ fn build_observation_capital_evidence(
         );
     }
     let composite_score = round2(weighted_sum / total_weight.max(0.01));
-    let confidence = if technical_score.is_some() {
-        "\u{4e2d}"
-    } else {
-        "\u{4f4e}"
-    }
-    .to_string();
+    let model_used = provided
+        .as_ref()
+        .map(|evidence| evidence.model_used)
+        .unwrap_or(false);
+    let confidence = capital_evidence_confidence(&items, technical_score.is_some());
     let sections = build_capital_evidence_sections(&items, &contributions);
+    let freshness = provided
+        .as_ref()
+        .map(|evidence| evidence.freshness.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("refreshed")
+        .to_string();
+    let mut notes = Vec::new();
+    if let Some(provided) = provided.as_ref() {
+        for note in &provided.notes {
+            push_capital_note(&mut notes, note);
+        }
+    }
+    if !model_used {
+        push_capital_note(
+            &mut notes,
+            "未调用模型，综合资金证据分由本地规则按资金流、机构席位、消息情绪、技术推断四类权重生成。",
+        );
+    }
+    if !capital_bucket_has_evidence(&items, ["fund_flow", "", ""]) {
+        push_capital_note(
+            &mut notes,
+            "资金流外部证据暂缺，本次用中性权重保留该桶，不把缺失数据当作流入或流出结论。",
+        );
+    }
+    if !items.iter().any(|item| item.category == "institution_lhb") {
+        push_capital_note(
+            &mut notes,
+            "龙虎榜机构席位未命中或未提供，仅表示当前证据源没有可展示记录，不代表机构没有交易。",
+        );
+    }
+    if !capital_bucket_has_evidence(&items, ["news_rag", "community_sentiment", ""]) {
+        push_capital_note(
+            &mut notes,
+            "消息情绪证据暂缺，当前不对新闻或社区情绪加减分。",
+        );
+    }
+
     CapitalEvidenceResult {
         stock_code: normalize_stock_code(&stock.code),
         generated_at: Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
         composite_score: Some(composite_score),
         confidence,
-        model_used: false,
+        model_used,
         as_of_trade_date: Some(as_of_trade_date),
-        freshness: "refreshed".to_string(),
+        freshness,
         contributions,
-        summary: Some(format!(
-            "{} {}\u{ff0c}{}",
-            "\u{7efc}\u{5408}\u{8d44}\u{91d1}\u{8bc1}\u{636e}\u{5206}",
-            format_number(composite_score),
-            "\u{5f53}\u{524d}\u{4e3a} Tauri/Rust \u{672c}\u{5730}\u{89c4}\u{5219}\u{5206}\u{ff1b}\u{8d44}\u{91d1}\u{6d41}\u{3001}\u{673a}\u{6784}\u{5e2d}\u{4f4d}\u{548c}\u{6d88}\u{606f}\u{60c5}\u{7eea}\u{5c1a}\u{672a}\u{8fc1}\u{79fb}\u{5230} Rust\u{ff0c}\u{5148}\u{4ee5}\u{6280}\u{672f}\u{63a8}\u{65ad}\u{8f85}\u{52a9}\u{89c2}\u{5bdf}\u{3002}"
+        summary: Some(capital_evidence_summary(
+            composite_score,
+            &scored_labels,
+            &evidence_labels,
         )),
         sections,
         items,
-        notes: vec![
-            "\u{672a}\u{8c03}\u{7528}\u{6a21}\u{578b}\u{ff0c}\u{7efc}\u{5408}\u{8d44}\u{91d1}\u{8bc1}\u{636e}\u{5206}\u{7531} Tauri/Rust \u{672c}\u{5730}\u{89c4}\u{5219}\u{751f}\u{6210}\u{3002}".to_string(),
-            "\u{5916}\u{90e8}\u{8d44}\u{91d1}\u{6d41}\u{3001}\u{9f99}\u{864e}\u{699c}\u{673a}\u{6784}\u{5e2d}\u{4f4d}\u{548c}\u{6d88}\u{606f}\u{7f13}\u{5b58}\u{8bc1}\u{636e}\u{4ecd}\u{5f85}\u{8fc1}\u{79fb}\u{5230} Rust/Tauri \u{7edf}\u{4e00}\u{8fd0}\u{884c}\u{65f6}\u{3002}".to_string(),
-        ],
+        notes,
     }
+}
+
+fn dedup_capital_items(items: &mut Vec<CapitalEvidenceItem>) {
+    let mut seen = HashSet::new();
+    items.retain(|item| {
+        let key = format!(
+            "{}|{}|{}|{}",
+            item.category,
+            item.source,
+            item.title,
+            item.date.as_deref().unwrap_or("")
+        );
+        seen.insert(key)
+    });
+}
+
+fn capital_item_matches<const N: usize>(item: &CapitalEvidenceItem, categories: [&str; N]) -> bool {
+    categories
+        .iter()
+        .any(|category| !category.is_empty() && *category == item.category.as_str())
+}
+
+fn capital_bucket_has_evidence<const N: usize>(
+    items: &[CapitalEvidenceItem],
+    categories: [&str; N],
+) -> bool {
+    items
+        .iter()
+        .any(|item| capital_item_matches(item, categories))
+}
+
+fn capital_bucket_score<const N: usize>(
+    items: &[CapitalEvidenceItem],
+    categories: [&str; N],
+) -> Option<f64> {
+    let mut total = 0.0;
+    let mut count = 0.0;
+    for item in items
+        .iter()
+        .filter(|item| capital_item_matches(item, categories))
+    {
+        if let Some(score) = item.score.filter(|value| value.is_finite()) {
+            total += score;
+            count += 1.0;
+        }
+    }
+    if count > 0.0 {
+        Some(round2(total / count))
+    } else {
+        None
+    }
+}
+
+fn capital_evidence_confidence(items: &[CapitalEvidenceItem], has_technical: bool) -> String {
+    let scored_external_count = [
+        ["fund_flow", "", ""],
+        ["institution_lhb", "", ""],
+        [
+            "news_rag",
+            "community_sentiment",
+            "message_sentiment_status",
+        ],
+    ]
+    .into_iter()
+    .filter(|categories| capital_bucket_score(items, *categories).is_some())
+    .count();
+    if scored_external_count >= 3 {
+        "高".to_string()
+    } else if scored_external_count >= 1 || has_technical {
+        "中".to_string()
+    } else {
+        "低".to_string()
+    }
+}
+
+fn capital_evidence_summary(
+    composite_score: f64,
+    scored_labels: &[String],
+    evidence_labels: &[String],
+) -> String {
+    if !scored_labels.is_empty() {
+        return format!(
+            "综合资金证据分 {}，已纳入{}；缺失分数的证据桶按中性权重处理。",
+            format_number(composite_score),
+            scored_labels.join("、")
+        );
+    }
+    if !evidence_labels.is_empty() {
+        return format!(
+            "综合资金证据分 {}，当前只有{}状态证据，缺失分数的证据桶按中性权重处理。",
+            format_number(composite_score),
+            evidence_labels.join("、")
+        );
+    }
+    format!(
+        "综合资金证据分 {}，外部资金证据暂缺，当前仅保留中性权重。",
+        format_number(composite_score)
+    )
+}
+
+fn push_capital_note(notes: &mut Vec<String>, note: impl AsRef<str>) {
+    let clean = note.as_ref().trim();
+    if clean.is_empty() || notes.iter().any(|existing| existing == clean) {
+        return;
+    }
+    notes.push(clean.to_string());
+}
+
+fn local_fund_flow_proxy_evidence_item(
+    trend: &TrendIndicatorResult,
+) -> Option<CapitalEvidenceItem> {
+    let signal = &trend.signal;
+    let latest = trend.series.last()?;
+    let score = local_fund_flow_proxy_score(latest);
+    let mut metrics = BTreeMap::new();
+    metrics.insert("收盘价".to_string(), format_number(signal.close));
+    if let Some(change_pct) = signal.close_change_pct {
+        metrics.insert("涨跌幅".to_string(), format_percent(change_pct));
+    }
+    let numeric_metrics = [
+        ("量价热度", latest.volume_price_heat),
+        ("吸筹强度", latest.accumulation_strength),
+        ("吸筹指标", latest.accumulation_index),
+        ("趋势热度", latest.trend_heat),
+        ("异动热度", latest.anomaly_heat),
+        ("人气热度", latest.popularity_heat),
+    ];
+    for (label, value) in numeric_metrics {
+        if let Some(value) = value.filter(|value| value.is_finite()) {
+            metrics.insert(label.to_string(), format_number(value));
+        }
+    }
+    metrics.insert("证据类型".to_string(), "本地日线量价代理".to_string());
+    Some(CapitalEvidenceItem {
+        category: "fund_flow".to_string(),
+        source: "Tauri/Rust 日线量价".to_string(),
+        title: "本地量价资金代理".to_string(),
+        date: Some(signal.date.clone()),
+        metrics,
+        sentiment: score_sentiment(score).to_string(),
+        weight: 0.35,
+        confidence: "中".to_string(),
+        url: None,
+        score: Some(score),
+        note: Some(format!(
+            "资金流代理分 {}：由量价热度、吸筹强度、趋势热度和承接指标合成；它不是外部主力净流入数据。",
+            format_number(score)
+        )),
+    })
+}
+
+fn local_fund_flow_proxy_score(point: &TrendIndicatorPoint) -> f64 {
+    let volume_price = point.volume_price_heat.unwrap_or(50.0).clamp(0.0, 100.0);
+    let accumulation_strength = point
+        .accumulation_strength
+        .unwrap_or(50.0)
+        .clamp(0.0, 100.0);
+    let trend_heat = point.trend_heat.unwrap_or(50.0).clamp(0.0, 100.0);
+    let rebound = point.rebound_signal.unwrap_or(50.0).clamp(0.0, 100.0);
+    let accumulation_index = point
+        .accumulation_index
+        .map(|value| (50.0 + value * 2.0).clamp(0.0, 100.0))
+        .unwrap_or(50.0);
+    round2(
+        volume_price * 0.35
+            + accumulation_strength * 0.25
+            + trend_heat * 0.20
+            + accumulation_index * 0.15
+            + rebound * 0.05,
+    )
 }
 
 fn technical_capital_score(trend: &TrendIndicatorResult) -> f64 {
@@ -2067,6 +2349,23 @@ fn technical_capital_evidence_item(
         );
     }
     metrics.insert("\u{72b6}\u{6001}".to_string(), signal.status.clone());
+    if let Some(point) = trend.series.last() {
+        let point_metrics = [
+            ("吸筹指标", point.accumulation_index),
+            ("吸筹强度", point.accumulation_strength),
+            ("波段机会", point.swing_opportunity),
+            ("绝地反击", point.rebound_signal),
+            ("趋势热度", point.trend_heat),
+            ("量价热度", point.volume_price_heat),
+            ("异动热度", point.anomaly_heat),
+            ("人气热度", point.popularity_heat),
+        ];
+        for (label, value) in point_metrics {
+            if let Some(value) = value.filter(|value| value.is_finite()) {
+                metrics.insert(label.to_string(), format_number(value));
+            }
+        }
+    }
     metrics.insert(
         "\u{77ed}\u{7ebf}\u{4e70}\u{70b9}".to_string(),
         if signal.short_buy {
@@ -2101,29 +2400,52 @@ fn technical_capital_evidence_item(
 fn institution_status_evidence_item(as_of_trade_date: &str) -> CapitalEvidenceItem {
     let mut metrics = BTreeMap::new();
     metrics.insert(
-        "\u{72b6}\u{6001}".to_string(),
-        "Rust \u{53d1}\u{5e03}\u{7248}\u{5c1a}\u{672a}\u{63a5}\u{5165}\u{9f99}\u{864e}\u{699c}\u{673a}\u{6784}\u{5e2d}\u{4f4d}".to_string(),
+        "状态".to_string(),
+        "当前没有可展示的龙虎榜机构席位记录".to_string(),
     );
+    metrics.insert("查询窗口".to_string(), as_of_trade_date.to_string());
     metrics.insert(
-        "\u{67e5}\u{8be2}\u{7a97}\u{53e3}".to_string(),
-        as_of_trade_date.to_string(),
-    );
-    metrics.insert(
-        "\u{5df2}\u{5c1d}\u{8bd5}\u{4fe1}\u{6e90}".to_string(),
-        "\u{5f85}\u{8fc1}\u{79fb}".to_string(),
+        "已尝试信源".to_string(),
+        "本地缓存 / 已提供外部证据".to_string(),
     );
     CapitalEvidenceItem {
         category: "institution_lhb_status".to_string(),
         source: "Tauri/Rust".to_string(),
-        title: "\u{673a}\u{6784}\u{5e2d}\u{4f4d}\u{6682}\u{672a}\u{8fc1}\u{79fb}".to_string(),
+        title: "机构席位暂无外部证据".to_string(),
         date: Some(as_of_trade_date.to_string()),
         metrics,
         sentiment: "uncertain".to_string(),
         weight: 0.25,
-        confidence: "\u{4f4e}".to_string(),
+        confidence: "低".to_string(),
         url: None,
         score: None,
-        note: Some("\u{7edf}\u{4e00} Tauri/Rust \u{540e}\u{7aef}\u{5df2}\u{6062}\u{590d}\u{9762}\u{677f}\u{ff0c}\u{4f46}\u{5916}\u{90e8}\u{673a}\u{6784}\u{5e2d}\u{4f4d}\u{8bc1}\u{636e}\u{4ecd}\u{9700}\u{5355}\u{72ec}\u{8fc1}\u{79fb}\u{3002}".to_string()),
+        note: Some(
+            "当前窗口没有可展示的龙虎榜机构席位证据；这只是证据缺口，不代表机构没有买卖。"
+                .to_string(),
+        ),
+    }
+}
+
+fn message_sentiment_status_evidence_item(as_of_trade_date: &str) -> CapitalEvidenceItem {
+    let mut metrics = BTreeMap::new();
+    metrics.insert("状态".to_string(), "本地消息缓存暂无可用证据".to_string());
+    metrics.insert("查询窗口".to_string(), as_of_trade_date.to_string());
+    metrics.insert(
+        "已尝试信源".to_string(),
+        "本地新闻缓存 / 已提供外部证据".to_string(),
+    );
+    CapitalEvidenceItem {
+        category: "message_sentiment_status".to_string(),
+        source: "Tauri/Rust".to_string(),
+        title: "消息情绪暂无本地证据".to_string(),
+        date: Some(as_of_trade_date.to_string()),
+        metrics,
+        sentiment: "uncertain".to_string(),
+        weight: 0.15,
+        confidence: "低".to_string(),
+        url: None,
+        score: None,
+        note: Some("当前没有可纳入评分的新闻或社区情绪证据；该桶保留中性权重。".to_string()),
     }
 }
 
@@ -2148,7 +2470,11 @@ fn build_capital_evidence_sections(
             "message_sentiment",
             "\u{6d88}\u{606f}\u{60c5}\u{7eea}",
             "\u{6d88}\u{606f}\u{60c5}\u{7eea}",
-            ["news_rag", "community_sentiment", ""],
+            [
+                "news_rag",
+                "community_sentiment",
+                "message_sentiment_status",
+            ],
         ),
         (
             "technical_behavior",
@@ -6185,6 +6511,35 @@ mod tests {
                     notes: vec!["季度 EPS 明细来自缓存".to_string()],
                 },
             )]),
+            capital_evidence: HashMap::from([(
+                "111111.SZ".to_string(),
+                CapitalEvidenceResult {
+                    stock_code: "111111.SZ".to_string(),
+                    generated_at: "2026-06-25T10:00:00".to_string(),
+                    composite_score: Some(68.0),
+                    confidence: "中".to_string(),
+                    model_used: false,
+                    as_of_trade_date: Some("2026-06-25".to_string()),
+                    freshness: "fresh-cache".to_string(),
+                    contributions: BTreeMap::new(),
+                    summary: Some("cached capital evidence".to_string()),
+                    sections: Vec::new(),
+                    items: vec![CapitalEvidenceItem {
+                        category: "fund_flow".to_string(),
+                        source: "test cache".to_string(),
+                        title: "fund flow sample".to_string(),
+                        date: Some("2026-06-25".to_string()),
+                        metrics: BTreeMap::from([("净额".to_string(), "1200万".to_string())]),
+                        sentiment: "positive".to_string(),
+                        weight: 0.35,
+                        confidence: "中".to_string(),
+                        url: None,
+                        score: Some(72.0),
+                        note: Some("cached fund flow".to_string()),
+                    }],
+                    notes: vec!["cached note".to_string()],
+                },
+            )]),
         }
     }
 
@@ -6473,9 +6828,135 @@ mod tests {
             .items
             .iter()
             .any(|item| item.category == "technical_behavior"));
+        assert!(capital_evidence
+            .items
+            .iter()
+            .any(|item| item.category == "fund_flow" && item.score == Some(72.0)));
+        assert!(capital_evidence
+            .contributions
+            .get("资金流")
+            .and_then(|value| value.get("available"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false));
+        let technical_item = capital_evidence
+            .items
+            .iter()
+            .find(|item| item.category == "technical_behavior")
+            .unwrap();
+        assert!(technical_item.metrics.contains_key("吸筹强度"));
+        assert!(technical_item.metrics.contains_key("波段机会"));
+        assert!(!capital_evidence
+            .notes
+            .iter()
+            .any(|note| note.contains("待迁移")));
         assert!(result.order_book.is_none());
         assert!(result.notes.iter().any(|note| note.contains("Tauri/Rust")));
     }
+    #[test]
+    fn observe_with_data_accepts_numeric_capital_metric_values() {
+        let mut data = sample_data_set();
+        let history: Vec<HistoryBar> = (0..45)
+            .map(|idx| {
+                let close = 10.0 + idx as f64 * 0.12;
+                HistoryBar {
+                    date: format!("2020-{:02}-{:02}", 2 + idx / 28, idx % 28 + 1),
+                    open: Some(close - 0.05),
+                    high: Some(close + 0.2),
+                    low: Some(close - 0.2),
+                    close,
+                    volume: Some(1_000_000.0 + idx as f64 * 10_000.0),
+                    capital: Some(1_000_000_000.0),
+                }
+            })
+            .collect();
+        data.histories.insert("111111.SZ".to_string(), history);
+
+        let mut payload = serde_json::to_value(ObserveWithDataRequest {
+            data,
+            request: StockObserveRequest {
+                code: "111111.SZ".to_string(),
+                start_date: "20200201".to_string(),
+                end_date: "20200331".to_string(),
+                series_limit: 40,
+                include_order_book: false,
+            },
+        })
+        .expect("payload should serialize");
+        payload["data"]["capital_evidence"]["111111.SZ"]["items"] = json!([
+            {
+                "category": "community_sentiment",
+                "source": "东方财富股吧",
+                "title": "numeric metric cache sample",
+                "date": "2026-06-25",
+                "metrics": {
+                    "阅读数": 6.0,
+                    "评论数": 2,
+                    "标题": "numeric metric cache sample"
+                },
+                "sentiment": "uncertain",
+                "weight": 0.15,
+                "confidence": "低",
+                "score": 50.0
+            }
+        ]);
+
+        let result = observe_with_data_value(payload)
+            .expect("numeric metric values in cached capital evidence should not block observe");
+        assert!(result.get("trend").is_some());
+        let items = result["capital_evidence"]["items"]
+            .as_array()
+            .expect("capital evidence items");
+        let community = items
+            .iter()
+            .find(|item| {
+                item.get("category").and_then(Value::as_str) == Some("community_sentiment")
+            })
+            .expect("community sentiment item should remain");
+        assert_eq!(
+            community["metrics"]["阅读数"],
+            Value::String("6.0".to_string())
+        );
+        assert!(
+            items
+                .iter()
+                .any(|item| item.get("category").and_then(Value::as_str)
+                    == Some("technical_behavior"))
+        );
+    }
+
+    #[test]
+    fn observe_without_cached_capital_evidence_uses_local_proxy_items() {
+        let mut data = sample_data_set();
+        data.capital_evidence.clear();
+        let result = observe_with_data(
+            &data,
+            &StockObserveRequest {
+                code: "111111.SZ".to_string(),
+                start_date: "2020-01-01".to_string(),
+                end_date: "2020-01-03".to_string(),
+                series_limit: 40,
+                include_order_book: false,
+            },
+        )
+        .expect("observation should still run without cached capital evidence");
+
+        let capital_evidence = result.capital_evidence.as_ref().unwrap();
+        assert!(capital_evidence.items.iter().any(|item| {
+            item.category == "fund_flow" && item.title == "本地量价资金代理" && item.score.is_some()
+        }));
+        assert!(capital_evidence
+            .items
+            .iter()
+            .any(|item| item.category == "message_sentiment_status"));
+        assert!(capital_evidence.sections.iter().any(|section| {
+            section.key == "message_sentiment"
+                && section
+                    .items
+                    .iter()
+                    .any(|item| item.category == "message_sentiment_status")
+        }));
+    }
+
     #[test]
     fn agent_routes_graph_request() {
         let response = run_agent_with_mock("用关系图分析 300750.SZ 产业链选股").unwrap();

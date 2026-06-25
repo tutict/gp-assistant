@@ -226,17 +226,7 @@ class AkShareProvider(StockProvider):
         notes: list[str] = []
         quarterly_eps_items: list[FinancialIndicatorItem] = []
 
-        indicator_fn = getattr(ak, "stock_financial_analysis_indicator_em", None)
-        if indicator_fn is not None:
-            try:
-                with proxy_environment(self.proxy_mode):
-                    df = indicator_fn(symbol=normalized_code, indicator="\u6309\u62a5\u544a\u671f")
-                if df is not None and not df.empty:
-                    row = df.iloc[0]
-                    period = self._format_financial_period(row.get("REPORT_DATE"), row.get("SEASON_LABEL"))
-                    source_parts.append("\u4e1c\u8d22F10")
-            except Exception as exc:
-                notes.append(f"\u4e1c\u8d22F10\u6307\u6807\u6682\u4e0d\u53ef\u7528\uff1a{exc}")
+        notes.append("东财 F10 财报指标已禁用，当前仅合并本地估值、同花顺/新浪可用财务摘要。")
 
         abstract_values: dict[str, float] = {}
         abstract_period = None
@@ -376,19 +366,10 @@ class AkShareProvider(StockProvider):
             except Exception as exc:
                 notes.append(f"\u540c\u82b1\u987a\u5355\u5b63 EPS \u6682\u4e0d\u53ef\u7528\uff1a{exc}")
 
-        indicator_fn = getattr(ak, "stock_financial_analysis_indicator_em", None)
-        if indicator_fn is not None:
-            try:
-                with proxy_environment(self.proxy_mode):
-                    df = indicator_fn(symbol=normalized_code, indicator="\u6309\u5355\u5b63\u5ea6")
-                points = self._quarterly_eps_points(df)
-                if points:
-                    return df, "\u4e1c\u65b9\u8d22\u5bccF10(\u5355\u5b63EPS)", points[0][0], notes
-            except Exception as exc:
-                notes.append(f"\u4e1c\u65b9\u8d22\u5bcc\u5355\u5b63 EPS \u6682\u4e0d\u53ef\u7528\uff1a{exc}")
+        notes.append("东财财报源已禁用。")
 
         if not notes:
-            notes.append("\u5355\u5b63\u5ea6 EPS \u4fe1\u6e90\u6682\u65e0\u53ef\u7528\u660e\u7ec6\u3002")
+            notes.append("单季度 EPS 信源暂无可用明细；东财财报源已禁用。")
         return None, None, None, notes
 
     @classmethod

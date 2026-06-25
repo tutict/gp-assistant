@@ -5,6 +5,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    process::Command,
     sync::{Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -28,13 +29,17 @@ const TENCENT_CONNECT_TIMEOUT_SECS: u64 = 3;
 const TENCENT_REQUEST_TIMEOUT_SECS: u64 = 6;
 const TENCENT_BATCH_TIMEOUT_SECS: u64 = 8;
 const TENCENT_NETWORK_PROBE_TIMEOUT_SECS: u64 = 4;
+const OBSERVE_TOTAL_TIMEOUT_SECS: u64 = 25;
+const OBSERVE_FINANCIAL_TOTAL_TIMEOUT_SECS: u64 = 10;
+const OBSERVE_HISTORY_TOTAL_TIMEOUT_SECS: u64 = 12;
 const OBSERVE_HISTORY_TIMEOUT_SECS: u64 = 8;
+const OBSERVE_CAPITAL_TOTAL_TIMEOUT_SECS: u64 = 10;
+const OBSERVE_CAPITAL_REQUEST_TIMEOUT_SECS: u64 = 6;
+const OBSERVE_GUBA_MAX_POSTS: usize = 10;
 const MIN_OBSERVE_HISTORY_BARS: usize = 3;
 const FINANCIAL_REQUEST_TIMEOUT_SECS: u64 = 6;
 const MAX_TENCENT_WEBVIEW_QUOTE_BYTES: usize = 1_048_576;
 const COMPLETE_QUARTERLY_EPS_POINTS: usize = 8;
-const EASTMONEY_FINANCIAL_ENDPOINT: &str =
-    "https://datacenter.eastmoney.com/securities/api/data/v1/get";
 const THS_FINANCIAL_ENDPOINT: &str =
     "https://basic.10jqka.com.cn/basicapi/finance/index/v1/app_data/";
 const SINA_FINANCIAL_GUIDELINE_ENDPOINT: &str =
@@ -47,6 +52,64 @@ const DEDUCTED_FINANCIAL_FIELDS: [&str; 3] = [
 
 static REFRESH_SEED_CACHE: OnceLock<Mutex<HashMap<PathBuf, Value>>> = OnceLock::new();
 static REFRESH_FINANCIAL_SNAPSHOT_CACHE: OnceLock<Mutex<HashMap<PathBuf, Value>>> = OnceLock::new();
+
+#[tauri::command]
+async fn api_observe(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let fallback_payload = payload.clone();
+    let observe_payload = tokio::time::timeout(
+        Duration::from_secs(OBSERVE_TOTAL_TIMEOUT_SECS),
+        observe_core_payload_with_cached_history(&app, payload),
+    )
+    .await;
+
+    match observe_payload {
+        Ok(Ok((core_payload, notes))) => match gp_core::observe_with_data_value(core_payload.clone()) {
+            Ok(mut result) => {
+                for note in notes {
+                    append_observe_note(&mut result, note);
+                }
+                Ok(result)
+            }
+            Err(error) => Ok(observe_error_result(
+                &core_payload,
+                &fallback_payload,
+                vec![format!("观察计算失败：{error}")],
+            )),
+        },
+        Ok(Err(error)) => Ok(observe_error_result(
+            &Value::Null,
+            &fallback_payload,
+            vec![format!("观察数据准备失败：{error}")],
+        )),
+        Err(_) => match observe_core_payload_from_cache(&app, fallback_payload.clone()) {
+            Ok(core_payload) => match gp_core::observe_with_data_value(core_payload.clone()) {
+                Ok(mut result) => {
+                    append_observe_note(
+                        &mut result,
+                        format!("观察在线补全超过 {OBSERVE_TOTAL_TIMEOUT_SECS} 秒，已返回本地缓存结果。"),
+                    );
+                    Ok(result)
+                }
+                Err(error) => Ok(observe_error_result(
+                    &core_payload,
+                    &fallback_payload,
+                    vec![
+                        format!("观察在线补全超过 {OBSERVE_TOTAL_TIMEOUT_SECS} 秒，已返回本地缓存结果。"),
+                        format!("观察计算失败：{error}"),
+                    ],
+                )),
+            },
+            Err(error) => Ok(observe_error_result(
+                &Value::Null,
+                &fallback_payload,
+                vec![
+                    format!("观察在线补全超过 {OBSERVE_TOTAL_TIMEOUT_SECS} 秒，且无法读取本地缓存。"),
+                    error,
+                ],
+            )),
+        },
+    }
+}
 
 #[tauri::command]
 fn core_screen(payload: Value) -> Result<Value, String> {
@@ -196,17 +259,6 @@ fn api_trend_analyze(app: tauri::AppHandle, payload: Value) -> Result<Value, Str
 fn api_trend_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
     gp_core::trend_screen_with_data_value(core_payload_with_cached_data(&app, "request", payload)?)
         .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-async fn api_observe(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let (core_payload, notes) = observe_core_payload_with_cached_history(&app, payload).await?;
-    let mut result =
-        gp_core::observe_with_data_value(core_payload).map_err(|error| error.to_string())?;
-    for note in notes {
-        append_observe_note(&mut result, note);
-    }
-    Ok(result)
 }
 
 #[tauri::command]
@@ -414,6 +466,191 @@ fn build_tencent_http_client(
         .user_agent(user_agent)
         .build()
         .map_err(|error| format!("create Tencent HTTP client failed: {error}"))
+}
+
+#[cfg(windows)]
+fn powershell_http_get_bytes(url: &str, timeout_secs: u64) -> Result<Vec<u8>, String> {
+    let timeout_ms = timeout_secs.saturating_mul(1000).max(1000).to_string();
+    let script = r#"& {
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$u = $env:GP_HTTP_URL
+$timeoutMs = [int]$env:GP_HTTP_TIMEOUT_MS
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$request = [System.Net.WebRequest]::Create($u)
+$request.Method = 'GET'
+$request.Timeout = $timeoutMs
+$request.ReadWriteTimeout = $timeoutMs
+if ($request -is [System.Net.HttpWebRequest]) {
+  $request.UserAgent = 'Mozilla/5.0 GuXuanYou/0.3 financial'
+  $request.Accept = '*/*'
+  $request.AutomaticDecompression = [Net.DecompressionMethods]::GZip -bor [Net.DecompressionMethods]::Deflate
+}
+$response = $request.GetResponse()
+try {
+  $stream = $response.GetResponseStream()
+  $memory = New-Object System.IO.MemoryStream
+  $stream.CopyTo($memory)
+  [Convert]::ToBase64String($memory.ToArray())
+} finally {
+  if ($stream) { $stream.Dispose() }
+  if ($response) { $response.Dispose() }
+}
+}"#;
+    let mut command = Command::new("powershell.exe");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let output = command
+        .env("GP_HTTP_URL", url)
+        .env("GP_HTTP_TIMEOUT_MS", timeout_ms.as_str())
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .output()
+        .map_err(|error| format!("PowerShell HTTP 启动失败：{error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = if !stderr.trim().is_empty() {
+            stderr.trim()
+        } else {
+            stdout.trim()
+        };
+        return Err(format!(
+            "PowerShell HTTP 失败：{}",
+            truncate_for_note(detail, 240)
+        ));
+    }
+    let encoded = String::from_utf8_lossy(&output.stdout);
+    let encoded = encoded.trim();
+    if encoded.is_empty() {
+        return Err("PowerShell HTTP 返回空响应".to_string());
+    }
+    general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|error| format!("PowerShell HTTP 响应解码失败：{error}"))
+}
+
+#[cfg(not(windows))]
+fn powershell_http_get_bytes(_url: &str, _timeout_secs: u64) -> Result<Vec<u8>, String> {
+    Err("PowerShell HTTP fallback only runs on Windows".to_string())
+}
+
+#[cfg(windows)]
+fn powershell_http_get_bytes_with_headers(
+    url: &str,
+    timeout_secs: u64,
+    user_agent: &str,
+    referer: &str,
+) -> Result<Vec<u8>, String> {
+    let timeout_ms = timeout_secs.saturating_mul(1000).max(1000).to_string();
+    let script = r#"& {
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$u = $env:GP_HTTP_URL
+$timeoutMs = [int]$env:GP_HTTP_TIMEOUT_MS
+$ua = $env:GP_HTTP_UA
+$referer = $env:GP_HTTP_REFERER
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$request = [System.Net.WebRequest]::Create($u)
+$request.Method = 'GET'
+$request.Timeout = $timeoutMs
+$request.ReadWriteTimeout = $timeoutMs
+if ($request -is [System.Net.HttpWebRequest]) {
+  $request.UserAgent = $ua
+  $request.Accept = 'text/html,application/json,text/plain,*/*'
+  if ($referer) { $request.Referer = $referer }
+  $request.AutomaticDecompression = [Net.DecompressionMethods]::GZip -bor [Net.DecompressionMethods]::Deflate
+}
+$response = $request.GetResponse()
+try {
+  $stream = $response.GetResponseStream()
+  $memory = New-Object System.IO.MemoryStream
+  $stream.CopyTo($memory)
+  [Convert]::ToBase64String($memory.ToArray())
+} finally {
+  if ($stream) { $stream.Dispose() }
+  if ($response) { $response.Dispose() }
+}
+}"#;
+    let mut command = Command::new("powershell.exe");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let output = command
+        .env("GP_HTTP_URL", url)
+        .env("GP_HTTP_TIMEOUT_MS", timeout_ms.as_str())
+        .env("GP_HTTP_UA", user_agent)
+        .env("GP_HTTP_REFERER", referer)
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .output()
+        .map_err(|error| format!("PowerShell HTTP 启动失败：{error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = if !stderr.trim().is_empty() {
+            stderr.trim()
+        } else {
+            stdout.trim()
+        };
+        return Err(format!(
+            "PowerShell HTTP 失败：{}",
+            truncate_for_note(detail, 240)
+        ));
+    }
+    let encoded = String::from_utf8_lossy(&output.stdout);
+    let encoded = encoded.trim();
+    if encoded.is_empty() {
+        return Err("PowerShell HTTP 返回空响应".to_string());
+    }
+    general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|error| format!("PowerShell HTTP 响应解码失败：{error}"))
+}
+
+#[cfg(not(windows))]
+fn powershell_http_get_bytes_with_headers(
+    _url: &str,
+    _timeout_secs: u64,
+    _user_agent: &str,
+    _referer: &str,
+) -> Result<Vec<u8>, String> {
+    Err("PowerShell HTTP fallback only runs on Windows".to_string())
+}
+
+fn decode_utf8_lossy(bytes: Vec<u8>) -> String {
+    match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(error) => String::from_utf8_lossy(&error.into_bytes()).to_string(),
+    }
+}
+
+fn truncate_for_note(value: &str, max_chars: usize) -> String {
+    let mut output = String::new();
+    for ch in value.chars().take(max_chars) {
+        output.push(ch);
+    }
+    if value.chars().count() > max_chars {
+        output.push_str("...");
+    }
+    output
 }
 
 #[tauri::command]
@@ -2165,6 +2402,70 @@ async fn observe_core_payload_with_cached_history(
     let mut notes = Vec::new();
     let mut data_changed = false;
 
+    let payload_financial_points = normalize_quarterly_eps(payload.get("financial_eps_points"));
+    if !payload_financial_points.is_empty() {
+        let before = financial_quarterly_eps_count(&data, &code);
+        let provided_count = payload_financial_points.len();
+        merge_quarterly_eps_points(&mut data, &code, payload_financial_points);
+        let after = financial_quarterly_eps_count(&data, &code);
+        if after > before {
+            data_changed = true;
+            notes.push(format!(
+                "季度 EPS 已通过 WebView 财报源预取并写入本地缓存：{code} 新增 {} 期，当前 {after} 期。",
+                after.saturating_sub(before)
+            ));
+        } else if provided_count > 0 {
+            notes.push(format!(
+                "季度 EPS WebView 财报源返回 {provided_count} 期，均已存在于本地缓存。"
+            ));
+        }
+    }
+    if let Some(extra_notes) = payload.get("financial_eps_notes").and_then(Value::as_array) {
+        for note in extra_notes.iter().filter_map(Value::as_str).take(4) {
+            if !note.trim().is_empty() {
+                notes.push(format!(
+                    "WebView 财报 EPS：{}",
+                    truncate_for_note(note.trim(), 240)
+                ));
+            }
+        }
+    }
+
+    let capital_fetch = tokio::time::timeout(
+        Duration::from_secs(OBSERVE_CAPITAL_TOTAL_TIMEOUT_SECS),
+        enrich_observe_capital_evidence(&mut data, &code, &start_date, &end_date),
+    )
+    .await;
+    match capital_fetch {
+        Ok((changed, capital_notes)) => {
+            data_changed |= changed;
+            notes.extend(capital_notes);
+        }
+        Err(_) => {
+            data_changed |= merge_capital_evidence_items(
+                &mut data,
+                &code,
+                vec![
+                    guba_status_item(
+                        &code,
+                        &end_date,
+                        "东方财富股吧请求超时，未取得社区情绪证据。",
+                    ),
+                    eastmoney_lhb_unavailable_item(
+                        &code,
+                        &start_date,
+                        &end_date,
+                        "东方财富龙虎榜机构统计请求超时。",
+                    ),
+                ],
+                &end_date,
+            );
+            notes.push(format!(
+                "综合资金证据联网补全超过 {OBSERVE_CAPITAL_TOTAL_TIMEOUT_SECS} 秒，已写入超时状态证据。"
+            ));
+        }
+    }
+
     let (financial_changed, financial_notes) =
         enrich_observe_financial_snapshot(&mut data, &code).await;
     data_changed |= financial_changed;
@@ -2184,8 +2485,13 @@ async fn observe_core_payload_with_cached_history(
         &end_date,
         MIN_OBSERVE_HISTORY_BARS,
     ) {
-        match fetch_observe_daily_history(&code, &start_date, &end_date).await {
-            Ok(rows) if !rows.is_empty() => {
+        let history_fetch = tokio::time::timeout(
+            Duration::from_secs(OBSERVE_HISTORY_TOTAL_TIMEOUT_SECS),
+            fetch_observe_daily_history(&code, &start_date, &end_date),
+        )
+        .await;
+        match history_fetch {
+            Ok(Ok(rows)) if !rows.is_empty() => {
                 let count = rows.len();
                 insert_history_rows(&mut data, &code, rows);
                 data_changed = true;
@@ -2193,11 +2499,16 @@ async fn observe_core_payload_with_cached_history(
                     "观察日线历史已按需联网更新并写入本地缓存：{code} {count} 条。"
                 ));
             }
-            Ok(_) => {
+            Ok(Ok(_)) => {
                 notes.push(format!("观察日线历史为空：{code}。"));
             }
-            Err(error) => {
+            Ok(Err(error)) => {
                 notes.push(format!("观察日线历史拉取失败：{error}"));
+            }
+            Err(_) => {
+                notes.push(format!(
+                    "观察日线历史拉取超过 {OBSERVE_HISTORY_TOTAL_TIMEOUT_SECS} 秒，已跳过在线补充。"
+                ));
             }
         }
     }
@@ -2211,6 +2522,8 @@ async fn observe_core_payload_with_cached_history(
     let mut observe_request = payload.clone();
     if let Some(map) = observe_request.as_object_mut() {
         map.remove("history");
+        map.remove("financial_eps_points");
+        map.remove("financial_eps_notes");
     }
     let mut request = serde_json::Map::new();
     request.insert("data".to_string(), data);
@@ -2218,12 +2531,787 @@ async fn observe_core_payload_with_cached_history(
     Ok((Value::Object(request), notes))
 }
 
+fn observe_core_payload_from_cache(
+    app: &tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    let data = cached_market_data(app)?;
+    let mut observe_request = payload;
+    if let Some(map) = observe_request.as_object_mut() {
+        map.remove("history");
+        map.remove("financial_eps_points");
+        map.remove("financial_eps_notes");
+    }
+    let mut request = serde_json::Map::new();
+    request.insert("data".to_string(), data);
+    request.insert("request".to_string(), observe_request);
+    Ok(Value::Object(request))
+}
+
+fn observe_error_result(
+    core_payload: &Value,
+    request_payload: &Value,
+    notes: Vec<String>,
+) -> Value {
+    let code = request_payload
+        .get("code")
+        .and_then(Value::as_str)
+        .and_then(normalize_stock_code)
+        .unwrap_or_else(|| {
+            request_payload
+                .get("code")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string()
+        });
+    let stock = core_payload
+        .get("data")
+        .and_then(|data| data.get("stocks"))
+        .and_then(Value::as_array)
+        .and_then(|stocks| {
+            stocks.iter().find(|stock| {
+                stock
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .and_then(normalize_stock_code)
+                    .map(|stock_code| stock_code == code)
+                    .unwrap_or(false)
+            })
+        })
+        .cloned()
+        .unwrap_or_else(|| json!({"code": code, "name": code, "industry": "", "price": null}));
+    json!({
+        "source": "tdx",
+        "stock": stock,
+        "financial_indicators": Value::Null,
+        "trend": Value::Null,
+        "capital_evidence": Value::Null,
+        "order_book": Value::Null,
+        "notes": notes,
+    })
+}
 fn append_observe_note(result: &mut Value, note: String) {
     if let Some(notes) = result.get_mut("notes").and_then(Value::as_array_mut) {
         notes.push(Value::String(note));
     } else if let Some(object) = result.as_object_mut() {
         object.insert("notes".to_string(), Value::Array(vec![Value::String(note)]));
     }
+}
+
+async fn enrich_observe_capital_evidence(
+    data: &mut Value,
+    code: &str,
+    start_date: &str,
+    end_date: &str,
+) -> (bool, Vec<String>) {
+    let mut notes = Vec::new();
+    let mut items = Vec::new();
+    let timeout = Duration::from_secs(OBSERVE_CAPITAL_REQUEST_TIMEOUT_SECS);
+    let client =
+        match build_tencent_http_client("Mozilla/5.0 GuXuanYou/0.3 capital evidence", timeout) {
+            Ok(client) => client,
+            Err(error) => {
+                return (
+                    false,
+                    vec![format!("综合资金证据 HTTP 客户端创建失败：{error}")],
+                );
+            }
+        };
+
+    match fetch_eastmoney_guba_sentiment(&client, code).await {
+        Ok(mut guba_items) if !guba_items.is_empty() => {
+            let count = guba_items.len();
+            items.append(&mut guba_items);
+            notes.push(format!(
+                "消息情绪已接入东方财富股吧：{code} 命中 {count} 条帖子，社区内容仅作情绪线索。"
+            ));
+        }
+        Ok(_) => {
+            items.push(guba_status_item(
+                code,
+                end_date,
+                "东方财富股吧暂无可纳入评分的帖子。",
+            ));
+            notes.push(format!("东方财富股吧暂无可纳入评分的帖子：{code}。"));
+        }
+        Err(error) => {
+            let detail = format!(
+                "东方财富股吧情绪抓取失败：{}",
+                truncate_for_note(&error, 180)
+            );
+            items.push(guba_status_item(code, end_date, &detail));
+            notes.push(detail);
+        }
+    }
+
+    match fetch_eastmoney_institution_lhb(&client, code, start_date, end_date).await {
+        Ok(item) => {
+            let title = item
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or("东方财富龙虎榜机构席位");
+            notes.push(format!("机构席位已接入东方财富龙虎榜机构统计：{title}。"));
+            items.push(item);
+        }
+        Err(error) => {
+            let detail = format!(
+                "东方财富龙虎榜机构统计抓取失败：{}",
+                truncate_for_note(&error, 180)
+            );
+            items.push(eastmoney_lhb_unavailable_item(
+                code, start_date, end_date, &detail,
+            ));
+            notes.push(detail);
+        }
+    }
+
+    if items.is_empty() {
+        return (false, notes);
+    }
+    let changed = merge_capital_evidence_items(data, code, items, end_date);
+    (changed, notes)
+}
+
+async fn fetch_eastmoney_guba_sentiment(
+    client: &reqwest::Client,
+    code: &str,
+) -> Result<Vec<Value>, String> {
+    let normalized =
+        normalize_stock_code(code).ok_or_else(|| format!("无效股吧股票代码：{code}"))?;
+    let digits = normalized
+        .get(..6)
+        .ok_or_else(|| format!("无效股吧股票代码：{code}"))?;
+    let url = format!("https://guba.eastmoney.com/list,{digits}.html");
+    let text = http_get_text_with_headers_first(
+        client,
+        &url,
+        OBSERVE_CAPITAL_REQUEST_TIMEOUT_SECS,
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "https://guba.eastmoney.com/",
+    )
+    .await?;
+    Ok(parse_eastmoney_guba_items(&text, &normalized, &url))
+}
+
+fn parse_eastmoney_guba_items(html: &str, code: &str, list_url: &str) -> Vec<Value> {
+    let Some(raw) = extract_json_after_var(html, "article_list") else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+        return Vec::new();
+    };
+    let Some(rows) = value.get("re").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut ranked_rows = rows.iter().collect::<Vec<_>>();
+    ranked_rows.sort_by(|left, right| {
+        guba_post_heat(right)
+            .partial_cmp(&guba_post_heat(left))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut items = Vec::new();
+    let mut seen = HashSet::new();
+    for row in ranked_rows {
+        if items.len() >= OBSERVE_GUBA_MAX_POSTS {
+            break;
+        }
+        let Some(object) = row.as_object() else {
+            continue;
+        };
+        let title = object_string_any(object, &["post_title"])
+            .map(|value| clean_html_text(&value))
+            .unwrap_or_default();
+        if title.trim().is_empty() || !seen.insert(title.clone()) {
+            continue;
+        }
+        let summary = guba_post_summary(object, &title);
+        let date = object_string_any(object, &["post_publish_time", "post_display_time"])
+            .and_then(|value| normalize_guba_datetime(&value));
+        let post_id = object_string_any(object, &["post_id"]).unwrap_or_default();
+        let url = if post_id.trim().is_empty() {
+            list_url.to_string()
+        } else {
+            let digits = code.get(..6).unwrap_or(code);
+            format!(
+                "https://guba.eastmoney.com/news,{digits},{}.html",
+                post_id.trim()
+            )
+        };
+        let score = guba_sentiment_score(&title, &summary, object);
+        let metrics = json!({
+            "标题": title,
+            "评论数": object_number_any_loose(object, &["post_comment_count"]).map(compact_count).unwrap_or_else(|| "0".to_string()),
+            "阅读数": object_number_any_loose(object, &["post_click_count"]).map(compact_count).unwrap_or_else(|| "0".to_string()),
+            "多空标记": guba_bullish_bearish_label(object.get("bullish_bearish")),
+            "证据分": format!("{score:.1}"),
+        });
+        items.push(json!({
+            "category": "community_sentiment",
+            "source": "东方财富股吧",
+            "title": title,
+            "date": date,
+            "metrics": metrics,
+            "sentiment": score_sentiment_label(score),
+            "weight": 0.15,
+            "confidence": "低",
+            "url": url,
+            "score": round2_value(score),
+            "note": format!("东方财富股吧帖子：{}。社区讨论只作情绪/传闻信号，不直接作为买卖结论。", truncate_for_note(&summary, 120)),
+        }));
+    }
+    items
+}
+
+fn guba_post_heat(value: &Value) -> f64 {
+    let Some(object) = value.as_object() else {
+        return 0.0;
+    };
+    let clicks = object_number_any_loose(object, &["post_click_count"]).unwrap_or(0.0);
+    let comments = object_number_any_loose(object, &["post_comment_count"]).unwrap_or(0.0);
+    let likes =
+        object_number_any_loose(object, &["post_like_count", "post_forward_count"]).unwrap_or(0.0);
+    clicks + comments * 25.0 + likes * 8.0
+}
+
+fn guba_post_summary(object: &serde_json::Map<String, Value>, title: &str) -> String {
+    let mut parts = Vec::new();
+    if let Some(nickname) = object_string_any(object, &["user_nickname"]) {
+        let nickname = clean_html_text(&nickname);
+        if !nickname.is_empty() {
+            parts.push(format!("作者 {nickname}"));
+        }
+    }
+    if let Some(clicks) = object_number_any_loose(object, &["post_click_count"]) {
+        parts.push(format!("阅读 {}", compact_count(clicks)));
+    }
+    if let Some(comments) = object_number_any_loose(object, &["post_comment_count"]) {
+        parts.push(format!("评论 {}", compact_count(comments)));
+    }
+    if parts.is_empty() {
+        title.to_string()
+    } else {
+        parts.join("，")
+    }
+}
+
+async fn fetch_eastmoney_institution_lhb(
+    client: &reqwest::Client,
+    code: &str,
+    start_date: &str,
+    end_date: &str,
+) -> Result<Value, String> {
+    let normalized =
+        normalize_stock_code(code).ok_or_else(|| format!("无效龙虎榜股票代码：{code}"))?;
+    let digits = normalized
+        .get(..6)
+        .ok_or_else(|| format!("无效龙虎榜股票代码：{code}"))?;
+    let start = normalize_history_date(start_date).unwrap_or_else(|| fallback_lhb_start_date());
+    let end = normalize_history_date(end_date).unwrap_or_else(|| fallback_today_date());
+    let filter =
+        format!("(TRADE_DATE>='{start}')(TRADE_DATE<='{end}')(SECURITY_CODE=\"{digits}\")");
+    let url = reqwest::Url::parse_with_params(
+        "https://datacenter-web.eastmoney.com/api/data/v1/get",
+        &[
+            ("sortColumns", "NET_BUY_AMT,TRADE_DATE,SECURITY_CODE"),
+            ("sortTypes", "-1,-1,1"),
+            ("pageSize", "50"),
+            ("pageNumber", "1"),
+            ("reportName", "RPT_ORGANIZATION_TRADE_DETAILS"),
+            ("columns", "ALL"),
+            ("source", "WEB"),
+            ("client", "WEB"),
+            ("filter", filter.as_str()),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    let text = http_get_text_with_headers_first(
+        client,
+        &url.to_string(),
+        OBSERVE_CAPITAL_REQUEST_TIMEOUT_SECS,
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "https://data.eastmoney.com/stock/jgmmtj.html",
+    )
+    .await?;
+    parse_eastmoney_lhb_item(&text, &normalized, &start, &end)
+}
+
+fn parse_eastmoney_lhb_item(
+    text: &str,
+    code: &str,
+    start_date: &str,
+    end_date: &str,
+) -> Result<Value, String> {
+    let value: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
+    let rows = value
+        .get("result")
+        .and_then(|result| result.get("data"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let digits = code.get(..6).unwrap_or(code);
+    let mut best: Option<&Value> = None;
+    let mut best_abs = -1.0;
+    for row in &rows {
+        let Some(object) = row.as_object() else {
+            continue;
+        };
+        let row_code = object_string_any(object, &["SECURITY_CODE"]);
+        if row_code.as_deref() != Some(digits) {
+            continue;
+        }
+        let net = object_number_any_loose(object, &["NET_BUY_AMT"])
+            .unwrap_or(0.0)
+            .abs();
+        if net > best_abs {
+            best_abs = net;
+            best = Some(row);
+        }
+    }
+    let Some(row) = best.and_then(Value::as_object) else {
+        return Ok(eastmoney_lhb_no_hit_item(code, start_date, end_date));
+    };
+    let buy = object_number_any_loose(row, &["BUY_AMT"]).unwrap_or(0.0);
+    let sell = object_number_any_loose(row, &["SELL_AMT"]).unwrap_or(0.0);
+    let net = object_number_any_loose(row, &["NET_BUY_AMT"]).unwrap_or(buy - sell);
+    let ratio = object_number_any_loose(row, &["RATIO"]);
+    let score = institution_lhb_score(net, buy, sell, ratio);
+    let trade_date =
+        object_string_any(row, &["TRADE_DATE"]).and_then(|value| normalize_history_date(&value));
+    let reason =
+        object_string_any(row, &["EXPLANATION"]).unwrap_or_else(|| "龙虎榜机构统计".to_string());
+    Ok(json!({
+        "category": "institution_lhb",
+        "source": "东方财富龙虎榜机构统计",
+        "title": "东方财富龙虎榜机构席位",
+        "date": trade_date,
+        "metrics": {
+            "机构买入额": format_amount_wan(buy),
+            "机构卖出额": format_amount_wan(sell),
+            "机构净买额": format_amount_wan(net),
+            "净买额占成交额比": ratio.map(|value| format!("{}%", format_number_like(value))).unwrap_or_else(|| "-".to_string()),
+            "买方机构数": object_number_any_loose(row, &["BUY_TIMES", "BUY_COUNT"]).map(format_number_like).unwrap_or_else(|| "-".to_string()),
+            "卖方机构数": object_number_any_loose(row, &["SELL_TIMES", "SELL_COUNT"]).map(format_number_like).unwrap_or_else(|| "-".to_string()),
+            "上榜原因": reason,
+            "证据分": format!("{score:.1}"),
+        },
+        "sentiment": score_sentiment_label(score),
+        "weight": 0.25,
+        "confidence": "高",
+        "url": "https://data.eastmoney.com/stock/jgmmtj.html",
+        "score": round2_value(score),
+        "note": "东方财富龙虎榜机构买卖每日统计；口径为公开龙虎榜机构专用席位，不等同于全部机构持仓变化。",
+    }))
+}
+
+fn guba_status_item(code: &str, end_date: &str, detail: &str) -> Value {
+    json!({
+        "category": "community_sentiment",
+        "source": "东方财富股吧",
+        "title": "东方财富股吧暂无可用情绪证据",
+        "date": normalize_history_date(end_date),
+        "metrics": {
+            "状态": detail,
+            "查询窗口": normalize_history_date(end_date).unwrap_or_else(|| end_date.to_string()),
+            "已尝试信源": "东方财富股吧",
+            "股票": code,
+        },
+        "sentiment": "uncertain",
+        "weight": 0.15,
+        "confidence": "低",
+        "url": guba_list_url(code),
+        "score": Value::Null,
+        "note": "未取得可纳入评分的东方财富股吧帖子；该桶保留中性权重。",
+    })
+}
+
+fn guba_list_url(code: &str) -> String {
+    let digits = normalize_stock_code(code)
+        .and_then(|value| value.get(..6).map(ToOwned::to_owned))
+        .unwrap_or_else(|| {
+            code.chars()
+                .filter(|ch| ch.is_ascii_digit())
+                .take(6)
+                .collect()
+        });
+    format!("https://guba.eastmoney.com/list,{digits}.html")
+}
+
+fn eastmoney_lhb_unavailable_item(
+    code: &str,
+    start_date: &str,
+    end_date: &str,
+    detail: &str,
+) -> Value {
+    json!({
+        "category": "institution_lhb_status",
+        "source": "东方财富龙虎榜机构统计",
+        "title": "东方财富龙虎榜机构统计不可用",
+        "date": normalize_history_date(end_date),
+        "metrics": {
+            "状态": "接口不可用",
+            "查询窗口": format!("{} - {}", normalize_history_date(start_date).unwrap_or_else(|| start_date.to_string()), normalize_history_date(end_date).unwrap_or_else(|| end_date.to_string())),
+            "已尝试信源": "东方财富龙虎榜机构买卖每日统计",
+            "失败原因": detail,
+            "股票": code,
+        },
+        "sentiment": "uncertain",
+        "weight": 0.25,
+        "confidence": "低",
+        "url": "https://data.eastmoney.com/stock/jgmmtj.html",
+        "score": Value::Null,
+        "note": "东方财富龙虎榜机构统计本次不可用；机构席位不参与加减分。",
+    })
+}
+
+fn eastmoney_lhb_no_hit_item(code: &str, start_date: &str, end_date: &str) -> Value {
+    let days = window_days(start_date, end_date);
+    json!({
+        "category": "institution_lhb_status",
+        "source": "东方财富龙虎榜机构统计",
+        "title": format!("近 {days} 日未上龙虎榜机构席位"),
+        "date": end_date,
+        "metrics": {
+            "状态": format!("近 {days} 日未上榜"),
+            "查询窗口": format!("{start_date} - {end_date}"),
+            "已尝试信源": "东方财富龙虎榜机构买卖每日统计",
+            "股票": code,
+        },
+        "sentiment": "uncertain",
+        "weight": 0.25,
+        "confidence": "中",
+        "url": "https://data.eastmoney.com/stock/jgmmtj.html",
+        "score": Value::Null,
+        "note": "没有龙虎榜机构专用席位记录，不代表机构没有买卖；只说明查询窗口内未公开上榜。",
+    })
+}
+
+fn merge_capital_evidence_items(
+    data: &mut Value,
+    code: &str,
+    items: Vec<Value>,
+    end_date: &str,
+) -> bool {
+    if !data.is_object() {
+        *data = json!({});
+    }
+    let object = data.as_object_mut().expect("data object just initialized");
+    let evidence_map = object
+        .entry("capital_evidence".to_string())
+        .or_insert_with(|| json!({}));
+    if !evidence_map.is_object() {
+        *evidence_map = json!({});
+    }
+    let evidence_object = evidence_map
+        .as_object_mut()
+        .expect("capital evidence object just initialized");
+    let existing = evidence_object
+        .get(code)
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let mut merged_items = existing
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let new_items = items;
+    let has_community_batch = new_items
+        .iter()
+        .any(|item| item.get("category").and_then(Value::as_str) == Some("community_sentiment"));
+    if has_community_batch {
+        merged_items.retain(|old| {
+            !matches!(
+                old.get("category").and_then(Value::as_str),
+                Some("community_sentiment" | "message_sentiment_status")
+            )
+        });
+    }
+    for item in new_items {
+        let category = item.get("category").and_then(Value::as_str).unwrap_or("");
+        if category != "community_sentiment" {
+            let replacement_categories = match category {
+                "institution_lhb" | "institution_lhb_status" => {
+                    vec!["institution_lhb", "institution_lhb_status"]
+                }
+                "message_sentiment_status" => {
+                    vec!["community_sentiment", "message_sentiment_status"]
+                }
+                _ => vec![category],
+            };
+            merged_items.retain(|old| {
+                old.get("category")
+                    .and_then(Value::as_str)
+                    .map(|old_category| !replacement_categories.contains(&old_category))
+                    .unwrap_or(true)
+            });
+        }
+        merged_items.push(item);
+    }
+    evidence_object.insert(
+        code.to_string(),
+        json!({
+            "stock_code": code,
+            "generated_at": epoch_millis().to_string(),
+            "composite_score": Value::Null,
+            "confidence": "中",
+            "model_used": false,
+            "as_of_trade_date": normalize_history_date(end_date),
+            "freshness": "refreshed",
+            "contributions": {},
+            "summary": "已接入东方财富股吧情绪与东方财富龙虎榜机构统计，最终分数由 Rust 规则合成。",
+            "sections": [],
+            "items": merged_items,
+            "notes": ["东方财富股吧仅作社区情绪线索；东方财富龙虎榜机构统计为公开机构专用席位口径。"],
+        }),
+    );
+    true
+}
+
+async fn http_get_text_with_headers_first(
+    client: &reqwest::Client,
+    url: &str,
+    timeout_secs: u64,
+    user_agent: &str,
+    referer: &str,
+) -> Result<String, String> {
+    match powershell_http_get_bytes_with_headers(url, timeout_secs, user_agent, referer) {
+        Ok(bytes) => return Ok(decode_utf8_lossy(bytes)),
+        Err(powershell_error) => match client
+            .get(url)
+            .header("User-Agent", user_agent)
+            .header("Referer", referer)
+            .header("Accept", "text/html,application/json,text/plain,*/*")
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => {
+                response.text().await.map_err(|error| error.to_string())
+            }
+            Ok(response) => Err(format!(
+                "PowerShell: {powershell_error}; reqwest HTTP {}",
+                response.status().as_u16()
+            )),
+            Err(error) => Err(format!("PowerShell: {powershell_error}; reqwest: {error}")),
+        },
+    }
+}
+
+fn extract_json_after_var(html: &str, var_name: &str) -> Option<String> {
+    let marker = format!("var {var_name}=");
+    let start = html.find(&marker)? + marker.len();
+    extract_balanced_json(&html[start..])
+}
+
+fn extract_balanced_json(raw: &str) -> Option<String> {
+    let mut start = None;
+    for (index, ch) in raw.char_indices() {
+        if ch == '{' || ch == '[' {
+            start = Some((index, ch));
+            break;
+        }
+    }
+    let (start_index, open) = start?;
+    let close = if open == '{' { '}' } else { ']' };
+    let mut depth = 0_i32;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, ch) in raw[start_index..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+        } else if ch == open {
+            depth += 1;
+        } else if ch == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(raw[start_index..start_index + offset + ch.len_utf8()].to_string());
+            }
+        }
+    }
+    None
+}
+
+fn clean_html_text(value: &str) -> String {
+    value
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn normalize_guba_datetime(value: &str) -> Option<String> {
+    let text = value.trim();
+    if text.len() >= 10 {
+        normalize_history_date(&text[..10])
+    } else {
+        None
+    }
+}
+
+fn guba_sentiment_score(
+    title: &str,
+    summary: &str,
+    object: &serde_json::Map<String, Value>,
+) -> f64 {
+    let text = format!("{title} {summary}");
+    let mut score: f64 = 50.0;
+    if contains_any(
+        &text,
+        &[
+            "利好", "上涨", "看多", "突破", "增长", "改善", "中标", "订单", "企稳", "买入", "加仓",
+        ],
+    ) {
+        score += 18.0;
+    }
+    if contains_any(
+        &text,
+        &[
+            "利空", "下跌", "看空", "亏损", "风险", "承压", "减持", "出货", "破位", "调查",
+        ],
+    ) {
+        score -= 18.0;
+    }
+    if let Some(flag) = object.get("bullish_bearish").and_then(Value::as_i64) {
+        if flag > 0 {
+            score += 8.0;
+        } else if flag < 0 {
+            score -= 8.0;
+        }
+    }
+    round2_value(score.clamp(0.0, 100.0))
+}
+
+fn contains_any(text: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| text.contains(needle))
+}
+
+fn guba_bullish_bearish_label(value: Option<&Value>) -> &'static str {
+    match value.and_then(Value::as_i64).unwrap_or(0) {
+        flag if flag > 0 => "看多",
+        flag if flag < 0 => "看空",
+        _ => "未标注",
+    }
+}
+
+fn score_sentiment_label(score: f64) -> &'static str {
+    if score >= 60.0 {
+        "positive"
+    } else if score <= 40.0 {
+        "negative"
+    } else {
+        "uncertain"
+    }
+}
+
+fn institution_lhb_score(net: f64, buy: f64, sell: f64, ratio: Option<f64>) -> f64 {
+    let total = (buy.abs() + sell.abs()).max(1.0);
+    let directional = (net / total * 35.0).clamp(-35.0, 35.0);
+    let ratio_score = ratio.unwrap_or(0.0).clamp(-15.0, 15.0);
+    round2_value((50.0 + directional + ratio_score).clamp(0.0, 100.0))
+}
+
+fn round2_value(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
+}
+
+fn format_amount_wan(value: f64) -> String {
+    if value.abs() >= 100_000_000.0 {
+        format!("{:.2} 亿", value / 100_000_000.0)
+    } else if value.abs() >= 10_000.0 {
+        format!("{:.2} 万", value / 10_000.0)
+    } else {
+        format_number_like(value)
+    }
+}
+
+fn format_number_like(value: f64) -> String {
+    if value.abs() >= 100.0 {
+        format!("{value:.0}")
+    } else if value.abs() >= 10.0 {
+        format!("{value:.2}")
+    } else {
+        format!("{value:.3}")
+    }
+}
+
+fn compact_count(value: f64) -> String {
+    if value >= 10_000.0 {
+        format!("{:.1}万", value / 10_000.0)
+    } else {
+        format_number_like(value)
+    }
+}
+
+fn window_days(start_date: &str, end_date: &str) -> i64 {
+    let start = compact_date_key(start_date)
+        .and_then(|key| days_from_civil_key(&key))
+        .unwrap_or(0);
+    let end = compact_date_key(end_date)
+        .and_then(|key| days_from_civil_key(&key))
+        .unwrap_or(start);
+    (end - start + 1).max(1)
+}
+
+fn fallback_today_date() -> String {
+    let days = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| (duration.as_secs() / 86_400) as i64)
+        .unwrap_or(0);
+    civil_date_from_days(days)
+}
+
+fn fallback_lhb_start_date() -> String {
+    let days = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| (duration.as_secs() / 86_400) as i64 - 30)
+        .unwrap_or(0);
+    civil_date_from_days(days)
+}
+
+fn days_from_civil_key(key: &str) -> Option<i64> {
+    if key.len() != 8 {
+        return None;
+    }
+    let year = key.get(0..4)?.parse::<i32>().ok()?;
+    let month = key.get(4..6)?.parse::<u32>().ok()?;
+    let day = key.get(6..8)?.parse::<u32>().ok()?;
+    Some(days_from_civil(year, month, day))
+}
+
+fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
+    let y = year as i64 - if month <= 2 { 1 } else { 0 };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = month as i64 + if month > 2 { -3 } else { 9 };
+    let doy = (153 * mp + 2) / 5 + day as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+fn civil_date_from_days(days_since_epoch: i64) -> String {
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if month <= 2 { 1 } else { 0 };
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 struct QuarterlyEpsFetchResult {
@@ -2246,7 +3334,21 @@ async fn enrich_observe_financial_snapshot(data: &mut Value, code: &str) -> (boo
         return (changed, notes);
     }
 
-    let fetch = fetch_quarterly_eps_chain(code).await;
+    let fetch = match tokio::time::timeout(
+        Duration::from_secs(OBSERVE_FINANCIAL_TOTAL_TIMEOUT_SECS),
+        fetch_quarterly_eps_chain(code),
+    )
+    .await
+    {
+        Ok(fetch) => fetch,
+        Err(_) => QuarterlyEpsFetchResult {
+            points: Vec::new(),
+            sources: Vec::new(),
+            errors: vec![format!(
+                "在线财报补全超过 {OBSERVE_FINANCIAL_TOTAL_TIMEOUT_SECS} 秒，已跳过同花顺/新浪补充。"
+            )],
+        },
+    };
     if !fetch.points.is_empty() {
         let before = financial_quarterly_eps_count(data, code);
         merge_quarterly_eps_points(data, code, fetch.points);
@@ -2273,7 +3375,7 @@ async fn enrich_observe_financial_snapshot(data: &mut Value, code: &str) -> (boo
             fetch.errors.join("；")
         };
         let note = format!(
-            "季度 EPS 明细仍不足：本地缓存 {cached_count} 期，通达信基础财务 {current_count} 期；已尝试东方财富、同花顺和新浪财经，{detail}。"
+            "季度 EPS 明细仍不足：本地缓存 {cached_count} 期，通达信基础财务 {current_count} 期；已尝试同花顺和新浪财经，{detail}。"
         );
         if push_financial_note(data, code, note.clone()) {
             changed = true;
@@ -2300,27 +3402,15 @@ async fn fetch_quarterly_eps_chain(code: &str) -> QuarterlyEpsFetchResult {
     let mut sources = Vec::new();
     let mut errors = Vec::new();
 
-    match fetch_eastmoney_quarterly_eps(&client, code).await {
+    match fetch_ths_quarterly_eps(&client, code).await {
         Ok(rows) if !rows.is_empty() => {
             points.extend(rows);
-            sources.push("东方财富季度 EPS".to_string());
+            sources.push("同花顺财务摘要".to_string());
         }
-        Ok(_) => errors.push("东方财富：返回空 EPS 明细".to_string()),
-        Err(error) => errors.push(format!("东方财富：{error}")),
+        Ok(_) => errors.push("同花顺：返回空 EPS 明细".to_string()),
+        Err(error) => errors.push(format!("同花顺：{error}")),
     }
     points = sort_dedup_quarterly_eps(points);
-
-    if points.len() < COMPLETE_QUARTERLY_EPS_POINTS {
-        match fetch_ths_quarterly_eps(&client, code).await {
-            Ok(rows) if !rows.is_empty() => {
-                points.extend(rows);
-                sources.push("同花顺财务摘要".to_string());
-            }
-            Ok(_) => errors.push("同花顺：返回空 EPS 明细".to_string()),
-            Err(error) => errors.push(format!("同花顺：{error}")),
-        }
-        points = sort_dedup_quarterly_eps(points);
-    }
 
     if points.len() < COMPLETE_QUARTERLY_EPS_POINTS {
         match fetch_sina_quarterly_eps(&client, code).await {
@@ -2334,89 +3424,15 @@ async fn fetch_quarterly_eps_chain(code: &str) -> QuarterlyEpsFetchResult {
         points = sort_dedup_quarterly_eps(points);
     }
 
+    if points.is_empty() {
+        errors.push("东财财报源已禁用；仅保留同花顺/新浪与本地缓存参与财报补全。".to_string());
+    }
+
     QuarterlyEpsFetchResult {
         points,
         sources,
         errors,
     }
-}
-
-async fn fetch_eastmoney_quarterly_eps(
-    client: &reqwest::Client,
-    code: &str,
-) -> Result<Vec<Value>, String> {
-    let symbol =
-        eastmoney_security_code(code).ok_or_else(|| format!("无法识别东财财报代码：{code}"))?;
-    let filter = format!(r#"(SECUCODE="{symbol}")"#);
-    let url = reqwest::Url::parse_with_params(
-        EASTMONEY_FINANCIAL_ENDPOINT,
-        &[
-            ("reportName", "RPT_F10_QTR_MAINFINADATA"),
-            ("columns", "ALL"),
-            ("quoteColumns", ""),
-            ("filter", filter.as_str()),
-            ("pageNumber", "1"),
-            ("pageSize", "200"),
-            ("sortTypes", "-1"),
-            ("sortColumns", "REPORT_DATE"),
-            ("source", "HSF10"),
-            ("client", "PC"),
-        ],
-    )
-    .map_err(|error| error.to_string())?;
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(format!("HTTP {}", status.as_u16()));
-    }
-    let text = response.text().await.map_err(|error| error.to_string())?;
-    parse_eastmoney_quarterly_eps_json(&text)
-}
-
-fn parse_eastmoney_quarterly_eps_json(text: &str) -> Result<Vec<Value>, String> {
-    let value: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
-    let rows = value
-        .get("result")
-        .and_then(|result| result.get("data"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| "响应缺少 result.data".to_string())?;
-    let mut points = Vec::new();
-    for row in rows {
-        let Some(object) = row.as_object() else {
-            continue;
-        };
-        let Some(period) = object_string_any(
-            object,
-            &[
-                "REPORT_DATE",
-                "REPORTDATE",
-                "END_DATE",
-                "REPORT_PERIOD",
-                "REPORT_NAME",
-            ],
-        )
-        .and_then(|raw| financial_period_from_text(&raw)) else {
-            continue;
-        };
-        let Some(eps) = object_number_any_loose(
-            object,
-            &[
-                "BASIC_EPS",
-                "EPSJB",
-                "EPS",
-                "DILUTED_EPS",
-                "DEDUCT_BASIC_EPS",
-            ],
-        ) else {
-            continue;
-        };
-        points.push(quarterly_eps_value(&period, eps, "东方财富季度 EPS"));
-    }
-    Ok(sort_dedup_quarterly_eps(points))
 }
 
 async fn fetch_ths_quarterly_eps(
@@ -2444,16 +3460,28 @@ async fn fetch_ths_quarterly_eps(
         ],
     )
     .map_err(|error| error.to_string())?;
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(format!("HTTP {}", status.as_u16()));
-    }
-    let text = response.text().await.map_err(|error| error.to_string())?;
+    let url_text = url.to_string();
+    let text = match client.get(url.clone()).send().await {
+        Ok(response) if response.status().is_success() => {
+            response.text().await.map_err(|error| error.to_string())?
+        }
+        Ok(response) => {
+            let primary_error = format!("HTTP {}", response.status().as_u16());
+            let bytes = powershell_http_get_bytes(&url_text, FINANCIAL_REQUEST_TIMEOUT_SECS)
+                .map_err(|fallback_error| {
+                    format!("{primary_error}; PowerShell fallback: {fallback_error}")
+                })?;
+            decode_utf8_lossy(bytes)
+        }
+        Err(error) => {
+            let primary_error = error.to_string();
+            let bytes = powershell_http_get_bytes(&url_text, FINANCIAL_REQUEST_TIMEOUT_SECS)
+                .map_err(|fallback_error| {
+                    format!("{primary_error}; PowerShell fallback: {fallback_error}")
+                })?;
+            decode_utf8_lossy(bytes)
+        }
+    };
     parse_ths_quarterly_eps_json(&text)
 }
 
@@ -2515,17 +3543,32 @@ async fn fetch_sina_quarterly_eps(
         let url = format!(
             "{SINA_FINANCIAL_GUIDELINE_ENDPOINT}/stockid/{digits}/ctrl/{year}/displaytype/4.phtml"
         );
-        match client.get(url).send().await {
-            Ok(response) if response.status().is_success() => match response.bytes().await {
-                Ok(bytes) => {
-                    let (text, _, _) = encoding_rs::GBK.decode(&bytes);
-                    points.extend(parse_sina_quarterly_eps_html(&text));
+        let bytes_result = match client.get(&url).send().await {
+            Ok(response) if response.status().is_success() => response
+                .bytes()
+                .await
+                .map(|bytes| bytes.to_vec())
+                .map_err(|error| error.to_string()),
+            Ok(response) => Err(format!("HTTP {}", response.status().as_u16())),
+            Err(error) => Err(error.to_string()),
+        };
+        let bytes = match bytes_result {
+            Ok(bytes) => bytes,
+            Err(primary_error) => {
+                match powershell_http_get_bytes(&url, FINANCIAL_REQUEST_TIMEOUT_SECS) {
+                    Ok(bytes) => bytes,
+                    Err(fallback_error) => {
+                        errors.push(format!(
+                            "{} 年 {}; PowerShell fallback: {}",
+                            year, primary_error, fallback_error
+                        ));
+                        continue;
+                    }
                 }
-                Err(error) => errors.push(error.to_string()),
-            },
-            Ok(response) => errors.push(format!("{} 年 HTTP {}", year, response.status().as_u16())),
-            Err(error) => errors.push(format!("{} 年 {}", year, error)),
-        }
+            }
+        };
+        let (text, _, _) = encoding_rs::GBK.decode(&bytes);
+        points.extend(parse_sina_quarterly_eps_html(&text));
         points = sort_dedup_quarterly_eps(points);
         if points.len() >= COMPLETE_QUARTERLY_EPS_POINTS {
             break;
@@ -2695,7 +3738,7 @@ fn merge_quarterly_eps_points(data: &mut Value, code: &str, points: Vec<Value>) 
         }
     }
     entry.insert("quarterly_eps".to_string(), Value::Array(normalized));
-    append_financial_source(entry, "东方财富/同花顺/新浪季度 EPS");
+    append_financial_source(entry, "同花顺/新浪季度 EPS");
 }
 
 fn financial_quarterly_eps_count(data: &Value, code: &str) -> usize {
@@ -2942,10 +3985,6 @@ fn financial_period_from_text(raw: &str) -> Option<String> {
     Some(format!("{year}Q{quarter}"))
 }
 
-fn eastmoney_security_code(code: &str) -> Option<String> {
-    normalize_stock_code(code)
-}
-
 fn ths_market_code(code: &str) -> Option<u16> {
     let normalized = normalize_stock_code(code)?;
     let digits = normalized.get(..6)?;
@@ -3069,17 +4108,15 @@ async fn fetch_observe_daily_history(
     let timeout = Duration::from_secs(OBSERVE_HISTORY_TIMEOUT_SECS);
     let client = build_tencent_http_client("Mozilla/5.0 GuXuanYou/0.3 observe history", timeout)?;
     let mut errors = Vec::new();
-    match fetch_eastmoney_daily_history(&client, code, start_date, end_date).await {
-        Ok(rows) if !rows.is_empty() => return Ok(rows),
-        Ok(_) => errors.push("\u{4e1c}\u{65b9}\u{8d22}\u{5bcc}\u{65e5}\u{7ebf}\u{8fd4}\u{56de}\u{7a7a}\u{6570}\u{636e}".to_string()),
-        Err(error) => errors.push(format!("\u{4e1c}\u{65b9}\u{8d22}\u{5bcc}\u{65e5}\u{7ebf}\u{ff1a}{error}")),
-    }
     match fetch_tencent_daily_history(&client, code, start_date, end_date).await {
         Ok(rows) if !rows.is_empty() => return Ok(rows),
-        Ok(_) => errors.push(
-            "\u{817e}\u{8baf}\u{65e5}\u{7ebf}\u{8fd4}\u{56de}\u{7a7a}\u{6570}\u{636e}".to_string(),
-        ),
-        Err(error) => errors.push(format!("\u{817e}\u{8baf}\u{65e5}\u{7ebf}\u{ff1a}{error}")),
+        Ok(_) => errors.push("腾讯日线返回空数据".to_string()),
+        Err(error) => errors.push(format!("腾讯日线：{error}")),
+    }
+    match fetch_eastmoney_daily_history(&client, code, start_date, end_date).await {
+        Ok(rows) if !rows.is_empty() => return Ok(rows),
+        Ok(_) => errors.push("东方财富日线返回空数据".to_string()),
+        Err(error) => errors.push(format!("东方财富日线：{error}")),
     }
     Err(errors.join("\u{ff1b}"))
 }
@@ -3878,25 +4915,82 @@ mod tests {
     }
 
     #[test]
-    fn eastmoney_quarterly_eps_parser_extracts_basic_eps() {
-        let raw = json!({
-            "result": {
-                "data": [
-                    {"REPORT_DATE": "2026-03-31 00:00:00", "BASIC_EPS": "0.42"},
-                    {"REPORT_DATE": "2025-03-31 00:00:00", "BASIC_EPS": 0.36}
-                ]
-            }
-        })
-        .to_string();
-
-        let rows = parse_eastmoney_quarterly_eps_json(&raw).expect("eastmoney parser");
-
-        assert_eq!(rows.len(), 2);
-        assert_eq!(
-            rows[0].get("period").and_then(Value::as_str),
-            Some("2026Q1")
+    fn eastmoney_guba_parser_extracts_hottest_sentiment_items() {
+        let rows = (0..12)
+            .map(|idx| {
+                format!(
+                    r#"{{"post_id":{},"post_title":"利好突破 看多上涨 {}","stockbar_code":"000725","post_click_count":{},"post_comment_count":{},"post_publish_time":"2026-06-25 12:{:02}:50","bullish_bearish":1}}"#,
+                    100 + idx,
+                    idx,
+                    idx * 10,
+                    idx,
+                    idx
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let html = format!(r#"<script>var article_list={{"re":[{}]}};</script>"#, rows);
+        let items = parse_eastmoney_guba_items(
+            &html,
+            "000725.SZ",
+            "https://guba.eastmoney.com/list,000725.html",
         );
-        assert_eq!(rows[0].get("value").and_then(Value::as_f64), Some(0.42));
+
+        assert_eq!(items.len(), 10);
+        let first = items.first().unwrap();
+        assert_eq!(
+            first.get("category").and_then(Value::as_str),
+            Some("community_sentiment")
+        );
+        assert_eq!(
+            first.get("source").and_then(Value::as_str),
+            Some("东方财富股吧")
+        );
+        assert!(first
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap()
+            .contains("11"));
+        assert_eq!(
+            first
+                .get("metrics")
+                .and_then(Value::as_object)
+                .and_then(|metrics| metrics.get("评论数"))
+                .and_then(Value::as_str),
+            Some("11.00")
+        );
+        assert!(first.get("score").and_then(Value::as_f64).unwrap() > 60.0);
+    }
+
+    #[test]
+    fn eastmoney_lhb_parser_extracts_matching_stock() {
+        let raw = r#"{"result":{"data":[{"SECURITY_CODE":"000725","SECURITY_NAME_ABBR":"京东方A","TRADE_DATE":"2026-06-17 00:00:00","BUY_AMT":147874970.48,"SELL_AMT":274892234.61,"NET_BUY_AMT":-127017264.13,"RATIO":-1.0467,"BUY_TIMES":0,"SELL_TIMES":1,"EXPLANATION":"日涨幅偏离值达到7%的前5只证券"}]}}"#;
+        let item = parse_eastmoney_lhb_item(raw, "000725.SZ", "2026-06-01", "2026-06-25").unwrap();
+        assert_eq!(
+            item.get("category").and_then(Value::as_str),
+            Some("institution_lhb")
+        );
+        assert_eq!(
+            item.get("source").and_then(Value::as_str),
+            Some("东方财富龙虎榜机构统计")
+        );
+        assert!(item.get("score").and_then(Value::as_f64).unwrap() < 50.0);
+        let metrics = item.get("metrics").and_then(Value::as_object).unwrap();
+        assert!(metrics
+            .get("机构净买额")
+            .and_then(Value::as_str)
+            .unwrap()
+            .contains("亿"));
+    }
+
+    #[test]
+    fn eastmoney_lhb_parser_returns_no_hit_status() {
+        let raw = r#"{"result":{"data":[{"SECURITY_CODE":"600000","TRADE_DATE":"2026-06-17 00:00:00"}]}}"#;
+        let item = parse_eastmoney_lhb_item(raw, "000725.SZ", "2026-06-01", "2026-06-25").unwrap();
+        assert_eq!(
+            item.get("category").and_then(Value::as_str),
+            Some("institution_lhb_status")
+        );
     }
 
     #[test]

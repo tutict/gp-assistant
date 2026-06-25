@@ -87,6 +87,8 @@ const MOBILE_TAURI_INVOKE_TIMEOUT_MS = 20000;
 const MOBILE_TENCENT_SCRIPT_BATCH_SIZE = 120;
 const MOBILE_TENCENT_SCRIPT_TIMEOUT_MS = 8000;
 const MOBILE_REFRESH_LOG_LIMIT = 80;
+const OBSERVE_FINANCIAL_EPS_TIMEOUT_MS = 8000;
+const OBSERVE_FINANCIAL_EPS_TARGET_POINTS = 8;
 const MOBILE_DEDUCTED_FINANCIAL_FIELDS = [
   "deducted_net_profit_billion",
   "deducted_net_profit_margin",
@@ -214,8 +216,20 @@ const TAURI_GET_PREFIX_ROUTES = [
         series_limit: clampInt(parsed.searchParams.get("series_limit"), 20, 500, 120),
         include_order_book: parsed.searchParams.get("include_order_book") === "true",
       };
-      const webviewHistory = await fetchObserveDailyHistoryForTauri(payload).catch(() => null);
+      const [webviewHistory, webviewFinancial] = await Promise.all([
+        fetchObserveDailyHistoryForTauri(payload).catch(() => null),
+        fetchObserveFinancialEpsForTauri(payload).catch((error) => ({
+          points: [],
+          notes: ["WebView 财报 EPS 补全失败：" + error.message],
+        })),
+      ]);
       if (Array.isArray(webviewHistory) && webviewHistory.length) payload.history = webviewHistory;
+      if (Array.isArray(webviewFinancial?.points) && webviewFinancial.points.length) {
+        payload.financial_eps_points = webviewFinancial.points;
+      }
+      if (Array.isArray(webviewFinancial?.notes) && webviewFinancial.notes.length) {
+        payload.financial_eps_notes = webviewFinancial.notes.slice(0, 4);
+      }
       return invoke("api_observe", { payload });
     },
   },
@@ -1649,7 +1663,7 @@ function failAgentAssistantRun(run, message) {
 
 async function requestAgentStream(runId, payload, onEvent) {
   const requestPayload = { ...payload, run_id: runId };
-  if (isTauriApiRuntime()) {
+  if (isTauriRuntime()) {
     await requestTauriAgentStream(runId, requestPayload, onEvent);
   } else {
     await requestDesktopAgentStream(requestPayload, onEvent);
@@ -3337,7 +3351,7 @@ function createRequestAbortError(message, name = "AbortError") {
 
 async function requestTauriJson(method, url, payload) {
   const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke || !isTauriApiRuntime()) return { handled: false };
+  if (!invoke) return { handled: false };
 
   const normalizedMethod = String(method || "GET").toUpperCase();
   const parsed = new URL(url, window.location.href);
@@ -3363,20 +3377,8 @@ function isTauriRuntime() {
   return Boolean(window.__TAURI__?.core?.invoke);
 }
 
-function isTauriApiRuntime() {
-  return isTauriRuntime() && !isDesktopBackendOrigin();
-}
-
 function isMobileTauriRuntime() {
   return isTauriRuntime() && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
-}
-function isDesktopBackendOrigin() {
-  const protocol = window.location.protocol;
-  const hostname = window.location.hostname;
-  return (
-    (protocol === "http:" || protocol === "https:") &&
-    (hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1")
-  );
 }
 
 async function openExternalUrl(rawUrl) {
@@ -3909,6 +3911,229 @@ function observeTencentDailyRowToHistory(row) {
     low: parseLooseNumber(row[4]) ?? close,
     volume: parseLooseNumber(row[5]),
   };
+}
+
+async function fetchObserveFinancialEpsForTauri(payload = {}) {
+  if (!isTauriRuntime()) return null;
+  const normalized = normalizeMobileStockCode(typeof payload === "string" ? payload : payload?.code || "");
+  if (!normalized) return null;
+
+  const notes = [];
+  let points = [];
+
+  try {
+    points = points.concat(await fetchObserveThsFinancialEps(normalized));
+  } catch (error) {
+    notes.push("同花顺 WebView EPS：" + error.message);
+  }
+  points = sortDedupObserveFinancialEps(points);
+
+  if (points.length < OBSERVE_FINANCIAL_EPS_TARGET_POINTS) {
+    try {
+      points = sortDedupObserveFinancialEps(points.concat(await fetchObserveSinaFinancialEps(normalized)));
+    } catch (error) {
+      notes.push("新浪财经 WebView EPS：" + error.message);
+    }
+  }
+
+  return { points: points.slice(0, 12), notes };
+}
+
+async function fetchObserveThsFinancialEps(normalizedCode) {
+  const digits = normalizedCode.slice(0, 6);
+  const market = observeThsMarketCode(normalizedCode);
+  if (!market) return [];
+  const url = new URL("https://basic.10jqka.com.cn/basicapi/finance/index/v1/app_data/");
+  url.searchParams.set("code", digits);
+  url.searchParams.set("id", "client_stock_importance");
+  url.searchParams.set("market", String(market));
+  url.searchParams.set("type", "stock");
+  url.searchParams.set("page", "1");
+  url.searchParams.set("size", "50");
+  url.searchParams.set("period", "0");
+
+  const response = await withTimeout(
+    fetch(url.toString(), { cache: "no-store", headers: { Accept: "application/json,text/plain,*/*" } }),
+    OBSERVE_FINANCIAL_EPS_TIMEOUT_MS,
+    "WebView 同花顺 EPS 超过 8 秒未返回。",
+  );
+  if (!response.ok) throw new Error("HTTP " + response.status);
+  return parseObserveThsFinancialEps(await response.json());
+}
+
+function observeThsMarketCode(normalizedCode) {
+  const digits = normalizedCode.slice(0, 6);
+  if (/^(000|001|002|003|300|301)/.test(digits)) return 33;
+  if (/^(600|601|603|605|688)/.test(digits)) return 17;
+  if (/^(920|8|4)/.test(digits)) return 151;
+  return null;
+}
+
+function parseObserveThsFinancialEps(payload) {
+  const rows = Array.isArray(payload?.data?.data)
+    ? payload.data.data
+    : Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload)
+        ? payload
+        : [];
+  const points = [];
+
+  rows.forEach((row) => {
+    if (!row || typeof row !== "object") return;
+    const period = observeFinancialPeriodFromRecord(row);
+    const scanMetric = (metric, fallbackName = "") => {
+      if (!metric || typeof metric !== "object") return;
+      const metricName = [fallbackName, metric.name, metric.title, metric.label, metric.metric_name, metric.index_name, metric.item_name, metric.item, metric.key]
+        .filter(Boolean)
+        .join(" ");
+      if (!observeFinancialMetricIsEps(metricName)) return;
+      const metricPeriod = period || observeFinancialPeriodFromRecord(metric);
+      const value = observeFinancialValueFirstFiniteNumber(metric);
+      if (metricPeriod && value !== null) points.push({ period: metricPeriod, value, source: "同花顺 WebView 财务摘要" });
+    };
+
+    const metricList = row.index_list || row.indexList || row.index || row.items || row.metric_list || row.metrics || row.data;
+    if (Array.isArray(metricList)) {
+      metricList.forEach((metric) => scanMetric(metric));
+    } else if (metricList && typeof metricList === "object") {
+      Object.entries(metricList).forEach(([name, metric]) => {
+        if (metric && typeof metric === "object") scanMetric(metric, name);
+        else if (period && observeFinancialMetricIsEps(name)) {
+          const value = observeFinancialValueFirstFiniteNumber(metric);
+          if (value !== null) points.push({ period, value, source: "同花顺 WebView 财务摘要" });
+        }
+      });
+    }
+
+    if (period) {
+      Object.entries(row).forEach(([name, value]) => {
+        if (!observeFinancialMetricIsEps(name)) return;
+        const eps = observeFinancialValueFirstFiniteNumber(value);
+        if (eps !== null) points.push({ period, value: eps, source: "同花顺 WebView 财务摘要" });
+      });
+    }
+  });
+
+  return sortDedupObserveFinancialEps(points);
+}
+
+async function fetchObserveSinaFinancialEps(normalizedCode) {
+  const digits = normalizedCode.slice(0, 6);
+  const currentYear = new Date().getFullYear();
+  let points = [];
+  const errors = [];
+  for (const year of [currentYear, currentYear - 1, currentYear - 2]) {
+    const url = "https://money.finance.sina.com.cn/corp/go.php/vFD_FinancialGuideLine/stockid/" + digits + "/ctrl/" + year + "/displaytype/4.phtml";
+    try {
+      const response = await withTimeout(
+        fetch(url, { cache: "no-store", headers: { Accept: "text/html,*/*" } }),
+        OBSERVE_FINANCIAL_EPS_TIMEOUT_MS,
+        "WebView 新浪 EPS " + year + " 超过 8 秒未返回。",
+      );
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      const html = decodeTencentQuoteBuffer(await response.arrayBuffer());
+      points = points.concat(parseObserveSinaFinancialEpsHtml(html));
+    } catch (error) {
+      errors.push(year + " 年 " + error.message);
+    }
+    points = sortDedupObserveFinancialEps(points);
+    if (points.length >= OBSERVE_FINANCIAL_EPS_TARGET_POINTS) break;
+  }
+  if (!points.length && errors.length) throw new Error(errors.join("；"));
+  return points;
+}
+
+function parseObserveSinaFinancialEpsHtml(html) {
+  const rows = observeSinaTableRows(html);
+  let headerPeriods = [];
+  const points = [];
+
+  rows.forEach((cells) => {
+    if (!cells.length) return;
+    const periods = cells.map(normalizeFinancialPeriodKey).filter(Boolean);
+    if (periods.length >= 2) headerPeriods = periods;
+    if (!headerPeriods.length || !observeFinancialMetricIsEps(cells[0])) return;
+    cells.slice(1).forEach((cell, index) => {
+      const period = headerPeriods[index];
+      const value = observeFinancialValueFirstFiniteNumber(cell);
+      if (period && value !== null) points.push({ period, value, source: "新浪财经 WebView 财务指标" });
+    });
+  });
+
+  return sortDedupObserveFinancialEps(points);
+}
+
+function observeSinaTableRows(html) {
+  if (typeof DOMParser !== "undefined") {
+    const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
+    return Array.from(doc.querySelectorAll("tr")).map((row) =>
+      Array.from(row.querySelectorAll("th,td"))
+        .map((cell) => cell.textContent.replace(/\s+/g, " ").trim())
+        .filter(Boolean),
+    );
+  }
+  return String(html || "")
+    .split(/<tr\b/i)
+    .slice(1)
+    .map((row) =>
+      row
+        .split(/<\/?t[hd][^>]*>/i)
+        .map((cell) => cell.replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/\s+/g, " ").trim())
+        .filter(Boolean),
+    );
+}
+
+function observeFinancialMetricIsEps(label) {
+  const text = String(label || "");
+  const upper = text.toUpperCase();
+  const lower = text.toLowerCase();
+  const isEps = upper.includes("EPS") || lower.includes("basic_eps") || lower.includes("basic_earnings_per_share") || text.includes("每股收益");
+  return isEps && !text.includes("每股净资产") && !upper.includes("BPS");
+}
+
+function observeFinancialPeriodFromRecord(record) {
+  if (!record || typeof record !== "object") return null;
+  for (const field of ["period", "date", "report_date", "reportDate", "report", "report_name", "quarter_name", "stat_date", "end_date", "REPORT_DATE"]) {
+    const period = normalizeFinancialPeriodKey(record[field]);
+    if (period) return period;
+  }
+  return null;
+}
+
+function observeFinancialValueFirstFiniteNumber(value) {
+  const direct = parseLooseNumber(value);
+  if (direct !== null) return direct;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const number = observeFinancialValueFirstFiniteNumber(item);
+      if (number !== null) return number;
+    }
+    return null;
+  }
+  if (value && typeof value === "object") {
+    for (const key of ["single", "value", "data", "val", "num", "latest", "amount"]) {
+      const number = observeFinancialValueFirstFiniteNumber(value[key]);
+      if (number !== null) return number;
+    }
+    for (const [key, nested] of Object.entries(value)) {
+      if (/date|period|name|label|title|report|quarter|source/i.test(key)) continue;
+      const number = observeFinancialValueFirstFiniteNumber(nested);
+      if (number !== null) return number;
+    }
+  }
+  return null;
+}
+
+function sortDedupObserveFinancialEps(points) {
+  const byPeriod = new Map();
+  (Array.isArray(points) ? points : []).forEach((point) => {
+    const period = normalizeFinancialPeriodKey(point?.period);
+    const value = observeFinancialValueFirstFiniteNumber(point?.value);
+    if (!period || value === null || byPeriod.has(period)) return;
+    byPeriod.set(period, { period, value, source: point?.source || "WebView 财报 EPS" });
+  });
+  return Array.from(byPeriod.values()).sort((left, right) => right.period.localeCompare(left.period));
 }
 
 async function fetchWebviewTencentQuoteBatch(codes, batchIndex, totalBatches) {
@@ -4517,6 +4742,7 @@ function renderNewsRagBody(data, groups = normalizeNewsSentimentGroups(data.sent
     ? renderPlainNewsGroups(groups)
     : (findings.length ? renderNewsFindings(findings) : renderEmpty("没有命中的上下游消息"));
   return [
+    renderUsMarketBrief(data.us_market_brief),
     body,
     data.notes?.length ? renderNotes(data.notes) : "",
   ].join("");
@@ -4535,6 +4761,63 @@ function normalizeNewsSentimentGroups(groups) {
 
 function newsAnalysisModeLabel(mode) {
   return mode === "llm_analysis" ? "模型分析" : "本地消息";
+}
+
+
+function renderUsMarketBrief(brief) {
+  if (!brief || typeof brief !== "object") return "";
+  const status = String(brief.status || "unavailable");
+  const stance = String(brief.stance || status);
+  const items = Array.isArray(brief.items) ? brief.items : [];
+  const notes = Array.isArray(brief.notes) ? brief.notes.filter(Boolean).slice(0, 2) : [];
+  const noteHtml = notes.length ? "<p>" + notes.map((note) => escapeHtml(sanitizeRuntimeMessage(note, 120))).join(" / ") + "</p>" : "";
+  if (status !== "ok") {
+    return [
+      '<section class="us-market-brief unavailable">',
+      '<header>',
+      '<div><span>美股风向简报</span><strong>' + escapeHtml(brief.headline || "美股风向暂不可用") + '</strong></div>',
+      '<em>' + escapeHtml(brief.source || "行情源") + '</em>',
+      '</header>',
+      noteHtml,
+      '</section>',
+    ].join("");
+  }
+  return [
+    '<section class="us-market-brief ' + usMarketBriefClass(stance) + '">',
+    '<header>',
+    '<div><span>美股风向简报</span><strong>' + escapeHtml(brief.headline || usMarketBriefLabel(stance)) + '</strong></div>',
+    '<em>' + escapeHtml(brief.source || "行情源") + ' · ' + escapeHtml(brief.as_of || "-") + '</em>',
+    '</header>',
+    '<div class="us-market-ticker-row">' + items.map(renderUsMarketTicker).join("") + '</div>',
+    noteHtml,
+    '</section>',
+  ].join("");
+}
+
+function renderUsMarketTicker(item = {}) {
+  const change = Number(item.change_percent);
+  const trend = Number.isFinite(change) && change > 0.001 ? "positive" : Number.isFinite(change) && change < -0.001 ? "negative" : "neutral";
+  return [
+    '<article class="us-market-ticker ' + trend + '">',
+    '<span>' + escapeHtml(item.name || item.symbol || "-") + '</span>',
+    '<strong>' + escapeHtml(formatNumber(item.price)) + '</strong>',
+    '<em>' + escapeHtml(formatSignedPercentPrecise(item.change_percent)) + '</em>',
+    '</article>',
+  ].join("");
+}
+
+function usMarketBriefClass(stance) {
+  if (stance === "positive") return "positive";
+  if (stance === "negative") return "negative";
+  if (stance === "mixed") return "mixed";
+  return "neutral";
+}
+
+function usMarketBriefLabel(stance) {
+  if (stance === "positive") return "美股偏强";
+  if (stance === "negative") return "美股偏弱";
+  if (stance === "mixed") return "美股分化";
+  return "美股震荡";
 }
 
 function renderPlainNewsGroups(groups) {
@@ -5554,19 +5837,34 @@ function renderEpsCell(year, quarter, pointByPeriod) {
 }
 
 function collectQuarterlyEpsItems(financial) {
-  const items = financial?.items || [];
   const points = [];
-  for (const item of items) {
+  const pushPoint = (periodValue, rawValue, tone = "neutral") => {
+    const period = normalizeFinancialPeriodKey(periodValue);
+    const value = parseLooseNumber(rawValue);
+    if (!period || value === null) return;
+    points.push({ period, value, tone });
+  };
+
+  for (const point of financial?.quarterly_eps || []) {
+    if (!point) continue;
+    pushPoint(point.period || point.label, point.raw_value ?? point.value, point.tone || "neutral");
+  }
+
+  for (const item of financial?.items || []) {
     if (!item) continue;
     const label = String(item.label || "").toUpperCase();
     const isEps = item.metric_key === "quarterly_eps" || label.includes("每股收益") || label.includes("EPS");
     if (!isEps) continue;
-    const period = normalizeFinancialPeriodKey(item.period || item.label || "");
-    const value = parseLooseNumber(item.raw_value ?? item.value);
-    if (!period || value === null) continue;
-    points.push({ period, value, tone: item.tone || "neutral" });
+    pushPoint(item.period || item.label || "", item.raw_value ?? item.value, item.tone || "neutral");
   }
-  return points.sort((left, right) => right.period.localeCompare(left.period));
+
+  const deduped = new Map();
+  points
+    .sort((left, right) => right.period.localeCompare(left.period))
+    .forEach((point) => {
+      if (!deduped.has(point.period)) deduped.set(point.period, point);
+    });
+  return Array.from(deduped.values());
 }
 
 function normalizeFinancialPeriodKey(value) {
@@ -5579,6 +5877,14 @@ function normalizeFinancialPeriodKey(value) {
     const month = Number(match[2]);
     const quarter = month === 3 ? 1 : month === 6 ? 2 : month === 9 ? 3 : month === 12 ? 4 : null;
     if (quarter) return `${match[1]}Q${quarter}`;
+  }
+
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length >= 6 && digits.startsWith("20")) {
+    const yearFromDigits = digits.slice(0, 4);
+    const month = Number(digits.slice(4, 6));
+    const quarter = month >= 1 && month <= 12 ? Math.ceil(month / 3) : null;
+    if (quarter) return `${yearFromDigits}Q${quarter}`;
   }
 
   const year = raw.match(/(20\d{2})/)?.[1];
@@ -6146,20 +6452,41 @@ function renderCapitalBehaviorPanel(series, signal = {}) {
   `;
 }
 
-function collectCapitalBehaviorMetrics(series) {
-  const points = (series || []).filter((point) =>
-    ["accumulation_index", "accumulation_strength", "swing_opportunity", "rebound_signal"].some((key) =>
-      Number.isFinite(Number(point[key])),
-    ),
-  );
-  const latest = points[points.length - 1] || {};
-  const metrics = [
-    ["\u5438\u7b79\u6307\u6807", latest.accumulation_index, "index"],
-    ["\u5438\u7b79\u5f3a\u5ea6", latest.accumulation_strength, "strength"],
-    ["\u6ce2\u6bb5\u673a\u4f1a", latest.swing_opportunity, "swing"],
-    ["\u7edd\u5730\u53cd\u51fb", latest.rebound_signal, "rebound"],
+function collectCapitalBehaviorMetrics(series, evidenceItems = []) {
+  const metricKeys = ["accumulation_index", "accumulation_strength", "swing_opportunity", "rebound_signal"];
+  const points = (series || []).filter((point) => metricKeys.some((key) => Number.isFinite(Number(point[key]))));
+  const evidenceItem = (evidenceItems || []).find((item) => item?.category === "technical_behavior") || null;
+  const evidenceMetrics = evidenceItem?.metrics || {};
+  const fallbackLatest = {
+    date: evidenceItem?.date,
+    accumulation_index: parseCapitalMetricNumber(evidenceMetrics, ["吸筹指标", "资金承接", "承接指标"]),
+    accumulation_strength: parseCapitalMetricNumber(evidenceMetrics, ["吸筹强度", "吸筹力度"]),
+    swing_opportunity: parseCapitalMetricNumber(evidenceMetrics, ["波段机会", "波段弹性"]),
+    rebound_signal: parseCapitalMetricNumber(evidenceMetrics, ["绝地反击", "反弹信号"]),
+    trend_heat: parseCapitalMetricNumber(evidenceMetrics, ["趋势热度"]),
+    volume_price_heat: parseCapitalMetricNumber(evidenceMetrics, ["量价热度"]),
+    anomaly_heat: parseCapitalMetricNumber(evidenceMetrics, ["异动热度"]),
+    popularity_heat: parseCapitalMetricNumber(evidenceMetrics, ["人气热度"]),
+  };
+  const latest = { ...fallbackLatest, ...(points[points.length - 1] || {}) };
+  const metricDefinitions = [
+    ["吸筹指标", latest.accumulation_index, "index"],
+    ["吸筹强度", latest.accumulation_strength, "strength"],
+    ["波段机会", latest.swing_opportunity, "swing"],
+    ["绝地反击", latest.rebound_signal, "rebound"],
   ];
+  const metrics = metricDefinitions.filter(([, value]) => Number.isFinite(Number(value)));
   return { points, latest, metrics };
+}
+
+function parseCapitalMetricNumber(metrics, labels) {
+  const value = evidenceMetric(metrics, labels);
+  if (!value) return undefined;
+  const normalized = String(value).replace(/,/g, "").replace(/%/g, "");
+  const match = normalized.match(/[-+]?\d+(?:\.\d+)?/);
+  if (!match) return undefined;
+  const number = Number(match[0]);
+  return Number.isFinite(number) ? number : undefined;
 }
 
 function renderCapitalMetricExplainPanel(metrics, options = {}) {
@@ -6558,7 +6885,7 @@ function buildFallbackEvidenceSections(evidence) {
       key: "message_sentiment",
       title: "消息情绪",
       contribution: "消息情绪",
-      categories: ["news_rag", "community_sentiment"],
+      categories: ["news_rag", "community_sentiment", "message_sentiment_status"],
     },
     { key: "technical_behavior", title: "技术推断", contribution: "技术推断", categories: ["technical_behavior"] },
   ];
@@ -6614,6 +6941,9 @@ function renderEvidenceSections(sections, technicalContext = {}) {
           if (section.key === "institution_lhb") {
             return renderInstitutionSeatSection(section);
           }
+          if (section.key === "message_sentiment") {
+            return renderMessageSentimentSection(section);
+          }
           const items = section.items || [];
           const score = Number(section.score);
           return `
@@ -6638,10 +6968,36 @@ function renderEvidenceSections(sections, technicalContext = {}) {
   `;
 }
 
+function renderMessageSentimentSection(section) {
+  const items = section.items || [];
+  const score = Number(section.score);
+  const title = section.title || "消息情绪";
+  const summary = section.summary || (items.length ? `东方财富股吧热度最高 ${items.length} 条` : "暂无消息情绪证据");
+  return `
+    <details class="capital-evidence-section message-sentiment ${section.available ? "available" : "missing"}" open>
+      <summary>
+        <div>
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml(summary)}</span>
+        </div>
+        <span class="message-sentiment-meta">
+          <em>${Number.isFinite(score) ? formatNumber(score) : capitalSectionStatus(section)}</em>
+          <b class="plain-news-toggle" aria-hidden="true"></b>
+        </span>
+      </summary>
+      ${
+        items.length
+          ? `<div class="capital-evidence-list compact message-sentiment-list">${items.map(renderEvidenceItem).join("")}</div>`
+          : renderEmpty("暂无证据")
+      }
+    </details>
+  `;
+}
+
 function renderTechnicalEvidenceSection(section, technicalContext = {}) {
   const items = section.items || [];
   const score = Number(section.score);
-  const { points, latest, metrics } = collectCapitalBehaviorMetrics(technicalContext.series || []);
+  const { points, latest, metrics } = collectCapitalBehaviorMetrics(technicalContext.series || [], items);
   const signal = technicalContext.signal || {};
   const evidenceNotes = items
     .map((item) => item.note || item.title || "")
@@ -6948,6 +7304,7 @@ function capitalCategoryLabel(category) {
     institution_lhb_status: "机构席位状态",
     news_rag: "新闻证据",
     community_sentiment: "社区情绪",
+    message_sentiment_status: "消息情绪状态",
     technical_behavior: "技术推断",
   };
   return labels[category] || category || "证据";

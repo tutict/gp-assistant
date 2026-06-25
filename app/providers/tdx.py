@@ -62,14 +62,12 @@ class TdxProvider(StockProvider):
         return items
 
     def refresh_screening_cache(self) -> list[str]:
-        try:
-            frame, note = self._fetch_eastmoney_fundamentals_for_screen()
-        except Exception as exc:
-            return [f"\u7b5b\u9009\u8d22\u52a1\u7f13\u5b58\u5237\u65b0\u5931\u8d25\uff1a{exc}\uff1b\u5df2\u4fdd\u7559\u73b0\u6709\u7f13\u5b58\u3002"]
-        if frame.empty:
-            return ["\u7b5b\u9009\u8d22\u52a1\u7f13\u5b58\u672a\u5237\u65b0\uff1a\u4e1c\u8d22\u6682\u65e0\u53ef\u7528\u8d22\u62a5\u6307\u6807\uff0c\u5df2\u4fdd\u7559\u73b0\u6709\u7f13\u5b58\u3002"]
-        self._write_fundamental_cache(frame)
-        return [note or f"\u7b5b\u9009\u8d22\u52a1\u7f13\u5b58\u5df2\u5237\u65b0\uff0c\u8986\u76d6 {len(frame)} \u53ea A \u80a1\u3002"]
+        lookup = self._read_fundamental_cache(self.fundamental_cache_path)
+        if lookup is None:
+            return ["筛选财务缓存重建已停用在线东财财报源；当前也没有可复用的本地缓存。"]
+        if lookup:
+            return [f"筛选财务缓存已保留本地版本，覆盖 {len(lookup)} 只 A 股；在线东财财报重建已禁用。"]
+        return ["筛选财务缓存为空；在线东财财报重建已禁用。"]
 
     def list_stocks_for_screen(self) -> tuple[List[StockItem], List[str]]:
         try:
@@ -749,19 +747,11 @@ class TdxProvider(StockProvider):
 
     def _cached_fundamentals_for_screen(self) -> tuple[dict[str, StockItem], str | None]:
         lookup = self._read_fundamental_cache(self.fundamental_cache_path)
-        if lookup is not None and (lookup or os.getenv("TDX_FUNDAMENTAL_CACHE")):
+        if lookup is None:
+            return {}, "本地财务缓存缺失；在线东财财报数据已禁用。"
+        if lookup:
             return lookup, None
-
-        try:
-            frame, note = self._fetch_eastmoney_fundamentals_for_screen()
-        except Exception as exc:
-            return {}, f"东财数据中心财报接口不可用：{exc}"
-
-        if frame.empty:
-            return {}, "东财数据中心未返回全市场财报数据。"
-
-        self._write_fundamental_cache(frame)
-        return self._fundamental_lookup_from_frame(frame), note
+        return {}, "本地财务缓存为空；在线东财财报数据已禁用。"
 
     def _read_fundamental_cache(self, path: str) -> dict[str, StockItem] | None:
         if not os.path.exists(path):

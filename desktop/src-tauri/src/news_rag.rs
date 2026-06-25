@@ -1,4 +1,7 @@
-use super::{cached_market_data, epoch_millis, normalize_stock_code, read_json_file};
+use super::{
+    cached_market_data, epoch_millis, normalize_stock_code, powershell_http_get_bytes_with_headers,
+    read_json_file,
+};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -12,6 +15,8 @@ use tauri::Manager;
 const NEWS_CACHE_FILE: &str = "news-cache.json";
 const SOURCE_TIER_NEWS: &str = "news";
 const SOURCE_TIER_COMMUNITY: &str = "community";
+const SOURCE_SINA_FINANCE: &str = "\u{65b0}\u{6d6a}\u{8d22}\u{7ecf}";
+const SOURCE_THS_F10: &str = "\u{540c}\u{82b1}\u{987a}F10\u{8d44}\u{8baf}";
 const CHAIN_RELATION_TYPES: [&str; 3] =
     ["supply_chain", "manufacturing_chain", "upstream_material"];
 const NEWS_TIMEOUT_SECS: u64 = 8;
@@ -52,8 +57,19 @@ pub(crate) async fn api_news_rag_impl(
         .collect::<Vec<_>>();
     let days = payload_u64(&payload, "days", 30, 1, 365) as i64;
     let max_items = payload_u64(&payload, "max_items", 24, 1, 100) as usize;
+    let include_us_market_brief = payload
+        .get("include_us_market_brief")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+        && env_bool("GP_NEWS_ENABLE_US_MARKET_BRIEF", true);
 
-    let (fetched, adapter_notes) = fetch_news_items(&related_stocks, &relations, days).await;
+    let news_result = fetch_news_items(&related_stocks, &relations, days).await;
+    let us_market_brief = if include_us_market_brief {
+        Some(fetch_us_market_brief().await)
+    } else {
+        None
+    };
+    let (fetched, adapter_notes) = news_result;
     let cache_path = news_cache_path(&app)?;
     let cached = read_news_cache_items(&cache_path);
     let merged_cache = merge_news_items(cached, fetched);
@@ -107,6 +123,7 @@ pub(crate) async fn api_news_rag_impl(
         "message_count": evidence.len(),
         "findings": findings,
         "sentiment_groups": sentiment_groups(&evidence, &analysis_mode),
+        "us_market_brief": us_market_brief,
         "notes": notes
     }))
 }
@@ -271,6 +288,49 @@ async fn fetch_news_items(
         );
     }
 
+    if env_bool("GP_NEWS_ENABLE_TRADITIONAL_MEDIA", true) {
+        if env_bool("GP_NEWS_ENABLE_SINA", true) {
+            match fetch_sina_stock_news(&client, stocks, relations, days).await {
+                Ok(news_items) => {
+                    if news_items.is_empty() {
+                        notes.push("\u{5df2}\u{5c1d}\u{8bd5}\u{65b0}\u{6d6a}\u{8d22}\u{7ecf}\u{4e2a}\u{80a1}\u{8d44}\u{8baf}\u{6293}\u{53d6}\u{ff0c}\u{5f53}\u{524d}\u{7a97}\u{53e3}\u{672a}\u{547d}\u{4e2d}\u{6d88}\u{606f}\u{3002}".to_string());
+                    } else {
+                        notes.push(format!(
+                            "\u{5df2}\u{901a}\u{8fc7}\u{65b0}\u{6d6a}\u{8d22}\u{7ecf}\u{4e2a}\u{80a1}\u{8d44}\u{8baf}\u{6293}\u{53d6}\u{5e76}\u{7f13}\u{5b58} {} \u{6761}\u{4f20}\u{7edf}\u{5a92}\u{4f53}\u{6d88}\u{606f}\u{3002}",
+                            news_items.len()
+                        ));
+                        items.extend(news_items);
+                    }
+                }
+                Err(error) => notes.push(format!(
+                    "\u{65b0}\u{6d6a}\u{8d22}\u{7ecf}\u{4e2a}\u{80a1}\u{8d44}\u{8baf}\u{6293}\u{53d6}\u{4e0d}\u{53ef}\u{7528}\u{ff0c}\u{5df2}\u{7ee7}\u{7eed}\u{4f7f}\u{7528}\u{5176}\u{5b83}\u{6d88}\u{606f}\u{6e90}\u{ff1a}{}",
+                    limit_chars(&error, 160)
+                )),
+            }
+        }
+        if env_bool("GP_NEWS_ENABLE_THS", true) {
+            match fetch_ths_stock_news(&client, stocks, relations, days).await {
+                Ok(news_items) => {
+                    if news_items.is_empty() {
+                        notes.push("\u{5df2}\u{5c1d}\u{8bd5}\u{540c}\u{82b1}\u{987a} F10 \u{8d44}\u{8baf}\u{6293}\u{53d6}\u{ff0c}\u{5f53}\u{524d}\u{7a97}\u{53e3}\u{672a}\u{547d}\u{4e2d}\u{6d88}\u{606f}\u{3002}".to_string());
+                    } else {
+                        notes.push(format!(
+                            "\u{5df2}\u{901a}\u{8fc7}\u{540c}\u{82b1}\u{987a} F10 \u{8d44}\u{8baf}\u{6293}\u{53d6}\u{5e76}\u{7f13}\u{5b58} {} \u{6761}\u{4f20}\u{7edf}\u{5a92}\u{4f53}\u{6d88}\u{606f}\u{3002}",
+                            news_items.len()
+                        ));
+                        items.extend(news_items);
+                    }
+                }
+                Err(error) => notes.push(format!(
+                    "\u{540c}\u{82b1}\u{987a} F10 \u{8d44}\u{8baf}\u{6293}\u{53d6}\u{4e0d}\u{53ef}\u{7528}\u{ff0c}\u{5df2}\u{7ee7}\u{7eed}\u{4f7f}\u{7528}\u{5176}\u{5b83}\u{6d88}\u{606f}\u{6e90}\u{ff1a}{}",
+                    limit_chars(&error, 160)
+                )),
+            }
+        }
+    } else {
+        notes.push("\u{4f20}\u{7edf}\u{8d22}\u{7ecf}\u{5a92}\u{4f53}\u{6293}\u{53d6}\u{5df2}\u{5173}\u{95ed}\u{ff1b}\u{53ef}\u{8bbe}\u{7f6e} GP_NEWS_ENABLE_TRADITIONAL_MEDIA=true \u{540e}\u{91cd}\u{65b0}\u{542f}\u{7528}\u{3002}".to_string());
+    }
+
     if env_bool("GP_NEWS_ENABLE_EASTMONEY", true) || env_bool("GP_NEWS_ENABLE_AKSHARE", true) {
         match fetch_eastmoney_stock_news(&client, stocks, relations, days).await {
             Ok(news_items) => {
@@ -297,6 +357,196 @@ async fn fetch_news_items(
     }
 
     (dedupe_news_items(items), notes)
+}
+
+async fn fetch_us_market_brief() -> Value {
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(
+            env_usize("GP_NEWS_US_MARKET_TIMEOUT_SECS", 5, 2, 15) as u64,
+        ))
+        .connect_timeout(Duration::from_secs(3))
+        .user_agent("Mozilla/5.0 GuXuanYou/0.3 us-market-brief")
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            return unavailable_us_market_brief(format!("创建美股行情 HTTP 客户端失败：{error}"))
+        }
+    };
+    match fetch_sina_us_market_brief(&client).await {
+        Ok(brief) => brief,
+        Err(error) => unavailable_us_market_brief(format!(
+            "新浪财经全球指数暂不可用：{}",
+            limit_chars(&error, 160)
+        )),
+    }
+}
+
+async fn fetch_sina_us_market_brief(client: &reqwest::Client) -> Result<Value, String> {
+    let url = "https://hq.sinajs.cn/list=gb_dji,gb_ixic,gb_inx,gb_vix";
+    let text = http_get_text_with_headers_timeout(
+        client,
+        url,
+        "https://finance.sina.com.cn/",
+        env_usize("GP_NEWS_US_MARKET_TIMEOUT_SECS", 5, 2, 15) as u64,
+    )
+    .await
+    .map_err(|error| format!("Sina US market request failed: {error}"))?;
+    parse_sina_us_market_brief(&text)
+}
+
+fn parse_sina_us_market_brief(text: &str) -> Result<Value, String> {
+    let specs = [
+        ("gb_dji", "DJI", "道琼斯"),
+        ("gb_ixic", "IXIC", "纳斯达克"),
+        ("gb_inx", "SPX", "标普500"),
+        ("gb_vix", "VIX", "VIX"),
+    ];
+    let mut items = Vec::new();
+    for (hq_key, symbol, fallback_name) in specs {
+        let Some(raw) = extract_sina_hq_string(text, hq_key) else {
+            continue;
+        };
+        if let Some(item) = parse_sina_us_index_item(&raw, symbol, fallback_name) {
+            items.push(item);
+        }
+    }
+    if items.is_empty() {
+        return Err("Sina US market payload did not include usable indexes".to_string());
+    }
+    Ok(build_us_market_brief(items, "新浪财经全球指数", Vec::new()))
+}
+
+fn parse_sina_us_index_item(raw: &str, symbol: &str, fallback_name: &str) -> Option<Value> {
+    let fields = raw.split(',').map(str::trim).collect::<Vec<_>>();
+    if fields.len() < 4 || fields.first().copied().unwrap_or_default().is_empty() {
+        return None;
+    }
+    let price = parse_f64_field(fields.get(1).copied())?;
+    let change_percent = parse_f64_field(fields.get(2).copied()).unwrap_or(0.0) / 100.0;
+    let change = parse_f64_field(fields.get(4).copied()).unwrap_or(price * change_percent);
+    let as_of = fields
+        .get(3)
+        .copied()
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(current_iso_like);
+    Some(json!({
+        "symbol": symbol,
+        "name": fields.first().copied().unwrap_or(fallback_name),
+        "price": price,
+        "change": change,
+        "change_percent": change_percent,
+        "as_of": as_of
+    }))
+}
+
+fn build_us_market_brief(mut items: Vec<Value>, source: &str, notes: Vec<String>) -> Value {
+    items.sort_by(|left, right| {
+        us_market_sort_rank(left)
+            .cmp(&us_market_sort_rank(right))
+            .then_with(|| {
+                left.get("symbol")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .cmp(right.get("symbol").and_then(Value::as_str).unwrap_or(""))
+            })
+    });
+    let directional = items
+        .iter()
+        .filter(|item| item.get("symbol").and_then(Value::as_str) != Some("VIX"))
+        .filter_map(|item| item.get("change_percent").and_then(Value::as_f64))
+        .collect::<Vec<_>>();
+    let average = if directional.is_empty() {
+        0.0
+    } else {
+        directional.iter().sum::<f64>() / directional.len() as f64
+    };
+    let rising = directional.iter().filter(|value| **value > 0.001).count();
+    let falling = directional.iter().filter(|value| **value < -0.001).count();
+    let stance = us_market_stance(average, rising, falling);
+    let as_of = items
+        .iter()
+        .filter_map(|item| item.get("as_of").and_then(Value::as_str))
+        .max()
+        .unwrap_or("")
+        .to_string();
+    json!({
+        "status": "ok",
+        "source": source,
+        "stance": stance,
+        "headline": us_market_headline(stance, average, rising, falling),
+        "average_change_percent": average,
+        "as_of": if as_of.is_empty() { current_iso_like() } else { as_of },
+        "items": items,
+        "notes": notes
+    })
+}
+
+fn unavailable_us_market_brief(note: String) -> Value {
+    json!({
+        "status": "unavailable",
+        "source": "新浪财经全球指数",
+        "stance": "unavailable",
+        "headline": "美股风向暂不可用",
+        "average_change_percent": null,
+        "as_of": current_iso_like(),
+        "items": [],
+        "notes": [note, "美股风向简报不使用 Yahoo 作为默认源，避免代理依赖；行情源失败不影响个股消息归类。"]
+    })
+}
+
+fn us_market_sort_rank(item: &Value) -> usize {
+    match item.get("symbol").and_then(Value::as_str).unwrap_or("") {
+        "SPX" => 0,
+        "IXIC" => 1,
+        "DJI" => 2,
+        "VIX" => 3,
+        _ => 9,
+    }
+}
+fn us_market_stance(average: f64, rising: usize, falling: usize) -> &'static str {
+    if average >= 0.003 && rising >= 2 {
+        "positive"
+    } else if average <= -0.003 && falling >= 2 {
+        "negative"
+    } else if rising > 0 && falling > 0 {
+        "mixed"
+    } else {
+        "neutral"
+    }
+}
+fn us_market_headline(stance: &str, average: f64, rising: usize, falling: usize) -> String {
+    let average_text = signed_percent_text(average);
+    match stance {
+        "positive" => format!("美股偏强：三大指数多数上涨，平均变动 {average_text}。"),
+        "negative" => format!("美股偏弱：三大指数多数回落，平均变动 {average_text}。"),
+        "mixed" => {
+            format!("美股分化：上涨 {rising} 个、下跌 {falling} 个，平均变动 {average_text}。")
+        }
+        _ => format!("美股震荡：三大指数方向不强，平均变动 {average_text}。"),
+    }
+}
+fn signed_percent_text(value: f64) -> String {
+    let sign = if value > 0.0 { "+" } else { "" };
+    format!("{sign}{:.2}%", value * 100.0)
+}
+fn extract_sina_hq_string(text: &str, hq_key: &str) -> Option<String> {
+    let marker = format!("hq_str_{hq_key}=\"");
+    let start = text.find(&marker)? + marker.len();
+    let end = text[start..].find('"').map(|offset| start + offset)?;
+    Some(text[start..end].to_string())
+}
+fn parse_f64_field(value: Option<&str>) -> Option<f64> {
+    let cleaned = value?.trim().replace(',', "");
+    if cleaned.is_empty() || cleaned == "--" {
+        None
+    } else {
+        cleaned
+            .parse::<f64>()
+            .ok()
+            .filter(|number| number.is_finite())
+    }
 }
 
 async fn fetch_guba_community(
@@ -372,23 +622,11 @@ async fn fetch_eastmoney_stock_news(
             .append_pair("cb", &callback)
             .append_pair("param", &param)
             .append_pair("_", &now);
-        let response = client
-            .get(url)
-            .header(
-                "Referer",
-                format!("https://so.eastmoney.com/news/s?keyword={digits}"),
-            )
-            .send()
-            .await
-            .map_err(|error| format!("Eastmoney news request failed: {error}"))?;
-        if !response.status().is_success() {
-            return Err(format!("Eastmoney news HTTP {}", response.status()));
-        }
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|error| format!("Eastmoney news body read failed: {error}"))?;
-        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let referer = format!("https://so.eastmoney.com/news/s?keyword={digits}");
+        let text =
+            http_get_text_with_headers_timeout(client, url.as_str(), &referer, NEWS_TIMEOUT_SECS)
+                .await
+                .map_err(|error| format!("Eastmoney news request failed: {error}"))?;
         let data =
             parse_jsonp(&text).ok_or_else(|| "Eastmoney news JSONP parse failed".to_string())?;
         let rows = data
@@ -433,6 +671,231 @@ async fn fetch_eastmoney_stock_news(
         }
     }
     Ok(items)
+}
+
+async fn fetch_sina_stock_news(
+    client: &reqwest::Client,
+    stocks: &[Value],
+    relations: &[Value],
+    days: i64,
+) -> Result<Vec<Value>, String> {
+    let mut items = Vec::new();
+    let cutoff = cutoff_epoch_millis(days);
+    let relation_map = relation_map(relations);
+    let max_stocks = env_usize("GP_NEWS_SINA_MAX_STOCKS", 8, 0, 50);
+    let max_items = env_usize("GP_NEWS_SINA_MAX_ITEMS", 24, 0, 100);
+    for stock in stocks.iter().take(max_stocks) {
+        let Some(code) = stock
+            .get("code")
+            .and_then(Value::as_str)
+            .and_then(normalize_stock_code)
+        else {
+            continue;
+        };
+        let Some(symbol) = sina_symbol(&code) else {
+            continue;
+        };
+        let url = format!(
+            "https://vip.stock.finance.sina.com.cn/corp/go.php/vCB_AllNewsStock/symbol/{symbol}.phtml"
+        );
+        let html = http_get_text(client, &url).await?;
+        items.extend(parse_sina_stock_news(
+            &html,
+            stock,
+            &relation_map,
+            cutoff,
+            max_items,
+        ));
+    }
+    Ok(items)
+}
+
+async fn fetch_ths_stock_news(
+    client: &reqwest::Client,
+    stocks: &[Value],
+    relations: &[Value],
+    days: i64,
+) -> Result<Vec<Value>, String> {
+    let mut items = Vec::new();
+    let cutoff = cutoff_epoch_millis(days);
+    let relation_map = relation_map(relations);
+    let max_stocks = env_usize("GP_NEWS_THS_MAX_STOCKS", 8, 0, 50);
+    let max_items = env_usize("GP_NEWS_THS_MAX_ITEMS", 40, 0, 160);
+    for stock in stocks.iter().take(max_stocks) {
+        let Some(code) = stock
+            .get("code")
+            .and_then(Value::as_str)
+            .and_then(normalize_stock_code)
+        else {
+            continue;
+        };
+        let Some(digits) = code_digits(&code) else {
+            continue;
+        };
+        let url = format!("https://basic.10jqka.com.cn/{digits}/news.html");
+        let html = http_get_text(client, &url).await?;
+        items.extend(parse_ths_linkage_news(
+            &html,
+            stock,
+            &relation_map,
+            cutoff,
+            max_items,
+        ));
+    }
+    Ok(items)
+}
+
+fn parse_sina_stock_news(
+    html: &str,
+    stock: &Value,
+    relation_map: &HashMap<String, Vec<String>>,
+    cutoff: u128,
+    max_items: usize,
+) -> Vec<Value> {
+    let Some(code) = stock
+        .get("code")
+        .and_then(Value::as_str)
+        .and_then(normalize_stock_code)
+    else {
+        return Vec::new();
+    };
+    let industry = stock_industries(stock);
+    let Some(start) = html
+        .find("class=\"datelist\"")
+        .or_else(|| html.find("class='datelist'"))
+    else {
+        return Vec::new();
+    };
+    let list_start = html[..start].rfind('<').unwrap_or(start);
+    let list_end = html[list_start..]
+        .find("</ul>")
+        .map(|offset| list_start + offset)
+        .unwrap_or(html.len());
+    let list = &html[list_start..list_end];
+    let mut items = Vec::new();
+    for chunk in list.split("<br") {
+        if items.len() >= max_items {
+            break;
+        }
+        let Some(published_at) = extract_sina_news_time(chunk) else {
+            continue;
+        };
+        let Some(published_epoch) = parse_time_epoch_millis(&published_at) else {
+            continue;
+        };
+        if published_epoch < cutoff {
+            continue;
+        }
+        let Some(url) = extract_first_attr_value(chunk, "href") else {
+            continue;
+        };
+        let title = extract_link_text(chunk);
+        if title.is_empty() {
+            continue;
+        }
+        items.push(news_item(json!({
+            "title": title,
+            "summary": title.clone(),
+            "source": SOURCE_SINA_FINANCE,
+            "source_tier": SOURCE_TIER_NEWS,
+            "published_at": published_at,
+            "published_at_epoch_ms": published_epoch,
+            "url": url,
+            "stock_codes": [code.clone()],
+            "industries": industry.clone(),
+            "relation_types": relation_map.get(&code).cloned().unwrap_or_default(),
+            "sentiment": infer_sentiment(&title),
+            "fetched_at_epoch_ms": epoch_millis()
+        })));
+    }
+    items
+}
+
+fn parse_ths_linkage_news(
+    html: &str,
+    stock: &Value,
+    relation_map: &HashMap<String, Vec<String>>,
+    cutoff: u128,
+    max_items: usize,
+) -> Vec<Value> {
+    let Some(code) = stock
+        .get("code")
+        .and_then(Value::as_str)
+        .and_then(normalize_stock_code)
+    else {
+        return Vec::new();
+    };
+    let Some(digits) = code_digits(&code) else {
+        return Vec::new();
+    };
+    let Some(raw) = extract_hidden_element_text(html, "linkagedata") else {
+        return Vec::new();
+    };
+    let Ok(rows) = serde_json::from_str::<Vec<Value>>(&raw) else {
+        return Vec::new();
+    };
+    let industry = stock_industries(stock);
+    let mut items = Vec::new();
+    for row in rows.into_iter().take(max_items) {
+        let title = clean_html(row.get("title").and_then(Value::as_str).unwrap_or(""));
+        if title.is_empty() {
+            continue;
+        }
+        let stocks_field = row.get("stocks").and_then(Value::as_str).unwrap_or("");
+        if !stocks_field.trim().is_empty() && !stocks_field.contains(&digits) {
+            continue;
+        }
+        let published_epoch = row
+            .get("ctime")
+            .and_then(Value::as_u64)
+            .map(|seconds| u128::from(seconds) * 1_000)
+            .unwrap_or_else(epoch_millis);
+        if published_epoch < cutoff {
+            continue;
+        }
+        let published_at = row
+            .get("ctime")
+            .and_then(Value::as_u64)
+            .map(epoch_seconds_to_news_time)
+            .unwrap_or_else(current_iso_like);
+        let source = row
+            .get("source")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(SOURCE_THS_F10);
+        let url = row
+            .get("curl")
+            .or_else(|| row.get("url"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("https://basic.10jqka.com.cn/{digits}/news.html"));
+        let author = row
+            .get("author")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("");
+        let summary = if author.is_empty() {
+            title.clone()
+        } else {
+            format!("{title} - {author}")
+        };
+        items.push(news_item(json!({
+            "title": title,
+            "summary": summary,
+            "source": source,
+            "source_tier": SOURCE_TIER_NEWS,
+            "published_at": published_at,
+            "published_at_epoch_ms": published_epoch,
+            "url": url,
+            "stock_codes": [code.clone()],
+            "industries": industry.clone(),
+            "relation_types": relation_map.get(&code).cloned().unwrap_or_default(),
+            "sentiment": infer_sentiment(&summary),
+            "fetched_at_epoch_ms": epoch_millis()
+        })));
+    }
+    items
 }
 
 fn parse_guba_article_list(
@@ -1466,24 +1929,50 @@ fn current_iso_like() -> String {
     format!("{seconds}")
 }
 async fn http_get_text(client: &reqwest::Client, url: &str) -> Result<String, String> {
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| format!("GET {url} failed: {error}"))?;
-    if !response.status().is_success() {
-        return Err(format!("GET {url} HTTP {}", response.status()));
+    http_get_text_with_headers_timeout(client, url, "", NEWS_TIMEOUT_SECS).await
+}
+async fn http_get_text_with_headers_timeout(
+    client: &reqwest::Client,
+    url: &str,
+    referer: &str,
+    timeout_secs: u64,
+) -> Result<String, String> {
+    let user_agent = "Mozilla/5.0 GuXuanYou/0.3 news-rag";
+    match powershell_http_get_bytes_with_headers(url, timeout_secs, user_agent, referer) {
+        Ok(bytes) => return Ok(decode_http_text(&bytes)),
+        Err(powershell_error) => {
+            let mut request = client.get(url).header("User-Agent", user_agent);
+            if !referer.trim().is_empty() {
+                request = request.header("Referer", referer);
+            }
+            let response = request.send().await.map_err(|error| {
+                format!(
+                    "PowerShell HTTP fallback failed: {}; reqwest GET {url} failed: {error}",
+                    limit_chars(&powershell_error, 180)
+                )
+            })?;
+            if !response.status().is_success() {
+                return Err(format!(
+                    "PowerShell HTTP fallback failed: {}; reqwest GET {url} HTTP {}",
+                    limit_chars(&powershell_error, 180),
+                    response.status()
+                ));
+            }
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|error| format!("GET {url} body read failed: {error}"))?;
+            Ok(decode_http_text(&bytes))
+        }
     }
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| format!("GET {url} body read failed: {error}"))?;
-    let (utf8, _, had_errors) = encoding_rs::UTF_8.decode(&bytes);
+}
+fn decode_http_text(bytes: &[u8]) -> String {
+    let (utf8, _, had_errors) = encoding_rs::UTF_8.decode(bytes);
     if had_errors {
-        let (gbk, _, _) = encoding_rs::GBK.decode(&bytes);
-        Ok(gbk.into_owned())
+        let (gbk, _, _) = encoding_rs::GBK.decode(bytes);
+        gbk.into_owned()
     } else {
-        Ok(utf8.into_owned())
+        utf8.into_owned()
     }
 }
 fn parse_jsonp(text: &str) -> Option<Value> {
@@ -1586,6 +2075,139 @@ fn guba_list_summary(row: &Value, title: &str) -> String {
     }
     parts.join("；")
 }
+
+fn stock_industries(stock: &Value) -> Vec<String> {
+    stock
+        .get("industry")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| vec![value.to_string()])
+        .unwrap_or_default()
+}
+fn sina_symbol(code: &str) -> Option<String> {
+    let normalized = normalize_stock_code(code)?;
+    let digits = code_digits(&normalized)?;
+    let prefix =
+        if normalized.ends_with(".SH") || digits.starts_with('6') || digits.starts_with('9') {
+            "sh"
+        } else {
+            "sz"
+        };
+    Some(format!("{prefix}{digits}"))
+}
+fn extract_first_attr_value(markup: &str, attr: &str) -> Option<String> {
+    for quote in ['\'', '"'] {
+        let marker = format!("{attr}={quote}");
+        let Some(start) = markup.find(&marker).map(|offset| offset + marker.len()) else {
+            continue;
+        };
+        let end = markup[start..]
+            .find(quote)
+            .map(|offset| start + offset)
+            .unwrap_or(markup.len());
+        let value = markup[start..end].trim();
+        if !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+fn extract_link_text(markup: &str) -> String {
+    let Some(link_start) = markup.find("<a") else {
+        return String::new();
+    };
+    let Some(text_start) = markup[link_start..]
+        .find('>')
+        .map(|offset| link_start + offset + 1)
+    else {
+        return String::new();
+    };
+    let text_end = markup[text_start..]
+        .find("</a>")
+        .map(|offset| text_start + offset)
+        .unwrap_or(markup.len());
+    clean_html(&markup[text_start..text_end])
+}
+fn extract_sina_news_time(markup: &str) -> Option<String> {
+    let bytes = markup.as_bytes();
+    for index in 0..bytes.len().saturating_sub(9) {
+        if !is_ascii_date_at(bytes, index) {
+            continue;
+        }
+        let date = markup.get(index..index + 10)?;
+        let after = markup.get(index + 10..).unwrap_or("");
+        if let Some(time_index) = find_ascii_time_index(after) {
+            let time = after.get(time_index..time_index + 5)?;
+            return Some(format!("{date} {time}:00"));
+        }
+        return Some(format!("{date} 00:00:00"));
+    }
+    None
+}
+fn is_ascii_date_at(bytes: &[u8], index: usize) -> bool {
+    index + 10 <= bytes.len()
+        && bytes[index..index + 4].iter().all(u8::is_ascii_digit)
+        && bytes[index + 4] == b'-'
+        && bytes[index + 5..index + 7].iter().all(u8::is_ascii_digit)
+        && bytes[index + 7] == b'-'
+        && bytes[index + 8..index + 10].iter().all(u8::is_ascii_digit)
+}
+fn find_ascii_time_index(value: &str) -> Option<usize> {
+    let bytes = value.as_bytes();
+    for index in 0..bytes.len().saturating_sub(4) {
+        if bytes[index].is_ascii_digit()
+            && bytes[index + 1].is_ascii_digit()
+            && bytes[index + 2] == b':'
+            && bytes[index + 3].is_ascii_digit()
+            && bytes[index + 4].is_ascii_digit()
+        {
+            return Some(index);
+        }
+    }
+    None
+}
+fn extract_hidden_element_text(html: &str, id: &str) -> Option<String> {
+    let marker_double = format!("id=\"{id}\"");
+    let marker_single = format!("id='{id}'");
+    let id_pos = html
+        .find(&marker_double)
+        .or_else(|| html.find(&marker_single))?;
+    let start = html[id_pos..].find('>').map(|offset| id_pos + offset + 1)?;
+    let end = html[start..]
+        .find("</div>")
+        .map(|offset| start + offset)
+        .unwrap_or(html.len());
+    let value = html[start..end].trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+fn epoch_seconds_to_news_time(seconds: u64) -> String {
+    let days = (seconds / 86_400) as i64;
+    let rem = seconds % 86_400;
+    let hour = rem / 3_600;
+    let minute = (rem % 3_600) / 60;
+    let second = rem % 60;
+    format!(
+        "{} {hour:02}:{minute:02}:{second:02}",
+        civil_date_from_days(days)
+    )
+}
+fn civil_date_from_days(days_since_epoch: i64) -> String {
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if month <= 2 { 1 } else { 0 };
+    format!("{year:04}-{month:02}-{day:02}")
+}
 fn configured_urls(env_name: &str) -> Vec<String> {
     env::var(env_name)
         .unwrap_or_default()
@@ -1684,6 +2306,76 @@ fn redact_secret(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sina_us_market_brief_parser_extracts_indices() {
+        let payload = r#"
+            var hq_str_gb_dji="道琼斯,51848.8984,0.35,2026-06-25 04:41:44,182.0600,51660.7500";
+            var hq_str_gb_ixic="纳斯达克,25476.6356,-0.43,2026-06-25 09:48:40,-110.4035,25578.6239";
+            var hq_str_gb_inx="标普500指数,7358.2202,-0.10,2026-06-25 04:41:44,-7.2400,7370.8799";
+            var hq_str_gb_vix="";
+        "#;
+        let brief = parse_sina_us_market_brief(payload).unwrap();
+        assert_eq!(brief["status"], "ok");
+        assert_eq!(brief["source"], "新浪财经全球指数");
+        assert_eq!(brief["items"].as_array().unwrap().len(), 3);
+        assert_eq!(brief["items"][0]["symbol"], "SPX");
+        assert_eq!(brief["items"][1]["symbol"], "IXIC");
+        assert_eq!(brief["items"][2]["symbol"], "DJI");
+        let dji_change = brief["items"][2]["change_percent"].as_f64().unwrap();
+        assert!((dji_change - 0.0035).abs() < 0.000001);
+        assert!(brief["headline"].as_str().unwrap().contains("美股"));
+    }
+
+    #[test]
+    fn sina_stock_news_parser_extracts_traditional_media_items() {
+        let stock = json!({"code":"000100.SZ", "name":"TCL科技", "industry":"面板"});
+        let relations =
+            relation_map(&[json!({"source_code":"000100.SZ", "relation_type":"supply_chain"})]);
+        let html = r#"
+            <div class="datelist"><ul>
+            &nbsp;&nbsp;2026-06-25&nbsp;17:37&nbsp;&nbsp;<a target='_blank' href='https://cj.sina.cn/articles/view/1'>TCL科技获机构调研，面板需求改善</a><br>
+            &nbsp;&nbsp;2026-06-24&nbsp;09:10&nbsp;&nbsp;<a target="_blank" href="https://finance.sina.com.cn/test">TCL科技融资余额上升</a><br>
+            </ul></div>
+        "#;
+        let cutoff = parse_time_epoch_millis("2026-06-01 00:00:00").unwrap();
+        let items = parse_sina_stock_news(&html, &stock, &relations, cutoff, 10);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["source"], SOURCE_SINA_FINANCE);
+        assert_eq!(items[0]["source_tier"], SOURCE_TIER_NEWS);
+        assert_eq!(items[0]["stock_codes"][0], "000100.SZ");
+        assert_eq!(items[0]["published_at"], "2026-06-25 17:37:00");
+        assert!(items[0]["url"].as_str().unwrap().contains("cj.sina.cn"));
+    }
+
+    #[test]
+    fn ths_linkage_news_parser_extracts_media_items() {
+        let stock = json!({"code":"000100.SZ", "name":"TCL科技", "industry":"面板"});
+        let relations = relation_map(&[
+            json!({"target_code":"000100.SZ", "relation_type":"manufacturing_chain"}),
+        ]);
+        let html = r#"
+            <div style="display:none" id="linkagedata">[
+              {"seq":1,"ctime":1782176731,"curl":"http:\/\/news.10jqka.com.cn\/field\/20260623\/677633298.shtml","title":"TCL科技：6月22日获融资买入10.31亿元","source":"同花顺iNews","author":"两融研究","stocks":"000100","type":"yidong"},
+              {"seq":2,"ctime":1782263131,"curl":"http:\/\/finance.eastmoney.com\/a.html","title":"TCL科技接受每日经济新闻采访","source":"每日经济新闻","stocks":"000100"}
+            ]</div>
+        "#;
+        let cutoff = parse_time_epoch_millis("2026-06-01 00:00:00").unwrap();
+        let items = parse_ths_linkage_news(&html, &stock, &relations, cutoff, 10);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["source"], "同花顺iNews");
+        assert_eq!(items[1]["source"], "每日经济新闻");
+        assert_eq!(items[0]["source_tier"], SOURCE_TIER_NEWS);
+        assert_eq!(items[0]["stock_codes"][0], "000100.SZ");
+        assert!(items[0]["published_at"]
+            .as_str()
+            .unwrap()
+            .starts_with("2026-06-23"));
+        assert!(items[0]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("http://news.10jqka.com.cn"));
+    }
     #[test]
     fn embedded_object_parser_handles_nested_json() {
         let html =

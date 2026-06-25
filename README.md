@@ -1,6 +1,6 @@
 # 股选优
 
-这是一个面向 A 股的选股智能体项目，后端使用 FastAPI，前端提供行情观察、基础选股、关系图选股、趋势指标选股和回测界面。项目同时包含 Tauri 桌面壳、移动端可嵌入的 Rust 核心模块，以及可切换的数据源适配层。
+这是一个面向 A 股的选股智能体项目，当前默认运行时为 Tauri + Rust。前端提供行情观察、基础选股、关系图选股、趋势指标选股、回测和消息证据界面；桌面端通过 Tauri command 调用 Rust 后端，不再要求本机 Python/FastAPI 服务。
 
 当前能力包括：
 
@@ -33,59 +33,44 @@ Android 的 `release-unsigned.apk` 需要接入正式 keystore 后再签名分�
 
 ## 本地运行
 
+默认开发入口是 Tauri 桌面端，不需要 Python 虚拟环境或 `requirements.txt`。
+
 ```bash
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-set STOCK_PROVIDER=tdx
-set OPENAI_API_KEY=your_key_here
-set OPENAI_MODEL=gpt-4o-mini
-uvicorn app.main:app --reload
+.\start-dev.bat
 ```
 
-打开 `http://127.0.0.1:8000` 即可访问响应式网页界面。
+等价的显式 Tauri 启动命令：
+
+```bash
+.\start-tauri-dev.bat
+```
+
+首次运行会准备 `desktop/mobile-dist` 静态前端资源，并执行 Rust/Tauri 预检。
 
 ## 桌面端（Tauri）
 
-Tauri 桌面壳位于 `desktop/`，启动时会先拉起本地 FastAPI 服务，再打开桌面窗口。
+Tauri 桌面壳位于 `desktop/`。桌面端加载本地静态前端，并通过 Rust/Tauri command 获取行情、财务、消息和资金证据数据。
+
+```bash
+.\start-tauri-dev.bat
+```
+
+也可以在 `desktop/` 下直接运行：
 
 ```bash
 cd desktop
 cmd /c npm install
-cmd /c npm run dev
+cmd /c npm run dev -- --no-watch
 ```
 
-开发模式会优先使用 `GP_ASSISTANT_PYTHON` 指定的解释器，然后依次回退到 `.venv-cpython\Scripts\python.exe`、`.venv\Scripts\python.exe` 和系统 `PATH` 中的 `python`。默认后端地址为 `http://127.0.0.1:8010`，默认数据源为 `STOCK_PROVIDER=tdx`。
-
-构建带 FastAPI sidecar 的 Windows 桌面安装包：
+构建 Windows 桌面安装包：
 
 ```bash
 cd desktop
 cmd /c npm run build:windows
 ```
 
-sidecar 构建使用 PyInstaller，输出到 `desktop/src-tauri/binaries/`。
-
-Linux 桌面包需要在 Linux 环境中构建，推荐使用 WSL Ubuntu。先准备 Rust stable、Node.js、Python/PyInstaller，以及 Tauri Linux 依赖（WebKitGTK、GTK、AppIndicator、librsvg、patchelf 等），并生成 Linux 平台 sidecar：
-
-```bash
-python -m PyInstaller --clean --onefile --name stock-optimizer-backend \
-  --collect-all onnxruntime --collect-all tokenizers --collect-all pytdx \
-  --add-data app/static:app/static \
-  --add-data app/prompts:app/prompts \
-  app/desktop_server.py
-cp dist/stock-optimizer-backend desktop/src-tauri/binaries/stock-optimizer-backend-x86_64-unknown-linux-gnu
-```
-
-然后在 `desktop/` 下打包 Linux 安装包：
-
-```bash
-npm install
-npm exec tauri -- build \
-  --config src-tauri/tauri.sidecar.conf.json \
-  --config '{"bundle":{"icon":["icons/icon.png","icons/icon.ico"]}}' \
-  --bundles deb appimage
-```
+当前桌面包不再打包 FastAPI sidecar，也不再需要 PyInstaller。Linux 桌面包仍需在 Linux 环境中构建，并准备 Rust stable、Node.js 与 Tauri Linux 依赖（WebKitGTK、GTK、AppIndicator、librsvg、patchelf 等）。
 
 ## 移动端 / 原生核心
 
@@ -118,24 +103,15 @@ Android 端不会启动 Python/FastAPI sidecar，会加载本地静态前端，�
 
 Rust 核心目前包含关系图选股、SWL/SWS 趋势选股、确定性回测和本地启发式智能体路由。移动端可以把 SQLite、内置 JSON 或远端接口拿到的股票、关系、历史行情统一封装为 `CoreDataSet` 后传入 Rust 核心。
 
-### Python ↔ Rust 双实现与一致性护栏
+### Rust 实现与 legacy Python 参考
 
-选股 / 趋势 / 回测 / 关系图这几块逻辑同时存在两份实现：
+默认桌面端和移动端都走 Rust/Tauri 后端。`app/services/*` 中的 Python 实现仍保留为 legacy 参考和迁移对照，不再是默认运行路径，也不再由发布检查强制执行。
 
-- **Python（`app/services/*`）是权威源**：功能最全（因子加权打分、PageRank+图嵌入关系评分、带再平衡和基准的组合回测、筹码分布等），桌面端与 Web 后端使用它。
-- **Rust（`native/gp-core`）是移动端实现**：手机端无法运行 Python/pandas/akshare，所以核心算法在 Rust 里另写一份。它是刚需，不能删，但目前是 Python 的**简化子集**：
-  - `trend`（趋势）：与 Python **数值等价**，是认真对齐的移植（仅缺 Python 的筹码分布旁路）。
-  - `screen`（选股）：**过滤条件一致**，但打分口径不同（Rust 加法启发式 vs Python 因子加权制），分数与排序会不同。
-  - `graph`（关系图）：候选池一致，但 Rust 只实现了局部邻域评分，**缺 PageRank 与图嵌入**。
-  - `backtest`（回测）：选标的与等权 buy&hold 一致，但 Rust **没有再平衡 / 交易成本 / 基准曲线**。
-
-`tests/test_core_parity.py` 通过 `ctypes` 直接加载 `gp-core` 的 cdylib（无需 PyO3），用同一份 mock 数据喂给两套实现做对拍：`trend` 断言数值容差内相等，`screen/graph/backtest` 断言共享部分（过滤、选标的、候选池）不漂移，并把已知算法差异钉成显式契约。**改动任一侧的共享逻辑时，请保持对拍测试通过**；若有意改变某条差异（例如把 Rust 打分对齐到 Python），需同步更新该测试。运行前先构建 cdylib：
+Rust 核心目前覆盖筛选、趋势、关系图、回测和本地智能体路由。运行 Rust 核心测试：
 
 ```bash
-cargo build --release --manifest-path native/gp-core/Cargo.toml
+cargo test --manifest-path native/gp-core/Cargo.toml
 ```
-
-未构建时对拍测试会自动跳过（带构建提示），不会让无 Rust 工具链的环境失败。
 
 ## 数据源
 

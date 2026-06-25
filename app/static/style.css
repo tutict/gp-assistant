@@ -2041,6 +2041,73 @@ input[type="date"] {
   gap: 12px;
 }
 
+.capital-evidence-section.message-sentiment {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+}
+
+.capital-evidence-section.message-sentiment > summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 48px;
+  cursor: pointer;
+  list-style: none;
+  padding: 10px;
+}
+
+.capital-evidence-section.message-sentiment > summary::-webkit-details-marker,
+.capital-evidence-section.message-sentiment > summary::marker {
+  display: none;
+  content: "";
+}
+
+.capital-evidence-section.message-sentiment > summary strong {
+  display: block;
+  color: var(--text);
+  font-size: 0.86rem;
+}
+
+.capital-evidence-section.message-sentiment > summary span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-style: normal;
+}
+
+.message-sentiment-meta {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.message-sentiment-meta em {
+  color: var(--accent-strong);
+  font-size: 0.74rem;
+  font-style: normal;
+  font-weight: 780;
+}
+
+.capital-evidence-section.message-sentiment:not(.available) .message-sentiment-meta em {
+  color: var(--muted);
+  font-weight: 720;
+}
+
+.message-sentiment-list {
+  border-top: 1px solid var(--line);
+  padding: 10px;
+}
+
+.capital-evidence-section.message-sentiment:not([open]) {
+  background: color-mix(in srgb, var(--surface-2) 88%, #000000);
+}
+
+.capital-evidence-section.message-sentiment:not([open]) > :not(summary) {
+  display: none;
+}
+
 .technical-fusion-meta {
   display: flex;
   flex-wrap: wrap;
@@ -6954,6 +7021,115 @@ h1 {
   font-size: 0.76rem;
   line-height: 1.45;
 }
+
+.us-market-brief {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line));
+  border-radius: 8px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 88%, var(--accent) 12%), var(--surface));
+  padding: 12px;
+}
+
+.us-market-brief header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.us-market-brief header div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.us-market-brief header span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 820;
+}
+
+.us-market-brief header strong {
+  color: var(--text);
+  font-size: 0.98rem;
+  font-weight: 880;
+  line-height: 1.25;
+}
+
+.us-market-brief header em,
+.us-market-brief p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.us-market-brief header em {
+  white-space: nowrap;
+}
+
+.us-market-ticker-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.us-market-ticker {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  padding: 9px 10px;
+}
+
+.us-market-ticker span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 780;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.us-market-ticker strong {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 880;
+  line-height: 1.1;
+}
+
+.us-market-ticker em {
+  font-size: 0.76rem;
+  font-style: normal;
+  font-weight: 840;
+}
+
+.us-market-ticker.positive em,
+.us-market-brief.positive header strong {
+  color: var(--rise);
+}
+
+.us-market-ticker.negative em,
+.us-market-brief.negative header strong {
+  color: var(--fall);
+}
+
+.us-market-ticker.neutral em,
+.us-market-brief.mixed header strong,
+.us-market-brief.neutral header strong {
+  color: var(--accent-strong);
+}
+
+.us-market-brief.unavailable {
+  border-color: color-mix(in srgb, var(--warning) 34%, var(--line));
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+}
+
 .plain-news-groups {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -7579,8 +7755,17 @@ h1 {
   .news-finding header {
     grid-template-columns: 1fr;
   }
-  .plain-news-groups {
+  .plain-news-groups,
+  .us-market-ticker-row {
     grid-template-columns: 1fr;
+  }
+
+  .us-market-brief header {
+    display: grid;
+  }
+
+  .us-market-brief header em {
+    white-space: normal;
   }
 
   .chart-wrap {

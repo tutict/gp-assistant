@@ -9,6 +9,7 @@
     "frontendDist": "../mobile-dist"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [],
     "security": {
       "csp": null

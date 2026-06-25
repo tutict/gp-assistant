@@ -142,11 +142,11 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
         try:
             from tokenizers import Tokenizer
         except ImportError as exc:
-            raise ValueError("缺少 tokenizers 依赖；请重新安装 requirements.txt。") from exc
+            raise ValueError("缺少 tokenizers 依赖；请重新安装 requirements.legacy-python.txt。") from exc
         try:
             import onnxruntime as ort
         except ImportError as exc:
-            raise ValueError("缺少 onnxruntime 依赖；请重新安装 requirements.txt。") from exc
+            raise ValueError("缺少 onnxruntime 依赖；请重新安装 requirements.legacy-python.txt。") from exc
 
         self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
         self._session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
