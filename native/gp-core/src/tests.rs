@@ -1208,3 +1208,94 @@ fn backtests_watchlist_codes_in_saved_order() {
     assert_eq!(result.symbols, vec!["222222.SZ", "111111.SZ"]);
     assert!(result.notes.iter().any(|note| note.contains("自选观察池")));
 }
+
+#[test]
+fn screen_stocks_empty_universe_returns_empty_without_panic() {
+    let result = screen_stocks(&[], &ScreenCriteria::default());
+    assert_eq!(result.returned, 0);
+    assert_eq!(result.total, 0);
+    assert!(result.items.is_empty());
+}
+
+#[test]
+fn pe_and_pb_scores_handle_nonpositive_and_nonfinite() {
+    // Non-positive PE/PB are penalized via match guards, never used as a divisor.
+    assert_eq!(pe_score(Some(0.0)), 0.25);
+    assert_eq!(pe_score(Some(-12.0)), 0.25);
+    assert_eq!(pb_score(Some(0.0)), 0.25);
+    assert_eq!(pb_score(Some(-3.0)), 0.25);
+    // Missing metrics fall back to a neutral score.
+    assert_eq!(pe_score(None), 0.52);
+    assert_eq!(pb_score(None), 0.52);
+    // NaN/Infinity must not propagate (all comparisons are false -> last arm).
+    assert!(pe_score(Some(f64::NAN)).is_finite());
+    assert!(pb_score(Some(f64::NAN)).is_finite());
+    assert!(pe_score(Some(f64::INFINITY)).is_finite());
+    assert!(pb_score(Some(f64::INFINITY)).is_finite());
+}
+
+#[test]
+fn fundamental_score_with_nonfinite_inputs_stays_bounded() {
+    let stock = StockItem {
+        code: "000001.SZ".to_string(),
+        roe: Some(f64::NAN),
+        dividend_yield: Some(f64::INFINITY),
+        deducted_net_profit_billion: Some(f64::NAN),
+        deducted_net_profit_growth_rate: Some(f64::NAN),
+        ..StockItem::default()
+    };
+    let score = fundamental_score(&stock);
+    assert!(score.is_finite());
+    assert!((0.0..=1.0).contains(&score));
+}
+
+#[test]
+fn score_stock_with_degenerate_metrics_stays_finite_and_bounded() {
+    let stock = StockItem {
+        code: "000002.SZ".to_string(),
+        name: "degenerate".to_string(),
+        industry: "银行".to_string(),
+        price: 0.0,
+        pe: Some(0.0),
+        pb: Some(0.0),
+        roe: Some(f64::NAN),
+        market_cap_billion: Some(0.0),
+        dividend_yield: Some(f64::INFINITY),
+        ..StockItem::default()
+    };
+    let result = screen_stocks(&[stock], &ScreenCriteria::default());
+    assert_eq!(result.returned, 1);
+    let scored = &result.items[0];
+    assert!(scored.score.is_finite(), "composite score must be finite");
+    assert!((0.0..=SCREEN_SCORE_SCALE).contains(&scored.score));
+    for (key, value) in &scored.factor_scores {
+        assert!(value.is_finite(), "factor score {key} must be finite");
+    }
+}
+
+#[test]
+fn screen_stocks_with_tied_scores_is_deterministic() {
+    let make = |code: &str| StockItem {
+        code: code.to_string(),
+        name: code.to_string(),
+        industry: "银行".to_string(),
+        price: 10.0,
+        pe: Some(8.0),
+        pb: Some(1.0),
+        roe: Some(0.15),
+        market_cap_billion: Some(120.0),
+        ..StockItem::default()
+    };
+    let universe = vec![make("000001.SZ"), make("000002.SZ"), make("000003.SZ")];
+    let criteria = ScreenCriteria {
+        sort_by: "score".to_string(),
+        sort_dir: "desc".to_string(),
+        ..ScreenCriteria::default()
+    };
+    let first = screen_stocks(&universe, &criteria);
+    let second = screen_stocks(&universe, &criteria);
+    let codes_first: Vec<_> = first.items.iter().map(|item| item.stock.code.clone()).collect();
+    let codes_second: Vec<_> = second.items.iter().map(|item| item.stock.code.clone()).collect();
+    assert_eq!(first.returned, 3);
+    assert_eq!(codes_first, codes_second, "tie-break ordering must be deterministic");
+}
