@@ -276,13 +276,7 @@ fn api_stock_search(app: tauri::AppHandle, payload: Value) -> Result<Value, Stri
         .unwrap_or("")
         .trim()
         .to_lowercase();
-    let limit = payload
-        .get("limit")
-        .and_then(Value::as_u64)
-        .and_then(|value| usize::try_from(value).ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(8)
-        .min(20);
+    let limit = payload_usize_field(&payload, "limit", 8, 1, 20);
     if query.is_empty() {
         return Ok(json!([]));
     }
@@ -378,12 +372,7 @@ fn api_minutes(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
         .and_then(Value::as_str)
         .and_then(normalize_stock_code)
         .ok_or_else(|| "code is required".to_string())?;
-    let limit = payload
-        .get("limit")
-        .and_then(Value::as_u64)
-        .and_then(|v| usize::try_from(v).ok())
-        .unwrap_or(500)
-        .clamp(1, 500);
+    let limit = payload_usize_field(&payload, "limit", 500, 1, 500);
     let data = cached_market_data(&app)?;
     let history = data
         .get("histories")
@@ -775,6 +764,20 @@ fn decode_utf8_lossy(bytes: Vec<u8>) -> String {
         Ok(text) => text,
         Err(error) => String::from_utf8_lossy(&error.into_bytes()).to_string(),
     }
+}
+
+fn payload_usize_field(value: &Value, key: &str, default: usize, min: usize, max: usize) -> usize {
+    let parsed = value.get(key).and_then(|field| {
+        field
+            .as_u64()
+            .and_then(|number| usize::try_from(number).ok())
+            .or_else(|| {
+                field
+                    .as_str()
+                    .and_then(|text| text.trim().parse::<usize>().ok())
+            })
+    });
+    parsed.unwrap_or(default).clamp(min, max)
 }
 
 fn truncate_for_note(value: &str, max_chars: usize) -> String {
@@ -4932,6 +4935,18 @@ mod tests {
         }
         let expected: BTreeSet<String> = stable.into_iter().collect();
         assert_eq!(fetched, expected, "rebuild missed or duplicated candidates");
+    }
+
+    #[test]
+    fn payload_usize_field_accepts_query_string_values() {
+        let payload = json!({"limit": "3"});
+        assert_eq!(payload_usize_field(&payload, "limit", 8, 1, 20), 3);
+
+        let numeric_payload = json!({"limit": 25});
+        assert_eq!(payload_usize_field(&numeric_payload, "limit", 8, 1, 20), 20);
+
+        let invalid_payload = json!({"limit": "bad"});
+        assert_eq!(payload_usize_field(&invalid_payload, "limit", 8, 1, 20), 8);
     }
 
     #[test]
