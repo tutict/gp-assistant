@@ -4953,7 +4953,7 @@ function renderTrendAnalysis(node, data) {
     summary: [
       ["状态", statusLabel(signal.status)],
       ["量化分", `${signal.quant_score ?? 0}/${signal.quant_score_max ?? 90}`],
-      ["收盘价", formatNumber(signal.close)],
+      ["收盘价", formatPrice(signal.close)],
     ],
     body: [
       renderSignalCard(data.stock || {}, signal),
@@ -5688,7 +5688,7 @@ function observeSummary(data) {
   const kdjValues = [signal.k, signal.d, signal.j].map(formatNumber).join(" / ");
   return [
     ["数据源", sourceLabel(data.source)],
-    ["最新价", formatNumber(stock.price)],
+    ["最新价", formatPrice(stock.price)],
     ["KDJ", kdjValues],
   ];
 }
@@ -5758,7 +5758,7 @@ function renderAgentResult(node, data) {
 
   const thirdMetric =
     data.action === "observe_stock"
-      ? ["最新价", formatNumber(nested.stock?.price)]
+      ? ["最新价", formatPrice(nested.stock?.price)]
       : data.action === "sector_screen"
       ? ["概念", nested.sector_count ?? nestedGroups.length ?? "-"]
       : data.action === "graph_screen"
@@ -6107,7 +6107,7 @@ function renderObservationOverview(stock, financial, trend = {}) {
           <p>${escapeHtml([stock.code, stock.industry].filter(Boolean).join(" · ") || "未知行业")}</p>
         </div>
         <div class="overview-price-block ${escapeHtml(priceTone)}">
-          <strong class="overview-price">${formatNumber(priceValue)}</strong>
+          <strong class="overview-price">${formatPrice(priceValue)}</strong>
           <span>${escapeHtml(priceSummary)}</span>
         </div>
       </header>
@@ -6141,7 +6141,7 @@ function renderQuoteCard(stock) {
           <h3>${escapeHtml(stock.name || stock.code || "-")}</h3>
           <p>${escapeHtml(stock.code || "")} · ${escapeHtml(stock.industry || "未知行业")}</p>
         </div>
-        <span class="quote-price">${formatNumber(stock.price)}</span>
+        <span class="quote-price">${formatPrice(stock.price)}</span>
       </header>
       <div class="quote-grid">
         <div><span>市盈率</span><strong>${formatNumber(stock.pe)}</strong></div>
@@ -6393,7 +6393,7 @@ function renderOrderBook(book) {
             (row) => `
               <div class="${row.tone}">
                 <span>${escapeHtml(row.side)}</span>
-                <strong>${formatNumber(row.price)}</strong>
+                <strong>${formatPrice(row.price)}</strong>
                 <em>${formatNumber(row.volume)}</em>
               </div>
             `,
@@ -6453,7 +6453,7 @@ function renderSignalCard(stock, signal, options = {}) {
         <span class="state-pill">${escapeHtml(statusLabel(signal.status))}</span>
       </header>
       <div class="signal-grid">
-        <div class="signal-price-cell ${escapeHtml(priceTone)}"><span>收盘价</span><strong>${formatNumber(priceValue)}</strong><small>${escapeHtml(priceSummary)}</small></div>
+        <div class="signal-price-cell ${escapeHtml(priceTone)}"><span>收盘价</span><strong>${formatPrice(priceValue)}</strong><small>${escapeHtml(priceSummary)}</small></div>
         <div><span>SWL/SWS 线</span><strong>${formatNumber(signal.swl)} / ${formatNumber(signal.sws)}</strong></div>
         <div><span>KDJ</span><strong>${formatNumber(signal.k)} / ${formatNumber(signal.d)} / ${formatNumber(signal.j)}</strong></div>
         <div><span>量化分</span><strong>${escapeHtml(String(signal.quant_score ?? 0))}/${escapeHtml(String(signal.quant_score_max ?? 90))}</strong></div>
@@ -6775,7 +6775,7 @@ function renderTrendChartExplanation(series, chipDistribution = null) {
   const prevSws = Number(previous.sws);
   const dateText = latest.date ? `${latest.date}：` : "";
   const valueParts = [
-    Number.isFinite(close) ? `收盘价 ${formatNumber(close)}` : "",
+    Number.isFinite(close) ? `收盘价 ${formatPrice(close)}` : "",
     Number.isFinite(swl) ? `SWL ${formatNumber(swl)}` : "",
     Number.isFinite(sws) ? `SWS ${formatNumber(sws)}` : "",
   ].filter(Boolean);
@@ -7808,15 +7808,15 @@ function basePanelClass(node) {
 }
 
 function renderPriceMeta(price, move, options = {}) {
-  if (!move) return `<span>价格 ${formatNumber(price)}</span>`;
+  if (!move) return `<span>价格 ${formatPrice(price)}</span>`;
   const value = move.value ?? price;
   const tone = ["rise", "fall", "flat"].includes(move.tone) ? move.tone : "neutral";
   const label = options.label || "收盘价";
   const summary = move.summary || "缺少涨跌对比";
   return `
-    <span class="price-meta ${escapeHtml(tone)}" aria-label="${escapeHtml(`${label} ${formatNumber(value)}，${summary}`)}">
+    <span class="price-meta ${escapeHtml(tone)}" aria-label="${escapeHtml(`${label} ${formatPrice(value)}，${summary}`)}">
       <em>${escapeHtml(label)}</em>
-      <strong>${formatNumber(value)}</strong>
+      <strong>${formatPrice(value)}</strong>
       <small>${escapeHtml(summary)}</small>
     </span>
   `;
@@ -7892,6 +7892,19 @@ function formatNumber(value) {
   if (!Number.isFinite(number)) return "-";
   if (Math.abs(number) >= 1000) return number.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
   return number.toLocaleString("zh-CN", { maximumFractionDigits: 3 });
+}
+
+// A-share prices are quoted to 0.01 precision — always render exactly two decimals
+// (pad trailing zeros, keep decimals even for prices >= 1000) instead of the generic
+// formatNumber, which trims zeros, allows 3 decimals, and rounds large values to integers.
+function formatPrice(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return number.toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function formatMoney(value) {
