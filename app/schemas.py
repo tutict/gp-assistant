@@ -22,7 +22,12 @@ class StockItem(BaseModel):
     deducted_net_profit_billion: Optional[float] = None
     deducted_net_profit_margin: Optional[float] = None
     deducted_net_profit_growth_rate: Optional[float] = None
-
+    change_pct: Optional[float] = None
+    volume: Optional[float] = None
+    amount: Optional[float] = None
+    turnover_rate: Optional[float] = None
+    volume_ratio: Optional[float] = None
+    quote_time: Optional[str] = None
 
 class FinancialIndicatorItem(BaseModel):
     label: str
@@ -56,7 +61,7 @@ class ScreenCriteria(BaseModel):
     limit: int = Field(default=10, ge=1, le=200)
     sort_by: str = Field(default="score")
     sort_dir: str = Field(default="desc")
-
+    score_profile: Literal["quality", "rotation"] = "quality"
 
 class ScreenedStock(BaseModel):
     stock: StockItem

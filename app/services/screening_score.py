@@ -15,11 +15,12 @@ from app.services.screening_rules import (
 
 
 FACTOR_LABELS = {
-    "theme": "主题",
-    "fundamental": "基本面",
-    "valuation": "估值",
-    "size": "规模",
-    "risk": "风险",
+    "theme": "\u4e3b\u9898",
+    "fundamental": "\u57fa\u672c\u9762",
+    "valuation": "\u4f30\u503c",
+    "market_heat": "\u8f6e\u52a8\u70ed\u5ea6",
+    "size": "\u89c4\u6a21",
+    "risk": "\u98ce\u9669",
 }
 
 
@@ -38,9 +39,10 @@ def score_stock(
     base_reasons: Sequence[str] | None = None,
     *,
     rules: ScreeningRules | None = None,
+    score_profile: str = "quality",
 ) -> ScreenedStock:
     active_rules = rules or load_screening_rules()
-    breakdown = score_breakdown(stock, base_reasons, rules=active_rules)
+    breakdown = score_breakdown(stock, base_reasons, rules=active_rules, score_profile=score_profile)
     return ScreenedStock(
         stock=stock,
         score=round(breakdown.score, 6),
@@ -57,6 +59,7 @@ def score_breakdown(
     base_reasons: Sequence[str] | None = None,
     *,
     rules: ScreeningRules | None = None,
+    score_profile: str = "quality",
 ) -> ScoreBreakdown:
     active_rules = rules or load_screening_rules()
     theme = theme_match_for_stock(stock, active_rules)
@@ -68,7 +71,9 @@ def score_breakdown(
         "size": _size_score(stock),
         "risk": _risk_score(stock, cold),
     }
-    weighted = sum(active_rules.factor_weights.get(key, 0.0) * value for key, value in factor_scores.items())
+    if _is_rotation_profile(score_profile):
+        factor_scores["market_heat"] = _market_heat_score(stock)
+    weighted = _weighted_score(factor_scores, active_rules, score_profile)
     score = max(0.0, min(active_rules.score_scale, weighted * active_rules.score_scale))
     reasons = list(base_reasons or [])
     reasons.extend(_factor_reasons(theme, cold, factor_scores))
@@ -168,43 +173,87 @@ def _risk_score(stock: StockItem, cold: bool) -> float:
     return 1.0
 
 
+def _is_rotation_profile(score_profile: str) -> bool:
+    return (score_profile or "").strip().lower() == "rotation"
+
+
+def _weighted_score(factor_scores: dict[str, float], rules: ScreeningRules, score_profile: str) -> float:
+    if _is_rotation_profile(score_profile):
+        weights = {
+            "theme": 0.20,
+            "fundamental": 0.20,
+            "valuation": 0.20,
+            "market_heat": 0.22,
+            "size": 0.08,
+            "risk": 0.10,
+        }
+    else:
+        weights = rules.factor_weights
+    return sum(float(weights.get(key, 0.0)) * value for key, value in factor_scores.items())
+
+
+def _market_heat_score(stock: StockItem) -> float:
+    change_pct = _as_percent(stock.change_pct) or 0.0
+    if change_pct >= 0:
+        positive_momentum = _clamp(min(change_pct, 10.0) / 10.0)
+    else:
+        positive_momentum = _clamp(0.45 + max(change_pct, -10.0) / 20.0)
+
+    raw_volume_ratio = _finite_or_none(stock.volume_ratio)
+    volume_ratio = (
+        _clamp((min(raw_volume_ratio, 3.0) - 1.0) / 2.0)
+        if raw_volume_ratio is not None and raw_volume_ratio > 0
+        else 0.45
+    )
+
+    turnover_percent = _as_percent(stock.turnover_rate)
+    turnover = _clamp(min(max(turnover_percent, 0.0), 8.0) / 8.0) if turnover_percent is not None else 0.45
+
+    amount_yuan = _finite_or_none(stock.amount)
+    amount = _clamp(min(amount_yuan / 1_000_000_000.0, 1.0)) if amount_yuan is not None and amount_yuan > 0 else 0.45
+    return _clamp(positive_momentum * 0.46 + volume_ratio * 0.24 + turnover * 0.18 + amount * 0.12)
+
 def _factor_reasons(theme, cold: bool, factor_scores: dict[str, float]) -> list[str]:
     reasons: list[str] = []
     if theme is not None:
-        reasons.append(f"主题:{theme.label}")
+        reasons.append(f"\u4e3b\u9898:{theme.label}")
     if factor_scores["valuation"] >= 0.74:
-        reasons.append("估值较低")
+        reasons.append("\u4f30\u503c\u8f83\u4f4e")
     elif factor_scores["valuation"] <= 0.38:
-        reasons.append("估值偏高")
+        reasons.append("\u4f30\u503c\u504f\u9ad8")
     if factor_scores["fundamental"] >= 0.72:
-        reasons.append("基本面较强")
+        reasons.append("\u57fa\u672c\u9762\u8f83\u5f3a")
+    if factor_scores.get("market_heat", 0.0) >= 0.72:
+        reasons.append("\u8f6e\u52a8\u70ed\u5ea6\u8f83\u9ad8")
     if cold:
-        reasons.append("低热度降权")
+        reasons.append("\u4f4e\u70ed\u5ea6\u964d\u6743")
     return reasons
 
 
 def _explain(stock: StockItem, theme_label: str | None, cold: bool, factor_scores: dict[str, float]) -> str:
     parts: list[str] = []
     if theme_label:
-        parts.append(f"主题命中{theme_label}")
+        parts.append(f"\u4e3b\u9898\u547d\u4e2d{theme_label}")
     else:
-        parts.append("主题热度一般")
-    parts.append(f"估值{_tier_word(factor_scores['valuation'])}")
-    parts.append(f"基本面{_tier_word(factor_scores['fundamental'])}")
+        parts.append("\u4e3b\u9898\u70ed\u5ea6\u4e00\u822c")
+    parts.append(f"\u4f30\u503c{_tier_word(factor_scores['valuation'])}")
+    parts.append(f"\u57fa\u672c\u9762{_tier_word(factor_scores['fundamental'])}")
     if stock.market_cap_billion is None:
-        parts.append("市值缺失按中性处理")
+        parts.append("\u5e02\u503c\u7f3a\u5931\u6309\u4e2d\u6027\u5904\u7406")
     else:
-        parts.append(f"市值规模{_tier_word(factor_scores['size'])}")
-    parts.append("银行/基建等低热度方向已降权" if cold else "风险惩罚低")
-    return "；".join(parts) + "。"
+        parts.append(f"\u5e02\u503c\u89c4\u6a21{_tier_word(factor_scores['size'])}")
+    if "market_heat" in factor_scores:
+        parts.append(f"\u8f6e\u52a8\u70ed\u5ea6{_tier_word(factor_scores['market_heat'])}")
+    parts.append("\u94f6\u884c/\u57fa\u5efa\u7b49\u4f4e\u70ed\u5ea6\u65b9\u5411\u5df2\u964d\u6743" if cold else "\u98ce\u9669\u60e9\u7f5a\u4f4e")
+    return "\uff1b".join(parts) + "\u3002"
 
 
 def _tier_word(value: float) -> str:
     if value >= 0.72:
-        return "强"
+        return "\u5f3a"
     if value >= 0.5:
-        return "中性"
-    return "偏弱"
+        return "\u4e2d\u6027"
+    return "\u504f\u5f31"
 
 
 def _as_percent(value: float | None) -> float | None:
@@ -217,6 +266,16 @@ def _as_percent(value: float | None) -> float | None:
     if not math.isfinite(numeric):
         return None
     return numeric * 100 if -1 <= numeric <= 1 else numeric
+
+
+def _finite_or_none(value: float | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
 
 
 def _clamp(value: float) -> float:

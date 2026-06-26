@@ -2261,6 +2261,16 @@ fn parse_tencent_quotes(
         let market_cap = parse_number(values.get(44))
             .filter(|value| *value > 0.0)
             .or_else(|| existing.and_then(|object| object_f64(object, "market_cap_billion")));
+        let change_pct = parse_number(values.get(32)).map(|value| value / 100.0);
+        let volume = parse_number(values.get(6)).map(|value| value * 100.0);
+        let amount = parse_number(values.get(37)).map(|value| value * 10_000.0);
+        let turnover_rate = parse_number(values.get(38)).map(|value| value / 100.0);
+        let volume_ratio = parse_number(values.get(49));
+        let quote_time = values
+            .get(30)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .or_else(|| existing.and_then(|object| object_string(object, "quote_time")));
         let roe = existing
             .and_then(|object| object_f64(object, "roe"))
             .or_else(|| estimate_roe(pe, pb));
@@ -2283,6 +2293,12 @@ fn parse_tencent_quotes(
         stock.insert("pb".to_string(), json!(pb));
         stock.insert("roe".to_string(), json!(roe));
         stock.insert("market_cap_billion".to_string(), json!(market_cap));
+        stock.insert("change_pct".to_string(), json!(change_pct));
+        stock.insert("volume".to_string(), json!(volume));
+        stock.insert("amount".to_string(), json!(amount));
+        stock.insert("turnover_rate".to_string(), json!(turnover_rate));
+        stock.insert("volume_ratio".to_string(), json!(volume_ratio));
+        stock.insert("quote_time".to_string(), json!(quote_time));
         stock.insert(
             "dividend_yield".to_string(),
             json!(existing.and_then(|object| object_f64(object, "dividend_yield"))),
@@ -2468,6 +2484,156 @@ fn object_f64(object: &serde_json::Map<String, Value>, key: &str) -> Option<f64>
         .get(key)
         .and_then(Value::as_f64)
         .filter(|value| value.is_finite())
+}
+
+fn cache_epoch_ms(value: Option<&Value>) -> Option<u128> {
+    value.and_then(|value| {
+        value.as_u64().map(u128::from).or_else(|| {
+            value.as_str().and_then(|text| {
+                let text = text.trim();
+                text.parse::<u128>()
+                    .ok()
+                    .or_else(|| parse_cache_datetime_epoch_ms(text))
+            })
+        })
+    })
+}
+
+fn parse_cache_datetime_epoch_ms(text: &str) -> Option<u128> {
+    let date = text.get(0..10)?;
+    let year = date.get(0..4)?.parse::<i32>().ok()?;
+    let month = date.get(5..7)?.parse::<u32>().ok()?;
+    let day = date.get(8..10)?.parse::<u32>().ok()?;
+    if date.get(4..5)? != "-" || date.get(7..8)? != "-" {
+        return None;
+    }
+    let mut hour = 0u32;
+    let mut minute = 0u32;
+    let mut second = 0u32;
+    let mut millis = 0u32;
+    let mut offset_seconds = 8 * 60 * 60;
+    if text.len() >= 19 && matches!(text.as_bytes().get(10), Some(b'T' | b't' | b' ')) {
+        hour = text.get(11..13)?.parse::<u32>().ok()?;
+        minute = text.get(14..16)?.parse::<u32>().ok()?;
+        second = text.get(17..19)?.parse::<u32>().ok()?;
+        let mut rest = text.get(19..).unwrap_or("");
+        if text.get(13..14)? != ":" || text.get(16..17)? != ":" {
+            return None;
+        }
+        if let Some(fraction) = rest.strip_prefix('.') {
+            let digits: String = fraction.chars().take_while(|ch| ch.is_ascii_digit()).take(3).collect();
+            if !digits.is_empty() {
+                let padded = format!("{digits:0<3}");
+                millis = padded.parse::<u32>().ok()?;
+            }
+            rest = &fraction[digits.len()..];
+        }
+        if let Some(tz) = rest.strip_prefix('Z').or_else(|| rest.strip_prefix('z')) {
+            let _ = tz;
+            offset_seconds = 0;
+        } else if rest.starts_with('+') || rest.starts_with('-') {
+            offset_seconds = parse_timezone_offset_seconds(rest)?;
+        }
+    }
+    if month == 0 || month > 12 || day == 0 || day > 31 || hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    let days = days_from_civil_epoch(year, month, day)?;
+    let epoch_seconds = days * 86_400 + i128::from(hour * 3600 + minute * 60 + second) - i128::from(offset_seconds);
+    if epoch_seconds < 0 {
+        return None;
+    }
+    let epoch_ms = epoch_seconds.checked_mul(1000)?.checked_add(i128::from(millis))?;
+    u128::try_from(epoch_ms).ok()
+}
+
+fn parse_timezone_offset_seconds(text: &str) -> Option<i32> {
+    let sign = if text.starts_with('-') { -1 } else { 1 };
+    let body = text.get(1..)?;
+    let hour = body.get(0..2)?.parse::<i32>().ok()?;
+    let minute = if body.get(2..3) == Some(":") {
+        body.get(3..5).unwrap_or("00").parse::<i32>().ok()?
+    } else if body.len() >= 4 {
+        body.get(2..4)?.parse::<i32>().ok()?
+    } else {
+        0
+    };
+    if hour > 23 || minute > 59 {
+        return None;
+    }
+    Some(sign * (hour * 3600 + minute * 60))
+}
+fn local_yyyymmdd_from_epoch_ms(epoch_ms: u128) -> Option<String> {
+    let seconds = i128::try_from(epoch_ms / 1000).ok()? + 8 * 60 * 60;
+    let days = seconds.div_euclid(86_400);
+    let (year, month, day) = civil_from_days(days)?;
+    Some(format!("{year:04}{month:02}{day:02}"))
+}
+
+fn market_quote_cache_stale(generated_at_epoch_ms: Option<u128>, now_epoch_ms: u128) -> bool {
+    let Some(quote_date) = generated_at_epoch_ms.and_then(local_yyyymmdd_from_epoch_ms) else {
+        return true;
+    };
+    let Some(expected_date) = expected_market_quote_date_from_epoch_ms(now_epoch_ms) else {
+        return true;
+    };
+    quote_date != expected_date
+}
+
+fn expected_market_quote_date_from_epoch_ms(epoch_ms: u128) -> Option<String> {
+    let seconds = i128::try_from(epoch_ms / 1000).ok()? + 8 * 60 * 60;
+    let mut days = seconds.div_euclid(86_400);
+    let seconds_in_day = seconds.rem_euclid(86_400);
+    let minutes = seconds_in_day / 60;
+    let weekday = weekday_from_days_since_epoch(days);
+    if weekday == 6 {
+        days -= 1;
+    } else if weekday == 0 {
+        days -= 2;
+    } else if minutes < 9 * 60 + 30 {
+        days -= 1;
+    }
+    while matches!(weekday_from_days_since_epoch(days), 0 | 6) {
+        days -= 1;
+    }
+    let (year, month, day) = civil_from_days(days)?;
+    Some(format!("{year:04}{month:02}{day:02}"))
+}
+
+fn weekday_from_days_since_epoch(days_since_epoch: i128) -> i128 {
+    (days_since_epoch + 4).rem_euclid(7)
+}
+
+fn days_from_civil_epoch(year: i32, month: u32, day: u32) -> Option<i128> {
+    let month_i = i128::from(month);
+    let day_i = i128::from(day);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let y = i128::from(year) - i128::from(month <= 2);
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = month_i + if month > 2 { -3 } else { 9 };
+    let doy = (153 * mp + 2).div_euclid(5) + day_i - 1;
+    let doe = yoe * 365 + yoe.div_euclid(4) - yoe.div_euclid(100) + doy;
+    Some(era * 146_097 + doe - 719_468)
+}
+fn civil_from_days(days_since_epoch: i128) -> Option<(i32, u32, u32)> {
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 }.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096).div_euclid(365);
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2).div_euclid(153);
+    let day = doy - (153 * mp + 2).div_euclid(5) + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if month <= 2 { 1 } else { 0 };
+    Some((
+        i32::try_from(year).ok()?,
+        u32::try_from(month).ok()?,
+        u32::try_from(day).ok()?,
+    ))
 }
 
 fn object_string(object: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
@@ -4456,6 +4622,10 @@ fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String> {
             "cache_bytes": 0,
             "cache_limit_bytes": 0,
             "universe_updated_at": Value::Null,
+            "quote_generated_at": Value::Null,
+            "quote_trade_date": Value::Null,
+            "current_trade_date": local_yyyymmdd_from_epoch_ms(epoch_millis()),
+            "stale": true,
             "policy": { "mode": "empty" },
             "notes": ["mobile market cache is empty; refresh is required"]
         }));
@@ -4486,16 +4656,26 @@ fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String> {
                 .map(ToOwned::to_owned),
         );
     }
+    let generated_at_epoch_ms = cache_epoch_ms(cache.get("generated_at_epoch_ms"))
+        .or_else(|| cache_epoch_ms(cache.get("generated_at")));
+    let updated_at_epoch_ms = cache_epoch_ms(cache.get("updated_at_epoch_ms"));
+    let now_epoch_ms = epoch_millis();
+    let quote_date = generated_at_epoch_ms.and_then(local_yyyymmdd_from_epoch_ms);
+    let current_date = expected_market_quote_date_from_epoch_ms(now_epoch_ms);
+    let stale = market_quote_cache_stale(generated_at_epoch_ms, now_epoch_ms);
+    if stale {
+        notes.push("cached Tencent quote date is stale; refresh before rotation screening".to_string());
+    }
     Ok(json!({
         "source": "tencent",
         "universe_count": stock_count,
         "cache_bytes": cache.get("bytes").and_then(Value::as_u64).unwrap_or(0),
         "cache_limit_bytes": 0,
-        "universe_updated_at": cache
-            .get("updated_at_epoch_ms")
-            .cloned()
-            .or_else(|| cache.get("generated_at").cloned())
-            .unwrap_or(Value::Null),
+        "universe_updated_at": updated_at_epoch_ms.map(|value| json!(value)).unwrap_or(Value::Null),
+        "quote_generated_at": generated_at_epoch_ms.map(|value| json!(value)).unwrap_or(Value::Null),
+        "quote_trade_date": quote_date,
+        "current_trade_date": current_date,
+        "stale": stale,
         "policy": { "mode": "tauri_native", "source": "cache" },
         "notes": notes
     }))
@@ -4603,6 +4783,7 @@ fn market_cache_record(
         .or_else(|| data.get("generated_at").cloned())
         .unwrap_or(Value::Null);
     let data_notes = data.get("notes").cloned().unwrap_or_else(|| json!([]));
+    let generated_at_epoch_ms = cache_epoch_ms(Some(&generated_at));
     let mut record = serde_json::Map::new();
     record.insert("exists".to_string(), json!(true));
     record.insert("bytes".to_string(), json!(bytes));
@@ -4616,6 +4797,12 @@ fn market_cache_record(
     record.insert("summary".to_string(), summary);
     record.insert("stock_count".to_string(), json!(stock_count));
     record.insert("generated_at".to_string(), generated_at);
+    record.insert(
+        "generated_at_epoch_ms".to_string(),
+        generated_at_epoch_ms
+            .map(|value| json!(value))
+            .unwrap_or(Value::Null),
+    );
     record.insert("data_notes".to_string(), data_notes);
     if include_data {
         record.insert("data".to_string(), data.clone());
@@ -4995,6 +5182,46 @@ mod tests {
                 .and_then(Value::as_array)
                 .map(|items| items.len()),
             Some(1)
+        );
+    }
+
+    #[test]
+    fn cache_epoch_ms_accepts_iso_quote_dates() {
+        let epoch = cache_epoch_ms(Some(&json!("2026-06-26T09:35:00+08:00")))
+            .expect("ISO quote time should parse");
+        assert_eq!(local_yyyymmdd_from_epoch_ms(epoch).as_deref(), Some("20260626"));
+        let utc_epoch = cache_epoch_ms(Some(&json!("2026-06-26T01:35:00Z")))
+            .expect("UTC quote time should parse");
+        assert_eq!(local_yyyymmdd_from_epoch_ms(utc_epoch).as_deref(), Some("20260626"));
+    }
+
+    #[test]
+    fn expected_market_quote_date_uses_previous_session_before_open_and_weekends() {
+        let friday_morning = cache_epoch_ms(Some(&json!("2026-06-26T08:00:00+08:00")))
+            .expect("Friday morning should parse");
+        assert_eq!(
+            expected_market_quote_date_from_epoch_ms(friday_morning).as_deref(),
+            Some("20260625")
+        );
+        let saturday = cache_epoch_ms(Some(&json!("2026-06-27T12:00:00+08:00")))
+            .expect("Saturday should parse");
+        assert_eq!(
+            expected_market_quote_date_from_epoch_ms(saturday).as_deref(),
+            Some("20260626")
+        );
+    }
+
+    #[test]
+    fn market_quote_cache_stale_uses_quote_generation_date() {
+        let june_25_quote = 1_782_381_094_692u128;
+        let june_26_now = june_25_quote + 86_400_000;
+
+        assert!(market_quote_cache_stale(Some(june_25_quote), june_26_now));
+        assert!(!market_quote_cache_stale(Some(june_26_now), june_26_now));
+        assert!(market_quote_cache_stale(None, june_26_now));
+        assert_eq!(
+            local_yyyymmdd_from_epoch_ms(june_25_quote).as_deref(),
+            Some("20260625")
         );
     }
 

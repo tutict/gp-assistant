@@ -152,7 +152,7 @@ def _screened_stocks(
         reasons = _matches(stock, criteria)
         if reasons is None:
             continue
-        screened.append(score_stock(stock, reasons, rules=rules))
+        screened.append(score_stock(stock, reasons, rules=rules, score_profile=criteria.score_profile))
 
     _sort_screened(screened, criteria)
     return apply_institution_buy_ratio_filter(screened, criteria, notes)
@@ -270,6 +270,7 @@ def _sort_screened(screened: List[ScreenedStock], criteria: ScreenCriteria) -> N
                 item.factor_scores.get("theme", 0.0),
                 item.factor_scores.get("fundamental", 0.0),
                 item.factor_scores.get("valuation", 0.0),
+                item.factor_scores.get("market_heat", 0.0),
             ),
             reverse=reverse,
         )
@@ -366,7 +367,7 @@ def _screen_result_groups(screened: List[ScreenedStock], rules: ScreeningRules) 
         ScreenResultGroup(
             key="hot",
             title="热门股",
-            description="AI上下游、芯片、算力、能源、新材料、游戏等热门方向，按综合分和主题优先级展示。",
+            description="AI上下游、芯片、算力、能源、新材料、医药、游戏等热门方向，按综合分和主题优先级展示。",
             total=sum(1 for item in screened if item.theme_category),
             returned=len(hot_items),
             items=hot_items,

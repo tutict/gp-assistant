@@ -119,6 +119,48 @@ class ScreenerIndustryTests(unittest.TestCase):
 
         self.assertEqual(result.returned, 1)
 
+    def test_rotation_profile_uses_intraday_market_heat_but_quality_ignores_it(self):
+        quiet = StockItem(
+            code="000001.SZ",
+            name="quiet",
+            industry="半导体",
+            price=10.0,
+            pe=18.0,
+            pb=2.0,
+            roe=0.1,
+            change_pct=0.001,
+            volume_ratio=0.8,
+            turnover_rate=0.01,
+            amount=20_000_000,
+        )
+        active = StockItem(
+            code="000002.SZ",
+            name="active",
+            industry="半导体",
+            price=10.0,
+            pe=18.0,
+            pb=2.0,
+            roe=0.1,
+            change_pct=0.075,
+            volume_ratio=2.6,
+            turnover_rate=0.08,
+            amount=900_000_000,
+        )
+
+        rotation = screen_stocks(
+            [quiet, active],
+            ScreenCriteria(sort_by="score", sort_dir="desc", limit=2, score_profile="rotation"),
+        )
+        quality = screen_stocks(
+            [quiet, active],
+            ScreenCriteria(sort_by="score", sort_dir="desc", limit=2, score_profile="quality"),
+        )
+
+        self.assertEqual(rotation.items[0].stock.code, "000002.SZ")
+        self.assertIn("market_heat", rotation.items[0].factor_scores)
+        self.assertTrue(all("market_heat" not in item.factor_scores for item in quality.items))
+        self.assertEqual(quality.items[0].score, quality.items[1].score)
+
     def test_score_sort_biases_toward_hot_energy_and_tech_sectors(self):
         universe = [
             StockItem(code="000001.SZ", name="平安银行", industry="银行", price=10.0, pe=10.0, pb=1.0, roe=0.1),
@@ -160,19 +202,20 @@ class ScreenerIndustryTests(unittest.TestCase):
         self.assertNotIn("000001.SZ", {item.stock.code for item in result.items})
         self.assertNotIn("601668.SH", {item.stock.code for item in result.items})
 
-    def test_score_sort_promotes_game_candidates_with_other_hot_sectors(self):
+    def test_score_sort_promotes_medical_and_game_candidates_with_other_hot_sectors(self):
         universe = [
             StockItem(code="000001.SZ", name="高分银行", industry="银行", price=10.0, pe=2.0, pb=0.2, roe=0.3),
             StockItem(code="601668.SH", name="中国建筑", industry="建筑装饰", price=10.0, pe=3.0, pb=0.4, roe=0.2),
             StockItem(code="002408.SZ", name="氟材料公司", industry="锂电材料", price=10.0, pe=70.0, pb=8.0, roe=0.03),
             StockItem(code="688001.SH", name="芯片公司", industry="半导体", price=10.0, pe=60.0, pb=8.0, roe=0.03),
             StockItem(code="601012.SH", name="光伏公司", industry="光伏", price=10.0, pe=50.0, pb=7.0, roe=0.03),
+            StockItem(code="300015.SZ", name="创新药公司", industry="医疗器械", price=10.0, pe=75.0, pb=8.5, roe=0.025),
             StockItem(code="002555.SZ", name="游戏公司", industry="网络游戏", price=10.0, pe=80.0, pb=9.0, roe=0.02),
         ]
 
-        result = screen_stocks(universe, ScreenCriteria(sort_by="score", sort_dir="desc", limit=4))
+        result = screen_stocks(universe, ScreenCriteria(sort_by="score", sort_dir="desc", limit=5))
 
-        self.assertEqual([item.stock.code for item in result.items], ["002408.SZ", "688001.SH", "601012.SH", "002555.SZ"])
+        self.assertEqual([item.stock.code for item in result.items], ["002408.SZ", "688001.SH", "601012.SH", "300015.SZ", "002555.SZ"])
         self.assertTrue(any("共享筛选规则" in note for note in result.notes))
 
     def test_score_sort_promotes_ai_chain_candidates(self):
@@ -193,16 +236,17 @@ class ScreenerIndustryTests(unittest.TestCase):
         self.assertNotIn("000001.SZ", codes)
         hot_group = next(group for group in result.groups if group.key == "hot")
         self.assertTrue(any(item.stock.industry in {"光模块", "PCB", "半导体", "云计算"} for item in hot_group.items))
-
     def test_shared_rules_classify_concepts_and_cold_sectors(self):
         rules = load_screening_rules()
         chip = StockItem(code="688001.SH", name="AI芯片公司", industry="半导体", price=10.0)
         wafer = StockItem(code="688002.SH", name="晶圆制造公司", industry="硅片", price=10.0)
+        medical = StockItem(code="300015.SZ", name="创新药公司", industry="医疗器械", price=10.0)
 
         self.assertGreaterEqual(rules.group_limit, 10)
         self.assertEqual(concept_group_for_stock(chip, rules), "AI算力与芯片")
         self.assertEqual(concept_group_for_stock(wafer, rules), "半导体晶圆")
         self.assertEqual(theme_category_for_stock(wafer, rules), "semiconductor_wafer")
+        self.assertEqual(theme_category_for_stock(medical, rules), "medical")
         self.assertTrue(is_cold_sector("银行", rules))
 
     def test_screened_stock_includes_factor_breakdown_and_explanation(self):

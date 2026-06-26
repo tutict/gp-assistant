@@ -64,6 +64,44 @@ pub struct StockItem {
     pub deducted_net_profit_margin: Option<f64>,
     #[serde(default)]
     pub deducted_net_profit_growth_rate: Option<f64>,
+    #[serde(default)]
+    pub change_pct: Option<f64>,
+    #[serde(default)]
+    pub volume: Option<f64>,
+    #[serde(default)]
+    pub amount: Option<f64>,
+    #[serde(default)]
+    pub turnover_rate: Option<f64>,
+    #[serde(default)]
+    pub volume_ratio: Option<f64>,
+    #[serde(default)]
+    pub quote_time: Option<String>,
+}
+
+impl Default for StockItem {
+    fn default() -> Self {
+        Self {
+            code: String::new(),
+            name: String::new(),
+            industry: String::new(),
+            is_st: false,
+            price: 0.0,
+            pe: None,
+            pb: None,
+            roe: None,
+            market_cap_billion: None,
+            dividend_yield: None,
+            deducted_net_profit_billion: None,
+            deducted_net_profit_margin: None,
+            deducted_net_profit_growth_rate: None,
+            change_pct: None,
+            volume: None,
+            amount: None,
+            turnover_rate: None,
+            volume_ratio: None,
+            quote_time: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -92,6 +130,8 @@ pub struct ScreenCriteria {
     pub sort_by: String,
     #[serde(default = "default_sort_dir")]
     pub sort_dir: String,
+    #[serde(default = "default_score_profile")]
+    pub score_profile: String,
 }
 
 impl Default for ScreenCriteria {
@@ -109,6 +149,7 @@ impl Default for ScreenCriteria {
             limit: default_screen_limit(),
             sort_by: default_sort_by(),
             sort_dir: default_sort_dir(),
+            score_profile: default_score_profile(),
         }
     }
 }
@@ -1034,6 +1075,10 @@ fn default_sort_dir() -> String {
     "desc".to_string()
 }
 
+fn default_score_profile() -> String {
+    "quality".to_string()
+}
+
 fn default_relation_weight() -> f64 {
     1.0
 }
@@ -1274,7 +1319,7 @@ pub fn sector_screen_stocks(
         let Some(reasons) = matches_stock(stock, &request.criteria) else {
             continue;
         };
-        screened.push(score_stock(stock, &reasons));
+        screened.push(score_stock(stock, &reasons, &request.criteria.score_profile));
     }
     sort_screened(&mut screened, &request.criteria);
 
@@ -1489,7 +1534,7 @@ fn selected_backtest_items(
     let mut missing = Vec::new();
     for code in codes.iter().take(request.top_n.clamp(1, 100)) {
         if let Some(stock) = by_code.get(code) {
-            selected.push(score_stock(stock, &["watchlist".to_string()]));
+            selected.push(score_stock(stock, &["watchlist".to_string()], "quality"));
         } else {
             missing.push(code.clone());
         }
@@ -3169,7 +3214,7 @@ pub fn screen_stocks(universe: &[StockItem], criteria: &ScreenCriteria) -> Scree
         let Some(reasons) = matches_stock(stock, criteria) else {
             continue;
         };
-        screened.push(score_stock(stock, &reasons));
+        screened.push(score_stock(stock, &reasons, &criteria.score_profile));
     }
 
     sort_screened(&mut screened, criteria);
@@ -3339,6 +3384,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             deducted_net_profit_billion: Some(680.0),
             deducted_net_profit_margin: Some(48.0),
             deducted_net_profit_growth_rate: Some(12.0),
+            ..StockItem::default()
         },
         StockItem {
             code: "000001.SZ".to_string(),
@@ -3354,6 +3400,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             deducted_net_profit_billion: Some(450.0),
             deducted_net_profit_margin: Some(38.0),
             deducted_net_profit_growth_rate: Some(6.0),
+            ..StockItem::default()
         },
         StockItem {
             code: "300750.SZ".to_string(),
@@ -3369,6 +3416,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             deducted_net_profit_billion: Some(380.0),
             deducted_net_profit_margin: Some(16.0),
             deducted_net_profit_growth_rate: Some(18.0),
+            ..StockItem::default()
         },
         StockItem {
             code: "002594.SZ".to_string(),
@@ -3384,6 +3432,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             deducted_net_profit_billion: Some(250.0),
             deducted_net_profit_margin: Some(12.0),
             deducted_net_profit_growth_rate: Some(15.0),
+            ..StockItem::default()
         },
         StockItem {
             code: "002475.SZ".to_string(),
@@ -3399,6 +3448,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             deducted_net_profit_billion: Some(95.0),
             deducted_net_profit_margin: Some(11.0),
             deducted_net_profit_growth_rate: Some(11.0),
+            ..StockItem::default()
         },
         StockItem {
             code: "600036.SH".to_string(),
@@ -3414,6 +3464,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             deducted_net_profit_billion: Some(1300.0),
             deducted_net_profit_margin: Some(42.0),
             deducted_net_profit_growth_rate: Some(5.0),
+            ..StockItem::default()
         },
         StockItem {
             code: "600000.SH".to_string(),
@@ -3429,6 +3480,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             deducted_net_profit_billion: Some(320.0),
             deducted_net_profit_margin: Some(36.0),
             deducted_net_profit_growth_rate: Some(4.0),
+            ..StockItem::default()
         },
         StockItem {
             code: "601012.SH".to_string(),
@@ -3444,6 +3496,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             deducted_net_profit_billion: Some(90.0),
             deducted_net_profit_margin: Some(10.5),
             deducted_net_profit_growth_rate: Some(12.0),
+            ..StockItem::default()
         },
         StockItem {
             code: "600309.SH".to_string(),
@@ -3459,6 +3512,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             deducted_net_profit_billion: Some(160.0),
             deducted_net_profit_margin: Some(13.0),
             deducted_net_profit_growth_rate: Some(14.0),
+            ..StockItem::default()
         },
         StockItem {
             code: "600887.SH".to_string(),
@@ -3474,6 +3528,7 @@ pub fn mock_stocks() -> Vec<StockItem> {
             deducted_net_profit_billion: Some(100.0),
             deducted_net_profit_margin: Some(9.0),
             deducted_net_profit_growth_rate: Some(8.0),
+            ..StockItem::default()
         },
     ]
 }
@@ -3635,23 +3690,25 @@ fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Option<Vec<Str
 const SCREEN_GROUP_LIMIT: usize = 10;
 const POTENTIAL_SCORE_THRESHOLD: f64 = 10.0;
 const SCREEN_SCORE_SCALE: f64 = 20.0;
-const THEME_PROMOTION_ORDER: [&str; 6] = [
+const THEME_PROMOTION_ORDER: [&str; 7] = [
     "materials",
     "ai_chain",
     "semiconductor_wafer",
     "tech",
     "energy",
+    "medical",
     "game",
 ];
-const THEME_FILL_ORDER: [&str; 6] = [
+const THEME_FILL_ORDER: [&str; 7] = [
     "ai_chain",
     "semiconductor_wafer",
     "materials",
     "tech",
     "energy",
+    "medical",
     "game",
 ];
-const THEME_RULES: [(&str, &str, f64, &[&str]); 6] = [
+const THEME_RULES: [(&str, &str, f64, &[&str]); 7] = [
     (
         "materials",
         "\u{65b0}\u{6750}\u{6599}",
@@ -3750,6 +3807,25 @@ const THEME_RULES: [(&str, &str, f64, &[&str]); 6] = [
             "\u{7164}\u{70ad}",
             "\u{98ce}\u{7535}",
             "\u{5145}\u{7535}\u{6869}",
+        ],
+    ),
+    (
+        "medical",
+        "\u{533b}\u{836f}\u{533b}\u{7597}",
+        0.8,
+        &[
+            "\u{533b}\u{836f}",
+            "\u{533b}\u{7597}",
+            "\u{751f}\u{7269}\u{5236}\u{54c1}",
+            "\u{521b}\u{65b0}\u{836f}",
+            "\u{4e2d}\u{836f}",
+            "\u{5316}\u{5b66}\u{5236}\u{836f}",
+            "\u{533b}\u{7597}\u{5668}\u{68b0}",
+            "cro",
+            "cxo",
+            "\u{75ab}\u{82d7}",
+            "\u{533b}\u{7597}\u{670d}\u{52a1}",
+            "\u{4eff}\u{5236}\u{836f}",
         ],
     ),
     (
@@ -3993,10 +4069,10 @@ const COLD_SECTOR_KEYWORDS: [&str; 9] = [
     "\u{516c}\u{8def}",
 ];
 
-fn score_stock(stock: &StockItem, reasons: &[String]) -> ScreenedStock {
+fn score_stock(stock: &StockItem, reasons: &[String], score_profile: &str) -> ScreenedStock {
     let theme = theme_match_for_stock(stock);
     let cold = is_cold_sector(&stock.industry);
-    let factor_scores = BTreeMap::from([
+    let mut factor_scores = BTreeMap::from([
         (
             "theme".to_string(),
             theme.as_ref().map(|(_, _, score)| *score).unwrap_or(0.35),
@@ -4006,11 +4082,10 @@ fn score_stock(stock: &StockItem, reasons: &[String]) -> ScreenedStock {
         ("size".to_string(), size_score(stock)),
         ("risk".to_string(), risk_score(stock, cold)),
     ]);
-    let weighted = factor_scores.get("theme").copied().unwrap_or(0.35) * 0.24
-        + factor_scores.get("fundamental").copied().unwrap_or(0.5) * 0.24
-        + factor_scores.get("valuation").copied().unwrap_or(0.5) * 0.24
-        + factor_scores.get("size").copied().unwrap_or(0.55) * 0.14
-        + factor_scores.get("risk").copied().unwrap_or(1.0) * 0.14;
+    if is_rotation_score_profile(score_profile) {
+        factor_scores.insert("market_heat".to_string(), market_heat_score(stock));
+    }
+    let weighted = weighted_score(&factor_scores, score_profile);
     let score = (weighted * SCREEN_SCORE_SCALE).clamp(0.0, SCREEN_SCORE_SCALE);
     let mut all_reasons = reasons.to_vec();
     all_reasons.extend(factor_reasons(theme.as_ref(), cold, &factor_scores));
@@ -4029,7 +4104,6 @@ fn score_stock(stock: &StockItem, reasons: &[String]) -> ScreenedStock {
         theme_category: theme.map(|(key, _, _)| key.to_string()),
     }
 }
-
 fn fundamental_score(stock: &StockItem) -> f64 {
     let roe_percent = stock.roe.and_then(as_percent);
     let roe_score = match roe_percent {
@@ -4110,6 +4184,53 @@ fn risk_score(stock: &StockItem, cold: bool) -> f64 {
     }
 }
 
+fn is_rotation_score_profile(score_profile: &str) -> bool {
+    score_profile.trim().eq_ignore_ascii_case("rotation")
+}
+
+fn weighted_score(factor_scores: &BTreeMap<String, f64>, score_profile: &str) -> f64 {
+    if is_rotation_score_profile(score_profile) {
+        factor_scores.get("theme").copied().unwrap_or(0.35) * 0.20
+            + factor_scores.get("fundamental").copied().unwrap_or(0.5) * 0.20
+            + factor_scores.get("valuation").copied().unwrap_or(0.5) * 0.20
+            + factor_scores.get("market_heat").copied().unwrap_or(0.5) * 0.22
+            + factor_scores.get("size").copied().unwrap_or(0.55) * 0.08
+            + factor_scores.get("risk").copied().unwrap_or(1.0) * 0.10
+    } else {
+        factor_scores.get("theme").copied().unwrap_or(0.35) * 0.24
+            + factor_scores.get("fundamental").copied().unwrap_or(0.5) * 0.24
+            + factor_scores.get("valuation").copied().unwrap_or(0.5) * 0.24
+            + factor_scores.get("size").copied().unwrap_or(0.55) * 0.14
+            + factor_scores.get("risk").copied().unwrap_or(1.0) * 0.14
+    }
+}
+
+fn market_heat_score(stock: &StockItem) -> f64 {
+    let change_pct = stock.change_pct.and_then(as_percent).unwrap_or(0.0);
+    let positive_momentum = if change_pct >= 0.0 {
+        (change_pct.min(10.0) / 10.0).clamp(0.0, 1.0)
+    } else {
+        (0.45 + change_pct.max(-10.0) / 20.0).clamp(0.0, 0.45)
+    };
+    let volume_ratio = stock
+        .volume_ratio
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .map(|value| ((value.min(3.0) - 1.0).max(0.0) / 2.0).clamp(0.0, 1.0))
+        .unwrap_or(0.45);
+    let turnover = stock
+        .turnover_rate
+        .and_then(as_percent)
+        .map(|value| (value.max(0.0).min(8.0) / 8.0).clamp(0.0, 1.0))
+        .unwrap_or(0.45);
+    let amount = stock
+        .amount
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .map(|value| ((value / 1_000_000_000.0).min(1.0)).clamp(0.0, 1.0))
+        .unwrap_or(0.45);
+    (positive_momentum * 0.46 + volume_ratio * 0.24 + turnover * 0.18 + amount * 0.12)
+        .clamp(0.0, 1.0)
+}
+
 fn factor_reasons(
     theme: Option<&(&'static str, &'static str, f64)>,
     cold: bool,
@@ -4126,6 +4247,9 @@ fn factor_reasons(
     }
     if factor_scores.get("fundamental").copied().unwrap_or(0.0) >= 0.72 {
         reasons.push("\u{57fa}\u{672c}\u{9762}\u{8f83}\u{5f3a}".to_string());
+    }
+    if factor_scores.get("market_heat").copied().unwrap_or(0.0) >= 0.72 {
+        reasons.push("\u{8f6e}\u{52a8}\u{70ed}\u{5ea6}\u{8f83}\u{9ad8}".to_string());
     }
     if cold {
         reasons.push("\u{4f4e}\u{70ed}\u{5ea6}\u{964d}\u{6743}".to_string());
@@ -4165,6 +4289,9 @@ fn explain_score(
             "\u{5e02}\u{503c}\u{89c4}\u{6a21}",
             tier_word(factor_scores.get("size").copied().unwrap_or(0.0))
         ));
+    }
+    if let Some(market_heat) = factor_scores.get("market_heat") {
+        parts.push(format!("{}{}", "\u{8f6e}\u{52a8}\u{70ed}\u{5ea6}", tier_word(*market_heat)));
     }
     parts.push(if cold { "\u{94f6}\u{884c}/\u{57fa}\u{5efa}\u{7b49}\u{4f4e}\u{70ed}\u{5ea6}\u{65b9}\u{5411}\u{5df2}\u{964d}\u{6743}".to_string() } else { "\u{98ce}\u{9669}\u{60e9}\u{7f5a}\u{4f4e}".to_string() });
     format!("{}{}", parts.join("\u{ff1b}"), "\u{3002}")
@@ -4392,7 +4519,7 @@ fn screen_result_groups(screened: &[ScreenedStock]) -> Vec<ScreenResultGroup> {
         ScreenResultGroup {
             key: "hot".to_string(),
             title: "\u{70ed}\u{95e8}\u{80a1}".to_string(),
-            description: "AI\u{4e0a}\u{4e0b}\u{6e38}\u{3001}\u{82af}\u{7247}\u{3001}\u{7b97}\u{529b}\u{3001}\u{80fd}\u{6e90}\u{3001}\u{65b0}\u{6750}\u{6599}\u{3001}\u{6e38}\u{620f}\u{7b49}\u{70ed}\u{95e8}\u{65b9}\u{5411}\u{ff0c}\u{6309}\u{7efc}\u{5408}\u{5206}\u{548c}\u{4e3b}\u{9898}\u{4f18}\u{5148}\u{7ea7}\u{5c55}\u{793a}\u{3002}".to_string(),
+            description: "AI\u{4e0a}\u{4e0b}\u{6e38}\u{3001}\u{82af}\u{7247}\u{3001}\u{7b97}\u{529b}\u{3001}\u{80fd}\u{6e90}\u{3001}\u{65b0}\u{6750}\u{6599}\u{3001}\u{533b}\u{836f}\u{3001}\u{6e38}\u{620f}\u{7b49}\u{70ed}\u{95e8}\u{65b9}\u{5411}\u{ff0c}\u{6309}\u{7efc}\u{5408}\u{5206}\u{548c}\u{4e3b}\u{9898}\u{4f18}\u{5148}\u{7ea7}\u{5c55}\u{793a}\u{3002}".to_string(),
             total: screened.iter().filter(|item| item.theme_category.is_some()).count(),
             returned: hot_items.len(),
             items: hot_items,
@@ -6429,6 +6556,7 @@ mod tests {
                 deducted_net_profit_billion: Some(8.0),
                 deducted_net_profit_margin: Some(12.0),
                 deducted_net_profit_growth_rate: Some(12.0),
+                ..StockItem::default()
             },
             StockItem {
                 code: "222222.SZ".to_string(),
@@ -6444,6 +6572,7 @@ mod tests {
                 deducted_net_profit_billion: Some(3.0),
                 deducted_net_profit_margin: Some(8.0),
                 deducted_net_profit_growth_rate: Some(8.0),
+                ..StockItem::default()
             },
         ];
         let relations = vec![StockRelation {
@@ -6668,6 +6797,7 @@ mod tests {
                 deducted_net_profit_billion: Some(3.0),
                 deducted_net_profit_margin: Some(12.0),
                 deducted_net_profit_growth_rate: Some(18.0),
+                ..StockItem::default()
             })
             .collect();
         let result = sector_screen_stocks(
@@ -6708,6 +6838,7 @@ mod tests {
                 deducted_net_profit_billion: Some(1.0),
                 deducted_net_profit_margin: Some(12.0),
                 deducted_net_profit_growth_rate: Some(18.0),
+                ..StockItem::default()
             },
             StockItem {
                 code: "300001.SZ".to_string(),
@@ -6723,6 +6854,7 @@ mod tests {
                 deducted_net_profit_billion: Some(1.1),
                 deducted_net_profit_margin: Some(13.0),
                 deducted_net_profit_growth_rate: Some(19.0),
+                ..StockItem::default()
             },
             StockItem {
                 code: "600000.SH".to_string(),
@@ -6738,6 +6870,7 @@ mod tests {
                 deducted_net_profit_billion: Some(2.0),
                 deducted_net_profit_margin: Some(20.0),
                 deducted_net_profit_growth_rate: Some(8.0),
+                ..StockItem::default()
             },
         ];
         let result = sector_screen_stocks(
@@ -7126,6 +7259,12 @@ mod tests {
             deducted_net_profit_billion: None,
             deducted_net_profit_margin: None,
             deducted_net_profit_growth_rate: None,
+            change_pct: None,
+            volume: None,
+            amount: None,
+            turnover_rate: None,
+            volume_ratio: None,
+            quote_time: None,
         }];
 
         let result = screen_stocks(
@@ -7156,6 +7295,12 @@ mod tests {
                 deducted_net_profit_billion: None,
                 deducted_net_profit_margin: None,
                 deducted_net_profit_growth_rate: None,
+            change_pct: None,
+            volume: None,
+            amount: None,
+            turnover_rate: None,
+            volume_ratio: None,
+            quote_time: None,
             },
             StockItem {
                 code: "600000.SH".to_string(),
@@ -7171,6 +7316,12 @@ mod tests {
                 deducted_net_profit_billion: None,
                 deducted_net_profit_margin: None,
                 deducted_net_profit_growth_rate: None,
+            change_pct: None,
+            volume: None,
+            amount: None,
+            turnover_rate: None,
+            volume_ratio: None,
+            quote_time: None,
             },
             StockItem {
                 code: "600036.SH".to_string(),
@@ -7186,6 +7337,12 @@ mod tests {
                 deducted_net_profit_billion: None,
                 deducted_net_profit_margin: None,
                 deducted_net_profit_growth_rate: None,
+            change_pct: None,
+            volume: None,
+            amount: None,
+            turnover_rate: None,
+            volume_ratio: None,
+            quote_time: None,
             },
         ];
 
@@ -7225,6 +7382,58 @@ mod tests {
     }
 
     #[test]
+    fn rotation_score_profile_uses_intraday_market_heat() {
+        let base = StockItem {
+            code: "300001.SZ".to_string(),
+            name: "quality-one".to_string(),
+            industry: "consumer".to_string(),
+            price: 10.0,
+            pe: Some(10.0),
+            pb: Some(1.0),
+            roe: Some(0.12),
+            market_cap_billion: Some(120.0),
+            ..StockItem::default()
+        };
+        let mut quiet = base.clone();
+        quiet.code = "300001.SZ".to_string();
+        quiet.change_pct = Some(0.001);
+        quiet.volume_ratio = Some(0.8);
+        quiet.turnover_rate = Some(0.005);
+        quiet.amount = Some(80_000_000.0);
+
+        let mut active = base.clone();
+        active.code = "300002.SZ".to_string();
+        active.change_pct = Some(0.075);
+        active.volume_ratio = Some(2.6);
+        active.turnover_rate = Some(0.07);
+        active.amount = Some(1_500_000_000.0);
+
+        let rotation = screen_stocks(
+            &[quiet.clone(), active.clone()],
+            &ScreenCriteria {
+                sort_by: "score".to_string(),
+                sort_dir: "desc".to_string(),
+                score_profile: "rotation".to_string(),
+                ..ScreenCriteria::default()
+            },
+        );
+        let quality = screen_stocks(
+            &[quiet, active],
+            &ScreenCriteria {
+                sort_by: "score".to_string(),
+                sort_dir: "desc".to_string(),
+                score_profile: "quality".to_string(),
+                ..ScreenCriteria::default()
+            },
+        );
+
+        assert_eq!(rotation.items[0].stock.code, "300002.SZ");
+        assert!(rotation.items[0].factor_scores.contains_key("market_heat"));
+        assert_eq!(quality.items[0].stock.code, "300001.SZ");
+        assert!(!quality.items[0].factor_scores.contains_key("market_heat"));
+    }
+
+    #[test]
     fn score_sort_biases_toward_hot_energy_and_tech_sectors() {
         let base = StockItem {
             code: "000001.SZ".to_string(),
@@ -7240,6 +7449,12 @@ mod tests {
             deducted_net_profit_billion: None,
             deducted_net_profit_margin: None,
             deducted_net_profit_growth_rate: None,
+            change_pct: None,
+            volume: None,
+            amount: None,
+            turnover_rate: None,
+            volume_ratio: None,
+            quote_time: None,
         };
         let mut chip = base.clone();
         chip.code = "688001.SH".to_string();
@@ -7286,6 +7501,12 @@ mod tests {
             deducted_net_profit_billion: None,
             deducted_net_profit_margin: None,
             deducted_net_profit_growth_rate: None,
+            change_pct: None,
+            volume: None,
+            amount: None,
+            turnover_rate: None,
+            volume_ratio: None,
+            quote_time: None,
         };
         let mut ordinary_bank = bank.clone();
         ordinary_bank.code = "600000.SH".to_string();
@@ -7343,6 +7564,12 @@ mod tests {
             deducted_net_profit_billion: None,
             deducted_net_profit_margin: None,
             deducted_net_profit_growth_rate: None,
+            change_pct: None,
+            volume: None,
+            amount: None,
+            turnover_rate: None,
+            volume_ratio: None,
+            quote_time: None,
         };
         let mut infra = bank.clone();
         infra.code = "601668.SH".to_string();
@@ -7396,7 +7623,7 @@ mod tests {
     }
 
     #[test]
-    fn score_sort_promotes_game_candidates_with_other_hot_sectors() {
+    fn score_sort_promotes_medical_and_game_candidates_with_other_hot_sectors() {
         let bank = StockItem {
             code: "000001.SZ".to_string(),
             name: "高分银行".to_string(),
@@ -7411,6 +7638,12 @@ mod tests {
             deducted_net_profit_billion: None,
             deducted_net_profit_margin: None,
             deducted_net_profit_growth_rate: None,
+            change_pct: None,
+            volume: None,
+            amount: None,
+            turnover_rate: None,
+            volume_ratio: None,
+            quote_time: None,
         };
         let mut infra = bank.clone();
         infra.code = "601668.SH".to_string();
@@ -7445,12 +7678,20 @@ mod tests {
         game.pb = Some(9.0);
         game.roe = Some(0.02);
 
+        let mut medical = chip.clone();
+        medical.code = "300015.SZ".to_string();
+        medical.name = "创新药公司".to_string();
+        medical.industry = "医疗器械".to_string();
+        medical.pe = Some(75.0);
+        medical.pb = Some(8.5);
+        medical.roe = Some(0.025);
+
         let result = screen_stocks(
-            &[bank, infra, material, chip, solar, game],
+            &[bank, infra, material, chip, solar, medical, game],
             &ScreenCriteria {
                 sort_by: "score".to_string(),
                 sort_dir: "desc".to_string(),
-                limit: 4,
+                limit: 5,
                 ..ScreenCriteria::default()
             },
         );
@@ -7462,7 +7703,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             codes,
-            vec!["002408.SZ", "688001.SH", "601012.SH", "002555.SZ"]
+            vec!["002408.SZ", "688001.SH", "601012.SH", "300015.SZ", "002555.SZ"]
         );
     }
 

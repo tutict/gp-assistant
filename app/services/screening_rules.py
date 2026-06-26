@@ -24,8 +24,8 @@ DEFAULT_RULES: dict[str, Any] = {
         "size": 0.14,
         "risk": 0.14,
     },
-    "theme_promotion_order": ["materials", "ai_chain", "semiconductor_wafer", "tech", "energy", "game"],
-    "theme_fill_order": ["ai_chain", "semiconductor_wafer", "materials", "tech", "energy", "game"],
+    "theme_promotion_order": ["materials", "ai_chain", "semiconductor_wafer", "tech", "energy", "medical", "game"],
+    "theme_fill_order": ["ai_chain", "semiconductor_wafer", "materials", "tech", "energy", "medical", "game"],
     "theme_categories": [
         {
             "key": "materials",
@@ -47,6 +47,7 @@ DEFAULT_RULES: dict[str, Any] = {
         },
         {"key": "tech", "label": "科技制造", "score": 0.84, "keywords": ["机器人", "软件", "通信", "科技", "电子", "自动化", "高端制造", "智能制造"]},
         {"key": "energy", "label": "新能源", "score": 0.82, "keywords": ["新能源", "电池", "储能", "光伏", "电力", "能源", "油气", "煤炭", "风电", "充电桩"]},
+        {"key": "medical", "label": "医药医疗", "score": 0.8, "keywords": ["医药", "医疗", "生物制品", "创新药", "中药", "化学制药", "医疗器械", "cro", "cxo", "疫苗", "医疗服务", "仿制药"]},
         {"key": "game", "label": "游戏传媒", "score": 0.78, "keywords": ["游戏", "网络游戏", "手游", "电竞", "云游戏", "互动娱乐", "文化传媒", "传媒"]},
     ],
     "concept_groups": [

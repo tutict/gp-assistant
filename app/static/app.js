@@ -106,6 +106,7 @@ let mobileMarketDataMeta = null;
 let mobileMarketRefreshJob = null;
 let mobileMarketRefreshProgress = null;
 let mobileFinancialSnapshotPromise = null;
+let screenMarketStatusSnapshot = null;
 const mobileMarketRefreshListeners = new Set();
 let autoRefreshInFlight = false;
 let observeRequestId = 0;
@@ -292,22 +293,25 @@ const TAURI_POST_ROUTES = {
 async function tauriAutoRefreshUniverse(invoke) {
   const status = await invoke("api_market_status");
   const empty = status?.policy?.mode === "empty" || Number(status?.universe_count || 0) <= 0;
-  if (empty) {
-    startMobileMarketRefreshJob(invoke, { seed: null, reason: "首次安装后台生成股票池" });
+  const stale = isMarketStatusStale(status);
+  if (empty || stale) {
+    startMobileMarketRefreshJob(invoke, { seed: null, reason: empty ? "\u9996\u6b21\u5b89\u88c5\u540e\u53f0\u751f\u6210\u80a1\u7968\u6c60" : "\u7b5b\u9009\u524d\u5237\u65b0\u8fc7\u671f\u884c\u60c5" });
   }
   return {
     source: DEFAULT_DATA_SOURCE,
     checked_at: new Date().toISOString(),
     trading_day: isLikelyTradingDay(),
     after_close: !shouldUsePreviousCloseForMobileRefresh(),
-    due: empty,
+    due: empty || stale,
     refreshed: false,
-    background_refresh: empty,
+    background_refresh: empty || stale,
     initial_refresh: empty,
     status,
     notes: empty
-      ? ["首次安装正在后台联网生成股票池，页面可以先操作；生成完成后会自动更新状态。"]
-      : ["已读取 Tauri/Rust 本地股票池缓存。"],
+      ? ["\u9996\u6b21\u5b89\u88c5\u6b63\u5728\u540e\u53f0\u8054\u7f51\u751f\u6210\u80a1\u7968\u6c60\uff0c\u9875\u9762\u53ef\u4ee5\u5148\u64cd\u4f5c\uff1b\u751f\u6210\u5b8c\u6210\u540e\u4f1a\u81ea\u52a8\u66f4\u65b0\u72b6\u6001\u3002"]
+      : stale
+      ? ["\u5df2\u68c0\u6d4b\u5230\u884c\u60c5\u65e5\u671f\u8fc7\u671f\uff0c\u6b63\u5728\u540e\u53f0\u5237\u65b0\u80a1\u7968\u6c60\u3002"]
+      : ["\u5df2\u8bfb\u53d6 Tauri/Rust \u672c\u5730\u80a1\u7968\u6c60\u7f13\u5b58\u3002"],
   };
 }
 
@@ -1066,6 +1070,7 @@ async function runScreen() {
   ]);
   const payload = buildCriteria();
   try {
+    await ensureFreshMarketDataForScreen(panels.screen);
     const data = await postJson("/api/screen", payload, panels.screen);
     if (data) renderScreenResult(panels.screen, data);
   } finally {
@@ -1092,6 +1097,7 @@ async function runSectorScreen() {
     min_sector_candidates: perSectorLimit,
   };
   try {
+    await ensureFreshMarketDataForScreen(panels.screen);
     const data = await postJson("/api/sector-screen", payload, panels.screen);
     if (data) renderSectorScreenResult(panels.screen, data);
   } finally {
@@ -1116,6 +1122,7 @@ async function runBoardScreen() {
     min_sector_candidates: 1,
   };
   try {
+    await ensureFreshMarketDataForScreen(panels.screen);
     const data = await postJson("/api/sector-screen", payload, panels.screen);
     if (data) renderBoardScreenResult(panels.screen, data);
   } finally {
@@ -1194,7 +1201,7 @@ async function runBacktest() {
   }
   const payload = {
     source,
-    criteria: buildCriteria({ limit: 100 }),
+    criteria: buildCriteria({ limit: 100, score_profile: "quality" }),
     stock_codes: source === "watchlist" ? watchlistItems.map((item) => item.code) : [],
     start_date: readDateParam("btStart", "20200101"),
     end_date: readDateParam("btEnd", currentSystemDateCompact()),
@@ -2047,19 +2054,19 @@ function updateBacktestIdleState() {
       ? null
       : canUseWatchlist
         ? { label: "切到自选观察池", action: "watchlist-backtest" }
-        : { label: "先运行筛选", action: "run-screen" };
+        : { label: "先筛选", action: "run-screen" };
   const title =
     source === "watchlist" && canUseWatchlist
-      ? "等待自选组合回测"
+      ? "自选组合待回测"
       : canUseWatchlist
-        ? `自选观察池已有 ${items.length} 只股票`
+        ? `观察池 ${items.length} 只`
         : "等待回测";
   const detail =
     source === "watchlist" && canUseWatchlist
-      ? "点击运行回测，验证收藏股票的组合表现。"
+      ? "点击运行回测"
       : canUseWatchlist
-        ? "可以继续用当前筛选条件回测，也可以切到自选观察池。"
-        : "先运行筛选生成候选组合，或从筛选结果收藏股票后回测。";
+        ? "可切到自选，也可继续用筛选条件"
+        : "先筛选或收藏股票";
   panels.backtest.innerHTML = renderBacktestEmptyState(title, detail, action);
 }
 
@@ -2978,6 +2985,7 @@ function buildCriteria(overrides = {}) {
     limit: readInt("resultLimit", DEFAULT_RESULT_LIMIT),
     sort_by: $("#sortBy").value,
     sort_dir: $("#sortDir").value,
+    score_profile: "rotation",
     ...overrides,
   };
 
@@ -2994,25 +3002,34 @@ function buildCriteria(overrides = {}) {
 function updateBacktestScope() {
   const node = $("#backtestScope");
   if (!node) return;
+  const context = node.closest(".backtest-context");
   const cost = clampFloat($("#btCostBps")?.value, 0, 500, 10);
   const source = getBacktestSource();
   const watchlistItems = readWatchlist();
   const topN = clampInt($("#btTopN")?.value, 1, 100, 10);
+  const start = displayDateParam("btStart", "2020-01-01");
+  const end = displayDateParam("btEnd", currentSystemDateInputValue());
   const sourceText =
     source === "watchlist"
-      ? `自选观察池 ${Math.min(topN, watchlistItems.length)} / ${watchlistItems.length} 只`
-      : ($("#industry")?.value ? `行业 ${$("#industry").value}` : "全部行业");
-  const label = node.closest(".backtest-context")?.querySelector("span");
-  if (label) label.textContent = source === "watchlist" ? "使用自选观察池" : "使用当前研究条件";
-  const parts = [
-    sourceText,
-    `持仓 ${topN} 只`,
-    `${displayDateParam("btStart", "2020-01-01")} 至 ${displayDateParam("btEnd", currentSystemDateInputValue())}`,
-    rebalanceLabel($("#btRebalance")?.value || "monthly"),
-    `${formatNumber(cost)} bps`,
-    benchmarkLabel($("#btBenchmark")?.value || "candidate_equal_weight"),
+      ? `${Math.min(topN, watchlistItems.length)} / ${watchlistItems.length} 只`
+      : ($("#industry")?.value ? $("#industry").value : "全部行业");
+  const label = $("#backtestScopeLabel") || context?.querySelector(".backtest-context-head span");
+  if (label) label.textContent = source === "watchlist" ? "自选观察池" : "当前研究条件";
+  node.textContent = sourceText;
+  node.title = source === "watchlist" ? `自选观察池 ${sourceText}` : sourceText;
+  const params = [
+    ["持仓", `${topN}只`],
+    ["区间", `${start}~${end}`],
+    ["频率", shortRebalanceLabel($("#btRebalance")?.value || "monthly")],
+    ["成本", `${formatNumber(cost)}bps`],
+    ["基准", shortBenchmarkLabel($("#btBenchmark")?.value || "candidate_equal_weight")],
   ];
-  node.textContent = parts.join(" · ");
+  const strip = $("#backtestParamStrip") || context?.querySelector(".backtest-param-strip");
+  if (strip) {
+    strip.innerHTML = params
+      .map(([labelText, value]) => `<span><b>${escapeHtml(labelText)}</b><strong>${escapeHtml(value)}</strong></span>`)
+      .join("");
+  }
 }
 
 function updateResearchSummaries() {
@@ -3052,6 +3069,24 @@ function benchmarkLabel(value) {
   };
   return labels[value] || value || "候选池等权基准";
 }
+
+function shortRebalanceLabel(value) {
+  const labels = {
+    none: "持有",
+    monthly: "月度",
+    quarterly: "季度",
+  };
+  return labels[value] || rebalanceLabel(value);
+}
+
+function shortBenchmarkLabel(value) {
+  const labels = {
+    candidate_equal_weight: "候选池",
+    none: "无",
+  };
+  return labels[value] || benchmarkLabel(value);
+}
+
 
 function displayDateParam(id, fallback) {
   const value = $(`#${id}`)?.value;
@@ -3592,6 +3627,7 @@ function applyMobileMarketDataRecord(record, source) {
     source,
     bytes: Number(record.bytes || 0),
     updatedAt: mobileRecordUpdatedAt(record) || data?.generated_at || null,
+    quoteGeneratedAt: data?.generated_at_epoch_ms || data?.generated_at || null,
     hasDeductedFinancialFields: mobileDataHasDeductedFinancialFields(data),
   };
   updateCriteriaSummary();
@@ -3620,6 +3656,79 @@ function shouldUsePreviousCloseForMobileRefresh(now = new Date()) {
   if (!isLikelyTradingDay(now)) return false;
   const minutes = now.getHours() * 60 + now.getMinutes();
   return minutes < 15 * 60 + 5;
+}
+
+async function ensureFreshMarketDataForScreen(panel) {
+  screenMarketStatusSnapshot = null;
+  if (!isTauriRuntime()) return null;
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (!invoke) return null;
+  let status = null;
+  try {
+    status = await invoke("api_market_status");
+    if (!isMarketStatusStale(status)) {
+      screenMarketStatusSnapshot = { status, refreshed: false };
+      return screenMarketStatusSnapshot;
+    }
+    setMaintenanceNote("\u7b5b\u9009\u524d\u68c0\u6d4b\u5230\u884c\u60c5\u8fc7\u671f\uff0c\u6b63\u5728\u5237\u65b0\u80a1\u7968\u6c60\u3002\u65e7\u7f13\u5b58\u4f1a\u5728\u5237\u65b0\u5931\u8d25\u65f6\u7ee7\u7eed\u53ef\u7528\u3002");
+    const refreshedStatus = await refreshMobileUniverseWithProgress(invoke);
+    await loadDataStatus().catch(() => {});
+    screenMarketStatusSnapshot = { status: refreshedStatus, refreshed: true };
+    return screenMarketStatusSnapshot;
+  } catch (error) {
+    const message = error?.message || String(error);
+    if (status && Number(status.universe_count || 0) > 0) {
+      screenMarketStatusSnapshot = { status, refreshed: false, refreshError: message };
+      setMaintenanceNote(`\u884c\u60c5\u5237\u65b0\u5931\u8d25\uff0c\u7ee7\u7eed\u4f7f\u7528\u65e7\u7f13\u5b58\uff1a${message}`);
+      return screenMarketStatusSnapshot;
+    }
+    screenMarketStatusSnapshot = { status: status || {}, refreshed: false, refreshError: message };
+    throw error;
+  }
+}
+
+function isMarketStatusStale(status) {
+  if (!status) return false;
+  if (status?.policy?.mode === "empty") return true;
+  if (Object.prototype.hasOwnProperty.call(status, "universe_count") && Number(status.universe_count || 0) <= 0) return true;
+  if (status.stale !== undefined) return Boolean(status.stale);
+  const quoteDate = localTradeDateCompact(status.quote_generated_at || status.generated_at || status.universe_updated_at);
+  if (!quoteDate) return false;
+  return quoteDate !== expectedMarketQuoteDateCompact();
+}
+function localTradeDateCompact(value) {
+  const date = parseDateLike(value);
+  if (!date) return "";
+  return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("");
+}
+
+function currentLocalDateCompact() {
+  return localTradeDateCompact(Date.now());
+}
+
+function expectedMarketQuoteDateCompact(now = new Date()) {
+  const date = new Date(now);
+  if (Number.isNaN(date.getTime())) return currentLocalDateCompact();
+  const minutes = date.getHours() * 60 + date.getMinutes();
+  if (date.getDay() === 6) date.setDate(date.getDate() - 1);
+  else if (date.getDay() === 0) date.setDate(date.getDate() - 2);
+  else if (minutes < 9 * 60 + 30) date.setDate(date.getDate() - 1);
+  while (date.getDay() === 0 || date.getDay() === 6) date.setDate(date.getDate() - 1);
+  return localTradeDateCompact(date);
+}
+function parseDateLike(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const numeric = Number(value);
+  const date = Number.isFinite(numeric) && Math.abs(numeric) > 1000000000 ? new Date(numeric) : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatTradeDate(value) {
+  if (!value) return "-";
+  const raw = String(value);
+  if (/^\d{8}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+  return raw;
 }
 
 async function refreshMobileUniverseWithProgress(invoke) {
@@ -4426,6 +4535,8 @@ async function mobileDataStatus(invoke) {
       cache_bytes: Number(meta.bytes || 0),
       cache_limit_bytes: 0,
       universe_updated_at: meta.updatedAt || data.generated_at || null,
+      quote_generated_at: meta.quoteGeneratedAt || data.generated_at_epoch_ms || data.generated_at || null,
+      stale: isMarketStatusStale({ quote_generated_at: meta.quoteGeneratedAt || data.generated_at_epoch_ms || data.generated_at }),
       policy: { mode: "mobile_online", source: meta.source || "cache" },
       notes: [
         `移动端当前使用手机本地股票池 ${stockCount} 只，来源为腾讯联网更新。`,
@@ -4487,6 +4598,7 @@ function renderScreenResult(node, data) {
           ["最高分", items[0] ? formatNumber(items[0].score) : "-"],
         ],
     body: [
+      renderScreenMarketStatus(screenMarketStatusSnapshot),
       hasGroups || items.length ? renderResultActions("当前筛选条件", actionCount) : "",
       hasGroups
         ? renderScreenGroups(groups)
@@ -4532,6 +4644,7 @@ function renderBoardScreenResult(node, data) {
       ["\u5019\u9009", data.total ?? 0],
     ],
     body: [
+      renderScreenMarketStatus(screenMarketStatusSnapshot),
       groups.length ? renderResultActions("\u5f53\u524d\u5206\u677f\u5757\u6761\u4ef6", data.returned ?? 0) : "",
       groups.length
         ? renderBoardGroups(groups)
@@ -4543,27 +4656,11 @@ function renderBoardScreenResult(node, data) {
 }
 
 function renderBoardGroups(groups) {
-  return `
-    <div class="sector-groups board-groups">
-      ${groups
-        .map((group) => {
-          const items = group.items || [];
-          return `
-            <section class="sector-group board-group">
-              <header>
-                <div>
-                  <h3>${escapeHtml(group.sector || "\u672a\u77e5\u677f\u5757")}</h3>
-                  <p>候选 ${formatNumber(group.total)} 只 · 展示 ${formatNumber(group.returned)} 只</p>
-                </div>
-                <strong>\u5747\u5206 ${formatNumber(group.average_score)}</strong>
-              </header>
-              ${items.length ? renderStockList(items.map(screenItemToView)) : renderEmpty("\u8be5\u677f\u5757\u6ca1\u6709\u5165\u9009\u80a1\u7968")}
-            </section>
-          `;
-        })
-        .join("")}
-    </div>
-  `;
+  return renderCollapsibleSectorGroups(groups, {
+    className: "board-groups",
+    emptyText: "该板块没有入选股票",
+    fallbackTitle: "未知板块",
+  });
 }
 function renderSectorScreenResult(node, data) {
   const groups = data.groups || [];
@@ -4574,6 +4671,7 @@ function renderSectorScreenResult(node, data) {
       ["候选", data.total ?? 0],
     ],
     body: [
+      renderScreenMarketStatus(screenMarketStatusSnapshot),
       groups.length ? renderResultActions("当前分概念条件", data.returned ?? 0) : "",
       groups.length
         ? renderSectorGroups(groups)
@@ -4585,22 +4683,37 @@ function renderSectorScreenResult(node, data) {
 }
 
 function renderSectorGroups(groups) {
+  return renderCollapsibleSectorGroups(groups, {
+    emptyText: "该概念没有入选股票",
+    fallbackTitle: "未知概念",
+  });
+}
+
+function renderCollapsibleSectorGroups(groups, options = {}) {
+  const className = ["sector-groups", options.className].filter(Boolean).join(" ");
   return `
-    <div class="sector-groups">
+    <div class="${escapeHtml(className)}">
       ${groups
-        .map((group) => {
+        .map((group, index) => {
           const items = group.items || [];
+          const title = group.sector || options.fallbackTitle || "未知分组";
+          const openAttr = index === 0 ? " open" : "";
           return `
-            <section class="sector-group">
-              <header>
+            <details class="sector-group${options.className ? " board-group" : ""}"${openAttr}>
+              <summary>
                 <div>
-                  <h3>${escapeHtml(group.sector || "未知概念")}</h3>
+                  <h3>${escapeHtml(title)}</h3>
                   <p>候选 ${formatNumber(group.total)} 只 · 展示 ${formatNumber(group.returned)} 只</p>
                 </div>
-                <strong>均分 ${formatNumber(group.average_score)}</strong>
-              </header>
-              ${items.length ? renderStockList(items.map(screenItemToView)) : renderEmpty("该概念没有入选股票")}
-            </section>
+                <span class="sector-group-meta">
+                  <strong>均分 ${formatNumber(group.average_score)}</strong>
+                  <i aria-hidden="true"></i>
+                </span>
+              </summary>
+              <div class="sector-group-content">
+                ${items.length ? renderStockList(items.map(screenItemToView)) : renderEmpty(options.emptyText || "该分组没有入选股票")}
+              </div>
+            </details>
           `;
         })
         .join("")}
@@ -5486,6 +5599,44 @@ function renderDataStatusCard(status) {
   `;
 }
 
+function renderScreenMarketStatus(snapshot) {
+  if (!snapshot) return "";
+  const status = snapshot.status || snapshot;
+  const stale = Boolean(snapshot.refreshError || isMarketStatusStale(status));
+  let tone = "neutral";
+  let title = "\u884c\u60c5\u72b6\u6001";
+  let message = "\u7b5b\u9009\u4f7f\u7528\u5f53\u524d\u672c\u5730\u884c\u60c5\u7f13\u5b58\u3002";
+  if (snapshot.refreshError) {
+    tone = "stale";
+    title = "\u65e7\u884c\u60c5\u63d0\u793a";
+    message = `\u884c\u60c5\u5237\u65b0\u5931\u8d25\uff0c\u7ee7\u7eed\u4f7f\u7528\u65e7\u7f13\u5b58\uff1a${snapshot.refreshError}`;
+  } else if (stale) {
+    tone = "stale";
+    message = "\u5f53\u524d\u7ed3\u679c\u53ef\u80fd\u4ecd\u4f7f\u7528\u65e7\u884c\u60c5\u7f13\u5b58\u3002";
+  } else if (snapshot.refreshed) {
+    tone = "fresh";
+    title = "\u884c\u60c5\u5df2\u5237\u65b0";
+    message = "\u7b5b\u9009\u524d\u5df2\u81ea\u52a8\u5237\u65b0\u5230\u6700\u65b0\u53ef\u7528\u884c\u60c5\u3002";
+  }
+  const quoteTime = formatDateTime(status.quote_generated_at || status.universe_updated_at);
+  const tradeDate = formatTradeDate(status.quote_trade_date || status.current_trade_date || expectedMarketQuoteDateCompact());
+  const details = [
+    ["\u884c\u60c5\u65f6\u95f4", quoteTime],
+    ["\u4ea4\u6613\u65e5", tradeDate],
+    ["\u80a1\u7968\u6c60", `${formatNumber(status.universe_count)} \u53ea`],
+  ];
+  return `
+    <section class="screen-market-status ${tone}">
+      <div>
+        <span>${escapeHtml(title)}</span>
+        <strong>${escapeHtml(message)}</strong>
+      </div>
+      <dl>
+        ${details.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value || "-")}</dd></div>`).join("")}
+      </dl>
+    </section>
+  `;
+}
 function screenItemToView(item) {
   return {
     stock: item.stock,
@@ -5578,6 +5729,7 @@ function renderStockRow(item) {
   const extra = item.extra?.length
     ? `<div class="mini-metrics">${item.extra.map(([label, value]) => `<span>${escapeHtml(label)} ${formatNumber(value)}</span>`).join("")}</div>`
     : "";
+  const marketHeat = renderMarketHeatMeta(stock, item);
   const signal = item.signal ? renderSignalSummary(item.signal) : "";
   const factorSummary = renderFactorSummary(item);
   const weight = item.weight !== undefined ? `<span class="weight">${formatPercent(item.weight)}</span>` : "";
@@ -5623,6 +5775,7 @@ function renderStockRow(item) {
         </div>
         <div class="row-button-group">${watchButton}${observeButton}</div>
       </div>
+      ${marketHeat}
       ${extra}
       ${factorSummary}
       ${signal}
@@ -5631,6 +5784,35 @@ function renderStockRow(item) {
       ${explanation}
     </article>
   `;
+}
+
+function renderMarketHeatMeta(stock, item) {
+  const scores = item.factorScores || item.factor_scores || {};
+  const changePct = normalizePercent(firstFiniteNumber(stock.change_pct, stock.changePct));
+  const turnover = normalizePercent(firstFiniteNumber(stock.turnover_rate, stock.turnoverRate));
+  const volumeRatio = firstFiniteNumber(stock.volume_ratio, stock.volumeRatio);
+  const heat = firstFiniteNumber(scores.market_heat);
+  const quoteTime = stock.quote_time || stock.quoteTime;
+  const metrics = [
+    ["\u6da8\u8dcc", changePct === null ? null : formatSignedPercentPrecise(changePct), metricTone(changePct)],
+    ["\u6362\u624b", turnover === null ? null : formatPercent(turnover), "neutral"],
+    ["\u91cf\u6bd4", volumeRatio === null ? null : formatNumber(volumeRatio), volumeRatio !== null && volumeRatio >= 1.5 ? "hot" : "neutral"],
+    ["\u8f6e\u52a8\u70ed\u5ea6", heat === null ? null : `${factorTier(heat)} ${formatNumber(heat)}`, heat !== null && heat >= 0.72 ? "hot" : "neutral"],
+    ["\u62a5\u4ef7", quoteTime ? formatDateTime(quoteTime) : null, "neutral"],
+  ].filter(([, value]) => value !== null && value !== undefined && value !== "-");
+  if (!metrics.length) return "";
+  return `
+    <div class="market-heat-row">
+      ${metrics.map(([label, value, tone]) => `<span class="${escapeHtml(tone || "neutral")}"><small>${escapeHtml(label)}</small><b>${escapeHtml(value)}</b></span>`).join("")}
+    </div>
+  `;
+}
+
+function metricTone(value) {
+  if (value === null || !Number.isFinite(Number(value))) return "neutral";
+  if (Number(value) > 0) return "rise";
+  if (Number(value) < 0) return "fall";
+  return "neutral";
 }
 
 function renderSelectionExplanation(explanation) {
@@ -5663,14 +5845,15 @@ function renderScoreContribution(item) {
 }
 function renderFactorSummary(item) {
   const scores = item.factorScores || item.factor_scores || {};
-  const order = ["theme", "fundamental", "valuation", "size", "risk", "institution"];
+  const order = ["theme", "fundamental", "valuation", "market_heat", "size", "risk", "institution"];
   const labels = {
-    theme: "主题",
-    fundamental: "基本面",
-    valuation: "估值",
-    size: "规模",
-    risk: "风险",
-    institution: "机构",
+    theme: "\u4e3b\u9898",
+    fundamental: "\u57fa\u672c\u9762",
+    valuation: "\u4f30\u503c",
+    market_heat: "\u8f6e\u52a8",
+    size: "\u89c4\u6a21",
+    risk: "\u98ce\u9669",
+    institution: "\u673a\u6784",
   };
   const pills = order
     .filter((key) => Number.isFinite(Number(scores[key])))
@@ -5682,7 +5865,7 @@ function renderFactorSummary(item) {
     <div class="factor-summary">
       ${explanation ? `<p>${escapeHtml(explanation)}</p>` : ""}
       <div class="tag-row factor-row">
-        ${item.concept ? `<span>概念 ${escapeHtml(item.concept)}</span>` : ""}
+        ${item.concept ? `<span>\u6982\u5ff5 ${escapeHtml(item.concept)}</span>` : ""}
         ${pills}
       </div>
     </div>
@@ -5698,7 +5881,6 @@ function factorTier(value) {
 }
 
 function renderObservationOverview(stock, financial, trend = {}) {
-  const sourceMeta = [financial?.period, financial?.source].filter(Boolean).join(" · ");
   const metrics = [
     ["市盈率(TTM)", formatNumber(stock.pe)],
     ["市净率", formatNumber(stock.pb)],
@@ -5718,7 +5900,6 @@ function renderObservationOverview(stock, financial, trend = {}) {
         <div>
           <h3>${escapeHtml(stock.name || stock.code || "-")}</h3>
           <p>${escapeHtml([stock.code, stock.industry].filter(Boolean).join(" · ") || "未知行业")}</p>
-          ${sourceMeta ? `<small>${escapeHtml(sourceMeta)}</small>` : ""}
         </div>
         <div class="overview-price-block ${escapeHtml(priceTone)}">
           <strong class="overview-price">${formatNumber(priceValue)}</strong>
@@ -5780,13 +5961,11 @@ function renderFinancialIndicators(financial) {
   );
   if (!items.length) return "";
 
-  const meta = [financial.period, financial.source].filter(Boolean).join(" \u00b7 ");
   return `
     <section class="financial-indicators">
       <header>
         <div>
           <h3>${escapeHtml(financial.title || "\u6700\u65b0\u6307\u6807")}</h3>
-          ${meta ? `<p>${escapeHtml(meta)}</p>` : ""}
         </div>
       </header>
       <div class="financial-indicator-grid">
@@ -5802,7 +5981,6 @@ function renderFinancialIndicators(financial) {
           })
           .join("")}
       </div>
-      ${financial.notes?.length ? `<div class="financial-indicator-notes">${financial.notes.map(escapeHtml).join(" / ")}</div>` : ""}
     </section>
   `;
 }
@@ -5822,7 +6000,6 @@ function renderQuarterlyEpsPanel(stock, financial) {
   });
   const latestPoint = points[0];
   const totalShares = estimateTotalSharesYi(stock);
-  const sourceMeta = [financial?.period, financial?.source].filter(Boolean).join(" · ");
   const notes = [];
   if (!points.length) notes.push("当前数据源没有返回季度 EPS 明细，先展示最新 EPS 与估算总股本。");
   if (totalShares === null) notes.push("总股本需要总市值和最新价，当前数据不足。");
@@ -5832,7 +6009,7 @@ function renderQuarterlyEpsPanel(stock, financial) {
       <header>
         <div>
           <h3>盈利与股本</h3>
-          <p>${escapeHtml(sourceMeta || "报告期 EPS 对比今年和上一年；总股本按总市值 / 最新价估算。")}</p>
+          <p>报告期 EPS 对比今年和上一年；总股本按总市值 / 最新价估算。</p>
         </div>
       </header>
       <div class="share-capital-grid">
@@ -7488,8 +7665,10 @@ function buildPriceMove(close, previousClose, fallback = {}) {
 }
 
 function normalizePercent(value) {
-  if (value === null) return null;
-  return Math.abs(value) > 1.5 ? value / 100 : value;
+  if (value === null || value === undefined) return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.abs(number) > 1.5 ? number / 100 : number;
 }
 
 function formatSignedPercentPrecise(value) {
@@ -7534,8 +7713,8 @@ function formatBytes(value) {
 }
 
 function formatDateTime(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value || "-";
+  const date = parseDateLike(value);
+  if (!date) return value || "-";
   return date.toLocaleString("zh-CN", {
     month: "2-digit",
     day: "2-digit",
