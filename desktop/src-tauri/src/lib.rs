@@ -2935,21 +2935,78 @@ async fn observe_core_payload_with_cached_history(
         }
     }
 
+    // Financial: run the local snapshot merge first, then decide whether an online EPS fetch
+    // is still needed — so the network part can run concurrently with capital/history below.
+    let financial_cached_count;
+    let financial_current_count;
+    let need_eps;
+    if mobile_fast_observe {
+        if merge_basic_financial_from_stock(&mut data, &code) {
+            data_changed = true;
+        }
+        notes
+            .push("移动端快速观察：已使用本地财务快照，跳过同花顺/新浪在线 EPS 补全。".to_string());
+        financial_cached_count = 0;
+        financial_current_count = 0;
+        need_eps = false;
+    } else {
+        financial_cached_count = financial_quarterly_eps_count(&data, &code);
+        if merge_basic_financial_from_stock(&mut data, &code) {
+            data_changed = true;
+        }
+        financial_current_count = financial_quarterly_eps_count(&data, &code);
+        need_eps = financial_current_count < COMPLETE_QUARTERLY_EPS_POINTS;
+    }
+
+    // History: decide whether an online daily-history fetch is needed (WebView-provided rows and
+    // a sufficiently stocked local cache both make it unnecessary).
+    let webview_history_rows = payload_history_rows(&payload);
+    let cache_lacks_history = webview_history_rows.is_none()
+        && !history_cache_has_bars(&data, &code, &start_date, &end_date, MIN_OBSERVE_HISTORY_BARS);
+    let need_history = cache_lacks_history && !mobile_fast_observe;
+
+    // Capital evidence, online EPS, and daily history are independent network groups — fetch them
+    // concurrently, then merge each result into `data` sequentially below.
     let capital_fetch_timeout = if mobile_fast_observe { 12 } else { OBSERVE_CAPITAL_TOTAL_TIMEOUT_SECS };
-    let capital_fetch = tokio::time::timeout(
-        Duration::from_secs(capital_fetch_timeout),
-        enrich_observe_capital_evidence_with_payload(
-            &mut data,
-            &code,
-            &start_date,
-            &end_date,
-            Some(&payload),
+    let (capital_outcome, eps_outcome, history_outcome) = futures::join!(
+        tokio::time::timeout(
+            Duration::from_secs(capital_fetch_timeout),
+            fetch_observe_capital_evidence_items(&code, &start_date, &end_date, Some(&payload)),
         ),
-    )
-    .await;
-    match capital_fetch {
-        Ok((changed, capital_notes)) => {
-            data_changed |= changed;
+        async {
+            if need_eps {
+                Some(
+                    tokio::time::timeout(
+                        Duration::from_secs(OBSERVE_FINANCIAL_TOTAL_TIMEOUT_SECS),
+                        fetch_quarterly_eps_chain(&code),
+                    )
+                    .await,
+                )
+            } else {
+                None
+            }
+        },
+        async {
+            if need_history {
+                Some(
+                    tokio::time::timeout(
+                        Duration::from_secs(OBSERVE_HISTORY_TOTAL_TIMEOUT_SECS),
+                        fetch_observe_daily_history(&code, &start_date, &end_date),
+                    )
+                    .await,
+                )
+            } else {
+                None
+            }
+        },
+    );
+
+    // Merge capital evidence.
+    match capital_outcome {
+        Ok((items, capital_notes)) => {
+            if !items.is_empty() {
+                data_changed |= merge_capital_evidence_items(&mut data, &code, items, &end_date);
+            }
             notes.extend(capital_notes);
             if mobile_fast_observe {
                 notes.push("Android short source capital evidence attempted with mobile proxy settings.".to_string());
@@ -2979,46 +3036,71 @@ async fn observe_core_payload_with_cached_history(
             ));
         }
     }
-    if mobile_fast_observe {
-        if merge_basic_financial_from_stock(&mut data, &code) {
-            data_changed = true;
+
+    // Merge online EPS (financial).
+    if need_eps {
+        let fetch = match eps_outcome {
+            Some(Ok(fetch)) => fetch,
+            _ => QuarterlyEpsFetchResult {
+                points: Vec::new(),
+                sources: Vec::new(),
+                errors: vec![format!(
+                    "在线财报补全超过 {OBSERVE_FINANCIAL_TOTAL_TIMEOUT_SECS} 秒，已跳过同花顺/新浪补充。"
+                )],
+            },
+        };
+        if !fetch.points.is_empty() {
+            let before = financial_quarterly_eps_count(&data, &code);
+            merge_quarterly_eps_points(&mut data, &code, fetch.points);
+            let after = financial_quarterly_eps_count(&data, &code);
+            if after > before {
+                data_changed = true;
+            }
+            let sources = if fetch.sources.is_empty() {
+                "在线财报源".to_string()
+            } else {
+                fetch.sources.join(" / ")
+            };
+            let note = format!(
+                "季度 EPS 已按优先级补全：本地缓存 {financial_cached_count} 期，通达信基础财务 {financial_current_count} 期，{sources} 后当前 {after} 期。"
+            );
+            if push_financial_note(&mut data, &code, note.clone()) {
+                data_changed = true;
+            }
+            notes.push(note);
+        } else if financial_current_count < COMPLETE_QUARTERLY_EPS_POINTS {
+            let detail = if fetch.errors.is_empty() {
+                "在线财报源没有返回可用 EPS 行".to_string()
+            } else {
+                fetch.errors.join("；")
+            };
+            let note = format!(
+                "季度 EPS 明细仍不足：本地缓存 {financial_cached_count} 期，通达信基础财务 {financial_current_count} 期；已尝试同花顺和新浪财经，{detail}。"
+            );
+            if push_financial_note(&mut data, &code, note.clone()) {
+                data_changed = true;
+            }
+            notes.push(note);
         }
-        notes
-            .push("移动端快速观察：已使用本地财务快照，跳过同花顺/新浪在线 EPS 补全。".to_string());
-    } else {
-        let (financial_changed, financial_notes) =
-            enrich_observe_financial_snapshot(&mut data, &code).await;
-        data_changed |= financial_changed;
-        notes.extend(financial_notes);
     }
 
-    if let Some(rows) = payload_history_rows(&payload) {
+    // Merge daily history.
+    if let Some(rows) = webview_history_rows {
         let count = rows.len();
         insert_history_rows(&mut data, &code, rows);
         data_changed = true;
         notes.push(format!(
             "观察日线历史已通过 WebView 预取并写入本地缓存：{code} {count} 条。"
         ));
-    } else if !history_cache_has_bars(
-        &data,
-        &code,
-        &start_date,
-        &end_date,
-        MIN_OBSERVE_HISTORY_BARS,
-    ) {
+    } else if cache_lacks_history {
         if mobile_fast_observe {
             notes.push(
                 "移动端快速观察：未命中 WebView 日线/本地历史时，不等待 Rust 在线日线补全。"
                     .to_string(),
             );
         } else {
-            let history_fetch = tokio::time::timeout(
-                Duration::from_secs(OBSERVE_HISTORY_TOTAL_TIMEOUT_SECS),
-                fetch_observe_daily_history(&code, &start_date, &end_date),
-            )
-            .await;
-            match history_fetch {
-                Ok(Ok(rows)) if !rows.is_empty() => {
+            match history_outcome {
+                Some(Ok(Ok(rows))) if !rows.is_empty() => {
                     let count = rows.len();
                     insert_history_rows(&mut data, &code, rows);
                     data_changed = true;
@@ -3026,17 +3108,18 @@ async fn observe_core_payload_with_cached_history(
                         "观察日线历史已按需联网更新并写入本地缓存：{code} {count} 条。"
                     ));
                 }
-                Ok(Ok(_)) => {
+                Some(Ok(Ok(_))) => {
                     notes.push(format!("观察日线历史为空：{code}。"));
                 }
-                Ok(Err(error)) => {
+                Some(Ok(Err(error))) => {
                     notes.push(format!("观察日线历史拉取失败：{error}"));
                 }
-                Err(_) => {
+                Some(Err(_)) => {
                     notes.push(format!(
                         "观察日线历史拉取超过 {OBSERVE_HISTORY_TOTAL_TIMEOUT_SECS} 秒，已跳过在线补充。"
                     ));
                 }
+                None => {}
             }
         }
     }
@@ -3129,13 +3212,12 @@ fn append_observe_note(result: &mut Value, note: String) {
     }
 }
 
-async fn enrich_observe_capital_evidence_with_payload(
-    data: &mut Value,
+async fn fetch_observe_capital_evidence_items(
     code: &str,
     start_date: &str,
     end_date: &str,
     network_payload: Option<&Value>,
-) -> (bool, Vec<String>) {
+) -> (Vec<Value>, Vec<String>) {
     let mut notes = Vec::new();
     let mut items = Vec::new();
     let timeout = Duration::from_secs(OBSERVE_CAPITAL_REQUEST_TIMEOUT_SECS);
@@ -3144,13 +3226,18 @@ async fn enrich_observe_capital_evidence_with_payload(
             Ok(client) => client,
             Err(error) => {
                 return (
-                    false,
+                    Vec::new(),
                     vec![format!("综合资金证据 HTTP 客户端创建失败：{error}")],
                 );
             }
         };
 
-    match fetch_eastmoney_guba_sentiment(&client, code).await {
+    // Guba sentiment and LHB institution stats hit independent endpoints — fetch concurrently.
+    let (guba_fetch, lhb_fetch) = futures::join!(
+        fetch_eastmoney_guba_sentiment(&client, code),
+        fetch_eastmoney_institution_lhb(&client, code, start_date, end_date),
+    );
+    match guba_fetch {
         Ok(mut guba_items) if !guba_items.is_empty() => {
             let count = guba_items.len();
             items.append(&mut guba_items);
@@ -3176,7 +3263,7 @@ async fn enrich_observe_capital_evidence_with_payload(
         }
     }
 
-    match fetch_eastmoney_institution_lhb(&client, code, start_date, end_date).await {
+    match lhb_fetch {
         Ok(item) => {
             let title = item
                 .get("title")
@@ -3197,11 +3284,7 @@ async fn enrich_observe_capital_evidence_with_payload(
         }
     }
 
-    if items.is_empty() {
-        return (false, notes);
-    }
-    let changed = merge_capital_evidence_items(data, code, items, end_date);
-    (changed, notes)
+    (items, notes)
 }
 
 async fn fetch_eastmoney_guba_sentiment(
@@ -3850,72 +3933,6 @@ struct QuarterlyEpsFetchResult {
     points: Vec<Value>,
     sources: Vec<String>,
     errors: Vec<String>,
-}
-
-async fn enrich_observe_financial_snapshot(data: &mut Value, code: &str) -> (bool, Vec<String>) {
-    let mut changed = false;
-    let mut notes = Vec::new();
-    let cached_count = financial_quarterly_eps_count(data, code);
-
-    if merge_basic_financial_from_stock(data, code) {
-        changed = true;
-    }
-
-    let current_count = financial_quarterly_eps_count(data, code);
-    if current_count >= COMPLETE_QUARTERLY_EPS_POINTS {
-        return (changed, notes);
-    }
-
-    let fetch = match tokio::time::timeout(
-        Duration::from_secs(OBSERVE_FINANCIAL_TOTAL_TIMEOUT_SECS),
-        fetch_quarterly_eps_chain(code),
-    )
-    .await
-    {
-        Ok(fetch) => fetch,
-        Err(_) => QuarterlyEpsFetchResult {
-            points: Vec::new(),
-            sources: Vec::new(),
-            errors: vec![format!(
-                "在线财报补全超过 {OBSERVE_FINANCIAL_TOTAL_TIMEOUT_SECS} 秒，已跳过同花顺/新浪补充。"
-            )],
-        },
-    };
-    if !fetch.points.is_empty() {
-        let before = financial_quarterly_eps_count(data, code);
-        merge_quarterly_eps_points(data, code, fetch.points);
-        let after = financial_quarterly_eps_count(data, code);
-        if after > before {
-            changed = true;
-        }
-        let sources = if fetch.sources.is_empty() {
-            "在线财报源".to_string()
-        } else {
-            fetch.sources.join(" / ")
-        };
-        let note = format!(
-            "季度 EPS 已按优先级补全：本地缓存 {cached_count} 期，通达信基础财务 {current_count} 期，{sources} 后当前 {after} 期。"
-        );
-        if push_financial_note(data, code, note.clone()) {
-            changed = true;
-        }
-        notes.push(note);
-    } else if current_count < COMPLETE_QUARTERLY_EPS_POINTS {
-        let detail = if fetch.errors.is_empty() {
-            "在线财报源没有返回可用 EPS 行".to_string()
-        } else {
-            fetch.errors.join("；")
-        };
-        let note = format!(
-            "季度 EPS 明细仍不足：本地缓存 {cached_count} 期，通达信基础财务 {current_count} 期；已尝试同花顺和新浪财经，{detail}。"
-        );
-        if push_financial_note(data, code, note.clone()) {
-            changed = true;
-        }
-        notes.push(note);
-    }
-
-    (changed, notes)
 }
 
 async fn fetch_quarterly_eps_chain(code: &str) -> QuarterlyEpsFetchResult {

@@ -275,7 +275,14 @@ async fn fetch_android_short_news_items(
     let mut items = Vec::new();
     notes.push("Android short news source enabled: Eastmoney Guba, Eastmoney search, Sina stock news, THS F10.".to_string());
 
-    match fetch_guba_community(&client, &short_stocks, relations, days).await {
+    // Four independent, additive sources — fetch them concurrently and merge in fixed order.
+    let (guba_result, eastmoney_result, sina_result, ths_result) = futures::join!(
+        fetch_guba_community(&client, &short_stocks, relations, days),
+        fetch_eastmoney_stock_news(&client, &short_stocks, relations, days),
+        fetch_sina_stock_news(&client, &short_stocks, relations, days),
+        fetch_ths_stock_news(&client, &short_stocks, relations, days),
+    );
+    match guba_result {
         Ok(guba_items) => {
             notes.push(format!("Android short source Eastmoney Guba returned {} items.", guba_items.len()));
             items.extend(guba_items);
@@ -285,7 +292,7 @@ async fn fetch_android_short_news_items(
             limit_chars(&error, 160)
         )),
     }
-    match fetch_eastmoney_stock_news(&client, &short_stocks, relations, days).await {
+    match eastmoney_result {
         Ok(news_items) => {
             notes.push(format!("Android short source Eastmoney stock news returned {} items.", news_items.len()));
             items.extend(news_items);
@@ -295,7 +302,7 @@ async fn fetch_android_short_news_items(
             limit_chars(&error, 160)
         )),
     }
-    match fetch_sina_stock_news(&client, &short_stocks, relations, days).await {
+    match sina_result {
         Ok(news_items) => {
             notes.push(format!("Android short source Sina stock news returned {} items.", news_items.len()));
             items.extend(news_items);
@@ -305,7 +312,7 @@ async fn fetch_android_short_news_items(
             limit_chars(&error, 160)
         )),
     }
-    match fetch_ths_stock_news(&client, &short_stocks, relations, days).await {
+    match ths_result {
         Ok(news_items) => {
             notes.push(format!("Android short source THS F10 returned {} items.", news_items.len()));
             items.extend(news_items);
@@ -342,8 +349,47 @@ async fn fetch_news_items(
     let mut notes = Vec::new();
     let mut items = Vec::new();
 
-    if env_bool("GP_NEWS_ENABLE_GUBA", true) {
-        match fetch_guba_community(&client, stocks, relations, days).await {
+    let guba_enabled = env_bool("GP_NEWS_ENABLE_GUBA", true);
+    let traditional_enabled = env_bool("GP_NEWS_ENABLE_TRADITIONAL_MEDIA", true);
+    let sina_enabled = traditional_enabled && env_bool("GP_NEWS_ENABLE_SINA", true);
+    let ths_enabled = traditional_enabled && env_bool("GP_NEWS_ENABLE_THS", true);
+    let eastmoney_enabled =
+        env_bool("GP_NEWS_ENABLE_EASTMONEY", true) || env_bool("GP_NEWS_ENABLE_AKSHARE", true);
+
+    // Independent, additive sources — fetch every enabled one concurrently, process in fixed order.
+    let (guba_result, sina_result, ths_result, eastmoney_result) = futures::join!(
+        async {
+            if guba_enabled {
+                Some(fetch_guba_community(&client, stocks, relations, days).await)
+            } else {
+                None
+            }
+        },
+        async {
+            if sina_enabled {
+                Some(fetch_sina_stock_news(&client, stocks, relations, days).await)
+            } else {
+                None
+            }
+        },
+        async {
+            if ths_enabled {
+                Some(fetch_ths_stock_news(&client, stocks, relations, days).await)
+            } else {
+                None
+            }
+        },
+        async {
+            if eastmoney_enabled {
+                Some(fetch_eastmoney_stock_news(&client, stocks, relations, days).await)
+            } else {
+                None
+            }
+        },
+    );
+
+    if let Some(result) = guba_result {
+        match result {
             Ok(guba_items) => {
                 if guba_items.is_empty() {
                     notes.push("已尝试东方财富股吧社区抓取，当前窗口未命中讨论。".to_string());
@@ -367,9 +413,9 @@ async fn fetch_news_items(
         );
     }
 
-    if env_bool("GP_NEWS_ENABLE_TRADITIONAL_MEDIA", true) {
-        if env_bool("GP_NEWS_ENABLE_SINA", true) {
-            match fetch_sina_stock_news(&client, stocks, relations, days).await {
+    if traditional_enabled {
+        if let Some(result) = sina_result {
+            match result {
                 Ok(news_items) => {
                     if news_items.is_empty() {
                         notes.push("\u{5df2}\u{5c1d}\u{8bd5}\u{65b0}\u{6d6a}\u{8d22}\u{7ecf}\u{4e2a}\u{80a1}\u{8d44}\u{8baf}\u{6293}\u{53d6}\u{ff0c}\u{5f53}\u{524d}\u{7a97}\u{53e3}\u{672a}\u{547d}\u{4e2d}\u{6d88}\u{606f}\u{3002}".to_string());
@@ -387,8 +433,8 @@ async fn fetch_news_items(
                 )),
             }
         }
-        if env_bool("GP_NEWS_ENABLE_THS", true) {
-            match fetch_ths_stock_news(&client, stocks, relations, days).await {
+        if let Some(result) = ths_result {
+            match result {
                 Ok(news_items) => {
                     if news_items.is_empty() {
                         notes.push("\u{5df2}\u{5c1d}\u{8bd5}\u{540c}\u{82b1}\u{987a} F10 \u{8d44}\u{8baf}\u{6293}\u{53d6}\u{ff0c}\u{5f53}\u{524d}\u{7a97}\u{53e3}\u{672a}\u{547d}\u{4e2d}\u{6d88}\u{606f}\u{3002}".to_string());
@@ -410,8 +456,8 @@ async fn fetch_news_items(
         notes.push("\u{4f20}\u{7edf}\u{8d22}\u{7ecf}\u{5a92}\u{4f53}\u{6293}\u{53d6}\u{5df2}\u{5173}\u{95ed}\u{ff1b}\u{53ef}\u{8bbe}\u{7f6e} GP_NEWS_ENABLE_TRADITIONAL_MEDIA=true \u{540e}\u{91cd}\u{65b0}\u{542f}\u{7528}\u{3002}".to_string());
     }
 
-    if env_bool("GP_NEWS_ENABLE_EASTMONEY", true) || env_bool("GP_NEWS_ENABLE_AKSHARE", true) {
-        match fetch_eastmoney_stock_news(&client, stocks, relations, days).await {
+    if let Some(result) = eastmoney_result {
+        match result {
             Ok(news_items) => {
                 if news_items.is_empty() {
                     notes.push("已尝试东方财富个股新闻接口抓取，当前窗口未命中消息。".to_string());
