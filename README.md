@@ -148,7 +148,7 @@ API 客户端可以通过请求头显式指定通达信数据源：
 - 如果当天收盘后已经刷新过 `data/cache/tdx_stocks.csv`，本日不会重复刷新。
 - Web 页面会在启动后按间隔触发检查；Tauri 移动端首次安装无缓存时会立即联网生成股票池，之后按交易日规则刷新手机本地缓存。
 
-默认桌面端通过 Tauri 内置数据维护入口执行状态检查、刷新和清理，不再需要 Python/FastAPI 服务。脚本层使用 `scripts\maintain-data-tauri.ps1` 查看/清理 Tauri AppData 缓存；联网刷新仍在桌面 App 内执行，因为刷新进度依赖 Tauri AppHandle 事件。`scripts\maintain_data.py` 仅保留为 legacy Python-only 对照。
+默认桌面端通过 Tauri 内置数据维护入口执行状态检查、刷新和清理，不再需要 Python/FastAPI 服务。脚本层使用 `scripts\maintain-data-tauri.ps1` 查看/清理 Tauri AppData 缓存；联网刷新仍在桌面 App 内执行，因为刷新进度依赖 Tauri AppHandle 事件。
 
 Legacy Python-only 回归测试（RAG pack、上游 RAG 构建、旧数据维护和 desktop server）已移到 `tests/legacy_python`，默认 `pytest` 不收集；如需核对旧路径，可显式运行 `pytest -c pytest.legacy-python.ini`。
 

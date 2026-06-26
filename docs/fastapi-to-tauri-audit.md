@@ -10,8 +10,8 @@ This document tracks whether the retired FastAPI surface, RAG pack workflow, and
 | --- | --- | --- |
 | Core stock workflows | Replaced | `app/static/app.js` bridges screen, sector screen, graph screen, trend, trend screen, observe, backtest, news RAG, stock search, and agent stream to Tauri commands. Commands are registered in `desktop/src-tauri/src/lib.rs`. |
 | Data maintenance UI | Replaced | Data status, refresh, auto-refresh, and prune are bridged to `api_market_status`, `api_market_refresh`, and `api_market_clear_cache`. |
-| Standalone data maintenance script | Replaced | `scripts/maintain-data-tauri.ps1` inspects and prunes Tauri AppData caches without Python/FastAPI. Online refresh remains inside the Tauri app because it uses AppHandle progress events. `scripts/maintain_data.py` is legacy reference only. |
-| Local `/api/rag-pack/*` vector pack | Replaced | `app/static/app.js` routes status/build/build-from-news-cache/query to `api_rag_pack_*`; `desktop/src-tauri/src/rag_pack.rs` stores a lightweight Tauri/Rust lexical pack in AppData. Legacy Python vector tests remain under `tests/legacy_python`. |
+| Standalone data maintenance script | Replaced | `scripts/maintain-data-tauri.ps1` inspects and prunes Tauri AppData caches without Python/FastAPI. Online refresh remains inside the Tauri app because it uses AppHandle progress events. |
+| Local `/api/rag-pack/*` vector pack | Replaced | `app/static/app.js` routes status/build/build-from-news-cache/query to `api_rag_pack_*`; `desktop/src-tauri/src/rag_pack.rs` stores a lightweight Tauri/Rust lexical pack in AppData. |
 | Desktop upstream RAG build and inline transfer | Replaced | `api_upstream_rag_build`, `api_upstream_rag_status`, and `api_upstream_rag_transfer_start` build a Tauri/Rust upstream evidence pack and expose an inline descriptor JSON for mobile import. The old Python LAN HTTP transfer remains legacy only. |
 | Mobile upstream RAG package management | Replaced | `core_upstream_rag_import`, `core_upstream_rag_list`, `core_upstream_rag_detail`, and `core_upstream_rag_rollback` are Tauri commands. |
 
@@ -50,8 +50,7 @@ This document tracks whether the retired FastAPI surface, RAG pack workflow, and
 
 ## Legacy Python Boundary
 
-Legacy Python/FastAPI modules and tests remain as migration references only. They are not part of the default Tauri desktop path:
+The Python/FastAPI service layer is retained only as the parity reference implementation for the Rust port (see `tests/test_core_parity.py`) and is exercised by the active `pytest` suite. It is not part of the default Tauri desktop runtime:
 
-- `tests/legacy_python` can be run with `pytest -c pytest.legacy-python.ini` when comparing retired behavior.
-- `scripts/maintain_data.py` is retained as a legacy Python-only reference; use `scripts/maintain-data-tauri.ps1` for script-level Tauri cache status/prune.
+- Script-level Tauri cache status/prune uses `scripts/maintain-data-tauri.ps1`; the retired Python-only `scripts/maintain_data.py` and the `tests/legacy_python` comparison suite have been removed.
 - The Tauri RAG replacement is intentionally lightweight and lexical. It removes the default Python/FastAPI dependency; it does not claim parity with the old Python ONNX/sqlite-vec vector implementation.
