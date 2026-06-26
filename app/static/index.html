@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>股选优</title>
-    <link rel="icon" href="data:," />
+    <link rel="icon" href="/static/assets/logo-mark-v2.png" />
     <script>
       const requestedTheme = new URLSearchParams(window.location.search).get("theme");
       const savedTheme =
@@ -182,7 +182,7 @@
     <main class="app-shell">
       <header class="app-header">
         <div class="brand-lockup">
-          <div class="brand-mark" aria-hidden="true">涨</div>
+          <img class="brand-mark" src="/static/assets/logo-mark-v2.png" alt="" aria-hidden="true" />
           <div>
             <h1 class="brand-title">股选优</h1>
           </div>
@@ -744,20 +744,26 @@
               <div class="backtest-setup">
                 <div class="backtest-source-switch" role="group" aria-label="回测标的来源">
                   <button class="active" type="button" data-backtest-source-option="criteria">
-                    <span>筛选组合</span>
-                    <strong>当前筛选条件</strong>
+                    <span>筛选</span>
+                    <strong>当前条件</strong>
                   </button>
                   <button type="button" data-backtest-source-option="watchlist">
-                    <span>自选组合</span>
-                    <strong>自选观察池</strong>
+                    <span>自选</span>
+                    <strong>观察池</strong>
                   </button>
                 </div>
-                <div class="backtest-context">
-                  <div>
-                    <span>回测范围</span>
-                    <strong id="backtestScope">等权买入并持有</strong>
+                <div class="backtest-context" aria-live="polite">
+                  <header class="backtest-context-head">
+                    <span id="backtestScopeLabel">当前研究条件</span>
+                    <strong id="backtestScope">全部行业</strong>
+                  </header>
+                  <div id="backtestParamStrip" class="backtest-param-strip" aria-label="回测参数">
+                    <span><b>持仓</b><strong>10只</strong></span>
+                    <span><b>区间</b><strong>2020-01-01 至 今天</strong></span>
+                    <span><b>频率</b><strong>月度</strong></span>
+                    <span><b>成本</b><strong>10bps</strong></span>
+                    <span><b>基准</b><strong>候选池</strong></span>
                   </div>
-                  <em>按当前研究条件生成组合表现</em>
                 </div>
                 <div class="backtest-run-row">
                   <button id="backtestBtn" type="button">运行回测</button>
@@ -777,8 +783,8 @@
               <div id="backtestResult" class="result-panel medium empty">
                 <div class="backtest-empty-state">
                   <strong>等待回测</strong>
-                  <span>先运行筛选生成候选组合，或切到自选观察池验证收藏股票。</span>
-                  <button type="button" data-empty-action="run-screen">先运行筛选</button>
+                  <span>先筛选或收藏股票</span>
+                  <button type="button" data-empty-action="run-screen">先筛选</button>
                 </div>
               </div>
             </article>

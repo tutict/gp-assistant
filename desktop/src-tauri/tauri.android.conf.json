@@ -21,7 +21,7 @@
     }
   },
   "bundle": {
-    "icon": ["icons/icon.png"],
+    "icon": ["icons/icon-v2.png"],
     "android": {
       "minSdkVersion": 24,
       "versionCode": 4

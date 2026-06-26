@@ -10,7 +10,7 @@ $AndroidManifest = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\A
 $AndroidBuildGradle = Join-Path $Root "desktop\src-tauri\gen\android\app\build.gradle.kts"
 $AndroidMainActivity = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\java\com\tutict\stockoptimizer\MainActivity.kt"
 $AndroidResDir = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\res"
-$AndroidIconSource = Join-Path $Root "desktop\src-tauri\icons\icon.png"
+$AndroidIconSource = Join-Path $Root "desktop\src-tauri\icons\icon-v2.png"
 $AndroidAppName = -join @([char]0x80A1, [char]0x9009, [char]0x4F18)
 $AndroidThemeName = "GpAssistantTheme"
 $AndroidBootColor = "#120E0D"
@@ -211,6 +211,28 @@ function Update-AndroidManifestStartupTheme {
     Set-Content -LiteralPath $AndroidManifest -Value $manifest -Encoding UTF8
 }
 
+function Update-AndroidManifestBranding {
+    if (-not (Test-Path -LiteralPath $AndroidManifest)) {
+        return
+    }
+
+    $manifest = Get-Content -LiteralPath $AndroidManifest -Raw
+    if ($manifest -match "<application(\s|>)") {
+        if ($manifest -match "android:icon=`"[^`"]+`"") {
+            $manifest = [regex]::Replace($manifest, "android:icon=`"[^`"]+`"", "android:icon=`"@mipmap/ic_launcher`"", 1)
+        } else {
+            $manifest = $manifest -replace "<application(\s|>)", "<application android:icon=`"@mipmap/ic_launcher`"`$1"
+        }
+
+        if ($manifest -match "android:roundIcon=`"[^`"]+`"") {
+            $manifest = [regex]::Replace($manifest, "android:roundIcon=`"[^`"]+`"", "android:roundIcon=`"@mipmap/ic_launcher_round`"", 1)
+        } else {
+            $manifest = $manifest -replace "<application(\s|>)", "<application android:roundIcon=`"@mipmap/ic_launcher_round`"`$1"
+        }
+    }
+
+    Set-Content -LiteralPath $AndroidManifest -Value $manifest -Encoding UTF8
+}
 function Update-AndroidSafeAreaInsets {
     $mainActivityDir = Split-Path -Parent $AndroidMainActivity
     if (-not (Test-Path -LiteralPath $mainActivityDir)) {
@@ -295,18 +317,14 @@ function Write-AndroidLauncherFallbackVectors {
     ) -join "`r`n"
     Set-Content -LiteralPath (Join-Path $drawableDir "ic_launcher_background.xml") -Value $backgroundVector -Encoding UTF8
 
-    $foregroundVector = @(
+    $foregroundBitmap = @(
         "<?xml version=`"1.0`" encoding=`"utf-8`"?>",
-        "<vector xmlns:android=`"http://schemas.android.com/apk/res/android`"",
-        "    android:width=`"108dp`"",
-        "    android:height=`"108dp`"",
-        "    android:viewportWidth=`"108`"",
-        "    android:viewportHeight=`"108`">",
-        "    <path android:fillColor=`"#FFF7F3`" android:pathData=`"M54,18L83,76H70L64,64H44L38,76H25L54,18zM49,52h10l-5,-12z`" />",
-        "    <path android:fillColor=`"#FFF7F3`" android:pathData=`"M28,84h52v8h-52z`" />",
-        "</vector>"
+        "<bitmap xmlns:android=`"http://schemas.android.com/apk/res/android`"",
+        "    android:gravity=`"center`"",
+        "    android:src=`"@mipmap/ic_launcher_foreground`" />"
     ) -join "`r`n"
-    Set-Content -LiteralPath (Join-Path $drawableV24Dir "ic_launcher_foreground.xml") -Value $foregroundVector -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $drawableDir "ic_launcher_foreground.xml") -Value $foregroundBitmap -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $drawableV24Dir "ic_launcher_foreground.xml") -Value $foregroundBitmap -Encoding UTF8
 }
 
 function Update-AndroidProjectBranding {
@@ -330,6 +348,7 @@ function Update-AndroidProjectBranding {
 
     Set-AndroidColorResource $valuesDir "ic_launcher_background" $AndroidLauncherColor
     Write-AndroidLauncherFallbackVectors
+    Update-AndroidManifestBranding
 
     $launcherSizes = @{
         "mipmap-mdpi" = 48
