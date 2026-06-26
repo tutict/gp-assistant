@@ -6,6 +6,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Mapping, Sequence, TypeVar
 
+from pydantic import ValidationError
+
 
 T = TypeVar("T")
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -142,7 +144,7 @@ def _parse_payload(model_type: type[T], payload: str) -> T | None:
         if hasattr(model_type, "model_validate_json"):
             return model_type.model_validate_json(payload)  # type: ignore[return-value]
         return model_type(**json.loads(payload))  # type: ignore[misc, return-value]
-    except Exception:
+    except (ValidationError, json.JSONDecodeError, TypeError):
         return None
 
 

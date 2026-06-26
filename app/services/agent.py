@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional, TypedDict
 from uuid import uuid4
 
+from pydantic import ValidationError
+
 from app.providers.base import StockProvider
 from app.schemas import (
     AgentResponse,
@@ -1071,7 +1073,7 @@ def _parse_criteria(data: Optional[Dict[str, Any]]) -> Optional[ScreenCriteria]:
         return None
     try:
         return ScreenCriteria(**data)
-    except Exception:
+    except (ValidationError, TypeError):
         return None
 
 
@@ -1080,7 +1082,7 @@ def _parse_observe(data: Optional[Dict[str, Any]]) -> Optional[StockObserveReque
         return None
     try:
         return StockObserveRequest(**data)
-    except Exception:
+    except (ValidationError, TypeError):
         return None
 
 
@@ -1089,7 +1091,7 @@ def _parse_sector_screen(data: Optional[Dict[str, Any]]) -> Optional[SectorScree
         return None
     try:
         return SectorScreenRequest(**data)
-    except Exception:
+    except (ValidationError, TypeError):
         return None
 
 
@@ -1098,7 +1100,7 @@ def _parse_graph_screen(data: Optional[Dict[str, Any]]) -> Optional[GraphScreenR
         return None
     try:
         return GraphScreenRequest(**data)
-    except Exception:
+    except (ValidationError, TypeError):
         return None
 
 
@@ -1107,7 +1109,7 @@ def _parse_trend_screen(data: Optional[Dict[str, Any]]) -> Optional[TrendScreenR
         return None
     try:
         return TrendScreenRequest(**data)
-    except Exception:
+    except (ValidationError, TypeError):
         return None
 
 
@@ -1116,7 +1118,7 @@ def _parse_backtest(data: Optional[Dict[str, Any]]) -> Optional[BacktestRequest]
         return None
     try:
         return BacktestRequest(**data)
-    except Exception:
+    except (ValidationError, TypeError):
         return None
 
 
@@ -1125,5 +1127,5 @@ def _parse_news_rag(data: Optional[Dict[str, Any]]) -> Optional[NewsRagRequest]:
         return None
     try:
         return NewsRagRequest(**data)
-    except Exception:
+    except (ValidationError, TypeError):
         return None
