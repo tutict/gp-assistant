@@ -193,7 +193,9 @@
             <select id="proxyModeSelect" aria-label="代理">
               <option value="none">不使用代理</option>
               <option value="system">使用系统代理</option>
-            </select>
+            
+              <option value="manual">手动代理</option></select>
+            <input id="proxyUrlInput" class="proxy-url-input" hidden type="url" inputmode="url" placeholder="http://127.0.0.1:7890" aria-label="手动代理 URL" />
           </div>
           <span id="sourceStatus" class="status-pill"><i aria-hidden="true"></i>通达信</span>
           <label class="theme-switch" for="themeToggle">

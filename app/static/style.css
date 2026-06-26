@@ -12638,3 +12638,29 @@ body.mobile-tauri .brand-lockup > .brand-mark {
     font-size: 0.78rem;
   }
 }
+
+.proxy-url-input {
+  width: min(220px, 34vw);
+  min-height: 30px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface) 88%, var(--surface-3));
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 720;
+  padding: 0 10px;
+}
+
+.proxy-url-input[hidden] {
+  display: none !important;
+}
+
+.proxy-url-input::placeholder {
+  color: var(--muted);
+}
+
+body.mobile-tauri .proxy-url-input.is-visible {
+  width: min(170px, 34vw);
+  min-height: 32px;
+  font-size: 0.78rem;
+}

@@ -1319,7 +1319,11 @@ pub fn sector_screen_stocks(
         let Some(reasons) = matches_stock(stock, &request.criteria) else {
             continue;
         };
-        screened.push(score_stock(stock, &reasons, &request.criteria.score_profile));
+        screened.push(score_stock(
+            stock,
+            &reasons,
+            &request.criteria.score_profile,
+        ));
     }
     sort_screened(&mut screened, &request.criteria);
 
@@ -2038,11 +2042,17 @@ fn build_observation_capital_evidence(
     dedup_capital_items(&mut items);
 
     let buckets = [
-        ("资金流", FUND_FLOW_WEIGHT, ["fund_flow", "", ""]),
+        (
+            "资金流",
+            FUND_FLOW_WEIGHT,
+            ["fund_flow", "", ""],
+            ["fund_flow", "", ""],
+        ),
         (
             "机构席位",
             INSTITUTION_WEIGHT,
             ["institution_lhb", "institution_lhb_status", ""],
+            ["institution_lhb", "", ""],
         ),
         (
             "消息情绪",
@@ -2052,17 +2062,23 @@ fn build_observation_capital_evidence(
                 "community_sentiment",
                 "message_sentiment_status",
             ],
+            ["news_rag", "community_sentiment", ""],
         ),
-        ("技术推断", TECHNICAL_WEIGHT, ["technical_behavior", "", ""]),
+        (
+            "技术推断",
+            TECHNICAL_WEIGHT,
+            ["technical_behavior", "", ""],
+            ["technical_behavior", "", ""],
+        ),
     ];
     let mut weighted_sum = 0.0;
     let mut total_weight: f64 = 0.0;
     let mut contributions = BTreeMap::new();
     let mut scored_labels = Vec::new();
     let mut evidence_labels = Vec::new();
-    for (label, weight, categories) in buckets {
-        let score = capital_bucket_score(&items, categories);
-        let available = capital_bucket_has_evidence(&items, categories);
+    for (label, weight, score_categories, evidence_categories) in buckets {
+        let score = capital_bucket_score(&items, score_categories);
+        let available = capital_bucket_has_evidence(&items, evidence_categories);
         if score.is_some() {
             scored_labels.push(label.to_string());
         }
@@ -2501,73 +2517,84 @@ fn build_capital_evidence_sections(
     let definitions = [
         (
             "fund_flow",
-            "\u{8d44}\u{91d1}\u{6d41}",
-            "\u{8d44}\u{91d1}\u{6d41}",
+            "资金流",
+            "资金流",
+            ["fund_flow", "", ""],
             ["fund_flow", "", ""],
         ),
         (
             "institution_lhb",
-            "\u{673a}\u{6784}\u{5e2d}\u{4f4d}",
-            "\u{673a}\u{6784}\u{5e2d}\u{4f4d}",
+            "机构席位",
+            "机构席位",
             ["institution_lhb", "institution_lhb_status", ""],
+            ["institution_lhb", "", ""],
         ),
         (
             "message_sentiment",
-            "\u{6d88}\u{606f}\u{60c5}\u{7eea}",
-            "\u{6d88}\u{606f}\u{60c5}\u{7eea}",
+            "消息情绪",
+            "消息情绪",
             [
                 "news_rag",
                 "community_sentiment",
                 "message_sentiment_status",
             ],
+            ["news_rag", "community_sentiment", ""],
         ),
         (
             "technical_behavior",
-            "\u{6280}\u{672f}\u{63a8}\u{65ad}",
-            "\u{6280}\u{672f}\u{63a8}\u{65ad}",
+            "技术推断",
+            "技术推断",
+            ["technical_behavior", "", ""],
             ["technical_behavior", "", ""],
         ),
     ];
     definitions
         .into_iter()
-        .map(|(key, title, contribution_key, categories)| {
-            let section_items = items
-                .iter()
-                .filter(|item| {
-                    categories
+        .map(
+            |(key, title, contribution_key, categories, evidence_categories)| {
+                let section_items = items
+                    .iter()
+                    .filter(|item| {
+                        categories
+                            .iter()
+                            .any(|category| !category.is_empty() && *category == item.category)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let contribution = contributions.get(contribution_key);
+                let score = contribution
+                    .and_then(|value| value.get("score"))
+                    .and_then(Value::as_f64);
+                let weight = contribution
+                    .and_then(|value| value.get("weight"))
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+                let contribution_available = contribution
+                    .and_then(|value| value.get("available"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let has_real_evidence = section_items.iter().any(|item| {
+                    evidence_categories
                         .iter()
                         .any(|category| !category.is_empty() && *category == item.category)
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            let contribution = contributions.get(contribution_key);
-            let score = contribution
-                .and_then(|value| value.get("score"))
-                .and_then(Value::as_f64);
-            let weight = contribution
-                .and_then(|value| value.get("weight"))
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0);
-            let contribution_available = contribution
-                .and_then(|value| value.get("available"))
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let available = contribution_available || !section_items.is_empty();
-            CapitalEvidenceSection {
-                key: key.to_string(),
-                title: title.to_string(),
-                score,
-                weight,
-                available,
-                summary: Some(capital_section_summary(
-                    title,
+                });
+                let available = contribution_available || has_real_evidence;
+                CapitalEvidenceSection {
+                    key: key.to_string(),
+                    title: title.to_string(),
                     score,
+                    weight,
                     available,
-                    section_items.len(),
-                )),
-                items: section_items,
-            }
-        })
+                    summary: Some(capital_section_summary(
+                        title,
+                        score,
+                        available,
+                        section_items.len(),
+                    )),
+                    items: section_items,
+                }
+            },
+        )
         .collect()
 }
 
@@ -4291,7 +4318,11 @@ fn explain_score(
         ));
     }
     if let Some(market_heat) = factor_scores.get("market_heat") {
-        parts.push(format!("{}{}", "\u{8f6e}\u{52a8}\u{70ed}\u{5ea6}", tier_word(*market_heat)));
+        parts.push(format!(
+            "{}{}",
+            "\u{8f6e}\u{52a8}\u{70ed}\u{5ea6}",
+            tier_word(*market_heat)
+        ));
     }
     parts.push(if cold { "\u{94f6}\u{884c}/\u{57fa}\u{5efa}\u{7b49}\u{4f4e}\u{70ed}\u{5ea6}\u{65b9}\u{5411}\u{5df2}\u{964d}\u{6743}".to_string() } else { "\u{98ce}\u{9669}\u{60e9}\u{7f5a}\u{4f4e}".to_string() });
     format!("{}{}", parts.join("\u{ff1b}"), "\u{3002}")
@@ -7295,12 +7326,12 @@ mod tests {
                 deducted_net_profit_billion: None,
                 deducted_net_profit_margin: None,
                 deducted_net_profit_growth_rate: None,
-            change_pct: None,
-            volume: None,
-            amount: None,
-            turnover_rate: None,
-            volume_ratio: None,
-            quote_time: None,
+                change_pct: None,
+                volume: None,
+                amount: None,
+                turnover_rate: None,
+                volume_ratio: None,
+                quote_time: None,
             },
             StockItem {
                 code: "600000.SH".to_string(),
@@ -7316,12 +7347,12 @@ mod tests {
                 deducted_net_profit_billion: None,
                 deducted_net_profit_margin: None,
                 deducted_net_profit_growth_rate: None,
-            change_pct: None,
-            volume: None,
-            amount: None,
-            turnover_rate: None,
-            volume_ratio: None,
-            quote_time: None,
+                change_pct: None,
+                volume: None,
+                amount: None,
+                turnover_rate: None,
+                volume_ratio: None,
+                quote_time: None,
             },
             StockItem {
                 code: "600036.SH".to_string(),
@@ -7337,12 +7368,12 @@ mod tests {
                 deducted_net_profit_billion: None,
                 deducted_net_profit_margin: None,
                 deducted_net_profit_growth_rate: None,
-            change_pct: None,
-            volume: None,
-            amount: None,
-            turnover_rate: None,
-            volume_ratio: None,
-            quote_time: None,
+                change_pct: None,
+                volume: None,
+                amount: None,
+                turnover_rate: None,
+                volume_ratio: None,
+                quote_time: None,
             },
         ];
 
@@ -7703,7 +7734,13 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             codes,
-            vec!["002408.SZ", "688001.SH", "601012.SH", "300015.SZ", "002555.SZ"]
+            vec![
+                "002408.SZ",
+                "688001.SH",
+                "601012.SH",
+                "300015.SZ",
+                "002555.SZ"
+            ]
         );
     }
 

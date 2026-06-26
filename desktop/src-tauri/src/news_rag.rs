@@ -1,6 +1,6 @@
 use super::{
-    cached_market_data, epoch_millis, normalize_stock_code, powershell_http_get_bytes_with_headers,
-    read_json_file,
+    build_http_client_with_proxy, cached_market_data, epoch_millis, normalize_stock_code,
+    powershell_http_get_bytes_with_headers, read_json_file,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -20,6 +20,7 @@ const SOURCE_THS_F10: &str = "\u{540c}\u{82b1}\u{987a}F10\u{8d44}\u{8baf}";
 const CHAIN_RELATION_TYPES: [&str; 3] =
     ["supply_chain", "manufacturing_chain", "upstream_material"];
 const NEWS_TIMEOUT_SECS: u64 = 8;
+const NEWS_ANDROID_TIMEOUT_SECS: u64 = 5;
 const NEWS_MAX_CACHE_ITEMS: usize = 2_000;
 
 pub(crate) async fn api_news_rag_impl(
@@ -57,13 +58,22 @@ pub(crate) async fn api_news_rag_impl(
         .collect::<Vec<_>>();
     let days = payload_u64(&payload, "days", 30, 1, 365) as i64;
     let max_items = payload_u64(&payload, "max_items", 24, 1, 100) as usize;
+    let mobile_fast = payload
+        .get("mobile_fast")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let include_us_market_brief = payload
         .get("include_us_market_brief")
         .and_then(Value::as_bool)
-        .unwrap_or(true)
+        .unwrap_or(!mobile_fast)
+        && !mobile_fast
         && env_bool("GP_NEWS_ENABLE_US_MARKET_BRIEF", true);
 
-    let news_result = fetch_news_items(&related_stocks, &relations, days).await;
+    let news_result = if mobile_fast {
+        fetch_android_short_news_items(&related_stocks, &relations, days, Some(&payload)).await
+    } else {
+        fetch_news_items(&related_stocks, &relations, days, None).await
+    };
     let us_market_brief = if include_us_market_brief {
         Some(fetch_us_market_brief().await)
     } else {
@@ -241,16 +251,85 @@ fn related_codes(scope_codes: &[String], relations: &[Value]) -> Vec<String> {
     codes
 }
 
+async fn fetch_android_short_news_items(
+    stocks: &[Value],
+    relations: &[Value],
+    days: i64,
+    network_payload: Option<&Value>,
+) -> (Vec<Value>, Vec<String>) {
+    let client = match build_http_client_with_proxy(
+        "Mozilla/5.0 GuXuanYou/0.3 android-news-short",
+        Duration::from_secs(NEWS_ANDROID_TIMEOUT_SECS),
+        network_payload,
+    ) {
+        Ok(client) => client,
+        Err(error) => {
+            return (
+                Vec::new(),
+                vec![format!("Android news short HTTP client failed: {error}")],
+            )
+        }
+    };
+    let short_stocks = stocks.iter().take(1).cloned().collect::<Vec<_>>();
+    let mut notes = Vec::new();
+    let mut items = Vec::new();
+    notes.push("Android short news source enabled: Eastmoney Guba, Eastmoney search, Sina stock news, THS F10.".to_string());
+
+    match fetch_guba_community(&client, &short_stocks, relations, days).await {
+        Ok(guba_items) => {
+            notes.push(format!("Android short source Eastmoney Guba returned {} items.", guba_items.len()));
+            items.extend(guba_items);
+        }
+        Err(error) => notes.push(format!(
+            "Android short source Eastmoney Guba failed: {}",
+            limit_chars(&error, 160)
+        )),
+    }
+    match fetch_eastmoney_stock_news(&client, &short_stocks, relations, days).await {
+        Ok(news_items) => {
+            notes.push(format!("Android short source Eastmoney stock news returned {} items.", news_items.len()));
+            items.extend(news_items);
+        }
+        Err(error) => notes.push(format!(
+            "Android short source Eastmoney stock news failed: {}",
+            limit_chars(&error, 160)
+        )),
+    }
+    match fetch_sina_stock_news(&client, &short_stocks, relations, days).await {
+        Ok(news_items) => {
+            notes.push(format!("Android short source Sina stock news returned {} items.", news_items.len()));
+            items.extend(news_items);
+        }
+        Err(error) => notes.push(format!(
+            "Android short source Sina stock news failed: {}",
+            limit_chars(&error, 160)
+        )),
+    }
+    match fetch_ths_stock_news(&client, &short_stocks, relations, days).await {
+        Ok(news_items) => {
+            notes.push(format!("Android short source THS F10 returned {} items.", news_items.len()));
+            items.extend(news_items);
+        }
+        Err(error) => notes.push(format!(
+            "Android short source THS F10 failed: {}",
+            limit_chars(&error, 160)
+        )),
+    }
+
+    (dedupe_news_items(items), notes)
+}
+
 async fn fetch_news_items(
     stocks: &[Value],
     relations: &[Value],
     days: i64,
+    network_payload: Option<&Value>,
 ) -> (Vec<Value>, Vec<String>) {
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(NEWS_TIMEOUT_SECS))
-        .connect_timeout(Duration::from_secs(4))
-        .user_agent("Mozilla/5.0 GuXuanYou/0.3 news-rag")
-        .build()
+    let client = match build_http_client_with_proxy(
+        "Mozilla/5.0 GuXuanYou/0.3 news-rag",
+        Duration::from_secs(NEWS_TIMEOUT_SECS),
+        network_payload,
+    )
     {
         Ok(client) => client,
         Err(error) => {
@@ -360,13 +439,11 @@ async fn fetch_news_items(
 }
 
 async fn fetch_us_market_brief() -> Value {
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(
-            env_usize("GP_NEWS_US_MARKET_TIMEOUT_SECS", 5, 2, 15) as u64,
-        ))
-        .connect_timeout(Duration::from_secs(3))
-        .user_agent("Mozilla/5.0 GuXuanYou/0.3 us-market-brief")
-        .build()
+    let client = match build_http_client_with_proxy(
+        "Mozilla/5.0 GuXuanYou/0.3 us-market-brief",
+        Duration::from_secs(env_usize("GP_NEWS_US_MARKET_TIMEOUT_SECS", 5, 2, 15) as u64),
+        None,
+    )
     {
         Ok(client) => client,
         Err(error) => {
@@ -1424,11 +1501,12 @@ async fn call_news_llm(
     stock_by_code: &HashMap<String, Value>,
     findings: &[Value],
 ) -> Result<Value, String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(config.timeout_seconds))
-        .connect_timeout(Duration::from_secs(8))
-        .build()
-        .map_err(|error| format!("create LLM HTTP client failed: {error}"))?;
+    let client = build_http_client_with_proxy(
+        "Mozilla/5.0 GuXuanYou/0.3 news-llm",
+        Duration::from_secs(config.timeout_seconds),
+        None,
+    )
+    .map_err(|error| format!("create LLM HTTP client failed: {error}"))?;
     let payload = news_llm_payload(scope_codes, relations, evidence, stock_by_code, findings);
     let mut request = json!({"model": config.model, "messages": [{"role": "system", "content": news_llm_system_prompt()}, {"role": "user", "content": serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())}], "temperature": config.temperature});
     if config.json_mode {

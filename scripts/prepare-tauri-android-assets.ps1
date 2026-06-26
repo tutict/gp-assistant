@@ -500,6 +500,7 @@ function New-MobileFinancialEntry {
         deducted_net_profit_margin = $null
         deducted_net_profit_growth_rate = $null
         periods = @{}
+        inferred_periods = @{}
     }
 }
 
@@ -538,6 +539,7 @@ function Export-MobileFinancialSnapshot {
                 $margin = ($profitBillion / $revenueBillion) * 100
             }
             $growth = ConvertTo-MobileSnapshotNumber $row.KCFJCXSYJLRTZ
+            $epsGrowth = ConvertTo-MobileSnapshotNumber $row.EPSJBTZ
 
             if ($periodKey) {
                 if ($null -eq $entry.latest_period -or [string] $periodKey -gt [string] $entry.latest_period) {
@@ -545,6 +547,14 @@ function Export-MobileFinancialSnapshot {
                 }
                 if ($null -ne $eps -and -not $entry.periods.ContainsKey($periodKey)) {
                     $entry.periods[$periodKey] = $eps
+                }
+                if ($null -ne $eps -and $null -ne $epsGrowth -and $periodKey -match '^([0-9]{4})Q([1-4])$') {
+                    $previousYear = [int] $Matches[1] - 1
+                    $previousPeriod = ('{0:D4}Q{1}' -f $previousYear, [int] $Matches[2])
+                    $denominator = 1.0 + ([double] $epsGrowth / 100.0)
+                    if ([Math]::Abs($denominator) -gt 0.000001 -and -not $entry.periods.ContainsKey($previousPeriod) -and -not $entry.inferred_periods.ContainsKey($previousPeriod)) {
+                        $entry.inferred_periods[$previousPeriod] = [double] $eps / $denominator
+                    }
                 }
                 if ($null -ne $eps -and ($null -eq $entry.latest_eps_period -or [string] $periodKey -gt [string] $entry.latest_eps_period)) {
                     $entry.latest_eps = $eps
@@ -566,16 +576,29 @@ function Export-MobileFinancialSnapshot {
         foreach ($code in ($byCode.Keys | Sort-Object)) {
             $entry = $byCode[$code]
             $quarterly = New-Object System.Collections.Generic.List[object]
-            foreach ($period in ($entry.periods.Keys | Sort-Object -Descending | Select-Object -First 12)) {
-                $value = $entry.periods[$period]
-                if ($null -eq $value) {
+            $periodRows = New-Object System.Collections.Generic.List[object]
+            foreach ($period in $entry.periods.Keys) {
+                $periodRows.Add([pscustomobject]@{ period = $period; value = $entry.periods[$period]; source = $source; inferred = $false }) | Out-Null
+            }
+            foreach ($period in $entry.inferred_periods.Keys) {
+                if (-not $entry.periods.ContainsKey($period)) {
+                    $periodRows.Add([pscustomobject]@{ period = $period; value = $entry.inferred_periods[$period]; source = ($source + ' / inferred EPS YoY'); inferred = $true }) | Out-Null
+                }
+            }
+            foreach ($row in ($periodRows | Sort-Object -Property period -Descending | Select-Object -First 12)) {
+                if ($null -eq $row.value) {
                     continue
                 }
-                $quarterly.Add([pscustomobject][ordered]@{
-                    period = $period
-                    value = [Math]::Round([double] $value, 6)
-                    source = $source
-                }) | Out-Null
+                $quarterlyItem = [ordered]@{
+                    period = $row.period
+                    value = [Math]::Round([double] $row.value, 6)
+                    source = $row.source
+                }
+                if ($row.inferred) {
+                    $quarterlyItem.inferred = $true
+                    $quarterlyItem.note = 'inferred_from_eps_yoy'
+                }
+                $quarterly.Add([pscustomobject]$quarterlyItem) | Out-Null
             }
             if ($null -eq $entry.deducted_net_profit_billion -and
                 $null -eq $entry.deducted_net_profit_margin -and

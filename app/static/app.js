@@ -31,6 +31,7 @@ const themeToggle = $("#themeToggle");
 const themeText = $("#themeText");
 const THEME_KEY = "stock-optimizer-theme";
 const DATA_PROXY_KEY = "stock-optimizer-proxy-mode";
+const DATA_PROXY_URL_KEY = "stock-optimizer-proxy-url";
 const AUTO_REFRESH_CHECK_KEY = "stock-optimizer-auto-refresh-last-check";
 const AUTO_REFRESH_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const LLM_SETTINGS_KEY = "stock-optimizer-llm-settings";
@@ -82,12 +83,14 @@ const DEFAULT_OBSERVE_TRADING_DAYS = 10;
 const DEFAULT_DATA_SOURCE = "tdx";
 const MOBILE_TENCENT_MAX_CANDIDATES = 15000;
 const MOBILE_TENCENT_MAX_FAILED_BATCHES = 4;
-const MOBILE_TENCENT_BATCHES_PER_STEP = 1;
+const MOBILE_TENCENT_BATCHES_PER_STEP = 8;
+const MOBILE_TENCENT_FETCH_CONCURRENCY = 8;
 const MOBILE_TAURI_INVOKE_TIMEOUT_MS = 20000;
 const MOBILE_TENCENT_SCRIPT_BATCH_SIZE = 120;
 const MOBILE_TENCENT_SCRIPT_TIMEOUT_MS = 8000;
 const MOBILE_REFRESH_LOG_LIMIT = 80;
 const OBSERVE_FINANCIAL_EPS_TIMEOUT_MS = 8000;
+const MOBILE_OBSERVE_FINANCIAL_EPS_TIMEOUT_MS = 9000;
 const OBSERVE_FINANCIAL_EPS_TARGET_POINTS = 8;
 const MOBILE_DEDUCTED_FINANCIAL_FIELDS = [
   "deducted_net_profit_billion",
@@ -113,10 +116,15 @@ let observeRequestId = 0;
 let observeTaskId = 0;
 let activeObserveController = null;
 const OBSERVE_REQUEST_TIMEOUT_MS = 180 * 1000;
+const MOBILE_OBSERVE_PREFETCH_TIMEOUT_MS = 5000;
+const MOBILE_OBSERVE_INVOKE_TIMEOUT_MS = 55000;
+const MOBILE_OBSERVE_REQUEST_TIMEOUT_MS = 65000;
+const MOBILE_NEWS_RAG_TIMEOUT_MS = 45000;
 const panelProgressTimers = new WeakMap();
 const buttonTaskStates = new WeakMap();
 const dataSource = {
   proxy: $("#proxyModeSelect"),
+  proxyUrl: $("#proxyUrlInput"),
   status: $("#sourceStatus"),
   universe: $("#universeCount"),
   cacheLabel: $("#cacheMetricLabel"),
@@ -243,18 +251,30 @@ const TAURI_GET_PREFIX_ROUTES = [
     prefix: "/api/observe/",
     handler: async ({ invoke, path, parsed }) => {
       const code = decodeURIComponent(path.slice("/api/observe/".length));
-      const payload = {
+      const payload = withAndroidNetworkOptions({
         code,
         start_date: normalizeDateParam(parsed.searchParams.get("start_date"), "20200101"),
         end_date: normalizeDateParam(parsed.searchParams.get("end_date"), currentSystemDateCompact()),
         series_limit: clampInt(parsed.searchParams.get("series_limit"), 20, 500, 120),
         include_order_book: parsed.searchParams.get("include_order_book") === "true",
-      };
+      });
+      const mobileFastObserve = isMobileTauriRuntime();
+      if (mobileFastObserve) {
+        payload.mobile_fast_observe = true;
+        const financialSnapshot = await loadMobileFinancialSnapshotForCode(code).catch(() => null);
+        if (financialSnapshot) payload.financial_snapshot = financialSnapshot;
+      }
       const [webviewHistory, webviewFinancial] = await Promise.all([
-        fetchObserveDailyHistoryForTauri(payload).catch(() => null),
-        fetchObserveFinancialEpsForTauri(payload).catch((error) => ({
+        fetchObserveDailyHistoryForTauri(payload, {
+          timeoutMs: mobileFastObserve ? MOBILE_OBSERVE_PREFETCH_TIMEOUT_MS : 8000,
+        }).catch(() => null),
+        withTimeout(
+          fetchObserveFinancialEpsForTauri(payload),
+          mobileFastObserve ? MOBILE_OBSERVE_FINANCIAL_EPS_TIMEOUT_MS : OBSERVE_FINANCIAL_EPS_TIMEOUT_MS,
+          "WebView \u8d22\u62a5 EPS \u8865\u5168\u8d85\u65f6\uff0c\u5df2\u964d\u7ea7\u4f7f\u7528\u672c\u5730\u5feb\u7167\u3002",
+        ).catch((error) => ({
           points: [],
-          notes: ["WebView 财报 EPS 补全失败：" + error.message],
+          notes: ["WebView \u8d22\u62a5 EPS \u8865\u5168\u5931\u8d25\uff1a" + error.message],
         })),
       ]);
       if (Array.isArray(webviewHistory) && webviewHistory.length) payload.history = webviewHistory;
@@ -264,7 +284,14 @@ const TAURI_GET_PREFIX_ROUTES = [
       if (Array.isArray(webviewFinancial?.notes) && webviewFinancial.notes.length) {
         payload.financial_eps_notes = webviewFinancial.notes.slice(0, 4);
       }
-      return invoke("api_observe", { payload });
+      const observeInvoke = invoke("api_observe", { payload });
+      return mobileFastObserve
+        ? withTimeout(
+            observeInvoke,
+            MOBILE_OBSERVE_INVOKE_TIMEOUT_MS,
+            "\u79fb\u52a8\u7aef\u89c2\u5bdf\u8d85\u8fc7 " + Math.round(MOBILE_OBSERVE_INVOKE_TIMEOUT_MS / 1000) + " \u79d2\u672a\u8fd4\u56de\uff0c\u5df2\u4e2d\u6b62\u7b49\u5f85\u3002",
+          )
+        : observeInvoke;
     },
   },
 ];
@@ -276,7 +303,14 @@ const TAURI_POST_ROUTES = {
   "/api/trend": async ({ invoke, payload }) => invoke("api_trend_analyze", { payload }),
   "/api/trend-screen": async ({ invoke, payload }) => invoke("api_trend_screen", { payload }),
   "/api/backtest": async ({ invoke, payload }) => invoke("api_backtest", { payload }),
-  "/api/news-rag": async ({ invoke, payload }) => invoke("api_news_rag", { payload }),
+  "/api/news-rag": async ({ invoke, payload }) =>
+    isMobileTauriRuntime()
+      ? withTimeout(
+          analyzeMobileStockNews(invoke, payload),
+          MOBILE_NEWS_RAG_TIMEOUT_MS,
+          "移动端消息分析超过 " + Math.round(MOBILE_NEWS_RAG_TIMEOUT_MS / 1000) + " 秒未返回，已中止等待。",
+        )
+      : invoke("api_news_rag", { payload }),
   "/api/rag-pack/build": async ({ invoke, payload }) => invoke("api_rag_pack_build", { payload }),
   "/api/rag-pack/build-from-news-cache": async ({ invoke, payload }) => invoke("api_rag_pack_build_from_news_cache", { payload }),
   "/api/rag-pack/query": async ({ invoke, payload }) => invoke("api_rag_pack_query", { payload }),
@@ -388,6 +422,8 @@ function normalizeMobileFinancialSnapshotFinancial(source = {}, fallbackCode = "
       if (!pointPeriod || !Number.isFinite(value)) return null;
       const normalized = { period: pointPeriod, value };
       if (point?.source) normalized.source = String(point.source);
+      if (point?.inferred) normalized.inferred = true;
+      if (point?.note) normalized.note = String(point.note);
       return normalized;
     })
     .filter(Boolean);
@@ -451,6 +487,20 @@ async function loadMobileFinancialSnapshot() {
     }
   })();
   return await mobileFinancialSnapshotPromise;
+}
+
+async function loadMobileFinancialSnapshotForCode(rawCode) {
+  const code = normalizeMobileStockCode(rawCode);
+  if (!code) return null;
+  const snapshot = await loadMobileFinancialSnapshot();
+  const financial = snapshot?.financials?.[code];
+  if (!financial || typeof financial !== "object") return null;
+  return {
+    stocks: [],
+    financials: {
+      [code]: financial,
+    },
+  };
 }
 async function hydrateMobileMarketDataRecord(record) {
   const data = record?.data || record;
@@ -529,6 +579,30 @@ function uniqueNotes(notes = []) {
     .filter((note) => note && !seen.has(note) && seen.add(note));
 }
 
+async function analyzeMobileStockNews(invoke, payload = {}) {
+  const mobilePayload = withAndroidNetworkOptions({
+    ...payload,
+    mobile_fast: true,
+    include_us_market_brief: false,
+    max_items: Math.max(10, Number(payload?.max_items || 24)),
+  });
+  const cached = await invoke("api_news_rag", { payload: mobilePayload });
+  const messageCount = Number(cached?.message_count ?? 0);
+  if (messageCount > 0 || (Array.isArray(cached?.findings) && cached.findings.length)) {
+    return appendMobilePayloadNotes(cached, ["移动端已使用安卓短链路或本机缓存完成分析；如源站均失败，可导入桌面端同步包补充。"]);
+  }
+
+  try {
+    const offline = await analyzeMobileNewsRag(invoke, payload);
+    return appendMobilePayloadNotes(offline, [
+      "移动端本机消息缓存暂无可用内容，已改用手机端已导入的上下游 RAG 包。",
+    ]);
+  } catch (offlineError) {
+    const cachedNotes = Array.isArray(cached?.notes) ? cached.notes.join(" ") : "";
+    const offlineMessage = offlineError?.message ? offlineError.message : "手机端尚未导入同步包。";
+    throw new Error(`${cachedNotes || "安卓在线短链路和本机缓存暂无可用内容。"} ${offlineMessage}`);
+  }
+}
 async function analyzeMobileNewsRag(invoke, payload = {}) {
   const requestedCode = normalizeStockCode(payload?.code || payload?.seed_codes?.[0] || "");
   const detail = await loadMobileNewsRagManifest(invoke, requestedCode);
@@ -798,8 +872,13 @@ function bindActions() {
   buttons.observe?.addEventListener("click", () => runObserveTask());
   dataSource.proxy?.addEventListener("change", () => {
     localStorage.setItem(DATA_PROXY_KEY, getSelectedProxyMode());
+    syncProxyUrlVisibility();
     updateSourceStatus();
     loadDataStatus();
+  });
+  dataSource.proxyUrl?.addEventListener("input", () => {
+    localStorage.setItem(DATA_PROXY_URL_KEY, getSelectedProxyUrl());
+    updateSourceStatus();
   });
   dataSource.refreshUniverse?.addEventListener("click", () => runDataTask(dataSource.refreshUniverse, refreshUniverse));
   dataSource.pruneCache?.addEventListener("click", () => runDataTask(dataSource.pruneCache, pruneCache));
@@ -1867,7 +1946,7 @@ async function runObserve(codeOverride, taskId = observeTaskId) {
   try {
     const data = await requestJson("GET", `/api/observe/${encodeURIComponent(code)}?${query}`, undefined, dataSourceHeaders(), {
       signal: controller?.signal,
-      timeoutMs: OBSERVE_REQUEST_TIMEOUT_MS,
+      timeoutMs: isMobileTauriRuntime() ? MOBILE_OBSERVE_REQUEST_TIMEOUT_MS : OBSERVE_REQUEST_TIMEOUT_MS,
     });
     if (requestId === observeRequestId && data) renderObserveResult(panels.observe, data);
   } catch (err) {
@@ -1883,6 +1962,8 @@ function initDataSource() {
   if (dataSource.proxy && savedProxy && [...dataSource.proxy.options].some((option) => option.value === savedProxy)) {
     dataSource.proxy.value = savedProxy;
   }
+  const savedProxyUrl = localStorage.getItem(DATA_PROXY_URL_KEY);
+  if (dataSource.proxyUrl && savedProxyUrl) dataSource.proxyUrl.value = savedProxyUrl;
   initSourceSelects();
   updateSourceStatus();
   loadDataStatus().finally(() => maybeAutoRefreshUniverse("startup"));
@@ -2160,7 +2241,7 @@ function initSourceSelects() {
     });
 
     custom.append(button, menu);
-    control.appendChild(custom);
+    select.insertAdjacentElement("afterend", custom);
     select.addEventListener("change", () => syncSourceSelect(select));
     syncSourceSelect(select);
   });
@@ -2214,26 +2295,59 @@ function normalizeDataSource(source) {
 function dataSourceHeaders() {
   const headers = { "X-Stock-Provider": getSelectedDataSource() };
   headers["X-Stock-Proxy"] = getSelectedProxyMode();
+  const proxyUrl = getSelectedProxyUrl();
+  if (proxyUrl) headers["X-Stock-Proxy-Url"] = proxyUrl;
   return headers;
 }
 
 function stockSearchHeaders() {
-  return {
+  const headers = {
     "X-Stock-Provider": getSelectedDataSource(),
     "X-Stock-Proxy": getSelectedProxyMode(),
   };
+  const proxyUrl = getSelectedProxyUrl();
+  if (proxyUrl) headers["X-Stock-Proxy-Url"] = proxyUrl;
+  return headers;
 }
 
 function getSelectedProxyMode() {
   return dataSource.proxy?.value || "none";
 }
 
+function getSelectedProxyUrl() {
+  return String(dataSource.proxyUrl?.value || localStorage.getItem(DATA_PROXY_URL_KEY) || "").trim();
+}
+
+function buildAndroidNetworkOptions() {
+  const proxyMode = getSelectedProxyMode();
+  const proxyUrl = proxyMode === "manual" ? getSelectedProxyUrl() : "";
+  return {
+    proxy_mode: proxyMode,
+    proxy_url: proxyUrl,
+    android_short_sources: isMobileTauriRuntime(),
+  };
+}
+
+function withAndroidNetworkOptions(payload = {}) {
+  if (!isTauriRuntime()) return payload;
+  return { ...(payload || {}), ...buildAndroidNetworkOptions() };
+}
+
+function syncProxyUrlVisibility() {
+  if (!dataSource.proxyUrl) return;
+  const manual = getSelectedProxyMode() === "manual";
+  dataSource.proxyUrl.hidden = !manual;
+  dataSource.proxyUrl.classList.toggle("is-visible", manual);
+}
+
 function updateSourceStatus() {
   if (!dataSource.status) return;
   const source = getSelectedDataSource();
   const label = sourceLabel(source);
-  const proxySuffix = getSelectedProxyMode() === "none" ? " 直连" : "";
+  const mode = getSelectedProxyMode();
+  const proxySuffix = mode === "none" ? " direct" : mode === "manual" ? " proxy" : " system proxy";
   dataSource.status.innerHTML = `<i aria-hidden="true"></i>${escapeHtml(label + proxySuffix)}`;
+  syncProxyUrlVisibility();
   if (dataSource.proxy) syncSourceSelect(dataSource.proxy);
 }
 
@@ -3326,6 +3440,21 @@ function withTimeout(promise, timeoutMs, message) {
   });
 }
 
+async function fetchWithTimeout(resource, options = {}, timeoutMs, message) {
+  const timeoutSignal = createTimeoutSignal(timeoutMs, message);
+  const request = { ...options };
+  const signal = combineAbortSignals(options.signal, timeoutSignal.signal);
+  if (signal) request.signal = signal;
+  try {
+    return await fetch(resource, request);
+  } catch (error) {
+    if (timeoutSignal.signal?.aborted) throw abortReason(timeoutSignal.signal);
+    throw error;
+  } finally {
+    timeoutSignal.cancel();
+  }
+}
+
 async function postJson(url, payload, resultNode) {
   try {
     return await requestJson("POST", url, payload);
@@ -3380,13 +3509,13 @@ function withAbortSignal(promise, signal) {
   ]);
 }
 
-function createTimeoutSignal(timeoutMs) {
+function createTimeoutSignal(timeoutMs, message) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || typeof AbortController === "undefined") {
     return { signal: null, cancel: () => {} };
   }
   const controller = new AbortController();
   const timer = window.setTimeout(() => {
-    controller.abort(createRequestAbortError(`请求超过 ${Math.round(timeoutMs / 1000)} 秒未返回`, "TimeoutError"));
+    controller.abort(createRequestAbortError(message || `请求超过 ${Math.round(timeoutMs / 1000)} 秒未返回`, "TimeoutError"));
   }, timeoutMs);
   return {
     signal: controller.signal,
@@ -3893,14 +4022,36 @@ function yieldToBrowser() {
   return new Promise((resolve) => window.setTimeout(resolve, 0));
 }
 
+// Run thunks with bounded concurrency, preserving input order. Each result is
+// { ok: true, value } or { ok: false, error } so callers can tolerate partial failures.
+async function runWithConcurrency(thunks, limit) {
+  const results = new Array(thunks.length);
+  let cursor = 0;
+  const workerCount = Math.max(1, Math.min(limit, thunks.length));
+  const workers = new Array(workerCount).fill(null).map(async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= thunks.length) break;
+      try {
+        results[index] = { ok: true, value: await thunks[index]() };
+      } catch (error) {
+        results[index] = { ok: false, error };
+      }
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 async function probeMobileNetwork(invoke) {
   appendRefreshLog("\u5148\u8fdb\u884c Rust \u7f51\u7edc\u63a2\u6d4b\uff1a\u901a\u8fc7 Tauri/Rust \u8bf7\u6c42 Baidu \u548c Tencent \u884c\u60c5\u57df\u540d\u3002");
   let probe;
   try {
     probe = await withTimeout(
-      invoke("core_mobile_network_probe"),
-      10000,
-      "Rust \u7f51\u7edc\u63a2\u6d4b\u8d85\u8fc7 10 \u79d2\u672a\u8fd4\u56de\uff0c\u53ef\u80fd\u662f Rust reqwest DNS/TLS/HTTP \u8def\u5f84\u5f02\u5e38\u3002",
+      invoke("core_mobile_network_probe", { payload: buildAndroidNetworkOptions() }),
+      18000,
+      "Rust \u7f51\u7edc\u63a2\u6d4b\u8d85\u8fc7 18 \u79d2\u672a\u8fd4\u56de\uff0c\u53ef\u80fd\u662f Rust reqwest DNS/TLS/HTTP \u8def\u5f84\u5f02\u5e38\u3002",
     );
   } catch (error) {
     const message = formatMobileProbeError(error.message);
@@ -3917,7 +4068,7 @@ async function probeMobileNetwork(invoke) {
     const target = item?.address || item?.url || "";
     const statusText = item?.status ? "HTTP " + item.status : (item?.stage || "no-status");
     if (item?.ok) anyHttpOk = true;
-    if ((item?.label === "tencent_https_dns" || item?.label === "tencent_https_fixed") && item?.ok) tencentOk = true;
+    if ((item?.label === "tencent_quote" || item?.label === "tencent_https_dns" || item?.label === "tencent_https_fixed") && item?.ok) tencentOk = true;
     const elapsed = Number.isFinite(Number(item?.elapsed_ms)) ? "\uff0c\u8017\u65f6 " + item.elapsed_ms + " ms" : "";
     const message = item?.ok
       ? label + "\u63a2\u6d4b\u901a\u8fc7\uff1a" + statusText + (target ? "\uff0c" + target : "") + elapsed + "\u3002"
@@ -3940,6 +4091,10 @@ async function probeMobileNetwork(invoke) {
 function formatMobileProbeLabel(label) {
   if (label === "baidu_ip_tcp") return "Baidu IP \u76f4\u8fde";
   if (label === "tencent_ip_tcp") return "Tencent IP \u76f4\u8fde";
+  if (label === "tencent_quote") return "Tencent quote";
+  if (label === "eastmoney_guba") return "Eastmoney Guba";
+  if (label === "sina_stock_news") return "Sina stock news";
+  if (label === "ths_stock_news") return "THS stock news";
   if (label === "tencent_https_dns") return "Tencent HTTPS \u7cfb\u7edf DNS";
   if (label === "tencent_https_fixed") return "Tencent HTTPS \u56fa\u5b9a\u89e3\u6790";
   if (label === "baidu_https") return "Baidu \u901a\u7528\u8054\u7f51";
@@ -4032,17 +4187,19 @@ function observeHistoryDateParam(value, fallback) {
   return normalized.slice(0, 4) + "-" + normalized.slice(4, 6) + "-" + normalized.slice(6, 8);
 }
 
-async function fetchObserveDailyHistoryForTauri(payload = {}) {
+async function fetchObserveDailyHistoryForTauri(payload = {}, options = {}) {
   if (!isTauriRuntime()) return null;
   const symbol = observeTencentDailySymbol(payload.code || "");
   if (!symbol) return null;
   const start = observeHistoryDateParam(payload.start_date, "20200101");
   const end = observeHistoryDateParam(payload.end_date, currentSystemDateCompact());
   const url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=" + encodeURIComponent(symbol + ",day," + start + "," + end + ",320,");
-  const response = await withTimeout(
-    fetch(url, { cache: "no-store" }),
-    8000,
-    "WebView Tencent \u65e5\u7ebf\u8d85\u8fc7 8 \u79d2\u672a\u8fd4\u56de\u3002",
+  const timeoutMs = clampInt(options.timeoutMs, 1000, 30000, 8000);
+  const response = await fetchWithTimeout(
+    url,
+    { cache: "no-store" },
+    timeoutMs,
+    "WebView Tencent \u65e5\u7ebf\u8d85\u8fc7 " + Math.round(timeoutMs / 1000) + " \u79d2\u672a\u8fd4\u56de\u3002",
   );
   if (!response.ok) throw new Error("WebView Tencent \u65e5\u7ebf HTTP " + response.status);
   const data = await response.json();
@@ -4140,7 +4297,7 @@ function parseObserveThsFinancialEps(payload) {
         .join(" ");
       if (!observeFinancialMetricIsEps(metricName)) return;
       const metricPeriod = period || observeFinancialPeriodFromRecord(metric);
-      const value = observeFinancialValueFirstFiniteNumber(metric);
+      const value = observeFinancialEpsMetricValue(metric);
       if (metricPeriod && value !== null) points.push({ period: metricPeriod, value, source: "同花顺 WebView 财务摘要" });
     };
 
@@ -4151,7 +4308,7 @@ function parseObserveThsFinancialEps(payload) {
       Object.entries(metricList).forEach(([name, metric]) => {
         if (metric && typeof metric === "object") scanMetric(metric, name);
         else if (period && observeFinancialMetricIsEps(name)) {
-          const value = observeFinancialValueFirstFiniteNumber(metric);
+          const value = observeFinancialEpsMetricValue(metric);
           if (value !== null) points.push({ period, value, source: "同花顺 WebView 财务摘要" });
         }
       });
@@ -4160,7 +4317,7 @@ function parseObserveThsFinancialEps(payload) {
     if (period) {
       Object.entries(row).forEach(([name, value]) => {
         if (!observeFinancialMetricIsEps(name)) return;
-        const eps = observeFinancialValueFirstFiniteNumber(value);
+        const eps = observeFinancialEpsMetricValue(value);
         if (eps !== null) points.push({ period, value: eps, source: "同花顺 WebView 财务摘要" });
       });
     }
@@ -4252,6 +4409,16 @@ function observeFinancialPeriodFromRecord(record) {
   return null;
 }
 
+function observeFinancialEpsMetricValue(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    for (const key of ["value", "data", "val", "num", "latest", "amount", "single"]) {
+      const number = observeFinancialValueFirstFiniteNumber(value[key]);
+      if (number !== null) return number;
+    }
+  }
+  return observeFinancialValueFirstFiniteNumber(value);
+}
+
 function observeFinancialValueFirstFiniteNumber(value) {
   const direct = parseLooseNumber(value);
   if (direct !== null) return direct;
@@ -4318,6 +4485,44 @@ async function fetchWebviewTencentQuoteBatch(codes, batchIndex, totalBatches) {
   };
 }
 
+// Fetch a whole window (several 120-symbol sub-batches) concurrently and merge the quote
+// text, so one ingest invoke covers many batches instead of paying a round-trip per batch.
+async function fetchWebviewTencentQuoteWindow(codes, firstBatchIndex, totalBatches) {
+  const chunks = [];
+  for (let i = 0; i < codes.length; i += MOBILE_TENCENT_SCRIPT_BATCH_SIZE) {
+    chunks.push(codes.slice(i, i + MOBILE_TENCENT_SCRIPT_BATCH_SIZE));
+  }
+  const started = Date.now();
+  const settled = await runWithConcurrency(
+    chunks.map((chunk, idx) => () => fetchWebviewTencentQuoteBatch(chunk, firstBatchIndex + idx, totalBatches)),
+    MOBILE_TENCENT_FETCH_CONCURRENCY,
+  );
+  const texts = [];
+  let byteLen = 0;
+  let failed = 0;
+  for (const result of settled) {
+    if (result?.ok && result.value?.quote_text) {
+      texts.push(result.value.quote_text);
+      byteLen += Number(result.value.webview_byte_len || 0);
+    } else {
+      failed += 1;
+    }
+  }
+  if (!texts.length) {
+    throw new Error("WebView Tencent 并发窗口全部批次失败，未取得任何行情文本。");
+  }
+  if (failed) {
+    appendRefreshLog("WebView 并发窗口部分批次失败：" + failed + "/" + chunks.length + " 批未返回，已用其余批次入库。", "warn");
+  }
+  return {
+    quote_text: texts.join("\n"),
+    quote_bytes_base64: null,
+    webview_status: 200,
+    webview_byte_len: byteLen,
+    webview_elapsed_ms: Date.now() - started,
+  };
+}
+
 async function refreshMobileMarketData(invoke, options = {}) {
   const stopRustLog = await startMarketRefreshLogListener();
   try {
@@ -4366,7 +4571,7 @@ async function refreshMobileMarketData(invoke, options = {}) {
 
     for (let loop = 0; loop < maxLoopGuard; loop += 1) {
       appendRefreshLog((useWebviewTencentTransport ? "WebView/Tauri " : "Tauri/Rust ") + "\u884c\u60c5\u6279\u6b21 " + (batchStart + 1) + " \u8d77\uff0c\u5355\u6b21 " + batchCount + " \u6279\u3002");
-      const basePayload = {
+      const basePayload = withAndroidNetworkOptions({
         seed: seed || { stocks: [], relations: [], histories: {} },
         financial_snapshot: !financialSnapshotSent && financialSnapshotPayload ? financialSnapshotPayload : null,
         scan_candidates: true,
@@ -4375,7 +4580,7 @@ async function refreshMobileMarketData(invoke, options = {}) {
         batch_start: batchStart,
         batch_count: batchCount,
         use_previous_close: shouldUsePreviousCloseForMobileRefresh(),
-      };
+      });
       if (basePayload.financial_snapshot) financialSnapshotSent = true;
       let refresh;
       if (useWebviewTencentTransport) {
@@ -4386,7 +4591,7 @@ async function refreshMobileMarketData(invoke, options = {}) {
           aggregate = { ...(aggregate || {}), done: true, next_batch_start: batchStart, total_batches: webviewTotalBatches, completed_batches: webviewTotalBatches };
           break;
         }
-        const webviewQuote = await fetchWebviewTencentQuoteBatch(batchCodes, batchStart + 1, webviewTotalBatches);
+        const webviewQuote = await fetchWebviewTencentQuoteWindow(batchCodes, batchStart + 1, webviewTotalBatches);
         refresh = await withTimeout(
           invoke("api_market_ingest_tencent_quotes", {
             payload: {
@@ -7111,12 +7316,14 @@ function buildFallbackEvidenceSections(evidence) {
       title: "机构席位",
       contribution: "机构席位",
       categories: ["institution_lhb", "institution_lhb_status"],
+      evidenceCategories: ["institution_lhb"],
     },
     {
       key: "message_sentiment",
       title: "消息情绪",
       contribution: "消息情绪",
       categories: ["news_rag", "community_sentiment", "message_sentiment_status"],
+      evidenceCategories: ["news_rag", "community_sentiment"],
     },
     { key: "technical_behavior", title: "技术推断", contribution: "技术推断", categories: ["technical_behavior"] },
   ];
@@ -7125,7 +7332,8 @@ function buildFallbackEvidenceSections(evidence) {
       const sectionItems = items.filter((item) => definition.categories.includes(item.category));
       const contribution = definition.contribution ? contributions[definition.contribution] || {} : {};
       const score = Number(contribution.score);
-      const available = Boolean(sectionItems.length || contribution.available);
+      const hasRealEvidence = sectionItems.some((item) => (definition.evidenceCategories || definition.categories).includes(item.category));
+      const available = Boolean(hasRealEvidence || contribution.available);
       return {
         key: definition.key,
         title: definition.title,

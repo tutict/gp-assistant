@@ -1,11 +1,13 @@
 use base64::{engine::general_purpose, Engine as _};
+use futures::stream::{self, StreamExt};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+#[cfg(not(mobile))]
+use std::process::Command;
 use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    process::Command,
     sync::{Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -24,6 +26,7 @@ const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
 const EASTMONEY_KLINE_ENDPOINT: &str = "https://push2his.eastmoney.com/api/qt/stock/kline/get";
 const TENCENT_DAILY_KLINE_ENDPOINT: &str = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get";
 const TENCENT_BATCH_SIZE: usize = 120;
+const TENCENT_FETCH_CONCURRENCY: usize = 8;
 const TENCENT_DEFAULT_MAX_CANDIDATES: usize = 8_000;
 const TENCENT_DEFAULT_MAX_FAILED_BATCHES: usize = 4;
 const TENCENT_CONNECT_TIMEOUT_SECS: u64 = 3;
@@ -31,6 +34,7 @@ const TENCENT_REQUEST_TIMEOUT_SECS: u64 = 6;
 const TENCENT_BATCH_TIMEOUT_SECS: u64 = 8;
 const TENCENT_NETWORK_PROBE_TIMEOUT_SECS: u64 = 4;
 const OBSERVE_TOTAL_TIMEOUT_SECS: u64 = 25;
+const OBSERVE_MOBILE_FAST_TOTAL_TIMEOUT_SECS: u64 = 35;
 const OBSERVE_FINANCIAL_TOTAL_TIMEOUT_SECS: u64 = 10;
 const OBSERVE_HISTORY_TOTAL_TIMEOUT_SECS: u64 = 12;
 const OBSERVE_HISTORY_TIMEOUT_SECS: u64 = 8;
@@ -57,26 +61,37 @@ static REFRESH_FINANCIAL_SNAPSHOT_CACHE: OnceLock<Mutex<HashMap<PathBuf, Value>>
 #[tauri::command]
 async fn api_observe(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
     let fallback_payload = payload.clone();
+    let mobile_fast_observe = payload
+        .get("mobile_fast_observe")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let observe_timeout_secs = if mobile_fast_observe {
+        OBSERVE_MOBILE_FAST_TOTAL_TIMEOUT_SECS
+    } else {
+        OBSERVE_TOTAL_TIMEOUT_SECS
+    };
     let observe_payload = tokio::time::timeout(
-        Duration::from_secs(OBSERVE_TOTAL_TIMEOUT_SECS),
+        Duration::from_secs(observe_timeout_secs),
         observe_core_payload_with_cached_history(&app, payload),
     )
     .await;
 
     match observe_payload {
-        Ok(Ok((core_payload, notes))) => match gp_core::observe_with_data_value(core_payload.clone()) {
-            Ok(mut result) => {
-                for note in notes {
-                    append_observe_note(&mut result, note);
+        Ok(Ok((core_payload, notes))) => {
+            match gp_core::observe_with_data_value(core_payload.clone()) {
+                Ok(mut result) => {
+                    for note in notes {
+                        append_observe_note(&mut result, note);
+                    }
+                    Ok(result)
                 }
-                Ok(result)
+                Err(error) => Ok(observe_error_result(
+                    &core_payload,
+                    &fallback_payload,
+                    vec![format!("观察计算失败：{error}")],
+                )),
             }
-            Err(error) => Ok(observe_error_result(
-                &core_payload,
-                &fallback_payload,
-                vec![format!("观察计算失败：{error}")],
-            )),
-        },
+        }
         Ok(Err(error)) => Ok(observe_error_result(
             &Value::Null,
             &fallback_payload,
@@ -87,7 +102,7 @@ async fn api_observe(app: tauri::AppHandle, payload: Value) -> Result<Value, Str
                 Ok(mut result) => {
                     append_observe_note(
                         &mut result,
-                        format!("观察在线补全超过 {OBSERVE_TOTAL_TIMEOUT_SECS} 秒，已返回本地缓存结果。"),
+                        format!("观察在线补全超过 {observe_timeout_secs} 秒，已返回本地缓存结果。"),
                     );
                     Ok(result)
                 }
@@ -95,7 +110,7 @@ async fn api_observe(app: tauri::AppHandle, payload: Value) -> Result<Value, Str
                     &core_payload,
                     &fallback_payload,
                     vec![
-                        format!("观察在线补全超过 {OBSERVE_TOTAL_TIMEOUT_SECS} 秒，已返回本地缓存结果。"),
+                        format!("观察在线补全超过 {observe_timeout_secs} 秒，已返回本地缓存结果。"),
                         format!("观察计算失败：{error}"),
                     ],
                 )),
@@ -104,7 +119,7 @@ async fn api_observe(app: tauri::AppHandle, payload: Value) -> Result<Value, Str
                 &Value::Null,
                 &fallback_payload,
                 vec![
-                    format!("观察在线补全超过 {OBSERVE_TOTAL_TIMEOUT_SECS} 秒，且无法读取本地缓存。"),
+                    format!("观察在线补全超过 {observe_timeout_secs} 秒，且无法读取本地缓存。"),
                     error,
                 ],
             )),
@@ -502,37 +517,42 @@ fn core_mobile_market_data_clear(app: tauri::AppHandle) -> Result<Value, String>
 }
 
 #[tauri::command]
-async fn core_mobile_network_probe() -> Result<Value, String> {
+async fn core_mobile_network_probe(payload: Option<Value>) -> Result<Value, String> {
     let http_timeout = Duration::from_secs(TENCENT_NETWORK_PROBE_TIMEOUT_SECS);
-    let client = build_tencent_http_client("Mozilla/5.0 GuXuanYou/0.3 mobile probe", http_timeout)?;
+    let payload_ref = payload.as_ref();
+    let proxy_mode = proxy_mode_from_payload(payload_ref);
+    let proxy_url = proxy_from_payload(payload_ref);
+    let client = build_http_client_with_proxy(
+        "Mozilla/5.0 GuXuanYou/0.3 mobile probe",
+        http_timeout,
+        payload_ref,
+    )?;
+    let probe_targets = [
+        ("baidu_https", "https://www.baidu.com"),
+        ("tencent_quote", "https://qt.gtimg.cn/q=sz000001"),
+        ("eastmoney_guba", "https://guba.eastmoney.com/list,000100.html"),
+        ("sina_stock_news", "https://vip.stock.finance.sina.com.cn/corp/go.php/vCB_AllNewsStock/symbol/sz000100.phtml"),
+        ("ths_stock_news", "https://basic.10jqka.com.cn/000100/news.html"),
+    ];
     let mut probes = Vec::new();
-    probes.push(
-        probe_mobile_url(
-            &client,
-            "baidu_https",
-            "https://www.baidu.com",
-            http_timeout,
-        )
-        .await,
-    );
-    probes.push(
-        probe_mobile_url(
-            &client,
-            "tencent_https_dns",
-            &format!("{TENCENT_QUOTE_ENDPOINT}sz000001"),
-            http_timeout,
-        )
-        .await,
-    );
+    for (label, url) in probe_targets {
+        probes.push(probe_mobile_url(&client, label, url, http_timeout).await);
+    }
 
-    let tencent_ok = probes.iter().any(|probe| {
+    let any_ok = probes
+        .iter()
+        .any(|probe| probe.get("ok").and_then(Value::as_bool).unwrap_or(false));
+    let quote_ok = probes.iter().any(|probe| {
         probe.get("ok").and_then(Value::as_bool).unwrap_or(false)
-            && probe.get("label").and_then(Value::as_str) == Some("tencent_https_dns")
+            && probe.get("label").and_then(Value::as_str) == Some("tencent_quote")
     });
     Ok(json!({
-        "ok": tencent_ok,
+        "ok": any_ok,
+        "quote_ok": quote_ok,
         "timeout_seconds": http_timeout.as_secs(),
         "resolver": "system_dns",
+        "proxy_mode": proxy_mode,
+        "proxy_configured": proxy_url.is_some(),
         "probes": probes,
     }))
 }
@@ -580,18 +600,106 @@ async fn probe_mobile_url(
     }
 }
 
-fn build_tencent_http_client(
+pub(crate) fn build_tencent_http_client(
     user_agent: &str,
     timeout: Duration,
 ) -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(timeout)
-        .connect_timeout(Duration::from_secs(TENCENT_CONNECT_TIMEOUT_SECS))
-        .user_agent(user_agent)
-        .build()
-        .map_err(|error| format!("create Tencent HTTP client failed: {error}"))
+    build_http_client_with_proxy(user_agent, timeout, None)
 }
 
+pub(crate) fn build_http_client_with_proxy(
+    user_agent: &str,
+    timeout: Duration,
+    payload: Option<&Value>,
+) -> Result<reqwest::Client, String> {
+    let builder = reqwest::Client::builder()
+        .timeout(timeout)
+        .connect_timeout(Duration::from_secs(TENCENT_CONNECT_TIMEOUT_SECS))
+        .user_agent(user_agent);
+    let builder = apply_android_tls_backend(builder)?;
+    apply_payload_proxy(builder, payload)?
+        .build()
+        .map_err(|error| format!("create HTTP client failed: {error}"))
+}
+
+#[cfg(target_os = "android")]
+fn apply_android_tls_backend(builder: reqwest::ClientBuilder) -> Result<reqwest::ClientBuilder, String> {
+    let root_store = rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let tls_config = rustls::ClientConfig::builder_with_provider(provider.into())
+        .with_safe_default_protocol_versions()
+        .map_err(|error| format!("create Android TLS config failed: {error}"))?
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    Ok(builder.tls_backend_preconfigured(tls_config))
+}
+
+#[cfg(not(target_os = "android"))]
+fn apply_android_tls_backend(builder: reqwest::ClientBuilder) -> Result<reqwest::ClientBuilder, String> {
+    Ok(builder)
+}
+
+fn apply_payload_proxy(
+    builder: reqwest::ClientBuilder,
+    payload: Option<&Value>,
+) -> Result<reqwest::ClientBuilder, String> {
+    let Some(proxy) = proxy_from_payload(payload) else {
+        return Ok(builder);
+    };
+    let reqwest_proxy = reqwest::Proxy::all(&proxy)
+        .map_err(|error| format!("invalid proxy URL {proxy}: {error}"))?;
+    Ok(builder.proxy(reqwest_proxy))
+}
+
+pub(crate) fn proxy_from_payload(payload: Option<&Value>) -> Option<String> {
+    let payload = payload?;
+    let mode = payload
+        .get("proxy_mode")
+        .and_then(Value::as_str)
+        .unwrap_or("none")
+        .trim()
+        .to_ascii_lowercase();
+    match mode.as_str() {
+        "manual" => payload
+            .get("proxy_url")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(normalize_manual_proxy_url),
+        "system" => std::env::var("HTTPS_PROXY")
+            .or_else(|_| std::env::var("HTTP_PROXY"))
+            .or_else(|_| std::env::var("ALL_PROXY"))
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        _ => None,
+    }
+}
+
+fn normalize_manual_proxy_url(value: &str) -> String {
+    #[cfg(target_os = "android")]
+    {
+        if let Ok(mut url) = reqwest::Url::parse(value) {
+            let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+            if host == "127.0.0.1" || host == "localhost" || host == "::1" {
+                if url.set_host(Some("10.0.2.2")).is_ok() {
+                    return url.to_string();
+                }
+            }
+        }
+    }
+    value.to_string()
+}
+pub(crate) fn proxy_mode_from_payload(payload: Option<&Value>) -> String {
+    payload
+        .and_then(|value| value.get("proxy_mode"))
+        .and_then(Value::as_str)
+        .unwrap_or("none")
+        .trim()
+        .to_ascii_lowercase()
+}
 #[cfg(windows)]
 fn powershell_http_get_bytes(url: &str, timeout_secs: u64) -> Result<Vec<u8>, String> {
     let timeout_ms = timeout_secs.saturating_mul(1000).max(1000).to_string();
@@ -850,6 +958,7 @@ async fn core_mobile_market_data_refresh_tencent(
         batch_start,
         batch_count,
         financial_snapshot,
+        Some(&payload),
     )
     .await?;
     emit_market_refresh_log(
@@ -1479,6 +1588,7 @@ async fn refresh_tencent_market_data(
     batch_start: usize,
     batch_count: Option<usize>,
     financial_snapshot: Value,
+    network_payload: Option<&Value>,
 ) -> Result<TencentRefreshResult, String> {
     let (seed_stocks, seed_codes) = seed_stock_maps(&seed);
     let enriched_stocks = enriched_stock_maps(&seed_stocks, &financial_snapshot);
@@ -1487,9 +1597,10 @@ async fn refresh_tencent_market_data(
         return Err("mobile market refresh has no candidate stock codes".to_string());
     }
 
-    let client = build_tencent_http_client(
+    let client = build_http_client_with_proxy(
         "Mozilla/5.0 GuXuanYou/0.3 mobile",
         Duration::from_secs(TENCENT_REQUEST_TIMEOUT_SECS),
+        network_payload,
     )?;
 
     emit_market_refresh_log(
@@ -1517,11 +1628,9 @@ async fn refresh_tencent_market_data(
     let mut seen = HashSet::new();
     let mut failed_batches = 0usize;
     let mut empty_batches = 0usize;
-    let mut consecutive_failed_batches = 0usize;
     let mut error_samples = Vec::new();
     let mut stopped_early = false;
     let mut stop_reason = None;
-    let mut next_batch_start = normalized_batch_start;
     let request_timeout = Duration::from_secs(TENCENT_REQUEST_TIMEOUT_SECS);
     let batch_timeout = Duration::from_secs(TENCENT_BATCH_TIMEOUT_SECS);
     emit_market_refresh_log(
@@ -1537,41 +1646,62 @@ async fn refresh_tencent_market_data(
             "batch_timeout_seconds": batch_timeout.as_secs(),
         }),
     );
-    for (offset, batch) in candidate_codes
+    // Fetch every batch in the window concurrently (bounded by TENCENT_FETCH_CONCURRENCY)
+    // instead of awaiting them one at a time. qt.gtimg.cn tolerates parallel requests, so
+    // wall-clock collapses from sum-of-batches to roughly slowest-batch * ceil(n / concurrency).
+    // Codes are cloned into owned Vecs so the per-batch future captures no borrowed slice
+    // (a borrowed `&[String]` trips higher-ranked lifetime inference inside the stream).
+    let window: Vec<(usize, Vec<String>)> = candidate_codes
         .chunks(TENCENT_BATCH_SIZE)
         .enumerate()
         .skip(normalized_batch_start)
         .take(effective_batch_count)
-    {
-        next_batch_start = offset + 1;
-        let batch_started_at = epoch_millis();
-        emit_market_refresh_log(
-            app,
-            "batch_request",
-            "info",
-            json!({
-                "batch_index": offset + 1,
-                "total_batches": total_batches,
-                "code_count": batch.len(),
-                "first_code": batch.first(),
-                "last_code": batch.last(),
-            }),
-        );
-        let fetch_result = match tokio::time::timeout(
-            batch_timeout,
-            fetch_tencent_quotes(&client, batch, request_timeout),
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => Err(format!(
-                "Tencent quote batch timed out after {} seconds",
-                batch_timeout.as_secs()
-            )),
-        };
+        .map(|(offset, batch)| (offset, batch.to_vec()))
+        .collect();
+    let mut fetch_results: Vec<(usize, u128, Result<TencentQuotePayload, String>)> =
+        stream::iter(window)
+            .map(|(offset, batch)| {
+                let client = &client;
+                async move {
+                    let batch_started_at = epoch_millis();
+                    emit_market_refresh_log(
+                        app,
+                        "batch_request",
+                        "info",
+                        json!({
+                            "batch_index": offset + 1,
+                            "total_batches": total_batches,
+                            "code_count": batch.len(),
+                            "first_code": batch.first(),
+                            "last_code": batch.last(),
+                        }),
+                    );
+                    let fetch_result = match tokio::time::timeout(
+                        batch_timeout,
+                        fetch_tencent_quotes(client, &batch, request_timeout),
+                    )
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(_) => Err(format!(
+                            "Tencent quote batch timed out after {} seconds",
+                            batch_timeout.as_secs()
+                        )),
+                    };
+                    (offset, batch_started_at, fetch_result)
+                }
+            })
+            .buffer_unordered(TENCENT_FETCH_CONCURRENCY)
+            .collect()
+            .await;
+
+    // The whole window is attempted, so advance the cursor to its end up front.
+    let next_batch_start = batch_end;
+    // Process responses in deterministic batch order so dedup and logs stay stable.
+    fetch_results.sort_by_key(|(offset, _, _)| *offset);
+    for (offset, batch_started_at, fetch_result) in fetch_results {
         match fetch_result {
             Ok(payload) => {
-                consecutive_failed_batches = 0;
                 let parsed_stocks =
                     parse_tencent_quotes(&payload.text, &enriched_stocks, use_previous_close);
                 if parsed_stocks.is_empty() {
@@ -1622,14 +1752,16 @@ async fn refresh_tencent_market_data(
                     error_samples.push(error);
                 }
                 failed_batches += 1;
-                consecutive_failed_batches += 1;
-                if consecutive_failed_batches >= max_failed_batches {
-                    stopped_early = true;
-                    stop_reason = Some("failed_batches".to_string());
-                    break;
-                }
             }
         }
+    }
+
+    // With concurrent fetching the entire window is attempted before we decide anything, so
+    // "early stop" becomes a post-hoc check: only bail when the window saw enough failures and
+    // produced no fresh quotes at all (a network-down signal). The front-end then stops paging.
+    if failed_batches >= max_failed_batches && seen.is_empty() {
+        stopped_early = true;
+        stop_reason = Some("failed_batches".to_string());
     }
     let fetched = seen.len();
     let preserved =
@@ -2014,6 +2146,37 @@ fn merge_financials_array(target: &mut serde_json::Map<String, Value>, value: Op
     }
 }
 
+fn merge_observe_financial_snapshot(data: &mut Value, code: &str, snapshot: &Value) -> bool {
+    let mut entries = serde_json::Map::new();
+    if let Some(existing) = data
+        .get("financials")
+        .and_then(Value::as_object)
+        .and_then(|financials| financials.get(code))
+        .cloned()
+    {
+        entries.insert(code.to_string(), existing);
+    }
+    merge_financials_object(&mut entries, snapshot.get("financials"));
+    merge_financials_array(&mut entries, snapshot.get("stocks"));
+    let Some(next) = entries.remove(code) else {
+        return false;
+    };
+    let previous = data
+        .get("financials")
+        .and_then(Value::as_object)
+        .and_then(|financials| financials.get(code))
+        .cloned();
+    if previous.as_ref() == Some(&next) {
+        return false;
+    }
+    let entry = financial_entry_mut(data, code);
+    if let Some(next_object) = next.as_object() {
+        for (key, value) in next_object {
+            entry.insert(key.clone(), value.clone());
+        }
+    }
+    true
+}
 fn merge_financial_entry(
     target: &mut serde_json::Map<String, Value>,
     raw_code: &str,
@@ -2121,6 +2284,16 @@ fn normalize_quarterly_eps(value: Option<&Value>) -> Vec<Value> {
             object_string(object, "source").filter(|value| !value.trim().is_empty())
         {
             row.insert("source".to_string(), json!(source));
+        }
+        if object
+            .get("inferred")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            row.insert("inferred".to_string(), json!(true));
+        }
+        if let Some(note) = object_string(object, "note").filter(|value| !value.trim().is_empty()) {
+            row.insert("note".to_string(), json!(note));
         }
         normalized.push(Value::Object(row));
         if normalized.len() >= 12 {
@@ -2521,7 +2694,11 @@ fn parse_cache_datetime_epoch_ms(text: &str) -> Option<u128> {
             return None;
         }
         if let Some(fraction) = rest.strip_prefix('.') {
-            let digits: String = fraction.chars().take_while(|ch| ch.is_ascii_digit()).take(3).collect();
+            let digits: String = fraction
+                .chars()
+                .take_while(|ch| ch.is_ascii_digit())
+                .take(3)
+                .collect();
             if !digits.is_empty() {
                 let padded = format!("{digits:0<3}");
                 millis = padded.parse::<u32>().ok()?;
@@ -2539,11 +2716,14 @@ fn parse_cache_datetime_epoch_ms(text: &str) -> Option<u128> {
         return None;
     }
     let days = days_from_civil_epoch(year, month, day)?;
-    let epoch_seconds = days * 86_400 + i128::from(hour * 3600 + minute * 60 + second) - i128::from(offset_seconds);
+    let epoch_seconds =
+        days * 86_400 + i128::from(hour * 3600 + minute * 60 + second) - i128::from(offset_seconds);
     if epoch_seconds < 0 {
         return None;
     }
-    let epoch_ms = epoch_seconds.checked_mul(1000)?.checked_add(i128::from(millis))?;
+    let epoch_ms = epoch_seconds
+        .checked_mul(1000)?
+        .checked_add(i128::from(millis))?;
     u128::try_from(epoch_ms).ok()
 }
 
@@ -2703,8 +2883,28 @@ async fn observe_core_payload_with_cached_history(
         .and_then(Value::as_str)
         .unwrap_or("20501231")
         .to_string();
+    let mobile_fast_observe = payload
+        .get("mobile_fast_observe")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let mut notes = Vec::new();
     let mut data_changed = false;
+
+    if let Some(snapshot) = payload.get("financial_snapshot") {
+        let before = financial_quarterly_eps_count(&data, &code);
+        if merge_observe_financial_snapshot(&mut data, &code, snapshot) {
+            data_changed = true;
+            let after = financial_quarterly_eps_count(&data, &code);
+            if after > before {
+                notes.push(format!(
+                    "观察页已合并移动端内置财务快照：{code} 新增 {} 期 EPS，当前 {after} 期。",
+                    after.saturating_sub(before)
+                ));
+            } else {
+                notes.push(format!("观察页已合并移动端内置财务快照：{code}。"));
+            }
+        }
+    }
 
     let payload_financial_points = normalize_quarterly_eps(payload.get("financial_eps_points"));
     if !payload_financial_points.is_empty() {
@@ -2735,15 +2935,25 @@ async fn observe_core_payload_with_cached_history(
         }
     }
 
+    let capital_fetch_timeout = if mobile_fast_observe { 12 } else { OBSERVE_CAPITAL_TOTAL_TIMEOUT_SECS };
     let capital_fetch = tokio::time::timeout(
-        Duration::from_secs(OBSERVE_CAPITAL_TOTAL_TIMEOUT_SECS),
-        enrich_observe_capital_evidence(&mut data, &code, &start_date, &end_date),
+        Duration::from_secs(capital_fetch_timeout),
+        enrich_observe_capital_evidence_with_payload(
+            &mut data,
+            &code,
+            &start_date,
+            &end_date,
+            Some(&payload),
+        ),
     )
     .await;
     match capital_fetch {
         Ok((changed, capital_notes)) => {
             data_changed |= changed;
             notes.extend(capital_notes);
+            if mobile_fast_observe {
+                notes.push("Android short source capital evidence attempted with mobile proxy settings.".to_string());
+            }
         }
         Err(_) => {
             data_changed |= merge_capital_evidence_items(
@@ -2765,15 +2975,22 @@ async fn observe_core_payload_with_cached_history(
                 &end_date,
             );
             notes.push(format!(
-                "综合资金证据联网补全超过 {OBSERVE_CAPITAL_TOTAL_TIMEOUT_SECS} 秒，已写入超时状态证据。"
+                "综合资金证据联网补全超过 {capital_fetch_timeout} 秒，已写入超时状态证据。"
             ));
         }
     }
-
-    let (financial_changed, financial_notes) =
-        enrich_observe_financial_snapshot(&mut data, &code).await;
-    data_changed |= financial_changed;
-    notes.extend(financial_notes);
+    if mobile_fast_observe {
+        if merge_basic_financial_from_stock(&mut data, &code) {
+            data_changed = true;
+        }
+        notes
+            .push("移动端快速观察：已使用本地财务快照，跳过同花顺/新浪在线 EPS 补全。".to_string());
+    } else {
+        let (financial_changed, financial_notes) =
+            enrich_observe_financial_snapshot(&mut data, &code).await;
+        data_changed |= financial_changed;
+        notes.extend(financial_notes);
+    }
 
     if let Some(rows) = payload_history_rows(&payload) {
         let count = rows.len();
@@ -2789,30 +3006,37 @@ async fn observe_core_payload_with_cached_history(
         &end_date,
         MIN_OBSERVE_HISTORY_BARS,
     ) {
-        let history_fetch = tokio::time::timeout(
-            Duration::from_secs(OBSERVE_HISTORY_TOTAL_TIMEOUT_SECS),
-            fetch_observe_daily_history(&code, &start_date, &end_date),
-        )
-        .await;
-        match history_fetch {
-            Ok(Ok(rows)) if !rows.is_empty() => {
-                let count = rows.len();
-                insert_history_rows(&mut data, &code, rows);
-                data_changed = true;
-                notes.push(format!(
-                    "观察日线历史已按需联网更新并写入本地缓存：{code} {count} 条。"
-                ));
-            }
-            Ok(Ok(_)) => {
-                notes.push(format!("观察日线历史为空：{code}。"));
-            }
-            Ok(Err(error)) => {
-                notes.push(format!("观察日线历史拉取失败：{error}"));
-            }
-            Err(_) => {
-                notes.push(format!(
-                    "观察日线历史拉取超过 {OBSERVE_HISTORY_TOTAL_TIMEOUT_SECS} 秒，已跳过在线补充。"
-                ));
+        if mobile_fast_observe {
+            notes.push(
+                "移动端快速观察：未命中 WebView 日线/本地历史时，不等待 Rust 在线日线补全。"
+                    .to_string(),
+            );
+        } else {
+            let history_fetch = tokio::time::timeout(
+                Duration::from_secs(OBSERVE_HISTORY_TOTAL_TIMEOUT_SECS),
+                fetch_observe_daily_history(&code, &start_date, &end_date),
+            )
+            .await;
+            match history_fetch {
+                Ok(Ok(rows)) if !rows.is_empty() => {
+                    let count = rows.len();
+                    insert_history_rows(&mut data, &code, rows);
+                    data_changed = true;
+                    notes.push(format!(
+                        "观察日线历史已按需联网更新并写入本地缓存：{code} {count} 条。"
+                    ));
+                }
+                Ok(Ok(_)) => {
+                    notes.push(format!("观察日线历史为空：{code}。"));
+                }
+                Ok(Err(error)) => {
+                    notes.push(format!("观察日线历史拉取失败：{error}"));
+                }
+                Err(_) => {
+                    notes.push(format!(
+                        "观察日线历史拉取超过 {OBSERVE_HISTORY_TOTAL_TIMEOUT_SECS} 秒，已跳过在线补充。"
+                    ));
+                }
             }
         }
     }
@@ -2828,13 +3052,14 @@ async fn observe_core_payload_with_cached_history(
         map.remove("history");
         map.remove("financial_eps_points");
         map.remove("financial_eps_notes");
+        map.remove("financial_snapshot");
+        map.remove("mobile_fast_observe");
     }
     let mut request = serde_json::Map::new();
     request.insert("data".to_string(), data);
     request.insert("request".to_string(), observe_request);
     Ok((Value::Object(request), notes))
 }
-
 fn observe_core_payload_from_cache(
     app: &tauri::AppHandle,
     payload: Value,
@@ -2845,6 +3070,8 @@ fn observe_core_payload_from_cache(
         map.remove("history");
         map.remove("financial_eps_points");
         map.remove("financial_eps_notes");
+        map.remove("financial_snapshot");
+        map.remove("mobile_fast_observe");
     }
     let mut request = serde_json::Map::new();
     request.insert("data".to_string(), data);
@@ -2902,17 +3129,18 @@ fn append_observe_note(result: &mut Value, note: String) {
     }
 }
 
-async fn enrich_observe_capital_evidence(
+async fn enrich_observe_capital_evidence_with_payload(
     data: &mut Value,
     code: &str,
     start_date: &str,
     end_date: &str,
+    network_payload: Option<&Value>,
 ) -> (bool, Vec<String>) {
     let mut notes = Vec::new();
     let mut items = Vec::new();
     let timeout = Duration::from_secs(OBSERVE_CAPITAL_REQUEST_TIMEOUT_SECS);
     let client =
-        match build_tencent_http_client("Mozilla/5.0 GuXuanYou/0.3 capital evidence", timeout) {
+        match build_http_client_with_proxy("Mozilla/5.0 GuXuanYou/0.3 capital evidence", timeout, network_payload) {
             Ok(client) => client,
             Err(error) => {
                 return (
@@ -3822,7 +4050,7 @@ fn parse_ths_quarterly_eps_json(text: &str) -> Result<Vec<Value>, String> {
             if !financial_metric_is_eps(metric_name) {
                 continue;
             }
-            if let Some(eps) = value_first_finite_number(metric_values) {
+            if let Some(eps) = eps_metric_value(metric_values) {
                 points.push(quarterly_eps_value(&period, eps, "同花顺财务摘要"));
                 break;
             }
@@ -4217,6 +4445,17 @@ fn object_number_any_loose(
     fields
         .iter()
         .find_map(|field| object.get(*field).and_then(|value| json_f64(Some(value))))
+}
+
+fn eps_metric_value(value: &Value) -> Option<f64> {
+    if let Some(object) = value.as_object() {
+        for key in ["value", "data", "val", "num", "latest", "amount", "single"] {
+            if let Some(number) = object.get(key).and_then(value_first_finite_number) {
+                return Some(number);
+            }
+        }
+    }
+    value_first_finite_number(value)
 }
 
 fn value_first_finite_number(value: &Value) -> Option<f64> {
@@ -4664,7 +4903,9 @@ fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String> {
     let current_date = expected_market_quote_date_from_epoch_ms(now_epoch_ms);
     let stale = market_quote_cache_stale(generated_at_epoch_ms, now_epoch_ms);
     if stale {
-        notes.push("cached Tencent quote date is stale; refresh before rotation screening".to_string());
+        notes.push(
+            "cached Tencent quote date is stale; refresh before rotation screening".to_string(),
+        );
     }
     Ok(json!({
         "source": "tencent",
@@ -5189,10 +5430,16 @@ mod tests {
     fn cache_epoch_ms_accepts_iso_quote_dates() {
         let epoch = cache_epoch_ms(Some(&json!("2026-06-26T09:35:00+08:00")))
             .expect("ISO quote time should parse");
-        assert_eq!(local_yyyymmdd_from_epoch_ms(epoch).as_deref(), Some("20260626"));
+        assert_eq!(
+            local_yyyymmdd_from_epoch_ms(epoch).as_deref(),
+            Some("20260626")
+        );
         let utc_epoch = cache_epoch_ms(Some(&json!("2026-06-26T01:35:00Z")))
             .expect("UTC quote time should parse");
-        assert_eq!(local_yyyymmdd_from_epoch_ms(utc_epoch).as_deref(), Some("20260626"));
+        assert_eq!(
+            local_yyyymmdd_from_epoch_ms(utc_epoch).as_deref(),
+            Some("20260626")
+        );
     }
 
     #[test]
@@ -5304,6 +5551,50 @@ mod tests {
         assert!(financials.get("300001.SZ").is_none());
     }
 
+    #[test]
+    fn observe_financial_snapshot_merges_inferred_prior_year_eps() {
+        let mut data = json!({
+            "financials": {
+                "000100.SZ": {
+                    "period": "2026Q1",
+                    "latest_eps": 0.0692,
+                    "quarterly_eps": [{"period": "2026Q1", "value": 0.0692, "source": "cache"}]
+                }
+            }
+        });
+        let snapshot = json!({
+            "financials": {
+                "000100.SZ": {
+                    "period": "2026Q1",
+                    "latest_eps": 0.0692,
+                    "quarterly_eps": [
+                        {"period": "2026Q1", "value": 0.0692, "source": "snapshot"},
+                        {"period": "2025Q1", "value": 0.0545, "source": "snapshot / inferred EPS YoY", "inferred": true, "note": "inferred_from_eps_yoy"}
+                    ]
+                }
+            }
+        });
+
+        assert!(merge_observe_financial_snapshot(
+            &mut data,
+            "000100.SZ",
+            &snapshot
+        ));
+        assert_eq!(financial_quarterly_eps_count(&data, "000100.SZ"), 2);
+        let rows = data
+            .get("financials")
+            .and_then(Value::as_object)
+            .and_then(|financials| financials.get("000100.SZ"))
+            .and_then(|entry| entry.get("quarterly_eps"))
+            .and_then(Value::as_array)
+            .expect("quarterly EPS rows should exist");
+        let prior = rows
+            .iter()
+            .find(|row| row.get("period").and_then(Value::as_str) == Some("2025Q1"))
+            .expect("inferred 2025Q1 EPS should be preserved");
+        assert_eq!(prior.get("value").and_then(Value::as_f64), Some(0.0545));
+        assert_eq!(prior.get("inferred").and_then(Value::as_bool), Some(true));
+    }
     #[test]
     fn eastmoney_guba_parser_extracts_hottest_sentiment_items() {
         let rows = (0..12)
