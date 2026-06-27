@@ -13,6 +13,7 @@ import {
 } from "../../lib/contracts";
 import { currentSystemDateInputValue, defaultObserveStartDateInputValue, escapeHtml, normalizeStockCode } from "../../lib/format";
 import { StockList } from "../StockList";
+import { StockCodeInput } from "../StockCodeInput";
 
 interface ScreenPanelProps {
   criteria: FilterCriteria;
@@ -136,7 +137,7 @@ export function ScreenPanel({
           <>
             <div className="form-row">
               <label htmlFor="seedCodes">Seed codes</label>
-              <input id="seedCodes" type="text" value={seedCodes} onChange={(e) => setSeedCodes(e.target.value)} placeholder="600519.SH, 300750.SZ" />
+              <StockCodeInput id="seedCodes" value={seedCodes} onChange={setSeedCodes} placeholder="600519.SH, 300750.SZ" listMode />
             </div>
             <div className="form-row inline">
               <label htmlFor="relationDepth">Depth</label>
@@ -154,7 +155,7 @@ export function ScreenPanel({
             {mode === "trendAnalyze" && (
               <div className="form-row inline">
                 <label htmlFor="trendCode">Code</label>
-                <input id="trendCode" type="text" value={trendCode} onChange={(e) => setTrendCode(e.target.value)} placeholder="600519.SH" />
+                <StockCodeInput id="trendCode" value={trendCode} onChange={setTrendCode} placeholder="输入股票代码或名称" />
               </div>
             )}
             <div className="form-row inline">

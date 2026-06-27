@@ -21,6 +21,7 @@ import {
   parseUpstreamImportDescriptor,
 } from "../../lib/contracts";
 import { escapeHtml, formatBytes, formatDateTime, formatNumber, normalizeStockCode } from "../../lib/format";
+import { StockCodeInput } from "../StockCodeInput";
 
 type NewsTab = "newsRag" | "ragPackBuild" | "ragPackQuery" | "upstreamScan" | "upstreamImport";
 
@@ -34,6 +35,12 @@ const TABS: { key: NewsTab; label: string }[] = [
 
 interface NewsRagPanelProps {
   llmSettings?: LlmSettings | null;
+}
+
+interface UpstreamMobileListResult {
+  root?: string;
+  packs?: Record<string, unknown>[];
+  notes?: string[];
 }
 
 export function NewsRagPanel({ llmSettings }: NewsRagPanelProps) {
@@ -50,6 +57,21 @@ export function NewsRagPanel({ llmSettings }: NewsRagPanelProps) {
   const [scanning, setScanning] = useState(false);
 
   const normalizedCode = normalizeStockCode(newsCode);
+
+  const scanAndImport = useCallback(async () => {
+    setScanning(true);
+    try {
+      const raw = await scanQrCode();
+      setImportPayload(raw);
+      const descriptor = parseUpstreamImportDescriptor(raw);
+      const payload = await fetchUpstreamImportPayload(descriptor);
+      const data = await postJson("/api/upstream-rag/mobile/import", payload);
+      setResult(data);
+    } finally {
+      setScanning(false);
+    }
+  }, []);
+
 
   const run = useCallback(async () => {
     setLoading(true);
@@ -93,19 +115,47 @@ export function NewsRagPanel({ llmSettings }: NewsRagPanelProps) {
     } finally {
       setLoading(false);
     }
-  }, [importPayload, llmSettings, manualUrls, newsDays, normalizedCode, queryText, seedCodes, tab]);
+  }, [importPayload, llmSettings, manualUrls, newsDays, normalizedCode, queryText, scanAndImport, seedCodes, tab]);
 
-  const scanAndImport = useCallback(async () => {
-    setScanning(true);
+  const listMobilePacks = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      const raw = await scanQrCode();
-      setImportPayload(raw);
-      const descriptor = parseUpstreamImportDescriptor(raw);
-      const payload = await fetchUpstreamImportPayload(descriptor);
-      const data = await postJson("/api/upstream-rag/mobile/import", payload);
+      const data = isMobileTauriRuntime()
+        ? await getJson<UpstreamMobileListResult>("/api/upstream-rag/mobile/list")
+        : await getJson("/api/upstream-rag/status");
       setResult(data);
+    } catch (err) {
+      setError((err as Error).message);
     } finally {
-      setScanning(false);
+      setLoading(false);
+    }
+  }, []);
+
+  const showMobilePackDetail = useCallback(async (stockCode: string, packVersion = "") => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({ stock_code: stockCode, pack_version: packVersion });
+      const data = await getJson(`/api/upstream-rag/mobile/detail?${params}`);
+      setResult(data);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const rollbackMobilePack = useCallback(async (stockCode: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await postJson("/api/upstream-rag/mobile/rollback", { stock_code: stockCode });
+      setResult(data);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -122,12 +172,12 @@ export function NewsRagPanel({ llmSettings }: NewsRagPanelProps) {
       <div className="panel-controls">
         {(tab === "newsRag" || tab === "ragPackBuild" || tab === "ragPackQuery" || tab === "upstreamScan") && (
           <>
-            <div className="form-row inline"><label htmlFor="newsCode">Code</label><input id="newsCode" type="text" value={newsCode} onChange={(e) => setNewsCode(e.target.value)} placeholder="300750.SZ" /></div>
+            <div className="form-row inline stock-code-row"><label htmlFor="newsCode">Code</label><StockCodeInput id="newsCode" value={newsCode} onChange={setNewsCode} placeholder="输入股票代码或名称" /></div>
             <div className="form-row inline"><label htmlFor="newsDays">Days</label><input id="newsDays" type="number" min="1" max="3650" value={newsDays} onChange={(e) => setNewsDays(Number(e.target.value) || 30)} /></div>
           </>
         )}
         {(tab === "ragPackBuild" || tab === "ragPackQuery") && (
-          <div className="form-row"><label htmlFor="seedCodesForRag">Seed codes</label><input id="seedCodesForRag" type="text" value={seedCodes} onChange={(e) => setSeedCodes(e.target.value)} placeholder="Optional comma separated codes" /></div>
+          <div className="form-row"><label htmlFor="seedCodesForRag">Seed codes</label><StockCodeInput id="seedCodesForRag" value={seedCodes} onChange={setSeedCodes} placeholder="Optional comma separated codes" listMode /></div>
         )}
         {tab === "ragPackQuery" && (
           <div className="form-row"><label htmlFor="ragQuery">Query</label><input id="ragQuery" type="text" value={queryText} onChange={(e) => setQueryText(e.target.value)} placeholder="supply chain order evidence" /></div>
@@ -139,26 +189,43 @@ export function NewsRagPanel({ llmSettings }: NewsRagPanelProps) {
           <div className="form-row"><label htmlFor="upstreamImportPayload">Descriptor</label><textarea id="upstreamImportPayload" rows={5} value={importPayload} onChange={(e) => setImportPayload(e.target.value)} placeholder="Paste QR JSON or manifest_url" /></div>
         )}
         <button type="button" className="run-btn" onClick={run} disabled={loading || scanning}>{loading || scanning ? "Running..." : "Run"}</button>
+        {(tab === "upstreamScan" || tab === "upstreamImport") && (
+          <button type="button" className="action-btn" onClick={listMobilePacks} disabled={loading || scanning}>List packs</button>
+        )}
       </div>
 
       <div className="panel-result">
         {error && <div className="result-error"><strong>Request failed</strong><p>{escapeHtml(error)}</p></div>}
         {loading && !result && !error && <div className="result-loading"><div className="loader" /><span>Working...</span></div>}
-        {result != null && !loading && <NewsResult tab={tab} result={result} />}
+        {result != null && !loading && <NewsResult tab={tab} result={result} onDetail={showMobilePackDetail} onRollback={rollbackMobilePack} />}
         {!result && !loading && !error && <div className="result-empty"><span>Configure parameters, then run.</span></div>}
       </div>
     </div>
   );
 }
 
-function NewsResult({ tab, result }: { tab: NewsTab; result: unknown }) {
+function NewsResult({
+  tab,
+  result,
+  onDetail,
+  onRollback,
+}: {
+  tab: NewsTab;
+  result: unknown;
+  onDetail: (stockCode: string, packVersion?: string) => void;
+  onRollback: (stockCode: string) => void;
+}) {
+  const record = asRecord(result);
   if (tab === "newsRag") return <NewsRagView result={result as NewsRagResult} />;
   if (tab === "ragPackQuery") return <RagPackQueryView result={result as RagPackQueryResult} />;
-  if (tab === "upstreamScan") return <UpstreamBuildView result={result as { build?: UpstreamRagBuildResult; transfer?: UpstreamRagTransferResult | null }} />;
+  if (tab === "upstreamScan" && (record.build || record.transfer)) return <UpstreamBuildView result={result as { build?: UpstreamRagBuildResult; transfer?: UpstreamRagTransferResult | null }} />;
+  if (Array.isArray(record.packs)) return <UpstreamMobileListView result={record as UpstreamMobileListResult} onDetail={onDetail} onRollback={onRollback} />;
+  if (record.manifest && !record.imported && !record.rolled_back) return <UpstreamDetailView result={record} />;
+  if (record.imported || record.rolled_back) return <UpstreamImportView result={record} />;
   return <GenericJsonResult result={result} />;
 }
 
-function NewsRagView({ result }: { result: NewsRagResult }) {
+export function NewsRagView({ result }: { result: NewsRagResult }) {
   const groups = normalizeNewsGroups(result.sentiment_groups);
   const findings = result.findings || [];
   const secondary = [...groups.mixed, ...groups.uncertain];
@@ -268,7 +335,7 @@ function UpstreamBuildView({ result }: { result: { build?: UpstreamRagBuildResul
       </div>
       <section className="upstream-transfer">
         <header>
-          <div><h3>{String(manifest.target_stock_name || "Upstream RAG")} {String(manifest.target_stock_code || "")}</h3><p>{String(manifest.pack_version || "")} · {formatBytes(manifest.file_size)}</p></div>
+          <div><h3>{String(manifest.target_stock_name || "Upstream RAG")} {String(manifest.target_stock_code || "")}</h3><p>{String(manifest.pack_version || "")} - {formatBytes(manifest.file_size)}</p></div>
           {transfer?.qr_svg && <img src={transfer.qr_svg} alt="Upstream RAG transfer QR" />}
         </header>
         {transfer && <div className="detail-grid"><div><span>Manifest</span><strong>{transfer.manifest_url}</strong></div><div><span>Pack</span><strong>{transfer.pack_url}</strong></div><div><span>Expires</span><strong>{formatDateTime(transfer.expires_at)}</strong></div></div>}
@@ -281,12 +348,98 @@ function UpstreamBuildView({ result }: { result: { build?: UpstreamRagBuildResul
   );
 }
 
+function UpstreamMobileListView({
+  result,
+  onDetail,
+  onRollback,
+}: {
+  result: UpstreamMobileListResult;
+  onDetail: (stockCode: string, packVersion?: string) => void;
+  onRollback: (stockCode: string) => void;
+}) {
+  const packs = result.packs || [];
+  if (!packs.length) return <div className="result-empty"><span>{result.notes?.[0] || "No mobile RAG packs imported."}</span></div>;
+  return (
+    <div className="upstream-mobile-list">
+      <div className="metric-strip">
+        <div className="metric"><span>Packs</span><strong>{packs.length}</strong></div>
+        <div className="metric"><span>Root</span><strong>{result.root || "--"}</strong></div>
+      </div>
+      <div className="rag-pack-list">
+        {packs.map((pack, index) => {
+          const stockCode = String(pack.target_stock_code || "");
+          const version = String(pack.pack_version || "");
+          return (
+            <article key={`${stockCode}-${version}-${index}`} className="rag-pack-item">
+              <header>
+                <div><h3>{String(pack.target_stock_name || stockCode || "RAG pack")}</h3><p>{stockCode} {version}</p></div>
+                <span className={`pack-state ${pack.current ? "current" : "archived"}`}>{pack.current ? "current" : "archived"}</span>
+              </header>
+              <div className="detail-grid">
+                <div><span>Docs</span><strong>{String(pack.document_count ?? 0)}</strong></div>
+                <div><span>Evidence</span><strong>{String(pack.evidence_count ?? 0)}</strong></div>
+                <div><span>Relations</span><strong>{String(pack.relation_edge_count ?? 0)}</strong></div>
+                <div><span>Size</span><strong>{formatBytes(pack.file_size)}</strong></div>
+              </div>
+              <div className="upstream-pack-actions">
+                <button type="button" className="action-btn" onClick={() => onDetail(stockCode, version)}>Detail</button>
+                <button type="button" className="action-btn" onClick={() => onRollback(stockCode)}>Rollback</button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+      {result.notes?.length ? <div className="notes">{result.notes.map((note) => <p key={note}>{note}</p>)}</div> : null}
+    </div>
+  );
+}
+
+function UpstreamImportView({ result }: { result: Record<string, unknown> }) {
+  const manifest = asRecord(result.manifest);
+  return (
+    <div className="upstream-result">
+      <div className="metric-strip">
+        <div className="metric"><span>Import</span><strong>{result.imported ? "done" : result.rolled_back ? "rolled back" : "updated"}</strong></div>
+        <div className="metric"><span>Code</span><strong>{String(result.stock_code || manifest.target_stock_code || "--")}</strong></div>
+        <div className="metric"><span>Version</span><strong>{String(result.pack_version || manifest.pack_version || "--")}</strong></div>
+        <div className="metric"><span>Docs</span><strong>{String(manifest.document_count ?? 0)}</strong></div>
+      </div>
+      <RelationGraph manifest={manifest} />
+      {Array.isArray(result.notes) ? <div className="notes">{result.notes.map((note) => <p key={String(note)}>{String(note)}</p>)}</div> : null}
+      <details className="raw-json"><summary>Raw JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
+    </div>
+  );
+}
+
+function UpstreamDetailView({ result }: { result: Record<string, unknown> }) {
+  const manifest = asRecord(result.manifest || result);
+  return (
+    <div className="upstream-result">
+      <div className="metric-strip">
+        <div className="metric"><span>Target</span><strong>{String(manifest.target_stock_code || "--")}</strong></div>
+        <div className="metric"><span>Version</span><strong>{String(manifest.pack_version || "--")}</strong></div>
+        <div className="metric"><span>Evidence</span><strong>{String(manifest.evidence_count ?? 0)}</strong></div>
+        <div className="metric"><span>Size</span><strong>{formatBytes(manifest.file_size)}</strong></div>
+      </div>
+      <section className="upstream-transfer">
+        <header><div><h3>{String(manifest.target_stock_name || "Upstream RAG")}</h3><p>{String(manifest._local_pack_path || "")}</p></div></header>
+        <div className="detail-grid">
+          <div><span>sha256</span><strong>{String(manifest.sha256 || "--")}</strong></div>
+          <div><span>Imported</span><strong>{formatDateTime(manifest.imported_at || manifest.generated_at)}</strong></div>
+        </div>
+      </section>
+      <RelationGraph manifest={manifest} />
+      <details className="raw-json"><summary>Raw JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
+    </div>
+  );
+}
+
 function RelationGraph({ manifest }: { manifest: Record<string, unknown> }) {
   const edges = Array.isArray(manifest.relation_edges) ? manifest.relation_edges as Record<string, unknown>[] : [];
   const chunks = Array.isArray(manifest.evidence_chunks) ? manifest.evidence_chunks as Record<string, unknown>[] : [];
   return (
     <>
-      {edges.length > 0 && <section className="upstream-graph"><header><h3>Relation graph</h3><span>{formatNumber(edges.length)}</span></header><div className="relation-map">{edges.slice(0, 18).map((edge, i) => <article key={i} className="relation-edge"><span>{String((edge.source_entity as Record<string, unknown>)?.entity_name || edge.source_code || "--")}</span><strong>{String(edge.relation_type || "--")}</strong><span>{String((edge.target_entity as Record<string, unknown>)?.entity_name || edge.target_code || "--")}</span></article>)}</div></section>}
+      {edges.length > 0 && <section className="upstream-graph"><header><h3>Relation graph</h3><span>{formatNumber(edges.length)}</span></header><div className="relation-map">{edges.slice(0, 18).map((edge, i) => <article key={i} className="relation-edge"><span>{String(asRecord(edge.source_entity).entity_name || edge.source_code || "--")}</span><strong>{String(edge.relation_type || "--")}</strong><span>{String(asRecord(edge.target_entity).entity_name || edge.target_code || "--")}</span></article>)}</div></section>}
       {chunks.length > 0 && <section className="upstream-evidence"><header><h3>Evidence</h3><span>{chunks.length}</span></header><div className="evidence-list">{chunks.slice(0, 24).map((chunk, i) => <article key={i}><strong>{String(chunk.title || "--")}</strong><p>{String(chunk.evidence_text || chunk.text || "")}</p></article>)}</div></section>}
     </>
   );
@@ -338,4 +491,8 @@ function detectWithJsQr(video: HTMLVideoElement, canvas: HTMLCanvasElement): str
   context.drawImage(video, 0, 0, width, height);
   const image = context.getImageData(0, 0, width, height);
   return jsQR(image.data, width, height, { inversionAttempts: "attemptBoth" })?.data || "";
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentResult, AgentStreamEvent, LlmSettings, StockRowView } from "../../types";
+import type { AgentResult, AgentStreamEvent, BacktestResult, LlmSettings, NewsRagResult, ObserveResult, StockRowView } from "../../types";
 import { getTauriInvoke, isTauriRuntime } from "../../lib/tauri";
 import { actionResultKind, buildLlmConfig, normalizeAgentStreamEvent, normalizeScreenRows, parseSseBlock } from "../../lib/contracts";
-import { escapeHtml, formatNumber, formatSignedPercent } from "../../lib/format";
 import { StockList } from "../StockList";
+import { BacktestResultView } from "./BacktestPanel";
+import { NewsRagView } from "./NewsRagPanel";
+import { ObserveResultView } from "./ObservePanel";
 
 interface AgentPanelProps {
   llmSettings: LlmSettings | null;
@@ -134,26 +136,37 @@ function AgentSteps({ steps }: { steps: AgentStep[] }) {
 
 function AgentResultView({ result }: { result: AgentResult }) {
   const kind = actionResultKind(result);
-  const nested = result.data || {};
-  if (kind === "backtest") {
-    const metrics = (nested.metrics || {}) as Record<string, number>;
-    return (
-      <div className="agent-result-card">
-        <div className="metric-strip">
-          <div className="metric"><span>Total return</span><strong>{metrics.total_return != null ? formatSignedPercent(metrics.total_return * 100) : "--"}</strong></div>
-          <div className="metric"><span>Max drawdown</span><strong>{metrics.max_drawdown != null ? formatSignedPercent(metrics.max_drawdown * 100) : "--"}</strong></div>
-          <div className="metric"><span>Stocks</span><strong>{formatNumber(metrics.num_stocks)}</strong></div>
-        </div>
-      </div>
-    );
-  }
+  const nested = agentNestedResult(result, kind);
+  if (kind === "backtest") return <BacktestResultView result={nested as unknown as BacktestResult} />;
   if (["screen", "sector", "graph", "trend"].includes(kind)) {
     const rows = normalizeScreenRows(nested) as StockRowView[];
-    return <StockList items={rows} watchlist={[]} onToggleWatchlist={() => {}} />;
+    return rows.length
+      ? <StockList items={rows} watchlist={[]} onToggleWatchlist={() => {}} />
+      : <GenericAgentResult result={nested || result} />;
   }
-  if (kind === "news") return <pre className="raw-result">{JSON.stringify(nested, null, 2)}</pre>;
-  if (kind === "observe") return <pre className="raw-result">{JSON.stringify(nested, null, 2)}</pre>;
+  if (kind === "news") return <NewsRagView result={nested as unknown as NewsRagResult} />;
+  if (kind === "observe") return <ObserveResultView result={nested as unknown as ObserveResult} />;
+  return <GenericAgentResult result={result} />;
+}
+
+function agentNestedResult(result: AgentResult, kind: string): Record<string, unknown> {
+  const data = asRecord(result.data);
+  if (Object.keys(data).length) return data;
+  if (kind === "backtest") return asRecord(result.backtest);
+  if (kind === "news") return asRecord(result.news_rag);
+  if (kind === "observe") return asRecord(result.observe);
+  if (kind === "sector") return asRecord(result.sector_screen);
+  if (kind === "graph") return asRecord(result.graph_screen);
+  if (kind === "trend") return asRecord(result.trend_screen);
+  return asRecord(result);
+}
+
+function GenericAgentResult({ result }: { result: unknown }) {
   return <details className="raw-json"><summary>Raw JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function mergeStep(steps: AgentStep[], step: AgentStep): AgentStep[] {

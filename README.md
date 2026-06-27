@@ -95,7 +95,7 @@ cmd /c npm run android:init
 cmd /c npm run build:android
 ```
 
-前端只有 `app/static/` 一份源码，桌面端与移动端共用：运行时通过 `isMobileTauriRuntime()` 判断环境，桌面/Web 走 HTTP `/api/*`，移动端改走 Tauri command（见 `app/static/app.js` 的 `MOBILE_API_HANDLERS` 路由表）。`desktop/mobile-dist/` 不是手工维护的副本，而是由 `scripts/prepare-tauri-android-assets.ps1` 从 `app/static/` 全量生成的产物（已 gitignore）。该脚本被接入 `tauri.android.conf.json` 的 `beforeBuildCommand`/`beforeDevCommand`，因此无论通过 `build-android.ps1` 还是直接 `npm run build:android`/`tauri android dev` 构建，移动端前端都会在打包前自动从 `app/static/` 重新生成，不会出现陈旧漂移。**所有前端改动只改 `app/static/`，切勿手改 `mobile-dist`。**
+前端源码唯一真源是 `desktop/frontend/` 的 React + TypeScript。Windows Tauri、Android Tauri 和 Python Web 都使用同一套 React 构建产物：`npm.cmd --prefix desktop/frontend run build` 输出到 `desktop/mobile-dist/`，`scripts/prepare-tauri-android-assets.ps1` 会在 Android 构建前重建该产物并写入移动端财务快照。Tauri/Web 运行时桥接逻辑在 `desktop/frontend/src/lib/tauri.ts`，页面组件在 `desktop/frontend/src/components/`。`desktop/mobile-dist/` 是生成目录，切勿手改。
 
 Android 端不会启动 Python/FastAPI sidecar，会加载本地静态前端，并通过 Tauri command 调用 `native/gp-core`。股票池不再随安装包预制：用户首次安装打开后，移动端会通过腾讯行情联网生成手机本地股票池；后续“联网更新股票池”会直接刷新手机缓存，不需要重新构建或重新安装移动包。当前移动端已覆盖基础筛选、分板块筛选、关系图筛选、趋势、观察、收藏、自选观察池回测、本地智能体路由和 RAG 包扫码导入。
 
@@ -248,4 +248,4 @@ curl -X POST http://127.0.0.1:8000/api/backtest ^
 趋势和回测接口未指定 `end_date` 时，默认使用服务运行环境的当前系统日期。
 # Frontend Source
 
-The React/TypeScript frontend source now lives in `desktop/frontend/`. `desktop/mobile-dist/` is generated output from `npm run build` and `scripts/prepare-tauri-android-assets.ps1`; do not edit it by hand. The old `app/static/` frontend remains as a legacy migration reference unless a task explicitly targets that path.
+The React/TypeScript frontend source lives in `desktop/frontend/` and is the only maintained frontend entry. `desktop/mobile-dist/` is generated output from `npm run build` and `scripts/prepare-tauri-android-assets.ps1`; do not edit it by hand. Do not add new frontend code under `app/static/`.

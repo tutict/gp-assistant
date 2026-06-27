@@ -1,4 +1,4 @@
-// Format utilities ported from app.js
+// Shared formatting utilities for the React frontend
 
 export function formatNumber(value: unknown): string {
   const n = parseLooseNumber(value);

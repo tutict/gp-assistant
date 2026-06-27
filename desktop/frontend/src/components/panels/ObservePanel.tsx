@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { CapitalEvidenceSection, FinancialIndicatorItem, ObserveResult, WatchlistItem } from "../../types";
 import { getJson } from "../../lib/tauri";
+import { StockCodeInput } from "../StockCodeInput";
 import {
   currentSystemDateInputValue,
   defaultObserveStartDateInputValue,
@@ -17,7 +18,7 @@ interface ObservePanelProps {
   initialCode?: string;
 }
 
-export function ObservePanel({ watchlist, initialCode }: ObservePanelProps) {
+export function ObservePanel({ initialCode }: ObservePanelProps) {
   const [code, setCode] = useState(initialCode || "");
   const [startDate, setStartDate] = useState(defaultObserveStartDateInputValue());
   const [endDate, setEndDate] = useState(currentSystemDateInputValue());
@@ -57,12 +58,9 @@ export function ObservePanel({ watchlist, initialCode }: ObservePanelProps) {
   return (
     <div className="panel-container">
       <div className="panel-controls">
-        <div className="form-row inline">
+        <div className="form-row inline stock-code-row">
           <label htmlFor="observeCode">Code</label>
-          <input id="observeCode" type="text" value={code} onChange={(e) => setCode(e.target.value)} placeholder="600519.SH" list="watchlist-suggestions" />
-          <datalist id="watchlist-suggestions">
-            {watchlist.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
-          </datalist>
+          <StockCodeInput id="observeCode" value={code} onChange={setCode} placeholder="输入股票代码或名称" />
         </div>
         <div className="form-row inline"><label htmlFor="observeStart">Start</label><input id="observeStart" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></div>
         <div className="form-row inline"><label htmlFor="observeEnd">End</label><input id="observeEnd" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></div>
@@ -79,7 +77,7 @@ export function ObservePanel({ watchlist, initialCode }: ObservePanelProps) {
   );
 }
 
-function ObserveResultView({ result }: { result: ObserveResult }) {
+export function ObserveResultView({ result }: { result: ObserveResult }) {
   const stock = result.stock || { code: "", name: "" };
   const trend = result.trend;
   const signal = trend?.signal;

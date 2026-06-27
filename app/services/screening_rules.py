@@ -9,7 +9,7 @@ from typing import Any, Mapping, Sequence
 from app.schemas import StockItem
 
 
-RULES_PATH = Path(__file__).resolve().parents[1] / "static" / "screening_rules.json"
+RULES_PATH = Path(__file__).resolve().parents[2] / "desktop" / "frontend" / "public" / "screening_rules.json"
 OTHER_CONCEPT = "其他概念"
 
 DEFAULT_RULES: dict[str, Any] = {

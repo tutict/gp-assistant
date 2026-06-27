@@ -122,7 +122,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
   );
 }
 
-function BacktestResultView({ result }: { result: BacktestResult }) {
+export function BacktestResultView({ result }: { result: BacktestResult }) {
   const metrics = result.metrics || {};
   return (
     <div className="backtest-result">
