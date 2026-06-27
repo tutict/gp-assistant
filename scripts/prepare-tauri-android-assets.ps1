@@ -62,10 +62,10 @@ function Build-ReactFrontend {
     }
 
     if (-not (Test-Path -LiteralPath (Join-Path $FrontendDir "node_modules"))) {
-        Invoke-Checked "Installing React frontend dependencies" "npm.cmd" @("ci") $FrontendDir
+        Invoke-Checked "Installing React frontend dependencies" "npm.cmd" @("--prefix", "desktop/frontend", "ci") $Root
     }
 
-    Invoke-Checked "Building React/TypeScript frontend" "npm.cmd" @("run", "build") $FrontendDir
+    Invoke-Checked "Building React/TypeScript frontend" "npm.cmd" @("--prefix", "desktop/frontend", "run", "build") $Root
 
     $indexPath = Join-Path $OutputDir "index.html"
     if (-not (Test-Path -LiteralPath $indexPath)) {
