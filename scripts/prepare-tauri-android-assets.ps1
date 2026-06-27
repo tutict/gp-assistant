@@ -3,9 +3,8 @@ param()
 $ErrorActionPreference = "Stop"
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$SourceDir = Join-Path $Root "app\static"
+$FrontendDir = Join-Path $Root "desktop\frontend"
 $OutputDir = Join-Path $Root "desktop\mobile-dist"
-$StaticOutputDir = Join-Path $OutputDir "static"
 $AndroidManifest = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\AndroidManifest.xml"
 $AndroidBuildGradle = Join-Path $Root "desktop\src-tauri\gen\android\app\build.gradle.kts"
 $AndroidMainActivity = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\java\com\tutict\stockoptimizer\MainActivity.kt"
@@ -30,6 +29,47 @@ function Assert-WorkspaceChildPath {
 
     if (-not $childFullPath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing to write outside workspace: $childFullPath"
+    }
+}
+
+function Invoke-Checked {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Description,
+        [Parameter(Mandatory = $true)]
+        [string] $FilePath,
+        [Parameter(Mandatory = $true)]
+        [string[]] $Arguments,
+        [Parameter(Mandatory = $true)]
+        [string] $WorkingDirectory
+    )
+
+    Write-Host $Description
+    Push-Location $WorkingDirectory
+    try {
+        & $FilePath @Arguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "$Description failed with exit code $LASTEXITCODE."
+        }
+    } finally {
+        Pop-Location
+    }
+}
+
+function Build-ReactFrontend {
+    if (-not (Test-Path -LiteralPath $FrontendDir)) {
+        throw "React frontend directory does not exist: $FrontendDir"
+    }
+
+    if (-not (Test-Path -LiteralPath (Join-Path $FrontendDir "node_modules"))) {
+        Invoke-Checked "Installing React frontend dependencies" "npm.cmd" @("ci") $FrontendDir
+    }
+
+    Invoke-Checked "Building React/TypeScript frontend" "npm.cmd" @("run", "build") $FrontendDir
+
+    $indexPath = Join-Path $OutputDir "index.html"
+    if (-not (Test-Path -LiteralPath $indexPath)) {
+        throw "React frontend build did not produce expected file: $indexPath"
     }
 }
 
@@ -651,25 +691,9 @@ function Export-MobileFinancialSnapshot {
     [System.IO.File]::WriteAllText($snapshotPath, $json, [System.Text.UTF8Encoding]::new($false))
     Write-Host "Prepared mobile financial snapshot: $($stocks.Count) rows, $($financials.Count) EPS entries at $snapshotPath"
 }
-if (-not (Test-Path -LiteralPath $SourceDir)) {
-    throw "Frontend source directory does not exist: $SourceDir"
-}
-
 Assert-WorkspaceChildPath $OutputDir $Root
 
-if (Test-Path -LiteralPath $OutputDir) {
-    Remove-Item -LiteralPath $OutputDir -Recurse -Force
-}
-
-New-Item -ItemType Directory -Path $StaticOutputDir -Force | Out-Null
-
-Copy-Item -LiteralPath (Join-Path $SourceDir "index.html") -Destination (Join-Path $OutputDir "index.html") -Force
-
-Get-ChildItem -LiteralPath $SourceDir -Force |
-    Where-Object { $_.Name -ne "index.html" } |
-    ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination $StaticOutputDir -Recurse -Force
-    }
+Build-ReactFrontend
 
 Export-MobileFinancialSnapshot
 
@@ -678,4 +702,4 @@ Update-AndroidProjectBranding
 Update-AndroidStartupTheme
 Update-AndroidSafeAreaInsets
 
-Write-Host "Prepared Tauri Android assets at: $OutputDir"
+Write-Host "Prepared Tauri React assets at: $OutputDir"

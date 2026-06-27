@@ -17,6 +17,8 @@ output/
 models/*
 !models/.gitkeep
 desktop/node_modules/
+desktop/frontend/node_modules/
+desktop/frontend/tsconfig.tsbuildinfo
 desktop/mobile-dist/
 desktop/src-tauri/gen/
 desktop/src-tauri/target/

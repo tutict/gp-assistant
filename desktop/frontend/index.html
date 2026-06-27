@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>股选优</title>
+    <link rel="icon" href="/assets/logo-mark-v2.png" />
+    <script>
+      const requestedTheme = new URLSearchParams(window.location.search).get("theme");
+      const savedTheme =
+        requestedTheme === "dark" || requestedTheme === "light"
+          ? requestedTheme
+          : localStorage.getItem("stock-optimizer-theme");
+      document.documentElement.dataset.theme = savedTheme || "dark";
+    </script>
+    <style>
+      html, body {
+        background: #120e0d;
+        color: #fff4ef;
+        margin: 0;
+        min-height: 100vh;
+      }
+      #bootSplash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: grid;
+        place-items: center;
+        background: #120e0d;
+        color: #fff4ef;
+        font-family: system-ui, sans-serif;
+      }
+      #bootSplash .splash-logo {
+        width: 48px; height: 48px;
+        border: 3px solid rgba(217, 37, 29, 0.2);
+        border-top-color: #d9251d;
+        border-radius: 50%;
+        animation: splashSpin 0.8s linear infinite;
+        margin-bottom: 16px;
+      }
+      #bootSplash .splash-text {
+        font-size: 0.9rem;
+        opacity: 0.6;
+      }
+      @keyframes splashSpin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div id="bootSplash">
+      <div style="text-align: center;">
+        <div class="splash-logo"></div>
+        <div class="splash-text">股选优启动中…</div>
+      </div>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

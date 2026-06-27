@@ -246,3 +246,6 @@ curl -X POST http://127.0.0.1:8000/api/backtest ^
 ```
 
 趋势和回测接口未指定 `end_date` 时，默认使用服务运行环境的当前系统日期。
+# Frontend Source
+
+The React/TypeScript frontend source now lives in `desktop/frontend/`. `desktop/mobile-dist/` is generated output from `npm run build` and `scripts/prepare-tauri-android-assets.ps1`; do not edit it by hand. The old `app/static/` frontend remains as a legacy migration reference unless a task explicitly targets that path.

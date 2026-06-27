@@ -55,8 +55,12 @@ function Invoke-Checked {
 }
 
 if (-not $SkipNode) {
-    $node = Resolve-CommandPath "node" "Install Node.js and retry."
-    Invoke-Checked "Frontend JavaScript syntax" $node @("--check", "app/static/app.js")
+    $npm = Resolve-CommandPath "npm.cmd" "Install Node.js/npm and retry."
+    $frontendDir = Join-Path $Root "desktop/frontend"
+    if (-not (Test-Path -LiteralPath (Join-Path $frontendDir "node_modules"))) {
+        Invoke-Checked "Install frontend dependencies" $npm @("ci") $frontendDir
+    }
+    Invoke-Checked "Frontend React/TypeScript build" $npm @("run", "build") $frontendDir
 }
 
 if (-not $SkipPrepare) {
