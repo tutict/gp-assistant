@@ -68,7 +68,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose }: Filte
         <span className="criteria-summary">{summary}</span>
       </div>
 
-      {open && <div className="criteria-overlay" onClick={onClose} />}
+      {open && <div className={`criteria-overlay ${open ? "open" : ""}`} onClick={onClose} />}
 
       <aside className={`criteria-panel ${open ? "open" : ""}`}>
         <div className="criteria-panel-header">

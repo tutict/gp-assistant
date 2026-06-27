@@ -1,6 +1,5 @@
 import { useCallback, useState } from "react";
 import type { LlmSettings } from "../../types";
-import { escapeHtml } from "../../lib/format";
 
 function normalizeBaseUrl(url: string): string {
   const trimmed = url.trim();
@@ -57,7 +56,7 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
       {open && (
         <div className="llm-settings-body">
           <div className="form-row">
-            <label htmlFor="llmApiKey">API Key</label>
+            <label htmlFor="llmApiKey">API 密钥</label>
             <input
               id="llmApiKey"
               type="password"
@@ -68,7 +67,7 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
           </div>
 
           <div className="form-row">
-            <label htmlFor="llmBaseUrl">Base URL</label>
+            <label htmlFor="llmBaseUrl">接口地址</label>
             <input
               id="llmBaseUrl"
               type="url"
@@ -132,7 +131,7 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
                 checked={current.remember_key ?? false}
                 onChange={(e) => update({ remember_key: e.target.checked })}
               />
-              记住 API Key
+              记住 API 密钥
             </label>
           </div>
 

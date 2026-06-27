@@ -275,7 +275,7 @@ try {
     Write-LogLine "  Error: $($_.Exception.Message)" ([ConsoleColor]::Red)
     Write-FailHint 'Run: .\start-tauri-dev.bat'
     Write-FailHint 'Run: .\start-tauri-dev.bat -PreflightOnly -NoTranscript'
-    Write-FailHint 'Run: .\start-tauri-dev.bat -RunPreflight -NoWatch -NoTranscript'
+    Write-FailHint 'Run: .\start-tauri-dev.bat -RunPreflight -SkipPrepare -NoWatch -NoTranscript'
     Write-FailHint 'Run: .\start-tauri-dev.bat -VerboseTauri -NoWatch -NoTranscript'
     Write-FailHint 'Run: npm.cmd run dev -- --no-watch'
 } finally {

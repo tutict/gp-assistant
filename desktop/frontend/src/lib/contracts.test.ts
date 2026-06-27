@@ -9,6 +9,7 @@ import {
   fetchUpstreamImportPayload,
   normalizeAgentStreamEvent,
   normalizeNewsGroups,
+  normalizeScreenGroups,
   normalizeScreenRows,
   parseSseBlock,
   parseUpstreamImportDescriptor,
@@ -111,6 +112,45 @@ describe("response normalizers", () => {
     expect(rows.map((row) => row.code)).toEqual(["300750.SZ", "600519.SH"]);
     expect(rows[0].score).toBe(18);
     expect(rows[1].score).toBe(88);
+  });
+
+  it("normalizes ordinary screen hot and potential groups", () => {
+    const groups = normalizeScreenGroups({
+      groups: [
+        {
+          key: "hot",
+          title: "热门股",
+          description: "热门方向候选。",
+          total: 2,
+          returned: 1,
+          items: [{ stock: { code: "300750.SZ", name: "宁德时代" }, score: 90, reasons: ["新能源"] }],
+        },
+        {
+          key: "potential",
+          title: "潜力股",
+          total: 3,
+          returned: 1,
+          items: [{ stock: { code: "600519.SH", name: "贵州茅台" }, score: 80, reasons: ["质量"] }],
+        },
+      ],
+    });
+
+    expect(groups.map((group) => group.title)).toEqual(["热门股", "潜力股"]);
+    expect(groups[0]).toMatchObject({ key: "hot", meta: "返回 1 / 总数 2" });
+    expect(groups[0].rows[0]).toMatchObject({ code: "300750.SZ", name: "宁德时代", score: 90 });
+    expect(groups[1].rows[0]).toMatchObject({ code: "600519.SH", name: "贵州茅台" });
+  });
+
+  it("keeps empty ordinary screen groups so users can see hot and potential sections", () => {
+    const groups = normalizeScreenGroups({
+      groups: [
+        { key: "hot", title: "热门股", total: 0, returned: 0, items: [] },
+        { key: "potential", title: "潜力股", total: 0, returned: 0, items: [] },
+      ],
+    });
+
+    expect(groups.map((group) => group.title)).toEqual(["热门股", "潜力股"]);
+    expect(groups.every((group) => group.rows.length === 0)).toBe(true);
   });
 
   it("normalizes news sentiment object groups", () => {

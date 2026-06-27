@@ -8,6 +8,7 @@ import {
   buildSectorScreenRequest,
   buildTrendAnalyzeRequest,
   buildTrendScreenRequest,
+  normalizeScreenGroups,
   normalizeScreenRows,
   normalizeSectorGroups,
 } from "../../lib/contracts";
@@ -219,7 +220,7 @@ function ScreenResultView({
   onRunBacktest?: () => void;
 }) {
   const resultRecord = result as { total?: number; returned?: number; notes?: string[] };
-  const groups = grouped ? normalizeSectorGroups(result as SectorScreenResult) : [];
+  const groups = grouped ? normalizeSectorGroups(result as SectorScreenResult) : normalizeScreenGroups(result);
   const rows = normalizeScreenRows(result);
 
   return (
@@ -242,8 +243,8 @@ function ScreenResultView({
           {groups.map((group, i) => (
             <details key={`${group.title}-${i}`} className="sector-group" open={i === 0}>
               <summary>
-                <div><h3>{group.title}</h3><p>{group.meta}</p></div>
-                <span className="sector-group-meta"><strong>{group.rows.length}</strong><i /></span>
+                <div><h3>{group.title}</h3><p>{group.description || group.meta}</p></div>
+                <span className="sector-group-meta"><strong>{group.rows.length}</strong><small>{group.meta}</small><i /></span>
               </summary>
               <div className="sector-group-content">
                 <StockList items={group.rows} watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} onObserveStock={onObserveStock} />

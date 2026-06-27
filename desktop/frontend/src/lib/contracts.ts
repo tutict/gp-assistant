@@ -39,6 +39,16 @@ export interface ScreenRequestOptions {
   score_profile?: "quality" | "rotation";
 }
 
+export interface StockGroupView {
+  key: string;
+  title: string;
+  description: string;
+  meta: string;
+  rows: StockRowView[];
+  total: number;
+  returned: number;
+}
+
 export function buildScreenCriteria(criteria: FilterCriteria, overrides: ScreenRequestOptions = {}): ScreenCriteria {
   const payload: ScreenCriteria = {
     include_st: criteria.includeSt,
@@ -201,17 +211,14 @@ export function normalizeScreenRows(result: ScreenResult | GraphScreenResult | T
   return items.map((item) => normalizeStockRow(item)).filter((item): item is StockRowView => Boolean(item));
 }
 
-export function normalizeSectorGroups(result: SectorScreenResult | ScreenResult | unknown): { title: string; meta: string; rows: StockRowView[] }[] {
+export function normalizeScreenGroups(result: ScreenResult | unknown): StockGroupView[] {
   const groups = Array.isArray(asRecord(result).groups) ? (asRecord(result).groups as unknown[]) : [];
-  return groups.map((group) => {
-    const g = asRecord(group);
-    const rows = Array.isArray(g.items) ? g.items.map((item) => normalizeStockRow(item)).filter(Boolean) as StockRowView[] : [];
-    return {
-      title: String(g.sector || g.title || g.key || "Group"),
-      meta: `返回 ${g.returned ?? rows.length} / 总数 ${g.total ?? rows.length}`,
-      rows,
-    };
-  });
+  return groups.map((group) => normalizeStockGroup(group, "screen"));
+}
+
+export function normalizeSectorGroups(result: SectorScreenResult | ScreenResult | unknown): StockGroupView[] {
+  const groups = Array.isArray(asRecord(result).groups) ? (asRecord(result).groups as unknown[]) : [];
+  return groups.map((group) => normalizeStockGroup(group, "sector"));
 }
 
 export function normalizeStockRow(item: unknown): StockRowView | null {
@@ -385,6 +392,31 @@ function trendAnalyzeToRow(result: TrendIndicatorResult): StockRowView {
     scoreLabel: "trend",
     raw: result,
   };
+}
+
+function normalizeStockGroup(group: unknown, mode: "screen" | "sector"): StockGroupView {
+  const g = asRecord(group);
+  const key = String(g.key || g.sector || "");
+  const rows = Array.isArray(g.items) ? g.items.map((item) => normalizeStockRow(item)).filter((item): item is StockRowView => Boolean(item)) : [];
+  const total = Number.isFinite(Number(g.total)) ? Number(g.total) : rows.length;
+  const returned = Number.isFinite(Number(g.returned)) ? Number(g.returned) : rows.length;
+  return {
+    key,
+    title: String(g.sector || g.title || screenGroupTitle(key) || (mode === "screen" ? "筛选分组" : "分组")),
+    description: String(g.description || ""),
+    meta: `返回 ${returned} / 总数 ${total}`,
+    rows,
+    total,
+    returned,
+  };
+}
+
+function screenGroupTitle(key: string): string {
+  const titles: Record<string, string> = {
+    hot: "热门股",
+    potential: "潜力股",
+  };
+  return titles[key] || "";
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

@@ -135,18 +135,20 @@ export function DataSourceBar({ mobileRuntime }: DataSourceBarProps) {
 
   return (
     <div className="data-source-bar">
-      <div className="data-source-status">
-        <span className="status-item"><em>股票池</em><strong>{formatNumber(status?.universe_count)}</strong></span>
-        <span className="status-item"><em>缓存</em><strong>{formatBytes(status?.cache_bytes)}</strong></span>
-        <span className="status-item"><em>更新</em><strong>{formatDateTime(status?.universe_updated_at)}</strong></span>
-        <span className={`status-item ${status?.stale ? "stale" : "fresh"}`}><em>状态</em><strong>{status?.stale ? "过期" : "可用"}</strong></span>
-        <span className="status-item"><em>运行时</em><strong>{isTauriRuntime() ? (mobileRuntime ? "Android Tauri" : "Windows Tauri") : "Python Web"}</strong></span>
-      </div>
+      <div className="data-source-main">
+        <div className="data-source-status">
+          <span className="status-item"><em>股票池</em><strong>{formatNumber(status?.universe_count)}</strong></span>
+          <span className="status-item"><em>缓存</em><strong>{formatBytes(status?.cache_bytes)}</strong></span>
+          <span className="status-item"><em>更新</em><strong>{formatDateTime(status?.universe_updated_at)}</strong></span>
+          <span className={`status-item ${status?.stale ? "stale" : "fresh"}`}><em>状态</em><strong>{status?.stale ? "过期" : "可用"}</strong></span>
+          <span className="status-item"><em>运行时</em><strong>{isTauriRuntime() ? (mobileRuntime ? "Android Tauri" : "Windows Tauri") : "Python Web"}</strong></span>
+        </div>
 
-      <div className="refresh-options">
-        <label><input type="checkbox" checked={fullRebuild} onChange={(event) => setFullRebuild(event.target.checked)} disabled={refreshing} />全量重建</label>
-        <label>批次<input type="number" min="1" max="1000" value={batchCount} onChange={(event) => setBatchCount(Number(event.target.value) || 1)} disabled={refreshing} /></label>
-        <label>候选<input type="number" min="1000" max="50000" step="1000" value={maxCandidates} onChange={(event) => setMaxCandidates(Number(event.target.value) || 15000)} disabled={refreshing} /></label>
+        <div className="refresh-options">
+          <label><input type="checkbox" checked={fullRebuild} onChange={(event) => setFullRebuild(event.target.checked)} disabled={refreshing} />全量重建</label>
+          <label>批次<input type="number" min="1" max="1000" value={batchCount} onChange={(event) => setBatchCount(Number(event.target.value) || 1)} disabled={refreshing} /></label>
+          <label>候选<input type="number" min="1000" max="50000" step="1000" value={maxCandidates} onChange={(event) => setMaxCandidates(Number(event.target.value) || 15000)} disabled={refreshing} /></label>
+        </div>
       </div>
 
       <div className="data-source-actions">
@@ -163,13 +165,19 @@ export function DataSourceBar({ mobileRuntime }: DataSourceBarProps) {
       )}
 
       {refreshLog.length > 0 && (
-        <div className="refresh-log">
-          {refreshLog.map((entry, i) => (
-            <div key={`${entry.time}-${i}`} className={`refresh-log-entry ${entry.tone}`}>
-              <span className="refresh-log-time">{entry.time}</span>
-              <span className="refresh-log-message">{entry.message}</span>
-            </div>
-          ))}
+        <div className="refresh-log-shell">
+          <div className="refresh-log-header">
+            <span>刷新日志</span>
+            <strong>最近 {refreshLog.length} 条</strong>
+          </div>
+          <div className="refresh-log">
+            {refreshLog.map((entry, i) => (
+              <div key={`${entry.time}-${i}`} className={`refresh-log-entry ${entry.tone}`}>
+                <span className="refresh-log-time">{entry.time}</span>
+                <span className="refresh-log-message">{entry.message}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
