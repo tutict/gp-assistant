@@ -33,7 +33,7 @@ export function ObservePanel({ initialCode }: ObservePanelProps) {
   const runObserve = useCallback(async () => {
     const normalizedCode = normalizeStockCode(code);
     if (!normalizedCode) {
-      setError("Please enter a valid stock code.");
+      setError("请输入有效股票代码。");
       return;
     }
     setLoading(true);
@@ -59,19 +59,19 @@ export function ObservePanel({ initialCode }: ObservePanelProps) {
     <div className="panel-container">
       <div className="panel-controls">
         <div className="form-row inline stock-code-row">
-          <label htmlFor="observeCode">Code</label>
+          <label htmlFor="observeCode">股票代码</label>
           <StockCodeInput id="observeCode" value={code} onChange={setCode} placeholder="输入股票代码或名称" />
         </div>
-        <div className="form-row inline"><label htmlFor="observeStart">Start</label><input id="observeStart" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></div>
-        <div className="form-row inline"><label htmlFor="observeEnd">End</label><input id="observeEnd" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></div>
-        <button type="button" className="run-btn" onClick={runObserve} disabled={loading}>{loading ? "Observing..." : "Observe"}</button>
+        <div className="form-row inline"><label htmlFor="observeStart">开始日期</label><input id="observeStart" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></div>
+        <div className="form-row inline"><label htmlFor="observeEnd">结束日期</label><input id="observeEnd" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></div>
+        <button type="button" className="run-btn" onClick={runObserve} disabled={loading}>{loading ? "观察中..." : "开始观察"}</button>
       </div>
 
       <div className="panel-result">
-        {error && <div className="result-error"><strong>Observe failed</strong><p>{escapeHtml(error)}</p></div>}
-        {loading && !result && !error && <div className="result-loading"><div className="loader" /><span>Loading observation...</span></div>}
+        {error && <div className="result-error"><strong>观察失败</strong><p>{escapeHtml(error)}</p></div>}
+        {loading && !result && !error && <div className="result-loading"><div className="loader" /><span>正在加载观察结果...</span></div>}
         {result && !loading && <ObserveResultView result={result} />}
-        {!result && !loading && !error && <div className="result-empty"><span>Enter a stock code, then observe.</span></div>}
+        {!result && !loading && !error && <div className="result-empty"><span>输入股票代码后开始观察。</span></div>}
       </div>
     </div>
   );
@@ -88,8 +88,8 @@ export function ObserveResultView({ result }: { result: ObserveResult }) {
   return (
     <div className="observe-result">
       <div className="metric-strip">
-        <div className="metric"><span>Source</span><strong>{result.source || "--"}</strong></div>
-        <div className="metric"><span>Price</span><strong>{formatPrice(stock.price)}</strong></div>
+        <div className="metric"><span>来源</span><strong>{result.source || "--"}</strong></div>
+        <div className="metric"><span>价格</span><strong>{formatPrice(stock.price)}</strong></div>
         <div className="metric"><span>K/D/J</span><strong>{formatNumber(signal?.k)} / {formatNumber(signal?.d)} / {formatNumber(signal?.j)}</strong></div>
       </div>
 
@@ -102,34 +102,34 @@ export function ObserveResultView({ result }: { result: ObserveResult }) {
           <Metric label="PE" value={formatNumber(stock.pe)} />
           <Metric label="PB" value={formatNumber(stock.pb)} />
           <Metric label="ROE" value={formatPercent(stock.roe)} />
-          <Metric label="Market cap" value={formatNumber(stock.market_cap_billion)} />
+          <Metric label="市值" value={formatNumber(stock.market_cap_billion)} />
         </div>
       </section>
 
       {signal && (
         <section className="signal-card">
-          <header><div><h3>Trend signal</h3><p>{signal.date || ""}</p></div><span className="state-pill">{signal.status || "neutral"}</span></header>
+          <header><div><h3>趋势信号</h3><p>{signal.date || ""}</p></div><span className="state-pill">{signalStatusLabel(signal.status)}</span></header>
           <div className="signal-grid">
-            <Metric label="Close" value={formatPrice(signal.close)} />
+            <Metric label="收盘" value={formatPrice(signal.close)} />
             <Metric label="SWL/SWS" value={`${formatNumber(signal.swl)} / ${formatNumber(signal.sws)}`} />
             <Metric label="KDJ" value={`${formatNumber(signal.k)} / ${formatNumber(signal.d)} / ${formatNumber(signal.j)}`} />
-            <Metric label="Quant" value={`${signal.quant_score ?? 0}/${signal.quant_score_max ?? 90}`} />
-            <Metric label="Pattern" value={`${signal.pattern_score ?? 0}/${signal.pattern_score_max ?? 100}`} />
-            <Metric label="Support" value={formatNumber(signal.support)} />
-            <Metric label="Resistance" value={formatNumber(signal.resistance)} />
+            <Metric label="量化分" value={`${signal.quant_score ?? 0}/${signal.quant_score_max ?? 90}`} />
+            <Metric label="形态分" value={`${signal.pattern_score ?? 0}/${signal.pattern_score_max ?? 100}`} />
+            <Metric label="支撑" value={formatNumber(signal.support)} />
+            <Metric label="压力" value={formatNumber(signal.resistance)} />
           </div>
           {signal.reasons?.length ? <div className="tag-row">{signal.reasons.map((reason) => <span key={reason}>{reason}</span>)}</div> : null}
           {series.length > 1 ? <TrendCharts series={series} /> : null}
         </section>
       )}
 
-      {financial?.items?.length ? <FinancialIndicators items={financial.items} title={financial.title || "Financial indicators"} /> : null}
+      {financial?.items?.length ? <FinancialIndicators items={financial.items} title={financial.title || "财务指标"} /> : null}
       {capital ? <CapitalEvidence sections={capital.sections || []} summary={capital.summary} notes={capital.notes || []} /> : null}
 
       {[...(result.notes || []), ...(signal?.notes || [])].length ? (
         <div className="notes">{[...(result.notes || []), ...(signal?.notes || [])].map((note) => <p key={note}>{note}</p>)}</div>
       ) : null}
-      <details className="raw-json"><summary>Raw JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
+      <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
     </div>
   );
 }
@@ -158,7 +158,7 @@ function FinancialIndicators({ items, title }: { items: FinancialIndicatorItem[]
 function CapitalEvidence({ sections, summary, notes }: { sections: CapitalEvidenceSection[]; summary?: string | null; notes: string[] }) {
   return (
     <section className="capital-evidence-list">
-      <header><h3>Capital evidence</h3>{summary && <p>{summary}</p>}</header>
+      <header><h3>资金证据</h3>{summary && <p>{summary}</p>}</header>
       {sections.filter((section) => section.items?.length || section.summary).slice(0, 6).map((section) => (
         <article key={section.key} className="capital-section">
           <h4>{section.title}</h4>
@@ -182,10 +182,21 @@ function CapitalEvidence({ sections, summary, notes }: { sections: CapitalEviden
 function TrendCharts({ series }: { series: { date: string; close?: number; swl?: number | null; sws?: number | null; k?: number | null; d?: number | null; j?: number | null }[] }) {
   return (
     <div className="signal-chart-stack">
-      <LineChart title="Close / SWL / SWS" series={series} keys={["close", "swl", "sws"]} />
+      <LineChart title="收盘 / SWL / SWS" series={series} keys={["close", "swl", "sws"]} />
       <LineChart title="KDJ" series={series} keys={["k", "d", "j"]} />
     </div>
   );
+}
+
+function signalStatusLabel(status?: string): string {
+  const labels: Record<string, string> = {
+    neutral: "中性",
+    positive: "偏强",
+    negative: "偏弱",
+    bullish: "看多",
+    bearish: "看空",
+  };
+  return labels[String(status || "neutral")] || String(status || "中性");
 }
 
 function LineChart({ title, series, keys }: { title: string; series: Record<string, unknown>[]; keys: string[] }) {

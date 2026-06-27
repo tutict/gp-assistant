@@ -26,11 +26,11 @@ import { StockCodeInput } from "../StockCodeInput";
 type NewsTab = "newsRag" | "ragPackBuild" | "ragPackQuery" | "upstreamScan" | "upstreamImport";
 
 const TABS: { key: NewsTab; label: string }[] = [
-  { key: "newsRag", label: "News RAG" },
-  { key: "ragPackBuild", label: "Build pack" },
-  { key: "ragPackQuery", label: "Query pack" },
-  { key: "upstreamScan", label: "Upstream sync" },
-  { key: "upstreamImport", label: "Mobile import" },
+  { key: "newsRag", label: "新闻 RAG" },
+  { key: "ragPackBuild", label: "构建包" },
+  { key: "ragPackQuery", label: "查询包" },
+  { key: "upstreamScan", label: "上游同步" },
+  { key: "upstreamImport", label: "移动导入" },
 ];
 
 interface NewsRagPanelProps {
@@ -78,7 +78,7 @@ export function NewsRagPanel({ llmSettings }: NewsRagPanelProps) {
     setError(null);
     try {
       if (tab === "newsRag") {
-        if (!normalizedCode) throw new Error("Please enter a valid stock code.");
+        if (!normalizedCode) throw new Error("请输入有效股票代码。");
         const data = await postJson<NewsRagResult>("/api/news-rag", buildNewsRagRequest(normalizedCode, newsDays, buildLlmConfig(llmSettings)));
         setResult(data);
       } else if (tab === "ragPackBuild") {
@@ -91,7 +91,7 @@ export function NewsRagPanel({ llmSettings }: NewsRagPanelProps) {
         if (isMobileTauriRuntime()) {
           await scanAndImport();
         } else {
-          if (!normalizedCode) throw new Error("Desktop upstream build needs a target stock code.");
+          if (!normalizedCode) throw new Error("桌面端构建上游同步包需要目标股票代码。");
           const build = await postJson<UpstreamRagBuildResult>("/api/upstream-rag/build", buildUpstreamRagBuildRequest(normalizedCode, newsDays, manualUrls));
           const manifest = build.manifest || {};
           const transfer = manifest.valid
@@ -172,33 +172,33 @@ export function NewsRagPanel({ llmSettings }: NewsRagPanelProps) {
       <div className="panel-controls">
         {(tab === "newsRag" || tab === "ragPackBuild" || tab === "ragPackQuery" || tab === "upstreamScan") && (
           <>
-            <div className="form-row inline stock-code-row"><label htmlFor="newsCode">Code</label><StockCodeInput id="newsCode" value={newsCode} onChange={setNewsCode} placeholder="输入股票代码或名称" /></div>
-            <div className="form-row inline"><label htmlFor="newsDays">Days</label><input id="newsDays" type="number" min="1" max="3650" value={newsDays} onChange={(e) => setNewsDays(Number(e.target.value) || 30)} /></div>
+            <div className="form-row inline stock-code-row"><label htmlFor="newsCode">股票代码</label><StockCodeInput id="newsCode" value={newsCode} onChange={setNewsCode} placeholder="输入股票代码或名称" /></div>
+            <div className="form-row inline"><label htmlFor="newsDays">天数</label><input id="newsDays" type="number" min="1" max="3650" value={newsDays} onChange={(e) => setNewsDays(Number(e.target.value) || 30)} /></div>
           </>
         )}
         {(tab === "ragPackBuild" || tab === "ragPackQuery") && (
-          <div className="form-row"><label htmlFor="seedCodesForRag">Seed codes</label><StockCodeInput id="seedCodesForRag" value={seedCodes} onChange={setSeedCodes} placeholder="Optional comma separated codes" listMode /></div>
+          <div className="form-row"><label htmlFor="seedCodesForRag">种子股票</label><StockCodeInput id="seedCodesForRag" value={seedCodes} onChange={setSeedCodes} placeholder="可选，多个股票用逗号分隔" listMode /></div>
         )}
         {tab === "ragPackQuery" && (
-          <div className="form-row"><label htmlFor="ragQuery">Query</label><input id="ragQuery" type="text" value={queryText} onChange={(e) => setQueryText(e.target.value)} placeholder="supply chain order evidence" /></div>
+          <div className="form-row"><label htmlFor="ragQuery">查询问题</label><input id="ragQuery" type="text" value={queryText} onChange={(e) => setQueryText(e.target.value)} placeholder="例如：供应链订单证据" /></div>
         )}
         {tab === "upstreamScan" && !isMobileTauriRuntime() && (
-          <div className="form-row"><label htmlFor="manualUrls">Manual URLs</label><textarea id="manualUrls" rows={3} value={manualUrls} onChange={(e) => setManualUrls(e.target.value)} placeholder="Optional public source URLs, one per line" /></div>
+          <div className="form-row"><label htmlFor="manualUrls">手动来源 URL</label><textarea id="manualUrls" rows={3} value={manualUrls} onChange={(e) => setManualUrls(e.target.value)} placeholder="可选公共来源链接，每行一个" /></div>
         )}
         {tab === "upstreamImport" && (
-          <div className="form-row"><label htmlFor="upstreamImportPayload">Descriptor</label><textarea id="upstreamImportPayload" rows={5} value={importPayload} onChange={(e) => setImportPayload(e.target.value)} placeholder="Paste QR JSON or manifest_url" /></div>
+          <div className="form-row"><label htmlFor="upstreamImportPayload">导入描述</label><textarea id="upstreamImportPayload" rows={5} value={importPayload} onChange={(e) => setImportPayload(e.target.value)} placeholder="粘贴二维码 JSON 或 manifest_url" /></div>
         )}
-        <button type="button" className="run-btn" onClick={run} disabled={loading || scanning}>{loading || scanning ? "Running..." : "Run"}</button>
+        <button type="button" className="run-btn" onClick={run} disabled={loading || scanning}>{loading || scanning ? "运行中..." : "运行"}</button>
         {(tab === "upstreamScan" || tab === "upstreamImport") && (
-          <button type="button" className="action-btn" onClick={listMobilePacks} disabled={loading || scanning}>List packs</button>
+          <button type="button" className="action-btn" onClick={listMobilePacks} disabled={loading || scanning}>查看导入包</button>
         )}
       </div>
 
       <div className="panel-result">
-        {error && <div className="result-error"><strong>Request failed</strong><p>{escapeHtml(error)}</p></div>}
-        {loading && !result && !error && <div className="result-loading"><div className="loader" /><span>Working...</span></div>}
+        {error && <div className="result-error"><strong>请求失败</strong><p>{escapeHtml(error)}</p></div>}
+        {loading && !result && !error && <div className="result-loading"><div className="loader" /><span>处理中...</span></div>}
         {result != null && !loading && <NewsResult tab={tab} result={result} onDetail={showMobilePackDetail} onRollback={rollbackMobilePack} />}
-        {!result && !loading && !error && <div className="result-empty"><span>Configure parameters, then run.</span></div>}
+        {!result && !loading && !error && <div className="result-empty"><span>设置参数后运行。</span></div>}
       </div>
     </div>
   );
@@ -233,27 +233,27 @@ export function NewsRagView({ result }: { result: NewsRagResult }) {
   return (
     <div className="news-rag-result">
       <div className="metric-strip">
-        <div className="metric"><span>Scope</span><strong>{result.scope_codes?.length ?? 0}</strong></div>
-        <div className="metric"><span>Relations</span><strong>{result.relation_count ?? 0}</strong></div>
-        <div className="metric"><span>Messages</span><strong>{result.message_count ?? 0}</strong></div>
-        <div className="metric"><span>Mode</span><strong>{groups.mode}</strong></div>
+        <div className="metric"><span>范围</span><strong>{result.scope_codes?.length ?? 0}</strong></div>
+        <div className="metric"><span>关系</span><strong>{result.relation_count ?? 0}</strong></div>
+        <div className="metric"><span>消息</span><strong>{result.message_count ?? 0}</strong></div>
+        <div className="metric"><span>模式</span><strong>{newsModeLabel(groups.mode)}</strong></div>
       </div>
 
       {findings.length > 0 && <Findings findings={findings} />}
 
       <div className="plain-news-groups">
-        <EvidenceColumn title="Positive" tone="positive" items={groups.positive} />
-        <EvidenceColumn title="Negative" tone="negative" items={groups.negative} />
+        <EvidenceColumn title="利好" tone="positive" items={groups.positive} />
+        <EvidenceColumn title="利空" tone="negative" items={groups.negative} />
         {secondary.length > 0 && (
           <details className="plain-news-secondary" open>
-            <summary><span>Mixed / uncertain {secondary.length}</span><b className="plain-news-toggle" /></summary>
+            <summary><span>混合 / 不确定 {secondary.length}</span><b className="plain-news-toggle" /></summary>
             <EvidenceList items={secondary} />
           </details>
         )}
       </div>
 
       {result.notes?.length ? <div className="notes">{result.notes.map((note) => <p key={note}>{note}</p>)}</div> : null}
-      <details className="raw-json"><summary>Raw JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
+      <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
     </div>
   );
 }
@@ -265,9 +265,9 @@ function Findings({ findings }: { findings: NewsImpactFinding[] }) {
         <section key={`${finding.target}-${index}`} className="news-finding">
           <header>
             <div><h3>{finding.target}</h3><p>{finding.impact_chain}</p></div>
-            <span className={`impact-pill ${finding.direction}`}>{finding.direction}</span>
+            <span className={`impact-pill ${finding.direction}`}>{directionLabel(finding.direction)}</span>
           </header>
-          <div className="finding-meta"><span>Confidence {finding.confidence}</span><span>Evidence {finding.evidence?.length ?? 0}</span></div>
+          <div className="finding-meta"><span>置信度 {finding.confidence}</span><span>证据 {finding.evidence?.length ?? 0}</span></div>
           <EvidenceList items={finding.evidence || []} />
           {finding.pending_checks?.length ? <div className="checklist">{finding.pending_checks.map((item) => <span key={item}>{item}</span>)}</div> : null}
         </section>
@@ -286,19 +286,19 @@ function EvidenceColumn({ title, tone, items }: { title: string; tone: string; i
 }
 
 function EvidenceList({ items }: { items: NewsEvidence[] }) {
-  if (!items.length) return <div className="result-empty"><span>No evidence.</span></div>;
+  if (!items.length) return <div className="result-empty"><span>暂无证据。</span></div>;
   return (
     <div className="evidence-list">
       {items.map((item, index) => (
         <article key={`${item.title}-${index}`}>
           <strong>{item.title || "--"}</strong>
           <span className="evidence-source">
-            <span className={`source-tier ${item.source_tier || "news"}`}>{item.source_tier || "news"}</span>
+            <span className={`source-tier ${item.source_tier || "news"}`}>{sourceTierLabel(item.source_tier)}</span>
             <span>{item.source || ""}</span>
             <span>{item.published_at || ""}</span>
           </span>
           {item.summary && <p>{item.summary}</p>}
-          {item.url && <a className="evidence-link" href={item.url} target="_blank" rel="noreferrer">Source</a>}
+          {item.url && <a className="evidence-link" href={item.url} target="_blank" rel="noreferrer">来源</a>}
         </article>
       ))}
     </div>
@@ -309,11 +309,11 @@ function RagPackQueryView({ result }: { result: RagPackQueryResult }) {
   const hits = result.hits || [];
   return (
     <div className="rag-query-result">
-      <div className="metric-strip"><div className="metric"><span>Hits</span><strong>{hits.length}</strong></div><div className="metric"><span>Version</span><strong>{String(result.manifest?.pack_version || "--")}</strong></div></div>
+      <div className="metric-strip"><div className="metric"><span>命中</span><strong>{hits.length}</strong></div><div className="metric"><span>版本</span><strong>{String(result.manifest?.pack_version || "--")}</strong></div></div>
       <div className="evidence-list">
         {hits.map((hit, i) => {
           const item = normalizeRagHit(hit);
-          return <article key={`${item.title}-${i}`}><strong>{item.title}</strong><span className="evidence-source">{item.source} score {item.score?.toFixed(3) ?? "--"}</span><p>{item.text}</p>{item.url && <a className="evidence-link" href={item.url} target="_blank" rel="noreferrer">Source</a>}</article>;
+          return <article key={`${item.title}-${i}`}><strong>{item.title}</strong><span className="evidence-source">{item.source} 分数 {item.score?.toFixed(3) ?? "--"}</span><p>{item.text}</p>{item.url && <a className="evidence-link" href={item.url} target="_blank" rel="noreferrer">来源</a>}</article>;
         })}
       </div>
       {result.notes?.length ? <div className="notes">{result.notes.map((note) => <p key={note}>{note}</p>)}</div> : null}
@@ -328,22 +328,22 @@ function UpstreamBuildView({ result }: { result: { build?: UpstreamRagBuildResul
   return (
     <div className="upstream-result">
       <div className="metric-strip">
-        <div className="metric"><span>Valid</span><strong>{manifest.valid ? "yes" : "no"}</strong></div>
-        <div className="metric"><span>Docs</span><strong>{String(manifest.document_count ?? 0)}</strong></div>
-        <div className="metric"><span>Evidence</span><strong>{String(manifest.evidence_count ?? 0)}</strong></div>
-        <div className="metric"><span>Relations</span><strong>{String(manifest.relation_edge_count ?? 0)}</strong></div>
+        <div className="metric"><span>有效</span><strong>{manifest.valid ? "是" : "否"}</strong></div>
+        <div className="metric"><span>文档</span><strong>{String(manifest.document_count ?? 0)}</strong></div>
+        <div className="metric"><span>证据</span><strong>{String(manifest.evidence_count ?? 0)}</strong></div>
+        <div className="metric"><span>关系</span><strong>{String(manifest.relation_edge_count ?? 0)}</strong></div>
       </div>
       <section className="upstream-transfer">
         <header>
-          <div><h3>{String(manifest.target_stock_name || "Upstream RAG")} {String(manifest.target_stock_code || "")}</h3><p>{String(manifest.pack_version || "")} - {formatBytes(manifest.file_size)}</p></div>
-          {transfer?.qr_svg && <img src={transfer.qr_svg} alt="Upstream RAG transfer QR" />}
+          <div><h3>{String(manifest.target_stock_name || "上游 RAG")} {String(manifest.target_stock_code || "")}</h3><p>{String(manifest.pack_version || "")} - {formatBytes(manifest.file_size)}</p></div>
+          {transfer?.qr_svg && <img src={transfer.qr_svg} alt="上游同步二维码" />}
         </header>
-        {transfer && <div className="detail-grid"><div><span>Manifest</span><strong>{transfer.manifest_url}</strong></div><div><span>Pack</span><strong>{transfer.pack_url}</strong></div><div><span>Expires</span><strong>{formatDateTime(transfer.expires_at)}</strong></div></div>}
+        {transfer && <div className="detail-grid"><div><span>清单</span><strong>{transfer.manifest_url}</strong></div><div><span>包文件</span><strong>{transfer.pack_url}</strong></div><div><span>过期时间</span><strong>{formatDateTime(transfer.expires_at)}</strong></div></div>}
         {transfer?.descriptor_json && <textarea className="upstream-inline-descriptor" readOnly rows={4} value={transfer.descriptor_json} />}
       </section>
       <RelationGraph manifest={manifest} />
       {build.notes?.length ? <div className="notes">{build.notes.map((note) => <p key={note}>{note}</p>)}</div> : null}
-      <details className="raw-json"><summary>Raw JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
+      <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
     </div>
   );
 }
@@ -358,12 +358,12 @@ function UpstreamMobileListView({
   onRollback: (stockCode: string) => void;
 }) {
   const packs = result.packs || [];
-  if (!packs.length) return <div className="result-empty"><span>{result.notes?.[0] || "No mobile RAG packs imported."}</span></div>;
+  if (!packs.length) return <div className="result-empty"><span>{result.notes?.[0] || "暂无已导入的移动端 RAG 包。"}</span></div>;
   return (
     <div className="upstream-mobile-list">
       <div className="metric-strip">
-        <div className="metric"><span>Packs</span><strong>{packs.length}</strong></div>
-        <div className="metric"><span>Root</span><strong>{result.root || "--"}</strong></div>
+        <div className="metric"><span>包数量</span><strong>{packs.length}</strong></div>
+        <div className="metric"><span>目录</span><strong>{result.root || "--"}</strong></div>
       </div>
       <div className="rag-pack-list">
         {packs.map((pack, index) => {
@@ -372,18 +372,18 @@ function UpstreamMobileListView({
           return (
             <article key={`${stockCode}-${version}-${index}`} className="rag-pack-item">
               <header>
-                <div><h3>{String(pack.target_stock_name || stockCode || "RAG pack")}</h3><p>{stockCode} {version}</p></div>
-                <span className={`pack-state ${pack.current ? "current" : "archived"}`}>{pack.current ? "current" : "archived"}</span>
+                <div><h3>{String(pack.target_stock_name || stockCode || "RAG 包")}</h3><p>{stockCode} {version}</p></div>
+                <span className={`pack-state ${pack.current ? "current" : "archived"}`}>{pack.current ? "当前" : "历史"}</span>
               </header>
               <div className="detail-grid">
-                <div><span>Docs</span><strong>{String(pack.document_count ?? 0)}</strong></div>
-                <div><span>Evidence</span><strong>{String(pack.evidence_count ?? 0)}</strong></div>
-                <div><span>Relations</span><strong>{String(pack.relation_edge_count ?? 0)}</strong></div>
-                <div><span>Size</span><strong>{formatBytes(pack.file_size)}</strong></div>
+                <div><span>文档</span><strong>{String(pack.document_count ?? 0)}</strong></div>
+                <div><span>证据</span><strong>{String(pack.evidence_count ?? 0)}</strong></div>
+                <div><span>关系</span><strong>{String(pack.relation_edge_count ?? 0)}</strong></div>
+                <div><span>大小</span><strong>{formatBytes(pack.file_size)}</strong></div>
               </div>
               <div className="upstream-pack-actions">
-                <button type="button" className="action-btn" onClick={() => onDetail(stockCode, version)}>Detail</button>
-                <button type="button" className="action-btn" onClick={() => onRollback(stockCode)}>Rollback</button>
+                <button type="button" className="action-btn" onClick={() => onDetail(stockCode, version)}>详情</button>
+                <button type="button" className="action-btn" onClick={() => onRollback(stockCode)}>回滚</button>
               </div>
             </article>
           );
@@ -399,14 +399,14 @@ function UpstreamImportView({ result }: { result: Record<string, unknown> }) {
   return (
     <div className="upstream-result">
       <div className="metric-strip">
-        <div className="metric"><span>Import</span><strong>{result.imported ? "done" : result.rolled_back ? "rolled back" : "updated"}</strong></div>
-        <div className="metric"><span>Code</span><strong>{String(result.stock_code || manifest.target_stock_code || "--")}</strong></div>
-        <div className="metric"><span>Version</span><strong>{String(result.pack_version || manifest.pack_version || "--")}</strong></div>
-        <div className="metric"><span>Docs</span><strong>{String(manifest.document_count ?? 0)}</strong></div>
+        <div className="metric"><span>导入</span><strong>{result.imported ? "已导入" : result.rolled_back ? "已回滚" : "已更新"}</strong></div>
+        <div className="metric"><span>股票</span><strong>{String(result.stock_code || manifest.target_stock_code || "--")}</strong></div>
+        <div className="metric"><span>版本</span><strong>{String(result.pack_version || manifest.pack_version || "--")}</strong></div>
+        <div className="metric"><span>文档</span><strong>{String(manifest.document_count ?? 0)}</strong></div>
       </div>
       <RelationGraph manifest={manifest} />
       {Array.isArray(result.notes) ? <div className="notes">{result.notes.map((note) => <p key={String(note)}>{String(note)}</p>)}</div> : null}
-      <details className="raw-json"><summary>Raw JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
+      <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
     </div>
   );
 }
@@ -416,20 +416,20 @@ function UpstreamDetailView({ result }: { result: Record<string, unknown> }) {
   return (
     <div className="upstream-result">
       <div className="metric-strip">
-        <div className="metric"><span>Target</span><strong>{String(manifest.target_stock_code || "--")}</strong></div>
-        <div className="metric"><span>Version</span><strong>{String(manifest.pack_version || "--")}</strong></div>
-        <div className="metric"><span>Evidence</span><strong>{String(manifest.evidence_count ?? 0)}</strong></div>
-        <div className="metric"><span>Size</span><strong>{formatBytes(manifest.file_size)}</strong></div>
+        <div className="metric"><span>目标</span><strong>{String(manifest.target_stock_code || "--")}</strong></div>
+        <div className="metric"><span>版本</span><strong>{String(manifest.pack_version || "--")}</strong></div>
+        <div className="metric"><span>证据</span><strong>{String(manifest.evidence_count ?? 0)}</strong></div>
+        <div className="metric"><span>大小</span><strong>{formatBytes(manifest.file_size)}</strong></div>
       </div>
       <section className="upstream-transfer">
-        <header><div><h3>{String(manifest.target_stock_name || "Upstream RAG")}</h3><p>{String(manifest._local_pack_path || "")}</p></div></header>
+        <header><div><h3>{String(manifest.target_stock_name || "上游 RAG")}</h3><p>{String(manifest._local_pack_path || "")}</p></div></header>
         <div className="detail-grid">
           <div><span>sha256</span><strong>{String(manifest.sha256 || "--")}</strong></div>
-          <div><span>Imported</span><strong>{formatDateTime(manifest.imported_at || manifest.generated_at)}</strong></div>
+          <div><span>导入时间</span><strong>{formatDateTime(manifest.imported_at || manifest.generated_at)}</strong></div>
         </div>
       </section>
       <RelationGraph manifest={manifest} />
-      <details className="raw-json"><summary>Raw JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
+      <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
     </div>
   );
 }
@@ -439,8 +439,8 @@ function RelationGraph({ manifest }: { manifest: Record<string, unknown> }) {
   const chunks = Array.isArray(manifest.evidence_chunks) ? manifest.evidence_chunks as Record<string, unknown>[] : [];
   return (
     <>
-      {edges.length > 0 && <section className="upstream-graph"><header><h3>Relation graph</h3><span>{formatNumber(edges.length)}</span></header><div className="relation-map">{edges.slice(0, 18).map((edge, i) => <article key={i} className="relation-edge"><span>{String(asRecord(edge.source_entity).entity_name || edge.source_code || "--")}</span><strong>{String(edge.relation_type || "--")}</strong><span>{String(asRecord(edge.target_entity).entity_name || edge.target_code || "--")}</span></article>)}</div></section>}
-      {chunks.length > 0 && <section className="upstream-evidence"><header><h3>Evidence</h3><span>{chunks.length}</span></header><div className="evidence-list">{chunks.slice(0, 24).map((chunk, i) => <article key={i}><strong>{String(chunk.title || "--")}</strong><p>{String(chunk.evidence_text || chunk.text || "")}</p></article>)}</div></section>}
+      {edges.length > 0 && <section className="upstream-graph"><header><h3>关系图</h3><span>{formatNumber(edges.length)}</span></header><div className="relation-map">{edges.slice(0, 18).map((edge, i) => <article key={i} className="relation-edge"><span>{String(asRecord(edge.source_entity).entity_name || edge.source_code || "--")}</span><strong>{String(edge.relation_type || "--")}</strong><span>{String(asRecord(edge.target_entity).entity_name || edge.target_code || "--")}</span></article>)}</div></section>}
+      {chunks.length > 0 && <section className="upstream-evidence"><header><h3>证据</h3><span>{chunks.length}</span></header><div className="evidence-list">{chunks.slice(0, 24).map((chunk, i) => <article key={i}><strong>{String(chunk.title || "--")}</strong><p>{String(chunk.evidence_text || chunk.text || "")}</p></article>)}</div></section>}
     </>
   );
 }
@@ -450,7 +450,7 @@ function GenericJsonResult({ result }: { result: unknown }) {
 }
 
 async function scanQrCode(): Promise<string> {
-  if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera is not available in this WebView.");
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error("当前 WebView 不支持摄像头。");
   const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } });
   const video = document.createElement("video");
   video.playsInline = true;
@@ -471,7 +471,7 @@ async function scanQrCode(): Promise<string> {
       }
       await new Promise((resolve) => window.setTimeout(resolve, 200));
     }
-    throw new Error("No QR code detected.");
+    throw new Error("未识别到二维码。");
   } finally {
     stream.getTracks().forEach((track) => track.stop());
   }
@@ -495,4 +495,37 @@ function detectWithJsQr(video: HTMLVideoElement, canvas: HTMLCanvasElement): str
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function newsModeLabel(mode?: string): string {
+  const labels: Record<string, string> = {
+    plain_news: "新闻分组",
+    rag: "RAG 检索",
+    direct: "直接分析",
+    cache: "缓存分析",
+  };
+  return labels[String(mode || "plain_news")] || String(mode || "--");
+}
+
+function directionLabel(direction: string): string {
+  const labels: Record<string, string> = {
+    positive: "利好",
+    negative: "利空",
+    mixed: "混合",
+    uncertain: "不确定",
+    bullish: "看多",
+    bearish: "看空",
+    neutral: "中性",
+  };
+  return labels[String(direction || "")] || String(direction || "--");
+}
+
+function sourceTierLabel(tier?: string): string {
+  const labels: Record<string, string> = {
+    filing: "公告",
+    news: "新闻",
+    community: "社区",
+    research: "研报",
+  };
+  return labels[String(tier || "news")] || String(tier || "新闻");
 }

@@ -9,17 +9,17 @@ interface StockListProps {
 }
 
 export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock }: StockListProps) {
-  if (!items.length) return <div className="empty-list">No matching stocks</div>;
+  if (!items.length) return <div className="empty-list">暂无匹配股票</div>;
 
   return (
     <div className="quote-table">
       <div className="quote-table-head">
-        <span>Name</span>
-        <span>Score</span>
+        <span>名称</span>
+        <span>评分</span>
         <span>PE</span>
         <span>PB</span>
         <span>ROE</span>
-        <span>Actions</span>
+        <span>操作</span>
       </div>
       <div className="stock-list">
         {items.map((item, i) => {
@@ -33,7 +33,7 @@ export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock 
                   <span>{item.code} {item.industry || ""}</span>
                 </div>
                 <div className="score-badge">
-                  <small>{item.scoreLabel || "score"}</small>
+                  <small>{scoreLabel(item.scoreLabel)}</small>
                   <b>{formatNumber(item.score)}</b>
                 </div>
                 <div className="quote-number">
@@ -48,10 +48,10 @@ export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock 
 
               <div className="row-actions">
                 <div className="stock-meta">
-                  <span>Price {formatPrice(item.price)}</span>
-                  <span className={tone}>Change {item.change_pct != null ? formatPercent(item.change_pct) : "--"}</span>
+                  <span>价格 {formatPrice(item.price)}</span>
+                  <span className={tone}>涨跌 {item.change_pct != null ? formatPercent(item.change_pct) : "--"}</span>
                   <span>ROE {formatPercent(item.roe)}</span>
-                  <span>Market cap {formatNumber(item.market_cap_billion)}</span>
+                  <span>市值 {formatNumber(item.market_cap_billion)}</span>
                 </div>
                 <div className="row-button-group">
                   <button
@@ -60,11 +60,11 @@ export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock 
                     onClick={() => onToggleWatchlist(item)}
                     aria-pressed={inWatchlist}
                   >
-                    {inWatchlist ? "Saved" : "Save"}
+                    {inWatchlist ? "已收藏" : "收藏"}
                   </button>
                   {onObserveStock && (
                     <button type="button" className="stock-row-action observe-action" onClick={() => onObserveStock(item.code)}>
-                      Observe
+                      观察
                     </button>
                   )}
                 </div>
@@ -76,7 +76,7 @@ export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock 
               ) : null}
               {item.explanation?.basis?.length ? (
                 <details className="selection-explain">
-                  <summary>Explanation</summary>
+                  <summary>入选依据</summary>
                   {item.explanation.basis.map((line) => <p key={line}>{line}</p>)}
                 </details>
               ) : null}
@@ -86,4 +86,13 @@ export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock 
       </div>
     </div>
   );
+}
+
+function scoreLabel(label?: string): string {
+  const labels: Record<string, string> = {
+    score: "评分",
+    final: "综合",
+    trend: "趋势",
+  };
+  return labels[String(label || "score")] || String(label);
 }

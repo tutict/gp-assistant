@@ -90,7 +90,7 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
           </div>
 
           <div className="form-row">
-            <label htmlFor="llmTemperature">Temperature</label>
+            <label htmlFor="llmTemperature">温度</label>
             <input
               id="llmTemperature"
               type="number"

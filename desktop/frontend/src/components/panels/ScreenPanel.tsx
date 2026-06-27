@@ -27,12 +27,12 @@ interface ScreenPanelProps {
 type ScreenMode = "screen" | "sectorScreen" | "boardScreen" | "graph" | "trendAnalyze" | "trendScreen";
 
 const TABS: { key: ScreenMode; label: string }[] = [
-  { key: "screen", label: "Smart screen" },
-  { key: "sectorScreen", label: "Concepts" },
-  { key: "boardScreen", label: "Boards" },
-  { key: "graph", label: "Relation graph" },
-  { key: "trendAnalyze", label: "Trend analyze" },
-  { key: "trendScreen", label: "Trend screen" },
+  { key: "screen", label: "智能选股" },
+  { key: "sectorScreen", label: "概念分组" },
+  { key: "boardScreen", label: "板块分组" },
+  { key: "graph", label: "关系图谱" },
+  { key: "trendAnalyze", label: "趋势分析" },
+  { key: "trendScreen", label: "趋势选股" },
 ];
 
 export function ScreenPanel({
@@ -76,7 +76,7 @@ export function ScreenPanel({
         payload = buildTrendScreenRequest(criteria, trendStart, trendEnd);
       } else if (mode === "trendAnalyze") {
         const code = normalizeStockCode(trendCode);
-        if (!code) throw new Error("Please enter a valid stock code.");
+        if (!code) throw new Error("请输入有效股票代码。");
         endpoint = "/api/trend";
         payload = buildTrendAnalyzeRequest(code, trendStart, trendEnd);
       }
@@ -121,12 +121,12 @@ export function ScreenPanel({
         {(mode === "sectorScreen" || mode === "boardScreen") && (
           <>
             <div className="form-row inline">
-              <label htmlFor="perSectorLimit">Per group</label>
+              <label htmlFor="perSectorLimit">每组数量</label>
               <input id="perSectorLimit" type="number" min="1" max="50" value={perSectorLimit} onChange={(e) => setPerSectorLimit(Number(e.target.value) || 5)} />
             </div>
             {mode === "sectorScreen" && (
               <div className="form-row inline">
-                <label htmlFor="maxSectors">Groups</label>
+                <label htmlFor="maxSectors">分组数</label>
                 <input id="maxSectors" type="number" min="1" max="50" value={maxSectors} onChange={(e) => setMaxSectors(Number(e.target.value) || 12)} />
               </div>
             )}
@@ -136,15 +136,15 @@ export function ScreenPanel({
         {mode === "graph" && (
           <>
             <div className="form-row">
-              <label htmlFor="seedCodes">Seed codes</label>
+              <label htmlFor="seedCodes">种子股票</label>
               <StockCodeInput id="seedCodes" value={seedCodes} onChange={setSeedCodes} placeholder="600519.SH, 300750.SZ" listMode />
             </div>
             <div className="form-row inline">
-              <label htmlFor="relationDepth">Depth</label>
+              <label htmlFor="relationDepth">关系深度</label>
               <input id="relationDepth" type="number" min="1" max="3" value={relationDepth} onChange={(e) => setRelationDepth(Number(e.target.value) || 1)} />
             </div>
             <div className="form-row inline">
-              <label htmlFor="relationWeight">Weight</label>
+              <label htmlFor="relationWeight">关系权重</label>
               <input id="relationWeight" type="number" min="0" max="1" step="0.05" value={relationWeight} onChange={(e) => setRelationWeight(Number(e.target.value) || 0.4)} />
             </div>
           </>
@@ -154,37 +154,37 @@ export function ScreenPanel({
           <>
             {mode === "trendAnalyze" && (
               <div className="form-row inline">
-                <label htmlFor="trendCode">Code</label>
+                <label htmlFor="trendCode">股票代码</label>
                 <StockCodeInput id="trendCode" value={trendCode} onChange={setTrendCode} placeholder="输入股票代码或名称" />
               </div>
             )}
             <div className="form-row inline">
-              <label htmlFor="trendStart">Start</label>
+              <label htmlFor="trendStart">开始日期</label>
               <input id="trendStart" type="date" value={trendStart} onChange={(e) => setTrendStart(e.target.value)} />
             </div>
             <div className="form-row inline">
-              <label htmlFor="trendEnd">End</label>
+              <label htmlFor="trendEnd">结束日期</label>
               <input id="trendEnd" type="date" value={trendEnd} onChange={(e) => setTrendEnd(e.target.value)} />
             </div>
           </>
         )}
 
         <button type="button" className="run-btn" onClick={run} disabled={loading}>
-          {loading ? "Running..." : "Run"}
+          {loading ? "运行中..." : "运行"}
         </button>
       </div>
 
       <div className="panel-result">
         {error && (
           <div className="result-error">
-            <strong>Query failed</strong>
+            <strong>查询失败</strong>
             <p>{escapeHtml(error)}</p>
           </div>
         )}
         {loading && !result && !error && (
           <div className="result-loading">
             <div className="loader" />
-            <span>Running analysis...</span>
+            <span>正在分析...</span>
           </div>
         )}
         {result != null && !loading && (
@@ -197,7 +197,7 @@ export function ScreenPanel({
             onRunBacktest={onRunBacktest}
           />
         )}
-        {!result && !loading && !error && <div className="result-empty"><span>Run a query to see results.</span></div>}
+        {!result && !loading && !error && <div className="result-empty"><span>设置参数后运行查询。</span></div>}
       </div>
     </div>
   );
@@ -225,15 +225,15 @@ function ScreenResultView({
   return (
     <div className="result-list">
       <div className="metric-strip">
-        <div className="metric"><span>Returned</span><strong>{resultRecord.returned ?? rows.length}</strong></div>
-        <div className="metric"><span>Total</span><strong>{resultRecord.total ?? rows.length}</strong></div>
-        <div className="metric"><span>Top score</span><strong>{rows[0]?.score?.toFixed(2) ?? "--"}</strong></div>
+        <div className="metric"><span>返回数</span><strong>{resultRecord.returned ?? rows.length}</strong></div>
+        <div className="metric"><span>总数</span><strong>{resultRecord.total ?? rows.length}</strong></div>
+        <div className="metric"><span>最高分</span><strong>{rows[0]?.score?.toFixed(2) ?? "--"}</strong></div>
       </div>
 
       {onRunBacktest && rows.length > 0 && (
         <div className="result-actions">
-          <div><span>Next step</span><strong>Backtest current criteria</strong></div>
-          <button type="button" onClick={onRunBacktest}>Backtest</button>
+          <div><span>下一步</span><strong>用当前条件回测</strong></div>
+          <button type="button" onClick={onRunBacktest}>回测</button>
         </div>
       )}
 
@@ -256,7 +256,7 @@ function ScreenResultView({
       )}
 
       {resultRecord.notes?.length ? <div className="notes">{resultRecord.notes.map((note) => <p key={note}>{note}</p>)}</div> : null}
-      <details className="raw-json"><summary>Raw JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
+      <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
     </div>
   );
 }

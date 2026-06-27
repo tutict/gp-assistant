@@ -42,7 +42,7 @@ export function AgentPanel({ llmSettings }: AgentPanelProps) {
     if (!text || loading) return;
     const runId = crypto.randomUUID?.() || `agent-${Date.now()}`;
     const userMessage: ChatMessage = { role: "user", content: text, timestamp: Date.now() };
-    const assistantMessage: ChatMessage = { role: "assistant", content: "Preparing...", timestamp: Date.now(), steps: [] };
+    const assistantMessage: ChatMessage = { role: "assistant", content: "准备中...", timestamp: Date.now(), steps: [] };
     setMessages((prev) => [...prev, userMessage, assistantMessage]);
     setInput("");
     setLoading(true);
@@ -56,29 +56,29 @@ export function AgentPanel({ llmSettings }: AgentPanelProps) {
       if (event.type === "status") {
         const step = {
           stage: event.stage || `stage-${Date.now()}`,
-          label: event.label || event.stage || "Running",
+          label: event.label || event.stage || "运行中",
           percent: Number(event.percent || 0),
         };
         setMessages((prev) => prev.map((message, index) => {
           if (index !== prev.length - 1) return message;
           return {
             ...message,
-            content: event.label || event.stage || "Running...",
+            content: event.label || event.stage || "运行中...",
             steps: mergeStep(message.steps || [], step),
           };
         }));
       } else if (event.type === "result") {
         const result = event.response || {};
-        patchAssistant({ content: result.reply || "Done.", result, steps: undefined });
+        patchAssistant({ content: result.reply || "已完成。", result, steps: undefined });
       } else if (event.type === "error") {
-        patchAssistant({ content: event.message || "Agent failed.", error: true });
+        patchAssistant({ content: event.message || "智能体执行失败。", error: true });
       }
     };
 
     try {
       await requestAgentStream({ message: text, run_id: runId, llm: buildLlmConfig(llmSettings) }, applyEvent);
     } catch (err) {
-      patchAssistant({ content: `Error: ${(err as Error).message}`, error: true });
+      patchAssistant({ content: `错误：${(err as Error).message}`, error: true });
     } finally {
       setLoading(false);
     }
@@ -87,15 +87,15 @@ export function AgentPanel({ llmSettings }: AgentPanelProps) {
   return (
     <div className="panel-container agent-panel">
       <div className="agent-header">
-        <h2>Agent</h2>
+        <h2>智能体</h2>
         {llmSettings?.model && <span className="agent-model">{llmSettings.model}</span>}
       </div>
 
       <div className="agent-thread" ref={threadRef}>
-        {messages.length === 0 && <div className="agent-empty"><p>Ask the local stock agent a question.</p></div>}
+        {messages.length === 0 && <div className="agent-empty"><p>向本地选股智能体提问。</p></div>}
         {messages.map((msg, i) => (
           <article key={i} className={`agent-message ${msg.role} ${msg.error ? "error" : ""}`}>
-            <div className="agent-message-meta"><span>{msg.role === "user" ? "You" : "Assistant"}</span><time>{new Date(msg.timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div>
+            <div className="agent-message-meta"><span>{msg.role === "user" ? "你" : "助手"}</span><time>{new Date(msg.timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div>
             <div className="agent-message-body">
               {msg.steps?.length ? <AgentSteps steps={msg.steps} /> : null}
               <p className="agent-final-reply">{msg.content}</p>
@@ -116,11 +116,11 @@ export function AgentPanel({ llmSettings }: AgentPanelProps) {
               send();
             }
           }}
-          placeholder="Type a message, Enter to send"
+          placeholder="输入问题，按回车发送"
           rows={2}
           disabled={loading}
         />
-        <button type="button" className="send-btn" onClick={send} disabled={loading || !input.trim()}>{loading ? "..." : "Send"}</button>
+        <button type="button" className="send-btn" onClick={send} disabled={loading || !input.trim()}>{loading ? "..." : "发送"}</button>
       </div>
     </div>
   );
@@ -162,7 +162,7 @@ function agentNestedResult(result: AgentResult, kind: string): Record<string, un
 }
 
 function GenericAgentResult({ result }: { result: unknown }) {
-  return <details className="raw-json"><summary>Raw JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>;
+  return <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -189,7 +189,7 @@ async function requestDesktopAgentStream(payload: Record<string, unknown>, onEve
     body: JSON.stringify(payload),
   });
   if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
-  if (!response.body?.getReader) throw new Error("This browser cannot read SSE streams.");
+  if (!response.body?.getReader) throw new Error("当前浏览器无法读取流式响应。");
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -211,7 +211,7 @@ async function requestDesktopAgentStream(payload: Record<string, unknown>, onEve
 async function requestTauriAgentStream(payload: Record<string, unknown>, onEvent: (event: AgentStreamEvent) => void): Promise<void> {
   const invoke = getTauriInvoke();
   const listen = (window as unknown as { __TAURI__?: { event?: { listen?: (event: string, handler: (event: unknown) => void) => Promise<() => void> } } }).__TAURI__?.event?.listen;
-  if (!invoke || !listen) throw new Error("Tauri event bridge is not available.");
+  if (!invoke || !listen) throw new Error("Tauri 事件桥不可用。");
   const runId = String(payload.run_id || "");
   let sawResult = false;
   let unlisten: (() => void) | undefined;

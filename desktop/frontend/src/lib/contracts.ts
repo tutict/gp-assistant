@@ -208,7 +208,7 @@ export function normalizeSectorGroups(result: SectorScreenResult | ScreenResult 
     const rows = Array.isArray(g.items) ? g.items.map((item) => normalizeStockRow(item)).filter(Boolean) as StockRowView[] : [];
     return {
       title: String(g.sector || g.title || g.key || "Group"),
-      meta: `returned ${g.returned ?? rows.length} / total ${g.total ?? rows.length}`,
+      meta: `返回 ${g.returned ?? rows.length} / 总数 ${g.total ?? rows.length}`,
       rows,
     };
   });
