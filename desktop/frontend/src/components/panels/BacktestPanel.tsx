@@ -89,7 +89,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
         </div>
       </div>
 
-      <div className="panel-controls">
+      <div className="panel-controls backtest-controls">
         <div className="form-row inline"><label htmlFor="btStart">开始日期</label><input id="btStart" type="date" value={start} onChange={(e) => setStart(e.target.value)} /></div>
         <div className="form-row inline"><label htmlFor="btEnd">结束日期</label><input id="btEnd" type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
         <div className="form-row inline"><label htmlFor="btTopN">持仓数量</label><input id="btTopN" type="number" min="1" max="100" value={topN} onChange={(e) => setTopN(Number(e.target.value) || 10)} /></div>

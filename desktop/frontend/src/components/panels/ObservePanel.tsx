@@ -1,15 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
-import type { CapitalEvidenceSection, FinancialIndicatorItem, ObserveResult, WatchlistItem } from "../../types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { CapitalEvidenceSection, FinancialIndicatorItem, ObserveResult, TrendIndicatorPoint, WatchlistItem } from "../../types";
+import { aggregateBars, computeKdj, KLINE_PERIODS, type KlineBar, type KlinePeriod, movingAverage, toDailyBars } from "../../lib/kline";
 import { getJson } from "../../lib/tauri";
 import { StockCodeInput } from "../StockCodeInput";
 import {
   currentSystemDateInputValue,
-  defaultObserveStartDateInputValue,
   escapeHtml,
   formatNumber,
   formatPercent,
   formatPrice,
   normalizeStockCode,
+  reasonLabel,
 } from "../../lib/format";
 
 interface ObservePanelProps {
@@ -18,9 +19,15 @@ interface ObservePanelProps {
   initialCode?: string;
 }
 
+const OBSERVE_FULL_HISTORY_START = "1990-01-01";
+const OBSERVE_FULL_HISTORY_LIMIT = "10000";
+const DEFAULT_VISIBLE_BARS = 120;
+const MIN_VISIBLE_BARS = 30;
+const MAX_VISIBLE_BARS = 240;
+
 export function ObservePanel({ initialCode }: ObservePanelProps) {
   const [code, setCode] = useState(initialCode || "");
-  const [startDate, setStartDate] = useState(defaultObserveStartDateInputValue());
+  const [startDate, setStartDate] = useState(OBSERVE_FULL_HISTORY_START);
   const [endDate, setEndDate] = useState(currentSystemDateInputValue());
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ObserveResult | null>(null);
@@ -42,7 +49,7 @@ export function ObservePanel({ initialCode }: ObservePanelProps) {
       const query = new URLSearchParams({
         start_date: startDate.replace(/-/g, ""),
         end_date: endDate.replace(/-/g, ""),
-        series_limit: "160",
+        series_limit: OBSERVE_FULL_HISTORY_LIMIT,
         include_order_book: "false",
         include_chip_distribution: "true",
       });
@@ -118,7 +125,7 @@ export function ObserveResultView({ result }: { result: ObserveResult }) {
             <Metric label="支撑" value={formatNumber(signal.support)} />
             <Metric label="压力" value={formatNumber(signal.resistance)} />
           </div>
-          {signal.reasons?.length ? <div className="tag-row">{signal.reasons.map((reason) => <span key={reason}>{reason}</span>)}</div> : null}
+          {signal.reasons?.length ? <div className="tag-row">{signal.reasons.map((reason) => <span key={reason}>{reasonLabel(reason)}</span>)}</div> : null}
           {series.length > 1 ? <TrendCharts series={series} /> : null}
         </section>
       )}
@@ -179,13 +186,261 @@ function CapitalEvidence({ sections, summary, notes }: { sections: CapitalEviden
   );
 }
 
-function TrendCharts({ series }: { series: { date: string; close?: number; swl?: number | null; sws?: number | null; k?: number | null; d?: number | null; j?: number | null }[] }) {
+function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
+  const [period, setPeriod] = useState<KlinePeriod>("daily");
+  const [visibleCount, setVisibleCount] = useState(DEFAULT_VISIBLE_BARS);
+  const [endIndex, setEndIndex] = useState<number | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const dailyBars = toDailyBars(series);
+  const bars = aggregateBars(dailyBars, period);
+
+  useEffect(() => {
+    setEndIndex(bars.length);
+    setVisibleCount((count) => Math.min(Math.max(count, MIN_VISIBLE_BARS), Math.max(MIN_VISIBLE_BARS, Math.min(MAX_VISIBLE_BARS, bars.length || DEFAULT_VISIBLE_BARS))));
+  }, [period, bars.length]);
+
+  if (dailyBars.length < 2) {
+    return (
+      <div className="signal-chart-stack">
+        <LineChart title="收盘 / SWL / SWS" series={series.slice(-DEFAULT_VISIBLE_BARS)} keys={["close", "swl", "sws"]} />
+        <LineChart title="KDJ" series={series.slice(-DEFAULT_VISIBLE_BARS)} keys={["k", "d", "j"]} />
+      </div>
+    );
+  }
+
+  const effectiveCount = Math.min(Math.max(visibleCount, MIN_VISIBLE_BARS), Math.max(MIN_VISIBLE_BARS, Math.min(MAX_VISIBLE_BARS, bars.length)));
+  const effectiveEnd = Math.min(Math.max(endIndex ?? bars.length, Math.min(effectiveCount, bars.length)), bars.length);
+  const visibleStart = Math.max(0, effectiveEnd - effectiveCount);
+  const visibleBars = bars.slice(visibleStart, effectiveEnd);
+  const startDate = visibleBars[0]?.date || "";
+  const endDate = visibleBars[visibleBars.length - 1]?.date || "";
+  const visibleSeries = sliceSeriesByDate(series, startDate, endDate);
+  const panStep = Math.max(1, Math.round(effectiveCount * 0.35));
+  const canPanLeft = visibleStart > 0;
+  const canPanRight = effectiveEnd < bars.length;
+  const zoomIn = () => setVisibleCount((count) => Math.max(MIN_VISIBLE_BARS, Math.round(count * 0.75)));
+  const zoomOut = () => setVisibleCount((count) => Math.min(Math.min(MAX_VISIBLE_BARS, bars.length), Math.round(count * 1.35)));
+  const panLeft = () => setEndIndex(Math.max(Math.min(effectiveCount, bars.length), effectiveEnd - panStep));
+  const panRight = () => setEndIndex(Math.min(bars.length, effectiveEnd + panStep));
+  const showLatest = () => setEndIndex(bars.length);
+  const dragTo = (targetEnd: number) => {
+    const minEnd = Math.min(effectiveCount, bars.length);
+    setEndIndex(Math.max(minEnd, Math.min(bars.length, targetEnd)));
+  };
+
   return (
-    <div className="signal-chart-stack">
-      <LineChart title="收盘 / SWL / SWS" series={series} keys={["close", "swl", "sws"]} />
-      <LineChart title="KDJ" series={series} keys={["k", "d", "j"]} />
+    <div className={`signal-chart-stack kline-workspace ${fullscreen ? "fullscreen" : ""}`}>
+      <CandlestickChart
+        period={period}
+        onPeriodChange={setPeriod}
+        allBars={bars}
+        visibleBars={visibleBars}
+        visibleStart={visibleStart}
+        visibleEnd={effectiveEnd}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
+        onPanLeft={panLeft}
+        onPanRight={panRight}
+        onLatest={showLatest}
+        onDragTo={dragTo}
+        fullscreen={fullscreen}
+        onToggleFullscreen={() => setFullscreen((value) => !value)}
+        canZoomIn={effectiveCount > MIN_VISIBLE_BARS}
+        canZoomOut={effectiveCount < Math.min(MAX_VISIBLE_BARS, bars.length)}
+        canPanLeft={canPanLeft}
+        canPanRight={canPanRight}
+      />
+      <LineChart title="收盘 / SWL / SWS" series={visibleSeries} keys={["close", "swl", "sws"]} />
+      <LineChart title="KDJ" series={visibleSeries} keys={["k", "d", "j"]} />
     </div>
   );
+}
+
+function CandlestickChart({
+  period,
+  onPeriodChange,
+  allBars,
+  visibleBars,
+  visibleStart,
+  visibleEnd,
+  onZoomIn,
+  onZoomOut,
+  onPanLeft,
+  onPanRight,
+  onLatest,
+  onDragTo,
+  fullscreen,
+  onToggleFullscreen,
+  canZoomIn,
+  canZoomOut,
+  canPanLeft,
+  canPanRight,
+}: {
+  period: KlinePeriod;
+  onPeriodChange: (period: KlinePeriod) => void;
+  allBars: KlineBar[];
+  visibleBars: KlineBar[];
+  visibleStart: number;
+  visibleEnd: number;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onPanLeft: () => void;
+  onPanRight: () => void;
+  onLatest: () => void;
+  onDragTo: (targetEnd: number) => void;
+  fullscreen: boolean;
+  onToggleFullscreen: () => void;
+  canZoomIn: boolean;
+  canZoomOut: boolean;
+  canPanLeft: boolean;
+  canPanRight: boolean;
+}) {
+  const width = 720;
+  const priceTop = 6;
+  const priceHeight = 218;
+  const volumeTop = priceTop + priceHeight + 24;
+  const volumeHeight = 58;
+  const height = volumeTop + volumeHeight + 4;
+
+  const priceMax = Math.max(...visibleBars.map((bar) => bar.high));
+  const priceMin = Math.min(...visibleBars.map((bar) => bar.low));
+  const priceRange = priceMax - priceMin || 1;
+  const yPrice = (value: number) => priceTop + (1 - (value - priceMin) / priceRange) * priceHeight;
+
+  const volumes = visibleBars.map((bar) => (Number.isFinite(bar.volume) ? bar.volume : 0));
+  const volumeMax = Math.max(...volumes, 1);
+  const hasVolume = volumes.some((value) => value > 0);
+
+  const slot = width / visibleBars.length;
+  const bodyWidth = Math.max(1, Math.min(slot * 0.62, 14));
+  const center = (index: number) => (index + 0.5) * slot;
+  const dragRef = useRef<{ pointerId: number; startX: number; startEnd: number; lastTargetEnd: number } | null>(null);
+  const onPointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
+    dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startEnd: visibleEnd, lastTargetEnd: visibleEnd };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const onPointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const deltaBars = Math.round((drag.startX - event.clientX) / Math.max(slot, 1));
+    const targetEnd = drag.startEnd + deltaBars;
+    if (targetEnd !== drag.lastTargetEnd) {
+      onDragTo(targetEnd);
+      drag.lastTargetEnd = targetEnd;
+    }
+  };
+  const endDrag = (event: React.PointerEvent<SVGSVGElement>) => {
+    if (dragRef.current?.pointerId === event.pointerId) {
+      dragRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    }
+  };
+
+  const closes = allBars.map((bar) => bar.close);
+  const maLines = [5, 10, 20].map((window) => ({
+    window,
+    points: movingAverage(closes, window)
+      .map((value, index) => {
+        if (value == null) return null;
+        if (index < visibleStart || index >= visibleEnd) return null;
+        return `${center(index - visibleStart).toFixed(2)},${yPrice(value).toFixed(2)}`;
+      })
+      .filter(Boolean)
+      .join(" "),
+  }));
+  const latest = visibleBars[visibleBars.length - 1];
+  const latestKdj = computeKdj(allBars)[visibleEnd - 1];
+  const sourceRange = `${allBars[0]?.date || "--"} 至 ${allBars[allBars.length - 1]?.date || "--"}`;
+  const visibleRange = `${visibleBars[0]?.date || "--"} 至 ${visibleBars[visibleBars.length - 1]?.date || "--"}`;
+
+  return (
+    <section className="chart-wrap kline-chart">
+      <header>
+        <div>
+          <h4>K线 / 均线 / 成交量</h4>
+          <p>{visibleRange}，{periodLabel(period)} {visibleBars.length} / {allBars.length} 根，历史 {sourceRange}</p>
+        </div>
+        <div className="kline-period-tabs" role="tablist" aria-label="K线周期">
+          {KLINE_PERIODS.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              role="tab"
+              aria-selected={period === item.key}
+              className={period === item.key ? "active" : ""}
+              onClick={() => onPeriodChange(item.key)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <div className="kline-nav" aria-label="K线视图控制">
+          <button type="button" onClick={onPanLeft} disabled={!canPanLeft} title="向左翻动">‹</button>
+          <button type="button" onClick={onZoomIn} disabled={!canZoomIn} title="放大">＋</button>
+          <button type="button" onClick={onZoomOut} disabled={!canZoomOut} title="缩小">－</button>
+          <button type="button" onClick={onPanRight} disabled={!canPanRight} title="向右翻动">›</button>
+          <button type="button" onClick={onLatest} disabled={!canPanRight} title="回到最新">最新</button>
+          <button type="button" className="kline-fullscreen-toggle" onClick={onToggleFullscreen} title={fullscreen ? "退出全屏" : "全屏观察"}>
+            {fullscreen ? "退出" : "全屏"}
+          </button>
+        </div>
+        <div className="kline-legend"><span className="ma-5">MA5</span><span className="ma-10">MA10</span><span className="ma-20">MA20</span></div>
+      </header>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="K线图"
+        className="kline-plot"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onPointerLeave={endDrag}
+      >
+        {visibleBars.map((bar, index) => {
+          const cx = center(index);
+          const bodyTop = Math.min(yPrice(bar.open), yPrice(bar.close));
+          const bodyHeight = Math.max(1, Math.abs(yPrice(bar.close) - yPrice(bar.open)));
+          return (
+            <g key={`${bar.date}-${index}`} className={bar.close >= bar.open ? "kline-up" : "kline-down"}>
+              <line className="kline-wick" x1={cx} x2={cx} y1={yPrice(bar.high)} y2={yPrice(bar.low)} stroke="currentColor" />
+              <rect className="kline-body" x={cx - bodyWidth / 2} y={bodyTop} width={bodyWidth} height={bodyHeight} fill="currentColor" />
+            </g>
+          );
+        })}
+        {maLines.map((line) => (line.points ? <polyline key={`ma-${line.window}`} className={`ma-${line.window}`} points={line.points} fill="none" /> : null))}
+        {hasVolume && visibleBars.map((bar, index) => {
+          const barHeight = (volumes[index] / volumeMax) * volumeHeight;
+          return (
+            <rect
+              key={`vol-${bar.date}-${index}`}
+              className={bar.close >= bar.open ? "kline-up" : "kline-down"}
+              x={center(index) - bodyWidth / 2}
+              y={volumeTop + (volumeHeight - barHeight)}
+              width={bodyWidth}
+              height={Math.max(0.5, barHeight)}
+              fill="currentColor"
+            />
+          );
+        })}
+      </svg>
+      <div className="chart-labels"><span>{visibleBars[0]?.date}</span><span>{visibleBars[visibleBars.length - 1]?.date}</span></div>
+      <div className="kline-stats" aria-label="当前周期最新K线">
+        <span>开 {formatPrice(latest?.open)}</span>
+        <span>高 {formatPrice(latest?.high)}</span>
+        <span>低 {formatPrice(latest?.low)}</span>
+        <span>收 {formatPrice(latest?.close)}</span>
+        <span>量 {formatNumber(latest?.volume)}</span>
+        {latestKdj ? <span>KDJ {formatNumber(latestKdj.k)} / {formatNumber(latestKdj.d)} / {formatNumber(latestKdj.j)}</span> : null}
+      </div>
+    </section>
+  );
+}
+
+function periodLabel(period: KlinePeriod): string {
+  return KLINE_PERIODS.find((item) => item.key === period)?.label || period;
 }
 
 function signalStatusLabel(status?: string): string {
@@ -202,6 +457,7 @@ function signalStatusLabel(status?: string): string {
 function LineChart({ title, series, keys }: { title: string; series: Record<string, unknown>[]; keys: string[] }) {
   const width = 720;
   const height = 160;
+  const gridLines = [0.25, 0.5, 0.75].map((ratio) => ratio * height);
   const points = series.map((point) => keys.map((key) => Number(point[key])).filter(Number.isFinite)).flat();
   if (points.length < 2) return null;
   const min = Math.min(...points);
@@ -216,11 +472,35 @@ function LineChart({ title, series, keys }: { title: string; series: Record<stri
   }).filter(Boolean).join(" ");
   return (
     <section className="chart-wrap trend-chart">
-      <header><h4>{title}</h4></header>
+      <header>
+        <h4>{title}</h4>
+        <div className="trend-legend">
+          {keys.map((key) => <span key={key} className={`line-${key}`}>{lineLabel(key)}</span>)}
+        </div>
+      </header>
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
-        {keys.map((key) => <polyline key={key} className={`line-${key}`} points={line(key)} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />)}
+        {gridLines.map((y) => <line key={y} className="trend-grid-line" x1="0" x2={width} y1={y} y2={y} />)}
+        {keys.map((key) => <polyline key={key} className={`trend-line line-${key}`} points={line(key)} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />)}
       </svg>
       <div className="chart-labels"><span>{String(series[0]?.date || "")}</span><span>{String(series[series.length - 1]?.date || "")}</span></div>
     </section>
   );
+}
+
+function lineLabel(key: string): string {
+  const labels: Record<string, string> = {
+    close: "收盘",
+    swl: "SWL",
+    sws: "SWS",
+    k: "K",
+    d: "D",
+    j: "J",
+  };
+  return labels[key] || key.toUpperCase();
+}
+
+function sliceSeriesByDate(series: TrendIndicatorPoint[], startDate: string, endDate: string): TrendIndicatorPoint[] {
+  if (!startDate || !endDate) return series.slice(-DEFAULT_VISIBLE_BARS);
+  const sliced = series.filter((point) => point.date >= startDate && point.date <= endDate);
+  return sliced.length ? sliced : series.slice(-DEFAULT_VISIBLE_BARS);
 }

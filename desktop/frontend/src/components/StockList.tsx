@@ -1,5 +1,5 @@
 import type { StockRowView, WatchlistItem } from "../types";
-import { formatNumber, formatPercent, formatPrice } from "../lib/format";
+import { formatNumber, formatPercent, formatPrice, reasonLabel } from "../lib/format";
 
 interface StockListProps {
   items: StockRowView[];
@@ -72,7 +72,7 @@ export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock 
 
               {item.concept && <div className="tag-row"><span>{item.concept}</span></div>}
               {item.reasons?.length ? (
-                <div className="tag-row">{item.reasons.slice(0, 5).map((reason) => <span key={reason}>{reason}</span>)}</div>
+                <div className="tag-row">{item.reasons.slice(0, 5).map((reason) => <span key={reason}>{reasonLabel(reason)}</span>)}</div>
               ) : null}
               {item.explanation?.basis?.length ? (
                 <details className="selection-explain">

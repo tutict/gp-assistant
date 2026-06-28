@@ -250,6 +250,18 @@ try {
             $devArgs += '--no-watch'
         }
 
+        if ([string]::IsNullOrWhiteSpace($env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS)) {
+            # WebView2 GPU compositing crashes on some drivers/hardware: the window goes
+            # black and auto-reloads (the boot splash reappears) on nearly any repaint -
+            # entering the app, clicking, switching tabs. Disabling GPU stabilizes it.
+            # Want acceleration back? Set this env var yourself before launching, e.g.
+            #   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--use-angle=gl'
+            $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--disable-gpu'
+            Write-Info 'WebView2: set --disable-gpu to avoid GPU renderer crashes (black screen + reload).'
+        } else {
+            Write-Info "WebView2: using existing WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
+        }
+
         Write-LogLine ''
         Write-Step 'Starting tauri dev...'
         Write-Info ("Command: npm.cmd {0}" -f ($devArgs -join ' '))

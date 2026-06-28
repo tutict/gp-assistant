@@ -59,7 +59,8 @@ const MOBILE_NEWS_RAG_TIMEOUT_MS = 45000;
 const MOBILE_MARKET_REFRESH_INVOKE_TIMEOUT_MS = 60000;
 const MOBILE_TENCENT_MAX_CANDIDATES = 15000;
 const MOBILE_TENCENT_BATCHES_PER_STEP = 8;
-const OBSERVE_HISTORY_LIMIT = 320;
+const OBSERVE_FULL_HISTORY_LIMIT = 10000;
+const OBSERVE_HISTORY_LIMIT = OBSERVE_FULL_HISTORY_LIMIT;
 const MOBILE_FINANCIAL_SNAPSHOT_URL = new URL("mobile-financial-snapshot.json", window.location.href).toString();
 const MOBILE_DEDUCTED_FINANCIAL_FIELDS = [
   "deducted_net_profit_billion",
@@ -127,9 +128,9 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
       const code = normalizeStockCode(decodeURIComponent(path.slice("/api/observe/".length)));
       const payload: Record<string, unknown> = withAndroidNetworkOptions({
         code,
-        start_date: normalizeDateParam(parsed.searchParams.get("start_date"), "20200101"),
+        start_date: normalizeDateParam(parsed.searchParams.get("start_date"), "19900101"),
         end_date: normalizeDateParam(parsed.searchParams.get("end_date"), currentSystemDateCompact()),
-        series_limit: clampInt(parsed.searchParams.get("series_limit"), 20, 500, 120),
+        series_limit: clampInt(parsed.searchParams.get("series_limit"), 20, OBSERVE_FULL_HISTORY_LIMIT, OBSERVE_FULL_HISTORY_LIMIT),
         include_order_book: parsed.searchParams.get("include_order_book") === "true",
         include_chip_distribution: parsed.searchParams.get("include_chip_distribution") !== "false",
       });

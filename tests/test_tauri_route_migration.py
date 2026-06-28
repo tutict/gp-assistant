@@ -64,6 +64,7 @@ def test_react_tauri_bridge_has_mobile_observe_and_cache_maintenance_paths():
         "api_observe",
         "mobile_fast_observe",
         "MOBILE_OBSERVE_INVOKE_TIMEOUT_MS",
+        "OBSERVE_FULL_HISTORY_LIMIT",
         "loadMobileFinancialSnapshotForCode",
         "fetchObserveDailyHistoryForTauri",
         "api_market_refresh",
@@ -85,6 +86,10 @@ def test_react_tauri_bridge_has_mobile_observe_and_cache_maintenance_paths():
     ]
     for command in rust_commands:
         assert command in lib_rs
+
+    assert "OBSERVE_DAILY_HISTORY_LIMIT" in lib_rs
+    assert "MIN_FULL_OBSERVE_HISTORY_BARS" in lib_rs
+    assert ",day,{start},{end},320," not in lib_rs
 
 
 def test_tauri_data_maintenance_script_replaces_default_python_script_path():

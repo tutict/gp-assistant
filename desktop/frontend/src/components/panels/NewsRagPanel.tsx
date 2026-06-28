@@ -161,7 +161,7 @@ export function NewsRagPanel({ llmSettings }: NewsRagPanelProps) {
 
   return (
     <div className="panel-container">
-      <div className="panel-tabs">
+      <div className="panel-tabs rag-tabs">
         {TABS.map((t) => (
           <button key={t.key} type="button" className={`panel-tab ${tab === t.key ? "active" : ""}`} onClick={() => { setTab(t.key); setResult(null); setError(null); }}>
             {t.label}
@@ -169,28 +169,28 @@ export function NewsRagPanel({ llmSettings }: NewsRagPanelProps) {
         ))}
       </div>
 
-      <div className="panel-controls">
+      <div className="panel-controls rag-controls">
         {(tab === "newsRag" || tab === "ragPackBuild" || tab === "ragPackQuery" || tab === "upstreamScan") && (
           <>
-            <div className="form-row inline stock-code-row"><label htmlFor="newsCode">股票代码</label><StockCodeInput id="newsCode" value={newsCode} onChange={setNewsCode} placeholder="输入股票代码或名称" /></div>
-            <div className="form-row inline"><label htmlFor="newsDays">天数</label><input id="newsDays" type="number" min="1" max="3650" value={newsDays} onChange={(e) => setNewsDays(Number(e.target.value) || 30)} /></div>
+            <div className="form-row inline stock-code-row rag-code-field"><label htmlFor="newsCode">股票代码</label><StockCodeInput id="newsCode" value={newsCode} onChange={setNewsCode} placeholder="输入股票代码或名称" /></div>
+            <div className="form-row inline rag-days-field"><label htmlFor="newsDays">天数</label><input id="newsDays" type="number" min="1" max="3650" value={newsDays} onChange={(e) => setNewsDays(Number(e.target.value) || 30)} /></div>
           </>
         )}
         {(tab === "ragPackBuild" || tab === "ragPackQuery") && (
-          <div className="form-row"><label htmlFor="seedCodesForRag">种子股票</label><StockCodeInput id="seedCodesForRag" value={seedCodes} onChange={setSeedCodes} placeholder="可选，多个股票用逗号分隔" listMode /></div>
+          <div className="form-row rag-wide-field"><label htmlFor="seedCodesForRag">种子股票</label><StockCodeInput id="seedCodesForRag" value={seedCodes} onChange={setSeedCodes} placeholder="可选，多个股票用逗号分隔" listMode /></div>
         )}
         {tab === "ragPackQuery" && (
-          <div className="form-row"><label htmlFor="ragQuery">查询问题</label><input id="ragQuery" type="text" value={queryText} onChange={(e) => setQueryText(e.target.value)} placeholder="例如：供应链订单证据" /></div>
+          <div className="form-row rag-wide-field"><label htmlFor="ragQuery">查询问题</label><input id="ragQuery" type="text" value={queryText} onChange={(e) => setQueryText(e.target.value)} placeholder="例如：供应链订单证据" /></div>
         )}
         {tab === "upstreamScan" && !isMobileTauriRuntime() && (
-          <div className="form-row"><label htmlFor="manualUrls">手动来源 URL</label><textarea id="manualUrls" rows={3} value={manualUrls} onChange={(e) => setManualUrls(e.target.value)} placeholder="可选公共来源链接，每行一个" /></div>
+          <div className="form-row rag-textarea-field"><label htmlFor="manualUrls">手动来源 URL</label><textarea id="manualUrls" rows={3} value={manualUrls} onChange={(e) => setManualUrls(e.target.value)} placeholder="可选公共来源链接，每行一个" /></div>
         )}
         {tab === "upstreamImport" && (
-          <div className="form-row"><label htmlFor="upstreamImportPayload">导入描述</label><textarea id="upstreamImportPayload" rows={5} value={importPayload} onChange={(e) => setImportPayload(e.target.value)} placeholder="粘贴二维码 JSON 或 manifest_url" /></div>
+          <div className="form-row rag-textarea-field"><label htmlFor="upstreamImportPayload">导入描述</label><textarea id="upstreamImportPayload" rows={5} value={importPayload} onChange={(e) => setImportPayload(e.target.value)} placeholder="粘贴二维码 JSON 或 manifest_url" /></div>
         )}
-        <button type="button" className="run-btn" onClick={run} disabled={loading || scanning}>{loading || scanning ? "运行中..." : "运行"}</button>
+        <button type="button" className="run-btn rag-run-btn" onClick={run} disabled={loading || scanning}>{loading || scanning ? "运行中..." : "运行"}</button>
         {(tab === "upstreamScan" || tab === "upstreamImport") && (
-          <button type="button" className="action-btn" onClick={listMobilePacks} disabled={loading || scanning}>查看导入包</button>
+          <button type="button" className="action-btn rag-secondary-btn" onClick={listMobilePacks} disabled={loading || scanning}>查看导入包</button>
         )}
       </div>
 

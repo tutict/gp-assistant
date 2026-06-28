@@ -284,7 +284,10 @@ async fn fetch_android_short_news_items(
     );
     match guba_result {
         Ok(guba_items) => {
-            notes.push(format!("Android short source Eastmoney Guba returned {} items.", guba_items.len()));
+            notes.push(format!(
+                "Android short source Eastmoney Guba returned {} items.",
+                guba_items.len()
+            ));
             items.extend(guba_items);
         }
         Err(error) => notes.push(format!(
@@ -294,7 +297,10 @@ async fn fetch_android_short_news_items(
     }
     match eastmoney_result {
         Ok(news_items) => {
-            notes.push(format!("Android short source Eastmoney stock news returned {} items.", news_items.len()));
+            notes.push(format!(
+                "Android short source Eastmoney stock news returned {} items.",
+                news_items.len()
+            ));
             items.extend(news_items);
         }
         Err(error) => notes.push(format!(
@@ -304,7 +310,10 @@ async fn fetch_android_short_news_items(
     }
     match sina_result {
         Ok(news_items) => {
-            notes.push(format!("Android short source Sina stock news returned {} items.", news_items.len()));
+            notes.push(format!(
+                "Android short source Sina stock news returned {} items.",
+                news_items.len()
+            ));
             items.extend(news_items);
         }
         Err(error) => notes.push(format!(
@@ -314,7 +323,10 @@ async fn fetch_android_short_news_items(
     }
     match ths_result {
         Ok(news_items) => {
-            notes.push(format!("Android short source THS F10 returned {} items.", news_items.len()));
+            notes.push(format!(
+                "Android short source THS F10 returned {} items.",
+                news_items.len()
+            ));
             items.extend(news_items);
         }
         Err(error) => notes.push(format!(
@@ -336,8 +348,7 @@ async fn fetch_news_items(
         "Mozilla/5.0 GuXuanYou/0.3 news-rag",
         Duration::from_secs(NEWS_TIMEOUT_SECS),
         network_payload,
-    )
-    {
+    ) {
         Ok(client) => client,
         Err(error) => {
             return (
@@ -489,8 +500,7 @@ async fn fetch_us_market_brief() -> Value {
         "Mozilla/5.0 GuXuanYou/0.3 us-market-brief",
         Duration::from_secs(env_usize("GP_NEWS_US_MARKET_TIMEOUT_SECS", 5, 2, 15) as u64),
         None,
-    )
-    {
+    ) {
         Ok(client) => client,
         Err(error) => {
             return unavailable_us_market_brief(format!("创建美股行情 HTTP 客户端失败：{error}"))

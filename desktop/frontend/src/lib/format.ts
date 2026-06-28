@@ -342,11 +342,37 @@ export function statusLabel(status: unknown): string {
 
 export function reasonLabel(reason: unknown): string {
   const labels: Record<string, string> = {
+    // 刷新/行情状态
     market_closed: "休市",
     no_data: "无数据",
     rate_limited: "请求频繁",
     timeout: "超时",
     manual: "手动",
+    // 选股条件达标
+    roe_ok: "ROE达标",
+    pe_ok: "市盈率达标",
+    pb_ok: "市净率达标",
+    mcap_ok: "市值达标",
+    deducted_net_profit_ok: "扣非净利润达标",
+    deducted_net_profit_margin_ok: "扣非净利率达标",
+    deducted_net_profit_growth_rate_ok: "扣非净利润增速达标",
+    // 关系图谱
+    strong_relation_signal: "强关联信号",
+    moderate_relation_signal: "中等关联信号",
+    // 趋势信号
+    short_buy_signal: "短线买入信号",
+    red_hold: "红柱持有",
+    swl_above_sws: "SWL上穿SWS",
+    kdj_golden_cross: "KDJ金叉",
+    kdj_dead_cross: "KDJ死叉",
+    kdj_oversold: "KDJ超卖",
+    kdj_overbought: "KDJ超买",
+    high_quant_score: "量化评分高",
+    white_exit: "白线离场",
+    cyan_watch: "青线观察",
+    oversold: "超卖",
+    accumulation_strength: "吸筹强度高",
+    swing_opportunity: "波段机会",
   };
   return labels[String(reason || "")] || String(reason || "");
 }

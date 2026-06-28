@@ -351,6 +351,14 @@ pub struct TrendIndicatorPoint {
     pub date: String,
     pub close: f64,
     #[serde(default)]
+    pub open: Option<f64>,
+    #[serde(default)]
+    pub high: Option<f64>,
+    #[serde(default)]
+    pub low: Option<f64>,
+    #[serde(default)]
+    pub volume: Option<f64>,
+    #[serde(default)]
     pub swl: Option<f64>,
     #[serde(default)]
     pub sws: Option<f64>,
@@ -933,6 +941,10 @@ struct PreparedBar {
 struct ComputedTrendBar {
     date: NaiveDate,
     close: f64,
+    open: f64,
+    high: f64,
+    low: f64,
+    volume: f64,
     previous_close: Option<f64>,
     close_change: Option<f64>,
     close_change_pct: Option<f64>,
@@ -1149,6 +1161,10 @@ fn current_system_date_yyyymmdd() -> String {
 
 fn default_series_limit() -> usize {
     120
+}
+
+fn clamp_series_limit(limit: usize) -> usize {
+    limit.clamp(20, 10_000)
 }
 
 fn default_trend_limit() -> usize {
@@ -1642,7 +1658,7 @@ pub fn trend_with_source(
     }
     let computed = compute_trend_bars(&bars);
     let signal = trend_signal_from_bar(&stock.code, computed.last().expect("non-empty trend bars"));
-    let limit = request.series_limit.clamp(20, 500);
+    let limit = clamp_series_limit(request.series_limit);
     let skip = computed.len().saturating_sub(limit);
     let series = computed
         .iter()
@@ -1693,7 +1709,7 @@ pub fn observe_with_source(
         code: stock.code.clone(),
         start_date: request.start_date.clone(),
         end_date: request.end_date.clone(),
-        series_limit: request.series_limit.clamp(20, 500),
+        series_limit: clamp_series_limit(request.series_limit),
     };
     let trend = match trend_with_source(source, &trend_request) {
         Ok(result) => Some(result),
@@ -5207,6 +5223,10 @@ fn compute_trend_bars(bars: &[PreparedBar]) -> Vec<ComputedTrendBar> {
         computed.push(ComputedTrendBar {
             date: bars[index].date,
             close: close[index],
+            open: open[index],
+            high: high[index],
+            low: low[index],
+            volume: volume[index],
             previous_close,
             close_change,
             close_change_pct,
@@ -5755,6 +5775,10 @@ fn trend_point_from_bar(bar: &ComputedTrendBar) -> TrendIndicatorPoint {
     TrendIndicatorPoint {
         date: bar.date.format("%Y-%m-%d").to_string(),
         close: round4(bar.close),
+        open: finite_round4(bar.open),
+        high: finite_round4(bar.high),
+        low: finite_round4(bar.low),
+        volume: finite_round4(bar.volume),
         swl: finite_round4(bar.swl),
         sws: finite_round4(bar.sws),
         k: finite_round4(bar.k),

@@ -42,6 +42,8 @@ const OBSERVE_CAPITAL_TOTAL_TIMEOUT_SECS: u64 = 10;
 const OBSERVE_CAPITAL_REQUEST_TIMEOUT_SECS: u64 = 6;
 const OBSERVE_GUBA_MAX_POSTS: usize = 10;
 const MIN_OBSERVE_HISTORY_BARS: usize = 3;
+const MIN_FULL_OBSERVE_HISTORY_BARS: usize = 750;
+const OBSERVE_DAILY_HISTORY_LIMIT: usize = 10_000;
 const FINANCIAL_REQUEST_TIMEOUT_SECS: u64 = 6;
 const MAX_TENCENT_WEBVIEW_QUOTE_BYTES: usize = 1_048_576;
 const COMPLETE_QUARTERLY_EPS_POINTS: usize = 8;
@@ -623,7 +625,9 @@ pub(crate) fn build_http_client_with_proxy(
 }
 
 #[cfg(target_os = "android")]
-fn apply_android_tls_backend(builder: reqwest::ClientBuilder) -> Result<reqwest::ClientBuilder, String> {
+fn apply_android_tls_backend(
+    builder: reqwest::ClientBuilder,
+) -> Result<reqwest::ClientBuilder, String> {
     let root_store = rustls::RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     };
@@ -637,7 +641,9 @@ fn apply_android_tls_backend(builder: reqwest::ClientBuilder) -> Result<reqwest:
 }
 
 #[cfg(not(target_os = "android"))]
-fn apply_android_tls_backend(builder: reqwest::ClientBuilder) -> Result<reqwest::ClientBuilder, String> {
+fn apply_android_tls_backend(
+    builder: reqwest::ClientBuilder,
+) -> Result<reqwest::ClientBuilder, String> {
     Ok(builder)
 }
 
@@ -2960,14 +2966,37 @@ async fn observe_core_payload_with_cached_history(
 
     // History: decide whether an online daily-history fetch is needed (WebView-provided rows and
     // a sufficiently stocked local cache both make it unnecessary).
+    let requested_series_limit = payload_usize_field(
+        &payload,
+        "series_limit",
+        120,
+        20,
+        OBSERVE_DAILY_HISTORY_LIMIT,
+    );
+    let required_cached_history_bars = if requested_series_limit > 500 {
+        MIN_FULL_OBSERVE_HISTORY_BARS
+    } else {
+        MIN_OBSERVE_HISTORY_BARS
+    };
     let webview_history_rows = payload_history_rows(&payload);
     let cache_lacks_history = webview_history_rows.is_none()
-        && !history_cache_has_bars(&data, &code, &start_date, &end_date, MIN_OBSERVE_HISTORY_BARS);
-    let need_history = cache_lacks_history && !mobile_fast_observe;
+        && !history_cache_has_bars(
+            &data,
+            &code,
+            &start_date,
+            &end_date,
+            required_cached_history_bars,
+        );
+    let need_history =
+        cache_lacks_history && (!mobile_fast_observe || requested_series_limit > 500);
 
     // Capital evidence, online EPS, and daily history are independent network groups — fetch them
     // concurrently, then merge each result into `data` sequentially below.
-    let capital_fetch_timeout = if mobile_fast_observe { 12 } else { OBSERVE_CAPITAL_TOTAL_TIMEOUT_SECS };
+    let capital_fetch_timeout = if mobile_fast_observe {
+        12
+    } else {
+        OBSERVE_CAPITAL_TOTAL_TIMEOUT_SECS
+    };
     let (capital_outcome, eps_outcome, history_outcome) = futures::join!(
         tokio::time::timeout(
             Duration::from_secs(capital_fetch_timeout),
@@ -3009,7 +3038,10 @@ async fn observe_core_payload_with_cached_history(
             }
             notes.extend(capital_notes);
             if mobile_fast_observe {
-                notes.push("Android short source capital evidence attempted with mobile proxy settings.".to_string());
+                notes.push(
+                    "Android short source capital evidence attempted with mobile proxy settings."
+                        .to_string(),
+                );
             }
         }
         Err(_) => {
@@ -3221,16 +3253,19 @@ async fn fetch_observe_capital_evidence_items(
     let mut notes = Vec::new();
     let mut items = Vec::new();
     let timeout = Duration::from_secs(OBSERVE_CAPITAL_REQUEST_TIMEOUT_SECS);
-    let client =
-        match build_http_client_with_proxy("Mozilla/5.0 GuXuanYou/0.3 capital evidence", timeout, network_payload) {
-            Ok(client) => client,
-            Err(error) => {
-                return (
-                    Vec::new(),
-                    vec![format!("综合资金证据 HTTP 客户端创建失败：{error}")],
-                );
-            }
-        };
+    let client = match build_http_client_with_proxy(
+        "Mozilla/5.0 GuXuanYou/0.3 capital evidence",
+        timeout,
+        network_payload,
+    ) {
+        Ok(client) => client,
+        Err(error) => {
+            return (
+                Vec::new(),
+                vec![format!("综合资金证据 HTTP 客户端创建失败：{error}")],
+            );
+        }
+    };
 
     // Guba sentiment and LHB institution stats hit independent endpoints — fetch concurrently.
     let (guba_fetch, lhb_fetch) = futures::join!(
@@ -4732,7 +4767,7 @@ async fn fetch_tencent_daily_history(
     })?;
     let start = hyphen_date_param(start_date).unwrap_or_else(|| "2020-01-01".to_string());
     let end = hyphen_date_param(end_date).unwrap_or_else(|| "2050-12-31".to_string());
-    let param = format!("{symbol},day,{start},{end},320,");
+    let param = format!("{symbol},day,{start},{end},{OBSERVE_DAILY_HISTORY_LIMIT},");
     let url = format!(
         "{TENCENT_DAILY_KLINE_ENDPOINT}?param={}",
         param.replace(',', "%2C")

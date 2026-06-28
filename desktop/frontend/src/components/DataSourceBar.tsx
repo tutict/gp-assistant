@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getJson, getTauriInvoke, isTauriRuntime, postJson, refreshTauriMarketData, validateTauriMarketCache } from "../lib/tauri";
-import { formatBytes, formatDateTime, formatNumber } from "../lib/format";
+import { getJson, getTauriInvoke, postJson, refreshTauriMarketData } from "../lib/tauri";
+import { formatBytes, formatNumber } from "../lib/format";
 import type { DataStatus } from "../types";
 
 interface DataSourceBarProps {
@@ -93,29 +93,6 @@ export function DataSourceBar({ mobileRuntime }: DataSourceBarProps) {
     }
   }, [appendLog, mobileRuntime, refreshOptions, updateProgressFromRefresh]);
 
-  const validateCache = useCallback(async () => {
-    setRefreshing(true);
-    setProgress({ label: "回读并校验本地缓存...", value: 18 });
-    try {
-      const invoke = getTauriInvoke();
-      if (!invoke) {
-        await loadStatus();
-        appendLog("Python Web 路径已读取数据源状态；Tauri 原生回读校验只在桌面/安卓应用内可用。", "warn");
-        return;
-      }
-      const validation = await validateTauriMarketCache(invoke, (message, tone) => appendLog(message, tone));
-      setProgress({ label: "校验完成", value: 100 });
-      appendLog(`校验结果：${formatNumber(validation.stock_count)} 只股票，${formatBytes(validation.bytes)}。`, "success");
-      await loadStatus();
-    } catch (err) {
-      appendLog(`校验失败：${(err as Error).message}`, "error");
-      setProgress({ label: "校验失败", value: 100 });
-    } finally {
-      setRefreshing(false);
-      window.setTimeout(() => setProgress(null), 1200);
-    }
-  }, [appendLog, loadStatus]);
-
   const pruneCache = useCallback(async () => {
     setRefreshing(true);
     setProgress({ label: "清理可丢弃缓存...", value: 30 });
@@ -139,9 +116,6 @@ export function DataSourceBar({ mobileRuntime }: DataSourceBarProps) {
         <div className="data-source-status">
           <span className="status-item"><em>股票池</em><strong>{formatNumber(status?.universe_count)}</strong></span>
           <span className="status-item"><em>缓存</em><strong>{formatBytes(status?.cache_bytes)}</strong></span>
-          <span className="status-item"><em>更新</em><strong>{formatDateTime(status?.universe_updated_at)}</strong></span>
-          <span className={`status-item ${status?.stale ? "stale" : "fresh"}`}><em>状态</em><strong>{status?.stale ? "过期" : "可用"}</strong></span>
-          <span className="status-item"><em>运行时</em><strong>{isTauriRuntime() ? (mobileRuntime ? "Android Tauri" : "Windows Tauri") : "Python Web"}</strong></span>
         </div>
 
         <div className="refresh-options">
@@ -152,8 +126,7 @@ export function DataSourceBar({ mobileRuntime }: DataSourceBarProps) {
       </div>
 
       <div className="data-source-actions">
-        <button type="button" className="action-btn" onClick={refreshUniverse} disabled={refreshing}>{mobileRuntime ? "移动端刷新" : "刷新股票池"}</button>
-        <button type="button" className="action-btn" onClick={validateCache} disabled={refreshing}>校验缓存</button>
+        <button type="button" className="action-btn" onClick={refreshUniverse} disabled={refreshing}>{mobileRuntime ? "移动端刷新并校验" : "刷新并校验股票池"}</button>
         <button type="button" className="action-btn" onClick={pruneCache} disabled={refreshing}>清理缓存</button>
       </div>
 

@@ -130,6 +130,10 @@ export interface GraphScreenResult {
 export interface TrendIndicatorPoint {
   date: string;
   close: number;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  volume?: number | null;
   swl?: number | null;
   sws?: number | null;
   k?: number | null;

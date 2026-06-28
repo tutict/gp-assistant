@@ -227,6 +227,49 @@ fn trend_indicator_runs_with_mock_history() {
 }
 
 #[test]
+fn trend_with_data_allows_full_observe_history_series() {
+    let mut data = sample_data_set();
+    let start = NaiveDate::from_ymd_opt(2020, 1, 1).expect("valid start date");
+    let history: Vec<HistoryBar> = (0..620)
+        .map(|idx| {
+            let close = 10.0 + idx as f64 * 0.01;
+            HistoryBar {
+                date: start
+                    .checked_add_days(Days::new(idx))
+                    .expect("valid history date")
+                    .format("%Y-%m-%d")
+                    .to_string(),
+                open: Some(close - 0.03),
+                high: Some(close + 0.08),
+                low: Some(close - 0.08),
+                close,
+                volume: Some(1_000_000.0 + idx as f64),
+                capital: Some(1_000_000_000.0),
+            }
+        })
+        .collect();
+    data.histories.insert("111111.SZ".to_string(), history);
+
+    let result = trend_with_data(
+        &data,
+        &TrendIndicatorRequest {
+            code: "111111.SZ".to_string(),
+            start_date: "20200101".to_string(),
+            end_date: "20211231".to_string(),
+            series_limit: 620,
+        },
+    )
+    .expect("full history trend should run");
+
+    assert_eq!(result.series.len(), 620);
+    let latest = result.series.last().expect("latest point");
+    assert!(latest.open.is_some());
+    assert!(latest.high.is_some());
+    assert!(latest.low.is_some());
+    assert!(latest.volume.is_some());
+}
+
+#[test]
 fn trend_screen_ranks_candidates() {
     let result = trend_screen_with_mock(&TrendScreenRequest {
         criteria: ScreenCriteria::default(),
@@ -1294,8 +1337,19 @@ fn screen_stocks_with_tied_scores_is_deterministic() {
     };
     let first = screen_stocks(&universe, &criteria);
     let second = screen_stocks(&universe, &criteria);
-    let codes_first: Vec<_> = first.items.iter().map(|item| item.stock.code.clone()).collect();
-    let codes_second: Vec<_> = second.items.iter().map(|item| item.stock.code.clone()).collect();
+    let codes_first: Vec<_> = first
+        .items
+        .iter()
+        .map(|item| item.stock.code.clone())
+        .collect();
+    let codes_second: Vec<_> = second
+        .items
+        .iter()
+        .map(|item| item.stock.code.clone())
+        .collect();
     assert_eq!(first.returned, 3);
-    assert_eq!(codes_first, codes_second, "tie-break ordering must be deterministic");
+    assert_eq!(
+        codes_first, codes_second,
+        "tie-break ordering must be deterministic"
+    );
 }
