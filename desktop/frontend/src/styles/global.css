@@ -217,7 +217,7 @@ a:hover { text-decoration: underline; }
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.48);
-  /* No backdrop-filter: blur() — see .app-header note; the rgba dim is enough. */
+  /* No backdrop-filter: blur() - see .app-header note; the rgba dim is enough. */
   z-index: 49;
 }
 
@@ -924,6 +924,28 @@ a:hover { text-decoration: underline; }
   font-size: 0.76rem;
   font-weight: 600;
 }
+.refresh-log-shell.collapsed {
+  padding-block: 8px;
+}
+.refresh-log-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.refresh-log-toggle {
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-1);
+  color: var(--accent);
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.refresh-log-toggle:hover {
+  border-color: var(--accent);
+}
 .refresh-log {
   display: grid;
   gap: 2px;
@@ -1180,10 +1202,49 @@ a:hover { text-decoration: underline; }
 .trend-legend .line-d { color: #4e9dff; }
 .trend-chart .line-j,
 .trend-legend .line-j { color: #c36cff; }
+.macd-chart .line-dif,
+.trend-legend .line-dif { color: #ffd84d; }
+.macd-chart .line-dea,
+.trend-legend .line-dea { color: #54b7ff; }
+.macd-chart .macd-up,
+.trend-legend .macd-up { color: #ff594f; }
+.macd-chart .macd-down,
+.trend-legend .macd-down { color: #13c27a; }
 .trend-chart .line-close { stroke-width: 2.6; }
 .trend-chart .line-swl,
 .trend-chart .line-sws { stroke-width: 2; opacity: 0.95; }
 .trend-chart .line-j { stroke-width: 2.5; }
+.macd-chart header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.macd-chart header h4 {
+  margin: 0;
+  font-size: 0.86rem;
+}
+.macd-chart svg {
+  color: var(--text);
+}
+.macd-chart .macd-bar {
+  opacity: 0.9;
+  rx: 0.8px;
+  filter: drop-shadow(0 0 2px color-mix(in srgb, currentColor 44%, transparent));
+}
+.macd-chart .macd-line-shadow {
+  stroke-width: 6;
+  opacity: 0.24;
+}
+.macd-chart .macd-line {
+  stroke-width: 3.4;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, currentColor 42%, transparent));
+}
+.macd-zero-line {
+  stroke: color-mix(in srgb, var(--text-secondary) 28%, transparent);
+  stroke-dasharray: 6 6;
+}
 .trend-legend {
   display: inline-flex;
   align-items: center;
@@ -1282,6 +1343,43 @@ a:hover { text-decoration: underline; }
 .kline-down { color: var(--fall); }
 .kline-wick { stroke-width: 1; }
 .kline-chart polyline { stroke-width: 1.4; }
+.kline-candle.selected .kline-body {
+  stroke: #ffffff;
+  stroke-width: 1.8;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, currentColor 70%, transparent));
+}
+.kline-candle.selected .kline-wick {
+  stroke-width: 2;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, currentColor 55%, transparent));
+}
+.kline-inspector-line {
+  stroke: color-mix(in srgb, var(--text) 58%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 4 5;
+  vector-effect: non-scaling-stroke;
+}
+.kline-inspector-dot {
+  fill: var(--text);
+  stroke: var(--surface);
+  stroke-width: 1.4;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--text) 55%, transparent));
+}
+.kline-inspector-card {
+  fill: color-mix(in srgb, var(--surface-2) 94%, #000 6%);
+  stroke: color-mix(in srgb, var(--accent) 62%, var(--line));
+  stroke-width: 1;
+  filter: drop-shadow(0 8px 18px rgb(0 0 0 / 0.34));
+}
+.kline-inspector-title {
+  fill: var(--text);
+  font-size: 11px;
+  font-weight: 800;
+}
+.kline-inspector-text {
+  fill: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+}
 .kline-chart .ma-5, .kline-legend .ma-5 { color: #f5a623; stroke: #f5a623; }
 .kline-chart .ma-10, .kline-legend .ma-10 { color: #4a90e2; stroke: #4a90e2; }
 .kline-chart .ma-20, .kline-legend .ma-20 { color: #b06ae0; stroke: #b06ae0; }
@@ -1386,4 +1484,1394 @@ a:hover { text-decoration: underline; }
   }
   .row-button-group { justify-content: stretch; }
   .stock-row-action { flex: 1; }
+}
+
+
+/* --- Android / Tauri Responsive Polish --- */
+html.mobile-tauri {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+html.mobile-tauri body {
+  font-size: 13px;
+  overscroll-behavior-y: contain;
+}
+html.mobile-tauri .app-header {
+  min-height: 48px;
+  padding: 7px 12px;
+}
+html.mobile-tauri .app-logo { width: 26px; height: 26px; }
+html.mobile-tauri .app-title { font-size: 1rem; }
+html.mobile-tauri .workbench {
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+}
+html.mobile-tauri button,
+html.mobile-tauri input,
+html.mobile-tauri select,
+html.mobile-tauri textarea {
+  max-width: 100%;
+}
+html.mobile-tauri .panel-container,
+html.mobile-tauri .observe-result,
+html.mobile-tauri .news-rag-result,
+html.mobile-tauri .signal-chart-stack {
+  min-width: 0;
+}
+html.mobile-tauri .chart-wrap,
+html.mobile-tauri .quote-table,
+html.mobile-tauri .raw-json pre,
+html.mobile-tauri .raw-result {
+  max-width: 100%;
+}
+
+@media (pointer: coarse) {
+  html.mobile-tauri .action-btn,
+  html.mobile-tauri .run-btn,
+  html.mobile-tauri .panel-tab,
+  html.mobile-tauri .source-toggle,
+  html.mobile-tauri .stock-row-action,
+  html.mobile-tauri .kline-nav button,
+  html.mobile-tauri .kline-period-tabs button,
+  html.mobile-tauri .rag-controls .rag-secondary-btn,
+  html.mobile-tauri .rag-controls .rag-run-btn {
+    min-height: 38px;
+  }
+  html.mobile-tauri .form-row input,
+  html.mobile-tauri .form-row select,
+  html.mobile-tauri .form-row textarea {
+    min-height: 38px;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1180px) {
+  html.mobile-tauri .app {
+    grid-template-columns: 176px minmax(0, 1fr);
+  }
+  html.mobile-tauri .sidebar {
+    width: 176px;
+  }
+  html.mobile-tauri .nav-link {
+    margin: 0 6px;
+    padding: 9px 10px;
+    gap: 8px;
+    font-size: 0.82rem;
+  }
+  html.mobile-tauri .workbench {
+    padding: 12px 14px 28px;
+    gap: 12px;
+  }
+  html.mobile-tauri .data-source-bar,
+  html.mobile-tauri .panel-controls,
+  html.mobile-tauri .research-context-bar {
+    padding: 8px 10px;
+  }
+  html.mobile-tauri .metric-strip {
+    grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  }
+  html.mobile-tauri .overview-metric-grid,
+  html.mobile-tauri .signal-grid,
+  html.mobile-tauri .financial-indicator-grid,
+  html.mobile-tauri .backtest-comparison,
+  html.mobile-tauri .detail-grid {
+    grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  }
+  html.mobile-tauri .quote-table-head,
+  html.mobile-tauri .stock-grid {
+    grid-template-columns: minmax(146px, 1.45fr) repeat(4, minmax(66px, 0.8fr)) minmax(104px, 0.9fr);
+    gap: 8px;
+  }
+  html.mobile-tauri .stock-row {
+    padding: 11px 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  html.mobile-tauri body { font-size: 12.5px; }
+  html.mobile-tauri .app-header {
+    gap: 9px;
+    padding: 7px 10px;
+  }
+  html.mobile-tauri .app-title {
+    max-width: 52vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.96rem;
+  }
+  html.mobile-tauri .theme-toggle-label { display: none; }
+  html.mobile-tauri .workbench {
+    padding: 9px 8px 22px;
+    gap: 10px;
+  }
+  html.mobile-tauri .research-context-bar,
+  html.mobile-tauri .data-source-bar,
+  html.mobile-tauri .panel-controls,
+  html.mobile-tauri .rag-controls,
+  html.mobile-tauri .backtest-context,
+  html.mobile-tauri .backtest-controls {
+    border-radius: 7px;
+    padding: 9px;
+  }
+  html.mobile-tauri .data-source-main,
+  html.mobile-tauri .data-source-status,
+  html.mobile-tauri .refresh-options,
+  html.mobile-tauri .data-source-actions {
+    width: 100%;
+  }
+  html.mobile-tauri .data-source-status {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+  html.mobile-tauri .status-item {
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 7px;
+    padding: 6px 8px;
+    border: 1px solid var(--line-soft);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--surface-2) 68%, transparent);
+  }
+  html.mobile-tauri .status-item em,
+  html.mobile-tauri .metric span,
+  html.mobile-tauri .quote-number span,
+  html.mobile-tauri .score-badge small {
+    font-size: 0.7rem;
+  }
+  html.mobile-tauri .status-item strong {
+    min-width: 0;
+    font-size: 0.78rem;
+    text-align: right;
+  }
+  html.mobile-tauri .refresh-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+  html.mobile-tauri .refresh-options label {
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+  }
+  html.mobile-tauri .refresh-options label:first-child {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+  }
+  html.mobile-tauri .refresh-options input[type="number"] {
+    width: 100%;
+  }
+  html.mobile-tauri .data-source-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+  html.mobile-tauri .data-source-actions .action-btn,
+  html.mobile-tauri .panel-tab,
+  html.mobile-tauri .run-btn {
+    width: 100%;
+  }
+  html.mobile-tauri .refresh-log-shell {
+    padding: 8px;
+  }
+  html.mobile-tauri .refresh-log-entry {
+    grid-template-columns: 56px minmax(0, 1fr);
+    gap: 7px;
+    font-size: 0.72rem;
+  }
+  html.mobile-tauri .panel-tabs,
+  html.mobile-tauri .rag-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+  html.mobile-tauri .panel-tab {
+    min-width: 0;
+    padding-inline: 8px;
+    font-size: 0.78rem;
+  }
+  html.mobile-tauri .panel-controls,
+  html.mobile-tauri .backtest-controls,
+  html.mobile-tauri .rag-controls {
+    display: grid;
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: 9px;
+  }
+  html.mobile-tauri .form-row,
+  html.mobile-tauri .form-row.inline,
+  html.mobile-tauri .rag-controls .form-row,
+  html.mobile-tauri .rag-controls .form-row.inline,
+  html.mobile-tauri .backtest-controls .form-row.inline {
+    min-width: 0;
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 5px;
+  }
+  html.mobile-tauri .form-row label,
+  html.mobile-tauri .backtest-controls .form-row label {
+    max-width: none;
+    text-align: left;
+    font-size: 0.72rem;
+  }
+  html.mobile-tauri .stock-code-input {
+    min-width: 0;
+    width: 100%;
+  }
+  html.mobile-tauri .form-row input,
+  html.mobile-tauri .form-row select,
+  html.mobile-tauri .form-row textarea,
+  html.mobile-tauri .stock-code-input input {
+    width: 100%;
+    padding: 8px 10px;
+    font-size: 0.86rem;
+  }
+  html.mobile-tauri .metric-strip,
+  html.mobile-tauri .overview-metric-grid,
+  html.mobile-tauri .signal-grid,
+  html.mobile-tauri .financial-indicator-grid,
+  html.mobile-tauri .backtest-comparison,
+  html.mobile-tauri .detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+  html.mobile-tauri .metric,
+  html.mobile-tauri .overview-metric-grid > div,
+  html.mobile-tauri .signal-grid > div,
+  html.mobile-tauri .financial-indicator-item,
+  html.mobile-tauri .backtest-comparison > div,
+  html.mobile-tauri .detail-grid > div,
+  html.mobile-tauri .sector-group,
+  html.mobile-tauri .screen-result-group,
+  html.mobile-tauri .signal-card,
+  html.mobile-tauri .observe-overview,
+  html.mobile-tauri .financial-indicators,
+  html.mobile-tauri .capital-evidence-list,
+  html.mobile-tauri .news-finding,
+  html.mobile-tauri .plain-news-column,
+  html.mobile-tauri .plain-news-secondary,
+  html.mobile-tauri .agent-result-card {
+    padding: 10px;
+    border-radius: 7px;
+  }
+  html.mobile-tauri .metric strong,
+  html.mobile-tauri .quote-number strong,
+  html.mobile-tauri .score-badge b {
+    font-size: 0.92rem;
+  }
+  html.mobile-tauri .quote-table {
+    overflow: visible;
+  }
+  html.mobile-tauri .quote-table-head {
+    display: none;
+  }
+  html.mobile-tauri .stock-row {
+    padding: 10px;
+  }
+  html.mobile-tauri .stock-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    align-items: stretch;
+  }
+  html.mobile-tauri .stock-title {
+    grid-column: 1 / -1;
+  }
+  html.mobile-tauri .quote-number,
+  html.mobile-tauri .score-badge {
+    min-width: 0;
+    padding: 7px 8px;
+    border: 1px solid var(--line-soft);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--surface-2) 66%, transparent);
+  }
+  html.mobile-tauri .row-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  html.mobile-tauri .row-button-group {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+  html.mobile-tauri .stock-row-action {
+    width: 100%;
+  }
+  html.mobile-tauri .observe-overview-header,
+  html.mobile-tauri .signal-card header,
+  html.mobile-tauri .financial-indicators header,
+  html.mobile-tauri .capital-evidence-list header,
+  html.mobile-tauri .news-finding header,
+  html.mobile-tauri .plain-news-column > header,
+  html.mobile-tauri .upstream-transfer header {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+  html.mobile-tauri .kline-chart header {
+    display: grid;
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: 8px;
+  }
+  html.mobile-tauri .kline-chart header h4 {
+    font-size: 0.92rem;
+  }
+  html.mobile-tauri .kline-chart header p {
+    font-size: 0.7rem;
+    line-height: 1.35;
+  }
+  html.mobile-tauri .kline-period-tabs,
+  html.mobile-tauri .kline-nav {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+  }
+  html.mobile-tauri .kline-nav {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  html.mobile-tauri .kline-nav button,
+  html.mobile-tauri .kline-period-tabs button {
+    min-width: 0;
+    height: 32px;
+    padding: 0 4px;
+    font-size: 0.72rem;
+  }
+  html.mobile-tauri .kline-legend,
+  html.mobile-tauri .trend-legend {
+    margin-left: 0;
+    gap: 7px;
+    font-size: 0.68rem;
+  }
+  html.mobile-tauri .kline-chart svg {
+    min-height: 220px;
+  }
+  html.mobile-tauri .trend-chart svg,
+  html.mobile-tauri .macd-chart svg {
+    min-height: 124px;
+  }
+  html.mobile-tauri .kline-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    font-size: 0.7rem;
+  }
+  html.mobile-tauri .plain-news-groups {
+    grid-template-columns: 1fr;
+  }
+  html.mobile-tauri .agent-panel {
+    height: auto;
+    min-height: calc(100svh - 112px);
+  }
+  html.mobile-tauri .agent-message {
+    max-width: 94%;
+  }
+  html.mobile-tauri .agent-input-bar {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 420px) {
+  html.mobile-tauri body { font-size: 12px; }
+  html.mobile-tauri .workbench {
+    padding-inline: 6px;
+    gap: 8px;
+  }
+  html.mobile-tauri .data-source-status,
+  html.mobile-tauri .metric-strip,
+  html.mobile-tauri .overview-metric-grid,
+  html.mobile-tauri .signal-grid,
+  html.mobile-tauri .financial-indicator-grid,
+  html.mobile-tauri .backtest-comparison,
+  html.mobile-tauri .detail-grid,
+  html.mobile-tauri .stock-grid,
+  html.mobile-tauri .row-button-group,
+  html.mobile-tauri .kline-stats {
+    grid-template-columns: 1fr;
+  }
+  html.mobile-tauri .data-source-actions,
+  html.mobile-tauri .panel-tabs,
+  html.mobile-tauri .rag-tabs {
+    grid-template-columns: 1fr;
+  }
+  html.mobile-tauri .kline-nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  html.mobile-tauri .kline-period-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  html.mobile-tauri .kline-chart svg {
+    min-height: 200px;
+  }
+  html.mobile-tauri .trend-legend span::before {
+    width: 11px;
+  }
+}
+
+
+/* Android orientation-specific density and stacking */
+html.mobile-tauri.android-landscape body {
+  font-size: 12.5px;
+}
+html.mobile-tauri.android-landscape .app {
+  grid-template-columns: 164px minmax(0, 1fr);
+}
+html.mobile-tauri.android-landscape .sidebar {
+  width: 164px;
+  padding-block: 8px;
+}
+html.mobile-tauri.android-landscape .nav-link {
+  padding: 8px 9px;
+  margin-inline: 5px;
+  gap: 7px;
+  font-size: 0.78rem;
+}
+html.mobile-tauri.android-landscape .workbench {
+  padding: 10px 12px 22px;
+  gap: 10px;
+}
+html.mobile-tauri.android-landscape .research-context-bar,
+html.mobile-tauri.android-landscape .data-source-bar,
+html.mobile-tauri.android-landscape .panel-controls,
+html.mobile-tauri.android-landscape .sector-group,
+html.mobile-tauri.android-landscape .screen-result-group,
+html.mobile-tauri.android-landscape .signal-card,
+html.mobile-tauri.android-landscape .observe-overview,
+html.mobile-tauri.android-landscape .financial-indicators,
+html.mobile-tauri.android-landscape .capital-evidence-list,
+html.mobile-tauri.android-landscape .news-finding,
+html.mobile-tauri.android-landscape .plain-news-column,
+html.mobile-tauri.android-landscape .plain-news-secondary,
+html.mobile-tauri.android-landscape .agent-result-card {
+  padding: 10px;
+  border-radius: 7px;
+}
+html.mobile-tauri.android-landscape .panel-controls {
+  min-height: 0;
+  gap: 8px;
+}
+html.mobile-tauri.android-landscape .form-row input,
+html.mobile-tauri.android-landscape .form-row select,
+html.mobile-tauri.android-landscape .form-row textarea {
+  padding: 6px 9px;
+  font-size: 0.82rem;
+}
+html.mobile-tauri.android-landscape .run-btn,
+html.mobile-tauri.android-landscape .action-btn,
+html.mobile-tauri.android-landscape .panel-tab {
+  min-height: 32px;
+  padding-block: 5px;
+}
+html.mobile-tauri.android-landscape .metric-strip,
+html.mobile-tauri.android-landscape .overview-metric-grid,
+html.mobile-tauri.android-landscape .signal-grid,
+html.mobile-tauri.android-landscape .financial-indicator-grid,
+html.mobile-tauri.android-landscape .backtest-comparison,
+html.mobile-tauri.android-landscape .detail-grid {
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: 8px;
+}
+html.mobile-tauri.android-landscape .kline-chart svg {
+  min-height: clamp(210px, 42svh, 300px);
+}
+html.mobile-tauri.android-landscape .trend-chart svg,
+html.mobile-tauri.android-landscape .macd-chart svg {
+  min-height: clamp(108px, 24svh, 150px);
+}
+html.mobile-tauri.android-landscape .kline-chart header {
+  gap: 8px;
+}
+html.mobile-tauri.android-landscape .kline-chart header p {
+  font-size: 0.68rem;
+}
+html.mobile-tauri.android-landscape .kline-nav button,
+html.mobile-tauri.android-landscape .kline-period-tabs button {
+  height: 30px;
+  padding-inline: 5px;
+  font-size: 0.7rem;
+}
+html.mobile-tauri.android-landscape .kline-stats {
+  font-size: 0.69rem;
+  gap: 5px 10px;
+}
+html.mobile-tauri.android-landscape .kline-inspector-title {
+  font-size: 10px;
+}
+html.mobile-tauri.android-landscape .kline-inspector-text {
+  font-size: 9.2px;
+}
+
+html.mobile-tauri.android-portrait .app {
+  grid-template-columns: 1fr;
+}
+html.mobile-tauri.android-portrait .sidebar {
+  position: fixed;
+  left: -260px;
+  top: 0;
+  height: 100dvh;
+  z-index: 50;
+  width: min(240px, 82vw);
+}
+html.mobile-tauri.android-portrait .sidebar.open {
+  left: 0;
+}
+html.mobile-tauri.android-portrait .mobile-nav-toggle {
+  display: flex;
+}
+html.mobile-tauri.android-portrait .workbench {
+  grid-column: 1;
+  padding: 8px 7px calc(22px + env(safe-area-inset-bottom, 0px));
+  gap: 8px;
+}
+html.mobile-tauri.android-portrait .app-header {
+  min-height: 44px;
+  padding: 6px 9px;
+  gap: 8px;
+}
+html.mobile-tauri.android-portrait .app-title {
+  max-width: 50vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.92rem;
+}
+html.mobile-tauri.android-portrait .theme-toggle-label {
+  display: none;
+}
+html.mobile-tauri.android-portrait .research-context-bar,
+html.mobile-tauri.android-portrait .data-source-bar,
+html.mobile-tauri.android-portrait .panel-controls,
+html.mobile-tauri.android-portrait .rag-controls,
+html.mobile-tauri.android-portrait .backtest-context,
+html.mobile-tauri.android-portrait .backtest-controls {
+  padding: 8px;
+  border-radius: 7px;
+}
+html.mobile-tauri.android-portrait .panel-controls,
+html.mobile-tauri.android-portrait .backtest-controls,
+html.mobile-tauri.android-portrait .rag-controls {
+  display: grid;
+  grid-template-columns: 1fr;
+  min-height: 0;
+  gap: 8px;
+}
+html.mobile-tauri.android-portrait .form-row,
+html.mobile-tauri.android-portrait .form-row.inline {
+  min-width: 0;
+  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+html.mobile-tauri.android-portrait .form-row label {
+  font-size: 0.7rem;
+}
+html.mobile-tauri.android-portrait .form-row input,
+html.mobile-tauri.android-portrait .form-row select,
+html.mobile-tauri.android-portrait .form-row textarea,
+html.mobile-tauri.android-portrait .stock-code-input input {
+  min-height: 36px;
+  padding: 7px 9px;
+  font-size: 0.82rem;
+}
+html.mobile-tauri.android-portrait .panel-tabs,
+html.mobile-tauri.android-portrait .rag-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+}
+html.mobile-tauri.android-portrait .panel-tab {
+  min-width: 0;
+  min-height: 34px;
+  padding: 5px 7px;
+  font-size: 0.74rem;
+}
+html.mobile-tauri.android-portrait .run-btn,
+html.mobile-tauri.android-portrait .action-btn {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 10px;
+  font-size: 0.78rem;
+}
+html.mobile-tauri.android-portrait .metric-strip,
+html.mobile-tauri.android-portrait .overview-metric-grid,
+html.mobile-tauri.android-portrait .signal-grid,
+html.mobile-tauri.android-portrait .financial-indicator-grid,
+html.mobile-tauri.android-portrait .backtest-comparison,
+html.mobile-tauri.android-portrait .detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+html.mobile-tauri.android-portrait .metric,
+html.mobile-tauri.android-portrait .overview-metric-grid > div,
+html.mobile-tauri.android-portrait .signal-grid > div,
+html.mobile-tauri.android-portrait .financial-indicator-item,
+html.mobile-tauri.android-portrait .backtest-comparison > div,
+html.mobile-tauri.android-portrait .detail-grid > div,
+html.mobile-tauri.android-portrait .sector-group,
+html.mobile-tauri.android-portrait .screen-result-group,
+html.mobile-tauri.android-portrait .signal-card,
+html.mobile-tauri.android-portrait .observe-overview,
+html.mobile-tauri.android-portrait .financial-indicators,
+html.mobile-tauri.android-portrait .capital-evidence-list,
+html.mobile-tauri.android-portrait .news-finding,
+html.mobile-tauri.android-portrait .plain-news-column,
+html.mobile-tauri.android-portrait .plain-news-secondary,
+html.mobile-tauri.android-portrait .agent-result-card {
+  padding: 9px;
+  border-radius: 7px;
+}
+html.mobile-tauri.android-portrait .observe-overview-header,
+html.mobile-tauri.android-portrait .signal-card header,
+html.mobile-tauri.android-portrait .financial-indicators header,
+html.mobile-tauri.android-portrait .capital-evidence-list header,
+html.mobile-tauri.android-portrait .news-finding header,
+html.mobile-tauri.android-portrait .plain-news-column > header,
+html.mobile-tauri.android-portrait .upstream-transfer header {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+html.mobile-tauri.android-portrait .kline-chart header {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  gap: 7px;
+}
+html.mobile-tauri.android-portrait .kline-chart header h4 {
+  font-size: 0.88rem;
+}
+html.mobile-tauri.android-portrait .kline-chart header p {
+  font-size: 0.66rem;
+  line-height: 1.32;
+}
+html.mobile-tauri.android-portrait .kline-period-tabs {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+html.mobile-tauri.android-portrait .kline-nav {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+html.mobile-tauri.android-portrait .kline-nav button,
+html.mobile-tauri.android-portrait .kline-period-tabs button {
+  min-width: 0;
+  height: 31px;
+  padding: 0 3px;
+  font-size: 0.68rem;
+}
+html.mobile-tauri.android-portrait .kline-legend,
+html.mobile-tauri.android-portrait .trend-legend {
+  margin-left: 0;
+  gap: 6px;
+  font-size: 0.64rem;
+}
+html.mobile-tauri.android-portrait .kline-chart svg {
+  min-height: min(48svh, 260px);
+}
+html.mobile-tauri.android-portrait .trend-chart svg,
+html.mobile-tauri.android-portrait .macd-chart svg {
+  min-height: 112px;
+}
+html.mobile-tauri.android-portrait .kline-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  font-size: 0.66rem;
+}
+html.mobile-tauri.android-portrait .kline-stats span,
+html.mobile-tauri.android-portrait .chart-labels span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+html.mobile-tauri.android-portrait .kline-inspector-title {
+  font-size: 9.5px;
+}
+html.mobile-tauri.android-portrait .kline-inspector-text {
+  font-size: 8.8px;
+}
+
+@media (max-width: 420px) {
+  html.mobile-tauri.android-portrait .metric-strip,
+  html.mobile-tauri.android-portrait .overview-metric-grid,
+  html.mobile-tauri.android-portrait .signal-grid,
+  html.mobile-tauri.android-portrait .financial-indicator-grid,
+  html.mobile-tauri.android-portrait .backtest-comparison,
+  html.mobile-tauri.android-portrait .detail-grid,
+  html.mobile-tauri.android-portrait .stock-grid,
+  html.mobile-tauri.android-portrait .row-button-group,
+  html.mobile-tauri.android-portrait .kline-stats {
+    grid-template-columns: 1fr;
+  }
+  html.mobile-tauri.android-portrait .kline-chart svg {
+    min-height: 210px;
+  }
+  html.mobile-tauri.android-portrait .kline-nav,
+  html.mobile-tauri.android-portrait .kline-period-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+
+/* Android compact phone hardening */
+html.mobile-tauri.android-compact,
+html.mobile-tauri.android-compact body,
+html.mobile-tauri.android-compact #root,
+html.mobile-tauri.android-compact .app {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+}
+html.mobile-tauri.android-compact body {
+  font-size: 12px;
+}
+html.mobile-tauri.android-compact,
+html.mobile-tauri.android-compact body,
+html.mobile-tauri.android-compact #root {
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+}
+
+html.mobile-tauri.android-compact .app {
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-rows: auto minmax(0, 1fr) auto !important;
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+}
+html.mobile-tauri.android-compact .sidebar {
+  position: relative;
+  left: 0;
+  right: auto;
+  top: auto;
+  bottom: auto;
+  grid-column: 1 / -1;
+  grid-row: 3;
+  width: 100%;
+  height: calc(58px + env(safe-area-inset-bottom, 0px));
+  z-index: 30;
+  display: block;
+  padding: 5px 6px calc(5px + env(safe-area-inset-bottom, 0px));
+  border-right: 0;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 98%, var(--bg));
+  overflow: visible;
+}
+html.mobile-tauri.android-compact .sidebar.open {
+  left: 0;
+}
+html.mobile-tauri.android-compact .nav-items {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  height: 100%;
+}
+html.mobile-tauri.android-compact .nav-link {
+  height: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 4px 2px;
+  border-radius: 7px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  font-size: 0.62rem;
+  line-height: 1.1;
+  text-align: center;
+}
+html.mobile-tauri.android-compact .nav-link svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+html.mobile-tauri.android-compact .mobile-nav-toggle,
+html.mobile-tauri.android-compact .mobile-nav-overlay {
+  display: none !important;
+}
+html.mobile-tauri.android-compact .workbench,
+html.mobile-tauri.android-compact .panels,
+html.mobile-tauri.android-compact .panel-container,
+html.mobile-tauri.android-compact .research-context-bar,
+html.mobile-tauri.android-compact .data-source-bar,
+html.mobile-tauri.android-compact .panel-controls,
+html.mobile-tauri.android-compact .backtest-controls,
+html.mobile-tauri.android-compact .rag-controls,
+html.mobile-tauri.android-compact .observe-result,
+html.mobile-tauri.android-compact .news-rag-result,
+html.mobile-tauri.android-compact .watchlist-panel,
+html.mobile-tauri.android-compact .llm-settings-panel {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  align-self: stretch;
+}
+html.mobile-tauri.android-compact .workbench {
+  grid-column: 1 / -1 !important;
+  grid-row: 2;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 7px 6px;
+  gap: 7px;
+}
+html.mobile-tauri.android-compact .app-header {
+  min-height: 42px;
+  padding: 5px 8px;
+  gap: 7px;
+}
+html.mobile-tauri.android-compact .app-logo {
+  width: 25px;
+  height: 25px;
+}
+html.mobile-tauri.android-compact .app-title {
+  max-width: 50vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+html.mobile-tauri.android-compact .theme-toggle-label {
+  display: none;
+}
+html.mobile-tauri.android-compact .research-context-bar,
+html.mobile-tauri.android-compact .data-source-bar,
+html.mobile-tauri.android-compact .panel-controls,
+html.mobile-tauri.android-compact .backtest-context,
+html.mobile-tauri.android-compact .backtest-controls,
+html.mobile-tauri.android-compact .rag-controls {
+  display: grid;
+  grid-template-columns: 1fr;
+  padding: 7px;
+  gap: 7px;
+  border-radius: 7px;
+}
+html.mobile-tauri.android-compact .criteria-summary {
+  white-space: normal;
+  line-height: 1.35;
+}
+html.mobile-tauri.android-compact .data-source-main,
+html.mobile-tauri.android-compact .data-source-status,
+html.mobile-tauri.android-compact .data-source-actions,
+html.mobile-tauri.android-compact .refresh-options,
+html.mobile-tauri.android-compact .panel-tabs,
+html.mobile-tauri.android-compact .rag-tabs,
+html.mobile-tauri.android-compact .plain-news-groups {
+  display: grid;
+  grid-template-columns: 1fr;
+  width: 100%;
+  gap: 6px;
+}
+html.mobile-tauri.android-compact .status-item,
+html.mobile-tauri.android-compact .metric,
+html.mobile-tauri.android-compact .quote-number,
+html.mobile-tauri.android-compact .score-badge {
+  min-width: 0;
+  width: 100%;
+}
+html.mobile-tauri.android-compact .status-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-2) 68%, transparent);
+}
+html.mobile-tauri.android-compact .status-item strong {
+  min-width: 0;
+  text-align: right;
+}
+html.mobile-tauri.android-compact .form-row,
+html.mobile-tauri.android-compact .form-row.inline,
+html.mobile-tauri.android-compact .rag-controls .form-row,
+html.mobile-tauri.android-compact .backtest-controls .form-row.inline {
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+html.mobile-tauri.android-compact .form-row input,
+html.mobile-tauri.android-compact .form-row select,
+html.mobile-tauri.android-compact .form-row textarea,
+html.mobile-tauri.android-compact .stock-code-input input,
+html.mobile-tauri.android-compact .action-btn,
+html.mobile-tauri.android-compact .run-btn,
+html.mobile-tauri.android-compact .panel-tab,
+html.mobile-tauri.android-compact .stock-row-action {
+  width: 100%;
+  max-width: 100%;
+  min-height: 34px;
+  font-size: 0.78rem;
+}
+html.mobile-tauri.android-compact .metric-strip,
+html.mobile-tauri.android-compact .overview-metric-grid,
+html.mobile-tauri.android-compact .signal-grid,
+html.mobile-tauri.android-compact .financial-indicator-grid,
+html.mobile-tauri.android-compact .backtest-comparison,
+html.mobile-tauri.android-compact .detail-grid,
+html.mobile-tauri.android-compact .stock-grid,
+html.mobile-tauri.android-compact .row-button-group,
+html.mobile-tauri.android-compact .kline-stats {
+  grid-template-columns: 1fr !important;
+}
+html.mobile-tauri.android-compact .panel-tab {
+  padding-inline: 7px;
+}
+html.mobile-tauri.android-compact .kline-chart svg {
+  min-height: 190px;
+}
+html.mobile-tauri.android-compact .trend-chart svg,
+html.mobile-tauri.android-compact .macd-chart svg {
+  min-height: 104px;
+}
+
+
+/* Android tablet uses desktop-style navigation */
+html.mobile-tauri.android-tablet .app {
+  grid-template-columns: 176px minmax(0, 1fr) !important;
+  grid-template-rows: auto 1fr !important;
+  height: auto;
+  min-height: 100vh;
+  overflow: visible;
+}
+html.mobile-tauri.android-tablet .mobile-nav-toggle,
+html.mobile-tauri.android-tablet .mobile-nav-overlay,
+html.mobile-tauri.android-tablet .mobile-nav-close {
+  display: none !important;
+}
+html.mobile-tauri.android-tablet .sidebar {
+  position: static !important;
+  grid-column: 1;
+  grid-row: 2 / -1;
+  width: 176px;
+  height: auto;
+  z-index: auto;
+  display: flex;
+  padding: 10px 0;
+  border-top: 0;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+  overflow-y: auto;
+}
+html.mobile-tauri.android-tablet .nav-items {
+  display: block;
+  height: auto;
+}
+html.mobile-tauri.android-tablet .nav-link {
+  min-height: 40px;
+  height: auto;
+  margin: 0 6px;
+  padding: 9px 10px;
+  border-radius: 7px;
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 8px;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  text-align: left;
+}
+html.mobile-tauri.android-tablet .nav-link svg {
+  width: 20px;
+  height: 20px;
+}
+html.mobile-tauri.android-tablet .workbench {
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 0;
+  overflow: visible;
+  padding: 12px 14px 28px;
+  gap: 12px;
+}
+html.mobile-tauri.android-tablet .app-header {
+  min-height: 48px;
+  padding: 7px 12px;
+}
+html.mobile-tauri.android-tablet .theme-toggle-label {
+  display: inline;
+}
+/* Android phone bottom navigation and tablet desktop parity */
+html.mobile-tauri.android-bottom-nav .app {
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-rows: auto minmax(0, 1fr) auto !important;
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+}
+html.mobile-tauri.android-bottom-nav .workbench {
+  grid-column: 1 / -1 !important;
+  grid-row: 2;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  scrollbar-gutter: stable;
+}
+html.mobile-tauri.android-bottom-nav .sidebar {
+  position: relative !important;
+  left: 0 !important;
+  right: auto !important;
+  top: auto !important;
+  bottom: auto !important;
+  grid-column: 1 / -1;
+  grid-row: 3;
+  width: 100% !important;
+  height: calc(60px + env(safe-area-inset-bottom, 0px));
+  min-height: calc(60px + env(safe-area-inset-bottom, 0px));
+  z-index: 30;
+  display: block;
+  padding: 5px 7px calc(5px + env(safe-area-inset-bottom, 0px));
+  border-right: 0;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 98%, var(--bg));
+  overflow: visible;
+  box-shadow: 0 -12px 28px rgba(0,0,0,0.24);
+}
+html.mobile-tauri.android-bottom-nav .nav-items {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+  height: 100%;
+}
+html.mobile-tauri.android-bottom-nav .nav-link {
+  height: 100%;
+  min-height: 46px;
+  margin: 0;
+  padding: 4px 2px;
+  border-radius: 8px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  font-size: 0.64rem;
+  font-weight: 700;
+  line-height: 1.08;
+  text-align: center;
+  white-space: nowrap;
+}
+html.mobile-tauri.android-bottom-nav .nav-link svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+html.mobile-tauri.android-bottom-nav .mobile-nav-toggle,
+html.mobile-tauri.android-bottom-nav .mobile-nav-overlay,
+html.mobile-tauri.android-bottom-nav .mobile-nav-close {
+  display: none !important;
+}
+html.mobile-tauri.android-bottom-nav .app-header {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+html.mobile-tauri.android-tablet body {
+  font-size: 14px;
+  overflow: auto;
+}
+html.mobile-tauri.android-tablet .app {
+  grid-template-columns: 220px minmax(0, 1fr) !important;
+  grid-template-rows: auto 1fr !important;
+  height: auto !important;
+  min-height: 100vh !important;
+  overflow: visible !important;
+}
+html.mobile-tauri.android-tablet .app-header {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  min-height: 58px;
+  padding: 8px 16px;
+  gap: 16px;
+}
+html.mobile-tauri.android-tablet .app-title {
+  max-width: none;
+  font-size: 1.1rem;
+}
+html.mobile-tauri.android-tablet .theme-toggle-label {
+  display: inline;
+}
+html.mobile-tauri.android-tablet .mobile-nav-toggle,
+html.mobile-tauri.android-tablet .mobile-nav-overlay,
+html.mobile-tauri.android-tablet .mobile-nav-close {
+  display: none !important;
+}
+html.mobile-tauri.android-tablet .sidebar {
+  position: static !important;
+  grid-column: 1;
+  grid-row: 2 / -1;
+  width: 220px !important;
+  height: auto !important;
+  min-height: 0;
+  z-index: auto;
+  display: flex;
+  padding: 12px 0;
+  border-top: 0;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+  overflow-y: auto;
+  box-shadow: none;
+}
+html.mobile-tauri.android-tablet .nav-items {
+  display: block;
+  height: auto;
+}
+html.mobile-tauri.android-tablet .nav-link {
+  min-height: 40px;
+  height: auto;
+  margin: 0 8px;
+  padding: 10px 16px;
+  border-radius: 6px;
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 10px;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  text-align: left;
+  white-space: normal;
+}
+html.mobile-tauri.android-tablet .nav-link svg {
+  width: 20px;
+  height: 20px;
+}
+html.mobile-tauri.android-tablet .workbench {
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 0;
+  overflow: visible;
+  padding: 18px 22px 44px;
+  gap: 14px;
+}
+html.mobile-tauri.android-tablet .research-context-bar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: 7px 12px;
+}
+html.mobile-tauri.android-tablet .criteria-toggle {
+  width: auto;
+  justify-content: flex-start;
+}
+html.mobile-tauri.android-tablet .criteria-summary {
+  white-space: nowrap;
+}
+html.mobile-tauri.android-tablet .data-source-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+}
+html.mobile-tauri.android-tablet .data-source-main,
+html.mobile-tauri.android-tablet .data-source-status,
+html.mobile-tauri.android-tablet .data-source-actions,
+html.mobile-tauri.android-tablet .refresh-options {
+  display: flex;
+  width: auto;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+html.mobile-tauri.android-tablet .data-source-main {
+  flex: 1 1 auto;
+}
+html.mobile-tauri.android-tablet .data-source-actions {
+  justify-content: flex-end;
+  flex: 0 0 auto;
+}
+html.mobile-tauri.android-tablet .status-item {
+  display: inline-flex;
+  width: auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  gap: 5px;
+}
+html.mobile-tauri.android-tablet .status-item strong {
+  text-align: left;
+  font-size: 0.86rem;
+}
+html.mobile-tauri.android-tablet .panel-tabs,
+html.mobile-tauri.android-tablet .rag-tabs {
+  display: flex;
+  grid-template-columns: none;
+  width: fit-content;
+  max-width: 100%;
+  gap: 2px;
+}
+html.mobile-tauri.android-tablet .panel-tab {
+  width: auto;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 14px;
+  font-size: 0.84rem;
+}
+html.mobile-tauri.android-tablet .panel-controls,
+html.mobile-tauri.android-tablet .backtest-controls,
+html.mobile-tauri.android-tablet .rag-controls {
+  display: flex;
+  grid-template-columns: none;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  padding: 14px;
+  gap: 12px;
+}
+html.mobile-tauri.android-tablet .form-row,
+html.mobile-tauri.android-tablet .rag-controls .form-row {
+  width: auto;
+  min-width: 140px;
+  flex: 1;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+html.mobile-tauri.android-tablet .form-row.inline,
+html.mobile-tauri.android-tablet .backtest-controls .form-row.inline {
+  width: auto;
+  min-width: auto;
+  flex: 0 1 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+html.mobile-tauri.android-tablet .form-row label,
+html.mobile-tauri.android-tablet .backtest-controls .form-row label {
+  max-width: none;
+  text-align: left;
+  font-size: 0.78rem;
+}
+html.mobile-tauri.android-tablet .form-row input,
+html.mobile-tauri.android-tablet .form-row select,
+html.mobile-tauri.android-tablet .form-row textarea,
+html.mobile-tauri.android-tablet .stock-code-input input {
+  width: auto;
+  min-height: 34px;
+  padding: 7px 10px;
+  font-size: 0.88rem;
+}
+html.mobile-tauri.android-tablet .action-btn,
+html.mobile-tauri.android-tablet .run-btn,
+html.mobile-tauri.android-tablet .stock-row-action {
+  width: auto;
+  min-height: 32px;
+  font-size: 0.82rem;
+}
+html.mobile-tauri.android-tablet .run-btn {
+  min-height: 40px;
+}
+html.mobile-tauri.android-tablet .metric-strip {
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+}
+html.mobile-tauri.android-tablet .overview-metric-grid,
+html.mobile-tauri.android-tablet .signal-grid,
+html.mobile-tauri.android-tablet .financial-indicator-grid,
+html.mobile-tauri.android-tablet .backtest-comparison,
+html.mobile-tauri.android-tablet .detail-grid {
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+html.mobile-tauri.android-tablet .metric,
+html.mobile-tauri.android-tablet .overview-metric-grid > div,
+html.mobile-tauri.android-tablet .signal-grid > div,
+html.mobile-tauri.android-tablet .financial-indicator-item,
+html.mobile-tauri.android-tablet .backtest-comparison > div,
+html.mobile-tauri.android-tablet .detail-grid > div,
+html.mobile-tauri.android-tablet .sector-group,
+html.mobile-tauri.android-tablet .screen-result-group,
+html.mobile-tauri.android-tablet .signal-card,
+html.mobile-tauri.android-tablet .observe-overview,
+html.mobile-tauri.android-tablet .financial-indicators,
+html.mobile-tauri.android-tablet .capital-evidence-list,
+html.mobile-tauri.android-tablet .news-finding,
+html.mobile-tauri.android-tablet .plain-news-column,
+html.mobile-tauri.android-tablet .plain-news-secondary,
+html.mobile-tauri.android-tablet .agent-result-card {
+  padding: 14px;
+  border-radius: 8px;
+}
+html.mobile-tauri.android-tablet .quote-table {
+  overflow: hidden;
+}
+html.mobile-tauri.android-tablet .quote-table-head {
+  display: grid;
+}
+html.mobile-tauri.android-tablet .quote-table-head,
+html.mobile-tauri.android-tablet .stock-grid {
+  grid-template-columns: minmax(170px, 1.7fr) repeat(4, minmax(80px, 0.8fr)) minmax(132px, 1fr);
+  gap: 10px;
+}
+html.mobile-tauri.android-tablet .stock-title {
+  grid-column: auto;
+}
+html.mobile-tauri.android-tablet .quote-number,
+html.mobile-tauri.android-tablet .score-badge {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+html.mobile-tauri.android-tablet .row-actions {
+  display: flex;
+  grid-template-columns: none;
+  justify-content: space-between;
+  gap: 12px;
+}
+html.mobile-tauri.android-tablet .row-button-group {
+  display: flex;
+  grid-template-columns: none;
+  justify-content: flex-start;
+  gap: 8px;
+}
+html.mobile-tauri.android-tablet .observe-overview-header,
+html.mobile-tauri.android-tablet .signal-card header,
+html.mobile-tauri.android-tablet .financial-indicators header,
+html.mobile-tauri.android-tablet .capital-evidence-list header,
+html.mobile-tauri.android-tablet .news-finding header,
+html.mobile-tauri.android-tablet .plain-news-column > header,
+html.mobile-tauri.android-tablet .upstream-transfer header {
+  display: flex;
+  grid-template-columns: none;
+  justify-content: space-between;
+  gap: 12px;
+}
+html.mobile-tauri.android-tablet .kline-chart header {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 10px;
+}
+html.mobile-tauri.android-tablet .kline-nav {
+  display: flex;
+  grid-template-columns: none;
+  gap: 6px;
+}
+html.mobile-tauri.android-tablet .kline-period-tabs {
+  display: inline-flex;
+  grid-template-columns: none;
+}
+html.mobile-tauri.android-tablet .kline-nav button,
+html.mobile-tauri.android-tablet .kline-period-tabs button {
+  width: auto;
+  height: 32px;
+  padding: 0 9px;
+  font-size: 0.72rem;
+}
+html.mobile-tauri.android-tablet .kline-legend,
+html.mobile-tauri.android-tablet .trend-legend {
+  margin-left: auto;
+  gap: 10px;
+  font-size: 0.74rem;
+}
+html.mobile-tauri.android-tablet .kline-stats {
+  display: flex;
+  grid-template-columns: none;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  font-size: 0.75rem;
+}
+html.mobile-tauri.android-tablet .kline-chart svg {
+  min-height: 300px;
+}
+html.mobile-tauri.android-tablet .trend-chart svg,
+html.mobile-tauri.android-tablet .macd-chart svg {
+  min-height: 150px;
 }

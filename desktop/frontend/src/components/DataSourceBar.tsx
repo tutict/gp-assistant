@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getJson, getTauriInvoke, postJson, refreshTauriMarketData } from "../lib/tauri";
 import { formatBytes, formatNumber } from "../lib/format";
 import type { DataStatus } from "../types";
@@ -6,6 +6,8 @@ import type { DataStatus } from "../types";
 interface DataSourceBarProps {
   mobileRuntime: boolean;
 }
+
+const REFRESH_LOG_AUTO_COLLAPSE_MS = 4000;
 
 const CACHE_POLICY = {
   mode: "light",
@@ -24,6 +26,8 @@ export function DataSourceBar({ mobileRuntime }: DataSourceBarProps) {
   const [status, setStatus] = useState<DataStatus | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshLog, setRefreshLog] = useState<RefreshLogEntry[]>([]);
+  const [refreshLogOpen, setRefreshLogOpen] = useState(false);
+  const refreshLogTimerRef = useRef<number | null>(null);
   const [progress, setProgress] = useState<{ label: string; value: number } | null>(null);
   const [batchCount, setBatchCount] = useState(mobileRuntime ? 8 : 32);
   const [maxCandidates, setMaxCandidates] = useState(15000);
@@ -32,6 +36,23 @@ export function DataSourceBar({ mobileRuntime }: DataSourceBarProps) {
   useEffect(() => {
     setBatchCount(mobileRuntime ? 8 : 32);
   }, [mobileRuntime]);
+
+  const clearRefreshLogTimer = useCallback(() => {
+    if (refreshLogTimerRef.current !== null) {
+      window.clearTimeout(refreshLogTimerRef.current);
+      refreshLogTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleRefreshLogCollapse = useCallback(() => {
+    clearRefreshLogTimer();
+    refreshLogTimerRef.current = window.setTimeout(() => {
+      setRefreshLogOpen(false);
+      refreshLogTimerRef.current = null;
+    }, REFRESH_LOG_AUTO_COLLAPSE_MS);
+  }, [clearRefreshLogTimer]);
+
+  useEffect(() => () => clearRefreshLogTimer(), [clearRefreshLogTimer]);
 
   const appendLog = useCallback((message: string, tone = "info") => {
     setRefreshLog((prev) => [{ time: new Date().toLocaleTimeString("zh-CN"), message, tone }, ...prev].slice(0, 120));
@@ -72,7 +93,9 @@ export function DataSourceBar({ mobileRuntime }: DataSourceBarProps) {
   }), [batchCount, fullRebuild, maxCandidates]);
 
   const refreshUniverse = useCallback(async () => {
+    clearRefreshLogTimer();
     setRefreshing(true);
+    setRefreshLogOpen(true);
     setRefreshLog([]);
     setProgress({ label: mobileRuntime ? "准备移动端股票池全量重建..." : "准备股票池刷新...", value: 6 });
     try {
@@ -84,31 +107,37 @@ export function DataSourceBar({ mobileRuntime }: DataSourceBarProps) {
       setStatus(nextStatus);
       setProgress({ label: "刷新、落盘、校验完成", value: 100 });
       appendLog((Array.isArray(data.notes) ? data.notes.join(" ") : "") || (data.refreshed ? "刷新完成。" : "刷新检查完成。"), "success");
+      scheduleRefreshLogCollapse();
     } catch (err) {
       appendLog(`刷新失败：${(err as Error).message}`, "error");
       setProgress({ label: "刷新失败", value: 100 });
+      scheduleRefreshLogCollapse();
     } finally {
       setRefreshing(false);
       window.setTimeout(() => setProgress(null), 1400);
     }
-  }, [appendLog, mobileRuntime, refreshOptions, updateProgressFromRefresh]);
+  }, [appendLog, clearRefreshLogTimer, mobileRuntime, refreshOptions, scheduleRefreshLogCollapse, updateProgressFromRefresh]);
 
   const pruneCache = useCallback(async () => {
+    clearRefreshLogTimer();
     setRefreshing(true);
+    setRefreshLogOpen(true);
     setProgress({ label: "清理可丢弃缓存...", value: 30 });
     try {
       const data = await postJson<{ status?: DataStatus; removed_files?: number; removed_bytes?: number; notes?: string[] }>("/api/data-sources/prune-cache", { ...CACHE_POLICY, mode: "clear" });
       setStatus(data.status || null);
       setProgress({ label: "清理完成", value: 100 });
       appendLog(`已删除 ${data.removed_files || 0} 个文件，释放 ${formatBytes(data.removed_bytes)}。`, "success");
+      scheduleRefreshLogCollapse();
     } catch (err) {
       appendLog(`清理失败：${(err as Error).message}`, "error");
       setProgress({ label: "清理失败", value: 100 });
+      scheduleRefreshLogCollapse();
     } finally {
       setRefreshing(false);
       window.setTimeout(() => setProgress(null), 900);
     }
-  }, [appendLog]);
+  }, [appendLog, clearRefreshLogTimer, scheduleRefreshLogCollapse]);
 
   return (
     <div className="data-source-bar">
@@ -138,19 +167,33 @@ export function DataSourceBar({ mobileRuntime }: DataSourceBarProps) {
       )}
 
       {refreshLog.length > 0 && (
-        <div className="refresh-log-shell">
+        <div className={`refresh-log-shell ${refreshLogOpen ? "open" : "collapsed"}`}>
           <div className="refresh-log-header">
             <span>刷新日志</span>
-            <strong>最近 {refreshLog.length} 条</strong>
+            <div className="refresh-log-header-actions">
+              <strong>最近 {refreshLog.length} 条</strong>
+              <button
+                type="button"
+                className="refresh-log-toggle"
+                onClick={() => {
+                  clearRefreshLogTimer();
+                  setRefreshLogOpen((open) => !open);
+                }}
+              >
+                {refreshLogOpen ? "收起" : "展开"}
+              </button>
+            </div>
           </div>
-          <div className="refresh-log">
-            {refreshLog.map((entry, i) => (
-              <div key={`${entry.time}-${i}`} className={`refresh-log-entry ${entry.tone}`}>
-                <span className="refresh-log-time">{entry.time}</span>
-                <span className="refresh-log-message">{entry.message}</span>
-              </div>
-            ))}
-          </div>
+          {refreshLogOpen && (
+            <div className="refresh-log">
+              {refreshLog.map((entry, i) => (
+                <div key={`${entry.time}-${i}`} className={`refresh-log-entry ${entry.tone}`}>
+                  <span className="refresh-log-time">{entry.time}</span>
+                  <span className="refresh-log-message">{entry.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

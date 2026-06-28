@@ -20,6 +20,7 @@ use tauri_plugin_shell::ShellExt;
 
 mod news_rag;
 mod rag_pack;
+mod runtime;
 
 const MOBILE_MARKET_DATA_FILE: &str = "mobile-market-data.json";
 const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
@@ -62,6 +63,10 @@ static REFRESH_FINANCIAL_SNAPSHOT_CACHE: OnceLock<Mutex<HashMap<PathBuf, Value>>
 
 #[tauri::command]
 async fn api_observe(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    runtime::with_heavy_network_permit("api_observe", api_observe_inner(app, payload)).await
+}
+
+async fn api_observe_inner(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
     let fallback_payload = payload.clone();
     let mobile_fast_observe = payload
         .get("mobile_fast_observe")
@@ -130,69 +135,110 @@ async fn api_observe(app: tauri::AppHandle, payload: Value) -> Result<Value, Str
 }
 
 #[tauri::command]
-fn core_screen(payload: Value) -> Result<Value, String> {
-    gp_core::screen_value(payload).map_err(|error| error.to_string())
+async fn core_screen(payload: Value) -> Result<Value, String> {
+    runtime::run_cpu_bound("core_screen", move || {
+        gp_core::screen_value(payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn core_screen_with_data(payload: Value) -> Result<Value, String> {
-    gp_core::screen_with_data_value(payload).map_err(|error| error.to_string())
+async fn core_screen_with_data(payload: Value) -> Result<Value, String> {
+    runtime::run_cpu_bound("core_screen_with_data", move || {
+        gp_core::screen_with_data_value(payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn core_graph_screen(payload: Value) -> Result<Value, String> {
-    gp_core::graph_screen_value(payload).map_err(|error| error.to_string())
+async fn core_graph_screen(payload: Value) -> Result<Value, String> {
+    runtime::run_cpu_bound("core_graph_screen", move || {
+        gp_core::graph_screen_value(payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn core_graph_screen_with_data(payload: Value) -> Result<Value, String> {
-    gp_core::graph_screen_with_data_value(payload).map_err(|error| error.to_string())
+async fn core_graph_screen_with_data(payload: Value) -> Result<Value, String> {
+    runtime::run_cpu_bound("core_graph_screen_with_data", move || {
+        gp_core::graph_screen_with_data_value(payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn core_backtest(payload: Value) -> Result<Value, String> {
-    gp_core::backtest_value(payload).map_err(|error| error.to_string())
+async fn core_backtest(payload: Value) -> Result<Value, String> {
+    runtime::run_cpu_bound("core_backtest", move || {
+        gp_core::backtest_value(payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn core_backtest_with_data(payload: Value) -> Result<Value, String> {
-    gp_core::backtest_with_data_value(payload).map_err(|error| error.to_string())
+async fn core_backtest_with_data(payload: Value) -> Result<Value, String> {
+    runtime::run_cpu_bound("core_backtest_with_data", move || {
+        gp_core::backtest_with_data_value(payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn core_trend(payload: Value) -> Result<Value, String> {
-    gp_core::trend_value(payload).map_err(|error| error.to_string())
+async fn core_trend(payload: Value) -> Result<Value, String> {
+    runtime::run_cpu_bound("core_trend", move || {
+        gp_core::trend_value(payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn core_trend_with_data(payload: Value) -> Result<Value, String> {
-    gp_core::trend_with_data_value(payload).map_err(|error| error.to_string())
+async fn core_trend_with_data(payload: Value) -> Result<Value, String> {
+    runtime::run_cpu_bound("core_trend_with_data", move || {
+        gp_core::trend_with_data_value(payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn core_trend_screen(payload: Value) -> Result<Value, String> {
-    gp_core::trend_screen_value(payload).map_err(|error| error.to_string())
+async fn core_trend_screen(payload: Value) -> Result<Value, String> {
+    runtime::run_cpu_bound("core_trend_screen", move || {
+        gp_core::trend_screen_value(payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn core_trend_screen_with_data(payload: Value) -> Result<Value, String> {
-    gp_core::trend_screen_with_data_value(payload).map_err(|error| error.to_string())
+async fn core_trend_screen_with_data(payload: Value) -> Result<Value, String> {
+    runtime::run_cpu_bound("core_trend_screen_with_data", move || {
+        gp_core::trend_screen_with_data_value(payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn core_agent(payload: Value) -> Result<Value, String> {
-    gp_core::agent_value(payload).map_err(|error| error.to_string())
+async fn core_agent(payload: Value) -> Result<Value, String> {
+    runtime::run_cpu_bound("core_agent", move || {
+        gp_core::agent_value(payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn core_agent_with_data(payload: Value) -> Result<Value, String> {
-    gp_core::agent_with_data_value(payload).map_err(|error| error.to_string())
+async fn core_agent_with_data(payload: Value) -> Result<Value, String> {
+    runtime::run_cpu_bound("core_agent_with_data", move || {
+        gp_core::agent_with_data_value(payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn core_agent_stream_with_data(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let events =
-        gp_core::agent_stream_with_data_events_value(payload).map_err(|error| error.to_string())?;
+async fn core_agent_stream_with_data(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    let events = runtime::run_cpu_bound("core_agent_stream_with_data", move || {
+        gp_core::agent_stream_with_data_events_value(payload).map_err(|error| error.to_string())
+    })
+    .await??;
     let mut final_response: Option<Value> = None;
     let mut error_message: Option<String> = None;
 
@@ -216,8 +262,11 @@ fn core_agent_stream_with_data(app: tauri::AppHandle, payload: Value) -> Result<
 }
 
 #[tauri::command]
-fn core_mobile_stock_skill(payload: Value) -> Result<Value, String> {
-    gp_core::mobile_stock_skill_value(payload).map_err(|error| error.to_string())
+async fn core_mobile_stock_skill(payload: Value) -> Result<Value, String> {
+    runtime::run_cpu_bound("core_mobile_stock_skill", move || {
+        gp_core::mobile_stock_skill_value(payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
@@ -250,39 +299,57 @@ fn api_market_clear_cache(app: tauri::AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn api_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    gp_core::screen_with_data_value(core_payload_with_cached_data(&app, "criteria", payload)?)
-        .map_err(|error| error.to_string())
+async fn api_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let core_payload = core_payload_with_cached_data(&app, "criteria", payload)?;
+    runtime::run_cpu_bound("api_screen", move || {
+        gp_core::screen_with_data_value(core_payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn api_sector_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    gp_core::sector_screen_with_data_value(core_payload_with_cached_data(&app, "request", payload)?)
-        .map_err(|error| error.to_string())
+async fn api_sector_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let core_payload = core_payload_with_cached_data(&app, "request", payload)?;
+    runtime::run_cpu_bound("api_sector_screen", move || {
+        gp_core::sector_screen_with_data_value(core_payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn api_graph_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    gp_core::graph_screen_with_data_value(core_payload_with_cached_data(&app, "request", payload)?)
-        .map_err(|error| error.to_string())
+async fn api_graph_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let core_payload = core_payload_with_cached_data(&app, "request", payload)?;
+    runtime::run_cpu_bound("api_graph_screen", move || {
+        gp_core::graph_screen_with_data_value(core_payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn api_trend_analyze(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    gp_core::trend_with_data_value(core_payload_with_cached_data(&app, "request", payload)?)
-        .map_err(|error| error.to_string())
+async fn api_trend_analyze(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let core_payload = core_payload_with_cached_data(&app, "request", payload)?;
+    runtime::run_cpu_bound("api_trend_analyze", move || {
+        gp_core::trend_with_data_value(core_payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn api_trend_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    gp_core::trend_screen_with_data_value(core_payload_with_cached_data(&app, "request", payload)?)
-        .map_err(|error| error.to_string())
+async fn api_trend_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let core_payload = core_payload_with_cached_data(&app, "request", payload)?;
+    runtime::run_cpu_bound("api_trend_screen", move || {
+        gp_core::trend_screen_with_data_value(core_payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    gp_core::backtest_with_data_value(core_payload_with_cached_data(&app, "request", payload)?)
-        .map_err(|error| error.to_string())
+async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let core_payload = core_payload_with_cached_data(&app, "request", payload)?;
+    runtime::run_cpu_bound("api_backtest", move || {
+        gp_core::backtest_with_data_value(core_payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
@@ -346,7 +413,8 @@ fn api_strategies() -> Result<Value, String> {
 
 #[tauri::command]
 async fn api_news_rag(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    news_rag::api_news_rag_impl(app, payload).await
+    runtime::with_heavy_network_permit("api_news_rag", news_rag::api_news_rag_impl(app, payload))
+        .await
 }
 
 #[tauri::command]
@@ -456,7 +524,7 @@ fn api_upstream_rag_transfer_start(app: tauri::AppHandle, payload: Value) -> Res
 }
 
 #[tauri::command]
-fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
     let data = cached_market_data(&app)?;
     let message = payload
         .get("message")
@@ -473,11 +541,14 @@ fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value, Stri
     if let Some(run_id) = run_id {
         request.insert("run_id".to_string(), Value::String(run_id));
     }
-    core_agent_stream_with_data(app, Value::Object(request))
+    core_agent_stream_with_data(app, Value::Object(request)).await
 }
 #[tauri::command]
-fn core_validate_data_source(payload: Value) -> Result<Value, String> {
-    gp_core::validate_data_source_value(payload).map_err(|error| error.to_string())
+async fn core_validate_data_source(payload: Value) -> Result<Value, String> {
+    runtime::run_cpu_bound("core_validate_data_source", move || {
+        gp_core::validate_data_source_value(payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
@@ -529,17 +600,35 @@ async fn core_mobile_network_probe(payload: Option<Value>) -> Result<Value, Stri
         http_timeout,
         payload_ref,
     )?;
-    let probe_targets = [
-        ("baidu_https", "https://www.baidu.com"),
-        ("tencent_quote", "https://qt.gtimg.cn/q=sz000001"),
-        ("eastmoney_guba", "https://guba.eastmoney.com/list,000100.html"),
-        ("sina_stock_news", "https://vip.stock.finance.sina.com.cn/corp/go.php/vCB_AllNewsStock/symbol/sz000100.phtml"),
-        ("ths_stock_news", "https://basic.10jqka.com.cn/000100/news.html"),
+    let (baidu_probe, tencent_probe, eastmoney_probe, sina_probe, ths_probe) = futures::join!(
+        probe_mobile_url(&client, "baidu_https", "https://www.baidu.com", http_timeout),
+        probe_mobile_url(&client, "tencent_quote", "https://qt.gtimg.cn/q=sz000001", http_timeout),
+        probe_mobile_url(
+            &client,
+            "eastmoney_guba",
+            "https://guba.eastmoney.com/list,000100.html",
+            http_timeout,
+        ),
+        probe_mobile_url(
+            &client,
+            "sina_stock_news",
+            "https://vip.stock.finance.sina.com.cn/corp/go.php/vCB_AllNewsStock/symbol/sz000100.phtml",
+            http_timeout,
+        ),
+        probe_mobile_url(
+            &client,
+            "ths_stock_news",
+            "https://basic.10jqka.com.cn/000100/news.html",
+            http_timeout,
+        ),
+    );
+    let probes = vec![
+        baidu_probe,
+        tencent_probe,
+        eastmoney_probe,
+        sina_probe,
+        ths_probe,
     ];
-    let mut probes = Vec::new();
-    for (label, url) in probe_targets {
-        probes.push(probe_mobile_url(&client, label, url, http_timeout).await);
-    }
 
     let any_ok = probes
         .iter()
@@ -561,8 +650,8 @@ async fn core_mobile_network_probe(payload: Option<Value>) -> Result<Value, Stri
 
 async fn probe_mobile_url(
     client: &reqwest::Client,
-    label: &str,
-    url: &str,
+    label: &'static str,
+    url: &'static str,
     timeout: Duration,
 ) -> Value {
     let started_at = epoch_millis();
@@ -907,6 +996,17 @@ fn truncate_for_note(value: &str, max_chars: usize) -> String {
 
 #[tauri::command]
 async fn core_mobile_market_data_refresh_tencent(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    runtime::with_market_refresh_permit(
+        "core_mobile_market_data_refresh_tencent",
+        core_mobile_market_data_refresh_tencent_inner(app, payload),
+    )
+    .await
+}
+
+async fn core_mobile_market_data_refresh_tencent_inner(
     app: tauri::AppHandle,
     payload: Value,
 ) -> Result<Value, String> {

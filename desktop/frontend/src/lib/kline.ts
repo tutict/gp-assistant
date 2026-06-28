@@ -116,6 +116,13 @@ export type KdjPoint = {
   j: number;
 };
 
+export type MacdPoint = {
+  date: string;
+  dif: number;
+  dea: number;
+  macd: number;
+};
+
 // TDX-style smoothing: Y = (weight*X + (window-weight)*prevY) / window.
 function tdxSma(values: number[], window: number, weight: number): number[] {
   const out: number[] = [];
@@ -146,4 +153,32 @@ export function computeKdj(bars: KlineBar[]): KdjPoint[] {
   const k = tdxSma(rsv, 3, 1);
   const d = tdxSma(k, 3, 1);
   return bars.map((bar, index) => ({ date: bar.date, k: k[index], d: d[index], j: 3 * k[index] - 2 * d[index] }));
+}
+
+function exponentialMovingAverage(values: number[], period: number): number[] {
+  const out: number[] = [];
+  const alpha = 2 / (period + 1);
+  let prev: number | null = null;
+  for (const raw of values) {
+    const value = Number.isFinite(raw) ? raw : (prev ?? 0);
+    const current: number = prev === null ? value : alpha * value + (1 - alpha) * prev;
+    prev = current;
+    out.push(current);
+  }
+  return out;
+}
+
+// MACD(12,26,9): DIF = EMA12 - EMA26, DEA = EMA(DIF,9), histogram = 2*(DIF-DEA).
+export function computeMacd(bars: KlineBar[], shortPeriod = 12, longPeriod = 26, signalPeriod = 9): MacdPoint[] {
+  const closes = bars.map((bar) => bar.close);
+  const emaShort = exponentialMovingAverage(closes, shortPeriod);
+  const emaLong = exponentialMovingAverage(closes, longPeriod);
+  const dif = closes.map((_, index) => emaShort[index] - emaLong[index]);
+  const dea = exponentialMovingAverage(dif, signalPeriod);
+  return bars.map((bar, index) => ({
+    date: bar.date,
+    dif: dif[index],
+    dea: dea[index],
+    macd: 2 * (dif[index] - dea[index]),
+  }));
 }

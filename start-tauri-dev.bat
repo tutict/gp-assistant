@@ -18,7 +18,7 @@ echo [gp-tauri] PowerShell script: %PS_SCRIPT%
 echo [gp-tauri] Raw args: %*
 echo [gp-tauri] PowerShell exe: %POWERSHELL_EXE%
 echo.
-echo [gp-tauri] Tip: this launcher verifies the desktop/Tauri path, not the Python web server path.
+echo [gp-tauri] Tip: this launcher verifies the desktop/Tauri path.
 echo [gp-tauri] Tip: default launch runs preflight, lets Tauri prepare assets once, and starts no-watch mode for cleaner logs.
 echo [gp-tauri] Tip: the window stays open while tauri dev is running; that is normal, not a stuck loop.
 echo [gp-tauri] Tip: session logs are written to logs\dev\tauri-dev-*.log and mirrored to logs\dev\tauri-dev.latest.log.

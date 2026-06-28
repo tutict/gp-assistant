@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CapitalEvidenceSection, FinancialIndicatorItem, ObserveResult, TrendIndicatorPoint, WatchlistItem } from "../../types";
-import { aggregateBars, computeKdj, KLINE_PERIODS, type KlineBar, type KlinePeriod, movingAverage, toDailyBars } from "../../lib/kline";
+import { aggregateBars, computeKdj, computeMacd, KLINE_PERIODS, type KlineBar, type KlinePeriod, type MacdPoint, movingAverage, toDailyBars } from "../../lib/kline";
 import { getJson } from "../../lib/tauri";
 import { StockCodeInput } from "../StockCodeInput";
 import {
@@ -252,6 +252,7 @@ function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
       />
       <LineChart title="收盘 / SWL / SWS" series={visibleSeries} keys={["close", "swl", "sws"]} />
       <LineChart title="KDJ" series={visibleSeries} keys={["k", "d", "j"]} />
+      <MacdChart series={computeMacd(bars).slice(visibleStart, effectiveEnd)} />
     </div>
   );
 }
@@ -314,9 +315,17 @@ function CandlestickChart({
   const slot = width / visibleBars.length;
   const bodyWidth = Math.max(1, Math.min(slot * 0.62, 14));
   const center = (index: number) => (index + 0.5) * slot;
-  const dragRef = useRef<{ pointerId: number; startX: number; startEnd: number; lastTargetEnd: number } | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const getBarIndexFromPointer = (event: React.PointerEvent<SVGSVGElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const relativeX = ((event.clientX - bounds.left) / Math.max(bounds.width, 1)) * width;
+    const index = Math.floor(relativeX / Math.max(slot, 1));
+    if (!Number.isFinite(index)) return null;
+    return Math.max(0, Math.min(visibleBars.length - 1, index));
+  };
+  const dragRef = useRef<{ pointerId: number; startX: number; startEnd: number; lastTargetEnd: number; moved: boolean } | null>(null);
   const onPointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
-    dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startEnd: visibleEnd, lastTargetEnd: visibleEnd };
+    dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startEnd: visibleEnd, lastTargetEnd: visibleEnd, moved: false };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const onPointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
@@ -325,15 +334,21 @@ function CandlestickChart({
     const deltaBars = Math.round((drag.startX - event.clientX) / Math.max(slot, 1));
     const targetEnd = drag.startEnd + deltaBars;
     if (targetEnd !== drag.lastTargetEnd) {
+      drag.moved = true;
       onDragTo(targetEnd);
       drag.lastTargetEnd = targetEnd;
     }
   };
-  const endDrag = (event: React.PointerEvent<SVGSVGElement>) => {
-    if (dragRef.current?.pointerId === event.pointerId) {
+  const endDrag = (event: React.PointerEvent<SVGSVGElement>, commitSelection = true) => {
+    const drag = dragRef.current;
+    if (drag?.pointerId === event.pointerId) {
       dragRef.current = null;
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      if (commitSelection && !drag.moved) {
+        const targetIndex = getBarIndexFromPointer(event);
+        if (targetIndex !== null) setSelectedDate(visibleBars[targetIndex]?.date || null);
       }
     }
   };
@@ -351,7 +366,20 @@ function CandlestickChart({
       .join(" "),
   }));
   const latest = visibleBars[visibleBars.length - 1];
-  const latestKdj = computeKdj(allBars)[visibleEnd - 1];
+  const kdjSeries = computeKdj(allBars);
+  const latestKdj = kdjSeries[visibleEnd - 1];
+  const selectedIndex = selectedDate ? visibleBars.findIndex((bar) => bar.date === selectedDate) : -1;
+  const selectedBar = selectedIndex >= 0 ? visibleBars[selectedIndex] : null;
+  const inspectedBar = selectedBar || latest;
+  const inspectedAbsoluteIndex = selectedIndex >= 0 ? visibleStart + selectedIndex : visibleEnd - 1;
+  const inspectedKdj = kdjSeries[inspectedAbsoluteIndex];
+  const selectedX = selectedIndex >= 0 ? center(selectedIndex) : null;
+  const selectedY = selectedBar ? yPrice(selectedBar.close) : null;
+  const inspectorWidth = 170;
+  const inspectorHeight = 98;
+  const rawInspectorX = selectedX !== null && selectedX > width - inspectorWidth - 18 ? selectedX - inspectorWidth - 10 : (selectedX ?? 0) + 10;
+  const inspectorX = Math.max(6, Math.min(width - inspectorWidth - 6, rawInspectorX));
+  const inspectorY = selectedY !== null && selectedY > priceTop + inspectorHeight + 16 ? selectedY - inspectorHeight - 10 : priceTop + 10;
   const sourceRange = `${allBars[0]?.date || "--"} 至 ${allBars[allBars.length - 1]?.date || "--"}`;
   const visibleRange = `${visibleBars[0]?.date || "--"} 至 ${visibleBars[visibleBars.length - 1]?.date || "--"}`;
 
@@ -396,15 +424,15 @@ function CandlestickChart({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        onPointerLeave={endDrag}
+        onPointerCancel={(event) => endDrag(event, false)}
+        onPointerLeave={(event) => endDrag(event, false)}
       >
         {visibleBars.map((bar, index) => {
           const cx = center(index);
           const bodyTop = Math.min(yPrice(bar.open), yPrice(bar.close));
           const bodyHeight = Math.max(1, Math.abs(yPrice(bar.close) - yPrice(bar.open)));
           return (
-            <g key={`${bar.date}-${index}`} className={bar.close >= bar.open ? "kline-up" : "kline-down"}>
+            <g key={`${bar.date}-${index}`} className={`kline-candle ${bar.close >= bar.open ? "kline-up" : "kline-down"} ${selectedDate === bar.date ? "selected" : ""}`}>
               <line className="kline-wick" x1={cx} x2={cx} y1={yPrice(bar.high)} y2={yPrice(bar.low)} stroke="currentColor" />
               <rect className="kline-body" x={cx - bodyWidth / 2} y={bodyTop} width={bodyWidth} height={bodyHeight} fill="currentColor" />
             </g>
@@ -425,20 +453,35 @@ function CandlestickChart({
             />
           );
         })}
+        {selectedBar && selectedX !== null && selectedY !== null && (
+          <g className="kline-inspector" pointerEvents="none">
+            <line className="kline-inspector-line" x1={selectedX} x2={selectedX} y1={priceTop} y2={volumeTop + volumeHeight} />
+            <circle className="kline-inspector-dot" cx={selectedX} cy={selectedY} r="3.8" />
+            <rect className="kline-inspector-card" x={inspectorX} y={inspectorY} width={inspectorWidth} height={inspectorHeight} rx="7" />
+            <text className="kline-inspector-title" x={inspectorX + 10} y={inspectorY + 18}>{selectedBar.date}</text>
+            <text className="kline-inspector-text" x={inspectorX + 10} y={inspectorY + 38}>
+              <tspan x={inspectorX + 10}>开盘价 {formatPrice(selectedBar.open)}</tspan>
+              <tspan x={inspectorX + 10} dy="14">最高价 {formatPrice(selectedBar.high)}</tspan>
+              <tspan x={inspectorX + 10} dy="14">最低价 {formatPrice(selectedBar.low)}</tspan>
+              <tspan x={inspectorX + 10} dy="14">收盘价 {formatPrice(selectedBar.close)}</tspan>
+              <tspan x={inspectorX + 10} dy="14">成交量 {formatNumber(selectedBar.volume)}</tspan>
+            </text>
+          </g>
+        )}
       </svg>
       <div className="chart-labels"><span>{visibleBars[0]?.date}</span><span>{visibleBars[visibleBars.length - 1]?.date}</span></div>
-      <div className="kline-stats" aria-label="当前周期最新K线">
-        <span>开 {formatPrice(latest?.open)}</span>
-        <span>高 {formatPrice(latest?.high)}</span>
-        <span>低 {formatPrice(latest?.low)}</span>
-        <span>收 {formatPrice(latest?.close)}</span>
-        <span>量 {formatNumber(latest?.volume)}</span>
-        {latestKdj ? <span>KDJ {formatNumber(latestKdj.k)} / {formatNumber(latestKdj.d)} / {formatNumber(latestKdj.j)}</span> : null}
+      <div className="kline-stats" aria-label={selectedBar ? "选中K线" : "当前周期最新K线"}>
+        <span>{selectedBar ? "选中" : "最新"} {inspectedBar?.date || "--"}</span>
+        <span>开盘价 {formatPrice(inspectedBar?.open)}</span>
+        <span>最高价 {formatPrice(inspectedBar?.high)}</span>
+        <span>最低价 {formatPrice(inspectedBar?.low)}</span>
+        <span>收盘价 {formatPrice(inspectedBar?.close)}</span>
+        <span>成交量 {formatNumber(inspectedBar?.volume)}</span>
+        {inspectedKdj ? <span>KDJ {formatNumber(inspectedKdj.k)} / {formatNumber(inspectedKdj.d)} / {formatNumber(inspectedKdj.j)}</span> : null}
       </div>
     </section>
   );
 }
-
 function periodLabel(period: KlinePeriod): string {
   return KLINE_PERIODS.find((item) => item.key === period)?.label || period;
 }
@@ -487,6 +530,69 @@ function LineChart({ title, series, keys }: { title: string; series: Record<stri
   );
 }
 
+function MacdChart({ series }: { series: MacdPoint[] }) {
+  const width = 720;
+  const height = 150;
+  if (series.length < 2) return null;
+  const values = series.map((point) => [point.dif, point.dea, point.macd]).flat().filter(Number.isFinite);
+  if (values.length < 2) return null;
+  const absValues = values.map((value) => Math.abs(value)).filter((value) => value > 0);
+  const maxAbs = absValues.length > 0 ? Math.max(...absValues) : 1;
+  const midY = height / 2;
+  const x = (index: number) => (index / Math.max(series.length - 1, 1)) * width;
+  const y = (value: number) => midY - (value / maxAbs) * (height * 0.46);
+  const barWidth = Math.max(2, Math.min((width / series.length) * 0.78, 9));
+  const line = (key: "dif" | "dea") => series.map((point, index) => {
+    const value = point[key];
+    if (!Number.isFinite(value)) return null;
+    return `${x(index).toFixed(2)},${y(value).toFixed(2)}`;
+  }).filter(Boolean).join(" ");
+  const latest = series[series.length - 1];
+
+  return (
+    <section className="chart-wrap macd-chart">
+      <header>
+        <h4>MACD</h4>
+        <div className="trend-legend">
+          <span className="line-dif">DIF</span>
+          <span className="line-dea">DEA</span>
+          <span className="macd-up">红柱</span>
+          <span className="macd-down">绿柱</span>
+        </div>
+      </header>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="MACD指标">
+        <line className="trend-grid-line macd-zero-line" x1="0" x2={width} y1={midY} y2={midY} />
+        {series.map((point, index) => {
+          const barTop = y(Math.max(point.macd, 0));
+          const barBottom = y(Math.min(point.macd, 0));
+          const barHeight = Math.abs(barBottom - barTop);
+          return (
+            <rect
+              key={`${point.date}-${index}`}
+              className={`macd-bar ${point.macd >= 0 ? "macd-up" : "macd-down"}`}
+              x={x(index) - barWidth / 2}
+              y={Math.min(barTop, barBottom)}
+              width={barWidth}
+              height={Math.max(point.macd === 0 ? 1 : 2, barHeight)}
+              fill="currentColor"
+            />
+          );
+        })}
+        <polyline className="trend-line macd-line-shadow line-dif" points={line("dif")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+        <polyline className="trend-line macd-line-shadow line-dea" points={line("dea")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+        <polyline className="trend-line macd-line line-dif" points={line("dif")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+        <polyline className="trend-line macd-line line-dea" points={line("dea")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      <div className="chart-labels"><span>{String(series[0]?.date || "")}</span><span>{String(series[series.length - 1]?.date || "")}</span></div>
+      <div className="kline-stats" aria-label="当前MACD">
+        <span>DIF {formatNumber(latest?.dif)}</span>
+        <span>DEA {formatNumber(latest?.dea)}</span>
+        <span>MACD {formatNumber(latest?.macd)}</span>
+      </div>
+    </section>
+  );
+}
+
 function lineLabel(key: string): string {
   const labels: Record<string, string> = {
     close: "收盘",
@@ -495,6 +601,8 @@ function lineLabel(key: string): string {
     k: "K",
     d: "D",
     j: "J",
+    dif: "DIF",
+    dea: "DEA",
   };
   return labels[key] || key.toUpperCase();
 }

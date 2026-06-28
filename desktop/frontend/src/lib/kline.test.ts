@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aggregateBars, computeKdj, toDailyBars, type KlineBar } from "./kline";
+import { aggregateBars, computeKdj, computeMacd, toDailyBars, type KlineBar } from "./kline";
 import type { TrendIndicatorPoint } from "../types";
 
 const bars: KlineBar[] = [
@@ -40,5 +40,17 @@ describe("kline helpers", () => {
     expect(Number.isFinite(kdj[1].k)).toBe(true);
     expect(Number.isFinite(kdj[1].d)).toBe(true);
     expect(Number.isFinite(kdj[1].j)).toBe(true);
+  });
+
+  it("computes MACD values aligned to each bar", () => {
+    const macd = computeMacd(bars);
+
+    expect(macd).toHaveLength(bars.length);
+    expect(macd[3].date).toBe("2026-02-02");
+    expect(Number.isFinite(macd[3].dif)).toBe(true);
+    expect(Number.isFinite(macd[3].dea)).toBe(true);
+    expect(Number.isFinite(macd[3].macd)).toBe(true);
+    expect(macd[3].dif).toBeGreaterThan(0);
+    expect(macd[3].dea).toBeGreaterThan(0);
   });
 });

@@ -80,4 +80,4 @@ if (-not $SkipAndroidPreflight) {
 }
 
 Write-Host ""
-Write-Step "Release checks completed without Python/FastAPI requirements."
+Write-Step "Release checks completed for the Tauri/Rust runtime."

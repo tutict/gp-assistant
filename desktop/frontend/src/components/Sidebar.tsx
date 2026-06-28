@@ -24,10 +24,9 @@ const ICONS: Record<string, string> = {
 export function Sidebar({ view, onNavigate, open, onClose }: SidebarProps) {
   return (
     <>
-      {open && <div className="mobile-nav-overlay" onClick={onClose} />}
+      {open && <div className="mobile-nav-overlay visible" onClick={onClose} />}
       <nav
         className={`sidebar ${open ? "open" : ""}`}
-        aria-hidden={!open}
       >
         <button className="mobile-nav-close" type="button" onClick={onClose} aria-label="关闭导航">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
