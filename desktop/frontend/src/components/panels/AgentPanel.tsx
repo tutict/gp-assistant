@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentResult, AgentStreamEvent, BacktestResult, LlmSettings, NewsRagResult, ObserveResult, StockRowView } from "../../types";
-import { getTauriInvoke, isTauriRuntime } from "../../lib/tauri";
+import { getTauriInvoke, getTauriListen, isTauriRuntime } from "../../lib/tauri";
 import { actionResultKind, buildLlmConfig, normalizeAgentStreamEvent, normalizeScreenRows, parseSseBlock } from "../../lib/contracts";
 import { StockList } from "../StockList";
 import { BacktestResultView } from "./BacktestPanel";
@@ -210,7 +210,7 @@ async function requestDesktopAgentStream(payload: Record<string, unknown>, onEve
 
 async function requestTauriAgentStream(payload: Record<string, unknown>, onEvent: (event: AgentStreamEvent) => void): Promise<void> {
   const invoke = getTauriInvoke();
-  const listen = (window as unknown as { __TAURI__?: { event?: { listen?: (event: string, handler: (event: unknown) => void) => Promise<() => void> } } }).__TAURI__?.event?.listen;
+  const listen = getTauriListen();
   if (!invoke || !listen) throw new Error("Tauri 事件桥不可用。");
   const runId = String(payload.run_id || "");
   let sawResult = false;

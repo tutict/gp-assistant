@@ -1,4 +1,5 @@
-
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { listen as tauriListen } from "@tauri-apps/api/event";
 import {
   clampInt,
   currentSystemDateCompact,
@@ -20,10 +21,13 @@ declare global {
       core?: { invoke: <T = unknown>(command: string, args?: Record<string, unknown>) => Promise<T> };
       event?: { listen: (event: string, handler: (event: unknown) => void) => Promise<() => void> };
     };
+    __TAURI_INTERNALS__?: unknown;
+    __TAURI_IPC__?: unknown;
   }
 }
 
-type InvokeFn = NonNullable<ReturnType<typeof getTauriInvoke>>;
+type InvokeFn = <T = unknown>(command: string, args?: Record<string, unknown>) => Promise<T>;
+type ListenFn = (event: string, handler: (event: unknown) => void) => Promise<() => void>;
 type TauriRouteHandler = (ctx: { invoke: InvokeFn; parsed: URL; path: string; payload?: unknown }) => Promise<unknown>;
 
 export interface RequestOptions {
@@ -70,16 +74,27 @@ const MOBILE_DEDUCTED_FINANCIAL_FIELDS = [
 
 let mobileFinancialSnapshotPromise: Promise<Record<string, unknown> | null> | null = null;
 
+function hasTauriRuntime(): boolean {
+  if (typeof window === "undefined") return false;
+  return Boolean(window.__TAURI_INTERNALS__ || window.__TAURI_IPC__ || window.__TAURI__?.core?.invoke);
+}
+
 export function isTauriRuntime(): boolean {
-  return Boolean(window.__TAURI__?.core?.invoke);
+  return hasTauriRuntime();
 }
 
 export function isMobileTauriRuntime(): boolean {
   return isTauriRuntime() && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
 }
 
-export function getTauriInvoke() {
-  return window.__TAURI__?.core?.invoke;
+export function getTauriInvoke(): InvokeFn | undefined {
+  if (!hasTauriRuntime()) return undefined;
+  return window.__TAURI__?.core?.invoke || (tauriInvoke as InvokeFn);
+}
+
+export function getTauriListen(): ListenFn | undefined {
+  if (!hasTauriRuntime()) return undefined;
+  return window.__TAURI__?.event?.listen || (tauriListen as ListenFn);
 }
 
 export const TAURI_GET_ROUTES: Record<string, TauriRouteHandler> = {
@@ -206,7 +221,7 @@ function defaultCachePolicy(): Record<string, unknown> {
 
 function buildAndroidNetworkOptions(): Record<string, unknown> {
   return {
-    proxy_mode: localStorage.getItem("stock-optimizer-proxy-mode") || "system",
+    proxy_mode: localStorage.getItem("stock-optimizer-proxy-mode") || (isMobileTauriRuntime() ? "system" : "none"),
     proxy_url: localStorage.getItem("stock-optimizer-proxy-url") || "",
     android_short_sources: isMobileTauriRuntime(),
   };
@@ -414,7 +429,7 @@ function validationNotes(validation: Record<string, unknown> | null): string[] {
 }
 
 async function listenMarketRefreshLogs(log: (message: string, tone?: string) => void): Promise<(() => void) | undefined> {
-  const listen = window.__TAURI__?.event?.listen;
+  const listen = getTauriListen();
   if (!listen) return undefined;
   return listen("market-refresh-log", (event) => {
     const payload = asRecord(asRecord(event).payload);

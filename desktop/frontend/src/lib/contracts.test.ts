@@ -13,6 +13,7 @@ import {
   normalizeScreenRows,
   parseSseBlock,
   parseUpstreamImportDescriptor,
+  sanitizePersistedLlmSettings,
 } from "./contracts";
 import type { FilterCriteria } from "../components/FilterBar";
 
@@ -29,6 +30,18 @@ const criteria: FilterCriteria = {
   sortDir: "desc",
 };
 
+describe("LLM settings persistence", () => {
+  it("drops API keys unless remember_key is enabled", () => {
+    expect(sanitizePersistedLlmSettings({ api_key: "sk-test", model: "gpt", remember_key: false })).toEqual({
+      model: "gpt",
+      remember_key: false,
+    });
+    expect(sanitizePersistedLlmSettings({ api_key: "sk-test", model: "gpt", remember_key: true })).toMatchObject({
+      api_key: "sk-test",
+      remember_key: true,
+    });
+  });
+});
 describe("contract payload builders", () => {
   it("builds screen criteria in backend schema shape", () => {
     expect(buildScreenCriteria(criteria)).toMatchObject({
@@ -198,6 +211,53 @@ describe("agent and upstream utilities", () => {
     const payload = await fetchUpstreamImportPayload({ manifest_url: "https://host/path/manifest.json" });
     expect(calls).toEqual(["https://host/path/manifest.json", "https://host/path/custom.sqlite"]);
     expect(payload.pack_base64).toBe("AQI=");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects unsafe upstream import URLs before fetching private hosts", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchUpstreamImportPayload({ manifest_url: "http://host/manifest.json" })).rejects.toThrow(/HTTPS/);
+    await expect(fetchUpstreamImportPayload({ manifest_url: "https://192.168.1.10/manifest.json" })).rejects.toThrow(/local or private/);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps upstream pack downloads on the manifest origin", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(String(url));
+      return new Response(JSON.stringify({ files: { pack: "https://cdn.example/pack.sqlite" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }));
+
+    await expect(fetchUpstreamImportPayload({ manifest_url: "https://host/path/manifest.json" })).rejects.toThrow(/same origin/);
+    expect(calls).toEqual(["https://host/path/manifest.json"]);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects upstream packs that declare an excessive content length", async () => {
+    const oversizedPackBytes = 25 * 1024 * 1024 + 1;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).endsWith("manifest.json")) {
+        return new Response(JSON.stringify({ files: { pack: "custom.sqlite" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(null, {
+        status: 200,
+        headers: { "Content-Length": String(oversizedPackBytes) },
+      });
+    }));
+
+    await expect(fetchUpstreamImportPayload({ manifest_url: "https://host/path/manifest.json" })).rejects.toThrow(/import limit/);
 
     vi.unstubAllGlobals();
   });

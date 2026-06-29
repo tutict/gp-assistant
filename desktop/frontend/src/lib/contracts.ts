@@ -192,6 +192,12 @@ export function buildUpstreamRagBuildRequest(code: string, newsDays: number, man
   };
 }
 
+export function sanitizePersistedLlmSettings(settings: LlmSettings | null | undefined): LlmSettings | null {
+  if (!settings) return null;
+  const sanitized: LlmSettings = { ...settings };
+  if (!sanitized.remember_key) delete sanitized.api_key;
+  return sanitized;
+}
 export function buildLlmConfig(settings: LlmSettings | null | undefined): LlmClientConfig | undefined {
   if (!settings) return undefined;
   const config: LlmClientConfig = {};
@@ -291,6 +297,10 @@ export interface UpstreamImportDescriptor {
   pack_base64?: string;
 }
 
+const UPSTREAM_IMPORT_TIMEOUT_MS = 15000;
+const UPSTREAM_MANIFEST_MAX_BYTES = 256 * 1024;
+const UPSTREAM_PACK_MAX_BYTES = 25 * 1024 * 1024;
+
 export function parseUpstreamImportDescriptor(rawValue: string): UpstreamImportDescriptor {
   const raw = String(rawValue || "").trim();
   if (!raw) return {};
@@ -322,19 +332,156 @@ export function deriveUpstreamPackUrl(manifestUrl: string, packFile = "rag_pack.
 
 export async function fetchUpstreamImportPayload(descriptor: UpstreamImportDescriptor): Promise<Record<string, unknown>> {
   if (descriptor.manifest && descriptor.pack_base64) {
-    return { manifest: descriptor.manifest, pack_base64: descriptor.pack_base64 };
+    assertManifestPackSize(descriptor.manifest);
+    const packBase64 = normalizePackBase64(descriptor.pack_base64);
+    return { manifest: descriptor.manifest, pack_base64: packBase64 };
   }
   if (!descriptor.manifest_url) throw new Error("Missing manifest_url");
-  const manifestResponse = await fetch(descriptor.manifest_url, { cache: "no-store" });
-  if (!manifestResponse.ok) throw new Error(`Manifest download failed: HTTP ${manifestResponse.status}`);
-  const manifest = await manifestResponse.json() as Record<string, unknown>;
-  const packUrl = descriptor.pack_url || deriveUpstreamPackUrl(descriptor.manifest_url, upstreamPackFileName(manifest));
-  const packResponse = await fetch(packUrl, { cache: "no-store" });
-  if (!packResponse.ok) throw new Error(`Pack download failed: HTTP ${packResponse.status}`);
-  const buffer = await packResponse.arrayBuffer();
+
+  const manifestUrl = validateUpstreamImportUrl(descriptor.manifest_url, "Manifest URL");
+  const manifestText = await fetchTextWithLimit(manifestUrl, UPSTREAM_MANIFEST_MAX_BYTES, "Manifest");
+  let manifest: Record<string, unknown>;
+  try {
+    manifest = JSON.parse(manifestText) as Record<string, unknown>;
+  } catch {
+    throw new Error("Manifest is not valid JSON.");
+  }
+  assertManifestPackSize(manifest);
+
+  const rawPackUrl = descriptor.pack_url || deriveUpstreamPackUrl(manifestUrl, upstreamPackFileName(manifest));
+  const packUrl = validateUpstreamImportUrl(rawPackUrl, "Pack URL", manifestUrl);
+  const buffer = await fetchArrayBufferWithLimit(packUrl, UPSTREAM_PACK_MAX_BYTES, "Pack");
   return { manifest, pack_base64: arrayBufferToBase64(buffer) };
 }
 
+function validateUpstreamImportUrl(rawUrl: string | undefined, label: string, expectedOrigin?: string): string {
+  if (!rawUrl) throw new Error(`${label} is missing.`);
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error(`${label} is not a valid URL.`);
+  }
+  if (url.protocol !== "https:") throw new Error(`${label} must use HTTPS.`);
+  if (isBlockedImportHost(url.hostname)) throw new Error(`${label} cannot target local or private hosts.`);
+  if (expectedOrigin && url.origin !== new URL(expectedOrigin).origin) {
+    throw new Error("Pack URL must use the same origin as the manifest URL.");
+  }
+  url.username = "";
+  url.password = "";
+  return url.toString();
+}
+
+function isBlockedImportHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+  const ipv4 = parseIpv4Address(host);
+  if (ipv4) return isPrivateOrReservedIpv4(ipv4);
+  if (host.includes(":")) {
+    if (host === "::" || host === "::1") return true;
+    if (/^f[cd]/.test(host) || /^fe[89ab]/.test(host)) return true;
+  }
+  return false;
+}
+
+function parseIpv4Address(host: string): number[] | null {
+  const parts = host.split(".");
+  if (parts.length !== 4) return null;
+  const bytes = parts.map((part) => Number(part));
+  if (bytes.some((byte, index) => !Number.isInteger(byte) || byte < 0 || byte > 255 || String(byte) !== parts[index])) return null;
+  return bytes;
+}
+
+function isPrivateOrReservedIpv4(bytes: number[]): boolean {
+  const [a, b] = bytes;
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && (b === 0 || b === 168)) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  return a >= 224;
+}
+
+function assertManifestPackSize(manifest: Record<string, unknown>): void {
+  const rawSize = manifest.file_size;
+  if (rawSize === undefined || rawSize === null || rawSize === "") return;
+  const size = Number(rawSize);
+  if (Number.isFinite(size) && size > UPSTREAM_PACK_MAX_BYTES) {
+    throw new Error(`Pack exceeds the ${UPSTREAM_PACK_MAX_BYTES} byte import limit.`);
+  }
+}
+
+function normalizePackBase64(rawValue: string): string {
+  const normalized = String(rawValue || "").replace(/\s/g, "");
+  const padding = normalized.endsWith("==") ? 2 : normalized.endsWith("=") ? 1 : 0;
+  const estimatedBytes = Math.max(0, Math.floor((normalized.length * 3) / 4) - padding);
+  if (estimatedBytes > UPSTREAM_PACK_MAX_BYTES) {
+    throw new Error(`Pack exceeds the ${UPSTREAM_PACK_MAX_BYTES} byte import limit.`);
+  }
+  return normalized;
+}
+
+async function fetchTextWithLimit(url: string, maxBytes: number, label: string): Promise<string> {
+  const buffer = await fetchArrayBufferWithLimit(url, maxBytes, label);
+  return new TextDecoder().decode(buffer);
+}
+
+async function fetchArrayBufferWithLimit(url: string, maxBytes: number, label: string): Promise<ArrayBuffer> {
+  const controller = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), UPSTREAM_IMPORT_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+    if (!response.ok) throw new Error(`${label} download failed: HTTP ${response.status}`);
+    assertContentLengthWithinLimit(response, maxBytes, label);
+    return await readResponseArrayBufferWithLimit(response, maxBytes, label);
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error(`${label} download timed out.`);
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+  }
+}
+
+function assertContentLengthWithinLimit(response: Response, maxBytes: number, label: string): void {
+  const contentLength = response.headers.get("content-length");
+  if (!contentLength) return;
+  const bytes = Number(contentLength);
+  if (Number.isFinite(bytes) && bytes > maxBytes) {
+    throw new Error(`${label} exceeds the ${maxBytes} byte import limit.`);
+  }
+}
+
+async function readResponseArrayBufferWithLimit(response: Response, maxBytes: number, label: string): Promise<ArrayBuffer> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > maxBytes) throw new Error(`${label} exceeds the ${maxBytes} byte import limit.`);
+    return buffer;
+  }
+
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error(`${label} exceeds the ${maxBytes} byte import limit.`);
+    }
+    chunks.push(value);
+  }
+
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output.buffer;
+}
 export function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   let binary = "";

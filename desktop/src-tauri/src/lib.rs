@@ -23,10 +23,12 @@ mod rag_pack;
 mod runtime;
 
 const MOBILE_MARKET_DATA_FILE: &str = "mobile-market-data.json";
+const MOBILE_MARKET_WRITE_RETRY_ATTEMPTS: usize = 3;
+const MOBILE_MARKET_WRITE_RETRY_DELAY_MS: u64 = 50;
 const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
 const EASTMONEY_KLINE_ENDPOINT: &str = "https://push2his.eastmoney.com/api/qt/stock/kline/get";
 const TENCENT_DAILY_KLINE_ENDPOINT: &str = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get";
-const TENCENT_BATCH_SIZE: usize = 120;
+const TENCENT_BATCH_SIZE: usize = 80;
 const TENCENT_FETCH_CONCURRENCY: usize = 8;
 const TENCENT_DEFAULT_MAX_CANDIDATES: usize = 8_000;
 const TENCENT_DEFAULT_MAX_FAILED_BATCHES: usize = 4;
@@ -2456,6 +2458,43 @@ async fn fetch_tencent_quotes(
     codes: &[String],
     request_timeout: Duration,
 ) -> Result<TencentQuotePayload, String> {
+
+#[cfg(windows)]
+async fn fetch_tencent_quotes_windows_fallback(
+    url: &str,
+    timeout_secs: u64,
+    status: Option<u16>,
+    primary_error: Option<String>,
+) -> Result<TencentQuotePayload, String> {
+    let fallback = powershell_http_get_bytes(url, timeout_secs).map_err(|powershell_error| {
+        match (status, primary_error.as_deref()) {
+            (Some(status), _) => format!("Tencent quote HTTP {status}; PowerShell fallback failed: {powershell_error}"),
+            (None, Some(error)) => format!("Tencent quote request failed: {error}; PowerShell fallback failed: {powershell_error}"),
+            (None, None) => format!("Tencent quote fallback failed: {powershell_error}"),
+        }
+    })?;
+    let byte_len = fallback.len();
+    let (text, _, _) = encoding_rs::GBK.decode(&fallback);
+    Ok(TencentQuotePayload {
+        text: text.into_owned(),
+        byte_len,
+        status: status.unwrap_or(200),
+    })
+}
+
+#[cfg(not(windows))]
+async fn fetch_tencent_quotes_windows_fallback(
+    _url: &str,
+    _timeout_secs: u64,
+    status: Option<u16>,
+    primary_error: Option<String>,
+) -> Result<TencentQuotePayload, String> {
+    match (status, primary_error) {
+        (Some(status), _) => Err(format!("Tencent quote HTTP {status}")),
+        (None, Some(error)) => Err(format!("Tencent quote request failed: {error}")),
+        (None, None) => Err("Tencent quote fallback failed".to_string()),
+    }
+}
     let symbols: Vec<String> = codes
         .iter()
         .filter_map(|code| tencent_symbol(code))
@@ -2468,27 +2507,38 @@ async fn fetch_tencent_quotes(
         });
     }
     let url = format!("{TENCENT_QUOTE_ENDPOINT}{}", symbols.join(","));
-    let response = client
-        .get(url)
-        .timeout(request_timeout)
-        .send()
-        .await
-        .map_err(|error| format!("Tencent quote request failed: {error}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(format!("Tencent quote HTTP {status}"));
+    match client.get(&url).timeout(request_timeout).send().await {
+        Ok(response) => {
+            let status = response.status();
+            if !status.is_success() {
+                return fetch_tencent_quotes_windows_fallback(
+                    &url,
+                    request_timeout.as_secs().max(1),
+                    Some(status.as_u16()),
+                    None,
+                )
+                .await;
+            }
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|error| format!("Tencent quote body read failed: {error}"))?;
+            let byte_len = bytes.len();
+            let (text, _, _) = encoding_rs::GBK.decode(&bytes);
+            Ok(TencentQuotePayload {
+                text: text.into_owned(),
+                byte_len,
+                status: status.as_u16(),
+            })
+        }
+        Err(error) => fetch_tencent_quotes_windows_fallback(
+            &url,
+            request_timeout.as_secs().max(1),
+            None,
+            Some(error.to_string()),
+        )
+        .await,
     }
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| format!("Tencent quote body read failed: {error}"))?;
-    let byte_len = bytes.len();
-    let (text, _, _) = encoding_rs::GBK.decode(&bytes);
-    Ok(TencentQuotePayload {
-        text: text.into_owned(),
-        byte_len,
-        status: status.as_u16(),
-    })
 }
 
 fn parse_tencent_quotes(
@@ -5132,14 +5182,7 @@ fn write_mobile_market_data_record(
     ));
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize mobile market data failed: {error}"))?;
-    fs::write(&tmp_path, &bytes)
-        .map_err(|error| format!("write mobile market cache temp failed: {error}"))?;
-    if path.exists() {
-        fs::remove_file(&path)
-            .map_err(|error| format!("replace old mobile market cache failed: {error}"))?;
-    }
-    fs::rename(&tmp_path, &path)
-        .map_err(|error| format!("commit mobile market cache failed: {error}"))?;
+    write_mobile_market_data_with_retry(&tmp_path, &path, &bytes)?;
     remember_refresh_seed(app, &payload);
     Ok(market_cache_record(
         &path,
@@ -5150,6 +5193,54 @@ fn write_mobile_market_data_record(
         include_data,
         "mobile market cache written",
     ))
+}
+
+fn retry_with_attempts<T, F>(attempts: usize, delay_ms: u64, mut op: F) -> Result<T, String>
+where
+    F: FnMut(usize) -> Result<T, String>,
+{
+    let attempts = attempts.max(1);
+    let mut last_error: Option<String> = None;
+    for attempt in 0..attempts {
+        match op(attempt) {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                last_error = Some(error);
+                if attempt + 1 < attempts {
+                    std::thread::sleep(Duration::from_millis(delay_ms));
+                }
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "operation failed".to_string()))
+}
+
+fn write_mobile_market_data_with_retry(
+    tmp_path: &Path,
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), String> {
+    retry_with_attempts(
+        MOBILE_MARKET_WRITE_RETRY_ATTEMPTS,
+        MOBILE_MARKET_WRITE_RETRY_DELAY_MS,
+        |_| write_mobile_market_data_once(tmp_path, path, bytes),
+    )
+}
+
+fn write_mobile_market_data_once(
+    tmp_path: &Path,
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), String> {
+    fs::write(tmp_path, bytes)
+        .map_err(|error| format!("write mobile market cache temp failed: {error}"))?;
+    if path.exists() {
+        fs::remove_file(path)
+            .map_err(|error| format!("replace old mobile market cache failed: {error}"))?;
+    }
+    fs::rename(tmp_path, path)
+        .map_err(|error| format!("commit mobile market cache failed: {error}"))?;
+    Ok(())
 }
 
 fn market_cache_record(

@@ -80,9 +80,9 @@ fn tencent_candidates_are_interleaved_across_markets() {
 #[test]
 fn candidate_batch_window_clamps_to_available_batches() {
     assert_eq!(candidate_batch_window(0, 0, Some(4)), (0, 0, 0));
-    assert_eq!(candidate_batch_window(600, 0, Some(2)), (0, 2, 5));
-    assert_eq!(candidate_batch_window(600, 4, Some(4)), (4, 5, 5));
-    assert_eq!(candidate_batch_window(600, 9, Some(1)), (5, 5, 5));
+    assert_eq!(candidate_batch_window(600, 0, Some(2)), (0, 2, 8));
+    assert_eq!(candidate_batch_window(600, 4, Some(4)), (4, 8, 8));
+    assert_eq!(candidate_batch_window(600, 9, Some(1)), (8, 8, 8));
 }
 
 #[test]
@@ -207,6 +207,23 @@ fn market_cache_record_can_omit_data_payload() {
             .map(|items| items.len()),
         Some(1)
     );
+}
+
+#[test]
+fn retry_with_attempts_retries_transient_failures() {
+    let mut attempts = 0usize;
+    let result = retry_with_attempts(3, 0, |_| {
+        attempts += 1;
+        if attempts < 2 {
+            Err("transient write failure".to_string())
+        } else {
+            Ok("ok")
+        }
+    })
+    .expect("retry helper should recover after a transient failure");
+
+    assert_eq!(result, "ok");
+    assert_eq!(attempts, 2);
 }
 
 #[test]

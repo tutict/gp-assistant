@@ -32,9 +32,11 @@ export function DataSourceBar({ mobileRuntime }: DataSourceBarProps) {
   const [batchCount, setBatchCount] = useState(mobileRuntime ? 8 : 32);
   const [maxCandidates, setMaxCandidates] = useState(15000);
   const [fullRebuild, setFullRebuild] = useState(true);
+  const [sourceToolsOpen, setSourceToolsOpen] = useState(false);
 
   useEffect(() => {
     setBatchCount(mobileRuntime ? 8 : 32);
+    if (!mobileRuntime) setSourceToolsOpen(false);
   }, [mobileRuntime]);
 
   const clearRefreshLogTimer = useCallback(() => {
@@ -139,24 +141,39 @@ export function DataSourceBar({ mobileRuntime }: DataSourceBarProps) {
     }
   }, [appendLog, clearRefreshLogTimer, scheduleRefreshLogCollapse]);
 
+  const sourceToolsVisible = !mobileRuntime || sourceToolsOpen || refreshing;
+
   return (
-    <div className="data-source-bar">
+    <div className={`data-source-bar ${mobileRuntime ? "mobile-source-bar" : ""} ${sourceToolsVisible ? "tools-open" : "tools-closed"}`}>
       <div className="data-source-main">
         <div className="data-source-status">
           <span className="status-item"><em>股票池</em><strong>{formatNumber(status?.universe_count)}</strong></span>
           <span className="status-item"><em>缓存</em><strong>{formatBytes(status?.cache_bytes)}</strong></span>
         </div>
 
+        {mobileRuntime && (
+          <button
+            type="button"
+            className="source-tools-toggle"
+            onClick={() => setSourceToolsOpen((open) => !open)}
+            aria-expanded={sourceToolsVisible}
+          >
+            {sourceToolsVisible ? "收起" : "刷新"}
+          </button>
+        )}
+      </div>
+
+      <div className="data-source-tools">
         <div className="refresh-options">
           <label><input type="checkbox" checked={fullRebuild} onChange={(event) => setFullRebuild(event.target.checked)} disabled={refreshing} />全量重建</label>
           <label>批次<input type="number" min="1" max="1000" value={batchCount} onChange={(event) => setBatchCount(Number(event.target.value) || 1)} disabled={refreshing} /></label>
           <label>候选<input type="number" min="1000" max="50000" step="1000" value={maxCandidates} onChange={(event) => setMaxCandidates(Number(event.target.value) || 15000)} disabled={refreshing} /></label>
         </div>
-      </div>
 
-      <div className="data-source-actions">
-        <button type="button" className="action-btn" onClick={refreshUniverse} disabled={refreshing}>{mobileRuntime ? "移动端刷新并校验" : "刷新并校验股票池"}</button>
-        <button type="button" className="action-btn" onClick={pruneCache} disabled={refreshing}>清理缓存</button>
+        <div className="data-source-actions">
+          <button type="button" className="action-btn" onClick={refreshUniverse} disabled={refreshing}>{mobileRuntime ? "刷新并校验" : "刷新并校验股票池"}</button>
+          <button type="button" className="action-btn" onClick={pruneCache} disabled={refreshing}>清理缓存</button>
+        </div>
       </div>
 
       {progress && (

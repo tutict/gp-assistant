@@ -2,11 +2,20 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-export function useLocalStorage<T>(key: string, initialValue: T): [T, (value: T | ((prev: T) => T)) => void] {
+export function useLocalStorage<T>(
+  key: string,
+  initialValue: T,
+  sanitize?: (value: T) => T,
+): [T, (value: T | ((prev: T) => T)) => void] {
   const [stored, setStored] = useState<T>(() => {
     try {
       const item = localStorage.getItem(key);
-      return item ? (JSON.parse(item) as T) : initialValue;
+      const parsed = item ? (JSON.parse(item) as T) : initialValue;
+      const sanitized = sanitize ? sanitize(parsed) : parsed;
+      if (sanitize && item !== JSON.stringify(sanitized)) {
+        localStorage.setItem(key, JSON.stringify(sanitized));
+      }
+      return sanitized;
     } catch {
       return initialValue;
     }
@@ -16,15 +25,16 @@ export function useLocalStorage<T>(key: string, initialValue: T): [T, (value: T 
     (value: T | ((prev: T) => T)) => {
       setStored((prev) => {
         const next = typeof value === "function" ? (value as (prev: T) => T)(prev) : value;
+        const persisted = sanitize ? sanitize(next) : next;
         try {
-          localStorage.setItem(key, JSON.stringify(next));
+          localStorage.setItem(key, JSON.stringify(persisted));
         } catch {
           // ignore
         }
         return next;
       });
     },
-    [key],
+    [key, sanitize],
   );
 
   return [stored, setValue];

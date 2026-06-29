@@ -1,4 +1,4 @@
-﻿param(
+param(
     [switch] $InitOnly,
     [switch] $PreflightOnly,
     [switch] $Debug,
@@ -101,7 +101,7 @@ function Resolve-JavaExecutable {
         return $javaCommand.Source
     }
 
-    throw "未找到 java.exe。请安装 JDK 17/21，或设置 GP_ANDROID_JAVA_HOME 指向对应 JDK。"
+    throw "java.exe was not found. Install JDK 17/21 or set GP_ANDROID_JAVA_HOME to the matching JDK."
 }
 
 function Get-JavaMajorVersion {
@@ -119,7 +119,7 @@ function Get-JavaMajorVersion {
         $ErrorActionPreference = $previousErrorActionPreference
     }
     if ($exitCode -ne 0) {
-        throw "Java 版本检查失败：$($versionOutput -join ' ')"
+        throw "Java version check failed: $($versionOutput -join ' ')"
     }
 
     $versionText = ($versionOutput | ForEach-Object { [string]$_ }) -join "`n"
@@ -133,14 +133,14 @@ function Get-JavaMajorVersion {
         return $major
     }
 
-    throw "无法识别 Java 版本：$versionText"
+    throw "Unable to detect Java version: $versionText"
 }
 
 function Assert-AndroidJavaVersion {
     $javaExe = Resolve-JavaExecutable
     $major = Get-JavaMajorVersion $javaExe
     if ($major -ne 17 -and $major -ne 21) {
-        throw "Android 构建需要 JDK 17 或 21；当前检测到 JDK $major：$javaExe。请安装 JDK 17/21，或设置 GP_ANDROID_JAVA_HOME 指向对应 JDK 后重试。"
+        throw "Android build requires JDK 17 or 21; detected JDK ${major}: ${javaExe}. Install JDK 17/21 or set GP_ANDROID_JAVA_HOME to the matching JDK."
     }
 
     Write-Host "Android Java OK: JDK $major ($javaExe)"
@@ -351,7 +351,7 @@ function Sign-AndroidReleaseApk {
     $zipalign = Resolve-AndroidBuildToolExecutable "zipalign.exe"
     $apksigner = Resolve-AndroidBuildToolExecutable "apksigner.bat"
     $alignedApk = Join-Path $unsignedApk.DirectoryName "guxuanyou-release-aligned.apk"
-    $signedApk = Join-Path $unsignedApk.DirectoryName "股选优_0.3.0_android_aarch64_release_signed.apk"
+    $signedApk = Join-Path $unsignedApk.DirectoryName "guxuanyou_0.3.0_android_aarch64_release_signed.apk"
 
     if (Test-Path -LiteralPath $alignedApk) {
         Remove-Item -LiteralPath $alignedApk -Force
@@ -450,9 +450,67 @@ function Clear-TauriAndroidPluginCache {
     }
 }
 
+function Assert-AndroidProjectChildPath {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    $androidProjectRoot = [System.IO.Path]::GetFullPath($AndroidProjectDir).TrimEnd("\", "/")
+    $childFullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd("\", "/")
+    $prefix = $androidProjectRoot + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $childFullPath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to write outside Android project: $childFullPath"
+    }
+}
+
+function Write-AndroidNetworkSecurityConfig {
+    if (-not (Test-Path -LiteralPath $AndroidProjectDir)) {
+        return
+    }
+
+    $xmlDir = Join-Path $AndroidProjectDir "app\src\main\res\xml"
+    $configPath = Join-Path $xmlDir "guxuanyou_network_security_config.xml"
+    Assert-AndroidProjectChildPath $configPath
+    New-Item -ItemType Directory -Path $xmlDir -Force | Out-Null
+    $config = @(
+        '<?xml version="1.0" encoding="utf-8"?>',
+        '<network-security-config>',
+        '    <base-config cleartextTrafficPermitted="false" />',
+        '    <domain-config cleartextTrafficPermitted="true">',
+        '        <domain includeSubdomains="false">localhost</domain>',
+        '        <domain includeSubdomains="false">127.0.0.1</domain>',
+        '        <domain includeSubdomains="false">10.0.2.2</domain>',
+        '    </domain-config>',
+        '</network-security-config>',
+        ''
+    ) -join "`r`n"
+    [System.IO.File]::WriteAllText($configPath, $config, [System.Text.UTF8Encoding]::new($false))
+}
+
+function Apply-AndroidApplicationNetworkSecurityConfig {
+    param([Parameter(Mandatory = $true)][string] $Manifest)
+
+    $updated = $Manifest -replace 'android:usesCleartextTraffic="true"', 'android:usesCleartextTraffic="false"'
+    if ($updated -notmatch 'android:usesCleartextTraffic=') {
+        $updated = $updated -replace '<application\b', '<application android:usesCleartextTraffic="false"'
+    }
+    if ($updated -notmatch 'android:networkSecurityConfig=') {
+        $updated = $updated -replace '<application\b', '<application android:networkSecurityConfig="@xml/guxuanyou_network_security_config"'
+    }
+    return $updated
+}
+
+function Disable-AndroidCleartextPlaceholder {
+    param([Parameter(Mandatory = $true)][string] $Gradle)
+
+    $updated = $Gradle -replace 'manifestPlaceholders\["usesCleartextTraffic"\]\s*=\s*"true"', 'manifestPlaceholders["usesCleartextTraffic"] = "false"'
+    $updated = $updated -replace 'manifestPlaceholders\["usesCleartextTraffic"\]\s*=\s*"false"', 'manifestPlaceholders["usesCleartextTraffic"] = "false"'
+    return $updated
+}
+
 function Update-AndroidProjectForLanImport {
     $AndroidManifest = Join-Path $AndroidProjectDir "app\src\main\AndroidManifest.xml"
     $AndroidBuildGradle = Join-Path $AndroidProjectDir "app\build.gradle.kts"
+
+    Write-AndroidNetworkSecurityConfig
 
     if (Test-Path -LiteralPath $AndroidManifest) {
         $manifest = Get-Content -LiteralPath $AndroidManifest -Raw
@@ -485,6 +543,12 @@ function Update-AndroidProjectForLanImport {
             $manifestUpdated = $true
         }
 
+        $securedManifest = Apply-AndroidApplicationNetworkSecurityConfig $manifest
+        if ($securedManifest -ne $manifest) {
+            $manifest = $securedManifest
+            $manifestUpdated = $true
+        }
+
         if ($manifestUpdated) {
             Set-Content -LiteralPath $AndroidManifest -Value $manifest -Encoding UTF8
         }
@@ -492,13 +556,12 @@ function Update-AndroidProjectForLanImport {
 
     if (Test-Path -LiteralPath $AndroidBuildGradle) {
         $gradle = Get-Content -LiteralPath $AndroidBuildGradle -Raw
-        $updated = $gradle -replace 'manifestPlaceholders\["usesCleartextTraffic"\]\s*=\s*"false"', 'manifestPlaceholders["usesCleartextTraffic"] = "true"'
+        $updated = Disable-AndroidCleartextPlaceholder $gradle
         if ($updated -ne $gradle) {
             Set-Content -LiteralPath $AndroidBuildGradle -Value $updated -Encoding UTF8
         }
     }
 }
-
 Initialize-AndroidEnvironment
 
 Assert-EnvPath "ANDROID_HOME" "Install Android SDK and set ANDROID_HOME to the SDK directory."

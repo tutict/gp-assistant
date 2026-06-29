@@ -3,6 +3,7 @@ import type { PanelKey } from "./types";
 import { useTheme } from "./hooks/useTheme";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { isMobileTauriRuntime } from "./lib/tauri";
+import { sanitizePersistedLlmSettings } from "./lib/contracts";
 import { Header } from "./components/Header";
 import { Sidebar } from "./components/Sidebar";
 import { FilterBar } from "./components/FilterBar";
@@ -17,6 +18,7 @@ import { LlmSettingsPanel } from "./components/panels/LlmSettingsPanel";
 import type { WatchlistItem, LlmSettings } from "./types";
 
 type ViewKey = "screen" | "observe" | "backtest" | "news" | "agent";
+type LlmSettingsUpdater = LlmSettings | null | ((prev: LlmSettings | null) => LlmSettings | null);
 
 const VIEW_TO_PANELS: Record<ViewKey, PanelKey[]> = {
   screen: ["screen", "sectorScreen", "boardScreen", "graph", "trendAnalyze", "trendScreen"],
@@ -54,7 +56,12 @@ export default function App({ onMounted }: AppProps) {
 
   // Persistent state
   const [watchlist, setWatchlist] = useLocalStorage<WatchlistItem[]>("stock-optimizer-watchlist", []);
-  const [llmSettings, setLlmSettings] = useLocalStorage<LlmSettings | null>("stock-optimizer-llm-settings", null);
+  const [storedLlmSettings, setStoredLlmSettings] = useLocalStorage<LlmSettings | null>(
+    "stock-optimizer-llm-settings",
+    null,
+    sanitizePersistedLlmSettings,
+  );
+  const [llmSettings, setLlmSettingsState] = useState<LlmSettings | null>(() => storedLlmSettings);
 
   // Filter criteria state
   const [criteria, setCriteria] = useLocalStorage("stock-optimizer-criteria", {
@@ -163,6 +170,14 @@ export default function App({ onMounted }: AppProps) {
     setBacktestPreferredSource("criteria");
     navigate("backtest");
   }, [navigate]);
+
+  const setLlmSettings = useCallback((value: LlmSettingsUpdater) => {
+    setLlmSettingsState((prev) => {
+      const next = typeof value === "function" ? value(prev) : value;
+      setStoredLlmSettings(sanitizePersistedLlmSettings(next));
+      return next;
+    });
+  }, [setStoredLlmSettings]);
 
   return (
     <div className={`app ${mobileNavOpen ? "mobile-nav-open" : ""}`} data-active-view={view}>

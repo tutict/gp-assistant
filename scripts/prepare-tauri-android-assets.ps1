@@ -73,13 +73,76 @@ function Build-ReactFrontend {
     }
 }
 
+function Assert-AndroidProjectChildPath {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    $androidProjectRoot = [System.IO.Path]::GetFullPath((Join-Path $Root "desktop\src-tauri\gen\android")).TrimEnd("\", "/")
+    $childFullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd("\", "/")
+    $prefix = $androidProjectRoot + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $childFullPath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to write outside Android project: $childFullPath"
+    }
+}
+
+function Write-AndroidNetworkSecurityConfig {
+    $androidProjectRoot = Join-Path $Root "desktop\src-tauri\gen\android"
+    if (-not (Test-Path -LiteralPath $androidProjectRoot)) {
+        return
+    }
+
+    $xmlDir = Join-Path $AndroidResDir "xml"
+    $configPath = Join-Path $xmlDir "guxuanyou_network_security_config.xml"
+    Assert-AndroidProjectChildPath $configPath
+    New-Item -ItemType Directory -Path $xmlDir -Force | Out-Null
+    $config = @(
+        '<?xml version="1.0" encoding="utf-8"?>',
+        '<network-security-config>',
+        '    <base-config cleartextTrafficPermitted="false" />',
+        '    <domain-config cleartextTrafficPermitted="true">',
+        '        <domain includeSubdomains="false">localhost</domain>',
+        '        <domain includeSubdomains="false">127.0.0.1</domain>',
+        '        <domain includeSubdomains="false">10.0.2.2</domain>',
+        '    </domain-config>',
+        '</network-security-config>',
+        ''
+    ) -join "`r`n"
+    [System.IO.File]::WriteAllText($configPath, $config, [System.Text.UTF8Encoding]::new($false))
+}
+
+function Apply-AndroidApplicationNetworkSecurityConfig {
+    param([Parameter(Mandatory = $true)][string] $Manifest)
+
+    $updated = $Manifest -replace 'android:usesCleartextTraffic="true"', 'android:usesCleartextTraffic="false"'
+    if ($updated -notmatch 'android:usesCleartextTraffic=') {
+        $updated = $updated -replace '<application\b', '<application android:usesCleartextTraffic="false"'
+    }
+    if ($updated -notmatch 'android:networkSecurityConfig=') {
+        $updated = $updated -replace '<application\b', '<application android:networkSecurityConfig="@xml/guxuanyou_network_security_config"'
+    }
+    return $updated
+}
+
+function Disable-AndroidCleartextPlaceholder {
+    param([Parameter(Mandatory = $true)][string] $Gradle)
+
+    $updated = $Gradle -replace 'manifestPlaceholders\["usesCleartextTraffic"\]\s*=\s*"true"', 'manifestPlaceholders["usesCleartextTraffic"] = "false"'
+    $updated = $updated -replace 'manifestPlaceholders\["usesCleartextTraffic"\]\s*=\s*"false"', 'manifestPlaceholders["usesCleartextTraffic"] = "false"'
+    return $updated
+}
+
 function Update-AndroidProjectForLanImport {
+    Write-AndroidNetworkSecurityConfig
+
     if (Test-Path -LiteralPath $AndroidManifest) {
         $manifest = Get-Content -LiteralPath $AndroidManifest -Raw
+        $manifestUpdated = $false
+        $internetPermissionPattern = [regex]::Escape('    <uses-permission android:name="android.permission.INTERNET" />')
+        $networkStatePermission = "    <uses-permission android:name=`"android.permission.ACCESS_NETWORK_STATE`" />"
+
         if ($manifest -notmatch "android\.permission\.CAMERA") {
-            $internetPermissionPattern = [regex]::Escape('    <uses-permission android:name="android.permission.INTERNET" />')
             $lanImportPermissions = @(
                 "    <uses-permission android:name=`"android.permission.INTERNET`" />",
+                $networkStatePermission,
                 "    <uses-permission android:name=`"android.permission.CAMERA`" />",
                 "    <uses-feature android:name=`"android.hardware.camera`" android:required=`"false`" />"
             ) -join "`r`n"
@@ -88,19 +151,38 @@ function Update-AndroidProjectForLanImport {
                 $manifestRootPattern = "<manifest([^>]*)>"
                 $manifest = $manifest -replace $manifestRootPattern, "<manifest`$1>`r`n$lanImportPermissions"
             }
+            $manifestUpdated = $true
+        }
+
+        if ($manifest -notmatch "android\.permission\.ACCESS_NETWORK_STATE") {
+            if ($manifest -match $internetPermissionPattern) {
+                $manifest = $manifest -replace $internetPermissionPattern, "    <uses-permission android:name=`"android.permission.INTERNET`" />`r`n$networkStatePermission"
+            } else {
+                $manifestRootPattern = "<manifest([^>]*)>"
+                $manifest = $manifest -replace $manifestRootPattern, "<manifest`$1>`r`n$networkStatePermission"
+            }
+            $manifestUpdated = $true
+        }
+
+        $securedManifest = Apply-AndroidApplicationNetworkSecurityConfig $manifest
+        if ($securedManifest -ne $manifest) {
+            $manifest = $securedManifest
+            $manifestUpdated = $true
+        }
+
+        if ($manifestUpdated) {
             Set-Content -LiteralPath $AndroidManifest -Value $manifest -Encoding UTF8
         }
     }
 
     if (Test-Path -LiteralPath $AndroidBuildGradle) {
         $gradle = Get-Content -LiteralPath $AndroidBuildGradle -Raw
-        $updated = $gradle -replace 'manifestPlaceholders\["usesCleartextTraffic"\]\s*=\s*"false"', 'manifestPlaceholders["usesCleartextTraffic"] = "true"'
+        $updated = Disable-AndroidCleartextPlaceholder $gradle
         if ($updated -ne $gradle) {
             Set-Content -LiteralPath $AndroidBuildGradle -Value $updated -Encoding UTF8
         }
     }
 }
-
 function Resize-Png {
     param(
         [Parameter(Mandatory = $true)]
@@ -496,7 +578,7 @@ function ConvertTo-MobileSnapshotPeriodKey {
     $text = ([string] $ReportDate).Trim()
     $year = $null
     $month = $null
-    if ($text -match '(?<year>20\d{2})[-/.年\s]*(?<month>0?[1-9]|1[0-2])') {
+    if ($text -match '(?<year>20\d{2})(?:[-/.\s]|\u5e74)*(?<month>0?[1-9]|1[0-2])') {
         $year = [int] $Matches.year
         $month = [int] $Matches.month
     }
