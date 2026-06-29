@@ -7,7 +7,9 @@ import {
   buildSectorScreenRequest,
   buildTrendScreenRequest,
   fetchUpstreamImportPayload,
+  buildLlmConfig,
   normalizeAgentStreamEvent,
+  normalizeLlmSettings,
   normalizeNewsGroups,
   normalizeScreenGroups,
   normalizeScreenRows,
@@ -16,6 +18,7 @@ import {
   sanitizePersistedLlmSettings,
 } from "./contracts";
 import type { FilterCriteria } from "../components/FilterBar";
+import type { LlmSettings } from "../types";
 
 const criteria: FilterCriteria = {
   includeSt: false,
@@ -32,13 +35,41 @@ const criteria: FilterCriteria = {
 
 describe("LLM settings persistence", () => {
   it("drops API keys unless remember_key is enabled", () => {
-    expect(sanitizePersistedLlmSettings({ api_key: "sk-test", model: "gpt", remember_key: false })).toEqual({
-      model: "gpt",
-      remember_key: false,
+    expect(sanitizePersistedLlmSettings({ api_key: "sk-test", model: "gpt", remember_key: false } as LlmSettings)).toEqual({
+      active_provider_id: "legacy",
+      providers: [{ id: "legacy", name: "gpt", provider: "custom", model: "gpt", remember_key: false }],
     });
-    expect(sanitizePersistedLlmSettings({ api_key: "sk-test", model: "gpt", remember_key: true })).toMatchObject({
+    expect(sanitizePersistedLlmSettings({
+      active_provider_id: "a",
+      providers: [
+        { id: "a", api_key: "sk-drop", model: "gpt", remember_key: false },
+        { id: "b", api_key: "sk-keep", model: "deepseek", remember_key: true },
+      ],
+    })).toMatchObject({
+      active_provider_id: "a",
+      providers: [
+        { id: "a", model: "gpt", remember_key: false },
+        { id: "b", api_key: "sk-keep", model: "deepseek", remember_key: true },
+      ],
+    });
+  });
+
+  it("normalizes legacy settings and builds config from the active provider", () => {
+    expect(normalizeLlmSettings({ base_url: "https://example.test/v1/", model: "old-model" } as LlmSettings)).toMatchObject({
+      active_provider_id: "legacy",
+      providers: [{ id: "legacy", model: "old-model" }],
+    });
+    expect(buildLlmConfig({
+      active_provider_id: "deepseek",
+      providers: [
+        { id: "openai", base_url: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+        { id: "deepseek", base_url: "https://api.deepseek.com/v1/", model: "deepseek-chat", api_key: "sk-test", timeout: 45 },
+      ],
+    })).toEqual({
       api_key: "sk-test",
-      remember_key: true,
+      base_url: "https://api.deepseek.com/v1",
+      model: "deepseek-chat",
+      timeout_seconds: 45,
     });
   });
 });

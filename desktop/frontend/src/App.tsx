@@ -12,7 +12,6 @@ import { ObservePanel } from "./components/panels/ObservePanel";
 import { BacktestPanel } from "./components/panels/BacktestPanel";
 import { NewsRagPanel } from "./components/panels/NewsRagPanel";
 import { AgentPanel } from "./components/panels/AgentPanel";
-import { DataSourceBar } from "./components/DataSourceBar";
 import { WatchlistPanel } from "./components/panels/WatchlistPanel";
 import { LlmSettingsPanel } from "./components/panels/LlmSettingsPanel";
 import type { WatchlistItem, LlmSettings } from "./types";
@@ -21,7 +20,7 @@ type ViewKey = "screen" | "observe" | "backtest" | "news" | "agent";
 type LlmSettingsUpdater = LlmSettings | null | ((prev: LlmSettings | null) => LlmSettings | null);
 
 const VIEW_TO_PANELS: Record<ViewKey, PanelKey[]> = {
-  screen: ["screen", "sectorScreen", "boardScreen", "graph", "trendAnalyze", "trendScreen"],
+  screen: ["screen", "sectorScreen", "boardScreen", "graph", "trendScreen"],
   observe: ["observe"],
   backtest: ["backtest"],
   news: ["newsRag", "ragPackBuild", "ragPackQuery", "upstreamScan", "upstreamImport"],
@@ -145,6 +144,12 @@ export default function App({ onMounted }: AppProps) {
     return () => document.removeEventListener("keydown", onKeydown);
   }, []);
 
+  useEffect(() => {
+    if (view !== "screen") {
+      setCriteriaOpen(false);
+    }
+  }, [view]);
+
   const navigate = useCallback((v: ViewKey) => {
     setView(v);
     setMobileNavOpen(false);
@@ -195,15 +200,16 @@ export default function App({ onMounted }: AppProps) {
       />
 
       <main className="workbench">
-        <FilterBar
-          criteria={criteria}
-          onChange={setCriteria}
-          open={criteriaOpen}
-          onToggle={() => setCriteriaOpen(!criteriaOpen)}
-          onClose={() => setCriteriaOpen(false)}
-        />
-
-        <DataSourceBar mobileRuntime={mobileRuntime} />
+        {view === "screen" && (
+          <FilterBar
+            criteria={criteria}
+            onChange={setCriteria}
+            open={criteriaOpen}
+            onToggle={() => setCriteriaOpen(!criteriaOpen)}
+            onClose={() => setCriteriaOpen(false)}
+            mobileRuntime={mobileRuntime}
+          />
+        )}
 
         <div className="panels">
           {view === "screen" && (

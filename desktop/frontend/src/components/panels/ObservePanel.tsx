@@ -9,6 +9,7 @@ import {
   formatNumber,
   formatPercent,
   formatPrice,
+  formatRatioPercent,
   normalizeStockCode,
   reasonLabel,
 } from "../../lib/format";
@@ -108,7 +109,7 @@ export function ObserveResultView({ result }: { result: ObserveResult }) {
         <div className="overview-metric-grid">
           <Metric label="PE" value={formatNumber(stock.pe)} />
           <Metric label="PB" value={formatNumber(stock.pb)} />
-          <Metric label="ROE" value={formatPercent(stock.roe)} />
+          <Metric label="ROE" value={formatRatioPercent(stock.roe)} />
           <Metric label="市值" value={formatNumber(stock.market_cap_billion)} />
         </div>
       </section>

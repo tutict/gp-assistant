@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentResult, AgentStreamEvent, BacktestResult, LlmSettings, NewsRagResult, ObserveResult, StockRowView } from "../../types";
 import { getTauriInvoke, getTauriListen, isTauriRuntime } from "../../lib/tauri";
-import { actionResultKind, buildLlmConfig, normalizeAgentStreamEvent, normalizeScreenRows, parseSseBlock } from "../../lib/contracts";
+import { actionResultKind, activeLlmProvider, buildLlmConfig, normalizeAgentStreamEvent, normalizeScreenRows, parseSseBlock } from "../../lib/contracts";
 import { StockList } from "../StockList";
 import { BacktestResultView } from "./BacktestPanel";
 import { NewsRagView } from "./NewsRagPanel";
@@ -32,6 +32,7 @@ export function AgentPanel({ llmSettings }: AgentPanelProps) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
+  const activeProvider = activeLlmProvider(llmSettings);
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
@@ -88,7 +89,7 @@ export function AgentPanel({ llmSettings }: AgentPanelProps) {
     <div className="panel-container agent-panel">
       <div className="agent-header">
         <h2>智能体</h2>
-        {llmSettings?.model && <span className="agent-model">{llmSettings.model}</span>}
+        {activeProvider?.model && <span className="agent-model">{activeProvider.name || activeProvider.model} · {activeProvider.model}</span>}
       </div>
 
       <div className="agent-thread" ref={threadRef}>

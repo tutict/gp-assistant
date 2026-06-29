@@ -29,7 +29,7 @@ const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
 const EASTMONEY_KLINE_ENDPOINT: &str = "https://push2his.eastmoney.com/api/qt/stock/kline/get";
 const TENCENT_DAILY_KLINE_ENDPOINT: &str = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get";
 const TENCENT_BATCH_SIZE: usize = 120;
-const TENCENT_FETCH_CONCURRENCY: usize = 8;
+const TENCENT_FETCH_CONCURRENCY: usize = 12;
 const TENCENT_DEFAULT_MAX_CANDIDATES: usize = 8_000;
 const TENCENT_DEFAULT_MAX_FAILED_BATCHES: usize = 4;
 const TENCENT_CONNECT_TIMEOUT_SECS: u64 = 3;

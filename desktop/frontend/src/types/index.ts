@@ -437,6 +437,14 @@ export interface WatchlistItem {
 }
 
 export interface LlmSettings {
+  active_provider_id?: string;
+  providers?: LlmProviderSettings[];
+}
+
+export interface LlmProviderSettings {
+  id?: string;
+  name?: string;
+  provider?: string;
   api_key?: string;
   base_url?: string;
   model?: string;
@@ -470,7 +478,6 @@ export type PanelKey =
   | "sectorScreen"
   | "boardScreen"
   | "graph"
-  | "trendAnalyze"
   | "trendScreen"
   | "backtest"
   | "newsRag"

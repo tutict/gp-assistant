@@ -1,5 +1,5 @@
 import type { StockRowView, WatchlistItem } from "../types";
-import { formatNumber, formatPercent, formatPrice, reasonLabel } from "../lib/format";
+import { formatNumber, formatPrice, formatRatioPercent, reasonLabel } from "../lib/format";
 
 interface StockListProps {
   items: StockRowView[];
@@ -49,8 +49,8 @@ export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock 
               <div className="row-actions">
                 <div className="stock-meta">
                   <span>价格 {formatPrice(item.price)}</span>
-                  <span className={tone}>涨跌 {item.change_pct != null ? formatPercent(item.change_pct) : "--"}</span>
-                  <span>ROE {formatPercent(item.roe)}</span>
+                  <span className={tone}>涨跌 {item.change_pct != null ? formatRatioPercent(item.change_pct) : "--"}</span>
+                  <span>ROE {formatRatioPercent(item.roe)}</span>
                   <span>市值 {formatNumber(item.market_cap_billion)}</span>
                 </div>
                 <div className="row-button-group">

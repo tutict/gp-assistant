@@ -6,13 +6,12 @@ import {
   buildGraphScreenRequest,
   buildScreenCriteria,
   buildSectorScreenRequest,
-  buildTrendAnalyzeRequest,
   buildTrendScreenRequest,
   normalizeScreenGroups,
   normalizeScreenRows,
   normalizeSectorGroups,
 } from "../../lib/contracts";
-import { currentSystemDateInputValue, defaultObserveStartDateInputValue, escapeHtml, normalizeStockCode } from "../../lib/format";
+import { currentSystemDateInputValue, defaultObserveStartDateInputValue, escapeHtml } from "../../lib/format";
 import { StockList } from "../StockList";
 import { StockCodeInput } from "../StockCodeInput";
 
@@ -25,14 +24,13 @@ interface ScreenPanelProps {
   onRunBacktest?: () => void;
 }
 
-type ScreenMode = "screen" | "sectorScreen" | "boardScreen" | "graph" | "trendAnalyze" | "trendScreen";
+type ScreenMode = "screen" | "sectorScreen" | "boardScreen" | "graph" | "trendScreen";
 
 const TABS: { key: ScreenMode; label: string }[] = [
   { key: "screen", label: "智能选股" },
   { key: "sectorScreen", label: "概念分组" },
   { key: "boardScreen", label: "板块分组" },
   { key: "graph", label: "关系图谱" },
-  { key: "trendAnalyze", label: "趋势分析" },
   { key: "trendScreen", label: "趋势选股" },
 ];
 
@@ -47,7 +45,6 @@ export function ScreenPanel({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
-  const [trendCode, setTrendCode] = useState("");
   const [trendStart, setTrendStart] = useState(defaultObserveStartDateInputValue());
   const [trendEnd, setTrendEnd] = useState(currentSystemDateInputValue());
   const [maxSectors, setMaxSectors] = useState(12);
@@ -75,11 +72,6 @@ export function ScreenPanel({
       } else if (mode === "trendScreen") {
         endpoint = "/api/trend-screen";
         payload = buildTrendScreenRequest(criteria, trendStart, trendEnd);
-      } else if (mode === "trendAnalyze") {
-        const code = normalizeStockCode(trendCode);
-        if (!code) throw new Error("请输入有效股票代码。");
-        endpoint = "/api/trend";
-        payload = buildTrendAnalyzeRequest(code, trendStart, trendEnd);
       }
 
       const data = await postJson(endpoint, payload);
@@ -89,7 +81,7 @@ export function ScreenPanel({
     } finally {
       setLoading(false);
     }
-  }, [criteria, maxSectors, mode, perSectorLimit, relationDepth, relationWeight, seedCodes, trendCode, trendEnd, trendStart]);
+  }, [criteria, maxSectors, mode, perSectorLimit, relationDepth, relationWeight, seedCodes, trendEnd, trendStart]);
 
   const toggleWatchlist = useCallback((item: StockRowView) => {
     const exists = watchlist.some((w) => w.code === item.code);
@@ -151,14 +143,8 @@ export function ScreenPanel({
           </>
         )}
 
-        {(mode === "trendAnalyze" || mode === "trendScreen") && (
+        {mode === "trendScreen" && (
           <>
-            {mode === "trendAnalyze" && (
-              <div className="form-row inline">
-                <label htmlFor="trendCode">股票代码</label>
-                <StockCodeInput id="trendCode" value={trendCode} onChange={setTrendCode} placeholder="输入股票代码或名称" />
-              </div>
-            )}
             <div className="form-row inline">
               <label htmlFor="trendStart">开始日期</label>
               <input id="trendStart" type="date" value={trendStart} onChange={(e) => setTrendStart(e.target.value)} />

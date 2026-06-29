@@ -194,20 +194,83 @@ export function buildUpstreamRagBuildRequest(code: string, newsDays: number, man
 
 export function sanitizePersistedLlmSettings(settings: LlmSettings | null | undefined): LlmSettings | null {
   if (!settings) return null;
-  const sanitized: LlmSettings = { ...settings };
-  if (!sanitized.remember_key) delete sanitized.api_key;
-  return sanitized;
+  const source = normalizeLlmSettings(settings);
+  const sanitized: LlmSettings = {
+    active_provider_id: source.active_provider_id,
+    providers: source.providers?.map((provider) => {
+      const sanitizedProvider = { ...provider };
+      if (!sanitizedProvider.remember_key) delete sanitizedProvider.api_key;
+      return sanitizedProvider;
+    }),
+  };
+  return sanitized.providers?.length ? sanitized : null;
 }
+
 export function buildLlmConfig(settings: LlmSettings | null | undefined): LlmClientConfig | undefined {
-  if (!settings) return undefined;
+  const active = activeLlmProvider(settings);
+  if (!active) return undefined;
   const config: LlmClientConfig = {};
-  if (settings.api_key) config.api_key = settings.api_key;
-  if (settings.base_url) config.base_url = settings.base_url.replace(/\/+$/, "");
-  if (settings.model) config.model = settings.model;
-  if (settings.temperature !== undefined) config.temperature = Number(settings.temperature);
-  if (settings.timeout !== undefined) config.timeout_seconds = Number(settings.timeout);
-  if (settings.json_mode !== undefined) config.json_mode = Boolean(settings.json_mode);
+  if (active.api_key) config.api_key = active.api_key;
+  if (active.base_url) config.base_url = active.base_url.replace(/\/+$/, "");
+  if (active.model) config.model = active.model;
+  if (active.temperature !== undefined) config.temperature = Number(active.temperature);
+  if (active.timeout !== undefined) config.timeout_seconds = Number(active.timeout);
+  if (active.json_mode !== undefined) config.json_mode = Boolean(active.json_mode);
   return Object.keys(config).length ? config : undefined;
+}
+
+export function normalizeLlmSettings(settings: LlmSettings | null | undefined): LlmSettings {
+  if (!settings) {
+    return { active_provider_id: "openai", providers: [defaultLlmProvider()] };
+  }
+  if (settings.providers?.length) {
+    const providers = settings.providers.map((provider, index) => ({
+      ...provider,
+      id: provider.id || `provider-${index + 1}`,
+      name: provider.name || provider.provider || provider.model || `Provider ${index + 1}`,
+    }));
+    const activeProviderId = providers.some((provider) => provider.id === settings.active_provider_id)
+      ? settings.active_provider_id
+      : providers[0]?.id;
+    return { active_provider_id: activeProviderId, providers };
+  }
+
+  const legacy = settings as LlmSettings & LlmClientConfig & { remember_key?: boolean; timeout?: number };
+  return {
+    active_provider_id: "legacy",
+    providers: [{
+      id: "legacy",
+      name: legacy.model || "自定义",
+      provider: "custom",
+      api_key: legacy.api_key,
+      base_url: legacy.base_url,
+      model: legacy.model,
+      temperature: legacy.temperature,
+      timeout: legacy.timeout,
+      json_mode: legacy.json_mode,
+      remember_key: legacy.remember_key,
+    }],
+  };
+}
+
+export function activeLlmProvider(settings: LlmSettings | null | undefined) {
+  const normalized = normalizeLlmSettings(settings);
+  return normalized.providers?.find((provider) => provider.id === normalized.active_provider_id)
+    || normalized.providers?.[0];
+}
+
+function defaultLlmProvider() {
+  return {
+    id: "openai",
+    name: "OpenAI",
+    provider: "openai",
+    base_url: "https://api.openai.com/v1",
+    model: "gpt-4o-mini",
+    temperature: 0.7,
+    timeout: 60,
+    json_mode: false,
+    remember_key: false,
+  };
 }
 
 export function normalizeScreenRows(result: ScreenResult | GraphScreenResult | TrendScreenResult | TrendIndicatorResult | unknown): StockRowView[] {
