@@ -28,7 +28,7 @@ const MOBILE_MARKET_WRITE_RETRY_DELAY_MS: u64 = 50;
 const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
 const EASTMONEY_KLINE_ENDPOINT: &str = "https://push2his.eastmoney.com/api/qt/stock/kline/get";
 const TENCENT_DAILY_KLINE_ENDPOINT: &str = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get";
-const TENCENT_BATCH_SIZE: usize = 80;
+const TENCENT_BATCH_SIZE: usize = 120;
 const TENCENT_FETCH_CONCURRENCY: usize = 8;
 const TENCENT_DEFAULT_MAX_CANDIDATES: usize = 8_000;
 const TENCENT_DEFAULT_MAX_FAILED_BATCHES: usize = 4;
@@ -1672,6 +1672,7 @@ struct TencentQuotePayload {
     text: String,
     byte_len: usize,
     status: u16,
+    transport: &'static str,
 }
 
 fn emit_market_refresh_log(app: &tauri::AppHandle, stage: &str, tone: &str, payload: Value) {
@@ -1766,7 +1767,7 @@ async fn refresh_tencent_market_data(
         .take(effective_batch_count)
         .map(|(offset, batch)| (offset, batch.to_vec()))
         .collect();
-    let mut fetch_results: Vec<(usize, u128, Result<TencentQuotePayload, String>)> =
+    let mut fetch_results: Vec<(usize, Result<(TencentQuotePayload, u128), (String, u128)>)> =
         stream::iter(window)
             .map(|(offset, batch)| {
                 let client = &client;
@@ -1796,7 +1797,11 @@ async fn refresh_tencent_market_data(
                             batch_timeout.as_secs()
                         )),
                     };
-                    (offset, batch_started_at, fetch_result)
+                    let elapsed_ms = epoch_millis().saturating_sub(batch_started_at);
+                    let timed_result = fetch_result
+                        .map(|payload| (payload, elapsed_ms))
+                        .map_err(|error| (error, elapsed_ms));
+                    (offset, timed_result)
                 }
             })
             .buffer_unordered(TENCENT_FETCH_CONCURRENCY)
@@ -1806,10 +1811,10 @@ async fn refresh_tencent_market_data(
     // The whole window is attempted, so advance the cursor to its end up front.
     let next_batch_start = batch_end;
     // Process responses in deterministic batch order so dedup and logs stay stable.
-    fetch_results.sort_by_key(|(offset, _, _)| *offset);
-    for (offset, batch_started_at, fetch_result) in fetch_results {
+    fetch_results.sort_by_key(|(offset, _)| *offset);
+    for (offset, fetch_result) in fetch_results {
         match fetch_result {
-            Ok(payload) => {
+            Ok((payload, elapsed_ms)) => {
                 let parsed_stocks =
                     parse_tencent_quotes(&payload.text, &enriched_stocks, use_previous_close);
                 if parsed_stocks.is_empty() {
@@ -1826,9 +1831,10 @@ async fn refresh_tencent_market_data(
                     json!({
                         "batch_index": offset + 1,
                         "status": payload.status,
+                        "transport": payload.transport,
                         "byte_len": payload.byte_len,
                         "parsed_count": parsed_stocks.len(),
-                        "elapsed_ms": epoch_millis().saturating_sub(batch_started_at),
+                        "elapsed_ms": elapsed_ms,
                         "sample": payload.text.chars().take(120).collect::<String>(),
                     }),
                 );
@@ -1845,14 +1851,14 @@ async fn refresh_tencent_market_data(
                     }
                 }
             }
-            Err(error) => {
+            Err((error, elapsed_ms)) => {
                 emit_market_refresh_log(
                     app,
                     "batch_error",
                     "error",
                     json!({
                         "batch_index": offset + 1,
-                        "elapsed_ms": epoch_millis().saturating_sub(batch_started_at),
+                        "elapsed_ms": elapsed_ms,
                         "error": error,
                     }),
                 );
@@ -2458,43 +2464,45 @@ async fn fetch_tencent_quotes(
     codes: &[String],
     request_timeout: Duration,
 ) -> Result<TencentQuotePayload, String> {
-
-#[cfg(windows)]
-async fn fetch_tencent_quotes_windows_fallback(
-    url: &str,
-    timeout_secs: u64,
-    status: Option<u16>,
-    primary_error: Option<String>,
-) -> Result<TencentQuotePayload, String> {
-    let fallback = powershell_http_get_bytes(url, timeout_secs).map_err(|powershell_error| {
-        match (status, primary_error.as_deref()) {
+    #[cfg(windows)]
+    async fn fetch_tencent_quotes_windows_fallback(
+        url: &str,
+        timeout_secs: u64,
+        status: Option<u16>,
+        primary_error: Option<String>,
+    ) -> Result<TencentQuotePayload, String> {
+        let url = url.to_string();
+        let fallback = tokio::task::spawn_blocking(move || powershell_http_get_bytes(&url, timeout_secs))
+        .await
+        .map_err(|error| format!("Tencent quote PowerShell fallback task failed: {error}"))?
+        .map_err(|powershell_error| match (status, primary_error.as_deref()) {
             (Some(status), _) => format!("Tencent quote HTTP {status}; PowerShell fallback failed: {powershell_error}"),
             (None, Some(error)) => format!("Tencent quote request failed: {error}; PowerShell fallback failed: {powershell_error}"),
             (None, None) => format!("Tencent quote fallback failed: {powershell_error}"),
-        }
-    })?;
-    let byte_len = fallback.len();
-    let (text, _, _) = encoding_rs::GBK.decode(&fallback);
-    Ok(TencentQuotePayload {
-        text: text.into_owned(),
-        byte_len,
-        status: status.unwrap_or(200),
-    })
-}
-
-#[cfg(not(windows))]
-async fn fetch_tencent_quotes_windows_fallback(
-    _url: &str,
-    _timeout_secs: u64,
-    status: Option<u16>,
-    primary_error: Option<String>,
-) -> Result<TencentQuotePayload, String> {
-    match (status, primary_error) {
-        (Some(status), _) => Err(format!("Tencent quote HTTP {status}")),
-        (None, Some(error)) => Err(format!("Tencent quote request failed: {error}")),
-        (None, None) => Err("Tencent quote fallback failed".to_string()),
+        })?;
+        let byte_len = fallback.len();
+        let (text, _, _) = encoding_rs::GBK.decode(&fallback);
+        Ok(TencentQuotePayload {
+            text: text.into_owned(),
+            byte_len,
+            status: status.unwrap_or(200),
+            transport: "powershell",
+        })
     }
-}
+
+    #[cfg(not(windows))]
+    async fn fetch_tencent_quotes_windows_fallback(
+        _url: &str,
+        _timeout_secs: u64,
+        status: Option<u16>,
+        primary_error: Option<String>,
+    ) -> Result<TencentQuotePayload, String> {
+        match (status, primary_error) {
+            (Some(status), _) => Err(format!("Tencent quote HTTP {status}")),
+            (None, Some(error)) => Err(format!("Tencent quote request failed: {error}")),
+            (None, None) => Err("Tencent quote fallback failed".to_string()),
+        }
+    }
     let symbols: Vec<String> = codes
         .iter()
         .filter_map(|code| tencent_symbol(code))
@@ -2504,6 +2512,7 @@ async fn fetch_tencent_quotes_windows_fallback(
             text: String::new(),
             byte_len: 0,
             status: 0,
+            transport: "none",
         });
     }
     let url = format!("{TENCENT_QUOTE_ENDPOINT}{}", symbols.join(","));
@@ -2529,15 +2538,18 @@ async fn fetch_tencent_quotes_windows_fallback(
                 text: text.into_owned(),
                 byte_len,
                 status: status.as_u16(),
+                transport: "reqwest",
             })
         }
-        Err(error) => fetch_tencent_quotes_windows_fallback(
-            &url,
-            request_timeout.as_secs().max(1),
-            None,
-            Some(error.to_string()),
-        )
-        .await,
+        Err(error) => {
+            fetch_tencent_quotes_windows_fallback(
+                &url,
+                request_timeout.as_secs().max(1),
+                None,
+                Some(error.to_string()),
+            )
+            .await
+        }
     }
 }
 
@@ -5227,11 +5239,7 @@ fn write_mobile_market_data_with_retry(
     )
 }
 
-fn write_mobile_market_data_once(
-    tmp_path: &Path,
-    path: &Path,
-    bytes: &[u8],
-) -> Result<(), String> {
+fn write_mobile_market_data_once(tmp_path: &Path, path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::write(tmp_path, bytes)
         .map_err(|error| format!("write mobile market cache temp failed: {error}"))?;
     if path.exists() {

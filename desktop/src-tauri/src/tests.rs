@@ -80,9 +80,14 @@ fn tencent_candidates_are_interleaved_across_markets() {
 #[test]
 fn candidate_batch_window_clamps_to_available_batches() {
     assert_eq!(candidate_batch_window(0, 0, Some(4)), (0, 0, 0));
-    assert_eq!(candidate_batch_window(600, 0, Some(2)), (0, 2, 8));
-    assert_eq!(candidate_batch_window(600, 4, Some(4)), (4, 8, 8));
-    assert_eq!(candidate_batch_window(600, 9, Some(1)), (8, 8, 8));
+    assert_eq!(candidate_batch_window(600, 0, Some(2)), (0, 2, 5));
+    assert_eq!(candidate_batch_window(600, 4, Some(4)), (4, 5, 5));
+    assert_eq!(candidate_batch_window(600, 9, Some(1)), (5, 5, 5));
+}
+
+#[test]
+fn tencent_batch_size_keeps_full_refresh_round_trips_reasonable() {
+    assert_eq!(15_000usize.div_ceil(TENCENT_BATCH_SIZE), 125);
 }
 
 #[test]

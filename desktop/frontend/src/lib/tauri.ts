@@ -221,7 +221,7 @@ function defaultCachePolicy(): Record<string, unknown> {
 
 function buildAndroidNetworkOptions(): Record<string, unknown> {
   return {
-    proxy_mode: localStorage.getItem("stock-optimizer-proxy-mode") || (isMobileTauriRuntime() ? "system" : "none"),
+    proxy_mode: localStorage.getItem("stock-optimizer-proxy-mode") || "system",
     proxy_url: localStorage.getItem("stock-optimizer-proxy-url") || "",
     android_short_sources: isMobileTauriRuntime(),
   };
