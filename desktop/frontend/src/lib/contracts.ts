@@ -221,13 +221,15 @@ export function buildLlmConfig(settings: LlmSettings | null | undefined): LlmCli
 
 export function normalizeLlmSettings(settings: LlmSettings | null | undefined): LlmSettings {
   if (!settings) {
-    return { active_provider_id: "openai", providers: [defaultLlmProvider()] };
+    const provider = defaultLlmProvider();
+    return { active_provider_id: provider.id, providers: [provider] };
   }
   if (settings.providers?.length) {
     const providers = settings.providers.map((provider, index) => ({
       ...provider,
       id: provider.id || `provider-${index + 1}`,
       name: provider.name || provider.provider || provider.model || `Provider ${index + 1}`,
+      provider: provider.provider || "custom",
     }));
     const activeProviderId = providers.some((provider) => provider.id === settings.active_provider_id)
       ? settings.active_provider_id
@@ -261,11 +263,11 @@ export function activeLlmProvider(settings: LlmSettings | null | undefined) {
 
 function defaultLlmProvider() {
   return {
-    id: "openai",
-    name: "OpenAI",
-    provider: "openai",
-    base_url: "https://api.openai.com/v1",
-    model: "gpt-4o-mini",
+    id: "compatible",
+    name: "通用兼容",
+    provider: "openai-compatible",
+    base_url: "",
+    model: "",
     temperature: 0.7,
     timeout: 60,
     json_mode: false,

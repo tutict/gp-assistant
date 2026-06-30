@@ -609,6 +609,7 @@ fn agent_stream_with_data_emits_status_and_result() {
         &sample_data_set(),
         "screen bank stocks",
         Some("native-run"),
+        None,
     );
     assert!(events.iter().any(|event| event.event_type == "status"));
     let result = events
@@ -617,6 +618,47 @@ fn agent_stream_with_data_emits_status_and_result() {
         .expect("agent stream should return result event");
     assert_eq!(result.run_id, "native-run");
     assert_eq!(result.response.as_ref().unwrap().action, "screen");
+}
+
+#[test]
+fn agent_reply_reflects_mode() {
+    fn reply_for(events: &[AgentStreamEvent]) -> &str {
+        events
+            .iter()
+            .find(|event| event.event_type == "result")
+            .and_then(|event| event.response.as_ref())
+            .map(|response| response.reply.as_str())
+            .expect("agent stream should return a result with a reply")
+    }
+
+    let research = run_agent_stream_with_data_events(
+        &sample_data_set(),
+        "screen bank stocks",
+        Some("mode-run"),
+        None,
+    );
+    let research_reply = reply_for(&research);
+    assert!(research_reply.contains("不构成投资建议"));
+
+    let quick = run_agent_stream_with_data_events(
+        &sample_data_set(),
+        "screen bank stocks",
+        Some("mode-run"),
+        Some("quick"),
+    );
+    let quick_reply = reply_for(&quick);
+    assert!(!quick_reply.contains("不构成投资建议"));
+    assert!(quick_reply.len() < research_reply.len());
+
+    let expert = run_agent_stream_with_data_events(
+        &sample_data_set(),
+        "screen bank stocks",
+        Some("mode-run"),
+        Some("expert"),
+    );
+    let expert_reply = reply_for(&expert);
+    assert!(expert_reply.contains("风险提示"));
+    assert!(expert_reply.contains("下一步"));
 }
 
 #[test]

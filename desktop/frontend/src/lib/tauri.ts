@@ -194,6 +194,7 @@ function invokeAgent(invoke: InvokeFn, payload: unknown): Promise<unknown> {
     payload: {
       message: String(request.message || ""),
       run_id: String(request.run_id || `react-agent-${Date.now()}`),
+      mode: String(request.mode || "quick"),
     },
   });
 }

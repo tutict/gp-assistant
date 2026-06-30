@@ -239,6 +239,10 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
             <span>筛选条件</span>
           </button>
           <span className="criteria-summary" title={summary}>{summary}</span>
+        </div>
+
+        <div className="screen-toolbar-side">
+          <div className="screen-status-row">
 
           <div className="data-source-status" aria-label="股票池状态">
             <span className="status-item"><em>股票池</em><strong>{formatNumber(status?.universe_count)}</strong></span>
@@ -255,7 +259,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
               {sourceToolsVisible ? "收起" : "刷新"}
             </button>
           )}
-        </div>
+          </div>
 
         <div className="data-source-tools">
           <div className="refresh-options">
@@ -268,6 +272,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
             <button type="button" className="action-btn" onClick={refreshUniverse} disabled={refreshing}>{mobileRuntime ? "刷新并校验" : "刷新并校验股票池"}</button>
             <button type="button" className="action-btn" onClick={pruneCache} disabled={refreshing}>清理缓存</button>
           </div>
+        </div>
         </div>
 
         {progress && (

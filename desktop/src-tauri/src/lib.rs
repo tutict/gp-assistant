@@ -537,11 +537,19 @@ async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value
         .get("run_id")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
+    let mode = payload
+        .get("mode")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
     let mut request = serde_json::Map::new();
     request.insert("data".to_string(), data);
     request.insert("message".to_string(), Value::String(message));
     if let Some(run_id) = run_id {
         request.insert("run_id".to_string(), Value::String(run_id));
+    }
+    if let Some(mode) = mode {
+        request.insert("mode".to_string(), Value::String(mode));
     }
     core_agent_stream_with_data(app, Value::Object(request)).await
 }

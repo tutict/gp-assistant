@@ -48,9 +48,26 @@ describe("LLM settings persistence", () => {
     })).toMatchObject({
       active_provider_id: "a",
       providers: [
-        { id: "a", model: "gpt", remember_key: false },
-        { id: "b", api_key: "sk-keep", model: "deepseek", remember_key: true },
+        { id: "a", model: "gpt", provider: "custom", remember_key: false },
+        { id: "b", api_key: "sk-keep", model: "deepseek", provider: "custom", remember_key: true },
       ],
+    });
+  });
+
+  it("starts from a generic compatible provider instead of a fixed vendor", () => {
+    expect(normalizeLlmSettings(null)).toEqual({
+      active_provider_id: "compatible",
+      providers: [{
+        id: "compatible",
+        name: "通用兼容",
+        provider: "openai-compatible",
+        base_url: "",
+        model: "",
+        temperature: 0.7,
+        timeout: 60,
+        json_mode: false,
+        remember_key: false,
+      }],
     });
   });
 
@@ -70,6 +87,33 @@ describe("LLM settings persistence", () => {
       base_url: "https://api.deepseek.com/v1",
       model: "deepseek-chat",
       timeout_seconds: 45,
+    });
+  });
+
+  it("keeps non-OpenAI provider metadata while building a compatible client config", () => {
+    const settings: LlmSettings = {
+      active_provider_id: "glm",
+      providers: [
+        {
+          id: "glm",
+          name: "GLM / 智谱",
+          provider: "zhipu",
+          base_url: "https://open.bigmodel.cn/api/paas/v4/",
+          model: "glm-4-flash",
+          api_key: "zhipu-key",
+          remember_key: true,
+        },
+      ],
+    };
+
+    expect(sanitizePersistedLlmSettings(settings)).toMatchObject({
+      active_provider_id: "glm",
+      providers: [{ id: "glm", provider: "zhipu", api_key: "zhipu-key" }],
+    });
+    expect(buildLlmConfig(settings)).toEqual({
+      api_key: "zhipu-key",
+      base_url: "https://open.bigmodel.cn/api/paas/v4",
+      model: "glm-4-flash",
     });
   });
 });

@@ -243,19 +243,25 @@ export default function App({ onMounted }: AppProps) {
             <AgentPanel
               llmSettings={llmSettings}
               onLlmSettingsChange={setLlmSettings}
+              watchlist={watchlist}
+              onWatchlistChange={setWatchlist}
             />
           )}
         </div>
 
-        <WatchlistPanel
-          items={watchlist}
-          onChange={setWatchlist}
-        />
+        {view !== "agent" && (
+          <WatchlistPanel
+            items={watchlist}
+            onChange={setWatchlist}
+          />
+        )}
 
-        <LlmSettingsPanel
-          settings={llmSettings}
-          onChange={setLlmSettings}
-        />
+        {view === "news" && (
+          <LlmSettingsPanel
+            settings={llmSettings}
+            onChange={setLlmSettings}
+          />
+        )}
       </main>
     </div>
   );

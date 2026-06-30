@@ -827,6 +827,8 @@ pub struct AgentStreamWithDataRequest {
     pub message: String,
     #[serde(default)]
     pub run_id: Option<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1273,6 +1275,7 @@ pub fn agent_stream_with_data_events_value(payload: Value) -> CoreResult<Vec<Age
         &request.data,
         &request.message,
         request.run_id.as_deref(),
+        request.mode.as_deref(),
     ))
 }
 
@@ -2775,26 +2778,28 @@ pub fn trend_screen_with_source(
 }
 
 pub fn run_agent_with_mock(message: &str) -> CoreResult<AgentResponse> {
-    run_agent_with_source(&MockDataSource, message)
+    run_agent_with_source(&MockDataSource, message, None)
 }
 
 pub fn run_agent_with_data(data: &CoreDataSet, message: &str) -> CoreResult<AgentResponse> {
     let source = StaticDataSource::new(data.clone());
-    run_agent_with_source(&source, message)
+    run_agent_with_source(&source, message, None)
 }
 
 pub fn run_agent_stream_with_data_events(
     data: &CoreDataSet,
     message: &str,
     run_id: Option<&str>,
+    mode: Option<&str>,
 ) -> Vec<AgentStreamEvent> {
     let source = StaticDataSource::new(data.clone());
-    run_agent_stream_with_source_events(&source, message, run_id)
+    run_agent_stream_with_source_events(&source, message, run_id, mode)
 }
 
 pub fn run_agent_with_source(
     source: &impl MarketDataSource,
     message: &str,
+    mode: Option<&str>,
 ) -> CoreResult<AgentResponse> {
     let lower = message.to_lowercase();
     let criteria = heuristic_criteria(message);
@@ -2825,7 +2830,7 @@ pub fn run_agent_with_source(
         };
         let data = serde_json::to_value(trend_screen_with_source(source, &trend_request)?)?;
         return Ok(AgentResponse {
-            reply: research_reply("已按趋势指标做选股排序。"),
+            reply: mode_reply(mode, "已按趋势指标做选股排序。"),
             action: "trend_screen".to_string(),
             criteria: None,
             backtest: None,
@@ -2864,7 +2869,7 @@ pub fn run_agent_with_source(
         };
         let data = serde_json::to_value(graph_screen_with_source(source, &graph_request)?)?;
         return Ok(AgentResponse {
-            reply: research_reply("已按股票关系图做关系传播选股。"),
+            reply: mode_reply(mode, "已按股票关系图做关系传播选股。"),
             action: "graph_screen".to_string(),
             criteria: None,
             backtest: None,
@@ -2887,7 +2892,7 @@ pub fn run_agent_with_source(
         };
         let data = serde_json::to_value(backtest_with_source(source, &backtest)?)?;
         return Ok(AgentResponse {
-            reply: research_reply("已按描述执行本地回测。"),
+            reply: mode_reply(mode, "已按描述执行本地回测。"),
             action: "backtest".to_string(),
             criteria: None,
             backtest: Some(backtest),
@@ -2900,7 +2905,7 @@ pub fn run_agent_with_source(
     if contains_any(&lower, &["选股", "筛选", "screen", "挑股票"]) {
         let data = serde_json::to_value(screen_with_source(source, &criteria)?)?;
         return Ok(AgentResponse {
-            reply: research_reply("已按描述筛选股票。"),
+            reply: mode_reply(mode, "已按描述筛选股票。"),
             action: "screen".to_string(),
             criteria: Some(criteria),
             backtest: None,
@@ -2911,7 +2916,7 @@ pub fn run_agent_with_source(
     }
 
     Ok(AgentResponse {
-        reply: research_reply("请说明要普通选股、关系图选股，还是回测。"),
+        reply: mode_reply(mode, "请说明要普通选股、关系图选股，还是回测。"),
         action: "clarify".to_string(),
         criteria: None,
         backtest: None,
@@ -2925,6 +2930,7 @@ pub fn run_agent_stream_with_source_events(
     source: &impl MarketDataSource,
     message: &str,
     run_id: Option<&str>,
+    mode: Option<&str>,
 ) -> Vec<AgentStreamEvent> {
     let run_id = run_id.unwrap_or("gp-agent-run").to_string();
     let mut events = vec![
@@ -2933,7 +2939,7 @@ pub fn run_agent_stream_with_source_events(
         agent_status_event(&run_id, "execute", "执行本地智能体", 64, None),
     ];
 
-    match run_agent_with_source(source, message) {
+    match run_agent_with_source(source, message, mode) {
         Ok(response) => {
             let action = response.action.clone();
             events.push(agent_status_event(
@@ -3064,8 +3070,19 @@ pub fn run_mobile_stock_skill(request: &MobileStockSkillRequest) -> MobileStockS
     }
 }
 
-fn research_reply(text: &str) -> String {
-    format!("{text} 仅供选股研究，不构成投资建议。")
+fn mode_reply(mode: Option<&str>, text: &str) -> String {
+    // The agent is a heuristic keyword router with no LLM prompt layer; the mode still
+    // reaches here from the UI so the reply tone reflects the user's chosen posture:
+    //   quick    -> terse conclusion
+    //   expert   -> conclusion plus risk note and a concrete next step
+    //   research -> research-style disclaimer (default, preserves prior behavior)
+    match mode.unwrap_or("research") {
+        "quick" => text.to_string(),
+        "expert" => format!(
+            "{text}\n\n风险提示：以上为本地策略结果，需结合基本面与市场环境复核。\n下一步：可对候选股票做观察或回测验证。"
+        ),
+        _ => format!("{text} 仅供选股研究，不构成投资建议。"),
+    }
 }
 
 fn mobile_source_to_finding(source: &MobileStockSourceItem) -> MobileStockSkillFinding {
