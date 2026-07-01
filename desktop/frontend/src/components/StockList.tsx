@@ -15,11 +15,10 @@ export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock 
     <div className="quote-table">
       <div className="quote-table-head">
         <span>名称</span>
+        <span>当前股价</span>
         <span>评分</span>
-        <span>PE</span>
-        <span>PB</span>
-        <span>ROE</span>
-        <span>操作</span>
+        <span>市盈率</span>
+        <span>市净率</span>
       </div>
       <div className="stock-list">
         {items.map((item, i) => {
@@ -32,25 +31,28 @@ export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock 
                   <strong>{item.name || item.code}</strong>
                   <span>{item.code} {item.industry || ""}</span>
                 </div>
+                <div className="stock-current-price">
+                  <strong>{formatPrice(item.price)}</strong>
+                  <span>当前股价</span>
+                </div>
                 <div className="score-badge">
                   <small>{scoreLabel(item.scoreLabel)}</small>
                   <b>{formatNumber(item.score)}</b>
                 </div>
-                <div className="quote-number">
+                <div className="quote-number quote-pe">
                   <strong>{formatNumber(item.pe)}</strong>
-                  <span>PE</span>
+                  <span>市盈率</span>
                 </div>
-                <div className="quote-number">
+                <div className="quote-number quote-pb">
                   <strong>{formatNumber(item.pb)}</strong>
-                  <span>PB</span>
+                  <span>市净率</span>
                 </div>
               </div>
 
               <div className="row-actions">
                 <div className="stock-meta">
-                  <span>价格 {formatPrice(item.price)}</span>
                   <span className={tone}>涨跌 {item.change_pct != null ? formatRatioPercent(item.change_pct) : "--"}</span>
-                  <span>ROE {formatRatioPercent(item.roe)}</span>
+                  <span>净资产收益率 {formatRatioPercent(item.roe)}</span>
                   <span>市值 {formatNumber(item.market_cap_billion)}</span>
                 </div>
                 <div className="row-button-group">

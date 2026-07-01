@@ -90,11 +90,11 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
       </div>
 
       <div className="panel-controls backtest-controls">
-        <div className="form-row inline"><label htmlFor="btStart">开始日期</label><input id="btStart" type="date" value={start} onChange={(e) => setStart(e.target.value)} /></div>
-        <div className="form-row inline"><label htmlFor="btEnd">结束日期</label><input id="btEnd" type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
-        <div className="form-row inline"><label htmlFor="btTopN">持仓数量</label><input id="btTopN" type="number" min="1" max="100" value={topN} onChange={(e) => setTopN(Number(e.target.value) || 10)} /></div>
+        <div className="form-row inline"><label htmlFor="btStart">开始</label><input id="btStart" type="date" value={start} onChange={(e) => setStart(e.target.value)} /></div>
+        <div className="form-row inline"><label htmlFor="btEnd">结束</label><input id="btEnd" type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
+        <div className="form-row inline"><label htmlFor="btTopN">持仓</label><input id="btTopN" type="number" min="1" max="100" value={topN} onChange={(e) => setTopN(Number(e.target.value) || 10)} /></div>
         <div className="form-row inline">
-          <label htmlFor="btRebalance">调仓频率</label>
+          <label htmlFor="btRebalance">调仓</label>
           <select id="btRebalance" value={rebalance} onChange={(e) => setRebalance(e.target.value)}>
             <option value="none">买入持有</option>
             <option value="monthly">月度调仓</option>
@@ -108,7 +108,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
             <option value="none">无</option>
           </select>
         </div>
-        <div className="form-row inline"><label htmlFor="btCostBps">交易成本 bps</label><input id="btCostBps" type="number" min="0" max="500" value={costBps} onChange={(e) => setCostBps(Number(e.target.value) || 0)} /></div>
+        <div className="form-row inline"><label htmlFor="btCostBps">成本</label><input id="btCostBps" type="number" min="0" max="500" value={costBps} onChange={(e) => setCostBps(Number(e.target.value) || 0)} /></div>
         <button type="button" className="run-btn" onClick={run} disabled={loading}>{loading ? "回测中..." : "运行回测"}</button>
       </div>
 

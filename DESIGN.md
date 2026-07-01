@@ -189,6 +189,7 @@ Depth is conveyed mostly by tonal layering and thin borders. Shadows are structu
 - **Do** use cyan only for action, selection, focus, and progress.
 - **Do** pair red/green market colors with text labels, arrows, or context.
 - **Do** keep controls at 44px minimum touch target on mobile.
+- **Do** treat Android compact workbench controls as the only mobile density exception: filter chips, screen status cells, and repeated dashboard controls may use 30px-36px targets when the surrounding view is scroll-dense and the command is repeated nearby.
 - **Do** preserve reduced-motion support and use motion only for state changes.
 
 ### Don't:

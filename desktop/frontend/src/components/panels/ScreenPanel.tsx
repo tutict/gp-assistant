@@ -110,7 +110,7 @@ export function ScreenPanel({
         ))}
       </div>
 
-      <div className="panel-controls">
+      <div className={`panel-controls ${mode === "sectorScreen" || mode === "boardScreen" ? "grouped-screen-controls" : ""}`}>
         {(mode === "sectorScreen" || mode === "boardScreen") && (
           <>
             <div className="form-row inline">
@@ -229,8 +229,8 @@ function ScreenResultView({
           {groups.map((group, i) => (
             <details key={`${group.title}-${i}`} className="sector-group" open={i === 0}>
               <summary>
-                <div><h3>{group.title}</h3><p>{group.description || group.meta}</p></div>
-                <span className="sector-group-meta"><strong>{group.rows.length}</strong><small>{group.meta}</small><i /></span>
+                <div className="sector-group-head"><h3>{group.title}</h3></div>
+                <span className="sector-group-meta"><strong>{group.rows.length}</strong><small>{group.meta}</small></span>
               </summary>
               <div className="sector-group-content">
                 <StockList items={group.rows} watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} onObserveStock={onObserveStock} />

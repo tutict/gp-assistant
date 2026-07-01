@@ -127,6 +127,7 @@ pub(crate) async fn api_news_rag_impl(
         notes.push("当前时间窗口没有命中可用消息。".to_string());
     }
 
+    let (user_notes, debug_notes) = split_news_notes(notes);
     Ok(json!({
         "scope_codes": scope_codes,
         "relation_count": relations.len(),
@@ -134,8 +135,43 @@ pub(crate) async fn api_news_rag_impl(
         "findings": findings,
         "sentiment_groups": sentiment_groups(&evidence, &analysis_mode),
         "us_market_brief": us_market_brief,
-        "notes": notes
+        "notes": user_notes,
+        "debug_notes": debug_notes
     }))
+}
+
+fn split_news_notes(notes: Vec<String>) -> (Vec<String>, Vec<String>) {
+    let mut user_notes = Vec::new();
+    let mut debug_notes = Vec::new();
+    let mut seen_user = HashSet::new();
+    let mut seen_debug = HashSet::new();
+    for note in notes {
+        let trimmed = note.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if is_debug_news_note(trimmed) {
+            if seen_debug.insert(trimmed.to_string()) {
+                debug_notes.push(trimmed.to_string());
+            }
+        } else if seen_user.insert(trimmed.to_string()) {
+            user_notes.push(trimmed.to_string());
+        }
+    }
+    (user_notes, debug_notes)
+}
+
+fn is_debug_news_note(note: &str) -> bool {
+    note.starts_with("Android ")
+        || note.starts_with("RAG 只在")
+        || note.starts_with("当前范围没有供应链")
+        || note.starts_with("当前为个股消息模式")
+        || note.starts_with("上下游 RAG 请使用")
+        || note.starts_with("未接入模型")
+        || note.starts_with("没有可分析目标")
+        || note.starts_with("消息缓存:")
+        || note.contains("news-cache.json")
+        || note.contains("GP_NEWS_ENABLE_TRADITIONAL_MEDIA")
 }
 
 fn stock_map(data: &Value) -> HashMap<String, Value> {

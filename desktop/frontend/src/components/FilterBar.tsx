@@ -86,7 +86,7 @@ const SORT_OPTIONS = [
   { value: "market_cap", label: "市值" },
   { value: "pe", label: "市盈率" },
   { value: "pb", label: "市净率" },
-  { value: "roe", label: "ROE" },
+  { value: "roe", label: "净资产收益率" },
   { value: "change_pct", label: "涨跌幅" },
 ];
 
@@ -213,9 +213,9 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
 
   const summary = [
     criteria.industry ? `行业 ${criteria.industry}` : "全部行业",
-    criteria.minRoe ? `ROE ≥ ${formatPercent(Number(criteria.minRoe))}` : "",
-    criteria.maxPe ? `PE ≤ ${formatNumber(criteria.maxPe)}` : "",
-    criteria.maxPb ? `PB ≤ ${formatNumber(criteria.maxPb)}` : "",
+    criteria.minRoe ? `净资产收益率 ≥ ${formatPercent(Number(criteria.minRoe))}` : "",
+    criteria.maxPe ? `市盈率 ≤ ${formatNumber(criteria.maxPe)}` : "",
+    criteria.maxPb ? `市净率 ≤ ${formatNumber(criteria.maxPb)}` : "",
     criteria.minMcap ? `市值 ≥ ${formatNumber(criteria.minMcap)} 亿` : "",
     "扣非净利润 > 0",
     "扣非净利润增长率 > 10%",
@@ -342,7 +342,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
           </div>
 
           <div className="form-row">
-            <label htmlFor="minRoe">最低 ROE (%)</label>
+            <label htmlFor="minRoe">最低净资产收益率 (%)</label>
             <input
               id="minRoe"
               type="number"
@@ -354,7 +354,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
           </div>
 
           <div className="form-row">
-            <label htmlFor="maxPe">最高 PE</label>
+            <label htmlFor="maxPe">最高市盈率</label>
             <input
               id="maxPe"
               type="number"
@@ -366,7 +366,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
           </div>
 
           <div className="form-row">
-            <label htmlFor="maxPb">最高 PB</label>
+            <label htmlFor="maxPb">最高市净率</label>
             <input
               id="maxPb"
               type="number"

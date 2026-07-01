@@ -62,6 +62,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const [activeConversationId, setActiveConversationId] = useLocalStorage<string>(AGENT_ACTIVE_KEY, "");
   const [railCollapsed, setRailCollapsed] = useLocalStorage<boolean>(AGENT_RAIL_COLLAPSED_KEY, false);
   const [input, setInput] = useState("");
+  const [conversationSearch, setConversationSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
   const activeProvider = activeLlmProvider(llmSettings);
@@ -73,6 +74,34 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
     [conversations],
   );
+  const visibleConversations = useMemo(() => {
+    const query = conversationSearch.trim().toLowerCase();
+    if (!query) return sortedConversations;
+    return sortedConversations.filter((conversation) => {
+      const messageText = conversation.messages.map((message) => message.content).join(" ");
+      return `${conversation.title} ${messageText}`.toLowerCase().includes(query);
+    });
+  }, [conversationSearch, sortedConversations]);
+  const groupedConversations = useMemo(() => {
+    const groups = [
+      { label: "7 天内", items: [] as AgentConversation[] },
+      { label: "30 天内", items: [] as AgentConversation[] },
+      { label: "更早", items: [] as AgentConversation[] },
+    ];
+    const now = Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    visibleConversations.forEach((conversation) => {
+      const age = now - conversation.updatedAt;
+      if (age <= 7 * day) {
+        groups[0].items.push(conversation);
+      } else if (age <= 30 * day) {
+        groups[1].items.push(conversation);
+      } else {
+        groups[2].items.push(conversation);
+      }
+    });
+    return groups.filter((group) => group.items.length);
+  }, [visibleConversations]);
 
   useEffect(() => {
     if (!activeConversation && conversations[0]) {
@@ -85,6 +114,12 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
   }, [messages, loading]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.matchMedia?.("(max-width: 640px)").matches) {
+      setRailCollapsed(true);
+    }
+  }, [setRailCollapsed]);
 
   const updateConversation = useCallback((conversationId: string, updater: (conversation: AgentConversation) => AgentConversation) => {
     setConversations((prev) => prev.map((conversation) => (
@@ -102,7 +137,10 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const switchConversation = useCallback((conversationId: string) => {
     setActiveConversationId(conversationId);
     setInput("");
-  }, [setActiveConversationId]);
+    if (typeof window !== "undefined" && window.matchMedia?.("(max-width: 640px)").matches) {
+      setRailCollapsed(true);
+    }
+  }, [setActiveConversationId, setRailCollapsed]);
 
   const removeConversation = useCallback((conversationId: string) => {
     setConversations((prev) => {
@@ -190,7 +228,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         }));
       } else if (event.type === "result") {
         const result = event.response || {};
-        patchAssistant({ content: result.reply || "已完成。", result, steps: undefined });
+        patchAssistant({ content: String(result.reply || "已完成。"), result, steps: undefined });
       } else if (event.type === "error") {
         patchAssistant({ content: event.message || "智能体执行失败。", error: true, steps: undefined });
       }
@@ -219,6 +257,15 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           <span />
         </button>
 
+        <label className="agent-rail-search">
+          <span aria-hidden="true" />
+          <input
+            value={conversationSearch}
+            onChange={(event) => setConversationSearch(event.target.value)}
+            placeholder="搜索对话内容..."
+          />
+        </label>
+
         <div className="agent-rail-brand">
           <span className="agent-logo-mark">股</span>
           <div>
@@ -234,32 +281,39 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         <div className="agent-rail-section">
           <div className="agent-rail-section-head">
             <span className="agent-rail-label">对话历史</span>
-            <strong>{sortedConversations.length}</strong>
+            <strong>{visibleConversations.length}</strong>
           </div>
           <div className="agent-history-list">
-            {sortedConversations.map((conversation) => (
-              <article
-                key={conversation.id}
-                className={`agent-history-item ${conversation.id === activeConversation?.id ? "active" : ""}`}
-              >
-                <button type="button" className="agent-history-main" onClick={() => switchConversation(conversation.id)}>
-                  <span>{conversation.title || "新对话"}</span>
-                  <em>{formatConversationTime(conversation.updatedAt)}</em>
-                  <b>{conversation.messages.length ? `${conversation.messages.length} 条` : "未开始"}</b>
-                </button>
-                <button
-                  type="button"
-                  className="agent-history-remove"
-                  aria-label="删除对话"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    removeConversation(conversation.id);
-                  }}
-                >
-                  ×
-                </button>
-              </article>
-            ))}
+            {groupedConversations.length ? groupedConversations.map((group) => (
+              <div key={group.label} className="agent-history-group">
+                <span className="agent-history-group-label">{group.label}</span>
+                {group.items.map((conversation) => (
+                  <article
+                    key={conversation.id}
+                    className={`agent-history-item ${conversation.id === activeConversation?.id ? "active" : ""}`}
+                  >
+                    <button type="button" className="agent-history-main" onClick={() => switchConversation(conversation.id)}>
+                      <span>{conversation.title || "新对话"}</span>
+                      <em>{formatConversationTime(conversation.updatedAt)}</em>
+                      <b>{conversation.messages.length ? `${conversation.messages.length} 条` : "未开始"}</b>
+                    </button>
+                    <button
+                      type="button"
+                      className="agent-history-remove"
+                      aria-label="删除对话"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        removeConversation(conversation.id);
+                      }}
+                    >
+                      ×
+                    </button>
+                  </article>
+                ))}
+              </div>
+            )) : (
+              <div className="agent-history-empty">没有匹配的对话</div>
+            )}
           </div>
         </div>
 
@@ -270,6 +324,34 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
       </aside>
 
       <section className="agent-chat-stage" aria-label="Agent 对话">
+        <button
+          type="button"
+          className="agent-rail-scrim"
+          onClick={() => setRailCollapsed(true)}
+          aria-label="关闭对话栏"
+        />
+        <div className="agent-mobile-actions" aria-label="Agent 移动端操作">
+          <button
+            type="button"
+            className="agent-mobile-menu"
+            onClick={() => setRailCollapsed(false)}
+            aria-label="展开对话栏"
+          >
+            <span />
+            <span />
+          </button>
+          <button
+            type="button"
+            className="agent-mobile-new"
+            onClick={() => {
+              startNewChat();
+              setRailCollapsed(true);
+            }}
+            aria-label="新建对话"
+          >
+            <span>+</span>
+          </button>
+        </div>
         <header className="agent-topbar">
           <div>
             <span>当前对话</span>
@@ -296,7 +378,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
               </div>
               <div className="agent-message-body">
                 {msg.steps?.length ? <AgentSteps steps={msg.steps} /> : null}
-                <p className="agent-final-reply">{msg.content}</p>
+                <p className="agent-final-reply">{msg.role === "assistant" && !msg.result ? sanitizeLegacyAgentReply(msg.content) : msg.content}</p>
                 {msg.result && <AgentResultView result={msg.result} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} />}
               </div>
             </article>
@@ -449,6 +531,31 @@ function mergeStep(steps: AgentStep[], step: AgentStep): AgentStep[] {
   if (index >= 0) next[index] = step;
   else next.push(step);
   return next;
+}
+
+function sanitizeLegacyAgentReply(content: string): string {
+  const original = String(content || "").trim();
+  if (!original) return "";
+  const lines = original
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const kept = lines.filter((line) => !isAgentNoiseLine(line));
+  return kept.length ? kept.join("\n") : original;
+}
+
+function isAgentNoiseLine(line: string): boolean {
+  return [
+    /^Android short/i,
+    /^Android .* returned \d+ items/i,
+    /^RAG 只在/,
+    /^未接入模型/,
+    /^当前范围没有供应链/,
+    /^消息缓存:/,
+    /^移动端已使用/,
+    /^暂未找到相关股票/,
+    /stocktopicer[\\/]+news[\\/]+news-cache\.json/i,
+  ].some((pattern) => pattern.test(line));
 }
 
 function createConversation(mode: AgentMode = "quick"): AgentConversation {

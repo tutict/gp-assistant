@@ -710,7 +710,7 @@ function mobileNewsSkillToNewsRagResult(skill: Record<string, unknown>, manifest
     ...mobileSkillFindingsToNewsFindings(skill.neutral_information, "mixed", target, code),
     ...mobileSkillFindingsToNewsFindings(skill.unverified_leads, "uncertain", target, code),
   ];
-  return {
+  return splitResultNotes({
     scope_codes: code ? [code] : [],
     relation_count: manifest.relation_edge_count ?? arrayRecords(manifest.relation_edges).length,
     message_count: sources.length,
@@ -721,7 +721,7 @@ function mobileNewsSkillToNewsRagResult(skill: Record<string, unknown>, manifest
       sources.length ? "" : "当前 RAG 包没有可分析证据，请在桌面端重建包含证据片段的同步包。",
       ...detailNotes,
     ]),
-  };
+  });
 }
 
 function mobileSkillFindingsToNewsFindings(items: unknown, direction: string, target: string, code: string): Record<string, unknown>[] {
@@ -753,7 +753,38 @@ function confidenceLabel(value: unknown): string {
 }
 
 function appendResultNotes<T extends Record<string, unknown>>(result: T, notes: string[]): T {
-  return { ...result, notes: uniqueNotes([...(Array.isArray(result.notes) ? result.notes as string[] : []), ...notes]) };
+  return splitResultNotes({ ...result, notes: uniqueNotes([...(Array.isArray(result.notes) ? result.notes as string[] : []), ...notes]) });
+}
+
+function splitResultNotes<T extends Record<string, unknown>>(result: T): T {
+  const notes = Array.isArray(result.notes) ? result.notes.map(String).filter(Boolean) : [];
+  const debugNotes = Array.isArray(result.debug_notes) ? result.debug_notes.map(String).filter(Boolean) : [];
+  const visible: string[] = [];
+  const debug = [...debugNotes];
+  for (const note of notes) {
+    if (isDebugNote(note)) debug.push(note);
+    else visible.push(note);
+  }
+  return {
+    ...result,
+    notes: uniqueNotes(visible),
+    debug_notes: uniqueNotes(debug),
+  };
+}
+
+function isDebugNote(note: string): boolean {
+  return [
+    /^Android /i,
+    /^RAG 只在/,
+    /^当前范围没有供应链/,
+    /^当前为个股消息模式/,
+    /^上下游 RAG 请使用/,
+    /^未接入模型/,
+    /^没有可分析目标/,
+    /^消息缓存:/,
+    /news-cache\.json/i,
+    /GP_NEWS_ENABLE_TRADITIONAL_MEDIA/,
+  ].some((pattern) => pattern.test(note));
 }
 
 export function createTimeoutSignal(timeoutMs?: number, message?: string): { signal: AbortSignal | null; cancel: () => void } {

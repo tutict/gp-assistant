@@ -107,12 +107,19 @@ export function ObserveResultView({ result }: { result: ObserveResult }) {
           {signal?.status && <span className={`state-pill ${signal.status}`}>{signal.status}</span>}
         </header>
         <div className="overview-metric-grid">
-          <Metric label="PE" value={formatNumber(stock.pe)} />
-          <Metric label="PB" value={formatNumber(stock.pb)} />
-          <Metric label="ROE" value={formatRatioPercent(stock.roe)} />
+          <Metric label="市盈率" value={formatNumber(stock.pe)} />
+          <Metric label="市净率" value={formatNumber(stock.pb)} />
+          <Metric label="净资产收益率" value={formatRatioPercent(stock.roe)} />
           <Metric label="市值" value={formatNumber(stock.market_cap_billion)} />
         </div>
       </section>
+
+      {!signal && series.length > 1 ? (
+        <section className="signal-card observe-chart-card">
+          <header><div><h3>行情图表</h3><p>K线、均线、KDJ 与 MACD</p></div></header>
+          <TrendCharts series={series} />
+        </section>
+      ) : null}
 
       {signal && (
         <section className="signal-card">
