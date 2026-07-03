@@ -211,6 +211,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
     }
   }, [appendLog, clearRefreshLogTimer, scheduleRefreshLogCollapse]);
 
+  const resultLimit = clampInt(criteria.resultLimit, 1, 200, 10);
   const summary = [
     criteria.industry ? `行业 ${criteria.industry}` : "全部行业",
     criteria.minRoe ? `净资产收益率 ≥ ${formatPercent(Number(criteria.minRoe))}` : "",
@@ -220,7 +221,6 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
     "扣非净利润 > 0",
     "扣非净利润增长率 > 10%",
     criteria.requireInstitutionBuyRatio ? "机构净买入" : "",
-    `返回 ${clampInt(criteria.resultLimit, 1, 200, 10)} 只`,
   ].filter(Boolean).join(" · ");
 
   const sourceToolsVisible = !mobileRuntime || sourceToolsOpen || refreshing;
@@ -238,15 +238,18 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
             </svg>
             <span>筛选条件</span>
           </button>
-          <span className="criteria-summary" title={summary}>{summary}</span>
+          <div className="screen-summary-block">
+            <span className="criteria-summary" title={`${summary} · 返回 ${resultLimit} 只`}>{summary}</span>
+            <span className="criteria-summary-badge">{resultLimit} 只</span>
+          </div>
         </div>
 
         <div className="screen-toolbar-side">
           <div className="screen-status-row">
 
-          <div className="data-source-status" aria-label="股票池状态">
-            <span className="status-item"><em>股票池</em><strong>{formatNumber(status?.universe_count)}</strong></span>
-            <span className="status-item"><em>缓存</em><strong>{formatBytes(status?.cache_bytes)}</strong></span>
+          <div className="data-source-status screen-status-metrics" aria-label="股票池状态">
+            <span className="status-item screen-status-metric"><em>股票池</em><strong>{formatNumber(status?.universe_count)}</strong></span>
+            <span className="status-item screen-status-metric"><em>缓存</em><strong>{formatBytes(status?.cache_bytes)}</strong></span>
           </div>
 
           {mobileRuntime && (
@@ -256,16 +259,25 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
               onClick={() => setSourceToolsOpen((expanded) => !expanded)}
               aria-expanded={sourceToolsVisible}
             >
-              {sourceToolsVisible ? "收起" : "刷新"}
+              {sourceToolsVisible ? "收起" : "工具"}
             </button>
           )}
           </div>
 
         <div className="data-source-tools">
           <div className="refresh-options">
-            <label><input type="checkbox" checked={fullRebuild} onChange={(event) => setFullRebuild(event.target.checked)} disabled={refreshing} />全量重建</label>
-            <label>批次<input type="number" min="1" max="1000" value={batchCount} onChange={(event) => setBatchCount(Number(event.target.value) || 1)} disabled={refreshing} /></label>
-            <label>候选<input type="number" min="1000" max="50000" step="1000" value={maxCandidates} onChange={(event) => setMaxCandidates(Number(event.target.value) || 15000)} disabled={refreshing} /></label>
+            <label className="refresh-option refresh-option-boolean">
+              <input type="checkbox" checked={fullRebuild} onChange={(event) => setFullRebuild(event.target.checked)} disabled={refreshing} />
+              <span className="refresh-option-label">全量重建</span>
+            </label>
+            <label className="refresh-option">
+              <span className="refresh-option-label">批次</span>
+              <input type="number" min="1" max="1000" value={batchCount} onChange={(event) => setBatchCount(Number(event.target.value) || 1)} disabled={refreshing} />
+            </label>
+            <label className="refresh-option">
+              <span className="refresh-option-label">候选</span>
+              <input type="number" min="1000" max="50000" step="1000" value={maxCandidates} onChange={(event) => setMaxCandidates(Number(event.target.value) || 15000)} disabled={refreshing} />
+            </label>
           </div>
 
           <div className="data-source-actions">
