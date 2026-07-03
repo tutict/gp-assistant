@@ -14,6 +14,7 @@ import {
   uniqueCompactStrings,
   uniqueNotes,
 } from "./format";
+import { fetchObserveDailyHistoryRows } from "./observeHistory";
 
 declare global {
   interface Window {
@@ -153,7 +154,7 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
         payload.mobile_fast_observe = true;
         const financialSnapshot = await loadMobileFinancialSnapshotForCode(code).catch(() => null);
         if (financialSnapshot) payload.financial_snapshot = financialSnapshot;
-        const history = await fetchObserveDailyHistoryForTauri(payload, MOBILE_OBSERVE_PREFETCH_TIMEOUT_MS).catch(() => null);
+        const history = await fetchObserveDailyHistoryForTauriStable(payload, MOBILE_OBSERVE_PREFETCH_TIMEOUT_MS).catch(() => null);
         if (Array.isArray(history) && history.length) payload.history = history;
       }
       const observeInvoke = invoke("api_observe", { payload });
@@ -617,6 +618,10 @@ function observeTencentDailyRowToHistory(row: unknown): Record<string, unknown> 
     low: parseLooseNumber(row[4]) ?? close,
     volume: parseLooseNumber(row[5]),
   };
+}
+
+export async function fetchObserveDailyHistoryForTauriStable(payload: Record<string, unknown>, timeoutMs: number): Promise<Record<string, unknown>[] | null> {
+  return fetchObserveDailyHistoryRows(payload, timeoutMs, fetchWithTimeout);
 }
 
 async function analyzeMobileStockNews(invoke: InvokeFn, payload: Record<string, unknown>): Promise<Record<string, unknown>> {

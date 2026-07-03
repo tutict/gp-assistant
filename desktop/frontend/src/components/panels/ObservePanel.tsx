@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CapitalEvidenceSection, FinancialIndicatorItem, ObserveResult, TrendIndicatorPoint, WatchlistItem } from "../../types";
 import { aggregateBars, computeKdj, computeMacd, KLINE_PERIODS, type KlineBar, type KlinePeriod, type MacdPoint, movingAverage, toDailyBars } from "../../lib/kline";
-import { fetchObserveDailyHistoryForTauri, getJson, isMobileTauriRuntime } from "../../lib/tauri";
+import { fetchObserveDailyHistoryForTauriStable, getJson, isMobileTauriRuntime } from "../../lib/tauri";
 import { CollapsibleNotes } from "../CollapsibleNotes";
 import { StockCodeInput } from "../StockCodeInput";
 import {
@@ -26,6 +26,11 @@ const OBSERVE_FULL_HISTORY_LIMIT = "10000";
 const DEFAULT_VISIBLE_BARS = 120;
 const MIN_VISIBLE_BARS = 30;
 const MAX_VISIBLE_BARS = 240;
+const KLINE_MOBILE_FULLSCREEN_CLASS = "kline-mobile-fullscreen";
+
+type LockableScreenOrientation = ScreenOrientation & {
+  unlock?: () => void;
+};
 
 export function ObservePanel({ initialCode }: ObservePanelProps) {
   const [code, setCode] = useState(initialCode || "");
@@ -151,7 +156,7 @@ export function ObserveResultView({ result }: { result: ObserveResult }) {
 
 async function hydrateMobileObserveTrend(result: ObserveResult, code: string, startDate: string, endDate: string): Promise<ObserveResult> {
   if ((result.trend?.series?.length || 0) > 1 || !isMobileTauriRuntime()) return result;
-  const history = await fetchObserveDailyHistoryForTauri({
+  const history = await fetchObserveDailyHistoryForTauriStable({
     code,
     start_date: startDate.replace(/\D/g, ""),
     end_date: endDate.replace(/\D/g, ""),
@@ -293,6 +298,7 @@ function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
   const [visibleCount, setVisibleCount] = useState(DEFAULT_VISIBLE_BARS);
   const [endIndex, setEndIndex] = useState<number | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const mobileRuntime = isMobileTauriRuntime();
   const dailyBars = toDailyBars(series);
   const bars = aggregateBars(dailyBars, period);
 
@@ -329,6 +335,39 @@ function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
     const minEnd = Math.min(effectiveCount, bars.length);
     setEndIndex(Math.max(minEnd, Math.min(bars.length, targetEnd)));
   };
+  const toggleFullscreen = useCallback(() => {
+    const next = !fullscreen;
+    setFullscreen(next);
+    if (!mobileRuntime) return;
+    if (next) {
+      void enterKlineMobileFullscreen();
+      return;
+    }
+    void exitKlineMobileFullscreen();
+  }, [fullscreen, mobileRuntime]);
+
+  useEffect(() => {
+    if (!mobileRuntime) return;
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement && fullscreen) {
+        document.documentElement.classList.remove(KLINE_MOBILE_FULLSCREEN_CLASS);
+        const orientation = window.screen?.orientation as LockableScreenOrientation | undefined;
+        try {
+          orientation?.unlock?.();
+        } catch {
+          // Ignore orientation unlock failures in WebView runtimes.
+        }
+        setFullscreen(false);
+      }
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, [fullscreen, mobileRuntime]);
+
+  useEffect(() => () => {
+    if (!mobileRuntime) return;
+    void exitKlineMobileFullscreen();
+  }, [mobileRuntime]);
 
   return (
     <div className={`signal-chart-stack kline-workspace ${fullscreen ? "fullscreen" : ""}`}>
@@ -346,7 +385,7 @@ function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
         onLatest={showLatest}
         onDragTo={dragTo}
         fullscreen={fullscreen}
-        onToggleFullscreen={() => setFullscreen((value) => !value)}
+        onToggleFullscreen={toggleFullscreen}
         canZoomIn={effectiveCount > MIN_VISIBLE_BARS}
         canZoomOut={effectiveCount < Math.min(MAX_VISIBLE_BARS, bars.length)}
         canPanLeft={canPanLeft}
@@ -713,4 +752,43 @@ function sliceSeriesByDate(series: TrendIndicatorPoint[], startDate: string, end
   if (!startDate || !endDate) return series.slice(-DEFAULT_VISIBLE_BARS);
   const sliced = series.filter((point) => point.date >= startDate && point.date <= endDate);
   return sliced.length ? sliced : series.slice(-DEFAULT_VISIBLE_BARS);
+}
+
+async function enterKlineMobileFullscreen(): Promise<void> {
+  const root = document.documentElement;
+  root.classList.add(KLINE_MOBILE_FULLSCREEN_CLASS);
+
+  try {
+    if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+      await document.documentElement.requestFullscreen();
+    }
+  } catch {
+    // Fullscreen API is best-effort in Android WebView/Tauri.
+  }
+
+  const orientation = window.screen?.orientation as LockableScreenOrientation | undefined;
+  try {
+    await orientation?.lock?.("landscape");
+  } catch {
+    // Orientation lock is also best-effort; keep the fullscreen shell either way.
+  }
+}
+
+async function exitKlineMobileFullscreen(): Promise<void> {
+  document.documentElement.classList.remove(KLINE_MOBILE_FULLSCREEN_CLASS);
+
+  const orientation = window.screen?.orientation as LockableScreenOrientation | undefined;
+  try {
+    orientation?.unlock?.();
+  } catch {
+    // Ignore unlock failures; the OS may keep the current orientation.
+  }
+
+  try {
+    if (document.fullscreenElement && document.exitFullscreen) {
+      await document.exitFullscreen();
+    }
+  } catch {
+    // Ignore document fullscreen exit failures in constrained runtimes.
+  }
 }

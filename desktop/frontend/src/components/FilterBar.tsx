@@ -211,7 +211,6 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
     }
   }, [appendLog, clearRefreshLogTimer, scheduleRefreshLogCollapse]);
 
-  const resultLimit = clampInt(criteria.resultLimit, 1, 200, 10);
   const summary = [
     criteria.industry ? `行业 ${criteria.industry}` : "全部行业",
     criteria.minRoe ? `净资产收益率 ≥ ${formatPercent(Number(criteria.minRoe))}` : "",
@@ -221,6 +220,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
     "扣非净利润 > 0",
     "扣非净利润增长率 > 10%",
     criteria.requireInstitutionBuyRatio ? "机构净买入" : "",
+    `返回 ${clampInt(criteria.resultLimit, 1, 200, 10)} 只`,
   ].filter(Boolean).join(" · ");
 
   const sourceToolsVisible = !mobileRuntime || sourceToolsOpen || refreshing;
@@ -238,10 +238,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
             </svg>
             <span>筛选条件</span>
           </button>
-          <div className="screen-summary-block">
-            <span className="criteria-summary" title={`${summary} · 返回 ${resultLimit} 只`}>{summary}</span>
-            <span className="criteria-summary-badge">{resultLimit} 只</span>
-          </div>
+          <span className="criteria-summary" title={summary}>{summary}</span>
         </div>
 
         <div className="screen-toolbar-side">
@@ -281,8 +278,8 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
           </div>
 
           <div className="data-source-actions">
-            <button type="button" className="action-btn" onClick={refreshUniverse} disabled={refreshing}>{mobileRuntime ? "刷新并校验" : "刷新并校验股票池"}</button>
-            <button type="button" className="action-btn" onClick={pruneCache} disabled={refreshing}>清理缓存</button>
+            <button type="button" className="action-btn" onClick={refreshUniverse} disabled={refreshing}>{mobileRuntime ? "校验刷新" : "刷新并校验股票池"}</button>
+            <button type="button" className="action-btn" onClick={pruneCache} disabled={refreshing}>{mobileRuntime ? "清缓存" : "清理缓存"}</button>
           </div>
         </div>
         </div>
