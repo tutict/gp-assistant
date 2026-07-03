@@ -31,6 +31,7 @@ export function StockCodeInput({ id, value, onChange, placeholder, listMode = fa
     return sanitizeStockLookupInput(parts[parts.length - 1] || "");
   }, [listMode, value]);
   const digits = stockCodeDigits(lookupToken);
+  const completeCode = hasMarketSuffix(lookupToken);
   const showMarketConfirm = digits.length === 6 && !hasMarketSuffix(lookupToken);
   const suggestedMarket = showMarketConfirm ? inferMarketFromDigits(digits) : "";
 
@@ -44,8 +45,10 @@ export function StockCodeInput({ id, value, onChange, placeholder, listMode = fa
 
   useEffect(() => {
     const query = lookupToken.trim();
-    if (!query || query.length < 2) {
+    if (!query || query.length < 2 || completeCode) {
       setSuggestions([]);
+      setLoading(false);
+      if (completeCode) setOpen(false);
       return;
     }
     const current = ++requestId.current;
@@ -66,7 +69,7 @@ export function StockCodeInput({ id, value, onChange, placeholder, listMode = fa
       }
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [lookupToken]);
+  }, [completeCode, lookupToken]);
 
   const applyValue = useCallback((next: string) => {
     if (!listMode) {
@@ -104,9 +107,9 @@ export function StockCodeInput({ id, value, onChange, placeholder, listMode = fa
         type="text"
         value={value}
         onChange={(event) => { onChange(event.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
+        onFocus={() => setOpen(!completeCode)}
         onKeyDown={(event) => {
-          if (!open || !suggestions.length) return;
+          if (!open || completeCode || !suggestions.length) return;
           if (event.key === "ArrowDown") {
             event.preventDefault();
             setActiveIndex((index) => Math.min(index + 1, suggestions.length - 1));
@@ -140,7 +143,7 @@ export function StockCodeInput({ id, value, onChange, placeholder, listMode = fa
           ))}
         </div>
       )}
-      {open && (suggestions.length > 0 || loading) && (
+      {open && !completeCode && (suggestions.length > 0 || loading) && (
         <div className="stock-suggest" role="listbox">
           {loading && <div className="stock-suggest-empty">搜索中...</div>}
           {!loading && suggestions.map((item, index) => (

@@ -2727,8 +2727,8 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen {
   background: #0d0f12 !important;
 }
 html.mobile-tauri.android-portrait.kline-mobile-fullscreen .kline-workspace.fullscreen {
-  top: 50% !important;
-  left: 50% !important;
+  top: 0 !important;
+  left: 0 !important;
   inset: auto !important;
   width: 100svh !important;
   height: 100svw !important;
@@ -2736,8 +2736,8 @@ html.mobile-tauri.android-portrait.kline-mobile-fullscreen .kline-workspace.full
   max-height: 100svw !important;
   padding: 10px 12px !important;
   border-radius: 0 !important;
-  transform: translate(-50%, -50%) rotate(90deg);
-  transform-origin: center center;
+  transform: rotate(90deg) translateY(-100%) !important;
+  transform-origin: top left !important;
 }
 html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .trend-chart,
 html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .macd-chart {
@@ -2810,9 +2810,57 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   user-select: none;
 }
 .kline-plot:active { cursor: grabbing; }
+.kline-chart { position: relative; }
 .kline-chart header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .kline-chart header h4 { margin: 0; }
 .kline-chart header p { margin: 2px 0 0; color: var(--text-secondary); font-size: 0.76rem; }
+.kline-fullscreen-exit {
+  display: none;
+}
+
+.kline-mobile-fullscreen-toolbar {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  z-index: 10001;
+  display: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.kline-mobile-fullscreen-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--line));
+  border-radius: 12px;
+  background: rgba(13, 15, 18, 0.92);
+  color: var(--text);
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+}
+
+.kline-mobile-fullscreen-tool:disabled {
+  opacity: 0.42;
+}
+
+.kline-mobile-fullscreen-zoom-in,
+.kline-mobile-fullscreen-zoom-out {
+  padding: 0;
+}
+
+.kline-mobile-fullscreen-exit {
+  min-width: 56px;
+  padding: 0 12px;
+  font-size: 0.72rem;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
+}
 .kline-period-tabs {
   display: inline-flex;
   gap: 2px;
@@ -9338,4 +9386,148 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-
 html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-search input,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-search input {
   font-size: 0.78rem !important;
+}
+
+/* Late mobile K-line fullscreen overrides. These must live after the
+   android-bottom-nav observe compaction rules so the chart can actually
+   take over the full viewport instead of staying inside the page shell. */
+html.mobile-tauri.kline-mobile-fullscreen,
+html.mobile-tauri.kline-mobile-fullscreen body,
+html.mobile-tauri.kline-mobile-fullscreen #root,
+html.mobile-tauri.kline-mobile-fullscreen .app {
+  width: 100% !important;
+  height: 100dvh !important;
+  min-height: 100dvh !important;
+  overflow: hidden !important;
+  background: #0d0f12 !important;
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .app-header,
+html.mobile-tauri.kline-mobile-fullscreen .sidebar {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .workbench,
+html.mobile-tauri.kline-mobile-fullscreen .panels,
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .panel-container,
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .panel-result,
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .observe-result {
+  min-height: 0 !important;
+  height: 100% !important;
+  overflow: hidden !important;
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .workbench {
+  padding: 0 !important;
+  gap: 0 !important;
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .panel-controls,
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .observe-result > :not(.observe-chart-card),
+html.mobile-tauri.kline-mobile-fullscreen .watchlist-panel {
+  display: none !important;
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .observe-chart-card {
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  overflow: visible !important;
+  box-shadow: none !important;
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .observe-chart-card > header,
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .observe-chart-card .signal-grid,
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .observe-chart-card .tag-row {
+  display: none !important;
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .observe-chart-card .kline-chart > header,
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .observe-chart-card .kline-chart > .chart-labels,
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .observe-chart-card .kline-chart > .kline-stats {
+  display: none !important;
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .kline-mobile-fullscreen-toolbar {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+html.mobile-tauri.android-portrait.kline-mobile-fullscreen .app[data-active-view="observe"] .kline-mobile-fullscreen-toolbar {
+  top: max(14px, env(safe-area-inset-top));
+  right: max(8px, env(safe-area-inset-right));
+  gap: 10px;
+}
+
+html.mobile-tauri.android-portrait.kline-mobile-fullscreen .app[data-active-view="observe"] .kline-mobile-fullscreen-toolbar .kline-mobile-fullscreen-tool {
+  transform: rotate(90deg);
+  transform-origin: center center;
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .observe-chart-card .signal-chart-stack.kline-workspace.fullscreen,
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .signal-card .signal-chart-stack.kline-workspace.fullscreen {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100dvw !important;
+  height: 100dvh !important;
+  min-width: 100dvw !important;
+  min-height: 100dvh !important;
+  max-width: 100dvw !important;
+  max-height: 100dvh !important;
+  margin: 0 !important;
+  padding:
+    max(8px, env(safe-area-inset-top))
+    max(10px, env(safe-area-inset-right))
+    max(8px, env(safe-area-inset-bottom))
+    max(10px, env(safe-area-inset-left)) !important;
+  gap: 8px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  background: #0d0f12 !important;
+  z-index: 9999 !important;
+  transform: none !important;
+}
+
+html.mobile-tauri.android-portrait.kline-mobile-fullscreen .app[data-active-view="observe"] .observe-chart-card .signal-chart-stack.kline-workspace.fullscreen,
+html.mobile-tauri.android-portrait.kline-mobile-fullscreen .app[data-active-view="observe"] .signal-card .signal-chart-stack.kline-workspace.fullscreen {
+  top: 0 !important;
+  left: 0 !important;
+  inset: auto !important;
+  width: 100dvh !important;
+  height: 100dvw !important;
+  min-width: 100dvh !important;
+  min-height: 100dvw !important;
+  max-width: 100dvh !important;
+  max-height: 100dvw !important;
+  transform: rotate(90deg) translateY(-100%) !important;
+  transform-origin: top left !important;
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .observe-chart-card .signal-chart-stack.kline-workspace.fullscreen .chart-wrap.kline-chart,
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .signal-card .signal-chart-stack.kline-workspace.fullscreen .chart-wrap.kline-chart {
+  flex: 1 1 auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  overflow: hidden !important;
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .observe-chart-card .signal-chart-stack.kline-workspace.fullscreen .kline-chart svg,
+html.mobile-tauri.kline-mobile-fullscreen .app[data-active-view="observe"] .signal-card .signal-chart-stack.kline-workspace.fullscreen .kline-chart svg {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
 }

@@ -326,6 +326,8 @@ function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
   const panStep = Math.max(1, Math.round(effectiveCount * 0.35));
   const canPanLeft = visibleStart > 0;
   const canPanRight = effectiveEnd < bars.length;
+  const canZoomIn = effectiveCount > MIN_VISIBLE_BARS;
+  const canZoomOut = effectiveCount < Math.min(MAX_VISIBLE_BARS, bars.length);
   const zoomIn = () => setVisibleCount((count) => Math.max(MIN_VISIBLE_BARS, Math.round(count * 0.75)));
   const zoomOut = () => setVisibleCount((count) => Math.min(Math.min(MAX_VISIBLE_BARS, bars.length), Math.round(count * 1.35)));
   const panLeft = () => setEndIndex(Math.max(Math.min(effectiveCount, bars.length), effectiveEnd - panStep));
@@ -370,7 +372,8 @@ function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
   }, [mobileRuntime]);
 
   return (
-    <div className={`signal-chart-stack kline-workspace ${fullscreen ? "fullscreen" : ""}`}>
+    <>
+      <div className={`signal-chart-stack kline-workspace ${fullscreen ? "fullscreen" : ""}`}>
       <CandlestickChart
         period={period}
         onPeriodChange={setPeriod}
@@ -386,15 +389,50 @@ function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
         onDragTo={dragTo}
         fullscreen={fullscreen}
         onToggleFullscreen={toggleFullscreen}
-        canZoomIn={effectiveCount > MIN_VISIBLE_BARS}
-        canZoomOut={effectiveCount < Math.min(MAX_VISIBLE_BARS, bars.length)}
+        canZoomIn={canZoomIn}
+        canZoomOut={canZoomOut}
         canPanLeft={canPanLeft}
         canPanRight={canPanRight}
+        mobileRuntime={mobileRuntime}
       />
       <LineChart title="收盘 / SWL / SWS" series={visibleSeries} keys={["close", "swl", "sws"]} />
       <LineChart title="KDJ" series={visibleSeries} keys={["k", "d", "j"]} />
       <MacdChart series={computeMacd(bars).slice(visibleStart, effectiveEnd)} />
-    </div>
+      </div>
+      {fullscreen && mobileRuntime ? (
+        <div className="kline-mobile-fullscreen-toolbar" role="toolbar" aria-label="Kline fullscreen tools">
+          <button
+            type="button"
+            className="kline-mobile-fullscreen-tool kline-mobile-fullscreen-zoom-out"
+            onClick={zoomOut}
+            disabled={!canZoomOut}
+            aria-label="Zoom out chart"
+            title="Zoom out chart"
+          >
+            -
+          </button>
+          <button
+            type="button"
+            className="kline-mobile-fullscreen-tool kline-mobile-fullscreen-zoom-in"
+            onClick={zoomIn}
+            disabled={!canZoomIn}
+            aria-label="Zoom in chart"
+            title="Zoom in chart"
+          >
+            +
+          </button>
+        <button
+          type="button"
+          className="kline-mobile-fullscreen-tool kline-mobile-fullscreen-exit"
+          onClick={toggleFullscreen}
+          aria-label="退出全屏"
+          title="退出全屏"
+        >
+          退出
+        </button>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -417,6 +455,7 @@ function CandlestickChart({
   canZoomOut,
   canPanLeft,
   canPanRight,
+  mobileRuntime,
 }: {
   period: KlinePeriod;
   onPeriodChange: (period: KlinePeriod) => void;
@@ -436,6 +475,7 @@ function CandlestickChart({
   canZoomOut: boolean;
   canPanLeft: boolean;
   canPanRight: boolean;
+  mobileRuntime: boolean;
 }) {
   const width = 720;
   const priceTop = 6;
@@ -453,26 +493,39 @@ function CandlestickChart({
   const volumeMax = Math.max(...volumes, 1);
   const hasVolume = volumes.some((value) => value > 0);
 
-  const slot = width / visibleBars.length;
+  const plotInsetStart = mobileRuntime ? 16 : 8;
+  const plotInsetEnd = mobileRuntime ? 40 : 12;
+  const plotWidth = Math.max(width - plotInsetStart - plotInsetEnd, visibleBars.length);
+  const slot = plotWidth / visibleBars.length;
+  const dragStepPixels = Math.max(slot * (mobileRuntime ? 1.4 : 1), mobileRuntime ? 12 : 6);
+  const dragDeadZonePixels = mobileRuntime ? 10 : 6;
   const bodyWidth = Math.max(1, Math.min(slot * 0.62, 14));
-  const center = (index: number) => (index + 0.5) * slot;
+  const center = (index: number) => plotInsetStart + (index + 0.5) * slot;
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const getBarIndexFromPointer = (event: React.PointerEvent<SVGSVGElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
     const relativeX = ((event.clientX - bounds.left) / Math.max(bounds.width, 1)) * width;
-    const index = Math.floor(relativeX / Math.max(slot, 1));
+    const index = Math.floor((relativeX - plotInsetStart) / Math.max(slot, 1));
     if (!Number.isFinite(index)) return null;
     return Math.max(0, Math.min(visibleBars.length - 1, index));
   };
   const dragRef = useRef<{ pointerId: number; startX: number; startEnd: number; lastTargetEnd: number; moved: boolean } | null>(null);
   const onPointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
+    event.preventDefault();
     dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startEnd: visibleEnd, lastTargetEnd: visibleEnd, moved: false };
+    setSelectedDate(null);
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const onPointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
-    const deltaBars = Math.round((drag.startX - event.clientX) / Math.max(slot, 1));
+    const deltaX = drag.startX - event.clientX;
+    if (Math.abs(deltaX) < dragDeadZonePixels) return;
+    event.preventDefault();
+    const deltaBars = deltaX >= 0
+      ? Math.floor(deltaX / dragStepPixels)
+      : Math.ceil(deltaX / dragStepPixels);
+    if (deltaBars === 0) return;
     const targetEnd = drag.startEnd + deltaBars;
     if (targetEnd !== drag.lastTargetEnd) {
       drag.moved = true;
@@ -483,6 +536,7 @@ function CandlestickChart({
   const endDrag = (event: React.PointerEvent<SVGSVGElement>, commitSelection = true) => {
     const drag = dragRef.current;
     if (drag?.pointerId === event.pointerId) {
+      event.preventDefault();
       dragRef.current = null;
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
@@ -557,11 +611,23 @@ function CandlestickChart({
         </div>
         <div className="kline-legend"><span className="ma-5">MA5</span><span className="ma-10">MA10</span><span className="ma-20">MA20</span></div>
       </header>
+      {fullscreen ? (
+        <button
+          type="button"
+          className="kline-fullscreen-exit"
+          onClick={onToggleFullscreen}
+          aria-label="退出全屏"
+          title="退出全屏"
+        >
+          退出
+        </button>
+      ) : null}
       <svg
         viewBox={`0 0 ${width} ${height}`}
         role="img"
         aria-label="K线图"
         className="kline-plot"
+        style={{ touchAction: mobileRuntime ? "none" : "pan-y" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
