@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CapitalEvidenceSection, FinancialIndicatorItem, ObserveResult, TrendIndicatorPoint, WatchlistItem } from "../../types";
 import { aggregateBars, computeKdj, computeMacd, KLINE_PERIODS, type KlineBar, type KlinePeriod, type MacdPoint, movingAverage, toDailyBars } from "../../lib/kline";
-import { getJson } from "../../lib/tauri";
+import { fetchObserveDailyHistoryForTauri, getJson, isMobileTauriRuntime } from "../../lib/tauri";
+import { CollapsibleNotes } from "../CollapsibleNotes";
 import { StockCodeInput } from "../StockCodeInput";
 import {
   currentSystemDateInputValue,
@@ -55,7 +56,7 @@ export function ObservePanel({ initialCode }: ObservePanelProps) {
         include_chip_distribution: "true",
       });
       const data = await getJson<ObserveResult>(`/api/observe/${encodeURIComponent(normalizedCode)}?${query}`);
-      setResult(data);
+      setResult(await hydrateMobileObserveTrend(data, normalizedCode, startDate, endDate));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -90,6 +91,7 @@ export function ObserveResultView({ result }: { result: ObserveResult }) {
   const trend = result.trend;
   const signal = trend?.signal;
   const series = trend?.series || [];
+  const displayKdj = kdjFromSignal(signal) || latestKdjFromSeries(series);
   const financial = result.financial_indicators;
   const capital = result.capital_evidence;
 
@@ -98,7 +100,7 @@ export function ObserveResultView({ result }: { result: ObserveResult }) {
       <div className="metric-strip">
         <div className="metric"><span>来源</span><strong>{result.source || "--"}</strong></div>
         <div className="metric"><span>价格</span><strong>{formatPrice(stock.price)}</strong></div>
-        <div className="metric"><span>K/D/J</span><strong>{formatNumber(signal?.k)} / {formatNumber(signal?.d)} / {formatNumber(signal?.j)}</strong></div>
+        <div className="metric"><span>K/D/J</span><strong>{formatKdj(displayKdj)}</strong></div>
       </div>
 
       <section className="observe-overview">
@@ -122,12 +124,12 @@ export function ObserveResultView({ result }: { result: ObserveResult }) {
       ) : null}
 
       {signal && (
-        <section className="signal-card">
+        <section className="signal-card observe-chart-card">
           <header><div><h3>趋势信号</h3><p>{signal.date || ""}</p></div><span className="state-pill">{signalStatusLabel(signal.status)}</span></header>
           <div className="signal-grid">
             <Metric label="收盘" value={formatPrice(signal.close)} />
             <Metric label="SWL/SWS" value={`${formatNumber(signal.swl)} / ${formatNumber(signal.sws)}`} />
-            <Metric label="KDJ" value={`${formatNumber(signal.k)} / ${formatNumber(signal.d)} / ${formatNumber(signal.j)}`} />
+            <Metric label="KDJ" value={formatKdj(displayKdj || kdjFromSignal(signal))} />
             <Metric label="量化分" value={`${signal.quant_score ?? 0}/${signal.quant_score_max ?? 90}`} />
             <Metric label="形态分" value={`${signal.pattern_score ?? 0}/${signal.pattern_score_max ?? 100}`} />
             <Metric label="支撑" value={formatNumber(signal.support)} />
@@ -141,12 +143,104 @@ export function ObserveResultView({ result }: { result: ObserveResult }) {
       {financial?.items?.length ? <FinancialIndicators items={financial.items} title={financial.title || "财务指标"} /> : null}
       {capital ? <CapitalEvidence sections={capital.sections || []} summary={capital.summary} notes={capital.notes || []} /> : null}
 
-      {[...(result.notes || []), ...(signal?.notes || [])].length ? (
-        <div className="notes">{[...(result.notes || []), ...(signal?.notes || [])].map((note) => <p key={note}>{note}</p>)}</div>
-      ) : null}
+      <CollapsibleNotes notes={[...(result.notes || []), ...(signal?.notes || [])]} />
       <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
     </div>
   );
+}
+
+async function hydrateMobileObserveTrend(result: ObserveResult, code: string, startDate: string, endDate: string): Promise<ObserveResult> {
+  if ((result.trend?.series?.length || 0) > 1 || !isMobileTauriRuntime()) return result;
+  const history = await fetchObserveDailyHistoryForTauri({
+    code,
+    start_date: startDate.replace(/\D/g, ""),
+    end_date: endDate.replace(/\D/g, ""),
+  }, 9000).catch(() => null);
+  const series = historyRowsToTrendSeries(history || []);
+  if (series.length < 2) return result;
+
+  const latest = series[series.length - 1];
+  const stock = {
+    ...(result.stock || { code, name: code }),
+    code: result.stock?.code || code,
+    name: result.stock?.name || code,
+    price: result.stock?.price ?? latest.close,
+  };
+
+  return {
+    ...result,
+    stock,
+    trend: {
+      stock,
+      signal: {
+        code: stock.code,
+        date: latest.date,
+        close: latest.close,
+        k: latest.k ?? null,
+        d: latest.d ?? null,
+        j: latest.j ?? null,
+        status: "neutral",
+      },
+      series,
+    },
+  };
+}
+
+function historyRowsToTrendSeries(rows: Record<string, unknown>[]): TrendIndicatorPoint[] {
+  const bars = rows.map((row) => {
+    const close = finiteNumber(row.close);
+    if (!row.date || close == null) return null;
+    const open = finiteNumber(row.open) ?? close;
+    const high = finiteNumber(row.high) ?? Math.max(open, close);
+    const low = finiteNumber(row.low) ?? Math.min(open, close);
+    return {
+      date: String(row.date),
+      open,
+      close,
+      high,
+      low,
+      volume: finiteNumber(row.volume) ?? 0,
+    } satisfies KlineBar;
+  }).filter(Boolean) as KlineBar[];
+
+  bars.sort((left, right) => left.date.localeCompare(right.date));
+  const kdjByDate = new Map(computeKdj(bars).map((point) => [point.date, point]));
+  return bars.map((bar) => {
+    const kdj = kdjByDate.get(bar.date);
+    return {
+      ...bar,
+      k: kdj?.k ?? null,
+      d: kdj?.d ?? null,
+      j: kdj?.j ?? null,
+    };
+  });
+}
+
+function kdjFromSignal(signal: { k?: number | null; d?: number | null; j?: number | null } | null | undefined) {
+  const k = finiteNumber(signal?.k);
+  const d = finiteNumber(signal?.d);
+  const j = finiteNumber(signal?.j);
+  return k == null || d == null || j == null ? null : { k, d, j };
+}
+
+function latestKdjFromSeries(series: TrendIndicatorPoint[]) {
+  for (let index = series.length - 1; index >= 0; index -= 1) {
+    const kdj = kdjFromSignal(series[index]);
+    if (kdj) return kdj;
+  }
+  const bars = toDailyBars(series);
+  const computed = computeKdj(bars);
+  return computed.length ? computed[computed.length - 1] : null;
+}
+
+function formatKdj(values: { k?: number | null; d?: number | null; j?: number | null } | null | undefined): string {
+  return values ? `${formatNumber(values.k)} / ${formatNumber(values.d)} / ${formatNumber(values.j)}` : "-- / -- / --";
+}
+
+function finiteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 function Metric({ label, value }: { label: string; value: string | number }) {
@@ -189,7 +283,7 @@ function CapitalEvidence({ sections, summary, notes }: { sections: CapitalEviden
           </div>
         </article>
       ))}
-      {notes.length ? <div className="notes">{notes.map((note) => <p key={note}>{note}</p>)}</div> : null}
+      <CollapsibleNotes notes={notes} />
     </section>
   );
 }

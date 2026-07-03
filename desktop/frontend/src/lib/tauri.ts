@@ -583,7 +583,7 @@ function normalizeFinancialPeriodKey(value: unknown): string {
   return `${date[1]}Q${q}`;
 }
 
-async function fetchObserveDailyHistoryForTauri(payload: Record<string, unknown>, timeoutMs: number): Promise<Record<string, unknown>[] | null> {
+export async function fetchObserveDailyHistoryForTauri(payload: Record<string, unknown>, timeoutMs: number): Promise<Record<string, unknown>[] | null> {
   const symbol = observeTencentDailySymbol(String(payload.code || ""));
   if (!symbol) return null;
   const start = normalizeDateParam(payload.start_date, "20200101");

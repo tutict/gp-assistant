@@ -21,6 +21,7 @@ import {
   parseUpstreamImportDescriptor,
 } from "../../lib/contracts";
 import { escapeHtml, formatBytes, formatDateTime, formatNumber, normalizeStockCode } from "../../lib/format";
+import { CollapsibleNotes } from "../CollapsibleNotes";
 import { StockCodeInput } from "../StockCodeInput";
 
 type NewsTab = "newsRag" | "ragPackBuild" | "ragPackQuery" | "upstreamScan" | "upstreamImport";
@@ -252,7 +253,7 @@ export function NewsRagView({ result }: { result: NewsRagResult }) {
         )}
       </div>
 
-      {result.notes?.length ? <div className="notes">{result.notes.map((note) => <p key={note}>{note}</p>)}</div> : null}
+      <CollapsibleNotes notes={result.notes || []} />
       <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
     </div>
   );
@@ -316,7 +317,7 @@ function RagPackQueryView({ result }: { result: RagPackQueryResult }) {
           return <article key={`${item.title}-${i}`}><strong>{item.title}</strong><span className="evidence-source">{item.source} 分数 {item.score?.toFixed(3) ?? "--"}</span><p>{item.text}</p>{item.url && <a className="evidence-link" href={item.url} target="_blank" rel="noreferrer">来源</a>}</article>;
         })}
       </div>
-      {result.notes?.length ? <div className="notes">{result.notes.map((note) => <p key={note}>{note}</p>)}</div> : null}
+      <CollapsibleNotes notes={result.notes || []} />
     </div>
   );
 }
@@ -342,7 +343,7 @@ function UpstreamBuildView({ result }: { result: { build?: UpstreamRagBuildResul
         {transfer?.descriptor_json && <textarea className="upstream-inline-descriptor" readOnly rows={4} value={transfer.descriptor_json} />}
       </section>
       <RelationGraph manifest={manifest} />
-      {build.notes?.length ? <div className="notes">{build.notes.map((note) => <p key={note}>{note}</p>)}</div> : null}
+      <CollapsibleNotes notes={build.notes || []} />
       <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
     </div>
   );
@@ -389,7 +390,7 @@ function UpstreamMobileListView({
           );
         })}
       </div>
-      {result.notes?.length ? <div className="notes">{result.notes.map((note) => <p key={note}>{note}</p>)}</div> : null}
+      <CollapsibleNotes notes={result.notes || []} />
     </div>
   );
 }
@@ -405,7 +406,7 @@ function UpstreamImportView({ result }: { result: Record<string, unknown> }) {
         <div className="metric"><span>文档</span><strong>{String(manifest.document_count ?? 0)}</strong></div>
       </div>
       <RelationGraph manifest={manifest} />
-      {Array.isArray(result.notes) ? <div className="notes">{result.notes.map((note) => <p key={String(note)}>{String(note)}</p>)}</div> : null}
+      <CollapsibleNotes notes={Array.isArray(result.notes) ? result.notes.map((note) => String(note)) : []} />
       <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
     </div>
   );

@@ -2839,6 +2839,71 @@ a:hover { text-decoration: underline; }
   background: white;
 }
 .upstream-inline-descriptor { width: 100%; margin-top: 12px; }
+.notes-block {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  overflow: hidden;
+}
+.notes-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-secondary);
+}
+.notes-summary::-webkit-details-marker { display: none; }
+.notes-summary-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  flex: 1 1 auto;
+}
+.notes-summary-label {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.notes-summary-preview {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notes-summary strong {
+  flex: 0 0 auto;
+  min-width: 28px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-align: center;
+}
+.notes-block[open] .notes-summary {
+  border-bottom: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--surface-2) 56%, transparent);
+}
+.notes-list {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+.notes-list p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .raw-json { margin-top: 14px; }
 .raw-json pre, .raw-result {
   max-height: 360px;
@@ -4682,6 +4747,11 @@ html.mobile-tauri.android-bottom-nav .stock-title strong,
 html.mobile-tauri.android-bottom-nav .stock-title span,
 html.mobile-tauri.android-bottom-nav .stock-meta,
 html.mobile-tauri.android-bottom-nav .tag-row,
+html.mobile-tauri.android-bottom-nav .notes-block,
+html.mobile-tauri.android-bottom-nav .notes-summary,
+html.mobile-tauri.android-bottom-nav .notes-summary-preview,
+html.mobile-tauri.android-bottom-nav .notes-list,
+html.mobile-tauri.android-bottom-nav .notes-list p,
 html.mobile-tauri.android-bottom-nav .notes,
 html.mobile-tauri.android-bottom-nav .notes p,
 html.mobile-tauri.android-bottom-nav .raw-json pre,
@@ -6603,6 +6673,9 @@ html.mobile-tauri.android-phone .score-badge small,
 html.mobile-tauri.android-phone .chart-labels,
 html.mobile-tauri.android-phone .stock-meta,
 html.mobile-tauri.android-phone .symbol-strip,
+html.mobile-tauri.android-phone .notes-summary-label,
+html.mobile-tauri.android-phone .notes-summary-preview,
+html.mobile-tauri.android-phone .notes-list p,
 html.mobile-tauri.android-phone .notes,
 html.mobile-tauri.android-phone .notes p,
 html.mobile-tauri.android-bottom-nav .metric span,
@@ -6612,6 +6685,9 @@ html.mobile-tauri.android-bottom-nav .score-badge small,
 html.mobile-tauri.android-bottom-nav .chart-labels,
 html.mobile-tauri.android-bottom-nav .stock-meta,
 html.mobile-tauri.android-bottom-nav .symbol-strip,
+html.mobile-tauri.android-bottom-nav .notes-summary-label,
+html.mobile-tauri.android-bottom-nav .notes-summary-preview,
+html.mobile-tauri.android-bottom-nav .notes-list p,
 html.mobile-tauri.android-bottom-nav .notes,
 html.mobile-tauri.android-bottom-nav .notes p {
   font-size: 0.62rem !important;
@@ -7879,8 +7955,8 @@ html.mobile-tauri.android-bottom-nav .chart-labels span {
     pointer-events: auto !important;
     display: grid !important;
     place-items: center !important;
-    width: 42px !important;
-    height: 42px !important;
+    width: 36px !important;
+    height: 36px !important;
     border: 0 !important;
     background: transparent !important;
     color: rgba(255, 255, 255, 0.9) !important;
@@ -7889,22 +7965,22 @@ html.mobile-tauri.android-bottom-nav .chart-labels span {
 
   .agent-mobile-menu span {
     display: block !important;
-    width: 25px !important;
+    width: 19px !important;
     height: 2px !important;
     border-radius: 999px !important;
     background: currentColor !important;
   }
 
   .agent-mobile-menu span + span {
-    margin-top: -16px !important;
+    margin-top: -12px !important;
   }
 
   .agent-mobile-new {
-    width: 36px !important;
-    height: 36px !important;
+    width: 30px !important;
+    height: 30px !important;
     border: 2px solid currentColor !important;
     border-radius: 999px !important;
-    font-size: 1.5rem !important;
+    font-size: 1.15rem !important;
     font-weight: 700 !important;
     line-height: 1 !important;
   }
@@ -7982,16 +8058,16 @@ html.mobile-tauri.android-bottom-nav .send-btn {
 html.mobile-tauri.android-phone .app[data-active-view="news"] .panels,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .panels {
   min-height: 0 !important;
-  overflow: hidden !important;
+  overflow: visible !important;
 }
 
 html.mobile-tauri.android-phone .app[data-active-view="news"] .panel-container,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .panel-container {
-  display: grid !important;
-  grid-template-rows: auto auto minmax(0, 1fr) !important;
+  display: flex !important;
+  flex-direction: column !important;
   min-height: 0 !important;
-  height: 100% !important;
-  overflow: hidden !important;
+  height: auto !important;
+  overflow: visible !important;
   gap: 6px !important;
   isolation: isolate !important;
 }
@@ -7999,11 +8075,9 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .panel-contai
 html.mobile-tauri.android-phone .app[data-active-view="news"] .panel-result,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .panel-result {
   min-height: 0 !important;
-  overflow-y: auto !important;
-  overflow-x: hidden !important;
-  padding: 0 5px calc(var(--phone-nav-h-final, 64px) + 24px) !important;
-  scroll-padding-bottom: calc(var(--phone-nav-h-final, 64px) + 24px) !important;
-  -webkit-overflow-scrolling: touch !important;
+  overflow: visible !important;
+  padding: 0 5px 0 !important;
+  scroll-padding-bottom: 0 !important;
 }
 
 html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-tabs,
@@ -8158,9 +8232,11 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-pack-ite
 
 html.mobile-tauri.android-phone .app[data-active-view="news"] .news-finding p,
 html.mobile-tauri.android-phone .app[data-active-view="news"] .evidence-list article p,
+html.mobile-tauri.android-phone .app[data-active-view="news"] .notes-list p,
 html.mobile-tauri.android-phone .app[data-active-view="news"] .notes p,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .news-finding p,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .evidence-list article p,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .notes-list p,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .notes p {
   margin: 4px 0 0 !important;
   font-size: 0.75rem !important;
@@ -8198,8 +8274,10 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .checklist {
 }
 
 html.mobile-tauri.android-phone .app[data-active-view="news"] .notes,
+html.mobile-tauri.android-phone .app[data-active-view="news"] .notes-block,
 html.mobile-tauri.android-phone .app[data-active-view="news"] .raw-json,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .notes,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .notes-block,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .raw-json {
   margin-top: 0 !important;
   position: relative !important;
@@ -8302,4 +8380,360 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-too
   padding: 4px 8px !important;
   border-radius: 7px !important;
   font-size: 0.7rem !important;
+}
+
+/* Screen page overlap guard: keep toolbar and run control in normal flow after results render. */
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .workbench,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .workbench {
+  gap: 8px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar.mobile-source-bar,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar.mobile-source-bar {
+  position: relative !important;
+  z-index: 5 !important;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-auto-rows: auto !important;
+  align-items: stretch !important;
+  align-content: start !important;
+  min-height: 84px !important;
+  height: auto !important;
+  margin: 0 0 7px !important;
+  padding: 6px !important;
+  gap: 6px !important;
+  overflow: visible !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .data-source-main,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .data-source-main {
+  min-height: 34px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar-side,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar-side,
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-status-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-status-row {
+  position: relative !important;
+  min-height: 36px !important;
+  overflow: visible !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .panels,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .panels,
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .panel-container,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .panel-container {
+  position: relative !important;
+  z-index: 1 !important;
+  margin-top: 0 !important;
+  overflow: visible !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .panel-tabs,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .panel-tabs {
+  position: relative !important;
+  z-index: 2 !important;
+  flex: 0 0 auto !important;
+  margin: 0 0 6px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .panel-controls,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .panel-controls {
+  position: relative !important;
+  z-index: 1 !important;
+  min-height: 42px !important;
+  height: auto !important;
+  overflow: visible !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .panel-controls .run-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .panel-controls .run-btn {
+  min-height: 36px !important;
+  height: 36px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  line-height: 1 !important;
+  padding: 0 10px !important;
+  overflow: visible !important;
+}
+
+/* Compact sizing after the overlap guard. */
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar.mobile-source-bar,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar.mobile-source-bar {
+  min-height: 68px !important;
+  padding: 4px 5px !important;
+  gap: 4px !important;
+  margin-bottom: 5px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .data-source-main,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .data-source-main {
+  min-height: 30px !important;
+  gap: 5px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .criteria-toggle,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .criteria-toggle {
+  min-height: 30px !important;
+  height: 30px !important;
+  padding: 3px 8px !important;
+  font-size: 0.68rem !important;
+  border-radius: 6px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .criteria-summary,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .criteria-summary {
+  font-size: 0.6rem !important;
+  line-height: 1.18 !important;
+  max-height: 28px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar-side,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar-side,
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-status-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-status-row {
+  min-height: 30px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-status-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-status-row {
+  grid-template-columns: minmax(0, 1fr) 82px !important;
+  gap: 4px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .data-source-status,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .data-source-status {
+  gap: 4px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .status-item,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .status-item {
+  min-height: 30px !important;
+  padding: 3px 6px !important;
+  border-radius: 6px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .status-item em,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .status-item em {
+  font-size: 0.54rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .status-item strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .status-item strong {
+  font-size: 0.62rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .source-tools-toggle,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .source-tools-toggle {
+  width: 82px !important;
+  min-height: 30px !important;
+  height: 30px !important;
+  padding: 3px 6px !important;
+  font-size: 0.62rem !important;
+  border-radius: 6px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .panel-controls,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .panel-controls {
+  min-height: 38px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .panel-controls .run-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .panel-controls .run-btn {
+  min-height: 32px !important;
+  height: 32px !important;
+  font-size: 0.68rem !important;
+}
+
+/* Keep screen refresh controls compact and non-overlapping. */
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-status-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-status-row {
+  grid-template-columns: minmax(0, 1fr) 58px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .data-source-status,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .data-source-status,
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .source-tools-toggle,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .source-tools-toggle {
+  grid-area: auto !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .source-tools-toggle,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .source-tools-toggle {
+  justify-self: stretch !important;
+  width: 58px !important;
+  min-width: 58px !important;
+  max-width: 58px !important;
+  min-height: 28px !important;
+  height: 28px !important;
+  padding: 2px 5px !important;
+  font-size: 0.58rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .status-item,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .status-item {
+  min-height: 28px !important;
+}
+
+/* Extra compact screen toolbar for phone-width Android. */
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar.mobile-source-bar,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar.mobile-source-bar {
+  min-height: 60px !important;
+  padding: 3px 4px !important;
+  gap: 3px !important;
+  margin-bottom: 4px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .data-source-main,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .data-source-main {
+  grid-template-columns: 92px minmax(0, 1fr) !important;
+  min-height: 24px !important;
+  gap: 4px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .criteria-toggle,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .criteria-toggle {
+  min-height: 24px !important;
+  height: 24px !important;
+  padding: 2px 6px !important;
+  border-radius: 5px !important;
+  font-size: 0.56rem !important;
+  gap: 3px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .criteria-toggle svg,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .criteria-toggle svg {
+  width: 10px !important;
+  height: 10px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .criteria-summary,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .criteria-summary {
+  display: block !important;
+  max-height: 1.2em !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  font-size: 0.5rem !important;
+  line-height: 1.2 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar-side,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar-side {
+  gap: 3px !important;
+  min-height: 24px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-status-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-status-row {
+  grid-template-columns: minmax(0, 1fr) 52px !important;
+  min-height: 24px !important;
+  gap: 3px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .data-source-status,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .data-source-status {
+  gap: 3px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .status-item,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .status-item {
+  min-height: 24px !important;
+  padding: 2px 5px !important;
+  border-radius: 5px !important;
+  gap: 3px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .status-item em,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .status-item em {
+  font-size: 0.48rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .status-item strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .status-item strong {
+  font-size: 0.56rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .source-tools-toggle,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .source-tools-toggle {
+  width: 52px !important;
+  min-width: 52px !important;
+  max-width: 52px !important;
+  min-height: 24px !important;
+  height: 24px !important;
+  padding: 2px 4px !important;
+  border-radius: 5px !important;
+  font-size: 0.5rem !important;
+}
+
+/* Compact expanded refresh tools: full height, no overlay. */
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar.mobile-source-bar.tools-open,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar.mobile-source-bar.tools-open {
+  min-height: 112px !important;
+  margin-bottom: 6px !important;
+  overflow: visible !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar.tools-open .data-source-tools,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar.tools-open .data-source-tools {
+  position: static !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 3px !important;
+  margin: 0 !important;
+  padding-top: 3px !important;
+  overflow: visible !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar.tools-open .refresh-options,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar.tools-open .refresh-options {
+  position: static !important;
+  display: grid !important;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1fr) !important;
+  gap: 3px !important;
+  min-height: 24px !important;
+  overflow: visible !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar.tools-open .refresh-options label,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar.tools-open .refresh-options label {
+  min-width: 0 !important;
+  min-height: 24px !important;
+  padding: 2px 4px !important;
+  border-radius: 5px !important;
+  font-size: 0.48rem !important;
+  line-height: 1 !important;
+  gap: 3px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar.tools-open .refresh-options input[type="number"],
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar.tools-open .refresh-options input[type="number"] {
+  height: 20px !important;
+  min-height: 20px !important;
+  padding: 2px 4px !important;
+  font-size: 0.5rem !important;
+  border-radius: 4px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar.tools-open .data-source-actions,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar.tools-open .data-source-actions {
+  position: static !important;
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 3px !important;
+  min-height: 24px !important;
+  overflow: visible !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar.tools-open .action-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar.tools-open .action-btn {
+  min-height: 24px !important;
+  height: 24px !important;
+  padding: 2px 5px !important;
+  border-radius: 5px !important;
+  font-size: 0.52rem !important;
+  line-height: 1 !important;
 }
