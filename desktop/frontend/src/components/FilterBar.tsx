@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getJson, getTauriInvoke, postJson, refreshTauriMarketData } from "../lib/tauri";
-import { formatBytes, formatPercent, formatNumber, clampInt } from "../lib/format";
+import { clampInt, formatBytes, formatNumber, formatPercent } from "../lib/format";
 import type { DataStatus } from "../types";
 
-interface FilterCriteria {
+export interface FilterCriteria {
   includeSt: boolean;
   requireInstitutionBuyRatio: boolean;
   minRoe: string;
@@ -109,6 +109,13 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
     if (!mobileRuntime) setSourceToolsOpen(false);
   }, [mobileRuntime]);
 
+  useEffect(() => {
+    if (mobileRuntime && open) {
+      setSourceToolsOpen(false);
+      setRefreshLogOpen(false);
+    }
+  }, [mobileRuntime, open]);
+
   const clearRefreshLogTimer = useCallback(() => {
     if (refreshLogTimerRef.current !== null) {
       window.clearTimeout(refreshLogTimerRef.current);
@@ -134,12 +141,13 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
     appendLog(entry.message, entry.tone);
     const match = entry.message.match(/(\d+)[-/](\d+|\?)/);
     if (!match) return;
+
     const done = Number(match[1]);
     const total = Number(match[2]);
-    if (Number.isFinite(done) && Number.isFinite(total) && total > 0) {
-      const value = Math.max(8, Math.min(98, Math.round((done / total) * 100)));
-      setProgress({ label: `刷新批次 ${Math.min(done, total)}/${total}`, value });
-    }
+    if (!Number.isFinite(done) || !Number.isFinite(total) || total <= 0) return;
+
+    const value = Math.max(8, Math.min(98, Math.round((done / total) * 100)));
+    setProgress({ label: `刷新批次 ${Math.min(done, total)}/${total}`, value });
   }, [appendLog]);
 
   const loadStatus = useCallback(async () => {
@@ -167,9 +175,10 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
   const refreshUniverse = useCallback(async () => {
     clearRefreshLogTimer();
     setRefreshing(true);
-    setRefreshLogOpen(true);
+    setRefreshLogOpen(!mobileRuntime);
     setRefreshLog([]);
-    setProgress({ label: mobileRuntime ? "准备移动端股票池全量重建..." : "准备股票池刷新...", value: 6 });
+    setProgress({ label: mobileRuntime ? "准备移动端股票池全量刷新..." : "准备股票池刷新...", value: 6 });
+
     try {
       const invoke = getTauriInvoke();
       const data = invoke
@@ -195,8 +204,12 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
     setRefreshing(true);
     setRefreshLogOpen(true);
     setProgress({ label: "清理可丢弃缓存...", value: 30 });
+
     try {
-      const data = await postJson<{ status?: DataStatus; removed_files?: number; removed_bytes?: number; notes?: string[] }>("/api/data-sources/prune-cache", { ...CACHE_POLICY, mode: "clear" });
+      const data = await postJson<{ status?: DataStatus; removed_files?: number; removed_bytes?: number; notes?: string[] }>(
+        "/api/data-sources/prune-cache",
+        { ...CACHE_POLICY, mode: "clear" },
+      );
       setStatus(data.status || null);
       setProgress({ label: "清理完成", value: 100 });
       appendLog(`已删除 ${data.removed_files || 0} 个文件，释放 ${formatBytes(data.removed_bytes)}。`, "success");
@@ -213,121 +226,175 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
 
   const summary = [
     criteria.industry ? `行业 ${criteria.industry}` : "全部行业",
-    criteria.minRoe ? `净资产收益率 ≥ ${formatPercent(Number(criteria.minRoe))}` : "",
-    criteria.maxPe ? `市盈率 ≤ ${formatNumber(criteria.maxPe)}` : "",
-    criteria.maxPb ? `市净率 ≤ ${formatNumber(criteria.maxPb)}` : "",
-    criteria.minMcap ? `市值 ≥ ${formatNumber(criteria.minMcap)} 亿` : "",
+    criteria.minRoe ? `ROE >= ${formatPercent(Number(criteria.minRoe))}` : "",
+    criteria.maxPe ? `PE <= ${formatNumber(criteria.maxPe)}` : "",
+    criteria.maxPb ? `PB <= ${formatNumber(criteria.maxPb)}` : "",
+    criteria.minMcap ? `市值 >= ${formatNumber(criteria.minMcap)} 亿` : "",
     "扣非净利润 > 0",
-    "扣非净利润增长率 > 10%",
+    "扣非净利润增速 > 10%",
     criteria.requireInstitutionBuyRatio ? "机构净买入" : "",
     `返回 ${clampInt(criteria.resultLimit, 1, 200, 10)} 只`,
   ].filter(Boolean).join(" · ");
 
-  const sourceToolsVisible = !mobileRuntime || sourceToolsOpen || refreshing;
+  const sourceToolsVisible = !mobileRuntime;
+  const statusMetricsClassName = mobileRuntime ? "screen-mobile-status-metrics" : "data-source-status screen-status-metrics";
+  const statusMetricClassName = mobileRuntime ? "screen-mobile-status-metric" : "status-item screen-status-metric";
+
+  const handleCriteriaToggle = useCallback(() => {
+    if (mobileRuntime) {
+      setSourceToolsOpen(false);
+      setRefreshLogOpen(false);
+    }
+    onToggle();
+  }, [mobileRuntime, onToggle]);
+
+  const toolsContent = sourceToolsVisible ? (
+    <div className={mobileRuntime ? "screen-mobile-tools" : "data-source-tools"}>
+      <div className="refresh-options">
+        <label className="refresh-option refresh-option-boolean">
+          <input type="checkbox" checked={fullRebuild} onChange={(event) => setFullRebuild(event.target.checked)} disabled={refreshing} />
+          <span className="refresh-option-label">全量重建</span>
+        </label>
+        <label className="refresh-option">
+          <span className="refresh-option-label">批次</span>
+          <input type="number" min="1" max="1000" value={batchCount} onChange={(event) => setBatchCount(Number(event.target.value) || 1)} disabled={refreshing} />
+        </label>
+        <label className="refresh-option">
+          <span className="refresh-option-label">候选</span>
+          <input type="number" min="1000" max="50000" step="1000" value={maxCandidates} onChange={(event) => setMaxCandidates(Number(event.target.value) || 15000)} disabled={refreshing} />
+        </label>
+      </div>
+
+      <div className="data-source-actions">
+        <button type="button" className="action-btn" onClick={refreshUniverse} disabled={refreshing}>
+          {mobileRuntime ? "校验刷新" : "刷新并校验股票池"}
+        </button>
+        <button type="button" className="action-btn" onClick={pruneCache} disabled={refreshing}>
+          {mobileRuntime ? "清缓存" : "清理缓存"}
+        </button>
+      </div>
+    </div>
+  ) : null;
+
+  const progressAndLog = mobileRuntime ? null : (
+    <>
+      {progress && (
+        <div className="refresh-progress">
+          <div className="refresh-progress-bar">
+            <div className="refresh-progress-fill" style={{ width: `${progress.value}%` }} />
+          </div>
+          <span className="refresh-progress-label">{progress.label}</span>
+        </div>
+      )}
+
+      {refreshLog.length > 0 && (
+        <div className={`refresh-log-shell ${refreshLogOpen ? "open" : "collapsed"}`}>
+          <div className="refresh-log-header">
+            <span>刷新日志</span>
+            <div className="refresh-log-header-actions">
+              <strong>最近 {refreshLog.length} 条</strong>
+              <button
+                type="button"
+                className="refresh-log-toggle"
+                onClick={() => {
+                  clearRefreshLogTimer();
+                  setRefreshLogOpen((expanded) => !expanded);
+                }}
+              >
+                {refreshLogOpen ? "收起" : "展开"}
+              </button>
+            </div>
+          </div>
+          {refreshLogOpen && (
+            <div className="refresh-log">
+              {refreshLog.map((entry, index) => (
+                <div key={`${entry.time}-${index}`} className={`refresh-log-entry ${entry.tone}`}>
+                  <span className="refresh-log-time">{entry.time}</span>
+                  <span className="refresh-log-message">{entry.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
 
   return (
     <>
-      <section
-        className={`research-context-bar screen-toolbar ${mobileRuntime ? "mobile-source-bar" : ""} ${sourceToolsVisible ? "tools-open" : "tools-closed"}`}
-        aria-label="选股控制栏"
-      >
-        <div className="data-source-main screen-toolbar-main">
-          <button type="button" className="criteria-toggle" onClick={onToggle}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 6h18M6 12h12M10 18h4" />
-            </svg>
-            <span>筛选条件</span>
-          </button>
-          <span className="criteria-summary" title={summary}>{summary}</span>
-        </div>
+      {mobileRuntime ? (
+        <>
+          <section
+            className={`research-context-bar screen-toolbar-card screen-mobile-toolbar-card ${refreshing ? "refreshing" : ""}`}
+            aria-label="选股控制栏"
+          >
+            <div className="screen-mobile-toolbar-row">
+              <button type="button" className="criteria-toggle" onClick={handleCriteriaToggle}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 6h18M6 12h12M10 18h4" />
+                </svg>
+                <span>筛选条件</span>
+              </button>
 
-        <div className="screen-toolbar-side">
-          <div className="screen-status-row">
-
-          <div className="data-source-status screen-status-metrics" aria-label="股票池状态">
-            <span className="status-item screen-status-metric"><em>股票池</em><strong>{formatNumber(status?.universe_count)}</strong></span>
-            <span className="status-item screen-status-metric"><em>缓存</em><strong>{formatBytes(status?.cache_bytes)}</strong></span>
-          </div>
-
-          {mobileRuntime && (
-            <button
-              type="button"
-              className="source-tools-toggle"
-              onClick={() => setSourceToolsOpen((expanded) => !expanded)}
-              aria-expanded={sourceToolsVisible}
-            >
-              {sourceToolsVisible ? "收起" : "工具"}
-            </button>
-          )}
-          </div>
-
-        <div className="data-source-tools">
-          <div className="refresh-options">
-            <label className="refresh-option refresh-option-boolean">
-              <input type="checkbox" checked={fullRebuild} onChange={(event) => setFullRebuild(event.target.checked)} disabled={refreshing} />
-              <span className="refresh-option-label">全量重建</span>
-            </label>
-            <label className="refresh-option">
-              <span className="refresh-option-label">批次</span>
-              <input type="number" min="1" max="1000" value={batchCount} onChange={(event) => setBatchCount(Number(event.target.value) || 1)} disabled={refreshing} />
-            </label>
-            <label className="refresh-option">
-              <span className="refresh-option-label">候选</span>
-              <input type="number" min="1000" max="50000" step="1000" value={maxCandidates} onChange={(event) => setMaxCandidates(Number(event.target.value) || 15000)} disabled={refreshing} />
-            </label>
-          </div>
-
-          <div className="data-source-actions">
-            <button type="button" className="action-btn" onClick={refreshUniverse} disabled={refreshing}>{mobileRuntime ? "校验刷新" : "刷新并校验股票池"}</button>
-            <button type="button" className="action-btn" onClick={pruneCache} disabled={refreshing}>{mobileRuntime ? "清缓存" : "清理缓存"}</button>
-          </div>
-        </div>
-        </div>
-
-        {progress && (
-          <div className="refresh-progress">
-            <div className="refresh-progress-bar"><div className="refresh-progress-fill" style={{ width: `${progress.value}%` }} /></div>
-            <span className="refresh-progress-label">{progress.label}</span>
-          </div>
-        )}
-
-        {refreshLog.length > 0 && (
-          <div className={`refresh-log-shell ${refreshLogOpen ? "open" : "collapsed"}`}>
-            <div className="refresh-log-header">
-              <span>刷新日志</span>
-              <div className="refresh-log-header-actions">
-                <strong>最近 {refreshLog.length} 条</strong>
-                <button
-                  type="button"
-                  className="refresh-log-toggle"
-                  onClick={() => {
-                    clearRefreshLogTimer();
-                    setRefreshLogOpen((expanded) => !expanded);
-                  }}
-                >
-                  {refreshLogOpen ? "收起" : "展开"}
-                </button>
+              <div className="screen-mobile-toolbar-main">
+                <span className="criteria-summary" title={summary}>{summary}</span>
+                <div className={statusMetricsClassName} aria-label="股票池状态">
+                  <span className={statusMetricClassName}><em>股票池</em><strong>{formatNumber(status?.universe_count)}</strong></span>
+                  <span className={statusMetricClassName}><em>缓存</em><strong>{formatBytes(status?.cache_bytes)}</strong></span>
+                </div>
               </div>
+
+              <button
+                type="button"
+                className="screen-mobile-tools-toggle screen-mobile-refresh-btn"
+                onClick={refreshUniverse}
+                disabled={refreshing}
+              >
+                {refreshing ? "刷新中" : "刷新"}
+              </button>
             </div>
-            {refreshLogOpen && (
-              <div className="refresh-log">
-                {refreshLog.map((entry, i) => (
-                  <div key={`${entry.time}-${i}`} className={`refresh-log-entry ${entry.tone}`}>
-                    <span className="refresh-log-time">{entry.time}</span>
-                    <span className="refresh-log-message">{entry.message}</span>
-                  </div>
-                ))}
+
+            {progress && (
+              <div className="screen-mobile-refresh-progress" aria-hidden="true">
+                <div className="screen-mobile-refresh-progress-fill" style={{ width: `${progress.value}%` }} />
               </div>
             )}
+
+            {progressAndLog}
+          </section>
+        </>
+      ) : (
+        <section className="research-context-bar screen-toolbar screen-toolbar-card tools-open" aria-label="选股控制栏">
+          <div className="data-source-main screen-toolbar-main">
+            <button type="button" className="criteria-toggle" onClick={handleCriteriaToggle}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 6h18M6 12h12M10 18h4" />
+              </svg>
+              <span>筛选条件</span>
+            </button>
+            <span className="criteria-summary" title={summary}>{summary}</span>
           </div>
-        )}
-      </section>
+
+          <div className="screen-toolbar-side">
+            <div className="screen-status-row">
+              <div className={statusMetricsClassName} aria-label="股票池状态">
+                <span className={statusMetricClassName}><em>股票池</em><strong>{formatNumber(status?.universe_count)}</strong></span>
+                <span className={statusMetricClassName}><em>缓存</em><strong>{formatBytes(status?.cache_bytes)}</strong></span>
+              </div>
+            </div>
+
+            {toolsContent}
+          </div>
+
+          {progressAndLog}
+        </section>
+      )}
 
       {open && <div className={`criteria-overlay ${open ? "open" : ""}`} onClick={onClose} />}
 
       <aside className={`criteria-panel ${open ? "open" : ""}`}>
         <div className="criteria-panel-header">
-          <h2>研究条件</h2>
+          <h2>筛选条件</h2>
           <button type="button" className="criteria-close" onClick={onClose} aria-label="关闭">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="6" y1="6" x2="18" y2="18" />
@@ -342,10 +409,10 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
             <select
               id="industry"
               value={criteria.industry}
-              onChange={(e) => update({ industry: e.target.value })}
+              onChange={(event) => update({ industry: event.target.value })}
             >
-              {INDUSTRIES.map((ind) => (
-                <option key={ind} value={ind}>{ind || "全部行业"}</option>
+              {INDUSTRIES.map((industry) => (
+                <option key={industry} value={industry}>{industry || "全部行业"}</option>
               ))}
             </select>
           </div>
@@ -357,7 +424,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
               type="number"
               step="0.1"
               value={criteria.minRoe}
-              onChange={(e) => update({ minRoe: e.target.value })}
+              onChange={(event) => update({ minRoe: event.target.value })}
               placeholder="如 15"
             />
           </div>
@@ -369,7 +436,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
               type="number"
               step="0.1"
               value={criteria.maxPe}
-              onChange={(e) => update({ maxPe: e.target.value })}
+              onChange={(event) => update({ maxPe: event.target.value })}
               placeholder="如 30"
             />
           </div>
@@ -381,7 +448,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
               type="number"
               step="0.1"
               value={criteria.maxPb}
-              onChange={(e) => update({ maxPb: e.target.value })}
+              onChange={(event) => update({ maxPb: event.target.value })}
               placeholder="如 5"
             />
           </div>
@@ -393,7 +460,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
               type="number"
               step="1"
               value={criteria.minMcap}
-              onChange={(e) => update({ minMcap: e.target.value })}
+              onChange={(event) => update({ minMcap: event.target.value })}
               placeholder="如 50"
             />
           </div>
@@ -406,7 +473,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
               min="1"
               max="200"
               value={criteria.resultLimit}
-              onChange={(e) => update({ resultLimit: clampInt(e.target.value, 1, 200, 10) })}
+              onChange={(event) => update({ resultLimit: clampInt(event.target.value, 1, 200, 10) })}
             />
           </div>
 
@@ -415,10 +482,10 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
             <select
               id="sortBy"
               value={criteria.sortBy}
-              onChange={(e) => update({ sortBy: e.target.value })}
+              onChange={(event) => update({ sortBy: event.target.value })}
             >
-              {SORT_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              {SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
           </div>
@@ -428,7 +495,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
             <select
               id="sortDir"
               value={criteria.sortDir}
-              onChange={(e) => update({ sortDir: e.target.value })}
+              onChange={(event) => update({ sortDir: event.target.value })}
             >
               <option value="desc">降序</option>
               <option value="asc">升序</option>
@@ -440,7 +507,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
               <input
                 type="checkbox"
                 checked={criteria.includeSt}
-                onChange={(e) => update({ includeSt: e.target.checked })}
+                onChange={(event) => update({ includeSt: event.target.checked })}
               />
               包含 ST 股票
             </label>
@@ -451,7 +518,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
               <input
                 type="checkbox"
                 checked={criteria.requireInstitutionBuyRatio}
-                onChange={(e) => update({ requireInstitutionBuyRatio: e.target.checked })}
+                onChange={(event) => update({ requireInstitutionBuyRatio: event.target.checked })}
               />
               机构净买入
             </label>
@@ -462,4 +529,4 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
   );
 }
 
-export type { FilterCriteria };
+export type { FilterCriteria as FilterCriteriaType };

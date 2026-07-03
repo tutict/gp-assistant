@@ -22,6 +22,7 @@ interface ScreenPanelProps {
   onWatchlistChange: (items: WatchlistItem[]) => void;
   onObserveStock?: (code: string) => void;
   onRunBacktest?: () => void;
+  mobileRuntime?: boolean;
 }
 
 type ScreenMode = "screen" | "sectorScreen" | "boardScreen" | "graph" | "trendScreen";
@@ -40,6 +41,7 @@ export function ScreenPanel({
   onWatchlistChange,
   onObserveStock,
   onRunBacktest,
+  mobileRuntime = false,
 }: ScreenPanelProps) {
   const [mode, setMode] = useState<ScreenMode>("screen");
   const [loading, setLoading] = useState(false);
@@ -95,14 +97,76 @@ export function ScreenPanel({
     }
   }, [mode, onWatchlistChange, watchlist]);
 
+  const hasControlFields = mode !== "screen";
+  const controlsClassName = `panel-controls screen-panel-controls ${mode === "sectorScreen" || mode === "boardScreen" ? "grouped-screen-controls" : ""}`;
+
+  const controlFields = (
+    <>
+      {(mode === "sectorScreen" || mode === "boardScreen") && (
+        <>
+          <div className="form-row inline">
+            <label htmlFor="perSectorLimit">每组数量</label>
+            <input id="perSectorLimit" type="number" min="1" max="50" value={perSectorLimit} onChange={(e) => setPerSectorLimit(Number(e.target.value) || 5)} />
+          </div>
+          {mode === "sectorScreen" && (
+            <div className="form-row inline">
+              <label htmlFor="maxSectors">分组数</label>
+              <input id="maxSectors" type="number" min="1" max="50" value={maxSectors} onChange={(e) => setMaxSectors(Number(e.target.value) || 12)} />
+            </div>
+          )}
+        </>
+      )}
+
+      {mode === "graph" && (
+        <>
+          <div className="form-row">
+            <label htmlFor="seedCodes">种子股票</label>
+            <StockCodeInput id="seedCodes" value={seedCodes} onChange={setSeedCodes} placeholder="600519.SH, 300750.SZ" listMode />
+          </div>
+          <div className="form-row inline">
+            <label htmlFor="relationDepth">关系深度</label>
+            <input id="relationDepth" type="number" min="1" max="3" value={relationDepth} onChange={(e) => setRelationDepth(Number(e.target.value) || 1)} />
+          </div>
+          <div className="form-row inline">
+            <label htmlFor="relationWeight">关系权重</label>
+            <input id="relationWeight" type="number" min="0" max="1" step="0.05" value={relationWeight} onChange={(e) => setRelationWeight(Number(e.target.value) || 0.4)} />
+          </div>
+        </>
+      )}
+
+      {mode === "trendScreen" && (
+        <>
+          <div className="form-row inline">
+            <label htmlFor="trendStart">开始日期</label>
+            <input id="trendStart" type="date" value={trendStart} onChange={(e) => setTrendStart(e.target.value)} />
+          </div>
+          <div className="form-row inline">
+            <label htmlFor="trendEnd">结束日期</label>
+            <input id="trendEnd" type="date" value={trendEnd} onChange={(e) => setTrendEnd(e.target.value)} />
+          </div>
+        </>
+      )}
+    </>
+  );
+
+  const runButton = (
+    <button type="button" className="run-btn" onClick={run} disabled={loading}>
+      {loading ? "运行中..." : "运行"}
+    </button>
+  );
+
   return (
-    <div className="panel-container">
-      <div className="panel-tabs">
+    <div className={`panel-container screen-panel-container ${result != null ? "has-result" : ""}`}>
+      <div className="panel-tabs screen-panel-tabs">
         {TABS.map((tab) => (
           <button
             key={tab.key}
             className={`panel-tab ${mode === tab.key ? "active" : ""}`}
-            onClick={() => { setMode(tab.key); setResult(null); setError(null); }}
+            onClick={() => {
+              setMode(tab.key);
+              setResult(null);
+              setError(null);
+            }}
             type="button"
           >
             {tab.label}
@@ -110,58 +174,25 @@ export function ScreenPanel({
         ))}
       </div>
 
-      <div className={`panel-controls ${mode === "sectorScreen" || mode === "boardScreen" ? "grouped-screen-controls" : ""}`}>
-        {(mode === "sectorScreen" || mode === "boardScreen") && (
-          <>
-            <div className="form-row inline">
-              <label htmlFor="perSectorLimit">每组数量</label>
-              <input id="perSectorLimit" type="number" min="1" max="50" value={perSectorLimit} onChange={(e) => setPerSectorLimit(Number(e.target.value) || 5)} />
+      {mobileRuntime ? (
+        <>
+          {hasControlFields && (
+            <div className={controlsClassName}>
+              {controlFields}
             </div>
-            {mode === "sectorScreen" && (
-              <div className="form-row inline">
-                <label htmlFor="maxSectors">分组数</label>
-                <input id="maxSectors" type="number" min="1" max="50" value={maxSectors} onChange={(e) => setMaxSectors(Number(e.target.value) || 12)} />
-              </div>
-            )}
-          </>
-        )}
+          )}
+          <div className="panel-controls screen-panel-run-card">
+            {runButton}
+          </div>
+        </>
+      ) : (
+        <div className={controlsClassName}>
+          {controlFields}
+          {runButton}
+        </div>
+      )}
 
-        {mode === "graph" && (
-          <>
-            <div className="form-row">
-              <label htmlFor="seedCodes">种子股票</label>
-              <StockCodeInput id="seedCodes" value={seedCodes} onChange={setSeedCodes} placeholder="600519.SH, 300750.SZ" listMode />
-            </div>
-            <div className="form-row inline">
-              <label htmlFor="relationDepth">关系深度</label>
-              <input id="relationDepth" type="number" min="1" max="3" value={relationDepth} onChange={(e) => setRelationDepth(Number(e.target.value) || 1)} />
-            </div>
-            <div className="form-row inline">
-              <label htmlFor="relationWeight">关系权重</label>
-              <input id="relationWeight" type="number" min="0" max="1" step="0.05" value={relationWeight} onChange={(e) => setRelationWeight(Number(e.target.value) || 0.4)} />
-            </div>
-          </>
-        )}
-
-        {mode === "trendScreen" && (
-          <>
-            <div className="form-row inline">
-              <label htmlFor="trendStart">开始日期</label>
-              <input id="trendStart" type="date" value={trendStart} onChange={(e) => setTrendStart(e.target.value)} />
-            </div>
-            <div className="form-row inline">
-              <label htmlFor="trendEnd">结束日期</label>
-              <input id="trendEnd" type="date" value={trendEnd} onChange={(e) => setTrendEnd(e.target.value)} />
-            </div>
-          </>
-        )}
-
-        <button type="button" className="run-btn" onClick={run} disabled={loading}>
-          {loading ? "运行中..." : "运行"}
-        </button>
-      </div>
-
-      <div className="panel-result">
+      <div className="panel-result screen-panel-result">
         {error && (
           <div className="result-error">
             <strong>查询失败</strong>
@@ -210,15 +241,15 @@ function ScreenResultView({
   const rows = normalizeScreenRows(result);
 
   return (
-    <div className="result-list">
-      <div className="metric-strip">
+    <div className="result-list screen-result-list">
+      <div className="metric-strip screen-result-metric-strip">
         <div className="metric"><span>返回数</span><strong>{resultRecord.returned ?? rows.length}</strong></div>
         <div className="metric"><span>总数</span><strong>{resultRecord.total ?? rows.length}</strong></div>
         <div className="metric"><span>最高分</span><strong>{rows[0]?.score?.toFixed(2) ?? "--"}</strong></div>
       </div>
 
       {onRunBacktest && rows.length > 0 && (
-        <div className="result-actions">
+        <div className="result-actions screen-result-actions">
           <div><span>下一步</span><strong>用当前条件回测</strong></div>
           <button type="button" onClick={onRunBacktest}>回测</button>
         </div>
@@ -226,8 +257,8 @@ function ScreenResultView({
 
       {groups.length > 0 ? (
         <div className="sector-groups">
-          {groups.map((group, i) => (
-            <details key={`${group.title}-${i}`} className="sector-group" open={i === 0}>
+          {groups.map((group, index) => (
+            <details key={`${group.title}-${index}`} className="sector-group" open={index === 0}>
               <summary>
                 <div className="sector-group-head"><h3>{group.title}</h3></div>
                 <span className="sector-group-meta"><strong>{group.rows.length}</strong><small>{group.meta}</small></span>

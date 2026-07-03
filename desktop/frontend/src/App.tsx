@@ -220,6 +220,7 @@ export default function App({ onMounted }: AppProps) {
               onWatchlistChange={setWatchlist}
               onObserveStock={observeStock}
               onRunBacktest={runCurrentCriteriaBacktest}
+              mobileRuntime={mobileRuntime}
             />
           )}
           {view === "observe" && (

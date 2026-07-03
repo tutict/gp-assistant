@@ -111,7 +111,7 @@ export function ObserveResultView({ result }: { result: ObserveResult }) {
       <section className="observe-overview">
         <header className="observe-overview-header">
           <div><h3>{stock.name || stock.code}</h3><p>{stock.code} {stock.industry || ""}</p></div>
-          {signal?.status && <span className={`state-pill ${signal.status}`}>{signal.status}</span>}
+          {signal?.status && <span className={`state-pill ${signalStatusTone(signal.status)}`}>{signalStatusLabel(signal.status)}</span>}
         </header>
         <div className="overview-metric-grid">
           <Metric label="市盈率" value={formatNumber(stock.pe)} />
@@ -130,7 +130,7 @@ export function ObserveResultView({ result }: { result: ObserveResult }) {
 
       {signal && (
         <section className="signal-card observe-chart-card">
-          <header><div><h3>趋势信号</h3><p>{signal.date || ""}</p></div><span className="state-pill">{signalStatusLabel(signal.status)}</span></header>
+          <header><div><h3>趋势信号</h3><p>{signal.date || ""}</p></div><span className={`state-pill ${signalStatusTone(signal.status)}`}>{signalStatusLabel(signal.status)}</span></header>
           <div className="signal-grid">
             <Metric label="收盘" value={formatPrice(signal.close)} />
             <Metric label="SWL/SWS" value={`${formatNumber(signal.swl)} / ${formatNumber(signal.sws)}`} />
@@ -272,19 +272,37 @@ function FinancialIndicators({ items, title }: { items: FinancialIndicatorItem[]
 function CapitalEvidence({ sections, summary, notes }: { sections: CapitalEvidenceSection[]; summary?: string | null; notes: string[] }) {
   return (
     <section className="capital-evidence-list">
-      <header><h3>资金证据</h3>{summary && <p>{summary}</p>}</header>
+      <header className="capital-evidence-header">
+        <div className="capital-evidence-heading">
+          <h3>资金证据</h3>
+          {summary && <p>{summary}</p>}
+        </div>
+      </header>
       {sections.filter((section) => section.items?.length || section.summary).slice(0, 6).map((section) => (
         <article key={section.key} className="capital-section">
           <h4>{section.title}</h4>
           {section.summary && <p>{section.summary}</p>}
           <div className="evidence-list">
-            {(section.items || []).slice(0, 4).map((item, index) => (
-              <article key={`${item.title}-${index}`}>
-                <strong>{item.title || item.source || "--"}</strong>
-                <span className="evidence-source">{item.source || ""} {item.date || ""}</span>
-                {item.note && <p>{item.note}</p>}
-              </article>
-            ))}
+            {(section.items || []).slice(0, 4).map((item, index) => {
+              const metrics = capitalEvidenceMetricEntries(item.metrics);
+              return (
+                <article key={`${item.title}-${index}`}>
+                  <strong>{item.title || item.source || "--"}</strong>
+                  <span className="evidence-source">{[item.source, item.date].filter(Boolean).join(" ")}</span>
+                  {metrics.length ? (
+                    <div className="detail-grid capital-evidence-metrics">
+                      {metrics.map(([label, value]) => (
+                        <div key={`${label}-${value}`}>
+                          <span>{label}</span>
+                          <strong>{value}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {item.note && <p>{item.note}</p>}
+                </article>
+              );
+            })}
           </div>
         </article>
       ))}
@@ -700,8 +718,80 @@ function signalStatusLabel(status?: string): string {
     negative: "偏弱",
     bullish: "看多",
     bearish: "看空",
+    buy_setup: "买点预备",
+    exit: "离场",
+    uptrend: "上升趋势",
+    hold: "持有",
+    watch: "观察",
+    oversold: "超卖",
   };
   return labels[String(status || "neutral")] || String(status || "中性");
+}
+
+function signalStatusTone(status?: string): "positive" | "negative" | "warning" | "neutral" {
+  switch (status) {
+    case "positive":
+    case "bullish":
+    case "buy_setup":
+    case "uptrend":
+    case "hold":
+      return "positive";
+    case "negative":
+    case "bearish":
+    case "exit":
+      return "negative";
+    case "watch":
+    case "oversold":
+      return "warning";
+    default:
+      return "neutral";
+  }
+}
+
+function capitalEvidenceMetricEntries(metrics?: Record<string, unknown>): Array<[string, string]> {
+  const entries = Object.entries(metrics || {})
+    .map(([label, value]) => [label, capitalEvidenceMetricValue(label, value)] as [string, string])
+    .filter(([, value]) => value.trim().length > 0);
+  const order = new Map<string, number>([
+    ["状态", 0],
+    ["查询窗口", 1],
+    ["证据类型", 2],
+    ["收盘价", 3],
+    ["涨跌幅", 4],
+    ["机构买入额", 5],
+    ["机构卖出额", 6],
+    ["机构净买额", 7],
+    ["净买额占成交额比", 8],
+    ["买方机构数", 9],
+    ["卖方机构数", 10],
+    ["上榜原因", 11],
+    ["量价热度", 12],
+    ["吸筹强度", 13],
+    ["吸筹指标", 14],
+    ["趋势热度", 15],
+    ["异动热度", 16],
+    ["人气热度", 17],
+    ["证据分", 18],
+    ["标题", 19],
+    ["评论数", 20],
+    ["阅读数", 21],
+    ["多空标记", 22],
+    ["尝试源", 23],
+    ["股票", 24],
+  ]);
+  return entries.sort(([leftLabel], [rightLabel]) => {
+    const leftOrder = order.get(leftLabel) ?? 999;
+    const rightOrder = order.get(rightLabel) ?? 999;
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+    return leftLabel.localeCompare(rightLabel, "zh-Hans-CN");
+  });
+}
+
+function capitalEvidenceMetricValue(label: string, value: unknown): string {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  if (label === "状态") return signalStatusLabel(text);
+  return text;
 }
 
 function LineChart({ title, series, keys }: { title: string; series: Record<string, unknown>[]; keys: string[] }) {
