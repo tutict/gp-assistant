@@ -7,7 +7,10 @@ __pycache__/
 .env
 .idea/
 .claude/
+.agents/
+.impeccable/
 .playwright-cli/
+tmp/
 data/
 build/
 dist/
