@@ -482,7 +482,7 @@ export function formatHeatValue(value: unknown): string {
   return Math.round(n).toString();
 }
 
-export function kdjStateLabel(signal: Record<string, unknown> = {}, latest: Record<string, unknown> = {}): string {
+export function kdjStateLabel(_signal: Record<string, unknown> = {}, latest: Record<string, unknown> = {}): string {
   const k = parseLooseNumber(latest.k);
   const d = parseLooseNumber(latest.d);
   const j = parseLooseNumber(latest.j);

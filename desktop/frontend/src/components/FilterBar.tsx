@@ -100,18 +100,15 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
   const [batchCount, setBatchCount] = useState(mobileRuntime ? 12 : 32);
   const [maxCandidates, setMaxCandidates] = useState(15000);
   const [fullRebuild, setFullRebuild] = useState(true);
-  const [sourceToolsOpen, setSourceToolsOpen] = useState(false);
 
   const update = (patch: Partial<FilterCriteria>) => onChange({ ...criteria, ...patch });
 
   useEffect(() => {
     setBatchCount(mobileRuntime ? 12 : 32);
-    if (!mobileRuntime) setSourceToolsOpen(false);
   }, [mobileRuntime]);
 
   useEffect(() => {
     if (mobileRuntime && open) {
-      setSourceToolsOpen(false);
       setRefreshLogOpen(false);
     }
   }, [mobileRuntime, open]);
@@ -242,7 +239,6 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
 
   const handleCriteriaToggle = useCallback(() => {
     if (mobileRuntime) {
-      setSourceToolsOpen(false);
       setRefreshLogOpen(false);
     }
     onToggle();

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import type { PanelKey } from "./types";
 import { useTheme } from "./hooks/useTheme";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { isMobileTauriRuntime } from "./lib/tauri";
@@ -18,14 +17,6 @@ import type { WatchlistItem, LlmSettings } from "./types";
 
 type ViewKey = "screen" | "observe" | "backtest" | "news" | "agent";
 type LlmSettingsUpdater = LlmSettings | null | ((prev: LlmSettings | null) => LlmSettings | null);
-
-const VIEW_TO_PANELS: Record<ViewKey, PanelKey[]> = {
-  screen: ["screen", "sectorScreen", "boardScreen", "graph", "trendScreen"],
-  observe: ["observe"],
-  backtest: ["backtest"],
-  news: ["newsRag", "ragPackBuild", "ragPackQuery", "upstreamScan", "upstreamImport"],
-  agent: ["agent"],
-};
 
 interface AppProps {
   onMounted?: () => void;

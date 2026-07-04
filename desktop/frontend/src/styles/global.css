@@ -7497,21 +7497,21 @@ html.mobile-tauri.android-bottom-nav .result-actions button {
   line-height: 1 !important;
 }
 
-/* Android screen page stacking fix: keep the top tabs from overlapping the content below. */
-html.mobile-tauri.android-phone .panel-container,
-html.mobile-tauri.android-bottom-nav .panel-container {
+/* Android screen page stacking fix: scoped to Screen to avoid cross-page panel overrides. */
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .panel-container,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .panel-container {
   position: relative !important;
   isolation: isolate !important;
 }
 
-html.mobile-tauri.android-phone .screen-toolbar,
-html.mobile-tauri.android-bottom-nav .screen-toolbar {
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar {
   position: relative !important;
   z-index: 3 !important;
 }
 
-html.mobile-tauri.android-phone .panel-tabs,
-html.mobile-tauri.android-bottom-nav .panel-tabs {
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .panel-tabs,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .panel-tabs {
   position: relative !important;
   z-index: 2 !important;
   margin-bottom: 3px !important;
@@ -7519,32 +7519,31 @@ html.mobile-tauri.android-bottom-nav .panel-tabs {
   background: color-mix(in srgb, var(--surface) 88%, var(--bg)) !important;
 }
 
-html.mobile-tauri.android-phone .panel-tab,
-html.mobile-tauri.android-bottom-nav .panel-tab {
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .panel-tab,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .panel-tab {
   position: relative !important;
   z-index: 1 !important;
 }
 
-html.mobile-tauri.android-phone .panel-tab.active,
-html.mobile-tauri.android-bottom-nav .panel-tab.active {
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .panel-tab.active,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .panel-tab.active {
   z-index: 2 !important;
 }
 
-html.mobile-tauri.android-phone .panel-controls,
-html.mobile-tauri.android-bottom-nav .panel-controls {
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .panel-controls,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .panel-controls {
   position: relative !important;
   z-index: 1 !important;
   margin-top: 0 !important;
 }
 
-html.mobile-tauri.android-phone .panel-result,
-html.mobile-tauri.android-bottom-nav .panel-result,
-html.mobile-tauri.android-phone .result-list,
-html.mobile-tauri.android-bottom-nav .result-list {
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .panel-result,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .panel-result,
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .result-list,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .result-list {
   position: relative !important;
   z-index: 0 !important;
 }
-
 /* Android stock card header: current price lives at the upper-right of each card. */
 html.mobile-tauri.android-phone .stock-grid,
 html.mobile-tauri.android-bottom-nav .stock-grid {

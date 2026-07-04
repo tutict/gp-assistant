@@ -15,6 +15,8 @@ import {
   uniqueNotes,
 } from "./format";
 import { fetchObserveDailyHistoryRows } from "./observeHistory";
+import { hydrateObserveTrendFromHistory } from "./observeTrend";
+import type { ObserveResult } from "../types";
 
 declare global {
   interface Window {
@@ -158,9 +160,18 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
         if (Array.isArray(history) && history.length) payload.history = history;
       }
       const observeInvoke = invoke("api_observe", { payload });
-      return isMobileTauriRuntime()
-        ? withTimeout(observeInvoke, MOBILE_OBSERVE_INVOKE_TIMEOUT_MS, `移动端观察超过 ${Math.round(MOBILE_OBSERVE_INVOKE_TIMEOUT_MS / 1000)} 秒未返回，已中止等待。`)
-        : observeInvoke;
+      if (!isMobileTauriRuntime()) return observeInvoke;
+
+      const observeResult = await withTimeout(
+        observeInvoke,
+        MOBILE_OBSERVE_INVOKE_TIMEOUT_MS,
+        `移动端观察超过 ${Math.round(MOBILE_OBSERVE_INVOKE_TIMEOUT_MS / 1000)} 秒未返回，已中止等待。`,
+      );
+      return hydrateObserveTrendFromHistory(
+        observeResult as ObserveResult,
+        code,
+        Array.isArray(payload.history) ? payload.history as Record<string, unknown>[] : null,
+      );
     },
   },
 ];

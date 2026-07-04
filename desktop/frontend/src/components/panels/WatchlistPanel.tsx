@@ -1,6 +1,5 @@
 import { useCallback } from "react";
 import type { WatchlistItem } from "../../types";
-import { formatPrice, formatPercent } from "../../lib/format";
 
 interface WatchlistPanelProps {
   items: WatchlistItem[];
