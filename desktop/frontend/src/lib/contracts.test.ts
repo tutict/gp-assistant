@@ -154,6 +154,7 @@ describe("contract payload builders", () => {
   it("builds graph, trend, backtest, and news payloads with backend field names", () => {
     expect(buildGraphScreenRequest(criteria, "300750, 600519.SH", 2, 0.5)).toMatchObject({
       seed_codes: ["300750.SZ", "600519.SH"],
+      seed_query: "300750, 600519.SH",
       relation_depth: 2,
       relation_weight: 0.5,
       criteria: { limit: 100 },

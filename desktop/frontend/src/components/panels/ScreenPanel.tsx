@@ -120,8 +120,8 @@ export function ScreenPanel({
       {mode === "graph" && (
         <>
           <div className="form-row">
-            <label htmlFor="seedCodes">种子股票</label>
-            <StockCodeInput id="seedCodes" value={seedCodes} onChange={setSeedCodes} placeholder="600519.SH, 300750.SZ" listMode />
+            <label htmlFor="seedCodes">中心股票/主题</label>
+            <StockCodeInput id="seedCodes" value={seedCodes} onChange={setSeedCodes} placeholder="埃斯顿 / 002747.SZ" listMode />
           </div>
           <div className="form-row inline">
             <label htmlFor="relationDepth">关系深度</label>

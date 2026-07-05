@@ -91,6 +91,7 @@ export function buildGraphScreenRequest(
   return {
     criteria: buildScreenCriteria(criteria, { limit: 100 }),
     seed_codes: parseStockCodeList(seedCodesRaw).slice(0, 50),
+    seed_query: seedCodesRaw.trim(),
     relation_depth: clampInt(relationDepth, 1, 3, 1),
     relation_weight: clampFloat(relationWeight, 0, 1, 0.4),
     limit: Math.min(clampInt(criteria.resultLimit, 1, 200, 10), 100),

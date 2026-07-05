@@ -176,6 +176,7 @@ fn graph_screen_adds_relation_signals() {
             ..ScreenCriteria::default()
         },
         seed_codes: vec!["300750.SZ".to_string()],
+        seed_query: String::new(),
         relation_depth: 1,
         relation_weight: 0.4,
         limit: 20,
@@ -185,6 +186,166 @@ fn graph_screen_adds_relation_signals() {
     assert!(result.items.iter().any(|item| item.relation_score > 0.0));
 }
 
+#[test]
+fn graph_screen_resolves_seed_query_to_robotics_supply_chain() {
+    let stocks = vec![
+        chain_stock(
+            "002747.SZ",
+            "\u{57c3}\u{65af}\u{987f}",
+            "\u{5de5}\u{4e1a}\u{673a}\u{5668}\u{4eba}",
+            220.0,
+        ),
+        chain_stock(
+            "688017.SH",
+            "\u{7eff}\u{7684}\u{8c10}\u{6ce2}",
+            "\u{673a}\u{5668}\u{4eba}\u{51cf}\u{901f}\u{5668}",
+            180.0,
+        ),
+        chain_stock(
+            "002979.SZ",
+            "\u{96f7}\u{8d5b}\u{667a}\u{80fd}",
+            "\u{4f3a}\u{670d}\u{63a7}\u{5236}\u{5668}",
+            120.0,
+        ),
+        chain_stock(
+            "300750.SZ",
+            "\u{5b81}\u{5fb7}\u{65f6}\u{4ee3}",
+            "\u{9502}\u{7535}\u{65b0}\u{80fd}\u{6e90}",
+            1800.0,
+        ),
+        chain_stock(
+            "600519.SH",
+            "\u{8d35}\u{5dde}\u{8305}\u{53f0}",
+            "\u{767d}\u{9152}",
+            2200.0,
+        ),
+    ];
+    let data = CoreDataSet {
+        stocks,
+        relations: Vec::new(),
+        histories: HashMap::new(),
+        financials: HashMap::new(),
+        capital_evidence: HashMap::new(),
+    };
+
+    let result = graph_screen_with_data(
+        &data,
+        &GraphScreenRequest {
+            seed_query: "\u{6309}\u{57c3}\u{65af}\u{987f}\u{4e0a}\u{4e0b}\u{6e38}\u{9009}\u{80a1}"
+                .to_string(),
+            relation_depth: 2,
+            relation_weight: 0.7,
+            limit: 5,
+            ..GraphScreenRequest::default()
+        },
+    )
+    .expect("graph screen should run");
+
+    assert_eq!(result.center_context.mode, "seed_stock_center");
+    assert!(result
+        .center_context
+        .codes
+        .contains(&"002747.SZ".to_string()));
+    assert!(result
+        .items
+        .iter()
+        .any(|item| item.stock.code == "688017.SH"));
+    assert!(result
+        .items
+        .iter()
+        .any(|item| item.stock.code == "300750.SZ"));
+    assert!(result
+        .items
+        .iter()
+        .any(|item| item.related.iter().any(|relation| {
+            relation.relation_type == "supply_chain_upstream"
+                || relation.relation_type == "supply_chain_downstream"
+        })));
+}
+
+#[test]
+fn graph_screen_does_not_add_robotics_chain_for_non_robot_seed_query() {
+    let stocks = vec![
+        chain_stock(
+            "002747.SZ",
+            "\u{57c3}\u{65af}\u{987f}",
+            "\u{5de5}\u{4e1a}\u{673a}\u{5668}\u{4eba}",
+            220.0,
+        ),
+        chain_stock(
+            "688017.SH",
+            "\u{7eff}\u{7684}\u{8c10}\u{6ce2}",
+            "\u{673a}\u{5668}\u{4eba}\u{51cf}\u{901f}\u{5668}",
+            180.0,
+        ),
+        chain_stock(
+            "300750.SZ",
+            "\u{5b81}\u{5fb7}\u{65f6}\u{4ee3}",
+            "\u{9502}\u{7535}\u{65b0}\u{80fd}\u{6e90}",
+            1800.0,
+        ),
+        chain_stock(
+            "600519.SH",
+            "\u{8d35}\u{5dde}\u{8305}\u{53f0}",
+            "\u{767d}\u{9152}",
+            2200.0,
+        ),
+    ];
+    let data = CoreDataSet {
+        stocks,
+        relations: Vec::new(),
+        histories: HashMap::new(),
+        financials: HashMap::new(),
+        capital_evidence: HashMap::new(),
+    };
+
+    let result = graph_screen_with_data(
+        &data,
+        &GraphScreenRequest {
+            seed_query: "\u{8d35}\u{5dde}\u{8305}\u{53f0}\u{4e0a}\u{4e0b}\u{6e38}".to_string(),
+            relation_depth: 2,
+            relation_weight: 0.7,
+            limit: 5,
+            ..GraphScreenRequest::default()
+        },
+    )
+    .expect("graph screen should run");
+
+    assert_eq!(result.center_context.mode, "seed_stock_center");
+    assert!(result
+        .center_context
+        .codes
+        .contains(&"600519.SH".to_string()));
+    assert!(result
+        .items
+        .iter()
+        .all(|item| item.related.iter().all(|relation| {
+            relation.relation_type != "supply_chain_upstream"
+                && relation.relation_type != "supply_chain_downstream"
+        })));
+    assert!(result
+        .notes
+        .iter()
+        .all(|note| { !note.contains("\u{673a}\u{5668}\u{4eba}\u{4ea7}\u{4e1a}\u{94fe}") }));
+}
+fn chain_stock(code: &str, name: &str, industry: &str, market_cap_billion: f64) -> StockItem {
+    StockItem {
+        code: code.to_string(),
+        name: name.to_string(),
+        industry: industry.to_string(),
+        is_st: false,
+        price: 20.0,
+        pe: Some(20.0),
+        pb: Some(3.0),
+        roe: Some(0.15),
+        market_cap_billion: Some(market_cap_billion),
+        dividend_yield: Some(0.01),
+        deducted_net_profit_billion: Some(3.0),
+        deducted_net_profit_margin: Some(12.0),
+        deducted_net_profit_growth_rate: Some(15.0),
+        ..StockItem::default()
+    }
+}
 #[test]
 fn backtest_uses_mock_history() {
     let result = backtest_with_mock(&BacktestRequest {

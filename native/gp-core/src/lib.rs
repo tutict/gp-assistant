@@ -286,6 +286,8 @@ pub struct GraphScreenRequest {
     pub criteria: ScreenCriteria,
     #[serde(default)]
     pub seed_codes: Vec<String>,
+    #[serde(default)]
+    pub seed_query: String,
     #[serde(default = "default_relation_depth")]
     pub relation_depth: usize,
     #[serde(default = "default_relation_weight_param")]
@@ -299,6 +301,7 @@ impl Default for GraphScreenRequest {
         Self {
             criteria: ScreenCriteria::default(),
             seed_codes: Vec::new(),
+            seed_query: String::new(),
             relation_depth: default_relation_depth(),
             relation_weight: default_relation_weight_param(),
             limit: default_graph_limit(),
@@ -2879,6 +2882,7 @@ pub fn run_agent_with_source(
         let graph_request = GraphScreenRequest {
             criteria,
             seed_codes: extract_codes(message),
+            seed_query: message.to_string(),
             relation_depth: if contains_any(&lower, &["二级", "2层", "2-hop", "two hop"]) {
                 2
             } else {
@@ -3364,7 +3368,12 @@ pub fn graph_screen_stocks(
     request: &GraphScreenRequest,
 ) -> GraphScreenResult {
     let candidate_pool = screen_candidate_pool(universe, &request.criteria, request.limit);
-    let center_context = resolve_center_context(&candidate_pool, &request.seed_codes);
+    let center_context = resolve_center_context(
+        universe,
+        &candidate_pool,
+        &request.seed_codes,
+        &request.seed_query,
+    );
     let candidate_by_code: HashMap<String, ScreenedStock> = candidate_pool
         .iter()
         .map(|item| (item.stock.code.clone(), item.clone()))
@@ -3374,7 +3383,10 @@ pub fn graph_screen_stocks(
         .map(|stock| (stock.code.clone(), stock.clone()))
         .collect();
 
+    let supply_chain_relations = infer_supply_chain_relations(universe, &center_context);
+    let has_supply_chain_relations = !supply_chain_relations.is_empty();
     let mut raw_relations = provider_relations.to_vec();
+    raw_relations.extend(supply_chain_relations);
     raw_relations.extend(infer_industry_relations(universe));
     let relations = merge_relations(&raw_relations);
     let adjacency = build_adjacency(&relations);
@@ -3425,6 +3437,9 @@ pub fn graph_screen_stocks(
             .to_string(),
     ];
     notes.extend(deducted_profit_rule_notes(universe, &request.criteria));
+    if has_supply_chain_relations {
+        notes.push("\u{5df2}\u{6839}\u{636e}\u{4e2d}\u{5fc3}\u{80a1}\u{63a8}\u{5bfc}\u{673a}\u{5668}\u{4eba}\u{4ea7}\u{4e1a}\u{94fe}\u{4e0a}\u{6e38}\u{90e8}\u{4ef6}\u{3001}\u{4e2d}\u{6e38}\u{672c}\u{4f53}/\u{7cfb}\u{7edf}\u{96c6}\u{6210}\u{3001}\u{4e0b}\u{6e38}\u{5e94}\u{7528}\u{573a}\u{666f}\u{5173}\u{7cfb}\u{3002}".to_string());
+    }
     if center_context.mode == "theme_center" {
         notes.push(format!(
             "\u{672a}\u{63d0}\u{4f9b}\u{79cd}\u{5b50}\u{80a1}\u{ff0c}\u{56fe}\u{8c31}\u{9009}\u{80a1}\u{4f7f}\u{7528}{}\u{3002}",
@@ -4720,19 +4735,33 @@ fn screen_candidate_pool(
 }
 
 fn resolve_center_context(
+    universe: &[StockItem],
     candidate_pool: &[ScreenedStock],
     seed_codes: &[String],
+    seed_query: &str,
 ) -> GraphCenterContext {
-    let normalized_seed_codes: Vec<String> = seed_codes
+    let mut normalized_seed_codes: Vec<String> = seed_codes
         .iter()
         .map(|code| normalize_stock_code(code))
         .filter(|code| !code.is_empty())
         .take(50)
         .collect();
+    normalized_seed_codes.extend(resolve_seed_query_codes(universe, seed_query));
+    normalized_seed_codes.sort();
+    normalized_seed_codes.dedup();
+    normalized_seed_codes.truncate(50);
     if !normalized_seed_codes.is_empty() {
+        let label = if seed_query.trim().is_empty() {
+            "\u{79cd}\u{5b50}\u{80a1}\u{4e2d}\u{5fc3}".to_string()
+        } else {
+            format!(
+                "\u{4ea7}\u{4e1a}\u{94fe}\u{4e2d}\u{5fc3}\u{ff1a}{}",
+                seed_query.trim()
+            )
+        };
         return GraphCenterContext {
-            mode: "seed_codes".to_string(),
-            label: "\u{79cd}\u{5b50}\u{80a1}\u{4e2d}\u{5fc3}".to_string(),
+            mode: "seed_stock_center".to_string(),
+            label,
             codes: normalized_seed_codes,
         };
     }
@@ -4778,6 +4807,43 @@ fn resolve_center_context(
     }
 }
 
+fn resolve_seed_query_codes(universe: &[StockItem], seed_query: &str) -> Vec<String> {
+    let query = seed_query.trim().to_lowercase();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let normalized_query = normalize_stock_code(&query).to_lowercase();
+    let mut matches: Vec<StockItem> = universe
+        .iter()
+        .filter(|stock| {
+            let code = stock.code.to_lowercase();
+            let normalized_code = normalize_stock_code(&stock.code).to_lowercase();
+            let name = stock.name.to_lowercase();
+            let industry = stock.industry.to_lowercase();
+            code == normalized_query
+                || normalized_code == normalized_query
+                || code.contains(&query)
+                || (!normalized_code.is_empty() && normalized_query.contains(&normalized_code))
+                || name.contains(&query)
+                || (!name.is_empty() && query.contains(&name))
+                || industry.contains(&query)
+                || (!industry.is_empty() && query.contains(&industry))
+        })
+        .cloned()
+        .collect();
+    matches.sort_by(|left, right| {
+        right
+            .market_cap_billion
+            .unwrap_or(0.0)
+            .total_cmp(&left.market_cap_billion.unwrap_or(0.0))
+    });
+    matches
+        .into_iter()
+        .take(12)
+        .map(|stock| stock.code)
+        .collect()
+}
+
 fn average_screen_score(items: &[ScreenedStock]) -> f64 {
     if items.is_empty() {
         0.0
@@ -4804,13 +4870,216 @@ fn center_group_key(item: &ScreenedStock) -> (String, String) {
         "industry center: unknown".to_string(),
     )
 }
+
+#[derive(Clone, Debug)]
+struct ChainProfile {
+    code: String,
+    role: &'static str,
+    rank: f64,
+}
+
+fn infer_supply_chain_relations(
+    universe: &[StockItem],
+    center_context: &GraphCenterContext,
+) -> Vec<StockRelation> {
+    let mut profiles: Vec<ChainProfile> = universe
+        .iter()
+        .flat_map(|stock| {
+            robotics_chain_roles(stock)
+                .into_iter()
+                .map(move |role| ChainProfile {
+                    code: stock.code.clone(),
+                    role,
+                    rank: chain_stock_rank(stock),
+                })
+        })
+        .collect();
+    if profiles.is_empty() {
+        return Vec::new();
+    }
+    profiles.sort_by(|left, right| right.rank.total_cmp(&left.rank));
+
+    let center_codes: HashSet<String> = center_context.codes.iter().cloned().collect();
+    let seeded = center_context.mode == "seed_stock_center" && !center_codes.is_empty();
+    let center_profiles: Vec<ChainProfile> = profiles
+        .iter()
+        .filter(|profile| center_codes.contains(&profile.code))
+        .cloned()
+        .collect();
+    if seeded && center_profiles.is_empty() {
+        return Vec::new();
+    }
+    let mut anchors: Vec<ChainProfile> = profiles
+        .iter()
+        .filter(|profile| profile.role == "midstream_robot")
+        .filter(|profile| !seeded || center_codes.contains(&profile.code))
+        .cloned()
+        .collect();
+    if anchors.is_empty() {
+        anchors = profiles
+            .iter()
+            .filter(|profile| profile.role == "midstream_robot")
+            .take(if seeded { 8 } else { 12 })
+            .cloned()
+            .collect();
+    }
+    if anchors.is_empty() {
+        return Vec::new();
+    }
+    anchors.sort_by(|left, right| right.rank.total_cmp(&left.rank));
+    anchors.truncate(12);
+
+    let upstream = top_chain_profiles(&profiles, "upstream_component", 80);
+    let downstream = top_chain_profiles(&profiles, "downstream_application", 80);
+    let mut relations = Vec::new();
+
+    for anchor in &anchors {
+        for upstream_profile in &upstream {
+            if upstream_profile.code == anchor.code {
+                continue;
+            }
+            relations.push(StockRelation {
+                source_code: upstream_profile.code.clone(),
+                target_code: anchor.code.clone(),
+                relation_type: "supply_chain_upstream".to_string(),
+                weight: 0.88,
+                description: Some("\u{673a}\u{5668}\u{4eba}\u{4ea7}\u{4e1a}\u{94fe}\u{4e0a}\u{6e38}\u{90e8}\u{4ef6} -> \u{672c}\u{4f53}/\u{7cfb}\u{7edf}\u{96c6}\u{6210}".to_string()),
+            });
+        }
+        for downstream_profile in &downstream {
+            if downstream_profile.code == anchor.code {
+                continue;
+            }
+            relations.push(StockRelation {
+                source_code: anchor.code.clone(),
+                target_code: downstream_profile.code.clone(),
+                relation_type: "supply_chain_downstream".to_string(),
+                weight: 0.78,
+                description: Some("\u{673a}\u{5668}\u{4eba}\u{672c}\u{4f53}/\u{7cfb}\u{7edf}\u{96c6}\u{6210} -> \u{4e0b}\u{6e38}\u{5e94}\u{7528}\u{573a}\u{666f}".to_string()),
+            });
+        }
+    }
+
+    for index in 0..anchors.len() {
+        for target in anchors.iter().skip(index + 1).take(3) {
+            relations.push(StockRelation {
+                source_code: anchors[index].code.clone(),
+                target_code: target.code.clone(),
+                relation_type: "robotics_peer".to_string(),
+                weight: 0.62,
+                description: Some("\u{673a}\u{5668}\u{4eba}\u{4ea7}\u{4e1a}\u{94fe}\u{4e2d}\u{6e38}\u{540c}\u{7c7b}".to_string()),
+            });
+        }
+    }
+
+    relations
+}
+
+fn top_chain_profiles(
+    profiles: &[ChainProfile],
+    role: &'static str,
+    limit: usize,
+) -> Vec<ChainProfile> {
+    let mut seen = HashSet::new();
+    profiles
+        .iter()
+        .filter(|profile| profile.role == role)
+        .filter(|profile| seen.insert(profile.code.clone()))
+        .take(limit)
+        .cloned()
+        .collect()
+}
+
+fn robotics_chain_roles(stock: &StockItem) -> Vec<&'static str> {
+    let text = format!("{} {} {}", stock.code, stock.name, stock.industry).to_lowercase();
+    let mut roles = Vec::new();
+    if contains_any(
+        &text,
+        &[
+            "002747",
+            "estun",
+            "robot",
+            "automation",
+            "\u{57c3}\u{65af}\u{987f}",
+            "\u{673a}\u{5668}\u{4eba}",
+            "\u{81ea}\u{52a8}\u{5316}",
+            "\u{5de5}\u{4e1a}\u{673a}\u{5668}\u{4eba}",
+            "\u{667a}\u{80fd}\u{88c5}\u{5907}",
+        ],
+    ) {
+        roles.push("midstream_robot");
+    }
+    if contains_any(
+        &text,
+        &[
+            "servo",
+            "sensor",
+            "reducer",
+            "controller",
+            "vision",
+            "\u{51cf}\u{901f}\u{5668}",
+            "\u{4f3a}\u{670d}",
+            "\u{63a7}\u{5236}\u{5668}",
+            "\u{4f20}\u{611f}\u{5668}",
+            "\u{673a}\u{5668}\u{89c6}\u{89c9}",
+            "\u{7535}\u{673a}",
+            "\u{4e1d}\u{6760}",
+            "\u{8f74}\u{627f}",
+            "\u{5de5}\u{4e1a}\u{6bcd}\u{673a}",
+        ],
+    ) {
+        roles.push("upstream_component");
+    }
+    if contains_any(
+        &text,
+        &[
+            "ev",
+            "battery",
+            "semiconductor",
+            "\u{6c7d}\u{8f66}",
+            "\u{65b0}\u{80fd}\u{6e90}",
+            "\u{9502}\u{7535}",
+            "\u{5149}\u{4f0f}",
+            "\u{533b}\u{7597}",
+            "\u{7269}\u{6d41}",
+            "\u{534a}\u{5bfc}\u{4f53}",
+            "\u{7535}\u{5b50}",
+            "\u{6d88}\u{8d39}\u{7535}\u{5b50}",
+        ],
+    ) {
+        roles.push("downstream_application");
+    }
+    roles
+}
+
+fn chain_stock_rank(stock: &StockItem) -> f64 {
+    stock.market_cap_billion.unwrap_or(0.0).sqrt()
+        + stock.roe.and_then(as_percent).unwrap_or(0.0).max(0.0)
+        + stock
+            .deducted_net_profit_growth_rate
+            .and_then(as_percent)
+            .unwrap_or(0.0)
+            .max(0.0)
+            * 0.2
+}
+
+fn is_directional_relation_type(relation_type: &str) -> bool {
+    matches!(
+        relation_type,
+        "supply_chain_upstream" | "supply_chain_downstream" | "supply_chain_application"
+    )
+}
 fn merge_relations(relations: &[StockRelation]) -> Vec<StockRelation> {
     let mut merged: HashMap<(String, String, String), StockRelation> = HashMap::new();
     for relation in relations {
         if relation.source_code == relation.target_code {
             continue;
         }
-        let (source, target) = sorted_pair(&relation.source_code, &relation.target_code);
+        let (source, target) = if is_directional_relation_type(&relation.relation_type) {
+            (relation.source_code.clone(), relation.target_code.clone())
+        } else {
+            sorted_pair(&relation.source_code, &relation.target_code)
+        };
         let key = (
             source.clone(),
             target.clone(),
@@ -5013,10 +5282,18 @@ fn relation_with_names(
         return relation;
     };
     let description = relation.description.clone().unwrap_or_default();
+    let connector = if is_directional_relation_type(&relation.relation_type) {
+        "->"
+    } else {
+        "<->"
+    };
     relation.description = Some(
-        format!("{} <-> {}. {}", source.name, target.name, description)
-            .trim()
-            .to_string(),
+        format!(
+            "{} {} {}. {}",
+            source.name, connector, target.name, description
+        )
+        .trim()
+        .to_string(),
     );
     relation
 }
