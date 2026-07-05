@@ -6,17 +6,18 @@ export function hydrateObserveTrendFromHistory(
   code: string,
   historyRows: Record<string, unknown>[] | null | undefined,
 ): ObserveResult {
-  if ((result.trend?.series?.length || 0) > 1) return result;
-
   const series = historyRowsToTrendSeries(historyRows || []);
   if (series.length < 2) return result;
 
   const latest = series[series.length - 1];
+  const currentLatest = latestResultTrendPoint(result);
+  if (currentLatest?.date && currentLatest.date >= latest.date) return result;
+
   const stock: StockItem = {
     ...(result.stock || { code, name: code }),
     code: result.stock?.code || code,
     name: result.stock?.name || code,
-    price: result.stock?.price ?? latest.close,
+    price: latest.close,
   };
 
   return {
@@ -25,6 +26,7 @@ export function hydrateObserveTrendFromHistory(
     trend: {
       stock,
       signal: {
+        ...(result.trend?.signal || {}),
         code: stock.code,
         date: latest.date,
         close: latest.close,
@@ -38,6 +40,11 @@ export function hydrateObserveTrendFromHistory(
   };
 }
 
+function latestResultTrendPoint(result: ObserveResult): { date?: string; close?: number | null } | null {
+  const series = result.trend?.series || [];
+  if (series.length) return series[series.length - 1];
+  return result.trend?.signal || null;
+}
 export function historyRowsToTrendSeries(rows: Record<string, unknown>[]): TrendIndicatorPoint[] {
   const bars = rows
     .map((row) => {

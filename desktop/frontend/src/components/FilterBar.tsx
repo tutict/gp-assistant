@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getJson, getTauriInvoke, postJson, refreshTauriMarketData } from "../lib/tauri";
+import { getJson, getTauriInvoke, isMarketStatusStale, postJson, refreshTauriMarketData } from "../lib/tauri";
 import { clampInt, formatBytes, formatNumber, formatPercent } from "../lib/format";
 import type { DataStatus } from "../types";
 
@@ -96,6 +96,7 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
   const [refreshLog, setRefreshLog] = useState<RefreshLogEntry[]>([]);
   const [refreshLogOpen, setRefreshLogOpen] = useState(false);
   const refreshLogTimerRef = useRef<number | null>(null);
+  const autoRefreshStartedRef = useRef(false);
   const [progress, setProgress] = useState<{ label: string; value: number } | null>(null);
   const [batchCount, setBatchCount] = useState(mobileRuntime ? 12 : 32);
   const [maxCandidates, setMaxCandidates] = useState(15000);
@@ -151,13 +152,15 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
     try {
       const data = await getJson<DataStatus>("/api/data-sources/status");
       setStatus(data);
+      return data;
     } catch (err) {
       appendLog(`状态读取失败：${(err as Error).message}`, "error");
+      return null;
     }
   }, [appendLog]);
 
   useEffect(() => {
-    loadStatus();
+    void loadStatus();
   }, [loadStatus]);
 
   const refreshOptions = useMemo(() => ({
@@ -168,6 +171,15 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
     max_candidates: Math.max(1000, Math.min(50000, Math.round(maxCandidates || 15000))),
     validate_after_write: true,
   }), [batchCount, fullRebuild, maxCandidates]);
+
+  const autoRefreshOptions = useMemo(() => ({
+    ...CACHE_POLICY,
+    mode: "light",
+    batch_start: 0,
+    batch_count: mobileRuntime ? 12 : 32,
+    max_candidates: 15000,
+    validate_after_write: true,
+  }), [mobileRuntime]);
 
   const refreshUniverse = useCallback(async () => {
     clearRefreshLogTimer();
@@ -195,6 +207,51 @@ export function FilterBar({ criteria, onChange, open, onToggle, onClose, mobileR
       window.setTimeout(() => setProgress(null), 1400);
     }
   }, [appendLog, clearRefreshLogTimer, mobileRuntime, refreshOptions, scheduleRefreshLogCollapse, updateProgressFromRefresh]);
+
+  useEffect(() => {
+    if (autoRefreshStartedRef.current || refreshing) return;
+    let cancelled = false;
+
+    const autoRefreshIfNeeded = async () => {
+      const currentStatus = status || await loadStatus();
+      if (cancelled || !currentStatus || !isMarketStatusStale(currentStatus)) return;
+
+      autoRefreshStartedRef.current = true;
+      clearRefreshLogTimer();
+      setRefreshLogOpen(!mobileRuntime);
+      setProgress({ label: "正在后台同步上一开盘日行情...", value: 6 });
+      appendLog("检测到行情缓存不是最新开盘日，已在后台触发自动刷新。", "info");
+
+      try {
+        const invoke = getTauriInvoke();
+        if (!invoke) {
+          setProgress({ label: "自动刷新已跳过", value: 100 });
+          appendLog("当前网页环境不执行启动自动刷新，避免阻塞筛选运行。", "info");
+          scheduleRefreshLogCollapse();
+          return;
+        }
+        const data = await postJson<{ status?: DataStatus; notes?: string[]; refreshed?: boolean; background_refresh?: boolean }>("/api/data-sources/auto-refresh-universe", autoRefreshOptions);
+        const nextStatus = (data.status || data) as DataStatus;
+        setStatus(nextStatus);
+        setProgress({ label: data.background_refresh ? "后台刷新已启动" : "上一开盘日行情已同步", value: 100 });
+        appendLog((Array.isArray(data.notes) ? data.notes.join(" ") : "") || (data.background_refresh ? "后台自动刷新已启动，筛选可继续运行。" : "上一开盘日行情已同步。"), "success");
+        scheduleRefreshLogCollapse();
+      } catch (err) {
+        appendLog(`自动刷新失败：${(err as Error).message}`, "error");
+        setProgress({ label: "自动刷新失败", value: 100 });
+        scheduleRefreshLogCollapse();
+      } finally {
+        if (!cancelled) {
+          window.setTimeout(() => setProgress(null), 1400);
+        }
+      }
+    };
+
+    void autoRefreshIfNeeded();
+    return () => {
+      cancelled = true;
+    };
+  }, [appendLog, autoRefreshOptions, clearRefreshLogTimer, loadStatus, mobileRuntime, refreshing, scheduleRefreshLogCollapse, status, updateProgressFromRefresh]);
 
   const pruneCache = useCallback(async () => {
     clearRefreshLogTimer();

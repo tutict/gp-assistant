@@ -1208,7 +1208,7 @@ a:hover { text-decoration: underline; }
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   background: radial-gradient(circle at 50% 44%, color-mix(in srgb, var(--agent-accent) 10%, transparent), transparent 34%),
     #121316;
 }
@@ -10340,15 +10340,21 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-works
   box-shadow: 18px 0 36px rgba(0, 0, 0, 0.42) !important;
 }
 
-html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-new-chat,
-html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-new-chat,
-html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-new-chat,
-html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-new-chat,
+/* Hide only the brand block in the drawer (the app header already shows 股选优).
+   The new-chat button and the model footer stay visible so the rail is usable. */
 html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-brand,
-html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-footer,
-html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-brand,
-html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-footer {
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-brand {
   display: none !important;
+}
+
+/* Full-width “新建对话” button inside the drawer, so a new chat is reachable while
+   the rail is open (the floating + on the chat stage is behind the scrim). */
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-new-chat,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-new-chat {
+  display: inline-flex !important;
+  width: 100% !important;
+  min-height: 40px !important;
+  margin: 0 !important;
 }
 
 html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-toggle,
@@ -10376,6 +10382,7 @@ html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace.
 html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-section,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail-section {
   grid-area: history !important;
+  flex: 1 1 auto !important;
   display: grid !important;
   grid-template-rows: auto minmax(0, 1fr) !important;
   gap: 8px !important;
@@ -11464,4 +11471,1727 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-pan
 html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-result-list,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-result-list {
   padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)) !important;
+}
+
+/* Agent rail model settings: keep connection controls in the sidebar footer. */
+.agent-rail-model-settings {
+  position: relative;
+  margin-top: auto;
+  width: 100%;
+  display: block;
+  min-width: 0;
+}
+
+.agent-rail-model-settings .llm-settings-panel {
+  margin: 0;
+  width: 100%;
+}
+
+.agent-rail-model-settings .llm-settings-toggle {
+  min-height: 46px;
+  padding: 8px 9px;
+  border-radius: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "label state"
+    "name name"
+    "model model";
+  gap: 2px 8px;
+  background: color-mix(in srgb, var(--surface) 80%, #000 20%);
+}
+
+.agent-rail-model-settings .llm-settings-toggle > span {
+  grid-area: label;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.agent-rail-model-settings .llm-settings-toggle strong {
+  grid-area: name;
+  font-size: 0.82rem;
+}
+
+.agent-rail-model-settings .llm-settings-toggle em {
+  grid-area: model;
+  font-size: 0.68rem;
+}
+
+.agent-rail-model-settings .llm-settings-toggle .llm-endpoint-state {
+  grid-area: state;
+  align-self: start;
+  padding: 1px 6px;
+  font-size: 0.62rem;
+}
+
+.agent-rail-model-settings .llm-settings-toggle .llm-status {
+  display: none;
+}
+
+.agent-rail-model-settings .llm-settings-body {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  max-height: min(62vh, 560px);
+  overflow: auto;
+  padding: 10px;
+  border-radius: 10px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255,255,255,0.04);
+  z-index: 20;
+}
+
+.agent-rail-model-settings .llm-switcher-summary,
+.agent-rail-model-settings .llm-switcher-grid,
+.agent-rail-model-settings .llm-editor-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.agent-rail-model-settings .llm-add-btn,
+.agent-rail-model-settings .llm-switcher .save-btn {
+  width: 100%;
+}
+
+.agent-rail-model-settings .llm-provider-list {
+  max-height: 180px;
+  overflow: auto;
+}
+
+.agent-workspace.rail-collapsed .agent-rail-model-settings {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .app[data-active-view="agent"] .agent-rail-model-settings,
+  .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail-model-settings {
+    display: block;
+    grid-area: model;
+    width: 100%;
+  }
+
+  .app[data-active-view="agent"] .agent-rail,
+  .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail {
+    grid-template-areas:
+      "toggle"
+      "brand"
+      "actions"
+      "history"
+      "model";
+  }
+
+  .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-toggle {
+    min-height: 38px;
+    padding: 6px 7px;
+    border-radius: 7px;
+  }
+
+  .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-body {
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: calc(var(--phone-nav-h-final, 0px) + 10px);
+    max-height: min(70vh, 560px);
+  }
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail-model-settings,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail-model-settings {
+  display: block !important;
+  grid-area: model !important;
+  width: 100% !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail {
+  /* Flex column instead of the (mismatched) grid-template-areas above: children
+     stack in DOM order — toggle, search, 新建对话, history, model — with the
+     history section flexing to fill and the model footer pinned to the bottom.
+     This removes the empty grid rows that scattered the content vertically. */
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 12px !important;
+  grid-template-areas: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-body,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-body {
+  position: fixed !important;
+  left: 10px !important;
+  right: 10px !important;
+  bottom: calc(var(--phone-nav-h-final, 0px) + 10px) !important;
+  max-height: min(70vh, 560px) !important;
+  z-index: 70 !important;
+}
+/* Android Agent drawer v3 final: compact, explicit side drawer layout. */
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace.rail-collapsed,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace.rail-collapsed {
+  position: relative !important;
+  overflow: hidden !important;
+  background: #090a0b !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace .agent-rail,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace .agent-rail,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail {
+  position: absolute !important;
+  inset: 0 auto auto 0 !important;
+  z-index: 80 !important;
+  width: min(72vw, 292px) !important;
+  max-width: calc(100vw - 74px) !important;
+  height: calc(100dvh - var(--phone-nav-h-final, 0px) - 10px) !important;
+  min-height: 0 !important;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto !important;
+  grid-template-areas:
+    "toggle"
+    "new"
+    "search"
+    "history"
+    "model" !important;
+  gap: 10px !important;
+  align-content: stretch !important;
+  justify-items: stretch !important;
+  padding: max(12px, env(safe-area-inset-top)) 12px max(10px, env(safe-area-inset-bottom)) !important;
+  border: 0 !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 0 16px 16px 0 !important;
+  background: rgba(12, 14, 17, 0.98) !important;
+  box-shadow: 18px 0 42px rgba(0, 0, 0, 0.5) !important;
+  transform: translateX(0) !important;
+  transition: transform 180ms ease, box-shadow 180ms ease !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail {
+  transform: translateX(calc(-100% - 8px)) !important;
+  box-shadow: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-toggle,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-toggle {
+  grid-area: toggle !important;
+  width: 32px !important;
+  height: 26px !important;
+  min-width: 32px !important;
+  min-height: 26px !important;
+  justify-self: start !important;
+  align-self: start !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.84) !important;
+  box-shadow: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-toggle span,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-toggle span + span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-toggle span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-toggle span + span {
+  display: block !important;
+  width: 18px !important;
+  height: 2px !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: currentColor !important;
+  transform: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-toggle span + span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-toggle span + span {
+  margin-top: 6px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-brand,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-brand {
+  display: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-new-chat,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-new-chat {
+  grid-area: new !important;
+  display: inline-flex !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  min-height: 36px !important;
+  margin: 0 !important;
+  padding: 0 12px !important;
+  border-radius: 12px !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  background: rgba(255, 255, 255, 0.055) !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+  font-size: 0.78rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-new-chat span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-new-chat span {
+  width: 15px !important;
+  height: 15px !important;
+  font-size: 0.8rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-search,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-search {
+  grid-area: search !important;
+  display: grid !important;
+  min-height: 38px !important;
+  padding: 0 11px !important;
+  gap: 8px !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 12px !important;
+  background: rgba(26, 29, 34, 0.96) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-section,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail-section,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-section,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail-section {
+  grid-area: history !important;
+  display: grid !important;
+  grid-template-rows: auto minmax(0, 1fr) !important;
+  gap: 7px !important;
+  min-height: 0 !important;
+  width: 100% !important;
+  overflow: hidden !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-section-head,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-section-head {
+  min-height: 20px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0 2px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-history-list,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-history-list {
+  display: block !important;
+  min-height: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  padding: 0 1px 4px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-history-item,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-history-item {
+  width: 100% !important;
+  min-height: 0 !important;
+  border-radius: 10px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-history-main,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-history-main {
+  min-height: 42px !important;
+  padding: 8px 10px !important;
+  border-radius: 10px !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail-model-settings,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail-model-settings {
+  grid-area: model !important;
+  display: block !important;
+  min-height: 0 !important;
+  width: 100% !important;
+  padding-top: 8px !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.07) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-toggle,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-toggle {
+  min-height: 34px !important;
+  padding: 5px 8px !important;
+  border-radius: 10px !important;
+  background: rgba(255, 255, 255, 0.035) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-toggle > span,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-toggle em,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-toggle > span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-toggle em {
+  font-size: 0.56rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-toggle strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-toggle strong {
+  font-size: 0.68rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace:not(.rail-collapsed) .agent-chat-stage,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace:not(.rail-collapsed) .agent-chat-stage {
+  filter: brightness(0.72) !important;
+}
+/* Android Agent drawer v4 final: narrower rail and raised model footer. */
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace .agent-rail,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace .agent-rail,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail {
+  width: min(66vw, 258px) !important;
+  max-width: calc(100vw - 112px) !important;
+  height: calc(100dvh - max(var(--phone-nav-h-final, 72px), 72px) - 18px) !important;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto !important;
+  gap: 8px !important;
+  padding: max(10px, env(safe-area-inset-top)) 10px 12px !important;
+  border-radius: 0 14px 14px 0 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-new-chat,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-new-chat {
+  min-height: 32px !important;
+  padding: 0 10px !important;
+  border-radius: 10px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-search,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-search {
+  min-height: 34px !important;
+  padding: 0 10px !important;
+  border-radius: 10px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-history-main,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-history-main {
+  min-height: 38px !important;
+  padding: 7px 9px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail-model-settings,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail-model-settings {
+  align-self: end !important;
+  margin-bottom: 10px !important;
+  padding-top: 7px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-toggle,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-toggle {
+  min-height: 30px !important;
+  padding: 4px 7px !important;
+  border-radius: 9px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-endpoint-state,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-endpoint-state {
+  transform: scale(0.86) !important;
+  transform-origin: right top !important;
+}
+/* Android Agent drawer v5 final: remove duplicate drawer new-chat action. */
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace .agent-rail,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace .agent-rail,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail {
+  grid-template-rows: auto auto minmax(0, 1fr) auto !important;
+  grid-template-areas:
+    "toggle"
+    "search"
+    "history"
+    "model" !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail > .agent-new-chat,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail > .agent-new-chat {
+  display: none !important;
+}
+/* Android Agent LLM sheet v1: detach model settings from drawer layout. */
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace:not(.rail-collapsed) .agent-rail,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace:not(.rail-collapsed) .agent-rail {
+  transform: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-panel.open::before,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-panel.open::before {
+  content: "";
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 115 !important;
+  background: rgba(0, 0, 0, 0.5) !important;
+  pointer-events: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-panel.open .llm-settings-toggle,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-panel.open .llm-settings-toggle {
+  position: relative !important;
+  z-index: 130 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-body,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-body {
+  position: fixed !important;
+  left: 10px !important;
+  right: 10px !important;
+  bottom: calc(max(var(--phone-nav-h-final, 72px), 72px) + 10px) !important;
+  width: auto !important;
+  max-width: none !important;
+  max-height: min(70dvh, 560px) !important;
+  margin: 0 !important;
+  padding: 10px !important;
+  display: grid !important;
+  grid-template-rows: auto minmax(0, 1fr) auto auto !important;
+  gap: 8px !important;
+  overflow: hidden !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  border-radius: 16px !important;
+  background: rgba(13, 15, 18, 0.98) !important;
+  box-shadow: 0 -18px 48px rgba(0, 0, 0, 0.58), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+  z-index: 130 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  gap: 8px !important;
+  align-items: center !important;
+  padding: 0 0 8px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary span {
+  font-size: 0.58rem !important;
+  color: rgba(255, 255, 255, 0.48) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary strong {
+  margin-top: 1px !important;
+  font-size: 0.72rem !important;
+  line-height: 1.2 !important;
+  max-width: 190px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-add-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-add-btn {
+  width: auto !important;
+  min-height: 28px !important;
+  padding: 3px 8px !important;
+  border-radius: 999px !important;
+  font-size: 0.66rem !important;
+  white-space: nowrap !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-grid,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-grid {
+  min-height: 0 !important;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 8px !important;
+  overflow-y: auto !important;
+  padding-right: 2px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-list,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-list {
+  max-height: 112px !important;
+  display: grid !important;
+  grid-auto-rows: minmax(38px, auto) !important;
+  gap: 6px !important;
+  overflow-y: auto !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card {
+  min-height: 38px !important;
+  padding: 6px 7px !important;
+  grid-template-columns: 22px minmax(0, 1fr) auto !important;
+  gap: 7px !important;
+  border-radius: 10px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-mark,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-mark {
+  width: 22px !important;
+  height: 22px !important;
+  font-size: 0.62rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card strong {
+  font-size: 0.68rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card em,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card b,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card em,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card b {
+  font-size: 0.56rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-editor,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-editor {
+  display: grid !important;
+  gap: 7px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head {
+  min-height: 24px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head span {
+  font-size: 0.58rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head strong {
+  font-size: 0.72rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-row,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-row.compact,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-row.compact {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+  gap: 7px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-row {
+  gap: 3px !important;
+  min-width: 0 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-row label,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-row label {
+  font-size: 0.58rem !important;
+  line-height: 1.1 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-row input,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-row select,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-row input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-row select {
+  min-height: 38px !important;
+  padding: 6px 10px !important;
+  border-radius: 10px !important;
+  font-size: 0.78rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-flags,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-preset-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-flags,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-preset-row {
+  gap: 6px !important;
+  padding-top: 6px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-flags label,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-preset-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-flags label,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-preset-btn {
+  font-size: 0.58rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-actions,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-actions {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 8px !important;
+}
+/* Android Agent LLM sheet v2: low-contrast compact controls. */
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-panel.open .llm-settings-toggle,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-panel.open .llm-settings-toggle {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateY(8px) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-panel.open::before,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-panel.open::before {
+  background: rgba(0, 0, 0, 0.42) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-body,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-body {
+  padding: 11px !important;
+  gap: 8px !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 14px !important;
+  background: rgba(12, 14, 17, 0.985) !important;
+  box-shadow: 0 -16px 42px rgba(0, 0, 0, 0.54), inset 0 1px 0 rgba(255, 255, 255, 0.035) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary {
+  padding-bottom: 7px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary strong {
+  color: rgba(255, 255, 255, 0.9) !important;
+  white-space: normal !important;
+  word-break: break-word !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-add-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-add-btn {
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--accent) !important;
+  box-shadow: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-list,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-list {
+  max-height: 104px !important;
+  gap: 6px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card {
+  grid-template-columns: 20px minmax(0, 1fr) !important;
+  min-height: 38px !important;
+  padding: 6px 8px !important;
+  gap: 7px !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 10px !important;
+  background: rgba(255, 255, 255, 0.035) !important;
+  box-shadow: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card.active,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card.active {
+  border-color: rgba(239, 68, 68, 0.32) !important;
+  background: rgba(239, 68, 68, 0.085) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card b,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card b {
+  display: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-mark,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-mark {
+  width: 20px !important;
+  height: 20px !important;
+  font-size: 0.58rem !important;
+  border: 0 !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-copy,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-copy {
+  min-width: 0 !important;
+  overflow: hidden !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card strong {
+  color: rgba(255, 255, 255, 0.92) !important;
+  line-height: 1.18 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card em,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card em {
+  color: rgba(255, 255, 255, 0.48) !important;
+  line-height: 1.15 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-editor,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-editor {
+  padding-top: 2px !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.055) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  gap: 8px !important;
+  align-items: center !important;
+  min-height: 26px !important;
+  overflow: hidden !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head > div,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head > div {
+  min-width: 0 !important;
+  overflow: hidden !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head span {
+  color: rgba(255, 255, 255, 0.45) !important;
+  line-height: 1.1 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head strong {
+  display: block !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head .clear-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head .clear-btn {
+  min-height: 24px !important;
+  padding: 2px 8px !important;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, 0.035) !important;
+  color: rgba(255, 255, 255, 0.62) !important;
+  font-size: 0.58rem !important;
+  white-space: nowrap !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-row,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-row.compact,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-row.compact {
+  gap: 8px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-row label,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-row label {
+  color: rgba(255, 255, 255, 0.48) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-row input,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-row select,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-row input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-row select {
+  min-height: 36px !important;
+  border: 1px solid rgba(255, 255, 255, 0.11) !important;
+  border-radius: 9px !important;
+  background: rgba(255, 255, 255, 0.03) !important;
+  color: rgba(255, 255, 255, 0.88) !important;
+  box-shadow: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-row input:focus,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-row select:focus,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-row input:focus,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-row select:focus {
+  border-color: rgba(239, 68, 68, 0.46) !important;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.12) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-flags,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-preset-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-flags,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-preset-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.055) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-preset-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-preset-btn {
+  min-height: 28px !important;
+  border: 1px solid rgba(255, 255, 255, 0.11) !important;
+  border-radius: 7px !important;
+  background: rgba(255, 255, 255, 0.028) !important;
+  color: rgba(255, 255, 255, 0.74) !important;
+  box-shadow: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-actions,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-actions {
+  padding-top: 2px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-actions .save-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-actions .save-btn {
+  min-height: 34px !important;
+  border: 0 !important;
+  border-radius: 9px !important;
+  box-shadow: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-actions .clear-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-actions .clear-btn {
+  min-height: 34px !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.42) !important;
+  box-shadow: none !important;
+}
+/* Android Agent history actions v1: visible delete and compact drawer toggle. */
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-toggle,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-toggle {
+  width: 26px !important;
+  height: 24px !important;
+  min-width: 26px !important;
+  min-height: 24px !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.68) !important;
+  opacity: 0.9 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-toggle:active,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-toggle:active {
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: rgba(255, 255, 255, 0.86) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-toggle span,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-toggle span + span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-toggle span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-toggle span + span {
+  position: absolute !important;
+  left: 50% !important;
+  top: 50% !important;
+  display: block !important;
+  width: 16px !important;
+  height: 2px !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: currentColor !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-toggle span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-toggle span {
+  transform: translate(-50%, -4px) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-toggle span + span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-toggle span + span {
+  transform: translate(-50%, 4px) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-history-item,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-history-item {
+  position: relative !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-history-main,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-history-main {
+  padding-right: 38px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-history-main span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-history-main span {
+  padding-right: 4px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-history-main em,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-history-main em {
+  margin-right: 2px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-history-remove,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-history-remove {
+  position: absolute !important;
+  top: 50% !important;
+  right: 8px !important;
+  z-index: 2 !important;
+  display: inline-grid !important;
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
+  place-items: center !important;
+  transform: translateY(-50%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, 0.035) !important;
+  color: rgba(255, 255, 255, 0.5) !important;
+  font-size: 0.72rem !important;
+  line-height: 1 !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  box-shadow: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-history-remove:active,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-history-remove:active {
+  border-color: rgba(239, 68, 68, 0.34) !important;
+  background: rgba(239, 68, 68, 0.14) !important;
+  color: rgba(255, 255, 255, 0.88) !important;
+}
+/* Android Agent LLM sheet v3: mobile settings page with back action. */
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-body,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-body {
+  left: 10px !important;
+  right: 10px !important;
+  bottom: calc(max(var(--phone-nav-h-final, 72px), 72px) + 8px) !important;
+  max-height: min(78dvh, 620px) !important;
+  padding: 12px !important;
+  grid-template-rows: auto minmax(0, 1fr) auto auto !important;
+  border-color: rgba(255, 255, 255, 0.07) !important;
+  border-radius: 14px !important;
+  background: rgba(13, 15, 18, 0.992) !important;
+  overflow: hidden !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary {
+  display: grid !important;
+  grid-template-columns: 30px minmax(0, 1fr) auto !important;
+  align-items: center !important;
+  gap: 8px !important;
+  min-height: 34px !important;
+  padding: 0 0 10px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.065) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-sheet-back-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-sheet-back-btn {
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  min-height: 28px !important;
+  display: inline-grid !important;
+  place-items: center !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 9px !important;
+  background: rgba(255, 255, 255, 0.035) !important;
+  color: rgba(255, 255, 255, 0.78) !important;
+  font-size: 1.2rem !important;
+  line-height: 1 !important;
+  box-shadow: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-sheet-back-btn:active,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-sheet-back-btn:active {
+  background: rgba(239, 68, 68, 0.12) !important;
+  border-color: rgba(239, 68, 68, 0.26) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary > div,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary > div {
+  min-width: 0 !important;
+  display: grid !important;
+  gap: 2px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary span {
+  font-size: 0.58rem !important;
+  line-height: 1.1 !important;
+  color: rgba(255, 255, 255, 0.46) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary strong {
+  max-width: none !important;
+  font-size: 0.74rem !important;
+  line-height: 1.18 !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-add-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-add-btn {
+  min-height: 28px !important;
+  padding: 0 6px !important;
+  color: var(--accent) !important;
+  font-size: 0.62rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-grid,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-grid {
+  gap: 10px !important;
+  overflow-y: auto !important;
+  padding: 0 1px 2px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-list,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-list {
+  max-height: 92px !important;
+  padding: 0 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card {
+  grid-template-columns: 18px minmax(0, 1fr) !important;
+  min-height: 40px !important;
+  padding: 7px 8px !important;
+  border: 1px solid rgba(255, 255, 255, 0.075) !important;
+  border-radius: 11px !important;
+  background: rgba(255, 255, 255, 0.028) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card.active,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card.active {
+  border-color: rgba(239, 68, 68, 0.28) !important;
+  background: rgba(239, 68, 68, 0.07) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-mark,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-mark {
+  width: 18px !important;
+  height: 18px !important;
+  font-size: 0.54rem !important;
+  color: rgba(255, 255, 255, 0.7) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-editor,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-editor {
+  padding-top: 10px !important;
+  gap: 8px !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head {
+  min-height: 28px !important;
+  padding: 0 !important;
+  overflow: visible !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head .clear-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head .clear-btn {
+  min-width: 44px !important;
+  min-height: 26px !important;
+  padding: 0 10px !important;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, 0.045) !important;
+  color: rgba(255, 255, 255, 0.58) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-row input,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-row select,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-row input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-row select {
+  min-height: 38px !important;
+  border-color: rgba(255, 255, 255, 0.105) !important;
+  background: rgba(255, 255, 255, 0.025) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-preset-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-preset-row {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  padding: 8px 0 0 !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.055) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-preset-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-preset-btn {
+  flex: 0 0 auto !important;
+  min-height: 30px !important;
+  padding: 0 10px !important;
+}
+/* Android Agent LLM sheet v4: single-form mobile layout, no overlapping provider card. */
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-body,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-body {
+  left: 8px !important;
+  right: 8px !important;
+  bottom: calc(max(var(--phone-nav-h-final, 72px), 72px) + 8px) !important;
+  max-height: min(80dvh, 640px) !important;
+  padding: 12px !important;
+  gap: 10px !important;
+  display: grid !important;
+  grid-template-rows: auto minmax(0, 1fr) auto auto !important;
+  border: 1px solid rgba(255, 255, 255, 0.075) !important;
+  border-radius: 16px !important;
+  background: rgba(13, 15, 18, 0.995) !important;
+  box-shadow: 0 -18px 44px rgba(0, 0, 0, 0.58) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary {
+  grid-template-columns: 36px minmax(0, 1fr) auto !important;
+  min-height: 42px !important;
+  padding: 0 0 10px !important;
+  gap: 8px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-sheet-back-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-sheet-back-btn {
+  width: 34px !important;
+  height: 34px !important;
+  min-width: 34px !important;
+  min-height: 34px !important;
+  border-radius: 12px !important;
+  font-size: 1.05rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary > div,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary > div {
+  min-width: 0 !important;
+  overflow: hidden !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-summary strong {
+  display: block !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-add-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-add-btn {
+  min-width: 58px !important;
+  min-height: 30px !important;
+  padding: 0 6px !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--accent) !important;
+  font-size: 0.62rem !important;
+  white-space: nowrap !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-grid,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-switcher-grid {
+  display: block !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  padding: 0 1px 2px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-list,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-list {
+  display: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-editor,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-editor {
+  display: grid !important;
+  gap: 10px !important;
+  padding: 0 !important;
+  border-top: 0 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: center !important;
+  gap: 10px !important;
+  min-height: 34px !important;
+  padding: 0 0 2px !important;
+  border: 0 !important;
+  overflow: hidden !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head > div,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head > div {
+  min-width: 0 !important;
+  overflow: hidden !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head span {
+  display: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head strong {
+  display: block !important;
+  font-size: 0.82rem !important;
+  line-height: 1.2 !important;
+  color: rgba(255, 255, 255, 0.92) !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head .clear-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-head .clear-btn {
+  position: static !important;
+  min-width: 48px !important;
+  min-height: 28px !important;
+  padding: 0 10px !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  color: rgba(255, 255, 255, 0.58) !important;
+  font-size: 0.62rem !important;
+  white-space: nowrap !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-row,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-row.compact,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-editor-row.compact {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+  gap: 10px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-row {
+  min-width: 0 !important;
+  gap: 5px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-row label,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-row label {
+  font-size: 0.62rem !important;
+  line-height: 1.15 !important;
+  color: rgba(255, 255, 255, 0.48) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-row input,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-row select,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-row input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-row select {
+  width: 100% !important;
+  min-height: 42px !important;
+  padding: 8px 12px !important;
+  border: 1px solid rgba(255, 255, 255, 0.105) !important;
+  border-radius: 11px !important;
+  background: rgba(255, 255, 255, 0.025) !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+  box-shadow: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-preset-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-preset-row {
+  display: flex !important;
+  gap: 8px !important;
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  padding: 10px 0 0 !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.055) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-flags,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-flags {
+  display: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .form-actions,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .form-actions {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+  gap: 10px !important;
+  padding-top: 0 !important;
+}
+/* LLM provider kind picker: replace oversized native Android select. */
+.llm-provider-kind-grid {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.llm-provider-kind-option {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.llm-provider-kind-option.active {
+  border-color: color-mix(in srgb, var(--agent-accent) 42%, var(--line));
+  background: color-mix(in srgb, var(--agent-accent-soft) 54%, transparent);
+  color: var(--text);
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-kind-grid,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-kind-grid {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  gap: 7px !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  padding: 0 1px 2px !important;
+  scrollbar-width: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-kind-grid::-webkit-scrollbar,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-kind-grid::-webkit-scrollbar {
+  display: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-kind-option,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-kind-option {
+  flex: 0 0 auto !important;
+  min-height: 34px !important;
+  padding: 0 11px !important;
+  border: 1px solid rgba(255, 255, 255, 0.095) !important;
+  border-radius: 10px !important;
+  background: rgba(255, 255, 255, 0.028) !important;
+  color: rgba(255, 255, 255, 0.66) !important;
+  font-size: 0.68rem !important;
+  box-shadow: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-kind-option.active,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-kind-option.active {
+  border-color: rgba(239, 68, 68, 0.38) !important;
+  background: rgba(239, 68, 68, 0.12) !important;
+  color: rgba(255, 255, 255, 0.92) !important;
+}
+/* Android News RAG compact controls v1: reduce field and tab height. */
+html.mobile-tauri.android-phone .app[data-active-view="news"] .panel-container,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .panel-container {
+  gap: 6px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-tabs,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-tabs {
+  min-height: 30px !important;
+  padding: 2px !important;
+  gap: 3px !important;
+  border-radius: 7px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-tabs .panel-tab,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-tabs .panel-tab {
+  min-width: clamp(66px, 20vw, 92px) !important;
+  min-height: 26px !important;
+  height: 26px !important;
+  padding: 2px 6px !important;
+  border-radius: 6px !important;
+  font-size: 0.6rem !important;
+  line-height: 1 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls {
+  gap: 4px !important;
+  padding: 4px !important;
+  border-radius: 7px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .form-row,
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .form-row.inline,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .form-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .form-row.inline {
+  gap: 2px !important;
+  min-height: 0 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .form-row label,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .form-row label {
+  min-height: 12px !important;
+  font-size: 0.55rem !important;
+  line-height: 1.05 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls input,
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls select,
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls textarea,
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .stock-code-input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls select,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls textarea,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .stock-code-input {
+  min-height: 34px !important;
+  height: 34px !important;
+  padding: 6px 10px !important;
+  border-radius: 7px !important;
+  font-size: 0.72rem !important;
+  line-height: 1.15 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-run-btn,
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-secondary-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-run-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-secondary-btn {
+  min-height: 34px !important;
+  height: 34px !important;
+  padding: 0 10px !important;
+  border-radius: 7px !important;
+  font-size: 0.72rem !important;
+  line-height: 1 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-code-field,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-code-field {
+  grid-column: 1 / -1 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-days-field,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-days-field {
+  grid-column: 1 / 2 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-run-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-run-btn {
+  grid-column: 2 / 3 !important;
+  align-self: end !important;
+}
+/* Android News RAG compact controls v2: fit tabs and halve field heights. */
+html.mobile-tauri.android-phone .app[data-active-view="news"] .panel-container,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .panel-container {
+  gap: 4px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-tabs,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-tabs {
+  width: 100% !important;
+  min-width: 0 !important;
+  min-height: 24px !important;
+  height: 28px !important;
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  gap: 2px !important;
+  padding: 2px !important;
+  overflow: hidden !important;
+  border-radius: 6px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-tabs .panel-tab,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-tabs .panel-tab {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  width: auto !important;
+  max-width: none !important;
+  min-height: 22px !important;
+  height: 22px !important;
+  padding: 0 2px !important;
+  border-radius: 5px !important;
+  font-size: 0.5rem !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls {
+  gap: 3px !important;
+  padding: 3px !important;
+  border-radius: 6px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .form-row,
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .form-row.inline,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .form-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .form-row.inline {
+  gap: 1px !important;
+  min-height: 0 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .form-row label,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .form-row label {
+  min-height: 9px !important;
+  font-size: 0.48rem !important;
+  line-height: 1 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls input,
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls select,
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls textarea,
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .stock-code-input,
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .stock-code-input input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls select,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls textarea,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .stock-code-input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .stock-code-input input {
+  min-height: 22px !important;
+  height: 22px !important;
+  padding: 2px 8px !important;
+  border-radius: 6px !important;
+  font-size: 0.62rem !important;
+  line-height: 1 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-run-btn,
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-secondary-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-run-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-secondary-btn {
+  min-height: 22px !important;
+  height: 22px !important;
+  padding: 0 8px !important;
+  border-radius: 6px !important;
+  font-size: 0.62rem !important;
+  line-height: 1 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-code-field,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-code-field {
+  grid-column: 1 / -1 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-days-field,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-days-field {
+  grid-column: 1 / 2 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-run-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-run-btn {
+  grid-column: 2 / 3 !important;
+  align-self: end !important;
+}
+/* Android News RAG compact controls v3: align top stock field with lower row. */
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+  box-sizing: border-box !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-code-field,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-code-field {
+  grid-column: 1 / -1 !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 1px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-code-field label,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-code-field label {
+  width: 100% !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-code-field .stock-code-input,
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-code-field .stock-code-input input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-code-field .stock-code-input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-code-field .stock-code-input input {
+  width: 100% !important;
+  max-width: none !important;
+  box-sizing: border-box !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-days-field,
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-run-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-days-field,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-run-btn {
+  width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+/* Android News RAG compact controls v4: exact horizontal edge alignment. */
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls {
+  column-gap: 4px !important;
+  row-gap: 3px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-code-field,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-code-field {
+  padding: 0 !important;
+  margin: 0 !important;
+  align-self: stretch !important;
+  justify-self: stretch !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-code-field .stock-code-input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-code-field .stock-code-input {
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-code-field .stock-code-input input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-code-field .stock-code-input input {
+  display: block !important;
+  width: 100% !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-days-field,
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-run-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-days-field,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-run-btn {
+  margin: 0 !important;
+  justify-self: stretch !important;
+}
+/* Android screen sub-mode compact controls: reduce vertical footprint for grouped, graph, and trend inputs. */
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-controls,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-controls {
+  padding: 4px 6px !important;
+  gap: 4px !important;
+  min-height: 0 !important;
+  border-radius: 7px !important;
+  align-items: center !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-controls .form-row,
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-controls .form-row.inline,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-controls .form-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-controls .form-row.inline {
+  gap: 2px !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-controls .form-row label,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-controls .form-row label {
+  font-size: 0.55rem !important;
+  line-height: 1 !important;
+  min-height: 9px !important;
+  margin: 0 !important;
+  white-space: nowrap !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-controls input,
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-controls select,
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-controls textarea,
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-controls .stock-code-input,
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-controls .stock-code-input input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-controls input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-controls select,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-controls textarea,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-controls .stock-code-input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-controls .stock-code-input input {
+  min-height: 25px !important;
+  height: 25px !important;
+  padding: 3px 7px !important;
+  border-radius: 5px !important;
+  font-size: 0.62rem !important;
+  line-height: 1.05 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-controls.grouped-screen-controls,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-controls.grouped-screen-controls {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 4px 8px !important;
+  padding: 4px 7px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-controls.grouped-screen-controls .form-row.inline,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-controls.grouped-screen-controls .form-row.inline {
+  display: grid !important;
+  grid-template-columns: 50px minmax(0, 1fr) !important;
+  gap: 5px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-controls.grouped-screen-controls input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-controls.grouped-screen-controls input {
+  min-height: 24px !important;
+  height: 24px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-controls:not(.grouped-screen-controls),
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-controls:not(.grouped-screen-controls) {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 4px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-controls:not(.grouped-screen-controls) .stock-code-input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-controls:not(.grouped-screen-controls) .stock-code-input {
+  width: 100% !important;
 }

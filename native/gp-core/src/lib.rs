@@ -446,6 +446,16 @@ pub struct TrendIndicatorSignal {
     pub white_exit: bool,
     #[serde(default)]
     pub oversold: bool,
+    #[serde(default = "default_trend_signal_type")]
+    pub signal_type: String,
+    #[serde(default)]
+    pub risk_flags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub technical_score: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern_layer_score: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_score: Option<f64>,
     #[serde(default)]
     pub quant_score: i32,
     #[serde(default = "default_quant_score_max")]
@@ -1123,7 +1133,11 @@ fn default_graph_center_mode() -> String {
 }
 
 fn default_trend_screen_style() -> String {
-    "short_buy".to_string()
+    "balanced_swing".to_string()
+}
+
+fn default_trend_signal_type() -> String {
+    "trend_continuation".to_string()
 }
 
 fn default_graph_limit() -> usize {
@@ -2739,26 +2753,32 @@ pub fn trend_screen_with_source(
             skipped += 1;
             continue;
         };
-        let trend_score = trend_score(&analysis.signal);
-        let final_score = combined_trend_score(candidate.score, trend_score);
+        let layered = layered_trend_score(&candidate.stock, &analysis);
+        if !trend_screen_candidate_allowed(&layered) {
+            skipped += 1;
+            continue;
+        }
+        let mut signal = analysis.signal.clone();
+        signal.signal_type = layered.signal_type.clone();
+        signal.risk_flags = layered.risk_flags.clone();
+        signal.technical_score = Some(round6(layered.technical_score));
+        signal.pattern_layer_score = Some(round6(layered.pattern_score));
+        signal.quality_score = Some(round6(layered.quality_score));
         let mut reasons = candidate.reasons.clone();
-        reasons.extend(analysis.signal.reasons.clone());
+        reasons.extend(signal.reasons.clone());
+        reasons.extend(layered.reason_tags.clone());
+        reasons.sort();
+        reasons.dedup();
         items.push(TrendStockSignal {
             stock: candidate.stock.clone(),
             base_score: round6(candidate.score),
-            trend_score: round6(trend_score),
-            final_score: round6(final_score),
-            signal: analysis.signal.clone(),
+            trend_score: round6(layered.trend_score),
+            final_score: round6(layered.final_score),
+            signal: signal.clone(),
             reasons,
-            explanation: trend_screen_explanation(
-                candidate,
-                &analysis.signal,
-                trend_score,
-                final_score,
-            ),
+            explanation: trend_screen_explanation(candidate, &signal, &layered),
         });
     }
-
     items.sort_by(|left, right| right.final_score.total_cmp(&left.final_score));
     items.truncate(request.limit.clamp(1, 100));
     let mut notes = trend_notes();
@@ -2772,7 +2792,7 @@ pub fn trend_screen_with_source(
         total: candidate_pool.len(),
         returned: items.len(),
         items,
-        screen_style: "short_buy".to_string(),
+        screen_style: "balanced_swing".to_string(),
         notes,
     })
 }
@@ -5774,6 +5794,11 @@ fn trend_signal_from_bar(code: &str, bar: &ComputedTrendBar) -> TrendIndicatorSi
         short_buy: bar.short_buy,
         white_exit: bar.white_exit,
         oversold: bar.oversold,
+        signal_type: default_trend_signal_type(),
+        risk_flags: trend_risk_flags_from_bar(bar),
+        technical_score: None,
+        pattern_layer_score: None,
+        quality_score: None,
         quant_score: bar.quant_score,
         quant_score_max: default_quant_score_max(),
         pattern_score: pattern_score(bar),
@@ -5905,125 +5930,577 @@ fn trend_status(bar: &ComputedTrendBar) -> String {
     .to_string()
 }
 
-fn trend_score(signal: &TrendIndicatorSignal) -> f64 {
-    short_buy_score(signal)
+#[derive(Clone, Debug)]
+struct TrendLayerScores {
+    technical_score: f64,
+    pattern_score: f64,
+    quality_score: f64,
+    trend_score: f64,
+    final_score: f64,
+    signal_type: String,
+    risk_flags: Vec<String>,
+    reason_tags: Vec<String>,
 }
 
-fn short_buy_score(signal: &TrendIndicatorSignal) -> f64 {
-    let mut score = (signal.quant_score as f64 / signal.quant_score_max.max(1) as f64) * 28.0;
-    if signal.short_buy {
-        score += 24.0;
+fn layered_trend_score(stock: &StockItem, trend: &TrendIndicatorResult) -> TrendLayerScores {
+    let signal = &trend.signal;
+    let bars = &trend.series;
+    let technical_score = technical_layer_score(signal, bars);
+    let pattern_score = pattern_layer_score(signal, bars);
+    let quality_score = quality_layer_score(stock);
+    let mut risk_flags = trend_layer_risk_flags(signal, bars);
+    let mut final_score = technical_score * 0.70 + pattern_score * 0.20 + quality_score * 0.10;
+    if risk_flags
+        .iter()
+        .any(|flag| flag == "breakdown_ma20" || flag == "bearish_long_ma_stack")
+    {
+        final_score -= 18.0;
+    }
+    if risk_flags
+        .iter()
+        .any(|flag| flag == "macd_bearish_divergence" || flag == "volume_stall")
+    {
+        final_score -= 8.0;
+    }
+    final_score = final_score.clamp(0.0, 100.0);
+    let signal_type = classify_trend_signal(signal, bars, final_score, &risk_flags);
+    if signal_type == "risk_warning" && !risk_flags.iter().any(|flag| flag == "weak_final_score") {
+        risk_flags.push("weak_final_score".to_string());
+    }
+    risk_flags.sort();
+    risk_flags.dedup();
+    let reason_tags = layered_reason_tags(
+        signal,
+        bars,
+        &signal_type,
+        technical_score,
+        pattern_score,
+        quality_score,
+    );
+    TrendLayerScores {
+        technical_score: round2(technical_score),
+        pattern_score: round2(pattern_score),
+        quality_score: round2(quality_score),
+        trend_score: round2(final_score),
+        final_score: round2(final_score),
+        signal_type,
+        risk_flags,
+        reason_tags,
+    }
+}
+
+fn trend_screen_candidate_allowed(layered: &TrendLayerScores) -> bool {
+    !layered
+        .risk_flags
+        .iter()
+        .any(|flag| flag == "bearish_long_ma_stack")
+}
+
+fn technical_layer_score(signal: &TrendIndicatorSignal, bars: &[TrendIndicatorPoint]) -> f64 {
+    if bars.len() < 45 {
+        return 0.0;
+    }
+    let closes = closes_from_points(bars);
+    let volumes = volumes_from_points(bars);
+    let Some(close) = closes
+        .last()
+        .copied()
+        .filter(|value| value.is_finite() && *value > 0.0)
+    else {
+        return 0.0;
+    };
+    let ma5 = trailing_mean(&closes, 5);
+    let ma10 = trailing_mean(&closes, 10);
+    let ma20 = trailing_mean(&closes, 20);
+    let ma60 = trailing_mean(&closes, 60);
+    let high20 = trailing_max(&closes, 20);
+    let high60 = trailing_max(&closes, 60);
+    let low60 = trailing_min(&closes, 60);
+    let volume5 = trailing_mean(&volumes, 5);
+    let volume20 = trailing_mean(&volumes, 20);
+    let ret20 = closes
+        .len()
+        .checked_sub(21)
+        .and_then(|idx| pct_change(close, closes[idx]))
+        .unwrap_or(0.0);
+    let ret60 = closes
+        .len()
+        .checked_sub(61)
+        .and_then(|idx| pct_change(close, closes[idx]))
+        .unwrap_or(ret20);
+    let range_position60 = if high60 > low60 {
+        ((close - low60) / (high60 - low60)).clamp(0.0, 1.0)
+    } else {
+        0.5
+    };
+    let drawdown20 = if high20 > 0.0 {
+        (close / high20 - 1.0).min(0.0).abs() * 100.0
+    } else {
+        100.0
+    };
+    let macd = macd_snapshot(&closes);
+    let mut score = 0.0;
+
+    if ma5 > ma10 && ma10 > ma20 && ma20 > ma60 {
+        score += 18.0;
+    } else if ma5 > ma10 && ma10 > ma20 {
+        score += 12.0;
+    } else if close > ma20 && ma20 > ma60 {
+        score += 8.0;
+    }
+    if close > ma5 {
+        score += 4.0;
+    }
+    if close > ma20 {
+        score += 5.0;
+    }
+    if close > ma60 {
+        score += 5.0;
+    }
+    if ma20 > ma60 {
+        score += 5.0;
+    }
+    score += (ret20.clamp(-8.0, 18.0) + 8.0) / 26.0 * 10.0;
+    score += (ret60.clamp(-12.0, 45.0) + 12.0) / 57.0 * 8.0;
+    score += range_position60 * 7.0;
+    score += (1.0 - (drawdown20 / 18.0).clamp(0.0, 1.0)) * 7.0;
+
+    if macd.dif > macd.dea && macd.hist > 0.0 {
+        score += 8.0;
+    }
+    if macd.prev_dif <= macd.prev_dea && macd.dif > macd.dea {
+        score += 7.0;
+    }
+    if macd.hist > macd.prev_hist {
+        score += 5.0;
+    }
+    if signal.kdj_golden_cross {
+        score += 7.0;
+    }
+    if signal.kdj_oversold && signal.k.unwrap_or(0.0) > signal.d.unwrap_or(0.0) {
+        score += 4.0;
+    }
+    if volume20 > 0.0 && volume5 > volume20 * 1.15 && close >= high20 * 0.98 {
+        score += 7.0;
+    }
+    if volume20 > 0.0 && volume5 <= volume20 * 0.95 && close >= ma20 * 0.98 && close <= ma20 * 1.08
+    {
+        score += 5.0;
+    }
+    if signal.swl_above_sws {
+        score += 7.0;
+    }
+    if signal
+        .swl
+        .zip(signal.sws)
+        .map(|(swl, sws)| swl > sws * 1.01)
+        .unwrap_or(false)
+    {
+        score += 3.0;
+    }
+    if signal.quant_score_max > 0 {
+        score += (signal.quant_score as f64 / signal.quant_score_max as f64).clamp(0.0, 1.0) * 8.0;
+    }
+    score.clamp(0.0, 100.0)
+}
+
+fn pattern_layer_score(signal: &TrendIndicatorSignal, bars: &[TrendIndicatorPoint]) -> f64 {
+    let closes = closes_from_points(bars);
+    let volumes = volumes_from_points(bars);
+    let close = closes.last().copied().unwrap_or(signal.close);
+    let ma20 = trailing_mean(&closes, 20);
+    let ma60 = trailing_mean(&closes, 60);
+    let high20 = trailing_max(&closes, 20);
+    let volume5 = trailing_mean(&volumes, 5);
+    let volume20 = trailing_mean(&volumes, 20);
+    let mut score = (signal.pattern_score as f64 / signal.pattern_score_max.max(1) as f64 * 45.0)
+        .clamp(0.0, 45.0);
+    if close >= high20 * 0.985 && volume20 > 0.0 && volume5 > volume20 * 1.1 {
+        score += 18.0;
+    }
+    if close >= ma20 * 0.98 && close <= ma20 * 1.06 && volume20 > 0.0 && volume5 <= volume20 * 1.05
+    {
+        score += 14.0;
+    }
+    if close >= ma60 * 0.98 && close <= ma60 * 1.08 {
+        score += 8.0;
+    }
+    if signal
+        .support
+        .map(|support| close >= support * 0.98 && close <= support * 1.08)
+        .unwrap_or(false)
+    {
+        score += 7.0;
     }
     if signal
         .pattern_signals
         .iter()
-        .any(|value| value == "bottom_accumulation")
+        .any(|value| value == "dragon_trend_volume")
     {
-        score += 10.0;
+        score += 8.0;
     }
     if signal
         .pattern_signals
         .iter()
         .any(|value| value == "swing_opportunity")
     {
-        score += 12.0;
-    }
-    if signal
-        .pattern_signals
-        .iter()
-        .any(|value| value == "rebound_signal")
-    {
-        score += 10.0;
-    }
-    if signal.swl_above_sws {
         score += 6.0;
     }
-    if signal.red_hold {
-        score += 4.0;
-    }
-    if signal
-        .star_line
-        .map(|star_line| signal.close > star_line)
-        .unwrap_or(false)
-    {
-        score += 3.0;
-    }
     if signal.white_exit {
-        score -= 30.0;
+        score -= 16.0;
     }
-    if signal.cyan_watch {
-        score -= 12.0;
+    if signal.kdj_overbought {
+        score -= 8.0;
+    }
+    if high_upper_shadow_ratio(bars).unwrap_or(0.0) >= 0.45 {
+        score -= 8.0;
     }
     score.clamp(0.0, 100.0)
 }
 
-fn combined_trend_score(base_score: f64, trend_score: f64) -> f64 {
-    combined_short_buy_score(base_score, trend_score)
+fn quality_layer_score(stock: &StockItem) -> f64 {
+    let mut score: f64 = 45.0;
+    if let Some(roe) = stock.roe.and_then(as_percent) {
+        score += if roe >= 15.0 {
+            18.0
+        } else if roe >= 8.0 {
+            10.0
+        } else if roe >= 0.0 {
+            2.0
+        } else {
+            -14.0
+        };
+    }
+    if stock
+        .deducted_net_profit_billion
+        .map(|value| value > 0.0)
+        .unwrap_or(false)
+    {
+        score += 14.0;
+    } else {
+        score -= 8.0;
+    }
+    if let Some(growth) = stock.deducted_net_profit_growth_rate.and_then(as_percent) {
+        score += if growth >= 20.0 {
+            10.0
+        } else if growth >= 10.0 {
+            6.0
+        } else if growth >= 0.0 {
+            2.0
+        } else {
+            -10.0
+        };
+    }
+    if let Some(margin) = stock.deducted_net_profit_margin.and_then(as_percent) {
+        score += if margin >= 15.0 {
+            6.0
+        } else if margin >= 8.0 {
+            3.0
+        } else {
+            0.0
+        };
+    }
+    if let Some(pe) = stock.pe.filter(|value| value.is_finite() && *value > 0.0) {
+        score += if pe <= 35.0 {
+            4.0
+        } else if pe <= 60.0 {
+            0.0
+        } else {
+            -6.0
+        };
+    }
+    if let Some(pb) = stock.pb.filter(|value| value.is_finite() && *value > 0.0) {
+        score += if pb <= 6.0 { 4.0 } else { -4.0 };
+    }
+    score.clamp(0.0, 100.0)
 }
 
-fn combined_short_buy_score(base_score: f64, trend_score: f64) -> f64 {
-    let base_component = base_score.clamp(0.0, 20.0) / 20.0 * 25.0;
-    (base_component + trend_score * 0.75).min(100.0)
+fn classify_trend_signal(
+    signal: &TrendIndicatorSignal,
+    bars: &[TrendIndicatorPoint],
+    final_score: f64,
+    risk_flags: &[String],
+) -> String {
+    if final_score < 65.0
+        || risk_flags
+            .iter()
+            .any(|flag| flag == "breakdown_ma20" || flag == "bearish_long_ma_stack")
+    {
+        return "risk_warning".to_string();
+    }
+    let closes = closes_from_points(bars);
+    let volumes = volumes_from_points(bars);
+    let close = closes.last().copied().unwrap_or(signal.close);
+    let high20 = trailing_max(&closes, 20);
+    let ma20 = trailing_mean(&closes, 20);
+    let volume5 = trailing_mean(&volumes, 5);
+    let volume20 = trailing_mean(&volumes, 20);
+    if close >= high20 * 0.985 && volume20 > 0.0 && volume5 >= volume20 * 1.1 {
+        return "breakout_chase".to_string();
+    }
+    if close >= ma20 * 0.98
+        && close <= ma20 * 1.06
+        && (signal.kdj_golden_cross || signal.swl_above_sws)
+    {
+        return "pullback_buy".to_string();
+    }
+    "trend_continuation".to_string()
 }
 
+fn layered_reason_tags(
+    signal: &TrendIndicatorSignal,
+    bars: &[TrendIndicatorPoint],
+    signal_type: &str,
+    technical: f64,
+    pattern: f64,
+    quality: f64,
+) -> Vec<String> {
+    let closes = closes_from_points(bars);
+    let ma5 = trailing_mean(&closes, 5);
+    let ma10 = trailing_mean(&closes, 10);
+    let ma20 = trailing_mean(&closes, 20);
+    let ma60 = trailing_mean(&closes, 60);
+    let close = closes.last().copied().unwrap_or(signal.close);
+    let mut tags = vec![format!("signal_type:{signal_type}")];
+    if ma5 > ma10 && ma10 > ma20 && ma20 > ma60 {
+        tags.push("ma_bull_stack".to_string());
+    }
+    if close > ma20 {
+        tags.push("price_above_ma20".to_string());
+    }
+    if signal.swl_above_sws {
+        tags.push("swl_strength".to_string());
+    }
+    if signal.kdj_golden_cross {
+        tags.push("kdj_golden_cross".to_string());
+    }
+    if technical >= 75.0 {
+        tags.push("technical_score_strong".to_string());
+    }
+    if pattern >= 70.0 {
+        tags.push("pattern_score_strong".to_string());
+    }
+    if quality >= 70.0 {
+        tags.push("quality_soft_bonus".to_string());
+    }
+    tags
+}
+
+fn trend_layer_risk_flags(
+    signal: &TrendIndicatorSignal,
+    bars: &[TrendIndicatorPoint],
+) -> Vec<String> {
+    let closes = closes_from_points(bars);
+    let volumes = volumes_from_points(bars);
+    let close = closes.last().copied().unwrap_or(signal.close);
+    let ma20 = trailing_mean(&closes, 20);
+    let ma60 = trailing_mean(&closes, 60);
+    let ma120 = trailing_mean(&closes, 120);
+    let volume5 = trailing_mean(&volumes, 5);
+    let volume20 = trailing_mean(&volumes, 20);
+    let macd = macd_snapshot(&closes);
+    let mut flags = Vec::new();
+    if bars.len() < 45 {
+        flags.push("insufficient_history".to_string());
+    }
+    if volume20 <= 0.0 || !volume20.is_finite() {
+        flags.push("low_volume".to_string());
+    }
+    if ma20.is_finite() && close < ma20 * 0.97 {
+        flags.push("breakdown_ma20".to_string());
+    }
+    if ma120.is_finite() && ma20 < ma60 && ma60 < ma120 {
+        flags.push("bearish_long_ma_stack".to_string());
+    }
+    if signal.kdj_overbought {
+        flags.push("kdj_overbought".to_string());
+    }
+    if signal.white_exit {
+        flags.push("white_exit".to_string());
+    }
+    if high_upper_shadow_ratio(bars).unwrap_or(0.0) >= 0.45
+        && volume20 > 0.0
+        && volume5 > volume20 * 1.1
+    {
+        flags.push("volume_stall".to_string());
+    }
+    if macd.dif > 0.0 && macd.hist < macd.prev_hist && close >= trailing_max(&closes, 20) * 0.98 {
+        flags.push("macd_bearish_divergence".to_string());
+    }
+    flags.sort();
+    flags.dedup();
+    flags
+}
+
+fn trend_risk_flags_from_bar(bar: &ComputedTrendBar) -> Vec<String> {
+    let mut flags = Vec::new();
+    if bar.white_exit {
+        flags.push("white_exit".to_string());
+    }
+    if bar.kdj_overbought {
+        flags.push("kdj_overbought".to_string());
+    }
+    if bar.kdj_dead_cross {
+        flags.push("kdj_dead_cross".to_string());
+    }
+    if !bar.swl_above_sws {
+        flags.push("swl_below_sws".to_string());
+    }
+    flags
+}
+
+fn closes_from_points(bars: &[TrendIndicatorPoint]) -> Vec<f64> {
+    bars.iter().map(|bar| bar.close).collect()
+}
+
+fn volumes_from_points(bars: &[TrendIndicatorPoint]) -> Vec<f64> {
+    bars.iter()
+        .map(|bar| bar.volume.unwrap_or(0.0).max(0.0))
+        .collect()
+}
+
+fn trailing_mean(values: &[f64], window: usize) -> f64 {
+    if values.is_empty() {
+        return f64::NAN;
+    }
+    let start = values.len().saturating_sub(window.max(1));
+    let mut sum = 0.0;
+    let mut count = 0.0;
+    for value in values[start..]
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+    {
+        sum += value;
+        count += 1.0;
+    }
+    if count > 0.0 {
+        sum / count
+    } else {
+        f64::NAN
+    }
+}
+
+fn trailing_max(values: &[f64], window: usize) -> f64 {
+    if values.is_empty() {
+        return f64::NAN;
+    }
+    let start = values.len().saturating_sub(window.max(1));
+    values[start..]
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .fold(f64::NEG_INFINITY, f64::max)
+}
+
+fn trailing_min(values: &[f64], window: usize) -> f64 {
+    if values.is_empty() {
+        return f64::NAN;
+    }
+    let start = values.len().saturating_sub(window.max(1));
+    values[start..]
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .fold(f64::INFINITY, f64::min)
+}
+
+fn pct_change(current: f64, previous: f64) -> Option<f64> {
+    if current.is_finite() && previous.is_finite() && previous.abs() > f64::EPSILON {
+        Some((current / previous - 1.0) * 100.0)
+    } else {
+        None
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct MacdSnapshot {
+    dif: f64,
+    dea: f64,
+    hist: f64,
+    prev_dif: f64,
+    prev_dea: f64,
+    prev_hist: f64,
+}
+
+fn macd_snapshot(closes: &[f64]) -> MacdSnapshot {
+    if closes.len() < 2 {
+        return MacdSnapshot::default();
+    }
+    let ema12 = ema(closes, 12);
+    let ema26 = ema(closes, 26);
+    let dif = ema12
+        .iter()
+        .zip(ema26.iter())
+        .map(|(left, right)| *left - *right)
+        .collect::<Vec<_>>();
+    let dea = ema(&dif, 9);
+    let hist = dif
+        .iter()
+        .zip(dea.iter())
+        .map(|(dif, dea)| 2.0 * (*dif - *dea))
+        .collect::<Vec<_>>();
+    let last = dif.len() - 1;
+    let prev = last.saturating_sub(1);
+    MacdSnapshot {
+        dif: dif[last],
+        dea: dea[last],
+        hist: hist[last],
+        prev_dif: dif[prev],
+        prev_dea: dea[prev],
+        prev_hist: hist[prev],
+    }
+}
+
+fn high_upper_shadow_ratio(bars: &[TrendIndicatorPoint]) -> Option<f64> {
+    let bar = bars.last()?;
+    let high = bar.high?;
+    let open = bar.open.unwrap_or(bar.close);
+    let low = bar.low?;
+    if !high.is_finite() || !open.is_finite() || !low.is_finite() || high <= low {
+        return None;
+    }
+    Some(((high - open.max(bar.close)) / (high - low)).clamp(0.0, 1.0))
+}
 fn trend_screen_explanation(
     candidate: &ScreenedStock,
     signal: &TrendIndicatorSignal,
-    trend_score: f64,
-    final_score: f64,
+    layered: &TrendLayerScores,
 ) -> SelectionExplanation {
     let mut basis = vec![
         format!(
             "Passed the current base screen with raw score {:.2}.",
             candidate.score
         ),
-        short_buy_basis_text(signal),
+        format!(
+            "{} signal with technical {:.2}, pattern {:.2}, quality {:.2}.",
+            signal.signal_type,
+            layered.technical_score,
+            layered.pattern_score,
+            layered.quality_score
+        ),
     ];
     if let Some(pattern_text) = pattern_basis_text(signal) {
         basis.push(pattern_text);
     }
 
-    let base_component = candidate.score.clamp(0.0, 20.0) / 20.0 * 25.0;
-    let trend_component = trend_score * 0.75;
+    let base_component = candidate.score.clamp(0.0, 20.0) / 20.0 * 10.0;
     SelectionExplanation {
         basis,
         score_breakdown: vec![
-            score_contribution("base_score", "Base screen", candidate.score, base_component, 14.0, 9.0),
-            score_contribution("short_buy_score", "Short-buy setup", trend_score, trend_component, 70.0, 45.0),
-            score_contribution("final_score", "Final score", final_score, final_score, 70.0, 45.0),
+            score_contribution("technical_score", "Technical layer", layered.technical_score, layered.technical_score * 0.70, 75.0, 60.0),
+            score_contribution("pattern_score", "Pattern layer", layered.pattern_score, layered.pattern_score * 0.20, 70.0, 55.0),
+            score_contribution("quality_score", "Quality soft score", layered.quality_score, layered.quality_score * 0.10, 70.0, 50.0),
+            score_contribution("base_score", "Base screen soft tie-breaker", candidate.score, base_component, 14.0, 9.0),
+            score_contribution("final_score", "Final score", layered.final_score, layered.final_score, 80.0, 65.0),
         ],
-        risk_checks: short_buy_risk_checks(signal),
+        risk_checks: trend_risk_checks(signal),
         verification: vec![
-            "\u{5efa}\u{8bae}\u{7528}\u{56fe}\u{8c31}\u{9009}\u{80a1}\u{4ea4}\u{53c9}\u{9a8c}\u{8bc1}\u{ff0c}\u{786e}\u{8ba4}\u{8be5}\u{80a1}\u{662f}\u{5426}\u{5904}\u{5728}\u{66f4}\u{5f3a}\u{7684}\u{4e3b}\u{9898}\u{4e2d}\u{5fc3}\u{3002}".to_string(),
-            "Watch the next trading day direction, volume, and close for setup confirmation.".to_string(),
+            "Confirm the signal with next-day price-volume action before entry.".to_string(),
+            "Use trend-screen labels to separate breakout, pullback, continuation, and risk candidates.".to_string(),
         ],
     }
 }
-
-fn short_buy_basis_text(signal: &TrendIndicatorSignal) -> String {
-    if signal.short_buy {
-        return "Short-buy signal is active; this is the highest-priority timing trigger."
-            .to_string();
-    }
-    if signal
-        .pattern_signals
-        .iter()
-        .any(|value| value == "swing_opportunity")
-    {
-        return "Swing-opportunity signal is strong enough for short-term watchlist inclusion."
-            .to_string();
-    }
-    if signal
-        .pattern_signals
-        .iter()
-        .any(|value| value == "rebound_signal")
-    {
-        return "Rebound signal is active and supports a short-term repair watch.".to_string();
-    }
-    "No explicit short-buy trigger is active; selection relies on quant score and base conditions."
-        .to_string()
-}
-
 fn pattern_basis_text(signal: &TrendIndicatorSignal) -> Option<String> {
     let mut labels = Vec::new();
     if signal
@@ -6061,7 +6538,7 @@ fn pattern_basis_text(signal: &TrendIndicatorSignal) -> Option<String> {
     }
 }
 
-fn short_buy_risk_checks(signal: &TrendIndicatorSignal) -> Vec<String> {
+fn trend_risk_checks(signal: &TrendIndicatorSignal) -> Vec<String> {
     let mut risks = Vec::new();
     if signal.white_exit {
         risks.push(
@@ -6072,7 +6549,7 @@ fn short_buy_risk_checks(signal: &TrendIndicatorSignal) -> Vec<String> {
         risks.push("Cyan-watch state means trend confirmation is insufficient.".to_string());
     }
     if risks.is_empty() {
-        risks.push("No major exit/high-zone risk is active, but next-day price-volume confirmation is still required.".to_string());
+        risks.push("No major break or high-zone risk is active, but next-day price-volume confirmation is still required.".to_string());
     }
     risks
 }

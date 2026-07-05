@@ -194,6 +194,14 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
       {open && (
         <div className="llm-settings-body llm-switcher">
           <div className="llm-switcher-summary">
+            <button
+              type="button"
+              className="llm-sheet-back-btn"
+              onClick={() => setOpen(false)}
+              aria-label="返回"
+            >
+              ‹
+            </button>
             <div>
               <span>当前 Endpoint</span>
               <strong>{active?.base_url || "尚未填写接口地址"}</strong>
@@ -259,15 +267,27 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
 
                     <div className="form-row">
                       <label htmlFor="llmProviderKind">供应商类型</label>
-                      <select
-                        id="llmProviderKind"
-                        value={editingProvider.provider || "custom"}
-                        onChange={(event) => updateProvider(editingProvider.id, { provider: event.target.value })}
+                      <div
+                        className="llm-provider-kind-grid"
+                        role="radiogroup"
+                        aria-label="供应商类型"
                       >
-                        {PROVIDER_KINDS.map((kind) => (
-                          <option key={kind.id} value={kind.id}>{kind.label}</option>
-                        ))}
-                      </select>
+                        {PROVIDER_KINDS.map((kind) => {
+                          const selected = (editingProvider.provider || "custom") === kind.id;
+                          return (
+                            <button
+                              key={kind.id}
+                              type="button"
+                              role="radio"
+                              aria-checked={selected}
+                              className={`llm-provider-kind-option ${selected ? "active" : ""}`}
+                              onClick={() => updateProvider(editingProvider.id, { provider: kind.id })}
+                            >
+                              <span>{kind.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
 

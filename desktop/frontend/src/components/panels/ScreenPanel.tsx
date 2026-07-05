@@ -207,6 +207,7 @@ export function ScreenPanel({
         )}
         {result != null && !loading && (
           <ScreenResultView
+            key={mode}
             result={result}
             grouped={mode === "sectorScreen" || mode === "boardScreen"}
             watchlist={watchlist}
@@ -258,7 +259,7 @@ function ScreenResultView({
       {groups.length > 0 ? (
         <div className="sector-groups">
           {groups.map((group, index) => (
-            <details key={`${group.title}-${index}`} className="sector-group" open={index === 0}>
+            <details key={`${group.title}-${index}`} className="sector-group">
               <summary>
                 <div className="sector-group-head"><h3>{group.title}</h3></div>
                 <span className="sector-group-meta"><strong>{group.rows.length}</strong><small>{group.meta}</small></span>

@@ -317,9 +317,8 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           </div>
         </div>
 
-        <div className="agent-rail-footer">
-          <span>当前模型</span>
-          <strong>{activeProvider?.model || "未配置模型"}</strong>
+        <div className="agent-rail-footer agent-rail-model-settings">
+          <LlmSettingsPanel settings={llmSettings} onChange={onLlmSettingsChange} />
         </div>
       </aside>
 
@@ -437,8 +436,6 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             </button>
           </div>
         </div>
-
-        <LlmSettingsPanel settings={llmSettings} onChange={onLlmSettingsChange} />
       </section>
     </div>
   );

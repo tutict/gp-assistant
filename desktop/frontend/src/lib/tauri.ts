@@ -60,7 +60,7 @@ export interface MarketRefreshOptions {
 }
 
 const STOCK_SEARCH_LIMIT = 5;
-const MOBILE_OBSERVE_PREFETCH_TIMEOUT_MS = 5000;
+const OBSERVE_PREFETCH_TIMEOUT_MS = 5000;
 const MOBILE_OBSERVE_INVOKE_TIMEOUT_MS = 55000;
 const MOBILE_NEWS_RAG_TIMEOUT_MS = 45000;
 const MOBILE_MARKET_REFRESH_INVOKE_TIMEOUT_MS = 60000;
@@ -152,15 +152,21 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
         include_order_book: parsed.searchParams.get("include_order_book") === "true",
         include_chip_distribution: parsed.searchParams.get("include_chip_distribution") !== "false",
       });
-      if (isMobileTauriRuntime()) {
+      const mobileRuntime = isMobileTauriRuntime();
+      let history: Record<string, unknown>[] | null = null;
+      if (mobileRuntime) {
         payload.mobile_fast_observe = true;
         const financialSnapshot = await loadMobileFinancialSnapshotForCode(code).catch(() => null);
         if (financialSnapshot) payload.financial_snapshot = financialSnapshot;
-        const history = await fetchObserveDailyHistoryForTauriStable(payload, MOBILE_OBSERVE_PREFETCH_TIMEOUT_MS).catch(() => null);
-        if (Array.isArray(history) && history.length) payload.history = history;
       }
+      history = await fetchObserveDailyHistoryForTauriStable(payload, OBSERVE_PREFETCH_TIMEOUT_MS).catch(() => null);
+      if (Array.isArray(history) && history.length) payload.history = history;
+
       const observeInvoke = invoke("api_observe", { payload });
-      if (!isMobileTauriRuntime()) return observeInvoke;
+      if (!mobileRuntime) {
+        const observeResult = await observeInvoke;
+        return hydrateObserveTrendFromHistory(observeResult as ObserveResult, code, history);
+      }
 
       const observeResult = await withTimeout(
         observeInvoke,
@@ -170,7 +176,7 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
       return hydrateObserveTrendFromHistory(
         observeResult as ObserveResult,
         code,
-        Array.isArray(payload.history) ? payload.history as Record<string, unknown>[] : null,
+        history,
       );
     },
   },
