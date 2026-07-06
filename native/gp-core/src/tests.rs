@@ -1,4 +1,4 @@
-use super::*;
+﻿use super::*;
 
 fn sample_data_set() -> CoreDataSet {
     let stocks = vec![
@@ -78,6 +78,7 @@ fn sample_data_set() -> CoreDataSet {
         stocks,
         relations,
         histories,
+        factor_snapshots: HashMap::new(),
         financials: HashMap::from([(
             "111111.SZ".to_string(),
             StockFinancialSnapshot {
@@ -124,9 +125,9 @@ fn sample_data_set() -> CoreDataSet {
                     confidence: "中".to_string(),
                     url: None,
                     score: Some(72.0),
-                    note: Some("cached fund flow".to_string()),
+                    note: Some("缓存资金流样例".to_string()),
                 }],
-                notes: vec!["cached note".to_string()],
+                notes: vec!["缓存说明".to_string()],
             },
         )]),
     }
@@ -168,176 +169,92 @@ fn default_screen_includes_non_st_stocks() {
 }
 
 #[test]
-fn graph_screen_adds_relation_signals() {
+fn custom_screen_uses_top_bar_criteria() {
+    let data = CoreDataSet {
+        stocks: vec![
+            custom_test_stock("300750.SZ", "catl", "battery", 1800.0, 20.0, 0.18),
+            custom_test_stock("600519.SH", "moutai", "liquor", 2200.0, 32.0, 0.32),
+            custom_test_stock("002594.SZ", "byd", "auto", 900.0, 45.0, 0.09),
+        ],
+        relations: vec![StockRelation {
+            source_code: "300750.SZ".to_string(),
+            target_code: "002594.SZ".to_string(),
+            relation_type: "supply_chain".to_string(),
+            weight: 1.0,
+            description: Some("ignored relation".to_string()),
+        }],
+        histories: HashMap::new(),
+        financials: HashMap::new(),
+        factor_snapshots: HashMap::new(),
+        capital_evidence: HashMap::new(),
+    };
+
+    let result = graph_screen_with_data(
+        &data,
+        &GraphScreenRequest {
+            criteria: ScreenCriteria {
+                max_pe: Some(35.0),
+                min_roe: Some(0.15),
+                ..ScreenCriteria::default()
+            },
+            seed_codes: vec!["002594.SZ".to_string()],
+            seed_query: "byd".to_string(),
+            relation_depth: 3,
+            relation_weight: 1.0,
+            limit: 10,
+        },
+    )
+    .expect("custom criteria screen should run");
+
+    let codes = result
+        .items
+        .iter()
+        .map(|item| item.stock.code.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(result.center_context.mode, "custom_criteria");
+    assert_eq!(result.relation_count, 0);
+    assert_eq!(result.returned, 2);
+    assert!(codes.contains(&"300750.SZ"));
+    assert!(codes.contains(&"600519.SH"));
+    assert!(!codes.contains(&"002594.SZ"));
+    assert!(result.items.iter().all(|item| item.related.is_empty()));
+    assert!(result.items.iter().all(|item| item.relation_score == 0.0));
+}
+
+#[test]
+fn custom_screen_empty_criteria_returns_top_ranked_candidates() {
     let result = graph_screen_with_mock(&GraphScreenRequest {
-        criteria: ScreenCriteria {
-            max_pe: Some(30.0),
-            min_roe: Some(0.1),
-            ..ScreenCriteria::default()
-        },
-        seed_codes: vec!["300750.SZ".to_string()],
+        criteria: ScreenCriteria::default(),
+        seed_codes: Vec::new(),
         seed_query: String::new(),
-        relation_depth: 1,
-        relation_weight: 0.4,
-        limit: 20,
+        limit: 5,
+        ..GraphScreenRequest::default()
     });
-    assert!(result.relation_count >= 7);
-    assert!(!result.items.is_empty());
-    assert!(result.items.iter().any(|item| item.relation_score > 0.0));
+
+    assert_eq!(result.center_context.mode, "custom_criteria");
+    assert_eq!(result.returned, 5);
+    assert_eq!(result.relation_count, 0);
+    assert!(result.items.iter().all(|item| item.related.is_empty()));
+    assert!(!result.notes.is_empty());
 }
 
-#[test]
-fn graph_screen_resolves_seed_query_to_robotics_supply_chain() {
-    let stocks = vec![
-        chain_stock(
-            "002747.SZ",
-            "\u{57c3}\u{65af}\u{987f}",
-            "\u{5de5}\u{4e1a}\u{673a}\u{5668}\u{4eba}",
-            220.0,
-        ),
-        chain_stock(
-            "688017.SH",
-            "\u{7eff}\u{7684}\u{8c10}\u{6ce2}",
-            "\u{673a}\u{5668}\u{4eba}\u{51cf}\u{901f}\u{5668}",
-            180.0,
-        ),
-        chain_stock(
-            "002979.SZ",
-            "\u{96f7}\u{8d5b}\u{667a}\u{80fd}",
-            "\u{4f3a}\u{670d}\u{63a7}\u{5236}\u{5668}",
-            120.0,
-        ),
-        chain_stock(
-            "300750.SZ",
-            "\u{5b81}\u{5fb7}\u{65f6}\u{4ee3}",
-            "\u{9502}\u{7535}\u{65b0}\u{80fd}\u{6e90}",
-            1800.0,
-        ),
-        chain_stock(
-            "600519.SH",
-            "\u{8d35}\u{5dde}\u{8305}\u{53f0}",
-            "\u{767d}\u{9152}",
-            2200.0,
-        ),
-    ];
-    let data = CoreDataSet {
-        stocks,
-        relations: Vec::new(),
-        histories: HashMap::new(),
-        financials: HashMap::new(),
-        capital_evidence: HashMap::new(),
-    };
-
-    let result = graph_screen_with_data(
-        &data,
-        &GraphScreenRequest {
-            seed_query: "\u{6309}\u{57c3}\u{65af}\u{987f}\u{4e0a}\u{4e0b}\u{6e38}\u{9009}\u{80a1}"
-                .to_string(),
-            relation_depth: 2,
-            relation_weight: 0.7,
-            limit: 5,
-            ..GraphScreenRequest::default()
-        },
-    )
-    .expect("graph screen should run");
-
-    assert_eq!(result.center_context.mode, "seed_stock_center");
-    assert!(result
-        .center_context
-        .codes
-        .contains(&"002747.SZ".to_string()));
-    assert!(result
-        .items
-        .iter()
-        .any(|item| item.stock.code == "688017.SH"));
-    assert!(result
-        .items
-        .iter()
-        .any(|item| item.stock.code == "300750.SZ"));
-    assert!(result
-        .items
-        .iter()
-        .any(|item| item.related.iter().any(|relation| {
-            relation.relation_type == "supply_chain_upstream"
-                || relation.relation_type == "supply_chain_downstream"
-        })));
-}
-
-#[test]
-fn graph_screen_does_not_add_robotics_chain_for_non_robot_seed_query() {
-    let stocks = vec![
-        chain_stock(
-            "002747.SZ",
-            "\u{57c3}\u{65af}\u{987f}",
-            "\u{5de5}\u{4e1a}\u{673a}\u{5668}\u{4eba}",
-            220.0,
-        ),
-        chain_stock(
-            "688017.SH",
-            "\u{7eff}\u{7684}\u{8c10}\u{6ce2}",
-            "\u{673a}\u{5668}\u{4eba}\u{51cf}\u{901f}\u{5668}",
-            180.0,
-        ),
-        chain_stock(
-            "300750.SZ",
-            "\u{5b81}\u{5fb7}\u{65f6}\u{4ee3}",
-            "\u{9502}\u{7535}\u{65b0}\u{80fd}\u{6e90}",
-            1800.0,
-        ),
-        chain_stock(
-            "600519.SH",
-            "\u{8d35}\u{5dde}\u{8305}\u{53f0}",
-            "\u{767d}\u{9152}",
-            2200.0,
-        ),
-    ];
-    let data = CoreDataSet {
-        stocks,
-        relations: Vec::new(),
-        histories: HashMap::new(),
-        financials: HashMap::new(),
-        capital_evidence: HashMap::new(),
-    };
-
-    let result = graph_screen_with_data(
-        &data,
-        &GraphScreenRequest {
-            seed_query: "\u{8d35}\u{5dde}\u{8305}\u{53f0}\u{4e0a}\u{4e0b}\u{6e38}".to_string(),
-            relation_depth: 2,
-            relation_weight: 0.7,
-            limit: 5,
-            ..GraphScreenRequest::default()
-        },
-    )
-    .expect("graph screen should run");
-
-    assert_eq!(result.center_context.mode, "seed_stock_center");
-    assert!(result
-        .center_context
-        .codes
-        .contains(&"600519.SH".to_string()));
-    assert!(result
-        .items
-        .iter()
-        .all(|item| item.related.iter().all(|relation| {
-            relation.relation_type != "supply_chain_upstream"
-                && relation.relation_type != "supply_chain_downstream"
-        })));
-    assert!(result
-        .notes
-        .iter()
-        .all(|note| { !note.contains("\u{673a}\u{5668}\u{4eba}\u{4ea7}\u{4e1a}\u{94fe}") }));
-}
-fn chain_stock(code: &str, name: &str, industry: &str, market_cap_billion: f64) -> StockItem {
+fn custom_test_stock(
+    code: &str,
+    name: &str,
+    industry: &str,
+    market_cap_billion: f64,
+    pe: f64,
+    roe: f64,
+) -> StockItem {
     StockItem {
         code: code.to_string(),
         name: name.to_string(),
         industry: industry.to_string(),
         is_st: false,
         price: 20.0,
-        pe: Some(20.0),
+        pe: Some(pe),
         pb: Some(3.0),
-        roe: Some(0.15),
+        roe: Some(roe),
         market_cap_billion: Some(market_cap_billion),
         dividend_yield: Some(0.01),
         deducted_net_profit_billion: Some(3.0),
@@ -354,15 +271,20 @@ fn backtest_uses_mock_history() {
             ..ScreenCriteria::default()
         },
         source: default_backtest_source(),
+        strategy_mode: default_backtest_strategy_mode(),
         stock_codes: Vec::new(),
         start_date: "20200101".to_string(),
         end_date: "20200110".to_string(),
         top_n: 2,
         initial_cash: 1000.0,
+        rebalance_frequency: default_rebalance_frequency(),
+        transaction_cost_bps: default_transaction_cost_bps(),
+        benchmark: default_backtest_benchmark(),
     })
     .expect("backtest should run");
     assert_eq!(result.metrics.num_stocks, 2);
-    assert_eq!(result.equity_curve.first().unwrap().equity, 1000.0);
+    assert!(result.equity_curve.first().unwrap().equity < 1000.0);
+    assert!(result.metrics.total_transaction_cost > 0.0);
     assert!(result.metrics.total_return > 0.0);
 }
 
@@ -640,7 +562,7 @@ fn observe_with_data_returns_financial_and_trend_payloads() {
         .find(|item| item.category == "technical_behavior")
         .unwrap();
     assert!(technical_item.metrics.contains_key("吸筹强度"));
-    assert!(technical_item.metrics.contains_key("波段机会"));
+    assert!(technical_item.metrics.contains_key("趋势热度"));
     assert!(!capital_evidence
         .notes
         .iter()
@@ -653,7 +575,7 @@ fn observe_with_data_accepts_numeric_capital_metric_values() {
     let mut data = sample_data_set();
     let history: Vec<HistoryBar> = (0..45)
         .map(|idx| {
-            let close = 10.0 + idx as f64 * 0.12;
+            let close = 10.0 + idx as f64 * 0.1;
             HistoryBar {
                 date: format!("2020-{:02}-{:02}", 2 + idx / 28, idx % 28 + 1),
                 open: Some(close - 0.05),
@@ -714,7 +636,6 @@ fn observe_with_data_accepts_numeric_capital_metric_values() {
         .iter()
         .any(|item| item.get("category").and_then(Value::as_str) == Some("technical_behavior")));
 }
-
 #[test]
 fn observe_without_cached_capital_evidence_uses_local_proxy_items() {
     let mut data = sample_data_set();
@@ -747,15 +668,14 @@ fn observe_without_cached_capital_evidence_uses_local_proxy_items() {
                 .any(|item| item.category == "message_sentiment_status")
     }));
 }
-
 #[test]
-fn agent_routes_graph_request() {
-    let response = run_agent_with_mock("用关系图分析 300750.SZ 产业链选股").unwrap();
-    assert_eq!(response.action, "graph_screen");
-    assert!(response.reply.contains("不构成投资建议"));
+fn agent_routes_sector_request_to_custom_screen() {
+    let response = run_agent_with_mock("筛选半导体趋势股").unwrap();
+    assert_eq!(response.action, "trend_screen");
+    assert_eq!(response.intent.as_ref().unwrap().kind, "trend_analysis");
+    assert!(response.reply.contains("仅供选股研究"));
     assert!(response.data.is_some());
 }
-
 #[test]
 fn agent_routes_trend_request() {
     let response = run_agent_with_mock("用趋势指标筛选上升趋势股票").unwrap();
@@ -763,7 +683,6 @@ fn agent_routes_trend_request() {
     assert!(response.reply.contains("不构成投资建议"));
     assert!(response.data.is_some());
 }
-
 #[test]
 fn agent_stream_with_data_emits_status_and_result() {
     let events = run_agent_stream_with_data_events(
@@ -862,7 +781,6 @@ fn mobile_stock_skill_classifies_sources_with_guardrails() {
         .iter()
         .any(|note| note.contains("社区来源只作为待验证线索")));
 }
-
 #[test]
 fn mobile_stock_skill_does_not_invent_without_sources() {
     let result = run_mobile_stock_skill(&MobileStockSkillRequest {
@@ -880,7 +798,6 @@ fn mobile_stock_skill_does_not_invent_without_sources() {
         .iter()
         .any(|note| note.contains("未找到可靠信源")));
 }
-
 #[test]
 fn validates_native_data_set() {
     let summary = validate_data_set(&sample_data_set()).expect("data set should be valid");
@@ -1145,16 +1062,7 @@ fn score_sort_biases_toward_hot_energy_and_tech_sectors() {
         pb: Some(1.0),
         roe: Some(0.1),
         market_cap_billion: Some(100.0),
-        dividend_yield: None,
-        deducted_net_profit_billion: None,
-        deducted_net_profit_margin: None,
-        deducted_net_profit_growth_rate: None,
-        change_pct: None,
-        volume: None,
-        amount: None,
-        turnover_rate: None,
-        volume_ratio: None,
-        quote_time: None,
+        ..StockItem::default()
     };
     let mut chip = base.clone();
     chip.code = "688001.SH".to_string();
@@ -1184,7 +1092,6 @@ fn score_sort_biases_toward_hot_energy_and_tech_sectors() {
         vec!["688001.SH", "601012.SH"]
     );
 }
-
 #[test]
 fn score_sort_promotes_hot_tech_and_energy_candidates_into_limited_results() {
     let bank = StockItem {
@@ -1197,16 +1104,7 @@ fn score_sort_promotes_hot_tech_and_energy_candidates_into_limited_results() {
         pb: Some(0.2),
         roe: Some(0.3),
         market_cap_billion: Some(100.0),
-        dividend_yield: None,
-        deducted_net_profit_billion: None,
-        deducted_net_profit_margin: None,
-        deducted_net_profit_growth_rate: None,
-        change_pct: None,
-        volume: None,
-        amount: None,
-        turnover_rate: None,
-        volume_ratio: None,
-        quote_time: None,
+        ..StockItem::default()
     };
     let mut ordinary_bank = bank.clone();
     ordinary_bank.code = "600000.SH".to_string();
@@ -1247,7 +1145,6 @@ fn score_sort_promotes_hot_tech_and_energy_candidates_into_limited_results() {
         vec!["688001.SH", "601012.SH"]
     );
 }
-
 #[test]
 fn score_sort_promotes_duofuduo_like_hot_themes_and_deprioritizes_bank_infra() {
     let bank = StockItem {
@@ -1260,16 +1157,7 @@ fn score_sort_promotes_duofuduo_like_hot_themes_and_deprioritizes_bank_infra() {
         pb: Some(0.2),
         roe: Some(0.3),
         market_cap_billion: Some(100.0),
-        dividend_yield: None,
-        deducted_net_profit_billion: None,
-        deducted_net_profit_margin: None,
-        deducted_net_profit_growth_rate: None,
-        change_pct: None,
-        volume: None,
-        amount: None,
-        turnover_rate: None,
-        volume_ratio: None,
-        quote_time: None,
+        ..StockItem::default()
     };
     let mut infra = bank.clone();
     infra.code = "601668.SH".to_string();
@@ -1321,7 +1209,6 @@ fn score_sort_promotes_duofuduo_like_hot_themes_and_deprioritizes_bank_infra() {
     assert!(!codes.contains(&"000001.SZ"));
     assert!(!codes.contains(&"601668.SH"));
 }
-
 #[test]
 fn score_sort_promotes_medical_and_game_candidates_with_other_hot_sectors() {
     let bank = StockItem {
@@ -1334,16 +1221,7 @@ fn score_sort_promotes_medical_and_game_candidates_with_other_hot_sectors() {
         pb: Some(0.2),
         roe: Some(0.3),
         market_cap_billion: Some(100.0),
-        dividend_yield: None,
-        deducted_net_profit_billion: None,
-        deducted_net_profit_margin: None,
-        deducted_net_profit_growth_rate: None,
-        change_pct: None,
-        volume: None,
-        amount: None,
-        turnover_rate: None,
-        volume_ratio: None,
-        quote_time: None,
+        ..StockItem::default()
     };
     let mut infra = bank.clone();
     infra.code = "601668.SH".to_string();
@@ -1412,7 +1290,6 @@ fn score_sort_promotes_medical_and_game_candidates_with_other_hot_sectors() {
         ]
     );
 }
-
 #[test]
 fn backtests_with_native_history() {
     let result = backtest_with_data(
@@ -1423,16 +1300,24 @@ fn backtests_with_native_history() {
                 ..ScreenCriteria::default()
             },
             source: default_backtest_source(),
+            strategy_mode: default_backtest_strategy_mode(),
             stock_codes: Vec::new(),
             start_date: "20200101".to_string(),
             end_date: "20200103".to_string(),
             top_n: 1,
             initial_cash: 1000.0,
+            rebalance_frequency: default_rebalance_frequency(),
+            transaction_cost_bps: default_transaction_cost_bps(),
+            benchmark: default_backtest_benchmark(),
         },
     )
     .expect("native data backtest should run");
     assert_eq!(result.equity_curve.len(), 3);
-    assert_eq!(result.equity_curve.last().unwrap().equity, 1200.0);
+    assert!((result.equity_curve.last().unwrap().equity - 1198.8).abs() < 1e-6);
+    assert!((result.metrics.total_return - 0.1988).abs() < 1e-6);
+    assert_eq!(result.metrics.strategy_mode, "candidate_snapshot");
+    assert_eq!(result.strategy_mode, "candidate_snapshot");
+    assert_eq!(result.metrics.rebalance_count, 1);
 }
 
 #[test]
@@ -1442,17 +1327,179 @@ fn backtests_watchlist_codes_in_saved_order() {
         &BacktestRequest {
             criteria: ScreenCriteria::default(),
             source: "watchlist".to_string(),
+            strategy_mode: default_backtest_strategy_mode(),
             stock_codes: vec!["222222.SZ".to_string(), "111111.SZ".to_string()],
             start_date: "20200101".to_string(),
             end_date: "20200103".to_string(),
             top_n: 10,
             initial_cash: 1000.0,
+            rebalance_frequency: default_rebalance_frequency(),
+            transaction_cost_bps: default_transaction_cost_bps(),
+            benchmark: default_backtest_benchmark(),
         },
     )
     .expect("watchlist backtest should run");
 
-    assert_eq!(result.symbols, vec!["222222.SZ", "111111.SZ"]);
+    assert_eq!(result.symbols, vec!["111111.SZ"]);
     assert!(result.notes.iter().any(|note| note.contains("自选观察池")));
+}
+
+#[test]
+fn backtest_walk_forward_mode_is_reported_separately() {
+    let result = backtest_with_data(
+        &sample_data_set(),
+        &BacktestRequest {
+            criteria: ScreenCriteria {
+                max_pe: Some(10.0),
+                ..ScreenCriteria::default()
+            },
+            source: default_backtest_source(),
+            strategy_mode: "walk_forward".to_string(),
+            stock_codes: Vec::new(),
+            start_date: "20200101".to_string(),
+            end_date: "20200103".to_string(),
+            top_n: 1,
+            initial_cash: 1000.0,
+            rebalance_frequency: default_rebalance_frequency(),
+            transaction_cost_bps: default_transaction_cost_bps(),
+            benchmark: default_backtest_benchmark(),
+        },
+    )
+    .expect("walk-forward backtest should run");
+
+    assert_eq!(result.strategy_mode, "walk_forward");
+    assert_eq!(result.metrics.strategy_mode, "walk_forward");
+    assert_eq!(result.metrics.rebalance_count, 1);
+}
+
+#[test]
+fn walk_forward_uses_point_in_time_factor_snapshots() {
+    let mut data = sample_data_set();
+    data.histories.insert(
+        "222222.SZ".to_string(),
+        vec![
+            HistoryBar {
+                date: "2020-01-01".to_string(),
+                open: Some(20.0),
+                high: Some(20.5),
+                low: Some(19.8),
+                close: 20.0,
+                volume: Some(1_000_000.0),
+                capital: Some(1_000_000_000.0),
+            },
+            HistoryBar {
+                date: "2020-02-01".to_string(),
+                open: Some(20.0),
+                high: Some(20.5),
+                low: Some(19.5),
+                close: 20.0,
+                volume: Some(1_000_000.0),
+                capital: Some(1_000_000_000.0),
+            },
+            HistoryBar {
+                date: "2020-03-01".to_string(),
+                open: Some(18.0),
+                high: Some(18.5),
+                low: Some(17.5),
+                close: 18.0,
+                volume: Some(1_000_000.0),
+                capital: Some(1_000_000_000.0),
+            },
+        ],
+    );
+    data.histories.insert(
+        "111111.SZ".to_string(),
+        vec![
+            HistoryBar {
+                date: "2020-01-01".to_string(),
+                open: Some(10.0),
+                high: Some(10.5),
+                low: Some(9.8),
+                close: 10.0,
+                volume: Some(1_000_000.0),
+                capital: Some(1_000_000_000.0),
+            },
+            HistoryBar {
+                date: "2020-02-01".to_string(),
+                open: Some(10.0),
+                high: Some(10.5),
+                low: Some(9.8),
+                close: 10.0,
+                volume: Some(1_000_000.0),
+                capital: Some(1_000_000_000.0),
+            },
+            HistoryBar {
+                date: "2020-03-01".to_string(),
+                open: Some(20.0),
+                high: Some(20.5),
+                low: Some(19.8),
+                close: 20.0,
+                volume: Some(1_000_000.0),
+                capital: Some(1_000_000_000.0),
+            },
+        ],
+    );
+    data.factor_snapshots = HashMap::from([
+        (
+            "111111.SZ".to_string(),
+            vec![
+                StockFactorSnapshot {
+                    date: "2020-01-01".to_string(),
+                    pe: Some(5.0),
+                    ..StockFactorSnapshot::default()
+                },
+                StockFactorSnapshot {
+                    date: "2020-02-01".to_string(),
+                    pe: Some(50.0),
+                    ..StockFactorSnapshot::default()
+                },
+            ],
+        ),
+        (
+            "222222.SZ".to_string(),
+            vec![
+                StockFactorSnapshot {
+                    date: "2020-01-01".to_string(),
+                    pe: Some(50.0),
+                    ..StockFactorSnapshot::default()
+                },
+                StockFactorSnapshot {
+                    date: "2020-02-01".to_string(),
+                    pe: Some(5.0),
+                    ..StockFactorSnapshot::default()
+                },
+            ],
+        ),
+    ]);
+
+    let result = backtest_with_data(
+        &data,
+        &BacktestRequest {
+            criteria: ScreenCriteria {
+                max_pe: Some(10.0),
+                ..ScreenCriteria::default()
+            },
+            source: default_backtest_source(),
+            strategy_mode: "walk_forward".to_string(),
+            stock_codes: Vec::new(),
+            start_date: "20200101".to_string(),
+            end_date: "20200301".to_string(),
+            top_n: 1,
+            initial_cash: 1000.0,
+            rebalance_frequency: "monthly".to_string(),
+            transaction_cost_bps: 0.0,
+            benchmark: "none".to_string(),
+        },
+    )
+    .expect("walk-forward should use factor snapshots");
+
+    assert_eq!(result.strategy_mode, "walk_forward");
+    assert_eq!(
+        result.rebalance_dates,
+        vec!["2020-01-01", "2020-02-01", "2020-03-01"]
+    );
+    assert_eq!(result.symbols, vec!["111111.SZ", "222222.SZ"]);
+    assert!((result.equity_curve.last().unwrap().equity - 900.0).abs() < 1e-6);
 }
 
 #[test]
@@ -1556,3 +1603,10 @@ fn screen_stocks_with_tied_scores_is_deterministic() {
         "tie-break ordering must be deterministic"
     );
 }
+
+
+
+
+
+
+

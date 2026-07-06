@@ -37,8 +37,6 @@ export default function App({ onMounted }: AppProps) {
     };
     return map[hash] || "screen";
   });
-
-  const [criteriaOpen, setCriteriaOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileRuntime, setMobileRuntime] = useState(false);
   const [observeCode, setObserveCode] = useState("");
@@ -128,23 +126,15 @@ export default function App({ onMounted }: AppProps) {
     const onKeydown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setMobileNavOpen(false);
-        setCriteriaOpen(false);
       }
     };
     document.addEventListener("keydown", onKeydown);
     return () => document.removeEventListener("keydown", onKeydown);
   }, []);
 
-  useEffect(() => {
-    if (view !== "screen") {
-      setCriteriaOpen(false);
-    }
-  }, [view]);
-
   const navigate = useCallback((v: ViewKey) => {
     setView(v);
     setMobileNavOpen(false);
-    setCriteriaOpen(false);
     const hrefMap: Record<ViewKey, string> = {
       screen: "#sectionScreen",
       observe: "#sectionObserve",
@@ -192,14 +182,7 @@ export default function App({ onMounted }: AppProps) {
 
       <main className="workbench">
         {view === "screen" && (
-          <FilterBar
-            criteria={criteria}
-            onChange={setCriteria}
-            open={criteriaOpen}
-            onToggle={() => setCriteriaOpen(!criteriaOpen)}
-            onClose={() => setCriteriaOpen(false)}
-            mobileRuntime={mobileRuntime}
-          />
+          <FilterBar mobileRuntime={mobileRuntime} />
         )}
 
         <div className="panels">

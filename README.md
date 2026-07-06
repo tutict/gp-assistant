@@ -1,4 +1,4 @@
-# 股选优
+﻿# 股选优
 
 这是一个面向 A 股的选股智能体项目。当前运行时已经统一为 Tauri + Rust：桌面端和 Android 端加载同一套 React/TypeScript 前端，通过 Tauri command 调用 Rust 后端获取行情、财务、消息、回测和资金证据数据。
 
@@ -132,3 +132,10 @@ cargo check --manifest-path desktop/src-tauri/Cargo.toml
 cmd /c npm --prefix desktop/frontend run build
 cmd /c npm --prefix desktop run build
 ```
+## Agent 能力边界
+
+Agent 定位为“选股研究工作台”，本轮仅编排现有本地能力，不引入 Python/AkShare 运行时，也不依赖东方财富妙想 `MX_APIKEY`。核心能力包括 `stock_snapshot`、`stock_news`、`stock_screen`、`trend_analysis`、`sector_analysis`、`watchlist_action`、`portfolio_simulation`。
+
+Agent 流式接口保持 `status/result/error` 兼容，同时支持 `tool_start`、`tool_result`、`evidence`、`final`，前端用于展示工具轨迹、证据摘要、风险提示和下一步动作。
+
+所有 Agent 输出仅供选股研究，不构成投资建议；不输出买入、卖出、目标价、仓位或收益承诺。社区或未验证来源只能作为待验证线索。

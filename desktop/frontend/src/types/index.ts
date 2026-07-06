@@ -269,6 +269,7 @@ export interface BacktestMetrics {
   total_transaction_cost?: number;
   total_turnover?: number;
   rebalance_count?: number;
+  strategy_mode?: string;
 }
 
 export interface EquityPoint {
@@ -283,6 +284,7 @@ export interface BacktestResult {
   symbols: string[];
   benchmark_symbols?: string[];
   rebalance_dates?: string[];
+  strategy_mode?: string;
   notes?: string[];
 }
 
@@ -387,9 +389,46 @@ export interface UpstreamRagTransferResult {
   notes?: string[];
 }
 
+export interface AgentIntent {
+  kind?: string;
+  query?: string;
+  symbols?: string[];
+  window?: string | null;
+  depth?: string;
+  mode?: string;
+}
+
+export interface AgentToolCall {
+  id?: string;
+  tool?: string;
+  label?: string;
+  status?: string;
+  input?: Record<string, unknown> | null;
+  output_summary?: string | null;
+  warnings?: string[];
+}
+
+export interface AgentEvidenceItem {
+  title?: string;
+  source?: string;
+  level?: string;
+  summary?: string;
+}
+
+export interface AgentAnswerSection {
+  title?: string;
+  bullets?: string[];
+}
+
 export interface AgentResult {
   reply?: string;
   action?: string;
+  intent?: AgentIntent | null;
+  tool_calls?: AgentToolCall[];
+  evidence_summary?: AgentEvidenceItem[];
+  answer_sections?: AgentAnswerSection[];
+  warnings?: string[];
+  next_actions?: string[];
   criteria?: ScreenCriteria | null;
   backtest?: Record<string, unknown> | null;
   news_rag?: Record<string, unknown> | null;

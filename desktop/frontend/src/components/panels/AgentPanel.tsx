@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentResult, AgentStreamEvent, BacktestResult, LlmSettings, NewsRagResult, ObserveResult, StockRowView, WatchlistItem } from "../../types";
 import { getTauriInvoke, getTauriListen, isTauriRuntime } from "../../lib/tauri";
-import { actionResultKind, activeLlmProvider, buildLlmConfig, normalizeAgentStreamEvent, normalizeScreenRows, parseSseBlock } from "../../lib/contracts";
+import { actionResultKind, activeLlmProvider, buildLlmConfig, normalizeAgentResult, normalizeAgentStreamEvent, normalizeScreenRows, parseSseBlock } from "../../lib/contracts";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { StockList } from "../StockList";
 import { BacktestResultView } from "./BacktestPanel";
@@ -42,8 +42,18 @@ interface AgentConversation {
 
 const AGENT_MODES = [
   { id: "quick", label: "快速模式", hint: "直接执行选股、观察和新闻查询" },
-  { id: "expert", label: "专家模式", hint: "要求更完整的依据、风险和下一步动作" },
+  { id: "expert", label: "专家模式", hint: "要求更完整的证据、风险和下一步动作" },
   { id: "research", label: "研报模式", hint: "聚焦上下游、公告和消息链路" },
+] as const;
+
+const AGENT_CAPABILITIES = [
+  { key: "stock_snapshot", title: "个股速览", hint: "行情、财务、资金面一屏汇总", example: "看一下贵州茅台财务和资金面" },
+  { key: "stock_news", title: "资讯研判", hint: "近期利好利空与来源证据", example: "分析 300750 最近利好利空" },
+  { key: "stock_screen", title: "智能选股", hint: "按条件筛选候选股并解释原因", example: "筛选高 ROE 低估值股票" },
+  { key: "trend_analysis", title: "趋势分析", hint: "K 线、量价和趋势因子观察", example: "筛选半导体趋势股" },
+  { key: "sector_analysis", title: "板块/主题", hint: "板块强弱、主题链路和候选股", example: "半导体板块有什么机会" },
+  { key: "watchlist_action", title: "自选股", hint: "只管理本地 watchlist", example: "把宁德时代加入自选" },
+  { key: "portfolio_simulation", title: "组合观察", hint: "基于自选股和回测做模拟观察", example: "用自选股做组合观察" },
 ] as const;
 
 type AgentMode = typeof AGENT_MODES[number]["id"];
@@ -214,20 +224,39 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           label: event.label || event.stage || "运行中",
           percent: Number(event.percent || 0),
         };
-        updateConversation(conversationId, (conversation) => ({
-          ...conversation,
-          messages: conversation.messages.map((message, index) => {
-            if (index !== conversation.messages.length - 1) return message;
-            return {
-              ...message,
-              content: event.label || event.stage || "运行中...",
-              steps: mergeStep(message.steps || [], step),
-            };
-          }),
-          updatedAt: Date.now(),
-        }));
+        updateAssistantProgress(conversationId, updateConversation, step, event.label || event.stage || "运行中...");
+      } else if (event.type === "tool_start") {
+        const payload = asRecord(event.payload);
+        const tool = String(payload.tool || event.action || "tool");
+        const step = {
+          stage: String(payload.id || `tool-${tool}`),
+          label: String(payload.label || payload.tool || tool || "执行工具"),
+          percent: 45,
+        };
+        updateAssistantProgress(conversationId, updateConversation, step, step.label);
+      } else if (event.type === "tool_result") {
+        const payload = asRecord(event.payload);
+        const tool = String(payload.tool || event.action || "tool");
+        const step = {
+          stage: String(payload.id || `tool-${tool}`),
+          label: String(payload.output_summary || payload.status || "工具完成"),
+          percent: 78,
+        };
+        updateAssistantProgress(conversationId, updateConversation, step, step.label);
+      } else if (event.type === "evidence") {
+        updateAssistantProgress(conversationId, updateConversation, {
+          stage: "evidence",
+          label: "汇总证据",
+          percent: 86,
+        }, "正在汇总证据...");
+      } else if (event.type === "final") {
+        updateAssistantProgress(conversationId, updateConversation, {
+          stage: "final",
+          label: "整理结果",
+          percent: 96,
+        }, "正在整理结果...");
       } else if (event.type === "result") {
-        const result = event.response || {};
+        const result = normalizeAgentResult(event.response || {});
         patchAssistant({ content: String(result.reply || "已完成。"), result, steps: undefined });
       } else if (event.type === "error") {
         patchAssistant({ content: event.message || "智能体执行失败。", error: true, steps: undefined });
@@ -235,13 +264,21 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     };
 
     try {
-      await requestAgentStream({ message: text, run_id: runId, llm: buildLlmConfig(llmSettings), mode }, applyEvent);
+      await requestAgentStream({
+        message: text,
+        run_id: runId,
+        llm: buildLlmConfig(llmSettings),
+        mode,
+        context: {
+          watchlist: watchlist.slice(0, 50).map((item) => ({ code: item.code, name: item.name, industry: item.industry })),
+        },
+      }, applyEvent);
     } catch (err) {
       patchAssistant({ content: `错误：${(err as Error).message}`, error: true, steps: undefined });
     } finally {
       setLoading(false);
     }
-  }, [activeConversation?.id, activeConversation?.mode, input, llmSettings, loading, updateConversation]);
+  }, [activeConversation?.id, activeConversation?.mode, input, llmSettings, loading, updateConversation, watchlist]);
 
   return (
     <div className={`panel-container agent-panel agent-workspace ${railCollapsed ? "rail-collapsed" : ""}`}>
@@ -250,8 +287,8 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           type="button"
           className="agent-rail-toggle"
           onClick={() => setRailCollapsed((collapsed) => !collapsed)}
-          aria-label={railCollapsed ? "展开对话历史" : "折叠对话历史"}
-          title={railCollapsed ? "展开对话历史" : "折叠对话历史"}
+          aria-label={railCollapsed ? "展开会话历史" : "折叠会话历史"}
+          title={railCollapsed ? "展开会话历史" : "折叠会话历史"}
         >
           <span />
           <span />
@@ -409,7 +446,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
                 send();
               }
             }}
-            placeholder={`给股选优 Agent 发送消息，当前为${activeMode.label}`}
+            placeholder={`给股选优 Agent 发送消息，当前为 ${activeMode.label}`}
             rows={3}
             disabled={loading}
           />
@@ -432,7 +469,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           </div>
           <div className="agent-composer-footer">
             <button type="button" className="send-btn" onClick={send} disabled={loading || !input.trim()} aria-label="发送">
-              {loading ? "..." : "↑"}
+              {loading ? "..." : "→"}
             </button>
           </div>
         </div>
@@ -471,6 +508,16 @@ function AgentEmptyState({
           </button>
         ))}
       </div>
+
+      <div className="agent-capability-grid" aria-label="Agent 能力">
+        {AGENT_CAPABILITIES.map((item) => (
+          <article key={item.key} className="agent-capability-card">
+            <strong>{item.title}</strong>
+            <span>{item.hint}</span>
+            <em>{item.example}</em>
+          </article>
+        ))}
+      </div>
     </div>
   );
 }
@@ -490,16 +537,97 @@ function AgentResultView({ result, watchlist, onToggleWatchlist }: {
 }) {
   const kind = actionResultKind(result);
   const nested = agentNestedResult(result, kind);
-  if (kind === "backtest") return <BacktestResultView result={nested as unknown as BacktestResult} />;
-  if (["screen", "sector", "graph", "trend"].includes(kind)) {
-    const rows = normalizeScreenRows(nested) as StockRowView[];
-    return rows.length
-      ? <StockList items={rows} watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} />
-      : <GenericAgentResult result={nested || result} />;
-  }
-  if (kind === "news") return <NewsRagView result={nested as unknown as NewsRagResult} />;
-  if (kind === "observe") return <ObserveResultView result={nested as unknown as ObserveResult} />;
-  return <GenericAgentResult result={result} />;
+  const legacyView = (() => {
+    if (kind === "backtest") return <BacktestResultView result={nested as unknown as BacktestResult} />;
+    if (["screen", "sector", "graph", "trend"].includes(kind)) {
+      const rows = normalizeScreenRows(nested) as StockRowView[];
+      return rows.length
+        ? <StockList items={rows} watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} />
+        : <GenericAgentResult result={nested || result} />;
+    }
+    if (kind === "news") return <NewsRagView result={nested as unknown as NewsRagResult} />;
+    if (kind === "observe") return <ObserveResultView result={nested as unknown as ObserveResult} />;
+    return <GenericAgentResult result={result} />;
+  })();
+
+  return (
+    <div className="agent-result-stack">
+      <AgentStructuredResult result={result} />
+      {legacyView}
+    </div>
+  );
+}
+
+function AgentStructuredResult({ result }: { result: AgentResult }) {
+  const toolCalls = Array.isArray(result.tool_calls) ? result.tool_calls : [];
+  const evidence = Array.isArray(result.evidence_summary) ? result.evidence_summary : [];
+  const sections = Array.isArray(result.answer_sections) ? result.answer_sections : [];
+  const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+  const nextActions = Array.isArray(result.next_actions) ? result.next_actions : [];
+  if (!result.intent && !toolCalls.length && !evidence.length && !sections.length && !warnings.length && !nextActions.length) return null;
+
+  return (
+    <section className="agent-structured-result">
+      {result.intent && (
+        <div className="agent-intent-card">
+          <span>任务理解</span>
+          <strong>{result.intent.kind || result.action || "stock_research"}</strong>
+          <em>{[result.intent.mode, result.intent.depth, result.intent.window].filter(Boolean).join(" ? ")}</em>
+        </div>
+      )}
+
+      {toolCalls.length > 0 && (
+        <div className="agent-tool-trace" aria-label="工具调用轨迹">
+          {toolCalls.map((call, index) => (
+            <article key={call.id || String(call.tool || "tool") + "-" + index} className={["agent-tool-call", call.status || "ok"].join(" ")}>
+              <span>{index + 1}</span>
+              <div>
+                <strong>{call.label || call.tool || "工具调用"}</strong>
+                <em>{call.output_summary || call.status || "已完成"}</em>
+              </div>
+              <b>{call.status || "ok"}</b>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {sections.length > 0 && (
+        <div className="agent-answer-sections">
+          {sections.map((section, index) => (
+            <article key={String(section.title || "section") + "-" + index}>
+              <strong>{section.title || "结论"}</strong>
+              {(section.bullets || []).map((bullet, bulletIndex) => <p key={bulletIndex}>{bullet}</p>)}
+            </article>
+          ))}
+        </div>
+      )}
+
+      {evidence.length > 0 && (
+        <div className="agent-evidence-grid">
+          {evidence.map((item, index) => (
+            <article key={String(item.title || "evidence") + "-" + index}>
+              <span>{item.level || "evidence"}</span>
+              <strong>{item.title || item.source || "证据"}</strong>
+              <p>{item.summary || item.source || "暂无证据摘要"}</p>
+              {item.source && <em>{item.source}</em>}
+            </article>
+          ))}
+        </div>
+      )}
+
+      {warnings.length > 0 && (
+        <div className="agent-warning-list">
+          {warnings.map((warning, index) => <p key={index}>{warning}</p>)}
+        </div>
+      )}
+
+      {nextActions.length > 0 && (
+        <div className="agent-next-actions">
+          {nextActions.map((action, index) => <button key={index} type="button" disabled>{action}</button>)}
+        </div>
+      )}
+    </section>
+  );
 }
 
 function agentNestedResult(result: AgentResult, kind: string): Record<string, unknown> {
@@ -529,6 +657,25 @@ function mergeStep(steps: AgentStep[], step: AgentStep): AgentStep[] {
   else next.push(step);
   return next;
 }
+function updateAssistantProgress(
+  conversationId: string,
+  updateConversation: (conversationId: string, updater: (conversation: AgentConversation) => AgentConversation) => void,
+  step: AgentStep,
+  content: string,
+) {
+  updateConversation(conversationId, (conversation) => ({
+    ...conversation,
+    messages: conversation.messages.map((message, index) => {
+      if (index !== conversation.messages.length - 1) return message;
+      return {
+        ...message,
+        content,
+        steps: mergeStep(message.steps || [], step),
+      };
+    }),
+    updatedAt: Date.now(),
+  }));
+}
 
 function sanitizeLegacyAgentReply(content: string): string {
   const original = String(content || "").trim();
@@ -545,7 +692,7 @@ function isAgentNoiseLine(line: string): boolean {
   return [
     /^Android short/i,
     /^Android .* returned \d+ items/i,
-    /^RAG 只在/,
+    /^RAG 只在/i,
     /^未接入模型/,
     /^当前范围没有供应链/,
     /^消息缓存:/,
@@ -669,10 +816,14 @@ async function requestTauriAgentStream(payload: Record<string, unknown>, onEvent
         message: String(payload.message || ""),
         run_id: runId,
         mode: String(payload.mode || "quick"),
+        context: payload.context,
+        platform: payload.platform,
+        network: payload.network,
       },
     });
-    if (!sawResult && response) onEvent({ run_id: runId, type: "result", response });
+    if (!sawResult && response) onEvent({ run_id: runId, type: "result", response: normalizeAgentResult(response) });
   } finally {
     unlisten?.();
   }
 }
+

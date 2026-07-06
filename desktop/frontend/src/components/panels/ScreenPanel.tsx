@@ -1,9 +1,10 @@
 import { useCallback, useState } from "react";
 import type { SectorScreenResult, StockRowView, WatchlistItem } from "../../types";
 import type { FilterCriteria } from "../FilterBar";
+import { CriteriaFields } from "../CriteriaFields";
 import { postJson } from "../../lib/tauri";
 import {
-  buildGraphScreenRequest,
+  buildCustomScreenRequest,
   buildScreenCriteria,
   buildSectorScreenRequest,
   buildTrendScreenRequest,
@@ -13,7 +14,6 @@ import {
 } from "../../lib/contracts";
 import { currentSystemDateInputValue, defaultObserveStartDateInputValue, escapeHtml } from "../../lib/format";
 import { StockList } from "../StockList";
-import { StockCodeInput } from "../StockCodeInput";
 
 interface ScreenPanelProps {
   criteria: FilterCriteria;
@@ -25,18 +25,19 @@ interface ScreenPanelProps {
   mobileRuntime?: boolean;
 }
 
-type ScreenMode = "screen" | "sectorScreen" | "boardScreen" | "graph" | "trendScreen";
+type ScreenMode = "screen" | "sectorScreen" | "boardScreen" | "customScreen" | "trendScreen";
 
 const TABS: { key: ScreenMode; label: string }[] = [
   { key: "screen", label: "智能选股" },
   { key: "sectorScreen", label: "概念分组" },
   { key: "boardScreen", label: "板块分组" },
-  { key: "graph", label: "关系图谱" },
+  { key: "customScreen", label: "自定义选股" },
   { key: "trendScreen", label: "趋势选股" },
 ];
 
 export function ScreenPanel({
   criteria,
+  onCriteriaChange,
   watchlist,
   onWatchlistChange,
   onObserveStock,
@@ -51,9 +52,6 @@ export function ScreenPanel({
   const [trendEnd, setTrendEnd] = useState(currentSystemDateInputValue());
   const [maxSectors, setMaxSectors] = useState(12);
   const [perSectorLimit, setPerSectorLimit] = useState(5);
-  const [seedCodes, setSeedCodes] = useState("");
-  const [relationDepth, setRelationDepth] = useState(1);
-  const [relationWeight, setRelationWeight] = useState(0.4);
 
   const run = useCallback(async () => {
     setLoading(true);
@@ -68,9 +66,9 @@ export function ScreenPanel({
       } else if (mode === "boardScreen") {
         endpoint = "/api/sector-screen";
         payload = buildSectorScreenRequest(criteria, "board", perSectorLimit, 5);
-      } else if (mode === "graph") {
-        endpoint = "/api/graph-screen";
-        payload = buildGraphScreenRequest(criteria, seedCodes, relationDepth, relationWeight);
+      } else if (mode === "customScreen") {
+        endpoint = "/api/custom-screen";
+        payload = buildCustomScreenRequest(criteria);
       } else if (mode === "trendScreen") {
         endpoint = "/api/trend-screen";
         payload = buildTrendScreenRequest(criteria, trendStart, trendEnd);
@@ -83,7 +81,7 @@ export function ScreenPanel({
     } finally {
       setLoading(false);
     }
-  }, [criteria, maxSectors, mode, perSectorLimit, relationDepth, relationWeight, seedCodes, trendEnd, trendStart]);
+  }, [criteria, maxSectors, mode, perSectorLimit, trendEnd, trendStart]);
 
   const toggleWatchlist = useCallback((item: StockRowView) => {
     const exists = watchlist.some((w) => w.code === item.code);
@@ -98,10 +96,15 @@ export function ScreenPanel({
   }, [mode, onWatchlistChange, watchlist]);
 
   const hasControlFields = mode !== "screen";
-  const controlsClassName = `panel-controls screen-panel-controls ${mode === "sectorScreen" || mode === "boardScreen" ? "grouped-screen-controls" : ""}`;
+  const controlsClassName = `panel-controls screen-panel-controls ${mode === "customScreen" ? "custom-screen-controls" : mode === "sectorScreen" || mode === "boardScreen" ? "grouped-screen-controls" : ""}`;
 
   const controlFields = (
     <>
+      {mode === "customScreen" && (
+        <div className="custom-screen-criteria">
+          <CriteriaFields criteria={criteria} onChange={onCriteriaChange} idPrefix="customScreen" />
+        </div>
+      )}
       {(mode === "sectorScreen" || mode === "boardScreen") && (
         <>
           <div className="form-row inline">
@@ -114,23 +117,6 @@ export function ScreenPanel({
               <input id="maxSectors" type="number" min="1" max="50" value={maxSectors} onChange={(e) => setMaxSectors(Number(e.target.value) || 12)} />
             </div>
           )}
-        </>
-      )}
-
-      {mode === "graph" && (
-        <>
-          <div className="form-row">
-            <label htmlFor="seedCodes">中心股票/主题</label>
-            <StockCodeInput id="seedCodes" value={seedCodes} onChange={setSeedCodes} placeholder="埃斯顿 / 002747.SZ" listMode />
-          </div>
-          <div className="form-row inline">
-            <label htmlFor="relationDepth">关系深度</label>
-            <input id="relationDepth" type="number" min="1" max="3" value={relationDepth} onChange={(e) => setRelationDepth(Number(e.target.value) || 1)} />
-          </div>
-          <div className="form-row inline">
-            <label htmlFor="relationWeight">关系权重</label>
-            <input id="relationWeight" type="number" min="0" max="1" step="0.05" value={relationWeight} onChange={(e) => setRelationWeight(Number(e.target.value) || 0.4)} />
-          </div>
         </>
       )}
 

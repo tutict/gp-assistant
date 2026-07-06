@@ -28,6 +28,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
   const [topN, setTopN] = useState(10);
   const [rebalance, setRebalance] = useState("monthly");
   const [benchmark, setBenchmark] = useState("candidate_equal_weight");
+  const [strategyMode, setStrategyMode] = useState("candidate_snapshot");
   const [costBps, setCostBps] = useState(10);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BacktestResult | null>(null);
@@ -55,6 +56,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
         rebalanceFrequency: rebalance,
         transactionCostBps: costBps,
         benchmark,
+        strategyMode,
       });
       const data = await postJson<BacktestResult>("/api/backtest", payload);
       setResult(data);
@@ -63,7 +65,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
     } finally {
       setLoading(false);
     }
-  }, [benchmark, costBps, criteria, end, rebalance, source, start, topN, watchlist]);
+  }, [benchmark, costBps, criteria, end, rebalance, source, start, strategyMode, topN, watchlist]);
 
   const sourceText = source === "watchlist"
     ? `${Math.min(topN, watchlist.length)} / ${watchlist.length} 只`
@@ -86,6 +88,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
           <span><b>调仓</b><strong>{shortRebalanceLabel(rebalance)}</strong></span>
           <span><b>成本</b><strong>{formatNumber(costBps)}bps</strong></span>
           <span><b>基准</b><strong>{shortBenchmarkLabel(benchmark)}</strong></span>
+          <span><b>Mode</b><strong>{strategyMode === "walk_forward" ? "Walk-forward" : "Snapshot"}</strong></span>
         </div>
       </div>
 
@@ -108,6 +111,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
             <option value="none">无</option>
           </select>
         </div>
+        <div className="form-row inline"><label htmlFor="btStrategyMode">模式</label><select id="btStrategyMode" value={strategyMode} onChange={(e) => setStrategyMode(e.target.value)}><option value="candidate_snapshot">候选快照</option><option value="walk_forward">Walk-forward</option></select></div>
         <div className="form-row inline"><label htmlFor="btCostBps">成本</label><input id="btCostBps" type="number" min="0" max="500" value={costBps} onChange={(e) => setCostBps(Number(e.target.value) || 0)} /></div>
         <button type="button" className="run-btn" onClick={run} disabled={loading}>{loading ? "回测中..." : "运行回测"}</button>
       </div>
@@ -141,6 +145,7 @@ export function BacktestResultView({ result }: { result: BacktestResult }) {
         <div><span>交易成本</span><strong>{formatMoney(metrics.total_transaction_cost)}</strong></div>
         <div><span>换手</span><strong>{formatNumber(metrics.total_turnover)}</strong></div>
         <div><span>调仓次数</span><strong>{metrics.rebalance_count ?? 0}</strong></div>
+        <div><span>Mode</span><strong>{metrics.strategy_mode === "walk_forward" ? "Walk-forward" : "Snapshot"}</strong></div>
       </section>
 
       {result.symbols?.length ? (

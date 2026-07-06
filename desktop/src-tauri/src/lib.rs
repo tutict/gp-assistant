@@ -319,6 +319,15 @@ async fn api_sector_screen(app: tauri::AppHandle, payload: Value) -> Result<Valu
 }
 
 #[tauri::command]
+async fn api_custom_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let core_payload = core_payload_with_cached_data(&app, "request", payload)?;
+    runtime::run_cpu_bound("api_custom_screen", move || {
+        gp_core::graph_screen_with_data_value(core_payload).map_err(|error| error.to_string())
+    })
+    .await?
+}
+
+#[tauri::command]
 async fn api_graph_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
     let core_payload = core_payload_with_cached_data(&app, "request", payload)?;
     runtime::run_cpu_bound("api_graph_screen", move || {
@@ -550,6 +559,11 @@ async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value
     }
     if let Some(mode) = mode {
         request.insert("mode".to_string(), Value::String(mode));
+    }
+    for key in ["context", "platform", "network"] {
+        if let Some(value) = payload.get(key) {
+            request.insert(key.to_string(), value.clone());
+        }
     }
     core_agent_stream_with_data(app, Value::Object(request)).await
 }
@@ -5409,6 +5423,7 @@ pub fn run() {
             api_market_clear_cache,
             api_screen,
             api_sector_screen,
+            api_custom_screen,
             api_graph_screen,
             api_trend_analyze,
             api_trend_screen,

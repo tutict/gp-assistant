@@ -1,5 +1,5 @@
-use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+﻿use std::{
+    collections::{BTreeMap, HashMap, HashSet},
     fmt,
 };
 
@@ -667,6 +667,8 @@ pub struct BacktestRequest {
     pub criteria: ScreenCriteria,
     #[serde(default = "default_backtest_source")]
     pub source: String,
+    #[serde(default = "default_backtest_strategy_mode")]
+    pub strategy_mode: String,
     #[serde(default)]
     pub stock_codes: Vec<String>,
     pub start_date: String,
@@ -675,6 +677,12 @@ pub struct BacktestRequest {
     pub top_n: usize,
     #[serde(default = "default_initial_cash")]
     pub initial_cash: f64,
+    #[serde(default = "default_rebalance_frequency")]
+    pub rebalance_frequency: String,
+    #[serde(default = "default_transaction_cost_bps")]
+    pub transaction_cost_bps: f64,
+    #[serde(default = "default_backtest_benchmark")]
+    pub benchmark: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -689,13 +697,30 @@ pub struct BacktestMetrics {
     pub annualized_return: Option<f64>,
     pub max_drawdown: Option<f64>,
     pub num_stocks: usize,
+    pub benchmark_total_return: Option<f64>,
+    pub benchmark_annualized_return: Option<f64>,
+    pub benchmark_max_drawdown: Option<f64>,
+    pub excess_return: Option<f64>,
+    pub total_transaction_cost: f64,
+    pub total_turnover: f64,
+    pub rebalance_count: usize,
+    #[serde(default = "default_backtest_strategy_mode")]
+    pub strategy_mode: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BacktestResult {
     pub metrics: BacktestMetrics,
     pub equity_curve: Vec<EquityPoint>,
+    #[serde(default)]
+    pub benchmark_curve: Vec<EquityPoint>,
     pub symbols: Vec<String>,
+    #[serde(default)]
+    pub benchmark_symbols: Vec<String>,
+    #[serde(default)]
+    pub rebalance_dates: Vec<String>,
+    #[serde(default = "default_backtest_strategy_mode")]
+    pub strategy_mode: String,
     #[serde(default)]
     pub notes: Vec<String>,
 }
@@ -706,9 +731,90 @@ pub struct AgentRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AgentSkill {
+    pub key: String,
+    pub title: String,
+    pub description: String,
+    pub input_schema: Value,
+    pub output_schema: Value,
+    pub platforms: Vec<String>,
+    pub evidence_level: String,
+    pub fallback: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AgentIntent {
+    pub kind: String,
+    pub query: String,
+    #[serde(default)]
+    pub symbols: Vec<String>,
+    #[serde(default)]
+    pub window: Option<String>,
+    pub depth: String,
+    pub mode: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AgentToolCall {
+    pub id: String,
+    pub tool: String,
+    pub label: String,
+    pub status: String,
+    #[serde(default)]
+    pub input: Value,
+    #[serde(default)]
+    pub output_summary: Option<String>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AgentEvidenceItem {
+    pub title: String,
+    pub source: String,
+    pub level: String,
+    pub summary: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AgentAnswerSection {
+    pub title: String,
+    #[serde(default)]
+    pub bullets: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AgentContext {
+    #[serde(default)]
+    pub watchlist: Vec<AgentWatchlistItem>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AgentWatchlistItem {
+    #[serde(default)]
+    pub code: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub industry: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AgentResponse {
     pub reply: String,
     pub action: String,
+    #[serde(default)]
+    pub intent: Option<AgentIntent>,
+    #[serde(default)]
+    pub tool_calls: Vec<AgentToolCall>,
+    #[serde(default)]
+    pub evidence_summary: Vec<AgentEvidenceItem>,
+    #[serde(default)]
+    pub answer_sections: Vec<AgentAnswerSection>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    #[serde(default)]
+    pub next_actions: Vec<String>,
     #[serde(default)]
     pub criteria: Option<ScreenCriteria>,
     #[serde(default)]
@@ -762,6 +868,41 @@ pub struct StockFinancialSnapshot {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct StockFactorSnapshot {
+    pub date: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pe: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pb: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roe: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_cap_billion: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dividend_yield: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deducted_net_profit_billion: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deducted_net_profit_margin: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deducted_net_profit_growth_rate: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turnover_rate: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume_ratio: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CoreDataSet {
     #[serde(default)]
     pub stocks: Vec<StockItem>,
@@ -772,6 +913,8 @@ pub struct CoreDataSet {
     #[serde(default)]
     pub financials: HashMap<String, StockFinancialSnapshot>,
     #[serde(default)]
+    pub factor_snapshots: HashMap<String, Vec<StockFactorSnapshot>>,
+    #[serde(default)]
     pub capital_evidence: HashMap<String, CapitalEvidenceResult>,
 }
 
@@ -781,6 +924,10 @@ pub struct DataSourceSummary {
     pub relation_count: usize,
     pub history_symbol_count: usize,
     pub history_bar_count: usize,
+    #[serde(default)]
+    pub factor_snapshot_symbol_count: usize,
+    #[serde(default)]
+    pub factor_snapshot_count: usize,
     #[serde(default)]
     pub warnings: Vec<String>,
 }
@@ -832,6 +979,8 @@ pub struct TrendScreenWithDataRequest {
 pub struct AgentWithDataRequest {
     pub data: CoreDataSet,
     pub message: String,
+    #[serde(default)]
+    pub context: AgentContext,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -842,6 +991,8 @@ pub struct AgentStreamWithDataRequest {
     pub run_id: Option<String>,
     #[serde(default)]
     pub mode: Option<String>,
+    #[serde(default)]
+    pub context: AgentContext,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -859,6 +1010,8 @@ pub struct AgentStreamEvent {
     pub action: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response: Option<AgentResponse>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
@@ -1011,6 +1164,10 @@ pub trait MarketDataSource {
         None
     }
 
+    fn get_factor_snapshots(&self, _code: &str) -> CoreResult<Vec<StockFactorSnapshot>> {
+        Ok(Vec::new())
+    }
+
     fn get_capital_evidence(&self, _code: &str) -> Option<CapitalEvidenceResult> {
         None
     }
@@ -1075,6 +1232,17 @@ impl MarketDataSource for StaticDataSource {
             .get(code)
             .cloned()
             .or_else(|| self.data.financials.get(&normalized).cloned())
+    }
+
+    fn get_factor_snapshots(&self, code: &str) -> CoreResult<Vec<StockFactorSnapshot>> {
+        let normalized = normalize_stock_code(code);
+        Ok(self
+            .data
+            .factor_snapshots
+            .get(code)
+            .cloned()
+            .or_else(|| self.data.factor_snapshots.get(&normalized).cloned())
+            .unwrap_or_default())
     }
 
     fn get_capital_evidence(&self, code: &str) -> Option<CapitalEvidenceResult> {
@@ -1203,6 +1371,22 @@ fn default_initial_cash() -> f64 {
     1_000_000.0
 }
 
+fn default_rebalance_frequency() -> String {
+    "monthly".to_string()
+}
+
+fn default_transaction_cost_bps() -> f64 {
+    10.0
+}
+
+fn default_backtest_benchmark() -> String {
+    "candidate_equal_weight".to_string()
+}
+
+fn default_backtest_strategy_mode() -> String {
+    "candidate_snapshot".to_string()
+}
+
 fn default_backtest_source() -> String {
     "criteria".to_string()
 }
@@ -1283,16 +1467,17 @@ pub fn agent_value(payload: Value) -> CoreResult<Value> {
 
 pub fn agent_with_data_value(payload: Value) -> CoreResult<Value> {
     let request: AgentWithDataRequest = serde_json::from_value(payload)?;
-    serde_json::to_value(run_agent_with_data(&request.data, &request.message)?).map_err(Into::into)
+    serde_json::to_value(run_agent_with_data_and_context(&request.data, &request.message, &request.context)?).map_err(Into::into)
 }
 
 pub fn agent_stream_with_data_events_value(payload: Value) -> CoreResult<Vec<AgentStreamEvent>> {
     let request: AgentStreamWithDataRequest = serde_json::from_value(payload)?;
-    Ok(run_agent_stream_with_data_events(
+    Ok(run_agent_stream_with_data_events_with_context(
         &request.data,
         &request.message,
         request.run_id.as_deref(),
         request.mode.as_deref(),
+        &request.context,
     ))
 }
 
@@ -1426,9 +1611,9 @@ pub fn sector_screen_stocks(
         ));
     }
     if board_mode {
-        notes.push("\u{5206}\u{677f}\u{5757}\u{7b5b}\u{9009}\u{5df2}\u{6309} A \u{80a1}\u{4ea4}\u{6613}\u{677f}\u{5757}\u{5206}\u{7ec4}\u{ff1a}\u{79d1}\u{521b}\u{677f}\u{3001}\u{521b}\u{4e1a}\u{677f}\u{3001}\u{5317}\u{4ea4}\u{6240}\u{3001}\u{6caa}\u{4e3b}\u{677f}\u{548c}\u{6df1}\u{4e3b}\u{677f}\u{3002}".to_string());
+        notes.push("基准为候选池买入持有等权曲线，用于衡量调仓与成本后的超额收益。".to_string());
     } else {
-        notes.push("\u{5206}\u{6982}\u{5ff5}\u{7b5b}\u{9009}\u{5df2}\u{5728} Rust gp-core \u{4e2d}\u{57fa}\u{4e8e}\u{5b8c}\u{6574}\u{5019}\u{9009}\u{6c60}\u{5206}\u{7ec4}\u{ff0c}\u{4e0d}\u{518d}\u{4f9d}\u{8d56}\u{524d}\u{7aef}\u{79fb}\u{52a8}\u{7aef}\u{4e8c}\u{6b21}\u{5206}\u{7ec4}\u{3002}".to_string());
+        notes.push("基准为候选池买入持有等权曲线，用于衡量调仓与成本后的超额收益。".to_string());
     }
     SectorScreenResult {
         total: screened.len(),
@@ -1476,70 +1661,643 @@ pub fn backtest_with_source(
     request: &BacktestRequest,
 ) -> CoreResult<BacktestResult> {
     let universe = source.list_stocks()?;
+    let strategy_mode = normalize_backtest_strategy_mode(&request.strategy_mode);
+    let source_mode = normalize_backtest_source(&request.source);
     let (selected, selection_notes) = selected_backtest_items(&universe, request);
-    let symbols: Vec<String> = selected
-        .iter()
-        .map(|item| item.stock.code.clone())
-        .collect();
+    let symbols: Vec<String> = if strategy_mode == "walk_forward" && source_mode != "watchlist" {
+        universe.iter().map(|item| item.code.clone()).collect()
+    } else {
+        selected
+            .iter()
+            .map(|item| item.stock.code.clone())
+            .collect()
+    };
 
-    let mut portfolio_points: BTreeMap<NaiveDate, Vec<f64>> = BTreeMap::new();
-    for item in &selected {
-        let bars = source.get_history(&item.stock.code, &request.start_date, &request.end_date)?;
-        let history = history_points_from_bars(&bars)?;
-        if let Some(base) = history
-            .first()
-            .map(|point| point.close)
-            .filter(|value| *value != 0.0)
-        {
-            for point in history {
-                portfolio_points
-                    .entry(point.date)
-                    .or_default()
-                    .push(point.close / base);
-            }
-        }
-    }
-
-    if portfolio_points.is_empty() {
+    let histories =
+        load_backtest_histories(source, &symbols, &request.start_date, &request.end_date)?;
+    if histories.is_empty() {
         return Ok(BacktestResult {
-            metrics: BacktestMetrics {
-                total_return: 0.0,
-                annualized_return: None,
-                max_drawdown: None,
-                num_stocks: symbols.len(),
-            },
+            metrics: empty_backtest_metrics(symbols.len(), &strategy_mode),
             equity_curve: Vec::new(),
+            benchmark_curve: Vec::new(),
             symbols,
+            benchmark_symbols: Vec::new(),
+            rebalance_dates: Vec::new(),
+            strategy_mode,
             notes: selection_notes,
         });
     }
 
-    let equity_curve: Vec<EquityPoint> = portfolio_points
+    let initial_cash = sanitize_initial_cash(request.initial_cash);
+    let cost_rate = sanitize_transaction_cost_rate(request.transaction_cost_bps);
+    let rebalance_frequency = normalize_rebalance_frequency(&request.rebalance_frequency);
+    let simulation = match strategy_mode.as_str() {
+        "walk_forward" => simulate_walk_forward_portfolio(
+            source,
+            &universe,
+            request,
+            &histories,
+            initial_cash,
+            cost_rate,
+            &rebalance_frequency,
+        )?,
+        _ => simulate_equal_weight_portfolio(
+            &histories,
+            initial_cash,
+            cost_rate,
+            &rebalance_frequency,
+        ),
+    };
+    let benchmark_enabled = normalize_backtest_benchmark(&request.benchmark) != "none";
+    let benchmark_curve = if benchmark_enabled {
+        equal_weight_benchmark_curve(&histories, initial_cash)
+    } else {
+        Vec::new()
+    };
+
+    let (total_return, annualized_return, max_drawdown) =
+        backtest_metrics(&simulation.equity_curve, initial_cash);
+    let (benchmark_total_return, benchmark_annualized_return, benchmark_max_drawdown) =
+        if benchmark_curve.is_empty() {
+            (None, None, None)
+        } else {
+            let (total, annualized, drawdown) = backtest_metrics(&benchmark_curve, initial_cash);
+            (Some(total), annualized, drawdown)
+        };
+    let excess_return =
+        benchmark_total_return.map(|benchmark_return| total_return - benchmark_return);
+    let available_symbols: Vec<String> = histories
         .iter()
-        .map(|(date, values)| {
-            let average = values.iter().sum::<f64>() / values.len() as f64;
-            EquityPoint {
-                date: date.format("%Y-%m-%d").to_string(),
-                equity: average * request.initial_cash,
-            }
-        })
+        .map(|history| history.code.clone())
         .collect();
 
-    let (total_return, annualized_return, max_drawdown) = backtest_metrics(&equity_curve);
+    let mut notes = selection_notes;
+    let missing_history_count = symbols.len().saturating_sub(available_symbols.len());
+    if missing_history_count > 0 {
+        notes.push(format!(
+            "{} 只标的缺少有效历史行情，已从回测组合中剔除。",
+            missing_history_count
+        ));
+    }
+    notes.push(format!(
+        "回测采用{}等权组合，交易成本为{:.1}bps。",
+        backtest_rebalance_note(&rebalance_frequency),
+        request.transaction_cost_bps.clamp(0.0, 500.0)
+    ));
+    notes.push(backtest_strategy_mode_note(&strategy_mode).to_string());
+    if benchmark_enabled {
+        notes.push("基准为候选池买入持有等权曲线，用于衡量调仓与成本后的超额收益。".to_string());
+    }
+
     Ok(BacktestResult {
         metrics: BacktestMetrics {
             total_return,
             annualized_return,
             max_drawdown,
-            num_stocks: symbols.len(),
+            num_stocks: available_symbols.len(),
+            benchmark_total_return,
+            benchmark_annualized_return,
+            benchmark_max_drawdown,
+            excess_return,
+            total_transaction_cost: simulation.total_transaction_cost,
+            total_turnover: simulation.total_turnover,
+            rebalance_count: simulation.rebalance_dates.len(),
+            strategy_mode: strategy_mode.clone(),
         },
-        equity_curve,
-        symbols,
-        notes: selection_notes,
+        equity_curve: simulation.equity_curve,
+        benchmark_curve,
+        symbols: available_symbols.clone(),
+        benchmark_symbols: if benchmark_enabled {
+            available_symbols
+        } else {
+            Vec::new()
+        },
+        rebalance_dates: simulation
+            .rebalance_dates
+            .iter()
+            .map(|date| date.format("%Y-%m-%d").to_string())
+            .collect(),
+        strategy_mode,
+        notes,
     })
 }
+#[derive(Clone, Debug)]
+struct BacktestHistory {
+    code: String,
+    prices: BTreeMap<NaiveDate, f64>,
+}
 
+#[derive(Clone, Debug)]
+struct PortfolioSimulation {
+    equity_curve: Vec<EquityPoint>,
+    rebalance_dates: Vec<NaiveDate>,
+    total_transaction_cost: f64,
+    total_turnover: f64,
+}
+
+fn empty_backtest_metrics(num_stocks: usize, strategy_mode: &str) -> BacktestMetrics {
+    BacktestMetrics {
+        total_return: 0.0,
+        annualized_return: None,
+        max_drawdown: None,
+        num_stocks,
+        benchmark_total_return: None,
+        benchmark_annualized_return: None,
+        benchmark_max_drawdown: None,
+        excess_return: None,
+        total_transaction_cost: 0.0,
+        total_turnover: 0.0,
+        rebalance_count: 0,
+        strategy_mode: strategy_mode.to_string(),
+    }
+}
+
+fn load_backtest_histories(
+    source: &impl MarketDataSource,
+    symbols: &[String],
+    start_date: &str,
+    end_date: &str,
+) -> CoreResult<Vec<BacktestHistory>> {
+    let mut histories = Vec::new();
+    for code in symbols {
+        let bars = source.get_history(code, start_date, end_date)?;
+        let prices: BTreeMap<NaiveDate, f64> = history_points_from_bars(&bars)?
+            .into_iter()
+            .filter(|point| point.close.is_finite() && point.close > 0.0)
+            .map(|point| (point.date, point.close))
+            .collect();
+        if !prices.is_empty() {
+            histories.push(BacktestHistory {
+                code: code.clone(),
+                prices,
+            });
+        }
+    }
+    Ok(histories)
+}
+
+fn simulate_equal_weight_portfolio(
+    histories: &[BacktestHistory],
+    initial_cash: f64,
+    transaction_cost_rate: f64,
+    rebalance_frequency: &str,
+) -> PortfolioSimulation {
+    let dates = backtest_calendar(histories);
+    let mut cash = initial_cash;
+    let mut holdings = vec![0.0; histories.len()];
+    let mut last_rebalance_date: Option<NaiveDate> = None;
+    let mut equity_curve = Vec::with_capacity(dates.len());
+    let mut rebalance_dates = Vec::new();
+    let mut total_transaction_cost = 0.0;
+    let mut total_turnover = 0.0;
+
+    for date in dates {
+        let current_prices: Vec<Option<f64>> = histories
+            .iter()
+            .map(|history| latest_price_on_or_before(history, date))
+            .collect();
+        let equity_before_rebalance = cash
+            + holdings
+                .iter()
+                .zip(current_prices.iter())
+                .map(|(shares, price)| shares * price.unwrap_or(0.0))
+                .sum::<f64>();
+
+        if should_rebalance(date, last_rebalance_date, rebalance_frequency)
+            && equity_before_rebalance > 0.0
+        {
+            let active_indices: Vec<usize> = current_prices
+                .iter()
+                .enumerate()
+                .filter_map(|(index, price)| price.filter(|value| *value > 0.0).map(|_| index))
+                .collect();
+            if !active_indices.is_empty() {
+                let target_weight = 1.0 / active_indices.len() as f64;
+                let mut turnover_value = 0.0;
+                for index in 0..histories.len() {
+                    let price = current_prices[index].unwrap_or(0.0);
+                    let target_value = if price > 0.0 && active_indices.contains(&index) {
+                        equity_before_rebalance * target_weight
+                    } else {
+                        0.0
+                    };
+                    let current_value = holdings[index] * price;
+                    turnover_value += (target_value - current_value).abs();
+                }
+
+                let transaction_cost = turnover_value * transaction_cost_rate;
+                let investable_equity = (equity_before_rebalance - transaction_cost).max(0.0);
+                cash = investable_equity;
+                holdings.fill(0.0);
+                for index in active_indices {
+                    if let Some(price) = current_prices[index].filter(|value| *value > 0.0) {
+                        let target_value = investable_equity * target_weight;
+                        holdings[index] = target_value / price;
+                        cash -= target_value;
+                    }
+                }
+                total_transaction_cost += transaction_cost;
+                total_turnover += turnover_value / equity_before_rebalance;
+                rebalance_dates.push(date);
+                last_rebalance_date = Some(date);
+            }
+        }
+
+        let equity = cash
+            + holdings
+                .iter()
+                .zip(current_prices.iter())
+                .map(|(shares, price)| shares * price.unwrap_or(0.0))
+                .sum::<f64>();
+        equity_curve.push(EquityPoint {
+            date: date.format("%Y-%m-%d").to_string(),
+            equity,
+        });
+    }
+
+    PortfolioSimulation {
+        equity_curve,
+        rebalance_dates,
+        total_transaction_cost,
+        total_turnover,
+    }
+}
+
+fn simulate_walk_forward_portfolio(
+    source: &impl MarketDataSource,
+    universe: &[StockItem],
+    request: &BacktestRequest,
+    histories: &[BacktestHistory],
+    initial_cash: f64,
+    transaction_cost_rate: f64,
+    rebalance_frequency: &str,
+) -> CoreResult<PortfolioSimulation> {
+    let dates = backtest_calendar(histories);
+    let mut snapshots_by_code = HashMap::new();
+    for history in histories {
+        snapshots_by_code.insert(
+            history.code.clone(),
+            load_factor_snapshot_timeline(source, &history.code)?,
+        );
+    }
+    Ok(simulate_walk_forward_portfolio_with_snapshots(
+        universe,
+        request,
+        histories,
+        &snapshots_by_code,
+        dates,
+        initial_cash,
+        transaction_cost_rate,
+        rebalance_frequency,
+    ))
+}
+
+fn simulate_walk_forward_portfolio_with_snapshots(
+    universe: &[StockItem],
+    request: &BacktestRequest,
+    histories: &[BacktestHistory],
+    snapshots_by_code: &HashMap<String, BTreeMap<NaiveDate, StockFactorSnapshot>>,
+    dates: Vec<NaiveDate>,
+    initial_cash: f64,
+    transaction_cost_rate: f64,
+    rebalance_frequency: &str,
+) -> PortfolioSimulation {
+    let mut cash = initial_cash;
+    let mut holdings = vec![0.0; histories.len()];
+    let mut last_rebalance_date: Option<NaiveDate> = None;
+    let mut equity_curve = Vec::with_capacity(dates.len());
+    let mut rebalance_dates = Vec::new();
+    let mut total_transaction_cost = 0.0;
+    let mut total_turnover = 0.0;
+    let history_index: HashMap<String, usize> = histories
+        .iter()
+        .enumerate()
+        .map(|(index, history)| (history.code.to_uppercase(), index))
+        .collect();
+
+    for date in dates {
+        let current_prices: Vec<Option<f64>> = histories
+            .iter()
+            .map(|history| latest_price_on_or_before(history, date))
+            .collect();
+        let equity_before_rebalance = cash
+            + holdings
+                .iter()
+                .zip(current_prices.iter())
+                .map(|(shares, price)| shares * price.unwrap_or(0.0))
+                .sum::<f64>();
+
+        if should_rebalance(date, last_rebalance_date, rebalance_frequency)
+            && equity_before_rebalance > 0.0
+        {
+            let active_indices = walk_forward_active_indices(
+                universe,
+                request,
+                histories,
+                snapshots_by_code,
+                &history_index,
+                &current_prices,
+                date,
+            );
+            if !active_indices.is_empty() {
+                let target_weight = 1.0 / active_indices.len() as f64;
+                let active_set: HashSet<usize> = active_indices.iter().copied().collect();
+                let mut turnover_value = 0.0;
+                for index in 0..histories.len() {
+                    let price = current_prices[index].unwrap_or(0.0);
+                    let target_value = if price > 0.0 && active_set.contains(&index) {
+                        equity_before_rebalance * target_weight
+                    } else {
+                        0.0
+                    };
+                    let current_value = holdings[index] * price;
+                    turnover_value += (target_value - current_value).abs();
+                }
+
+                let transaction_cost = turnover_value * transaction_cost_rate;
+                let investable_equity = (equity_before_rebalance - transaction_cost).max(0.0);
+                cash = investable_equity;
+                holdings.fill(0.0);
+                for index in active_indices {
+                    if let Some(price) = current_prices[index].filter(|value| *value > 0.0) {
+                        let target_value = investable_equity * target_weight;
+                        holdings[index] = target_value / price;
+                        cash -= target_value;
+                    }
+                }
+                total_transaction_cost += transaction_cost;
+                total_turnover += turnover_value / equity_before_rebalance;
+                rebalance_dates.push(date);
+                last_rebalance_date = Some(date);
+            }
+        }
+
+        let equity = cash
+            + holdings
+                .iter()
+                .zip(current_prices.iter())
+                .map(|(shares, price)| shares * price.unwrap_or(0.0))
+                .sum::<f64>();
+        equity_curve.push(EquityPoint {
+            date: date.format("%Y-%m-%d").to_string(),
+            equity,
+        });
+    }
+
+    PortfolioSimulation {
+        equity_curve,
+        rebalance_dates,
+        total_transaction_cost,
+        total_turnover,
+    }
+}
+
+fn load_factor_snapshot_timeline(
+    source: &impl MarketDataSource,
+    code: &str,
+) -> CoreResult<BTreeMap<NaiveDate, StockFactorSnapshot>> {
+    let mut timeline = BTreeMap::new();
+    for snapshot in source.get_factor_snapshots(code)? {
+        let date = parse_date(&snapshot.date)?;
+        timeline.insert(date, snapshot);
+    }
+    Ok(timeline)
+}
+
+fn walk_forward_active_indices(
+    universe: &[StockItem],
+    request: &BacktestRequest,
+    histories: &[BacktestHistory],
+    snapshots_by_code: &HashMap<String, BTreeMap<NaiveDate, StockFactorSnapshot>>,
+    history_index: &HashMap<String, usize>,
+    current_prices: &[Option<f64>],
+    date: NaiveDate,
+) -> Vec<usize> {
+    let visible_universe = point_in_time_universe(universe, snapshots_by_code, date);
+    let selected = selected_backtest_items_from_universe(&visible_universe, request).0;
+    let mut indices = Vec::new();
+    for item in selected.into_iter().take(request.top_n.clamp(1, 100)) {
+        let code = item.stock.code.to_uppercase();
+        if let Some(index) = history_index.get(&code).copied() {
+            if current_prices
+                .get(index)
+                .and_then(|price| *price)
+                .filter(|price| *price > 0.0)
+                .is_some()
+            {
+                indices.push(index);
+            }
+        }
+    }
+    if indices.is_empty() {
+        histories
+            .iter()
+            .enumerate()
+            .filter_map(|(index, _)| {
+                current_prices
+                    .get(index)
+                    .and_then(|price| price.filter(|value| *value > 0.0))
+                    .map(|_| index)
+            })
+            .collect()
+    } else {
+        indices
+    }
+}
+
+fn point_in_time_universe(
+    universe: &[StockItem],
+    snapshots_by_code: &HashMap<String, BTreeMap<NaiveDate, StockFactorSnapshot>>,
+    date: NaiveDate,
+) -> Vec<StockItem> {
+    universe
+        .iter()
+        .map(|stock| {
+            let Some(snapshot) =
+                latest_factor_snapshot_on_or_before(snapshots_by_code, &stock.code, date)
+            else {
+                return stock.clone();
+            };
+            apply_factor_snapshot(stock, snapshot)
+        })
+        .collect()
+}
+
+fn latest_factor_snapshot_on_or_before<'a>(
+    snapshots_by_code: &'a HashMap<String, BTreeMap<NaiveDate, StockFactorSnapshot>>,
+    code: &str,
+    date: NaiveDate,
+) -> Option<&'a StockFactorSnapshot> {
+    snapshots_by_code
+        .get(code)
+        .or_else(|| snapshots_by_code.get(&code.to_uppercase()))
+        .and_then(|timeline| {
+            timeline
+                .range(..=date)
+                .next_back()
+                .map(|(_, snapshot)| snapshot)
+        })
+}
+
+fn apply_factor_snapshot(stock: &StockItem, snapshot: &StockFactorSnapshot) -> StockItem {
+    let mut updated = stock.clone();
+    if let Some(value) = snapshot
+        .price
+        .filter(|value| value.is_finite() && *value > 0.0)
+    {
+        updated.price = value;
+    }
+    updated.pe = snapshot.pe.or(updated.pe);
+    updated.pb = snapshot.pb.or(updated.pb);
+    updated.roe = snapshot.roe.or(updated.roe);
+    updated.market_cap_billion = snapshot.market_cap_billion.or(updated.market_cap_billion);
+    updated.dividend_yield = snapshot.dividend_yield.or(updated.dividend_yield);
+    updated.deducted_net_profit_billion = snapshot
+        .deducted_net_profit_billion
+        .or(updated.deducted_net_profit_billion);
+    updated.deducted_net_profit_margin = snapshot
+        .deducted_net_profit_margin
+        .or(updated.deducted_net_profit_margin);
+    updated.deducted_net_profit_growth_rate = snapshot
+        .deducted_net_profit_growth_rate
+        .or(updated.deducted_net_profit_growth_rate);
+    updated.change_pct = snapshot.change_pct.or(updated.change_pct);
+    updated.volume = snapshot.volume.or(updated.volume);
+    updated.amount = snapshot.amount.or(updated.amount);
+    updated.turnover_rate = snapshot.turnover_rate.or(updated.turnover_rate);
+    updated.volume_ratio = snapshot.volume_ratio.or(updated.volume_ratio);
+    updated
+}
+
+fn equal_weight_benchmark_curve(
+    histories: &[BacktestHistory],
+    initial_cash: f64,
+) -> Vec<EquityPoint> {
+    backtest_calendar(histories)
+        .into_iter()
+        .filter_map(|date| {
+            let values: Vec<f64> = histories
+                .iter()
+                .filter_map(|history| {
+                    let first = history.prices.values().next().copied()?;
+                    let price = latest_price_on_or_before(history, date)?;
+                    if first > 0.0 && price > 0.0 {
+                        Some(price / first)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if values.is_empty() {
+                None
+            } else {
+                Some(EquityPoint {
+                    date: date.format("%Y-%m-%d").to_string(),
+                    equity: initial_cash * values.iter().sum::<f64>() / values.len() as f64,
+                })
+            }
+        })
+        .collect()
+}
+
+fn backtest_calendar(histories: &[BacktestHistory]) -> Vec<NaiveDate> {
+    let mut dates = BTreeMap::new();
+    for history in histories {
+        for date in history.prices.keys() {
+            dates.insert(*date, ());
+        }
+    }
+    dates.into_keys().collect()
+}
+
+fn latest_price_on_or_before(history: &BacktestHistory, date: NaiveDate) -> Option<f64> {
+    history
+        .prices
+        .range(..=date)
+        .next_back()
+        .map(|(_, price)| *price)
+}
+
+fn should_rebalance(
+    date: NaiveDate,
+    last_rebalance_date: Option<NaiveDate>,
+    frequency: &str,
+) -> bool {
+    let Some(previous) = last_rebalance_date else {
+        return true;
+    };
+    match frequency {
+        "none" => false,
+        "quarterly" => date.year() != previous.year() || quarter(date) != quarter(previous),
+        _ => date.year() != previous.year() || date.month() != previous.month(),
+    }
+}
+
+fn quarter(date: NaiveDate) -> u32 {
+    (date.month0() / 3) + 1
+}
+
+fn sanitize_initial_cash(value: f64) -> f64 {
+    if value.is_finite() && value > 0.0 {
+        value
+    } else {
+        default_initial_cash()
+    }
+}
+
+fn sanitize_transaction_cost_rate(bps: f64) -> f64 {
+    if bps.is_finite() {
+        bps.clamp(0.0, 500.0) / 10_000.0
+    } else {
+        default_transaction_cost_bps() / 10_000.0
+    }
+}
+
+fn normalize_rebalance_frequency(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "none" => "none".to_string(),
+        "quarterly" => "quarterly".to_string(),
+        _ => "monthly".to_string(),
+    }
+}
+
+fn normalize_backtest_benchmark(value: &str) -> String {
+    if value.trim().eq_ignore_ascii_case("none") {
+        "none".to_string()
+    } else {
+        "candidate_equal_weight".to_string()
+    }
+}
+
+fn normalize_backtest_strategy_mode(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "walk_forward" | "point_in_time" | "point-in-time" => "walk_forward".to_string(),
+        _ => "candidate_snapshot".to_string(),
+    }
+}
+
+fn backtest_strategy_mode_note(value: &str) -> &'static str {
+    match value {
+        "walk_forward" => "策略模式：walk_forward，按调仓日执行组合再平衡；后续可接入逐日基本面快照。",
+        _ => "策略模式：candidate_snapshot，展示当前候选池的历史组合表现，不等同于严格可交易的逐日选股策略。",
+    }
+}
+
+fn backtest_rebalance_note(value: &str) -> &'static str {
+    match value {
+        "none" => "买入持有",
+        "quarterly" => "季度调仓",
+        _ => "月度调仓",
+    }
+}
 fn selected_backtest_items(
+    universe: &[StockItem],
+    request: &BacktestRequest,
+) -> (Vec<ScreenedStock>, Vec<String>) {
+    selected_backtest_items_from_universe(universe, request)
+}
+
+fn selected_backtest_items_from_universe(
     universe: &[StockItem],
     request: &BacktestRequest,
 ) -> (Vec<ScreenedStock>, Vec<String>) {
@@ -1739,7 +2497,7 @@ pub fn observe_with_source(
         }
     };
     if request.include_order_book {
-        notes.push("\u{76d8}\u{53e3}\u{6570}\u{636e}\u{5c1a}\u{672a}\u{8fc1}\u{79fb}\u{5230} Rust \u{884c}\u{60c5}\u{6e90}\u{ff0c}\u{5df2}\u{8fd4}\u{56de}\u{7a7a}\u{76d8}\u{53e3}\u{3002}".to_string());
+        notes.push("基准为候选池买入持有等权曲线，用于衡量调仓与成本后的超额收益。".to_string());
     }
     let capital_evidence = build_observation_capital_evidence(
         &stock,
@@ -1935,10 +2693,10 @@ fn build_observation_financial_indicators(
             );
         }
         if points.is_empty() {
-            notes.push("\u{5f53}\u{524d}\u{8d22}\u{62a5}\u{5feb}\u{7167}\u{6ca1}\u{6709}\u{5b63}\u{5ea6} EPS \u{660e}\u{7ec6}\u{ff0c}\u{5148}\u{5c55}\u{793a}\u{6700}\u{65b0} EPS \u{6216}\u{4f30}\u{7b97}\u{503c}\u{3002}".to_string());
-        }
+            notes.push("基准为候选池买入持有等权曲线，用于衡量调仓与成本后的超额收益。".to_string());
+    }
     } else {
-        notes.push("\u{5f53}\u{524d}\u{6570}\u{636e}\u{96c6}\u{672a}\u{63a5}\u{5165}\u{8d22}\u{62a5} EPS \u{5feb}\u{7167}\u{ff0c}\u{6bcf}\u{80a1}\u{6536}\u{76ca}\u{6309}\u{5e02}\u{76c8}\u{7387}\u{4f30}\u{7b97}\u{3002}".to_string());
+        notes.push("基准为候选池买入持有等权曲线，用于衡量调仓与成本后的超额收益。".to_string());
     }
 
     FinancialIndicators {
@@ -2152,13 +2910,13 @@ fn build_observation_capital_evidence(
     if !model_used {
         push_capital_note(
             &mut notes,
-            "未调用模型，综合资金证据分由本地规则按资金流、机构席位、消息情绪、技术推断四类权重生成。",
+            "未调用模型，综合资金证据分由本地规则按资金流、机构席位、消息情绪和技术推断四类权重生成。",
         );
     }
     if !capital_bucket_has_evidence(&items, ["fund_flow", "", ""]) {
         push_capital_note(
             &mut notes,
-            "资金流外部证据暂缺，本次用中性权重保留该桶，不把缺失数据当作流入或流出结论。",
+            "资金流外部证据暂缺，本次按中性权重保留该项，不把缺失数据当作流入或流出结论。",
         );
     }
     if !items.iter().any(|item| item.category == "institution_lhb") {
@@ -2274,14 +3032,14 @@ fn capital_evidence_summary(
 ) -> String {
     if !scored_labels.is_empty() {
         return format!(
-            "综合资金证据分 {}，已纳入{}；缺失分数的证据桶按中性权重处理。",
+            "综合资金证据分 {}，已纳入{}；缺失分数的证据项按中性权重处理。",
             format_number(composite_score),
             scored_labels.join("、")
         );
     }
     if !evidence_labels.is_empty() {
         return format!(
-            "综合资金证据分 {}，当前只有{}状态证据，缺失分数的证据桶按中性权重处理。",
+            "综合资金证据分 {}，当前只有{}状态证据；缺失分数的证据项按中性权重处理。",
             format_number(composite_score),
             evidence_labels.join("、")
         );
@@ -2339,7 +3097,7 @@ fn local_fund_flow_proxy_evidence_item(
         note: Some(format!(
             "资金流代理分 {}：由量价热度、吸筹强度、趋势热度和承接指标合成；它不是外部主力净流入数据。",
             format_number(score)
-        )),
+        )), 
     })
 }
 
@@ -2493,15 +3251,9 @@ fn technical_capital_evidence_item(
 
 fn institution_status_evidence_item(as_of_trade_date: &str) -> CapitalEvidenceItem {
     let mut metrics = BTreeMap::new();
-    metrics.insert(
-        "状态".to_string(),
-        "当前没有可展示的龙虎榜机构席位记录".to_string(),
-    );
+    metrics.insert("状态".to_string(), "当前没有可展示的龙虎榜机构席位记录".to_string());
     metrics.insert("查询窗口".to_string(), as_of_trade_date.to_string());
-    metrics.insert(
-        "已尝试信源".to_string(),
-        "本地缓存 / 已提供外部证据".to_string(),
-    );
+    metrics.insert("已尝试信源".to_string(), "本地缓存 / 已提供外部证据".to_string());
     CapitalEvidenceItem {
         category: "institution_lhb_status".to_string(),
         source: "Tauri/Rust".to_string(),
@@ -2513,10 +3265,7 @@ fn institution_status_evidence_item(as_of_trade_date: &str) -> CapitalEvidenceIt
         confidence: "低".to_string(),
         url: None,
         score: None,
-        note: Some(
-            "当前窗口没有可展示的龙虎榜机构席位证据；这只是证据缺口，不代表机构没有买卖。"
-                .to_string(),
-        ),
+        note: Some("当前窗口没有可展示的龙虎榜机构席位证据；这只是证据缺口，不代表机构没有买卖。".to_string()),
     }
 }
 
@@ -2524,14 +3273,11 @@ fn message_sentiment_status_evidence_item(as_of_trade_date: &str) -> CapitalEvid
     let mut metrics = BTreeMap::new();
     metrics.insert("状态".to_string(), "本地消息缓存暂无可用证据".to_string());
     metrics.insert("查询窗口".to_string(), as_of_trade_date.to_string());
-    metrics.insert(
-        "已尝试信源".to_string(),
-        "本地新闻缓存 / 已提供外部证据".to_string(),
-    );
+    metrics.insert("已尝试信源".to_string(), "本地新闻缓存 / 已提供外部证据".to_string());
     CapitalEvidenceItem {
         category: "message_sentiment_status".to_string(),
         source: "Tauri/Rust".to_string(),
-        title: "消息情绪暂无本地证据".to_string(),
+        title: "消息情绪暂无外部证据".to_string(),
         date: Some(as_of_trade_date.to_string()),
         metrics,
         sentiment: "uncertain".to_string(),
@@ -2539,10 +3285,9 @@ fn message_sentiment_status_evidence_item(as_of_trade_date: &str) -> CapitalEvid
         confidence: "低".to_string(),
         url: None,
         score: None,
-        note: Some("当前没有可纳入评分的新闻或社区情绪证据；该桶保留中性权重。".to_string()),
+        note: Some("当前窗口没有可展示的新闻或社区情绪证据；该项仅作为证据缺口提示。".to_string()),
     }
 }
-
 fn build_capital_evidence_sections(
     items: &[CapitalEvidenceItem],
     contributions: &BTreeMap<String, Value>,
@@ -2800,13 +3545,331 @@ pub fn trend_screen_with_source(
     })
 }
 
+pub fn agent_skill_registry() -> Vec<AgentSkill> {
+    vec![
+        agent_skill(
+            "stock_snapshot",
+            "Stock Snapshot",
+            "Local quote, observe and financial snapshot.",
+            "desktop,android",
+            "local_cache",
+            "Return available observe data or explain missing local cache.",
+        ),
+        agent_skill(
+            "stock_news",
+            "Stock News",
+            "News and RAG evidence for recent positive and negative signals.",
+            "desktop,android",
+            "rag_or_news_cache",
+            "Return short-link news or imported mobile RAG package when full RAG is unavailable.",
+        ),
+        agent_skill(
+            "stock_screen",
+            "Stock Screen",
+            "Rule based candidate screening over the local universe.",
+            "desktop,android",
+            "local_cache",
+            "Ask for clearer criteria when the intent cannot be mapped.",
+        ),
+        agent_skill(
+            "trend_analysis",
+            "Trend Analysis",
+            "Technical trend ranking and local OHLC indicators.",
+            "desktop,android",
+            "local_history",
+            "Return skipped-count warnings when OHLC history is incomplete.",
+        ),
+        agent_skill(
+            "sector_analysis",
+            "Sector Analysis",
+            "Sector and relation driven candidate discovery.",
+            "desktop",
+            "local_relations",
+            "Fall back to ordinary screening when relation data is unavailable.",
+        ),
+        agent_skill(
+            "watchlist_action",
+            "Watchlist Action",
+            "Local watchlist-only add, remove and review workflow.",
+            "desktop,android",
+            "local_state",
+            "Never place trades; explain local-only scope.",
+        ),
+        agent_skill(
+            "portfolio_simulation",
+            "Portfolio Simulation",
+            "Watchlist or candidate portfolio observation and backtest.",
+            "desktop",
+            "local_backtest",
+            "Return research-only backtest or desktop-only downgrade notice.",
+        ),
+    ]
+}
+
+fn agent_skill(
+    key: &str,
+    title: &str,
+    description: &str,
+    platforms: &str,
+    evidence_level: &str,
+    fallback: &str,
+) -> AgentSkill {
+    AgentSkill {
+        key: key.to_string(),
+        title: title.to_string(),
+        description: description.to_string(),
+        input_schema: json!({ "query": "string", "symbols": ["string"], "mode": "quick|expert|research" }),
+        output_schema: json!({ "sections": ["summary", "evidence", "risks"], "research_only": true }),
+        platforms: platforms.split(',').map(|item| item.to_string()).collect(),
+        evidence_level: evidence_level.to_string(),
+        fallback: fallback.to_string(),
+    }
+}
+
+fn agent_finalize_response(
+    mut response: AgentResponse,
+    message: &str,
+    mode: Option<&str>,
+) -> AgentResponse {
+    let mode_text = mode.unwrap_or("quick").to_string();
+    let action = response.action.clone();
+    let symbols = extract_codes(message);
+    response.intent = Some(AgentIntent {
+        kind: agent_intent_kind(&action).to_string(),
+        query: message.trim().to_string(),
+        symbols,
+        window: agent_window_hint(message),
+        depth: agent_depth_for_mode(&mode_text).to_string(),
+        mode: mode_text,
+    });
+    response.tool_calls = agent_tool_calls_for_response(&response);
+    response.evidence_summary = agent_evidence_for_response(&response);
+    response.answer_sections = agent_sections_for_response(&response);
+    response.warnings = agent_warnings_for_response(&response);
+    response.next_actions = agent_next_actions_for_response(&response);
+    response
+}
+
+fn agent_intent_kind(action: &str) -> &'static str {
+    match action {
+        "trend_screen" => "trend_analysis",
+        "graph_screen" => "sector_analysis",
+        "backtest" => "portfolio_simulation",
+        "screen" => "stock_screen",
+        "observe_stock" => "stock_snapshot",
+        "news_rag" => "stock_news",
+        "watchlist_action" => "watchlist_action",
+        _ => "clarify",
+    }
+}
+fn agent_depth_for_mode(mode: &str) -> &'static str {
+    match mode {
+        "research" => "research",
+        "expert" => "expert",
+        _ => "quick",
+    }
+}
+
+fn agent_window_hint(message: &str) -> Option<String> {
+    let lower = message.to_lowercase();
+    if lower.contains("recent") || message.contains("近期") || message.contains("最近") {
+        Some("recent".to_string())
+    } else if lower.contains("today") || message.contains("今天") || message.contains("今日") {
+        Some("today".to_string())
+    } else {
+        None
+    }
+}
+fn agent_tool_calls_for_response(response: &AgentResponse) -> Vec<AgentToolCall> {
+    if response.action == "clarify" {
+        return vec![AgentToolCall {
+            id: "intent_parser".to_string(),
+            tool: "agent_plan_request".to_string(),
+            label: "Understand request".to_string(),
+            status: "needs_input".to_string(),
+            input: json!({ "action": response.action }),
+            output_summary: Some("Need a clearer stock research task.".to_string()),
+            warnings: Vec::new(),
+        }];
+    }
+    let tool = agent_intent_kind(&response.action);
+    vec![
+        AgentToolCall {
+            id: "intent_parser".to_string(),
+            tool: "agent_plan_request".to_string(),
+            label: "Understand request".to_string(),
+            status: "ok".to_string(),
+            input: json!({ "action": response.action }),
+            output_summary: Some(format!("Routed to {tool}.")),
+            warnings: Vec::new(),
+        },
+        AgentToolCall {
+            id: format!("tool_{tool}"),
+            tool: tool.to_string(),
+            label: agent_tool_label(tool).to_string(),
+            status: if response.data.is_some() {
+                "ok"
+            } else {
+                "degraded"
+            }
+            .to_string(),
+            input: json!({ "action": response.action }),
+            output_summary: Some(agent_data_summary(response)),
+            warnings: agent_warnings_for_response(response),
+        },
+        AgentToolCall {
+            id: "synthesizer".to_string(),
+            tool: "agent_synthesize_response".to_string(),
+            label: "Structure answer".to_string(),
+            status: "ok".to_string(),
+            input: json!({ "research_only": true }),
+            output_summary: Some("Prepared sections, evidence and risk boundary.".to_string()),
+            warnings: Vec::new(),
+        },
+    ]
+}
+
+fn agent_tool_label(tool: &str) -> &'static str {
+    match tool {
+        "trend_analysis" => "运行趋势筛选",
+        "sector_analysis" => "运行自定义板块筛选",
+        "portfolio_simulation" => "运行本地组合观察",
+        "stock_screen" => "运行本地选股",
+        "stock_snapshot" => "生成个股速览",
+        "stock_news" => "整理资讯证据",
+        "watchlist_action" => "读取本地自选股",
+        _ => "运行本地工具",
+    }
+}
+fn agent_data_summary(response: &AgentResponse) -> String {
+    let Some(data) = response.data.as_ref() else {
+        return "未返回结构化数据。".to_string();
+    };
+    let returned = data
+        .get("returned")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            data.get("items")
+                .and_then(Value::as_array)
+                .map(|items| items.len() as u64)
+        })
+        .or_else(|| {
+            data.get("equity_curve")
+                .and_then(Value::as_array)
+                .map(|items| items.len() as u64)
+        });
+    match returned {
+        Some(count) => format!("返回 {count} 条本地记录。"),
+        None => "已返回本地结构化数据。".to_string(),
+    }
+}
+fn agent_evidence_for_response(response: &AgentResponse) -> Vec<AgentEvidenceItem> {
+    let source = match response.action.as_str() {
+        "trend_screen" => "本地 K 线与趋势指标",
+        "graph_screen" => "本地自定义筛选兼容结果",
+        "backtest" => "本地回测引擎",
+        "screen" => "本地股票池缓存",
+        "observe_stock" => "本地行情与观察数据",
+        "news_rag" => "本地新闻/RAG 降级结果",
+        "watchlist_action" => "本地自选股观察池",
+        _ => "本地 Agent 路由",
+    };
+    vec![AgentEvidenceItem {
+        title: agent_tool_label(agent_intent_kind(&response.action)).to_string(),
+        source: source.to_string(),
+        level: if response.data.is_some() {
+            "primary"
+        } else {
+            "degraded"
+        }
+        .to_string(),
+        summary: agent_data_summary(response),
+    }]
+}
+fn agent_sections_for_response(response: &AgentResponse) -> Vec<AgentAnswerSection> {
+    vec![
+        AgentAnswerSection {
+            title: "结论概览".to_string(),
+            bullets: vec![
+                response.reply.clone(),
+                "仅供选股研究，不构成投资建议。".to_string(),
+            ],
+        },
+        AgentAnswerSection {
+            title: "证据摘要".to_string(),
+            bullets: agent_evidence_for_response(response)
+                .into_iter()
+                .map(|item| item.summary)
+                .collect(),
+        },
+        AgentAnswerSection {
+            title: "风险边界".to_string(),
+            bullets: vec!["不输出买入、卖出、目标价、仓位或收益承诺。".to_string()],
+        },
+    ]
+}
+fn agent_warnings_for_response(response: &AgentResponse) -> Vec<String> {
+    let mut warnings = vec!["仅供选股研究，不构成投资建议。".to_string()];
+    if response.action == "backtest" {
+        warnings.push("组合观察只使用本地自选股/候选股数据，不是真实交易。".to_string());
+    }
+    if response.action == "news_rag" {
+        warnings.push("当前新闻能力可能使用本地缓存或降级结果，需复核原始来源。".to_string());
+    }
+    if response.data.is_none() {
+        warnings.push("本次请求没有可用的本地证据载荷。".to_string());
+    }
+    warnings
+}
+fn agent_next_actions_for_response(response: &AgentResponse) -> Vec<String> {
+    match response.action.as_str() {
+        "trend_screen" => vec![
+            "查看候选股详情".to_string(),
+            "运行本地回测".to_string(),
+            "加入自选股观察".to_string(),
+        ],
+        "graph_screen" => vec![
+            "调整自定义筛选条件".to_string(),
+            "比较板块趋势强度".to_string(),
+        ],
+        "backtest" => vec![
+            "查看回撤与换手".to_string(),
+            "调整回测时间窗口".to_string(),
+        ],
+        "screen" => vec![
+            "收紧筛选条件".to_string(),
+            "继续做趋势分析".to_string(),
+        ],
+        "observe_stock" => vec![
+            "查看趋势指标".to_string(),
+            "补充资讯证据".to_string(),
+        ],
+        "news_rag" => vec![
+            "核验原始来源".to_string(),
+            "继续看财务和资金面".to_string(),
+        ],
+        "watchlist_action" => vec![
+            "用自选股做组合观察".to_string(),
+            "对自选股运行回测".to_string(),
+        ],
+        _ => vec!["补充股票代码、板块或筛选条件".to_string()],
+    }
+}
 pub fn run_agent_with_mock(message: &str) -> CoreResult<AgentResponse> {
     run_agent_with_source(&MockDataSource, message, None)
 }
 
 pub fn run_agent_with_data(data: &CoreDataSet, message: &str) -> CoreResult<AgentResponse> {
+    run_agent_with_data_and_context(data, message, &AgentContext::default())
+}
+
+pub fn run_agent_with_data_and_context(
+    data: &CoreDataSet,
+    message: &str,
+    context: &AgentContext,
+) -> CoreResult<AgentResponse> {
     let source = StaticDataSource::new(data.clone());
-    run_agent_with_source(&source, message, None)
+    run_agent_with_source_and_context(&source, message, None, context)
 }
 
 pub fn run_agent_stream_with_data_events(
@@ -2815,8 +3878,18 @@ pub fn run_agent_stream_with_data_events(
     run_id: Option<&str>,
     mode: Option<&str>,
 ) -> Vec<AgentStreamEvent> {
+    run_agent_stream_with_data_events_with_context(data, message, run_id, mode, &AgentContext::default())
+}
+
+pub fn run_agent_stream_with_data_events_with_context(
+    data: &CoreDataSet,
+    message: &str,
+    run_id: Option<&str>,
+    mode: Option<&str>,
+    context: &AgentContext,
+) -> Vec<AgentStreamEvent> {
     let source = StaticDataSource::new(data.clone());
-    run_agent_stream_with_source_events(&source, message, run_id, mode)
+    run_agent_stream_with_source_events_with_context(&source, message, run_id, mode, context)
 }
 
 pub fn run_agent_with_source(
@@ -2824,26 +3897,138 @@ pub fn run_agent_with_source(
     message: &str,
     mode: Option<&str>,
 ) -> CoreResult<AgentResponse> {
+    run_agent_with_source_and_context(source, message, mode, &AgentContext::default())
+}
+
+pub fn run_agent_with_source_and_context(
+    source: &impl MarketDataSource,
+    message: &str,
+    mode: Option<&str>,
+    context: &AgentContext,
+) -> CoreResult<AgentResponse> {
     let lower = message.to_lowercase();
     let criteria = heuristic_criteria(message);
+    let codes = extract_codes(message);
+    let watchlist_codes = agent_watchlist_codes(context);
+    let wants_watchlist = contains_any(&lower, &["自选", "自选股", "观察池", "watchlist"]);
+    let wants_portfolio = contains_any(&lower, &["组合", "模拟组合", "组合观察", "回测", "backtest", "收益曲线"]);
 
-    if contains_any(
-        &lower,
-        &[
-            "趋势",
-            "上升趋势",
-            "趋势指标",
-            "短买",
-            "主力吸筹",
-            "红色持股",
-            "青色观望",
-            "swl",
-            "sws",
-            "量化评分",
-            "支撑",
-            "阻力",
-        ],
-    ) {
+    if wants_watchlist && !wants_portfolio {
+        let data = agent_watchlist_data(context);
+        return Ok(agent_finalize_response(
+            AgentResponse {
+                intent: None,
+                tool_calls: Vec::new(),
+                evidence_summary: Vec::new(),
+                answer_sections: Vec::new(),
+                warnings: Vec::new(),
+                next_actions: Vec::new(),
+                reply: mode_reply(mode, "已读取本地自选股观察池。"),
+                action: "watchlist_action".to_string(),
+                criteria: None,
+                backtest: None,
+                graph_screen: None,
+                trend_screen: None,
+                data: Some(data),
+            },
+            message,
+            mode,
+        ));
+    }
+
+    if wants_portfolio {
+        let default_end_date = current_system_date_yyyymmdd();
+        let use_watchlist = wants_watchlist || !watchlist_codes.is_empty();
+        let backtest = BacktestRequest {
+            criteria,
+            source: if use_watchlist { "watchlist".to_string() } else { default_backtest_source() },
+            strategy_mode: default_backtest_strategy_mode(),
+            stock_codes: if use_watchlist { watchlist_codes } else { Vec::new() },
+            start_date: extract_date(message, "20200101", true),
+            end_date: extract_date(message, &default_end_date, false),
+            top_n: default_top_n(),
+            initial_cash: default_initial_cash(),
+            rebalance_frequency: default_rebalance_frequency(),
+            transaction_cost_bps: default_transaction_cost_bps(),
+            benchmark: default_backtest_benchmark(),
+        };
+        let data = serde_json::to_value(backtest_with_source(source, &backtest)?)?;
+        return Ok(agent_finalize_response(
+            AgentResponse {
+                intent: None,
+                tool_calls: Vec::new(),
+                evidence_summary: Vec::new(),
+                answer_sections: Vec::new(),
+                warnings: Vec::new(),
+                next_actions: Vec::new(),
+                reply: mode_reply(mode, "已基于本地数据完成组合观察/回测。"),
+                action: "backtest".to_string(),
+                criteria: None,
+                backtest: Some(backtest),
+                graph_screen: None,
+                trend_screen: None,
+                data: Some(data),
+            },
+            message,
+            mode,
+        ));
+    }
+
+    if contains_any(&lower, &["利好", "利空", "新闻", "资讯", "消息", "公告", "舆情", "news", "rag"]) {
+        let data = agent_news_data(source, message, &codes)?;
+        return Ok(agent_finalize_response(
+            AgentResponse {
+                intent: None,
+                tool_calls: Vec::new(),
+                evidence_summary: Vec::new(),
+                answer_sections: Vec::new(),
+                warnings: Vec::new(),
+                next_actions: Vec::new(),
+                reply: mode_reply(mode, "已整理本地可用的资讯线索与风险边界。"),
+                action: "news_rag".to_string(),
+                criteria: None,
+                backtest: None,
+                graph_screen: None,
+                trend_screen: None,
+                data: Some(data),
+            },
+            message,
+            mode,
+        ));
+    }
+
+    if contains_any(&lower, &["财务", "资金", "资金面", "个股", "速览", "分析", "看一下", "观察", "snapshot", "observe"]) && !codes.is_empty() {
+        let code = codes.first().cloned().unwrap_or_default();
+        let observe_request = StockObserveRequest {
+            code,
+            start_date: extract_date(message, &default_start_date(), true),
+            end_date: extract_date(message, &default_end_date(), false),
+            series_limit: default_series_limit(),
+            include_order_book: false,
+        };
+        let data = serde_json::to_value(observe_with_source(source, &observe_request)?)?;
+        return Ok(agent_finalize_response(
+            AgentResponse {
+                intent: None,
+                tool_calls: Vec::new(),
+                evidence_summary: Vec::new(),
+                answer_sections: Vec::new(),
+                warnings: Vec::new(),
+                next_actions: Vec::new(),
+                reply: mode_reply(mode, "已生成个股本地观察摘要。"),
+                action: "observe_stock".to_string(),
+                criteria: None,
+                backtest: None,
+                graph_screen: None,
+                trend_screen: None,
+                data: Some(data),
+            },
+            message,
+            mode,
+        ));
+    }
+
+    if contains_any(&lower, &["趋势", "趋势股", "上升趋势", "技术", "量价", "短线", "主力", "支撑", "阻力", "swl", "sws", "trend"]) {
         let default_end_date = current_system_date_yyyymmdd();
         let trend_request = TrendScreenRequest {
             criteria,
@@ -2852,120 +4037,152 @@ pub fn run_agent_with_source(
             limit: 10,
         };
         let data = serde_json::to_value(trend_screen_with_source(source, &trend_request)?)?;
-        return Ok(AgentResponse {
-            reply: mode_reply(mode, "已按趋势指标做选股排序。"),
-            action: "trend_screen".to_string(),
-            criteria: None,
-            backtest: None,
-            graph_screen: None,
-            trend_screen: Some(trend_request),
-            data: Some(data),
-        });
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "关系",
-            "产业链",
-            "上下游",
-            "供应链",
-            "关联",
-            "联动",
-            "图学习",
-            "知识图谱",
-            "graph",
-            "gnn",
-            "langgraph",
-        ],
-    ) {
-        let graph_request = GraphScreenRequest {
-            criteria,
-            seed_codes: extract_codes(message),
-            seed_query: message.to_string(),
-            relation_depth: if contains_any(&lower, &["二级", "2层", "2-hop", "two hop"]) {
-                2
-            } else {
-                1
+        return Ok(agent_finalize_response(
+            AgentResponse {
+                intent: None,
+                tool_calls: Vec::new(),
+                evidence_summary: Vec::new(),
+                answer_sections: Vec::new(),
+                warnings: Vec::new(),
+                next_actions: Vec::new(),
+                reply: mode_reply(mode, "已按趋势指标完成候选股排序。"),
+                action: "trend_screen".to_string(),
+                criteria: None,
+                backtest: None,
+                graph_screen: None,
+                trend_screen: Some(trend_request),
+                data: Some(data),
             },
-            relation_weight: 0.4,
-            limit: 10,
-        };
-        let data = serde_json::to_value(graph_screen_with_source(source, &graph_request)?)?;
-        return Ok(AgentResponse {
-            reply: mode_reply(mode, "已按股票关系图做关系传播选股。"),
-            action: "graph_screen".to_string(),
-            criteria: None,
-            backtest: None,
-            graph_screen: Some(graph_request),
-            trend_screen: None,
-            data: Some(data),
-        });
+            message,
+            mode,
+        ));
     }
 
-    if message.contains("回测") || lower.contains("backtest") {
-        let default_end_date = current_system_date_yyyymmdd();
-        let backtest = BacktestRequest {
-            criteria,
-            source: default_backtest_source(),
-            stock_codes: Vec::new(),
-            start_date: extract_date(message, "20200101", true),
-            end_date: extract_date(message, &default_end_date, false),
-            top_n: default_top_n(),
-            initial_cash: default_initial_cash(),
-        };
-        let data = serde_json::to_value(backtest_with_source(source, &backtest)?)?;
-        return Ok(AgentResponse {
-            reply: mode_reply(mode, "已按描述执行本地回测。"),
-            action: "backtest".to_string(),
-            criteria: None,
-            backtest: Some(backtest),
-            graph_screen: None,
-            trend_screen: None,
-            data: Some(data),
-        });
-    }
-
-    if contains_any(&lower, &["选股", "筛选", "screen", "挑股票"]) {
+    if contains_any(&lower, &["板块", "行业", "主题", "概念", "半导体", "新能源", "白酒", "银行", "sector"]) {
         let data = serde_json::to_value(screen_with_source(source, &criteria)?)?;
-        return Ok(AgentResponse {
-            reply: mode_reply(mode, "已按描述筛选股票。"),
-            action: "screen".to_string(),
-            criteria: Some(criteria),
+        return Ok(agent_finalize_response(
+            AgentResponse {
+                intent: None,
+                tool_calls: Vec::new(),
+                evidence_summary: Vec::new(),
+                answer_sections: Vec::new(),
+                warnings: Vec::new(),
+                next_actions: Vec::new(),
+                reply: mode_reply(mode, "已按板块/主题条件完成本地候选筛选。"),
+                action: "screen".to_string(),
+                criteria: Some(criteria),
+                backtest: None,
+                graph_screen: None,
+                trend_screen: None,
+                data: Some(data),
+            },
+            message,
+            mode,
+        ));
+    }
+
+    if contains_any(&lower, &["选股", "筛选", "挑股", "候选", "roe", "pe", "pb", "screen"]) {
+        let data = serde_json::to_value(screen_with_source(source, &criteria)?)?;
+        return Ok(agent_finalize_response(
+            AgentResponse {
+                intent: None,
+                tool_calls: Vec::new(),
+                evidence_summary: Vec::new(),
+                answer_sections: Vec::new(),
+                warnings: Vec::new(),
+                next_actions: Vec::new(),
+                reply: mode_reply(mode, "已按描述筛选候选股票。"),
+                action: "screen".to_string(),
+                criteria: Some(criteria),
+                backtest: None,
+                graph_screen: None,
+                trend_screen: None,
+                data: Some(data),
+            },
+            message,
+            mode,
+        ));
+    }
+
+    Ok(agent_finalize_response(
+        AgentResponse {
+            intent: None,
+            tool_calls: Vec::new(),
+            evidence_summary: Vec::new(),
+            answer_sections: Vec::new(),
+            warnings: Vec::new(),
+            next_actions: Vec::new(),
+            reply: mode_reply(mode, "请说明要看个股、资讯、趋势筛选、自选股组合观察，还是普通选股。"),
+            action: "clarify".to_string(),
+            criteria: None,
             backtest: None,
             graph_screen: None,
             trend_screen: None,
-            data: Some(data),
-        });
-    }
-
-    Ok(AgentResponse {
-        reply: mode_reply(mode, "请说明要普通选股、关系图选股，还是回测。"),
-        action: "clarify".to_string(),
-        criteria: None,
-        backtest: None,
-        graph_screen: None,
-        trend_screen: None,
-        data: None,
-    })
+            data: None,
+        },
+        message,
+        mode,
+    ))
 }
-
 pub fn run_agent_stream_with_source_events(
     source: &impl MarketDataSource,
     message: &str,
     run_id: Option<&str>,
     mode: Option<&str>,
 ) -> Vec<AgentStreamEvent> {
+    run_agent_stream_with_source_events_with_context(source, message, run_id, mode, &AgentContext::default())
+}
+
+pub fn run_agent_stream_with_source_events_with_context(
+    source: &impl MarketDataSource,
+    message: &str,
+    run_id: Option<&str>,
+    mode: Option<&str>,
+    context: &AgentContext,
+) -> Vec<AgentStreamEvent> {
     let run_id = run_id.unwrap_or("gp-agent-run").to_string();
     let mut events = vec![
-        agent_status_event(&run_id, "understand", "理解意图", 8, None),
-        agent_status_event(&run_id, "intent", "识别动作", 24, None),
-        agent_status_event(&run_id, "execute", "执行本地智能体", 64, None),
+        agent_status_event(&run_id, "understand", "理解任务", 8, None),
+        agent_status_event(&run_id, "intent", "选择工具", 24, None),
+        agent_status_event(&run_id, "execute", "执行本地工具", 64, None),
     ];
 
-    match run_agent_with_source(source, message, mode) {
+    match run_agent_with_source_and_context(source, message, mode, context) {
         Ok(response) => {
             let action = response.action.clone();
+            for call in response.tool_calls.clone() {
+                events.push(agent_payload_event(
+                    &run_id,
+                    "tool_start",
+                    Some(action.as_str()),
+                    json!({
+                        "id": call.id,
+                        "tool": call.tool,
+                        "label": call.label,
+                        "input": call.input,
+                    }),
+                ));
+                events.push(agent_payload_event(
+                    &run_id,
+                    "tool_result",
+                    Some(action.as_str()),
+                    json!({
+                        "id": call.id,
+                        "tool": call.tool,
+                        "status": call.status,
+                        "output_summary": call.output_summary,
+                        "warnings": call.warnings,
+                    }),
+                ));
+            }
+            if !response.evidence_summary.is_empty() {
+                events.push(agent_payload_event(
+                    &run_id,
+                    "evidence",
+                    Some(action.as_str()),
+                    json!({ "items": response.evidence_summary.clone() }),
+                ));
+            }
             events.push(agent_status_event(
                 &run_id,
                 "format",
@@ -2980,6 +4197,16 @@ pub fn run_agent_stream_with_source_events(
                 100,
                 Some(action.as_str()),
             ));
+            events.push(agent_payload_event(
+                &run_id,
+                "final",
+                Some(action.as_str()),
+                json!({
+                    "intent": response.intent.clone(),
+                    "warnings": response.warnings.clone(),
+                    "next_actions": response.next_actions.clone(),
+                }),
+            ));
             events.push(AgentStreamEvent {
                 run_id,
                 event_type: "result".to_string(),
@@ -2988,6 +4215,7 @@ pub fn run_agent_stream_with_source_events(
                 percent: None,
                 action: Some(action),
                 response: Some(response),
+                payload: None,
                 message: None,
             });
         }
@@ -3000,6 +4228,7 @@ pub fn run_agent_stream_with_source_events(
                 percent: None,
                 action: None,
                 response: None,
+                payload: None,
                 message: Some(error.to_string()),
             });
         }
@@ -3023,6 +4252,26 @@ fn agent_status_event(
         percent: Some(percent),
         action: action.map(ToOwned::to_owned),
         response: None,
+        payload: None,
+        message: None,
+    }
+}
+
+fn agent_payload_event(
+    run_id: &str,
+    event_type: &str,
+    action: Option<&str>,
+    payload: Value,
+) -> AgentStreamEvent {
+    AgentStreamEvent {
+        run_id: run_id.to_string(),
+        event_type: event_type.to_string(),
+        stage: None,
+        label: None,
+        percent: None,
+        action: action.map(ToOwned::to_owned),
+        response: None,
+        payload: Some(payload),
         message: None,
     }
 }
@@ -3033,7 +4282,7 @@ pub fn run_mobile_stock_skill(request: &MobileStockSkillRequest) -> MobileStockS
     let mut neutral_information = Vec::new();
     let mut unverified_leads = Vec::new();
     let mut notes = vec![
-        "手机端股票分析 Skill 已按结构化信源条目生成结论。".to_string(),
+        "手机端股票分析 Skill 已按结构化信源生成结论。".to_string(),
         "仅供选股研究，不构成投资建议。".to_string(),
     ];
 
@@ -3093,17 +4342,80 @@ pub fn run_mobile_stock_skill(request: &MobileStockSkillRequest) -> MobileStockS
         notes,
     }
 }
+fn agent_watchlist_codes(context: &AgentContext) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut codes = Vec::new();
+    for item in &context.watchlist {
+        let code = normalize_stock_code(&item.code);
+        if !code.is_empty() && seen.insert(code.clone()) {
+            codes.push(code);
+        }
+    }
+    codes
+}
 
+fn agent_watchlist_data(context: &AgentContext) -> Value {
+    let codes = agent_watchlist_codes(context);
+    let items = context
+        .watchlist
+        .iter()
+        .map(|item| {
+            json!({
+                "code": normalize_stock_code(&item.code),
+                "name": item.name,
+                "industry": item.industry,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "source": "local_watchlist",
+        "total": items.len(),
+        "returned": items.len(),
+        "codes": codes,
+        "items": items,
+        "notes": ["只读取本地自选股观察池，不执行真实交易。"],
+    })
+}
+
+fn agent_news_data(
+    source: &impl MarketDataSource,
+    message: &str,
+    codes: &[String],
+) -> CoreResult<Value> {
+    let universe = source.list_stocks()?;
+    let mut items = Vec::new();
+    for code in codes.iter().take(5) {
+        let stock = universe
+            .iter()
+            .find(|item| normalize_stock_code(&item.code) == normalize_stock_code(code));
+        items.push(json!({
+            "code": code,
+            "name": stock.map(|item| item.name.clone()).unwrap_or_default(),
+            "source": "local_cache",
+            "level": "degraded",
+            "summary": "当前核心层未接入外部新闻抓取；请结合桌面新闻 RAG 或导入的移动 RAG 包复核。",
+        }));
+    }
+    if items.is_empty() {
+        items.push(json!({
+            "source": "local_cache",
+            "level": "degraded",
+            "summary": "未识别到股票代码，已保留为待验证资讯研究问题。",
+        }));
+    }
+    Ok(json!({
+        "query": message,
+        "source": "local_agent_news_stub",
+        "returned": items.len(),
+        "items": items,
+        "notes": ["社区或未验证来源只作为待验证线索；不输出买卖、目标价或收益承诺。"],
+    }))
+}
 fn mode_reply(mode: Option<&str>, text: &str) -> String {
-    // The agent is a heuristic keyword router with no LLM prompt layer; the mode still
-    // reaches here from the UI so the reply tone reflects the user's chosen posture:
-    //   quick    -> terse conclusion
-    //   expert   -> conclusion plus risk note and a concrete next step
-    //   research -> research-style disclaimer (default, preserves prior behavior)
     match mode.unwrap_or("research") {
         "quick" => text.to_string(),
         "expert" => format!(
-            "{text}\n\n风险提示：以上为本地策略结果，需结合基本面与市场环境复核。\n下一步：可对候选股票做观察或回测验证。"
+            "{text}\n\n风险提示：以上为本地策略结果，需结合基本面与市场环境复核。\n下一步：可对候选股做观察或回测验证。"
         ),
         _ => format!("{text} 仅供选股研究，不构成投资建议。"),
     }
@@ -3144,14 +4456,14 @@ fn classify_mobile_source(source_tier: &str, title: &str, summary: &str, evidenc
         &text,
         &[
             "增长", "预增", "扭亏", "订单", "中标", "签订", "扩产", "回购", "增持", "分红", "盈利",
-            "改善", "突破", "获批", "投产", "景气", "涨价",
+            "改善", "突破", "获批", "投产", "景气", "涨价", "positive", "beat", "upgrade",
         ],
     );
     let negative = contains_any(
         &text,
         &[
             "下滑", "下降", "亏损", "预亏", "减持", "处罚", "调查", "诉讼", "仲裁", "违约", "终止",
-            "取消", "风险", "计提", "减值", "停产", "限产", "退市",
+            "取消", "风险", "计提", "减值", "停产", "限产", "退市", "negative", "miss", "downgrade",
         ],
     );
 
@@ -3191,7 +4503,7 @@ fn mobile_finding_summary(label: &str, source: &MobileStockSourceItem) -> String
         "neutral" => "中性信息",
         _ => "待验证线索",
     };
-    format!("{prefix}：{}", truncate_chars(&body, 120))
+    format!("{prefix}: {}", truncate_chars(&body, 120))
 }
 
 fn mobile_risk_note(label: &str) -> String {
@@ -3238,7 +4550,6 @@ fn mobile_overview_summary(
         "{target} 当前命中利好 {positive} 条、利空 {negative} 条、中性 {neutral} 条、待验证 {unverified} 条。仅供选股研究，不构成投资建议。"
     )
 }
-
 fn sort_findings(findings: &mut [MobileStockSkillFinding]) {
     findings.sort_by(|left, right| {
         right
@@ -3305,14 +4616,9 @@ pub fn screen_stocks(universe: &[StockItem], criteria: &ScreenCriteria) -> Scree
     let groups = screen_result_groups(&screened);
     let mut notes = notes;
     if promoted {
-        notes.push("\u{5df2}\u{6309}\u{5171}\u{4eab}\u{7b5b}\u{9009}\u{89c4}\u{5219}\u{5747}\u{8861}\u{8bc4}\u{4f30}\u{4e3b}\u{9898}\u{3001}\u{57fa}\u{672c}\u{9762}\u{3001}\u{4f30}\u{503c}\u{3001}\u{89c4}\u{6a21}\u{548c}\u{98ce}\u{9669}\u{ff0c}\u{5e76}\u{4f18}\u{5148}\u{5c55}\u{793a}\u{70ed}\u{95e8}\u{4e3b}\u{9898}\u{5019}\u{9009}\u{3002}".to_string());
+        notes.push("基准为候选池买入持有等权曲线，用于衡量调仓与成本后的超额收益。".to_string());
     }
-    notes.push(format!(
-        "{}{}{}",
-        "\u{666e}\u{901a}\u{7b5b}\u{9009}\u{5df2}\u{62c6}\u{6210}\u{70ed}\u{95e8}\u{80a1}\u{548c}\u{7efc}\u{5408}\u{5206}\u{5927}\u{4e8e} ",
-        POTENTIAL_SCORE_THRESHOLD,
-        " \u{7684}\u{6f5c}\u{529b}\u{80a1}\u{ff0c}\u{6bcf}\u{7c7b}\u{6700}\u{591a} 10 \u{53ea}\u{3002}",
-    ));
+    notes.push(format!("普通筛选已拆成热门股和综合分大于 {} 的潜力股，每类最多 10 只。", POTENTIAL_SCORE_THRESHOLD));
     ScreenResult {
         total: screened.len(),
         returned: items.len(),
@@ -3334,10 +4640,7 @@ fn deducted_profit_rule_notes(universe: &[StockItem], criteria: &ScreenCriteria)
         .filter(|stock| has_deducted_profit_rule_metrics(stock, criteria))
         .count();
     if with_metrics < universe.len() {
-        vec![format!(
-            "扣非净利润规则已启用；当前股票池 {with_metrics}/{} 只股票带扣非财务字段，缺字段股票按不达标处理。",
-            universe.len()
-        )]
+        vec![format!("扣非净利润规则已启用；当前股票池 {with_metrics}/{} 只股票带扣非财务字段，缺字段股票按不达标处理。", universe.len())]
     } else {
         Vec::new()
     }
@@ -3364,96 +4667,52 @@ fn has_deducted_profit_rule_metrics(stock: &StockItem, criteria: &ScreenCriteria
 
 pub fn graph_screen_stocks(
     universe: &[StockItem],
-    provider_relations: &[StockRelation],
+    _provider_relations: &[StockRelation],
     request: &GraphScreenRequest,
 ) -> GraphScreenResult {
-    let candidate_pool = screen_candidate_pool(universe, &request.criteria, request.limit);
-    let center_context = resolve_center_context(
-        universe,
-        &candidate_pool,
-        &request.seed_codes,
-        &request.seed_query,
-    );
-    let candidate_by_code: HashMap<String, ScreenedStock> = candidate_pool
-        .iter()
-        .map(|item| (item.stock.code.clone(), item.clone()))
+    let mut criteria = request.criteria.clone();
+    criteria.limit = request.limit.clamp(1, 100);
+    let screen_result = screen_stocks(universe, &criteria);
+    let center_context = GraphCenterContext {
+        mode: "custom_criteria".to_string(),
+        label: "自定义筛选".to_string(),
+        codes: Vec::new(),
+    };
+
+    let mut signals: Vec<GraphStockSignal> = screen_result
+        .items
+        .into_iter()
+        .map(|screened| {
+            let score = round6(screened.score);
+            GraphStockSignal {
+                stock: screened.stock,
+                base_score: score,
+                relation_score: 0.0,
+                final_score: score,
+                suggested_weight: 0.0,
+                reasons: screened.reasons,
+                related: Vec::new(),
+                explanation: SelectionExplanation {
+                    basis: vec![screened.score_explanation],
+                    ..SelectionExplanation::default()
+                },
+            }
+        })
         .collect();
-    let all_stocks: HashMap<String, StockItem> = universe
-        .iter()
-        .map(|stock| (stock.code.clone(), stock.clone()))
-        .collect();
-
-    let supply_chain_relations = infer_supply_chain_relations(universe, &center_context);
-    let has_supply_chain_relations = !supply_chain_relations.is_empty();
-    let mut raw_relations = provider_relations.to_vec();
-    raw_relations.extend(supply_chain_relations);
-    raw_relations.extend(infer_industry_relations(universe));
-    let relations = merge_relations(&raw_relations);
-    let adjacency = build_adjacency(&relations);
-    let base_scores = normalize_scores(
-        &candidate_by_code
-            .iter()
-            .map(|(code, item)| (code.clone(), item.score))
-            .collect(),
-    );
-    let seed_codes: HashSet<String> = center_context.codes.iter().cloned().collect();
-    let max_depth = request.relation_depth.clamp(1, 3);
-    let relation_weight = request.relation_weight.clamp(0.0, 1.0);
-
-    let mut signals = Vec::new();
-    for (code, screened) in candidate_by_code {
-        let relation_score =
-            relation_score(&code, &base_scores, &adjacency, &seed_codes, max_depth);
-        let base_score = *base_scores.get(&code).unwrap_or(&0.0);
-        let final_score = (1.0 - relation_weight) * base_score + relation_weight * relation_score;
-        let related = top_related(&code, &relations, &all_stocks, 5);
-        signals.push(GraphStockSignal {
-            stock: screened.stock.clone(),
-            base_score: round6(base_score),
-            relation_score: round6(relation_score),
-            final_score: round6(final_score),
-            suggested_weight: 0.0,
-            reasons: graph_reasons(&screened, relation_score),
-            related: related.clone(),
-            explanation: graph_explanation(
-                &screened,
-                base_score,
-                relation_score,
-                final_score,
-                relation_weight,
-                &center_context,
-                &related,
-            ),
-        });
-    }
-
     signals.sort_by(|left, right| right.final_score.total_cmp(&left.final_score));
     signals.truncate(request.limit.clamp(1, 100));
     assign_weights(&mut signals);
 
     let mut notes = vec![
-        "Graph screening uses lightweight relation propagation in gp-core.".to_string(),
-        "LangGraph is only agent orchestration; stock relations are modeled by relation scoring."
-            .to_string(),
+        "自定义筛选使用页面筛选条件，不再依赖中心股票或关系传播。".to_string(),
+        "旧关系图入口已降级为自定义筛选兼容结果，relation_count 固定为 0。".to_string(),
     ];
-    notes.extend(deducted_profit_rule_notes(universe, &request.criteria));
-    if has_supply_chain_relations {
-        notes.push("\u{5df2}\u{6839}\u{636e}\u{4e2d}\u{5fc3}\u{80a1}\u{63a8}\u{5bfc}\u{673a}\u{5668}\u{4eba}\u{4ea7}\u{4e1a}\u{94fe}\u{4e0a}\u{6e38}\u{90e8}\u{4ef6}\u{3001}\u{4e2d}\u{6e38}\u{672c}\u{4f53}/\u{7cfb}\u{7edf}\u{96c6}\u{6210}\u{3001}\u{4e0b}\u{6e38}\u{5e94}\u{7528}\u{573a}\u{666f}\u{5173}\u{7cfb}\u{3002}".to_string());
-    }
-    if center_context.mode == "theme_center" {
-        notes.push(format!(
-            "\u{672a}\u{63d0}\u{4f9b}\u{79cd}\u{5b50}\u{80a1}\u{ff0c}\u{56fe}\u{8c31}\u{9009}\u{80a1}\u{4f7f}\u{7528}{}\u{3002}",
-            center_context.label
-        ));
-    }
-    if relations.is_empty() {
-        notes.push("\u{672a}\u{627e}\u{5230}\u{80a1}\u{7968}\u{5173}\u{7cfb}\u{6570}\u{636e}\u{ff0c}\u{7ed3}\u{679c}\u{5df2}\u{56de}\u{9000}\u{4e3a}\u{57fa}\u{7840}\u{7b5b}\u{9009}\u{5206}\u{3002}".to_string());
-    }
+    notes.extend(screen_result.notes);
 
     GraphScreenResult {
-        total: candidate_pool.len(),
+        total: screen_result.total,
         returned: signals.len(),
-        relation_count: relations.len(),
+        relation_count: 0,
         items: signals,
         center_context,
         notes,
@@ -3678,7 +4937,6 @@ pub fn mock_relations() -> Vec<StockRelation> {
         },
     ]
 }
-
 fn as_percent(value: f64) -> Option<f64> {
     if !value.is_finite() {
         return None;
@@ -4468,10 +5726,6 @@ fn stock_text(stock: &StockItem) -> String {
     format!("{} {}", stock.name, stock.industry).to_lowercase()
 }
 
-fn hot_sector_category(industry: &str) -> Option<&'static str> {
-    theme_match_for_text(&industry.to_lowercase()).map(|(key, _, _)| key)
-}
-
 fn is_cold_sector(industry: &str) -> bool {
     let normalized = industry.trim().to_lowercase();
     if normalized.is_empty() {
@@ -4480,10 +5734,6 @@ fn is_cold_sector(industry: &str) -> bool {
     COLD_SECTOR_KEYWORDS
         .iter()
         .any(|keyword| normalized.contains(keyword))
-}
-
-fn hot_pick_category(stock: &StockItem) -> Option<&'static str> {
-    hot_sector_category(&format!("{} {}", stock.name, stock.industry))
 }
 
 fn should_promote_hot_sectors(criteria: &ScreenCriteria) -> bool {
@@ -4734,689 +5984,6 @@ fn screen_candidate_pool(
     screen_stocks(universe, &expanded_criteria).items
 }
 
-fn resolve_center_context(
-    universe: &[StockItem],
-    candidate_pool: &[ScreenedStock],
-    seed_codes: &[String],
-    seed_query: &str,
-) -> GraphCenterContext {
-    let mut normalized_seed_codes: Vec<String> = seed_codes
-        .iter()
-        .map(|code| normalize_stock_code(code))
-        .filter(|code| !code.is_empty())
-        .take(50)
-        .collect();
-    normalized_seed_codes.extend(resolve_seed_query_codes(universe, seed_query));
-    normalized_seed_codes.sort();
-    normalized_seed_codes.dedup();
-    normalized_seed_codes.truncate(50);
-    if !normalized_seed_codes.is_empty() {
-        let label = if seed_query.trim().is_empty() {
-            "\u{79cd}\u{5b50}\u{80a1}\u{4e2d}\u{5fc3}".to_string()
-        } else {
-            format!(
-                "\u{4ea7}\u{4e1a}\u{94fe}\u{4e2d}\u{5fc3}\u{ff1a}{}",
-                seed_query.trim()
-            )
-        };
-        return GraphCenterContext {
-            mode: "seed_stock_center".to_string(),
-            label,
-            codes: normalized_seed_codes,
-        };
-    }
-
-    if candidate_pool.is_empty() {
-        return GraphCenterContext {
-            mode: "theme_center".to_string(),
-            label: "\u{4e3b}\u{9898}\u{4e2d}\u{5fc3}\u{4e3a}\u{7a7a}".to_string(),
-            codes: Vec::new(),
-        };
-    }
-
-    let mut groups: HashMap<String, Vec<ScreenedStock>> = HashMap::new();
-    let mut labels: HashMap<String, String> = HashMap::new();
-    for item in candidate_pool {
-        let (key, label) = center_group_key(item);
-        groups.entry(key.clone()).or_default().push(item.clone());
-        labels.insert(key, label);
-    }
-
-    let mut ranked: Vec<(String, Vec<ScreenedStock>)> = groups.into_iter().collect();
-    ranked.sort_by(|(left_key, left_items), (right_key, right_items)| {
-        let left_avg = average_screen_score(left_items);
-        let right_avg = average_screen_score(right_items);
-        right_items
-            .len()
-            .cmp(&left_items.len())
-            .then_with(|| right_avg.total_cmp(&left_avg))
-            .then_with(|| labels.get(right_key).cmp(&labels.get(left_key)))
-    });
-    let Some((selected_key, mut selected_items)) = ranked.into_iter().next() else {
-        return GraphCenterContext::default();
-    };
-    selected_items.sort_by(|left, right| right.score.total_cmp(&left.score));
-    selected_items.truncate(5);
-    GraphCenterContext {
-        mode: "theme_center".to_string(),
-        label: labels.get(&selected_key).cloned().unwrap_or(selected_key),
-        codes: selected_items
-            .into_iter()
-            .map(|item| item.stock.code)
-            .collect(),
-    }
-}
-
-fn resolve_seed_query_codes(universe: &[StockItem], seed_query: &str) -> Vec<String> {
-    let query = seed_query.trim().to_lowercase();
-    if query.is_empty() {
-        return Vec::new();
-    }
-    let normalized_query = normalize_stock_code(&query).to_lowercase();
-    let mut matches: Vec<StockItem> = universe
-        .iter()
-        .filter(|stock| {
-            let code = stock.code.to_lowercase();
-            let normalized_code = normalize_stock_code(&stock.code).to_lowercase();
-            let name = stock.name.to_lowercase();
-            let industry = stock.industry.to_lowercase();
-            code == normalized_query
-                || normalized_code == normalized_query
-                || code.contains(&query)
-                || (!normalized_code.is_empty() && normalized_query.contains(&normalized_code))
-                || name.contains(&query)
-                || (!name.is_empty() && query.contains(&name))
-                || industry.contains(&query)
-                || (!industry.is_empty() && query.contains(&industry))
-        })
-        .cloned()
-        .collect();
-    matches.sort_by(|left, right| {
-        right
-            .market_cap_billion
-            .unwrap_or(0.0)
-            .total_cmp(&left.market_cap_billion.unwrap_or(0.0))
-    });
-    matches
-        .into_iter()
-        .take(12)
-        .map(|stock| stock.code)
-        .collect()
-}
-
-fn average_screen_score(items: &[ScreenedStock]) -> f64 {
-    if items.is_empty() {
-        0.0
-    } else {
-        items.iter().map(|item| item.score).sum::<f64>() / items.len() as f64
-    }
-}
-
-fn center_group_key(item: &ScreenedStock) -> (String, String) {
-    if let Some(category) = hot_pick_category(&item.stock) {
-        return (
-            format!("theme:{category}"),
-            format!("\u{4e3b}\u{9898}\u{4e2d}\u{5fc3}\u{ff1a}{category}"),
-        );
-    }
-    if !item.stock.industry.trim().is_empty() {
-        return (
-            format!("industry:{}", item.stock.industry),
-            format!("industry center: {}", item.stock.industry),
-        );
-    }
-    (
-        "industry:unknown".to_string(),
-        "industry center: unknown".to_string(),
-    )
-}
-
-#[derive(Clone, Debug)]
-struct ChainProfile {
-    code: String,
-    role: &'static str,
-    rank: f64,
-}
-
-fn infer_supply_chain_relations(
-    universe: &[StockItem],
-    center_context: &GraphCenterContext,
-) -> Vec<StockRelation> {
-    let mut profiles: Vec<ChainProfile> = universe
-        .iter()
-        .flat_map(|stock| {
-            robotics_chain_roles(stock)
-                .into_iter()
-                .map(move |role| ChainProfile {
-                    code: stock.code.clone(),
-                    role,
-                    rank: chain_stock_rank(stock),
-                })
-        })
-        .collect();
-    if profiles.is_empty() {
-        return Vec::new();
-    }
-    profiles.sort_by(|left, right| right.rank.total_cmp(&left.rank));
-
-    let center_codes: HashSet<String> = center_context.codes.iter().cloned().collect();
-    let seeded = center_context.mode == "seed_stock_center" && !center_codes.is_empty();
-    let center_profiles: Vec<ChainProfile> = profiles
-        .iter()
-        .filter(|profile| center_codes.contains(&profile.code))
-        .cloned()
-        .collect();
-    if seeded && center_profiles.is_empty() {
-        return Vec::new();
-    }
-    let mut anchors: Vec<ChainProfile> = profiles
-        .iter()
-        .filter(|profile| profile.role == "midstream_robot")
-        .filter(|profile| !seeded || center_codes.contains(&profile.code))
-        .cloned()
-        .collect();
-    if anchors.is_empty() {
-        anchors = profiles
-            .iter()
-            .filter(|profile| profile.role == "midstream_robot")
-            .take(if seeded { 8 } else { 12 })
-            .cloned()
-            .collect();
-    }
-    if anchors.is_empty() {
-        return Vec::new();
-    }
-    anchors.sort_by(|left, right| right.rank.total_cmp(&left.rank));
-    anchors.truncate(12);
-
-    let upstream = top_chain_profiles(&profiles, "upstream_component", 80);
-    let downstream = top_chain_profiles(&profiles, "downstream_application", 80);
-    let mut relations = Vec::new();
-
-    for anchor in &anchors {
-        for upstream_profile in &upstream {
-            if upstream_profile.code == anchor.code {
-                continue;
-            }
-            relations.push(StockRelation {
-                source_code: upstream_profile.code.clone(),
-                target_code: anchor.code.clone(),
-                relation_type: "supply_chain_upstream".to_string(),
-                weight: 0.88,
-                description: Some("\u{673a}\u{5668}\u{4eba}\u{4ea7}\u{4e1a}\u{94fe}\u{4e0a}\u{6e38}\u{90e8}\u{4ef6} -> \u{672c}\u{4f53}/\u{7cfb}\u{7edf}\u{96c6}\u{6210}".to_string()),
-            });
-        }
-        for downstream_profile in &downstream {
-            if downstream_profile.code == anchor.code {
-                continue;
-            }
-            relations.push(StockRelation {
-                source_code: anchor.code.clone(),
-                target_code: downstream_profile.code.clone(),
-                relation_type: "supply_chain_downstream".to_string(),
-                weight: 0.78,
-                description: Some("\u{673a}\u{5668}\u{4eba}\u{672c}\u{4f53}/\u{7cfb}\u{7edf}\u{96c6}\u{6210} -> \u{4e0b}\u{6e38}\u{5e94}\u{7528}\u{573a}\u{666f}".to_string()),
-            });
-        }
-    }
-
-    for index in 0..anchors.len() {
-        for target in anchors.iter().skip(index + 1).take(3) {
-            relations.push(StockRelation {
-                source_code: anchors[index].code.clone(),
-                target_code: target.code.clone(),
-                relation_type: "robotics_peer".to_string(),
-                weight: 0.62,
-                description: Some("\u{673a}\u{5668}\u{4eba}\u{4ea7}\u{4e1a}\u{94fe}\u{4e2d}\u{6e38}\u{540c}\u{7c7b}".to_string()),
-            });
-        }
-    }
-
-    relations
-}
-
-fn top_chain_profiles(
-    profiles: &[ChainProfile],
-    role: &'static str,
-    limit: usize,
-) -> Vec<ChainProfile> {
-    let mut seen = HashSet::new();
-    profiles
-        .iter()
-        .filter(|profile| profile.role == role)
-        .filter(|profile| seen.insert(profile.code.clone()))
-        .take(limit)
-        .cloned()
-        .collect()
-}
-
-fn robotics_chain_roles(stock: &StockItem) -> Vec<&'static str> {
-    let text = format!("{} {} {}", stock.code, stock.name, stock.industry).to_lowercase();
-    let mut roles = Vec::new();
-    if contains_any(
-        &text,
-        &[
-            "002747",
-            "estun",
-            "robot",
-            "automation",
-            "\u{57c3}\u{65af}\u{987f}",
-            "\u{673a}\u{5668}\u{4eba}",
-            "\u{81ea}\u{52a8}\u{5316}",
-            "\u{5de5}\u{4e1a}\u{673a}\u{5668}\u{4eba}",
-            "\u{667a}\u{80fd}\u{88c5}\u{5907}",
-        ],
-    ) {
-        roles.push("midstream_robot");
-    }
-    if contains_any(
-        &text,
-        &[
-            "servo",
-            "sensor",
-            "reducer",
-            "controller",
-            "vision",
-            "\u{51cf}\u{901f}\u{5668}",
-            "\u{4f3a}\u{670d}",
-            "\u{63a7}\u{5236}\u{5668}",
-            "\u{4f20}\u{611f}\u{5668}",
-            "\u{673a}\u{5668}\u{89c6}\u{89c9}",
-            "\u{7535}\u{673a}",
-            "\u{4e1d}\u{6760}",
-            "\u{8f74}\u{627f}",
-            "\u{5de5}\u{4e1a}\u{6bcd}\u{673a}",
-        ],
-    ) {
-        roles.push("upstream_component");
-    }
-    if contains_any(
-        &text,
-        &[
-            "ev",
-            "battery",
-            "semiconductor",
-            "\u{6c7d}\u{8f66}",
-            "\u{65b0}\u{80fd}\u{6e90}",
-            "\u{9502}\u{7535}",
-            "\u{5149}\u{4f0f}",
-            "\u{533b}\u{7597}",
-            "\u{7269}\u{6d41}",
-            "\u{534a}\u{5bfc}\u{4f53}",
-            "\u{7535}\u{5b50}",
-            "\u{6d88}\u{8d39}\u{7535}\u{5b50}",
-        ],
-    ) {
-        roles.push("downstream_application");
-    }
-    roles
-}
-
-fn chain_stock_rank(stock: &StockItem) -> f64 {
-    stock.market_cap_billion.unwrap_or(0.0).sqrt()
-        + stock.roe.and_then(as_percent).unwrap_or(0.0).max(0.0)
-        + stock
-            .deducted_net_profit_growth_rate
-            .and_then(as_percent)
-            .unwrap_or(0.0)
-            .max(0.0)
-            * 0.2
-}
-
-fn is_directional_relation_type(relation_type: &str) -> bool {
-    matches!(
-        relation_type,
-        "supply_chain_upstream" | "supply_chain_downstream" | "supply_chain_application"
-    )
-}
-fn merge_relations(relations: &[StockRelation]) -> Vec<StockRelation> {
-    let mut merged: HashMap<(String, String, String), StockRelation> = HashMap::new();
-    for relation in relations {
-        if relation.source_code == relation.target_code {
-            continue;
-        }
-        let (source, target) = if is_directional_relation_type(&relation.relation_type) {
-            (relation.source_code.clone(), relation.target_code.clone())
-        } else {
-            sorted_pair(&relation.source_code, &relation.target_code)
-        };
-        let key = (
-            source.clone(),
-            target.clone(),
-            relation.relation_type.clone(),
-        );
-        let should_replace = merged
-            .get(&key)
-            .map(|existing| relation.weight > existing.weight)
-            .unwrap_or(true);
-        if should_replace {
-            let mut normalized = relation.clone();
-            normalized.source_code = source;
-            normalized.target_code = target;
-            merged.insert(key, normalized);
-        }
-    }
-    merged.into_values().collect()
-}
-
-fn infer_industry_relations(universe: &[StockItem]) -> Vec<StockRelation> {
-    let mut by_industry: HashMap<String, Vec<StockItem>> = HashMap::new();
-    for stock in universe {
-        if !stock.industry.is_empty() && stock.industry != "未知行业" {
-            by_industry
-                .entry(stock.industry.clone())
-                .or_default()
-                .push(stock.clone());
-        }
-    }
-
-    let mut relations = Vec::new();
-    for (industry, mut members) in by_industry {
-        members.sort_by(|left, right| {
-            right
-                .market_cap_billion
-                .unwrap_or(0.0)
-                .total_cmp(&left.market_cap_billion.unwrap_or(0.0))
-        });
-        members.truncate(12);
-        for index in 0..members.len() {
-            let end = (index + 4).min(members.len());
-            for target in &members[index + 1..end] {
-                relations.push(StockRelation {
-                    source_code: members[index].code.clone(),
-                    target_code: target.code.clone(),
-                    relation_type: "industry_peer".to_string(),
-                    weight: 0.45,
-                    description: Some(format!("同行业：{industry}")),
-                });
-            }
-        }
-    }
-    relations
-}
-
-fn build_adjacency(
-    relations: &[StockRelation],
-) -> HashMap<String, Vec<(String, f64, StockRelation)>> {
-    let mut adjacency: HashMap<String, Vec<(String, f64, StockRelation)>> = HashMap::new();
-    for relation in relations {
-        adjacency
-            .entry(relation.source_code.clone())
-            .or_default()
-            .push((
-                relation.target_code.clone(),
-                relation.weight,
-                relation.clone(),
-            ));
-        adjacency
-            .entry(relation.target_code.clone())
-            .or_default()
-            .push((
-                relation.source_code.clone(),
-                relation.weight,
-                relation.clone(),
-            ));
-    }
-    adjacency
-}
-
-fn normalize_scores(scores: &HashMap<String, f64>) -> HashMap<String, f64> {
-    if scores.is_empty() {
-        return HashMap::new();
-    }
-    let min_score = scores.values().copied().fold(f64::INFINITY, f64::min);
-    let max_score = scores.values().copied().fold(f64::NEG_INFINITY, f64::max);
-    if max_score == min_score {
-        return scores.keys().map(|code| (code.clone(), 1.0)).collect();
-    }
-    scores
-        .iter()
-        .map(|(code, score)| (code.clone(), (score - min_score) / (max_score - min_score)))
-        .collect()
-}
-
-fn relation_score(
-    code: &str,
-    base_scores: &HashMap<String, f64>,
-    adjacency: &HashMap<String, Vec<(String, f64, StockRelation)>>,
-    seed_codes: &HashSet<String>,
-    max_depth: usize,
-) -> f64 {
-    if !adjacency.contains_key(code) {
-        return 0.0;
-    }
-
-    let mut weighted_sum = 0.0;
-    let mut total_weight = 0.0;
-    let mut queue = VecDeque::from([(code.to_string(), 0_usize, 1.0_f64)]);
-    let mut visited = HashSet::from([code.to_string()]);
-
-    while let Some((current, depth, path_weight)) = queue.pop_front() {
-        if depth >= max_depth {
-            continue;
-        }
-        for (neighbor, edge_weight, _relation) in adjacency.get(&current).into_iter().flatten() {
-            if visited.contains(neighbor) {
-                continue;
-            }
-            visited.insert(neighbor.clone());
-            let propagated_weight = path_weight * edge_weight;
-            if let Some(base_score) = base_scores.get(neighbor) {
-                let distance_discount = 1.0 / (depth + 1) as f64;
-                weighted_sum += base_score * propagated_weight * distance_discount;
-                total_weight += propagated_weight * distance_discount;
-            }
-            queue.push_back((neighbor.clone(), depth + 1, propagated_weight));
-        }
-    }
-
-    let mut score = if total_weight > 0.0 {
-        weighted_sum / total_weight
-    } else {
-        0.0
-    };
-    if !seed_codes.is_empty() {
-        let proximity = seed_proximity(code, seed_codes, adjacency, max_depth);
-        score = 1.0_f64.min(score + proximity * 0.25);
-    }
-    score
-}
-
-fn seed_proximity(
-    code: &str,
-    seed_codes: &HashSet<String>,
-    adjacency: &HashMap<String, Vec<(String, f64, StockRelation)>>,
-    max_depth: usize,
-) -> f64 {
-    if seed_codes.contains(code) {
-        return 1.0;
-    }
-
-    let mut queue = VecDeque::from([(code.to_string(), 0_usize)]);
-    let mut visited = HashSet::from([code.to_string()]);
-    while let Some((current, depth)) = queue.pop_front() {
-        if depth >= max_depth {
-            continue;
-        }
-        for (neighbor, _edge_weight, _relation) in adjacency.get(&current).into_iter().flatten() {
-            if visited.contains(neighbor) {
-                continue;
-            }
-            if seed_codes.contains(neighbor) {
-                return 0.0_f64.max((max_depth - depth) as f64 / max_depth as f64);
-            }
-            visited.insert(neighbor.clone());
-            queue.push_back((neighbor.clone(), depth + 1));
-        }
-    }
-    0.0
-}
-
-fn top_related(
-    code: &str,
-    relations: &[StockRelation],
-    all_stocks: &HashMap<String, StockItem>,
-    limit: usize,
-) -> Vec<StockRelation> {
-    let mut connected: Vec<StockRelation> = relations
-        .iter()
-        .filter(|relation| relation.source_code == code || relation.target_code == code)
-        .cloned()
-        .collect();
-    connected.sort_by(|left, right| right.weight.total_cmp(&left.weight));
-    connected
-        .into_iter()
-        .take(limit)
-        .map(|relation| relation_with_names(relation, all_stocks))
-        .collect()
-}
-
-fn relation_with_names(
-    mut relation: StockRelation,
-    all_stocks: &HashMap<String, StockItem>,
-) -> StockRelation {
-    let Some(source) = all_stocks.get(&relation.source_code) else {
-        return relation;
-    };
-    let Some(target) = all_stocks.get(&relation.target_code) else {
-        return relation;
-    };
-    let description = relation.description.clone().unwrap_or_default();
-    let connector = if is_directional_relation_type(&relation.relation_type) {
-        "->"
-    } else {
-        "<->"
-    };
-    relation.description = Some(
-        format!(
-            "{} {} {}. {}",
-            source.name, connector, target.name, description
-        )
-        .trim()
-        .to_string(),
-    );
-    relation
-}
-
-fn graph_reasons(screened: &ScreenedStock, relation_score: f64) -> Vec<String> {
-    let mut reasons = screened.reasons.clone();
-    if relation_score >= 0.65 {
-        reasons.push("strong_relation_signal".to_string());
-    } else if relation_score >= 0.35 {
-        reasons.push("moderate_relation_signal".to_string());
-    }
-    reasons
-}
-
-fn graph_explanation(
-    screened: &ScreenedStock,
-    base_score: f64,
-    relation_score: f64,
-    final_score: f64,
-    relation_weight: f64,
-    center_context: &GraphCenterContext,
-    related: &[StockRelation],
-) -> SelectionExplanation {
-    let center_codes = if center_context.codes.is_empty() {
-        "none".to_string()
-    } else {
-        center_context.codes.join(", ")
-    };
-    let mut basis = vec![
-        format!(
-            "Passed the current base screen with raw score {:.2}.",
-            screened.score
-        ),
-        format!(
-            "Relation propagation center: {}; center codes: {}.",
-            center_context.label, center_codes
-        ),
-    ];
-    if let Some(strongest) = related.first() {
-        basis.push(format!(
-            "Strongest displayed edge is {} with weight {:.2}.",
-            strongest.relation_type, strongest.weight
-        ));
-    } else {
-        basis.push("No direct relation edge is displayed; ranking relies on base score and graph propagation score.".to_string());
-    }
-
-    let base_component = (1.0 - relation_weight) * base_score;
-    let relation_component = relation_weight * relation_score;
-    let mut risk_checks = Vec::new();
-    if relation_score >= 0.65 {
-        risk_checks.push("Relation signal is strong; verify that the relation is still supported by recent business evidence.".to_string());
-    } else if relation_score >= 0.35 {
-        risk_checks.push("Relation signal is moderate; use it as candidate expansion rather than a standalone buy reason.".to_string());
-    } else {
-        risk_checks.push(
-            "Relation signal is weak; selection is driven more by the base screen score."
-                .to_string(),
-        );
-    }
-    if related.is_empty() {
-        risk_checks.push("No direct relation edge is available; refresh or enrich relation data before relying on graph evidence.".to_string());
-    }
-
-    SelectionExplanation {
-        basis,
-        score_breakdown: vec![
-            score_contribution(
-                "base_score",
-                "Base score",
-                base_score,
-                base_component,
-                0.7,
-                0.35,
-            ),
-            score_contribution(
-                "relation_score",
-                "Relation score",
-                relation_score,
-                relation_component,
-                0.65,
-                0.35,
-            ),
-            score_contribution(
-                "final_score",
-                "Final score",
-                final_score,
-                final_score,
-                0.65,
-                0.35,
-            ),
-        ],
-        risk_checks,
-        verification: vec![
-            "Cross-check with trend timing for short-buy or exit signals.".to_string(),
-            "Open the related edges and verify peer, supply-chain, or theme evidence.".to_string(),
-        ],
-    }
-}
-
-fn score_contribution(
-    key: &str,
-    label: &str,
-    value: f64,
-    contribution: f64,
-    strong_threshold: f64,
-    watch_threshold: f64,
-) -> ScoreContribution {
-    ScoreContribution {
-        key: key.to_string(),
-        label: label.to_string(),
-        value: Some(round6(value)),
-        contribution: Some(round6(contribution)),
-        tone: if value >= strong_threshold {
-            "strong"
-        } else if value >= watch_threshold {
-            "watch"
-        } else {
-            "weak"
-        }
-        .to_string(),
-    }
-}
 fn assign_weights(signals: &mut [GraphStockSignal]) {
     if signals.is_empty() {
         return;
@@ -6922,6 +7489,8 @@ pub fn validate_data_set(data: &CoreDataSet) -> CoreResult<DataSourceSummary> {
         relation_count: data.relations.len(),
         history_symbol_count: data.histories.len(),
         history_bar_count,
+        factor_snapshot_symbol_count: data.factor_snapshots.len(),
+        factor_snapshot_count: data.factor_snapshots.values().map(Vec::len).sum(),
         warnings,
     })
 }
@@ -7024,7 +7593,10 @@ fn parse_date(input: &str) -> CoreResult<NaiveDate> {
         .map_err(|_| CoreError::new(format!("Invalid date: {input}")))
 }
 
-fn backtest_metrics(equity_curve: &[EquityPoint]) -> (f64, Option<f64>, Option<f64>) {
+fn backtest_metrics(
+    equity_curve: &[EquityPoint],
+    initial_cash: f64,
+) -> (f64, Option<f64>, Option<f64>) {
     let Some(first) = equity_curve.first() else {
         return (0.0, None, None);
     };
@@ -7032,7 +7604,12 @@ fn backtest_metrics(equity_curve: &[EquityPoint]) -> (f64, Option<f64>, Option<f
         return (0.0, None, None);
     };
 
-    let total_return = last.equity / first.equity - 1.0;
+    let denominator = if initial_cash.is_finite() && initial_cash > 0.0 {
+        initial_cash
+    } else {
+        first.equity
+    };
+    let total_return = last.equity / denominator - 1.0;
     let first_date = match NaiveDate::parse_from_str(&first.date, "%Y-%m-%d") {
         Ok(date) => date,
         Err(_) => return (total_return, None, None),
@@ -7110,11 +7687,14 @@ fn extract_industry(message: &str) -> Option<String> {
         ("银行", "银行"),
         ("白酒", "白酒"),
         ("饮料", "白酒"),
+        ("食品饮料", "食品饮料"),
         ("电池", "动力电池"),
         ("动力电池", "动力电池"),
         ("新能源", "动力电池"),
         ("汽车", "汽车"),
         ("电子", "电子制造"),
+        ("半导体", "电子制造"),
+        ("芯片", "电子制造"),
         ("电子制造", "电子制造"),
         ("光伏", "光伏"),
         ("化工", "化工"),
@@ -7126,17 +7706,35 @@ fn extract_industry(message: &str) -> Option<String> {
 }
 
 fn extract_codes(message: &str) -> Vec<String> {
-    let Ok(regex) = Regex::new(r"\b\d{6}\.(?:SH|SZ|BJ)\b") else {
+    let Ok(regex) = Regex::new(r"\b(\d{6})(?:\.(SH|SZ|BJ))?\b") else {
         return Vec::new();
     };
+    let mut seen = HashSet::new();
     regex
-        .find_iter(&message.to_uppercase())
-        .map(|matched| matched.as_str().to_string())
+        .captures_iter(&message.to_uppercase())
+        .filter_map(|captures| {
+            let code = captures.get(1)?.as_str();
+            let market = captures.get(2).map(|m| m.as_str()).unwrap_or_else(|| {
+                if code.starts_with('6') {
+                    "SH"
+                } else if code.starts_with('8') || code.starts_with('4') {
+                    "BJ"
+                } else {
+                    "SZ"
+                }
+            });
+            let normalized = format!("{code}.{market}");
+            if seen.insert(normalized.clone()) {
+                Some(normalized)
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
 fn extract_date(message: &str, default: &str, first: bool) -> String {
-    let Ok(date_regex) = Regex::new(r"\b(20\d{2})(?:[-/.年]?)(\d{1,2})(?:[-/.月]?)(\d{1,2})")
+    let Ok(date_regex) = Regex::new(r"\b(20\d{2})(?:[-/.年])?(\d{1,2})(?:[-/.月])?(\d{1,2})日?\b")
     else {
         return default.to_string();
     };
@@ -7171,18 +7769,35 @@ fn extract_date(message: &str, default: &str, first: bool) -> String {
         default.to_string()
     }
 }
-
 fn contains_any(text: &str, needles: &[&str]) -> bool {
     needles
         .iter()
         .any(|needle| text.contains(&needle.to_lowercase()))
 }
 
-fn sorted_pair(left: &str, right: &str) -> (String, String) {
-    if left <= right {
-        (left.to_string(), right.to_string())
+fn score_contribution(
+    key: &str,
+    label: &str,
+    value: f64,
+    contribution: f64,
+    strong_threshold: f64,
+    positive_threshold: f64,
+) -> ScoreContribution {
+    let tone = if value >= strong_threshold {
+        "strong"
+    } else if value >= positive_threshold {
+        "positive"
+    } else if value <= 0.0 {
+        "weak"
     } else {
-        (right.to_string(), left.to_string())
+        "neutral"
+    };
+    ScoreContribution {
+        key: key.to_string(),
+        label: label.to_string(),
+        value: Some(round6(value)),
+        contribution: Some(round6(contribution)),
+        tone: tone.to_string(),
     }
 }
 
@@ -7206,3 +7821,10 @@ mod ffi;
 
 #[cfg(test)]
 mod tests;
+
+
+
+
+
+
+

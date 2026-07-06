@@ -1,5 +1,6 @@
-import type { FilterCriteria } from "../components/FilterBar";
+﻿import type { FilterCriteria } from "../components/FilterBar";
 import type {
+  AgentResult,
   AgentStreamEvent,
   BacktestResult,
   GraphScreenResult,
@@ -82,21 +83,21 @@ export function buildSectorScreenRequest(
   };
 }
 
-export function buildGraphScreenRequest(
-  criteria: FilterCriteria,
-  seedCodesRaw: string,
-  relationDepth: number,
-  relationWeight: number,
-): Record<string, unknown> {
+export function buildCustomScreenRequest(criteria: FilterCriteria): Record<string, unknown> {
   return {
     criteria: buildScreenCriteria(criteria, { limit: 100 }),
-    seed_codes: parseStockCodeList(seedCodesRaw).slice(0, 50),
-    seed_query: seedCodesRaw.trim(),
-    relation_depth: clampInt(relationDepth, 1, 3, 1),
-    relation_weight: clampFloat(relationWeight, 0, 1, 0.4),
+    seed_codes: [],
+    seed_query: "",
+    relation_depth: 1,
+    relation_weight: 0,
     limit: Math.min(clampInt(criteria.resultLimit, 1, 200, 10), 100),
   };
 }
+
+export function buildGraphScreenRequest(criteria: FilterCriteria): Record<string, unknown> {
+  return buildCustomScreenRequest(criteria);
+}
+
 
 export function buildTrendScreenRequest(
   criteria: FilterCriteria,
@@ -130,10 +131,12 @@ export function buildBacktestRequest(args: {
   rebalanceFrequency: string;
   transactionCostBps: number;
   benchmark: string;
+  strategyMode?: string;
 }): Record<string, unknown> {
   return {
     source: args.source,
     criteria: buildScreenCriteria(args.criteria, { limit: 100, score_profile: "quality" }),
+    strategy_mode: args.strategyMode || "candidate_snapshot",
     stock_codes: args.source === "watchlist" ? args.watchlist.map((item) => item.code).filter(Boolean).slice(0, 100) : [],
     start_date: normalizeDateParam(args.startDate, "20200101"),
     end_date: normalizeDateParam(args.endDate, currentSystemDateCompact()),
@@ -584,6 +587,20 @@ export function normalizeAgentStreamEvent(rawEvent: unknown): AgentStreamEvent |
   return event && typeof event === "object" ? event as AgentStreamEvent : null;
 }
 
+export function normalizeAgentResult(rawResult: unknown): AgentResult {
+  const result = asRecord(rawResult) as AgentResult;
+  const data = asRecord(result.data);
+  const action = String(result.action || data.action || "");
+  const normalized: AgentResult = { ...result };
+  if (action && !normalized.action) normalized.action = action;
+  if (!Array.isArray(normalized.tool_calls)) normalized.tool_calls = [];
+  if (!Array.isArray(normalized.evidence_summary)) normalized.evidence_summary = [];
+  if (!Array.isArray(normalized.answer_sections)) normalized.answer_sections = [];
+  if (!Array.isArray(normalized.warnings)) normalized.warnings = [];
+  if (!Array.isArray(normalized.next_actions)) normalized.next_actions = [];
+  return normalized;
+}
+
 export function actionResultKind(result: unknown): "screen" | "sector" | "graph" | "trend" | "backtest" | "observe" | "news" | "data" | "unknown" {
   const action = String(asRecord(result).action || "");
   if (action === "screen") return "screen";
@@ -652,3 +669,5 @@ function upstreamPackFileName(manifest: Record<string, unknown>): string {
 }
 
 export type { NewsEvidence, BacktestResult, ObserveResult };
+
+

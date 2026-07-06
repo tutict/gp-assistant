@@ -1,13 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  actionResultKind,
   buildBacktestRequest,
-  buildGraphScreenRequest,
+  buildCustomScreenRequest,
   buildNewsRagRequest,
   buildScreenCriteria,
   buildSectorScreenRequest,
   buildTrendScreenRequest,
   fetchUpstreamImportPayload,
   buildLlmConfig,
+  normalizeAgentResult,
   normalizeAgentStreamEvent,
   normalizeLlmSettings,
   normalizeNewsGroups,
@@ -152,11 +154,11 @@ describe("contract payload builders", () => {
   });
 
   it("builds graph, trend, backtest, and news payloads with backend field names", () => {
-    expect(buildGraphScreenRequest(criteria, "300750, 600519.SH", 2, 0.5)).toMatchObject({
-      seed_codes: ["300750.SZ", "600519.SH"],
-      seed_query: "300750, 600519.SH",
-      relation_depth: 2,
-      relation_weight: 0.5,
+    expect(buildCustomScreenRequest(criteria)).toMatchObject({
+      seed_codes: [],
+      seed_query: "",
+      relation_depth: 1,
+      relation_weight: 0,
       criteria: { limit: 100 },
     });
     expect(buildTrendScreenRequest(criteria, "2020-01-01", "2026-06-27")).toMatchObject({
@@ -174,12 +176,14 @@ describe("contract payload builders", () => {
       rebalanceFrequency: "quarterly",
       transactionCostBps: 20,
       benchmark: "none",
+      strategyMode: "walk_forward",
     })).toMatchObject({
       source: "watchlist",
       stock_codes: ["300750.SZ"],
       rebalance_frequency: "quarterly",
       transaction_cost_bps: 20,
       benchmark: "none",
+      strategy_mode: "walk_forward",
     });
     expect(buildNewsRagRequest("300750.SZ", 30)).toMatchObject({
       code: "300750.SZ",
@@ -250,6 +254,29 @@ describe("response normalizers", () => {
 });
 
 describe("agent and upstream utilities", () => {
+  it("normalizes structured agent responses while preserving legacy actions", () => {
+    const normalized = normalizeAgentResult({
+      action: "screen",
+      reply: "ok",
+      intent: { kind: "stock_screen", mode: "expert" },
+      tool_calls: [{ id: "t1", tool: "stock_screen", status: "ok" }],
+      evidence_summary: [{ title: "Local", level: "primary", summary: "Returned rows" }],
+      answer_sections: [{ title: "Conclusion", bullets: ["ok"] }],
+      warnings: ["For stock research only"],
+      next_actions: ["Run trend analysis"],
+    });
+    expect(actionResultKind(normalized)).toBe("screen");
+    expect(normalized.intent?.kind).toBe("stock_screen");
+    expect(normalized.tool_calls).toHaveLength(1);
+    expect(normalized.evidence_summary).toHaveLength(1);
+    expect(normalized.answer_sections).toHaveLength(1);
+
+    const legacy = normalizeAgentResult({ action: "trend_screen", data: { items: [] } });
+    expect(actionResultKind(legacy)).toBe("trend");
+    expect(legacy.tool_calls).toEqual([]);
+    expect(legacy.warnings).toEqual([]);
+  });
+
   it("parses SSE blocks and Tauri event payloads", () => {
     expect(parseSseBlock('event: status\ndata: {"stage":"run","label":"Running"}')?.stage).toBe("run");
     expect(normalizeAgentStreamEvent({ payload: '{"type":"result","response":{"reply":"ok"}}' })?.type).toBe("result");

@@ -13195,3 +13195,202 @@ html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-co
 html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-controls:not(.grouped-screen-controls) .stock-code-input {
   width: 100% !important;
 }
+.custom-screen-controls {
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.custom-screen-criteria {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  flex: 1 1 100%;
+  width: 100%;
+}
+
+.custom-screen-criteria .form-row {
+  min-width: 0;
+}
+
+.custom-screen-criteria .checkbox-row {
+  justify-content: flex-end;
+  min-height: 58px;
+}
+.agent-capability-grid {
+  width: min(820px, 100%);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+  margin-top: 4px;
+}
+.agent-capability-card {
+  min-height: 112px;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 86%, var(--agent-accent-soft));
+  text-align: left;
+}
+.agent-capability-card strong {
+  color: var(--text);
+  font-size: 0.9rem;
+}
+.agent-capability-card span,
+.agent-capability-card em {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+.agent-capability-card em {
+  font-style: normal;
+  color: var(--agent-accent-strong);
+}
+.agent-result-stack {
+  display: grid;
+  gap: 12px;
+}
+.agent-structured-result {
+  display: grid;
+  gap: 12px;
+  margin-top: 4px;
+}
+.agent-intent-card,
+.agent-answer-sections article,
+.agent-evidence-grid article,
+.agent-warning-list,
+.agent-tool-call {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.agent-intent-card {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+}
+.agent-intent-card span,
+.agent-evidence-grid span {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+.agent-intent-card strong {
+  color: var(--text);
+  font-size: 0.94rem;
+}
+.agent-intent-card em,
+.agent-tool-call em,
+.agent-evidence-grid em {
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  font-style: normal;
+}
+.agent-tool-trace {
+  display: grid;
+  gap: 8px;
+}
+.agent-tool-call {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+}
+.agent-tool-call > span {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--agent-accent-soft);
+  color: var(--agent-accent-strong);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+.agent-tool-call div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.agent-tool-call strong,
+.agent-answer-sections strong,
+.agent-evidence-grid strong {
+  color: var(--text);
+  font-size: 0.86rem;
+}
+.agent-tool-call b {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--agent-accent-soft) 72%, transparent);
+  color: var(--agent-accent-strong);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+.agent-answer-sections {
+  display: grid;
+  gap: 8px;
+}
+.agent-answer-sections article {
+  display: grid;
+  gap: 6px;
+  padding: 11px 12px;
+}
+.agent-answer-sections p,
+.agent-evidence-grid p,
+.agent-warning-list p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.agent-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+}
+.agent-evidence-grid article {
+  display: grid;
+  gap: 6px;
+  padding: 11px 12px;
+}
+.agent-warning-list {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-color: color-mix(in srgb, var(--warning, #d97706) 38%, var(--line));
+  background: color-mix(in srgb, var(--surface-2) 82%, #f59e0b 8%);
+}
+.agent-next-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.agent-next-actions button {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+@media (max-width: 640px) {
+  .agent-capability-grid,
+  .agent-evidence-grid {
+    grid-template-columns: 1fr;
+  }
+  .agent-tool-call {
+    grid-template-columns: 22px minmax(0, 1fr);
+  }
+  .agent-tool-call b {
+    grid-column: 2;
+    justify-self: start;
+  }
+}

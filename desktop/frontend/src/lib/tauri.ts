@@ -185,6 +185,7 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
 export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/screen": async ({ invoke, payload }) => invoke("api_screen", { payload }),
   "/api/sector-screen": async ({ invoke, payload }) => invoke("api_sector_screen", { payload }),
+  "/api/custom-screen": async ({ invoke, payload }) => invoke("api_custom_screen", { payload }),
   "/api/graph-screen": async ({ invoke, payload }) => invoke("api_graph_screen", { payload }),
   "/api/trend": async ({ invoke, payload }) => invoke("api_trend_analyze", { payload }),
   "/api/trend-screen": async ({ invoke, payload }) => invoke("api_trend_screen", { payload }),
