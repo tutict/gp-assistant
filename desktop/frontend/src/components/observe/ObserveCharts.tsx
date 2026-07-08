@@ -1,98 +1,123 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TrendIndicatorPoint } from "../../types";
-import { aggregateBars, computeKdj, computeMacd, KLINE_PERIODS, type KlineBar, type KlinePeriod, type MacdPoint, movingAverage, toDailyBars } from "../../lib/kline";
+import {
+  aggregateBars,
+  computeKdj,
+  computeMacd,
+  KLINE_PERIODS,
+  movingAverage,
+  toDailyBars,
+  type KlineBar,
+  type KlinePeriod,
+} from "../../lib/kline";
 import { formatNumber, formatPrice } from "../../lib/format";
 import { isMobileTauriRuntime } from "../../lib/tauri";
 
-const DEFAULT_VISIBLE_BARS = 120;
+const DEFAULT_VISIBLE_BARS = 96;
 const MIN_VISIBLE_BARS = 30;
-const MAX_VISIBLE_BARS = 240;
-const KLINE_MOBILE_FULLSCREEN_CLASS = "kline-mobile-fullscreen";
+const MAX_VISIBLE_BARS = 180;
 
-type LockableScreenOrientation = ScreenOrientation & {
-  unlock?: () => void;
+type SeriesPoint = { date: string; [key: string]: number | string };
+type LayoutMode = "mobile" | "desktop";
+
+type ChartLayout = {
+  mode: LayoutMode;
+  width: number;
+  priceTop: number;
+  priceHeight: number;
+  volumeTop: number;
+  volumeHeight: number;
+  macdTop: number;
+  macdHeight: number;
+  rsiTop?: number;
+  rsiHeight?: number;
+  dmaTop?: number;
+  dmaHeight?: number;
+  mtmTop?: number;
+  mtmHeight?: number;
+  kdjTop?: number;
+  kdjHeight?: number;
+  height: number;
 };
+
+const MOBILE_LAYOUT: ChartLayout = {
+  mode: "mobile",
+  width: 720,
+  priceTop: 22,
+  priceHeight: 330,
+  macdTop: 386,
+  macdHeight: 94,
+  rsiTop: 502,
+  rsiHeight: 88,
+  volumeTop: 612,
+  volumeHeight: 106,
+  height: 728,
+};
+
+const DESKTOP_LAYOUT: ChartLayout = {
+  mode: "desktop",
+  width: 1180,
+  priceTop: 20,
+  priceHeight: 260,
+  volumeTop: 306,
+  volumeHeight: 78,
+  macdTop: 412,
+  macdHeight: 74,
+  dmaTop: 514,
+  dmaHeight: 74,
+  mtmTop: 616,
+  mtmHeight: 74,
+  kdjTop: 718,
+  kdjHeight: 74,
+  height: 802,
+};
+
 export function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
   const [period, setPeriod] = useState<KlinePeriod>("daily");
   const [visibleCount, setVisibleCount] = useState(DEFAULT_VISIBLE_BARS);
   const [endIndex, setEndIndex] = useState<number | null>(null);
-  const [fullscreen, setFullscreen] = useState(false);
   const mobileRuntime = isMobileTauriRuntime();
   const dailyBars = toDailyBars(series);
   const bars = aggregateBars(dailyBars, period);
 
   useEffect(() => {
     setEndIndex(bars.length);
-    setVisibleCount((count) => Math.min(Math.max(count, MIN_VISIBLE_BARS), Math.max(MIN_VISIBLE_BARS, Math.min(MAX_VISIBLE_BARS, bars.length || DEFAULT_VISIBLE_BARS))));
+    setVisibleCount((count) =>
+      Math.min(
+        Math.max(count, MIN_VISIBLE_BARS),
+        Math.max(MIN_VISIBLE_BARS, Math.min(MAX_VISIBLE_BARS, bars.length || DEFAULT_VISIBLE_BARS)),
+      ),
+    );
   }, [period, bars.length]);
 
   if (dailyBars.length < 2) {
     return (
-      <div className="signal-chart-stack">
-        <LineChart title="收盘 / SWL / SWS" series={series.slice(-DEFAULT_VISIBLE_BARS)} keys={["close", "swl", "sws"]} />
-        <LineChart title="KDJ" series={series.slice(-DEFAULT_VISIBLE_BARS)} keys={["k", "d", "j"]} />
+      <div className="signal-chart-stack kline-workspace kline-market-workspace">
+        <section className="chart-wrap kline-chart kline-market-chart">
+          <header className="kline-market-header">
+            <PeriodTabs period={period} onPeriodChange={setPeriod} />
+          </header>
+          <div className="kline-empty-state">暂无可用 K 线数据</div>
+        </section>
       </div>
     );
   }
 
-  const effectiveCount = Math.min(Math.max(visibleCount, MIN_VISIBLE_BARS), Math.max(MIN_VISIBLE_BARS, Math.min(MAX_VISIBLE_BARS, bars.length)));
+  const effectiveCount = Math.min(
+    Math.max(visibleCount, MIN_VISIBLE_BARS),
+    Math.max(MIN_VISIBLE_BARS, Math.min(MAX_VISIBLE_BARS, bars.length)),
+  );
   const effectiveEnd = Math.min(Math.max(endIndex ?? bars.length, Math.min(effectiveCount, bars.length)), bars.length);
   const visibleStart = Math.max(0, effectiveEnd - effectiveCount);
   const visibleBars = bars.slice(visibleStart, effectiveEnd);
-  const startDate = visibleBars[0]?.date || "";
-  const endDate = visibleBars[visibleBars.length - 1]?.date || "";
-  const visibleSeries = sliceSeriesByDate(series, startDate, endDate);
-  const panStep = Math.max(1, Math.round(effectiveCount * 0.35));
-  const canPanLeft = visibleStart > 0;
-  const canPanRight = effectiveEnd < bars.length;
-  const canZoomIn = effectiveCount > MIN_VISIBLE_BARS;
-  const canZoomOut = effectiveCount < Math.min(MAX_VISIBLE_BARS, bars.length);
-  const zoomIn = () => setVisibleCount((count) => Math.max(MIN_VISIBLE_BARS, Math.round(count * 0.75)));
-  const zoomOut = () => setVisibleCount((count) => Math.min(Math.min(MAX_VISIBLE_BARS, bars.length), Math.round(count * 1.35)));
-  const panLeft = () => setEndIndex(Math.max(Math.min(effectiveCount, bars.length), effectiveEnd - panStep));
-  const panRight = () => setEndIndex(Math.min(bars.length, effectiveEnd + panStep));
-  const showLatest = () => setEndIndex(bars.length);
+
   const dragTo = (targetEnd: number) => {
     const minEnd = Math.min(effectiveCount, bars.length);
     setEndIndex(Math.max(minEnd, Math.min(bars.length, targetEnd)));
   };
-  const toggleFullscreen = useCallback(() => {
-    const next = !fullscreen;
-    setFullscreen(next);
-    if (!mobileRuntime) return;
-    if (next) {
-      void enterKlineMobileFullscreen();
-      return;
-    }
-    void exitKlineMobileFullscreen();
-  }, [fullscreen, mobileRuntime]);
-
-  useEffect(() => {
-    if (!mobileRuntime) return;
-    const handleFullscreenChange = () => {
-      if (!document.fullscreenElement && fullscreen) {
-        document.documentElement.classList.remove(KLINE_MOBILE_FULLSCREEN_CLASS);
-        const orientation = window.screen?.orientation as LockableScreenOrientation | undefined;
-        try {
-          orientation?.unlock?.();
-        } catch {
-          // Ignore orientation unlock failures in WebView runtimes.
-        }
-        setFullscreen(false);
-      }
-    };
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
-  }, [fullscreen, mobileRuntime]);
-
-  useEffect(() => () => {
-    if (!mobileRuntime) return;
-    void exitKlineMobileFullscreen();
-  }, [mobileRuntime]);
 
   return (
-    <>
-      <div className={`signal-chart-stack kline-workspace ${fullscreen ? "fullscreen" : ""}`}>
+    <div className={`signal-chart-stack kline-workspace kline-market-workspace ${mobileRuntime ? "mobile-board" : "desktop-board"}`}>
       <CandlestickChart
         period={period}
         onPeriodChange={setPeriod}
@@ -100,58 +125,29 @@ export function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
         visibleBars={visibleBars}
         visibleStart={visibleStart}
         visibleEnd={effectiveEnd}
-        onZoomIn={zoomIn}
-        onZoomOut={zoomOut}
-        onPanLeft={panLeft}
-        onPanRight={panRight}
-        onLatest={showLatest}
         onDragTo={dragTo}
-        fullscreen={fullscreen}
-        onToggleFullscreen={toggleFullscreen}
-        canZoomIn={canZoomIn}
-        canZoomOut={canZoomOut}
-        canPanLeft={canPanLeft}
-        canPanRight={canPanRight}
         mobileRuntime={mobileRuntime}
       />
-      <LineChart title="收盘 / SWL / SWS" series={visibleSeries} keys={["close", "swl", "sws"]} />
-      <LineChart title="KDJ" series={visibleSeries} keys={["k", "d", "j"]} />
-      <MacdChart series={computeMacd(bars).slice(visibleStart, effectiveEnd)} />
-      </div>
-      {fullscreen && mobileRuntime ? (
-        <div className="kline-mobile-fullscreen-toolbar" role="toolbar" aria-label="Kline fullscreen tools">
-          <button
-            type="button"
-            className="kline-mobile-fullscreen-tool kline-mobile-fullscreen-zoom-out"
-            onClick={zoomOut}
-            disabled={!canZoomOut}
-            aria-label="Zoom out chart"
-            title="Zoom out chart"
-          >
-            -
-          </button>
-          <button
-            type="button"
-            className="kline-mobile-fullscreen-tool kline-mobile-fullscreen-zoom-in"
-            onClick={zoomIn}
-            disabled={!canZoomIn}
-            aria-label="Zoom in chart"
-            title="Zoom in chart"
-          >
-            +
-          </button>
+    </div>
+  );
+}
+
+function PeriodTabs({ period, onPeriodChange }: { period: KlinePeriod; onPeriodChange: (period: KlinePeriod) => void }) {
+  return (
+    <div className="kline-period-tabs" role="tablist" aria-label="K线周期">
+      {KLINE_PERIODS.map((item) => (
         <button
+          key={item.key}
           type="button"
-          className="kline-mobile-fullscreen-tool kline-mobile-fullscreen-exit"
-          onClick={toggleFullscreen}
-          aria-label="退出全屏"
-          title="退出全屏"
+          role="tab"
+          aria-selected={period === item.key}
+          className={period === item.key ? "active" : ""}
+          onClick={() => onPeriodChange(item.key)}
         >
-          退出
+          {item.label}
         </button>
-        </div>
-      ) : null}
-    </>
+      ))}
+    </div>
   );
 }
 
@@ -162,18 +158,7 @@ function CandlestickChart({
   visibleBars,
   visibleStart,
   visibleEnd,
-  onZoomIn,
-  onZoomOut,
-  onPanLeft,
-  onPanRight,
-  onLatest,
   onDragTo,
-  fullscreen,
-  onToggleFullscreen,
-  canZoomIn,
-  canZoomOut,
-  canPanLeft,
-  canPanRight,
   mobileRuntime,
 }: {
   period: KlinePeriod;
@@ -182,45 +167,72 @@ function CandlestickChart({
   visibleBars: KlineBar[];
   visibleStart: number;
   visibleEnd: number;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onPanLeft: () => void;
-  onPanRight: () => void;
-  onLatest: () => void;
   onDragTo: (targetEnd: number) => void;
-  fullscreen: boolean;
-  onToggleFullscreen: () => void;
-  canZoomIn: boolean;
-  canZoomOut: boolean;
-  canPanLeft: boolean;
-  canPanRight: boolean;
   mobileRuntime: boolean;
 }) {
-  const width = 720;
-  const priceTop = 6;
-  const priceHeight = 218;
-  const volumeTop = priceTop + priceHeight + 24;
-  const volumeHeight = 58;
-  const height = volumeTop + volumeHeight + 4;
+  const layout = mobileRuntime ? MOBILE_LAYOUT : DESKTOP_LAYOUT;
+  const { width, priceTop, priceHeight, volumeTop, volumeHeight, macdTop, macdHeight, height } = layout;
+  const plotInsetStart = mobileRuntime ? 8 : 52;
+  const plotInsetEnd = mobileRuntime ? 8 : 48;
 
   const priceMax = Math.max(...visibleBars.map((bar) => bar.high));
   const priceMin = Math.min(...visibleBars.map((bar) => bar.low));
-  const priceRange = priceMax - priceMin || 1;
-  const yPrice = (value: number) => priceTop + (1 - (value - priceMin) / priceRange) * priceHeight;
+  const pricePadding = Math.max((priceMax - priceMin) * 0.08, 0.01);
+  const priceUpper = priceMax + pricePadding;
+  const priceLower = priceMin - pricePadding;
+  const priceRange = priceUpper - priceLower || 1;
+  const yPrice = (value: number) => priceTop + (1 - (value - priceLower) / priceRange) * priceHeight;
 
+  const plotWidth = Math.max(width - plotInsetStart - plotInsetEnd, visibleBars.length);
+  const slot = plotWidth / Math.max(visibleBars.length, 1);
+  const dragStepPixels = Math.max(slot * (mobileRuntime ? 1.3 : 1), mobileRuntime ? 12 : 6);
+  const dragDeadZonePixels = mobileRuntime ? 10 : 6;
+  const bodyWidth = Math.max(1, Math.min(slot * 0.62, mobileRuntime ? 12 : 9));
+  const center = (index: number) => plotInsetStart + (index + 0.5) * slot;
+  const xByAbsoluteIndex = (index: number) => center(index - visibleStart);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+
+  const closes = allBars.map((bar) => bar.close);
+  const maDefinitions = [
+    { window: 5, label: "MA5", className: "ma-5" },
+    { window: 10, label: "MA10", className: "ma-10" },
+    { window: 20, label: "MA20", className: "ma-20" },
+    { window: 30, label: "MA30", className: "ma-30" },
+    { window: 60, label: "MA60", className: "ma-60" },
+  ];
+  const maLines = maDefinitions.map((definition) => {
+    const values = movingAverage(closes, definition.window);
+    return {
+      ...definition,
+      latest: values[visibleEnd - 1],
+      points: values
+        .map((value, index) => {
+          if (value == null || index < visibleStart || index >= visibleEnd) return null;
+          return `${xByAbsoluteIndex(index).toFixed(2)},${yPrice(value).toFixed(2)}`;
+        })
+        .filter(Boolean)
+        .join(" "),
+    };
+  });
+
+  const macd = computeMacd(allBars).slice(visibleStart, visibleEnd);
+  const rsiSeries = computeRsiLines(allBars).slice(visibleStart, visibleEnd);
+  const dmaSeries = computeDmaLines(allBars).slice(visibleStart, visibleEnd);
+  const mtmSeries = computeMtmLines(allBars).slice(visibleStart, visibleEnd);
+  const kdjSeries = computeKdj(allBars).slice(visibleStart, visibleEnd);
   const volumes = visibleBars.map((bar) => (Number.isFinite(bar.volume) ? bar.volume : 0));
   const volumeMax = Math.max(...volumes, 1);
-  const hasVolume = volumes.some((value) => value > 0);
+  const selectedIndex = selectedDate ? visibleBars.findIndex((bar) => bar.date === selectedDate) : -1;
+  const selectedBar = selectedIndex >= 0 ? visibleBars[selectedIndex] : null;
+  const latest = visibleBars[visibleBars.length - 1];
+  const inspectedBar = selectedBar || latest;
+  const selectedX = selectedIndex >= 0 ? center(selectedIndex) : null;
+  const selectedY = selectedBar ? yPrice(selectedBar.close) : null;
+  const startDate = visibleBars[0]?.date || "";
+  const endDate = visibleBars[visibleBars.length - 1]?.date || "";
+  const visibleRange = `${startDate} - ${endDate}`;
+  const priceTicks = buildTicks(priceLower, priceUpper, 5);
 
-  const plotInsetStart = mobileRuntime ? 16 : 8;
-  const plotInsetEnd = mobileRuntime ? 40 : 12;
-  const plotWidth = Math.max(width - plotInsetStart - plotInsetEnd, visibleBars.length);
-  const slot = plotWidth / visibleBars.length;
-  const dragStepPixels = Math.max(slot * (mobileRuntime ? 1.4 : 1), mobileRuntime ? 12 : 6);
-  const dragDeadZonePixels = mobileRuntime ? 10 : 6;
-  const bodyWidth = Math.max(1, Math.min(slot * 0.62, 14));
-  const center = (index: number) => plotInsetStart + (index + 0.5) * slot;
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const getBarIndexFromPointer = (event: React.PointerEvent<SVGSVGElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
     const relativeX = ((event.clientX - bounds.left) / Math.max(bounds.width, 1)) * width;
@@ -228,6 +240,7 @@ function CandlestickChart({
     if (!Number.isFinite(index)) return null;
     return Math.max(0, Math.min(visibleBars.length - 1, index));
   };
+
   const dragRef = useRef<{ pointerId: number; startX: number; startEnd: number; lastTargetEnd: number; moved: boolean } | null>(null);
   const onPointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
     event.preventDefault();
@@ -241,9 +254,7 @@ function CandlestickChart({
     const deltaX = drag.startX - event.clientX;
     if (Math.abs(deltaX) < dragDeadZonePixels) return;
     event.preventDefault();
-    const deltaBars = deltaX >= 0
-      ? Math.floor(deltaX / dragStepPixels)
-      : Math.ceil(deltaX / dragStepPixels);
+    const deltaBars = deltaX >= 0 ? Math.floor(deltaX / dragStepPixels) : Math.ceil(deltaX / dragStepPixels);
     if (deltaBars === 0) return;
     const targetEnd = drag.startEnd + deltaBars;
     if (targetEnd !== drag.lastTargetEnd) {
@@ -254,97 +265,43 @@ function CandlestickChart({
   };
   const endDrag = (event: React.PointerEvent<SVGSVGElement>, commitSelection = true) => {
     const drag = dragRef.current;
-    if (drag?.pointerId === event.pointerId) {
-      event.preventDefault();
-      dragRef.current = null;
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
-      if (commitSelection && !drag.moved) {
-        const targetIndex = getBarIndexFromPointer(event);
-        if (targetIndex !== null) setSelectedDate(visibleBars[targetIndex]?.date || null);
-      }
+    if (drag?.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (commitSelection && !drag.moved) {
+      const targetIndex = getBarIndexFromPointer(event);
+      if (targetIndex !== null) setSelectedDate(visibleBars[targetIndex]?.date || null);
     }
   };
 
-  const closes = allBars.map((bar) => bar.close);
-  const maLines = [5, 10, 20].map((window) => ({
-    window,
-    points: movingAverage(closes, window)
-      .map((value, index) => {
-        if (value == null) return null;
-        if (index < visibleStart || index >= visibleEnd) return null;
-        return `${center(index - visibleStart).toFixed(2)},${yPrice(value).toFixed(2)}`;
-      })
-      .filter(Boolean)
-      .join(" "),
-  }));
-  const latest = visibleBars[visibleBars.length - 1];
-  const kdjSeries = computeKdj(allBars);
-  const selectedIndex = selectedDate ? visibleBars.findIndex((bar) => bar.date === selectedDate) : -1;
-  const selectedBar = selectedIndex >= 0 ? visibleBars[selectedIndex] : null;
-  const inspectedBar = selectedBar || latest;
-  const inspectedAbsoluteIndex = selectedIndex >= 0 ? visibleStart + selectedIndex : visibleEnd - 1;
-  const inspectedKdj = kdjSeries[inspectedAbsoluteIndex];
-  const selectedX = selectedIndex >= 0 ? center(selectedIndex) : null;
-  const selectedY = selectedBar ? yPrice(selectedBar.close) : null;
-  const inspectorWidth = 170;
-  const inspectorHeight = 98;
+  const inspectorWidth = 168;
+  const inspectorHeight = 96;
   const rawInspectorX = selectedX !== null && selectedX > width - inspectorWidth - 18 ? selectedX - inspectorWidth - 10 : (selectedX ?? 0) + 10;
-  const inspectorX = Math.max(6, Math.min(width - inspectorWidth - 6, rawInspectorX));
-  const inspectorY = selectedY !== null && selectedY > priceTop + inspectorHeight + 16 ? selectedY - inspectorHeight - 10 : priceTop + 10;
-  const sourceRange = `${allBars[0]?.date || "--"} 至 ${allBars[allBars.length - 1]?.date || "--"}`;
-  const visibleRange = `${visibleBars[0]?.date || "--"} 至 ${visibleBars[visibleBars.length - 1]?.date || "--"}`;
+  const inspectorX = Math.max(8, Math.min(width - inspectorWidth - 8, rawInspectorX));
+  const inspectorY = selectedY !== null && selectedY > priceTop + inspectorHeight + 16 ? selectedY - inspectorHeight - 10 : priceTop + 12;
 
   return (
-    <section className="chart-wrap kline-chart">
-      <header>
-        <div>
-          <h4>K线 / 均线 / 成交量</h4>
-          <p>{visibleRange}，{periodLabel(period)} {visibleBars.length} / {allBars.length} 根，历史 {sourceRange}</p>
+    <section className={`chart-wrap kline-chart kline-market-chart ${mobileRuntime ? "mobile-chart" : "desktop-chart"}`}>
+      <header className="kline-market-header">
+        <PeriodTabs period={period} onPeriodChange={onPeriodChange} />
+        <div className="kline-desktop-tools" aria-hidden="true">
+          <span>前复权</span><span>画线</span><span>工具</span>
         </div>
-        <div className="kline-period-tabs" role="tablist" aria-label="K线周期">
-          {KLINE_PERIODS.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              role="tab"
-              aria-selected={period === item.key}
-              className={period === item.key ? "active" : ""}
-              onClick={() => onPeriodChange(item.key)}
-            >
-              {item.label}
-            </button>
+        <div className="kline-legend" aria-label="均线">
+          <span>日线</span>
+          {maLines.map((line) => (
+            <span key={line.window} className={line.className}>{line.label}:{formatNumber(line.latest)}</span>
           ))}
         </div>
-        <div className="kline-nav" aria-label="K线视图控制">
-          <button type="button" onClick={onPanLeft} disabled={!canPanLeft} title="向左翻动">‹</button>
-          <button type="button" onClick={onZoomIn} disabled={!canZoomIn} title="放大">＋</button>
-          <button type="button" onClick={onZoomOut} disabled={!canZoomOut} title="缩小">－</button>
-          <button type="button" onClick={onPanRight} disabled={!canPanRight} title="向右翻动">›</button>
-          <button type="button" onClick={onLatest} disabled={!canPanRight} title="回到最新">最新</button>
-          <button type="button" className="kline-fullscreen-toggle" onClick={onToggleFullscreen} title={fullscreen ? "退出全屏" : "全屏观察"}>
-            {fullscreen ? "退出" : "全屏"}
-          </button>
-        </div>
-        <div className="kline-legend"><span className="ma-5">MA5</span><span className="ma-10">MA10</span><span className="ma-20">MA20</span></div>
       </header>
-      {fullscreen ? (
-        <button
-          type="button"
-          className="kline-fullscreen-exit"
-          onClick={onToggleFullscreen}
-          aria-label="退出全屏"
-          title="退出全屏"
-        >
-          退出
-        </button>
-      ) : null}
       <svg
         viewBox={`0 0 ${width} ${height}`}
         role="img"
-        aria-label="K线图"
-        className="kline-plot"
+        aria-label={`${periodLabel(period)}K线图`}
+        className="kline-plot kline-market-plot"
         style={{ touchAction: mobileRuntime ? "none" : "pan-y" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -352,6 +309,18 @@ function CandlestickChart({
         onPointerCancel={(event) => endDrag(event, false)}
         onPointerLeave={(event) => endDrag(event, false)}
       >
+        <rect className="kline-plot-bg" x="0" y="0" width={width} height={height} />
+        {priceTicks.map((tick) => {
+          const y = yPrice(tick);
+          return (
+            <g key={`price-${tick}`}>
+              <line className="kline-grid-line" x1={plotInsetStart} x2={width - plotInsetEnd} y1={y} y2={y} />
+              <text className="kline-axis-label left" x="18" y={y + 4}>{formatPrice(tick)}</text>
+              {!mobileRuntime ? <text className="kline-axis-label right" x={width - 18} y={y + 4}>{formatPrice(tick)}</text> : null}
+            </g>
+          );
+        })}
+        <line className="kline-current-line" x1={plotInsetStart} x2={width - plotInsetEnd} y1={yPrice(latest.close)} y2={yPrice(latest.close)} />
         {visibleBars.map((bar, index) => {
           const cx = center(index);
           const bodyTop = Math.min(yPrice(bar.open), yPrice(bar.close));
@@ -363,206 +332,316 @@ function CandlestickChart({
             </g>
           );
         })}
-        {maLines.map((line) => (line.points ? <polyline key={`ma-${line.window}`} className={`ma-${line.window}`} points={line.points} fill="none" /> : null))}
-        {hasVolume && visibleBars.map((bar, index) => {
-          const barHeight = (volumes[index] / volumeMax) * volumeHeight;
-          return (
-            <rect
-              key={`vol-${bar.date}-${index}`}
-              className={bar.close >= bar.open ? "kline-up" : "kline-down"}
-              x={center(index) - bodyWidth / 2}
-              y={volumeTop + (volumeHeight - barHeight)}
-              width={bodyWidth}
-              height={Math.max(0.5, barHeight)}
-              fill="currentColor"
-            />
-          );
-        })}
+        {maLines.map((line) => (line.points ? <polyline key={`ma-${line.window}`} className={line.className} points={line.points} fill="none" /> : null))}
+        {mobileRuntime ? (
+          <>
+            <PanelBorder width={width} y={macdTop - 12} />
+            <MacdLayer series={macd} top={macdTop} height={macdHeight} width={width} center={center} barWidth={bodyWidth} />
+            <PanelTitle x={8} y={macdTop + 16} label="MACD(12,26,9)" />
+            <PanelBorder width={width} y={(layout.rsiTop || 0) - 12} />
+            <RsiLayer series={rsiSeries} top={layout.rsiTop || 0} height={layout.rsiHeight || 0} width={width} center={center} />
+            <PanelTitle x={8} y={(layout.rsiTop || 0) + 16} label="RSI(6,12,24)" />
+            <PanelBorder width={width} y={volumeTop - 12} />
+            <VolumeLayer bars={visibleBars} volumes={volumes} max={volumeMax} top={volumeTop} height={volumeHeight} center={center} barWidth={bodyWidth} />
+            <PanelTitle x={8} y={volumeTop + 16} label="成交量" />
+          </>
+        ) : (
+          <>
+            <PanelBorder width={width} y={volumeTop - 12} />
+            <VolumeLayer bars={visibleBars} volumes={volumes} max={volumeMax} top={volumeTop} height={volumeHeight} center={center} barWidth={bodyWidth} />
+            <PanelTitle x={8} y={volumeTop + 14} label={`成交量  总量:${formatWan(volumeMax)}`} />
+            <PanelBorder width={width} y={macdTop - 12} />
+            <MacdLayer series={macd} top={macdTop} height={macdHeight} width={width} center={center} barWidth={bodyWidth} />
+            <PanelTitle x={8} y={macdTop + 14} label="MACD  (12,26,9)" />
+            <PanelBorder width={width} y={(layout.dmaTop || 0) - 12} />
+            <MultiLineLayer series={dmaSeries} top={layout.dmaTop || 0} height={layout.dmaHeight || 0} width={width} center={center} keys={["ddd", "ama"]} classNames={["line-dma", "line-ama"]} includeZero />
+            <PanelTitle x={8} y={(layout.dmaTop || 0) + 14} label="新DMA   AMA / DDD" />
+            <PanelBorder width={width} y={(layout.mtmTop || 0) - 12} />
+            <MultiLineLayer series={mtmSeries} top={layout.mtmTop || 0} height={layout.mtmHeight || 0} width={width} center={center} keys={["mtm", "mamtm"]} classNames={["line-mtm", "line-mamtm"]} includeZero />
+            <PanelTitle x={8} y={(layout.mtmTop || 0) + 14} label="MTM   MTM / MAMTM" />
+            <PanelBorder width={width} y={(layout.kdjTop || 0) - 12} />
+            <MultiLineLayer series={kdjSeries} top={layout.kdjTop || 0} height={layout.kdjHeight || 0} width={width} center={center} keys={["k", "d", "j"]} classNames={["line-k", "line-d", "line-j"]} />
+            <PanelTitle x={8} y={(layout.kdjTop || 0) + 14} label="KDJ   (9,3,3)" />
+          </>
+        )}
         {selectedBar && selectedX !== null && selectedY !== null && (
           <g className="kline-inspector" pointerEvents="none">
-            <line className="kline-inspector-line" x1={selectedX} x2={selectedX} y1={priceTop} y2={volumeTop + volumeHeight} />
+            <line className="kline-inspector-line" x1={selectedX} x2={selectedX} y1={priceTop} y2={height - 8} />
             <circle className="kline-inspector-dot" cx={selectedX} cy={selectedY} r="3.8" />
-            <rect className="kline-inspector-card" x={inspectorX} y={inspectorY} width={inspectorWidth} height={inspectorHeight} rx="7" />
+            <rect className="kline-inspector-card" x={inspectorX} y={inspectorY} width={inspectorWidth} height={inspectorHeight} rx="5" />
             <text className="kline-inspector-title" x={inspectorX + 10} y={inspectorY + 18}>{selectedBar.date}</text>
             <text className="kline-inspector-text" x={inspectorX + 10} y={inspectorY + 38}>
-              <tspan x={inspectorX + 10}>开盘价 {formatPrice(selectedBar.open)}</tspan>
-              <tspan x={inspectorX + 10} dy="14">最高价 {formatPrice(selectedBar.high)}</tspan>
-              <tspan x={inspectorX + 10} dy="14">最低价 {formatPrice(selectedBar.low)}</tspan>
-              <tspan x={inspectorX + 10} dy="14">收盘价 {formatPrice(selectedBar.close)}</tspan>
-              <tspan x={inspectorX + 10} dy="14">成交量 {formatNumber(selectedBar.volume)}</tspan>
+              <tspan x={inspectorX + 10}>开 {formatPrice(selectedBar.open)}</tspan>
+              <tspan x={inspectorX + 10} dy="14">高 {formatPrice(selectedBar.high)}</tspan>
+              <tspan x={inspectorX + 10} dy="14">低 {formatPrice(selectedBar.low)}</tspan>
+              <tspan x={inspectorX + 10} dy="14">收 {formatPrice(selectedBar.close)}</tspan>
+              <tspan x={inspectorX + 10} dy="14">量 {formatNumber(selectedBar.volume)}</tspan>
             </text>
           </g>
         )}
       </svg>
-      <div className="chart-labels"><span>{visibleBars[0]?.date}</span><span>{visibleBars[visibleBars.length - 1]?.date}</span></div>
+      <div className="chart-labels"><span>{visibleRange}</span><span>{periodLabel(period)} · {visibleBars.length}/{allBars.length}</span></div>
       <div className="kline-stats" aria-label={selectedBar ? "选中K线" : "当前周期最新K线"}>
         <span>{selectedBar ? "选中" : "最新"} {inspectedBar?.date || "--"}</span>
-        <span>开盘价 {formatPrice(inspectedBar?.open)}</span>
-        <span>最高价 {formatPrice(inspectedBar?.high)}</span>
-        <span>最低价 {formatPrice(inspectedBar?.low)}</span>
-        <span>收盘价 {formatPrice(inspectedBar?.close)}</span>
-        <span>成交量 {formatNumber(inspectedBar?.volume)}</span>
-        {inspectedKdj ? <span>KDJ {formatNumber(inspectedKdj.k)} / {formatNumber(inspectedKdj.d)} / {formatNumber(inspectedKdj.j)}</span> : null}
+        <span>开 {formatPrice(inspectedBar?.open)}</span>
+        <span>高 {formatPrice(inspectedBar?.high)}</span>
+        <span>低 {formatPrice(inspectedBar?.low)}</span>
+        <span>收 {formatPrice(inspectedBar?.close)}</span>
+        <span>量 {formatNumber(inspectedBar?.volume)}</span>
       </div>
     </section>
   );
 }
+
+function PanelBorder({ width, y }: { width: number; y: number }) {
+  return <line className="kline-section-border" x1="0" x2={width} y1={y} y2={y} />;
+}
+
+function PanelTitle({ x, y, label }: { x: number; y: number; label: string }) {
+  return <text className="kline-subpanel-title" x={x} y={y}>{label}</text>;
+}
+
+function MacdLayer({
+  series,
+  top,
+  height,
+  width,
+  center,
+  barWidth,
+}: {
+  series: ReturnType<typeof computeMacd>;
+  top: number;
+  height: number;
+  width: number;
+  center: (index: number) => number;
+  barWidth: number;
+}) {
+  if (series.length < 2) return null;
+  const values = series.flatMap((point) => [point.dif, point.dea, point.macd]).filter(Number.isFinite);
+  const maxAbs = Math.max(...values.map((value) => Math.abs(value)), 1);
+  const midY = top + height / 2;
+  const y = (value: number) => midY - (value / maxAbs) * (height * 0.46);
+  const line = (key: "dif" | "dea") => series.map((point, index) => `${center(index).toFixed(2)},${y(point[key]).toFixed(2)}`).join(" ");
+
+  return (
+    <g className="kline-macd-layer">
+      <line className="trend-grid-line macd-zero-line" x1="0" x2={width} y1={midY} y2={midY} />
+      {series.map((point, index) => {
+        const barTop = y(Math.max(point.macd, 0));
+        const barBottom = y(Math.min(point.macd, 0));
+        return (
+          <rect
+            key={`${point.date}-${index}`}
+            className={`macd-bar ${point.macd >= 0 ? "macd-up" : "macd-down"}`}
+            x={center(index) - barWidth / 2}
+            y={Math.min(barTop, barBottom)}
+            width={Math.max(1, Math.min(barWidth, 7))}
+            height={Math.max(1, Math.abs(barBottom - barTop))}
+            fill="currentColor"
+          />
+        );
+      })}
+      <polyline className="trend-line line-dif" points={line("dif")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline className="trend-line line-dea" points={line("dea")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+    </g>
+  );
+}
+
+function MultiLineLayer({
+  series,
+  top,
+  height,
+  width,
+  center,
+  keys,
+  classNames,
+  includeZero = false,
+}: {
+  series: SeriesPoint[];
+  top: number;
+  height: number;
+  width: number;
+  center: (index: number) => number;
+  keys: string[];
+  classNames: string[];
+  includeZero?: boolean;
+}) {
+  if (series.length < 2) return null;
+  const values = series.flatMap((point) => keys.map((key) => Number(point[key]))).filter(Number.isFinite);
+  if (includeZero) values.push(0);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const y = (value: number) => top + (1 - (value - min) / range) * height;
+  const zeroY = 0 >= min && 0 <= max ? y(0) : null;
+  const line = (key: string) =>
+    series
+      .map((point, index) => {
+        const value = Number(point[key]);
+        if (!Number.isFinite(value)) return null;
+        return `${center(index).toFixed(2)},${y(value).toFixed(2)}`;
+      })
+      .filter(Boolean)
+      .join(" ");
+
+  return (
+    <g className="kline-line-panel">
+      {zeroY !== null ? <line className="trend-grid-line" x1="0" x2={width} y1={zeroY} y2={zeroY} /> : null}
+      {keys.map((key, index) => <polyline key={key} className={`trend-line ${classNames[index]}`} points={line(key)} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />)}
+    </g>
+  );
+}
+
+function RsiLayer({
+  series,
+  top,
+  height,
+  width,
+  center,
+}: {
+  series: RsiPoint[];
+  top: number;
+  height: number;
+  width: number;
+  center: (index: number) => number;
+}) {
+  if (series.length < 2) return null;
+  const y = (value: number) => top + (1 - Math.max(0, Math.min(100, value)) / 100) * height;
+  const line = (key: keyof Pick<RsiPoint, "rsi6" | "rsi12" | "rsi24">) =>
+    series
+      .map((point, index) => {
+        const value = point[key];
+        if (!Number.isFinite(value)) return null;
+        return `${center(index).toFixed(2)},${y(value).toFixed(2)}`;
+      })
+      .filter(Boolean)
+      .join(" ");
+
+  return (
+    <g className="kline-rsi-layer">
+      <line className="trend-grid-line" x1="0" x2={width} y1={y(70)} y2={y(70)} />
+      <line className="trend-grid-line" x1="0" x2={width} y1={y(30)} y2={y(30)} />
+      <polyline className="trend-line line-rsi6" points={line("rsi6")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline className="trend-line line-rsi12" points={line("rsi12")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline className="trend-line line-rsi24" points={line("rsi24")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+    </g>
+  );
+}
+
+function VolumeLayer({
+  bars,
+  volumes,
+  max,
+  top,
+  height,
+  center,
+  barWidth,
+}: {
+  bars: KlineBar[];
+  volumes: number[];
+  max: number;
+  top: number;
+  height: number;
+  center: (index: number) => number;
+  barWidth: number;
+}) {
+  return (
+    <g className="kline-volume-layer">
+      {bars.map((bar, index) => {
+        const barHeight = (volumes[index] / max) * height;
+        return (
+          <rect
+            key={`vol-${bar.date}-${index}`}
+            className={bar.close >= bar.open ? "kline-up" : "kline-down"}
+            x={center(index) - barWidth / 2}
+            y={top + (height - barHeight)}
+            width={barWidth}
+            height={Math.max(0.5, barHeight)}
+            fill="currentColor"
+          />
+        );
+      })}
+    </g>
+  );
+}
+
+type RsiPoint = {
+  date: string;
+  rsi6: number;
+  rsi12: number;
+  rsi24: number;
+};
+
+function computeRsiLines(bars: KlineBar[]): RsiPoint[] {
+  const closes = bars.map((bar) => bar.close);
+  const rsi6 = computeRsi(closes, 6);
+  const rsi12 = computeRsi(closes, 12);
+  const rsi24 = computeRsi(closes, 24);
+  return bars.map((bar, index) => ({ date: bar.date, rsi6: rsi6[index], rsi12: rsi12[index], rsi24: rsi24[index] }));
+}
+
+function computeRsi(values: number[], period: number): number[] {
+  const result: number[] = [];
+  let averageGain = 0;
+  let averageLoss = 0;
+  for (let index = 0; index < values.length; index += 1) {
+    if (index === 0) {
+      result.push(50);
+      continue;
+    }
+    const change = values[index] - values[index - 1];
+    const gain = Math.max(change, 0);
+    const loss = Math.max(-change, 0);
+    if (index <= period) {
+      averageGain += gain;
+      averageLoss += loss;
+      const divisor = Math.max(index, 1);
+      result.push(rsiValue(averageGain / divisor, averageLoss / divisor));
+      continue;
+    }
+    averageGain = (averageGain * (period - 1) + gain) / period;
+    averageLoss = (averageLoss * (period - 1) + loss) / period;
+    result.push(rsiValue(averageGain, averageLoss));
+  }
+  return result;
+}
+
+function rsiValue(averageGain: number, averageLoss: number): number {
+  if (averageLoss === 0) return averageGain === 0 ? 50 : 100;
+  const relativeStrength = averageGain / averageLoss;
+  return 100 - 100 / (1 + relativeStrength);
+}
+
+function computeDmaLines(bars: KlineBar[]): SeriesPoint[] {
+  const closes = bars.map((bar) => bar.close);
+  const ma10 = movingAverage(closes, 10);
+  const ma50 = movingAverage(closes, 50);
+  const ddd = closes.map((_, index) => valueOrNaN(ma10[index]) - valueOrNaN(ma50[index]));
+  const ama = movingAverage(ddd.map((value) => (Number.isFinite(value) ? value : 0)), 10);
+  return bars.map((bar, index) => ({ date: bar.date, ddd: ddd[index], ama: valueOrNaN(ama[index]) }));
+}
+
+function computeMtmLines(bars: KlineBar[]): SeriesPoint[] {
+  const closes = bars.map((bar) => bar.close);
+  const mtm = closes.map((close, index) => index >= 12 ? close - closes[index - 12] : NaN);
+  const mamtm = movingAverage(mtm.map((value) => (Number.isFinite(value) ? value : 0)), 6);
+  return bars.map((bar, index) => ({ date: bar.date, mtm: mtm[index], mamtm: valueOrNaN(mamtm[index]) }));
+}
+
+function valueOrNaN(value: number | null | undefined): number {
+  return value == null ? NaN : value;
+}
+
+function buildTicks(min: number, max: number, count: number): number[] {
+  if (!Number.isFinite(min) || !Number.isFinite(max) || count <= 1) return [];
+  return Array.from({ length: count }, (_, index) => min + ((max - min) * index) / (count - 1)).reverse();
+}
+
+function formatWan(value: number): string {
+  if (!Number.isFinite(value)) return "--";
+  return `${formatNumber(value / 10_000)}万`;
+}
+
 function periodLabel(period: KlinePeriod): string {
   return KLINE_PERIODS.find((item) => item.key === period)?.label || period;
-}
-
-
-function LineChart({ title, series, keys }: { title: string; series: Record<string, unknown>[]; keys: string[] }) {
-  const width = 720;
-  const height = 160;
-  const gridLines = [0.25, 0.5, 0.75].map((ratio) => ratio * height);
-  const points = series.map((point) => keys.map((key) => Number(point[key])).filter(Number.isFinite)).flat();
-  if (points.length < 2) return null;
-  const min = Math.min(...points);
-  const max = Math.max(...points);
-  const range = max - min || 1;
-  const line = (key: string) => series.map((point, index) => {
-    const value = Number(point[key]);
-    if (!Number.isFinite(value)) return null;
-    const x = (index / Math.max(series.length - 1, 1)) * width;
-    const y = height - ((value - min) / range) * height;
-    return `${x.toFixed(2)},${y.toFixed(2)}`;
-  }).filter(Boolean).join(" ");
-  return (
-    <section className="chart-wrap trend-chart">
-      <header>
-        <h4>{title}</h4>
-        <div className="trend-legend">
-          {keys.map((key) => <span key={key} className={`line-${key}`}>{lineLabel(key)}</span>)}
-        </div>
-      </header>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
-        {gridLines.map((y) => <line key={y} className="trend-grid-line" x1="0" x2={width} y1={y} y2={y} />)}
-        {keys.map((key) => <polyline key={key} className={`trend-line line-${key}`} points={line(key)} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />)}
-      </svg>
-      <div className="chart-labels"><span>{String(series[0]?.date || "")}</span><span>{String(series[series.length - 1]?.date || "")}</span></div>
-    </section>
-  );
-}
-
-function MacdChart({ series }: { series: MacdPoint[] }) {
-  const width = 720;
-  const height = 150;
-  if (series.length < 2) return null;
-  const values = series.map((point) => [point.dif, point.dea, point.macd]).flat().filter(Number.isFinite);
-  if (values.length < 2) return null;
-  const absValues = values.map((value) => Math.abs(value)).filter((value) => value > 0);
-  const maxAbs = absValues.length > 0 ? Math.max(...absValues) : 1;
-  const midY = height / 2;
-  const x = (index: number) => (index / Math.max(series.length - 1, 1)) * width;
-  const y = (value: number) => midY - (value / maxAbs) * (height * 0.46);
-  const barWidth = Math.max(2, Math.min((width / series.length) * 0.78, 9));
-  const line = (key: "dif" | "dea") => series.map((point, index) => {
-    const value = point[key];
-    if (!Number.isFinite(value)) return null;
-    return `${x(index).toFixed(2)},${y(value).toFixed(2)}`;
-  }).filter(Boolean).join(" ");
-  const latest = series[series.length - 1];
-
-  return (
-    <section className="chart-wrap macd-chart">
-      <header>
-        <h4>MACD</h4>
-        <div className="trend-legend">
-          <span className="line-dif">DIF</span>
-          <span className="line-dea">DEA</span>
-          <span className="macd-up">红柱</span>
-          <span className="macd-down">绿柱</span>
-        </div>
-      </header>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="MACD指标">
-        <line className="trend-grid-line macd-zero-line" x1="0" x2={width} y1={midY} y2={midY} />
-        {series.map((point, index) => {
-          const barTop = y(Math.max(point.macd, 0));
-          const barBottom = y(Math.min(point.macd, 0));
-          const barHeight = Math.abs(barBottom - barTop);
-          return (
-            <rect
-              key={`${point.date}-${index}`}
-              className={`macd-bar ${point.macd >= 0 ? "macd-up" : "macd-down"}`}
-              x={x(index) - barWidth / 2}
-              y={Math.min(barTop, barBottom)}
-              width={barWidth}
-              height={Math.max(point.macd === 0 ? 1 : 2, barHeight)}
-              fill="currentColor"
-            />
-          );
-        })}
-        <polyline className="trend-line macd-line-shadow line-dif" points={line("dif")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-        <polyline className="trend-line macd-line-shadow line-dea" points={line("dea")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-        <polyline className="trend-line macd-line line-dif" points={line("dif")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-        <polyline className="trend-line macd-line line-dea" points={line("dea")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-      <div className="chart-labels"><span>{String(series[0]?.date || "")}</span><span>{String(series[series.length - 1]?.date || "")}</span></div>
-      <div className="kline-stats" aria-label="当前MACD">
-        <span>DIF {formatNumber(latest?.dif)}</span>
-        <span>DEA {formatNumber(latest?.dea)}</span>
-        <span>MACD {formatNumber(latest?.macd)}</span>
-      </div>
-    </section>
-  );
-}
-
-function lineLabel(key: string): string {
-  const labels: Record<string, string> = {
-    close: "收盘",
-    swl: "SWL",
-    sws: "SWS",
-    k: "K",
-    d: "D",
-    j: "J",
-    dif: "DIF",
-    dea: "DEA",
-  };
-  return labels[key] || key.toUpperCase();
-}
-
-function sliceSeriesByDate(series: TrendIndicatorPoint[], startDate: string, endDate: string): TrendIndicatorPoint[] {
-  if (!startDate || !endDate) return series.slice(-DEFAULT_VISIBLE_BARS);
-  const sliced = series.filter((point) => point.date >= startDate && point.date <= endDate);
-  return sliced.length ? sliced : series.slice(-DEFAULT_VISIBLE_BARS);
-}
-
-async function enterKlineMobileFullscreen(): Promise<void> {
-  const root = document.documentElement;
-  root.classList.add(KLINE_MOBILE_FULLSCREEN_CLASS);
-
-  try {
-    if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
-      await document.documentElement.requestFullscreen();
-    }
-  } catch {
-    // Fullscreen API is best-effort in Android WebView/Tauri.
-  }
-
-  const orientation = window.screen?.orientation as LockableScreenOrientation | undefined;
-  try {
-    await orientation?.lock?.("landscape");
-  } catch {
-    // Orientation lock is also best-effort; keep the fullscreen shell either way.
-  }
-}
-
-async function exitKlineMobileFullscreen(): Promise<void> {
-  document.documentElement.classList.remove(KLINE_MOBILE_FULLSCREEN_CLASS);
-
-  const orientation = window.screen?.orientation as LockableScreenOrientation | undefined;
-  try {
-    orientation?.unlock?.();
-  } catch {
-    // Ignore unlock failures; the OS may keep the current orientation.
-  }
-
-  try {
-    if (document.fullscreenElement && document.exitFullscreen) {
-      await document.exitFullscreen();
-    }
-  } catch {
-    // Ignore document fullscreen exit failures in constrained runtimes.
-  }
 }

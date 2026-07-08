@@ -50,8 +50,6 @@ export function ScreenPanel({
   const [error, setError] = useState<string | null>(null);
   const [trendStart, setTrendStart] = useState(defaultObserveStartDateInputValue());
   const [trendEnd, setTrendEnd] = useState(currentSystemDateInputValue());
-  const [maxSectors, setMaxSectors] = useState(12);
-  const [perSectorLimit, setPerSectorLimit] = useState(5);
 
   const run = useCallback(async () => {
     setLoading(true);
@@ -62,10 +60,10 @@ export function ScreenPanel({
 
       if (mode === "sectorScreen") {
         endpoint = "/api/sector-screen";
-        payload = buildSectorScreenRequest(criteria, "concept", perSectorLimit, maxSectors);
+        payload = buildSectorScreenRequest(criteria, "concept", 5, 12);
       } else if (mode === "boardScreen") {
         endpoint = "/api/sector-screen";
-        payload = buildSectorScreenRequest(criteria, "board", perSectorLimit, 5);
+        payload = buildSectorScreenRequest(criteria, "board", 5, 5);
       } else if (mode === "customScreen") {
         endpoint = "/api/custom-screen";
         payload = buildCustomScreenRequest(criteria);
@@ -81,7 +79,7 @@ export function ScreenPanel({
     } finally {
       setLoading(false);
     }
-  }, [criteria, maxSectors, mode, perSectorLimit, trendEnd, trendStart]);
+  }, [criteria, mode, trendEnd, trendStart]);
 
   const toggleWatchlist = useCallback((item: StockRowView) => {
     const exists = watchlist.some((w) => w.code === item.code);
@@ -95,7 +93,7 @@ export function ScreenPanel({
     }
   }, [mode, onWatchlistChange, watchlist]);
 
-  const hasControlFields = mode !== "screen";
+  const hasControlFields = mode !== "screen" && mode !== "sectorScreen" && mode !== "boardScreen";
   const controlsClassName = `panel-controls screen-panel-controls ${mode === "customScreen" ? "custom-screen-controls" : mode === "sectorScreen" || mode === "boardScreen" ? "grouped-screen-controls" : ""}`;
 
   const controlFields = (
@@ -105,20 +103,8 @@ export function ScreenPanel({
           <CriteriaFields criteria={criteria} onChange={onCriteriaChange} idPrefix="customScreen" />
         </div>
       )}
-      {(mode === "sectorScreen" || mode === "boardScreen") && (
-        <>
-          <div className="form-row inline">
-            <label htmlFor="perSectorLimit">每组数量</label>
-            <input id="perSectorLimit" type="number" min="1" max="50" value={perSectorLimit} onChange={(e) => setPerSectorLimit(Number(e.target.value) || 5)} />
-          </div>
-          {mode === "sectorScreen" && (
-            <div className="form-row inline">
-              <label htmlFor="maxSectors">分组数</label>
-              <input id="maxSectors" type="number" min="1" max="50" value={maxSectors} onChange={(e) => setMaxSectors(Number(e.target.value) || 12)} />
-            </div>
-          )}
-        </>
-      )}
+
+
 
       {mode === "trendScreen" && (
         <>
@@ -235,12 +221,6 @@ function ScreenResultView({
         <div className="metric"><span>最高分</span><strong>{rows[0]?.score?.toFixed(2) ?? "--"}</strong></div>
       </div>
 
-      {onRunBacktest && rows.length > 0 && (
-        <div className="result-actions screen-result-actions">
-          <div><span>下一步</span><strong>用当前条件回测</strong></div>
-          <button type="button" onClick={onRunBacktest}>回测</button>
-        </div>
-      )}
 
       {groups.length > 0 ? (
         <div className="sector-groups">
@@ -261,6 +241,13 @@ function ScreenResultView({
       )}
 
       {resultRecord.notes?.length ? <div className="notes">{resultRecord.notes.map((note) => <p key={note}>{note}</p>)}</div> : null}
+
+      {onRunBacktest && rows.length > 0 && (
+        <div className="result-actions screen-result-actions">
+          <div><span>下一步</span><strong>用当前条件回测</strong></div>
+          <button type="button" onClick={onRunBacktest}>回测</button>
+        </div>
+      )}
       <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
     </div>
   );

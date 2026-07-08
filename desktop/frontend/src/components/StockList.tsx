@@ -1,4 +1,4 @@
-import type { StockRowView, WatchlistItem } from "../types";
+import type { ScoreContribution, StockRowView, WatchlistItem } from "../types";
 import { formatNumber, formatPrice, formatRatioPercent, reasonLabel } from "../lib/format";
 
 interface StockListProps {
@@ -11,19 +11,22 @@ interface StockListProps {
 export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock }: StockListProps) {
   if (!items.length) return <div className="empty-list">暂无匹配股票</div>;
 
+  const sortedItems = [...items].sort((a, b) => stockDisplayScore(b) - stockDisplayScore(a));
+
   return (
     <div className="quote-table">
       <div className="quote-table-head">
         <span>名称</span>
         <span>当前股价</span>
-        <span>评分</span>
         <span>市盈率</span>
+        <span>每股收益</span>
         <span>市净率</span>
       </div>
       <div className="stock-list">
-        {items.map((item, i) => {
+        {sortedItems.map((item, i) => {
           const inWatchlist = watchlist.some((w) => w.code === item.code);
           const tone = item.change_pct != null && item.change_pct > 0 ? "rise" : item.change_pct != null && item.change_pct < 0 ? "fall" : "neutral";
+          const scoreSummary = buildScoreSummary(item);
           return (
             <article key={`${item.code}-${i}`} className={`stock-row ${tone}`}>
               <div className="stock-grid">
@@ -35,19 +38,32 @@ export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock 
                   <strong>{formatPrice(item.price)}</strong>
                   <span>当前股价</span>
                 </div>
-                <div className="score-badge">
-                  <small>{scoreLabel(item.scoreLabel)}</small>
-                  <b>{formatNumber(item.score)}</b>
-                </div>
                 <div className="quote-number quote-pe">
                   <strong>{formatNumber(item.pe)}</strong>
                   <span>市盈率</span>
+                </div>
+                <div className="quote-number quote-eps">
+                  <strong>{formatNumber(item.eps)}</strong>
+                  <span>每股收益</span>
                 </div>
                 <div className="quote-number quote-pb">
                   <strong>{formatNumber(item.pb)}</strong>
                   <span>市净率</span>
                 </div>
               </div>
+
+              <div className="score-strip" aria-label="评分概览">
+                <div className="score-strip-metrics">
+                  <ScoreChip label="质量" value={item.qualityScore} />
+                  <ScoreChip label="趋势" value={item.trendScore} />
+                  <ScoreChip label="风险" value={item.riskScore} inverted />
+                </div>
+                <div className="score-strip-primary">
+                  <span>综合评分</span>
+                  <strong>{formatNumber(item.balancedScore ?? item.score)}</strong>
+                </div>
+              </div>
+              <p className="stock-score-summary">{scoreSummary}</p>
 
               <div className="row-actions">
                 <div className="stock-meta">
@@ -73,13 +89,10 @@ export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock 
               </div>
 
               {item.concept && <div className="tag-row"><span>{item.concept}</span></div>}
-              {item.reasons?.length ? (
-                <div className="tag-row">{item.reasons.slice(0, 5).map((reason) => <span key={reason}>{reasonLabel(reason)}</span>)}</div>
-              ) : null}
               {item.explanation?.basis?.length ? (
-                <details className="selection-explain">
-                  <summary>入选依据</summary>
-                  {item.explanation.basis.map((line) => <p key={line}>{line}</p>)}
+                <details className="selection-explain compact-selection-explain">
+                  <summary>查看入选依据</summary>
+                  {item.explanation.basis.slice(0, 3).map((line) => <p key={line}>{line}</p>)}
                 </details>
               ) : null}
             </article>
@@ -90,11 +103,39 @@ export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock 
   );
 }
 
-function scoreLabel(label?: string): string {
-  const labels: Record<string, string> = {
-    score: "评分",
-    final: "综合",
-    trend: "趋势",
-  };
-  return labels[String(label || "score")] || String(label);
+function ScoreChip({ label, value, inverted = false }: { label: string; value?: number | null; inverted?: boolean }) {
+  const score = typeof value === "number" && Number.isFinite(value) ? value : null;
+  const level = score == null ? "neutral" : inverted ? (score >= 70 ? "bad" : score >= 40 ? "watch" : "good") : score >= 70 ? "good" : score >= 50 ? "watch" : "neutral";
+  return (
+    <span className={`score-chip ${level}`}>
+      <em>{label}</em>
+      <b>{score == null ? "--" : formatNumber(score)}</b>
+    </span>
+  );
+}
+
+function buildScoreSummary(item: StockRowView): string {
+  const positiveTags = compactStrings([...(item.reasonTags || []), ...(item.reasons || []).map(reasonLabel)]).slice(0, 2);
+  const riskTags = compactStrings(item.riskTags || []).slice(0, 2);
+  const periods = compactStrings(item.suitablePeriods || []).slice(0, 2);
+  const strongest = strongestContribution(item.scoreBreakdown || []);
+  const highlights = positiveTags.length ? positiveTags.join("、") : strongest ? `${strongest.label}贡献较高` : "综合评分较为均衡";
+  const riskText = riskTags.length ? `需关注${riskTags.join("、")}` : "暂未出现突出的扣分标签";
+  const periodText = periods.length ? `适合${periods.join("、")}观察` : "建议结合短中周期继续跟踪";
+  return `${highlights}，${riskText}，${periodText}；仅供选股研究，不构成投资建议。`;
+}
+
+function strongestContribution(parts: ScoreContribution[]): ScoreContribution | null {
+  return parts
+    .filter((part) => typeof part.contribution === "number" && Number.isFinite(part.contribution))
+    .sort((a, b) => Number(b.contribution) - Number(a.contribution))[0] || null;
+}
+
+function compactStrings(values: unknown[]): string[] {
+  return values.map((value) => String(value || "").trim()).filter(Boolean);
+}
+
+function stockDisplayScore(item: StockRowView): number {
+  const score = item.balancedScore ?? item.score;
+  return typeof score === "number" && Number.isFinite(score) ? score : Number.NEGATIVE_INFINITY;
 }

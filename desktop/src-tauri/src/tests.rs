@@ -328,6 +328,7 @@ fn financial_snapshot_enriches_seed_without_preserving_snapshot_only_rows() {
             .and_then(Value::as_f64),
         Some(12.0)
     );
+    assert_eq!(stocks[0].get("latest_eps").and_then(Value::as_f64), Some(0.45));
 
     let valid_codes = HashSet::from(["000001.SZ".to_string()]);
     let financials = filtered_financial_snapshot_map(&seed, &snapshot, &valid_codes);

@@ -1,4 +1,4 @@
-﻿import type { FilterCriteria } from "../components/FilterBar";
+import type { FilterCriteria } from "../components/FilterBar";
 import type {
   AgentResult,
   AgentStreamEvent,
@@ -35,7 +35,7 @@ import {
 
 export interface ScreenRequestOptions {
   limit?: number;
-  score_profile?: "quality" | "rotation";
+  score_profile?: "balanced" | "quality" | "trend" | "rotation";
 }
 
 export interface StockGroupView {
@@ -57,7 +57,7 @@ export function buildScreenCriteria(criteria: FilterCriteria, overrides: ScreenR
     limit: clampInt(overrides.limit ?? criteria.resultLimit, 1, 200, 10),
     sort_by: criteria.sortBy || "score",
     sort_dir: criteria.sortDir || "desc",
-    score_profile: overrides.score_profile || "rotation",
+    score_profile: overrides.score_profile || criteria.scoreProfile || "balanced",
   };
   if (criteria.industry) payload.industry = criteria.industry;
   if (criteria.minRoe) payload.min_roe = Number(criteria.minRoe);
@@ -310,13 +310,22 @@ export function normalizeStockRow(item: unknown): StockRowView | null {
     change_pct: firstNumber(stock.change_pct, stock.pct),
     pe: firstNumber(stock.pe),
     pb: firstNumber(stock.pb),
+    eps: firstNumber(stock.eps, stock.latest_eps, raw.eps, raw.latest_eps),
     roe: firstNumber(stock.roe),
     market_cap_billion: firstNumber(stock.market_cap_billion, stock.market_cap),
     score,
-    scoreLabel: raw.final_score !== undefined ? "final" : "score",
+    scoreLabel: raw.final_score !== undefined ? "final" : raw.balanced_score !== undefined ? "balanced" : "score",
     reasons: Array.isArray(raw.reasons) ? raw.reasons as string[] : [],
     concept: String(screened.concept || ""),
+    qualityScore: firstNumber(screened.quality_score),
+    trendScore: firstNumber(screened.trend_score),
+    riskScore: firstNumber(screened.risk_score),
+    balancedScore: firstNumber(screened.balanced_score),
     factorScores: screened.factor_scores || {},
+    scoreBreakdown: Array.isArray(screened.score_breakdown) ? screened.score_breakdown : [],
+    reasonTags: Array.isArray(screened.reason_tags) ? screened.reason_tags : [],
+    riskTags: Array.isArray(screened.risk_tags) ? screened.risk_tags : [],
+    suitablePeriods: Array.isArray(screened.suitable_periods) ? screened.suitable_periods : [],
     explanation: (raw.explanation as StockRowView["explanation"]) || null,
     raw: item,
   };

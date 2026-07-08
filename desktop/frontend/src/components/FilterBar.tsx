@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getJson, getTauriInvoke, isMarketStatusStale, postJson, refreshTauriMarketData } from "../lib/tauri";
-import { formatBytes, formatNumber } from "../lib/format";
+import { formatBytes, formatMarketRefreshDate, formatNumber } from "../lib/format";
 import type { DataStatus } from "../types";
 
 export interface FilterCriteria {
@@ -14,6 +14,7 @@ export interface FilterCriteria {
   resultLimit: number;
   sortBy: string;
   sortDir: string;
+  scoreProfile: "balanced" | "quality" | "trend" | "rotation" | string;
 }
 
 interface FilterBarProps {
@@ -214,10 +215,18 @@ useEffect(() => {
       window.setTimeout(() => setProgress(null), 900);
     }
   }, [appendLog, clearRefreshLogTimer, scheduleRefreshLogCollapse]);
-const sourceToolsVisible = !mobileRuntime;
+  const sourceToolsVisible = !mobileRuntime;
   const statusMetricsClassName = mobileRuntime ? "screen-mobile-status-metrics" : "data-source-status screen-status-metrics";
   const statusMetricClassName = mobileRuntime ? "screen-mobile-status-metric" : "status-item screen-status-metric";
-const toolsContent = sourceToolsVisible ? (
+  const refreshDateSource = status?.quote_trade_date ?? status?.quote_generated_at ?? status?.generated_at ?? status?.universe_updated_at;
+  const refreshDateText = formatMarketRefreshDate(refreshDateSource, mobileRuntime);
+  const mobileUniverseCount = Number(status?.universe_count);
+  const mobileUniverseText = Number.isFinite(mobileUniverseCount)
+    ? `已同步 ${mobileUniverseCount >= 10000 ? `${(mobileUniverseCount / 10000).toFixed(1)}万` : Math.max(0, Math.round(mobileUniverseCount)).toString()}只`
+    : "待同步";
+  const mobileCacheText = status?.cache_bytes !== undefined ? `缓存 ${formatBytes(status.cache_bytes)}` : "缓存 --";
+  const mobileRefreshSummary = `${mobileUniverseText} · ${refreshDateText} · ${mobileCacheText}`;
+  const toolsContent = sourceToolsVisible ? (
     <div className={mobileRuntime ? "screen-mobile-tools" : "data-source-tools"}>
       <div className="refresh-options">
         <label className="refresh-option refresh-option-boolean">
@@ -298,9 +307,12 @@ const toolsContent = sourceToolsVisible ? (
         >
           <div className="screen-mobile-toolbar-row">
             <div className="screen-mobile-toolbar-main">
-              <div className={statusMetricsClassName} aria-label="股票池状态">
-                <span className={statusMetricClassName}><em>股票池</em><strong>{formatNumber(status?.universe_count)}</strong></span>
-                <span className={statusMetricClassName}><em>缓存</em><strong>{formatBytes(status?.cache_bytes)}</strong></span>
+              <div className="screen-mobile-status-inline" aria-label="股票池状态" title={mobileRefreshSummary}>
+                <strong>{mobileUniverseText}</strong>
+                <span aria-hidden="true">·</span>
+                <strong className="refresh-date-value">{refreshDateText}</strong>
+                <span aria-hidden="true">·</span>
+                <strong>{mobileCacheText}</strong>
               </div>
             </div>
 
@@ -326,6 +338,7 @@ const toolsContent = sourceToolsVisible ? (
             <div className={statusMetricsClassName} aria-label="股票池状态">
               <span className={statusMetricClassName}><em>股票池</em><strong>{formatNumber(status?.universe_count)}</strong></span>
               <span className={statusMetricClassName}><em>缓存</em><strong>{formatBytes(status?.cache_bytes)}</strong></span>
+              <span className={`${statusMetricClassName} refresh-date`}><em>刷新日期</em><strong>{refreshDateText}</strong></span>
             </div>
           </div>
 

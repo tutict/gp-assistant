@@ -316,6 +316,10 @@ a:hover { text-decoration: underline; }
 .status-item.fresh strong { color: var(--success); }
 .status-item.stale strong { color: var(--warning); }
 
+.status-item.refresh-date strong,
+.screen-status-metric.refresh-date strong {
+  color: var(--accent);
+}
 .data-source-actions {
   display: flex;
   gap: 6px;
@@ -517,7 +521,6 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
   line-height: 1.2;
 }
-
 .app[data-active-view="observe"] .panel-controls input,
 .app[data-active-view="observe"] .panel-controls .stock-code-input {
   min-width: 0;
@@ -1438,25 +1441,21 @@ a:hover { text-decoration: underline; }
   flex: 0 0 auto;
   border: 0;
   border-radius: 10px;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--agent-accent) 88%, #ff9d95 12%),
-    color-mix(in srgb, var(--agent-accent-strong) 84%, #7c1410 16%)
-  );
-  color: var(--button-text);
+  background: linear-gradient(135deg, #ef4444, #b91c1c);
+  color: #fff;
   font-size: 0.92rem;
   font-weight: 850;
-  box-shadow: 0 8px 18px rgba(226, 55, 47, 0.24);
+  box-shadow: 0 8px 18px rgba(239, 68, 68, 0.34);
   cursor: pointer;
 }
 .send-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, var(--agent-accent), var(--agent-accent-strong));
-  box-shadow: 0 10px 22px rgba(226, 55, 47, 0.3);
+  background: linear-gradient(135deg, #f87171, #dc2626);
+  box-shadow: 0 10px 22px rgba(239, 68, 68, 0.42);
 }
 .send-btn:disabled {
   opacity: 0.78;
   cursor: not-allowed;
-  background: color-mix(in srgb, var(--agent-accent) 72%, #4b1714 28%);
+  background: linear-gradient(135deg, #7f1d1d, #450a0a);
   color: rgba(255, 247, 245, 0.82);
   box-shadow: none;
 }
@@ -3185,9 +3184,9 @@ html.mobile-tauri {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   /* Shrink the Android UI relatively by lowering the root font-size.
-     rem-based fonts/spacing scale down to 15/16 ≈ 94%; viewport-height
+     rem-based fonts/spacing scale down to 15/16 ~= 94%; viewport-height
      math (100dvh/100%) is untouched, so the layout still fills the screen
-     (no bottom gap). Do NOT use `zoom` here — it scales viewport units
+     (no bottom gap). Do NOT use `zoom` here; it scales viewport units
      too and leaves a black gap at the bottom. */
   font-size: 15px;
 }
@@ -4491,7 +4490,7 @@ html.mobile-tauri.android-tablet .quote-table-head {
 }
 html.mobile-tauri.android-tablet .quote-table-head,
 html.mobile-tauri.android-tablet .stock-grid {
-  grid-template-columns: minmax(170px, 1.7fr) repeat(4, minmax(80px, 0.8fr)) minmax(132px, 1fr);
+  grid-template-columns: minmax(170px, 1.7fr) minmax(96px, 0.85fr) repeat(3, minmax(80px, 0.8fr));
   gap: 10px;
 }
 html.mobile-tauri.android-tablet .stock-title {
@@ -5370,7 +5369,7 @@ html.mobile-tauri.android-bottom-nav .source-tools-toggle {
   width: 74px !important;
   min-height: 34px !important;
   height: 34px !important;
-  padding: 0 8px !important;
+  padding: 0 9px !important;
   border-radius: 7px !important;
   font-size: 0.74rem !important;
   align-self: stretch !important;
@@ -6260,7 +6259,7 @@ html.mobile-tauri.android-bottom-nav .agent-new-chat {
   width: auto !important;
   min-width: 82px !important;
   min-height: 28px !important;
-  padding: 0 8px !important;
+  padding: 0 9px !important;
   gap: 4px !important;
   font-size: 0.66rem !important;
 }
@@ -6998,7 +6997,7 @@ html.mobile-tauri.android-phone .backtest-param-strip,
 html.mobile-tauri.android-bottom-nav .backtest-param-strip {
   grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
   gap: 3px 5px !important;
-  font-size: 0.56rem !important;
+  font-size: 0.54rem !important;
   line-height: 1.08 !important;
 }
 
@@ -7435,7 +7434,7 @@ html.mobile-tauri.android-bottom-nav .llm-endpoint-state {
   background: transparent !important;
 }
 
-/* Android backtest source switch: make 当前条件 / 自选股 less tall. */
+/* Android backtest source switch: make current criteria / watchlist less tall. */
 html.mobile-tauri.android-phone .backtest-context-controls,
 html.mobile-tauri.android-bottom-nav .backtest-context-controls {
   padding: 2px !important;
@@ -7453,7 +7452,7 @@ html.mobile-tauri.android-bottom-nav .backtest-context-controls .source-toggle {
   line-height: 1 !important;
 }
 
-/* Android screen result action: keep the "用当前条件回测" prompt compact. */
+/* Android screen result action: keep the backtest-with-current-criteria prompt compact. */
 html.mobile-tauri.android-phone .result-actions,
 html.mobile-tauri.android-bottom-nav .result-actions {
   min-height: 38px !important;
@@ -7547,12 +7546,11 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .result-lis
 /* Android stock card header: current price lives at the upper-right of each card. */
 html.mobile-tauri.android-phone .stock-grid,
 html.mobile-tauri.android-bottom-nav .stock-grid {
-  grid-template-columns: minmax(0, 1fr) auto !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
   grid-template-areas:
-    "title price"
-    "score score"
-    "pe pb" !important;
-  align-items: start !important;
+    "title title price"
+    "pe eps pb" !important;
+  align-items: stretch !important;
 }
 
 html.mobile-tauri.android-phone .stock-title,
@@ -7565,8 +7563,8 @@ html.mobile-tauri.android-bottom-nav .stock-title {
 html.mobile-tauri.android-phone .stock-current-price,
 html.mobile-tauri.android-bottom-nav .stock-current-price {
   grid-area: price !important;
-  align-self: start !important;
-  justify-self: end !important;
+  align-self: stretch !important;
+  justify-self: stretch !important;
   min-width: 72px !important;
   padding-left: 8px !important;
   text-align: right !important;
@@ -7581,7 +7579,7 @@ html.mobile-tauri.android-bottom-nav .stock-current-price strong {
 html.mobile-tauri.android-phone .stock-current-price span,
 html.mobile-tauri.android-bottom-nav .stock-current-price span {
   margin-top: 2px !important;
-  font-size: 0.56rem !important;
+  font-size: 0.54rem !important;
   line-height: 1 !important;
 }
 
@@ -7595,11 +7593,70 @@ html.mobile-tauri.android-bottom-nav .stock-grid .quote-pe {
   grid-area: pe !important;
 }
 
+html.mobile-tauri.android-phone .stock-grid .quote-eps,
+html.mobile-tauri.android-bottom-nav .stock-grid .quote-eps {
+  grid-area: eps !important;
+}
+
 html.mobile-tauri.android-phone .stock-grid .quote-pb,
 html.mobile-tauri.android-bottom-nav .stock-grid .quote-pb {
   grid-area: pb !important;
 }
 
+
+/* Android screen stock metrics: align valuation and score factor cards as one grid. */
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .stock-grid .quote-number,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .stock-grid .quote-number,
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .score-chip,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .score-chip {
+  min-height: 44px !important;
+  display: grid !important;
+  grid-template-rows: auto auto !important;
+  grid-template-areas:
+    "metric-label"
+    "metric-value" !important;
+  align-content: center !important;
+  justify-items: center !important;
+  gap: 3px !important;
+  padding: 7px 8px !important;
+  text-align: center !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .stock-grid .quote-number span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .stock-grid .quote-number span,
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .score-chip em,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .score-chip em {
+  grid-area: metric-label !important;
+  margin: 0 !important;
+  color: var(--text-secondary) !important;
+  font-size: 0.58rem !important;
+  font-weight: 650 !important;
+  line-height: 1.05 !important;
+  text-align: center !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .stock-grid .quote-number strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .stock-grid .quote-number strong,
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .score-chip b,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .score-chip b {
+  grid-area: metric-value !important;
+  margin: 0 !important;
+  font-size: 0.88rem !important;
+  font-weight: 850 !important;
+  line-height: 1.05 !important;
+  text-align: center !important;
+  font-variant-numeric: tabular-nums !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .score-strip,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .score-strip {
+  margin-top: 6px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .score-strip-metrics,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .score-strip-metrics {
+  gap: 6px !important;
+}
 /* Android observe page polish: compact cards, stable stacking, readable evidence text, visible charts. */
 html.mobile-tauri.android-phone .app[data-active-view="observe"] .panel-container,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .panel-container {
@@ -7618,7 +7675,7 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .panel-res
 html.mobile-tauri.android-phone .observe-result,
 html.mobile-tauri.android-bottom-nav .observe-result {
   display: grid !important;
-  gap: 6px !important;
+  gap: 5px !important;
   min-width: 0 !important;
   overflow: visible !important;
 }
@@ -8955,7 +9012,7 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-too
   height: 24px !important;
   padding: 2px 6px !important;
   border-radius: 5px !important;
-  font-size: 0.56rem !important;
+  font-size: 0.54rem !important;
   gap: 3px !important;
 }
 
@@ -9009,7 +9066,7 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-too
 
 html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .status-item strong,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .status-item strong {
-  font-size: 0.56rem !important;
+  font-size: 0.54rem !important;
 }
 
 html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar .source-tools-toggle,
@@ -9151,7 +9208,7 @@ html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar 
 html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .criteria-toggle {
   min-height: 28px !important;
   height: 28px !important;
-  padding: 0 8px !important;
+  padding: 0 9px !important;
   border-radius: 6px !important;
   font-size: 0.62rem !important;
   gap: 4px !important;
@@ -9171,7 +9228,7 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-too
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
   color: color-mix(in srgb, var(--text-secondary) 90%, var(--text)) !important;
-  font-size: 0.56rem !important;
+  font-size: 0.54rem !important;
   line-height: 1.1 !important;
 }
 
@@ -9231,7 +9288,7 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-too
   max-width: none !important;
   min-height: 28px !important;
   height: 28px !important;
-  padding: 0 8px !important;
+  padding: 0 9px !important;
   border-radius: 6px !important;
   border: 1px solid var(--line) !important;
   background: color-mix(in srgb, var(--surface-2) 88%, transparent) !important;
@@ -9304,7 +9361,7 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-too
   min-height: 20px !important;
   padding: 1px 4px !important;
   border-radius: 4px !important;
-  font-size: 0.56rem !important;
+  font-size: 0.54rem !important;
   text-align: right !important;
 }
 
@@ -9319,7 +9376,7 @@ html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar 
 html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar .action-btn {
   min-height: 30px !important;
   height: 30px !important;
-  padding: 0 8px !important;
+  padding: 0 9px !important;
   border-radius: 6px !important;
   font-size: 0.58rem !important;
 }
@@ -9622,7 +9679,7 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-too
 
 html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-toolbar-card .screen-status-metric em,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-toolbar-card .screen-status-metric em {
-  font-size: 0.56rem !important;
+  font-size: 0.54rem !important;
   line-height: 1 !important;
 }
 
@@ -9871,7 +9928,7 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mob
 
 html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-mobile-status-metric em,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mobile-status-metric em {
-  font-size: 0.56rem !important;
+  font-size: 0.54rem !important;
   line-height: 1 !important;
 }
 
@@ -9913,7 +9970,7 @@ html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-mobile-t
 html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mobile-toolbar.tools-open .screen-mobile-tools {
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) !important;
-  gap: 6px !important;
+  gap: 5px !important;
   min-width: 0 !important;
   margin: 0 !important;
   padding-top: 6px !important;
@@ -9969,7 +10026,7 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mob
   min-height: 20px !important;
   padding: 1px 4px !important;
   border-radius: 4px !important;
-  font-size: 0.56rem !important;
+  font-size: 0.54rem !important;
   text-align: right !important;
 }
 
@@ -9985,7 +10042,7 @@ html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-mobile-t
 html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mobile-toolbar .action-btn {
   min-height: 30px !important;
   height: 30px !important;
-  padding: 0 8px !important;
+  padding: 0 9px !important;
   border-radius: 6px !important;
   font-size: 0.58rem !important;
 }
@@ -10094,7 +10151,7 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mob
 
 html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-mobile-status-metric em,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mobile-status-metric em {
-  font-size: 0.56rem !important;
+  font-size: 0.54rem !important;
   line-height: 1 !important;
 }
 
@@ -10127,11 +10184,16 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mob
   color: var(--text) !important;
 }
 
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-mobile-toolbar-main .screen-mobile-status-metric.refresh-date strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mobile-toolbar-main .screen-mobile-status-metric.refresh-date strong {
+  color: var(--accent) !important;
+  font-variant-numeric: tabular-nums !important;
+}
 html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-mobile-tools,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mobile-tools {
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) !important;
-  gap: 6px !important;
+  gap: 5px !important;
   min-width: 0 !important;
   margin: 0 !important;
   padding-top: 6px !important;
@@ -10187,7 +10249,7 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mob
   min-height: 20px !important;
   padding: 1px 4px !important;
   border-radius: 4px !important;
-  font-size: 0.56rem !important;
+  font-size: 0.54rem !important;
   text-align: right !important;
 }
 
@@ -10203,7 +10265,7 @@ html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-mobile-s
 html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mobile-status-card .action-btn {
   min-height: 30px !important;
   height: 30px !important;
-  padding: 0 8px !important;
+  padding: 0 9px !important;
   border-radius: 6px !important;
   font-size: 0.58rem !important;
 }
@@ -10340,14 +10402,14 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-works
   box-shadow: 18px 0 36px rgba(0, 0, 0, 0.42) !important;
 }
 
-/* Hide only the brand block in the drawer (the app header already shows 股选优).
+/* Hide only the brand block in the drawer; the app header already shows the app name.
    The new-chat button and the model footer stay visible so the rail is usable. */
 html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-brand,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-brand {
   display: none !important;
 }
 
-/* Full-width “新建对话” button inside the drawer, so a new chat is reachable while
+/* Full-width new-chat button inside the drawer, so a new chat is reachable while
    the rail is open (the floating + on the chat stage is behind the scrim). */
 html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-new-chat,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-new-chat {
@@ -10487,7 +10549,7 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-histo
   display: block !important;
   grid-area: time !important;
   color: rgba(255, 255, 255, 0.42) !important;
-  font-size: 0.56rem !important;
+  font-size: 0.54rem !important;
   line-height: 1 !important;
 }
 
@@ -11313,9 +11375,9 @@ html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-ru
 html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-run-card .run-btn {
   min-height: 30px !important;
   height: 30px !important;
-  padding: 0 8px !important;
+  padding: 0 9px !important;
   border-radius: 6px !important;
-  font-size: 0.56rem !important;
+  font-size: 0.54rem !important;
   line-height: 1 !important;
   box-shadow: 0 5px 14px rgba(239, 68, 68, 0.18) !important;
 }
@@ -11608,7 +11670,7 @@ html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-workspace.
 html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail {
   /* Flex column instead of the (mismatched) grid-template-areas above: children
-     stack in DOM order — toggle, search, 新建对话, history, model — with the
+     stack in DOM order: toggle, search, new chat, history, model; with the
      history section flexing to fill and the model footer pinned to the bottom.
      This removes the empty grid rows that scattered the content vertically. */
   display: flex !important;
@@ -11819,7 +11881,7 @@ html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model
 html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-toggle em,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-toggle > span,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-toggle em {
-  font-size: 0.56rem !important;
+  font-size: 0.54rem !important;
 }
 
 html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-settings-toggle strong,
@@ -12025,7 +12087,7 @@ html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model
 html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card b,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card em,
 html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-card b {
-  font-size: 0.56rem !important;
+  font-size: 0.54rem !important;
 }
 
 html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-rail-model-settings .llm-provider-editor,
@@ -13018,7 +13080,7 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls
 html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-secondary-btn {
   min-height: 22px !important;
   height: 22px !important;
-  padding: 0 8px !important;
+  padding: 0 9px !important;
   border-radius: 6px !important;
   font-size: 0.62rem !important;
   line-height: 1 !important;
@@ -13116,6 +13178,59 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls
 html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-run-btn {
   margin: 0 !important;
   justify-self: stretch !important;
+}
+/* Android News RAG stacking fix: keep controls in normal flow after running. */
+html.mobile-tauri.android-phone .app[data-active-view="news"] .panel-container,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .panel-container {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 6px !important;
+  overflow: visible !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls {
+  position: relative !important;
+  z-index: 3 !important;
+  flex: 0 0 auto !important;
+  min-height: auto !important;
+  height: auto !important;
+  align-items: stretch !important;
+  overflow: visible !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-code-field,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-code-field {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  align-items: stretch !important;
+  gap: 2px !important;
+  min-height: 34px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-code-field label,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-code-field label {
+  display: block !important;
+  min-height: 10px !important;
+  line-height: 1 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .rag-controls .rag-code-field .stock-code-input,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .rag-controls .rag-code-field .stock-code-input {
+  min-width: 0 !important;
+  min-height: 22px !important;
+  height: auto !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="news"] .panel-result,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="news"] .panel-result {
+  position: relative !important;
+  z-index: 1 !important;
+  flex: 0 0 auto !important;
+  clear: both !important;
+  margin-top: 0 !important;
+  transform: none !important;
 }
 /* Android screen sub-mode compact controls: reduce vertical footprint for grouped, graph, and trend inputs. */
 html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-controls,
@@ -13393,4 +13508,1576 @@ html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-pan
     grid-column: 2;
     justify-self: start;
   }
+}
+
+/* Custom screen layout polish. */
+.custom-screen-controls {
+  align-items: stretch;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.custom-screen-controls > .run-btn {
+  align-self: stretch;
+  min-width: 116px;
+  min-height: 42px;
+}
+
+.custom-screen-criteria {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(280px, 1.35fr) minmax(260px, 1fr);
+  gap: 10px;
+  flex: 1 1 760px;
+  width: 100%;
+  min-width: 0;
+}
+
+.criteria-field-group {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2) 88%, var(--surface));
+}
+
+.criteria-field-group header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.criteria-field-group header strong {
+  color: var(--text);
+  font-size: 0.82rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.criteria-field-group header span {
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  line-height: 1.2;
+  text-align: right;
+}
+
+.criteria-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+
+.criteria-field-group-primary .criteria-field-grid {
+  grid-template-columns: 1fr;
+}
+
+.criteria-field-group-secondary .criteria-field-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.criteria-field-group .form-row {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.criteria-field-group .form-row label {
+  min-height: auto;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.criteria-field-group input,
+.criteria-field-group select {
+  width: 100%;
+  min-width: 0;
+}
+
+.criteria-toggle-row {
+  display: grid;
+  gap: 7px;
+  padding-top: 2px;
+}
+
+.criteria-toggle-row label {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.criteria-toggle-row input {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.criteria-toggle-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1180px) {
+  .custom-screen-criteria {
+    grid-template-columns: minmax(220px, 1fr) minmax(320px, 1.3fr);
+  }
+
+  .criteria-field-group-secondary {
+    grid-column: 1 / -1;
+  }
+
+  .criteria-field-group-secondary .criteria-field-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .custom-screen-criteria,
+  .criteria-field-group-secondary .criteria-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .custom-screen-controls > .run-btn {
+    width: 100%;
+  }
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-panel-controls.custom-screen-controls,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-panel-controls.custom-screen-controls {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 7px !important;
+  padding: 7px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .custom-screen-criteria,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .custom-screen-criteria {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 7px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .criteria-field-group,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .criteria-field-group {
+  gap: 6px !important;
+  padding: 8px !important;
+  border-radius: 8px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .criteria-field-group header,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .criteria-field-group header {
+  padding-bottom: 4px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .criteria-field-group header strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .criteria-field-group header strong {
+  font-size: 0.68rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .criteria-field-group header span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .criteria-field-group header span {
+  font-size: 0.54rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .criteria-field-grid,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .criteria-field-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 6px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .criteria-field-group-primary .criteria-field-grid,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .criteria-field-group-primary .criteria-field-grid,
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .criteria-field-group-secondary .criteria-field-grid,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .criteria-field-group-secondary .criteria-field-grid {
+  grid-template-columns: 1fr 1fr !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .criteria-toggle-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .criteria-toggle-row {
+  grid-column: 1 / -1 !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 6px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .criteria-toggle-row label,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .criteria-toggle-row label {
+  min-height: 26px !important;
+  padding: 4px 6px !important;
+  border-radius: 6px !important;
+  font-size: 0.62rem !important;
+}
+/* Android observe stacking fix: keep controls above stock detail content. */
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .panels,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .panels,
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-panel-container,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-panel-container {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 7px !important;
+  position: relative !important;
+  overflow: visible !important;
+  isolation: isolate !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-panel-controls,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-panel-controls {
+  position: relative !important;
+  z-index: 4 !important;
+  flex: 0 0 auto !important;
+  width: 100% !important;
+  margin: 0 !important;
+  transform: none !important;
+  overflow: visible !important;
+  box-sizing: border-box !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-panel-result,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-panel-result {
+  position: relative !important;
+  z-index: 1 !important;
+  flex: 0 0 auto !important;
+  width: 100% !important;
+  margin: 0 !important;
+  padding-top: 0 !important;
+  transform: none !important;
+  overflow: visible !important;
+  box-sizing: border-box !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-result,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-result,
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-overview,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-overview,
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-chart-card,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-chart-card,
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .financial-indicators,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .financial-indicators,
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .capital-evidence-list,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .capital-evidence-list {
+  position: relative !important;
+  z-index: auto !important;
+  transform: none !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-panel-controls .observe-code-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-panel-controls .observe-code-row {
+  min-width: 0 !important;
+}
+
+
+/* Observe text metrics panel: dense stock indicator summary. */
+.observe-text-metrics {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2) 88%, var(--surface));
+}
+
+.observe-text-metrics > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.observe-text-metrics h3,
+.observe-text-metric-section h4 {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.observe-text-metrics h3 {
+  font-size: 0.9rem;
+}
+
+.observe-text-metrics > header p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.observe-text-metric-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.observe-text-metric-section {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.observe-text-metric-section h4 {
+  font-size: 0.78rem;
+}
+
+.observe-text-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.observe-text-metric-item {
+  grid-column: span 3;
+}
+
+.observe-text-metric-item.metric-short {
+  grid-column: span 2;
+}
+
+.observe-text-metric-item.metric-long {
+  grid-column: 1 / -1;
+}
+
+.observe-text-metric-item {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-2) 76%, transparent);
+}
+
+.observe-text-metric-item span {
+  color: var(--text-secondary);
+  font-size: 0.64rem;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.observe-text-metric-item strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 0.76rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-text-metrics,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-text-metrics {
+  gap: 7px !important;
+  padding: 8px !important;
+  border-radius: 8px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-text-metrics > header,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-text-metrics > header {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 3px !important;
+  padding-bottom: 5px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-text-metrics h3,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-text-metrics h3 {
+  font-size: 0.72rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-text-metrics > header p,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-text-metrics > header p {
+  font-size: 0.58rem !important;
+  text-align: left !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-text-metric-sections,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-text-metric-sections {
+  grid-template-columns: 1fr !important;
+  gap: 7px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-text-metric-section,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-text-metric-section {
+  gap: 5px !important;
+  padding: 7px !important;
+  border-radius: 7px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-text-metric-section h4,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-text-metric-section h4 {
+  font-size: 0.64rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-text-metric-grid,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-text-metric-grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
+  gap: 5px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-text-metric-item,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-text-metric-item {
+  grid-column: span 3 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-text-metric-item.metric-short,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-text-metric-item.metric-short {
+  grid-column: span 2 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-text-metric-item.metric-long,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-text-metric-item.metric-long {
+  grid-column: 1 / -1 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-text-metric-item,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-text-metric-item {
+  padding: 5px 6px !important;
+  border-radius: 6px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-text-metric-item span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-text-metric-item span {
+  font-size: 0.52rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-text-metric-item strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-text-metric-item strong {
+  font-size: 0.6rem !important;
+}
+
+
+
+
+/* Observe metric analysis: compact summary under literal indicators. */
+.observe-metric-analysis {
+  display: grid;
+  gap: 8px;
+  margin-top: 2px;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 86%, var(--surface-2));
+}
+
+.observe-metric-analysis h4 {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.2;
+}
+
+.observe-metric-analysis-list {
+  display: grid;
+  gap: 6px;
+}
+
+.observe-metric-analysis-item {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border-left: 3px solid var(--line-soft);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
+}
+
+.observe-metric-analysis-item.positive {
+  border-left-color: var(--success);
+}
+
+.observe-metric-analysis-item.warning {
+  border-left-color: var(--warning);
+}
+
+.observe-metric-analysis-item.negative {
+  border-left-color: var(--danger);
+}
+
+.observe-metric-analysis-item strong {
+  color: var(--text);
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.observe-metric-analysis-item p,
+.observe-metric-analysis-disclaimer {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
+.observe-metric-analysis-disclaimer {
+  padding-top: 2px;
+  color: var(--text-muted);
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-metric-analysis,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-metric-analysis {
+  gap: 6px !important;
+  padding: 7px !important;
+  border-radius: 7px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-metric-analysis h4,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-metric-analysis h4 {
+  font-size: 0.64rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-metric-analysis-list,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-metric-analysis-list {
+  gap: 5px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-metric-analysis-item,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-metric-analysis-item {
+  gap: 2px !important;
+  padding: 6px !important;
+  border-radius: 6px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-metric-analysis-item strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-metric-analysis-item strong {
+  font-size: 0.58rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-metric-analysis-item p,
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-metric-analysis-disclaimer,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-metric-analysis-item p,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-metric-analysis-disclaimer {
+  font-size: 0.54rem !important;
+  line-height: 1.35 !important;
+}
+
+
+/* Agent mode capability mapping. */
+.agent-mode-capabilities {
+  width: min(620px, 100%);
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+}
+
+.agent-mode-capabilities strong {
+  color: var(--text);
+  font-size: 0.86rem;
+  line-height: 1.2;
+}
+
+.agent-mode-capabilities p {
+  max-width: 520px;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.agent-mode-capability-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.agent-mode-capability-tags span {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--agent-accent) 24%, var(--line-soft));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--agent-accent-soft) 62%, transparent);
+  color: var(--agent-accent-strong);
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+
+.agent-mode-capabilities em {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-style: normal;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-mode-capabilities,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-mode-capabilities {
+  gap: 6px !important;
+  padding: 8px !important;
+  border-radius: 8px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-mode-capabilities strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-mode-capabilities strong {
+  font-size: 0.64rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-mode-capabilities p,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-mode-capabilities p,
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-mode-capabilities em,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-mode-capabilities em {
+  font-size: 0.54rem !important;
+  line-height: 1.35 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-mode-capability-tags,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-mode-capability-tags {
+  gap: 4px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="agent"] .agent-mode-capability-tags span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="agent"] .agent-mode-capability-tags span {
+  min-height: 20px !important;
+  padding: 2px 7px !important;
+  font-size: 0.54rem !important;
+}
+
+.score-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.score-mini-grid span {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: rgba(15, 23, 42, 0.04);
+  color: var(--text-muted, #64748b);
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.score-tags span {
+  background: rgba(14, 165, 233, 0.10);
+  color: #0369a1;
+}
+
+.risk-tags span {
+  background: rgba(245, 158, 11, 0.12);
+  color: #92400e;
+}
+
+.period-tags span {
+  background: rgba(22, 163, 74, 0.10);
+  color: #166534;
+}
+
+.score-breakdown-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.score-breakdown-list p {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+}
+
+.compact-selection-explain summary,
+.score-breakdown-list,
+.score-breakdown-list p,
+.score-breakdown-list span,
+.score-breakdown-list strong,
+.score-breakdown-list b,
+.score-breakdown-list em {
+  color: #fff !important;
+}
+
+@media (max-width: 720px) {
+  .score-mini-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+/* Compact candidate score summary. */
+.score-strip {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  gap: 5px;
+  margin-top: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.score-strip-primary {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  justify-self: start;
+  align-items: baseline;
+  gap: 8px;
+  min-width: min(150px, 100%);
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+.score-strip-primary span,
+.score-chip em {
+  color: var(--text-secondary);
+  font-size: 0.64rem;
+  font-style: normal;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.score-strip-primary strong {
+  color: #fbbf24;
+  font-size: 1.16rem;
+  line-height: 1;
+  font-weight: 900;
+  text-shadow: 0 0 12px rgba(251, 191, 36, 0.24);
+}
+
+.score-strip-metrics {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.score-chip {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 7px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+}
+
+.score-chip b {
+  color: var(--text);
+  font-size: 0.82rem;
+  line-height: 1.1;
+}
+
+.score-chip.good b {
+  color: var(--success);
+}
+
+.score-chip.watch b {
+  color: var(--warning);
+}
+
+.score-chip.bad b {
+  color: var(--danger);
+}
+
+.stock-score-summary {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.compact-selection-explain {
+  margin-top: 6px;
+}
+
+.observe-metric-analysis.compact {
+  gap: 6px;
+}
+
+.observe-metric-one-line {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .score-strip,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .score-strip {
+  grid-template-columns: 1fr !important;
+  gap: 5px !important;
+  padding: 0 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .score-strip-primary,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .score-strip-primary {
+  grid-template-columns: auto auto !important;
+  justify-content: start !important;
+  gap: 8px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .score-strip-primary strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .score-strip-primary strong {
+  font-size: 0.96rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .score-chip,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .score-chip {
+  padding: 5px 4px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .stock-score-summary,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .stock-score-summary,
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-metric-one-line,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-metric-one-line {
+  font-size: 0.54rem !important;
+  line-height: 1.35 !important;
+}
+
+
+/* Agent desktop narrow guard: keep tablet-width desktop layouts out of the
+   mobile drawer rules that also pivot at 640px. */
+@media (min-width: 641px) and (max-width: 980px) {
+  html.desktop-runtime .app[data-active-view="agent"] .agent-workspace,
+  html.desktop-runtime .app[data-active-view="agent"] .agent-workspace.rail-collapsed {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: auto minmax(0, 1fr) !important;
+  }
+
+  html.desktop-runtime .app[data-active-view="agent"] .agent-rail,
+  html.desktop-runtime .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail {
+    position: relative !important;
+    inset: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    display: grid !important;
+    grid-template-columns: auto minmax(0, 1fr) auto !important;
+    grid-template-areas:
+      "toggle brand actions"
+      "history history history" !important;
+    align-items: center !important;
+    justify-items: stretch !important;
+    gap: 10px 12px !important;
+    padding: 12px !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--line-soft) !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    transform: none !important;
+  }
+
+  html.desktop-runtime .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail {
+    grid-template-areas: "toggle brand actions" !important;
+  }
+
+  html.desktop-runtime .app[data-active-view="agent"] .agent-rail-brand,
+  html.desktop-runtime .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail-brand {
+    grid-area: brand !important;
+    display: flex !important;
+    min-width: 0 !important;
+  }
+
+  html.desktop-runtime .app[data-active-view="agent"] .agent-rail-brand div,
+  html.desktop-runtime .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail-brand div {
+    display: grid !important;
+  }
+
+  html.desktop-runtime .app[data-active-view="agent"] .agent-new-chat,
+  html.desktop-runtime .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-new-chat {
+    grid-area: actions !important;
+    width: auto !important;
+    min-width: 134px !important;
+    height: auto !important;
+    min-height: 36px !important;
+    padding: 0 14px !important;
+  }
+
+  html.desktop-runtime .app[data-active-view="agent"] .agent-new-chat-label,
+  html.desktop-runtime .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-new-chat-label {
+    display: inline !important;
+  }
+
+  html.desktop-runtime .app[data-active-view="agent"] .agent-rail-section {
+    grid-area: history !important;
+    display: grid !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  html.desktop-runtime .app[data-active-view="agent"] .agent-workspace.rail-collapsed .agent-rail-section {
+    display: none !important;
+  }
+
+  html.desktop-runtime .app[data-active-view="agent"] .agent-history-list {
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 6px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none !important;
+  }
+
+  html.desktop-runtime .app[data-active-view="agent"] .agent-history-list::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  html.desktop-runtime .app[data-active-view="agent"] .agent-history-item {
+    flex: 0 0 190px !important;
+    width: auto !important;
+    min-width: 0 !important;
+  }
+
+  html.desktop-runtime .app[data-active-view="agent"] .agent-rail-scrim,
+  html.desktop-runtime .app[data-active-view="agent"] .agent-mobile-actions {
+    display: none !important;
+  }
+}
+
+/* Screen mobile refresh bar readability override. */
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-mobile-toolbar-card,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mobile-toolbar-card {
+  padding: 3px 5px !important;
+  min-height: 28px !important;
+  overflow: hidden !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-mobile-toolbar-row,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mobile-toolbar-row {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 46px !important;
+  align-items: center !important;
+  gap: 5px !important;
+  min-height: 24px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-mobile-toolbar-main,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mobile-toolbar-main {
+  display: block !important;
+  min-width: 0 !important;
+  width: 100% !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-mobile-status-inline,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mobile-status-inline {
+  display: flex !important;
+  flex-flow: row nowrap !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  height: 24px !important;
+  min-height: 24px !important;
+  padding: 0 9px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: 8px !important;
+  background: color-mix(in srgb, var(--surface-2) 82%, transparent) !important;
+  overflow: hidden !important;
+  white-space: nowrap !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-mobile-status-inline strong,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mobile-status-inline strong,
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-mobile-status-inline span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mobile-status-inline span {
+  display: inline-block !important;
+  flex: 0 1 auto !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  font-size: 0.54rem !important;
+  line-height: 1 !important;
+  text-align: center !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-mobile-status-inline span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mobile-status-inline span {
+  flex: 0 0 auto !important;
+  color: rgba(148, 163, 184, 0.55) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-mobile-status-inline .refresh-date-value,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mobile-status-inline .refresh-date-value {
+  color: var(--accent) !important;
+  font-variant-numeric: tabular-nums !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .screen-mobile-refresh-btn,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .screen-mobile-refresh-btn {
+  width: 46px !important;
+  min-width: 46px !important;
+  min-height: 24px !important;
+  height: 24px !important;
+  padding: 0 6px !important;
+  font-size: 0.54rem !important;
+  letter-spacing: 0 !important;
+}
+/* End screen mobile refresh bar readability override. */
+
+/* Observe K-line market board: single 75vh chart area with 日K/周K/月K only. */
+.app[data-active-view="observe"] .observe-chart-card {
+  padding: 0;
+  overflow: hidden;
+  background: #101010;
+  border-color: rgba(255, 255, 255, 0.10);
+}
+
+.app[data-active-view="observe"] .observe-chart-card > header {
+  display: none;
+}
+
+.kline-market-workspace {
+  display: block;
+  width: 100%;
+  min-height: min(760px, 75svh);
+  margin: 0;
+  padding: 0;
+  background: #101010;
+}
+
+.kline-market-chart {
+  min-height: min(760px, 75svh);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: #101010;
+}
+
+.kline-market-header {
+  min-height: 58px;
+  display: grid !important;
+  grid-template-columns: minmax(190px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+  background: #101010;
+}
+
+.kline-market-header .kline-period-tabs {
+  width: min(340px, 100%);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.kline-market-header .kline-period-tabs button {
+  position: relative;
+  min-width: 0;
+  height: 58px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(245, 247, 250, 0.72);
+  font-size: 1rem;
+  font-weight: 850;
+  letter-spacing: 0;
+}
+
+.kline-market-header .kline-period-tabs button.active {
+  color: #f5f7fa;
+  background: transparent;
+}
+
+.kline-market-header .kline-period-tabs button.active::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 32px;
+  height: 4px;
+  border-radius: 999px;
+  background: #ef3340;
+  transform: translateX(-50%);
+}
+
+.kline-market-header .kline-legend {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  color: #f5f7fa;
+  font-size: 0.88rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.kline-market-header .kline-legend .ma-5 { color: #f5f7fa; }
+.kline-market-header .kline-legend .ma-10 { color: #f7b500; }
+.kline-market-header .kline-legend .ma-20 { color: #ff2ebd; }
+.kline-market-header .kline-legend .ma-30 { color: #009b73; }
+
+.kline-market-plot {
+  flex: 1 1 auto;
+  display: block;
+  width: 100%;
+  height: calc(min(760px, 75svh) - 96px);
+  min-height: 420px;
+  background: #101010;
+  color: #f5f7fa;
+}
+
+.kline-plot-bg {
+  fill: #101010;
+}
+
+.kline-grid-line,
+.kline-section-border,
+.trend-grid-line {
+  stroke: rgba(255, 255, 255, 0.10);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.kline-current-line {
+  stroke: rgba(255, 213, 102, 0.82);
+  stroke-width: 1;
+  stroke-dasharray: 4 5;
+  vector-effect: non-scaling-stroke;
+}
+
+.kline-axis-label,
+.kline-subpanel-title {
+  fill: rgba(245, 247, 250, 0.70);
+  font-size: 17px;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+
+.kline-subpanel-title {
+  font-size: 15px;
+}
+
+.kline-up,
+.kline-macd-layer .macd-up {
+  color: #ff4036;
+}
+
+.kline-down,
+.kline-macd-layer .macd-down {
+  color: #26ad34;
+}
+
+.kline-wick {
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+}
+
+.kline-body {
+  rx: 0.7px;
+}
+
+.kline-market-chart polyline {
+  stroke-width: 2.1;
+  vector-effect: non-scaling-stroke;
+}
+
+.kline-market-chart .ma-5 { color: #f5f7fa; stroke: #f5f7fa; }
+.kline-market-chart .ma-10 { color: #f7b500; stroke: #f7b500; }
+.kline-market-chart .ma-20 { color: #ff2ebd; stroke: #ff2ebd; }
+.kline-market-chart .ma-30 { color: #009b73; stroke: #009b73; }
+.kline-market-chart .line-dif { color: #d9dde4; stroke: #d9dde4; }
+.kline-market-chart .line-dea { color: #ff6b2f; stroke: #ff6b2f; }
+.kline-market-chart .line-rsi6 { color: #d9dde4; stroke: #d9dde4; }
+.kline-market-chart .line-rsi12 { color: #ff6b2f; stroke: #ff6b2f; }
+.kline-market-chart .line-rsi24 { color: #ff66a8; stroke: #ff66a8; }
+
+.kline-market-chart .macd-bar {
+  opacity: 0.96;
+}
+
+.kline-market-chart .chart-labels,
+.kline-market-chart .kline-stats {
+  flex: 0 0 auto;
+  padding: 0 12px;
+  background: #101010;
+  color: rgba(245, 247, 250, 0.66);
+  font-variant-numeric: tabular-nums;
+}
+
+.kline-market-chart .chart-labels {
+  min-height: 26px;
+  align-items: center;
+  font-size: 0.84rem;
+}
+
+.kline-market-chart .kline-stats {
+  min-height: 38px;
+  align-items: center;
+  margin: 0;
+  font-size: 0.78rem;
+}
+
+.kline-empty-state {
+  display: grid;
+  place-items: center;
+  flex: 1 1 auto;
+  min-height: 420px;
+  color: rgba(245, 247, 250, 0.62);
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .observe-chart-card,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .observe-chart-card {
+  padding: 0 !important;
+  border-radius: 0 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .kline-market-workspace,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .kline-market-workspace,
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .kline-market-chart,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .kline-market-chart {
+  min-height: 75svh !important;
+  height: 75svh !important;
+  max-height: 75svh !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .kline-market-header,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .kline-market-header {
+  min-height: 46px !important;
+  height: 46px !important;
+  grid-template-columns: minmax(132px, auto) minmax(0, 1fr) !important;
+  gap: 6px !important;
+  padding: 0 7px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .kline-market-header .kline-period-tabs,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .kline-market-header .kline-period-tabs {
+  width: 132px !important;
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 0 !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .kline-market-header .kline-period-tabs button,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .kline-market-header .kline-period-tabs button {
+  height: 46px !important;
+  min-height: 46px !important;
+  padding: 0 2px !important;
+  font-size: 0.72rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .kline-market-header .kline-period-tabs button.active::after,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .kline-market-header .kline-period-tabs button.active::after {
+  width: 24px !important;
+  height: 3px !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .kline-market-header .kline-legend,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .kline-market-header .kline-legend {
+  gap: 7px !important;
+  font-size: 0.58rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .kline-market-plot,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .kline-market-plot {
+  height: calc(75svh - 84px) !important;
+  min-height: 0 !important;
+  max-height: calc(75svh - 84px) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .kline-market-chart .chart-labels,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .kline-market-chart .chart-labels {
+  min-height: 20px !important;
+  height: 20px !important;
+  padding: 0 7px !important;
+  font-size: 0.52rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .kline-market-chart .kline-stats,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .kline-market-chart .kline-stats {
+  min-height: 18px !important;
+  height: 18px !important;
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  gap: 6px !important;
+  overflow: hidden !important;
+  padding: 0 7px !important;
+  font-size: 0.5rem !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .kline-axis-label,
+html.mobile-tauri.android-phone .app[data-active-view="observe"] .kline-subpanel-title,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .kline-axis-label,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="observe"] .kline-subpanel-title {
+  font-size: 12px !important;
+}
+
+/* Desktop observe K-line terminal layout, separate from the mobile 75svh board. */
+html:not(.mobile-tauri) .app[data-active-view="observe"] .observe-chart-card {
+  border-radius: 0;
+  background: #0f121a;
+  border-color: #252b38;
+  box-shadow: none;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-workspace,
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart {
+  min-height: 760px;
+  height: min(840px, calc(100vh - 126px));
+  max-height: none;
+  background: #0f121a;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart {
+  border: 1px solid #252b38;
+  overflow: hidden;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-header {
+  min-height: 40px;
+  height: 40px;
+  grid-template-columns: auto minmax(220px, 1fr) auto;
+  grid-template-areas:
+    "period tools tools"
+    "legend legend legend";
+  gap: 0 10px;
+  padding: 0 4px;
+  border-bottom: 1px solid #252b38;
+  background: #202434;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-header .kline-period-tabs {
+  grid-area: period;
+  width: auto;
+  display: inline-flex;
+  align-self: start;
+  height: 20px;
+  gap: 1px;
+  padding: 0;
+  background: transparent;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-header .kline-period-tabs button {
+  height: 20px;
+  min-height: 20px;
+  min-width: 40px;
+  padding: 0 9px;
+  border: 1px solid #30384a;
+  border-radius: 0;
+  background: #171c2a;
+  color: #b6becf;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-header .kline-period-tabs button.active {
+  background: #21324a;
+  border-color: #4b6f96;
+  color: #ffffff;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-header .kline-period-tabs button.active::after {
+  display: none;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-desktop-tools {
+  grid-area: tools;
+  align-self: start;
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  height: 20px;
+  color: #c5cad6;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-header .kline-legend {
+  grid-area: legend;
+  justify-self: stretch;
+  justify-content: flex-start;
+  height: 20px;
+  gap: 10px;
+  padding-left: 2px;
+  color: #cbd3e1;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 20px;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-plot {
+  flex: 1 1 auto;
+  height: calc(100% - 66px);
+  min-height: 650px;
+  background: #0f121a;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-plot-bg {
+  fill: #0f121a;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-grid-line,
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-section-border,
+html:not(.mobile-tauri) .app[data-active-view="observe"] .trend-grid-line {
+  stroke: #242b38;
+  stroke-width: 1;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-section-border {
+  stroke: #202634;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-current-line {
+  stroke: rgba(248, 207, 72, 0.58);
+  stroke-dasharray: 3 5;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-axis-label {
+  fill: #ff3347;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-axis-label.left {
+  text-anchor: start;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-axis-label.right {
+  text-anchor: end;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-subpanel-title {
+  fill: #aeb8c9;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-up,
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-macd-layer .macd-up {
+  color: #ff2532;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-down,
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-macd-layer .macd-down {
+  color: #03c6d7;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-wick {
+  stroke-width: 1.2;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-body {
+  rx: 0;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart polyline {
+  stroke-width: 1.35;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart .ma-5 { color: #e7e9ef; stroke: #e7e9ef; }
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart .ma-10 { color: #f4d313; stroke: #f4d313; }
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart .ma-20 { color: #ff35b7; stroke: #ff35b7; }
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart .ma-30 { color: #00bd67; stroke: #00bd67; }
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart .ma-60 { color: #1b9af7; stroke: #1b9af7; }
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart .line-dif { color: #d6d9df; stroke: #d6d9df; }
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart .line-dea { color: #f4d313; stroke: #f4d313; }
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart .line-dma { color: #d6d9df; stroke: #d6d9df; }
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart .line-ama { color: #f4d313; stroke: #f4d313; }
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart .line-mtm { color: #f4d313; stroke: #f4d313; }
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart .line-mamtm { color: #1b9af7; stroke: #1b9af7; }
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart .line-k { color: #f4d313; stroke: #f4d313; }
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart .line-d { color: #1b9af7; stroke: #1b9af7; }
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart .line-j { color: #e975bc; stroke: #e975bc; }
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart .chart-labels {
+  min-height: 20px;
+  height: 20px;
+  padding: 0 52px;
+  border-top: 1px solid #202634;
+  color: #9ca8ba;
+  font-size: 12px;
+}
+
+html:not(.mobile-tauri) .app[data-active-view="observe"] .kline-market-chart .kline-stats {
+  min-height: 0;
+  height: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+}
+
+html.mobile-tauri .app[data-active-view="observe"] .kline-desktop-tools {
+  display: none !important;
+}
+
+html.mobile-tauri .app[data-active-view="observe"] .kline-market-header {
+  grid-template-areas: none !important;
+}
+/* Android custom screen checkboxes: keep option text visible beside the checkbox. */
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .criteria-toggle-row label,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .criteria-toggle-row label {
+  display: grid !important;
+  grid-template-columns: 18px minmax(0, 1fr) !important;
+  align-items: center !important;
+  justify-items: start !important;
+  gap: 7px !important;
+  min-height: 34px !important;
+  padding: 6px 8px !important;
+  color: var(--text) !important;
+  text-align: left !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .criteria-toggle-row input[type="checkbox"],
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .criteria-toggle-row input[type="checkbox"] {
+  grid-column: 1 !important;
+  width: 16px !important;
+  min-width: 16px !important;
+  max-width: 16px !important;
+  height: 16px !important;
+  min-height: 16px !important;
+  max-height: 16px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  justify-self: center !important;
+  accent-color: var(--accent) !important;
+}
+
+html.mobile-tauri.android-phone .app[data-active-view="screen"] .criteria-toggle-row span,
+html.mobile-tauri.android-bottom-nav .app[data-active-view="screen"] .criteria-toggle-row span {
+  grid-column: 2 !important;
+  display: block !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  color: var(--text) !important;
+  font-size: 0.62rem !important;
+  font-weight: 750 !important;
+  line-height: 1.15 !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
 }

@@ -54,10 +54,12 @@ const THS_FINANCIAL_ENDPOINT: &str =
     "https://basic.10jqka.com.cn/basicapi/finance/index/v1/app_data/";
 const SINA_FINANCIAL_GUIDELINE_ENDPOINT: &str =
     "https://money.finance.sina.com.cn/corp/go.php/vFD_FinancialGuideLine";
-const DEDUCTED_FINANCIAL_FIELDS: [&str; 3] = [
+const SCREEN_STOCK_FINANCIAL_FIELDS: [&str; 5] = [
     "deducted_net_profit_billion",
     "deducted_net_profit_margin",
     "deducted_net_profit_growth_rate",
+    "latest_eps",
+    "latest_bps",
 ];
 
 static REFRESH_SEED_CACHE: OnceLock<Mutex<HashMap<PathBuf, Value>>> = OnceLock::new();
@@ -2226,7 +2228,7 @@ fn enriched_stock_maps(
             row.insert("code".to_string(), json!(code));
             row
         });
-        for field in DEDUCTED_FINANCIAL_FIELDS {
+        for field in SCREEN_STOCK_FINANCIAL_FIELDS {
             if finite_object_number(target, field).is_some() {
                 continue;
             }

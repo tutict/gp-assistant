@@ -33,6 +33,7 @@ const criteria: FilterCriteria = {
   resultLimit: 10,
   sortBy: "score",
   sortDir: "desc",
+  scoreProfile: "balanced",
 };
 
 describe("LLM settings persistence", () => {
@@ -133,7 +134,7 @@ describe("contract payload builders", () => {
       limit: 10,
       sort_by: "score",
       sort_dir: "desc",
-      score_profile: "rotation",
+      score_profile: "balanced",
     });
   });
 

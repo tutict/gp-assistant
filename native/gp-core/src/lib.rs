@@ -1,4 +1,4 @@
-﻿use std::{
+use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt,
 };
@@ -56,6 +56,8 @@ pub struct StockItem {
     #[serde(default)]
     pub dividend_yield: Option<f64>,
     #[serde(default)]
+    pub latest_eps: Option<f64>,
+    #[serde(default)]
     pub deducted_net_profit_billion: Option<f64>,
     #[serde(default)]
     pub deducted_net_profit_margin: Option<f64>,
@@ -88,6 +90,7 @@ impl Default for StockItem {
             roe: None,
             market_cap_billion: None,
             dividend_yield: None,
+            latest_eps: None,
             deducted_net_profit_billion: None,
             deducted_net_profit_margin: None,
             deducted_net_profit_growth_rate: None,
@@ -157,9 +160,25 @@ pub struct ScreenedStock {
     pub score: f64,
     pub reasons: Vec<String>,
     #[serde(default)]
+    pub quality_score: f64,
+    #[serde(default)]
+    pub trend_score: f64,
+    #[serde(default)]
+    pub risk_score: f64,
+    #[serde(default)]
+    pub balanced_score: f64,
+    #[serde(default)]
     pub factor_scores: BTreeMap<String, f64>,
     #[serde(default)]
+    pub score_breakdown: Vec<ScoreContribution>,
+    #[serde(default)]
     pub score_explanation: String,
+    #[serde(default)]
+    pub reason_tags: Vec<String>,
+    #[serde(default)]
+    pub risk_tags: Vec<String>,
+    #[serde(default)]
+    pub suitable_periods: Vec<String>,
     #[serde(default)]
     pub concept: Option<String>,
     #[serde(default)]
@@ -1268,7 +1287,7 @@ fn default_sort_dir() -> String {
 }
 
 fn default_score_profile() -> String {
-    "quality".to_string()
+    "balanced".to_string()
 }
 
 fn default_relation_weight() -> f64 {
@@ -4609,6 +4628,7 @@ pub fn screen_stocks(universe: &[StockItem], criteria: &ScreenCriteria) -> Scree
         screened.push(score_stock(stock, &reasons, &criteria.score_profile));
     }
 
+    apply_industry_relative_scores(&mut screened, &criteria.score_profile);
     sort_screened(&mut screened, criteria);
 
     let limit = criteria.limit.clamp(1, 200);
@@ -5194,216 +5214,289 @@ const THEME_RULES: [(&str, &str, f64, &[&str]); 7] = [
         ],
     ),
 ];
-const CONCEPT_GROUP_RULES: [(&str, &[&str]); 15] = [
+const CONCEPT_GROUP_RULES: [(&str, &[&str]); 20] = [
     (
-        "\u{534a}\u{5bfc}\u{4f53}\u{6676}\u{5706}",
+        "半导体设计",
         &[
-            "\u{534a}\u{5bfc}\u{4f53}\u{6676}\u{5706}",
-            "\u{6676}\u{5706}",
-            "\u{6676}\u{5706}\u{4ee3}\u{5de5}",
-            "\u{6676}\u{5706}\u{5236}\u{9020}",
-            "\u{6676}\u{5706}\u{5382}",
-            "\u{7845}\u{6676}\u{5706}",
-            "\u{7845}\u{7247}",
-            "\u{5916}\u{5ef6}\u{7247}",
-            "\u{5916}\u{5ef6}\u{7845}\u{7247}",
-            "\u{534a}\u{5bfc}\u{4f53}\u{886c}\u{5e95}",
-            "\u{886c}\u{5e95}",
-            "\u{78b3}\u{5316}\u{7845}\u{886c}\u{5e95}",
-            "sic\u{886c}\u{5e95}",
-            "\u{629b}\u{5149}\u{7247}",
-            "8\u{82f1}\u{5bf8}",
-            "12\u{82f1}\u{5bf8}",
-        ],
-    ),
-    (
-        "AI\u{7b97}\u{529b}\u{4e0e}\u{82af}\u{7247}",
-        &[
-            "\u{534a}\u{5bfc}\u{4f53}",
-            "\u{82af}\u{7247}",
-            "\u{7b97}\u{529b}",
-            "\u{4eba}\u{5de5}\u{667a}\u{80fd}",
-            "ai",
-            "\u{5149}\u{6a21}\u{5757}",
-            "cpo",
-            "\u{670d}\u{52a1}\u{5668}",
-            "\u{6db2}\u{51b7}",
-            "gpu",
-            "hbm",
-            "\u{5b58}\u{50a8}",
-            "\u{6570}\u{636e}\u{4e2d}\u{5fc3}",
-            "\u{4e91}\u{8ba1}\u{7b97}",
-            "\u{5927}\u{6a21}\u{578b}",
-            "aigc",
-            "\u{8fb9}\u{7f18}\u{8ba1}\u{7b97}",
-            "pcb",
-            "\u{5c01}\u{88c5}",
-            "\u{5c01}\u{6d4b}",
-            "eda",
+            "半导体设计",
+            "芯片设计",
+            "集成电路设计",
+            "ic设计",
             "soc",
+            "mcu",
+            "模拟芯片",
+            "功率芯片",
+            "射频芯片",
+            "传感器芯片",
+            "eda",
         ],
     ),
     (
-        "\u{65b0}\u{6750}\u{6599}",
+        "半导体设备",
         &[
-            "\u{6c1f}\u{5316}\u{5de5}",
-            "\u{6c1f}\u{6750}\u{6599}",
-            "\u{9502}\u{7535}\u{6750}\u{6599}",
-            "\u{7535}\u{89e3}\u{6db2}",
-            "\u{516d}\u{6c1f}\u{78f7}\u{9178}\u{9502}",
-            "\u{65b0}\u{80fd}\u{6750}",
-            "\u{65b0}\u{6750}\u{6599}",
-            "\u{56fa}\u{6001}\u{7535}\u{6c60}",
-            "\u{78c1}\u{6750}",
+            "半导体设备",
+            "光刻机",
+            "刻蚀",
+            "薄膜沉积",
+            "离子注入",
+            "量测设备",
+            "检测设备",
+            "清洗设备",
+            "涂胶显影",
+            "测试设备",
+            "探针台",
+            "分选机",
         ],
     ),
     (
-        "\u{65b0}\u{80fd}\u{6e90}\u{4e0e}\u{50a8}\u{80fd}",
+        "半导体材料",
         &[
-            "\u{65b0}\u{80fd}\u{6e90}",
-            "\u{7535}\u{6c60}",
-            "\u{50a8}\u{80fd}",
-            "\u{5149}\u{4f0f}",
-            "\u{7535}\u{529b}",
-            "\u{80fd}\u{6e90}",
-            "\u{98ce}\u{7535}",
-            "\u{5145}\u{7535}\u{6869}",
+            "半导体材料",
+            "光刻胶",
+            "电子特气",
+            "湿电子化学品",
+            "靶材",
+            "抛光液",
+            "抛光垫",
+            "cmp",
+            "硅片",
+            "衬底",
+            "碳化硅",
+            "sic",
+            "氮化镓",
+            "gan",
         ],
     ),
     (
-        "\u{6e38}\u{620f}\u{4f20}\u{5a92}",
+        "半导体晶圆",
         &[
-            "\u{6e38}\u{620f}",
-            "\u{7f51}\u{7edc}\u{6e38}\u{620f}",
-            "\u{624b}\u{6e38}",
-            "\u{7535}\u{7ade}",
-            "\u{4e91}\u{6e38}\u{620f}",
-            "\u{4e92}\u{52a8}\u{5a31}\u{4e50}",
-            "\u{4f20}\u{5a92}",
-            "\u{5e7f}\u{544a}\u{8425}\u{9500}",
+            "半导体晶圆",
+            "晶圆",
+            "晶圆代工",
+            "晶圆制造",
+            "晶圆厂",
+            "硅晶圆",
+            "外延片",
+            "外延硅片",
+            "半导体衬底",
+            "碳化硅衬底",
+            "sic衬底",
+            "抛光片",
+            "8英寸",
+            "12英寸",
         ],
     ),
     (
-        "\u{673a}\u{5668}\u{4eba}\u{4e0e}\u{9ad8}\u{7aef}\u{5236}\u{9020}",
+        "半导体封测",
         &[
-            "\u{673a}\u{5668}\u{4eba}",
-            "\u{5de5}\u{4e1a}\u{6bcd}\u{673a}",
-            "\u{81ea}\u{52a8}\u{5316}",
-            "\u{9ad8}\u{7aef}\u{5236}\u{9020}",
-            "\u{667a}\u{80fd}\u{5236}\u{9020}",
-            "\u{673a}\u{68b0}\u{8bbe}\u{5907}",
+            "封测",
+            "封装测试",
+            "半导体封装",
+            "芯片封装",
+            "先进封装",
+            "测试服务",
+            "晶圆测试",
+            "chiplet",
+            "2.5d",
+            "3d封装",
+            "cowos",
         ],
     ),
     (
-        "\u{6d88}\u{8d39}\u{96f6}\u{552e}",
+        "存储芯片",
         &[
-            "\u{98df}\u{54c1}",
-            "\u{996e}\u{6599}",
-            "\u{767d}\u{9152}",
-            "\u{4f11}\u{95f2}\u{98df}\u{54c1}",
-            "\u{4e00}\u{822c}\u{96f6}\u{552e}",
-            "\u{5546}\u{8d38}\u{96f6}\u{552e}",
-            "\u{5bb6}\u{7535}",
-            "\u{65c5}\u{6e38}",
-            "\u{9152}\u{5e97}",
-            "\u{9910}\u{996e}",
+            "存储芯片",
+            "存储器",
+            "dram",
+            "nand",
+            "nor flash",
+            "hbm",
+            "固态硬盘",
+            "ssd",
+            "闪存",
+            "内存",
         ],
     ),
     (
-        "\u{533b}\u{836f}\u{533b}\u{7597}",
+        "AI算力与芯片",
         &[
-            "\u{533b}\u{836f}",
-            "\u{533b}\u{7597}",
-            "\u{751f}\u{7269}\u{5236}\u{54c1}",
-            "\u{521b}\u{65b0}\u{836f}",
-            "\u{4e2d}\u{836f}",
-            "\u{5316}\u{5b66}\u{5236}\u{836f}",
-            "\u{533b}\u{7597}\u{5668}\u{68b0}",
+            "算力",
+            "人工智能",
+            "ai",
+            "光模块",
+            "cpo",
+            "服务器",
+            "液冷",
+            "gpu",
+            "数据中心",
+            "云计算",
+            "大模型",
+            "aigc",
+            "边缘计算",
+            "pcb",
+        ],
+    ),
+    (
+        "新材料",
+        &[
+            "氟化工",
+            "氟材料",
+            "锂电材料",
+            "电解液",
+            "六氟磷酸锂",
+            "新能材",
+            "新材料",
+            "固态电池",
+            "磁材",
+        ],
+    ),
+    (
+        "新能源与储能",
+        &[
+            "新能源",
+            "电池",
+            "储能",
+            "光伏",
+            "电力",
+            "能源",
+            "风电",
+            "充电桩",
+        ],
+    ),
+    (
+        "游戏传媒",
+        &[
+            "游戏",
+            "网络游戏",
+            "手游",
+            "电竞",
+            "云游戏",
+            "互动娱乐",
+            "传媒",
+            "广告营销",
+        ],
+    ),
+    (
+        "机器人与高端制造",
+        &[
+            "机器人",
+            "工业母机",
+            "自动化",
+            "高端制造",
+            "智能制造",
+            "机械设备",
+        ],
+    ),
+    (
+        "消费零售",
+        &[
+            "食品",
+            "饮料",
+            "白酒",
+            "休闲食品",
+            "一般零售",
+            "商贸零售",
+            "家电",
+            "旅游",
+            "酒店",
+            "餐饮",
+        ],
+    ),
+    (
+        "医药医疗",
+        &[
+            "医药",
+            "医疗",
+            "生物制品",
+            "创新药",
+            "中药",
+            "化学制药",
+            "医疗器械",
             "cro",
         ],
     ),
     (
-        "\u{91d1}\u{878d}\u{5730}\u{4ea7}",
+        "金融地产",
         &[
-            "\u{94f6}\u{884c}",
-            "\u{8bc1}\u{5238}",
-            "\u{4fdd}\u{9669}",
-            "\u{623f}\u{5730}\u{4ea7}",
-            "\u{5730}\u{4ea7}",
-            "\u{7269}\u{4e1a}",
+            "银行",
+            "证券",
+            "保险",
+            "房地产",
+            "地产",
+            "物业",
         ],
     ),
     (
-        "\u{57fa}\u{5efa}\u{5efa}\u{7b51}",
+        "基建建筑",
         &[
-            "\u{5efa}\u{7b51}",
-            "\u{623f}\u{5c4b}\u{5efa}\u{8bbe}",
-            "\u{5de5}\u{7a0b}\u{5efa}\u{8bbe}",
-            "\u{57fa}\u{7840}\u{5efa}\u{8bbe}",
-            "\u{6c34}\u{6ce5}",
-            "\u{94c1}\u{8def}",
-            "\u{516c}\u{8def}",
-            "\u{88c5}\u{4fee}\u{88c5}\u{9970}",
+            "建筑",
+            "房屋建设",
+            "工程建设",
+            "基础建设",
+            "水泥",
+            "铁路",
+            "公路",
+            "装修装饰",
         ],
     ),
     (
-        "\u{5468}\u{671f}\u{8d44}\u{6e90}",
+        "周期资源",
         &[
-            "\u{7164}\u{70ad}",
-            "\u{94a2}\u{94c1}",
-            "\u{666e}\u{94a2}",
-            "\u{6709}\u{8272}",
-            "\u{91d1}\u{5c5e}",
-            "\u{5316}\u{5de5}",
-            "\u{77f3}\u{6cb9}",
-            "\u{6cb9}\u{6c14}",
-            "\u{77ff}\u{4e1a}",
+            "煤炭",
+            "钢铁",
+            "普钢",
+            "有色",
+            "金属",
+            "化工",
+            "石油",
+            "油气",
+            "矿业",
         ],
     ),
     (
-        "\u{6c7d}\u{8f66}\u{4ea7}\u{4e1a}\u{94fe}",
+        "汽车产业链",
         &[
-            "\u{6c7d}\u{8f66}",
-            "\u{6574}\u{8f66}",
-            "\u{96f6}\u{90e8}\u{4ef6}",
-            "\u{8f6e}\u{80ce}",
-            "\u{667a}\u{80fd}\u{9a7e}\u{9a76}",
-            "\u{65e0}\u{4eba}\u{9a7e}\u{9a76}",
-            "\u{6c7d}\u{8f66}\u{670d}\u{52a1}",
+            "汽车",
+            "整车",
+            "零部件",
+            "轮胎",
+            "智能驾驶",
+            "无人驾驶",
+            "汽车服务",
         ],
     ),
     (
-        "\u{519b}\u{5de5}\u{822a}\u{5929}",
+        "军工航天",
         &[
-            "\u{519b}\u{5de5}",
-            "\u{822a}\u{5929}",
-            "\u{822a}\u{7a7a}",
-            "\u{536b}\u{661f}",
-            "\u{8239}\u{8236}",
-            "\u{65e0}\u{4eba}\u{673a}",
-            "\u{56fd}\u{9632}",
+            "军工",
+            "航天",
+            "航空",
+            "卫星",
+            "船舶",
+            "无人机",
+            "国防",
         ],
     ),
     (
-        "\u{4ea4}\u{8fd0}\u{7269}\u{6d41}",
+        "交运物流",
         &[
-            "\u{7269}\u{6d41}",
-            "\u{822a}\u{8fd0}",
-            "\u{6e2f}\u{53e3}",
-            "\u{673a}\u{573a}",
-            "\u{822a}\u{7a7a}\u{8fd0}\u{8f93}",
-            "\u{94c1}\u{8def}\u{8fd0}\u{8f93}",
-            "\u{5feb}\u{9012}",
+            "物流",
+            "航运",
+            "港口",
+            "机场",
+            "航空运输",
+            "铁路运输",
+            "快递",
         ],
     ),
     (
-        "\u{516c}\u{7528}\u{73af}\u{4fdd}",
+        "公用环保",
         &[
-            "\u{73af}\u{4fdd}",
-            "\u{6c34}\u{52a1}",
-            "\u{71c3}\u{6c14}",
-            "\u{4f9b}\u{70ed}",
-            "\u{516c}\u{7528}\u{4e8b}\u{4e1a}",
+            "环保",
+            "水务",
+            "燃气",
+            "供热",
+            "公用事业",
         ],
     ),
 ];
@@ -5422,34 +5515,71 @@ const COLD_SECTOR_KEYWORDS: [&str; 9] = [
 fn score_stock(stock: &StockItem, reasons: &[String], score_profile: &str) -> ScreenedStock {
     let theme = theme_match_for_stock(stock);
     let cold = is_cold_sector(&stock.industry);
-    let mut factor_scores = BTreeMap::from([
-        (
-            "theme".to_string(),
-            theme.as_ref().map(|(_, _, score)| *score).unwrap_or(0.35),
-        ),
-        ("fundamental".to_string(), fundamental_score(stock)),
-        ("valuation".to_string(), valuation_score(stock)),
-        ("size".to_string(), size_score(stock)),
-        ("risk".to_string(), risk_score(stock, cold)),
+    let theme_score = theme.as_ref().map(|(_, _, score)| *score).unwrap_or(0.35);
+    let fundamental = fundamental_score(stock);
+    let valuation = valuation_score(stock);
+    let size = size_score(stock);
+    let risk = risk_score(stock, cold);
+    let market_heat = market_heat_score(stock);
+    let overheat_penalty = overheat_penalty_score(stock);
+
+    let scoring_factors = BTreeMap::from([
+        ("theme".to_string(), theme_score),
+        ("fundamental".to_string(), fundamental),
+        ("valuation".to_string(), valuation),
+        ("size".to_string(), size),
+        ("risk".to_string(), risk),
+        ("market_heat".to_string(), market_heat),
+        ("overheat_penalty".to_string(), overheat_penalty),
     ]);
-    if is_rotation_score_profile(score_profile) {
-        factor_scores.insert("market_heat".to_string(), market_heat_score(stock));
+
+    let quality_score = profile_score(&scoring_factors, "quality");
+    let trend_score = profile_score(&scoring_factors, "trend");
+    let balanced_score = profile_score(&scoring_factors, "balanced");
+    let selected_score = profile_score(&scoring_factors, score_profile);
+    let score = (selected_score * SCREEN_SCORE_SCALE).clamp(0.0, SCREEN_SCORE_SCALE);
+
+    let mut public_factors = BTreeMap::from([
+        ("theme".to_string(), theme_score),
+        ("fundamental".to_string(), fundamental),
+        ("valuation".to_string(), valuation),
+        ("size".to_string(), size),
+        ("risk".to_string(), risk),
+        ("quality_score".to_string(), quality_score),
+        ("trend_score".to_string(), trend_score),
+        ("balanced_score".to_string(), balanced_score),
+    ]);
+    if uses_market_heat_score_profile(score_profile) {
+        public_factors.insert("market_heat".to_string(), market_heat);
+        public_factors.insert("overheat_penalty".to_string(), overheat_penalty);
     }
-    let weighted = weighted_score(&factor_scores, score_profile);
-    let score = (weighted * SCREEN_SCORE_SCALE).clamp(0.0, SCREEN_SCORE_SCALE);
+
     let mut all_reasons = reasons.to_vec();
-    all_reasons.extend(factor_reasons(theme.as_ref(), cold, &factor_scores));
-    let score_explanation = explain_score(stock, theme.as_ref(), cold, &factor_scores);
-    let rounded_scores = factor_scores
+    all_reasons.extend(factor_reasons(theme.as_ref(), cold, &scoring_factors));
+    let reason_tags = build_reason_tags(theme.as_ref(), &scoring_factors);
+    let risk_tags = build_risk_tags(stock, cold, &scoring_factors);
+    let suitable_periods = suitable_periods_for_scores(quality_score, trend_score, risk);
+    let score_breakdown = profile_score_breakdown(score_profile, &scoring_factors);
+    let score_explanation = explain_score(stock, theme.as_ref(), cold, &scoring_factors);
+    let rounded_scores = public_factors
         .into_iter()
-        .map(|(key, value)| (key, (value * 10_000.0).round() / 10_000.0))
+        .map(|(key, value)| (key, round6(value)))
         .collect();
+
     ScreenedStock {
         stock: stock.clone(),
-        score: (score * 1_000_000.0).round() / 1_000_000.0,
+        score: round6(score),
         reasons: all_reasons,
+        quality_score: round6(quality_score * SCREEN_SCORE_SCALE),
+        trend_score: round6(trend_score * SCREEN_SCORE_SCALE),
+        risk_score: round6(risk * SCREEN_SCORE_SCALE),
+        balanced_score: round6(balanced_score * SCREEN_SCORE_SCALE),
         factor_scores: rounded_scores,
+        score_breakdown,
         score_explanation,
+        reason_tags,
+        risk_tags,
+        suitable_periods,
         concept: Some(concept_group_for_stock(stock)),
         theme_category: theme.map(|(key, _, _)| key.to_string()),
     }
@@ -5534,25 +5664,65 @@ fn risk_score(stock: &StockItem, cold: bool) -> f64 {
     }
 }
 
-fn is_rotation_score_profile(score_profile: &str) -> bool {
-    score_profile.trim().eq_ignore_ascii_case("rotation")
+fn normalized_score_profile(score_profile: &str) -> &'static str {
+    match score_profile.trim().to_ascii_lowercase().as_str() {
+        "rotation" => "rotation",
+        "trend" | "trend_swing" => "trend",
+        "quality" => "quality",
+        _ => "balanced",
+    }
 }
 
-fn weighted_score(factor_scores: &BTreeMap<String, f64>, score_profile: &str) -> f64 {
-    if is_rotation_score_profile(score_profile) {
-        factor_scores.get("theme").copied().unwrap_or(0.35) * 0.20
-            + factor_scores.get("fundamental").copied().unwrap_or(0.5) * 0.20
-            + factor_scores.get("valuation").copied().unwrap_or(0.5) * 0.20
-            + factor_scores.get("market_heat").copied().unwrap_or(0.5) * 0.22
-            + factor_scores.get("size").copied().unwrap_or(0.55) * 0.08
-            + factor_scores.get("risk").copied().unwrap_or(1.0) * 0.10
-    } else {
-        factor_scores.get("theme").copied().unwrap_or(0.35) * 0.24
-            + factor_scores.get("fundamental").copied().unwrap_or(0.5) * 0.24
-            + factor_scores.get("valuation").copied().unwrap_or(0.5) * 0.24
-            + factor_scores.get("size").copied().unwrap_or(0.55) * 0.14
-            + factor_scores.get("risk").copied().unwrap_or(1.0) * 0.14
-    }
+fn uses_market_heat_score_profile(score_profile: &str) -> bool {
+    matches!(normalized_score_profile(score_profile), "balanced" | "trend" | "rotation")
+}
+
+fn profile_score(factor_scores: &BTreeMap<String, f64>, score_profile: &str) -> f64 {
+    let theme = factor_scores.get("theme").copied().unwrap_or(0.35);
+    let fundamental = factor_scores.get("fundamental").copied().unwrap_or(0.5);
+    let valuation = factor_scores.get("valuation").copied().unwrap_or(0.5);
+    let size = factor_scores.get("size").copied().unwrap_or(0.55);
+    let risk = factor_scores.get("risk").copied().unwrap_or(1.0);
+    let market_heat = factor_scores.get("market_heat").copied().unwrap_or(0.5);
+    let overheat_penalty = factor_scores.get("overheat_penalty").copied().unwrap_or(0.0);
+
+    let raw = match normalized_score_profile(score_profile) {
+        "rotation" => {
+            theme * 0.18
+                + fundamental * 0.18
+                + valuation * 0.16
+                + market_heat * 0.22
+                + size * 0.08
+                + risk * 0.18
+                - overheat_penalty * 0.10
+        }
+        "trend" => {
+            theme * 0.16
+                + fundamental * 0.16
+                + valuation * 0.12
+                + market_heat * 0.30
+                + size * 0.08
+                + risk * 0.18
+                - overheat_penalty * 0.16
+        }
+        "quality" => {
+            theme * 0.12
+                + fundamental * 0.32
+                + valuation * 0.26
+                + size * 0.14
+                + risk * 0.16
+        }
+        _ => {
+            theme * 0.16
+                + fundamental * 0.26
+                + valuation * 0.20
+                + market_heat * 0.16
+                + size * 0.08
+                + risk * 0.22
+                - overheat_penalty * 0.08
+        }
+    };
+    raw.clamp(0.0, 1.0)
 }
 
 fn market_heat_score(stock: &StockItem) -> f64 {
@@ -5581,6 +5751,139 @@ fn market_heat_score(stock: &StockItem) -> f64 {
         .clamp(0.0, 1.0)
 }
 
+fn overheat_penalty_score(stock: &StockItem) -> f64 {
+    let change_pct = stock.change_pct.and_then(as_percent).unwrap_or(0.0);
+    let turnover = stock.turnover_rate.and_then(as_percent).unwrap_or(0.0);
+    let volume_ratio = stock.volume_ratio.unwrap_or(0.0);
+    let change_penalty = if change_pct > 7.0 { ((change_pct - 7.0) / 5.0).clamp(0.0, 1.0) } else { 0.0 };
+    let turnover_penalty = if turnover > 8.0 { ((turnover - 8.0) / 8.0).clamp(0.0, 1.0) } else { 0.0 };
+    let volume_penalty = if volume_ratio > 3.0 { ((volume_ratio - 3.0) / 2.0).clamp(0.0, 1.0) } else { 0.0 };
+    (change_penalty * 0.50 + turnover_penalty * 0.28 + volume_penalty * 0.22).clamp(0.0, 1.0)
+}
+
+fn profile_score_breakdown(score_profile: &str, factor_scores: &BTreeMap<String, f64>) -> Vec<ScoreContribution> {
+    let weights: &[(&str, &str, f64)] = match normalized_score_profile(score_profile) {
+        "quality" => &[
+            ("theme", "主题匹配", 0.12),
+            ("fundamental", "质量盈利", 0.32),
+            ("valuation", "估值安全", 0.26),
+            ("size", "规模流动性", 0.14),
+            ("risk", "风险控制", 0.16),
+        ],
+        "trend" => &[
+            ("theme", "主题匹配", 0.16),
+            ("fundamental", "质量底座", 0.16),
+            ("valuation", "估值约束", 0.12),
+            ("market_heat", "趋势热度", 0.30),
+            ("size", "规模流动性", 0.08),
+            ("risk", "风险控制", 0.18),
+            ("overheat_penalty", "过热惩罚", -0.16),
+        ],
+        "rotation" => &[
+            ("theme", "主题匹配", 0.18),
+            ("fundamental", "质量底座", 0.18),
+            ("valuation", "估值约束", 0.16),
+            ("market_heat", "轮动热度", 0.22),
+            ("size", "规模流动性", 0.08),
+            ("risk", "风险控制", 0.18),
+            ("overheat_penalty", "过热惩罚", -0.10),
+        ],
+        _ => &[
+            ("theme", "主题匹配", 0.16),
+            ("fundamental", "质量盈利", 0.26),
+            ("valuation", "估值安全", 0.20),
+            ("market_heat", "趋势热度", 0.16),
+            ("size", "规模流动性", 0.08),
+            ("risk", "风险控制", 0.22),
+            ("overheat_penalty", "过热惩罚", -0.08),
+        ],
+    };
+    weights
+        .iter()
+        .map(|(key, label, weight)| {
+            let value = factor_scores.get(*key).copied().unwrap_or(0.0).clamp(0.0, 1.0);
+            let contribution = value * weight * SCREEN_SCORE_SCALE;
+            let tone = if *weight < 0.0 {
+                if value >= 0.5 { "weak" } else { "neutral" }
+            } else if value >= 0.74 {
+                "strong"
+            } else if value >= 0.55 {
+                "positive"
+            } else if value <= 0.35 {
+                "weak"
+            } else {
+                "neutral"
+            };
+            ScoreContribution {
+                key: (*key).to_string(),
+                label: (*label).to_string(),
+                value: Some(round6(value * SCREEN_SCORE_SCALE)),
+                contribution: Some(round6(contribution)),
+                tone: tone.to_string(),
+            }
+        })
+        .collect()
+}
+
+fn build_reason_tags(
+    theme: Option<&(&'static str, &'static str, f64)>,
+    factor_scores: &BTreeMap<String, f64>,
+) -> Vec<String> {
+    let mut tags = Vec::new();
+    if let Some((_, label, _)) = theme {
+        tags.push(format!("主题:{label}"));
+    }
+    if factor_scores.get("fundamental").copied().unwrap_or(0.0) >= 0.72 {
+        tags.push("质量较强".to_string());
+    }
+    if factor_scores.get("valuation").copied().unwrap_or(0.0) >= 0.72 {
+        tags.push("估值有安全边际".to_string());
+    }
+    if factor_scores.get("market_heat").copied().unwrap_or(0.0) >= 0.72 {
+        tags.push("趋势热度较高".to_string());
+    }
+    if factor_scores.get("risk").copied().unwrap_or(0.0) >= 0.72 {
+        tags.push("风险约束通过".to_string());
+    }
+    tags
+}
+
+fn build_risk_tags(stock: &StockItem, cold: bool, factor_scores: &BTreeMap<String, f64>) -> Vec<String> {
+    let mut tags = Vec::new();
+    if stock.is_st {
+        tags.push("ST 风险".to_string());
+    }
+    if cold {
+        tags.push("低热度板块降权".to_string());
+    }
+    if factor_scores.get("valuation").copied().unwrap_or(0.0) <= 0.38 {
+        tags.push("估值偏高".to_string());
+    }
+    if factor_scores.get("fundamental").copied().unwrap_or(0.0) <= 0.38 {
+        tags.push("质量偏弱".to_string());
+    }
+    if factor_scores.get("overheat_penalty").copied().unwrap_or(0.0) >= 0.35 {
+        tags.push("短线过热".to_string());
+    }
+    if tags.is_empty() {
+        tags.push("未识别明确高风险".to_string());
+    }
+    tags
+}
+
+fn suitable_periods_for_scores(quality_score: f64, trend_score: f64, risk: f64) -> Vec<String> {
+    let mut periods = Vec::new();
+    if trend_score >= 0.62 && risk >= 0.5 {
+        periods.push("5-10日观察".to_string());
+    }
+    if quality_score >= 0.58 && risk >= 0.5 {
+        periods.push("20-60日观察".to_string());
+    }
+    if periods.is_empty() {
+        periods.push("仅观察验证".to_string());
+    }
+    periods
+}
 fn factor_reasons(
     theme: Option<&(&'static str, &'static str, f64)>,
     cold: bool,
@@ -5805,6 +6108,96 @@ fn promote_hot_sector_items(
     promoted
 }
 
+fn apply_industry_relative_scores(screened: &mut [ScreenedStock], score_profile: &str) {
+    if screened.len() < 3 {
+        return;
+    }
+
+    let quality_values = industry_percentiles(screened, "fundamental");
+    let valuation_values = industry_percentiles(screened, "valuation");
+    let profile = normalized_score_profile(score_profile);
+
+    for item in screened.iter_mut() {
+        let quality_pct = quality_values.get(&item.stock.code).copied().unwrap_or(0.5);
+        let valuation_pct = valuation_values.get(&item.stock.code).copied().unwrap_or(0.5);
+        let relative_score = ((quality_pct + valuation_pct) / 2.0).clamp(0.0, 1.0);
+        let old_quality = item.quality_score;
+        let old_balanced = item.balanced_score;
+        item.quality_score = round6((old_quality * 0.82 + relative_score * SCREEN_SCORE_SCALE * 0.18).clamp(0.0, SCREEN_SCORE_SCALE));
+        item.balanced_score = round6((old_balanced * 0.88 + relative_score * SCREEN_SCORE_SCALE * 0.12).clamp(0.0, SCREEN_SCORE_SCALE));
+        item.factor_scores.insert("industry_quality_pct".to_string(), round6(quality_pct));
+        item.factor_scores.insert("industry_valuation_pct".to_string(), round6(valuation_pct));
+        item.factor_scores.insert("industry_relative_score".to_string(), round6(relative_score));
+        item.reason_tags.push("行业内相对评分".to_string());
+
+        item.score = match profile {
+            "quality" => item.quality_score,
+            "balanced" => item.balanced_score,
+            _ => item.score,
+        };
+    }
+}
+
+fn industry_percentiles(screened: &[ScreenedStock], factor_key: &str) -> HashMap<String, f64> {
+    let mut by_industry: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+    for item in screened {
+        let industry = if item.stock.industry.trim().is_empty() {
+            "__unknown__"
+        } else {
+            item.stock.industry.trim()
+        };
+        by_industry
+            .entry(industry.to_string())
+            .or_default()
+            .push((item.stock.code.clone(), item.factor_scores.get(factor_key).copied().unwrap_or(0.5)));
+    }
+
+    let mut result = HashMap::new();
+    for values in by_industry.values_mut() {
+        values.sort_by(|left, right| left.1.total_cmp(&right.1).then_with(|| left.0.cmp(&right.0)));
+        let denom = (values.len().saturating_sub(1)).max(1) as f64;
+        for (rank, (code, _)) in values.iter().enumerate() {
+            result.insert(code.clone(), rank as f64 / denom);
+        }
+    }
+    result
+}
+
+fn diversify_by_industry(screened: &[ScreenedStock], limit: usize) -> Vec<ScreenedStock> {
+    if limit == 0 || screened.len() <= 3 {
+        return screened.iter().take(limit).cloned().collect();
+    }
+    let per_industry_limit = ((limit as f64) * 0.45).ceil().max(2.0) as usize;
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut selected = Vec::new();
+    let mut deferred = Vec::new();
+
+    for item in screened {
+        let industry = if item.stock.industry.trim().is_empty() {
+            "__unknown__".to_string()
+        } else {
+            item.stock.industry.trim().to_string()
+        };
+        let count = counts.get(&industry).copied().unwrap_or(0);
+        if count < per_industry_limit {
+            counts.insert(industry, count + 1);
+            selected.push(item.clone());
+        } else {
+            deferred.push(item.clone());
+        }
+        if selected.len() >= limit {
+            return selected;
+        }
+    }
+
+    for item in deferred {
+        selected.push(item);
+        if selected.len() >= limit {
+            break;
+        }
+    }
+    selected
+}
 fn sort_screened(screened: &mut [ScreenedStock], criteria: &ScreenCriteria) {
     let sort_by = criteria.sort_by.trim().to_ascii_lowercase();
     let ascending = criteria.sort_dir.trim().eq_ignore_ascii_case("asc");
@@ -5833,8 +6226,17 @@ fn primary_screen_items(
     limit: usize,
 ) -> (Vec<ScreenedStock>, bool) {
     if !should_promote_hot_sectors(criteria) || limit == 0 {
-        let items = screened.iter().take(limit).cloned().collect::<Vec<_>>();
-        return (items, false);
+        let items = diversify_by_industry(screened, limit);
+        let changed = items
+            .iter()
+            .map(|item| item.stock.code.as_str())
+            .collect::<Vec<_>>()
+            != screened
+                .iter()
+                .take(limit)
+                .map(|item| item.stock.code.as_str())
+                .collect::<Vec<_>>();
+        return (items, changed);
     }
     let promoted = promote_hot_sector_items(screened, criteria, limit);
     let promoted_flag = promoted

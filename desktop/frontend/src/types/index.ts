@@ -7,6 +7,8 @@ export interface StockItem {
   pct?: number;
   pe?: number;
   pb?: number;
+  eps?: number;
+  latest_eps?: number;
   roe?: number;
   market_cap_billion?: number;
   market_cap?: number;
@@ -30,15 +32,23 @@ export interface ScreenCriteria {
   limit?: number;
   sort_by?: string;
   sort_dir?: string;
-  score_profile?: "quality" | "rotation" | string;
+  score_profile?: "balanced" | "quality" | "trend" | "rotation" | string;
 }
 
 export interface ScreenedStock {
   stock: StockItem;
   score: number;
   reasons: string[];
+  quality_score?: number;
+  trend_score?: number;
+  risk_score?: number;
+  balanced_score?: number;
   factor_scores?: Record<string, number>;
+  score_breakdown?: ScoreContribution[];
   score_explanation?: string;
+  reason_tags?: string[];
+  risk_tags?: string[];
+  suitable_periods?: string[];
   concept?: string | null;
   theme_category?: string | null;
 }
@@ -459,7 +469,11 @@ export interface DataStatus {
   cache_usage?: number;
   universe_count?: number;
   universe_cache_path?: string | null;
-  universe_updated_at?: string | null;
+  universe_updated_at?: string | number | null;
+  quote_generated_at?: string | number | null;
+  quote_trade_date?: string | null;
+  current_trade_date?: string | null;
+  generated_at?: string | number | null;
   universe_age_hours?: number | null;
   stale?: boolean;
   policy?: Record<string, unknown>;
@@ -501,13 +515,22 @@ export interface StockRowView {
   change_pct?: number | null;
   pe?: number;
   pb?: number;
+  eps?: number;
   roe?: number;
   market_cap_billion?: number;
   score?: number;
   scoreLabel?: string;
   reasons?: string[];
   concept?: string;
+  qualityScore?: number;
+  trendScore?: number;
+  riskScore?: number;
+  balancedScore?: number;
   factorScores?: Record<string, number>;
+  scoreBreakdown?: ScoreContribution[];
+  reasonTags?: string[];
+  riskTags?: string[];
+  suitablePeriods?: string[];
   explanation?: SelectionExplanation | null;
   raw?: unknown;
 }

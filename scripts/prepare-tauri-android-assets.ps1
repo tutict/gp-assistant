@@ -65,7 +65,11 @@ function Build-ReactFrontend {
         Invoke-Checked "Installing React frontend dependencies" "npm.cmd" @("--prefix", "desktop/frontend", "ci") $Root
     }
 
-    Invoke-Checked "Building React/TypeScript frontend" "npm.cmd" @("--prefix", "desktop/frontend", "run", "build") $Root
+    if ($env:GP_SKIP_FRONTEND_BUILD -eq "1") {
+        Write-Host "Skipping React/TypeScript frontend build; using existing mobile-dist"
+    } else {
+        Invoke-Checked "Building React/TypeScript frontend" "npm.cmd" @("run", "build") $FrontendDir
+    }
 
     $indexPath = Join-Path $OutputDir "index.html"
     if (-not (Test-Path -LiteralPath $indexPath)) {

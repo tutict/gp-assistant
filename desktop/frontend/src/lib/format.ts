@@ -71,6 +71,22 @@ export function formatDateTime(value: unknown): string {
   });
 }
 
+export function formatMarketRefreshDate(value: unknown, compact = false): string {
+  if (value === null || value === undefined || value === "") return "--";
+  const raw = String(value).trim();
+  const compactDate = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compactDate) {
+    return compact ? `${compactDate[2]}/${compactDate[3]}` : `${compactDate[1]}/${compactDate[2]}/${compactDate[3]}`;
+  }
+
+  const epoch = Number(raw);
+  const date = Number.isFinite(epoch) && epoch > 100000000000 ? new Date(epoch) : new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  const year = String(date.getFullYear());
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return compact ? `${month}/${day}` : `${year}/${month}/${day}`;
+}
 export function formatMarketCapYi(value: unknown): string {
   const n = parseLooseNumber(value);
   if (n === null) return "—";

@@ -8,9 +8,9 @@ import type { TrendIndicatorPoint } from "../types";
 export type KlinePeriod = "daily" | "weekly" | "monthly";
 
 export const KLINE_PERIODS: { key: KlinePeriod; label: string }[] = [
-  { key: "daily", label: "日线" },
-  { key: "weekly", label: "周线" },
-  { key: "monthly", label: "月线" },
+  { key: "daily", label: "日K" },
+  { key: "weekly", label: "周K" },
+  { key: "monthly", label: "月K" },
 ];
 
 export interface KlineBar {

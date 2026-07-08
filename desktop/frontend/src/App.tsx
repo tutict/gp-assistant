@@ -63,6 +63,7 @@ export default function App({ onMounted }: AppProps) {
     resultLimit: 10,
     sortBy: "score",
     sortDir: "desc",
+    scoreProfile: "balanced",
   });
 
   useEffect(() => {

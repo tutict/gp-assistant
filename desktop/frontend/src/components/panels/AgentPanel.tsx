@@ -46,21 +46,32 @@ const AGENT_MODES = [
   { id: "research", label: "研报模式", hint: "聚焦上下游、公告和消息链路" },
 ] as const;
 
-const AGENT_CAPABILITIES = [
-  { key: "stock_snapshot", title: "个股速览", hint: "行情、财务、资金面一屏汇总", example: "看一下贵州茅台财务和资金面" },
-  { key: "stock_news", title: "资讯研判", hint: "近期利好利空与来源证据", example: "分析 300750 最近利好利空" },
-  { key: "stock_screen", title: "智能选股", hint: "按条件筛选候选股并解释原因", example: "筛选高 ROE 低估值股票" },
-  { key: "trend_analysis", title: "趋势分析", hint: "K 线、量价和趋势因子观察", example: "筛选半导体趋势股" },
-  { key: "sector_analysis", title: "板块/主题", hint: "板块强弱、主题链路和候选股", example: "半导体板块有什么机会" },
-  { key: "watchlist_action", title: "自选股", hint: "只管理本地 watchlist", example: "把宁德时代加入自选" },
-  { key: "portfolio_simulation", title: "组合观察", hint: "基于自选股和回测做模拟观察", example: "用自选股做组合观察" },
-] as const;
 
 type AgentMode = typeof AGENT_MODES[number]["id"];
+
+const AGENT_MODE_CAPABILITIES: Record<AgentMode, { summary: string; capabilities: string[]; example: string }> = {
+  quick: {
+    summary: "快速理解问题，优先调用少量工具给出可执行结论。",
+    capabilities: ["个股速览", "近期利好利空", "快速筛选"],
+    example: "例如：分析 300750 最近利好利空",
+  },
+  expert: {
+    summary: "更完整地串联行情、财务、趋势和风险，适合做深度研究。",
+    capabilities: ["财务和资金面", "趋势验证", "风险提示"],
+    example: "例如：看一下贵州茅台财务和资金面",
+  },
+  research: {
+    summary: "按研报视角整理板块、主题、上下游和消息链路。",
+    capabilities: ["板块主题", "上下游线索", "证据汇总"],
+    example: "例如：半导体板块有什么机会",
+  },
+};
+
 
 const AGENT_HISTORY_KEY = "stock-optimizer-agent-conversations";
 const AGENT_ACTIVE_KEY = "stock-optimizer-agent-active-conversation";
 const AGENT_RAIL_COLLAPSED_KEY = "stock-optimizer-agent-rail-collapsed";
+const AGENT_MOBILE_DRAWER_QUERY = "(max-width: 640px)";
 const MAX_AGENT_CONVERSATIONS = 40;
 
 export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatchlistChange }: AgentPanelProps) {
@@ -126,9 +137,23 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   }, [messages, loading]);
 
   useEffect(() => {
-    if (typeof window !== "undefined" && window.matchMedia?.("(max-width: 640px)").matches) {
-      setRailCollapsed(true);
-    }
+    if (typeof window === "undefined" || !window.matchMedia) return;
+
+    const mobileDrawerQuery = window.matchMedia(AGENT_MOBILE_DRAWER_QUERY);
+    const syncRailForViewport = () => {
+      if (mobileDrawerQuery.matches) {
+        setRailCollapsed(true);
+      }
+    };
+
+    syncRailForViewport();
+    mobileDrawerQuery.addEventListener?.("change", syncRailForViewport);
+    mobileDrawerQuery.addListener?.(syncRailForViewport);
+
+    return () => {
+      mobileDrawerQuery.removeEventListener?.("change", syncRailForViewport);
+      mobileDrawerQuery.removeListener?.(syncRailForViewport);
+    };
   }, [setRailCollapsed]);
 
   const updateConversation = useCallback((conversationId: string, updater: (conversation: AgentConversation) => AgentConversation) => {
@@ -142,12 +167,15 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     setConversations((prev) => [next, ...prev].slice(0, MAX_AGENT_CONVERSATIONS));
     setActiveConversationId(next.id);
     setInput("");
-  }, [activeConversation?.mode, setActiveConversationId, setConversations]);
+    if (typeof window !== "undefined" && window.matchMedia?.(AGENT_MOBILE_DRAWER_QUERY).matches) {
+      setRailCollapsed(true);
+    }
+  }, [activeConversation?.mode, setActiveConversationId, setConversations, setRailCollapsed]);
 
   const switchConversation = useCallback((conversationId: string) => {
     setActiveConversationId(conversationId);
     setInput("");
-    if (typeof window !== "undefined" && window.matchMedia?.("(max-width: 640px)").matches) {
+    if (typeof window !== "undefined" && window.matchMedia?.(AGENT_MOBILE_DRAWER_QUERY).matches) {
       setRailCollapsed(true);
     }
   }, [setActiveConversationId, setRailCollapsed]);
@@ -488,6 +516,7 @@ function AgentEmptyState({
   onModeChange: (mode: AgentMode) => void;
 }) {
   const activeMode = AGENT_MODES.find((item) => item.id === mode) || AGENT_MODES[0];
+  const capability = AGENT_MODE_CAPABILITIES[mode];
 
   return (
     <div className="agent-empty-state">
@@ -509,19 +538,19 @@ function AgentEmptyState({
         ))}
       </div>
 
-      <div className="agent-capability-grid" aria-label="Agent 能力">
-        {AGENT_CAPABILITIES.map((item) => (
-          <article key={item.key} className="agent-capability-card">
-            <strong>{item.title}</strong>
-            <span>{item.hint}</span>
-            <em>{item.example}</em>
-          </article>
-        ))}
+      <div className="agent-mode-capabilities" aria-label="当前模式能力">
+        <strong>{activeMode.label}能力</strong>
+        <p>{capability.summary}</p>
+        <div className="agent-mode-capability-tags">
+          {capability.capabilities.map((item) => (
+            <span key={item}>{item}</span>
+          ))}
+        </div>
+        <em>{capability.example}</em>
       </div>
     </div>
   );
 }
-
 function AgentSteps({ steps }: { steps: AgentStep[] }) {
   return (
     <div className="agent-stream-steps">
