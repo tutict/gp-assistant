@@ -1,3 +1,4 @@
+import { ArrowLeft, Plus } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import type { LlmProviderSettings, LlmSettings } from "../../types";
 import { activeLlmProvider, normalizeLlmSettings } from "../../lib/contracts";
@@ -199,14 +200,15 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
               className="llm-sheet-back-btn"
               onClick={() => setOpen(false)}
               aria-label="返回"
+              title="返回"
             >
-              ‹
+              <ArrowLeft size={17} aria-hidden="true" />
             </button>
             <div>
               <span>当前 Endpoint</span>
               <strong>{active?.base_url || "尚未填写接口地址"}</strong>
             </div>
-            <button type="button" className="llm-add-btn" onClick={addBlankProvider}>+ 新建连接</button>
+            <button type="button" className="llm-add-btn" onClick={addBlankProvider}><Plus size={15} aria-hidden="true" />新建连接</button>
           </div>
 
           <div className="llm-switcher-grid">
@@ -377,7 +379,7 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
           <div className="llm-preset-row">
             {PROVIDER_PRESETS.map((preset) => (
               <button key={preset.id} type="button" className="llm-preset-btn" onClick={() => addPreset(preset)}>
-                + {preset.name}
+                <Plus size={14} aria-hidden="true" /> {preset.name}
               </button>
             ))}
           </div>

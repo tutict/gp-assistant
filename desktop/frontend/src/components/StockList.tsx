@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react";
 import type { ScoreContribution, StockRowView, WatchlistItem } from "../types";
 import { formatNumber, formatPrice, formatRatioPercent, reasonLabel } from "../lib/format";
 
@@ -8,10 +9,11 @@ interface StockListProps {
   onObserveStock?: (code: string) => void;
 }
 
-export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock }: StockListProps) {
-  if (!items.length) return <div className="empty-list">暂无匹配股票</div>;
+export const StockList = memo(function StockList({ items, watchlist, onToggleWatchlist, onObserveStock }: StockListProps) {
+  const savedCodes = useMemo(() => new Set(watchlist.map((item) => item.code)), [watchlist]);
+  const sortedItems = useMemo(() => sortStocksByDisplayScore(items), [items]);
 
-  const sortedItems = [...items].sort((a, b) => stockDisplayScore(b) - stockDisplayScore(a));
+  if (!sortedItems.length) return <div className="empty-list">暂无匹配股票</div>;
 
   return (
     <div className="quote-table">
@@ -24,7 +26,7 @@ export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock 
       </div>
       <div className="stock-list">
         {sortedItems.map((item, i) => {
-          const inWatchlist = watchlist.some((w) => w.code === item.code);
+          const inWatchlist = savedCodes.has(item.code);
           const tone = item.change_pct != null && item.change_pct > 0 ? "rise" : item.change_pct != null && item.change_pct < 0 ? "fall" : "neutral";
           const scoreSummary = buildScoreSummary(item);
           return (
@@ -101,9 +103,9 @@ export function StockList({ items, watchlist, onToggleWatchlist, onObserveStock 
       </div>
     </div>
   );
-}
+});
 
-function ScoreChip({ label, value, inverted = false }: { label: string; value?: number | null; inverted?: boolean }) {
+const ScoreChip = memo(function ScoreChip({ label, value, inverted = false }: { label: string; value?: number | null; inverted?: boolean }) {
   const score = typeof value === "number" && Number.isFinite(value) ? value : null;
   const level = score == null ? "neutral" : inverted ? (score >= 70 ? "bad" : score >= 40 ? "watch" : "good") : score >= 70 ? "good" : score >= 50 ? "watch" : "neutral";
   return (
@@ -112,7 +114,7 @@ function ScoreChip({ label, value, inverted = false }: { label: string; value?: 
       <b>{score == null ? "--" : formatNumber(score)}</b>
     </span>
   );
-}
+});
 
 function buildScoreSummary(item: StockRowView): string {
   const positiveTags = compactStrings([...(item.reasonTags || []), ...(item.reasons || []).map(reasonLabel)]).slice(0, 2);
@@ -133,6 +135,10 @@ function strongestContribution(parts: ScoreContribution[]): ScoreContribution | 
 
 function compactStrings(values: unknown[]): string[] {
   return values.map((value) => String(value || "").trim()).filter(Boolean);
+}
+
+export function sortStocksByDisplayScore(items: StockRowView[]): StockRowView[] {
+  return [...items].sort((a, b) => stockDisplayScore(b) - stockDisplayScore(a));
 }
 
 function stockDisplayScore(item: StockRowView): number {

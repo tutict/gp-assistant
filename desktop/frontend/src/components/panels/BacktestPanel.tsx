@@ -5,13 +5,14 @@ import { postJson } from "../../lib/tauri";
 import { buildBacktestRequest } from "../../lib/contracts";
 import {
   currentSystemDateInputValue,
-  escapeHtml,
   formatMoney,
   formatNumber,
   formatSignedPercent,
   shortBenchmarkLabel,
   shortRebalanceLabel,
 } from "../../lib/format";
+import { RawJson } from "../RawJson";
+import { PanelFeedback } from "../ui/PanelFeedback";
 
 interface BacktestPanelProps {
   criteria: FilterCriteria;
@@ -117,10 +118,10 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
       </div>
 
       <div className="panel-result">
-        {error && <div className="result-error"><strong>回测失败</strong><p>{escapeHtml(error)}</p></div>}
-        {loading && !result && !error && <div className="result-loading"><div className="loader" /><span>正在回测...</span></div>}
+        {error && <PanelFeedback kind="error" title="回测失败" description={error} />}
+        {loading && !result && !error && <PanelFeedback kind="loading" description="正在计算组合表现..." />}
         {result && !loading && <BacktestResultView result={result} />}
-        {!result && !loading && !error && <div className="result-empty"><span>设置参数后运行回测。</span></div>}
+        {!result && !loading && !error && <PanelFeedback kind="empty" description="选择股票来源并设置参数后运行回测。" />}
       </div>
     </div>
   );
@@ -156,7 +157,7 @@ export function BacktestResultView({ result }: { result: BacktestResult }) {
       ) : null}
 
       {result.notes?.length ? <div className="notes">{result.notes.map((note) => <p key={note}>{note}</p>)}</div> : null}
-      <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
+      <RawJson result={result} />
     </div>
   );
 }

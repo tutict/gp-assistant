@@ -259,6 +259,26 @@ export function defaultObserveStartDateInputValue(referenceValue = ""): string {
   return tradingWindowStartDateInputValue(referenceValue || currentSystemDateInputValue(), 10);
 }
 
+export const TREND_SCREEN_LOOKBACK_TRADING_DAYS = 90;
+
+export function defaultTrendStartDateInputValue(referenceValue = ""): string {
+  return tradingWindowStartDateInputValue(
+    referenceValue || currentSystemDateInputValue(),
+    TREND_SCREEN_LOOKBACK_TRADING_DAYS,
+  );
+}
+
+export function trendScreenStartDateInputValue(startValue: string, endValue = ""): string {
+  const endDate = parseDateInputValue(endValue) || new Date();
+  const minimumStart = defaultTrendStartDateInputValue(formatDateInputValue(endDate));
+  const minimumStartDate = parseDateInputValue(minimumStart);
+  const requestedStartDate = parseDateInputValue(startValue);
+  if (!minimumStartDate || !requestedStartDate || requestedStartDate > minimumStartDate) {
+    return minimumStart;
+  }
+  return formatDateInputValue(requestedStartDate);
+}
+
 export function defaultObserveStartCompact(referenceValue = ""): string {
   return defaultObserveStartDateInputValue(referenceValue).replace(/-/g, "");
 }
@@ -587,4 +607,9 @@ export function parseCodes(raw: string): string[] {
     .split(/[,，;；\s]+/)
     .map((item) => sanitizeStockLookupInput(item))
     .filter(Boolean);
+}
+
+export function metricOrMissing(value: string): string {
+  const normalized = String(value || "").trim();
+  return normalized && normalized !== "--" ? normalized : "暂无";
 }

@@ -6,6 +6,11 @@ export default defineConfig({
   build: {
     outDir: "../mobile-dist",
     emptyOutDir: true,
+    sourcemap: false,
+    minify: "esbuild",
+    cssCodeSplit: true,
+    assetsInlineLimit: 2048,
+    reportCompressedSize: true,
   },
   server: {
     proxy: {

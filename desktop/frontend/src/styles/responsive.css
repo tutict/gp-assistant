@@ -1,0 +1,1408 @@
+@media (min-width: 769px) and (max-width: 1180px) {
+  :root {
+    --sidebar-width: 72px;
+  }
+
+  .app-title {
+    font-size: 15px;
+  }
+
+  .nav-link {
+    min-height: 52px;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    padding: 4px;
+    font-size: 10.5px;
+  }
+
+  .workbench {
+    padding: 16px 18px 38px;
+  }
+
+  .screen-toolbar-card {
+    grid-template-columns: 1fr;
+  }
+
+  .screen-toolbar-side {
+    justify-content: flex-start;
+  }
+
+  .backtest-controls {
+    grid-template-columns: repeat(4, minmax(104px, 1fr));
+  }
+
+  .backtest-controls .run-btn {
+    min-height: var(--touch-height);
+  }
+
+  .observe-text-metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .agent-workspace {
+    grid-template-columns: 238px minmax(0, 1fr);
+  }
+
+  .agent-workspace.rail-collapsed {
+    grid-template-columns: 54px minmax(0, 1fr);
+  }
+
+  .agent-thread {
+    padding-inline: 24px;
+  }
+}
+
+@media (max-width: 768px) {
+  :root {
+    --header-height: 44px;
+    --bottom-nav-height: 58px;
+  }
+
+  html {
+    scroll-padding-bottom: calc(var(--bottom-nav-height) + var(--safe-bottom));
+  }
+
+  body {
+    font-size: 12px;
+    overscroll-behavior-y: contain;
+  }
+
+  .app {
+    display: block;
+    min-height: 100dvh;
+  }
+
+  .app-header {
+    min-height: var(--header-height);
+    padding: 0 8px;
+  }
+
+  .app-logo {
+    width: 22px;
+    height: 22px;
+  }
+
+  .app-title {
+    font-size: 13px;
+  }
+
+  .theme-toggle {
+    width: 32px;
+    height: 32px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .theme-toggle-label {
+    display: none;
+  }
+
+  .mobile-nav-toggle,
+  .mobile-nav-close,
+  .mobile-nav-overlay {
+    display: none;
+  }
+
+  .sidebar {
+    position: fixed;
+    z-index: var(--z-sidebar);
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: auto;
+    height: calc(var(--bottom-nav-height) + var(--safe-bottom));
+    padding: 2px 4px var(--safe-bottom);
+    overflow: visible;
+    border-top: 1px solid var(--line);
+    border-right: 0;
+    background: var(--surface);
+  }
+
+  .nav-items {
+    display: grid;
+    height: var(--bottom-nav-height);
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 2px;
+  }
+
+  .nav-link {
+    min-width: 0;
+    min-height: 54px;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    padding: 3px 2px;
+    border-radius: var(--radius-sm);
+    font-size: 9px;
+    line-height: 1.1;
+  }
+
+  .nav-link svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .workbench {
+    width: 100%;
+    min-width: 0;
+    padding: 7px 7px calc(var(--bottom-nav-height) + var(--safe-bottom) + 12px);
+  }
+
+  .panel-tabs,
+  .rag-tabs {
+    gap: 2px;
+    padding: 2px;
+    scroll-snap-type: x proximity;
+  }
+
+  .panel-tab {
+    min-width: max-content;
+    min-height: var(--touch-height);
+    flex: 1 0 auto;
+    padding-inline: 9px;
+    font-size: 11px;
+    scroll-snap-align: start;
+  }
+
+  .screen-panel-tabs .panel-tab,
+  .rag-tabs .panel-tab {
+    min-width: calc((100vw - 34px) / 3.2);
+  }
+
+  .panel-controls,
+  .backtest-controls,
+  .rag-controls {
+    margin-top: 6px;
+    padding: 8px;
+  }
+
+  .run-btn,
+  .save-btn,
+  .action-btn,
+  .clear-btn,
+  .stock-row-action,
+  .source-toggle,
+  .rag-secondary-btn,
+  .llm-add-btn,
+  .llm-preset-btn {
+    min-height: var(--touch-height);
+  }
+
+  .form-row input,
+  .form-row select,
+  .form-row textarea,
+  .stock-code-input input {
+    min-height: var(--touch-height);
+  }
+
+  .screen-toolbar,
+  .screen-toolbar-card:not(.screen-mobile-toolbar-card) {
+    display: none;
+  }
+
+  .screen-mobile-toolbar-card {
+    display: block;
+    min-height: 42px;
+    padding: 5px 7px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+  }
+
+  .screen-mobile-toolbar-row {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .screen-mobile-toolbar-main {
+    min-width: 0;
+  }
+
+  .screen-mobile-status-inline {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 5px;
+    color: var(--text-secondary);
+    font-size: 10.5px;
+    white-space: nowrap;
+  }
+
+  .screen-mobile-status-inline strong {
+    overflow: hidden;
+    color: var(--text);
+    font-size: 11px;
+    text-overflow: ellipsis;
+  }
+
+  .screen-mobile-refresh-btn {
+    min-width: 54px;
+    min-height: 32px;
+    padding: 0 7px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 10px;
+    font-weight: 700;
+  }
+
+  .screen-mobile-refresh-progress {
+    height: 2px;
+    margin: 5px -7px -5px;
+    overflow: hidden;
+    background: var(--line-soft);
+  }
+
+  .screen-mobile-refresh-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width var(--motion-standard) ease;
+  }
+
+  .screen-panel-container {
+    margin-top: 6px;
+  }
+
+  .screen-panel-controls,
+  .screen-panel-run-card {
+    display: block;
+    border: 0;
+    background: transparent;
+    padding: 0;
+  }
+
+  .screen-panel-run-card .run-btn,
+  .screen-panel-controls > .run-btn {
+    width: 100%;
+    min-height: var(--touch-height);
+  }
+
+  .screen-panel-result {
+    padding-top: 4px;
+  }
+
+  .screen-result-metric-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .metric-strip,
+  .detail-grid,
+  .backtest-comparison,
+  .overview-metric-grid,
+  .signal-grid,
+  .financial-indicator-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric,
+  .detail-grid > div,
+  .backtest-comparison > div,
+  .overview-metric-grid > div,
+  .signal-grid > div,
+  .financial-indicator-item {
+    min-height: 48px;
+    padding: 6px 8px;
+  }
+
+  .quote-table {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .quote-table-head {
+    display: none;
+  }
+
+  .stock-list {
+    display: grid;
+    gap: 6px;
+  }
+
+  .stock-row {
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+  }
+
+  .stock-row:first-child {
+    border-top: 1px solid var(--line);
+  }
+
+  .stock-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
+  }
+
+  .stock-title {
+    grid-column: 1 / 3;
+    align-self: center;
+  }
+
+  .stock-current-price {
+    grid-column: 3;
+    justify-self: stretch;
+    align-self: center;
+    text-align: right;
+  }
+
+  .quote-number {
+    display: grid;
+    min-height: 44px;
+    align-content: center;
+    justify-items: center;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    text-align: center;
+  }
+
+  .quote-number strong {
+    font-size: 12px;
+  }
+
+  .quote-number span {
+    overflow: hidden;
+    max-width: 100%;
+    font-size: 9px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .score-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .score-strip-metrics {
+    gap: 5px;
+  }
+
+  .score-chip,
+  .score-strip-primary {
+    min-height: 44px;
+  }
+
+  .score-strip-primary {
+    grid-template-columns: auto auto;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .score-strip-primary strong {
+    margin-top: 0;
+  }
+
+  .stock-score-summary {
+    font-size: 9.5px;
+    line-height: 1.45;
+  }
+
+  .row-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .row-button-group {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stock-row-action {
+    width: 100%;
+  }
+
+  .observe-panel-controls {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .observe-code-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .observe-code-row label {
+    margin: 0;
+  }
+
+  .observe-run-btn {
+    width: 100%;
+  }
+
+  .observe-overview-header,
+  .signal-card > header,
+  .news-finding > header,
+  .plain-news-column > header,
+  .upstream-transfer > header {
+    padding: 8px 9px;
+  }
+
+  .observe-text-metrics {
+    padding: 0 9px 9px;
+  }
+
+  .observe-text-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .observe-text-metric-item.metric-long {
+    grid-column: 1 / -1;
+  }
+
+  .observe-chart-card > header {
+    padding-inline: 0;
+  }
+
+  .kline-chart svg,
+  .trend-chart svg,
+  .macd-chart svg {
+    width: 100%;
+    min-height: 220px;
+  }
+
+  .kline-period-tabs,
+  .kline-nav {
+    max-width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+
+  .kline-period-tabs button,
+  .kline-nav button {
+    min-width: 44px;
+    min-height: var(--touch-height);
+    flex: 0 0 auto;
+  }
+
+  .backtest-context-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .backtest-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .backtest-controls .run-btn {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .plain-news-groups {
+    grid-template-columns: 1fr;
+  }
+
+  .plain-news-secondary {
+    grid-column: auto;
+  }
+
+  .rag-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 86px;
+  }
+
+  .rag-controls .rag-code-field,
+  .rag-controls .rag-wide-field,
+  .rag-controls .rag-textarea-field {
+    grid-column: 1 / -1;
+  }
+
+  .rag-controls .rag-days-field {
+    grid-column: 1;
+  }
+
+  .rag-controls .rag-run-btn {
+    grid-column: 2;
+  }
+
+  .rag-controls .rag-secondary-btn {
+    grid-column: 1 / -1;
+  }
+
+  .evidence-list article {
+    padding: 8px;
+  }
+
+  .app[data-active-view="agent"] .workbench {
+    height: calc(100dvh - var(--header-height));
+    padding: 0 0 calc(var(--bottom-nav-height) + var(--safe-bottom));
+    overflow: hidden;
+  }
+
+  .app[data-active-view="agent"] .panels,
+  .app[data-active-view="agent"] .agent-panel {
+    height: 100%;
+  }
+
+  .agent-workspace,
+  .agent-workspace.rail-collapsed {
+    display: block;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .agent-rail {
+    position: fixed;
+    z-index: var(--z-drawer);
+    top: var(--header-height);
+    bottom: calc(var(--bottom-nav-height) + var(--safe-bottom));
+    left: 0;
+    width: min(82vw, 304px);
+    height: auto;
+    padding: 9px;
+    border-right: 1px solid var(--line);
+    transform: translateX(0);
+    transition: transform var(--motion-standard) var(--ease-out);
+  }
+
+  .agent-workspace.rail-collapsed .agent-rail {
+    width: min(82vw, 304px);
+    transform: translateX(-102%);
+  }
+
+  .agent-workspace.rail-collapsed .agent-rail-brand,
+  .agent-workspace.rail-collapsed .agent-new-chat-label,
+  .agent-workspace.rail-collapsed .agent-rail-section,
+  .agent-workspace.rail-collapsed .agent-rail-footer,
+  .agent-workspace.rail-collapsed .agent-rail-search {
+    display: initial;
+  }
+
+  .agent-workspace.rail-collapsed .agent-rail-brand {
+    display: flex;
+  }
+
+  .agent-workspace.rail-collapsed .agent-rail-section,
+  .agent-workspace.rail-collapsed .agent-rail-footer {
+    display: flex;
+  }
+
+  .agent-workspace.rail-collapsed .agent-rail-search {
+    display: flex;
+  }
+
+  .agent-rail-scrim {
+    position: fixed;
+    z-index: calc(var(--z-drawer) - 1);
+    inset: var(--header-height) 0 calc(var(--bottom-nav-height) + var(--safe-bottom));
+    display: block;
+    border: 0;
+    background: rgba(0, 0, 0, 0.5);
+  }
+
+  .agent-workspace.rail-collapsed .agent-rail-scrim {
+    display: none;
+  }
+
+  .agent-chat-stage {
+    height: 100%;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .agent-mobile-actions {
+    position: absolute;
+    z-index: 3;
+    top: 7px;
+    left: 7px;
+    display: flex;
+    gap: 4px;
+  }
+
+  .agent-mobile-menu,
+  .agent-mobile-new {
+    width: 38px;
+    height: 38px;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .agent-topbar {
+    min-height: 46px;
+    padding: 5px 8px 5px 88px;
+  }
+
+  .agent-topbar-meta em {
+    display: none;
+  }
+
+  .agent-thread {
+    padding: 8px 7px;
+  }
+
+  .agent-message,
+  .agent-message.user {
+    width: 100%;
+  }
+
+  .agent-message.user {
+    width: min(88%, 620px);
+  }
+
+  .agent-composer-card {
+    position: sticky;
+    z-index: 4;
+    bottom: 0;
+    margin: 0 6px 6px;
+    padding: 6px 6px 5px 8px;
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.22);
+  }
+
+  .agent-input {
+    min-height: 46px;
+    max-height: 126px;
+  }
+
+  .send-btn {
+    width: var(--touch-height);
+    height: var(--touch-height);
+  }
+
+  .agent-empty-state {
+    padding: 12px;
+  }
+
+  .agent-mode-tabs {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .agent-mode-tabs button {
+    min-height: var(--touch-height);
+  }
+
+  .llm-settings-body {
+    position: fixed;
+    z-index: var(--z-modal);
+    inset: var(--header-height) 0 calc(var(--bottom-nav-height) + var(--safe-bottom));
+    margin: 0;
+    padding: 8px;
+    overflow-y: auto;
+    border: 0;
+    border-radius: 0;
+    background: var(--bg);
+  }
+
+  .llm-switcher-grid,
+  .llm-editor-row,
+  .llm-editor-row.compact {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .llm-provider-list {
+    max-height: none;
+  }
+
+  .llm-provider-kind-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .watchlist-item {
+    grid-template-columns: 96px minmax(0, 1fr) auto;
+    min-height: var(--touch-height);
+  }
+
+  .watchlist-remove {
+    width: 36px;
+    height: 36px;
+  }
+
+  .panel-container,
+  .screen-result-list,
+  .sector-groups,
+  .screen-result-groups,
+  .signal-chart-stack,
+  .plain-news-groups,
+  .evidence-list,
+  .relation-map,
+  .rag-pack-list {
+    gap: 7px;
+  }
+
+  .metric strong,
+  .status-item strong {
+    margin-top: 2px;
+  }
+
+  .stock-title strong {
+    font-size: 12.5px;
+  }
+
+  .stock-title span,
+  .stock-current-price span,
+  .quote-number span,
+  .score-chip em,
+  .score-strip-primary span {
+    font-size: 9px;
+  }
+
+  .stock-current-price strong,
+  .score-chip b {
+    font-size: 12px;
+  }
+
+  .score-strip {
+    gap: 5px;
+    margin-top: 6px;
+  }
+
+  .score-chip,
+  .score-strip-primary {
+    padding: 4px 6px;
+  }
+
+  .score-strip-primary strong {
+    font-size: 15px;
+  }
+
+  .stock-score-summary,
+  .row-actions,
+  .selection-explain {
+    margin-top: 6px;
+  }
+
+  .stock-meta {
+    font-size: 9.5px;
+  }
+
+  .row-actions {
+    gap: 6px;
+  }
+
+  .form-row {
+    gap: 3px;
+  }
+
+  .form-row label {
+    font-size: 10px;
+  }
+
+  .form-row input,
+  .form-row select,
+  .form-row textarea,
+  .stock-code-input input {
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+
+  .panel-feedback {
+    min-height: 120px;
+    padding: 18px 12px;
+  }
+
+  .watchlist {
+    margin-top: 7px;
+  }
+}
+
+@media (max-width: 420px) {
+  .workbench {
+    padding-inline: 8px;
+  }
+
+  .screen-panel-tabs .panel-tab,
+  .rag-tabs .panel-tab {
+    min-width: calc((100vw - 28px) / 2.75);
+  }
+
+  .screen-mobile-status-inline {
+    gap: 3px;
+    font-size: 10px;
+  }
+
+  .screen-mobile-status-inline strong {
+    font-size: 10px;
+  }
+
+  .screen-result-metric-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .screen-result-metric-strip .metric {
+    min-height: 52px;
+    padding: 7px 5px;
+    text-align: center;
+  }
+
+  .screen-result-metric-strip .metric strong {
+    font-size: 13px;
+  }
+
+  .stock-row {
+    padding: 9px;
+  }
+
+  .score-chip {
+    padding-inline: 4px;
+  }
+
+  .stock-meta {
+    gap: 5px;
+  }
+
+  .observe-text-metric-item {
+    padding-inline: 7px;
+  }
+
+  .backtest-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .rag-controls {
+    grid-template-columns: minmax(0, 1fr) 78px;
+  }
+
+  .agent-topbar strong {
+    max-width: 42vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 560px) and (max-width: 980px) {
+  :root {
+    --header-height: 46px;
+    --sidebar-width: 66px;
+  }
+
+  .app {
+    display: grid;
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    grid-template-rows: var(--header-height) minmax(0, 1fr);
+    min-height: 100dvh;
+  }
+
+  .app-header {
+    grid-column: 1 / -1;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: var(--header-height);
+    right: auto;
+    bottom: 0;
+    left: 0;
+    width: var(--sidebar-width);
+    height: auto;
+    padding: 5px;
+    border-top: 0;
+    border-right: 1px solid var(--line);
+  }
+
+  .nav-items {
+    height: auto;
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .nav-link {
+    min-height: 48px;
+    flex-direction: column;
+  }
+
+  .workbench {
+    grid-column: 2;
+    padding: 8px 10px 18px;
+  }
+
+  .app[data-active-view="agent"] .workbench {
+    height: calc(100dvh - var(--header-height));
+    padding: 0;
+  }
+
+  .agent-rail {
+    top: var(--header-height);
+    bottom: 0;
+  }
+
+  .agent-rail-scrim {
+    inset: var(--header-height) 0 0 var(--sidebar-width);
+  }
+
+  .llm-settings-body {
+    inset: var(--header-height) 0 0 var(--sidebar-width);
+  }
+
+  .panel-tab,
+  .run-btn,
+  .action-btn,
+  .stock-row-action,
+  .form-row input,
+  .form-row select {
+    min-height: 38px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms;
+    animation-iteration-count: 1;
+    scroll-behavior: auto;
+    transition-duration: 1ms;
+  }
+
+  .panel-feedback-loading > svg,
+  .spin {
+    animation-duration: 900ms;
+  }
+}
+
+@media (max-width: 768px) {
+  .panel-tabs,
+  .rag-tabs {
+    width: 100%;
+    flex-wrap: nowrap;
+  }
+}
+/* Android WebView density: aggressively compact the phone UI. */
+html.mobile-tauri {
+  --control-height: 32px;
+  --touch-height: 34px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  font-size: 11px;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html.mobile-tauri body {
+  font-size: 0.84rem;
+  line-height: 1.3;
+}
+
+html.mobile-tauri button,
+html.mobile-tauri input,
+html.mobile-tauri select,
+html.mobile-tauri textarea {
+  font-size: 0.86rem;
+}
+
+html.mobile-tauri .panel-container,
+html.mobile-tauri .screen-result-list,
+html.mobile-tauri .sector-groups,
+html.mobile-tauri .screen-result-groups,
+html.mobile-tauri .signal-chart-stack,
+html.mobile-tauri .plain-news-groups,
+html.mobile-tauri .evidence-list,
+html.mobile-tauri .relation-map,
+html.mobile-tauri .rag-pack-list {
+  gap: 3px;
+}
+
+html.mobile-tauri .panel-controls,
+html.mobile-tauri .backtest-controls,
+html.mobile-tauri .rag-controls {
+  padding: 4px;
+}
+
+html.android-phone {
+  --header-height: 34px;
+  --bottom-nav-height: 44px;
+  font-size: 10px;
+}
+
+html.android-phone body {
+  font-size: 9px;
+  line-height: 1.25;
+}
+
+html.android-phone .app-header {
+  padding-inline: 4px;
+}
+
+html.android-phone .app-logo {
+  width: 17px;
+  height: 17px;
+}
+
+html.android-phone .app-title {
+  font-size: 10px;
+}
+
+html.android-phone .workbench {
+  padding: 2px 4px calc(var(--bottom-nav-height) + var(--safe-bottom) + 4px);
+}
+
+html.android-phone .sidebar {
+  padding: 1px 2px var(--safe-bottom);
+}
+
+html.android-phone .nav-link {
+  min-height: 40px;
+  gap: 0;
+  padding: 1px;
+  font-size: 7.5px;
+  line-height: 1;
+}
+
+html.android-phone .nav-link svg {
+  width: 14px;
+  height: 14px;
+}
+
+html.android-phone .panel-container {
+  gap: 3px;
+}
+
+html.android-phone .panel-tabs,
+html.android-phone .rag-tabs {
+  gap: 1px;
+  padding: 2px;
+  border-radius: 6px;
+}
+
+html.android-phone .panel-tab {
+  min-height: 30px;
+  padding: 2px 4px;
+  font-size: 9px;
+  line-height: 1;
+}
+
+html.android-phone .form-row label {
+  font-size: 8px;
+}
+
+html.android-phone .form-row input,
+html.android-phone .form-row select,
+html.android-phone .form-row textarea,
+html.android-phone .stock-code-input input {
+  min-height: 32px;
+  padding: 3px 5px;
+  font-size: 9px;
+}
+
+html.android-phone .run-btn,
+html.android-phone .save-btn,
+html.android-phone .action-btn,
+html.android-phone .clear-btn,
+html.android-phone .stock-row-action,
+html.android-phone .source-toggle,
+html.android-phone .rag-secondary-btn,
+html.android-phone .llm-add-btn,
+html.android-phone .llm-preset-btn {
+  min-height: 32px;
+  padding-inline: 7px;
+  font-size: 9px;
+}
+
+html.android-phone .screen-panel-container {
+  margin-top: 2px;
+}
+
+html.android-phone .screen-panel-tabs {
+  margin-top: 3px;
+}
+
+html.android-phone .screen-mobile-toolbar-card {
+  min-height: 30px;
+  padding: 2px 4px;
+}
+
+html.android-phone .screen-mobile-toolbar-row {
+  gap: 4px;
+}
+
+html.android-phone .screen-mobile-status-inline,
+html.android-phone .screen-mobile-status-inline strong,
+html.android-phone .screen-mobile-refresh-btn {
+  font-size: 8px;
+}
+
+html.android-phone .screen-mobile-refresh-btn {
+  min-width: 44px;
+  min-height: 26px;
+  padding: 0 4px;
+  border-radius: 5px;
+}
+
+html.android-phone .screen-mobile-refresh-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+html.android-phone .screen-mobile-refresh-progress {
+  margin: 2px -4px -2px;
+}
+
+html.android-phone .screen-panel-run-card .run-btn,
+html.android-phone .screen-panel-controls > .run-btn {
+  min-height: 32px;
+}
+
+html.android-phone .screen-panel-result,
+html.android-phone .panel-result {
+  padding-top: 2px;
+}
+
+html.android-phone .panel-feedback {
+  min-height: 58px;
+  gap: 6px;
+  padding: 7px 8px;
+  border-radius: 6px;
+}
+
+html.android-phone .panel-feedback > svg {
+  width: 16px;
+  height: 16px;
+}
+
+html.android-phone .panel-feedback strong {
+  margin-bottom: 1px;
+  font-size: 9.5px;
+}
+
+html.android-phone .panel-feedback p {
+  font-size: 9px;
+  line-height: 1.25;
+}
+
+html.android-phone .watchlist-panel {
+  margin-top: 4px;
+  border-radius: 6px;
+}
+
+html.android-phone .watchlist-header {
+  min-height: 32px;
+  gap: 4px;
+  padding: 0 8px;
+}
+
+html.android-phone .watchlist-header > div {
+  gap: 4px;
+}
+
+html.android-phone .watchlist-header h3 {
+  font-size: 10px;
+}
+
+html.android-phone .watchlist-count {
+  font-size: 8px;
+}
+
+html.android-phone .watchlist-panel > .panel-feedback {
+  min-height: 50px;
+}
+
+html.android-phone .watchlist {
+  margin-top: 3px;
+}
+
+html.android-phone .stock-row {
+  padding: 4px;
+}
+
+html.android-phone .metric,
+html.android-phone .detail-grid > div,
+html.android-phone .backtest-comparison > div,
+html.android-phone .overview-metric-grid > div,
+html.android-phone .signal-grid > div,
+html.android-phone .financial-indicator-item {
+  min-height: 36px;
+  padding: 3px 4px;
+}
+
+html.android-phone .stock-title strong {
+  font-size: 9.5px;
+}
+
+html.android-phone .stock-current-price strong,
+html.android-phone .quote-number strong,
+html.android-phone .score-chip b {
+  font-size: 9px;
+}
+
+html.android-phone .stock-title span,
+html.android-phone .stock-current-price span,
+html.android-phone .quote-number span,
+html.android-phone .score-chip em,
+html.android-phone .score-strip-primary span,
+html.android-phone .stock-meta {
+  font-size: 7.5px;
+}
+
+html.android-phone .score-strip-primary strong {
+  font-size: 10.5px;
+}
+
+html.android-phone .metric-card dd {
+  font-size: 0.9rem;
+}
+
+html.android-phone .agent-topbar {
+  min-height: 34px;
+}
+
+html.android-phone .agent-thread {
+  padding: 4px;
+}
+
+html.android-phone .agent-message {
+  font-size: 0.84rem;
+}
+
+html.android-phone .agent-input {
+  min-height: 34px;
+  max-height: 90px;
+}
+
+/* Android phone ultra-compact screening overrides. */
+html.android-phone .screen-panel-tabs {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  padding: 1px;
+  overflow: visible;
+}
+
+html.android-phone .screen-panel-tabs .panel-tab {
+  width: auto;
+  min-width: 0;
+  min-height: 26px;
+  padding: 1px 2px;
+  overflow: hidden;
+  font-size: 7.5px;
+  text-overflow: ellipsis;
+}
+
+html.android-phone .screen-panel-run-card,
+html.android-phone .screen-panel-controls {
+  margin-top: 2px;
+}
+
+html.android-phone .screen-panel-run-card .run-btn,
+html.android-phone .screen-panel-controls > .run-btn {
+  min-height: 28px;
+  padding: 1px 6px;
+  font-size: 8px;
+}
+
+html.android-phone .screen-result-list {
+  gap: 2px;
+}
+
+html.android-phone .screen-result-metric-strip {
+  gap: 3px;
+}
+
+html.android-phone .screen-result-metric-strip .metric {
+  min-height: 30px;
+  padding: 2px 3px;
+  border-radius: 5px;
+}
+
+html.android-phone .screen-result-metric-strip .metric span {
+  font-size: 7px;
+  line-height: 1;
+}
+
+html.android-phone .screen-result-metric-strip .metric strong {
+  margin-top: 1px;
+  font-size: 10px;
+  line-height: 1;
+}
+
+html.android-phone .sector-groups {
+  gap: 3px;
+}
+
+html.android-phone .sector-group {
+  border-radius: 5px;
+}
+
+html.android-phone .sector-group > summary {
+  min-height: 30px;
+  gap: 4px;
+  padding: 0 7px;
+}
+
+html.android-phone .sector-group h3 {
+  font-size: 9px;
+  line-height: 1;
+}
+
+html.android-phone .sector-group-meta {
+  gap: 4px;
+  font-size: 7px;
+  line-height: 1;
+}
+
+html.android-phone .sector-group-meta strong {
+  font-size: 9px;
+}
+
+html.android-phone .sector-group-meta small {
+  font-size: 7px;
+}
+
+html.android-phone .sector-group-content {
+  padding: 2px;
+}
+
+html.android-phone .custom-screen-controls,
+html.android-phone .grouped-screen-controls {
+  gap: 3px;
+  padding: 3px;
+}
+
+html.android-tablet {
+  --header-height: 48px;
+  --control-height: 36px;
+  --touch-height: 40px;
+  font-size: 13px;
+}
+
+html.android-tablet body {
+  font-size: 12px;
+}
+
+html.android-tablet .app-title {
+  font-size: 14px;
+}
+
+html.android-tablet .workbench {
+  padding: 12px 14px 30px;
+}
+
+html.android-tablet .nav-link {
+  min-height: 46px;
+  font-size: 10px;
+}
+
+html.android-tablet .panel-tab {
+  min-height: 36px;
+  padding-inline: 10px;
+  font-size: 11px;
+}
+
+html.android-tablet .form-row input,
+html.android-tablet .form-row select,
+html.android-tablet .form-row textarea,
+html.android-tablet .stock-code-input input,
+html.android-tablet .run-btn,
+html.android-tablet .action-btn,
+html.android-tablet .stock-row-action {
+  font-size: 11.5px;
+}

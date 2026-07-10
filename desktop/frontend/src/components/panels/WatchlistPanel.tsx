@@ -1,5 +1,8 @@
+import { Trash2 } from "lucide-react";
 import { useCallback } from "react";
 import type { WatchlistItem } from "../../types";
+import { IconButton } from "../ui/IconButton";
+import { PanelFeedback } from "../ui/PanelFeedback";
 
 interface WatchlistPanelProps {
   items: WatchlistItem[];
@@ -8,7 +11,7 @@ interface WatchlistPanelProps {
 
 export function WatchlistPanel({ items, onChange }: WatchlistPanelProps) {
   const remove = useCallback((code: string) => {
-    onChange(items.filter((w) => w.code !== code));
+    onChange(items.filter((item) => item.code !== code));
   }, [items, onChange]);
 
   const clear = useCallback(() => {
@@ -18,39 +21,35 @@ export function WatchlistPanel({ items, onChange }: WatchlistPanelProps) {
   }, [onChange]);
 
   return (
-    <div className="watchlist-panel">
-      <div className="watchlist-header">
-        <h3>自选股 <span className="watchlist-count">({items.length})</span></h3>
+    <section className="watchlist-panel" aria-label="自选股">
+      <header className="watchlist-header">
+        <div>
+          <h3>自选股</h3>
+          <span className="watchlist-count">{items.length} 只</span>
+        </div>
         {items.length > 0 && (
           <button type="button" className="clear-btn" onClick={clear}>清空</button>
         )}
-      </div>
+      </header>
 
       {items.length === 0 ? (
-        <div className="watchlist-empty">
-          <span>暂无关注股票</span>
-        </div>
+        <PanelFeedback kind="empty" description="收藏股票后会显示在这里。" />
       ) : (
         <ul className="watchlist-items">
           {items.map((item) => (
             <li key={item.code} className="watchlist-item">
               <span className="watchlist-code">{item.code}</span>
-              <span className="watchlist-name">{item.name || "—"}</span>
-              <button
-                type="button"
+              <span className="watchlist-name">{item.name || "暂无名称"}</span>
+              <IconButton
                 className="watchlist-remove"
                 onClick={() => remove(item.code)}
-                aria-label="移除"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                </svg>
-              </button>
+                label={`移除 ${item.name || item.code}`}
+                icon={<Trash2 size={15} aria-hidden="true" />}
+              />
             </li>
           ))}
         </ul>
       )}
-    </div>
+    </section>
   );
 }

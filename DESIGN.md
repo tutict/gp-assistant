@@ -2,22 +2,22 @@
 name: 股选优
 description: A professional A-share research workbench for screening, evidence, observation, and backtesting.
 colors:
-  primary: "#48BFD2"
-  primary-deep: "#0F7B8A"
-  accent: "#D97706"
-  background-dark: "#0D1116"
-  surface-dark: "#151B22"
-  surface-raised-dark: "#1D252D"
-  text-dark: "#F2F7FA"
-  muted-dark: "#9BAAB7"
-  border-dark: "#2B3844"
+  primary: "#D83D35"
+  primary-deep: "#A92924"
+  accent: "#F3C451"
+  background-dark: "#0D1014"
+  surface-dark: "#14191F"
+  surface-raised-dark: "#222A33"
+  text-dark: "#F4F7FA"
+  muted-dark: "#A9B4BF"
+  border-dark: "#303943"
   background-light: "#F6F8FB"
   surface-light: "#FFFFFF"
   text-light: "#16212B"
   muted-light: "#5F6F7D"
   rise: "#F25D52"
   fall: "#35B779"
-  warning: "#D97706"
+  warning: "#E7A33D"
 typography:
   display:
     fontFamily: "Fira Sans, Inter, system-ui, sans-serif"
@@ -83,7 +83,7 @@ components:
 
 **Creative North Star: "Research Desk Terminal"**
 
-The interface should feel like a focused research desk: quiet, structured, and built around evidence. It uses a restrained dark-first workbench, strong text contrast, compact controls, and a single cyan action color so data and status remain louder than decoration.
+The interface should feel like a focused research desk: quiet, structured, and built around evidence. It uses a restrained dark-first workbench, strong text contrast, compact controls, and a single disciplined red action color so data and status remain louder than decoration.
 
 The system rejects marketing-page dramatics, generic finance neon, and noisy trading-software clutter. The design earns trust through consistent controls, visible states, and disciplined grouping.
 
@@ -95,11 +95,11 @@ The system rejects marketing-page dramatics, generic finance neon, and noisy tra
 
 ## 2. Colors
 
-The palette is graphite surfaces, exchange cyan actions, amber caution, and semantic red/green market states.
+The palette is graphite surfaces, disciplined red actions, amber caution, and semantic red/green market states.
 
 ### Primary
-- **Exchange Cyan**: used for primary actions, selected navigation, focus rings, and active stream/status markers.
-- **Deep Exchange Cyan**: used for primary button fills and high-emphasis selected states.
+- **Research Red**: used for primary actions, selected navigation, focus rings, and active stream/status markers.
+- **Deep Research Red**: used for primary button fills and high-emphasis selected states.
 
 ### Secondary
 - **Audit Amber**: used for warnings, incomplete data, stale cache, and settings that require review.
@@ -114,7 +114,9 @@ The palette is graphite surfaces, exchange cyan actions, amber caution, and sema
 
 ### Named Rules
 
-**The One Action Color Rule.** Cyan is reserved for action, selection, focus, and progress. It is not decoration.
+**The One Action Color Rule.** Research Red is reserved for action, selection, focus, and progress. It is not decoration.
+
+**The Gold Score Rule.** Gold is reserved for the composite score. Factor scores stay neutral white so the hierarchy remains unambiguous.
 
 **The Semantic Market Rule.** Red and green only describe market direction or positive/negative evidence, and must be paired with text.
 
@@ -155,13 +157,13 @@ Depth is conveyed mostly by tonal layering and thin borders. Shadows are structu
 
 ### Buttons
 - **Shape:** compact rectangle with precise corners (4px).
-- **Primary:** Deep Exchange Cyan fill, white text, 10px 14px padding, 44px minimum touch height on mobile.
-- **Hover / Focus:** hover deepens the fill; focus uses a visible cyan ring; active state darkens without shifting layout.
-- **Ghost:** transparent surface with Workbench Line border and cyan text for secondary commands.
+- **Primary:** Deep Research Red fill, white text, 10px 14px padding, 44px minimum touch height on mobile.
+- **Hover / Focus:** hover deepens the fill; focus uses a visible red ring; active state darkens without shifting layout.
+- **Ghost:** transparent surface with Workbench Line border and red text for secondary commands.
 
 ### Chips
 - **Style:** muted tonal background, thin border, label-weight text.
-- **State:** selected chips use cyan text and a stronger border; unselected chips stay neutral.
+- **State:** selected chips use red text and a stronger border; unselected chips stay neutral.
 
 ### Cards / Containers
 - **Corner Style:** restrained rounded corners (8px to 10px).
@@ -172,11 +174,11 @@ Depth is conveyed mostly by tonal layering and thin borders. Shadows are structu
 
 ### Inputs / Fields
 - **Style:** dark tonal fill, thin border, 4px radius, visible label.
-- **Focus:** border shifts to cyan and receives a soft focus ring.
+- **Focus:** border shifts to red and receives a soft focus ring.
 - **Error / Disabled:** error uses text plus semantic color; disabled states reduce opacity and remove pointer affordance.
 
 ### Navigation
-- **Style:** persistent sidebar on desktop, bottom navigation on mobile, both with label and icon. Active state uses cyan text and a tonal background. Navigation never hides primary work surfaces.
+- **Style:** persistent sidebar on desktop, bottom navigation on mobile, both with label and icon. Active state uses red text and a tonal background. Navigation never hides primary work surfaces.
 
 ### Result Panels
 - **Style:** dense evidence-first content, consistent metric rows, explicit empty/loading/error states.
@@ -186,7 +188,7 @@ Depth is conveyed mostly by tonal layering and thin borders. Shadows are structu
 
 ### Do:
 - **Do** keep the current conditions and data source visible near the working surface.
-- **Do** use cyan only for action, selection, focus, and progress.
+- **Do** use research red only for action, selection, focus, and progress.
 - **Do** pair red/green market colors with text labels, arrows, or context.
 - **Do** keep controls at 44px minimum touch target on mobile.
 - **Do** treat Android compact workbench controls as the only mobile density exception: filter chips, screen status cells, and repeated dashboard controls may use 30px-36px targets when the surrounding view is scroll-dense and the command is repeated nearby.

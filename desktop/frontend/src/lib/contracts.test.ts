@@ -167,6 +167,11 @@ describe("contract payload builders", () => {
       end_date: "20260627",
       criteria: { limit: 100 },
     });
+    expect(buildTrendScreenRequest(criteria, "2026-06-25", "2026-07-09")).toMatchObject({
+      start_date: "20260305",
+      end_date: "20260709",
+      criteria: { limit: 100 },
+    });
     expect(buildBacktestRequest({
       source: "watchlist",
       criteria,

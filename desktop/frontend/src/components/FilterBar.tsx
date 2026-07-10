@@ -1,3 +1,4 @@
+import { RefreshCw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getJson, getTauriInvoke, isMarketStatusStale, postJson, refreshTauriMarketData } from "../lib/tauri";
 import { formatBytes, formatMarketRefreshDate, formatNumber } from "../lib/format";
@@ -245,10 +246,10 @@ useEffect(() => {
 
       <div className="data-source-actions">
         <button type="button" className="action-btn" onClick={refreshUniverse} disabled={refreshing}>
-          {mobileRuntime ? "校验刷新" : "刷新并校验股票池"}
+          <RefreshCw className={refreshing ? "spin" : ""} size={15} aria-hidden="true" /><span>{mobileRuntime ? "校验刷新" : "刷新并校验股票池"}</span>
         </button>
         <button type="button" className="action-btn" onClick={pruneCache} disabled={refreshing}>
-          {mobileRuntime ? "清缓存" : "清理缓存"}
+          <Trash2 size={15} aria-hidden="true" /><span>{mobileRuntime ? "清缓存" : "清理缓存"}</span>
         </button>
       </div>
     </div>
@@ -322,7 +323,7 @@ useEffect(() => {
               onClick={refreshUniverse}
               disabled={refreshing}
             >
-              {refreshing ? "刷新中" : "刷新"}
+              <RefreshCw className={refreshing ? "spin" : ""} size={14} aria-hidden="true" /><span>{refreshing ? "刷新中" : "刷新"}</span>
             </button>
           </div>
 

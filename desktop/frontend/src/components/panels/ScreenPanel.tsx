@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import type { SectorScreenResult, StockRowView, WatchlistItem } from "../../types";
 import type { FilterCriteria } from "../FilterBar";
 import { CriteriaFields } from "../CriteriaFields";
@@ -12,8 +12,10 @@ import {
   normalizeScreenRows,
   normalizeSectorGroups,
 } from "../../lib/contracts";
-import { currentSystemDateInputValue, defaultObserveStartDateInputValue, escapeHtml } from "../../lib/format";
+import { currentSystemDateInputValue, defaultTrendStartDateInputValue } from "../../lib/format";
 import { StockList } from "../StockList";
+import { RawJson } from "../RawJson";
+import { PanelFeedback } from "../ui/PanelFeedback";
 
 interface ScreenPanelProps {
   criteria: FilterCriteria;
@@ -48,7 +50,7 @@ export function ScreenPanel({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
-  const [trendStart, setTrendStart] = useState(defaultObserveStartDateInputValue());
+  const [trendStart, setTrendStart] = useState(defaultTrendStartDateInputValue());
   const [trendEnd, setTrendEnd] = useState(currentSystemDateInputValue());
 
   const run = useCallback(async () => {
@@ -129,7 +131,7 @@ export function ScreenPanel({
 
   return (
     <div className={`panel-container screen-panel-container ${result != null ? "has-result" : ""}`}>
-      <div className="panel-tabs screen-panel-tabs">
+      <div className="panel-tabs screen-panel-tabs" role="tablist" aria-label="选股模式">
         {TABS.map((tab) => (
           <button
             key={tab.key}
@@ -165,18 +167,8 @@ export function ScreenPanel({
       )}
 
       <div className="panel-result screen-panel-result">
-        {error && (
-          <div className="result-error">
-            <strong>查询失败</strong>
-            <p>{escapeHtml(error)}</p>
-          </div>
-        )}
-        {loading && !result && !error && (
-          <div className="result-loading">
-            <div className="loader" />
-            <span>正在分析...</span>
-          </div>
-        )}
+        {error && <PanelFeedback kind="error" title="查询失败" description={error} />}
+        {loading && !result && !error && <PanelFeedback kind="loading" description="正在分析候选股票..." />}
         {result != null && !loading && (
           <ScreenResultView
             key={mode}
@@ -188,13 +180,13 @@ export function ScreenPanel({
             onRunBacktest={onRunBacktest}
           />
         )}
-        {!result && !loading && !error && <div className="result-empty"><span>设置参数后运行查询。</span></div>}
+        {!result && !loading && !error && <PanelFeedback kind="empty" description="设置筛选条件后运行查询。" />}
       </div>
     </div>
   );
 }
 
-function ScreenResultView({
+const ScreenResultView = memo(function ScreenResultView({
   result,
   grouped,
   watchlist,
@@ -210,8 +202,11 @@ function ScreenResultView({
   onRunBacktest?: () => void;
 }) {
   const resultRecord = result as { total?: number; returned?: number; notes?: string[] };
-  const groups = grouped ? normalizeSectorGroups(result as SectorScreenResult) : normalizeScreenGroups(result);
-  const rows = normalizeScreenRows(result);
+  const groups = useMemo(
+    () => grouped ? normalizeSectorGroups(result as SectorScreenResult) : normalizeScreenGroups(result),
+    [grouped, result],
+  );
+  const rows = useMemo(() => normalizeScreenRows(result), [result]);
 
   return (
     <div className="result-list screen-result-list">
@@ -248,7 +243,7 @@ function ScreenResultView({
           <button type="button" onClick={onRunBacktest}>回测</button>
         </div>
       )}
-      <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
+      <RawJson result={result} />
     </div>
   );
-}
+});

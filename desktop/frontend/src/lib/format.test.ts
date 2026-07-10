@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatRatioPercent, hasMarketSuffix } from "./format";
+import {
+  defaultTrendStartDateInputValue,
+  formatRatioPercent,
+  hasMarketSuffix,
+  trendScreenStartDateInputValue,
+} from "./format";
 
 describe("formatRatioPercent", () => {
   it("formats core ratio fields as visible percentages", () => {
@@ -20,5 +25,16 @@ describe("hasMarketSuffix", () => {
 
   it("keeps bare digits incomplete so market confirmation can still show", () => {
     expect(hasMarketSuffix("000100")).toBe(false);
+  });
+});
+
+describe("trend screen date window", () => {
+  it("defaults to ninety weekdays of lookback", () => {
+    expect(defaultTrendStartDateInputValue("2026-07-09")).toBe("2026-03-05");
+  });
+
+  it("expands short windows while preserving longer requested ranges", () => {
+    expect(trendScreenStartDateInputValue("2026-06-25", "2026-07-09")).toBe("2026-03-05");
+    expect(trendScreenStartDateInputValue("2020-01-01", "2026-07-09")).toBe("2020-01-01");
   });
 });

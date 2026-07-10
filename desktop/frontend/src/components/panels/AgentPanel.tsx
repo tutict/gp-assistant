@@ -1,4 +1,5 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LoaderCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, Search, Send, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentResult, AgentStreamEvent, BacktestResult, LlmSettings, NewsRagResult, ObserveResult, StockRowView, WatchlistItem } from "../../types";
 import { getTauriInvoke, getTauriListen, isTauriRuntime } from "../../lib/tauri";
 import { actionResultKind, activeLlmProvider, buildLlmConfig, normalizeAgentResult, normalizeAgentStreamEvent, normalizeScreenRows, parseSseBlock } from "../../lib/contracts";
@@ -8,6 +9,8 @@ import { BacktestResultView } from "./BacktestPanel";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
 import { NewsRagView } from "./NewsRagPanel";
 import { ObserveResultView } from "./ObservePanel";
+import { RawJson } from "../RawJson";
+import { IconButton } from "../ui/IconButton";
 
 interface AgentPanelProps {
   llmSettings: LlmSettings | null;
@@ -71,7 +74,7 @@ const AGENT_MODE_CAPABILITIES: Record<AgentMode, { summary: string; capabilities
 const AGENT_HISTORY_KEY = "stock-optimizer-agent-conversations";
 const AGENT_ACTIVE_KEY = "stock-optimizer-agent-active-conversation";
 const AGENT_RAIL_COLLAPSED_KEY = "stock-optimizer-agent-rail-collapsed";
-const AGENT_MOBILE_DRAWER_QUERY = "(max-width: 640px)";
+const AGENT_MOBILE_DRAWER_QUERY = "(max-width: 768px)";
 const MAX_AGENT_CONVERSATIONS = 40;
 
 export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatchlistChange }: AgentPanelProps) {
@@ -311,19 +314,15 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   return (
     <div className={`panel-container agent-panel agent-workspace ${railCollapsed ? "rail-collapsed" : ""}`}>
       <aside className="agent-rail" aria-label="Agent 会话历史">
-        <button
-          type="button"
+        <IconButton
           className="agent-rail-toggle"
           onClick={() => setRailCollapsed((collapsed) => !collapsed)}
-          aria-label={railCollapsed ? "展开会话历史" : "折叠会话历史"}
-          title={railCollapsed ? "展开会话历史" : "折叠会话历史"}
-        >
-          <span />
-          <span />
-        </button>
+          label={railCollapsed ? "展开会话历史" : "折叠会话历史"}
+          icon={railCollapsed ? <PanelLeftOpen size={18} aria-hidden="true" /> : <PanelLeftClose size={18} aria-hidden="true" />}
+        />
 
         <label className="agent-rail-search">
-          <span aria-hidden="true" />
+          <Search size={15} aria-hidden="true" />
           <input
             value={conversationSearch}
             onChange={(event) => setConversationSearch(event.target.value)}
@@ -340,7 +339,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         </div>
 
         <button type="button" className="agent-new-chat" onClick={startNewChat}>
-          <span>+</span><strong className="agent-new-chat-label">新建对话</strong>
+          <Plus size={16} aria-hidden="true" /><strong className="agent-new-chat-label">新建对话</strong>
         </button>
 
         <div className="agent-rail-section">
@@ -371,7 +370,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
                         removeConversation(conversation.id);
                       }}
                     >
-                      ×
+                      <Trash2 size={14} aria-hidden="true" />
                     </button>
                   </article>
                 ))}
@@ -395,26 +394,21 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           aria-label="关闭对话栏"
         />
         <div className="agent-mobile-actions" aria-label="Agent 移动端操作">
-          <button
-            type="button"
+          <IconButton
             className="agent-mobile-menu"
             onClick={() => setRailCollapsed(false)}
-            aria-label="展开对话栏"
-          >
-            <span />
-            <span />
-          </button>
-          <button
-            type="button"
+            label="展开对话栏"
+            icon={<Menu size={18} aria-hidden="true" />}
+          />
+          <IconButton
             className="agent-mobile-new"
             onClick={() => {
               startNewChat();
               setRailCollapsed(true);
             }}
-            aria-label="新建对话"
-          >
-            <span>+</span>
-          </button>
+            label="新建对话"
+            icon={<Plus size={18} aria-hidden="true" />}
+          />
         </div>
         <header className="agent-topbar">
           <div>
@@ -455,16 +449,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
               本地存储配额已满，部分对话历史未能保存，刷新后可能丢失。建议删除旧对话后重试。
             </div>
           )}
-          <button
-            type="button"
-            className="agent-composer-plus"
-            aria-label="添加上下文（暂未开放）"
-            title="添加上下文（暂未开放）"
-            disabled
-          >
-            +
-          </button>
-          <textarea
+<textarea
             className="agent-input"
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -479,25 +464,11 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             disabled={loading}
           />
           <div className="agent-composer-tools">
-            <span aria-hidden="true">{activeMode.label}</span>
-            <button
-              type="button"
-              className="agent-voice-btn"
-              aria-label="语音输入（暂未开放）"
-              title="语音输入（暂未开放）"
-              tabIndex={-1}
-              disabled
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" />
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                <path d="M12 19v3" />
-              </svg>
-            </button>
+            <span>{activeMode.label}</span>
           </div>
           <div className="agent-composer-footer">
             <button type="button" className="send-btn" onClick={send} disabled={loading || !input.trim()} aria-label="发送">
-              {loading ? "..." : "→"}
+              {loading ? <LoaderCircle className="spin" size={18} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
             </button>
           </div>
         </div>
@@ -530,6 +501,8 @@ function AgentEmptyState({
             key={item.id}
             type="button"
             className={item.id === mode ? "active" : ""}
+            role="tab"
+            aria-selected={item.id === mode}
             onClick={() => onModeChange(item.id)}
             title={item.hint}
           >
@@ -672,7 +645,7 @@ function agentNestedResult(result: AgentResult, kind: string): Record<string, un
 }
 
 function GenericAgentResult({ result }: { result: unknown }) {
-  return <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>;
+  return <RawJson result={result} />;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

@@ -3,14 +3,16 @@ import type { CapitalEvidenceResult, CapitalEvidenceSection, FinancialIndicatorI
 import { computeKdj, toDailyBars } from "../../lib/kline";
 import { getJson } from "../../lib/tauri";
 import { CollapsibleNotes } from "../CollapsibleNotes";
+import { RawJson } from "../RawJson";
 import { StockCodeInput } from "../StockCodeInput";
 import { TrendCharts } from "../observe/ObserveCharts";
+import { PanelFeedback } from "../ui/PanelFeedback";
 import {
   currentSystemDateInputValue,
-  escapeHtml,
   formatNumber,
   formatPrice,
   formatRatioPercent,
+  metricOrMissing,
   normalizeStockCode,
   reasonLabel,
 } from "../../lib/format";
@@ -70,10 +72,10 @@ export function ObservePanel({ initialCode }: ObservePanelProps) {
       </div>
 
       <div className="panel-result observe-panel-result">
-        {error && <div className="result-error"><strong>观察失败</strong><p>{escapeHtml(error)}</p></div>}
-        {loading && !result && !error && <div className="result-loading"><div className="loader" /><span>正在加载观察结果...</span></div>}
+        {error && <PanelFeedback kind="error" title="观察失败" description={error} />}
+        {loading && !result && !error && <PanelFeedback kind="loading" description="正在加载行情、财务和趋势数据..." />}
         {result && !loading && <ObserveResultView result={result} />}
-        {!result && !loading && !error && <div className="result-empty"><span>输入股票代码后开始观察。</span></div>}
+        {!result && !loading && !error && <PanelFeedback kind="empty" description="输入股票代码后开始观察。" />}
       </div>
     </div>
   );
@@ -112,7 +114,7 @@ export function ObserveResultView({ result }: { result: ObserveResult }) {
       )}
 
       <CollapsibleNotes notes={[...(result.notes || []), ...(signal?.notes || [])]} />
-      <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
+      <RawJson result={result} />
     </div>
   );
 }
@@ -428,10 +430,6 @@ function financialMetricAny(lookup: Map<string, string>, keys: string[], fallbac
   return fallback;
 }
 
-function metricOrMissing(value: string): string {
-  const normalized = String(value || "").trim();
-  return normalized && normalized !== "--" ? normalized : "暂无";
-}
 
 function summarizeCapitalEvidence(capital?: CapitalEvidenceResult | null): Record<string, string> {
   const sections = capital?.sections || [];

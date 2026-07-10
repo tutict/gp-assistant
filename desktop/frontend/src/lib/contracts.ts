@@ -31,6 +31,7 @@ import {
   normalizeDateParam,
   normalizeStockCode,
   parseCodes,
+  trendScreenStartDateInputValue,
 } from "./format";
 
 export interface ScreenRequestOptions {
@@ -104,10 +105,15 @@ export function buildTrendScreenRequest(
   startDate: string,
   endDate: string,
 ): Record<string, unknown> {
+  const normalizedEndDate = normalizeDateParam(endDate, currentSystemDateCompact());
+  const normalizedStartDate = normalizeDateParam(
+    trendScreenStartDateInputValue(startDate, endDate),
+    "20200101",
+  );
   return {
     criteria: buildScreenCriteria(criteria, { limit: 100 }),
-    start_date: normalizeDateParam(startDate, "20200101"),
-    end_date: normalizeDateParam(endDate, currentSystemDateCompact()),
+    start_date: normalizedStartDate,
+    end_date: normalizedEndDate,
     limit: Math.min(clampInt(criteria.resultLimit, 1, 200, 10), 100),
   };
 }

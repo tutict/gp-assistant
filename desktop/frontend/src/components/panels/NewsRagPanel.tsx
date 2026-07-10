@@ -20,8 +20,10 @@ import {
   normalizeRagHit,
   parseUpstreamImportDescriptor,
 } from "../../lib/contracts";
-import { escapeHtml, formatBytes, formatDateTime, formatNumber, normalizeStockCode } from "../../lib/format";
+import { formatBytes, formatDateTime, formatNumber, normalizeStockCode } from "../../lib/format";
 import { CollapsibleNotes } from "../CollapsibleNotes";
+import { RawJson } from "../RawJson";
+import { PanelFeedback } from "../ui/PanelFeedback";
 import { StockCodeInput } from "../StockCodeInput";
 
 type NewsTab = "newsRag" | "ragPackBuild" | "ragPackQuery" | "upstreamScan" | "upstreamImport";
@@ -162,9 +164,9 @@ export function NewsRagPanel({ llmSettings }: NewsRagPanelProps) {
 
   return (
     <div className="panel-container">
-      <div className="panel-tabs rag-tabs">
+      <div className="panel-tabs rag-tabs" role="tablist" aria-label="消息工具">
         {TABS.map((t) => (
-          <button key={t.key} type="button" className={`panel-tab ${tab === t.key ? "active" : ""}`} onClick={() => { setTab(t.key); setResult(null); setError(null); }}>
+          <button key={t.key} type="button" className={`panel-tab ${tab === t.key ? "active" : ""}`} role="tab" aria-selected={tab === t.key} onClick={() => { setTab(t.key); setResult(null); setError(null); }}>
             {t.label}
           </button>
         ))}
@@ -196,10 +198,10 @@ export function NewsRagPanel({ llmSettings }: NewsRagPanelProps) {
       </div>
 
       <div className="panel-result">
-        {error && <div className="result-error"><strong>请求失败</strong><p>{escapeHtml(error)}</p></div>}
-        {loading && !result && !error && <div className="result-loading"><div className="loader" /><span>处理中...</span></div>}
+        {error && <PanelFeedback kind="error" title="请求失败" description={error} />}
+        {loading && !result && !error && <PanelFeedback kind="loading" description="正在整理消息和证据..." />}
         {result != null && !loading && <NewsResult tab={tab} result={result} onDetail={showMobilePackDetail} onRollback={rollbackMobilePack} />}
-        {!result && !loading && !error && <div className="result-empty"><span>设置参数后运行。</span></div>}
+        {!result && !loading && !error && <PanelFeedback kind="empty" description="选择消息工具并设置参数后运行。" />}
       </div>
     </div>
   );
@@ -254,7 +256,7 @@ export function NewsRagView({ result }: { result: NewsRagResult }) {
       </div>
 
       <CollapsibleNotes notes={result.notes || []} />
-      <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
+      <RawJson result={result} />
     </div>
   );
 }
@@ -344,7 +346,7 @@ function UpstreamBuildView({ result }: { result: { build?: UpstreamRagBuildResul
       </section>
       <RelationGraph manifest={manifest} />
       <CollapsibleNotes notes={build.notes || []} />
-      <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
+      <RawJson result={result} />
     </div>
   );
 }
@@ -407,7 +409,7 @@ function UpstreamImportView({ result }: { result: Record<string, unknown> }) {
       </div>
       <RelationGraph manifest={manifest} />
       <CollapsibleNotes notes={Array.isArray(result.notes) ? result.notes.map((note) => String(note)) : []} />
-      <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
+      <RawJson result={result} />
     </div>
   );
 }
@@ -430,7 +432,7 @@ function UpstreamDetailView({ result }: { result: Record<string, unknown> }) {
         </div>
       </section>
       <RelationGraph manifest={manifest} />
-      <details className="raw-json"><summary>原始 JSON</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
+      <RawJson result={result} />
     </div>
   );
 }
@@ -447,7 +449,7 @@ function RelationGraph({ manifest }: { manifest: Record<string, unknown> }) {
 }
 
 function GenericJsonResult({ result }: { result: unknown }) {
-  return <pre className="raw-result">{JSON.stringify(result, null, 2)}</pre>;
+  return <RawJson result={result} className="raw-result" inline />;
 }
 
 async function scanQrCode(): Promise<string> {

@@ -1,0 +1,104 @@
+:root {
+  --bg: #0d1014;
+  --surface: #14191f;
+  --surface-2: #1a2027;
+  --surface-3: #222a33;
+  --surface-raised: #272f39;
+  --line: #303943;
+  --line-soft: rgba(255, 255, 255, 0.075);
+  --text: #f4f7fa;
+  --text-secondary: #a9b4bf;
+  --text-tertiary: #7f8b97;
+  --accent: #d83d35;
+  --accent-strong: #c6322c;
+  --accent-muted: #a92924;
+  --accent-soft: rgba(216, 61, 53, 0.14);
+  --button-text: #ffffff;
+  --success: #35b779;
+  --warning: #e7a33d;
+  --error: #f0645c;
+  --rise: #ee554c;
+  --fall: #35b779;
+  --flat: #a9b4bf;
+  --score: #f3c451;
+  --score-soft: rgba(243, 196, 81, 0.14);
+  --focus-ring: rgba(216, 61, 53, 0.34);
+  --control-height: 40px;
+  --touch-height: 44px;
+  --header-height: 56px;
+  --sidebar-width: 208px;
+  --bottom-nav-height: 66px;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --motion-fast: 160ms;
+  --motion-standard: 210ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --sticky-top: var(--header-height);
+  --z-header: 30;
+  --z-sidebar: 35;
+  --z-overlay: 40;
+  --z-drawer: 45;
+  --z-modal: 50;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --surface-2: #edf1f5;
+  --surface-3: #e3e8ed;
+  --surface-raised: #ffffff;
+  --line: #cdd5dd;
+  --line-soft: rgba(21, 31, 42, 0.1);
+  --text: #18212a;
+  --text-secondary: #566473;
+  --text-tertiary: #6e7b88;
+  --accent: #d83d35;
+  --accent-strong: #b92d28;
+  --accent-muted: #a92924;
+  --accent-soft: rgba(216, 61, 53, 0.1);
+  --button-text: #ffffff;
+  --success: #168653;
+  --warning: #a9660f;
+  --error: #c93730;
+  --rise: #d83d35;
+  --fall: #168653;
+  --flat: #667482;
+  --score: #9d6b08;
+  --score-soft: rgba(157, 107, 8, 0.1);
+  --focus-ring: rgba(216, 61, 53, 0.24);
+  color-scheme: light;
+}
+
+html {
+  accent-color: var(--accent);
+}
+
+body,
+button,
+input,
+select,
+textarea {
+  font-family: Inter, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  letter-spacing: 0;
+}
+
+strong,
+b,
+.metric,
+.quote-number,
+.score-chip,
+.status-item,
+.stock-code,
+time {
+  font-variant-numeric: tabular-nums;
+}
