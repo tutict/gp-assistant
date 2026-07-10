@@ -76,6 +76,7 @@ const MOBILE_DEDUCTED_FINANCIAL_FIELDS = [
 ];
 
 let mobileFinancialSnapshotPromise: Promise<Record<string, unknown> | null> | null = null;
+let mobileFinancialSnapshotSentToBackend = false;
 
 function hasTauriRuntime(): boolean {
   if (typeof window === "undefined") return false;
@@ -182,13 +183,33 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
   },
 ];
 
+async function withMobileFinancialSnapshotPayload(payload: unknown): Promise<unknown> {
+  if (!isMobileTauriRuntime()) return payload;
+  const base = asRecord(payload);
+  if (financialSnapshotPayload(asRecord(base.financial_snapshot))) return payload;
+  if (mobileFinancialSnapshotSentToBackend) return payload;
+  const snapshot = await loadMobileFinancialSnapshot().catch(() => null);
+  const financialSnapshot = financialSnapshotPayload(snapshot, { includeStocks: false });
+  return financialSnapshot ? { ...base, financial_snapshot: financialSnapshot } : payload;
+}
+
+async function invokeWithMobileFinancialSnapshot(invoke: InvokeFn, command: string, payload: unknown): Promise<unknown> {
+  const nextPayload = await withMobileFinancialSnapshotPayload(payload);
+  const includedSnapshot = Boolean(
+    financialSnapshotPayload(asRecord(asRecord(nextPayload).financial_snapshot)),
+  );
+  const result = await invoke(command, { payload: nextPayload });
+  if (includedSnapshot) mobileFinancialSnapshotSentToBackend = true;
+  return result;
+}
+
 export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
-  "/api/screen": async ({ invoke, payload }) => invoke("api_screen", { payload }),
-  "/api/sector-screen": async ({ invoke, payload }) => invoke("api_sector_screen", { payload }),
-  "/api/custom-screen": async ({ invoke, payload }) => invoke("api_custom_screen", { payload }),
-  "/api/graph-screen": async ({ invoke, payload }) => invoke("api_graph_screen", { payload }),
+  "/api/screen": async ({ invoke, payload }) => invokeWithMobileFinancialSnapshot(invoke, "api_screen", payload),
+  "/api/sector-screen": async ({ invoke, payload }) => invokeWithMobileFinancialSnapshot(invoke, "api_sector_screen", payload),
+  "/api/custom-screen": async ({ invoke, payload }) => invokeWithMobileFinancialSnapshot(invoke, "api_custom_screen", payload),
+  "/api/graph-screen": async ({ invoke, payload }) => invokeWithMobileFinancialSnapshot(invoke, "api_graph_screen", payload),
   "/api/trend": async ({ invoke, payload }) => invoke("api_trend_analyze", { payload }),
-  "/api/trend-screen": async ({ invoke, payload }) => invoke("api_trend_screen", { payload }),
+  "/api/trend-screen": async ({ invoke, payload }) => invokeWithMobileFinancialSnapshot(invoke, "api_trend_screen", payload),
   "/api/backtest": async ({ invoke, payload }) => invoke("api_backtest", { payload }),
   "/api/news-rag": async ({ invoke, payload }) => isMobileTauriRuntime()
     ? withTimeout(analyzeMobileStockNews(invoke, asRecord(payload)), MOBILE_NEWS_RAG_TIMEOUT_MS, `移动端消息分析超过 ${Math.round(MOBILE_NEWS_RAG_TIMEOUT_MS / 1000)} 秒未返回，已中止等待。`)
@@ -535,12 +556,16 @@ async function loadMobileFinancialSnapshot(): Promise<Record<string, unknown> | 
   return mobileFinancialSnapshotPromise;
 }
 
-function financialSnapshotPayload(snapshot: Record<string, unknown> | null): Record<string, unknown> | null {
+function financialSnapshotPayload(
+  snapshot: Record<string, unknown> | null,
+  options: { includeStocks?: boolean } = {},
+): Record<string, unknown> | null {
   if (!snapshot) return null;
-  const stocks = Array.isArray(snapshot.stocks) ? snapshot.stocks : [];
+  const includeStocks = options.includeStocks !== false;
+  const stocks = includeStocks && Array.isArray(snapshot.stocks) ? snapshot.stocks : [];
   const financials = asRecord(snapshot.financials);
   if (!stocks.length && !Object.keys(financials).length) return null;
-  return { stocks, financials };
+  return includeStocks ? { stocks, financials } : { financials };
 }
 
 async function loadMobileFinancialSnapshotForCode(rawCode: string): Promise<Record<string, unknown> | null> {

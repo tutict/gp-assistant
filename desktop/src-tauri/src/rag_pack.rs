@@ -2,16 +2,33 @@ use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    cmp::Ordering,
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::Manager;
 
 const RAG_PACK_FILE: &str = "rag-pack.json";
 const UPSTREAM_PACK_FILE: &str = "rag_pack.sqlite";
+
+static RAG_PACK_CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedRagPack>>> = OnceLock::new();
+
+#[derive(Clone)]
+struct CachedRagPack {
+    bytes: u64,
+    modified_at_epoch_ms: Option<u128>,
+    manifest: Value,
+    chunks: Arc<Vec<IndexedRagChunk>>,
+}
+
+#[derive(Clone)]
+struct IndexedRagChunk {
+    value: Value,
+    lower: String,
+    terms: HashSet<String>,
+}
 
 pub(crate) fn rag_pack_status(app: tauri::AppHandle) -> Result<Value, String> {
     let path = rag_pack_path(&app)?;
@@ -124,7 +141,7 @@ pub(crate) fn rag_pack_query(app: tauri::AppHandle, payload: Value) -> Result<Va
     if !path.exists() {
         return Err("Tauri/Rust RAG pack has not been built yet.".to_string());
     }
-    let pack = read_json_file(&path)?;
+    let pack = load_rag_pack_cache(&path)?;
     let query = string_field(&payload, "query").unwrap_or_default();
     if query.trim().is_empty() {
         return Err("query is required.".to_string());
@@ -136,11 +153,11 @@ pub(crate) fn rag_pack_query(app: tauri::AppHandle, payload: Value) -> Result<Va
     let published_after = string_field(&payload, "published_after");
     let top_k = int_field(&payload, "top_k", 8, 1, 50) as usize;
     let mut scored = pack
-        .get("chunks")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|chunk| {
+        .chunks
+        .iter()
+        .enumerate()
+        .filter(|(_, indexed)| {
+            let chunk = &indexed.value;
             if !stock_codes.is_empty()
                 && !value_string_array(chunk.get("stock_codes"))
                     .iter()
@@ -177,21 +194,16 @@ pub(crate) fn rag_pack_query(app: tauri::AppHandle, payload: Value) -> Result<Va
             }
             true
         })
-        .filter_map(|chunk| {
-            let text = format!(
-                "{} {}",
-                chunk.get("title").and_then(Value::as_str).unwrap_or(""),
-                chunk.get("text").and_then(Value::as_str).unwrap_or("")
-            );
-            let score = lexical_score(&query_terms, &text);
-            (score > 0.0).then(|| (score, chunk.clone()))
+        .filter_map(|(index, indexed)| {
+            let score = lexical_score_prepared(&query_terms, &indexed.lower, &indexed.terms);
+            (score > 0.0).then_some((score, index))
         })
         .collect::<Vec<_>>();
-    scored.sort_by(|left, right| right.0.partial_cmp(&left.0).unwrap_or(Ordering::Equal));
+    retain_top_scored(&mut scored, top_k);
     let hits = scored
         .into_iter()
-        .take(top_k)
-        .map(|(score, mut chunk)| {
+        .map(|(score, index)| {
+            let mut chunk = pack.chunks[index].value.clone();
             if let Value::Object(ref mut map) = chunk {
                 map.insert("score".to_string(), json!(score));
             }
@@ -200,8 +212,8 @@ pub(crate) fn rag_pack_query(app: tauri::AppHandle, payload: Value) -> Result<Va
         .collect::<Vec<_>>();
     Ok(json!({
         "hits": hits,
-        "manifest": pack.get("manifest").cloned().unwrap_or_else(|| json!({})),
-        "notes": ["Queried Tauri/Rust lightweight local RAG pack with lexical scoring."]
+        "manifest": pack.manifest.clone(),
+        "notes": ["Queried cached Tauri/Rust local RAG index with lexical scoring."]
     }))
 }
 
@@ -377,6 +389,7 @@ fn write_rag_pack(
             .map_err(|error| format!("serialize RAG pack failed: {error}"))?,
     )
     .map_err(|error| format!("write RAG pack failed: {error}"))?;
+    forget_rag_pack_cache(&path);
     Ok(
         json!({"path": path.display().to_string(), "document_count": manifest["document_count"], "chunk_count": manifest["chunk_count"], "content_hash": content_hash, "embedding_model": "tauri-lexical", "embedding_backend": "tauri-rust", "embedding_quantization": "none", "embedding_dim": 0, "notes": ["Built Tauri/Rust lightweight RAG pack without Python/ONNX."]}),
     )
@@ -534,9 +547,85 @@ fn source_tier_counts(docs: &[Value]) -> Value {
     json!(counts)
 }
 
-fn lexical_score(query_terms: &[String], text: &str) -> f64 {
-    let lower = text.to_lowercase();
-    let text_terms = tokenize(text).into_iter().collect::<HashSet<_>>();
+fn rag_pack_cache() -> &'static Mutex<HashMap<PathBuf, CachedRagPack>> {
+    RAG_PACK_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn rag_file_signature(path: &Path) -> (u64, Option<u128>) {
+    let metadata = fs::metadata(path).ok();
+    let bytes = metadata.as_ref().map(|value| value.len()).unwrap_or(0);
+    let modified_at_epoch_ms = metadata
+        .and_then(|value| value.modified().ok())
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|value| value.as_millis());
+    (bytes, modified_at_epoch_ms)
+}
+
+fn load_rag_pack_cache(path: &Path) -> Result<CachedRagPack, String> {
+    let (bytes, modified_at_epoch_ms) = rag_file_signature(path);
+    if let Ok(slot) = rag_pack_cache().lock() {
+        if let Some(entry) = slot.get(path) {
+            if entry.bytes == bytes && entry.modified_at_epoch_ms == modified_at_epoch_ms {
+                return Ok(entry.clone());
+            }
+        }
+    }
+    let pack = read_json_file(path)?;
+    let chunks = pack
+        .get("chunks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|chunk| {
+            let text = format!(
+                "{} {}",
+                chunk.get("title").and_then(Value::as_str).unwrap_or(""),
+                chunk.get("text").and_then(Value::as_str).unwrap_or("")
+            );
+            IndexedRagChunk {
+                value: chunk.clone(),
+                lower: text.to_lowercase(),
+                terms: tokenize(&text).into_iter().collect::<HashSet<_>>(),
+            }
+        })
+        .collect::<Vec<_>>();
+    let entry = CachedRagPack {
+        bytes,
+        modified_at_epoch_ms,
+        manifest: pack.get("manifest").cloned().unwrap_or_else(|| json!({})),
+        chunks: Arc::new(chunks),
+    };
+    if let Ok(mut slot) = rag_pack_cache().lock() {
+        slot.insert(path.to_path_buf(), entry.clone());
+    }
+    Ok(entry)
+}
+
+fn forget_rag_pack_cache(path: &Path) {
+    if let Ok(mut slot) = rag_pack_cache().lock() {
+        slot.remove(path);
+    }
+}
+
+fn retain_top_scored(scored: &mut Vec<(f64, usize)>, top_k: usize) {
+    let compare = |left: &(f64, usize), right: &(f64, usize)| {
+        right
+            .0
+            .total_cmp(&left.0)
+            .then_with(|| left.1.cmp(&right.1))
+    };
+    if scored.len() > top_k {
+        scored.select_nth_unstable_by(top_k, compare);
+        scored.truncate(top_k);
+    }
+    scored.sort_by(compare);
+}
+
+fn lexical_score_prepared(
+    query_terms: &[String],
+    lower: &str,
+    text_terms: &HashSet<String>,
+) -> f64 {
     let mut score = 0.0;
     for term in query_terms {
         if term.len() >= 2 && lower.contains(term) {
@@ -679,4 +768,54 @@ fn epoch_millis() -> u128 {
 }
 fn current_stamp() -> String {
     epoch_millis().to_string()
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prepared_lexical_score_preserves_scoring_rules() {
+        let text = "Alpha beta alpha";
+        let query_terms = tokenize("alpha beta gamma");
+        let lower = text.to_lowercase();
+        let text_terms = tokenize(text).into_iter().collect::<HashSet<_>>();
+
+        assert_eq!(
+            lexical_score_prepared(&query_terms, &lower, &text_terms),
+            6.0
+        );
+    }
+
+    #[test]
+    fn top_k_ranking_is_stable_for_equal_scores() {
+        let mut scored = vec![(3.0, 2), (2.0, 3), (3.0, 0), (3.0, 1)];
+        retain_top_scored(&mut scored, 2);
+        assert_eq!(scored, vec![(3.0, 0), (3.0, 1)]);
+    }
+
+    #[test]
+    fn rag_pack_cache_reuses_unchanged_index() {
+        let path = std::env::temp_dir().join(format!(
+            "gp-rag-pack-cache-{}-{}.json",
+            std::process::id(),
+            epoch_millis()
+        ));
+        let pack = json!({
+            "manifest": {"version": "test"},
+            "chunks": [{"title": "Alpha", "text": "beta gamma"}]
+        });
+        fs::write(
+            &path,
+            serde_json::to_vec(&pack).expect("serialize test pack"),
+        )
+        .expect("write test pack");
+        forget_rag_pack_cache(&path);
+
+        let first = load_rag_pack_cache(&path).expect("load first index");
+        let second = load_rag_pack_cache(&path).expect("load cached index");
+        assert!(Arc::ptr_eq(&first.chunks, &second.chunks));
+
+        forget_rag_pack_cache(&path);
+        let _ = fs::remove_file(path);
+    }
 }

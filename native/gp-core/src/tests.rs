@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 fn sample_data_set() -> CoreDataSet {
     let stocks = vec![
@@ -873,7 +873,7 @@ fn selected_industry_does_not_match_empty_stock_industry() {
         roe: Some(0.16),
         market_cap_billion: Some(240.0),
         dividend_yield: None,
-            latest_eps: None,
+        latest_eps: None,
         deducted_net_profit_billion: None,
         deducted_net_profit_margin: None,
         deducted_net_profit_growth_rate: None,
@@ -1607,10 +1607,54 @@ fn screen_stocks_with_tied_scores_is_deterministic() {
         "tie-break ordering must be deterministic"
     );
 }
+#[test]
+fn static_data_source_borrows_original_stock_slice() {
+    let data = sample_data_set();
+    let source = StaticDataSource::new(&data);
+    let stocks = source.stocks().expect("borrow stocks");
 
+    assert_eq!(stocks.as_ptr(), data.stocks.as_ptr());
+    assert_eq!(stocks.len(), data.stocks.len());
+}
 
+#[test]
+#[ignore = "manual release performance guard"]
+fn benchmark_screen_stocks_8000_universe() {
+    let universe = (0..8_000)
+        .map(|index| StockItem {
+            code: format!("{:06}.SZ", index),
+            name: format!("stock-{index}"),
+            industry: format!("industry-{}", index % 24),
+            price: 10.0 + (index % 100) as f64,
+            pe: Some(8.0 + (index % 30) as f64),
+            pb: Some(0.8 + (index % 10) as f64 / 10.0),
+            roe: Some(0.08 + (index % 15) as f64 / 100.0),
+            market_cap_billion: Some(20.0 + (index % 500) as f64),
+            change_pct: Some((index % 20) as f64 / 10.0),
+            turnover_rate: Some(1.0 + (index % 50) as f64 / 10.0),
+            volume_ratio: Some(0.8 + (index % 20) as f64 / 10.0),
+            ..StockItem::default()
+        })
+        .collect::<Vec<_>>();
+    let criteria = ScreenCriteria {
+        limit: 200,
+        sort_by: "score".to_string(),
+        sort_dir: "desc".to_string(),
+        ..ScreenCriteria::default()
+    };
+    let started = std::time::Instant::now();
 
+    for _ in 0..10 {
+        let result = screen_stocks(&universe, &criteria);
+        assert_eq!(result.total, universe.len());
+        std::hint::black_box(result);
+    }
 
-
-
-
+    let elapsed = started.elapsed();
+    let average = elapsed / 10;
+    eprintln!("8,000-stock screening x10: {elapsed:?}, average: {average:?}");
+    assert!(
+        average < std::time::Duration::from_millis(500),
+        "8,000-stock screening regression: average {average:?}"
+    );
+}

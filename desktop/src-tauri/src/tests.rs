@@ -328,7 +328,10 @@ fn financial_snapshot_enriches_seed_without_preserving_snapshot_only_rows() {
             .and_then(Value::as_f64),
         Some(12.0)
     );
-    assert_eq!(stocks[0].get("latest_eps").and_then(Value::as_f64), Some(0.45));
+    assert_eq!(
+        stocks[0].get("latest_eps").and_then(Value::as_f64),
+        Some(0.45)
+    );
 
     let valid_codes = HashSet::from(["000001.SZ".to_string()]);
     let financials = filtered_financial_snapshot_map(&seed, &snapshot, &valid_codes);
@@ -583,4 +586,172 @@ fn append_all_preserved_seed_stocks_keeps_rows_outside_current_batch() {
     assert!(stocks
         .iter()
         .any(|stock| stock.get("code").and_then(Value::as_str) == Some("688001.SH")));
+}
+#[test]
+fn financial_snapshot_financials_object_enriches_screen_stock_rows() {
+    let seed = json!({
+        "stocks": [
+            {"code": "000001.SZ", "name": "Ping An Bank", "price": 10.0}
+        ]
+    });
+    let snapshot = json!({
+        "financials": {
+            "000001.SZ": {"latest_eps": 0.45, "latest_bps": 12.3}
+        }
+    });
+    let (seed_stocks, seed_codes) = seed_stock_maps(&seed);
+    let enriched = enriched_stock_maps(&seed_stocks, &snapshot);
+    let mut stocks = Vec::new();
+    let mut seen = HashSet::new();
+    append_preserved_seed_stocks(&seed_codes, &enriched, &mut stocks, &mut seen);
+
+    assert_eq!(stocks.len(), 1);
+    assert_eq!(
+        stocks[0].get("latest_eps").and_then(Value::as_f64),
+        Some(0.45)
+    );
+    assert_eq!(
+        stocks[0].get("latest_bps").and_then(Value::as_f64),
+        Some(12.3)
+    );
+}
+
+#[test]
+fn core_payload_strips_financial_snapshot_after_merging_screen_rows() {
+    let mut data = json!({
+        "stocks": [
+            {"code": "000001.SZ", "name": "Ping An Bank", "price": 10.0}
+        ]
+    });
+    let snapshot = json!({
+        "financials": {
+            "000001.SZ": {"latest_eps": 0.45}
+        }
+    });
+    merge_screen_financial_snapshot_into_data(&mut data, &snapshot);
+    let stripped = strip_core_side_payload_fields(json!({
+        "financial_snapshot": snapshot,
+        "limit": 10
+    }));
+
+    assert_eq!(
+        data["stocks"][0].get("latest_eps").and_then(Value::as_f64),
+        Some(0.45)
+    );
+    assert!(stripped.get("financial_snapshot").is_none());
+    assert_eq!(stripped.get("limit").and_then(Value::as_i64), Some(10));
+}
+
+#[test]
+fn mobile_market_cache_reuses_matching_metadata_and_invalidates_on_size() {
+    let path = PathBuf::from("test-mobile-market-cache.json");
+    let data = json!({
+        "stocks": [{"code": "000001.SZ", "name": "Ping An Bank", "industry": "Banking", "price": 10.0}],
+        "relations": []
+    });
+    let (typed, summary) =
+        parse_mobile_market_data_snapshot(&data, "test market data").expect("valid summary");
+
+    forget_mobile_market_data_cache(&path);
+    remember_mobile_market_data_cache(&path, 100, Some(1), &data, typed, &summary);
+
+    let reused = cached_mobile_market_data_entry(&path, 100, Some(1)).expect("cache hit");
+    assert_eq!(reused.bytes, 100);
+    assert_eq!(reused.data["stocks"][0]["code"].as_str(), Some("000001.SZ"));
+    assert!(cached_mobile_market_data_entry(&path, 101, Some(1)).is_none());
+    assert!(cached_mobile_market_data_entry(&path, 100, Some(2)).is_none());
+
+    forget_mobile_market_data_cache(&path);
+    assert!(cached_mobile_market_data_entry(&path, 100, Some(1)).is_none());
+}
+
+#[test]
+fn trend_history_prefetch_codes_normalizes_and_deduplicates_candidates() {
+    let result = json!({
+        "items": [
+            {"stock": {"code": "000001"}},
+            {"stock": {"code": "000001.SZ"}},
+            {"stock": {"code": "600000.SH"}},
+            {"stock": {"code": "invalid"}}
+        ]
+    });
+
+    assert_eq!(
+        trend_history_prefetch_codes(&result, 10),
+        vec!["000001.SZ".to_string(), "600000.SH".to_string()]
+    );
+}
+
+#[test]
+fn trend_history_cache_requires_enough_bars_inside_requested_window() {
+    let data = json!({
+        "histories": {
+            "000001.SZ": [
+                {"date": "2026-03-04", "close": 9.8},
+                {"date": "2026-03-05", "close": 9.9},
+                {"date": "2026-03-06", "close": 10.0}
+            ]
+        }
+    });
+
+    assert!(history_cache_has_bars(
+        &data,
+        "000001.SZ",
+        "20260305",
+        "20260306",
+        2
+    ));
+    assert!(!history_cache_has_bars(
+        &data,
+        "000001.SZ",
+        "20260305",
+        "20260306",
+        3
+    ));
+}
+
+#[test]
+fn market_data_patch_updates_only_requested_stock() {
+    let source = json!({
+        "stocks": [
+            {"code": "000001.SZ", "name": "A", "price": 10.5},
+            {"code": "600000.SH", "name": "B", "price": 8.0}
+        ],
+        "histories": {
+            "000001.SZ": [{"date": "2026-07-09", "close": 10.5}],
+            "600000.SH": [{"date": "2026-07-09", "close": 8.0}]
+        },
+        "financials": {
+            "000001.SZ": {"latest_eps": 1.2},
+            "600000.SH": {"latest_eps": 0.8}
+        }
+    });
+    let patch = market_data_patch_for_codes(&source, &["000001.SZ".to_string()]);
+    assert!(patch["histories"].get("000001.SZ").is_some());
+    assert!(patch["histories"].get("600000.SH").is_none());
+
+    let mut target = json!({
+        "stocks": [
+            {"code": "000001.SZ", "name": "A", "price": 9.5},
+            {"code": "600000.SH", "name": "B", "price": 8.0}
+        ],
+        "histories": {
+            "600000.SH": [{"date": "2026-07-09", "close": 8.0}]
+        },
+        "financials": {
+            "600000.SH": {"latest_eps": 0.8}
+        }
+    });
+    apply_market_data_patch(&mut target, &patch);
+
+    assert_eq!(target["stocks"][0]["price"].as_f64(), Some(10.5));
+    assert_eq!(target["stocks"][1]["price"].as_f64(), Some(8.0));
+    assert_eq!(
+        target["financials"]["000001.SZ"]["latest_eps"].as_f64(),
+        Some(1.2)
+    );
+    assert_eq!(
+        target["financials"]["600000.SH"]["latest_eps"].as_f64(),
+        Some(0.8)
+    );
 }

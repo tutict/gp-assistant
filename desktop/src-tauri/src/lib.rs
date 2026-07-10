@@ -8,7 +8,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use stock_optimizer_core as gp_core;
@@ -23,6 +23,7 @@ mod rag_pack;
 mod runtime;
 
 const MOBILE_MARKET_DATA_FILE: &str = "mobile-market-data.json";
+const MOBILE_MARKET_PATCH_DIR: &str = "mobile-market-data-patches";
 const MOBILE_MARKET_WRITE_RETRY_ATTEMPTS: usize = 3;
 const MOBILE_MARKET_WRITE_RETRY_DELAY_MS: u64 = 50;
 const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
@@ -41,6 +42,10 @@ const OBSERVE_MOBILE_FAST_TOTAL_TIMEOUT_SECS: u64 = 35;
 const OBSERVE_FINANCIAL_TOTAL_TIMEOUT_SECS: u64 = 10;
 const OBSERVE_HISTORY_TOTAL_TIMEOUT_SECS: u64 = 12;
 const OBSERVE_HISTORY_TIMEOUT_SECS: u64 = 8;
+const TREND_SCREEN_HISTORY_TIMEOUT_SECS: u64 = 18;
+const TREND_SCREEN_HISTORY_CONCURRENCY: usize = 6;
+const TREND_SCREEN_HISTORY_PREFETCH_LIMIT: usize = 80;
+const MIN_TREND_SCREEN_HISTORY_BARS: usize = 45;
 const OBSERVE_CAPITAL_TOTAL_TIMEOUT_SECS: u64 = 10;
 const OBSERVE_CAPITAL_REQUEST_TIMEOUT_SECS: u64 = 6;
 const OBSERVE_GUBA_MAX_POSTS: usize = 10;
@@ -50,6 +55,7 @@ const OBSERVE_DAILY_HISTORY_LIMIT: usize = 10_000;
 const FINANCIAL_REQUEST_TIMEOUT_SECS: u64 = 6;
 const MAX_TENCENT_WEBVIEW_QUOTE_BYTES: usize = 1_048_576;
 const COMPLETE_QUARTERLY_EPS_POINTS: usize = 8;
+const MAX_CACHED_HTTP_CLIENTS: usize = 16;
 const THS_FINANCIAL_ENDPOINT: &str =
     "https://basic.10jqka.com.cn/basicapi/finance/index/v1/app_data/";
 const SINA_FINANCIAL_GUIDELINE_ENDPOINT: &str =
@@ -63,11 +69,50 @@ const SCREEN_STOCK_FINANCIAL_FIELDS: [&str; 5] = [
 ];
 
 static REFRESH_SEED_CACHE: OnceLock<Mutex<HashMap<PathBuf, Value>>> = OnceLock::new();
-static REFRESH_FINANCIAL_SNAPSHOT_CACHE: OnceLock<Mutex<HashMap<PathBuf, Value>>> = OnceLock::new();
+static REFRESH_FINANCIAL_SNAPSHOT_CACHE: OnceLock<Mutex<HashMap<PathBuf, Arc<Value>>>> =
+    OnceLock::new();
+static MOBILE_MARKET_DATA_CACHE: OnceLock<Mutex<HashMap<PathBuf, MobileMarketDataCacheEntry>>> =
+    OnceLock::new();
+static SCREEN_STOCK_OVERLAY_CACHE: OnceLock<Mutex<HashMap<PathBuf, ScreenStockOverlayCacheEntry>>> =
+    OnceLock::new();
+static MOBILE_MARKET_UPDATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static HTTP_CLIENT_CACHE: OnceLock<Mutex<HashMap<HttpClientCacheKey, reqwest::Client>>> =
+    OnceLock::new();
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct HttpClientCacheKey {
+    user_agent: String,
+    timeout_ms: u128,
+    proxy: Option<String>,
+}
+
+#[derive(Clone)]
+struct MobileMarketDataCacheEntry {
+    bytes: u64,
+    modified_at_epoch_ms: Option<u128>,
+    data: Arc<Value>,
+    typed: Arc<gp_core::CoreDataSet>,
+    summary: Value,
+}
+
+#[derive(Clone)]
+struct ScreenStockOverlayCacheEntry {
+    data: Arc<gp_core::CoreDataSet>,
+    financial_snapshot: Arc<Value>,
+    stocks: Arc<Vec<gp_core::StockItem>>,
+}
+
+struct PreparedTrendScreen {
+    data: Arc<gp_core::CoreDataSet>,
+    stock_override: Option<Arc<Vec<gp_core::StockItem>>>,
+    history_override: HashMap<String, Vec<gp_core::HistoryBar>>,
+    request: gp_core::TrendScreenRequest,
+    notes: Vec<String>,
+}
 
 #[tauri::command]
 async fn api_observe(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    runtime::with_heavy_network_permit("api_observe", api_observe_inner(app, payload)).await
+    api_observe_inner(app, payload).await
 }
 
 async fn api_observe_inner(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
@@ -83,33 +128,34 @@ async fn api_observe_inner(app: tauri::AppHandle, payload: Value) -> Result<Valu
     };
     let observe_payload = tokio::time::timeout(
         Duration::from_secs(observe_timeout_secs),
-        observe_core_payload_with_cached_history(&app, payload),
+        runtime::with_heavy_network_permit(
+            "api_observe_network",
+            observe_core_payload_with_cached_history(&app, payload),
+        ),
     )
     .await;
 
     match observe_payload {
-        Ok(Ok((core_payload, notes))) => {
-            match gp_core::observe_with_data_value(core_payload.clone()) {
-                Ok(mut result) => {
-                    for note in notes {
-                        append_observe_note(&mut result, note);
-                    }
-                    Ok(result)
+        Ok(Ok((core_payload, notes))) => match run_observe_calculation(&core_payload).await {
+            Ok(mut result) => {
+                for note in notes {
+                    append_observe_note(&mut result, note);
                 }
-                Err(error) => Ok(observe_error_result(
-                    &core_payload,
-                    &fallback_payload,
-                    vec![format!("观察计算失败：{error}")],
-                )),
+                Ok(result)
             }
-        }
+            Err(error) => Ok(observe_error_result(
+                &core_payload,
+                &fallback_payload,
+                vec![format!("观察计算失败：{error}")],
+            )),
+        },
         Ok(Err(error)) => Ok(observe_error_result(
             &Value::Null,
             &fallback_payload,
             vec![format!("观察数据准备失败：{error}")],
         )),
         Err(_) => match observe_core_payload_from_cache(&app, fallback_payload.clone()) {
-            Ok(core_payload) => match gp_core::observe_with_data_value(core_payload.clone()) {
+            Ok(core_payload) => match run_observe_calculation(&core_payload).await {
                 Ok(mut result) => {
                     append_observe_note(
                         &mut result,
@@ -136,6 +182,14 @@ async fn api_observe_inner(app: tauri::AppHandle, payload: Value) -> Result<Valu
             )),
         },
     }
+}
+
+async fn run_observe_calculation(core_payload: &Value) -> Result<Value, String> {
+    let payload = core_payload.clone();
+    runtime::run_cpu_bound("api_observe_calculation", move || {
+        gp_core::observe_with_data_value(payload).map_err(|error| error.to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
@@ -304,63 +358,121 @@ fn api_market_clear_cache(app: tauri::AppHandle) -> Result<Value, String> {
 
 #[tauri::command]
 async fn api_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let core_payload = core_payload_with_cached_data(&app, "criteria", payload)?;
+    let data = cached_market_data_snapshot(&app)?;
+    let stock_override = screen_stock_override(&app, &data, &payload)?;
+    let criteria =
+        serde_json::from_value::<gp_core::ScreenCriteria>(strip_core_side_payload_fields(payload))
+            .map_err(|error| format!("invalid screen request: {error}"))?;
     runtime::run_cpu_bound("api_screen", move || {
-        gp_core::screen_with_data_value(core_payload).map_err(|error| error.to_string())
+        let result = match stock_override.as_deref() {
+            Some(stocks) => gp_core::screen_stocks(stocks, &criteria),
+            None => gp_core::screen_with_data(data.as_ref(), &criteria)
+                .map_err(|error| error.to_string())?,
+        };
+        serde_json::to_value(result).map_err(|error| error.to_string())
     })
     .await?
 }
 
 #[tauri::command]
 async fn api_sector_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let core_payload = core_payload_with_cached_data(&app, "request", payload)?;
+    let data = cached_market_data_snapshot(&app)?;
+    let stock_override = screen_stock_override(&app, &data, &payload)?;
+    let request = serde_json::from_value::<gp_core::SectorScreenRequest>(
+        strip_core_side_payload_fields(payload),
+    )
+    .map_err(|error| format!("invalid sector screen request: {error}"))?;
     runtime::run_cpu_bound("api_sector_screen", move || {
-        gp_core::sector_screen_with_data_value(core_payload).map_err(|error| error.to_string())
+        let result = match stock_override.as_deref() {
+            Some(stocks) => gp_core::sector_screen_stocks(stocks, &request),
+            None => gp_core::sector_screen_with_data(data.as_ref(), &request)
+                .map_err(|error| error.to_string())?,
+        };
+        serde_json::to_value(result).map_err(|error| error.to_string())
     })
     .await?
 }
 
 #[tauri::command]
 async fn api_custom_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let core_payload = core_payload_with_cached_data(&app, "request", payload)?;
-    runtime::run_cpu_bound("api_custom_screen", move || {
-        gp_core::graph_screen_with_data_value(core_payload).map_err(|error| error.to_string())
-    })
-    .await?
+    run_graph_screen_command("api_custom_screen", app, payload).await
 }
 
 #[tauri::command]
 async fn api_graph_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let core_payload = core_payload_with_cached_data(&app, "request", payload)?;
-    runtime::run_cpu_bound("api_graph_screen", move || {
-        gp_core::graph_screen_with_data_value(core_payload).map_err(|error| error.to_string())
-    })
-    .await?
+    run_graph_screen_command("api_graph_screen", app, payload).await
 }
 
 #[tauri::command]
 async fn api_trend_analyze(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let core_payload = core_payload_with_cached_data(&app, "request", payload)?;
+    let data = cached_market_data_snapshot(&app)?;
+    let stock_override = screen_stock_override(&app, &data, &payload)?;
+    let request = serde_json::from_value::<gp_core::TrendIndicatorRequest>(
+        strip_core_side_payload_fields(payload),
+    )
+    .map_err(|error| format!("invalid trend request: {error}"))?;
     runtime::run_cpu_bound("api_trend_analyze", move || {
-        gp_core::trend_with_data_value(core_payload).map_err(|error| error.to_string())
+        let source = match stock_override.as_deref() {
+            Some(stocks) => gp_core::StaticDataSource::with_stocks(data.as_ref(), stocks),
+            None => gp_core::StaticDataSource::new(data.as_ref()),
+        };
+        let result =
+            gp_core::trend_with_source(&source, &request).map_err(|error| error.to_string())?;
+        serde_json::to_value(result).map_err(|error| error.to_string())
     })
     .await?
 }
 
 #[tauri::command]
 async fn api_trend_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let core_payload = core_payload_with_cached_data(&app, "request", payload)?;
-    runtime::run_cpu_bound("api_trend_screen", move || {
-        gp_core::trend_screen_with_data_value(core_payload).map_err(|error| error.to_string())
+    api_trend_screen_inner(app, payload).await
+}
+
+async fn api_trend_screen_inner(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let prepared = tokio::time::timeout(
+        Duration::from_secs(TREND_SCREEN_HISTORY_TIMEOUT_SECS),
+        prepare_trend_screen(&app, payload),
+    )
+    .await
+    .map_err(|_| format!("trend screen history prefetch exceeded {TREND_SCREEN_HISTORY_TIMEOUT_SECS}s; retry after refreshing market data."))??;
+    let PreparedTrendScreen {
+        data,
+        stock_override,
+        history_override,
+        request,
+        notes,
+    } = prepared;
+    let mut result = runtime::run_cpu_bound("api_trend_screen", move || {
+        let history_override = (!history_override.is_empty()).then_some(&history_override);
+        let source = gp_core::StaticDataSource::with_overrides(
+            data.as_ref(),
+            stock_override.as_deref().map(Vec::as_slice),
+            history_override,
+        );
+        let result = gp_core::trend_screen_with_source(&source, &request)
+            .map_err(|error| error.to_string())?;
+        serde_json::to_value(result).map_err(|error| error.to_string())
     })
-    .await?
+    .await??;
+    append_result_notes(&mut result, notes);
+    Ok(result)
 }
 
 #[tauri::command]
 async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let core_payload = core_payload_with_cached_data(&app, "request", payload)?;
+    let data = cached_market_data_snapshot(&app)?;
+    let stock_override = screen_stock_override(&app, &data, &payload)?;
+    let request =
+        serde_json::from_value::<gp_core::BacktestRequest>(strip_core_side_payload_fields(payload))
+            .map_err(|error| format!("invalid backtest request: {error}"))?;
     runtime::run_cpu_bound("api_backtest", move || {
-        gp_core::backtest_with_data_value(core_payload).map_err(|error| error.to_string())
+        let source = match stock_override.as_deref() {
+            Some(stocks) => gp_core::StaticDataSource::with_stocks(data.as_ref(), stocks),
+            None => gp_core::StaticDataSource::new(data.as_ref()),
+        };
+        let result =
+            gp_core::backtest_with_source(&source, &request).map_err(|error| error.to_string())?;
+        serde_json::to_value(result).map_err(|error| error.to_string())
     })
     .await?
 }
@@ -729,14 +841,41 @@ pub(crate) fn build_http_client_with_proxy(
     timeout: Duration,
     payload: Option<&Value>,
 ) -> Result<reqwest::Client, String> {
+    let proxy = proxy_from_payload(payload);
+    let key = HttpClientCacheKey {
+        user_agent: user_agent.to_string(),
+        timeout_ms: timeout.as_millis(),
+        proxy: proxy.clone(),
+    };
+    if let Some(client) = http_client_cache()
+        .lock()
+        .map_err(|_| "HTTP client cache lock poisoned".to_string())?
+        .get(&key)
+        .cloned()
+    {
+        return Ok(client);
+    }
+
     let builder = reqwest::Client::builder()
         .timeout(timeout)
         .connect_timeout(Duration::from_secs(TENCENT_CONNECT_TIMEOUT_SECS))
         .user_agent(user_agent);
     let builder = apply_android_tls_backend(builder)?;
-    apply_payload_proxy(builder, payload)?
+    let client = apply_proxy_url(builder, proxy.as_deref())?
         .build()
-        .map_err(|error| format!("create HTTP client failed: {error}"))
+        .map_err(|error| format!("create HTTP client failed: {error}"))?;
+
+    let mut cache = http_client_cache()
+        .lock()
+        .map_err(|_| "HTTP client cache lock poisoned".to_string())?;
+    if cache.len() >= MAX_CACHED_HTTP_CLIENTS {
+        cache.clear();
+    }
+    Ok(cache.entry(key).or_insert_with(|| client.clone()).clone())
+}
+
+fn http_client_cache() -> &'static Mutex<HashMap<HttpClientCacheKey, reqwest::Client>> {
+    HTTP_CLIENT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 #[cfg(target_os = "android")]
@@ -762,14 +901,14 @@ fn apply_android_tls_backend(
     Ok(builder)
 }
 
-fn apply_payload_proxy(
+fn apply_proxy_url(
     builder: reqwest::ClientBuilder,
-    payload: Option<&Value>,
+    proxy: Option<&str>,
 ) -> Result<reqwest::ClientBuilder, String> {
-    let Some(proxy) = proxy_from_payload(payload) else {
+    let Some(proxy) = proxy else {
         return Ok(builder);
     };
-    let reqwest_proxy = reqwest::Proxy::all(&proxy)
+    let reqwest_proxy = reqwest::Proxy::all(proxy)
         .map_err(|error| format!("invalid proxy URL {proxy}: {error}"))?;
     Ok(builder.proxy(reqwest_proxy))
 }
@@ -1305,8 +1444,20 @@ fn refresh_seed_cache() -> &'static Mutex<HashMap<PathBuf, Value>> {
     REFRESH_SEED_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn refresh_financial_snapshot_cache() -> &'static Mutex<HashMap<PathBuf, Value>> {
+fn refresh_financial_snapshot_cache() -> &'static Mutex<HashMap<PathBuf, Arc<Value>>> {
     REFRESH_FINANCIAL_SNAPSHOT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn mobile_market_data_cache() -> &'static Mutex<HashMap<PathBuf, MobileMarketDataCacheEntry>> {
+    MOBILE_MARKET_DATA_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn screen_stock_overlay_cache() -> &'static Mutex<HashMap<PathBuf, ScreenStockOverlayCacheEntry>> {
+    SCREEN_STOCK_OVERLAY_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn mobile_market_update_lock() -> &'static Mutex<()> {
+    MOBILE_MARKET_UPDATE_LOCK.get_or_init(|| Mutex::new(()))
 }
 
 fn cache_context_path(app: &tauri::AppHandle) -> Option<PathBuf> {
@@ -1333,11 +1484,17 @@ fn clear_refresh_seed(app: &tauri::AppHandle) {
         if let Ok(mut slot) = refresh_financial_snapshot_cache().lock() {
             slot.remove(&path);
         }
+        if let Ok(mut slot) = screen_stock_overlay_cache().lock() {
+            slot.remove(&path);
+        }
     } else {
         if let Ok(mut slot) = refresh_seed_cache().lock() {
             slot.clear();
         }
         if let Ok(mut slot) = refresh_financial_snapshot_cache().lock() {
+            slot.clear();
+        }
+        if let Ok(mut slot) = screen_stock_overlay_cache().lock() {
             slot.clear();
         }
     }
@@ -1351,7 +1508,7 @@ fn remember_refresh_financial_snapshot(app: &tauri::AppHandle, snapshot: &Value)
         return;
     };
     if let Ok(mut slot) = refresh_financial_snapshot_cache().lock() {
-        slot.insert(path, snapshot.clone());
+        slot.insert(path, Arc::new(snapshot.clone()));
     }
 }
 
@@ -1370,7 +1527,7 @@ fn refresh_financial_snapshot_payload(app: &tauri::AppHandle, payload: &Value) -
     if let Ok(slot) = refresh_financial_snapshot_cache().lock() {
         if let Some(cached) = slot.get(&path) {
             if financial_snapshot_payload_present(cached) {
-                return cached.clone();
+                return cached.as_ref().clone();
             }
         }
     }
@@ -2209,35 +2366,59 @@ fn enriched_stock_maps(
     financial_snapshot: &Value,
 ) -> HashMap<String, serde_json::Map<String, Value>> {
     let mut enriched = seed_stocks.clone();
-    let Some(snapshot_stocks) = financial_snapshot.get("stocks").and_then(Value::as_array) else {
-        return enriched;
-    };
-    for item in snapshot_stocks {
-        let Some(object) = item.as_object() else {
-            continue;
-        };
-        let Some(code) = object
-            .get("code")
-            .and_then(Value::as_str)
-            .and_then(normalize_stock_code)
-        else {
-            continue;
-        };
-        let target = enriched.entry(code.clone()).or_insert_with(|| {
-            let mut row = serde_json::Map::new();
-            row.insert("code".to_string(), json!(code));
-            row
-        });
-        for field in SCREEN_STOCK_FINANCIAL_FIELDS {
-            if finite_object_number(target, field).is_some() {
+
+    if let Some(financials) = financial_snapshot
+        .get("financials")
+        .and_then(Value::as_object)
+    {
+        for (raw_code, item) in financials {
+            let Some(code) = normalize_stock_code(raw_code) else {
                 continue;
-            }
-            if let Some(value) = finite_object_number(object, field) {
-                target.insert(field.to_string(), json!(value));
-            }
+            };
+            let Some(object) = item.as_object() else {
+                continue;
+            };
+            merge_stock_financial_fields(&mut enriched, &code, object);
         }
     }
+
+    if let Some(snapshot_stocks) = financial_snapshot.get("stocks").and_then(Value::as_array) {
+        for item in snapshot_stocks {
+            let Some(object) = item.as_object() else {
+                continue;
+            };
+            let Some(code) = object
+                .get("code")
+                .and_then(Value::as_str)
+                .and_then(normalize_stock_code)
+            else {
+                continue;
+            };
+            merge_stock_financial_fields(&mut enriched, &code, object);
+        }
+    }
+
     enriched
+}
+
+fn merge_stock_financial_fields(
+    enriched: &mut HashMap<String, serde_json::Map<String, Value>>,
+    code: &str,
+    source: &serde_json::Map<String, Value>,
+) {
+    let target = enriched.entry(code.to_string()).or_insert_with(|| {
+        let mut row = serde_json::Map::new();
+        row.insert("code".to_string(), json!(code));
+        row
+    });
+    for field in SCREEN_STOCK_FINANCIAL_FIELDS {
+        if finite_object_number(target, field).is_some() {
+            continue;
+        }
+        if let Some(value) = finite_object_number(source, field) {
+            target.insert(field.to_string(), json!(value));
+        }
+    }
 }
 
 fn filtered_financial_snapshot_map(
@@ -3055,6 +3236,214 @@ fn filter_seed_histories(seed: &Value, valid_codes: &HashSet<String>) -> Value {
     Value::Object(histories)
 }
 
+async fn prepare_trend_screen(
+    app: &tauri::AppHandle,
+    payload: Value,
+) -> Result<PreparedTrendScreen, String> {
+    let data = cached_market_data_snapshot(app)?;
+    let stock_override = screen_stock_override(app, &data, &payload)?;
+    let request = serde_json::from_value::<gp_core::TrendScreenRequest>(
+        strip_core_side_payload_fields(payload),
+    )
+    .map_err(|error| format!("invalid trend screen request: {error}"))?;
+    let criteria = request.criteria.clone();
+    let candidate_data = Arc::clone(&data);
+    let candidate_stocks = stock_override.clone();
+    let candidate_result = runtime::run_cpu_bound("api_trend_screen_candidates", move || {
+        let universe = candidate_stocks
+            .as_deref()
+            .map(Vec::as_slice)
+            .unwrap_or(candidate_data.stocks.as_slice());
+        gp_core::screen_stocks(universe, &criteria)
+    })
+    .await?;
+    let candidates = trend_history_prefetch_codes_from_result(&candidate_result, request.limit);
+    let missing = candidates
+        .iter()
+        .filter(|code| {
+            !typed_history_cache_has_bars(
+                data.as_ref(),
+                code,
+                &request.start_date,
+                &request.end_date,
+                MIN_TREND_SCREEN_HISTORY_BARS,
+            )
+        })
+        .take(TREND_SCREEN_HISTORY_PREFETCH_LIMIT)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut notes = Vec::new();
+    if missing.is_empty() {
+        notes.push(format!(
+            "Trend screen reused cached OHLCV history for {} candidates.",
+            candidates.len()
+        ));
+        return Ok(PreparedTrendScreen {
+            data,
+            stock_override,
+            history_override: HashMap::new(),
+            request,
+            notes,
+        });
+    }
+
+    let start_date = request.start_date.clone();
+    let end_date = request.end_date.clone();
+    let fetch_missing = missing.clone();
+    let fetches =
+        runtime::with_heavy_network_permit("api_trend_screen_history_fetch", async move {
+            let results = stream::iter(fetch_missing)
+                .map(|code| {
+                    let start_date = start_date.clone();
+                    let end_date = end_date.clone();
+                    async move {
+                        let result =
+                            fetch_observe_daily_history(&code, &start_date, &end_date).await;
+                        (code, result)
+                    }
+                })
+                .buffer_unordered(TREND_SCREEN_HISTORY_CONCURRENCY)
+                .collect::<Vec<_>>()
+                .await;
+            Ok(results)
+        })
+        .await?;
+
+    let mut history_override = HashMap::new();
+    let mut history_patch = serde_json::Map::new();
+    let mut fetched = 0usize;
+    let mut failed = 0usize;
+    for (code, result) in fetches {
+        match result {
+            Ok(rows) if !rows.is_empty() => {
+                let typed =
+                    serde_json::from_value::<Vec<gp_core::HistoryBar>>(Value::Array(rows.clone()))
+                        .map_err(|error| {
+                            format!("trend history parse failed for {code}: {error}")
+                        })?;
+                history_patch.insert(code.clone(), Value::Array(rows));
+                history_override.insert(code, typed);
+                fetched += 1;
+            }
+            _ => failed += 1,
+        }
+    }
+    if !history_patch.is_empty() {
+        let patch = json!({ "histories": history_patch });
+        if let Err(error) = persist_market_data_patch_updates(app.clone(), patch).await {
+            notes.push(format!(
+                "Trend screen fetched OHLCV for {fetched} candidates, but cache patch write failed: {error}"
+            ));
+        }
+    }
+    notes.push(format!(
+        "Trend screen OHLCV prefetch: candidates {}, missing {}, fetched {fetched}, failed {failed}. Algorithm uses MA/KDJ/MACD/SWL/SWS, quant score, volume-price heat, and quality overlays.",
+        candidates.len(),
+        missing.len()
+    ));
+    Ok(PreparedTrendScreen {
+        data,
+        stock_override,
+        history_override,
+        request,
+        notes,
+    })
+}
+
+fn typed_history_cache_has_bars(
+    data: &gp_core::CoreDataSet,
+    code: &str,
+    start_date: &str,
+    end_date: &str,
+    min_bars: usize,
+) -> bool {
+    let normalized = normalize_stock_code(code).unwrap_or_else(|| code.to_string());
+    let Some(rows) = data
+        .histories
+        .get(code)
+        .or_else(|| data.histories.get(&normalized))
+    else {
+        return false;
+    };
+    let start_key = compact_date_key(start_date).unwrap_or_else(|| "00000000".to_string());
+    let end_key = compact_date_key(end_date).unwrap_or_else(|| "99999999".to_string());
+    rows.iter()
+        .filter_map(|row| compact_date_key(&row.date))
+        .filter(|date| date >= &start_key && date <= &end_key)
+        .take(min_bars)
+        .count()
+        >= min_bars
+}
+
+fn trend_history_prefetch_codes_from_result(
+    candidate_result: &gp_core::ScreenResult,
+    limit: usize,
+) -> Vec<String> {
+    let pool_size = TREND_SCREEN_HISTORY_PREFETCH_LIMIT
+        .max(limit.saturating_mul(5))
+        .max(50)
+        .min(200);
+    normalize_trend_prefetch_codes(
+        candidate_result
+            .items
+            .iter()
+            .take(pool_size)
+            .map(|item| item.stock.code.as_str()),
+    )
+}
+
+fn normalize_trend_prefetch_codes<'a>(codes: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::new();
+    for code in codes {
+        if let Some(code) = normalize_stock_code(code) {
+            if seen.insert(code.clone()) {
+                normalized.push(code);
+            }
+        }
+    }
+    normalized
+}
+
+#[cfg(test)]
+fn trend_history_prefetch_codes(candidate_result: &Value, limit: usize) -> Vec<String> {
+    let pool_size = TREND_SCREEN_HISTORY_PREFETCH_LIMIT
+        .max(limit.saturating_mul(5))
+        .max(50)
+        .min(200);
+    normalize_trend_prefetch_codes(
+        candidate_result
+            .get("items")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .take(pool_size)
+            .filter_map(|item| {
+                item.get("stock")
+                    .and_then(|stock| stock.get("code"))
+                    .and_then(Value::as_str)
+            }),
+    )
+}
+
+fn append_result_notes(result: &mut Value, extra_notes: Vec<String>) {
+    if extra_notes.is_empty() || !result.is_object() {
+        return;
+    }
+    let notes = result
+        .as_object_mut()
+        .expect("result object checked")
+        .entry("notes".to_string())
+        .or_insert_with(|| json!([]));
+    if let Some(items) = notes.as_array_mut() {
+        for note in extra_notes {
+            if !note.trim().is_empty() {
+                items.push(Value::String(note));
+            }
+        }
+    }
+}
+
 async fn observe_core_payload_with_cached_history(
     app: &tauri::AppHandle,
     payload: Value,
@@ -3343,8 +3732,11 @@ async fn observe_core_payload_with_cached_history(
     }
 
     if data_changed {
-        if let Err(error) = write_mobile_market_data_record(app, data.clone(), false) {
-            notes.push(format!("观察缓存写入失败：{error}"));
+        let persist_data = data.clone();
+        if let Err(error) =
+            persist_market_data_updates(app.clone(), persist_data, vec![code.clone()]).await
+        {
+            notes.push(format!("观察缓存补丁写入失败：{error}"));
         }
     }
 
@@ -5074,16 +5466,113 @@ fn cached_market_data(app: &tauri::AppHandle) -> Result<Value, String> {
         .ok_or_else(|| "股票池缓存缺少 data 字段，请清理缓存后重新联网更新。".to_string())
 }
 
-fn core_payload_with_cached_data(
+fn screen_financial_snapshot(app: &tauri::AppHandle, payload: &Value) -> Option<Arc<Value>> {
+    if let Some(snapshot) = payload
+        .get("financial_snapshot")
+        .filter(|snapshot| financial_snapshot_payload_present(snapshot))
+    {
+        let snapshot = Arc::new(snapshot.clone());
+        if let Some(path) = cache_context_path(app) {
+            if let Ok(mut slot) = refresh_financial_snapshot_cache().lock() {
+                slot.insert(path, Arc::clone(&snapshot));
+            }
+        }
+        return Some(snapshot);
+    }
+    let path = cache_context_path(app)?;
+    refresh_financial_snapshot_cache()
+        .lock()
+        .ok()?
+        .get(&path)
+        .cloned()
+}
+
+fn screen_stock_override(
     app: &tauri::AppHandle,
-    payload_key: &str,
+    data: &Arc<gp_core::CoreDataSet>,
+    payload: &Value,
+) -> Result<Option<Arc<Vec<gp_core::StockItem>>>, String> {
+    let Some(financial_snapshot) = screen_financial_snapshot(app, payload) else {
+        return Ok(None);
+    };
+    let path = mobile_market_data_path(app)?;
+    if let Ok(slot) = screen_stock_overlay_cache().lock() {
+        if let Some(entry) = slot.get(&path) {
+            if Arc::ptr_eq(&entry.data, data)
+                && entry.financial_snapshot.as_ref() == financial_snapshot.as_ref()
+            {
+                return Ok(Some(Arc::clone(&entry.stocks)));
+            }
+        }
+    }
+
+    let mut stock_data = json!({ "stocks": &data.stocks });
+    merge_screen_financial_snapshot_into_data(&mut stock_data, financial_snapshot.as_ref());
+    let stocks = stock_data
+        .as_object_mut()
+        .and_then(|object| object.remove("stocks"))
+        .unwrap_or_else(|| json!([]));
+    let stocks = Arc::new(
+        serde_json::from_value(stocks)
+            .map_err(|error| format!("screen stock overlay parse failed: {error}"))?,
+    );
+    if let Ok(mut slot) = screen_stock_overlay_cache().lock() {
+        slot.insert(
+            path,
+            ScreenStockOverlayCacheEntry {
+                data: Arc::clone(data),
+                financial_snapshot,
+                stocks: Arc::clone(&stocks),
+            },
+        );
+    }
+    Ok(Some(stocks))
+}
+
+async fn run_graph_screen_command(
+    label: &'static str,
+    app: tauri::AppHandle,
     payload: Value,
 ) -> Result<Value, String> {
-    let data = cached_market_data(app)?;
-    let mut request = serde_json::Map::new();
-    request.insert("data".to_string(), data);
-    request.insert(payload_key.to_string(), payload);
-    Ok(Value::Object(request))
+    let data = cached_market_data_snapshot(&app)?;
+    let stock_override = screen_stock_override(&app, &data, &payload)?;
+    let request = serde_json::from_value::<gp_core::GraphScreenRequest>(
+        strip_core_side_payload_fields(payload),
+    )
+    .map_err(|error| format!("invalid graph screen request: {error}"))?;
+    runtime::run_cpu_bound(label, move || {
+        let source = match stock_override.as_deref() {
+            Some(stocks) => gp_core::StaticDataSource::with_stocks(data.as_ref(), stocks),
+            None => gp_core::StaticDataSource::new(data.as_ref()),
+        };
+        let result = gp_core::graph_screen_with_source(&source, &request)
+            .map_err(|error| error.to_string())?;
+        serde_json::to_value(result).map_err(|error| error.to_string())
+    })
+    .await?
+}
+fn merge_screen_financial_snapshot_into_data(data: &mut Value, financial_snapshot: &Value) {
+    if !financial_snapshot_payload_present(financial_snapshot) {
+        return;
+    }
+    let (seed_stocks, seed_codes) = seed_stock_maps(data);
+    if seed_codes.is_empty() {
+        return;
+    }
+    let enriched_stocks = enriched_stock_maps(&seed_stocks, financial_snapshot);
+    let mut stocks = Vec::with_capacity(seed_codes.len());
+    let mut seen = HashSet::new();
+    append_preserved_seed_stocks(&seed_codes, &enriched_stocks, &mut stocks, &mut seen);
+    if let Some(object) = data.as_object_mut() {
+        object.insert("stocks".to_string(), Value::Array(stocks));
+    }
+}
+
+fn strip_core_side_payload_fields(mut payload: Value) -> Value {
+    if let Some(object) = payload.as_object_mut() {
+        object.remove("financial_snapshot");
+    }
+    payload
 }
 
 fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String> {
@@ -5170,6 +5659,7 @@ fn read_mobile_market_data_record(
 ) -> Result<Value, String> {
     let path = mobile_market_data_path(app)?;
     if !path.exists() {
+        forget_mobile_market_data_cache(&path);
         return Ok(json!({
             "exists": false,
             "bytes": 0,
@@ -5177,16 +5667,49 @@ fn read_mobile_market_data_record(
             "notes": ["mobile market cache is empty"]
         }));
     }
-    let data = read_json_file(&path)?;
-    let summary = gp_core::validate_data_source_value(data.clone())
-        .map_err(|error| format!("cached mobile market data is invalid: {error}"))?;
     let bytes = fs::metadata(&path)
         .map(|metadata| metadata.len())
         .unwrap_or(0);
+    let modified_at_epoch_ms = file_modified_millis(&path);
+    if let Some(entry) = cached_mobile_market_data_entry(&path, bytes, modified_at_epoch_ms) {
+        return Ok(market_cache_record(
+            &path,
+            entry.bytes,
+            entry.modified_at_epoch_ms,
+            entry.summary,
+            entry.data.as_ref(),
+            include_data,
+            "mobile market cache loaded from memory",
+        ));
+    }
+
+    let _update_guard = mobile_market_update_lock()
+        .lock()
+        .map_err(|_| "mobile market update lock is poisoned".to_string())?;
+    let bytes = fs::metadata(&path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    let modified_at_epoch_ms = file_modified_millis(&path);
+    if let Some(entry) = cached_mobile_market_data_entry(&path, bytes, modified_at_epoch_ms) {
+        return Ok(market_cache_record(
+            &path,
+            entry.bytes,
+            entry.modified_at_epoch_ms,
+            entry.summary,
+            entry.data.as_ref(),
+            include_data,
+            "mobile market cache loaded from memory",
+        ));
+    }
+
+    let mut data = read_json_file(&path)?;
+    apply_persisted_market_data_patches(app, &mut data)?;
+    let (typed, summary) = parse_mobile_market_data_snapshot(&data, "cached mobile market data")?;
+    remember_mobile_market_data_cache(&path, bytes, modified_at_epoch_ms, &data, typed, &summary);
     Ok(market_cache_record(
         &path,
         bytes,
-        file_modified_millis(&path),
+        modified_at_epoch_ms,
         summary,
         &data,
         include_data,
@@ -5203,8 +5726,10 @@ fn write_mobile_market_data_record(
     payload: Value,
     include_data: bool,
 ) -> Result<Value, String> {
-    let summary = gp_core::validate_data_source_value(payload.clone())
-        .map_err(|error| format!("mobile market data validation failed: {error}"))?;
+    let _update_guard = mobile_market_update_lock()
+        .lock()
+        .map_err(|_| "mobile market update lock is poisoned".to_string())?;
+    let (typed, summary) = parse_mobile_market_data_snapshot(&payload, "mobile market data")?;
     let path = mobile_market_data_path(app)?;
     let root = path
         .parent()
@@ -5219,6 +5744,15 @@ fn write_mobile_market_data_record(
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize mobile market data failed: {error}"))?;
     write_mobile_market_data_with_retry(&tmp_path, &path, &bytes)?;
+    clear_mobile_market_data_patches(app)?;
+    remember_mobile_market_data_cache(
+        &path,
+        bytes.len() as u64,
+        file_modified_millis(&path),
+        &payload,
+        typed,
+        &summary,
+    );
     remember_refresh_seed(app, &payload);
     Ok(market_cache_record(
         &path,
@@ -5327,6 +5861,316 @@ fn market_cache_record(
     Value::Object(record)
 }
 
+fn cached_mobile_market_data_entry(
+    path: &Path,
+    bytes: u64,
+    modified_at_epoch_ms: Option<u128>,
+) -> Option<MobileMarketDataCacheEntry> {
+    let slot = mobile_market_data_cache().lock().ok()?;
+    let entry = slot.get(path)?;
+    if entry.bytes == bytes && entry.modified_at_epoch_ms == modified_at_epoch_ms {
+        Some(entry.clone())
+    } else {
+        None
+    }
+}
+
+fn market_data_patch_for_codes(data: &Value, codes: &[String]) -> Value {
+    let codes = codes
+        .iter()
+        .filter_map(|code| normalize_stock_code(code))
+        .collect::<HashSet<_>>();
+    let stocks = data
+        .get("stocks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|stock| {
+            stock
+                .get("code")
+                .and_then(Value::as_str)
+                .and_then(normalize_stock_code)
+                .map(|code| codes.contains(&code))
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let section = |name: &str| {
+        let mut selected = serde_json::Map::new();
+        if let Some(items) = data.get(name).and_then(Value::as_object) {
+            for (raw_code, value) in items {
+                if normalize_stock_code(raw_code)
+                    .map(|code| codes.contains(&code))
+                    .unwrap_or(false)
+                {
+                    selected.insert(raw_code.clone(), value.clone());
+                }
+            }
+        }
+        Value::Object(selected)
+    };
+    json!({
+        "schema_version": 1,
+        "updated_at_epoch_ms": epoch_millis(),
+        "stocks": stocks,
+        "histories": section("histories"),
+        "financials": section("financials"),
+        "factor_snapshots": section("factor_snapshots"),
+        "capital_evidence": section("capital_evidence")
+    })
+}
+
+fn apply_market_data_patch(data: &mut Value, patch: &Value) {
+    let Some(target) = data.as_object_mut() else {
+        return;
+    };
+    if let Some(patch_stocks) = patch.get("stocks").and_then(Value::as_array) {
+        let mut replacements = patch_stocks
+            .iter()
+            .filter_map(|stock| {
+                let code = stock
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .and_then(normalize_stock_code)?;
+                Some((code, stock.clone()))
+            })
+            .collect::<HashMap<_, _>>();
+        let stocks = target
+            .entry("stocks".to_string())
+            .or_insert_with(|| json!([]));
+        if let Some(items) = stocks.as_array_mut() {
+            for item in items.iter_mut() {
+                let Some(code) = item
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .and_then(normalize_stock_code)
+                else {
+                    continue;
+                };
+                if let Some(replacement) = replacements.remove(&code) {
+                    *item = replacement;
+                }
+            }
+            items.extend(replacements.into_values());
+        }
+    }
+    for name in [
+        "histories",
+        "financials",
+        "factor_snapshots",
+        "capital_evidence",
+    ] {
+        let Some(patch_items) = patch.get(name).and_then(Value::as_object) else {
+            continue;
+        };
+        let target_items = target.entry(name.to_string()).or_insert_with(|| json!({}));
+        if let Some(target_items) = target_items.as_object_mut() {
+            for (code, value) in patch_items {
+                target_items.insert(code.clone(), value.clone());
+            }
+        }
+    }
+}
+fn mobile_market_patch_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let path = mobile_market_data_path(app)?;
+    let root = path
+        .parent()
+        .ok_or_else(|| "mobile market cache path has no parent".to_string())?;
+    Ok(root.join(MOBILE_MARKET_PATCH_DIR))
+}
+
+fn apply_persisted_market_data_patches(
+    app: &tauri::AppHandle,
+    data: &mut Value,
+) -> Result<usize, String> {
+    let root = mobile_market_patch_dir(app)?;
+    if !root.exists() {
+        return Ok(0);
+    }
+    let mut paths = fs::read_dir(&root)
+        .map_err(|error| format!("read mobile market patches failed: {error}"))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
+        .collect::<Vec<_>>();
+    paths.sort();
+    let mut applied = 0usize;
+    for path in paths {
+        let patch = read_json_file(&path)?;
+        apply_market_data_patch(data, &patch);
+        applied += 1;
+    }
+    Ok(applied)
+}
+
+fn clear_mobile_market_data_patches(app: &tauri::AppHandle) -> Result<(), String> {
+    let root = mobile_market_patch_dir(app)?;
+    if root.exists() {
+        fs::remove_dir_all(&root)
+            .map_err(|error| format!("clear mobile market patches failed: {error}"))?;
+    }
+    Ok(())
+}
+
+fn market_data_patch_codes(patch: &Value) -> Vec<String> {
+    let mut codes = HashSet::new();
+    if let Some(stocks) = patch.get("stocks").and_then(Value::as_array) {
+        codes.extend(stocks.iter().filter_map(|stock| {
+            stock
+                .get("code")
+                .and_then(Value::as_str)
+                .and_then(normalize_stock_code)
+        }));
+    }
+    for section in [
+        "histories",
+        "financials",
+        "factor_snapshots",
+        "capital_evidence",
+    ] {
+        if let Some(items) = patch.get(section).and_then(Value::as_object) {
+            codes.extend(items.keys().filter_map(|code| normalize_stock_code(code)));
+        }
+    }
+    let mut codes = codes.into_iter().collect::<Vec<_>>();
+    codes.sort();
+    codes
+}
+
+fn persist_market_data_patch_sync(app: &tauri::AppHandle, patch: &Value) -> Result<usize, String> {
+    let root = mobile_market_patch_dir(app)?;
+    fs::create_dir_all(&root)
+        .map_err(|error| format!("create mobile market patch dir failed: {error}"))?;
+    let mut written = 0usize;
+    for code in market_data_patch_codes(patch) {
+        let safe_code = sanitize_path_part(&code);
+        let path = root.join(format!("{safe_code}.json"));
+        let mut merged_patch = if path.exists() {
+            read_json_file(&path)?
+        } else {
+            json!({})
+        };
+        let code_patch = market_data_patch_for_codes(patch, std::slice::from_ref(&code));
+        apply_market_data_patch(&mut merged_patch, &code_patch);
+        let bytes = serde_json::to_vec(&merged_patch)
+            .map_err(|error| format!("serialize mobile market patch failed: {error}"))?;
+        let tmp_path = root.join(format!("{safe_code}.tmp-{}", epoch_millis()));
+        write_mobile_market_data_once(&tmp_path, &path, &bytes)?;
+        written += 1;
+    }
+    Ok(written)
+}
+
+async fn persist_market_data_patch_updates(
+    app: tauri::AppHandle,
+    patch: Value,
+) -> Result<usize, String> {
+    runtime::run_io_bound("persist market data patches", move || {
+        let _update_guard = mobile_market_update_lock()
+            .lock()
+            .map_err(|_| "mobile market update lock is poisoned".to_string())?;
+        let written = persist_market_data_patch_sync(&app, &patch)?;
+        let path = mobile_market_data_path(&app)?;
+        let mut data = if let Ok(slot) = mobile_market_data_cache().lock() {
+            slot.get(&path)
+                .map(|entry| entry.data.as_ref().clone())
+                .unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        };
+        if data.is_null() {
+            data = read_json_file(&path)?;
+            apply_persisted_market_data_patches(&app, &mut data)?;
+        } else {
+            apply_market_data_patch(&mut data, &patch);
+        }
+        let bytes = fs::metadata(&path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        let modified_at_epoch_ms = file_modified_millis(&path);
+        let (typed, summary) = parse_mobile_market_data_snapshot(&data, "updated market data")?;
+        remember_mobile_market_data_cache(
+            &path,
+            bytes,
+            modified_at_epoch_ms,
+            &data,
+            typed,
+            &summary,
+        );
+        Ok(written)
+    })
+    .await?
+}
+
+async fn persist_market_data_updates(
+    app: tauri::AppHandle,
+    data: Value,
+    codes: Vec<String>,
+) -> Result<usize, String> {
+    let patch = market_data_patch_for_codes(&data, &codes);
+    persist_market_data_patch_updates(app, patch).await
+}
+fn parse_mobile_market_data_snapshot(
+    data: &Value,
+    label: &str,
+) -> Result<(Arc<gp_core::CoreDataSet>, Value), String> {
+    let typed = serde_json::from_value::<gp_core::CoreDataSet>(data.clone())
+        .map_err(|error| format!("{label} parse failed: {error}"))?;
+    let summary = gp_core::validate_data_set(&typed)
+        .map_err(|error| format!("{label} validation failed: {error}"))?;
+    let summary = serde_json::to_value(summary)
+        .map_err(|error| format!("{label} summary serialization failed: {error}"))?;
+    Ok((Arc::new(typed), summary))
+}
+
+fn cached_market_data_snapshot(
+    app: &tauri::AppHandle,
+) -> Result<Arc<gp_core::CoreDataSet>, String> {
+    let path = mobile_market_data_path(app)?;
+    let cache = read_mobile_market_data_record(app, false)?;
+    if !cache
+        .get("exists")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err("股票池为空，请先联网更新股票池。".to_string());
+    }
+    let slot = mobile_market_data_cache()
+        .lock()
+        .map_err(|_| "mobile market cache lock is poisoned".to_string())?;
+    slot.get(&path)
+        .map(|entry| Arc::clone(&entry.typed))
+        .ok_or_else(|| "mobile market typed snapshot is unavailable".to_string())
+}
+
+fn remember_mobile_market_data_cache(
+    path: &Path,
+    bytes: u64,
+    modified_at_epoch_ms: Option<u128>,
+    data: &Value,
+    typed: Arc<gp_core::CoreDataSet>,
+    summary: &Value,
+) {
+    if let Ok(mut slot) = mobile_market_data_cache().lock() {
+        slot.insert(
+            path.to_path_buf(),
+            MobileMarketDataCacheEntry {
+                bytes,
+                modified_at_epoch_ms,
+                data: Arc::new(data.clone()),
+                typed,
+                summary: summary.clone(),
+            },
+        );
+    }
+}
+
+fn forget_mobile_market_data_cache(path: &Path) {
+    if let Ok(mut slot) = mobile_market_data_cache().lock() {
+        slot.remove(path);
+    }
+}
+
 fn mobile_market_data_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let mut root = app
         .path()
@@ -5336,7 +6180,6 @@ fn mobile_market_data_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     root.push(MOBILE_MARKET_DATA_FILE);
     Ok(root)
 }
-
 fn file_modified_millis(path: &Path) -> Option<u128> {
     fs::metadata(path)
         .ok()?
