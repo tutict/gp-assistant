@@ -186,6 +186,11 @@ export function ScreenPanel({
   );
 }
 
+
+function compactGroupMeta(meta: string) {
+  const total = meta.match(/总数\s*([\d,]+)/)?.[1];
+  return total ? `/ ${total}` : meta.replace(/返回\s*[\d,]+\s*\/\s*/, "");
+}
 const ScreenResultView = memo(function ScreenResultView({
   result,
   grouped,
@@ -223,7 +228,7 @@ const ScreenResultView = memo(function ScreenResultView({
             <details key={`${group.title}-${index}`} className="sector-group">
               <summary>
                 <div className="sector-group-head"><h3>{group.title}</h3></div>
-                <span className="sector-group-meta"><strong>{group.rows.length}</strong><small>{group.meta}</small></span>
+                <span className="sector-group-meta" title={group.meta} aria-label={group.meta}><strong>{group.rows.length}</strong><small>{compactGroupMeta(group.meta)}</small></span>
               </summary>
               <div className="sector-group-content">
                 <StockList items={group.rows} watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} onObserveStock={onObserveStock} />

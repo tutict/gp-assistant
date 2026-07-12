@@ -4357,3 +4357,25 @@ html.android-phone.android-bottom-nav .nav-link {
   min-width: 0;
   box-sizing: border-box;
 }
+/* Android group count badge refinement */
+html.android-phone .sector-group-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  min-height: 16px;
+  gap: 2px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 6.4px;
+}
+
+html.android-phone .sector-group-meta strong {
+  font-size: 7.8px;
+  line-height: 1;
+}
+
+html.android-phone .sector-group-meta small {
+  font-size: 6.2px;
+  line-height: 1;
+}

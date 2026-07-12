@@ -742,6 +742,40 @@ fn agent_reply_reflects_mode() {
 }
 
 #[test]
+fn agent_observe_reply_is_beginner_readable() {
+    let events = run_agent_stream_with_data_events(
+        &sample_data_set(),
+        "observe 111111.SZ",
+        Some("beginner-run"),
+        Some("expert"),
+    );
+    let response = events
+        .iter()
+        .find(|event| event.event_type == "result")
+        .and_then(|event| event.response.as_ref())
+        .expect("agent stream should return an observe result");
+
+    assert_eq!(response.action, "observe_stock");
+    let joined = response
+        .answer_sections
+        .iter()
+        .flat_map(|section| {
+            std::iter::once(section.title.as_str())
+                .chain(section.bullets.iter().map(String::as_str))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(joined.contains("一句话结论"));
+    assert!(joined.contains("新手"));
+    assert!(joined.contains("支撑位"));
+    assert!(joined.contains("压力位"));
+    assert!(joined.contains("KDJ"));
+    assert!(joined.contains("资金证据综合分"));
+    assert!(joined.contains("不等于马上买入"));
+    assert!(joined.contains("不是投资建议") || joined.contains("不构成投资建议"));
+}
+#[test]
 fn mobile_stock_skill_classifies_sources_with_guardrails() {
     let result = run_mobile_stock_skill(&MobileStockSkillRequest {
         stock_code: "300750.SZ".to_string(),

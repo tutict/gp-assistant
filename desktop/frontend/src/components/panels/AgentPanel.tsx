@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentResult, AgentStreamEvent, BacktestResult, LlmSettings, NewsRagResult, ObserveResult, StockRowView, WatchlistItem } from "../../types";
 import { getTauriInvoke, getTauriListen, isTauriRuntime } from "../../lib/tauri";
 import { actionResultKind, activeLlmProvider, buildLlmConfig, normalizeAgentResult, normalizeAgentStreamEvent, normalizeScreenRows, parseSseBlock } from "../../lib/contracts";
+import { buildAgentStreamPayload } from "../../lib/agent";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { StockList } from "../StockList";
 import { BacktestResultView } from "./BacktestPanel";
@@ -69,6 +70,7 @@ const AGENT_MODE_CAPABILITIES: Record<AgentMode, { summary: string; capabilities
     example: "例如：半导体板块有什么机会",
   },
 };
+
 
 
 const AGENT_HISTORY_KEY = "stock-optimizer-agent-conversations";
@@ -295,15 +297,15 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     };
 
     try {
-      await requestAgentStream({
+      const payload = buildAgentStreamPayload({
         message: text,
-        run_id: runId,
+        runId,
         llm: buildLlmConfig(llmSettings),
         mode,
-        context: {
-          watchlist: watchlist.slice(0, 50).map((item) => ({ code: item.code, name: item.name, industry: item.industry })),
-        },
-      }, applyEvent);
+        watchlist,
+      });
+      if (!payload) return;
+      await requestAgentStream(payload, applyEvent);
     } catch (err) {
       patchAssistant({ content: `错误：${(err as Error).message}`, error: true, steps: undefined });
     } finally {
