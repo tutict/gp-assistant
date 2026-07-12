@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import type { TrendIndicatorPoint } from "../../types";
 import {
   aggregateBars,
@@ -14,6 +14,7 @@ import { formatNumber, formatPrice } from "../../lib/format";
 import { isMobileTauriRuntime } from "../../lib/tauri";
 
 const DEFAULT_VISIBLE_BARS = 96;
+const MOBILE_DEFAULT_VISIBLE_BARS = 72;
 const MIN_VISIBLE_BARS = 30;
 const MAX_VISIBLE_BARS = 180;
 
@@ -43,15 +44,15 @@ type ChartLayout = {
 const MOBILE_LAYOUT: ChartLayout = {
   mode: "mobile",
   width: 720,
-  priceTop: 22,
-  priceHeight: 330,
-  macdTop: 386,
-  macdHeight: 94,
-  rsiTop: 502,
-  rsiHeight: 88,
-  volumeTop: 612,
-  volumeHeight: 106,
-  height: 728,
+  priceTop: 18,
+  priceHeight: 300,
+  macdTop: 352,
+  macdHeight: 96,
+  rsiTop: 468,
+  rsiHeight: 90,
+  volumeTop: 580,
+  volumeHeight: 118,
+  height: 708,
 };
 
 const DESKTOP_LAYOUT: ChartLayout = {
@@ -73,10 +74,10 @@ const DESKTOP_LAYOUT: ChartLayout = {
 };
 
 export function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
-  const [period, setPeriod] = useState<KlinePeriod>("daily");
-  const [visibleCount, setVisibleCount] = useState(DEFAULT_VISIBLE_BARS);
-  const [endIndex, setEndIndex] = useState<number | null>(null);
   const mobileRuntime = isMobileTauriRuntime();
+  const [period, setPeriod] = useState<KlinePeriod>("daily");
+  const [visibleCount, setVisibleCount] = useState(() => (mobileRuntime ? MOBILE_DEFAULT_VISIBLE_BARS : DEFAULT_VISIBLE_BARS));
+  const [endIndex, setEndIndex] = useState<number | null>(null);
   const dailyBars = toDailyBars(series);
   const bars = aggregateBars(dailyBars, period);
 
@@ -216,7 +217,6 @@ function CandlestickChart({
   });
 
   const macd = computeMacd(allBars).slice(visibleStart, visibleEnd);
-  const rsiSeries = computeRsiLines(allBars).slice(visibleStart, visibleEnd);
   const dmaSeries = computeDmaLines(allBars).slice(visibleStart, visibleEnd);
   const mtmSeries = computeMtmLines(allBars).slice(visibleStart, visibleEnd);
   const kdjSeries = computeKdj(allBars).slice(visibleStart, visibleEnd);
@@ -277,11 +277,24 @@ function CandlestickChart({
     }
   };
 
-  const inspectorWidth = 168;
-  const inspectorHeight = 96;
-  const rawInspectorX = selectedX !== null && selectedX > width - inspectorWidth - 18 ? selectedX - inspectorWidth - 10 : (selectedX ?? 0) + 10;
+  const inspectorWidth = mobileRuntime ? 142 : 168;
+  const inspectorHeight = mobileRuntime ? 88 : 96;
+  const mobileInspectorX = selectedX !== null && selectedX > width * 0.55 ? 10 : width - inspectorWidth - 10;
+  const rawInspectorX = mobileRuntime
+    ? mobileInspectorX
+    : selectedX !== null && selectedX > width - inspectorWidth - 18
+      ? selectedX - inspectorWidth - 10
+      : (selectedX ?? 0) + 10;
   const inspectorX = Math.max(8, Math.min(width - inspectorWidth - 8, rawInspectorX));
-  const inspectorY = selectedY !== null && selectedY > priceTop + inspectorHeight + 16 ? selectedY - inspectorHeight - 10 : priceTop + 12;
+  const inspectorY = mobileRuntime
+    ? priceTop + 8
+    : selectedY !== null && selectedY > priceTop + inspectorHeight + 16
+      ? selectedY - inspectorHeight - 10
+      : priceTop + 12;
+  const inspectorTextX = inspectorX + (mobileRuntime ? 8 : 10);
+  const inspectorTitleY = inspectorY + (mobileRuntime ? 16 : 18);
+  const inspectorTextY = inspectorY + (mobileRuntime ? 32 : 38);
+  const inspectorLineGap = mobileRuntime ? 12 : 14;
 
   return (
     <section className={`chart-wrap kline-chart kline-market-chart ${mobileRuntime ? "mobile-chart" : "desktop-chart"}`}>
@@ -335,15 +348,18 @@ function CandlestickChart({
         {maLines.map((line) => (line.points ? <polyline key={`ma-${line.window}`} className={line.className} points={line.points} fill="none" /> : null))}
         {mobileRuntime ? (
           <>
+            <rect className="kline-subpanel-bg" x="0" y={macdTop - 12} width={width} height={macdHeight + 24} />
             <PanelBorder width={width} y={macdTop - 12} />
             <MacdLayer series={macd} top={macdTop} height={macdHeight} width={width} center={center} barWidth={bodyWidth} />
-            <PanelTitle x={8} y={macdTop + 16} label="MACD(12,26,9)" />
+            <PanelTitle x={10} y={macdTop + 14} label="MACD" />
+            <rect className="kline-subpanel-bg" x="0" y={(layout.rsiTop || 0) - 12} width={width} height={(layout.rsiHeight || 0) + 24} />
             <PanelBorder width={width} y={(layout.rsiTop || 0) - 12} />
-            <RsiLayer series={rsiSeries} top={layout.rsiTop || 0} height={layout.rsiHeight || 0} width={width} center={center} />
-            <PanelTitle x={8} y={(layout.rsiTop || 0) + 16} label="RSI(6,12,24)" />
+            <KdjLayer series={kdjSeries} top={layout.rsiTop || 0} height={layout.rsiHeight || 0} width={width} center={center} />
+            <PanelTitle x={10} y={(layout.rsiTop || 0) + 14} label="KDJ" />
+            <rect className="kline-subpanel-bg" x="0" y={volumeTop - 12} width={width} height={volumeHeight + 24} />
             <PanelBorder width={width} y={volumeTop - 12} />
             <VolumeLayer bars={visibleBars} volumes={volumes} max={volumeMax} top={volumeTop} height={volumeHeight} center={center} barWidth={bodyWidth} />
-            <PanelTitle x={8} y={volumeTop + 16} label="成交量" />
+            <PanelTitle x={10} y={volumeTop + 14} label="VOL" />
           </>
         ) : (
           <>
@@ -368,14 +384,14 @@ function CandlestickChart({
           <g className="kline-inspector" pointerEvents="none">
             <line className="kline-inspector-line" x1={selectedX} x2={selectedX} y1={priceTop} y2={height - 8} />
             <circle className="kline-inspector-dot" cx={selectedX} cy={selectedY} r="3.8" />
-            <rect className="kline-inspector-card" x={inspectorX} y={inspectorY} width={inspectorWidth} height={inspectorHeight} rx="5" />
-            <text className="kline-inspector-title" x={inspectorX + 10} y={inspectorY + 18}>{selectedBar.date}</text>
-            <text className="kline-inspector-text" x={inspectorX + 10} y={inspectorY + 38}>
-              <tspan x={inspectorX + 10}>开 {formatPrice(selectedBar.open)}</tspan>
-              <tspan x={inspectorX + 10} dy="14">高 {formatPrice(selectedBar.high)}</tspan>
-              <tspan x={inspectorX + 10} dy="14">低 {formatPrice(selectedBar.low)}</tspan>
-              <tspan x={inspectorX + 10} dy="14">收 {formatPrice(selectedBar.close)}</tspan>
-              <tspan x={inspectorX + 10} dy="14">量 {formatNumber(selectedBar.volume)}</tspan>
+            <rect className="kline-inspector-card" x={inspectorX} y={inspectorY} width={inspectorWidth} height={inspectorHeight} rx={mobileRuntime ? 6 : 5} />
+            <text className="kline-inspector-title" x={inspectorTextX} y={inspectorTitleY}>{selectedBar.date}</text>
+            <text className="kline-inspector-text" x={inspectorTextX} y={inspectorTextY}>
+              <tspan x={inspectorTextX}>开 {formatPrice(selectedBar.open)}</tspan>
+              <tspan x={inspectorTextX} dy={inspectorLineGap}>高 {formatPrice(selectedBar.high)}</tspan>
+              <tspan x={inspectorTextX} dy={inspectorLineGap}>低 {formatPrice(selectedBar.low)}</tspan>
+              <tspan x={inspectorTextX} dy={inspectorLineGap}>收 {formatPrice(selectedBar.close)}</tspan>
+              <tspan x={inspectorTextX} dy={inspectorLineGap}>量 {formatNumber(selectedBar.volume)}</tspan>
             </text>
           </g>
         )}
@@ -417,32 +433,127 @@ function MacdLayer({
   barWidth: number;
 }) {
   if (series.length < 2) return null;
-  const values = series.flatMap((point) => [point.dif, point.dea, point.macd]).filter(Number.isFinite);
-  const maxAbs = Math.max(...values.map((value) => Math.abs(value)), 1);
+  const lineValues = series.flatMap((point) => [point.dif, point.dea]).filter(Number.isFinite);
+  const macdValues = series.map((point) => point.macd).filter(Number.isFinite);
+  const lineMaxAbs = Math.max(...lineValues.map((value) => Math.abs(value)), 1e-6);
+  const rawMacdMaxAbs = Math.max(...macdValues.map((value) => Math.abs(value)), 1e-6);
+  const barMaxAbs = Math.max(rawMacdMaxAbs, lineMaxAbs * 0.08, 1e-6);
   const midY = top + height / 2;
-  const y = (value: number) => midY - (value / maxAbs) * (height * 0.46);
+  const y = (value: number) => midY - (value / lineMaxAbs) * (height * 0.36);
+  const barY = (value: number) => midY - (value / barMaxAbs) * (height * 0.46);
   const line = (key: "dif" | "dea") => series.map((point, index) => `${center(index).toFixed(2)},${y(point[key]).toFixed(2)}`).join(" ");
+  const crosses = buildCrossMarkers(series, "dif", "dea");
 
   return (
     <g className="kline-macd-layer">
       <line className="trend-grid-line macd-zero-line" x1="0" x2={width} y1={midY} y2={midY} />
+      <polyline className="trend-line macd-line-gap" points={line("dif")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline className="trend-line macd-line-gap" points={line("dea")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
       {series.map((point, index) => {
-        const barTop = y(Math.max(point.macd, 0));
-        const barBottom = y(Math.min(point.macd, 0));
+        const barTop = barY(Math.max(point.macd, 0));
+        const barBottom = barY(Math.min(point.macd, 0));
         return (
           <rect
             key={`${point.date}-${index}`}
             className={`macd-bar ${point.macd >= 0 ? "macd-up" : "macd-down"}`}
             x={center(index) - barWidth / 2}
             y={Math.min(barTop, barBottom)}
-            width={Math.max(1, Math.min(barWidth, 7))}
-            height={Math.max(1, Math.abs(barBottom - barTop))}
+            width={Math.max(2.8, Math.min(barWidth * 1.08, 8.4))}
+            height={Math.max(2.4, Math.abs(barBottom - barTop))}
             fill="currentColor"
           />
         );
       })}
       <polyline className="trend-line line-dif" points={line("dif")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
       <polyline className="trend-line line-dea" points={line("dea")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+      <CrossMarkerLayer crosses={crosses} center={center} y={(point) => y((point.dif + point.dea) / 2)} />
+    </g>
+  );
+}
+
+function KdjLayer({
+  series,
+  top,
+  height,
+  width,
+  center,
+}: {
+  series: ReturnType<typeof computeKdj>;
+  top: number;
+  height: number;
+  width: number;
+  center: (index: number) => number;
+}) {
+  if (series.length < 2) return null;
+  const values = series.flatMap((point) => [point.k, point.d, point.j]).filter(Number.isFinite);
+  values.push(0, 20, 50, 80, 100);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const y = (value: number) => top + (1 - (value - min) / range) * height;
+  const line = (key: "k" | "d" | "j") =>
+    series
+      .map((point, index) => {
+        const value = point[key];
+        if (!Number.isFinite(value)) return null;
+        return `${center(index).toFixed(2)},${y(value).toFixed(2)}`;
+      })
+      .filter(Boolean)
+      .join(" ");
+  const crosses = buildCrossMarkers(series, "k", "d");
+
+  return (
+    <g className="kline-kdj-layer">
+      <line className="trend-grid-line kdj-guide-line" x1="0" x2={width} y1={y(80)} y2={y(80)} />
+      <line className="trend-grid-line kdj-guide-line" x1="0" x2={width} y1={y(50)} y2={y(50)} />
+      <line className="trend-grid-line kdj-guide-line" x1="0" x2={width} y1={y(20)} y2={y(20)} />
+      <polyline className="trend-line line-k" points={line("k")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline className="trend-line line-d" points={line("d")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline className="trend-line line-j" points={line("j")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+      <CrossMarkerLayer crosses={crosses} center={center} y={(point) => y((point.k + point.d) / 2)} />
+    </g>
+  );
+}
+
+function buildCrossMarkers<T extends Record<string, number | string>>(series: T[], fastKey: string, slowKey: string) {
+  const crosses: Array<{ index: number; type: "golden" | "death"; point: T }> = [];
+  for (let index = 1; index < series.length; index += 1) {
+    const prevFast = Number(series[index - 1][fastKey]);
+    const prevSlow = Number(series[index - 1][slowKey]);
+    const fast = Number(series[index][fastKey]);
+    const slow = Number(series[index][slowKey]);
+    if (![prevFast, prevSlow, fast, slow].every(Number.isFinite)) continue;
+    const prevDiff = prevFast - prevSlow;
+    const diff = fast - slow;
+    if (prevDiff <= 0 && diff > 0) crosses.push({ index, type: "golden", point: series[index] });
+    if (prevDiff >= 0 && diff < 0) crosses.push({ index, type: "death", point: series[index] });
+  }
+  return crosses;
+}
+
+function CrossMarkerLayer<T>({
+  crosses,
+  center,
+  y,
+}: {
+  crosses: Array<{ index: number; type: "golden" | "death"; point: T }>;
+  center: (index: number) => number;
+  y: (point: T) => number;
+}) {
+  if (!crosses.length) return null;
+  return (
+    <g className="indicator-cross-layer" pointerEvents="none">
+      {crosses.map((cross) => {
+        const x = center(cross.index);
+        const markerY = y(cross.point);
+        const isGolden = cross.type === "golden";
+        return (
+          <g key={`${cross.type}-${cross.index}`} className={`indicator-cross-marker ${isGolden ? "golden" : "death"}`} transform={`translate(${x.toFixed(2)} ${markerY.toFixed(2)})`}>
+            <circle r="5.8" />
+            <path d={isGolden ? "M -5 3 L 0 -5 L 5 3" : "M -5 -3 L 0 5 L 5 -3"} />
+          </g>
+        );
+      })}
     </g>
   );
 }
@@ -492,42 +603,6 @@ function MultiLineLayer({
   );
 }
 
-function RsiLayer({
-  series,
-  top,
-  height,
-  width,
-  center,
-}: {
-  series: RsiPoint[];
-  top: number;
-  height: number;
-  width: number;
-  center: (index: number) => number;
-}) {
-  if (series.length < 2) return null;
-  const y = (value: number) => top + (1 - Math.max(0, Math.min(100, value)) / 100) * height;
-  const line = (key: keyof Pick<RsiPoint, "rsi6" | "rsi12" | "rsi24">) =>
-    series
-      .map((point, index) => {
-        const value = point[key];
-        if (!Number.isFinite(value)) return null;
-        return `${center(index).toFixed(2)},${y(value).toFixed(2)}`;
-      })
-      .filter(Boolean)
-      .join(" ");
-
-  return (
-    <g className="kline-rsi-layer">
-      <line className="trend-grid-line" x1="0" x2={width} y1={y(70)} y2={y(70)} />
-      <line className="trend-grid-line" x1="0" x2={width} y1={y(30)} y2={y(30)} />
-      <polyline className="trend-line line-rsi6" points={line("rsi6")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-      <polyline className="trend-line line-rsi12" points={line("rsi12")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-      <polyline className="trend-line line-rsi24" points={line("rsi24")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-    </g>
-  );
-}
-
 function VolumeLayer({
   bars,
   volumes,
@@ -563,53 +638,6 @@ function VolumeLayer({
       })}
     </g>
   );
-}
-
-type RsiPoint = {
-  date: string;
-  rsi6: number;
-  rsi12: number;
-  rsi24: number;
-};
-
-function computeRsiLines(bars: KlineBar[]): RsiPoint[] {
-  const closes = bars.map((bar) => bar.close);
-  const rsi6 = computeRsi(closes, 6);
-  const rsi12 = computeRsi(closes, 12);
-  const rsi24 = computeRsi(closes, 24);
-  return bars.map((bar, index) => ({ date: bar.date, rsi6: rsi6[index], rsi12: rsi12[index], rsi24: rsi24[index] }));
-}
-
-function computeRsi(values: number[], period: number): number[] {
-  const result: number[] = [];
-  let averageGain = 0;
-  let averageLoss = 0;
-  for (let index = 0; index < values.length; index += 1) {
-    if (index === 0) {
-      result.push(50);
-      continue;
-    }
-    const change = values[index] - values[index - 1];
-    const gain = Math.max(change, 0);
-    const loss = Math.max(-change, 0);
-    if (index <= period) {
-      averageGain += gain;
-      averageLoss += loss;
-      const divisor = Math.max(index, 1);
-      result.push(rsiValue(averageGain / divisor, averageLoss / divisor));
-      continue;
-    }
-    averageGain = (averageGain * (period - 1) + gain) / period;
-    averageLoss = (averageLoss * (period - 1) + loss) / period;
-    result.push(rsiValue(averageGain, averageLoss));
-  }
-  return result;
-}
-
-function rsiValue(averageGain: number, averageLoss: number): number {
-  if (averageLoss === 0) return averageGain === 0 ? 50 : 100;
-  const relativeStrength = averageGain / averageLoss;
-  return 100 - 100 / (1 + relativeStrength);
 }
 
 function computeDmaLines(bars: KlineBar[]): SeriesPoint[] {

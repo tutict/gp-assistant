@@ -1,4 +1,4 @@
-@media (min-width: 769px) and (max-width: 1180px) {
+﻿@media (min-width: 769px) and (max-width: 1180px) {
   :root {
     --sidebar-width: 72px;
   }
@@ -111,8 +111,7 @@
     right: 0;
     bottom: 0;
     left: 0;
-    width: auto;
-    height: calc(var(--bottom-nav-height) + var(--safe-bottom));
+      height: calc(var(--bottom-nav-height) + var(--safe-bottom));
     padding: 2px 4px var(--safe-bottom);
     overflow: visible;
     border-top: 1px solid var(--line);
@@ -1108,11 +1107,11 @@ html.android-phone .llm-preset-btn {
 }
 
 html.android-phone .screen-panel-container {
-  margin-top: 2px;
+  margin-top: 0;
 }
 
 html.android-phone .screen-panel-tabs {
-  margin-top: 3px;
+  margin-top: 0;
 }
 
 html.android-phone .screen-mobile-toolbar-card {
@@ -1143,7 +1142,7 @@ html.android-phone .screen-mobile-refresh-btn svg {
 }
 
 html.android-phone .screen-mobile-refresh-progress {
-  margin: 2px -4px -2px;
+  margin: 1px -4px -3px;
 }
 
 html.android-phone .screen-panel-run-card .run-btn,
@@ -1278,7 +1277,6 @@ html.android-phone .screen-panel-tabs {
 }
 
 html.android-phone .screen-panel-tabs .panel-tab {
-  width: auto;
   min-width: 0;
   min-height: 26px;
   padding: 1px 2px;
@@ -1405,4 +1403,2889 @@ html.android-tablet .run-btn,
 html.android-tablet .action-btn,
 html.android-tablet .stock-row-action {
   font-size: 11.5px;
+}
+/* Android phone ultra-compact observe detail overrides. */
+html.android-phone .observe-result {
+  gap: 3px;
+}
+
+html.android-phone .observe-overview-header,
+html.android-phone .signal-card > header,
+html.android-phone .financial-indicators > header,
+html.android-phone .capital-evidence-list > header {
+  gap: 4px;
+  padding: 7px 8px;
+}
+
+html.android-phone .observe-overview-header h3,
+html.android-phone .signal-card h3,
+html.android-phone .news-finding h3,
+html.android-phone .plain-news-column h3 {
+  font-size: 11px;
+  line-height: 1.05;
+}
+
+html.android-phone .observe-overview-header p,
+html.android-phone .signal-card header p,
+html.android-phone .news-finding header p {
+  margin-top: 2px;
+  font-size: 8px;
+  line-height: 1.05;
+}
+
+html.android-phone .observe-text-metrics {
+  padding: 0 8px 8px;
+}
+
+html.android-phone .observe-text-metrics > header {
+  padding: 8px 0 6px;
+}
+
+html.android-phone .observe-text-metrics h3 {
+  font-size: 10px;
+  line-height: 1.05;
+}
+
+html.android-phone .observe-text-metrics > header p {
+  margin-top: 2px;
+  font-size: 8px;
+  line-height: 1.25;
+}
+
+html.android-phone .observe-text-metric-sections {
+  gap: 5px;
+}
+
+html.android-phone .observe-text-metric-section {
+  padding-top: 6px;
+}
+
+html.android-phone .observe-text-metric-section h4 {
+  margin-bottom: 5px;
+  font-size: 9.5px;
+  line-height: 1.05;
+}
+
+html.android-phone .observe-text-metric-grid {
+  gap: 4px;
+}
+
+html.android-phone .observe-text-metric-item {
+  min-height: 36px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+html.android-phone .observe-text-metric-item span {
+  font-size: 7.5px;
+  line-height: 1.05;
+}
+
+html.android-phone .observe-text-metric-item strong {
+  margin-top: 2px;
+  font-size: 9px;
+  line-height: 1.1;
+}
+
+html.android-phone .observe-text-metric-item.metric-long {
+  min-height: 34px;
+}
+
+html.android-phone .observe-metric-analysis {
+  margin-top: 6px;
+  padding: 7px;
+  border-radius: 7px;
+}
+
+html.android-phone .observe-metric-analysis h4 {
+  margin-bottom: 3px;
+  font-size: 9px;
+}
+
+html.android-phone .observe-metric-one-line,
+html.android-phone .observe-metric-analysis-disclaimer {
+  font-size: 8px;
+  line-height: 1.28;
+}
+/* Android phone compact news page fixes. */
+html.android-phone .app[data-active-view="news"] .rag-tabs {
+  display: grid;
+  width: 100%;
+  max-width: 100%;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  padding: 1px;
+  overflow: visible;
+}
+
+html.android-phone .app[data-active-view="news"] .rag-tabs .panel-tab {
+  min-width: 0;
+  min-height: 26px;
+  padding: 1px 2px;
+  overflow: hidden;
+  font-size: 7.5px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.android-phone .app[data-active-view="news"] .rag-controls {
+  margin-top: 2px;
+}
+
+html.android-phone .sidebar {
+  position: fixed;
+  top: auto;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: calc(var(--bottom-nav-height) + var(--safe-bottom));
+  min-height: 0;
+}
+
+html.android-phone .nav-items {
+  height: var(--bottom-nav-height);
+  align-items: stretch;
+}
+
+html.android-phone .sidebar li,
+html.android-phone .nav-link {
+  min-height: 0;
+}
+
+html.android-phone .nav-link {
+  height: 100%;
+}
+/* Android phone ultra-compact Agent page fixes. */
+html.android-phone .app[data-active-view="agent"] .workbench {
+  height: calc(100dvh - var(--header-height));
+  padding: 0 0 calc(var(--bottom-nav-height) + var(--safe-bottom));
+}
+
+html.android-phone .agent-chat-stage {
+  height: 100%;
+  grid-template-rows: 34px minmax(0, 1fr) auto;
+  background: var(--bg);
+}
+
+html.android-phone .agent-mobile-actions {
+  top: 4px;
+  left: 4px;
+  gap: 3px;
+}
+
+html.android-phone .agent-mobile-menu,
+html.android-phone .agent-mobile-new {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  border-radius: 7px;
+}
+
+html.android-phone .agent-mobile-menu svg,
+html.android-phone .agent-mobile-new svg {
+  width: 15px;
+  height: 15px;
+}
+
+html.android-phone .agent-topbar {
+  min-height: 34px;
+  padding: 3px 6px 3px 72px;
+  gap: 6px;
+}
+
+html.android-phone .agent-topbar div {
+  gap: 4px;
+}
+
+html.android-phone .agent-topbar span,
+html.android-phone .agent-topbar em {
+  font-size: 7px;
+  line-height: 1;
+}
+
+html.android-phone .agent-topbar strong {
+  font-size: 8.5px;
+  line-height: 1;
+}
+
+html.android-phone .agent-topbar-meta span {
+  font-size: 7px;
+}
+
+html.android-phone .agent-thread {
+  gap: 5px;
+  padding: 4px 6px;
+}
+
+html.android-phone .agent-thread.empty {
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 6px;
+}
+
+html.android-phone .agent-empty-state {
+  width: min(300px, 100%);
+  gap: 7px;
+  padding: 4px;
+}
+
+html.android-phone .agent-empty-mark {
+  width: 28px;
+  height: 28px;
+  font-size: 9px;
+}
+
+html.android-phone .agent-empty-state h2 {
+  font-size: 10.5px;
+  line-height: 1.15;
+}
+
+html.android-phone .agent-empty-state p {
+  max-width: 280px;
+  font-size: 7.5px;
+  line-height: 1.25;
+}
+
+html.android-phone .agent-mode-tabs {
+  display: grid;
+  width: min(270px, 100%);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  padding: 2px;
+  overflow: visible;
+  border-radius: 8px;
+}
+
+html.android-phone .agent-mode-tabs button {
+  min-width: 0;
+  min-height: 27px;
+  padding: 1px 4px;
+  overflow: hidden;
+  border-radius: 6px;
+  font-size: 7.5px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.android-phone .agent-mode-capabilities {
+  width: min(270px, 100%);
+  padding: 7px;
+  border-radius: 8px;
+  font-size: 7.5px;
+  line-height: 1.25;
+}
+
+html.android-phone .agent-mode-capabilities strong {
+  font-size: 8.5px;
+}
+
+html.android-phone .agent-mode-capabilities p,
+html.android-phone .agent-mode-capabilities em {
+  margin: 2px 0 0;
+  font-size: 7.5px;
+  line-height: 1.25;
+}
+
+html.android-phone .agent-mode-capability-tags {
+  gap: 3px;
+  margin-top: 4px;
+}
+
+html.android-phone .agent-mode-capability-tags span {
+  padding: 1px 5px;
+  font-size: 7px;
+}
+
+html.android-phone .agent-composer-card {
+  position: sticky;
+  bottom: 0;
+  width: calc(100% - 12px);
+  min-height: 38px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas: "input tools footer";
+  gap: 4px;
+  margin: 0 6px 5px;
+  padding: 4px 5px;
+  border-radius: 9px;
+}
+
+html.android-phone .agent-input {
+  height: 22px;
+  min-height: 22px;
+  max-height: 56px;
+  padding: 1px 2px;
+  font-size: 8px;
+  line-height: 1.2;
+}
+
+html.android-phone .agent-composer-tools {
+  max-width: 54px;
+  overflow: hidden;
+  font-size: 7px;
+  line-height: 1;
+  text-overflow: ellipsis;
+}
+
+html.android-phone .send-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+}
+
+html.android-phone .send-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+html.android-phone .agent-message,
+html.android-phone .agent-message.user {
+  max-width: 100%;
+  padding: 6px 7px;
+  font-size: 8px;
+  line-height: 1.35;
+}
+
+html.android-phone .agent-final-reply,
+html.android-phone .agent-message-meta {
+  font-size: 8px;
+  line-height: 1.35;
+}
+
+html.android-phone .agent-rail {
+  width: min(78vw, 270px);
+  padding: 7px;
+}
+
+html.android-phone .agent-workspace.rail-collapsed .agent-rail {
+  width: min(78vw, 270px);
+}
+/* Android phone ultra-compact stock result cards. */
+html.android-phone .sector-group,
+html.android-phone .screen-result-group {
+  padding: 4px;
+  border-radius: 5px;
+}
+
+html.android-phone .sector-group > summary,
+html.android-phone .screen-result-group > summary {
+  min-height: 22px;
+  gap: 3px;
+  padding: 0 4px;
+}
+
+html.android-phone .sector-group > summary h3,
+html.android-phone .screen-result-group > summary h3 {
+  font-size: 8px;
+  line-height: 1;
+}
+
+html.android-phone .sector-group-meta {
+  min-height: 18px;
+  gap: 3px;
+  padding: 1px 5px;
+  font-size: 6.8px;
+}
+
+html.android-phone .sector-group-meta strong {
+  font-size: 8px;
+}
+
+html.android-phone .sector-group-meta small {
+  font-size: 6.6px;
+}
+
+html.android-phone .sector-group-content {
+  margin-top: 3px;
+  padding: 0;
+}
+
+html.android-phone .stock-row {
+  padding: 3px;
+}
+
+html.android-phone .stock-grid {
+  gap: 3px;
+}
+
+html.android-phone .stock-title strong {
+  font-size: 8.5px;
+  line-height: 1.05;
+}
+
+html.android-phone .stock-title span,
+html.android-phone .stock-current-price span,
+html.android-phone .quote-number span {
+  margin-top: 1px;
+  font-size: 6.8px;
+  line-height: 1;
+}
+
+html.android-phone .stock-current-price strong,
+html.android-phone .quote-number strong {
+  font-size: 8px;
+  line-height: 1.05;
+}
+
+html.android-phone .score-strip {
+  gap: 3px;
+  margin-top: 4px;
+}
+
+html.android-phone .score-strip-metrics {
+  gap: 3px;
+}
+
+html.android-phone .score-chip,
+html.android-phone .score-strip-primary {
+  min-height: 34px;
+  padding: 3px 4px;
+  border-radius: 5px;
+}
+
+html.android-phone .score-chip em,
+html.android-phone .score-strip-primary span {
+  font-size: 6.8px;
+  line-height: 1;
+}
+
+html.android-phone .score-chip b {
+  margin-top: 1px;
+  font-size: 8px;
+  line-height: 1;
+}
+
+html.android-phone .score-strip-primary {
+  min-width: 0;
+}
+
+html.android-phone .score-strip-primary strong {
+  margin-top: 1px;
+  font-size: 9px;
+  line-height: 1;
+}
+
+html.android-phone .stock-score-summary {
+  margin-top: 4px;
+  font-size: 7.2px;
+  line-height: 1.25;
+}
+
+html.android-phone .row-actions {
+  gap: 4px;
+  margin-top: 5px;
+}
+
+html.android-phone .stock-meta,
+html.android-phone .row-button-group,
+html.android-phone .tag-row {
+  gap: 4px;
+}
+
+html.android-phone .stock-meta {
+  font-size: 6.8px;
+  line-height: 1.15;
+}
+
+html.android-phone .stock-row-action {
+  min-height: 25px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 7.5px;
+}
+
+html.android-phone .tag-row {
+  margin-top: 4px;
+}
+
+html.android-phone .tag-row span {
+  padding: 2px 6px;
+  font-size: 6.8px;
+}
+
+/* MuMu / high-density Android extreme compact pass. */
+html.android-phone {
+  --header-height: 32px;
+  --bottom-nav-height: 38px;
+  --control-height: 24px;
+  --touch-height: 28px;
+  font-size: 7px;
+}
+
+html.android-phone body,
+html.android-phone button,
+html.android-phone input,
+html.android-phone select,
+html.android-phone textarea {
+  font-size: 7px;
+  line-height: 1.12;
+}
+
+html.android-phone .app-header {
+  min-height: 32px;
+  height: 32px;
+  gap: 4px;
+  padding: 2px 5px;
+}
+
+html.android-phone .app-logo {
+  width: 18px;
+  height: 18px;
+}
+
+html.android-phone .app-title {
+  font-size: 9px;
+}
+
+html.android-phone .theme-toggle-track {
+  width: 28px;
+  height: 16px;
+}
+
+html.android-phone .theme-toggle-thumb {
+  width: 12px;
+  height: 12px;
+}
+
+html.android-phone .theme-toggle input:checked + .theme-toggle-track .theme-toggle-thumb {
+  transform: translate(12px);
+}
+
+html.android-phone .workbench {
+  gap: 2px;
+  padding: 1px 3px calc(var(--bottom-nav-height) + var(--safe-bottom) + 2px);
+}
+
+html.android-phone .sidebar {
+  height: calc(var(--bottom-nav-height) + var(--safe-bottom));
+  padding: 0 1px;
+}
+
+html.android-phone .nav-items {
+  height: var(--bottom-nav-height);
+}
+
+html.android-phone .nav-link {
+  height: 36px;
+  gap: 1px;
+  padding: 0;
+  border-radius: 6px;
+  font-size: 6px;
+  line-height: 1;
+}
+
+html.android-phone .nav-link svg {
+  width: 13px;
+  height: 13px;
+}
+
+html.android-phone .panel-container,
+html.android-phone .screen-result-list,
+html.android-phone .sector-groups,
+html.android-phone .screen-result-groups,
+html.android-phone .signal-chart-stack,
+html.android-phone .plain-news-groups,
+html.android-phone .evidence-list,
+html.android-phone .relation-map,
+html.android-phone .rag-pack-list,
+html.android-phone .observe-result {
+  gap: 2px;
+}
+
+html.android-phone .screen-mobile-toolbar-card,
+html.android-phone .panel-controls,
+html.android-phone .backtest-controls,
+html.android-phone .rag-controls {
+  min-height: 0;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 5px;
+}
+
+html.android-phone .screen-mobile-toolbar-row {
+  min-height: 24px;
+  gap: 3px;
+}
+
+html.android-phone .screen-mobile-status-inline,
+html.android-phone .screen-mobile-status-inline strong,
+html.android-phone .screen-mobile-refresh-btn {
+  font-size: 6.5px;
+  line-height: 1;
+}
+
+html.android-phone .screen-mobile-refresh-btn {
+  min-width: 42px;
+  min-height: 22px;
+  padding: 0 5px;
+  border-radius: 5px;
+}
+
+html.android-phone .screen-panel-tabs,
+html.android-phone .rag-tabs,
+html.android-phone .agent-mode-tabs {
+  gap: 1px;
+  padding: 1px;
+  border-radius: 6px;
+}
+
+html.android-phone .screen-panel-tabs .panel-tab,
+html.android-phone .rag-tabs .panel-tab,
+html.android-phone .agent-mode-tabs button,
+html.android-phone .panel-tab {
+  min-height: 21px;
+  padding: 0 2px;
+  border-radius: 5px;
+  font-size: 6px;
+  line-height: 1;
+}
+
+html.android-phone .run-btn,
+html.android-phone .save-btn,
+html.android-phone .action-btn,
+html.android-phone .clear-btn,
+html.android-phone .stock-row-action,
+html.android-phone .source-toggle,
+html.android-phone .rag-secondary-btn,
+html.android-phone .llm-add-btn,
+html.android-phone .llm-preset-btn {
+  min-height: 22px;
+  padding: 0 5px;
+  border-radius: 5px;
+  font-size: 6.5px;
+  line-height: 1;
+}
+
+html.android-phone .form-row {
+  gap: 2px;
+}
+
+html.android-phone .form-row label {
+  font-size: 6px;
+  line-height: 1;
+}
+
+html.android-phone .form-row input,
+html.android-phone .form-row select,
+html.android-phone .form-row textarea,
+html.android-phone .stock-code-input input,
+html.android-phone .rag-controls input,
+html.android-phone .rag-controls select,
+html.android-phone .rag-controls textarea,
+html.android-phone .backtest-controls input,
+html.android-phone .backtest-controls select {
+  min-height: 22px;
+  height: 22px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: 6.5px;
+}
+
+html.android-phone .panel-result,
+html.android-phone .result-empty,
+html.android-phone .panel-feedback {
+  min-height: 42px;
+  padding: 5px 6px;
+  border-radius: 5px;
+}
+
+html.android-phone .panel-feedback > svg {
+  width: 13px;
+  height: 13px;
+}
+
+html.android-phone .panel-feedback strong,
+html.android-phone .panel-feedback p {
+  font-size: 7px;
+  line-height: 1.12;
+}
+
+html.android-phone .screen-result-metric-strip {
+  gap: 2px;
+}
+
+html.android-phone .metric,
+html.android-phone .screen-result-metric-strip .metric,
+html.android-phone .detail-grid > div,
+html.android-phone .backtest-comparison > div,
+html.android-phone .overview-metric-grid > div,
+html.android-phone .signal-grid > div,
+html.android-phone .financial-indicator-item,
+html.android-phone .observe-text-metric-item,
+html.android-phone .score-chip,
+html.android-phone .score-strip-primary {
+  min-height: 26px;
+  padding: 2px 3px;
+  border-radius: 4px;
+}
+
+html.android-phone .metric span,
+html.android-phone .screen-result-metric-strip .metric span,
+html.android-phone .observe-text-metric-item span,
+html.android-phone .score-chip em,
+html.android-phone .score-strip-primary span,
+html.android-phone .stock-title span,
+html.android-phone .stock-current-price span,
+html.android-phone .quote-number span,
+html.android-phone .stock-meta,
+html.android-phone .tag-row span {
+  font-size: 5.8px;
+  line-height: 1;
+}
+
+html.android-phone .metric strong,
+html.android-phone .screen-result-metric-strip .metric strong,
+html.android-phone .observe-text-metric-item strong,
+html.android-phone .score-chip b,
+html.android-phone .stock-title strong,
+html.android-phone .stock-current-price strong,
+html.android-phone .quote-number strong {
+  font-size: 7.2px;
+  line-height: 1;
+}
+
+html.android-phone .screen-result-group,
+html.android-phone .sector-group,
+html.android-phone .stock-row,
+html.android-phone .watchlist-panel,
+html.android-phone .observe-overview,
+html.android-phone .signal-card,
+html.android-phone .observe-text-metrics,
+html.android-phone .agent-result-card {
+  padding: 2px;
+  border-radius: 4px;
+}
+
+html.android-phone .screen-result-group > summary,
+html.android-phone .sector-group > summary,
+html.android-phone .watchlist-header {
+  min-height: 18px;
+  padding: 0 3px;
+  gap: 2px;
+}
+
+html.android-phone .screen-result-group > summary h3,
+html.android-phone .sector-group > summary h3,
+html.android-phone .watchlist-header h3,
+html.android-phone .observe-overview-header h3,
+html.android-phone .signal-card h3,
+html.android-phone .observe-text-metrics h3,
+html.android-phone .observe-text-metric-section h4 {
+  font-size: 7.2px;
+  line-height: 1;
+}
+
+html.android-phone .sector-group-meta {
+  min-height: 15px;
+  padding: 0 4px;
+  font-size: 5.8px;
+}
+
+html.android-phone .sector-group-meta strong {
+  font-size: 7px;
+}
+
+html.android-phone .score-strip,
+html.android-phone .score-strip-metrics,
+html.android-phone .stock-grid,
+html.android-phone .row-actions,
+html.android-phone .stock-meta,
+html.android-phone .row-button-group,
+html.android-phone .tag-row,
+html.android-phone .observe-text-metric-grid,
+html.android-phone .observe-text-metric-sections {
+  gap: 2px;
+}
+
+html.android-phone .stock-score-summary,
+html.android-phone .observe-metric-one-line,
+html.android-phone .observe-metric-analysis-disclaimer,
+html.android-phone .observe-overview-header p,
+html.android-phone .signal-card header p {
+  margin-top: 2px;
+  font-size: 6px;
+  line-height: 1.15;
+}
+
+html.android-phone .observe-overview-header,
+html.android-phone .signal-card > header,
+html.android-phone .financial-indicators > header,
+html.android-phone .capital-evidence-list > header,
+html.android-phone .observe-text-metrics > header {
+  gap: 2px;
+  padding: 4px 5px;
+}
+
+html.android-phone .observe-chart-card .chart-wrap,
+html.android-phone .chart-wrap {
+  min-height: 118px;
+}
+
+html.android-phone .app[data-active-view="agent"] .workbench {
+  height: calc(100dvh - var(--header-height));
+  padding-bottom: calc(var(--bottom-nav-height) + var(--safe-bottom));
+}
+
+html.android-phone .agent-chat-stage {
+  grid-template-rows: 28px minmax(0, 1fr) auto;
+}
+
+html.android-phone .agent-topbar {
+  min-height: 28px;
+  height: 28px;
+  padding: 2px 4px 2px 64px;
+}
+
+html.android-phone .agent-mobile-menu,
+html.android-phone .agent-mobile-new {
+  width: 25px;
+  height: 25px;
+  min-height: 25px;
+  border-radius: 5px;
+}
+
+html.android-phone .agent-empty-state {
+  width: min(250px, 100%);
+  gap: 4px;
+  padding: 2px;
+}
+
+html.android-phone .agent-empty-mark {
+  width: 22px;
+  height: 22px;
+  font-size: 7px;
+}
+
+html.android-phone .agent-empty-state h2 {
+  font-size: 8px;
+}
+
+html.android-phone .agent-empty-state p,
+html.android-phone .agent-mode-capabilities,
+html.android-phone .agent-mode-capabilities p,
+html.android-phone .agent-mode-capabilities em {
+  font-size: 6px;
+  line-height: 1.15;
+}
+
+html.android-phone .agent-mode-capabilities {
+  width: min(250px, 100%);
+  padding: 4px;
+  border-radius: 6px;
+}
+
+html.android-phone .agent-composer-card {
+  width: calc(100% - 8px);
+  min-height: 31px;
+  gap: 2px;
+  margin: 0 4px 3px;
+  padding: 2px 3px;
+  border-radius: 7px;
+}
+
+html.android-phone .agent-input {
+  height: 18px;
+  min-height: 18px;
+  max-height: 44px;
+  padding: 0 2px;
+  font-size: 6.5px;
+}
+
+html.android-phone .send-btn {
+  width: 23px;
+  height: 23px;
+  border-radius: 5px;
+}
+
+html.android-phone .send-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Android news page overflow fix: keep controls inside the viewport. */
+html.android-phone,
+html.android-phone body,
+html.android-phone #root,
+html.android-phone .app,
+html.android-phone .workbench,
+html.android-phone .panels,
+html.android-phone .panel-container {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+html.android-phone .app[data-active-view="news"] .workbench {
+  min-width: 0;
+  width: 100vw;
+  overflow-x: hidden;
+}
+
+html.android-phone .app[data-active-view="news"] .panels,
+html.android-phone .app[data-active-view="news"] .panel-container {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+html.android-phone .app[data-active-view="news"] .rag-controls {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: minmax(0, 1fr) minmax(42px, 52px);
+  gap: 2px;
+  overflow: hidden;
+}
+
+html.android-phone .app[data-active-view="news"] .rag-controls .form-row,
+html.android-phone .app[data-active-view="news"] .rag-controls .form-row.inline,
+html.android-phone .app[data-active-view="news"] .rag-controls .rag-code-field,
+html.android-phone .app[data-active-view="news"] .rag-controls .rag-days-field,
+html.android-phone .app[data-active-view="news"] .rag-controls .rag-wide-field,
+html.android-phone .app[data-active-view="news"] .rag-controls .rag-textarea-field {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  flex: none;
+}
+
+html.android-phone .app[data-active-view="news"] .rag-controls .rag-code-field,
+html.android-phone .app[data-active-view="news"] .rag-controls .rag-wide-field,
+html.android-phone .app[data-active-view="news"] .rag-controls .rag-textarea-field {
+  grid-column: 1 / -1;
+}
+
+html.android-phone .app[data-active-view="news"] .rag-controls .rag-days-field {
+  grid-column: 1;
+}
+
+html.android-phone .app[data-active-view="news"] .rag-controls .rag-run-btn {
+  grid-column: 2;
+  width: 100%;
+  min-width: 0;
+  max-width: 52px;
+  justify-self: stretch;
+  align-self: end;
+  padding: 0 3px;
+}
+
+html.android-phone .app[data-active-view="news"] .rag-controls .rag-secondary-btn {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+html.android-phone .app[data-active-view="news"] .panel-result,
+html.android-phone .app[data-active-view="news"] .llm-settings-panel {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* Android Agent drawer / history rail extreme compact pass. */
+html.android-phone .agent-workspace,
+html.android-phone .agent-workspace.rail-collapsed {
+  grid-template-columns: 1fr;
+  overflow: hidden;
+}
+
+html.android-phone .agent-rail {
+  width: min(74vw, 266px);
+  max-width: 266px;
+  padding: 5px;
+  gap: 5px;
+  border-right-width: 1px;
+}
+
+html.android-phone .agent-workspace.rail-collapsed .agent-rail {
+  width: min(74vw, 266px);
+  max-width: 266px;
+  transform: translateX(-100%);
+}
+
+html.android-phone .agent-rail-toggle {
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0;
+  border-radius: 5px;
+}
+
+html.android-phone .agent-rail-toggle svg {
+  width: 13px;
+  height: 13px;
+}
+
+html.android-phone .agent-rail-search {
+  min-height: 28px;
+  padding: 2px 6px;
+  gap: 4px;
+  border-radius: 6px;
+}
+
+html.android-phone .agent-rail-search svg {
+  width: 13px;
+  height: 13px;
+}
+
+html.android-phone .agent-rail-search input {
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+  font-size: 6.5px;
+  line-height: 1;
+}
+
+html.android-phone .agent-rail-brand {
+  min-height: 34px;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+html.android-phone .agent-logo-mark {
+  width: 25px;
+  height: 25px;
+  font-size: 7px;
+}
+
+html.android-phone .agent-rail-brand div {
+  gap: 1px;
+}
+
+html.android-phone .agent-rail-brand strong {
+  font-size: 7.5px;
+  line-height: 1;
+}
+
+html.android-phone .agent-rail-brand em,
+html.android-phone .agent-rail-label,
+html.android-phone .agent-rail-footer span,
+html.android-phone .agent-history-group-label {
+  font-size: 5.8px;
+  line-height: 1;
+}
+
+html.android-phone .agent-new-chat {
+  min-height: 28px;
+  height: 28px;
+  gap: 4px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 6.8px;
+}
+
+html.android-phone .agent-new-chat svg {
+  width: 13px;
+  height: 13px;
+}
+
+html.android-phone .agent-new-chat-label {
+  font-size: 6.8px;
+  line-height: 1;
+}
+
+html.android-phone .agent-rail-section {
+  gap: 4px;
+  min-height: 0;
+}
+
+html.android-phone .agent-rail-section-head {
+  min-height: 16px;
+  gap: 3px;
+}
+
+html.android-phone .agent-history-list {
+  gap: 4px;
+  padding-right: 0;
+}
+
+html.android-phone .agent-history-group {
+  gap: 3px;
+}
+
+html.android-phone .agent-history-item {
+  min-height: 46px;
+  padding: 4px 5px;
+  border-radius: 6px;
+}
+
+html.android-phone .agent-history-main {
+  gap: 3px;
+}
+
+html.android-phone .agent-history-main span {
+  font-size: 6.8px;
+  line-height: 1.05;
+}
+
+html.android-phone .agent-history-main em,
+html.android-phone .agent-history-main b {
+  font-size: 5.8px;
+  line-height: 1;
+}
+
+html.android-phone .agent-history-remove {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  border-radius: 4px;
+}
+
+html.android-phone .agent-rail-footer,
+html.android-phone .agent-rail-model-settings,
+html.android-phone .agent-rail-model-settings .llm-settings-panel {
+  margin-top: 4px;
+  padding-top: 5px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-settings-toggle {
+  min-height: 42px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 6px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-settings-toggle > span,
+html.android-phone .agent-rail-model-settings .llm-settings-toggle > strong,
+html.android-phone .agent-rail-model-settings .llm-settings-toggle > em,
+html.android-phone .agent-rail-model-settings .llm-status,
+html.android-phone .agent-rail-model-settings .llm-endpoint-state {
+  font-size: 6px;
+  line-height: 1.05;
+}
+
+html.android-phone .agent-rail-model-settings .llm-settings-toggle > strong {
+  font-size: 7px;
+}
+
+/* Android Agent history card final compact pass. */
+html.android-phone .agent-history-list,
+html.android-phone .agent-history-group {
+  gap: 2px;
+}
+
+html.android-phone .agent-history-item {
+  min-height: 38px;
+  height: 40px;
+  padding: 3px 5px;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+html.android-phone .agent-history-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: 1fr 1fr;
+  align-items: center;
+  gap: 1px 6px;
+  min-width: 0;
+  width: 100%;
+}
+
+html.android-phone .agent-history-main span {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 6.5px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.android-phone .agent-history-main em,
+html.android-phone .agent-history-main b {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 5.5px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.android-phone .agent-history-main em {
+  justify-self: start;
+}
+
+html.android-phone .agent-history-main b {
+  justify-self: end;
+}
+
+html.android-phone .agent-history-remove {
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+}
+
+html.android-phone .agent-history-empty {
+  min-height: 24px;
+  padding: 4px;
+  font-size: 6px;
+}
+
+/* Android Agent history card inner-content hard clamp. */
+html.android-phone .agent-history-item {
+  display: flex;
+  align-items: stretch;
+}
+
+html.android-phone .agent-history-item .agent-history-main {
+  height: 100%;
+  min-height: 0 !important;
+  padding: 0 2px !important;
+  align-content: center;
+  overflow: hidden;
+}
+
+html.android-phone .agent-history-item .agent-history-main span,
+html.android-phone .agent-history-item .agent-history-main em,
+html.android-phone .agent-history-item .agent-history-main b {
+  height: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+}
+
+/* Android Agent empty-state comfort pass: slightly larger than extreme compact. */
+html.android-phone .agent-empty-state {
+  width: min(280px, 100%);
+  gap: 6px;
+  padding: 5px 4px;
+}
+
+html.android-phone .agent-empty-mark {
+  width: 26px;
+  height: 26px;
+  font-size: 8px;
+}
+
+html.android-phone .agent-empty-state h2 {
+  font-size: 9.2px;
+  line-height: 1.18;
+}
+
+html.android-phone .agent-empty-state p {
+  max-width: 270px;
+  font-size: 7px;
+  line-height: 1.35;
+}
+
+html.android-phone .agent-mode-tabs {
+  width: min(278px, 100%);
+  padding: 2px;
+  gap: 2px;
+  border-radius: 8px;
+}
+
+html.android-phone .agent-mode-tabs button {
+  min-height: 25px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  font-size: 7px;
+  line-height: 1.05;
+}
+
+html.android-phone .agent-mode-capabilities {
+  width: min(278px, 100%);
+  padding: 7px 8px;
+  border-radius: 8px;
+  font-size: 7px;
+  line-height: 1.35;
+}
+
+html.android-phone .agent-mode-capabilities strong {
+  font-size: 7.6px;
+  line-height: 1.2;
+}
+
+html.android-phone .agent-mode-capabilities p,
+html.android-phone .agent-mode-capabilities em {
+  margin-top: 2px;
+  font-size: 6.8px;
+  line-height: 1.35;
+}
+
+html.android-phone .agent-mode-capability-tags {
+  gap: 3px;
+  margin-top: 4px;
+}
+
+html.android-phone .agent-mode-capability-tags span {
+  padding: 1px 5px;
+  font-size: 6.3px;
+  line-height: 1.1;
+}
+
+/* Android LLM settings sheet compact pass. */
+html.android-phone .agent-rail-model-settings .llm-settings-panel.open {
+  position: static;
+}
+
+html.android-phone .agent-rail-model-settings .llm-settings-panel.open .llm-settings-header {
+  display: none;
+}
+
+html.android-phone .agent-rail-model-settings .llm-settings-panel.open .llm-settings-body {
+  position: fixed;
+  inset: 38px auto 0 0;
+  z-index: 62;
+  width: min(74vw, 266px);
+  max-width: 266px;
+  max-height: none;
+  margin: 0;
+  padding: 7px 6px 10px;
+  gap: 7px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: none;
+  scrollbar-width: none;
+}
+
+html.android-phone .agent-rail-model-settings .llm-settings-panel.open .llm-settings-body::-webkit-scrollbar {
+  display: none;
+}
+
+html.android-phone .agent-rail-model-settings .llm-switcher-summary {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 0 6px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+html.android-phone .agent-rail-model-settings .llm-sheet-back-btn {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  border-radius: 7px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-sheet-back-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-switcher-summary > div {
+  min-width: 0;
+}
+
+html.android-phone .agent-rail-model-settings .llm-switcher-summary span {
+  font-size: 6.5px;
+  line-height: 1;
+}
+
+html.android-phone .agent-rail-model-settings .llm-switcher-summary strong {
+  margin-top: 2px;
+  font-size: 7.5px;
+  line-height: 1.08;
+}
+
+html.android-phone .agent-rail-model-settings .llm-add-btn {
+  min-width: 0;
+  min-height: 26px;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: 6.5px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+html.android-phone .agent-rail-model-settings .llm-add-btn svg {
+  width: 11px;
+  height: 11px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-switcher-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-provider-list {
+  gap: 5px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-provider-card {
+  min-height: 42px;
+  padding: 5px 6px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 5px;
+  border-radius: 7px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-provider-mark {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  font-size: 6.5px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-provider-copy {
+  gap: 1px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-provider-card strong {
+  font-size: 7.2px;
+  line-height: 1.05;
+}
+
+html.android-phone .agent-rail-model-settings .llm-provider-card em {
+  font-size: 6px;
+  line-height: 1.05;
+}
+
+html.android-phone .agent-rail-model-settings .llm-provider-card b {
+  max-width: 44px;
+  padding: 1px 5px;
+  font-size: 5.8px;
+  line-height: 1.15;
+}
+
+html.android-phone .agent-rail-model-settings .llm-provider-editor {
+  gap: 6px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-editor-head {
+  min-height: 24px;
+  gap: 5px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-editor-head span {
+  font-size: 6.2px;
+  line-height: 1;
+}
+
+html.android-phone .agent-rail-model-settings .llm-editor-head strong {
+  margin-top: 1px;
+  font-size: 7.3px;
+  line-height: 1.05;
+}
+
+html.android-phone .agent-rail-model-settings .llm-editor-head .clear-btn {
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: 6.2px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-editor-row,
+html.android-phone .agent-rail-model-settings .llm-editor-row.compact {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-switcher .form-row {
+  gap: 3px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-switcher .form-row label {
+  font-size: 6.5px;
+  line-height: 1;
+}
+
+html.android-phone .agent-rail-model-settings .llm-switcher .form-row input,
+html.android-phone .agent-rail-model-settings .llm-switcher .form-row select {
+  min-height: 28px;
+  padding: 0 7px;
+  border-radius: 7px;
+  font-size: 7px;
+  line-height: 1.1;
+}
+
+html.android-phone .agent-rail-model-settings .llm-provider-kind-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-provider-kind-option {
+  min-height: 28px;
+  padding: 0 5px;
+  border-radius: 7px;
+  font-size: 6.4px;
+  line-height: 1.05;
+}
+
+html.android-phone .agent-rail-model-settings .llm-flags,
+html.android-phone .agent-rail-model-settings .llm-preset-row,
+html.android-phone .agent-rail-model-settings .llm-switcher .form-actions {
+  gap: 5px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-flags label {
+  min-height: 18px;
+  gap: 4px;
+  padding: 0;
+  font-size: 6.3px;
+  line-height: 1;
+}
+
+html.android-phone .agent-rail-model-settings .llm-flags input[type="checkbox"] {
+  width: 11px;
+  height: 11px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-preset-row {
+  padding-top: 6px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-preset-btn {
+  min-height: 24px;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: 6.4px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-switcher .save-btn,
+html.android-phone .agent-rail-model-settings .llm-switcher .clear-btn {
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 6.8px;
+}
+/* Android stock cards compact frame / larger text pass. */
+html.android-phone .screen-result-group,
+html.android-phone .sector-group {
+  padding: 3px 4px;
+  border-radius: 5px;
+}
+
+html.android-phone .screen-result-group > summary,
+html.android-phone .sector-group > summary {
+  min-height: 20px;
+  padding: 0 3px;
+}
+
+html.android-phone .screen-result-group > summary h3,
+html.android-phone .sector-group > summary h3 {
+  font-size: 8.4px;
+  line-height: 1.05;
+}
+
+html.android-phone .sector-group-meta {
+  min-height: 17px;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 6.8px;
+}
+
+html.android-phone .sector-group-meta strong {
+  font-size: 8.5px;
+}
+
+html.android-phone .sector-group-content {
+  margin-top: 2px;
+}
+
+html.android-phone .stock-row {
+  padding: 3px 4px;
+  border-radius: 5px;
+}
+
+html.android-phone .stock-grid {
+  gap: 2px;
+}
+
+html.android-phone .stock-row header {
+  gap: 4px;
+}
+
+html.android-phone .stock-title strong {
+  font-size: 9.1px;
+  line-height: 1.05;
+}
+
+html.android-phone .stock-title span,
+html.android-phone .stock-current-price span,
+html.android-phone .quote-number span {
+  font-size: 7.1px;
+  line-height: 1;
+}
+
+html.android-phone .stock-current-price strong,
+html.android-phone .quote-number strong {
+  font-size: 8.8px;
+  line-height: 1.05;
+}
+
+html.android-phone .score-strip {
+  gap: 2px;
+  margin-top: 3px;
+}
+
+html.android-phone .score-strip-metrics {
+  gap: 2px;
+}
+
+html.android-phone .score-chip,
+html.android-phone .score-strip-primary {
+  min-height: 29px;
+  padding: 2px 3px;
+  border-radius: 5px;
+}
+
+html.android-phone .score-chip em,
+html.android-phone .score-strip-primary span {
+  font-size: 7px;
+  line-height: 1;
+}
+
+html.android-phone .score-chip b {
+  margin-top: 1px;
+  font-size: 8.7px;
+  line-height: 1;
+}
+
+html.android-phone .score-strip-primary strong {
+  margin-top: 0;
+  font-size: 9.5px;
+  line-height: 1;
+}
+
+html.android-phone .stock-score-summary {
+  margin-top: 3px;
+  font-size: 7.7px;
+  line-height: 1.18;
+}
+
+html.android-phone .stock-meta {
+  gap: 3px;
+  font-size: 7.1px;
+  line-height: 1.08;
+}
+
+html.android-phone .row-actions {
+  gap: 3px;
+  margin-top: 4px;
+}
+
+html.android-phone .stock-row-action {
+  min-height: 22px;
+  padding: 0 6px;
+  border-radius: 5px;
+  font-size: 7.8px;
+}
+
+html.android-phone .tag-row {
+  gap: 3px;
+  margin-top: 3px;
+}
+
+html.android-phone .tag-row span {
+  padding: 1px 5px;
+  border-radius: 7px;
+  font-size: 6.9px;
+}
+/* Android stock cards dense frame pass. */
+html.android-phone .stock-row {
+  padding: 3px 4px;
+  overflow: hidden;
+}
+
+html.android-phone .stock-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  align-items: stretch;
+}
+
+html.android-phone .stock-title {
+  grid-column: span 2;
+  min-height: 16px;
+}
+
+html.android-phone .stock-current-price {
+  min-height: 16px;
+  align-content: center;
+  justify-items: end;
+  text-align: right;
+}
+
+html.android-phone .quote-number {
+  min-height: 28px !important;
+  height: 28px;
+  padding: 1px 3px !important;
+  border-radius: 5px !important;
+  align-content: center;
+}
+
+html.android-phone .stock-title strong {
+  font-size: 9.3px;
+  line-height: 1.05;
+}
+
+html.android-phone .stock-title span,
+html.android-phone .stock-current-price span,
+html.android-phone .quote-number span {
+  margin-top: 0;
+  font-size: 7.1px;
+  line-height: 1;
+}
+
+html.android-phone .stock-current-price strong,
+html.android-phone .quote-number strong {
+  font-size: 8.9px;
+  line-height: 1;
+}
+
+html.android-phone .score-strip {
+  grid-template-columns: minmax(0, 1fr) 76px;
+  gap: 2px;
+  margin-top: 2px;
+  align-items: stretch;
+}
+
+html.android-phone .score-strip-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+}
+
+html.android-phone .score-chip,
+html.android-phone .score-strip-primary {
+  min-height: 28px;
+  height: 28px;
+  padding: 1px 2px;
+  border-radius: 5px;
+}
+
+html.android-phone .score-strip-primary {
+  min-width: 0;
+}
+
+html.android-phone .score-chip em,
+html.android-phone .score-strip-primary span {
+  font-size: 7px;
+  line-height: 1;
+}
+
+html.android-phone .score-chip b,
+html.android-phone .score-strip-primary strong {
+  margin-top: 0;
+  font-size: 8.8px;
+  line-height: 1;
+}
+
+html.android-phone .stock-score-summary {
+  height: 9px;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 7.4px;
+  line-height: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.android-phone .row-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: 3px;
+  align-items: center;
+  margin-top: 2px;
+}
+
+html.android-phone .stock-meta {
+  flex-wrap: nowrap;
+  gap: 3px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 7.1px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+html.android-phone .stock-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.android-phone .row-button-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+  width: 100%;
+}
+
+html.android-phone .stock-row-action {
+  min-height: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 5px;
+  font-size: 7.8px;
+}
+
+html.android-phone .tag-row {
+  height: 14px;
+  margin-top: 2px;
+  overflow: hidden;
+}
+
+html.android-phone .tag-row span {
+  min-height: 12px;
+  height: 12px;
+  padding: 0 5px;
+  border-radius: 6px;
+  font-size: 6.9px;
+  line-height: 12px;
+}
+
+html.android-phone .selection-explain.compact-selection-explain {
+  margin-top: 2px;
+}
+
+html.android-phone .selection-explain.compact-selection-explain summary {
+  min-height: 16px;
+  font-size: 6.8px;
+  line-height: 16px;
+}
+/* Android backtest and watchlist compact pass. */
+html.android-phone .screen-result-actions,
+html.android-phone .result-actions.screen-result-actions {
+  min-height: 34px;
+  margin: 4px 0 6px;
+  padding: 4px 7px;
+  gap: 6px;
+  border-radius: 5px;
+}
+
+html.android-phone .screen-result-actions > div,
+html.android-phone .result-actions.screen-result-actions > div {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+html.android-phone .screen-result-actions span,
+html.android-phone .result-actions.screen-result-actions span {
+  font-size: 6.8px;
+  line-height: 1;
+}
+
+html.android-phone .screen-result-actions strong,
+html.android-phone .result-actions.screen-result-actions strong {
+  font-size: 7.4px;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+
+html.android-phone .screen-result-actions button,
+html.android-phone .result-actions.screen-result-actions button {
+  width: 34px;
+  min-width: 34px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  font-size: 7px;
+  line-height: 1;
+}
+
+html.android-phone .watchlist-panel {
+  margin-top: 3px;
+  border-radius: 4px;
+}
+
+html.android-phone .watchlist-header {
+  min-height: 20px;
+  height: 20px;
+  padding: 0 5px;
+  gap: 3px;
+}
+
+html.android-phone .watchlist-header > div {
+  gap: 3px;
+}
+
+html.android-phone .watchlist-header h3 {
+  font-size: 7.6px;
+  line-height: 1;
+}
+
+html.android-phone .watchlist-count {
+  font-size: 6.6px;
+  line-height: 1;
+}
+
+html.android-phone .watchlist-panel > .panel-feedback {
+  min-height: 34px;
+  height: 34px;
+  gap: 5px;
+  padding: 3px 6px;
+  border-radius: 0;
+}
+
+html.android-phone .watchlist-panel > .panel-feedback > svg {
+  width: 12px;
+  height: 12px;
+}
+
+html.android-phone .watchlist-panel > .panel-feedback p,
+html.android-phone .watchlist-panel > .panel-feedback strong {
+  font-size: 7px;
+  line-height: 1.05;
+}
+
+html.android-phone .watchlist-items .watchlist-item {
+  min-height: 26px;
+  padding: 0 5px;
+  gap: 4px;
+}
+
+html.android-phone .watchlist-code,
+html.android-phone .watchlist-name {
+  font-size: 7px;
+  line-height: 1;
+}
+
+html.android-phone .watchlist-remove {
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+}
+/* Android custom screen text readability pass. */
+html.android-phone .custom-screen-criteria {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+}
+
+html.android-phone .custom-screen-criteria .criteria-field-group {
+  display: grid;
+  gap: 5px;
+  padding: 0;
+}
+
+html.android-phone .custom-screen-criteria .criteria-field-group header {
+  display: grid;
+  gap: 2px;
+  min-height: 0;
+  margin: 0;
+  padding: 0 1px 1px;
+}
+
+html.android-phone .custom-screen-criteria .criteria-field-group header strong {
+  color: var(--text);
+  font-size: 8.8px;
+  font-weight: 760;
+  line-height: 1.12;
+  letter-spacing: 0.01em;
+}
+
+html.android-phone .custom-screen-criteria .criteria-field-group header span {
+  color: color-mix(in srgb, var(--text-secondary) 88%, var(--text));
+  font-size: 7.2px;
+  font-weight: 520;
+  line-height: 1.18;
+}
+
+html.android-phone .custom-screen-criteria .criteria-field-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+}
+
+html.android-phone .custom-screen-criteria .form-row {
+  min-width: 0;
+  gap: 3px;
+}
+
+html.android-phone .custom-screen-criteria .form-row label {
+  color: color-mix(in srgb, var(--text-secondary) 86%, var(--text));
+  font-size: 7.4px;
+  font-weight: 650;
+  line-height: 1.05;
+  letter-spacing: 0.005em;
+}
+
+html.android-phone .custom-screen-criteria .form-row input,
+html.android-phone .custom-screen-criteria .form-row select {
+  min-height: 25px;
+  height: 25px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 7.8px;
+  font-weight: 560;
+  line-height: 1.1;
+}
+
+html.android-phone .custom-screen-criteria .form-row input::placeholder {
+  color: color-mix(in srgb, var(--text-secondary) 72%, transparent);
+  font-size: 7.2px;
+}
+
+html.android-phone .custom-screen-criteria .criteria-toggle-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  align-items: center;
+}
+
+html.android-phone .custom-screen-criteria .criteria-toggle-row label {
+  display: flex;
+  min-width: 0;
+  min-height: 22px;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+  font-size: 7.4px;
+  font-weight: 600;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+
+html.android-phone .custom-screen-criteria .criteria-toggle-row input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  min-width: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+/* Android custom screen text clarity pass. */
+html.android-phone .custom-screen-criteria,
+html.android-phone .custom-screen-criteria * {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+html.android-phone .custom-screen-criteria .criteria-field-group {
+  gap: 6px;
+}
+
+html.android-phone .custom-screen-criteria .criteria-field-group header {
+  gap: 2px;
+  padding: 0 2px 1px;
+}
+
+html.android-phone .custom-screen-criteria .criteria-field-group header strong {
+  font-size: 10.6px;
+  font-weight: 780;
+  line-height: 1.05;
+}
+
+html.android-phone .custom-screen-criteria .criteria-field-group header span {
+  color: color-mix(in srgb, var(--text-secondary) 78%, var(--text));
+  font-size: 8.8px;
+  font-weight: 560;
+  line-height: 1.12;
+}
+
+html.android-phone .custom-screen-criteria .criteria-field-grid {
+  gap: 6px;
+}
+
+html.android-phone .custom-screen-criteria .form-row {
+  gap: 3px;
+}
+
+html.android-phone .custom-screen-criteria .form-row label {
+  margin: 0;
+  color: color-mix(in srgb, var(--text-secondary) 76%, var(--text));
+  font-size: 9.2px;
+  font-weight: 700;
+  line-height: 1.05;
+}
+
+html.android-phone .custom-screen-criteria .form-row input,
+html.android-phone .custom-screen-criteria .form-row select {
+  min-height: 26px;
+  height: 26px;
+  padding: 2px 8px;
+  font-size: 9px;
+  font-weight: 580;
+  line-height: 1.1;
+}
+
+html.android-phone .custom-screen-criteria .form-row input::placeholder {
+  font-size: 8.6px;
+  font-weight: 520;
+}
+
+html.android-phone .custom-screen-criteria .criteria-toggle-row label {
+  min-height: 23px;
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1.05;
+}
+
+html.android-phone .custom-screen-criteria .criteria-toggle-row input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+}
+/* Android custom screen two-column fields pass. */
+html.android-phone .custom-screen-criteria .criteria-field-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 7px;
+}
+
+html.android-phone .custom-screen-criteria .form-row {
+  min-width: 0;
+}
+
+html.android-phone .custom-screen-criteria .form-row input,
+html.android-phone .custom-screen-criteria .form-row select {
+  width: 100%;
+  min-width: 0;
+}
+
+html.android-phone .custom-screen-criteria .criteria-toggle-row {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+/* Android stock cards text size comfort pass. */
+html.android-phone .stock-title strong {
+  font-size: 10.2px;
+  line-height: 1.05;
+}
+
+html.android-phone .stock-title span,
+html.android-phone .stock-current-price span,
+html.android-phone .quote-number span {
+  font-size: 7.8px;
+  line-height: 1;
+}
+
+html.android-phone .stock-current-price strong,
+html.android-phone .quote-number strong {
+  font-size: 9.8px;
+  line-height: 1;
+}
+
+html.android-phone .score-chip em,
+html.android-phone .score-strip-primary span {
+  font-size: 7.6px;
+  line-height: 1;
+}
+
+html.android-phone .score-chip b,
+html.android-phone .score-strip-primary strong {
+  font-size: 9.7px;
+  line-height: 1;
+}
+
+html.android-phone .stock-score-summary {
+  height: 10px;
+  font-size: 8px;
+  line-height: 10px;
+}
+
+html.android-phone .stock-meta {
+  font-size: 7.7px;
+  line-height: 1;
+}
+
+html.android-phone .stock-row-action {
+  font-size: 8.5px;
+  font-weight: 700;
+}
+
+html.android-phone .tag-row span,
+html.android-phone .selection-explain.compact-selection-explain summary {
+  font-size: 7.5px;
+}
+/* Android Agent composer height comfort pass. */
+html.android-phone .agent-composer-card {
+  min-height: 42px;
+  padding: 5px 6px;
+  gap: 4px;
+}
+
+html.android-phone .agent-input {
+  height: 26px;
+  min-height: 26px;
+  max-height: 64px;
+  padding: 2px 3px;
+  font-size: 7.5px;
+  line-height: 1.25;
+}
+
+html.android-phone .agent-composer-tools {
+  font-size: 7.5px;
+  line-height: 1.1;
+}
+
+html.android-phone .send-btn {
+  width: 29px;
+  height: 29px;
+  border-radius: 7px;
+}
+
+html.android-phone .send-btn svg {
+  width: 14px;
+  height: 14px;
+}
+/* Android header and Agent action icon-only pass. */
+html.android-phone .theme-toggle,
+html.android-phone .theme-toggle:hover,
+html.android-phone .theme-toggle:focus-visible {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-secondary);
+}
+
+html.android-phone .theme-toggle svg {
+  width: 15px;
+  height: 15px;
+}
+
+html.android-phone .agent-mobile-menu,
+html.android-phone .agent-mobile-new,
+html.android-phone .agent-mobile-menu:hover,
+html.android-phone .agent-mobile-new:hover,
+html.android-phone .agent-mobile-menu:focus-visible,
+html.android-phone .agent-mobile-new:focus-visible {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-secondary);
+}
+
+html.android-phone .agent-mobile-menu svg,
+html.android-phone .agent-mobile-new svg {
+  width: 16px;
+  height: 16px;
+}
+
+html.android-phone .agent-topbar {
+  border-top: 0;
+}
+/* Android Agent topbar one-line alignment pass. */
+html.android-phone .agent-mobile-actions {
+  top: 32px;
+  left: 6px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+html.android-phone .agent-topbar {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 5px 0 74px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  line-height: 1;
+}
+
+html.android-phone .agent-topbar > div,
+html.android-phone .agent-topbar-meta {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+html.android-phone .agent-topbar span,
+html.android-phone .agent-topbar strong,
+html.android-phone .agent-topbar em,
+html.android-phone .agent-topbar-meta span {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  line-height: 28px;
+}
+
+html.android-phone .agent-topbar strong {
+  max-width: 96px;
+}
+
+html.android-phone .agent-topbar-meta {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+html.android-phone .agent-mobile-menu,
+html.android-phone .agent-mobile-new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Android Agent topbar alignment correction: keep action buttons in the topbar row. */
+html.android-phone .agent-mobile-actions {
+  top: 0;
+  left: 6px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+html.android-phone .agent-mobile-menu,
+html.android-phone .agent-mobile-new {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+}
+/* Android LLM provider kind grid: three providers per row. */
+html.android-phone .agent-rail-model-settings .llm-provider-kind-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+html.android-phone .agent-rail-model-settings .llm-provider-kind-option {
+  min-height: 28px;
+  padding: 0 3px;
+  border-radius: 7px;
+  font-size: 6.2px;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+/* Android news stock search suggestion popover fix. */
+html.android-phone .app[data-active-view="news"] .rag-controls,
+html.android-phone .app[data-active-view="news"] .rag-controls .rag-code-field,
+html.android-phone .app[data-active-view="news"] .rag-controls .stock-code-input {
+  overflow: visible;
+}
+
+html.android-phone .app[data-active-view="news"] .rag-controls .stock-code-input {
+  position: relative;
+  z-index: 20;
+}
+
+html.android-phone .app[data-active-view="news"] .stock-suggest,
+html.android-phone .app[data-active-view="news"] .market-confirm {
+  top: calc(100% + 3px);
+  left: 0;
+  right: 0;
+  z-index: 120;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.34);
+}
+
+html.android-phone .app[data-active-view="news"] .stock-suggest button,
+html.android-phone .app[data-active-view="news"] .market-confirm button {
+  min-height: 30px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border-color: transparent;
+  background: transparent;
+  align-items: center;
+}
+
+html.android-phone .app[data-active-view="news"] .stock-suggest button.active,
+html.android-phone .app[data-active-view="news"] .stock-suggest button:hover,
+html.android-phone .app[data-active-view="news"] .market-confirm button.suggested,
+html.android-phone .app[data-active-view="news"] .market-confirm button:hover {
+  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-2));
+}
+
+html.android-phone .app[data-active-view="news"] .stock-suggest button strong,
+html.android-phone .app[data-active-view="news"] .market-confirm button strong {
+  font-size: 8px;
+  line-height: 1.1;
+}
+
+html.android-phone .app[data-active-view="news"] .stock-suggest button span,
+html.android-phone .app[data-active-view="news"] .market-confirm button span,
+html.android-phone .app[data-active-view="news"] .stock-suggest-empty {
+  font-size: 7px;
+  line-height: 1.1;
+  color: var(--text-secondary);
+}
+/* Android news stock search suggestion visual polish. */
+html.android-phone .app[data-active-view="news"] .stock-code-row {
+  position: relative;
+  z-index: 30;
+}
+
+html.android-phone .app[data-active-view="news"] .stock-code-input:focus-within {
+  z-index: 140;
+}
+
+html.android-phone .app[data-active-view="news"] .stock-code-input input:focus {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+html.android-phone .app[data-active-view="news"] .stock-suggest,
+html.android-phone .app[data-active-view="news"] .market-confirm {
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 132px;
+  overflow-y: auto;
+  padding: 5px;
+  border-radius: 9px;
+  border-color: color-mix(in srgb, var(--line) 82%, transparent);
+  background: color-mix(in srgb, var(--surface) 94%, #000);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.46);
+}
+
+html.android-phone .app[data-active-view="news"] .stock-suggest button,
+html.android-phone .app[data-active-view="news"] .market-confirm button {
+  min-height: 32px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  background: var(--surface);
+  border-color: color-mix(in srgb, var(--line-soft) 78%, transparent);
+}
+
+html.android-phone .app[data-active-view="news"] .stock-suggest button.active,
+html.android-phone .app[data-active-view="news"] .stock-suggest button:hover,
+html.android-phone .app[data-active-view="news"] .market-confirm button.suggested,
+html.android-phone .app[data-active-view="news"] .market-confirm button:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+html.android-phone .app[data-active-view="news"] .stock-suggest button strong,
+html.android-phone .app[data-active-view="news"] .market-confirm button strong {
+  font-size: 8.5px;
+  font-weight: 750;
+}
+
+html.android-phone .app[data-active-view="news"] .stock-suggest button span,
+html.android-phone .app[data-active-view="news"] .market-confirm button span {
+  max-width: 58%;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Android news stock search suggestion fixed dark background. */
+html.android-phone .app[data-active-view="news"] .stock-suggest,
+html.android-phone .app[data-active-view="news"] .market-confirm {
+  background: #111820;
+  border-color: #2B3642;
+}
+
+html.android-phone .app[data-active-view="news"] .stock-suggest button,
+html.android-phone .app[data-active-view="news"] .market-confirm button {
+  background: #151D26;
+  border-color: #2A3540;
+}
+
+html.android-phone .app[data-active-view="news"] .stock-suggest button.active,
+html.android-phone .app[data-active-view="news"] .stock-suggest button:hover,
+html.android-phone .app[data-active-view="news"] .market-confirm button.suggested,
+html.android-phone .app[data-active-view="news"] .market-confirm button:hover {
+  background: #251A1D;
+  border-color: #D63A35;
+}
+/* Android observe indicator chart readability pass. */
+html.android-phone .kline-market-workspace.mobile-board {
+  gap: 1px;
+}
+
+html.android-phone .kline-market-chart.mobile-chart {
+  padding: 2px 0 0;
+  border-radius: 6px;
+  background: #05070A;
+  overflow: hidden;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-market-header {
+  gap: 2px;
+  padding: 0 2px 2px;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-period-tabs {
+  gap: 1px;
+  padding: 1px;
+  border-color: #26313D;
+  border-radius: 5px;
+  background: #111820;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-period-tabs button {
+  min-width: 33px;
+  min-height: 20px;
+  height: 20px;
+  padding: 0 3px;
+  border-radius: 4px;
+  font-size: 6.4px;
+  line-height: 1;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-legend {
+  width: 100%;
+  margin-left: 0;
+  gap: 2px 5px;
+  font-size: 5.8px;
+  line-height: 1.05;
+  white-space: normal;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-legend span:first-child {
+  display: none;
+}
+
+html.android-phone .kline-market-chart.mobile-chart svg {
+  display: block;
+  min-height: 0;
+  height: auto;
+  border-radius: 5px;
+  background: #05070A;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-plot-bg {
+  fill: #030609;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-subpanel-bg {
+  fill: #070C11;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-grid-line,
+html.android-phone .kline-market-chart.mobile-chart .trend-grid-line {
+  stroke: #24313D;
+  stroke-opacity: 0.68;
+  stroke-width: 0.8;
+  vector-effect: non-scaling-stroke;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-section-border {
+  stroke: #3A4652;
+  stroke-opacity: 0.9;
+  stroke-width: 1.15;
+  vector-effect: non-scaling-stroke;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-current-line {
+  stroke: #D63A35;
+  stroke-opacity: 0.62;
+  stroke-dasharray: 5 5;
+  vector-effect: non-scaling-stroke;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-axis-label {
+  fill: #7F8A98;
+  font-size: 8.5px;
+  font-weight: 700;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-subpanel-title {
+  fill: #9AA6B2;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.35px;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-chart polyline,
+html.android-phone .kline-market-chart.mobile-chart polyline.trend-line,
+html.android-phone .kline-market-chart.mobile-chart polyline[class^="ma-"] {
+  stroke-width: 1.65;
+  vector-effect: non-scaling-stroke;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-wick {
+  stroke-width: 1.15;
+  vector-effect: non-scaling-stroke;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-body {
+  rx: 0.9px;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-volume-layer rect,
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-bar {
+  opacity: 0.86;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-inspector-line {
+  stroke: #AEB8C4;
+  stroke-opacity: 0.48;
+  stroke-width: 0.9;
+  vector-effect: non-scaling-stroke;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-inspector-dot {
+  fill: #F5F7FA;
+  stroke: #05070A;
+  stroke-width: 1.1;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-inspector-card {
+  fill: #111820;
+  stroke: #D63A35;
+  stroke-opacity: 0.72;
+  stroke-width: 1;
+  filter: none;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-inspector-title {
+  fill: #F2F5F8;
+  font-size: 9.6px;
+  font-weight: 800;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-inspector-text {
+  fill: #AEB8C4;
+  font-size: 8.6px;
+  font-weight: 700;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .chart-labels,
+html.android-phone .kline-market-chart.mobile-chart .kline-stats {
+  margin-top: 2px;
+  gap: 2px 5px;
+  font-size: 6px;
+  line-height: 1.05;
+}
+/* Android observe indicator line palette pass. */
+html.android-phone .kline-market-chart.mobile-chart .line-dif {
+  color: #FFD84D;
+  stroke: #FFD84D;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .line-dea {
+  color: #54B7FF;
+  stroke: #54B7FF;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .line-rsi6,
+html.android-phone .kline-market-chart.mobile-chart .line-k {
+  color: #F59D38;
+  stroke: #F59D38;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .line-rsi12,
+html.android-phone .kline-market-chart.mobile-chart .line-d {
+  color: #4E9DFF;
+  stroke: #4E9DFF;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .line-rsi24,
+html.android-phone .kline-market-chart.mobile-chart .line-j {
+  color: #C36CFF;
+  stroke: #C36CFF;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .line-dma,
+html.android-phone .kline-market-chart.mobile-chart .line-mtm {
+  color: #FFD84D;
+  stroke: #FFD84D;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .line-ama,
+html.android-phone .kline-market-chart.mobile-chart .line-mamtm {
+  color: #54B7FF;
+  stroke: #54B7FF;
+}
+/* Android observe cross marker visibility pass. */
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .line-dif,
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .line-dea,
+html.android-phone .kline-market-chart.mobile-chart .kline-kdj-layer .line-k,
+html.android-phone .kline-market-chart.mobile-chart .kline-kdj-layer .line-d,
+html.android-phone .kline-market-chart.mobile-chart .kline-kdj-layer .line-j {
+  stroke-width: 2.45;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.9));
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-kdj-layer .line-j {
+  stroke-width: 2.05;
+  opacity: 0.94;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-bar {
+  opacity: 0.72;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kdj-guide-line,
+html.android-phone .kline-market-chart.mobile-chart .macd-zero-line {
+  stroke: #546170;
+  stroke-opacity: 0.82;
+  stroke-width: 1;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .indicator-cross-marker circle {
+  stroke: #05070A;
+  stroke-width: 2.2;
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.86));
+}
+
+html.android-phone .kline-market-chart.mobile-chart .indicator-cross-marker text {
+  fill: #05070A;
+  font-size: 8.6px;
+  font-weight: 900;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .indicator-cross-marker.golden circle {
+  fill: #FFD84D;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .indicator-cross-marker.death circle {
+  fill: #54B7FF;
+}
+/* Android MACD bar-line separation pass. */
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-bar {
+  opacity: 0.52;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-line-gap {
+  color: #030609;
+  stroke: #030609;
+  stroke-width: 7.2px;
+  opacity: 0.96;
+  filter: none;
+  vector-effect: non-scaling-stroke;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .line-dif,
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .line-dea {
+  stroke-width: 2.75px;
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.95));
+}
+
+html.android-phone .kline-market-chart.mobile-chart .macd-zero-line {
+  stroke: #6A7481;
+  stroke-opacity: 0.95;
+  stroke-width: 1.25;
+}
+/* Android MACD visibility correction pass. */
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-line-gap {
+  stroke-width: 3.8px;
+  opacity: 0.62;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-bar {
+  opacity: 0.82;
+  filter: none;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .line-dif,
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .line-dea {
+  stroke-width: 3px;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.98));
+}
+
+html.android-phone .kline-market-chart.mobile-chart .indicator-cross-marker circle {
+  stroke-width: 1.7;
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.9));
+}
+
+html.android-phone .kline-market-chart.mobile-chart .indicator-cross-marker path {
+  fill: none;
+  stroke: #05070A;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* Android MACD column emphasis pass. */
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-up {
+  color: #20E19A;
+  fill: #20E19A;
+  opacity: 0.96;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-down {
+  color: #FF5B4F;
+  fill: #FF5B4F;
+  opacity: 0.96;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-bar {
+  opacity: 0.96;
+  filter: drop-shadow(0 0 1.5px rgba(255, 255, 255, 0.1));
+  shape-rendering: geometricPrecision;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-line-gap {
+  stroke-width: 2.6px;
+  opacity: 0.5;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .line-dif,
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .line-dea {
+  stroke-width: 2.55px;
+}
+/* Android MACD final histogram visibility pass. */
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-bar {
+  opacity: 1;
+  stroke: currentColor;
+  stroke-width: 0.35px;
+  vector-effect: non-scaling-stroke;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-up {
+  color: #24F2A2;
+  fill: #24F2A2;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-down {
+  color: #FF6259;
+  fill: #FF6259;
+}
+/* Android observe text metrics: three per row. */
+html.android-phone .observe-text-metric-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+}
+
+html.android-phone .observe-text-metric-item {
+  min-height: 34px;
+  padding: 4px 5px;
+}
+
+html.android-phone .observe-text-metric-item.metric-short,
+html.android-phone .observe-text-metric-item.metric-normal {
+  grid-column: span 1;
+}
+
+html.android-phone .observe-text-metric-item.metric-long {
+  grid-column: 1 / -1;
+  min-height: 34px;
+}
+
+html.android-phone .observe-text-metric-item span {
+  font-size: 7.8px;
+  line-height: 1.05;
+}
+
+html.android-phone .observe-text-metric-item strong {
+  margin-top: 2px;
+  font-size: 9.4px;
+  line-height: 1.08;
+}
+/* Android bottom nav full-width fix after long observe results. */
+html.android-phone.android-bottom-nav .sidebar {
+  width: 100vw;
+  max-width: none;
+  right: 0;
+  left: 0;
+  box-sizing: border-box;
+}
+
+html.android-phone.android-bottom-nav .nav-items {
+  width: 100%;
+  max-width: none;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+html.android-phone.android-bottom-nav .nav-link {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }

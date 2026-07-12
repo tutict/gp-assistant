@@ -351,7 +351,7 @@ function Sign-AndroidReleaseApk {
     $zipalign = Resolve-AndroidBuildToolExecutable "zipalign.exe"
     $apksigner = Resolve-AndroidBuildToolExecutable "apksigner.bat"
     $alignedApk = Join-Path $unsignedApk.DirectoryName "guxuanyou-release-aligned.apk"
-    $signedApk = Join-Path $unsignedApk.DirectoryName "guxuanyou_0.3.0_android_aarch64_release_signed.apk"
+    $signedApk = Join-Path $unsignedApk.DirectoryName "guxuanyou_0.4.000_android_aarch64_release_signed.apk"
 
     if (Test-Path -LiteralPath $alignedApk) {
         Remove-Item -LiteralPath $alignedApk -Force

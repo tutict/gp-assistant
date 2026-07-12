@@ -81,7 +81,15 @@ export default function App({ onMounted }: AppProps) {
       const viewportLongSide = Math.max(width, height);
       const screenShortSide = Math.min(screenWidth, screenHeight);
       const shortSide = Math.min(viewportShortSide, screenShortSide);
-      const compact = mobile && (shortSide <= 560 || (viewportShortSide <= 600 && viewportLongSide < 960));
+      const pixelRatio = window.devicePixelRatio || 1;
+      const cssShortSide = screenShortSide / Math.max(pixelRatio, 1);
+      const highDensityPhone = pixelRatio >= 2.5 && cssShortSide <= 640;
+      const compact = mobile && (
+        highDensityPhone
+        || shortSide <= 560
+        || viewportShortSide <= 640
+        || (viewportShortSide <= 760 && viewportLongSide <= 1280)
+      );
       const tablet = mobile && !compact;
       root.classList.toggle("mobile-tauri", mobile);
       root.classList.toggle("desktop-runtime", !mobile);

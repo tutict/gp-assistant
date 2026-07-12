@@ -323,7 +323,7 @@ useEffect(() => {
               onClick={refreshUniverse}
               disabled={refreshing}
             >
-              <RefreshCw className={refreshing ? "spin" : ""} size={14} aria-hidden="true" /><span>{refreshing ? "刷新中" : "刷新"}</span>
+              <span>{refreshing ? "刷新中" : "刷新"}</span>
             </button>
           </div>
 

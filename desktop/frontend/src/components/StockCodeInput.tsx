@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getJson } from "../lib/tauri";
 import { hasMarketSuffix, inferMarketFromDigits, normalizeStockCode, sanitizeStockLookupInput, stockCodeDigits } from "../lib/format";
 import type { StockItem } from "../types";
@@ -32,7 +32,13 @@ export function StockCodeInput({ id, value, onChange, placeholder, listMode = fa
   }, [listMode, value]);
   const digits = stockCodeDigits(lookupToken);
   const completeCode = hasMarketSuffix(lookupToken);
-  const showMarketConfirm = digits.length === 6 && !hasMarketSuffix(lookupToken);
+  const exactSuggestion = useMemo(() => {
+    if (digits.length !== 6) return null;
+    return suggestions.find((item) => stockCodeDigits(item.code) === digits) || null;
+  }, [digits, suggestions]);
+  const hasExactSuggestion = Boolean(exactSuggestion);
+  const showStockSuggest = open && !completeCode && (suggestions.length > 0 || loading);
+  const showMarketConfirm = open && digits.length === 6 && !hasMarketSuffix(lookupToken) && !loading && !hasExactSuggestion && suggestions.length === 0;
   const suggestedMarket = showMarketConfirm ? inferMarketFromDigits(digits) : "";
 
   useEffect(() => {
@@ -128,7 +134,7 @@ export function StockCodeInput({ id, value, onChange, placeholder, listMode = fa
         aria-autocomplete="list"
         aria-expanded={open}
       />
-      {open && showMarketConfirm && (
+      {showMarketConfirm && (
         <div className="market-confirm" role="group" aria-label="选择市场">
           {MARKET_OPTIONS.map((market) => (
             <button
@@ -143,7 +149,7 @@ export function StockCodeInput({ id, value, onChange, placeholder, listMode = fa
           ))}
         </div>
       )}
-      {open && !completeCode && (suggestions.length > 0 || loading) && (
+      {showStockSuggest && (
         <div className="stock-suggest" role="listbox">
           {loading && <div className="stock-suggest-empty">搜索中...</div>}
           {!loading && suggestions.map((item, index) => (

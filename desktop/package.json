@@ -1,15 +1,16 @@
 {
   "name": "stock-optimizer-desktop",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
-    "build:windows": "tauri build",
+    "build:windows": "npm run prepare:desktop && tauri build --config src-tauri/tauri.skip-beforebuild.json",
     "android:init": "tauri android init --ci --skip-targets-install",
     "prepare:android": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/prepare-tauri-android-assets.ps1",
-    "build:android": "tauri android build --apk --target aarch64 --ci"
+    "build:android": "tauri android build --apk --target aarch64 --ci",
+    "prepare:desktop": "npm --prefix frontend run build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"

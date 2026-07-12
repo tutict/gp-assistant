@@ -21,10 +21,12 @@
     }
   },
   "bundle": {
-    "icon": ["icons/icon-v2.png"],
+    "icon": [
+      "icons/icon-v2.png"
+    ],
     "android": {
       "minSdkVersion": 24,
-      "versionCode": 4
+      "versionCode": 5
     }
   }
 }

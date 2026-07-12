@@ -6,3 +6,29 @@
 @import "./shell.css" layer(shell);
 @import "./pages.css" layer(pages);
 @import "./responsive.css" layer(responsive);
+/* Hide scrollbars while preserving scroll interaction. */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+html,
+body,
+#root {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+#root::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}

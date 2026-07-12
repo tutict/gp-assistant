@@ -816,6 +816,22 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
 .kline-chart .ma-5, .kline-legend .ma-5 { color: #f5a623; stroke: #f5a623; }
 .kline-chart .ma-10, .kline-legend .ma-10 { color: #4a90e2; stroke: #4a90e2; }
 .kline-chart .ma-20, .kline-legend .ma-20 { color: #b06ae0; stroke: #b06ae0; }
+.kline-chart .ma-30, .kline-legend .ma-30 { color: #18c7a9; stroke: #18c7a9; }
+.kline-chart .ma-60, .kline-legend .ma-60 { color: #d95cff; stroke: #d95cff; }
+.kline-chart .line-dif { color: #ffd84d; stroke: #ffd84d; }
+.kline-chart .line-dea { color: #54b7ff; stroke: #54b7ff; }
+.kline-chart .line-rsi6 { color: #f59d38; stroke: #f59d38; }
+.kline-chart .line-rsi12 { color: #4e9dff; stroke: #4e9dff; }
+.kline-chart .line-rsi24 { color: #c36cff; stroke: #c36cff; }
+.kline-chart .line-k { color: #f59d38; stroke: #f59d38; }
+.kline-chart .line-d { color: #4e9dff; stroke: #4e9dff; }
+.kline-chart .line-j { color: #c36cff; stroke: #c36cff; }
+.kline-chart .line-dma { color: #ffd84d; stroke: #ffd84d; }
+.kline-chart .line-ama { color: #54b7ff; stroke: #54b7ff; }
+.kline-chart .line-mtm { color: #f59d38; stroke: #f59d38; }
+.kline-chart .line-mamtm { color: #4e9dff; stroke: #4e9dff; }
+.kline-chart .macd-up { color: #ff594f; }
+.kline-chart .macd-down { color: #13c27a; }
 .kline-stats {
   display: flex;
   gap: 8px 14px;

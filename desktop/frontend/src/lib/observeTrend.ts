@@ -1,4 +1,4 @@
-import type { ObserveResult, StockItem, TrendIndicatorPoint } from "../types";
+import type { ObserveResult, StockItem, TrendIndicatorPoint, TrendIndicatorSignal } from "../types";
 import { computeKdj, type KlineBar } from "./kline";
 
 export function hydrateObserveTrendFromHistory(
@@ -8,33 +8,47 @@ export function hydrateObserveTrendFromHistory(
 ): ObserveResult {
   const series = historyRowsToTrendSeries(historyRows || []);
   if (series.length < 2) return result;
+  if ((result.trend?.series || []).length >= 2) return result;
 
   const latest = series[series.length - 1];
   const currentLatest = latestResultTrendPoint(result);
-  if (currentLatest?.date && currentLatest.date >= latest.date) return result;
-
   const stock: StockItem = {
     ...(result.stock || { code, name: code }),
     code: result.stock?.code || code,
     name: result.stock?.name || code,
-    price: latest.close,
+    price: currentLatest?.close ?? latest.close,
   };
-
-  return {
-    ...result,
-    stock,
-    trend: {
-      stock,
-      signal: {
-        ...(result.trend?.signal || {}),
+  const currentSignal = result.trend?.signal;
+  const shouldRefreshSignal = !currentLatest?.date || currentLatest.date < latest.date;
+  const signal: TrendIndicatorSignal = shouldRefreshSignal
+    ? {
+        ...(currentSignal || {}),
         code: stock.code,
         date: latest.date,
         close: latest.close,
         k: latest.k ?? null,
         d: latest.d ?? null,
         j: latest.j ?? null,
-        status: "neutral",
-      },
+        status: currentSignal?.status || "neutral",
+      }
+    : {
+        ...(currentSignal || {}),
+        code: currentSignal?.code || stock.code,
+        date: currentSignal?.date || latest.date,
+        close: currentSignal?.close ?? latest.close,
+        k: currentSignal?.k ?? latest.k ?? null,
+        d: currentSignal?.d ?? latest.d ?? null,
+        j: currentSignal?.j ?? latest.j ?? null,
+        status: currentSignal?.status || "neutral",
+      };
+
+  return {
+    ...result,
+    stock,
+    trend: {
+      ...(result.trend || {}),
+      stock,
+      signal,
       series,
     },
   };
