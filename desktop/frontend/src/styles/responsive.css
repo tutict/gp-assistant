@@ -1,4 +1,4 @@
-@media (min-width: 769px) and (max-width: 1180px) {
+﻿@media (min-width: 769px) and (max-width: 1180px) {
   :root {
     --sidebar-width: 72px;
   }
@@ -4378,4 +4378,89 @@ html.android-phone .sector-group-meta strong {
 html.android-phone .sector-group-meta small {
   font-size: 6.2px;
   line-height: 1;
+}
+
+/* Android Agent model connector compact strip */
+html.android-phone .agent-rail-model-settings .llm-settings-toggle,
+html.android-phone .agent-rail-model-settings .llm-settings-toggle:hover,
+html.android-phone .agent-rail-model-settings .llm-settings-toggle:focus,
+html.android-phone .agent-rail-model-settings .llm-settings-toggle:focus-visible {
+  min-height: 30px;
+  padding: 3px 2px;
+  border: 0 !important;
+  outline: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none !important;
+}
+
+html.android-phone .agent-rail-model-settings .llm-settings-toggle .llm-endpoint-state,
+html.android-phone .agent-rail-model-settings .llm-settings-toggle .llm-status {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+/* Android news model connector compact strip */
+html.android-phone .app[data-active-view="news"] .workbench > .llm-settings-panel .llm-settings-toggle,
+html.android-phone .app[data-active-view="news"] .workbench > .llm-settings-panel .llm-settings-toggle:hover,
+html.android-phone .app[data-active-view="news"] .workbench > .llm-settings-panel .llm-settings-toggle:focus,
+html.android-phone .app[data-active-view="news"] .workbench > .llm-settings-panel .llm-settings-toggle:focus-visible {
+  min-height: 32px;
+  padding: 4px 6px;
+  border: 0 !important;
+  outline: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none !important;
+}
+
+html.android-phone .app[data-active-view="news"] .workbench > .llm-settings-panel .llm-endpoint-state,
+html.android-phone .app[data-active-view="news"] .workbench > .llm-settings-panel .llm-status {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+/* Android news expanded model settings: reduce inner heavy cards */
+html.android-phone .app[data-active-view="news"] .workbench > .llm-settings-panel.open .llm-settings-body {
+  border: 0 !important;
+  border-top: 1px solid var(--line-soft) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+html.android-phone .app[data-active-view="news"] .workbench > .llm-settings-panel .llm-switcher-summary {
+  padding: 5px 0 7px;
+  border: 0 !important;
+  border-bottom: 1px solid var(--line-soft) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+html.android-phone .app[data-active-view="news"] .workbench > .llm-settings-panel .llm-provider-card,
+html.android-phone .app[data-active-view="news"] .workbench > .llm-settings-panel .llm-provider-card.active,
+html.android-phone .app[data-active-view="news"] .workbench > .llm-settings-panel .llm-provider-card:hover {
+  min-height: 38px;
+  padding: 5px 7px;
+  border: 1px solid color-mix(in srgb, var(--line-soft) 58%, transparent) !important;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-2) 30%, transparent) !important;
+  box-shadow: none !important;
+  transform: none;
+}
+
+html.android-phone .app[data-active-view="news"] .workbench > .llm-settings-panel .llm-provider-card.active {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--line-soft)) !important;
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-2)) !important;
+}
+
+html.android-phone .app[data-active-view="news"] .workbench > .llm-settings-panel .llm-provider-mark {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: transparent;
+  font-size: 0.64rem;
 }

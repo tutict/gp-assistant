@@ -1,4 +1,4 @@
-/* --- Migrated controls --- */
+﻿/* --- Migrated controls --- */
 .stock-code-row { position: relative; }
 .stock-code-input {
   position: relative;
@@ -2372,4 +2372,103 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   line-height: 1;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+/* Agent model connector compact strip: remove high-contrast frame */
+.agent-rail-model-settings .llm-settings-toggle,
+.agent-rail-model-settings .llm-settings-toggle:hover,
+.agent-rail-model-settings .llm-settings-toggle:focus,
+.agent-rail-model-settings .llm-settings-toggle:focus-visible {
+  min-height: 36px;
+  padding: 4px 2px;
+  border: 0 !important;
+  outline: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none !important;
+}
+
+.agent-rail-model-settings .llm-settings-toggle:hover,
+.agent-rail-model-settings .llm-settings-toggle:focus-visible {
+  background: color-mix(in srgb, var(--surface-2) 42%, transparent);
+}
+
+.agent-rail-model-settings .llm-settings-toggle .llm-endpoint-state,
+.agent-rail-model-settings .llm-settings-toggle .llm-status {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+/* News page model connector compact strip: remove bottom high-contrast frame */
+.app[data-active-view="news"] .workbench > .llm-settings-panel {
+  margin-top: 4px;
+}
+
+.app[data-active-view="news"] .workbench > .llm-settings-panel .llm-settings-toggle,
+.app[data-active-view="news"] .workbench > .llm-settings-panel .llm-settings-toggle:hover,
+.app[data-active-view="news"] .workbench > .llm-settings-panel .llm-settings-toggle:focus,
+.app[data-active-view="news"] .workbench > .llm-settings-panel .llm-settings-toggle:focus-visible {
+  min-height: 36px;
+  padding: 4px 8px;
+  border: 0 !important;
+  outline: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none !important;
+}
+
+.app[data-active-view="news"] .workbench > .llm-settings-panel .llm-settings-toggle:hover,
+.app[data-active-view="news"] .workbench > .llm-settings-panel .llm-settings-toggle:focus-visible {
+  background: color-mix(in srgb, var(--surface-2) 36%, transparent);
+}
+
+.app[data-active-view="news"] .workbench > .llm-settings-panel .llm-endpoint-state,
+.app[data-active-view="news"] .workbench > .llm-settings-panel .llm-status {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+/* News page expanded model settings: reduce inner heavy cards */
+.app[data-active-view="news"] .workbench > .llm-settings-panel.open .llm-settings-body {
+  border: 0 !important;
+  border-top: 1px solid var(--line-soft) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.app[data-active-view="news"] .workbench > .llm-settings-panel .llm-switcher-summary {
+  padding: 6px 0 8px;
+  border: 0 !important;
+  border-bottom: 1px solid var(--line-soft) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.app[data-active-view="news"] .workbench > .llm-settings-panel .llm-provider-card,
+.app[data-active-view="news"] .workbench > .llm-settings-panel .llm-provider-card.active,
+.app[data-active-view="news"] .workbench > .llm-settings-panel .llm-provider-card:hover {
+  min-height: 42px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--line-soft) 62%, transparent) !important;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 34%, transparent) !important;
+  box-shadow: none !important;
+  transform: none;
+}
+
+.app[data-active-view="news"] .workbench > .llm-settings-panel .llm-provider-card.active {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line-soft)) !important;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2)) !important;
+}
+
+.app[data-active-view="news"] .workbench > .llm-settings-panel .llm-provider-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 0.68rem;
 }
