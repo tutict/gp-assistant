@@ -7,9 +7,12 @@ import { PanelFeedback } from "../ui/PanelFeedback";
 interface WatchlistPanelProps {
   items: WatchlistItem[];
   onChange: (items: WatchlistItem[]) => void;
+  onObserve?: (code: string) => void;
+  onNews?: (code: string) => void;
+  onBacktest?: () => void;
 }
 
-export function WatchlistPanel({ items, onChange }: WatchlistPanelProps) {
+export function WatchlistPanel({ items, onChange, onObserve, onNews, onBacktest }: WatchlistPanelProps) {
   const remove = useCallback((code: string) => {
     onChange(items.filter((item) => item.code !== code));
   }, [items, onChange]);
@@ -28,7 +31,10 @@ export function WatchlistPanel({ items, onChange }: WatchlistPanelProps) {
           <span className="watchlist-count">{items.length} 只</span>
         </div>
         {items.length > 0 && (
-          <button type="button" className="clear-btn" onClick={clear}>清空</button>
+          <div className="watchlist-header-actions">
+            {onBacktest && <button type="button" className="clear-btn watchlist-backtest" onClick={onBacktest}>回测</button>}
+            <button type="button" className="clear-btn" onClick={clear}>清空</button>
+          </div>
         )}
       </header>
 
@@ -38,8 +44,19 @@ export function WatchlistPanel({ items, onChange }: WatchlistPanelProps) {
         <ul className="watchlist-items">
           {items.map((item) => (
             <li key={item.code} className="watchlist-item">
-              <span className="watchlist-code">{item.code}</span>
-              <span className="watchlist-name">{item.name || "暂无名称"}</span>
+              <button
+                type="button"
+                className="watchlist-observe"
+                onClick={() => onObserve?.(item.code)}
+                disabled={!onObserve}
+                title={`观察 ${item.name || item.code}`}
+              >
+                <span className="watchlist-code">{item.code}</span>
+                <span className="watchlist-name">{item.name || "暂无名称"}</span>
+              </button>
+              {onNews && (
+                <button type="button" className="watchlist-news" onClick={() => onNews(item.code)}>消息</button>
+              )}
               <IconButton
                 className="watchlist-remove"
                 onClick={() => remove(item.code)}

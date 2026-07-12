@@ -21,12 +21,13 @@ interface ObservePanelProps {
   watchlist: WatchlistItem[];
   onWatchlistChange: (items: WatchlistItem[]) => void;
   initialCode?: string;
+  initialCodeRequestId?: number;
 }
 
 const OBSERVE_FULL_HISTORY_START = "1990-01-01";
 const OBSERVE_FULL_HISTORY_LIMIT = "10000";
 
-export function ObservePanel({ initialCode }: ObservePanelProps) {
+export function ObservePanel({ initialCode, initialCodeRequestId = 0, watchlist, onWatchlistChange }: ObservePanelProps) {
   const [code, setCode] = useState(initialCode || "");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ObserveResult | null>(null);
@@ -34,7 +35,31 @@ export function ObservePanel({ initialCode }: ObservePanelProps) {
 
   useEffect(() => {
     if (initialCode) setCode(initialCode);
-  }, [initialCode]);
+  }, [initialCode, initialCodeRequestId]);
+
+  const toggleObservedWatchlist = useCallback(() => {
+    const stock = result?.stock;
+    const normalizedCode = normalizeStockCode(stock?.code || code);
+    if (!normalizedCode) return;
+    const exists = watchlist.some((item) => normalizeStockCode(item.code) === normalizedCode);
+    if (exists) {
+      onWatchlistChange(watchlist.filter((item) => normalizeStockCode(item.code) !== normalizedCode));
+      return;
+    }
+    onWatchlistChange([
+      {
+        code: normalizedCode,
+        name: stock?.name || normalizedCode,
+        industry: stock?.industry,
+        added_at: new Date().toISOString(),
+        source: "observe",
+      },
+      ...watchlist,
+    ]);
+  }, [code, onWatchlistChange, result?.stock, watchlist]);
+
+  const observedCode = normalizeStockCode(result?.stock?.code || code);
+  const observedInWatchlist = Boolean(observedCode && watchlist.some((item) => normalizeStockCode(item.code) === observedCode));
 
   const runObserve = useCallback(async () => {
     const normalizedCode = normalizeStockCode(code);
@@ -74,14 +99,14 @@ export function ObservePanel({ initialCode }: ObservePanelProps) {
       <div className="panel-result observe-panel-result">
         {error && <PanelFeedback kind="error" title="观察失败" description={error} />}
         {loading && !result && !error && <PanelFeedback kind="loading" description="正在加载行情、财务和趋势数据..." />}
-        {result && !loading && <ObserveResultView result={result} />}
+        {result && !loading && <ObserveResultView result={result} inWatchlist={observedInWatchlist} onToggleWatchlist={toggleObservedWatchlist} />}
         {!result && !loading && !error && <PanelFeedback kind="empty" description="输入股票代码后开始观察。" />}
       </div>
     </div>
   );
 }
 
-export function ObserveResultView({ result }: { result: ObserveResult }) {
+export function ObserveResultView({ result, inWatchlist = false, onToggleWatchlist }: { result: ObserveResult; inWatchlist?: boolean; onToggleWatchlist?: () => void }) {
   const stock = result.stock || { code: "", name: "" };
   const trend = result.trend;
   const signal = trend?.signal;
@@ -94,7 +119,14 @@ export function ObserveResultView({ result }: { result: ObserveResult }) {
       <section className="observe-overview">
         <header className="observe-overview-header">
           <div><h3>{stock.name || stock.code}</h3><p>{stock.code} {stock.industry || ""}</p></div>
-          {signal?.status && <span className={`state-pill ${signalStatusTone(signal.status)}`}>{signalStatusLabel(signal.status)}</span>}
+          <div className="observe-overview-actions">
+            {signal?.status && <span className={`state-pill ${signalStatusTone(signal.status)}`}>{signalStatusLabel(signal.status)}</span>}
+            {onToggleWatchlist && (
+              <button type="button" className={`stock-row-action watchlist-action ${inWatchlist ? "saved" : ""}`} onClick={onToggleWatchlist}>
+                {inWatchlist ? "已收藏" : "收藏"}
+              </button>
+            )}
+          </div>
         </header>
         <ObserveTextMetrics stock={stock} signal={signal} series={series} capital={capital} financialItems={financial?.items || []} />
       </section>

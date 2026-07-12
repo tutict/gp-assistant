@@ -18,6 +18,7 @@ import type { WatchlistItem, LlmSettings } from "./types";
 
 type ViewKey = "screen" | "observe" | "backtest" | "news" | "agent";
 type LlmSettingsUpdater = LlmSettings | null | ((prev: LlmSettings | null) => LlmSettings | null);
+type StockRouteRequest = { code: string; requestId: number };
 
 interface AppProps {
   onMounted?: () => void;
@@ -40,7 +41,8 @@ export default function App({ onMounted }: AppProps) {
   });
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileRuntime, setMobileRuntime] = useState(false);
-  const [observeCode, setObserveCode] = useState("");
+  const [observeRequest, setObserveRequest] = useState<StockRouteRequest | null>(null);
+  const [newsRequest, setNewsRequest] = useState<StockRouteRequest | null>(null);
   const [backtestPreferredSource, setBacktestPreferredSource] = useState<"criteria" | "watchlist" | null>(null);
 
   // Persistent state
@@ -165,13 +167,23 @@ export default function App({ onMounted }: AppProps) {
   }, []);
 
   const observeStock = useCallback((code: string) => {
-    setObserveCode(code);
+    setObserveRequest((prev) => ({ code, requestId: (prev?.requestId ?? 0) + 1 }));
     navigate("observe");
   }, [navigate]);
 
   const runCurrentCriteriaBacktest = useCallback(() => {
     setBacktestPreferredSource("criteria");
     navigate("backtest");
+  }, [navigate]);
+
+  const runWatchlistBacktest = useCallback(() => {
+    setBacktestPreferredSource("watchlist");
+    navigate("backtest");
+  }, [navigate]);
+
+  const openNewsForStock = useCallback((code: string) => {
+    setNewsRequest((prev) => ({ code, requestId: (prev?.requestId ?? 0) + 1 }));
+    navigate("news");
   }, [navigate]);
 
   const setLlmSettings = useCallback((value: LlmSettingsUpdater) => {
@@ -218,7 +230,8 @@ export default function App({ onMounted }: AppProps) {
             <ObservePanel
               watchlist={watchlist}
               onWatchlistChange={setWatchlist}
-              initialCode={observeCode}
+              initialCode={observeRequest?.code || ""}
+              initialCodeRequestId={observeRequest?.requestId ?? 0}
             />
           )}
           {view === "backtest" && (
@@ -229,7 +242,12 @@ export default function App({ onMounted }: AppProps) {
             />
           )}
           {view === "news" && (
-            <NewsRagPanel llmSettings={llmSettings} />
+            <NewsRagPanel
+              llmSettings={llmSettings}
+              watchlist={watchlist}
+              initialCode={newsRequest?.code || ""}
+              initialCodeRequestId={newsRequest?.requestId ?? 0}
+            />
           )}
           {view === "agent" && (
             <AgentPanel
@@ -245,6 +263,9 @@ export default function App({ onMounted }: AppProps) {
           <WatchlistPanel
             items={watchlist}
             onChange={setWatchlist}
+            onObserve={observeStock}
+            onNews={openNewsForStock}
+            onBacktest={runWatchlistBacktest}
           />
         )}
 

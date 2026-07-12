@@ -36,3 +36,6 @@ desktop/src-tauri/gen/android/app/build/outputs/apk/**/*-aligned.apk
 /gp-agent-check.png
 /gp-window.xml
 /mumu-*.png
+/artifacts/
+/gp-*.png
+/gp_*.png

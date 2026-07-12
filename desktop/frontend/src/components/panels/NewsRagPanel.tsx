@@ -1,6 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   LlmSettings,
+  WatchlistItem,
   NewsEvidence,
   NewsImpactFinding,
   NewsRagResult,
@@ -38,6 +39,9 @@ const TABS: { key: NewsTab; label: string }[] = [
 
 interface NewsRagPanelProps {
   llmSettings?: LlmSettings | null;
+  watchlist?: WatchlistItem[];
+  initialCode?: string;
+  initialCodeRequestId?: number;
 }
 
 interface UpstreamMobileListResult {
@@ -46,7 +50,7 @@ interface UpstreamMobileListResult {
   notes?: string[];
 }
 
-export function NewsRagPanel({ llmSettings }: NewsRagPanelProps) {
+export function NewsRagPanel({ llmSettings, watchlist = [], initialCode = "", initialCodeRequestId = 0 }: NewsRagPanelProps) {
   const [tab, setTab] = useState<NewsTab>("newsRag");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<unknown>(null);
@@ -60,6 +64,19 @@ export function NewsRagPanel({ llmSettings }: NewsRagPanelProps) {
   const [scanning, setScanning] = useState(false);
 
   const normalizedCode = normalizeStockCode(newsCode);
+  const watchlistCodes = useMemo(() => watchlist.map((item) => item.code).filter(Boolean), [watchlist]);
+
+  useEffect(() => {
+    if (initialCode) setNewsCode(initialCode);
+  }, [initialCode, initialCodeRequestId]);
+
+  const useFirstWatchlistCode = useCallback(() => {
+    if (watchlistCodes[0]) setNewsCode(watchlistCodes[0]);
+  }, [watchlistCodes]);
+
+  const importWatchlistSeeds = useCallback(() => {
+    if (watchlistCodes.length > 0) setSeedCodes(watchlistCodes.join(", "));
+  }, [watchlistCodes]);
 
   const scanAndImport = useCallback(async () => {
     setScanning(true);
@@ -190,6 +207,12 @@ export function NewsRagPanel({ llmSettings }: NewsRagPanelProps) {
         )}
         {tab === "upstreamImport" && (
           <div className="form-row rag-textarea-field"><label htmlFor="upstreamImportPayload">导入描述</label><textarea id="upstreamImportPayload" rows={5} value={importPayload} onChange={(e) => setImportPayload(e.target.value)} placeholder="粘贴二维码 JSON 或 manifest_url" /></div>
+        )}
+        {watchlistCodes.length > 0 && (tab === "newsRag" || tab === "ragPackBuild" || tab === "ragPackQuery" || tab === "upstreamScan") && (
+          <div className="rag-watchlist-actions">
+            <button type="button" className="action-btn" onClick={useFirstWatchlistCode}>首只自选</button>
+            {(tab === "ragPackBuild" || tab === "ragPackQuery") && <button type="button" className="action-btn" onClick={importWatchlistSeeds}>导入自选股</button>}
+          </div>
         )}
         <button type="button" className="run-btn rag-run-btn" onClick={run} disabled={loading || scanning}>{loading || scanning ? "运行中..." : "运行"}</button>
         {(tab === "upstreamScan" || tab === "upstreamImport") && (

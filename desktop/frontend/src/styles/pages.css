@@ -2243,3 +2243,102 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.watchlist-observe {
+  display: grid;
+  grid-template-columns: minmax(88px, auto) minmax(0, 1fr);
+  flex: 1;
+  min-width: 0;
+  gap: 12px;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.watchlist-observe:disabled {
+  cursor: default;
+}
+
+.watchlist-observe:not(:disabled):hover .watchlist-code,
+.watchlist-observe:not(:disabled):hover .watchlist-name {
+  color: var(--accent);
+}
+
+.observe-overview-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.observe-overview-actions .watchlist-action {
+  min-width: 72px;
+}
+
+.watchlist-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.watchlist-backtest,
+.watchlist-news {
+  color: var(--accent);
+}
+
+.watchlist-news {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.watchlist-news:hover {
+  border-color: var(--accent);
+  background: rgba(229, 57, 53, 0.12);
+}
+
+.rag-watchlist-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rag-watchlist-actions .action-btn {
+  min-height: 38px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.android-compact .watchlist-header-actions,
+.android-phone .watchlist-header-actions {
+  gap: 6px;
+}
+
+.android-compact .watchlist-news,
+.android-phone .watchlist-news {
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.android-compact .rag-watchlist-actions,
+.android-phone .rag-watchlist-actions {
+  grid-column: 1 / -1;
+  gap: 6px;
+}
+
+.android-compact .rag-watchlist-actions .action-btn,
+.android-phone .rag-watchlist-actions .action-btn {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 11px;
+}
