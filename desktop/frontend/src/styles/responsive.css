@@ -1,4 +1,4 @@
-﻿@media (min-width: 769px) and (max-width: 1180px) {
+@media (min-width: 769px) and (max-width: 1180px) {
   :root {
     --sidebar-width: 72px;
   }
@@ -3592,6 +3592,74 @@ html.android-phone .stock-row-action {
 html.android-phone .tag-row span,
 html.android-phone .selection-explain.compact-selection-explain summary {
   font-size: 7.5px;
+}
+/* Android backtest form label spacing pass. */
+html.android-phone .backtest-controls {
+  align-items: start;
+  row-gap: 4px;
+}
+
+html.android-phone .backtest-controls .form-row.inline {
+  gap: 1px;
+  align-items: stretch;
+}
+
+html.android-phone .backtest-controls .form-row label {
+  min-height: 0;
+  margin: 0;
+  line-height: 1;
+}
+
+html.android-phone .backtest-controls input,
+html.android-phone .backtest-controls select {
+  margin-top: 0;
+}
+/* Android stock result card breathing-room pass. */
+html.android-phone .stock-row {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+html.android-phone .stock-grid {
+  gap: 4px;
+}
+
+html.android-phone .quote-number {
+  min-height: 34px !important;
+  height: 34px;
+  padding: 4px 4px !important;
+}
+
+html.android-phone .score-strip {
+  gap: 4px;
+  margin-top: 4px;
+}
+
+html.android-phone .score-strip-metrics {
+  gap: 4px;
+}
+
+html.android-phone .score-chip,
+html.android-phone .score-strip-primary {
+  min-height: 34px;
+  height: 34px;
+  padding: 4px 3px;
+}
+
+html.android-phone .stock-title strong,
+html.android-phone .stock-current-price strong,
+html.android-phone .quote-number strong,
+html.android-phone .score-chip b,
+html.android-phone .score-strip-primary strong {
+  line-height: 1.12;
+}
+
+html.android-phone .stock-title span,
+html.android-phone .stock-current-price span,
+html.android-phone .quote-number span,
+html.android-phone .score-chip em,
+html.android-phone .score-strip-primary span {
+  line-height: 1.08;
 }
 /* Android Agent composer height comfort pass. */
 html.android-phone .agent-composer-card {

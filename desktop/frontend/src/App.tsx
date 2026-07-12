@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTheme } from "./hooks/useTheme";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { isMobileTauriRuntime } from "./lib/tauri";
+import { createPersistentWatchlistSetter, loadLocalWatchlistSnapshot, loadPersistentWatchlist } from "./lib/watchlistStore";
 import { sanitizePersistedLlmSettings } from "./lib/contracts";
 import { Header } from "./components/Header";
 import { Sidebar } from "./components/Sidebar";
@@ -43,13 +44,20 @@ export default function App({ onMounted }: AppProps) {
   const [backtestPreferredSource, setBacktestPreferredSource] = useState<"criteria" | "watchlist" | null>(null);
 
   // Persistent state
-  const [watchlist, setWatchlist] = useLocalStorage<WatchlistItem[]>("stock-optimizer-watchlist", []);
+  const [watchlistLocalSnapshot] = useState<WatchlistItem[]>(() => loadLocalWatchlistSnapshot());
+  const [watchlist, setWatchlistState] = useState<WatchlistItem[]>(watchlistLocalSnapshot);
   const [storedLlmSettings, setStoredLlmSettings] = useLocalStorage<LlmSettings | null>(
     "stock-optimizer-llm-settings",
     null,
     sanitizePersistedLlmSettings,
   );
   const [llmSettings, setLlmSettingsState] = useState<LlmSettings | null>(() => storedLlmSettings);
+
+  const setWatchlist = useCallback(createPersistentWatchlistSetter(setWatchlistState), []);
+
+  useEffect(() => {
+    void loadPersistentWatchlist(watchlistLocalSnapshot, setWatchlistState);
+  }, [watchlistLocalSnapshot]);
 
   // Filter criteria state
   const [criteria, setCriteria] = useLocalStorage("stock-optimizer-criteria", {
