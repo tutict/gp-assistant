@@ -87,6 +87,8 @@ powershell -ExecutionPolicy Bypass -File scripts\build-mobile-core.ps1
 
 `native/gp-core` 同时暴露 Rust 函数和小型 C ABI，移动端可以把 SQLite、内置 JSON 或远端接口拿到的股票、关系、历史行情封装为 `CoreDataSet` 后传入 Rust 核心。
 
+严格 Walk-forward 回测使用固定评分规则，并把每个调仓日至下一调仓日作为独立样本外折。每个候选标的（包括自选观察池）都必须提供 `factor_snapshots`，且每条记录必须包含 `available_date`、`is_st`、`is_listed` 和 `is_tradable`；其中 `date` 表示指标所属报告期，`available_date` 表示市场实际可见日期，并且不能早于报告期。当期曾处于上市且可交易状态的候选必须具备历史行情。历史快照可以包含当前股票池已不存在的代码，核心会将它们纳入历史候选池，以降低幸存者偏差。结果返回逐折明细和相对当期可比候选池的 `Precision@N`，逐折收益只使用折末当日真实报价；入选股票若缺少折末报价，会保留在 Precision 分母并按未命中处理，避免静默抬高精度。缺少历史行情、快照覆盖或必要字段时，严格回测会明确失败，不会用当前财务数据或陈旧交易价回填。
+
 ## 数据源
 
 桌面端和移动端统一使用 Rust/Tauri 数据链路：通达信负责 A 股股票池、日线和分钟线，腾讯股票负责筛选行情和盘口优先数据。数据源对外只保留 `tdx`；旧版本保存过的 `astock`、`akshare`、`eastmoney` 配置已不再兼容，发布版遇到这些值会明确拒绝。

@@ -163,6 +163,26 @@ fn screens_by_pe_and_roe() {
 }
 
 #[test]
+fn roe_filter_accepts_ratio_and_percent_thresholds() {
+    let universe = vec![
+        custom_test_stock("000001.SZ", "high-roe", "bank", 100.0, 10.0, 0.15),
+        custom_test_stock("000002.SZ", "low-roe", "bank", 100.0, 10.0, 0.08),
+    ];
+
+    for minimum in [0.10, 10.0] {
+        let result = screen_stocks(
+            &universe,
+            &ScreenCriteria {
+                min_roe: Some(minimum),
+                ..ScreenCriteria::default()
+            },
+        );
+        assert_eq!(result.returned, 1);
+        assert_eq!(result.items[0].stock.code, "000001.SZ");
+    }
+}
+
+#[test]
 fn default_screen_includes_non_st_stocks() {
     let result = screen_with_mock(&ScreenCriteria::default());
     assert_eq!(result.returned, 10);
@@ -263,6 +283,18 @@ fn custom_test_stock(
         ..StockItem::default()
     }
 }
+
+fn pit_factor_snapshot(date: &str, pe: Option<f64>) -> StockFactorSnapshot {
+    StockFactorSnapshot {
+        date: date.to_string(),
+        available_date: Some(date.to_string()),
+        is_st: Some(false),
+        is_listed: Some(true),
+        is_tradable: Some(true),
+        pe,
+        ..StockFactorSnapshot::default()
+    }
+}
 #[test]
 fn backtest_uses_mock_history() {
     let result = backtest_with_mock(&BacktestRequest {
@@ -271,7 +303,7 @@ fn backtest_uses_mock_history() {
             ..ScreenCriteria::default()
         },
         source: default_backtest_source(),
-        strategy_mode: default_backtest_strategy_mode(),
+        strategy_mode: "candidate_snapshot".to_string(),
         stock_codes: Vec::new(),
         start_date: "20200101".to_string(),
         end_date: "20200110".to_string(),
@@ -1037,6 +1069,87 @@ fn optional_metric_sort_keeps_missing_values_last() {
 }
 
 #[test]
+fn ui_metric_sorts_use_requested_fields_without_diversification() {
+    let mut highest_cap = custom_test_stock(
+        "000001.SZ",
+        "highest-cap",
+        "same-industry",
+        500.0,
+        20.0,
+        0.08,
+    );
+    highest_cap.change_pct = Some(0.01);
+    let mut highest_roe = custom_test_stock(
+        "000002.SZ",
+        "highest-roe",
+        "same-industry",
+        400.0,
+        20.0,
+        0.20,
+    );
+    highest_roe.change_pct = Some(-0.02);
+    let mut highest_change = custom_test_stock(
+        "000003.SZ",
+        "highest-change",
+        "same-industry",
+        300.0,
+        20.0,
+        0.12,
+    );
+    highest_change.change_pct = Some(0.05);
+    let mut other_industry = custom_test_stock(
+        "000004.SZ",
+        "other-industry",
+        "other-industry",
+        50.0,
+        20.0,
+        0.05,
+    );
+    other_industry.change_pct = Some(0.0);
+    let universe = vec![highest_cap, highest_roe, highest_change, other_industry];
+
+    let market_cap = screen_stocks(
+        &universe,
+        &ScreenCriteria {
+            limit: 3,
+            sort_by: "market_cap".to_string(),
+            sort_dir: "desc".to_string(),
+            ..ScreenCriteria::default()
+        },
+    );
+    assert_eq!(
+        market_cap
+            .items
+            .iter()
+            .map(|item| item.stock.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["000001.SZ", "000002.SZ", "000003.SZ"]
+    );
+
+    let roe = screen_stocks(
+        &universe,
+        &ScreenCriteria {
+            limit: 4,
+            sort_by: "roe".to_string(),
+            sort_dir: "desc".to_string(),
+            ..ScreenCriteria::default()
+        },
+    );
+    assert_eq!(roe.items[0].stock.code, "000002.SZ");
+
+    let change = screen_stocks(
+        &universe,
+        &ScreenCriteria {
+            limit: 4,
+            sort_by: "change_pct".to_string(),
+            sort_dir: "desc".to_string(),
+            ..ScreenCriteria::default()
+        },
+    );
+    assert_eq!(change.items[0].stock.code, "000003.SZ");
+}
+
+#[test]
 fn rotation_score_profile_uses_intraday_market_heat() {
     let base = StockItem {
         code: "300001.SZ".to_string(),
@@ -1086,6 +1199,89 @@ fn rotation_score_profile_uses_intraday_market_heat() {
     assert!(rotation.items[0].factor_scores.contains_key("market_heat"));
     assert_eq!(quality.items[0].stock.code, "300001.SZ");
     assert!(!quality.items[0].factor_scores.contains_key("market_heat"));
+}
+
+#[test]
+fn quality_profile_uses_quality_ranking_without_hot_sector_promotion() {
+    let bank = StockItem {
+        code: "000001.SZ".to_string(),
+        name: "高质量银行".to_string(),
+        industry: "银行".to_string(),
+        price: 10.0,
+        pe: Some(8.0),
+        pb: Some(1.0),
+        roe: Some(0.25),
+        market_cap_billion: Some(300.0),
+        dividend_yield: Some(0.03),
+        deducted_net_profit_billion: Some(20.0),
+        deducted_net_profit_growth_rate: Some(0.15),
+        ..StockItem::default()
+    };
+    let mut chip = bank.clone();
+    chip.code = "688001.SH".to_string();
+    chip.name = "弱基本面芯片".to_string();
+    chip.industry = "半导体".to_string();
+    chip.pe = Some(60.0);
+    chip.pb = Some(8.0);
+    chip.roe = Some(0.03);
+    chip.dividend_yield = None;
+    chip.deducted_net_profit_billion = Some(-1.0);
+    chip.deducted_net_profit_growth_rate = Some(-0.20);
+
+    let result = screen_stocks(
+        &[chip, bank],
+        &ScreenCriteria {
+            sort_by: "score".to_string(),
+            sort_dir: "desc".to_string(),
+            score_profile: "quality".to_string(),
+            limit: 1,
+            ..ScreenCriteria::default()
+        },
+    );
+
+    assert_eq!(result.items[0].stock.code, "000001.SZ");
+    assert_eq!(result.items[0].risk_score, SCREEN_SCORE_SCALE);
+    assert!(result.items[0]
+        .score_breakdown
+        .iter()
+        .all(|factor| factor.key != "theme"));
+    assert!(result.items[0]
+        .risk_tags
+        .iter()
+        .all(|tag| !tag.contains("低热度板块")));
+}
+
+#[test]
+fn quality_profile_penalizes_incomplete_core_financial_data() {
+    let complete = custom_test_stock("000002.SZ", "complete", "consumer", 120.0, 12.0, 0.18);
+    let mut incomplete = complete.clone();
+    incomplete.code = "000001.SZ".to_string();
+    incomplete.market_cap_billion = None;
+    incomplete.dividend_yield = None;
+    incomplete.deducted_net_profit_billion = None;
+    incomplete.deducted_net_profit_growth_rate = None;
+
+    assert_eq!(data_quality_score(&complete), 1.0);
+    assert_eq!(data_quality_score(&incomplete), 0.65);
+
+    let result = screen_stocks(
+        &[incomplete, complete],
+        &ScreenCriteria {
+            sort_by: "score".to_string(),
+            sort_dir: "desc".to_string(),
+            score_profile: "quality".to_string(),
+            limit: 2,
+            ..ScreenCriteria::default()
+        },
+    );
+
+    assert_eq!(result.items[0].stock.code, "000002.SZ");
+    assert_eq!(result.items[0].factor_scores["data_quality"], 1.0);
+    assert_eq!(result.items[1].factor_scores["data_quality"], 0.65);
+    assert!(result.items[0]
+        .score_breakdown
+        .iter()
+        .any(|factor| factor.key == "data_quality"));
 }
 
 #[test]
@@ -1338,7 +1534,7 @@ fn backtests_with_native_history() {
                 ..ScreenCriteria::default()
             },
             source: default_backtest_source(),
-            strategy_mode: default_backtest_strategy_mode(),
+            strategy_mode: "candidate_snapshot".to_string(),
             stock_codes: Vec::new(),
             start_date: "20200101".to_string(),
             end_date: "20200103".to_string(),
@@ -1365,7 +1561,7 @@ fn backtests_watchlist_codes_in_saved_order() {
         &BacktestRequest {
             criteria: ScreenCriteria::default(),
             source: "watchlist".to_string(),
-            strategy_mode: default_backtest_strategy_mode(),
+            strategy_mode: "candidate_snapshot".to_string(),
             stock_codes: vec!["222222.SZ".to_string(), "111111.SZ".to_string()],
             start_date: "20200101".to_string(),
             end_date: "20200103".to_string(),
@@ -1383,8 +1579,8 @@ fn backtests_watchlist_codes_in_saved_order() {
 }
 
 #[test]
-fn backtest_walk_forward_mode_is_reported_separately() {
-    let result = backtest_with_data(
+fn walk_forward_requires_point_in_time_factor_snapshots() {
+    let error = backtest_with_data(
         &sample_data_set(),
         &BacktestRequest {
             criteria: ScreenCriteria {
@@ -1403,11 +1599,248 @@ fn backtest_walk_forward_mode_is_reported_separately() {
             benchmark: default_backtest_benchmark(),
         },
     )
-    .expect("walk-forward backtest should run");
+    .expect_err("criteria walk-forward must reject missing factor snapshots");
 
-    assert_eq!(result.strategy_mode, "walk_forward");
-    assert_eq!(result.metrics.strategy_mode, "walk_forward");
-    assert_eq!(result.metrics.rebalance_count, 1);
+    assert!(error.to_string().contains("历史因子快照"));
+}
+
+#[test]
+fn walk_forward_rejects_partial_factor_snapshot_coverage() {
+    let mut data = sample_data_set();
+    let second_history = data
+        .histories
+        .get("111111.SZ")
+        .cloned()
+        .expect("sample history");
+    data.histories
+        .insert("222222.SZ".to_string(), second_history);
+    data.factor_snapshots.insert(
+        "111111.SZ".to_string(),
+        vec![pit_factor_snapshot("2020-01-01", Some(5.0))],
+    );
+
+    let error = backtest_with_data(
+        &data,
+        &BacktestRequest {
+            criteria: ScreenCriteria::default(),
+            source: default_backtest_source(),
+            strategy_mode: "walk_forward".to_string(),
+            stock_codes: Vec::new(),
+            start_date: "20200101".to_string(),
+            end_date: "20200103".to_string(),
+            top_n: 1,
+            initial_cash: 1000.0,
+            rebalance_frequency: default_rebalance_frequency(),
+            transaction_cost_bps: 0.0,
+            benchmark: "none".to_string(),
+        },
+    )
+    .expect_err("strict walk-forward must reject partial PIT coverage");
+
+    assert!(error.to_string().contains("222222.SZ"));
+}
+
+#[test]
+fn walk_forward_rejects_partial_history_coverage() {
+    let mut data = sample_data_set();
+    data.factor_snapshots = HashMap::from([
+        (
+            "111111.SZ".to_string(),
+            vec![pit_factor_snapshot("2020-01-01", Some(5.0))],
+        ),
+        (
+            "222222.SZ".to_string(),
+            vec![pit_factor_snapshot("2020-01-01", Some(8.0))],
+        ),
+    ]);
+
+    let error = backtest_with_data(
+        &data,
+        &BacktestRequest {
+            criteria: ScreenCriteria::default(),
+            source: default_backtest_source(),
+            strategy_mode: "walk_forward".to_string(),
+            stock_codes: Vec::new(),
+            start_date: "20200101".to_string(),
+            end_date: "20200103".to_string(),
+            top_n: 1,
+            initial_cash: 1000.0,
+            rebalance_frequency: default_rebalance_frequency(),
+            transaction_cost_bps: 0.0,
+            benchmark: "none".to_string(),
+        },
+    )
+    .expect_err("strict walk-forward must reject partial history coverage");
+
+    assert!(error.to_string().contains("222222.SZ"));
+    assert!(error.to_string().contains("历史行情"));
+}
+
+#[test]
+fn walk_forward_watchlist_requires_point_in_time_status() {
+    let error = backtest_with_data(
+        &sample_data_set(),
+        &BacktestRequest {
+            criteria: ScreenCriteria::default(),
+            source: "watchlist".to_string(),
+            strategy_mode: "walk_forward".to_string(),
+            stock_codes: vec!["111111.SZ".to_string()],
+            start_date: "20200101".to_string(),
+            end_date: "20200103".to_string(),
+            top_n: 1,
+            initial_cash: 1000.0,
+            rebalance_frequency: default_rebalance_frequency(),
+            transaction_cost_bps: 0.0,
+            benchmark: "none".to_string(),
+        },
+    )
+    .expect_err("walk-forward watchlist must require historical status snapshots");
+
+    assert!(error.to_string().contains("111111.SZ"));
+}
+
+#[test]
+fn walk_forward_watchlist_respects_historical_st_status() {
+    let mut data = sample_data_set();
+    let mut st_snapshot = pit_factor_snapshot("2020-01-01", Some(5.0));
+    st_snapshot.is_st = Some(true);
+    data.factor_snapshots
+        .insert("111111.SZ".to_string(), vec![st_snapshot]);
+
+    let result = backtest_with_data(
+        &data,
+        &BacktestRequest {
+            criteria: ScreenCriteria {
+                include_st: false,
+                ..ScreenCriteria::default()
+            },
+            source: "watchlist".to_string(),
+            strategy_mode: "walk_forward".to_string(),
+            stock_codes: vec!["111111.SZ".to_string()],
+            start_date: "20200101".to_string(),
+            end_date: "20200103".to_string(),
+            top_n: 1,
+            initial_cash: 1000.0,
+            rebalance_frequency: default_rebalance_frequency(),
+            transaction_cost_bps: 0.0,
+            benchmark: "none".to_string(),
+        },
+    )
+    .expect("historical ST watchlist stock should be excluded without breaking the fold");
+
+    assert!(result.symbols.is_empty());
+    assert!((result.equity_curve.last().unwrap().equity - 1000.0).abs() < 1e-6);
+}
+
+#[test]
+fn walk_forward_without_history_fails_instead_of_skipping_pit_validation() {
+    let mut data = sample_data_set();
+    data.histories.clear();
+    data.factor_snapshots = HashMap::from([
+        (
+            "111111.SZ".to_string(),
+            vec![pit_factor_snapshot("2020-01-01", Some(5.0))],
+        ),
+        (
+            "222222.SZ".to_string(),
+            vec![pit_factor_snapshot("2020-01-01", Some(8.0))],
+        ),
+    ]);
+
+    let error = backtest_with_data(
+        &data,
+        &BacktestRequest {
+            criteria: ScreenCriteria::default(),
+            source: default_backtest_source(),
+            strategy_mode: "walk_forward".to_string(),
+            stock_codes: Vec::new(),
+            start_date: "20200101".to_string(),
+            end_date: "20200103".to_string(),
+            top_n: 1,
+            initial_cash: 1000.0,
+            rebalance_frequency: default_rebalance_frequency(),
+            transaction_cost_bps: 0.0,
+            benchmark: "none".to_string(),
+        },
+    )
+    .expect_err("strict walk-forward cannot validate PIT data without history");
+
+    assert!(error.to_string().contains("历史行情"));
+}
+
+#[test]
+fn factor_snapshot_is_not_visible_before_its_public_availability_date() {
+    let mut data = sample_data_set();
+    data.factor_snapshots.insert(
+        "111111.SZ".to_string(),
+        vec![StockFactorSnapshot {
+            date: "2019-12-31".to_string(),
+            available_date: Some("2020-02-01".to_string()),
+            is_st: Some(false),
+            is_listed: Some(true),
+            is_tradable: Some(true),
+            pe: Some(5.0),
+            ..StockFactorSnapshot::default()
+        }],
+    );
+    let source = StaticDataSource::new(&data);
+    let timeline =
+        load_factor_snapshot_timeline(&source, "111111.SZ").expect("valid snapshot timeline");
+
+    assert!(latest_factor_snapshot_on_or_before(
+        &HashMap::from([("111111.SZ".to_string(), timeline.clone())]),
+        "111111.SZ",
+        NaiveDate::from_ymd_opt(2020, 1, 31).unwrap(),
+    )
+    .is_none());
+    assert!(latest_factor_snapshot_on_or_before(
+        &HashMap::from([("111111.SZ".to_string(), timeline)]),
+        "111111.SZ",
+        NaiveDate::from_ymd_opt(2020, 2, 1).unwrap(),
+    )
+    .is_some());
+}
+
+#[test]
+fn factor_snapshot_rejects_availability_before_report_date() {
+    let mut data = sample_data_set();
+    data.factor_snapshots.insert(
+        "111111.SZ".to_string(),
+        vec![StockFactorSnapshot {
+            date: "2020-03-31".to_string(),
+            available_date: Some("2020-03-01".to_string()),
+            is_st: Some(false),
+            is_listed: Some(true),
+            is_tradable: Some(true),
+            ..StockFactorSnapshot::default()
+        }],
+    );
+    let source = StaticDataSource::new(&data);
+
+    let error = load_factor_snapshot_timeline(&source, "111111.SZ")
+        .expect_err("availability cannot precede the report date");
+
+    assert!(error.to_string().contains("早于报告期"));
+}
+
+#[test]
+fn walk_forward_fold_return_requires_an_exact_end_date_price() {
+    let history = BacktestHistory {
+        code: "111111.SZ".to_string(),
+        prices: BTreeMap::from([
+            (NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), 10.0),
+            (NaiveDate::from_ymd_opt(2020, 3, 1).unwrap(), 5.0),
+        ]),
+    };
+
+    assert_eq!(
+        forward_return(
+            &history,
+            NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2020, 2, 1).unwrap(),
+        ),
+        None
+    );
 }
 
 #[test]
@@ -1459,10 +1892,10 @@ fn walk_forward_uses_point_in_time_factor_snapshots() {
             },
             HistoryBar {
                 date: "2020-02-01".to_string(),
-                open: Some(10.0),
-                high: Some(10.5),
-                low: Some(9.8),
-                close: 10.0,
+                open: Some(15.0),
+                high: Some(15.5),
+                low: Some(14.8),
+                close: 15.0,
                 volume: Some(1_000_000.0),
                 capital: Some(1_000_000_000.0),
             },
@@ -1483,11 +1916,19 @@ fn walk_forward_uses_point_in_time_factor_snapshots() {
             vec![
                 StockFactorSnapshot {
                     date: "2020-01-01".to_string(),
+                    available_date: Some("2020-01-01".to_string()),
+                    is_st: Some(false),
+                    is_listed: Some(true),
+                    is_tradable: Some(true),
                     pe: Some(5.0),
                     ..StockFactorSnapshot::default()
                 },
                 StockFactorSnapshot {
                     date: "2020-02-01".to_string(),
+                    available_date: Some("2020-02-01".to_string()),
+                    is_st: Some(false),
+                    is_listed: Some(true),
+                    is_tradable: Some(true),
                     pe: Some(50.0),
                     ..StockFactorSnapshot::default()
                 },
@@ -1498,17 +1939,26 @@ fn walk_forward_uses_point_in_time_factor_snapshots() {
             vec![
                 StockFactorSnapshot {
                     date: "2020-01-01".to_string(),
+                    available_date: Some("2020-01-01".to_string()),
+                    is_st: Some(false),
+                    is_listed: Some(true),
+                    is_tradable: Some(true),
                     pe: Some(50.0),
                     ..StockFactorSnapshot::default()
                 },
                 StockFactorSnapshot {
                     date: "2020-02-01".to_string(),
+                    available_date: Some("2020-02-01".to_string()),
+                    is_st: Some(false),
+                    is_listed: Some(true),
+                    is_tradable: Some(true),
                     pe: Some(5.0),
                     ..StockFactorSnapshot::default()
                 },
             ],
         ),
     ]);
+    data.stocks.retain(|stock| stock.code != "222222.SZ");
 
     let result = backtest_with_data(
         &data,
@@ -1537,7 +1987,284 @@ fn walk_forward_uses_point_in_time_factor_snapshots() {
         vec!["2020-01-01", "2020-02-01", "2020-03-01"]
     );
     assert_eq!(result.symbols, vec!["111111.SZ", "222222.SZ"]);
-    assert!((result.equity_curve.last().unwrap().equity - 900.0).abs() < 1e-6);
+    assert!((result.equity_curve.last().unwrap().equity - 1350.0).abs() < 1e-6);
+    assert_eq!(result.metrics.oos_fold_count, 2);
+    assert_eq!(result.metrics.evaluated_selection_count, 2);
+    assert_eq!(result.metrics.selection_hit_count, 1);
+    assert_eq!(result.metrics.precision_at_n, Some(0.5));
+    assert_eq!(result.walk_forward_folds.len(), 3);
+}
+
+#[test]
+fn walk_forward_rejects_snapshot_without_public_availability_date() {
+    let mut data = sample_data_set();
+    data.factor_snapshots.insert(
+        "111111.SZ".to_string(),
+        vec![StockFactorSnapshot {
+            date: "2019-12-31".to_string(),
+            available_date: None,
+            is_st: Some(false),
+            is_listed: Some(true),
+            is_tradable: Some(true),
+            pe: Some(5.0),
+            ..StockFactorSnapshot::default()
+        }],
+    );
+
+    let error = backtest_with_data(
+        &data,
+        &BacktestRequest {
+            criteria: ScreenCriteria::default(),
+            source: default_backtest_source(),
+            strategy_mode: "walk_forward".to_string(),
+            stock_codes: Vec::new(),
+            start_date: "20200101".to_string(),
+            end_date: "20200103".to_string(),
+            top_n: 1,
+            initial_cash: 1000.0,
+            rebalance_frequency: "monthly".to_string(),
+            transaction_cost_bps: 0.0,
+            benchmark: "none".to_string(),
+        },
+    )
+    .expect_err("strict PIT backtest must require a public availability date");
+
+    assert!(error.to_string().contains("available_date"));
+}
+
+#[test]
+fn walk_forward_does_not_fill_missing_snapshot_fields_from_current_data() {
+    let mut data = sample_data_set();
+    data.stocks.retain(|stock| stock.code == "111111.SZ");
+    data.factor_snapshots.insert(
+        "111111.SZ".to_string(),
+        vec![StockFactorSnapshot {
+            date: "2020-01-01".to_string(),
+            available_date: Some("2020-01-01".to_string()),
+            is_st: Some(false),
+            is_listed: Some(true),
+            is_tradable: Some(true),
+            pe: None,
+            ..StockFactorSnapshot::default()
+        }],
+    );
+
+    let result = backtest_with_data(
+        &data,
+        &BacktestRequest {
+            criteria: ScreenCriteria {
+                max_pe: Some(10.0),
+                ..ScreenCriteria::default()
+            },
+            source: default_backtest_source(),
+            strategy_mode: "walk_forward".to_string(),
+            stock_codes: Vec::new(),
+            start_date: "20200101".to_string(),
+            end_date: "20200103".to_string(),
+            top_n: 1,
+            initial_cash: 1000.0,
+            rebalance_frequency: "monthly".to_string(),
+            transaction_cost_bps: 0.0,
+            benchmark: "none".to_string(),
+        },
+    )
+    .expect("strict walk-forward should hold cash when factors are missing");
+
+    assert_eq!(result.rebalance_dates, vec!["2020-01-01"]);
+    assert!((result.equity_curve.last().unwrap().equity - 1000.0).abs() < 1e-6);
+}
+
+#[test]
+fn walk_forward_moves_to_cash_when_no_stock_matches_at_rebalance() {
+    let mut data = sample_data_set();
+    data.stocks.retain(|stock| stock.code == "111111.SZ");
+    data.histories.clear();
+    data.histories.insert(
+        "111111.SZ".to_string(),
+        vec![
+            HistoryBar {
+                date: "2020-01-01".to_string(),
+                open: None,
+                high: None,
+                low: None,
+                close: 10.0,
+                volume: None,
+                capital: None,
+            },
+            HistoryBar {
+                date: "2020-02-01".to_string(),
+                open: None,
+                high: None,
+                low: None,
+                close: 20.0,
+                volume: None,
+                capital: None,
+            },
+            HistoryBar {
+                date: "2020-03-01".to_string(),
+                open: None,
+                high: None,
+                low: None,
+                close: 10.0,
+                volume: None,
+                capital: None,
+            },
+        ],
+    );
+    data.factor_snapshots.insert(
+        "111111.SZ".to_string(),
+        vec![
+            StockFactorSnapshot {
+                date: "2020-01-01".to_string(),
+                available_date: Some("2020-01-01".to_string()),
+                is_st: Some(false),
+                is_listed: Some(true),
+                is_tradable: Some(true),
+                pe: Some(5.0),
+                ..StockFactorSnapshot::default()
+            },
+            StockFactorSnapshot {
+                date: "2020-02-01".to_string(),
+                available_date: Some("2020-02-01".to_string()),
+                is_st: Some(false),
+                is_listed: Some(true),
+                is_tradable: Some(true),
+                pe: Some(50.0),
+                ..StockFactorSnapshot::default()
+            },
+        ],
+    );
+
+    let result = backtest_with_data(
+        &data,
+        &BacktestRequest {
+            criteria: ScreenCriteria {
+                max_pe: Some(10.0),
+                ..ScreenCriteria::default()
+            },
+            source: default_backtest_source(),
+            strategy_mode: "walk_forward".to_string(),
+            stock_codes: Vec::new(),
+            start_date: "20200101".to_string(),
+            end_date: "20200301".to_string(),
+            top_n: 1,
+            initial_cash: 1000.0,
+            rebalance_frequency: "monthly".to_string(),
+            transaction_cost_bps: 0.0,
+            benchmark: "none".to_string(),
+        },
+    )
+    .expect("walk-forward should rebalance an empty selection to cash");
+
+    assert_eq!(
+        result.rebalance_dates,
+        vec!["2020-01-01", "2020-02-01", "2020-03-01"]
+    );
+    assert!((result.equity_curve.last().unwrap().equity - 2000.0).abs() < 1e-6);
+}
+
+#[test]
+fn walk_forward_does_not_trade_a_suspended_holding_at_a_stale_price() {
+    let mut data = sample_data_set();
+    data.histories = HashMap::from([
+        (
+            "111111.SZ".to_string(),
+            vec![
+                HistoryBar {
+                    date: "2020-01-01".to_string(),
+                    open: None,
+                    high: None,
+                    low: None,
+                    close: 10.0,
+                    volume: None,
+                    capital: None,
+                },
+                HistoryBar {
+                    date: "2020-03-01".to_string(),
+                    open: None,
+                    high: None,
+                    low: None,
+                    close: 5.0,
+                    volume: None,
+                    capital: None,
+                },
+            ],
+        ),
+        (
+            "222222.SZ".to_string(),
+            vec![
+                HistoryBar {
+                    date: "2020-01-01".to_string(),
+                    open: None,
+                    high: None,
+                    low: None,
+                    close: 20.0,
+                    volume: None,
+                    capital: None,
+                },
+                HistoryBar {
+                    date: "2020-02-01".to_string(),
+                    open: None,
+                    high: None,
+                    low: None,
+                    close: 20.0,
+                    volume: None,
+                    capital: None,
+                },
+                HistoryBar {
+                    date: "2020-03-01".to_string(),
+                    open: None,
+                    high: None,
+                    low: None,
+                    close: 20.0,
+                    volume: None,
+                    capital: None,
+                },
+            ],
+        ),
+    ]);
+    let mut suspended = pit_factor_snapshot("2020-02-01", Some(50.0));
+    suspended.is_tradable = Some(false);
+    data.factor_snapshots = HashMap::from([
+        (
+            "111111.SZ".to_string(),
+            vec![pit_factor_snapshot("2020-01-01", Some(5.0)), suspended],
+        ),
+        (
+            "222222.SZ".to_string(),
+            vec![
+                pit_factor_snapshot("2020-01-01", Some(50.0)),
+                pit_factor_snapshot("2020-02-01", Some(5.0)),
+            ],
+        ),
+    ]);
+
+    let result = backtest_with_data(
+        &data,
+        &BacktestRequest {
+            criteria: ScreenCriteria {
+                max_pe: Some(10.0),
+                ..ScreenCriteria::default()
+            },
+            source: default_backtest_source(),
+            strategy_mode: "walk_forward".to_string(),
+            stock_codes: Vec::new(),
+            start_date: "20200101".to_string(),
+            end_date: "20200301".to_string(),
+            top_n: 1,
+            initial_cash: 1000.0,
+            rebalance_frequency: "monthly".to_string(),
+            transaction_cost_bps: 0.0,
+            benchmark: "none".to_string(),
+        },
+    )
+    .expect("suspended holdings should remain locked until an exact trade price exists");
+
+    assert!((result.equity_curve.last().unwrap().equity - 500.0).abs() < 1e-6);
+    assert_eq!(result.symbols, vec!["111111.SZ", "222222.SZ"]);
+    assert_eq!(result.walk_forward_folds[0].evaluated_selection_count, 1);
+    assert_eq!(result.walk_forward_folds[0].hit_count, 0);
+    assert_eq!(result.walk_forward_folds[0].precision_at_n, Some(0.0));
 }
 
 #[test]
@@ -1558,11 +2285,11 @@ fn pe_and_pb_scores_handle_nonpositive_and_nonfinite() {
     // Missing metrics fall back to a neutral score.
     assert_eq!(pe_score(None), 0.52);
     assert_eq!(pb_score(None), 0.52);
-    // NaN/Infinity must not propagate (all comparisons are false -> last arm).
-    assert!(pe_score(Some(f64::NAN)).is_finite());
-    assert!(pb_score(Some(f64::NAN)).is_finite());
-    assert!(pe_score(Some(f64::INFINITY)).is_finite());
-    assert!(pb_score(Some(f64::INFINITY)).is_finite());
+    // Non-finite values use the same neutral fallback as missing metrics.
+    assert_eq!(pe_score(Some(f64::NAN)), pe_score(None));
+    assert_eq!(pb_score(Some(f64::NAN)), pb_score(None));
+    assert_eq!(pe_score(Some(f64::INFINITY)), pe_score(None));
+    assert_eq!(pb_score(Some(f64::INFINITY)), pb_score(None));
 }
 
 #[test]
@@ -1594,14 +2321,95 @@ fn score_stock_with_degenerate_metrics_stays_finite_and_bounded() {
         dividend_yield: Some(f64::INFINITY),
         ..StockItem::default()
     };
-    let result = screen_stocks(&[stock], &ScreenCriteria::default());
-    assert_eq!(result.returned, 1);
-    let scored = &result.items[0];
+    let scored = score_stock(&stock, &[], "balanced");
     assert!(scored.score.is_finite(), "composite score must be finite");
     assert!((0.0..=SCREEN_SCORE_SCALE).contains(&scored.score));
     for (key, value) in &scored.factor_scores {
         assert!(value.is_finite(), "factor score {key} must be finite");
     }
+}
+
+#[test]
+fn hard_filters_reject_invalid_quotes_and_valuation_metrics() {
+    let valid = custom_test_stock("000001.SZ", "valid", "bank", 100.0, 10.0, 0.15);
+    let mut zero_price = valid.clone();
+    zero_price.code = "000002.SZ".to_string();
+    zero_price.price = 0.0;
+    let mut negative_pe = valid.clone();
+    negative_pe.code = "000003.SZ".to_string();
+    negative_pe.pe = Some(-10.0);
+    let mut nonfinite_pb = valid.clone();
+    nonfinite_pb.code = "000004.SZ".to_string();
+    nonfinite_pb.pb = Some(f64::NAN);
+
+    let result = screen_stocks(
+        &[valid, zero_price, negative_pe, nonfinite_pb],
+        &ScreenCriteria {
+            max_pe: Some(20.0),
+            max_pb: Some(5.0),
+            ..ScreenCriteria::default()
+        },
+    );
+
+    assert_eq!(result.returned, 1);
+    assert_eq!(result.items[0].stock.code, "000001.SZ");
+}
+
+#[test]
+fn industry_percentiles_are_tie_aware_and_shrink_small_groups() {
+    let tied_a = custom_test_stock("000001.SZ", "tied-a", "small-group", 100.0, 20.0, 0.10);
+    let tied_b = custom_test_stock("000002.SZ", "tied-b", "small-group", 100.0, 20.0, 0.10);
+    let high = custom_test_stock("000003.SZ", "high", "small-group", 100.0, 20.0, 0.20);
+    let singleton = custom_test_stock("000004.SZ", "singleton", "single-group", 100.0, 20.0, 0.15);
+    let result = screen_stocks(
+        &[tied_a, tied_b, high, singleton],
+        &ScreenCriteria {
+            score_profile: "quality".to_string(),
+            ..ScreenCriteria::default()
+        },
+    );
+    let by_code = result
+        .items
+        .iter()
+        .map(|item| (item.stock.code.as_str(), item))
+        .collect::<HashMap<_, _>>();
+
+    let tied_a_pct = by_code["000001.SZ"].factor_scores["industry_quality_pct"];
+    let tied_b_pct = by_code["000002.SZ"].factor_scores["industry_quality_pct"];
+    let high_pct = by_code["000003.SZ"].factor_scores["industry_quality_pct"];
+    let singleton_pct = by_code["000004.SZ"].factor_scores["industry_quality_pct"];
+    assert_eq!(tied_a_pct, tied_b_pct);
+    assert!(high_pct > tied_a_pct);
+    assert!((0.35..0.65).contains(&high_pct));
+    assert_eq!(singleton_pct, 0.5);
+}
+
+#[test]
+fn balanced_profile_stays_bounded() {
+    let factors = BTreeMap::from([
+        ("theme".to_string(), 1.0),
+        ("fundamental".to_string(), 1.0),
+        ("valuation".to_string(), 1.0),
+        ("market_heat".to_string(), 1.0),
+        ("size".to_string(), 1.0),
+        ("risk".to_string(), 1.0),
+        ("overheat_penalty".to_string(), 0.0),
+    ]);
+    assert!((profile_score(&factors, "balanced") - 1.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn balanced_profile_preserves_legacy_theme_weight() {
+    let factors = BTreeMap::from([
+        ("theme".to_string(), 1.0),
+        ("fundamental".to_string(), 0.0),
+        ("valuation".to_string(), 0.0),
+        ("market_heat".to_string(), 0.0),
+        ("size".to_string(), 0.0),
+        ("risk".to_string(), 0.0),
+        ("overheat_penalty".to_string(), 0.0),
+    ]);
+    assert!((profile_score(&factors, "balanced") - 0.16).abs() < f64::EPSILON);
 }
 
 #[test]

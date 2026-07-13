@@ -125,7 +125,7 @@ describe("contract payload builders", () => {
     expect(buildScreenCriteria(criteria)).toMatchObject({
       include_st: false,
       require_institution_buy_ratio_gt_sell_ratio: true,
-      min_roe: 15,
+      min_roe: 0.15,
       max_pe: 30,
       max_pb: 5,
       min_market_cap_billion: 50,
@@ -191,6 +191,17 @@ describe("contract payload builders", () => {
       benchmark: "none",
       strategy_mode: "walk_forward",
     });
+    expect(buildBacktestRequest({
+      source: "criteria",
+      criteria,
+      watchlist: [],
+      startDate: "2020-01-01",
+      endDate: "2026-06-27",
+      topN: 10,
+      rebalanceFrequency: "monthly",
+      transactionCostBps: 10,
+      benchmark: "candidate_equal_weight",
+    })).toMatchObject({ strategy_mode: "walk_forward" });
     expect(buildNewsRagRequest("300750.SZ", 30)).toMatchObject({
       code: "300750.SZ",
       seed_codes: ["300750.SZ"],

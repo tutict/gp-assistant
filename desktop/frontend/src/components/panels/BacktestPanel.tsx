@@ -7,6 +7,7 @@ import {
   currentSystemDateInputValue,
   formatMoney,
   formatNumber,
+  formatPercent,
   formatSignedPercent,
   shortBenchmarkLabel,
   shortRebalanceLabel,
@@ -29,7 +30,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
   const [topN, setTopN] = useState(10);
   const [rebalance, setRebalance] = useState("monthly");
   const [benchmark, setBenchmark] = useState("candidate_equal_weight");
-  const [strategyMode, setStrategyMode] = useState("candidate_snapshot");
+  const [strategyMode, setStrategyMode] = useState("walk_forward");
   const [costBps, setCostBps] = useState(10);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BacktestResult | null>(null);
@@ -118,7 +119,13 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
       </div>
 
       <div className="panel-result">
-        {error && <PanelFeedback kind="error" title="回测失败" description={error} />}
+        {error && <PanelFeedback
+          kind="error"
+          title="回测失败"
+          description={strategyMode === "walk_forward"
+            ? `${error} 请补齐历史因子快照，或切换到“候选快照”查看非严格历史组合表现。`
+            : error}
+        />}
         {loading && !result && !error && <PanelFeedback kind="loading" description="正在计算组合表现..." />}
         {result && !loading && <BacktestResultView result={result} />}
         {!result && !loading && !error && <PanelFeedback kind="empty" description="选择股票来源并设置参数后运行回测。" />}
@@ -136,6 +143,7 @@ export function BacktestResultView({ result }: { result: BacktestResult }) {
         <div className="metric"><span>年化收益</span><strong>{metrics.annualized_return != null ? formatSignedPercent(metrics.annualized_return * 100) : "--"}</strong></div>
         <div className="metric"><span>最大回撤</span><strong className="negative">{metrics.max_drawdown != null ? formatSignedPercent(metrics.max_drawdown * 100) : "--"}</strong></div>
         <div className="metric"><span>超额收益</span><strong>{metrics.excess_return != null ? formatSignedPercent(metrics.excess_return * 100) : "--"}</strong></div>
+        <div className="metric"><span>Precision@N</span><strong>{metrics.precision_at_n != null ? formatPercent(metrics.precision_at_n * 100) : "--"}</strong></div>
       </div>
 
       {result.equity_curve?.length ? <section className="backtest-primary-chart"><Sparkline curve={result.equity_curve} /></section> : null}
@@ -146,12 +154,33 @@ export function BacktestResultView({ result }: { result: BacktestResult }) {
         <div><span>交易成本</span><strong>{formatMoney(metrics.total_transaction_cost)}</strong></div>
         <div><span>换手</span><strong>{formatNumber(metrics.total_turnover)}</strong></div>
         <div><span>调仓次数</span><strong>{metrics.rebalance_count ?? 0}</strong></div>
+        <div><span>样本外折数</span><strong>{metrics.oos_fold_count ?? 0}</strong></div>
         <div><span>Mode</span><strong>{metrics.strategy_mode === "walk_forward" ? "Walk-forward" : "Snapshot"}</strong></div>
       </section>
 
+      {result.walk_forward_folds?.length ? (
+        <section className="backtest-holdings">
+          <header><span>样本外逐折结果</span><strong>{metrics.oos_fold_count ?? 0}</strong></header>
+          <div className="backtest-fold-list">
+            {result.walk_forward_folds.map((fold) => (
+              <div className="backtest-fold-row" key={`${fold.selection_date}-${fold.evaluation_end_date || "pending"}`}>
+                <span>
+                  <b>{fold.selection_date} → {fold.evaluation_end_date || "待评估"}</b>
+                  <small>入选 {fold.selected_symbols.length} · 精度分母 {fold.evaluated_selection_count}/{fold.eligible_symbol_count}</small>
+                </span>
+                <span>
+                  <b>{fold.precision_at_n != null ? `Precision ${formatPercent(fold.precision_at_n * 100)}` : "Precision --"}</b>
+                  <small>超额 {fold.average_excess_return != null ? formatSignedPercent(fold.average_excess_return * 100) : "--"}</small>
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {result.symbols?.length ? (
         <section className="backtest-holdings">
-          <header><span>标的</span><strong>{result.symbols.length}</strong></header>
+          <header><span>{result.strategy_mode === "walk_forward" ? "滚动入选标的" : "标的"}</span><strong>{result.symbols.length}</strong></header>
           <div className="symbol-strip">{result.symbols.join(" · ")}</div>
         </section>
       ) : null}

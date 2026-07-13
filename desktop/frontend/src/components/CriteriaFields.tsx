@@ -101,22 +101,22 @@ export function CriteriaFields({ criteria, onChange, idPrefix = "criteria" }: Cr
         <div className="criteria-field-grid">
           <div className="form-row">
             <label htmlFor={id("minRoe")}>最低 ROE (%)</label>
-            <input id={id("minRoe")} type="number" step="0.1" value={criteria.minRoe} onChange={(event) => update({ minRoe: event.target.value })} placeholder="如 15" />
+            <input id={id("minRoe")} type="number" min="-100" max="100" step="0.1" value={criteria.minRoe} onChange={(event) => update({ minRoe: event.target.value })} placeholder="如 15" />
           </div>
 
           <div className="form-row">
             <label htmlFor={id("maxPe")}>最高 PE</label>
-            <input id={id("maxPe")} type="number" step="0.1" value={criteria.maxPe} onChange={(event) => update({ maxPe: event.target.value })} placeholder="如 30" />
+            <input id={id("maxPe")} type="number" min="0.1" step="0.1" value={criteria.maxPe} onChange={(event) => update({ maxPe: event.target.value })} placeholder="如 30" />
           </div>
 
           <div className="form-row">
             <label htmlFor={id("maxPb")}>最高 PB</label>
-            <input id={id("maxPb")} type="number" step="0.1" value={criteria.maxPb} onChange={(event) => update({ maxPb: event.target.value })} placeholder="如 5" />
+            <input id={id("maxPb")} type="number" min="0.1" step="0.1" value={criteria.maxPb} onChange={(event) => update({ maxPb: event.target.value })} placeholder="如 5" />
           </div>
 
           <div className="form-row">
             <label htmlFor={id("minMcap")}>最低市值 (亿)</label>
-            <input id={id("minMcap")} type="number" step="1" value={criteria.minMcap} onChange={(event) => update({ minMcap: event.target.value })} placeholder="如 50" />
+            <input id={id("minMcap")} type="number" min="0" step="1" value={criteria.minMcap} onChange={(event) => update({ minMcap: event.target.value })} placeholder="如 50" />
           </div>
         </div>
       </section>

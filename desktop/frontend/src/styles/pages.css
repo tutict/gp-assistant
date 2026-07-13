@@ -1615,6 +1615,39 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   overflow-wrap: anywhere;
 }
 
+.backtest-fold-list {
+  display: grid;
+  gap: 8px;
+}
+
+.backtest-fold-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.backtest-fold-row:first-child {
+  border-top: 0;
+}
+
+.backtest-fold-row > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.backtest-fold-row > span:last-child {
+  justify-items: end;
+  text-align: right;
+}
+
+.backtest-fold-row small {
+  color: var(--text-secondary);
+}
+
 .rag-tabs {
   margin-bottom: 0;
 }

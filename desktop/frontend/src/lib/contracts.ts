@@ -61,7 +61,7 @@ export function buildScreenCriteria(criteria: FilterCriteria, overrides: ScreenR
     score_profile: overrides.score_profile || criteria.scoreProfile || "balanced",
   };
   if (criteria.industry) payload.industry = criteria.industry;
-  if (criteria.minRoe) payload.min_roe = Number(criteria.minRoe);
+  if (criteria.minRoe) payload.min_roe = Number(criteria.minRoe) / 100;
   if (criteria.maxPe) payload.max_pe = Number(criteria.maxPe);
   if (criteria.maxPb) payload.max_pb = Number(criteria.maxPb);
   if (criteria.minMcap) payload.min_market_cap_billion = Number(criteria.minMcap);
@@ -142,7 +142,7 @@ export function buildBacktestRequest(args: {
   return {
     source: args.source,
     criteria: buildScreenCriteria(args.criteria, { limit: 100, score_profile: "quality" }),
-    strategy_mode: args.strategyMode || "candidate_snapshot",
+    strategy_mode: args.strategyMode || "walk_forward",
     stock_codes: args.source === "watchlist" ? args.watchlist.map((item) => item.code).filter(Boolean).slice(0, 100) : [],
     start_date: normalizeDateParam(args.startDate, "20200101"),
     end_date: normalizeDateParam(args.endDate, currentSystemDateCompact()),

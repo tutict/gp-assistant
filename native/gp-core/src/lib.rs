@@ -724,8 +724,39 @@ pub struct BacktestMetrics {
     pub total_transaction_cost: f64,
     pub total_turnover: f64,
     pub rebalance_count: usize,
+    #[serde(default)]
+    pub oos_fold_count: usize,
+    #[serde(default)]
+    pub evaluated_selection_count: usize,
+    #[serde(default)]
+    pub selection_hit_count: usize,
+    #[serde(default)]
+    pub precision_at_n: Option<f64>,
     #[serde(default = "default_backtest_strategy_mode")]
     pub strategy_mode: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WalkForwardFold {
+    pub selection_date: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluation_end_date: Option<String>,
+    #[serde(default)]
+    pub selected_symbols: Vec<String>,
+    #[serde(default)]
+    pub eligible_symbol_count: usize,
+    #[serde(default)]
+    pub evaluated_selection_count: usize,
+    #[serde(default)]
+    pub hit_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub precision_at_n: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub average_forward_return: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub benchmark_forward_return: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub average_excess_return: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -739,6 +770,8 @@ pub struct BacktestResult {
     pub benchmark_symbols: Vec<String>,
     #[serde(default)]
     pub rebalance_dates: Vec<String>,
+    #[serde(default)]
+    pub walk_forward_folds: Vec<WalkForwardFold>,
     #[serde(default = "default_backtest_strategy_mode")]
     pub strategy_mode: String,
     #[serde(default)]
@@ -890,6 +923,18 @@ pub struct StockFinancialSnapshot {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct StockFactorSnapshot {
     pub date: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub available_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub industry: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_st: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_listed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_tradable: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub price: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1188,6 +1233,10 @@ pub trait MarketDataSource {
         Ok(Vec::new())
     }
 
+    fn factor_snapshot_codes(&self) -> CoreResult<Vec<String>> {
+        Ok(Vec::new())
+    }
+
     fn get_capital_evidence(&self, _code: &str) -> Option<CapitalEvidenceResult> {
         None
     }
@@ -1303,6 +1352,18 @@ impl MarketDataSource for StaticDataSource<'_> {
             .cloned()
             .or_else(|| self.data.factor_snapshots.get(&normalized).cloned())
             .unwrap_or_default())
+    }
+
+    fn factor_snapshot_codes(&self) -> CoreResult<Vec<String>> {
+        let mut codes = self
+            .data
+            .factor_snapshots
+            .keys()
+            .map(|code| normalize_stock_code(code))
+            .collect::<Vec<_>>();
+        codes.sort();
+        codes.dedup();
+        Ok(codes)
     }
 
     fn get_capital_evidence(&self, code: &str) -> Option<CapitalEvidenceResult> {
@@ -1444,7 +1505,7 @@ fn default_backtest_benchmark() -> String {
 }
 
 fn default_backtest_strategy_mode() -> String {
-    "candidate_snapshot".to_string()
+    "walk_forward".to_string()
 }
 
 fn default_backtest_source() -> String {
@@ -1725,10 +1786,31 @@ pub fn backtest_with_source(
     source: &impl MarketDataSource,
     request: &BacktestRequest,
 ) -> CoreResult<BacktestResult> {
-    let universe = source.stocks()?;
+    let mut universe = source.stocks()?.to_vec();
     let strategy_mode = normalize_backtest_strategy_mode(&request.strategy_mode);
     let source_mode = normalize_backtest_source(&request.source);
-    let (selected, selection_notes) = selected_backtest_items(&universe, request);
+    if strategy_mode == "walk_forward" && source_mode != "watchlist" {
+        let mut known_codes = universe
+            .iter()
+            .map(|stock| stock.code.to_uppercase())
+            .collect::<HashSet<_>>();
+        for code in source.factor_snapshot_codes()? {
+            let normalized = normalize_stock_code(&code);
+            if normalized.is_empty() || !known_codes.insert(normalized.to_uppercase()) {
+                continue;
+            }
+            universe.push(StockItem {
+                code: normalized,
+                ..StockItem::default()
+            });
+        }
+    }
+    let (selected, selection_notes) =
+        if strategy_mode == "walk_forward" && source_mode != "watchlist" {
+            (Vec::new(), Vec::new())
+        } else {
+            selected_backtest_items(&universe, request)
+        };
     let symbols: Vec<String> = if strategy_mode == "walk_forward" && source_mode != "watchlist" {
         universe.iter().map(|item| item.code.clone()).collect()
     } else {
@@ -1738,16 +1820,54 @@ pub fn backtest_with_source(
             .collect()
     };
 
-    let histories =
-        load_backtest_histories(source, &symbols, &request.start_date, &request.end_date)?;
+    let history_symbols = if strategy_mode == "walk_forward" {
+        strict_walk_forward_history_symbols(
+            source,
+            &symbols,
+            &request.start_date,
+            &request.end_date,
+        )?
+    } else {
+        symbols.clone()
+    };
+    let histories = load_backtest_histories(
+        source,
+        &history_symbols,
+        &request.start_date,
+        &request.end_date,
+    )?;
+    if strategy_mode == "walk_forward" {
+        let available_codes = histories
+            .iter()
+            .map(|history| history.code.to_uppercase())
+            .collect::<HashSet<_>>();
+        let missing_history_codes = history_symbols
+            .iter()
+            .filter(|code| !available_codes.contains(&code.to_uppercase()))
+            .take(8)
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing_history_codes.is_empty() {
+            return Err(CoreError::new(format!(
+                "walk_forward 严格回测缺少当期上市候选的历史行情：{}",
+                missing_history_codes.join("、")
+            )));
+        }
+    }
     if histories.is_empty() {
+        let reported_symbols = if strategy_mode == "walk_forward" {
+            Vec::new()
+        } else {
+            symbols
+        };
         return Ok(BacktestResult {
-            metrics: empty_backtest_metrics(symbols.len(), &strategy_mode),
+            metrics: empty_backtest_metrics(reported_symbols.len(), &strategy_mode),
             equity_curve: Vec::new(),
             benchmark_curve: Vec::new(),
-            symbols,
+            symbols: reported_symbols,
             benchmark_symbols: Vec::new(),
             rebalance_dates: Vec::new(),
+            walk_forward_folds: Vec::new(),
             strategy_mode,
             notes: selection_notes,
         });
@@ -1795,6 +1915,30 @@ pub fn backtest_with_source(
         .iter()
         .map(|history| history.code.clone())
         .collect();
+    let walk_forward_folds = if strategy_mode == "walk_forward" {
+        evaluate_walk_forward_folds(&histories, &simulation.selections)
+    } else {
+        Vec::new()
+    };
+    let reported_symbols = if strategy_mode == "walk_forward" {
+        selected_symbols_from_rebalances(&histories, &simulation.selections)
+    } else {
+        available_symbols.clone()
+    };
+    let evaluated_selection_count = walk_forward_folds
+        .iter()
+        .map(|fold| fold.evaluated_selection_count)
+        .sum::<usize>();
+    let selection_hit_count = walk_forward_folds
+        .iter()
+        .map(|fold| fold.hit_count)
+        .sum::<usize>();
+    let precision_at_n = (evaluated_selection_count > 0)
+        .then_some(selection_hit_count as f64 / evaluated_selection_count as f64);
+    let oos_fold_count = walk_forward_folds
+        .iter()
+        .filter(|fold| fold.precision_at_n.is_some())
+        .count();
 
     let mut notes = selection_notes;
     let missing_history_count = symbols.len().saturating_sub(available_symbols.len());
@@ -1810,6 +1954,12 @@ pub fn backtest_with_source(
         request.transaction_cost_bps.clamp(0.0, 500.0)
     ));
     notes.push(backtest_strategy_mode_note(&strategy_mode).to_string());
+    if strategy_mode == "walk_forward" {
+        notes.push(format!(
+            "滚动样本外评估共 {} 折，{} 个入选样本可计算相对候选池基准的命中率。",
+            oos_fold_count, evaluated_selection_count
+        ));
+    }
     if benchmark_enabled {
         notes.push("基准为候选池买入持有等权曲线，用于衡量调仓与成本后的超额收益。".to_string());
     }
@@ -1819,7 +1969,7 @@ pub fn backtest_with_source(
             total_return,
             annualized_return,
             max_drawdown,
-            num_stocks: available_symbols.len(),
+            num_stocks: reported_symbols.len(),
             benchmark_total_return,
             benchmark_annualized_return,
             benchmark_max_drawdown,
@@ -1827,11 +1977,15 @@ pub fn backtest_with_source(
             total_transaction_cost: simulation.total_transaction_cost,
             total_turnover: simulation.total_turnover,
             rebalance_count: simulation.rebalance_dates.len(),
+            oos_fold_count,
+            evaluated_selection_count,
+            selection_hit_count,
+            precision_at_n,
             strategy_mode: strategy_mode.clone(),
         },
         equity_curve: simulation.equity_curve,
         benchmark_curve,
-        symbols: available_symbols.clone(),
+        symbols: reported_symbols,
         benchmark_symbols: if benchmark_enabled {
             available_symbols
         } else {
@@ -1842,6 +1996,7 @@ pub fn backtest_with_source(
             .iter()
             .map(|date| date.format("%Y-%m-%d").to_string())
             .collect(),
+        walk_forward_folds,
         strategy_mode,
         notes,
     })
@@ -1858,6 +2013,20 @@ struct PortfolioSimulation {
     rebalance_dates: Vec<NaiveDate>,
     total_transaction_cost: f64,
     total_turnover: f64,
+    selections: Vec<RebalanceSelection>,
+}
+
+#[derive(Clone, Debug)]
+struct ActiveSelection {
+    selected_indices: Vec<usize>,
+    eligible_indices: Vec<usize>,
+}
+
+#[derive(Clone, Debug)]
+struct RebalanceSelection {
+    date: NaiveDate,
+    selected_indices: Vec<usize>,
+    eligible_indices: Vec<usize>,
 }
 
 fn empty_backtest_metrics(num_stocks: usize, strategy_mode: &str) -> BacktestMetrics {
@@ -1873,8 +2042,61 @@ fn empty_backtest_metrics(num_stocks: usize, strategy_mode: &str) -> BacktestMet
         total_transaction_cost: 0.0,
         total_turnover: 0.0,
         rebalance_count: 0,
+        oos_fold_count: 0,
+        evaluated_selection_count: 0,
+        selection_hit_count: 0,
+        precision_at_n: None,
         strategy_mode: strategy_mode.to_string(),
     }
+}
+
+fn strict_walk_forward_history_symbols(
+    source: &impl MarketDataSource,
+    symbols: &[String],
+    start_date: &str,
+    end_date: &str,
+) -> CoreResult<Vec<String>> {
+    let start = parse_date(start_date)?;
+    let end = parse_date(end_date)?;
+    let mut required = Vec::new();
+    let mut missing_snapshots = Vec::new();
+
+    for code in symbols {
+        let timeline = load_factor_snapshot_timeline(source, code)?;
+        if timeline.is_empty() {
+            missing_snapshots.push(code.clone());
+            continue;
+        }
+        let tradable_at_start = timeline
+            .range(..=start)
+            .next_back()
+            .map(|(_, snapshot)| {
+                snapshot.is_listed == Some(true) && snapshot.is_tradable == Some(true)
+            })
+            .unwrap_or(false);
+        let becomes_tradable_in_range = timeline.range(start..=end).any(|(_, snapshot)| {
+            snapshot.is_listed == Some(true) && snapshot.is_tradable == Some(true)
+        });
+        if tradable_at_start || becomes_tradable_in_range {
+            required.push(code.clone());
+        }
+    }
+
+    if !missing_snapshots.is_empty() {
+        let preview = missing_snapshots
+            .iter()
+            .take(8)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("、");
+        return Err(CoreError::new(format!(
+            "walk_forward 严格回测要求完整的历史因子快照 factor_snapshots；缺少 {} 个：{}",
+            missing_snapshots.len(),
+            preview
+        )));
+    }
+
+    Ok(required)
 }
 
 fn load_backtest_histories(
@@ -1985,6 +2207,7 @@ fn simulate_equal_weight_portfolio(
         rebalance_dates,
         total_transaction_cost,
         total_turnover,
+        selections: Vec::new(),
     }
 }
 
@@ -1999,11 +2222,26 @@ fn simulate_walk_forward_portfolio(
 ) -> CoreResult<PortfolioSimulation> {
     let dates = backtest_calendar(histories);
     let mut snapshots_by_code = HashMap::new();
+    let mut missing_snapshot_codes = Vec::new();
     for history in histories {
-        snapshots_by_code.insert(
-            history.code.clone(),
-            load_factor_snapshot_timeline(source, &history.code)?,
-        );
+        let timeline = load_factor_snapshot_timeline(source, &history.code)?;
+        if timeline.is_empty() {
+            missing_snapshot_codes.push(history.code.clone());
+        }
+        snapshots_by_code.insert(history.code.clone(), timeline);
+    }
+    if !missing_snapshot_codes.is_empty() {
+        let preview = missing_snapshot_codes
+            .iter()
+            .take(8)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("、");
+        return Err(CoreError::new(format!(
+            "walk_forward 严格回测要求每个有历史行情的标的都有历史因子快照 factor_snapshots；缺少 {} 个：{}",
+            missing_snapshot_codes.len(),
+            preview
+        )));
     }
     Ok(simulate_walk_forward_portfolio_with_snapshots(
         universe,
@@ -2034,6 +2272,7 @@ fn simulate_walk_forward_portfolio_with_snapshots(
     let mut rebalance_dates = Vec::new();
     let mut total_transaction_cost = 0.0;
     let mut total_turnover = 0.0;
+    let mut selections = Vec::new();
     let history_index: HashMap<String, usize> = histories
         .iter()
         .enumerate()
@@ -2041,66 +2280,88 @@ fn simulate_walk_forward_portfolio_with_snapshots(
         .collect();
 
     for date in dates {
-        let current_prices: Vec<Option<f64>> = histories
+        let valuation_prices: Vec<Option<f64>> = histories
             .iter()
             .map(|history| latest_price_on_or_before(history, date))
+            .collect();
+        let trade_prices: Vec<Option<f64>> = histories
+            .iter()
+            .map(|history| price_on_date(history, date))
             .collect();
         let equity_before_rebalance = cash
             + holdings
                 .iter()
-                .zip(current_prices.iter())
+                .zip(valuation_prices.iter())
                 .map(|(shares, price)| shares * price.unwrap_or(0.0))
                 .sum::<f64>();
 
         if should_rebalance(date, last_rebalance_date, rebalance_frequency)
             && equity_before_rebalance > 0.0
         {
-            let active_indices = walk_forward_active_indices(
+            let active = walk_forward_active_indices(
                 universe,
                 request,
-                histories,
                 snapshots_by_code,
                 &history_index,
-                &current_prices,
+                &trade_prices,
                 date,
             );
-            if !active_indices.is_empty() {
-                let target_weight = 1.0 / active_indices.len() as f64;
-                let active_set: HashSet<usize> = active_indices.iter().copied().collect();
-                let mut turnover_value = 0.0;
-                for index in 0..histories.len() {
-                    let price = current_prices[index].unwrap_or(0.0);
-                    let target_value = if price > 0.0 && active_set.contains(&index) {
-                        equity_before_rebalance * target_weight
-                    } else {
-                        0.0
-                    };
+            let target_weight = if active.selected_indices.is_empty() {
+                0.0
+            } else {
+                1.0 / active.selected_indices.len() as f64
+            };
+            let active_set: HashSet<usize> = active.selected_indices.iter().copied().collect();
+            let tradable_equity_before = cash
+                + holdings
+                    .iter()
+                    .zip(trade_prices.iter())
+                    .map(|(shares, price)| shares * price.unwrap_or(0.0))
+                    .sum::<f64>();
+            let mut turnover_value = 0.0;
+            for index in 0..histories.len() {
+                let price = trade_prices[index].unwrap_or(0.0);
+                let target_value = if price > 0.0 && active_set.contains(&index) {
+                    tradable_equity_before * target_weight
+                } else {
+                    0.0
+                };
+                if price > 0.0 {
                     let current_value = holdings[index] * price;
                     turnover_value += (target_value - current_value).abs();
                 }
-
-                let transaction_cost = turnover_value * transaction_cost_rate;
-                let investable_equity = (equity_before_rebalance - transaction_cost).max(0.0);
-                cash = investable_equity;
-                holdings.fill(0.0);
-                for index in active_indices {
-                    if let Some(price) = current_prices[index].filter(|value| *value > 0.0) {
-                        let target_value = investable_equity * target_weight;
-                        holdings[index] = target_value / price;
-                        cash -= target_value;
-                    }
-                }
-                total_transaction_cost += transaction_cost;
-                total_turnover += turnover_value / equity_before_rebalance;
-                rebalance_dates.push(date);
-                last_rebalance_date = Some(date);
             }
+
+            let transaction_cost = turnover_value * transaction_cost_rate;
+            let investable_equity = (tradable_equity_before - transaction_cost).max(0.0);
+            cash = investable_equity;
+            for (index, price) in trade_prices.iter().enumerate() {
+                if price.is_some() {
+                    holdings[index] = 0.0;
+                }
+            }
+            for index in active.selected_indices.iter().copied() {
+                if let Some(price) = trade_prices[index].filter(|value| *value > 0.0) {
+                    let target_value = investable_equity * target_weight;
+                    holdings[index] = target_value / price;
+                    cash -= target_value;
+                }
+            }
+            total_transaction_cost += transaction_cost;
+            total_turnover += turnover_value / equity_before_rebalance;
+            rebalance_dates.push(date);
+            selections.push(RebalanceSelection {
+                date,
+                selected_indices: active.selected_indices,
+                eligible_indices: active.eligible_indices,
+            });
+            last_rebalance_date = Some(date);
         }
 
         let equity = cash
             + holdings
                 .iter()
-                .zip(current_prices.iter())
+                .zip(valuation_prices.iter())
                 .map(|(shares, price)| shares * price.unwrap_or(0.0))
                 .sum::<f64>();
         equity_curve.push(EquityPoint {
@@ -2114,6 +2375,7 @@ fn simulate_walk_forward_portfolio_with_snapshots(
         rebalance_dates,
         total_transaction_cost,
         total_turnover,
+        selections,
     }
 }
 
@@ -2123,8 +2385,38 @@ fn load_factor_snapshot_timeline(
 ) -> CoreResult<BTreeMap<NaiveDate, StockFactorSnapshot>> {
     let mut timeline = BTreeMap::new();
     for snapshot in source.get_factor_snapshots(code)? {
-        let date = parse_date(&snapshot.date)?;
-        timeline.insert(date, snapshot);
+        let available_date = snapshot.available_date.as_deref().ok_or_else(|| {
+            CoreError::new(format!(
+                "历史因子快照缺少 available_date，无法判断数据何时可用：{code} {}",
+                snapshot.date
+            ))
+        })?;
+        let report_date = parse_date(&snapshot.date).map_err(|_| {
+            CoreError::new(format!(
+                "历史因子快照报告期 date 无效：{code} {}",
+                snapshot.date
+            ))
+        })?;
+        if snapshot.is_st.is_none()
+            || snapshot.is_listed.is_none()
+            || snapshot.is_tradable.is_none()
+        {
+            return Err(CoreError::new(format!(
+                "历史因子快照缺少 is_st/is_listed/is_tradable 状态：{code} {available_date}"
+            )));
+        }
+        let availability_date = parse_date(available_date).map_err(|_| {
+            CoreError::new(format!(
+                "历史因子快照 available_date 无效：{code} {available_date}"
+            ))
+        })?;
+        if availability_date < report_date {
+            return Err(CoreError::new(format!(
+                "历史因子快照 available_date 早于报告期 date：{code} {} 早于 {}",
+                available_date, snapshot.date
+            )));
+        }
+        timeline.insert(availability_date, snapshot);
     }
     Ok(timeline)
 }
@@ -2132,14 +2424,53 @@ fn load_factor_snapshot_timeline(
 fn walk_forward_active_indices(
     universe: &[StockItem],
     request: &BacktestRequest,
-    histories: &[BacktestHistory],
     snapshots_by_code: &HashMap<String, BTreeMap<NaiveDate, StockFactorSnapshot>>,
     history_index: &HashMap<String, usize>,
     current_prices: &[Option<f64>],
     date: NaiveDate,
-) -> Vec<usize> {
-    let visible_universe = point_in_time_universe(universe, snapshots_by_code, date);
+) -> ActiveSelection {
+    if normalize_backtest_source(&request.source) == "watchlist" {
+        let eligible_indices = dedupe_stock_codes(&request.stock_codes)
+            .into_iter()
+            .filter_map(|code| {
+                let index = history_index.get(&code.to_uppercase()).copied()?;
+                let snapshot = latest_factor_snapshot_on_or_before(snapshots_by_code, &code, date)?;
+                if snapshot.is_listed != Some(true)
+                    || snapshot.is_tradable != Some(true)
+                    || (!request.criteria.include_st && snapshot.is_st == Some(true))
+                {
+                    return None;
+                }
+                current_prices
+                    .get(index)
+                    .and_then(|price| *price)
+                    .filter(|price| price.is_finite() && *price > 0.0)?;
+                Some(index)
+            })
+            .collect::<Vec<_>>();
+        let selected_indices = eligible_indices
+            .iter()
+            .take(request.top_n.clamp(1, 100))
+            .copied()
+            .collect();
+        return ActiveSelection {
+            eligible_indices,
+            selected_indices,
+        };
+    }
+
+    let visible_universe = point_in_time_universe(
+        universe,
+        snapshots_by_code,
+        history_index,
+        current_prices,
+        date,
+    );
     let selected = selected_backtest_items_from_universe(&visible_universe, request).0;
+    let eligible_indices = visible_universe
+        .iter()
+        .filter_map(|stock| history_index.get(&stock.code.to_uppercase()).copied())
+        .collect::<Vec<_>>();
     let mut indices = Vec::new();
     for item in selected.into_iter().take(request.top_n.clamp(1, 100)) {
         let code = item.stock.code.to_uppercase();
@@ -2154,36 +2485,34 @@ fn walk_forward_active_indices(
             }
         }
     }
-    if indices.is_empty() {
-        histories
-            .iter()
-            .enumerate()
-            .filter_map(|(index, _)| {
-                current_prices
-                    .get(index)
-                    .and_then(|price| price.filter(|value| *value > 0.0))
-                    .map(|_| index)
-            })
-            .collect()
-    } else {
-        indices
+    ActiveSelection {
+        selected_indices: indices,
+        eligible_indices,
     }
 }
 
 fn point_in_time_universe(
     universe: &[StockItem],
     snapshots_by_code: &HashMap<String, BTreeMap<NaiveDate, StockFactorSnapshot>>,
+    history_index: &HashMap<String, usize>,
+    current_prices: &[Option<f64>],
     date: NaiveDate,
 ) -> Vec<StockItem> {
     universe
         .iter()
-        .map(|stock| {
-            let Some(snapshot) =
-                latest_factor_snapshot_on_or_before(snapshots_by_code, &stock.code, date)
-            else {
-                return stock.clone();
-            };
-            apply_factor_snapshot(stock, snapshot)
+        .filter_map(|stock| {
+            let snapshot =
+                latest_factor_snapshot_on_or_before(snapshots_by_code, &stock.code, date)?;
+            if snapshot.is_listed != Some(true) || snapshot.is_tradable != Some(true) {
+                return None;
+            }
+            snapshot.is_st?;
+            let index = history_index.get(&stock.code.to_uppercase()).copied()?;
+            let price = current_prices
+                .get(index)
+                .and_then(|price| *price)
+                .filter(|price| price.is_finite() && *price > 0.0)?;
+            Some(apply_factor_snapshot(stock, snapshot, price))
         })
         .collect()
 }
@@ -2204,34 +2533,34 @@ fn latest_factor_snapshot_on_or_before<'a>(
         })
 }
 
-fn apply_factor_snapshot(stock: &StockItem, snapshot: &StockFactorSnapshot) -> StockItem {
-    let mut updated = stock.clone();
-    if let Some(value) = snapshot
-        .price
-        .filter(|value| value.is_finite() && *value > 0.0)
-    {
-        updated.price = value;
+fn apply_factor_snapshot(
+    stock: &StockItem,
+    snapshot: &StockFactorSnapshot,
+    historical_price: f64,
+) -> StockItem {
+    let finite = |value: Option<f64>| value.filter(|value| value.is_finite());
+    StockItem {
+        code: stock.code.clone(),
+        name: snapshot.name.clone().unwrap_or_default(),
+        industry: snapshot.industry.clone().unwrap_or_default(),
+        is_st: snapshot.is_st.unwrap_or(true),
+        price: historical_price,
+        pe: finite(snapshot.pe),
+        pb: finite(snapshot.pb),
+        roe: finite(snapshot.roe),
+        market_cap_billion: finite(snapshot.market_cap_billion),
+        dividend_yield: finite(snapshot.dividend_yield),
+        latest_eps: None,
+        deducted_net_profit_billion: finite(snapshot.deducted_net_profit_billion),
+        deducted_net_profit_margin: finite(snapshot.deducted_net_profit_margin),
+        deducted_net_profit_growth_rate: finite(snapshot.deducted_net_profit_growth_rate),
+        change_pct: finite(snapshot.change_pct),
+        volume: finite(snapshot.volume),
+        amount: finite(snapshot.amount),
+        turnover_rate: finite(snapshot.turnover_rate),
+        volume_ratio: finite(snapshot.volume_ratio),
+        quote_time: snapshot.available_date.clone(),
     }
-    updated.pe = snapshot.pe.or(updated.pe);
-    updated.pb = snapshot.pb.or(updated.pb);
-    updated.roe = snapshot.roe.or(updated.roe);
-    updated.market_cap_billion = snapshot.market_cap_billion.or(updated.market_cap_billion);
-    updated.dividend_yield = snapshot.dividend_yield.or(updated.dividend_yield);
-    updated.deducted_net_profit_billion = snapshot
-        .deducted_net_profit_billion
-        .or(updated.deducted_net_profit_billion);
-    updated.deducted_net_profit_margin = snapshot
-        .deducted_net_profit_margin
-        .or(updated.deducted_net_profit_margin);
-    updated.deducted_net_profit_growth_rate = snapshot
-        .deducted_net_profit_growth_rate
-        .or(updated.deducted_net_profit_growth_rate);
-    updated.change_pct = snapshot.change_pct.or(updated.change_pct);
-    updated.volume = snapshot.volume.or(updated.volume);
-    updated.amount = snapshot.amount.or(updated.amount);
-    updated.turnover_rate = snapshot.turnover_rate.or(updated.turnover_rate);
-    updated.volume_ratio = snapshot.volume_ratio.or(updated.volume_ratio);
-    updated
 }
 
 fn equal_weight_benchmark_curve(
@@ -2281,6 +2610,119 @@ fn latest_price_on_or_before(history: &BacktestHistory, date: NaiveDate) -> Opti
         .range(..=date)
         .next_back()
         .map(|(_, price)| *price)
+}
+
+fn price_on_date(history: &BacktestHistory, date: NaiveDate) -> Option<f64> {
+    history.prices.get(&date).copied()
+}
+
+fn selected_symbols_from_rebalances(
+    histories: &[BacktestHistory],
+    selections: &[RebalanceSelection],
+) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut symbols = Vec::new();
+    for selection in selections {
+        for index in &selection.selected_indices {
+            let Some(history) = histories.get(*index) else {
+                continue;
+            };
+            if seen.insert(history.code.clone()) {
+                symbols.push(history.code.clone());
+            }
+        }
+    }
+    symbols
+}
+
+fn evaluate_walk_forward_folds(
+    histories: &[BacktestHistory],
+    selections: &[RebalanceSelection],
+) -> Vec<WalkForwardFold> {
+    let final_date = backtest_calendar(histories).last().copied();
+    selections
+        .iter()
+        .enumerate()
+        .map(|(position, selection)| {
+            let evaluation_end = selections
+                .get(position + 1)
+                .map(|next| next.date)
+                .or(final_date)
+                .filter(|end| *end > selection.date);
+            let selected_symbols = selection
+                .selected_indices
+                .iter()
+                .filter_map(|index| histories.get(*index).map(|history| history.code.clone()))
+                .collect::<Vec<_>>();
+            let selected_returns = evaluation_end
+                .map(|end| {
+                    selection
+                        .selected_indices
+                        .iter()
+                        .map(|index| {
+                            histories
+                                .get(*index)
+                                .and_then(|history| forward_return(history, selection.date, end))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let benchmark_returns = evaluation_end
+                .map(|end| {
+                    selection
+                        .eligible_indices
+                        .iter()
+                        .filter_map(|index| {
+                            forward_return(histories.get(*index)?, selection.date, end)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let benchmark_forward_return = mean(&benchmark_returns);
+            let realized_selected_returns = selected_returns
+                .iter()
+                .filter_map(|value| *value)
+                .collect::<Vec<_>>();
+            let average_forward_return = mean(&realized_selected_returns);
+            let (evaluated_selection_count, hit_count, precision_at_n) =
+                if let Some(benchmark) = benchmark_forward_return {
+                    let hit_count = selected_returns
+                        .iter()
+                        .filter_map(|value| *value)
+                        .filter(|value| *value > benchmark)
+                        .count();
+                    let evaluated = selected_returns.len();
+                    let precision = (evaluated > 0).then_some(hit_count as f64 / evaluated as f64);
+                    (evaluated, hit_count, precision)
+                } else {
+                    (0, 0, None)
+                };
+            WalkForwardFold {
+                selection_date: selection.date.format("%Y-%m-%d").to_string(),
+                evaluation_end_date: evaluation_end.map(|date| date.format("%Y-%m-%d").to_string()),
+                selected_symbols,
+                eligible_symbol_count: selection.eligible_indices.len(),
+                evaluated_selection_count,
+                hit_count,
+                precision_at_n,
+                average_forward_return,
+                benchmark_forward_return,
+                average_excess_return: average_forward_return
+                    .zip(benchmark_forward_return)
+                    .map(|(selected, benchmark)| selected - benchmark),
+            }
+        })
+        .collect()
+}
+
+fn forward_return(history: &BacktestHistory, start: NaiveDate, end: NaiveDate) -> Option<f64> {
+    let start_price = price_on_date(history, start)?;
+    let end_price = price_on_date(history, end)?;
+    (start_price > 0.0 && end_price > 0.0).then_some(end_price / start_price - 1.0)
+}
+
+fn mean(values: &[f64]) -> Option<f64> {
+    (!values.is_empty()).then_some(values.iter().sum::<f64>() / values.len() as f64)
 }
 
 fn should_rebalance(
@@ -2336,14 +2778,14 @@ fn normalize_backtest_benchmark(value: &str) -> String {
 
 fn normalize_backtest_strategy_mode(value: &str) -> String {
     match value.trim().to_ascii_lowercase().as_str() {
-        "walk_forward" | "point_in_time" | "point-in-time" => "walk_forward".to_string(),
-        _ => "candidate_snapshot".to_string(),
+        "candidate_snapshot" | "snapshot" => "candidate_snapshot".to_string(),
+        _ => "walk_forward".to_string(),
     }
 }
 
 fn backtest_strategy_mode_note(value: &str) -> &'static str {
     match value {
-        "walk_forward" => "策略模式：walk_forward，按调仓日执行组合再平衡；后续可接入逐日基本面快照。",
+        "walk_forward" => "策略模式：walk_forward，仅使用 available_date 不晚于调仓日的因子快照和历史上市/ST/可交易状态；调仓只使用当日实际报价。",
         _ => "策略模式：candidate_snapshot，展示当前候选池的历史组合表现，不等同于严格可交易的逐日选股策略。",
     }
 }
@@ -5353,8 +5795,29 @@ fn as_percent(value: f64) -> Option<f64> {
     })
 }
 
+fn finite_positive(value: Option<f64>) -> Option<f64> {
+    value.filter(|value| value.is_finite() && *value > 0.0)
+}
+
+fn meets_min_percent(value: Option<f64>, minimum: f64, inclusive: bool) -> bool {
+    let Some(value) = value.and_then(as_percent) else {
+        return false;
+    };
+    let Some(minimum) = as_percent(minimum) else {
+        return false;
+    };
+    if inclusive {
+        value >= minimum
+    } else {
+        value > minimum
+    }
+}
+
 fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Option<Vec<String>> {
     let mut reasons = Vec::new();
+    if !stock.price.is_finite() || stock.price <= 0.0 {
+        return None;
+    }
     if !criteria.include_st && stock.is_st {
         return None;
     }
@@ -5373,31 +5836,42 @@ fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Option<Vec<Str
     }
 
     if let Some(min_roe) = criteria.min_roe {
-        if stock.roe.map(|roe| roe < min_roe).unwrap_or(true) {
+        if !meets_min_percent(stock.roe, min_roe, true) {
             return None;
         }
         reasons.push("roe_ok".to_string());
     }
 
     if let Some(max_pe) = criteria.max_pe {
-        if stock.pe.map(|pe| pe > max_pe).unwrap_or(true) {
+        if !max_pe.is_finite()
+            || max_pe <= 0.0
+            || finite_positive(stock.pe)
+                .map(|pe| pe > max_pe)
+                .unwrap_or(true)
+        {
             return None;
         }
         reasons.push("pe_ok".to_string());
     }
 
     if let Some(max_pb) = criteria.max_pb {
-        if stock.pb.map(|pb| pb > max_pb).unwrap_or(true) {
+        if !max_pb.is_finite()
+            || max_pb <= 0.0
+            || finite_positive(stock.pb)
+                .map(|pb| pb > max_pb)
+                .unwrap_or(true)
+        {
             return None;
         }
         reasons.push("pb_ok".to_string());
     }
 
     if let Some(min_market_cap) = criteria.min_market_cap_billion {
-        if stock
-            .market_cap_billion
-            .map(|market_cap| market_cap < min_market_cap)
-            .unwrap_or(true)
+        if !min_market_cap.is_finite()
+            || min_market_cap < 0.0
+            || finite_positive(stock.market_cap_billion)
+                .map(|market_cap| market_cap < min_market_cap)
+                .unwrap_or(true)
         {
             return None;
         }
@@ -5405,10 +5879,12 @@ fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Option<Vec<Str
     }
 
     if let Some(min_profit) = criteria.min_deducted_net_profit_billion {
-        if stock
-            .deducted_net_profit_billion
-            .map(|profit| profit <= min_profit)
-            .unwrap_or(true)
+        if !min_profit.is_finite()
+            || stock
+                .deducted_net_profit_billion
+                .filter(|profit| profit.is_finite())
+                .map(|profit| profit <= min_profit)
+                .unwrap_or(true)
         {
             return None;
         }
@@ -5416,24 +5892,14 @@ fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Option<Vec<Str
     }
 
     if let Some(min_margin) = criteria.min_deducted_net_profit_margin {
-        if stock
-            .deducted_net_profit_margin
-            .and_then(as_percent)
-            .map(|margin| margin <= min_margin)
-            .unwrap_or(true)
-        {
+        if !meets_min_percent(stock.deducted_net_profit_margin, min_margin, false) {
             return None;
         }
         reasons.push("deducted_net_profit_margin_ok".to_string());
     }
 
     if let Some(min_growth) = criteria.min_deducted_net_profit_growth_rate {
-        if stock
-            .deducted_net_profit_growth_rate
-            .and_then(as_percent)
-            .map(|growth| growth <= min_growth)
-            .unwrap_or(true)
-        {
+        if !meets_min_percent(stock.deducted_net_profit_growth_rate, min_growth, false) {
             return None;
         }
         reasons.push("deducted_net_profit_growth_rate_ok".to_string());
@@ -5868,11 +6334,14 @@ const COLD_SECTOR_KEYWORDS: [&str; 9] = [
 fn score_stock(stock: &StockItem, reasons: &[String], score_profile: &str) -> ScreenedStock {
     let theme = theme_match_for_stock(stock);
     let cold = is_cold_sector(&stock.industry);
+    let quality_profile = normalized_score_profile(score_profile) == "quality";
+    let cold_penalty = cold && !quality_profile;
     let theme_score = theme.as_ref().map(|(_, _, score)| *score).unwrap_or(0.35);
     let fundamental = fundamental_score(stock);
     let valuation = valuation_score(stock);
     let size = size_score(stock);
-    let risk = risk_score(stock, cold);
+    let risk = risk_score(stock, cold_penalty);
+    let data_quality = data_quality_score(stock);
     let market_heat = market_heat_score(stock);
     let overheat_penalty = overheat_penalty_score(stock);
 
@@ -5882,6 +6351,7 @@ fn score_stock(stock: &StockItem, reasons: &[String], score_profile: &str) -> Sc
         ("valuation".to_string(), valuation),
         ("size".to_string(), size),
         ("risk".to_string(), risk),
+        ("data_quality".to_string(), data_quality),
         ("market_heat".to_string(), market_heat),
         ("overheat_penalty".to_string(), overheat_penalty),
     ]);
@@ -5898,6 +6368,7 @@ fn score_stock(stock: &StockItem, reasons: &[String], score_profile: &str) -> Sc
         ("valuation".to_string(), valuation),
         ("size".to_string(), size),
         ("risk".to_string(), risk),
+        ("data_quality".to_string(), data_quality),
         ("quality_score".to_string(), quality_score),
         ("trend_score".to_string(), trend_score),
         ("balanced_score".to_string(), balanced_score),
@@ -5907,13 +6378,22 @@ fn score_stock(stock: &StockItem, reasons: &[String], score_profile: &str) -> Sc
         public_factors.insert("overheat_penalty".to_string(), overheat_penalty);
     }
 
+    let profile_theme = if quality_profile {
+        None
+    } else {
+        theme.as_ref()
+    };
     let mut all_reasons = reasons.to_vec();
-    all_reasons.extend(factor_reasons(theme.as_ref(), cold, &scoring_factors));
-    let reason_tags = build_reason_tags(theme.as_ref(), &scoring_factors);
-    let risk_tags = build_risk_tags(stock, cold, &scoring_factors);
+    all_reasons.extend(factor_reasons(
+        profile_theme,
+        cold_penalty,
+        &scoring_factors,
+    ));
+    let reason_tags = build_reason_tags(profile_theme, &scoring_factors);
+    let risk_tags = build_risk_tags(stock, cold_penalty, &scoring_factors);
     let suitable_periods = suitable_periods_for_scores(quality_score, trend_score, risk);
     let score_breakdown = profile_score_breakdown(score_profile, &scoring_factors);
-    let score_explanation = explain_score(stock, theme.as_ref(), cold, &scoring_factors);
+    let score_explanation = explain_score(stock, profile_theme, cold_penalty, &scoring_factors);
     let rounded_scores = public_factors
         .into_iter()
         .map(|(key, value)| (key, round6(value)))
@@ -5974,30 +6454,34 @@ fn valuation_score(stock: &StockItem) -> f64 {
 }
 
 fn pe_score(value: Option<f64>) -> f64 {
+    let Some(value) = value.filter(|value| value.is_finite()) else {
+        return 0.52;
+    };
     match value {
-        None => 0.52,
-        Some(value) if value <= 0.0 => 0.25,
-        Some(value) if value <= 15.0 => 1.0,
-        Some(value) if value <= 30.0 => 0.72,
-        Some(value) if value <= 60.0 => 0.45,
-        Some(_) => 0.28,
+        value if value <= 0.0 => 0.25,
+        value if value <= 15.0 => 1.0,
+        value if value <= 30.0 => 0.72,
+        value if value <= 60.0 => 0.45,
+        _ => 0.28,
     }
 }
 
 fn pb_score(value: Option<f64>) -> f64 {
+    let Some(value) = value.filter(|value| value.is_finite()) else {
+        return 0.52;
+    };
     match value {
-        None => 0.52,
-        Some(value) if value <= 0.0 => 0.25,
-        Some(value) if value <= 1.5 => 1.0,
-        Some(value) if value <= 3.0 => 0.74,
-        Some(value) if value <= 6.0 => 0.5,
-        Some(value) if value <= 10.0 => 0.34,
-        Some(_) => 0.22,
+        value if value <= 0.0 => 0.25,
+        value if value <= 1.5 => 1.0,
+        value if value <= 3.0 => 0.74,
+        value if value <= 6.0 => 0.5,
+        value if value <= 10.0 => 0.34,
+        _ => 0.22,
     }
 }
 
 fn size_score(stock: &StockItem) -> f64 {
-    match stock.market_cap_billion {
+    match finite_positive(stock.market_cap_billion) {
         None => 0.55,
         Some(value) if value < 20.0 => 0.36,
         Some(value) if value < 100.0 => 0.68,
@@ -6005,6 +6489,45 @@ fn size_score(stock: &StockItem) -> f64 {
         Some(value) if value < 2000.0 => 0.78,
         Some(_) => 0.62,
     }
+}
+
+fn data_quality_score(stock: &StockItem) -> f64 {
+    let mut score: f64 = 0.0;
+    if stock.roe.and_then(as_percent).is_some() {
+        score += 0.30;
+    }
+    if finite_positive(stock.pe).is_some() {
+        score += 0.20;
+    }
+    if finite_positive(stock.pb).is_some() {
+        score += 0.15;
+    }
+    if finite_positive(stock.market_cap_billion).is_some() {
+        score += 0.10;
+    }
+    if stock
+        .deducted_net_profit_billion
+        .filter(|value| value.is_finite())
+        .is_some()
+    {
+        score += 0.10;
+    }
+    if stock
+        .deducted_net_profit_growth_rate
+        .and_then(as_percent)
+        .is_some()
+    {
+        score += 0.10;
+    }
+    if stock
+        .dividend_yield
+        .and_then(as_percent)
+        .filter(|value| *value >= 0.0)
+        .is_some()
+    {
+        score += 0.05;
+    }
+    round6(score.clamp(0.0, 1.0))
 }
 
 fn risk_score(stock: &StockItem, cold: bool) -> f64 {
@@ -6039,6 +6562,7 @@ fn profile_score(factor_scores: &BTreeMap<String, f64>, score_profile: &str) -> 
     let valuation = factor_scores.get("valuation").copied().unwrap_or(0.5);
     let size = factor_scores.get("size").copied().unwrap_or(0.55);
     let risk = factor_scores.get("risk").copied().unwrap_or(1.0);
+    let data_quality = factor_scores.get("data_quality").copied().unwrap_or(0.0);
     let market_heat = factor_scores.get("market_heat").copied().unwrap_or(0.5);
     let overheat_penalty = factor_scores
         .get("overheat_penalty")
@@ -6065,7 +6589,7 @@ fn profile_score(factor_scores: &BTreeMap<String, f64>, score_profile: &str) -> 
                 - overheat_penalty * 0.16
         }
         "quality" => {
-            theme * 0.12 + fundamental * 0.32 + valuation * 0.26 + size * 0.14 + risk * 0.16
+            fundamental * 0.40 + valuation * 0.28 + size * 0.10 + risk * 0.10 + data_quality * 0.12
         }
         _ => {
             theme * 0.16
@@ -6109,7 +6633,7 @@ fn market_heat_score(stock: &StockItem) -> f64 {
 fn overheat_penalty_score(stock: &StockItem) -> f64 {
     let change_pct = stock.change_pct.and_then(as_percent).unwrap_or(0.0);
     let turnover = stock.turnover_rate.and_then(as_percent).unwrap_or(0.0);
-    let volume_ratio = stock.volume_ratio.unwrap_or(0.0);
+    let volume_ratio = finite_positive(stock.volume_ratio).unwrap_or(0.0);
     let change_penalty = if change_pct > 7.0 {
         ((change_pct - 7.0) / 5.0).clamp(0.0, 1.0)
     } else {
@@ -6134,11 +6658,11 @@ fn profile_score_breakdown(
 ) -> Vec<ScoreContribution> {
     let weights: &[(&str, &str, f64)] = match normalized_score_profile(score_profile) {
         "quality" => &[
-            ("theme", "主题匹配", 0.12),
-            ("fundamental", "质量盈利", 0.32),
-            ("valuation", "估值安全", 0.26),
-            ("size", "规模流动性", 0.14),
-            ("risk", "风险控制", 0.16),
+            ("fundamental", "质量盈利", 0.40),
+            ("valuation", "估值安全", 0.28),
+            ("size", "规模流动性", 0.10),
+            ("risk", "基础风险", 0.10),
+            ("data_quality", "数据完整度", 0.12),
         ],
         "trend" => &[
             ("theme", "主题匹配", 0.16),
@@ -6223,6 +6747,9 @@ fn build_reason_tags(
     if factor_scores.get("risk").copied().unwrap_or(0.0) >= 0.72 {
         tags.push("风险约束通过".to_string());
     }
+    if factor_scores.get("data_quality").copied().unwrap_or(0.0) >= 0.85 {
+        tags.push("核心数据完整".to_string());
+    }
     tags
 }
 
@@ -6243,6 +6770,9 @@ fn build_risk_tags(
     }
     if factor_scores.get("fundamental").copied().unwrap_or(0.0) <= 0.38 {
         tags.push("质量偏弱".to_string());
+    }
+    if factor_scores.get("data_quality").copied().unwrap_or(0.0) < 0.70 {
+        tags.push("核心财务数据缺失较多".to_string());
     }
     if factor_scores
         .get("overheat_penalty")
@@ -6288,6 +6818,9 @@ fn factor_reasons(
     if factor_scores.get("fundamental").copied().unwrap_or(0.0) >= 0.72 {
         reasons.push("\u{57fa}\u{672c}\u{9762}\u{8f83}\u{5f3a}".to_string());
     }
+    if factor_scores.get("data_quality").copied().unwrap_or(0.0) >= 0.85 {
+        reasons.push("核心财务数据完整".to_string());
+    }
     if factor_scores.get("market_heat").copied().unwrap_or(0.0) >= 0.72 {
         reasons.push("\u{8f6e}\u{52a8}\u{70ed}\u{5ea6}\u{8f83}\u{9ad8}".to_string());
     }
@@ -6318,6 +6851,10 @@ fn explain_score(
         "{}{}",
         "\u{57fa}\u{672c}\u{9762}",
         tier_word(factor_scores.get("fundamental").copied().unwrap_or(0.0))
+    ));
+    parts.push(format!(
+        "数据完整度{}",
+        tier_word(factor_scores.get("data_quality").copied().unwrap_or(0.0))
     ));
     if stock.market_cap_billion.is_none() {
         parts.push(
@@ -6430,6 +6967,7 @@ fn should_promote_hot_sectors(criteria: &ScreenCriteria) -> bool {
     criteria.industry.as_deref().unwrap_or("").trim().is_empty()
         && criteria.sort_by.trim().eq_ignore_ascii_case("score")
         && !criteria.sort_dir.trim().eq_ignore_ascii_case("asc")
+        && normalized_score_profile(&criteria.score_profile) != "quality"
 }
 
 fn promote_hot_sector_items(
@@ -6560,9 +7098,22 @@ fn industry_percentiles(screened: &[ScreenedStock], factor_key: &str) -> HashMap
                 .total_cmp(&right.1)
                 .then_with(|| left.0.cmp(&right.0))
         });
-        let denom = (values.len().saturating_sub(1)).max(1) as f64;
-        for (rank, (code, _)) in values.iter().enumerate() {
-            result.insert(code.clone(), rank as f64 / denom);
+        let count = values.len();
+        let denom = count.saturating_sub(1).max(1) as f64;
+        let reliability = (count.saturating_sub(1) as f64 / 7.0).clamp(0.0, 1.0);
+        let mut start = 0;
+        while start < count {
+            let mut end = start + 1;
+            while end < count && values[end].1.total_cmp(&values[start].1).is_eq() {
+                end += 1;
+            }
+            let mid_rank = (start + end - 1) as f64 / 2.0;
+            let raw_percentile = if count == 1 { 0.5 } else { mid_rank / denom };
+            let percentile = 0.5 + (raw_percentile - 0.5) * reliability;
+            for (code, _) in &values[start..end] {
+                result.insert(code.clone(), percentile.clamp(0.0, 1.0));
+            }
+            start = end;
         }
     }
     result
@@ -6625,13 +7176,24 @@ fn sort_screened(screened: &mut [ScreenedStock], criteria: &ScreenCriteria) {
     });
 }
 
+fn should_diversify_by_industry(criteria: &ScreenCriteria) -> bool {
+    criteria.industry.as_deref().unwrap_or("").trim().is_empty()
+        && criteria.sort_by.trim().eq_ignore_ascii_case("score")
+        && !criteria.sort_dir.trim().eq_ignore_ascii_case("asc")
+        && normalized_score_profile(&criteria.score_profile) != "quality"
+}
+
 fn primary_screen_items(
     screened: &[ScreenedStock],
     criteria: &ScreenCriteria,
     limit: usize,
 ) -> (Vec<ScreenedStock>, bool) {
     if !should_promote_hot_sectors(criteria) || limit == 0 {
-        let items = diversify_by_industry(screened, limit);
+        let items = if should_diversify_by_industry(criteria) {
+            diversify_by_industry(screened, limit)
+        } else {
+            screened.iter().take(limit).cloned().collect()
+        };
         let changed = items
             .iter()
             .map(|item| item.stock.code.as_str())
@@ -6772,12 +7334,16 @@ fn append_selected(
 }
 
 fn sort_value(item: &ScreenedStock, sort_by: &str) -> Option<f64> {
-    match sort_by {
+    let value = match sort_by {
         "price" => Some(item.stock.price),
         "pe" => item.stock.pe,
         "pb" => item.stock.pb,
+        "roe" => item.stock.roe.and_then(as_percent),
+        "market_cap" | "market_cap_billion" => item.stock.market_cap_billion,
+        "change_pct" | "pct" => item.stock.change_pct.and_then(as_percent),
         _ => Some(item.score),
-    }
+    };
+    value.filter(|value| value.is_finite())
 }
 
 fn screen_candidate_pool(

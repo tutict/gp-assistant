@@ -279,7 +279,24 @@ export interface BacktestMetrics {
   total_transaction_cost?: number;
   total_turnover?: number;
   rebalance_count?: number;
+  oos_fold_count?: number;
+  evaluated_selection_count?: number;
+  selection_hit_count?: number;
+  precision_at_n?: number | null;
   strategy_mode?: string;
+}
+
+export interface WalkForwardFold {
+  selection_date: string;
+  evaluation_end_date?: string | null;
+  selected_symbols: string[];
+  eligible_symbol_count: number;
+  evaluated_selection_count: number;
+  hit_count: number;
+  precision_at_n?: number | null;
+  average_forward_return?: number | null;
+  benchmark_forward_return?: number | null;
+  average_excess_return?: number | null;
 }
 
 export interface EquityPoint {
@@ -294,6 +311,7 @@ export interface BacktestResult {
   symbols: string[];
   benchmark_symbols?: string[];
   rebalance_dates?: string[];
+  walk_forward_folds?: WalkForwardFold[];
   strategy_mode?: string;
   notes?: string[];
 }
