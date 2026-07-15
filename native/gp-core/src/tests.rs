@@ -688,6 +688,18 @@ fn observe_without_cached_capital_evidence_uses_local_proxy_items() {
     assert!(capital_evidence.items.iter().any(|item| {
         item.category == "fund_flow" && item.title == "本地量价资金代理" && item.score.is_some()
     }));
+    let proxy = capital_evidence
+        .items
+        .iter()
+        .find(|item| item.category == "fund_flow" && item.title == "本地量价资金代理")
+        .expect("local fund-flow proxy should be present");
+    assert!(proxy.metrics.contains_key("隐性资金代理分"));
+    assert!(proxy.metrics.contains_key("推断方向"));
+    assert!(proxy
+        .note
+        .as_deref()
+        .unwrap_or_default()
+        .contains("不是外部主力净流入数据"));
     assert!(capital_evidence
         .items
         .iter()

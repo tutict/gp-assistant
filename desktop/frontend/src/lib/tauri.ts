@@ -225,6 +225,9 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/upstream-rag/mobile/import": async ({ invoke, payload }) => invoke("core_upstream_rag_import", { payload }),
   "/api/upstream-rag/mobile/detail": async ({ invoke, payload }) => invoke("core_upstream_rag_detail", { payload }),
   "/api/upstream-rag/mobile/rollback": async ({ invoke, payload }) => invoke("core_upstream_rag_rollback", { payload }),
+  "/api/llm/models": async ({ invoke, payload }) => invoke("api_llm_models", {
+    payload: withAndroidNetworkOptions(asRecord(payload)),
+  }),
   "/api/agent": async ({ invoke, payload }) => invokeAgent(invoke, payload),
   "/api/agent/stream": async ({ invoke, payload }) => invokeAgent(invoke, payload),
 };

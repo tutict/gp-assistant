@@ -1,6 +1,70 @@
 use super::*;
 
 #[test]
+fn llm_models_endpoint_appends_models_to_provider_base_path() {
+    assert_eq!(
+        llm_models_endpoint("https://api.openai.com/v1/")
+            .unwrap()
+            .as_str(),
+        "https://api.openai.com/v1/models"
+    );
+    assert_eq!(
+        llm_models_endpoint("https://gateway.example/v1/chat/completions?trace=1")
+            .unwrap()
+            .as_str(),
+        "https://gateway.example/v1/models"
+    );
+    assert_eq!(
+        llm_models_endpoint("http://127.0.0.1:11434/v1/models")
+            .unwrap()
+            .as_str(),
+        "http://127.0.0.1:11434/v1/models"
+    );
+    assert!(llm_models_endpoint("file:///tmp/models").is_err());
+}
+
+#[test]
+fn parse_llm_model_options_supports_openai_and_ollama_shapes() {
+    let openai = parse_llm_model_options(&json!({
+        "data": [
+            {"id": "gpt-5.4", "owned_by": "openai"},
+            {"id": "gpt-5.4", "owned_by": "duplicate"},
+            {"id": "gpt-5.4-mini", "display_name": "GPT 5.4 Mini"}
+        ]
+    }));
+    assert_eq!(openai.len(), 2);
+    assert_eq!(openai[0]["id"].as_str(), Some("gpt-5.4"));
+    assert_eq!(openai[1]["name"].as_str(), Some("GPT 5.4 Mini"));
+
+    let ollama = parse_llm_model_options(&json!({
+        "models": [
+            {"name": "qwen2.5:7b", "model": "qwen2.5:7b"},
+            "deepseek-r1:8b"
+        ]
+    }));
+    assert_eq!(ollama.len(), 2);
+    assert_eq!(ollama[0]["id"].as_str(), Some("qwen2.5:7b"));
+    assert_eq!(ollama[1]["id"].as_str(), Some("deepseek-r1:8b"));
+}
+
+#[test]
+fn llm_models_http_error_explains_auth_and_version_failures() {
+    assert!(llm_models_http_error(401, b"{}", "sk-test").contains("API 密钥"));
+    assert!(llm_models_http_error(404, b"{}", "sk-test").contains("/v1"));
+    assert!(
+        llm_models_http_error(429, br#"{"error":{"message":"rate limited"}}"#, "sk-test")
+            .contains("rate limited")
+    );
+    let redacted = llm_models_http_error(
+        500,
+        br#"{"error":{"message":"upstream echoed sk-secret-token"}}"#,
+        "sk-secret-token",
+    );
+    assert!(!redacted.contains("sk-secret-token"));
+    assert!(redacted.contains("[已隐藏密钥]"));
+}
+
+#[test]
 fn append_preserved_seed_stocks_keeps_seed_rows_and_fills_missing_industry() {
     let seed = json!({
         "stocks": [
@@ -471,6 +535,17 @@ fn eastmoney_lhb_parser_extracts_matching_stock() {
         .and_then(Value::as_str)
         .unwrap()
         .contains("亿"));
+    assert_eq!(
+        metrics.get("机构买卖比").and_then(Value::as_str),
+        Some("0.538")
+    );
+}
+
+#[test]
+fn institution_buy_sell_ratio_handles_zero_sell_amount() {
+    assert_eq!(institution_buy_sell_ratio(100.0, 0.0), "∞");
+    assert_eq!(institution_buy_sell_ratio(0.0, 0.0), "-");
+    assert_eq!(institution_buy_sell_ratio(150.0, 100.0), "1.500");
 }
 
 #[test]

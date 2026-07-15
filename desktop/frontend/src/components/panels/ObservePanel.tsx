@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import type { CapitalEvidenceResult, CapitalEvidenceSection, FinancialIndicatorItem, ObserveResult, StockItem, TrendIndicatorPoint, TrendIndicatorSignal, WatchlistItem } from "../../types";
+import type { CapitalEvidenceItem, CapitalEvidenceResult, CapitalEvidenceSection, FinancialIndicatorItem, ObserveResult, StockItem, TrendIndicatorPoint, TrendIndicatorSignal, WatchlistItem } from "../../types";
 import { computeKdj, toDailyBars } from "../../lib/kline";
+import { calculateObserveQuant } from "../../lib/observeQuant";
+import type { ObserveQuantConclusion } from "../../lib/observeQuant";
 import { getJson } from "../../lib/tauri";
 import { CollapsibleNotes } from "../CollapsibleNotes";
 import { RawJson } from "../RawJson";
@@ -174,8 +176,13 @@ function ObserveTextMetrics({
   const financialLookup = buildFinancialLookup(financialItems);
   const capitalSummary = summarizeCapitalEvidence(capital);
   const analysisItems = buildMetricAnalysis({ stock, signal, latest, kdj, changePct, capital, capitalSummary, financialLookup });
+  const specialQuant = calculateObserveQuant(series);
 
   const sections: Array<{ title: string; items: Array<[string, string]> }> = [
+    {
+      title: "特殊量化明细",
+      items: specialQuant.details,
+    },
     {
       title: "行情与估值",
       items: compactMetricItems([
@@ -201,25 +208,21 @@ function ObserveTextMetrics({
         ["多空线", signal?.swl_above_sws ? "SWL 高于 SWS" : signal?.swl_above_sws === false ? "SWL 低于 SWS" : "--"],
         ["支撑位", formatPrice(signal?.support)],
         ["压力位", formatPrice(signal?.resistance)],
-        ["突破值", formatNumber(valueFromRecord(signal, "breakout"))],
-        ["反转值", formatNumber(valueFromRecord(signal, "reversal"))],
         ["风险标记", formatList(signal?.risk_flags, riskFlagLabel)],
       ]),
     },
     {
       title: "KDJ 与交易信号",
       items: compactMetricItems([
-        ["K", formatNumber(kdj?.k)],
-        ["D", formatNumber(kdj?.d)],
-        ["J", formatNumber(kdj?.j)],
-        ["金叉", yesNo(signal?.kdj_golden_cross)],
-        ["死叉", yesNo(signal?.kdj_dead_cross)],
-        ["超买", yesNo(signal?.kdj_overbought)],
-        ["超卖", yesNo(signal?.kdj_oversold ?? signal?.oversold)],
-        ["红持", yesNo(signal?.red_hold ?? latest?.red_hold)],
-        ["青观", yesNo(signal?.cyan_watch ?? latest?.cyan_watch)],
-        ["短买", yesNo(signal?.short_buy ?? latest?.short_buy)],
-        ["白离", yesNo(signal?.white_exit ?? latest?.white_exit)],
+        ["K / D / J", kdj ? `${formatNumber(kdj.k)} / ${formatNumber(kdj.d)} / ${formatNumber(kdj.j)}` : "--"],
+        ["交叉信号", signal?.kdj_golden_cross ? "金叉" : signal?.kdj_dead_cross ? "死叉" : signal ? "无明显交叉" : "--"],
+        ["极端区间", signal?.kdj_overbought ? "超买" : signal?.kdj_oversold || signal?.oversold ? "超卖" : signal ? "未处于极端区间" : "--"],
+        ["操作提示", [
+          (signal?.red_hold ?? latest?.red_hold) ? "红持" : "",
+          (signal?.cyan_watch ?? latest?.cyan_watch) ? "青观" : "",
+          (signal?.short_buy ?? latest?.short_buy) ? "短买" : "",
+          (signal?.white_exit ?? latest?.white_exit) ? "白离" : "",
+        ].filter(Boolean).join("、") || "--"],
       ]),
     },
     {
@@ -247,7 +250,7 @@ function ObserveTextMetrics({
         ["触发原因", formatList(signal?.reasons, reasonLabel)],
       ]),
     },    {
-      title: "最新指标",
+      title: "财务质量",
       items: compactMetricItems([
         ["市盈率(TTM)", metricOrMissing(formatNumber(stock.pe))],
         ["市净率(最新)", metricOrMissing(formatNumber(stock.pb))],
@@ -280,38 +283,238 @@ function ObserveTextMetrics({
         ["技术资金", capitalSummary.technical === "--" ? "暂无" : capitalSummary.technical],
       ]),
     },
-  ].map((section) => ({ ...section, items: section.items.filter(([, value]) => value && value !== "--" && value !== "—") }));
+  ].map((section) => ({ ...section, items: section.items.filter(([, value]) => value && value !== "--" && value !== "—" && value !== "暂无") }));
+
+  const decisionItems = selectObservationDecisions(analysisItems);
+  const verdict = buildObservationVerdict(signal);
+  const nextSignal = buildObservationNextSignal(signal);
+  const changeTone: MetricAnalysisTone = numeric(changePct) > 0 ? "positive" : numeric(changePct) < 0 ? "negative" : "neutral";
+  const keyMetrics: Array<{ label: string; value: string; tone?: MetricAnalysisTone }> = [
+    { label: "最新价", value: metricOrMissing(formatPrice(close)) },
+    { label: "涨跌幅", value: metricOrMissing(formatSignedPercent(changePct)), tone: changeTone },
+    { label: "市盈率", value: metricOrMissing(formatNumber(stock.pe)) },
+    { label: "ROE", value: metricOrMissing(formatRatioPercent(stock.roe)) },
+    { label: "支撑位", value: metricOrMissing(formatPrice(signal?.support)) },
+    { label: "压力位", value: metricOrMissing(formatPrice(signal?.resistance)) },
+  ];
+  const duplicateLatestLabels = new Set(["市盈率(TTM)", "市净率(最新)", "净资产收益率", "股息率"]);
+  const detailSections = sections.map((section) => section.title === "财务质量"
+    ? { ...section, items: section.items.filter(([label]) => !duplicateLatestLabels.has(label)) }
+    : section);
 
   return (
-    <section className="observe-text-metrics" aria-label="文字指标面板">
-      <header>
-        <h3>文字指标</h3>
-        <p>汇总行情、趋势、KDJ、热度、评分、财务和资金证据。</p>
+    <section className="observe-text-metrics observe-decision-summary" aria-label="观察判断">
+      <header className="observe-decision-heading">
+        <div>
+          <span>观察摘要</span>
+          <h3>先看结论，再看证据</h3>
+        </div>
+        <time>{String(stock.quote_time || signal?.date || latest?.date || "数据时间未知")}</time>
       </header>
-      <div className="observe-text-metric-sections">
-        {sections.filter((section) => section.items.length).map((section) => (
-          <article key={section.title} className="observe-text-metric-section">
-            <h4>{section.title}</h4>
-            <div className="observe-text-metric-grid">
-              {section.items.map(([label, value]) => (
-                <div key={`${section.title}-${label}`} className={`observe-text-metric-item ${metricItemSizeClass(label, value)}`}>
-                  <span>{label}</span>
-                  <strong>{value}</strong>
-                </div>
-              ))}
-            </div>
+
+      <section className={`observe-verdict ${verdict.tone}`} aria-label="当前观察结论">
+        <span>当前判断</span>
+        <h4>{verdict.title}</h4>
+        <p>{verdict.summary}</p>
+      </section>
+
+      <div className="observe-decision-grid" aria-label="核心判断">
+        {decisionItems.map((item) => (
+          <article key={item.title} className={`observe-decision-item ${item.tone}`}>
+            <span>{observationDecisionLabel(item.title)}</span>
+            <p>{firstSentence(item.text)}</p>
           </article>
         ))}
       </div>
-      {analysisItems.length ? (
-        <section className="observe-metric-analysis compact" aria-label="指标总结分析">
-          <h4>指标总结</h4>
-          <p className="observe-metric-one-line">{buildMetricOneLineSummary(analysisItems)}</p>
-          <p className="observe-metric-analysis-disclaimer">仅供选股研究，不构成投资建议；请结合公告、财报和自身风险承受能力独立判断。</p>
-        </section>
-      ) : null}
+
+      <ObserveSpecialQuant conclusions={specialQuant.conclusions} />
+
+      <section className="observe-next-signal" aria-label="下一步观察信号">
+        <span>下一步看什么</span>
+        <p>{nextSignal}</p>
+      </section>
+
+      <dl className="observe-key-metrics" aria-label="关键数值">
+        {keyMetrics.map((item) => (
+          <div key={item.label} className={item.tone || "neutral"}>
+            <dt>{item.label}</dt>
+            <dd>{item.value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <CapitalQuantPanel capital={capital} />
+
+      <details className="observe-detail-disclosure">
+        <summary><span>专业指标明细</span><small>需要时展开</small></summary>
+        <div className="observe-text-metric-sections">
+          {detailSections.filter((section) => section.items.length).map((section) => (
+            <article key={section.title} className="observe-text-metric-section">
+              <h4>{section.title}</h4>
+              <div className="observe-text-metric-grid">
+                {section.items.map(([label, value]) => (
+                  <div key={`${section.title}-${label}`} className="observe-text-metric-item">
+                    <span>{label}</span>
+                    <strong>{value}</strong>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      </details>
+
+      <p className="observe-metric-analysis-disclaimer">仅供选股研究，不构成投资建议；请结合公告、财报和自身风险承受能力独立判断。</p>
     </section>
   );
+}
+
+function ObserveSpecialQuant({ conclusions }: { conclusions: ObserveQuantConclusion[] }) {
+  return (
+    <section className="observe-special-quant" aria-label="特殊量化结论">
+      {conclusions.map((item) => (
+        <article key={item.key} className={`observe-special-quant-item ${item.tone}`}>
+          <span>{item.label}</span>
+          <strong>{item.state}</strong>
+          <p>{item.summary}</p>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null }) {
+  const items = capital?.items || [];
+  const institution = items.find((item) => item.category === "institution_lhb");
+  const institutionStatus = items.find((item) => item.category === "institution_lhb_status");
+  const proxy = items.find((item) => item.category === "fund_flow" && (
+    item.title?.includes("量价资金代理")
+    || item.source?.includes("Tauri/Rust")
+    || capitalMetricValue(item, "证据类型") === "本地日线量价代理"
+  ));
+  if (!institution && !institutionStatus && !proxy) return null;
+
+  const institutionTone = capitalSentimentTone(institution?.sentiment);
+  const institutionMetrics: CapitalQuantMetric[] = institution ? [
+    { label: "机构买入", value: capitalMetricValue(institution, "机构买入额"), tone: "positive" },
+    { label: "机构卖出", value: capitalMetricValue(institution, "机构卖出额"), tone: "negative" },
+    { label: "机构净买", value: capitalMetricValue(institution, "机构净买额"), tone: institutionTone },
+    { label: "净买占成交", value: capitalMetricValue(institution, "净买额占成交额比"), tone: institutionTone },
+  ] : [];
+  const institutionMeta = institution ? [
+    capitalMetricPart("机构买卖比", capitalMetricValue(institution, "机构买卖比")),
+    capitalMetricPair(
+      "买方/卖方机构",
+      capitalMetricValue(institution, "买方机构数"),
+      capitalMetricValue(institution, "卖方机构数"),
+    ),
+  ].filter(Boolean).join(" · ") : "";
+
+  const proxyScore = numeric(proxy?.score);
+  const proxyTone: MetricAnalysisTone = Number.isFinite(proxyScore)
+    ? proxyScore >= 60 ? "positive" : proxyScore <= 40 ? "negative" : "neutral"
+    : "neutral";
+  const proxyDirection = capitalMetricValue(proxy, "推断方向") !== "暂无"
+    ? capitalMetricValue(proxy, "推断方向")
+    : proxyDirectionFromScore(proxyScore);
+  const proxyMetrics: CapitalQuantMetric[] = proxy ? [
+    { label: "代理分", value: Number.isFinite(proxyScore) ? `${formatNumber(proxyScore)}/100` : capitalMetricValue(proxy, "隐性资金代理分"), tone: proxyTone },
+    { label: "推断方向", value: proxyDirection, tone: proxyTone },
+    { label: "量价热度", value: capitalMetricValue(proxy, "量价热度") },
+    { label: "吸筹强度", value: capitalMetricValue(proxy, "吸筹强度") },
+  ] : [];
+  const proxyMeta = proxy ? [
+    capitalMetricPart("趋势热度", capitalMetricValue(proxy, "趋势热度")),
+    capitalMetricPart("异动热度", capitalMetricValue(proxy, "异动热度")),
+  ].filter(Boolean).join(" · ") : "";
+
+  return (
+    <section className="observe-capital-quant" aria-label="机构与暗盘资金量化">
+      <header>
+        <div><span>资金量化</span><h4>机构席位与暗盘资金代理</h4></div>
+        <small>公开数据 + 本地估算</small>
+      </header>
+      <div className="capital-quant-lanes">
+        <article className="capital-quant-lane institution">
+          <header>
+            <div><span>龙虎榜公开席位</span><h5>机构买入 / 卖出</h5></div>
+            <small>{institution ? `${institution.date || "窗口内"} · ${institution.confidence || "高"}置信` : "当前无公开记录"}</small>
+          </header>
+          {institution ? (
+            <>
+              <CapitalQuantMetrics metrics={institutionMetrics} />
+              {institutionMeta && <p className="capital-quant-meta">{institutionMeta}</p>}
+              <p className="capital-quant-note">公开龙虎榜机构专用席位，不等于全部机构持仓变化。</p>
+            </>
+          ) : (
+            <>
+              <p className="capital-quant-empty">{institutionStatus?.title || "查询窗口内没有可展示的龙虎榜机构席位记录。"}</p>
+              <p className="capital-quant-note">未上榜不代表机构没有买卖，只表示当前没有公开席位证据。</p>
+            </>
+          )}
+        </article>
+
+        {proxy && (
+          <article className="capital-quant-lane proxy">
+            <header>
+              <div><span>日线量价推断</span><h5>暗盘资金代理</h5></div>
+              <small className="capital-quant-estimate">估算 · {proxy.confidence || "中"}置信</small>
+            </header>
+            <CapitalQuantMetrics metrics={proxyMetrics} />
+            {proxyMeta && <p className="capital-quant-meta">{proxyMeta}</p>}
+            <p className="capital-quant-note">由量价、吸筹、趋势和承接指标合成；不是交易所披露的暗盘成交，也不等同于主力净流入。</p>
+          </article>
+        )}
+      </div>
+    </section>
+  );
+}
+
+type CapitalQuantMetric = {
+  label: string;
+  value: string;
+  tone?: MetricAnalysisTone;
+};
+
+function CapitalQuantMetrics({ metrics }: { metrics: CapitalQuantMetric[] }) {
+  return (
+    <dl className="capital-quant-metrics">
+      {metrics.map((metric) => (
+        <div key={metric.label} className={metric.tone || "neutral"}>
+          <dt>{metric.label}</dt>
+          <dd>{metric.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function capitalMetricValue(item: CapitalEvidenceItem | null | undefined, key: string): string {
+  const value = item?.metrics?.[key];
+  if (value == null) return "暂无";
+  const text = String(value).trim();
+  return !text || text === "-" || text === "--" || text === "—" ? "暂无" : text;
+}
+
+function capitalMetricPart(label: string, value: string): string {
+  return value === "暂无" ? "" : `${label} ${value}`;
+}
+
+function capitalMetricPair(label: string, left: string, right: string): string {
+  return left === "暂无" && right === "暂无" ? "" : `${label} ${left}/${right}`;
+}
+
+function proxyDirectionFromScore(score: number): string {
+  if (!Number.isFinite(score)) return "暂无";
+  if (score >= 60) return "偏流入";
+  if (score <= 40) return "偏流出";
+  return "中性";
+}
+
+function capitalSentimentTone(sentiment?: string): MetricAnalysisTone {
+  if (sentiment === "positive") return "positive";
+  if (sentiment === "negative") return "negative";
+  return "neutral";
 }
 
 type MetricAnalysisTone = "positive" | "warning" | "negative" | "neutral";
@@ -322,15 +525,54 @@ type MetricAnalysisItem = {
   tone: MetricAnalysisTone;
 };
 
-function buildMetricOneLineSummary(items: MetricAnalysisItem[]): string {
-  const priority = { negative: 0, warning: 1, positive: 2, neutral: 3 } as const;
-  const ordered = [...items].sort((a, b) => priority[a.tone] - priority[b.tone]);
-  const main = ordered.slice(0, 2).map((item) => `${item.title}：${trimSentence(item.text)}`).join("；");
-  return main ? `${main}。` : "当前指标证据不足，建议补充行情、财务和资金数据后再判断。";
+function selectObservationDecisions(items: MetricAnalysisItem[]): MetricAnalysisItem[] {
+  const preferred = ["趋势位置", "行情估值", "财务资金"]
+    .map((title) => items.find((item) => item.title === title))
+    .filter((item): item is MetricAnalysisItem => Boolean(item));
+  return preferred.length ? preferred : items.slice(0, 3);
 }
 
-function trimSentence(text: string): string {
-  return String(text || "").replace(/[。；;\s]+$/g, "");
+function firstSentence(text: string): string {
+  const sentence = String(text || "").split("。").find((item) => item.trim());
+  return sentence ? `${sentence.trim()}。` : "当前证据不足。";
+}
+
+function observationDecisionLabel(title: string): string {
+  const labels: Record<string, string> = {
+    趋势位置: "趋势位置",
+    行情估值: "价格表现",
+    财务资金: "财务概览",
+  };
+  return labels[title] || title;
+}
+
+function buildObservationVerdict(signal?: TrendIndicatorSignal | null): { title: string; summary: string; tone: MetricAnalysisTone } {
+  const tone = signalStatusTone(signal?.status);
+  const risks = Array.isArray(signal?.risk_flags) ? signal.risk_flags.map(riskFlagLabel).filter(Boolean) : [];
+  if (risks.length) {
+    return {
+      title: tone === "negative" ? "趋势承压，先等待风险收敛" : "已有方向，但风险尚未解除",
+      summary: `当前识别到${risks.slice(0, 3).join("、")}。先确认风险信号是否消退，再判断趋势是否成立。`,
+      tone: tone === "negative" ? "negative" : "warning",
+    };
+  }
+  if (tone === "positive") return { title: "趋势偏强，进入确认阶段", summary: "积极结构已经出现，下一步验证压力位突破和量能延续。", tone };
+  if (tone === "negative") return { title: "趋势偏弱，暂不急于下结论", summary: "价格与趋势结构仍承压，重点观察支撑是否有效。", tone };
+  if (tone === "warning") return { title: "信号未确认，适合继续观察", summary: "当前有变化，但证据还不足以形成稳定方向。", tone };
+  return { title: "方向尚未形成，等待关键信号", summary: "当前证据偏中性，优先观察趋势、量能和关键价位能否形成一致。", tone: "neutral" };
+}
+
+function buildObservationNextSignal(signal?: TrendIndicatorSignal | null): string {
+  const support = formatPrice(signal?.support);
+  const resistance = formatPrice(signal?.resistance);
+  const supportText = support !== "--" ? `${support} 支撑` : "关键支撑";
+  const resistanceText = resistance !== "--" ? `${resistance} 压力位` : "上方压力位";
+  const tone = signalStatusTone(signal?.status);
+  if (signal?.kdj_overbought) return `先看超买状态能否降温，同时确认回落时 ${supportText} 是否有效。`;
+  if (signal?.kdj_dead_cross) return `先看 KDJ 死叉是否修复，并确认价格能否守住 ${supportText}。`;
+  if (tone === "positive") return `关注能否放量突破 ${resistanceText}；若回落，再看 ${supportText} 是否有效。`;
+  if (tone === "negative") return `关注价格能否重新站稳 ${supportText}，并等待 SWL 与 SWS 关系改善。`;
+  return `等待趋势方向与成交量形成一致；向上关注 ${resistanceText}，向下关注 ${supportText}。`;
 }
 function buildMetricAnalysis({
   stock,
@@ -438,12 +680,6 @@ function buildMetricAnalysis({
 
   return items;
 }
-function metricItemSizeClass(label: string, value: string): "metric-short" | "metric-long" | "metric-normal" {
-  const compactValue = String(value || "").replace(/\s+/g, "");
-  if (compactValue.length <= 8 && label.length <= 5) return "metric-short";
-  if (compactValue.length >= 14 || /、|·|，|。|;|；/.test(value)) return "metric-long";
-  return "metric-normal";
-}
 function buildFinancialLookup(items: FinancialIndicatorItem[]): Map<string, string> {
   const lookup = new Map<string, string>();
   for (const item of items || []) {
@@ -523,20 +759,9 @@ function formatScore(value: unknown, max: unknown): string {
   return Number.isFinite(m) && m > 0 ? `${n}/${m}` : String(n);
 }
 
-function yesNo(value: unknown): string {
-  if (value === true) return "是";
-  if (value === false) return "否";
-  return "--";
-}
-
 function formatList(values: unknown, mapper?: (value: unknown) => string): string {
   if (!Array.isArray(values) || !values.length) return "--";
   return values.map((item) => mapper ? mapper(item) : String(item)).filter(Boolean).join("、") || "--";
-}
-
-function valueFromRecord(record: unknown, key: string): unknown {
-  if (!record || typeof record !== "object") return undefined;
-  return (record as Record<string, unknown>)[key];
 }
 
 function signalTypeLabel(value: unknown): string {

@@ -1,7 +1,8 @@
-import { ArrowLeft, Plus } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
-import type { LlmProviderSettings, LlmSettings } from "../../types";
+import { ArrowLeft, ChevronDown, Download, LoaderCircle, Plus } from "lucide-react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import type { LlmModelListResult, LlmModelOption, LlmProviderSettings, LlmSettings } from "../../types";
 import { activeLlmProvider, normalizeLlmSettings } from "../../lib/contracts";
+import { postJson } from "../../lib/tauri";
 
 const PROVIDER_KINDS = [
   { id: "openai-compatible", label: "OpenAI 兼容", hint: "适用于多数 /v1/chat/completions 网关" },
@@ -63,6 +64,13 @@ interface LlmSettingsPanelProps {
   onChange: (settings: LlmSettings | null) => void;
 }
 
+interface ProviderModelCatalog {
+  models: LlmModelOption[];
+  loaded: boolean;
+  loading: boolean;
+  error: string;
+}
+
 function providerId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 }
@@ -88,6 +96,25 @@ function endpointState(provider?: LlmProviderSettings): { label: string; tone: "
   return { label: "可启用", tone: "ready" };
 }
 
+function normalizeModelOptions(models?: LlmModelOption[]): LlmModelOption[] {
+  const seen = new Set<string>();
+  return (models || []).flatMap((model) => {
+    const id = String(model?.id || "").trim();
+    if (!id || seen.has(id)) return [];
+    seen.add(id);
+    return [{
+      id,
+      name: model.name?.trim() || null,
+      owned_by: model.owned_by?.trim() || null,
+    }];
+  });
+}
+
+function modelLoadError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error || "");
+  return raw.replace(/^Error:\s*/i, "").trim().slice(0, 220) || "无法拉取模型列表，请检查连接配置。";
+}
+
 export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<{ text: string; state: string }>({ text: "", state: "neutral" });
@@ -95,8 +122,39 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
   const active = activeLlmProvider(settings);
   const providers = normalized.providers || [];
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
+  const [modelCatalogs, setModelCatalogs] = useState<Record<string, ProviderModelCatalog>>({});
+  const [modelMenuProviderId, setModelMenuProviderId] = useState<string | null>(null);
+  const modelRequestTokens = useRef<Record<string, number>>({});
   const editingProvider = providers.find((provider) => provider.id === editingProviderId) || active || providers[0];
   const activeState = endpointState(active);
+  const editingCatalog = editingProvider?.id ? modelCatalogs[editingProvider.id] : undefined;
+  const availableModels = editingCatalog?.models || [];
+  const modelMenuOpen = Boolean(
+    editingProvider?.id
+      && modelMenuProviderId === editingProvider.id
+      && availableModels.length,
+  );
+  const configuredModelUnavailable = Boolean(
+    editingCatalog?.loaded
+      && editingProvider?.model
+      && !availableModels.some((model) => model.id === editingProvider.model),
+  );
+  const modelHint = editingCatalog?.loading
+    ? "正在从供应商拉取模型列表…"
+    : editingCatalog?.error
+      ? editingCatalog.error
+      : configuredModelUnavailable
+        ? "当前模型不在供应商返回的列表中，请重新选择。"
+        : editingCatalog?.loaded
+          ? "已拉取 " + availableModels.length + " 个模型，点击右侧箭头选择默认模型。"
+          : "填写接口地址及所需密钥后，先拉取供应商模型列表。";
+  const modelHintTone = editingCatalog?.error
+    ? "error"
+    : configuredModelUnavailable
+      ? "warn"
+      : editingCatalog?.loaded
+        ? "success"
+        : "neutral";
 
   const commit = useCallback((next: LlmSettings) => {
     onChange(next);
@@ -113,13 +171,101 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
     showStatus("已切换");
   }, [commit, normalized, showStatus]);
 
+  const invalidateProviderModels = useCallback((id?: string) => {
+    if (!id) return;
+    modelRequestTokens.current[id] = (modelRequestTokens.current[id] || 0) + 1;
+    setModelCatalogs((current) => {
+      if (!current[id]) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setModelMenuProviderId((current) => current === id ? null : current);
+  }, []);
+
   const updateProvider = useCallback((id: string | undefined, patch: Partial<LlmProviderSettings>) => {
     if (!id) return;
+    if (["provider", "base_url", "api_key"].some((key) => Object.prototype.hasOwnProperty.call(patch, key))) {
+      invalidateProviderModels(id);
+    }
     commit({
       ...normalized,
       providers: providers.map((provider) => provider.id === id ? { ...provider, ...patch } : provider),
     });
-  }, [commit, normalized, providers]);
+  }, [commit, invalidateProviderModels, normalized, providers]);
+
+  const fetchProviderModels = useCallback(async (provider: LlmProviderSettings) => {
+    const id = provider.id;
+    if (!id) return;
+    const baseUrl = normalizeBaseUrl(provider.base_url || "");
+    if (!baseUrl) {
+      invalidateProviderModels(id);
+      setModelCatalogs((current) => ({
+        ...current,
+        [id]: {
+          models: [],
+          loaded: false,
+          loading: false,
+          error: "请先填写供应商接口地址。",
+        },
+      }));
+      return;
+    }
+
+    const requestToken = (modelRequestTokens.current[id] || 0) + 1;
+    modelRequestTokens.current[id] = requestToken;
+    setModelMenuProviderId((current) => current === id ? null : current);
+    setModelCatalogs((current) => ({
+      ...current,
+      [id]: {
+        models: current[id]?.models || [],
+        loaded: current[id]?.loaded || false,
+        loading: true,
+        error: "",
+      },
+    }));
+
+    const timeoutSeconds = Math.max(10, Math.min(120, Math.round(provider.timeout ?? 60)));
+    try {
+      const result = await postJson<LlmModelListResult>("/api/llm/models", {
+        provider: provider.provider || "openai-compatible",
+        base_url: baseUrl,
+        api_key: provider.api_key || "",
+        timeout_seconds: timeoutSeconds,
+      }, { timeoutMs: (timeoutSeconds + 5) * 1000 });
+      if (modelRequestTokens.current[id] !== requestToken) return;
+
+      const models = normalizeModelOptions(result.models);
+      const error = models.length ? "" : "供应商已响应，但没有返回可选择的模型。";
+      setModelCatalogs((current) => ({
+        ...current,
+        [id]: {
+          models,
+          loaded: true,
+          loading: false,
+          error,
+        },
+      }));
+      if (models.length) {
+        setModelMenuProviderId(id);
+        showStatus("已拉取 " + models.length + " 个模型");
+      } else {
+        showStatus("未返回模型", "neutral");
+      }
+    } catch (error) {
+      if (modelRequestTokens.current[id] !== requestToken) return;
+      setModelCatalogs((current) => ({
+        ...current,
+        [id]: {
+          models: current[id]?.models || [],
+          loaded: current[id]?.loaded || false,
+          loading: false,
+          error: modelLoadError(error),
+        },
+      }));
+      showStatus("拉取失败", "neutral");
+    }
+  }, [invalidateProviderModels, showStatus]);
 
   const addPreset = useCallback((preset: typeof PROVIDER_PRESETS[number]) => {
     const nextProvider: LlmProviderSettings = {
@@ -158,16 +304,20 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
 
   const removeProvider = useCallback((id?: string) => {
     if (!id || providers.length <= 1) return;
+    invalidateProviderModels(id);
     const nextProviders = providers.filter((provider) => provider.id !== id);
     const activeProviderId = normalized.active_provider_id === id ? nextProviders[0]?.id : normalized.active_provider_id;
     commit({ active_provider_id: activeProviderId, providers: nextProviders });
     if (editingProviderId === id) setEditingProviderId(activeProviderId || null);
     showStatus("已删除", "neutral");
-  }, [commit, editingProviderId, normalized.active_provider_id, providers, showStatus]);
+  }, [commit, editingProviderId, invalidateProviderModels, normalized.active_provider_id, providers, showStatus]);
 
   const clearAll = useCallback(() => {
     onChange(null);
     setEditingProviderId(null);
+    setModelCatalogs({});
+    setModelMenuProviderId(null);
+    modelRequestTokens.current = {};
     showStatus("已清空", "neutral");
   }, [onChange, showStatus]);
 
@@ -224,6 +374,7 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
                     onClick={() => {
                       activateProvider(provider.id);
                       setEditingProviderId(provider.id || null);
+                      setModelMenuProviderId(null);
                     }}
                   >
                     <span className="llm-provider-mark">{providerKindLabel(provider.provider).slice(0, 1)}</span>
@@ -304,15 +455,94 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
                     />
                   </div>
 
-                  <div className="form-row">
-                    <label htmlFor="llmModel">模型 ID</label>
-                    <input
-                      id="llmModel"
-                      type="text"
-                      value={editingProvider.model || ""}
-                      onChange={(event) => updateProvider(editingProvider.id, { model: event.target.value.trim() })}
-                      placeholder="deepseek-chat / glm-4-flash / qwen-plus"
-                    />
+                  <div className="form-row llm-model-field">
+                    <label id="llmModelLabel" htmlFor="llmModel">默认模型</label>
+                    <div
+                      className={"llm-model-picker " + (modelMenuOpen ? "open" : "")}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") setModelMenuProviderId(null);
+                      }}
+                    >
+                      <button
+                        id="llmModel"
+                        type="button"
+                        className={"llm-model-selection " + (configuredModelUnavailable ? "warn" : "")}
+                        onClick={() => {
+                          if (!availableModels.length) return;
+                          setModelMenuProviderId(modelMenuOpen ? null : editingProvider.id || null);
+                        }}
+                        disabled={!availableModels.length}
+                        aria-haspopup="listbox"
+                        aria-expanded={modelMenuOpen}
+                        aria-controls="llmModelList"
+                        aria-labelledby="llmModelLabel llmModel"
+                      >
+                        <span>{editingProvider.model || "请先拉取模型列表"}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={"llm-model-action refresh " + (editingCatalog?.loading ? "loading" : "")}
+                        onClick={() => void fetchProviderModels(editingProvider)}
+                        disabled={editingCatalog?.loading}
+                        aria-label={editingCatalog?.loaded ? "刷新供应商模型列表" : "拉取供应商模型列表"}
+                        title={editingCatalog?.loaded ? "刷新模型列表" : "拉取模型列表"}
+                      >
+                        {editingCatalog?.loading
+                          ? <LoaderCircle size={16} aria-hidden="true" />
+                          : <Download size={16} aria-hidden="true" />}
+                      </button>
+                      <button
+                        type="button"
+                        className="llm-model-action toggle"
+                        onClick={() => setModelMenuProviderId(modelMenuOpen ? null : editingProvider.id || null)}
+                        disabled={!availableModels.length}
+                        aria-label="展开模型列表"
+                        aria-haspopup="listbox"
+                        aria-expanded={modelMenuOpen}
+                        aria-controls="llmModelList"
+                      >
+                        <ChevronDown size={16} aria-hidden="true" />
+                      </button>
+
+                      {modelMenuOpen && (
+                        <div className="llm-model-menu" id="llmModelList" role="listbox" aria-label="供应商模型列表">
+                          <div className="llm-model-menu-head" role="presentation">
+                            <span>{providerKindLabel(editingProvider.provider)}</span>
+                            <b>{availableModels.length} 个模型</b>
+                          </div>
+                          {availableModels.map((model) => {
+                            const selected = model.id === editingProvider.model;
+                            const description = model.name || model.owned_by || "";
+                            return (
+                              <button
+                                key={model.id}
+                                type="button"
+                                className={"llm-model-option " + (selected ? "selected" : "")}
+                                role="option"
+                                aria-selected={selected}
+                                onClick={() => {
+                                  updateProvider(editingProvider.id, { model: model.id });
+                                  setModelMenuProviderId(null);
+                                  showStatus("已选择模型");
+                                }}
+                              >
+                                <span>
+                                  <strong>{model.id}</strong>
+                                  {description && description !== model.id && <em>{description}</em>}
+                                </span>
+                                {selected && <b>当前</b>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    <p
+                      className={"llm-model-hint " + modelHintTone}
+                      role={modelHintTone === "error" ? "alert" : "status"}
+                    >
+                      {modelHint}
+                    </p>
                   </div>
 
                   <div className="form-row">

@@ -1742,3 +1742,202 @@
     flex-wrap: wrap;
   }
 }
+
+/* Provider-backed default model picker. */
+.llm-model-field {
+  grid-column: 1 / -1;
+}
+
+.llm-model-picker {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px 36px;
+  gap: 6px;
+  min-width: 0;
+}
+
+.llm-model-selection,
+.llm-model-action {
+  min-height: 36px;
+  height: 36px;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 74%, var(--surface));
+  color: var(--text);
+}
+
+.llm-model-selection {
+  min-width: 0;
+  padding: 0 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.llm-model-selection > span {
+  display: block;
+  overflow: hidden;
+  font-size: 0.86rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-model-selection.warn {
+  border-color: color-mix(in srgb, var(--warning) 52%, var(--line));
+}
+
+.llm-model-selection:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.llm-model-action {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.llm-model-action:hover:not(:disabled),
+.llm-model-picker.open .llm-model-action.toggle {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 32%, var(--surface-2));
+  color: var(--accent);
+}
+
+.llm-model-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.llm-model-picker.open .llm-model-action.toggle svg {
+  transform: rotate(180deg);
+}
+
+.llm-model-action svg {
+  transition: transform 160ms ease;
+}
+
+.llm-model-action.loading svg {
+  animation: llm-model-refresh 850ms linear infinite;
+}
+
+@keyframes llm-model-refresh {
+  to { transform: rotate(360deg); }
+}
+
+.llm-model-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  max-height: min(310px, 46vh);
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 96%, var(--bg));
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.28);
+}
+
+.llm-model-menu-head {
+  position: sticky;
+  z-index: 1;
+  top: -5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+  padding: 5px 8px;
+  background: color-mix(in srgb, var(--surface) 96%, var(--bg));
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.llm-model-menu-head span {
+  font-weight: 750;
+}
+
+.llm-model-menu-head b {
+  font-size: 0.68rem;
+  font-weight: 650;
+}
+
+.llm-model-option {
+  width: 100%;
+  min-height: 42px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.llm-model-option:hover,
+.llm-model-option:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--accent-soft) 28%, var(--surface-2));
+}
+
+.llm-model-option.selected {
+  background: color-mix(in srgb, var(--accent-soft) 38%, var(--surface-2));
+}
+
+.llm-model-option > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.llm-model-option strong {
+  overflow: hidden;
+  font-size: 0.82rem;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-model-option em {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-model-option > b {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: 0.64rem;
+  white-space: nowrap;
+}
+
+.llm-model-hint {
+  min-height: 16px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.llm-model-hint.success { color: var(--success); }
+.llm-model-hint.warn { color: var(--warning); }
+.llm-model-hint.error { color: var(--danger); }
+
+@media (prefers-reduced-motion: reduce) {
+  .llm-model-action svg { transition: none; }
+  .llm-model-action.loading svg { animation-duration: 1.8s; }
+}

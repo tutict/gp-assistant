@@ -4464,3 +4464,886 @@ html.android-phone .app[data-active-view="news"] .workbench > .llm-settings-pane
   background: transparent;
   font-size: 0.64rem;
 }
+
+/* Android phone 130% comfort-density pass for real-device readability. */
+html.android-phone {
+  --header-height: 42px;
+  --bottom-nav-height: 50px;
+  --control-height: 31px;
+  --touch-height: 36px;
+  --space-1: 5px;
+  --space-2: 5px;
+  --space-3: 8px;
+  --space-4: 10px;
+  --space-5: 26px;
+  --space-6: 31px;
+  -webkit-text-size-adjust: 130%;
+  text-size-adjust: 130%;
+}
+
+html.android-phone .app-header {
+  min-height: var(--header-height);
+  height: var(--header-height);
+  gap: 5px;
+  padding: 3px 7px;
+}
+
+html.android-phone .app-logo {
+  width: 23px;
+  height: 23px;
+}
+
+html.android-phone .theme-toggle-track {
+  width: 36px;
+  height: 21px;
+}
+
+html.android-phone .theme-toggle-thumb {
+  width: 16px;
+  height: 16px;
+}
+
+html.android-phone .theme-toggle input:checked + .theme-toggle-track .theme-toggle-thumb {
+  transform: translate(16px);
+}
+
+html.android-phone .workbench {
+  gap: 3px;
+  padding: 2px 4px calc(var(--bottom-nav-height) + var(--safe-bottom) + 3px);
+}
+
+html.android-phone .sidebar {
+  height: calc(var(--bottom-nav-height) + var(--safe-bottom));
+  padding: 0 2px var(--safe-bottom);
+}
+
+html.android-phone .nav-items {
+  height: var(--bottom-nav-height);
+  gap: 3px;
+}
+
+html.android-phone .nav-link {
+  height: 47px;
+  gap: 2px;
+  padding: 1px;
+  border-radius: 8px;
+}
+
+html.android-phone .nav-link svg {
+  width: 17px;
+  height: 17px;
+}
+
+html.android-phone .panel-container,
+html.android-phone .screen-result-list,
+html.android-phone .sector-groups,
+html.android-phone .screen-result-groups,
+html.android-phone .signal-chart-stack,
+html.android-phone .plain-news-groups,
+html.android-phone .evidence-list,
+html.android-phone .relation-map,
+html.android-phone .rag-pack-list,
+html.android-phone .observe-result {
+  gap: 3px;
+}
+
+html.android-phone .screen-mobile-toolbar-card,
+html.android-phone .panel-controls,
+html.android-phone .backtest-controls,
+html.android-phone .rag-controls {
+  gap: 3px;
+  padding: 4px;
+  border-radius: 7px;
+}
+
+html.android-phone .screen-mobile-toolbar-row {
+  min-height: 31px;
+  gap: 4px;
+}
+
+html.android-phone .screen-mobile-refresh-btn {
+  min-width: 55px;
+  min-height: 29px;
+  padding: 0 7px;
+  border-radius: 7px;
+}
+
+html.android-phone .screen-panel-tabs,
+html.android-phone .rag-tabs,
+html.android-phone .agent-mode-tabs {
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+}
+
+html.android-phone .screen-panel-tabs .panel-tab,
+html.android-phone .rag-tabs .panel-tab,
+html.android-phone .agent-mode-tabs button,
+html.android-phone .panel-tab {
+  min-height: 27px;
+  padding: 0 3px;
+  border-radius: 7px;
+}
+
+html.android-phone .run-btn,
+html.android-phone .save-btn,
+html.android-phone .action-btn,
+html.android-phone .clear-btn,
+html.android-phone .stock-row-action,
+html.android-phone .source-toggle,
+html.android-phone .rag-secondary-btn,
+html.android-phone .llm-add-btn,
+html.android-phone .llm-preset-btn {
+  min-height: 29px;
+  padding: 0 7px;
+  border-radius: 7px;
+}
+
+html.android-phone .form-row {
+  gap: 3px;
+}
+
+html.android-phone .form-row input,
+html.android-phone .form-row select,
+html.android-phone .form-row textarea,
+html.android-phone .stock-code-input input,
+html.android-phone .rag-controls input,
+html.android-phone .rag-controls select,
+html.android-phone .rag-controls textarea,
+html.android-phone .backtest-controls input,
+html.android-phone .backtest-controls select {
+  min-height: 29px;
+  height: 29px;
+  padding: 2px 7px;
+  border-radius: 7px;
+}
+
+html.android-phone .panel-result,
+html.android-phone .result-empty,
+html.android-phone .panel-feedback {
+  min-height: 55px;
+  padding: 7px 8px;
+  border-radius: 7px;
+}
+
+html.android-phone .panel-feedback > svg {
+  width: 17px;
+  height: 17px;
+}
+
+html.android-phone .metric,
+html.android-phone .screen-result-metric-strip .metric,
+html.android-phone .detail-grid > div,
+html.android-phone .backtest-comparison > div,
+html.android-phone .overview-metric-grid > div,
+html.android-phone .signal-grid > div,
+html.android-phone .financial-indicator-item,
+html.android-phone .observe-text-metric-item,
+html.android-phone .score-chip,
+html.android-phone .score-strip-primary {
+  min-height: 34px;
+  padding: 3px 4px;
+  border-radius: 5px;
+}
+
+html.android-phone .screen-result-group,
+html.android-phone .sector-group,
+html.android-phone .stock-row,
+html.android-phone .watchlist-panel,
+html.android-phone .observe-overview,
+html.android-phone .signal-card,
+html.android-phone .observe-text-metrics,
+html.android-phone .agent-result-card {
+  padding: 3px;
+  border-radius: 5px;
+}
+
+html.android-phone .screen-result-group > summary,
+html.android-phone .sector-group > summary,
+html.android-phone .watchlist-header {
+  min-height: 23px;
+  padding: 0 4px;
+  gap: 3px;
+}
+
+html.android-phone .sector-group-meta {
+  min-width: 68px;
+  min-height: 21px;
+  gap: 3px;
+  padding: 0 7px;
+}
+
+html.android-phone .stock-row {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+html.android-phone .stock-grid,
+html.android-phone .score-strip,
+html.android-phone .score-strip-metrics {
+  gap: 5px;
+}
+
+html.android-phone .score-strip {
+  margin-top: 5px;
+}
+
+html.android-phone .quote-number,
+html.android-phone .score-chip,
+html.android-phone .score-strip-primary {
+  min-height: 44px !important;
+  height: 44px;
+  padding: 5px !important;
+}
+
+html.android-phone .observe-chart-card .chart-wrap,
+html.android-phone .chart-wrap {
+  min-height: 153px;
+}
+
+html.android-phone .agent-chat-stage {
+  grid-template-rows: 36px minmax(0, 1fr) auto;
+}
+
+html.android-phone .agent-topbar {
+  min-height: 36px;
+  height: 36px;
+  padding: 3px 5px 3px 83px;
+}
+
+html.android-phone .agent-mobile-menu,
+html.android-phone .agent-mobile-new {
+  width: 33px;
+  height: 33px;
+  min-height: 33px;
+  border-radius: 7px;
+}
+
+html.android-phone .agent-composer-card {
+  min-height: 55px;
+  padding: 7px 8px;
+  gap: 5px;
+}
+
+html.android-phone .agent-input {
+  height: 34px;
+  min-height: 34px;
+  max-height: 83px;
+  padding: 3px 4px;
+}
+
+html.android-phone .send-btn {
+  width: 36px;
+  height: 36px;
+}
+
+html.android-phone .send-btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+html.android-phone .llm-model-picker {
+  grid-template-columns: minmax(0, 1fr) 36px 36px;
+  gap: 4px;
+}
+
+html.android-phone .llm-model-selection,
+html.android-phone .llm-model-action {
+  min-height: 36px;
+  height: 36px;
+  border-radius: 7px;
+}
+
+html.android-phone .llm-model-selection {
+  padding: 0 7px;
+}
+
+html.android-phone .llm-model-selection > span {
+  font-size: 7.4px;
+}
+
+html.android-phone .llm-model-action svg {
+  width: 16px;
+  height: 16px;
+}
+
+html.android-phone .llm-model-menu {
+  max-height: 44vh;
+  padding: 4px;
+  border-radius: 8px;
+}
+
+html.android-phone .llm-model-menu-head {
+  min-height: 30px;
+  padding: 4px 6px;
+  font-size: 6.8px;
+}
+
+html.android-phone .llm-model-option {
+  min-height: 38px;
+  padding: 5px 6px;
+  gap: 6px;
+  border-radius: 6px;
+}
+
+html.android-phone .llm-model-option strong {
+  font-size: 7.2px;
+}
+
+html.android-phone .llm-model-option em,
+html.android-phone .llm-model-hint {
+  font-size: 6.4px;
+}
+
+@media (max-width: 760px) {
+  .stock-row,
+  .stock-row:first-child {
+    border: 0;
+    border-radius: 11px;
+  }
+
+  .stock-insight-board {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .stock-insight-board .quote-number,
+  .stock-insight-board .score-chip,
+  .stock-insight-board .score-strip-primary {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .stock-insight-board .score-strip {
+    border-top: 1px solid var(--line-soft);
+  }
+
+  .stock-insight-board .score-strip-primary {
+    background: linear-gradient(90deg, var(--score-soft), transparent);
+    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--score) 72%, transparent);
+  }
+}
+
+/* Android screening cards: readable, borderless metric ribbon. */
+html.android-phone .quote-table {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+html.android-phone .stock-list {
+  gap: 7px;
+}
+
+html.android-phone .stock-row,
+html.android-phone .stock-row:first-child {
+  padding: 8px;
+  border: 0 !important;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 94%, var(--surface-2));
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.12);
+}
+
+html.android-phone .stock-row-head {
+  min-height: 28px;
+  gap: 8px;
+  padding: 0 2px;
+}
+
+html.android-phone .stock-row-head .stock-title {
+  display: block;
+  min-height: 0;
+}
+
+html.android-phone .stock-row-head .stock-current-price {
+  display: block;
+  min-height: 0;
+  text-align: right;
+}
+
+html.android-phone .stock-row-head .stock-title strong,
+html.android-phone .stock-row-head .stock-current-price strong {
+  font-size: 9.6px;
+  line-height: 1.05;
+}
+
+html.android-phone .stock-row-head .stock-title span,
+html.android-phone .stock-row-head .stock-current-price span {
+  margin-top: 2px;
+  font-size: 7.1px;
+  line-height: 1;
+}
+
+html.android-phone .stock-insight-board {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 9px;
+  background:
+    linear-gradient(115deg, color-mix(in srgb, var(--surface-2) 88%, transparent), color-mix(in srgb, var(--surface-3) 58%, transparent));
+}
+
+html.android-phone .stock-grid.stock-valuation-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+}
+
+html.android-phone .stock-insight-board .quote-number,
+html.android-phone .stock-insight-board .score-chip,
+html.android-phone .stock-insight-board .score-strip-primary {
+  min-height: 44px !important;
+  height: auto;
+  padding: 7px 4px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent;
+  box-shadow: none;
+}
+
+html.android-phone .stock-insight-board .quote-number strong,
+html.android-phone .stock-insight-board .score-chip b {
+  margin: 0;
+  font-size: 9.4px;
+  line-height: 1;
+}
+
+html.android-phone .stock-insight-board .quote-number span,
+html.android-phone .stock-insight-board .score-chip em,
+html.android-phone .stock-insight-board .score-strip-primary span {
+  margin-top: 3px;
+  font-size: 7.1px;
+  line-height: 1;
+}
+
+html.android-phone .stock-insight-board .score-strip {
+  grid-template-columns: minmax(0, 1fr) 88px;
+  gap: 0;
+  margin: 0;
+  border-top: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--surface-2) 26%, transparent);
+}
+
+html.android-phone .stock-insight-board .score-strip-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+}
+
+html.android-phone .stock-insight-board .score-strip-primary {
+  min-width: 0;
+  background: linear-gradient(90deg, var(--score-soft), transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--score) 74%, transparent);
+}
+
+html.android-phone .stock-insight-board .score-strip-primary strong {
+  margin-top: 3px;
+  font-size: 10.2px;
+  line-height: 1;
+}
+
+html.android-phone .stock-row .stock-score-summary {
+  display: -webkit-box;
+  height: auto;
+  margin: 6px 2px 0;
+  overflow: hidden;
+  font-size: 7.1px;
+  line-height: 1.4;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+html.android-phone .stock-row .row-actions {
+  margin-top: 6px;
+}
+
+/* Observe summary: responsive decision hierarchy. */
+@media (max-width: 760px) {
+  .observe-decision-summary > .observe-decision-heading {
+    align-items: start;
+  }
+
+  .observe-decision-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .observe-decision-item,
+  .observe-decision-item:first-child {
+    border-top: 1px solid var(--line-soft);
+    border-left: 0;
+  }
+
+  .observe-decision-item:first-child {
+    border-top: 0;
+  }
+
+  .observe-next-signal {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .observe-key-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .observe-key-metrics > div:nth-child(4) {
+    border-left: 0;
+  }
+
+  .observe-key-metrics > div:nth-child(n + 4) {
+    margin-top: 7px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line-soft);
+  }
+
+  .observe-detail-disclosure .observe-text-metric-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+html.android-phone .observe-text-metrics.observe-decision-summary {
+  padding: 0 8px 9px;
+  border-radius: 8px;
+}
+
+html.android-phone .observe-decision-summary > .observe-decision-heading {
+  gap: 8px;
+  padding: 9px 1px 7px;
+}
+
+html.android-phone .observe-decision-heading > div > span,
+html.android-phone .observe-verdict > span,
+html.android-phone .observe-next-signal > span {
+  font-size: 8.5px;
+  line-height: 1.1;
+  letter-spacing: 0.07em;
+}
+
+html.android-phone .observe-decision-summary .observe-decision-heading h3 {
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 1.12;
+}
+
+html.android-phone .observe-decision-heading time {
+  max-width: 42%;
+  font-size: 8px;
+  line-height: 1.25;
+  text-align: right;
+}
+
+html.android-phone .observe-verdict {
+  padding: 11px 12px 12px 15px;
+  border-radius: 8px;
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--observe-tone) 76%, transparent);
+}
+
+html.android-phone .observe-verdict h4 {
+  margin-top: 4px;
+  font-size: 14.5px;
+  line-height: 1.2;
+}
+
+html.android-phone .observe-verdict p {
+  margin-top: 5px;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+html.android-phone .observe-decision-grid {
+  margin-top: 7px;
+  border-radius: 8px;
+}
+
+html.android-phone .observe-decision-item {
+  padding: 10px 11px 11px;
+}
+
+html.android-phone .observe-decision-item::before {
+  left: 11px;
+  width: 24px;
+}
+
+html.android-phone .observe-decision-item > span {
+  font-size: 10.5px;
+  line-height: 1.15;
+}
+
+html.android-phone .observe-decision-item > p {
+  margin-top: 4px;
+  font-size: 9.5px;
+  line-height: 1.42;
+}
+
+html.android-phone .observe-next-signal {
+  gap: 4px;
+  margin-top: 7px;
+  padding: 9px 11px;
+  border-radius: 7px;
+}
+
+html.android-phone .observe-next-signal > p {
+  font-size: 9.5px;
+  line-height: 1.42;
+}
+
+html.android-phone .observe-key-metrics {
+  margin-top: 8px;
+  padding: 7px 0;
+}
+
+html.android-phone .observe-key-metrics > div {
+  min-height: 38px;
+  padding: 3px 6px;
+}
+
+html.android-phone .observe-key-metrics > div:nth-child(n + 4) {
+  margin-top: 5px;
+  padding-top: 7px;
+}
+
+html.android-phone .observe-key-metrics dt {
+  font-size: 8.5px;
+  line-height: 1.1;
+}
+
+html.android-phone .observe-key-metrics dd {
+  margin-top: 4px;
+  font-size: 11.5px;
+  line-height: 1.05;
+}
+
+html.android-phone .observe-detail-disclosure {
+  margin-top: 6px;
+}
+
+html.android-phone .observe-detail-disclosure > summary {
+  min-height: 38px;
+  padding: 0 2px;
+}
+
+html.android-phone .observe-detail-disclosure > summary > span {
+  font-size: 10.5px;
+}
+
+html.android-phone .observe-detail-disclosure > summary > small {
+  font-size: 8.5px;
+}
+
+html.android-phone .observe-detail-disclosure .observe-text-metric-sections {
+  gap: 9px;
+  padding: 0 2px 6px;
+}
+
+html.android-phone .observe-detail-disclosure .observe-text-metric-section {
+  padding-top: 9px;
+}
+
+html.android-phone .observe-detail-disclosure .observe-text-metric-section h4 {
+  margin-bottom: 3px;
+  font-size: 10.5px;
+  line-height: 1.1;
+}
+
+html.android-phone .observe-detail-disclosure .observe-text-metric-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+html.android-phone .observe-detail-disclosure .observe-text-metric-item,
+html.android-phone .observe-detail-disclosure .observe-text-metric-item.metric-long {
+  min-height: 34px;
+  padding: 7px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  background: transparent;
+}
+
+html.android-phone .observe-detail-disclosure .observe-text-metric-item span {
+  font-size: 9px;
+  line-height: 1.25;
+}
+
+html.android-phone .observe-detail-disclosure .observe-text-metric-item strong {
+  margin: 0;
+  font-size: 9.5px;
+  line-height: 1.25;
+}
+
+html.android-phone .observe-decision-summary > .observe-metric-analysis-disclaimer {
+  margin: 6px 2px 0;
+  font-size: 8.5px;
+  line-height: 1.35;
+}
+
+@media (max-width: 760px) {
+  .capital-quant-lanes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .capital-quant-lane,
+  .capital-quant-lane:first-child {
+    border-top: 1px solid var(--line-soft);
+    border-left: 0;
+  }
+
+  .capital-quant-lane:first-child {
+    border-top: 0;
+  }
+
+  .capital-quant-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .capital-quant-metrics > div:nth-child(3) {
+    border-left: 0;
+  }
+
+  .capital-quant-metrics > div:nth-child(n + 3) {
+    margin-top: 7px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line-soft);
+  }
+}
+
+html.android-phone .observe-capital-quant {
+  margin-top: 7px;
+  border-radius: 8px;
+}
+
+html.android-phone .observe-capital-quant > header {
+  min-height: 44px;
+  gap: 8px;
+  padding: 7px 10px;
+}
+
+html.android-phone .observe-capital-quant > header span,
+html.android-phone .capital-quant-lane > header span {
+  font-size: 8px;
+  line-height: 1.1;
+}
+
+html.android-phone .observe-capital-quant > header h4 {
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.15;
+}
+
+html.android-phone .observe-capital-quant > header > small {
+  font-size: 8px;
+}
+
+html.android-phone .capital-quant-lane {
+  padding: 11px 10px 10px;
+}
+
+html.android-phone .capital-quant-lane::before {
+  left: 10px;
+  width: 26px;
+}
+
+html.android-phone .capital-quant-lane > header {
+  gap: 8px;
+}
+
+html.android-phone .capital-quant-lane > header h5 {
+  margin-top: 3px;
+  font-size: 10.5px;
+  line-height: 1.15;
+}
+
+html.android-phone .capital-quant-lane > header small {
+  max-width: 48%;
+  font-size: 8px;
+  line-height: 1.25;
+}
+
+html.android-phone .capital-quant-metrics {
+  margin-top: 8px;
+}
+
+html.android-phone .capital-quant-metrics > div {
+  min-height: 38px;
+  padding: 3px 6px;
+}
+
+html.android-phone .capital-quant-metrics > div:nth-child(n + 3) {
+  margin-top: 5px;
+  padding-top: 7px;
+}
+
+html.android-phone .capital-quant-metrics dt {
+  font-size: 8.5px;
+  line-height: 1.15;
+}
+
+html.android-phone .capital-quant-metrics dd {
+  margin-top: 4px;
+  font-size: 10.5px;
+  line-height: 1.1;
+}
+
+html.android-phone .capital-quant-meta,
+html.android-phone .capital-quant-note,
+html.android-phone .capital-quant-empty {
+  margin-top: 7px;
+  font-size: 8.5px;
+  line-height: 1.4;
+}
+
+html.android-phone .capital-quant-empty {
+  min-height: 40px;
+  font-size: 9.5px;
+}
+
+@media (max-width: 760px) {
+  .observe-special-quant {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .observe-special-quant-item:nth-child(odd) {
+    border-left: 0;
+  }
+
+  .observe-special-quant-item:nth-child(n + 3) {
+    border-top: 1px solid var(--line-soft);
+  }
+}
+
+html.android-phone .observe-special-quant {
+  margin-top: 7px;
+  border-radius: 8px;
+}
+
+html.android-phone .observe-special-quant-item {
+  min-height: 74px;
+  padding: 10px 9px 11px;
+}
+
+html.android-phone .observe-special-quant-item > span {
+  gap: 5px;
+  font-size: 8.5px;
+  line-height: 1.15;
+}
+
+html.android-phone .observe-special-quant-item > span::before {
+  width: 5px;
+  height: 5px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--quant-tone) 11%, transparent);
+}
+
+html.android-phone .observe-special-quant-item > strong {
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.18;
+}
+
+html.android-phone .observe-special-quant-item > p {
+  margin-top: 4px;
+  font-size: 8.5px;
+  line-height: 1.38;
+}

@@ -17,13 +17,6 @@ export const StockList = memo(function StockList({ items, watchlist, onToggleWat
 
   return (
     <div className="quote-table">
-      <div className="quote-table-head">
-        <span>名称</span>
-        <span>当前股价</span>
-        <span>市盈率</span>
-        <span>每股收益</span>
-        <span>市净率</span>
-      </div>
       <div className="stock-list">
         {sortedItems.map((item, i) => {
           const inWatchlist = savedCodes.has(item.code);
@@ -31,7 +24,7 @@ export const StockList = memo(function StockList({ items, watchlist, onToggleWat
           const scoreSummary = buildScoreSummary(item);
           return (
             <article key={`${item.code}-${i}`} className={`stock-row ${tone}`}>
-              <div className="stock-grid">
+              <header className="stock-row-head">
                 <div className="stock-title">
                   <strong>{item.name || item.code}</strong>
                   <span>{item.code} {item.industry || ""}</span>
@@ -40,29 +33,34 @@ export const StockList = memo(function StockList({ items, watchlist, onToggleWat
                   <strong>{formatPrice(item.price)}</strong>
                   <span>当前股价</span>
                 </div>
-                <div className="quote-number quote-pe">
-                  <strong>{formatNumber(item.pe)}</strong>
-                  <span>市盈率</span>
-                </div>
-                <div className="quote-number quote-eps">
-                  <strong>{formatNumber(item.eps)}</strong>
-                  <span>每股收益</span>
-                </div>
-                <div className="quote-number quote-pb">
-                  <strong>{formatNumber(item.pb)}</strong>
-                  <span>市净率</span>
-                </div>
-              </div>
+              </header>
 
-              <div className="score-strip" aria-label="评分概览">
-                <div className="score-strip-metrics">
-                  <ScoreChip label="质量" value={item.qualityScore} />
-                  <ScoreChip label="趋势" value={item.trendScore} />
-                  <ScoreChip label="风险" value={item.riskScore} inverted />
+              <div className="stock-insight-board" aria-label="估值与评分概览">
+                <div className="stock-grid stock-valuation-grid" aria-label="估值指标">
+                  <div className="quote-number quote-pe">
+                    <strong>{formatNumber(item.pe)}</strong>
+                    <span>市盈率</span>
+                  </div>
+                  <div className="quote-number quote-eps">
+                    <strong>{formatNumber(item.eps)}</strong>
+                    <span>每股收益</span>
+                  </div>
+                  <div className="quote-number quote-pb">
+                    <strong>{formatNumber(item.pb)}</strong>
+                    <span>市净率</span>
+                  </div>
                 </div>
-                <div className="score-strip-primary">
-                  <span>综合评分</span>
-                  <strong>{formatNumber(item.balancedScore ?? item.score)}</strong>
+
+                <div className="score-strip" aria-label="评分概览">
+                  <div className="score-strip-metrics">
+                    <ScoreChip label="质量" value={item.qualityScore} />
+                    <ScoreChip label="趋势" value={item.trendScore} />
+                    <ScoreChip label="风险" value={item.riskScore} inverted />
+                  </div>
+                  <div className="score-strip-primary">
+                    <span>综合评分</span>
+                    <strong>{formatNumber(item.balancedScore ?? item.score)}</strong>
+                  </div>
                 </div>
               </div>
               <p className="stock-score-summary">{scoreSummary}</p>

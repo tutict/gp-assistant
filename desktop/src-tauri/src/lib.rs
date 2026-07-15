@@ -58,6 +58,7 @@ const FINANCIAL_REQUEST_TIMEOUT_SECS: u64 = 6;
 const MAX_TENCENT_WEBVIEW_QUOTE_BYTES: usize = 1_048_576;
 const COMPLETE_QUARTERLY_EPS_POINTS: usize = 8;
 const MAX_CACHED_HTTP_CLIENTS: usize = 16;
+const LLM_MODEL_LIST_MAX_BYTES: usize = 2 * 1024 * 1024;
 const THS_FINANCIAL_ENDPOINT: &str =
     "https://basic.10jqka.com.cn/basicapi/finance/index/v1/app_data/";
 const SINA_FINANCIAL_GUIDELINE_ENDPOINT: &str =
@@ -880,6 +881,194 @@ async fn probe_mobile_url(
             })
         }
     }
+}
+
+#[tauri::command]
+async fn api_llm_models(payload: Value) -> Result<Value, String> {
+    let base_url = payload
+        .get("base_url")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "请先填写供应商接口地址。".to_string())?;
+    let provider = payload
+        .get("provider")
+        .and_then(Value::as_str)
+        .unwrap_or("openai-compatible")
+        .trim()
+        .to_ascii_lowercase();
+    let api_key = payload
+        .get("api_key")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    let timeout_seconds = payload_usize_field(&payload, "timeout_seconds", 60, 10, 120);
+    let endpoint = llm_models_endpoint(base_url)?;
+    let client = build_http_client_with_proxy(
+        "gp-assistant/0.4 llm-model-catalog",
+        Duration::from_secs(timeout_seconds as u64),
+        Some(&payload),
+    )?;
+
+    let mut request = client
+        .get(endpoint.clone())
+        .header("Accept", "application/json");
+    if provider == "anthropic-compatible" {
+        request = request.header("anthropic-version", "2023-06-01");
+        if !api_key.is_empty() {
+            request = request.header("x-api-key", api_key);
+        }
+    } else if !api_key.is_empty() {
+        request = request.bearer_auth(api_key);
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("连接供应商失败：{error}"))?;
+    let status = response.status();
+    if response
+        .content_length()
+        .is_some_and(|bytes| bytes > LLM_MODEL_LIST_MAX_BYTES as u64)
+    {
+        return Err("供应商返回的模型列表过大，已停止读取。".to_string());
+    }
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| format!("读取供应商模型列表失败：{error}"))?;
+        if body.len().saturating_add(chunk.len()) > LLM_MODEL_LIST_MAX_BYTES {
+            return Err("供应商返回的模型列表过大，已停止读取。".to_string());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    if !status.is_success() {
+        return Err(llm_models_http_error(status.as_u16(), &body, api_key));
+    }
+
+    let response_json: Value = serde_json::from_slice(&body)
+        .map_err(|error| format!("供应商模型列表不是有效 JSON：{error}"))?;
+    let models = parse_llm_model_options(&response_json);
+    Ok(json!({
+        "provider": provider,
+        "endpoint": endpoint.to_string(),
+        "count": models.len(),
+        "models": models,
+    }))
+}
+
+fn llm_models_endpoint(base_url: &str) -> Result<reqwest::Url, String> {
+    let mut url = reqwest::Url::parse(base_url.trim())
+        .map_err(|_| "供应商接口地址格式不正确。".to_string())?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("供应商接口地址仅支持 http 或 https。".to_string());
+    }
+    if url.host_str().is_none() {
+        return Err("供应商接口地址缺少主机名。".to_string());
+    }
+
+    let mut path = url.path().trim_end_matches('/').to_string();
+    for suffix in ["/chat/completions", "/messages"] {
+        if let Some(base) = path.strip_suffix(suffix) {
+            path = base.to_string();
+            break;
+        }
+    }
+    if !path.ends_with("/models") {
+        path.push_str("/models");
+    }
+    if path.is_empty() || !path.starts_with('/') {
+        path.insert(0, '/');
+    }
+    url.set_path(&path);
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url)
+}
+
+fn parse_llm_model_options(response: &Value) -> Vec<Value> {
+    let rows = response
+        .get("data")
+        .and_then(Value::as_array)
+        .or_else(|| response.get("models").and_then(Value::as_array))
+        .or_else(|| {
+            response
+                .get("result")
+                .and_then(|value| value.get("data"))
+                .and_then(Value::as_array)
+        });
+    let Some(rows) = rows else {
+        return Vec::new();
+    };
+
+    let mut seen = HashSet::new();
+    let mut models = Vec::new();
+    for row in rows {
+        let id = row
+            .as_str()
+            .or_else(|| row.get("id").and_then(Value::as_str))
+            .or_else(|| row.get("model").and_then(Value::as_str))
+            .or_else(|| row.get("name").and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && value.len() <= 256);
+        let Some(id) = id else {
+            continue;
+        };
+        if !seen.insert(id.to_string()) {
+            continue;
+        }
+        let display_name = row
+            .get("display_name")
+            .and_then(Value::as_str)
+            .or_else(|| row.get("name").and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && *value != id);
+        let owned_by = row
+            .get("owned_by")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        models.push(json!({
+            "id": id,
+            "name": display_name,
+            "owned_by": owned_by,
+        }));
+    }
+    models
+}
+
+fn llm_models_http_error(status: u16, body: &[u8], api_key: &str) -> String {
+    match status {
+        401 | 403 => return format!("供应商鉴权失败，请检查 API 密钥（HTTP {status}）。"),
+        404 => {
+            return "未找到模型列表接口（HTTP 404），请确认接口地址包含正确的版本路径，例如 /v1。"
+                .to_string()
+        }
+        _ => {}
+    }
+    let detail = serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("error")
+                .and_then(|error| error.get("message").or(Some(error)))
+                .and_then(Value::as_str)
+                .or_else(|| value.get("message").and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| redact_llm_error_detail(&truncate_for_note(value, 180), api_key))
+        });
+    detail
+        .map(|message| format!("供应商返回 HTTP {status}：{message}"))
+        .unwrap_or_else(|| format!("供应商返回 HTTP {status}，未能拉取模型列表。"))
+}
+
+fn redact_llm_error_detail(detail: &str, api_key: &str) -> String {
+    let api_key = api_key.trim();
+    if api_key.len() < 4 {
+        return detail.to_string();
+    }
+    detail.replace(api_key, "[已隐藏密钥]")
 }
 
 pub(crate) fn build_tencent_http_client(
@@ -4169,6 +4358,7 @@ fn parse_eastmoney_lhb_item(
             "机构买入额": format_amount_wan(buy),
             "机构卖出额": format_amount_wan(sell),
             "机构净买额": format_amount_wan(net),
+            "机构买卖比": institution_buy_sell_ratio(buy, sell),
             "净买额占成交额比": ratio.map(|value| format!("{}%", format_number_like(value))).unwrap_or_else(|| "-".to_string()),
             "买方机构数": object_number_any_loose(row, &["BUY_TIMES", "BUY_COUNT"]).map(format_number_like).unwrap_or_else(|| "-".to_string()),
             "卖方机构数": object_number_any_loose(row, &["SELL_TIMES", "SELL_COUNT"]).map(format_number_like).unwrap_or_else(|| "-".to_string()),
@@ -4514,6 +4704,16 @@ fn format_amount_wan(value: f64) -> String {
         format!("{:.2} 万", value / 10_000.0)
     } else {
         format_number_like(value)
+    }
+}
+
+fn institution_buy_sell_ratio(buy: f64, sell: f64) -> String {
+    if sell.abs() > f64::EPSILON {
+        format_number_like(buy / sell)
+    } else if buy > 0.0 {
+        "∞".to_string()
+    } else {
+        "-".to_string()
     }
 }
 
@@ -6532,6 +6732,7 @@ pub fn run() {
             api_upstream_rag_build,
             api_upstream_rag_transfer_start,
             api_agent_stream,
+            api_llm_models,
             core_validate_data_source,
             core_mobile_market_data_read,
             core_mobile_market_data_write,

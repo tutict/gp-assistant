@@ -525,6 +525,19 @@ export interface LlmProviderSettings {
   remember_key?: boolean;
 }
 
+export interface LlmModelOption {
+  id: string;
+  name?: string | null;
+  owned_by?: string | null;
+}
+
+export interface LlmModelListResult {
+  provider?: string;
+  endpoint?: string;
+  count?: number;
+  models?: LlmModelOption[];
+}
+
 export interface StockRowView {
   code: string;
   name: string;

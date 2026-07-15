@@ -3573,6 +3573,11 @@ fn local_fund_flow_proxy_evidence_item(
     let latest = trend.series.last()?;
     let score = local_fund_flow_proxy_score(latest);
     let mut metrics = BTreeMap::new();
+    metrics.insert("隐性资金代理分".to_string(), format_number(score));
+    metrics.insert(
+        "推断方向".to_string(),
+        fund_flow_proxy_direction(score).to_string(),
+    );
     metrics.insert("收盘价".to_string(), format_number(signal.close));
     if let Some(change_pct) = signal.close_change_pct {
         metrics.insert("涨跌幅".to_string(), format_percent(change_pct));
@@ -3628,6 +3633,16 @@ fn local_fund_flow_proxy_score(point: &TrendIndicatorPoint) -> f64 {
             + accumulation_index * 0.15
             + rebound * 0.05,
     )
+}
+
+fn fund_flow_proxy_direction(score: f64) -> &'static str {
+    if score >= 60.0 {
+        "偏流入"
+    } else if score <= 40.0 {
+        "偏流出"
+    } else {
+        "中性"
+    }
 }
 
 fn technical_capital_score(trend: &TrendIndicatorResult) -> f64 {
