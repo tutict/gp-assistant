@@ -456,20 +456,6 @@
 }
 .chart-wrap { width: 100%; overflow: hidden; }
 .chart-wrap svg { width: 100%; min-height: 150px; color: var(--accent); }
-.trend-chart header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 6px;
-}
-.trend-chart header h4 {
-  margin: 0;
-  font-size: 0.86rem;
-}
-.trend-chart svg {
-  color: var(--text);
-}
 .trend-grid-line {
   stroke: color-mix(in srgb, var(--text-secondary) 22%, transparent);
   stroke-width: 1;
@@ -479,81 +465,9 @@
   stroke-width: 2.2;
   vector-effect: non-scaling-stroke;
 }
-.trend-chart .line-close,
-.trend-legend .line-close { color: #eef3ff; }
-.trend-chart .line-swl,
-.trend-legend .line-swl { color: #f5c84b; }
-.trend-chart .line-sws,
-.trend-legend .line-sws { color: #3ec7dd; }
-.trend-chart .line-k,
-.trend-legend .line-k { color: #f59d38; }
-.trend-chart .line-d,
-.trend-legend .line-d { color: #4e9dff; }
-.trend-chart .line-j,
-.trend-legend .line-j { color: #c36cff; }
-.macd-chart .line-dif,
-.trend-legend .line-dif { color: #ffd84d; }
-.macd-chart .line-dea,
-.trend-legend .line-dea { color: #54b7ff; }
-.macd-chart .macd-up,
-.trend-legend .macd-up { color: #ff594f; }
-.macd-chart .macd-down,
-.trend-legend .macd-down { color: #13c27a; }
-.trend-chart .line-close { stroke-width: 2.6; }
-.trend-chart .line-swl,
-.trend-chart .line-sws { stroke-width: 2; opacity: 0.95; }
-.trend-chart .line-j { stroke-width: 2.5; }
-.macd-chart header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 6px;
-}
-.macd-chart header h4 {
-  margin: 0;
-  font-size: 0.86rem;
-}
-.macd-chart svg {
-  color: var(--text);
-}
-.macd-chart .macd-bar {
-  opacity: 0.9;
-  rx: 0.8px;
-  filter: drop-shadow(0 0 2px color-mix(in srgb, currentColor 44%, transparent));
-}
-.macd-chart .macd-line-shadow {
-  stroke-width: 6;
-  opacity: 0.24;
-}
-.macd-chart .macd-line {
-  stroke-width: 3.4;
-  filter: drop-shadow(0 0 3px color-mix(in srgb, currentColor 42%, transparent));
-}
 .macd-zero-line {
   stroke: color-mix(in srgb, var(--text-secondary) 28%, transparent);
   stroke-dasharray: 6 6;
-}
-.trend-legend {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  font-size: 0.74rem;
-  font-weight: 700;
-}
-.trend-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  white-space: nowrap;
-}
-.trend-legend span::before {
-  content: "";
-  width: 16px;
-  height: 3px;
-  border-radius: 999px;
-  background: currentColor;
 }
 .kline-workspace.fullscreen {
   position: fixed;
@@ -601,10 +515,6 @@ html.mobile-tauri.android-portrait.kline-mobile-fullscreen .kline-workspace.full
   border-radius: 0 !important;
   transform: rotate(90deg) translateY(-100%) !important;
   transform-origin: top left !important;
-}
-html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .trend-chart,
-html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .macd-chart {
-  display: none !important;
 }
 html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .chart-wrap.kline-chart {
   flex: 1 1 auto !important;
@@ -744,8 +654,9 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   stroke-width: 2;
 }
 .kline-legend { display: inline-flex; gap: 10px; margin-left: auto; font-size: 0.74rem; font-weight: 600; }
-.kline-up { color: var(--rise); }
-.kline-down { color: var(--fall); }
+.kline-market-chart .kline-up { color: var(--rise); }
+.kline-market-chart .kline-down { color: var(--fall); }
+.kline-market-chart .kline-flat { color: var(--flat); }
 .kline-wick { stroke-width: 1; }
 .kline-chart polyline { stroke-width: 1.4; }
 .kline-candle.selected .kline-body {
@@ -802,8 +713,9 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
 .kline-chart .line-ama { color: #54b7ff; stroke: #54b7ff; }
 .kline-chart .line-mtm { color: #f59d38; stroke: #f59d38; }
 .kline-chart .line-mamtm { color: #4e9dff; stroke: #4e9dff; }
-.kline-chart .macd-up { color: #ff594f; }
-.kline-chart .macd-down { color: #13c27a; }
+.kline-chart .macd-up { color: var(--rise); fill: var(--rise); }
+.kline-chart .macd-down { color: var(--fall); fill: var(--fall); }
+.kline-chart .macd-flat { color: var(--flat); fill: var(--flat); }
 .kline-stats {
   display: flex;
   gap: 8px 14px;

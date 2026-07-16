@@ -461,9 +461,7 @@
     padding-inline: 0;
   }
 
-  .kline-chart .kline-plot,
-  .trend-chart svg,
-  .macd-chart svg {
+  .kline-chart .kline-plot {
     width: 100%;
     min-height: 220px;
   }
@@ -4040,7 +4038,7 @@ html.android-phone .kline-market-chart.mobile-chart .kline-section-border {
 }
 
 html.android-phone .kline-market-chart.mobile-chart .kline-current-line {
-  stroke: #D63A35;
+  stroke: currentColor;
   stroke-opacity: 0.62;
   stroke-dasharray: 5 5;
   vector-effect: non-scaling-stroke;
@@ -4075,8 +4073,7 @@ html.android-phone .kline-market-chart.mobile-chart .kline-body {
   rx: 0.9px;
 }
 
-html.android-phone .kline-market-chart.mobile-chart .kline-volume-layer rect,
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-bar {
+html.android-phone .kline-market-chart.mobile-chart .kline-volume-layer rect {
   opacity: 0.86;
 }
 
@@ -4161,8 +4158,6 @@ html.android-phone .kline-market-chart.mobile-chart .line-mamtm {
   stroke: #54B7FF;
 }
 /* Android observe cross marker visibility pass. */
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .line-dif,
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .line-dea,
 html.android-phone .kline-market-chart.mobile-chart .kline-kdj-layer .line-k,
 html.android-phone .kline-market-chart.mobile-chart .kline-kdj-layer .line-d,
 html.android-phone .kline-market-chart.mobile-chart .kline-kdj-layer .line-j {
@@ -4175,12 +4170,8 @@ html.android-phone .kline-market-chart.mobile-chart .kline-kdj-layer .line-j {
   opacity: 0.94;
 }
 
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-bar {
-  opacity: 0.72;
-}
-
 html.android-phone .kline-market-chart.mobile-chart .kdj-guide-line,
-html.android-phone .kline-market-chart.mobile-chart .macd-zero-line {
+html.android-phone .kline-market-chart.mobile-chart .kdj-guide-line {
   stroke: #546170;
   stroke-opacity: 0.82;
   stroke-width: 1;
@@ -4207,104 +4198,25 @@ html.android-phone .kline-market-chart.mobile-chart .indicator-cross-marker.gold
 html.android-phone .kline-market-chart.mobile-chart .indicator-cross-marker.death circle {
   fill: #54B7FF;
 }
-/* Android MACD bar-line separation pass. */
+/* Android MACD: one shared scale, A-share red-positive/green-negative palette. */
 html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-bar {
-  opacity: 0.52;
-}
-
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-line-gap {
-  color: #030609;
-  stroke: #030609;
-  stroke-width: 7.2px;
-  opacity: 0.96;
-  filter: none;
+  opacity: 0.9;
+  stroke: none;
+  shape-rendering: crispEdges;
   vector-effect: non-scaling-stroke;
 }
 
 html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .line-dif,
 html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .line-dea {
-  stroke-width: 2.75px;
-  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.95));
+  stroke-width: 2.15px;
+  filter: none;
 }
 
 html.android-phone .kline-market-chart.mobile-chart .macd-zero-line {
   stroke: #6A7481;
-  stroke-opacity: 0.95;
-  stroke-width: 1.25;
-}
-/* Android MACD visibility correction pass. */
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-line-gap {
-  stroke-width: 3.8px;
-  opacity: 0.62;
-}
-
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-bar {
-  opacity: 0.82;
-  filter: none;
-}
-
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .line-dif,
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .line-dea {
-  stroke-width: 3px;
-  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.98));
-}
-
-html.android-phone .kline-market-chart.mobile-chart .indicator-cross-marker circle {
-  stroke-width: 1.7;
-  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.9));
-}
-
-html.android-phone .kline-market-chart.mobile-chart .indicator-cross-marker path {
-  fill: none;
-  stroke: #05070A;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-/* Android MACD column emphasis pass. */
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-up {
-  color: #20E19A;
-  fill: #20E19A;
-  opacity: 0.96;
-}
-
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-down {
-  color: #FF5B4F;
-  fill: #FF5B4F;
-  opacity: 0.96;
-}
-
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-bar {
-  opacity: 0.96;
-  filter: drop-shadow(0 0 1.5px rgba(255, 255, 255, 0.1));
-  shape-rendering: geometricPrecision;
-}
-
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-line-gap {
-  stroke-width: 2.6px;
-  opacity: 0.5;
-}
-
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .line-dif,
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .line-dea {
-  stroke-width: 2.55px;
-}
-/* Android MACD final histogram visibility pass. */
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-bar {
-  opacity: 1;
-  stroke: currentColor;
-  stroke-width: 0.35px;
-  vector-effect: non-scaling-stroke;
-}
-
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-up {
-  color: #24F2A2;
-  fill: #24F2A2;
-}
-
-html.android-phone .kline-market-chart.mobile-chart .kline-macd-layer .macd-down {
-  color: #FF6259;
-  fill: #FF6259;
+  stroke-opacity: 0.88;
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
 }
 /* Android observe text metrics: three per row. */
 html.android-phone .observe-text-metric-grid {
@@ -5468,14 +5380,6 @@ html.android-phone .kline-market-chart.mobile-chart .kline-legend {
 
 html.android-phone .kline-market-chart.mobile-chart .kline-last-price text {
   font-size: 14px;
-}
-
-html.android-phone .kline-market-chart.mobile-chart .kline-stats .kline-up {
-  color: var(--rise);
-}
-
-html.android-phone .kline-market-chart.mobile-chart .kline-stats .kline-down {
-  color: var(--fall);
 }
 
 html.mobile-tauri.kline-mobile-fullscreen .kline-market-chart.mobile-chart .kline-market-header {

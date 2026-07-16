@@ -3,9 +3,11 @@ import { LocateFixed, Maximize2, Minimize2, ZoomIn, ZoomOut } from "lucide-react
 import type { TrendIndicatorPoint } from "../../types";
 import {
   aggregateBars,
+  buildMacdScale,
   computeKdj,
   computeMacd,
   KLINE_PERIODS,
+  marketDirection,
   movingAverage,
   toDailyBars,
   type KlineBar,
@@ -27,6 +29,10 @@ const MOBILE_DEFAULT_VISIBLE_BARS = 72;
 
 type SeriesPoint = { date: string; [key: string]: number | string };
 type LayoutMode = "mobile" | "desktop";
+
+const klineDirectionClass = (value: number, reference: number | null | undefined) =>
+  `kline-${marketDirection(value, reference)}`;
+const macdDirectionClass = (value: number) => `macd-${marketDirection(value, 0)}`;
 
 type ChartLayout = {
   mode: LayoutMode;
@@ -347,7 +353,7 @@ function CandlestickChart({
     ? ((inspectedBar.close - inspectedPrevious.close) / inspectedPrevious.close) * 100
     : null;
   const latestPrevious = allBars[visibleEnd - 2];
-  const latestIsUp = !latestPrevious || latest.close >= latestPrevious.close;
+  const latestDirectionClass = klineDirectionClass(latest.close, latestPrevious?.close);
   const selectedX = selectedIndex >= 0 ? center(selectedIndex) : null;
   const selectedY = selectedBar ? yPrice(selectedBar.close) : null;
   const startDate = visibleBars[0]?.date || "";
@@ -505,20 +511,20 @@ function CandlestickChart({
             </g>
           );
         })}
-        <line className="kline-current-line" x1={plotInsetStart} x2={currentPriceLabelX} y1={currentPriceY} y2={currentPriceY} />
+        <line className={`kline-current-line ${latestDirectionClass}`} x1={plotInsetStart} x2={currentPriceLabelX} y1={currentPriceY} y2={currentPriceY} />
         {visibleBars.map((bar, index) => {
           const cx = center(index);
           const bodyTop = Math.min(yPrice(bar.open), yPrice(bar.close));
           const bodyHeight = Math.max(1, Math.abs(yPrice(bar.close) - yPrice(bar.open)));
           return (
-            <g key={`${bar.date}-${index}`} className={`kline-candle ${bar.close >= bar.open ? "kline-up" : "kline-down"} ${selectedDate === bar.date ? "selected" : ""}`}>
+            <g key={`${bar.date}-${index}`} className={`kline-candle ${klineDirectionClass(bar.close, bar.open)} ${selectedDate === bar.date ? "selected" : ""}`}>
               <line className="kline-wick" x1={cx} x2={cx} y1={yPrice(bar.high)} y2={yPrice(bar.low)} stroke="currentColor" />
               <rect className="kline-body" x={cx - bodyWidth / 2} y={bodyTop} width={bodyWidth} height={bodyHeight} fill="currentColor" />
             </g>
           );
         })}
         {maLines.map((line) => (line.points ? <polyline key={`ma-${line.window}`} className={line.className} points={line.points} fill="none" /> : null))}
-        <g className={`kline-last-price ${latestIsUp ? "kline-up" : "kline-down"}`} pointerEvents="none">
+        <g className={`kline-last-price ${latestDirectionClass}`} pointerEvents="none">
           <rect x={currentPriceLabelX} y={currentPriceLabelY} width={currentPriceLabelWidth} height="24" rx="4" />
           <text x={currentPriceLabelX + currentPriceLabelWidth / 2} y={currentPriceLabelY + 16}>{formatPrice(latest.close)}</text>
         </g>
@@ -579,7 +585,7 @@ function CandlestickChart({
         <span>高 {formatPrice(inspectedBar?.high)}</span>
         <span>低 {formatPrice(inspectedBar?.low)}</span>
         <span>收 {formatPrice(inspectedBar?.close)}</span>
-        <span className={inspectedChangePercent !== null && inspectedChangePercent >= 0 ? "kline-up" : "kline-down"}>
+        <span className={klineDirectionClass(inspectedChangePercent ?? 0, 0)}>
           涨跌 {formatSignedPercent(inspectedChangePercent)}
         </span>
         <span>量 {formatNumber(inspectedBar?.volume)}</span>
@@ -612,33 +618,27 @@ function MacdLayer({
   barWidth: number;
 }) {
   if (series.length < 2) return null;
-  const lineValues = series.flatMap((point) => [point.dif, point.dea]).filter(Number.isFinite);
-  const macdValues = series.map((point) => point.macd).filter(Number.isFinite);
-  const lineMaxAbs = Math.max(...lineValues.map((value) => Math.abs(value)), 1e-6);
-  const rawMacdMaxAbs = Math.max(...macdValues.map((value) => Math.abs(value)), 1e-6);
-  const barMaxAbs = Math.max(rawMacdMaxAbs, lineMaxAbs * 0.08, 1e-6);
-  const midY = top + height / 2;
-  const y = (value: number) => midY - (value / lineMaxAbs) * (height * 0.36);
-  const barY = (value: number) => midY - (value / barMaxAbs) * (height * 0.46);
+  const scale = buildMacdScale(series, top, height);
+  const midY = scale.zeroY;
+  const y = scale.y;
   const line = (key: "dif" | "dea") => series.map((point, index) => `${center(index).toFixed(2)},${y(point[key]).toFixed(2)}`).join(" ");
   const crosses = buildCrossMarkers(series, "dif", "dea");
 
   return (
     <g className="kline-macd-layer">
       <line className="trend-grid-line macd-zero-line" x1="0" x2={width} y1={midY} y2={midY} />
-      <polyline className="trend-line macd-line-gap" points={line("dif")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-      <polyline className="trend-line macd-line-gap" points={line("dea")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
       {series.map((point, index) => {
-        const barTop = barY(Math.max(point.macd, 0));
-        const barBottom = barY(Math.min(point.macd, 0));
+        const barTop = y(Math.max(point.macd, 0));
+        const barBottom = y(Math.min(point.macd, 0));
+        const histogramWidth = Math.max(2.8, Math.min(barWidth * 1.08, 8.4));
         return (
           <rect
             key={`${point.date}-${index}`}
-            className={`macd-bar ${point.macd >= 0 ? "macd-up" : "macd-down"}`}
-            x={center(index) - barWidth / 2}
+            className={`macd-bar ${macdDirectionClass(point.macd)}`}
+            x={center(index) - histogramWidth / 2}
             y={Math.min(barTop, barBottom)}
-            width={Math.max(2.8, Math.min(barWidth * 1.08, 8.4))}
-            height={Math.max(2.4, Math.abs(barBottom - barTop))}
+            width={histogramWidth}
+            height={Math.abs(barBottom - barTop)}
             fill="currentColor"
           />
         );
@@ -806,7 +806,7 @@ function VolumeLayer({
         return (
           <rect
             key={`vol-${bar.date}-${index}`}
-            className={bar.close >= bar.open ? "kline-up" : "kline-down"}
+            className={klineDirectionClass(bar.close, bar.open)}
             x={center(index) - barWidth / 2}
             y={top + (height - barHeight)}
             width={barWidth}
@@ -851,7 +851,7 @@ function formatWan(value: number): string {
 
 function formatSignedPercent(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return "--";
-  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+  return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
 function periodLabel(period: KlinePeriod): string {

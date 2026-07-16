@@ -350,8 +350,17 @@ function Sign-AndroidReleaseApk {
     $unsignedApk = Find-UnsignedReleaseApk
     $zipalign = Resolve-AndroidBuildToolExecutable "zipalign.exe"
     $apksigner = Resolve-AndroidBuildToolExecutable "apksigner.bat"
+    $tauriConfigPath = Join-Path $Root "desktop\src-tauri\tauri.conf.json"
+    $appVersion = [string]((Get-Content -LiteralPath $tauriConfigPath -Raw | ConvertFrom-Json).version)
+    if ($appVersion -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
+        throw "Invalid Tauri application version in ${tauriConfigPath}: $appVersion"
+    }
+    $targetLabel = ($Target | Where-Object { $_ } | ForEach-Object { $_ -replace '[^0-9A-Za-z_-]', '-' }) -join '-'
+    if (-not $targetLabel) {
+        $targetLabel = "universal"
+    }
     $alignedApk = Join-Path $unsignedApk.DirectoryName "guxuanyou-release-aligned.apk"
-    $signedApk = Join-Path $unsignedApk.DirectoryName "guxuanyou_0.4.000_android_aarch64_release_signed.apk"
+    $signedApk = Join-Path $unsignedApk.DirectoryName "guxuanyou_${appVersion}_android_${targetLabel}_release_signed.apk"
 
     if (Test-Path -LiteralPath $alignedApk) {
         Remove-Item -LiteralPath $alignedApk -Force

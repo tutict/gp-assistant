@@ -22,6 +22,16 @@ export interface KlineBar {
   volume: number;
 }
 
+export type MarketDirection = "up" | "down" | "flat";
+
+export function marketDirection(value: number, reference: number | null | undefined): MarketDirection {
+  if (!Number.isFinite(value) || reference == null || !Number.isFinite(reference)) return "flat";
+  const delta = value - reference;
+  const tolerance = Number.EPSILON * Math.max(1, Math.abs(value), Math.abs(reference)) * 8;
+  if (Math.abs(delta) <= tolerance) return "flat";
+  return delta > 0 ? "up" : "down";
+}
+
 const toNum = (value: unknown): number => {
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) ? n : NaN;
@@ -46,7 +56,8 @@ export function toDailyBars(series: TrendIndicatorPoint[]): KlineBar[] {
         Number.isFinite(bar.high) &&
         Number.isFinite(bar.low) &&
         Number.isFinite(bar.close),
-    );
+    )
+    .sort((left, right) => left.date.replace(/\D/g, "").localeCompare(right.date.replace(/\D/g, "")));
 }
 
 function ymd(date: string): { y: number; m: number; d: number } | null {
@@ -122,6 +133,24 @@ export type MacdPoint = {
   dea: number;
   macd: number;
 };
+
+export type MacdScale = {
+  zeroY: number;
+  y: (value: number) => number;
+};
+
+export function buildMacdScale(series: MacdPoint[], top: number, height: number): MacdScale {
+  const values = series
+    .flatMap((point) => [point.dif, point.dea, point.macd])
+    .filter(Number.isFinite);
+  const maxAbs = Math.max(...values.map((value) => Math.abs(value)), 1e-6) * 1.08;
+  const zeroY = top + height / 2;
+  const y = (value: number) => zeroY - (value / maxAbs) * (height * 0.44);
+  return {
+    zeroY,
+    y,
+  };
+}
 
 // TDX-style smoothing: Y = (weight*X + (window-weight)*prevY) / window.
 function tdxSma(values: number[], window: number, weight: number): number[] {

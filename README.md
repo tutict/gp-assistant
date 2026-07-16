@@ -1,143 +1,195 @@
-﻿# 股选优
+# 股选优
 
-这是一个面向 A 股的选股智能体项目。当前运行时已经统一为 Tauri + Rust：桌面端和 Android 端加载同一套 React/TypeScript 前端，通过 Tauri command 调用 Rust 后端获取行情、财务、消息、回测和资金证据数据。
+面向 A 股研究的跨平台选股、观察与回测工作台。项目使用 **Tauri 2 + Rust + React/TypeScript**，Windows 桌面端与 Android 端共享同一套界面和 Rust 核心能力。
 
-项目不再包含 Python/FastAPI 后端、Python 依赖清单或 Python 测试入口。
+> 股选优只提供研究、筛选和策略验证工具，不构成投资建议，不承诺任何收益。市场有风险，投资需谨慎。
 
-## 当前能力
+![股选优界面](./current-guxuanyou.png)
 
-- 基础选股：按行业、市盈率、市净率、ROE、市值、ST 状态、轮动热度等条件筛选，并支持分板块选股。
-- 关系图选股：用股票知识图谱和关系评分建模同行业、供应链、主题、估值相似、市值相近等关系。
-- 趋势选股：把通达信风格的 SWL/SWS 指标、红色持股、短买、离场、支撑阻力和量化评分转成可计算结果。
-- 行情观察：查看股票快照、股本/EPS、分钟线、日线技术面和综合资金证据。
-- 回测验证：支持等权组合、月度/季度再平衡、交易成本扣减、候选池等权基准，以及自选观察池固定标的回测。
-- 消息证据：支持个股消息、上下游 RAG 包、移动端扫码导入和本地规则判定。
-- 移动端：安装后联网生成手机本地股票池，支持筛选、观察、收藏、自选回测、消息拉取和响应式面板。
-- 数据维护：支持股票池刷新、交易日收盘后自动刷新检查、缓存状态查看和可丢弃行情缓存清理。
+## 下载与安装
 
-## 风险提示
+请前往项目的 [GitHub Releases](https://github.com/tutict/gp-assistant/releases) 下载最新版：
 
-本项目用于 A 股选股研究、策略验证和产品使用，不构成任何投资建议或收益承诺。股票市场有风险，投资需谨慎；用户应结合自身风险承受能力独立判断，并自行承担投资决策结果。
+- **Windows 10/11 x64**：下载名称以 `_x64-setup.exe` 结尾的安装程序。
+- **Android 7.0 及以上**：下载名称以 `_android_aarch64_release_signed.apk` 结尾的安装包。
 
-## 本地运行
+Android 安装时如果系统提示“未知来源应用”，请只为当前文件来源临时授权。升级安装必须使用相同签名的 APK；正式发布包会保留一致的应用签名。
 
-默认开发入口是 Tauri 桌面端：
+## 主要能力
 
-```bash
+| 模块 | 能力 |
+| --- | --- |
+| 选股 | 按估值、盈利质量、成长、风险、市值、行业与市场状态筛选，提供质量、趋势、风险和综合评分 |
+| 多策略筛选 | 支持基础筛选、行业/板块筛选、关系图筛选和趋势筛选，并可将结果加入自选池 |
+| 个股观察 | 汇总行情、总股本、流通股、EPS、财务质量、机构资金、量价状态和专业量化明细 |
+| K 线与指标 | 支持日 K、周 K、月 K，显示均线、MACD、KDJ、成交量、十字定位、缩放和手机横向全屏 |
+| 研究摘要 | 首屏提炼资金背离、趋势效率、波动状态和流动性风险，原始指标保留在专业明细中 |
+| 回测 | 支持条件候选池或自选池回测、等权组合、调仓、成本扣减和严格滚动样本外验证 |
+| 新闻与证据 | 聚合个股消息、上下游关系和本地 RAG 证据，区分来源、时间与正负面线索 |
+| 研究 Agent | 调用筛选、观察、回测和消息工具，以聊天方式组织证据并解释结果 |
+| 模型配置 | 支持 OpenAI 兼容接口、硅基流动和本地模型服务，可先拉取供应商模型列表再选择默认模型 |
+| 数据维护 | 查看股票池与缓存状态，联网更新数据，并在收盘后进行刷新检查 |
+
+## 设计与数据原则
+
+- **证据优先**：结果尽可能展示数据来源、更新时间、缺失项和可复核明细。
+- **中国市场语义**：图表使用红涨、绿跌、灰平，方向信息同时配合文字或数值表达。
+- **缺失不伪造**：无法取得的数据保持缺失状态或使用明确标注的代理指标，不用虚构值补齐。
+- **桌面与移动同源**：前端唯一源码位于 `desktop/frontend/`，桌面端和 Android 端使用相同业务组件。
+- **本地优先**：自选、缓存和研究数据优先保存在本机；密钥与签名配置不应提交到仓库。
+
+核心股票池、日线和分钟线能力以通达信与腾讯行情链路为主；观察、财务和消息模块会按数据可用性补充公开来源。外部数据可能延迟、缺失或调整口径，使用结论前应核对原始公告和交易所信息。
+
+## 严格滚动样本外回测
+
+Walk-forward 回测把每个调仓日至下一调仓日视为独立样本外区间，固定当期可见数据后再筛选和计分，以降低未来函数和幸存者偏差：
+
+- 因子快照必须包含所属报告期和实际可见日期。
+- 历史候选必须记录当时的上市、ST 和可交易状态。
+- 入选标的缺少区间末真实报价时不会被静默剔除。
+- 缺少行情、快照覆盖或必要字段时会明确失败，不使用当前财务数据或陈旧价格回填。
+- 结果包含逐折明细、组合收益、基准对比和 `Precision@N` 等验证指标。
+
+这些约束会降低“漂亮但不可复现”的回测结果，更适合用于筛选规则迭代和发布前验证。
+
+## 模型配置
+
+研究 Agent 支持 OpenAI Chat Completions 兼容接口。推荐在应用的模型设置中完成配置：
+
+1. 新建模型连接并选择供应商类型。
+2. 填写接口地址和 API Key；本地模型通常不需要 Key。
+3. 点击拉取按钮获取供应商返回的模型列表。
+4. 从列表中选择默认模型并保存。
+
+也可以使用环境变量提供默认配置：
+
+```text
+OPENAI_API_KEY
+OPENAI_MODEL
+OPENAI_BASE_URL
+OPENAI_TEMPERATURE
+OPENAI_TIMEOUT_SECONDS
+OPENAI_JSON_MODE=false
+```
+
+API Key 只应保存在受信任的本机环境中。不要把 `.env`、Android 签名文件或任何密钥提交到版本库。
+
+## 技术架构
+
+```mermaid
+flowchart LR
+    UI[React + TypeScript] --> IPC[Tauri Commands]
+    IPC --> Runtime[Rust Tauri Runtime]
+    Runtime --> Core[gp-core 筛选与回测核心]
+    Runtime --> Cache[本地缓存与 SQLite]
+    Runtime --> Data[行情、财务与消息数据源]
+    Runtime --> LLM[OpenAI 兼容模型服务]
+```
+
+- `desktop/frontend/`：React/TypeScript 界面，Windows 与 Android 共用。
+- `desktop/src-tauri/`：Tauri 壳、Rust commands、网络与本地存储适配。
+- `native/gp-core/`：筛选、评分、趋势、关系图和回测核心库。
+- `app/prompts/`：Agent 约束和移动端技能说明。
+- `docs/`：数据、RAG 和工程设计文档。
+- `scripts/`：开发、发布检查、桌面资源准备和 Android 构建脚本。
+
+项目当前不依赖 Python/FastAPI 运行时，主要运行链路已统一到 Tauri + Rust。
+
+## 本地开发
+
+### 环境要求
+
+- Windows 10/11
+- Node.js 与 npm
+- Rust stable toolchain
+- Tauri 2 所需的 Windows WebView2/构建环境
+- Android 构建额外需要 JDK 17 或 21、Android SDK 和 Android NDK
+
+首次拉取后安装依赖：
+
+```powershell
+cd desktop
+npm install
+cd frontend
+npm install
+```
+
+启动桌面开发环境：
+
+```powershell
 .\start-tauri-dev.bat
 ```
 
-首次运行会准备 `desktop/mobile-dist` 静态前端资源，并执行 Rust/Tauri 预检。也可以在 `desktop/` 下直接运行：
+或者：
 
-```bash
+```powershell
 cd desktop
-cmd /c npm install
-cmd /c npm run dev -- --no-watch
+npm run dev -- --no-watch
 ```
 
-构建 Windows 桌面安装包：
+## 测试与发布检查
 
-```bash
-cd desktop
-cmd /c npm run build:windows
+运行前端测试：
+
+```powershell
+cd desktop\frontend
+npm test
 ```
 
-## Android
+运行 Rust 测试：
 
-构建 Tauri Android 安装包前，需要安装 Android SDK、Android NDK，并设置 `ANDROID_HOME` 和 `NDK_HOME`。仓库提供初始化和构建脚本：
-
-```bash
-powershell -ExecutionPolicy Bypass -File scripts\build-android.ps1 -InitOnly
-powershell -ExecutionPolicy Bypass -File scripts\build-android.ps1
-```
-
-也可以在 `desktop/` 下执行：
-
-```bash
-cmd /c npm run android:init
-cmd /c npm run build:android
-```
-
-Android 端加载本地静态前端，并通过 Tauri command 调用 Rust 后端。股票池不随安装包预制；首次安装打开后，移动端通过腾讯行情联网生成手机本地股票池，后续“联网更新股票池”会直接刷新手机缓存。
-
-## 代码结构
-
-- `desktop/frontend/`：React + TypeScript 前端源码，Windows 和 Android 共用。
-- `desktop/mobile-dist/`：前端构建产物，由脚本生成，不手工编辑。
-- `desktop/src-tauri/`：Tauri 桌面/移动壳和 Rust command。
-- `native/gp-core/`：可嵌入的 Rust 核心库，覆盖筛选、趋势、关系图、回测和本地智能体路由。
-- `scripts/`：Tauri、Android、移动核心和缓存维护脚本。
-- `app/prompts/`：智能体约束和移动端技能说明文本。
-
-前端源码唯一真源是 `desktop/frontend/`。`scripts/prepare-tauri-android-assets.ps1` 会在 Android 构建前重建前端产物并写入移动端财务快照。
-
-## Rust 核心
-
-运行核心库测试：
-
-```bash
+```powershell
 cargo test --manifest-path native/gp-core/Cargo.toml
+cargo test --manifest-path desktop/src-tauri/Cargo.toml
 ```
 
-构建移动核心：
+运行完整发布检查：
 
-```bash
-powershell -ExecutionPolicy Bypass -File scripts\build-mobile-core.ps1
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release-check.ps1
 ```
 
-`native/gp-core` 同时暴露 Rust 函数和小型 C ABI，移动端可以把 SQLite、内置 JSON 或远端接口拿到的股票、关系、历史行情封装为 `CoreDataSet` 后传入 Rust 核心。
+该检查会执行前端生产构建、Rust 测试、Tauri `cargo check` 和 Android 环境预检。
 
-严格 Walk-forward 回测使用固定评分规则，并把每个调仓日至下一调仓日作为独立样本外折。每个候选标的（包括自选观察池）都必须提供 `factor_snapshots`，且每条记录必须包含 `available_date`、`is_st`、`is_listed` 和 `is_tradable`；其中 `date` 表示指标所属报告期，`available_date` 表示市场实际可见日期，并且不能早于报告期。当期曾处于上市且可交易状态的候选必须具备历史行情。历史快照可以包含当前股票池已不存在的代码，核心会将它们纳入历史候选池，以降低幸存者偏差。结果返回逐折明细和相对当期可比候选池的 `Precision@N`，逐折收益只使用折末当日真实报价；入选股票若缺少折末报价，会保留在 Precision 分母并按未命中处理，避免静默抬高精度。缺少历史行情、快照覆盖或必要字段时，严格回测会明确失败，不会用当前财务数据或陈旧交易价回填。
+## 构建安装包
 
-## 数据源
+Windows NSIS 安装包：
 
-桌面端和移动端统一使用 Rust/Tauri 数据链路：通达信负责 A 股股票池、日线和分钟线，腾讯股票负责筛选行情和盘口优先数据。数据源对外只保留 `tdx`；旧版本保存过的 `astock`、`akshare`、`eastmoney` 配置已不再兼容，发布版遇到这些值会明确拒绝。
-
-常用环境变量：
-
-- `TDX_CACHE`：通达信股票池缓存路径，默认 `data/cache/tdx_stocks.csv`。
-- `TDX_REFRESH=true`：强制刷新股票池。
-- `TDX_HOSTS=host1:7709,host2:7709`：指定通达信服务器。
-- `TDX_TIMEOUT=6`：连接超时秒数。
-- `TDX_TENCENT_BATCH_SIZE=80`：腾讯批量行情请求大小。
-- `STOCK_PROXY_MODE=system|none`：行情请求是否使用系统代理。
-
-移动端 RAG 的使用方式和工程设计见 `docs/rag.md`。当前 Tauri 桌面端提供轻量 Rust RAG pack 构建/查询和上游 RAG 内联导入 JSON。
-
-## 数据维护
-
-默认通过 Tauri 内置数据维护入口执行状态检查、刷新和清理。脚本层可用 `scripts\maintain-data-tauri.ps1` 查看或清理 Tauri AppData 缓存；联网刷新仍在桌面 App 内执行，因为刷新进度依赖 Tauri AppHandle 事件。
-
-```bash
-powershell -ExecutionPolicy Bypass -File scripts\maintain-data-tauri.ps1
+```powershell
+cd desktop
+npm run build:windows
 ```
 
-## 智能体与大模型接口
+Android 初始化与预检：
 
-智能体可调用 OpenAI Chat Completions 或兼容 OpenAI 协议的接口。可配置：
-
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL`
-- `OPENAI_BASE_URL`
-- `OPENAI_TEMPERATURE`
-- `OPENAI_TIMEOUT_SECONDS`
-- `OPENAI_JSON_MODE=false`
-
-智能体定位为“选股研究助手”：只做条件筛选、行情观察、关系图分析、消息证据梳理和回测解释，不承诺收益，不输出直接交易指令。
-
-## 发布检查
-
-常用验证命令：
-
-```bash
-cargo check --manifest-path desktop/src-tauri/Cargo.toml
-cmd /c npm --prefix desktop/frontend run build
-cmd /c npm --prefix desktop run build
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-android.ps1 -InitOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-android.ps1 -PreflightOnly
 ```
-## Agent 能力边界
 
-Agent 定位为“选股研究工作台”，本轮仅编排现有本地能力，不引入 Python/AkShare 运行时，也不依赖东方财富妙想 `MX_APIKEY`。核心能力包括 `stock_snapshot`、`stock_news`、`stock_screen`、`trend_analysis`、`sector_analysis`、`watchlist_action`、`portfolio_simulation`。
+构建并签名 Android aarch64 Release APK：
 
-Agent 流式接口保持 `status/result/error` 兼容，同时支持 `tool_start`、`tool_result`、`evidence`、`final`，前端用于展示工具轨迹、证据摘要、风险提示和下一步动作。
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-android.ps1 -Signed -Target aarch64
+```
 
-所有 Agent 输出仅供选股研究，不构成投资建议；不输出买入、卖出、目标价、仓位或收益承诺。社区或未验证来源只能作为待验证线索。
+本地签名配置位于被 Git 忽略的 `desktop/src-tauri/keys/`。请妥善备份 keystore；丢失签名密钥后无法对已安装应用进行原签名升级。
+
+## 常用运行配置
+
+| 变量 | 说明 |
+| --- | --- |
+| `TDX_CACHE` | 通达信股票池缓存路径，默认 `data/cache/tdx_stocks.csv` |
+| `TDX_REFRESH=true` | 强制刷新股票池 |
+| `TDX_HOSTS` | 指定通达信服务器，例如 `host1:7709,host2:7709` |
+| `TDX_TIMEOUT` | 通达信连接超时秒数 |
+| `TDX_TENCENT_BATCH_SIZE` | 腾讯批量行情请求大小 |
+| `STOCK_PROXY_MODE=system\|none` | 行情请求是否使用系统代理 |
+
+## 参与开发
+
+提交改动前请至少执行与改动范围对应的测试；涉及发布、Rust/Tauri 或移动端资源时，建议运行完整 `scripts/release-check.ps1`。新增指标应同时说明公式、原始输入、缺失值策略和适用边界，并为关键计算补充回归测试。
+
+## 风险声明
+
+本项目中的筛选分数、量化指标、新闻情绪、回测结果和 Agent 输出均仅供研究参考，不是买卖建议、目标价、仓位建议或收益承诺。历史表现不代表未来结果，用户应独立核验数据并自行承担决策风险。
