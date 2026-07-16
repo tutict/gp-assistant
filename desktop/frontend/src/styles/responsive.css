@@ -585,7 +585,6 @@
     display: flex;
   }
 
-
   .agent-rail-scrim {
     position: fixed;
     z-index: calc(var(--z-drawer) - 1);
@@ -620,8 +619,6 @@
     background: var(--surface-2);
     color: var(--text);
   }
-
-
 
   .agent-thread {
     padding: 8px 7px;
@@ -1229,7 +1226,6 @@ html.android-phone .metric-card dd {
   font-size: 0.9rem;
 }
 
-
 html.android-phone .agent-thread {
   padding: 4px;
 }
@@ -1564,11 +1560,6 @@ html.android-phone .agent-mobile-new svg {
   height: 15px;
 }
 
-
-
-
-
-
 html.android-phone .agent-thread {
   gap: 5px;
   padding: 4px 6px;
@@ -1584,12 +1575,6 @@ html.android-phone .agent-empty-state {
   width: min(300px, 100%);
   gap: 7px;
   padding: 4px;
-}
-
-html.android-phone .agent-empty-mark {
-  width: 28px;
-  height: 28px;
-  font-size: 9px;
 }
 
 html.android-phone .agent-empty-state h2 {
@@ -1615,7 +1600,7 @@ html.android-phone .agent-mode-tabs {
 
 html.android-phone .agent-mode-tabs button {
   min-width: 0;
-  min-height: 27px;
+  min-height: 30px;
   padding: 1px 4px;
   overflow: hidden;
   border-radius: 6px;
@@ -1623,35 +1608,6 @@ html.android-phone .agent-mode-tabs button {
   line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-html.android-phone .agent-mode-capabilities {
-  width: min(270px, 100%);
-  padding: 7px;
-  border-radius: 8px;
-  font-size: 7.5px;
-  line-height: 1.25;
-}
-
-html.android-phone .agent-mode-capabilities strong {
-  font-size: 8.5px;
-}
-
-html.android-phone .agent-mode-capabilities p,
-html.android-phone .agent-mode-capabilities em {
-  margin: 2px 0 0;
-  font-size: 7.5px;
-  line-height: 1.25;
-}
-
-html.android-phone .agent-mode-capability-tags {
-  gap: 3px;
-  margin-top: 4px;
-}
-
-html.android-phone .agent-mode-capability-tags span {
-  padding: 1px 5px;
-  font-size: 7px;
 }
 
 html.android-phone .agent-composer-card {
@@ -1988,7 +1944,6 @@ html.android-phone .agent-mode-tabs {
 
 html.android-phone .screen-panel-tabs .panel-tab,
 html.android-phone .rag-tabs .panel-tab,
-html.android-phone .agent-mode-tabs button,
 html.android-phone .panel-tab {
   min-height: 21px;
   padding: 0 2px;
@@ -2183,7 +2138,6 @@ html.android-phone .app[data-active-view="agent"] .workbench {
   padding-bottom: calc(var(--bottom-nav-height) + var(--safe-bottom));
 }
 
-
 html.android-phone .agent-mobile-menu,
 html.android-phone .agent-mobile-new {
   width: 25px;
@@ -2198,28 +2152,8 @@ html.android-phone .agent-empty-state {
   padding: 2px;
 }
 
-html.android-phone .agent-empty-mark {
-  width: 22px;
-  height: 22px;
-  font-size: 7px;
-}
-
 html.android-phone .agent-empty-state h2 {
   font-size: 8px;
-}
-
-html.android-phone .agent-empty-state p,
-html.android-phone .agent-mode-capabilities,
-html.android-phone .agent-mode-capabilities p,
-html.android-phone .agent-mode-capabilities em {
-  font-size: 6px;
-  line-height: 1.15;
-}
-
-html.android-phone .agent-mode-capabilities {
-  width: min(250px, 100%);
-  padding: 4px;
-  border-radius: 6px;
 }
 
 html.android-phone .agent-composer-card {
@@ -2606,12 +2540,6 @@ html.android-phone .agent-empty-state {
   padding: 5px 4px;
 }
 
-html.android-phone .agent-empty-mark {
-  width: 26px;
-  height: 26px;
-  font-size: 8px;
-}
-
 html.android-phone .agent-empty-state h2 {
   font-size: 9.2px;
   line-height: 1.18;
@@ -2631,42 +2559,11 @@ html.android-phone .agent-mode-tabs {
 }
 
 html.android-phone .agent-mode-tabs button {
-  min-height: 25px;
+  min-height: 30px;
   padding: 1px 5px;
   border-radius: 6px;
   font-size: 7px;
   line-height: 1.05;
-}
-
-html.android-phone .agent-mode-capabilities {
-  width: min(278px, 100%);
-  padding: 7px 8px;
-  border-radius: 8px;
-  font-size: 7px;
-  line-height: 1.35;
-}
-
-html.android-phone .agent-mode-capabilities strong {
-  font-size: 7.6px;
-  line-height: 1.2;
-}
-
-html.android-phone .agent-mode-capabilities p,
-html.android-phone .agent-mode-capabilities em {
-  margin-top: 2px;
-  font-size: 6.8px;
-  line-height: 1.35;
-}
-
-html.android-phone .agent-mode-capability-tags {
-  gap: 3px;
-  margin-top: 4px;
-}
-
-html.android-phone .agent-mode-capability-tags span {
-  padding: 1px 5px;
-  font-size: 6.3px;
-  line-height: 1.1;
 }
 
 /* Android LLM settings sheet compact pass. */
@@ -4388,7 +4285,6 @@ html.android-phone .agent-mode-tabs {
 
 html.android-phone .screen-panel-tabs .panel-tab,
 html.android-phone .rag-tabs .panel-tab,
-html.android-phone .agent-mode-tabs button,
 html.android-phone .panel-tab {
   min-height: 27px;
   padding: 0 3px;
@@ -4510,7 +4406,6 @@ html.android-phone .observe-chart-card .chart-wrap,
 html.android-phone .chart-wrap {
   min-height: 153px;
 }
-
 
 html.android-phone .agent-mobile-menu,
 html.android-phone .agent-mobile-new {

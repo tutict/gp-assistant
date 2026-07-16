@@ -50,28 +50,7 @@ const AGENT_MODES = [
   { id: "research", label: "研报模式", hint: "聚焦上下游、公告和消息链路" },
 ] as const;
 
-
 type AgentMode = typeof AGENT_MODES[number]["id"];
-
-const AGENT_MODE_CAPABILITIES: Record<AgentMode, { summary: string; capabilities: string[]; example: string }> = {
-  quick: {
-    summary: "快速理解问题，优先调用少量工具给出可执行结论。",
-    capabilities: ["个股速览", "近期利好利空", "快速筛选"],
-    example: "例如：分析 300750 最近利好利空",
-  },
-  expert: {
-    summary: "更完整地串联行情、财务、趋势和风险，适合做深度研究。",
-    capabilities: ["财务和资金面", "趋势验证", "风险提示"],
-    example: "例如：看一下贵州茅台财务和资金面",
-  },
-  research: {
-    summary: "按研报视角整理板块、主题、上下游和消息链路。",
-    capabilities: ["板块主题", "上下游线索", "证据汇总"],
-    example: "例如：半导体板块有什么机会",
-  },
-};
-
-
 
 const AGENT_HISTORY_KEY = "stock-optimizer-agent-conversations";
 const AGENT_ACTIVE_KEY = "stock-optimizer-agent-active-conversation";
@@ -477,23 +456,18 @@ function AgentEmptyState({
   activeModel?: string;
   onModeChange: (mode: AgentMode) => void;
 }) {
-  const activeMode = AGENT_MODES.find((item) => item.id === mode) || AGENT_MODES[0];
-  const capability = AGENT_MODE_CAPABILITIES[mode];
-
   return (
     <div className="agent-empty-state">
-      <div className="agent-empty-mark">股</div>
-      <h2>使用{activeMode.label}开始对话</h2>
-      <p>{activeModel ? `当前模型：${activeModel}` : "配置模型后，可以让 Agent 调用行情、回测和消息工具完成分析。"}</p>
+      <h2>开始对话</h2>
 
-      <div className="agent-mode-tabs" role="tablist" aria-label="对话模式">
+      <div className="agent-mode-tabs" role="group" aria-label="对话模式">
         {AGENT_MODES.map((item) => (
           <button
             key={item.id}
             type="button"
             className={item.id === mode ? "active" : ""}
-            role="tab"
-            aria-selected={item.id === mode}
+            aria-pressed={item.id === mode}
+            aria-label={`${item.label}：${item.hint}`}
             onClick={() => onModeChange(item.id)}
             title={item.hint}
           >
@@ -502,16 +476,7 @@ function AgentEmptyState({
         ))}
       </div>
 
-      <div className="agent-mode-capabilities" aria-label="当前模式能力">
-        <strong>{activeMode.label}能力</strong>
-        <p>{capability.summary}</p>
-        <div className="agent-mode-capability-tags">
-          {capability.capabilities.map((item) => (
-            <span key={item}>{item}</span>
-          ))}
-        </div>
-        <em>{capability.example}</em>
-      </div>
+      {!activeModel && <p role="status">请先配置模型</p>}
     </div>
   );
 }

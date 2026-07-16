@@ -2093,7 +2093,6 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   background: var(--bg);
 }
 
-
 .agent-thread {
   min-width: 0;
   min-height: 0;
@@ -2107,7 +2106,7 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
 }
 
 .agent-empty-state {
-  width: min(680px, 100%);
+  width: min(420px, 100%);
 }
 
 .agent-message {
@@ -2244,7 +2243,6 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   color: var(--button-text);
 }
 
-.agent-mode-capabilities,
 .agent-intent-card,
 .agent-answer-sections article,
 .agent-evidence-grid article,
@@ -2258,7 +2256,6 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   background: var(--surface);
 }
 
-.agent-capability-grid,
 .agent-answer-sections,
 .agent-evidence-grid {
   display: grid;
@@ -2266,19 +2263,10 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   gap: var(--space-2);
 }
 
-.agent-mode-capability-tags,
 .agent-next-actions {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
-}
-
-.agent-mode-capability-tags span {
-  padding: 3px 7px;
-  border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--text-secondary);
-  font-size: 10px;
 }
 
 .agent-tool-trace,
