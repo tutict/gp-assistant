@@ -1441,6 +1441,137 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   padding: 0 14px 14px;
 }
 
+/* Fundamental snapshot leads the observation flow; one continuous data sheet, not card tiles. */
+.observe-fundamental-snapshot {
+  min-width: 0;
+  padding: 13px 14px 15px;
+  border-bottom: 1px solid var(--line-soft);
+  background:
+    linear-gradient(105deg, color-mix(in srgb, var(--accent) 5%, transparent), transparent 44%),
+    color-mix(in srgb, var(--surface-2) 46%, transparent);
+}
+
+.observe-fundamental-snapshot > header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.observe-fundamental-snapshot > header span {
+  display: block;
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  font-weight: 760;
+  letter-spacing: 0.08em;
+}
+
+.observe-fundamental-snapshot > header h3 {
+  margin: 3px 0 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.15;
+}
+
+.observe-fundamental-periods {
+  display: grid;
+  gap: 3px;
+  justify-items: end;
+}
+
+.observe-fundamental-periods time {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.observe-fundamental-periods time > span {
+  color: var(--text-tertiary);
+  font-size: 8px;
+  font-weight: 760;
+  letter-spacing: 0.05em;
+}
+
+.observe-fundamental-primary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0 0 10px;
+  padding: 9px 0;
+  border-block: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line-soft));
+}
+
+.observe-fundamental-primary > div {
+  min-width: 0;
+  padding: 0 12px;
+  border-left: 1px solid var(--line-soft);
+}
+
+.observe-fundamental-primary > div:first-child {
+  border-left: 0;
+  padding-left: 0;
+}
+
+.observe-fundamental-primary > div:last-child {
+  padding-right: 0;
+}
+
+.observe-fundamental-primary dt,
+.observe-fundamental-grid dt {
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  line-height: 1.25;
+}
+
+.observe-fundamental-primary dd {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 760;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.observe-fundamental-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 22px;
+  margin: 0;
+}
+
+.observe-fundamental-grid > div {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line-soft) 74%, transparent);
+}
+
+.observe-fundamental-grid dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 680;
+  line-height: 1.25;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.observe-fundamental-grid > div.positive dd {
+  color: var(--rise);
+}
+
+.observe-fundamental-grid > div.negative dd {
+  color: var(--fall);
+}
+
 .observe-text-metrics > header {
   padding: 14px 0 10px;
 }

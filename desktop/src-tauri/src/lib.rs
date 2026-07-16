@@ -141,6 +141,7 @@ async fn api_observe_inner(app: tauri::AppHandle, payload: Value) -> Result<Valu
     match observe_payload {
         Ok(Ok((core_payload, notes))) => match run_observe_calculation(&core_payload).await {
             Ok(mut result) => {
+                enrich_observe_stock_quote_fields(&mut result, &core_payload);
                 for note in notes {
                     append_observe_note(&mut result, note);
                 }
@@ -160,6 +161,7 @@ async fn api_observe_inner(app: tauri::AppHandle, payload: Value) -> Result<Valu
         Err(_) => match observe_core_payload_from_cache(&app, fallback_payload.clone()) {
             Ok(core_payload) => match run_observe_calculation(&core_payload).await {
                 Ok(mut result) => {
+                    enrich_observe_stock_quote_fields(&mut result, &core_payload);
                     append_observe_note(
                         &mut result,
                         format!("观察在线补全超过 {observe_timeout_secs} 秒，已返回本地缓存结果。"),
@@ -193,6 +195,53 @@ async fn run_observe_calculation(core_payload: &Value) -> Result<Value, String> 
         gp_core::observe_with_data_value(payload).map_err(|error| error.to_string())
     })
     .await?
+}
+
+fn enrich_observe_stock_quote_fields(result: &mut Value, core_payload: &Value) {
+    const QUOTE_FIELDS: [&str; 4] = [
+        "market_cap_billion",
+        "circulating_market_cap_billion",
+        "total_shares",
+        "circulating_shares",
+    ];
+
+    let result_code = result
+        .get("stock")
+        .and_then(|stock| stock.get("code"))
+        .and_then(Value::as_str)
+        .and_then(normalize_stock_code);
+    let Some(result_code) = result_code else {
+        return;
+    };
+    let source_stock = core_payload
+        .get("data")
+        .and_then(|data| data.get("stocks"))
+        .and_then(Value::as_array)
+        .and_then(|stocks| {
+            stocks.iter().find(|stock| {
+                stock
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .and_then(normalize_stock_code)
+                    .is_some_and(|code| code == result_code)
+            })
+        });
+    let (Some(source_stock), Some(target_stock)) = (
+        source_stock.and_then(Value::as_object),
+        result.get_mut("stock").and_then(Value::as_object_mut),
+    ) else {
+        return;
+    };
+
+    for field in QUOTE_FIELDS {
+        if let Some(value) = source_stock.get(field).filter(|value| {
+            value
+                .as_f64()
+                .is_some_and(|number| number.is_finite() && number > 0.0)
+        }) {
+            target_stock.insert(field.to_string(), value.clone());
+        }
+    }
 }
 
 #[tauri::command]
@@ -3046,9 +3095,22 @@ fn parse_tencent_quotes(
         let pb = parse_number(values.get(46))
             .filter(|value| *value > 0.0)
             .or_else(|| existing.and_then(|object| object_f64(object, "pb")));
-        let market_cap = parse_number(values.get(44))
+        // Tencent fields 44/45 are circulating/total market cap in 亿元,
+        // while 72/73 are the corresponding share counts.
+        let circulating_market_cap = parse_number(values.get(44))
+            .filter(|value| *value > 0.0)
+            .or_else(|| {
+                existing.and_then(|object| object_f64(object, "circulating_market_cap_billion"))
+            });
+        let market_cap = parse_number(values.get(45))
             .filter(|value| *value > 0.0)
             .or_else(|| existing.and_then(|object| object_f64(object, "market_cap_billion")));
+        let circulating_shares = parse_number(values.get(72))
+            .filter(|value| *value > 0.0)
+            .or_else(|| existing.and_then(|object| object_f64(object, "circulating_shares")));
+        let total_shares = parse_number(values.get(73))
+            .filter(|value| *value > 0.0)
+            .or_else(|| existing.and_then(|object| object_f64(object, "total_shares")));
         let change_pct = parse_number(values.get(32)).map(|value| value / 100.0);
         let volume = parse_number(values.get(6)).map(|value| value * 100.0);
         let amount = parse_number(values.get(37)).map(|value| value * 10_000.0);
@@ -3081,6 +3143,12 @@ fn parse_tencent_quotes(
         stock.insert("pb".to_string(), json!(pb));
         stock.insert("roe".to_string(), json!(roe));
         stock.insert("market_cap_billion".to_string(), json!(market_cap));
+        stock.insert(
+            "circulating_market_cap_billion".to_string(),
+            json!(circulating_market_cap),
+        );
+        stock.insert("total_shares".to_string(), json!(total_shares));
+        stock.insert("circulating_shares".to_string(), json!(circulating_shares));
         stock.insert("change_pct".to_string(), json!(change_pct));
         stock.insert("volume".to_string(), json!(volume));
         stock.insert("amount".to_string(), json!(amount));

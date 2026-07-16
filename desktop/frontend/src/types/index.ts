@@ -12,6 +12,9 @@ export interface StockItem {
   roe?: number;
   market_cap_billion?: number;
   market_cap?: number;
+  circulating_market_cap_billion?: number;
+  total_shares?: number;
+  circulating_shares?: number;
   dividend_yield?: number;
   is_st?: boolean;
   quote_time?: string;
@@ -217,6 +220,8 @@ export interface FinancialIndicatorItem {
 
 export interface FinancialIndicatorSection {
   title?: string;
+  period?: string | null;
+  source?: string | null;
   items?: FinancialIndicatorItem[];
   quarterly_eps?: FinancialIndicatorItem[];
   notes?: string[];

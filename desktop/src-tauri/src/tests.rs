@@ -155,6 +155,62 @@ fn tencent_batch_size_keeps_full_refresh_round_trips_reasonable() {
 }
 
 #[test]
+fn tencent_quote_parser_extracts_market_cap_and_share_structure() {
+    // Preserve the complete field shape of a public Tencent quote sample so
+    // index drift around the market-cap/share-count tail is caught by tests.
+    let raw = r#"v_sh600941="1~中国移动~600941~93.01~92.80~92.79~50872~23976~26896~93.01~3~93.00~33~92.99~67~92.98~51~92.97~2~93.02~7~93.03~44~93.04~22~93.05~7~93.06~88~~20260716120558~0.21~0.23~93.39~92.46~93.01/50872/472965240~50872~47297~0.56~14.85~~93.39~92.46~1.00~839.66~20168.01~1.42~102.08~83.52~1.03~-12~92.97~17.18~14.71~~~0.17~47296.5240~0.0000~0~   A~GP-A~-5.91~4.85~5.05~9.55~6.31~108.58~85.38~5.39~0.03~1.91~902767867~21683696323~-3.70~-11.90~902767867~~~-14.08~0.00~~CNY~0~___D__F__N~93.09~-170~";"#;
+
+    let stocks = parse_tencent_quotes(raw, &HashMap::new(), false);
+    assert_eq!(stocks.len(), 1);
+    let stock = &stocks[0];
+    assert_eq!(
+        stock
+            .get("circulating_market_cap_billion")
+            .and_then(Value::as_f64),
+        Some(839.66)
+    );
+    assert_eq!(
+        stock.get("market_cap_billion").and_then(Value::as_f64),
+        Some(20168.01)
+    );
+    assert_eq!(
+        stock.get("circulating_shares").and_then(Value::as_f64),
+        Some(902_767_867.0)
+    );
+    assert_eq!(
+        stock.get("total_shares").and_then(Value::as_f64),
+        Some(21_683_696_323.0)
+    );
+}
+
+#[test]
+fn observe_result_preserves_share_structure_from_quote_data() {
+    let core_payload = json!({
+        "data": {
+            "stocks": [{
+                "code": "600941.SH",
+                "market_cap_billion": 20168.01,
+                "circulating_market_cap_billion": 839.66,
+                "total_shares": 21683696323.0,
+                "circulating_shares": 902767867.0
+            }]
+        }
+    });
+    let mut result = json!({"stock": {"code": "600941.SH"}});
+
+    enrich_observe_stock_quote_fields(&mut result, &core_payload);
+
+    assert_eq!(
+        result["stock"]["total_shares"].as_f64(),
+        Some(21_683_696_323.0)
+    );
+    assert_eq!(
+        result["stock"]["circulating_shares"].as_f64(),
+        Some(902_767_867.0)
+    );
+}
+
+#[test]
 fn build_candidate_codes_is_stable_as_seed_grows() {
     // A full rebuild paginates with `batch_start`; the candidate list must
     // not drift as freshly fetched codes accumulate into the in-memory seed.

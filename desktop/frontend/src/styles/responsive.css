@@ -5347,3 +5347,68 @@ html.android-phone .observe-special-quant-item > p {
   font-size: 8.5px;
   line-height: 1.38;
 }
+
+/* Android fundamental data sheet: three headline facts, then a scan-friendly two-column ledger. */
+html.android-phone .observe-fundamental-snapshot {
+  padding: 9px 9px 10px;
+}
+
+html.android-phone .observe-fundamental-snapshot > header {
+  margin-bottom: 7px;
+}
+
+html.android-phone .observe-fundamental-snapshot > header span {
+  font-size: 8px;
+}
+
+html.android-phone .observe-fundamental-snapshot > header h3 {
+  margin-top: 2px;
+  font-size: 11px;
+}
+
+html.android-phone .observe-fundamental-periods {
+  max-width: 48%;
+}
+
+html.android-phone .observe-fundamental-periods time {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 8px;
+  text-overflow: ellipsis;
+}
+
+html.android-phone .observe-fundamental-periods time > span {
+  font-size: 7px;
+}
+
+html.android-phone .observe-fundamental-primary {
+  margin-bottom: 7px;
+  padding: 7px 0;
+}
+
+html.android-phone .observe-fundamental-primary > div {
+  padding-inline: 7px;
+}
+
+html.android-phone .observe-fundamental-primary dt,
+html.android-phone .observe-fundamental-grid dt {
+  font-size: 8px;
+}
+
+html.android-phone .observe-fundamental-primary dd {
+  margin-top: 3px;
+  font-size: 10.5px;
+}
+
+html.android-phone .observe-fundamental-grid {
+  column-gap: 13px;
+}
+
+html.android-phone .observe-fundamental-grid > div {
+  gap: 5px;
+  padding: 4px 0;
+}
+
+html.android-phone .observe-fundamental-grid dd {
+  font-size: 8.5px;
+}

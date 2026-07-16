@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import type { CapitalEvidenceItem, CapitalEvidenceResult, CapitalEvidenceSection, FinancialIndicatorItem, ObserveResult, StockItem, TrendIndicatorPoint, TrendIndicatorSignal, WatchlistItem } from "../../types";
+import type { CapitalEvidenceItem, CapitalEvidenceResult, CapitalEvidenceSection, FinancialIndicatorItem, FinancialIndicatorSection, ObserveResult, StockItem, TrendIndicatorPoint, TrendIndicatorSignal, WatchlistItem } from "../../types";
 import { computeKdj, toDailyBars } from "../../lib/kline";
 import { calculateObserveQuant } from "../../lib/observeQuant";
 import type { ObserveQuantConclusion } from "../../lib/observeQuant";
+import { buildFundamentalSnapshotData } from "../../lib/fundamentalSnapshot";
 import { getJson } from "../../lib/tauri";
 import { CollapsibleNotes } from "../CollapsibleNotes";
 import { RawJson } from "../RawJson";
@@ -130,6 +131,7 @@ export function ObserveResultView({ result, inWatchlist = false, onToggleWatchli
             )}
           </div>
         </header>
+        <FundamentalSnapshot stock={stock} financial={financial} />
         <ObserveTextMetrics stock={stock} signal={signal} series={series} capital={capital} financialItems={financial?.items || []} />
       </section>
 
@@ -150,6 +152,40 @@ export function ObserveResultView({ result, inWatchlist = false, onToggleWatchli
       <CollapsibleNotes notes={[...(result.notes || []), ...(signal?.notes || [])]} />
       <RawJson result={result} />
     </div>
+  );
+}
+
+function FundamentalSnapshot({ stock, financial }: { stock: StockItem; financial?: FinancialIndicatorSection | null }) {
+  const snapshot = buildFundamentalSnapshotData(stock, financial);
+  return (
+    <section className="observe-fundamental-snapshot" aria-label="最新基本面">
+      <header>
+        <div>
+          <span>基本面快照</span>
+          <h3>最新指标</h3>
+        </div>
+        <div className="observe-fundamental-periods">
+          <time><span>行情</span>{snapshot.quoteTime}</time>
+          <time><span>财务</span>{snapshot.financialPeriod}</time>
+        </div>
+      </header>
+      <dl className="observe-fundamental-primary" aria-label="每股收益与股本结构">
+        {snapshot.primary.map((item) => (
+          <div key={item.label}>
+            <dt>{item.label}</dt>
+            <dd>{item.value}</dd>
+          </div>
+        ))}
+      </dl>
+      <dl className="observe-fundamental-grid">
+        {snapshot.details.map((item) => (
+          <div key={item.label} className={item.tone || "neutral"}>
+            <dt>{item.label}</dt>
+            <dd>{item.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
   );
 }
 
@@ -249,28 +285,6 @@ function ObserveTextMetrics({
         ["形态信号", formatList(signal?.pattern_signals, patternSignalLabel)],
         ["触发原因", formatList(signal?.reasons, reasonLabel)],
       ]),
-    },    {
-      title: "财务质量",
-      items: compactMetricItems([
-        ["市盈率(TTM)", metricOrMissing(formatNumber(stock.pe))],
-        ["市净率(最新)", metricOrMissing(formatNumber(stock.pb))],
-        ["每股收益(计算)", financialMetricAny(financialLookup, ["latest_eps", "eps", "estimated_eps", "最新每股收益", "每股收益(估算)", "每股收益"], metricOrMissing(formatNumber(stock.latest_eps ?? stock.eps)))],
-        ["每股净资产", financialMetricAny(financialLookup, ["latest_bps", "estimated_bps", "每股净资产", "每股净资产(估算)"])],
-        ["营业总收入", financialMetricAny(financialLookup, ["operating_revenue", "total_operating_revenue", "revenue", "营业总收入", "营业收入"])],
-        ["总营收同比", financialMetricAny(financialLookup, ["operating_revenue_yoy", "revenue_growth_rate", "total_operating_revenue_yoy", "总营收同比", "营业收入同比"])],
-        ["归母净利润", financialMetricAny(financialLookup, ["net_profit_parent", "parent_net_profit", "np_parent_company_owners", "归母净利润"])],
-        ["归母净利同比", financialMetricAny(financialLookup, ["net_profit_parent_yoy", "parent_net_profit_yoy", "归母净利同比", "归母净利润同比"])],
-        ["扣非净利润", financialMetricAny(financialLookup, ["deducted_net_profit", "deducted_net_profit_billion", "扣非净利润"])],
-        ["扣非净利同比", financialMetricAny(financialLookup, ["deducted_net_profit_growth_rate", "扣非净利同比", "扣非净利润增长率", "扣非增长"])],
-        ["毛利率", financialMetricAny(financialLookup, ["gross_margin", "gross_profit_margin", "毛利率"])],
-        ["净利率", financialMetricAny(financialLookup, ["net_margin", "net_profit_margin", "deducted_net_profit_margin", "净利率", "扣非净利率"])],
-        ["净资产收益率", metricOrMissing(formatRatioPercent(stock.roe))],
-        ["资产负债率", financialMetricAny(financialLookup, ["asset_liability_ratio", "debt_to_asset_ratio", "资产负债率"])],
-        ["商誉净资产比", financialMetricAny(financialLookup, ["goodwill_to_net_assets", "goodwill_net_asset_ratio", "商誉净资产比"])],
-        ["质押总股本比", financialMetricAny(financialLookup, ["pledged_share_ratio", "pledge_total_share_ratio", "质押总股本比"])],
-        ["股息率", metricOrMissing(formatRatioPercent(stock.dividend_yield))],
-        ["股利支付率(静)", financialMetricAny(financialLookup, ["dividend_payout_ratio", "static_dividend_payout_ratio", "股利支付率(静)", "股利支付率"])],
-      ]),
     },
     {
       title: "资金证据",
@@ -292,15 +306,10 @@ function ObserveTextMetrics({
   const keyMetrics: Array<{ label: string; value: string; tone?: MetricAnalysisTone }> = [
     { label: "最新价", value: metricOrMissing(formatPrice(close)) },
     { label: "涨跌幅", value: metricOrMissing(formatSignedPercent(changePct)), tone: changeTone },
-    { label: "市盈率", value: metricOrMissing(formatNumber(stock.pe)) },
-    { label: "ROE", value: metricOrMissing(formatRatioPercent(stock.roe)) },
     { label: "支撑位", value: metricOrMissing(formatPrice(signal?.support)) },
     { label: "压力位", value: metricOrMissing(formatPrice(signal?.resistance)) },
   ];
-  const duplicateLatestLabels = new Set(["市盈率(TTM)", "市净率(最新)", "净资产收益率", "股息率"]);
-  const detailSections = sections.map((section) => section.title === "财务质量"
-    ? { ...section, items: section.items.filter(([label]) => !duplicateLatestLabels.has(label)) }
-    : section);
+  const detailSections = sections;
 
   return (
     <section className="observe-text-metrics observe-decision-summary" aria-label="观察判断">
@@ -690,15 +699,6 @@ function buildFinancialLookup(items: FinancialIndicatorItem[]): Map<string, stri
   }
   return lookup;
 }
-function financialMetricAny(lookup: Map<string, string>, keys: string[], fallback = "暂无"): string {
-  for (const key of keys) {
-    const value = lookup.get(key);
-    if (value != null && String(value).trim() && String(value).trim() !== "--") return String(value);
-  }
-  return fallback;
-}
-
-
 function summarizeCapitalEvidence(capital?: CapitalEvidenceResult | null): Record<string, string> {
   const sections = capital?.sections || [];
   return {
@@ -751,6 +751,7 @@ function formatMarketCap(stock: StockItem): string {
   if (stock.market_cap_billion != null) return `${formatNumber(stock.market_cap_billion)}亿`;
   return formatNumber(stock.market_cap);
 }
+
 
 function formatScore(value: unknown, max: unknown): string {
   const n = numeric(value);
