@@ -4926,8 +4926,6 @@ html.android-phone .observe-decision-summary > .observe-decision-heading {
   padding: 9px 1px 7px;
 }
 
-html.android-phone .observe-decision-heading > div > span,
-html.android-phone .observe-verdict > span,
 html.android-phone .observe-next-signal > span {
   font-size: 8.5px;
   line-height: 1.1;
@@ -5133,12 +5131,6 @@ html.android-phone .observe-capital-quant > header {
   padding: 7px 10px;
 }
 
-html.android-phone .observe-capital-quant > header span,
-html.android-phone .capital-quant-lane > header span {
-  font-size: 8px;
-  line-height: 1.1;
-}
-
 html.android-phone .observe-capital-quant > header h4 {
   margin-top: 3px;
   font-size: 11.5px;
@@ -5199,7 +5191,6 @@ html.android-phone .capital-quant-metrics dd {
   line-height: 1.1;
 }
 
-html.android-phone .capital-quant-meta,
 html.android-phone .capital-quant-note,
 html.android-phone .capital-quant-empty {
   margin-top: 7px;

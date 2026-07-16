@@ -314,15 +314,11 @@ function ObserveTextMetrics({
   return (
     <section className="observe-text-metrics observe-decision-summary" aria-label="观察判断">
       <header className="observe-decision-heading">
-        <div>
-          <span>观察摘要</span>
-          <h3>先看结论，再看证据</h3>
-        </div>
+        <h3>观察摘要</h3>
         <time>{String(stock.quote_time || signal?.date || latest?.date || "数据时间未知")}</time>
       </header>
 
       <section className={`observe-verdict ${verdict.tone}`} aria-label="当前观察结论">
-        <span>当前判断</span>
         <h4>{verdict.title}</h4>
         <p>{verdict.summary}</p>
       </section>
@@ -440,20 +436,25 @@ function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null
   return (
     <section className="observe-capital-quant" aria-label="机构与暗盘资金量化">
       <header>
-        <div><span>资金量化</span><h4>机构席位与暗盘资金代理</h4></div>
-        <small>公开数据 + 本地估算</small>
+        <h4>资金量化证据</h4>
+        <small>公开席位 · 本地估算</small>
       </header>
       <div className="capital-quant-lanes">
         <article className="capital-quant-lane institution">
           <header>
-            <div><span>龙虎榜公开席位</span><h5>机构买入 / 卖出</h5></div>
+            <h5>龙虎榜机构席位</h5>
             <small>{institution ? `${institution.date || "窗口内"} · ${institution.confidence || "高"}置信` : "当前无公开记录"}</small>
           </header>
           {institution ? (
             <>
               <CapitalQuantMetrics metrics={institutionMetrics} />
-              {institutionMeta && <p className="capital-quant-meta">{institutionMeta}</p>}
-              <p className="capital-quant-note">公开龙虎榜机构专用席位，不等于全部机构持仓变化。</p>
+              {institutionMeta && (
+                <details className="capital-quant-more">
+                  <summary>更多席位数据</summary>
+                  <p>{institutionMeta}</p>
+                </details>
+              )}
+              <p className="capital-quant-note">仅代表龙虎榜公开机构席位，不等同于全部机构持仓。</p>
             </>
           ) : (
             <>
@@ -466,12 +467,17 @@ function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null
         {proxy && (
           <article className="capital-quant-lane proxy">
             <header>
-              <div><span>日线量价推断</span><h5>暗盘资金代理</h5></div>
+              <h5>量价资金代理</h5>
               <small className="capital-quant-estimate">估算 · {proxy.confidence || "中"}置信</small>
             </header>
             <CapitalQuantMetrics metrics={proxyMetrics} />
-            {proxyMeta && <p className="capital-quant-meta">{proxyMeta}</p>}
-            <p className="capital-quant-note">由量价、吸筹、趋势和承接指标合成；不是交易所披露的暗盘成交，也不等同于主力净流入。</p>
+            {proxyMeta && (
+              <details className="capital-quant-more">
+                <summary>更多代理数据</summary>
+                <p>{proxyMeta}</p>
+              </details>
+            )}
+            <p className="capital-quant-note">量价模型估算，非交易所披露数据，也不代表主力净流入。</p>
           </article>
         )}
       </div>

@@ -69,15 +69,15 @@ const MOBILE_TENCENT_MAX_CANDIDATES = 15000;
 const MOBILE_TENCENT_BATCHES_PER_STEP = 12;
 const OBSERVE_FULL_HISTORY_LIMIT = 10000;
 const OBSERVE_HISTORY_LIMIT = OBSERVE_FULL_HISTORY_LIMIT;
-const MOBILE_FINANCIAL_SNAPSHOT_URL = new URL("mobile-financial-snapshot.json", window.location.href).toString();
-const MOBILE_DEDUCTED_FINANCIAL_FIELDS = [
+const BUNDLED_FINANCIAL_SNAPSHOT_URL = new URL("mobile-financial-snapshot.json", window.location.href).toString();
+const DEDUCTED_FINANCIAL_FIELDS = [
   "deducted_net_profit_billion",
   "deducted_net_profit_margin",
   "deducted_net_profit_growth_rate",
 ];
 
-let mobileFinancialSnapshotPromise: Promise<Record<string, unknown> | null> | null = null;
-let mobileFinancialSnapshotSentToBackend = false;
+let financialSnapshotPromise: Promise<Record<string, unknown> | null> | null = null;
+let financialSnapshotSentToBackend = false;
 
 function hasTauriRuntime(): boolean {
   if (typeof window === "undefined") return false;
@@ -158,9 +158,9 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
       let history: Record<string, unknown>[] | null = null;
       if (mobileRuntime) {
         payload.mobile_fast_observe = true;
-        const financialSnapshot = await loadMobileFinancialSnapshotForCode(code).catch(() => null);
-        if (financialSnapshot) payload.financial_snapshot = financialSnapshot;
       }
+      const financialSnapshot = await loadBundledFinancialSnapshotForCode(code).catch(() => null);
+      if (financialSnapshot) payload.financial_snapshot = financialSnapshot;
       history = await fetchObserveDailyHistoryForTauriStable(payload, OBSERVE_PREFETCH_TIMEOUT_MS).catch(() => null);
       if (Array.isArray(history) && history.length) payload.history = history;
 
@@ -184,33 +184,33 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
   },
 ];
 
-async function withMobileFinancialSnapshotPayload(payload: unknown): Promise<unknown> {
-  if (!isMobileTauriRuntime()) return payload;
+async function withFinancialSnapshotPayload(payload: unknown): Promise<unknown> {
+  if (!isTauriRuntime()) return payload;
   const base = asRecord(payload);
   if (financialSnapshotPayload(asRecord(base.financial_snapshot))) return payload;
-  if (mobileFinancialSnapshotSentToBackend) return payload;
-  const snapshot = await loadMobileFinancialSnapshot().catch(() => null);
+  if (financialSnapshotSentToBackend) return payload;
+  const snapshot = await loadBundledFinancialSnapshot().catch(() => null);
   const financialSnapshot = financialSnapshotPayload(snapshot, { includeStocks: false });
   return financialSnapshot ? { ...base, financial_snapshot: financialSnapshot } : payload;
 }
 
-async function invokeWithMobileFinancialSnapshot(invoke: InvokeFn, command: string, payload: unknown): Promise<unknown> {
-  const nextPayload = await withMobileFinancialSnapshotPayload(payload);
+async function invokeWithFinancialSnapshot(invoke: InvokeFn, command: string, payload: unknown): Promise<unknown> {
+  const nextPayload = await withFinancialSnapshotPayload(payload);
   const includedSnapshot = Boolean(
     financialSnapshotPayload(asRecord(asRecord(nextPayload).financial_snapshot)),
   );
   const result = await invoke(command, { payload: nextPayload });
-  if (includedSnapshot) mobileFinancialSnapshotSentToBackend = true;
+  if (includedSnapshot) financialSnapshotSentToBackend = true;
   return result;
 }
 
 export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
-  "/api/screen": async ({ invoke, payload }) => invokeWithMobileFinancialSnapshot(invoke, "api_screen", payload),
-  "/api/sector-screen": async ({ invoke, payload }) => invokeWithMobileFinancialSnapshot(invoke, "api_sector_screen", payload),
-  "/api/custom-screen": async ({ invoke, payload }) => invokeWithMobileFinancialSnapshot(invoke, "api_custom_screen", payload),
-  "/api/graph-screen": async ({ invoke, payload }) => invokeWithMobileFinancialSnapshot(invoke, "api_graph_screen", payload),
+  "/api/screen": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_screen", payload),
+  "/api/sector-screen": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_sector_screen", payload),
+  "/api/custom-screen": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_custom_screen", payload),
+  "/api/graph-screen": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_graph_screen", payload),
   "/api/trend": async ({ invoke, payload }) => invoke("api_trend_analyze", { payload }),
-  "/api/trend-screen": async ({ invoke, payload }) => invokeWithMobileFinancialSnapshot(invoke, "api_trend_screen", payload),
+  "/api/trend-screen": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_trend_screen", payload),
   "/api/backtest": async ({ invoke, payload }) => invoke("api_backtest", { payload }),
   "/api/news-rag": async ({ invoke, payload }) => isMobileTauriRuntime()
     ? withTimeout(analyzeMobileStockNews(invoke, asRecord(payload)), MOBILE_NEWS_RAG_TIMEOUT_MS, `移动端消息分析超过 ${Math.round(MOBILE_NEWS_RAG_TIMEOUT_MS / 1000)} 秒未返回，已中止等待。`)
@@ -222,7 +222,11 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/upstream-rag/transfer/start": async ({ invoke, payload }) => invoke("api_upstream_rag_transfer_start", { payload }),
   "/api/data-sources/auto-refresh-universe": async ({ invoke, payload }) => tauriAutoRefreshUniverse(invoke, asRecord(payload)),
   "/api/data-sources/refresh-universe": async ({ invoke, payload }) => refreshTauriMarketData(invoke, asRecord(payload)),
-  "/api/data-sources/prune-cache": async ({ invoke }) => invoke("api_market_clear_cache"),
+  "/api/data-sources/prune-cache": async ({ invoke }) => {
+    const result = await invoke("api_market_clear_cache");
+    financialSnapshotSentToBackend = false;
+    return result;
+  },
   "/api/upstream-rag/mobile/import": async ({ invoke, payload }) => invoke("core_upstream_rag_import", { payload }),
   "/api/upstream-rag/mobile/detail": async ({ invoke, payload }) => invoke("core_upstream_rag_detail", { payload }),
   "/api/upstream-rag/mobile/rollback": async ({ invoke, payload }) => invoke("core_upstream_rag_rollback", { payload }),
@@ -310,7 +314,7 @@ export async function refreshTauriMarketData(invoke: InvokeFn, options: MarketRe
   });
   try {
     logs("开始通过 Tauri/Rust 刷新股票池。", "info");
-    const financialSnapshot = await loadMobileFinancialSnapshot().catch(() => null);
+    const financialSnapshot = await loadBundledFinancialSnapshot().catch(() => null);
     const baseOptions = sanitizeMarketRefreshOptions(options);
     const maxLoops = clampInt(Number(baseOptions.max_refresh_loops || 512), 1, 2048, 512);
     let batchStart = clampInt(baseOptions.batch_start, 0, 100000, 0);
@@ -531,25 +535,25 @@ function mobileRefreshNotes(status: unknown, fallback = ""): string[] {
   if (failed > 0) return [`${base} 失败批次 ${failed} 批，其余股票已继续处理。`];
   return [base];
 }
-async function loadMobileFinancialSnapshot(): Promise<Record<string, unknown> | null> {
-  if (mobileFinancialSnapshotPromise) return mobileFinancialSnapshotPromise;
-  mobileFinancialSnapshotPromise = (async () => {
+async function loadBundledFinancialSnapshot(): Promise<Record<string, unknown> | null> {
+  if (financialSnapshotPromise) return financialSnapshotPromise;
+  financialSnapshotPromise = (async () => {
     try {
-      const response = await fetch(MOBILE_FINANCIAL_SNAPSHOT_URL, { cache: "no-store" });
+      const response = await fetch(BUNDLED_FINANCIAL_SNAPSHOT_URL, { cache: "no-store" });
       if (!response.ok) return null;
       const snapshot = asRecord(await response.json());
       const financials: Record<string, unknown> = {};
       const stocks = (Array.isArray(snapshot.stocks) ? snapshot.stocks : [])
-        .map((stock) => normalizeMobileFinancialSnapshotStock(asRecord(stock)))
+        .map((stock) => normalizeBundledFinancialSnapshotStock(asRecord(stock)))
         .filter(Boolean) as Record<string, unknown>[];
       for (const stock of stocks) {
         const code = String(stock.code || "");
-        const financial = normalizeMobileFinancialSnapshotFinancial(stock);
+        const financial = normalizeBundledFinancialSnapshotFinancial(stock);
         if (code && financial) financials[code] = financial;
       }
       for (const [rawCode, value] of Object.entries(asRecord(snapshot.financials))) {
         const code = normalizeStockCode(rawCode);
-        const financial = normalizeMobileFinancialSnapshotFinancial(asRecord(value));
+        const financial = normalizeBundledFinancialSnapshotFinancial(asRecord(value));
         if (code && financial) financials[code] = financial;
       }
       return { ...snapshot, stocks, financials };
@@ -557,7 +561,7 @@ async function loadMobileFinancialSnapshot(): Promise<Record<string, unknown> | 
       return null;
     }
   })();
-  return mobileFinancialSnapshotPromise;
+  return financialSnapshotPromise;
 }
 
 function financialSnapshotPayload(
@@ -572,30 +576,34 @@ function financialSnapshotPayload(
   return includeStocks ? { stocks, financials } : { financials };
 }
 
-async function loadMobileFinancialSnapshotForCode(rawCode: string): Promise<Record<string, unknown> | null> {
+async function loadBundledFinancialSnapshotForCode(rawCode: string): Promise<Record<string, unknown> | null> {
   const code = normalizeStockCode(rawCode);
   if (!code) return null;
-  const snapshot = await loadMobileFinancialSnapshot();
+  const snapshot = await loadBundledFinancialSnapshot();
   const financial = asRecord(asRecord(snapshot?.financials)[code]);
   if (!Object.keys(financial).length) return null;
   return { stocks: [], financials: { [code]: financial } };
 }
 
-function normalizeMobileFinancialSnapshotStock(stock: Record<string, unknown>): Record<string, unknown> | null {
+function normalizeBundledFinancialSnapshotStock(stock: Record<string, unknown>): Record<string, unknown> | null {
   const code = normalizeStockCode(stock.code);
   if (!code) return null;
   const item: Record<string, unknown> = { code };
-  for (const field of MOBILE_DEDUCTED_FINANCIAL_FIELDS) {
+  for (const field of DEDUCTED_FINANCIAL_FIELDS) {
     const value = parseLooseNumber(stock[field]);
     if (value !== null) item[field] = value;
   }
-  const financial = normalizeMobileFinancialSnapshotFinancial(stock);
+  const financial = normalizeBundledFinancialSnapshotFinancial(stock);
   if (financial) item.financial = financial;
   return item;
 }
 
-function normalizeMobileFinancialSnapshotFinancial(source: Record<string, unknown>): Record<string, unknown> | null {
+function normalizeBundledFinancialSnapshotFinancial(source: Record<string, unknown>): Record<string, unknown> | null {
   const financial: Record<string, unknown> = normalizeMobileFinancialSnapshotDetails(source);
+  for (const field of DEDUCTED_FINANCIAL_FIELDS) {
+    const value = parseLooseNumber(source[field]);
+    if (value !== null) financial[field] = value;
+  }
   const latestEps = parseLooseNumber(source.latest_eps ?? source.eps);
   if (latestEps !== null) financial.latest_eps = latestEps;
   const latestBps = parseLooseNumber(source.latest_bps ?? source.bps);
@@ -617,7 +625,7 @@ function normalizeQuarterlyEpsPoint(point: Record<string, unknown>): Record<stri
   const period = normalizeFinancialPeriodKey(point.period);
   const value = parseLooseNumber(point.value ?? point.raw_value);
   if (!period || value === null) return null;
-  return { period, value, source: point.source ? String(point.source) : "mobile financial snapshot" };
+  return { period, value, source: point.source ? String(point.source) : "bundled financial snapshot" };
 }
 
 function normalizeFinancialPeriodKey(value: unknown): string {

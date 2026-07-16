@@ -293,9 +293,9 @@ function CandlestickChart({
 }) {
   const layout = mobileRuntime ? (isFullscreen ? MOBILE_LANDSCAPE_LAYOUT : MOBILE_LAYOUT) : DESKTOP_LAYOUT;
   const { width, priceTop, priceHeight, volumeTop, volumeHeight, macdTop, macdHeight, height } = layout;
-  const plotInsetStart = mobileRuntime ? 8 : 52;
+  const plotInsetStart = 8;
   const currentPriceLabelWidth = mobileRuntime ? 68 : 76;
-  const plotInsetEnd = (mobileRuntime ? 8 : 48) + currentPriceLabelWidth;
+  const plotInsetEnd = currentPriceLabelWidth + 8;
 
   const priceMax = Math.max(...visibleBars.map((bar) => bar.high));
   const priceMin = Math.min(...visibleBars.map((bar) => bar.low));
@@ -506,8 +506,9 @@ function CandlestickChart({
           return (
             <g key={`price-${tick}`}>
               <line className="kline-grid-line" x1={plotInsetStart} x2={width - plotInsetEnd} y1={y} y2={y} />
-              <text className="kline-axis-label left" x="18" y={y + 4}>{formatPrice(tick)}</text>
-              {!mobileRuntime ? <text className="kline-axis-label right" x={width - 18} y={y + 4}>{formatPrice(tick)}</text> : null}
+              {mobileRuntime
+                ? <text className="kline-axis-label left" x="18" y={y + 4}>{formatPrice(tick)}</text>
+                : <text className="kline-axis-label right" x={width - 18} y={y + 4}>{formatPrice(tick)}</text>}
             </g>
           );
         })}
@@ -643,9 +644,9 @@ function MacdLayer({
           />
         );
       })}
+      <CrossMarkerLayer crosses={crosses} center={center} y={(point) => y((point.dif + point.dea) / 2)} />
       <polyline className="trend-line line-dif" points={line("dif")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
       <polyline className="trend-line line-dea" points={line("dea")} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-      <CrossMarkerLayer crosses={crosses} center={center} y={(point) => y((point.dif + point.dea) / 2)} />
     </g>
   );
 }
@@ -728,8 +729,8 @@ function CrossMarkerLayer<T>({
         const isGolden = cross.type === "golden";
         return (
           <g key={`${cross.type}-${cross.index}`} className={`indicator-cross-marker ${isGolden ? "golden" : "death"}`} transform={`translate(${x.toFixed(2)} ${markerY.toFixed(2)})`}>
-            <circle r="5.8" />
-            <path d={isGolden ? "M -5 3 L 0 -5 L 5 3" : "M -5 -3 L 0 5 L 5 -3"} />
+            <circle r="5.8" fill="none" />
+            <path d={isGolden ? "M -5 3 L 0 -5 L 5 3" : "M -5 -3 L 0 5 L 5 -3"} fill="none" />
           </g>
         );
       })}

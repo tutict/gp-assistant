@@ -1,4 +1,7 @@
-param()
+param(
+    [switch] $SkipAndroidProjectUpdates,
+    [string] $FinancialSourcePath = ""
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -640,8 +643,11 @@ function New-MobileFinancialEntry {
 
 function Export-MobileFinancialSnapshot {
     $snapshotPath = Join-Path $OutputDir "mobile-financial-snapshot.json"
-    $fundamentalsPath = Join-Path $Root "data\cache\tdx_fundamentals.csv"
-    $stocks = New-Object System.Collections.Generic.List[object]
+    $fundamentalsPath = if ([string]::IsNullOrWhiteSpace($FinancialSourcePath)) {
+        Join-Path $Root "data\cache\tdx_fundamentals.csv"
+    } else {
+        [System.IO.Path]::GetFullPath($FinancialSourcePath)
+    }
     $financials = [ordered]@{}
     $byCode = @{}
     $source = $null
@@ -797,8 +803,10 @@ function Export-MobileFinancialSnapshot {
                 source = $source
                 quarterly_eps = $quarterly
             }
-            $stocks.Add([pscustomobject]$stock) | Out-Null
             $financials[$code] = [pscustomobject][ordered]@{
+                deducted_net_profit_billion = $stock.deducted_net_profit_billion
+                deducted_net_profit_margin = $stock.deducted_net_profit_margin
+                deducted_net_profit_growth_rate = $stock.deducted_net_profit_growth_rate
                 latest_eps = $stock.latest_eps
                 latest_bps = $stock.latest_bps
                 operating_revenue_billion = $stock.operating_revenue_billion
@@ -816,22 +824,33 @@ function Export-MobileFinancialSnapshot {
         }
         $notes.Add("tdx fundamentals snapshot exported for mobile deducted filters and EPS indicators") | Out-Null
     } else {
-        $notes.Add("tdx_fundamentals.csv not found; mobile deducted financial filters and EPS indicators will rely on existing cache fields") | Out-Null
+        if (Test-Path -LiteralPath $snapshotPath) {
+            try {
+                $existingSnapshot = Get-Content -LiteralPath $snapshotPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $existingFinancialCount = @($existingSnapshot.financials.psobject.Properties).Count
+                if ($existingFinancialCount -gt 0) {
+                    Write-Host "Reused bundled financial snapshot with $existingFinancialCount entries at $snapshotPath"
+                    return
+                }
+            } catch {
+                Write-Warning "Bundled financial snapshot is unreadable: $($_.Exception.Message)"
+            }
+        }
+        throw "Cannot prepare a financial snapshot: data/cache/tdx_fundamentals.csv is missing and no non-empty bundled baseline was copied by the frontend build."
     }
 
     $snapshot = [pscustomobject][ordered]@{
-        schema_version = "mobile-financial-snapshot/v2"
+        schema_version = "mobile-financial-snapshot/v3"
         generated_at = (Get-Date).ToUniversalTime().ToString("o")
         source = $source
-        stock_count = $stocks.Count
+        stock_count = 0
         financial_count = $financials.Count
-        stocks = $stocks
         financials = $financials
         notes = $notes
     }
     $json = $snapshot | ConvertTo-Json -Depth 10 -Compress
     [System.IO.File]::WriteAllText($snapshotPath, $json, [System.Text.UTF8Encoding]::new($false))
-    Write-Host "Prepared mobile financial snapshot: $($stocks.Count) rows, $($financials.Count) EPS entries at $snapshotPath"
+    Write-Host "Prepared bundled financial snapshot: $($financials.Count) entries at $snapshotPath"
 }
 Assert-WorkspaceChildPath $OutputDir $Root
 
@@ -839,9 +858,11 @@ Build-ReactFrontend
 
 Export-MobileFinancialSnapshot
 
-Update-AndroidProjectForLanImport
-Update-AndroidProjectBranding
-Update-AndroidStartupTheme
-Update-AndroidSafeAreaInsets
+if (-not $SkipAndroidProjectUpdates) {
+    Update-AndroidProjectForLanImport
+    Update-AndroidProjectBranding
+    Update-AndroidStartupTheme
+    Update-AndroidSafeAreaInsets
+}
 
 Write-Host "Prepared Tauri React assets at: $OutputDir"
