@@ -763,45 +763,9 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   background: radial-gradient(circle at 50% 44%, color-mix(in srgb, var(--agent-accent) 10%, transparent), transparent 34%),
     #121316;
-}
-.agent-topbar {
-  min-height: 54px;
-  padding: 12px 18px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--text-secondary);
-  border-bottom: 1px solid color-mix(in srgb, var(--line-soft) 70%, transparent);
-}
-.agent-topbar div {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-.agent-topbar span,
-.agent-topbar em {
-  font-size: 0.78rem;
-  font-style: normal;
-}
-.agent-topbar strong {
-  color: var(--text);
-  font-size: 0.98rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.agent-topbar-meta {
-  justify-content: flex-end;
-  flex: 0 0 auto;
-}
-.agent-topbar-meta span {
-  color: var(--agent-accent-strong);
-  font-weight: 750;
 }
 .agent-thread {
   min-height: 0;

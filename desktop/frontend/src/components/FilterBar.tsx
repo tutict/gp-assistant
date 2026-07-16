@@ -1,4 +1,4 @@
-import { RefreshCw, Trash2 } from "lucide-react";
+import { RefreshCw, Settings2, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getJson, getTauriInvoke, isMarketStatusStale, postJson, refreshTauriMarketData } from "../lib/tauri";
 import { formatBytes, formatMarketRefreshDate, formatNumber } from "../lib/format";
@@ -216,9 +216,6 @@ useEffect(() => {
       window.setTimeout(() => setProgress(null), 900);
     }
   }, [appendLog, clearRefreshLogTimer, scheduleRefreshLogCollapse]);
-  const sourceToolsVisible = !mobileRuntime;
-  const statusMetricsClassName = mobileRuntime ? "screen-mobile-status-metrics" : "data-source-status screen-status-metrics";
-  const statusMetricClassName = mobileRuntime ? "screen-mobile-status-metric" : "status-item screen-status-metric";
   const refreshDateSource = status?.quote_trade_date ?? status?.quote_generated_at ?? status?.generated_at ?? status?.universe_updated_at;
   const refreshDateText = formatMarketRefreshDate(refreshDateSource, mobileRuntime);
   const mobileUniverseCount = Number(status?.universe_count);
@@ -227,8 +224,8 @@ useEffect(() => {
     : "待同步";
   const mobileCacheText = status?.cache_bytes !== undefined ? `缓存 ${formatBytes(status.cache_bytes)}` : "缓存 --";
   const mobileRefreshSummary = `${mobileUniverseText} · ${refreshDateText} · ${mobileCacheText}`;
-  const toolsContent = sourceToolsVisible ? (
-    <div className={mobileRuntime ? "screen-mobile-tools" : "data-source-tools"}>
+  const maintenanceContent = (
+    <div className="screen-refresh-maintenance-panel">
       <div className="refresh-options">
         <label className="refresh-option refresh-option-boolean">
           <input type="checkbox" checked={fullRebuild} onChange={(event) => setFullRebuild(event.target.checked)} disabled={refreshing} />
@@ -243,17 +240,11 @@ useEffect(() => {
           <input type="number" min="1000" max="50000" step="1000" value={maxCandidates} onChange={(event) => setMaxCandidates(Number(event.target.value) || 15000)} disabled={refreshing} />
         </label>
       </div>
-
-      <div className="data-source-actions">
-        <button type="button" className="action-btn" onClick={refreshUniverse} disabled={refreshing}>
-          <RefreshCw className={refreshing ? "spin" : ""} size={15} aria-hidden="true" /><span>{mobileRuntime ? "校验刷新" : "刷新并校验股票池"}</span>
-        </button>
-        <button type="button" className="action-btn" onClick={pruneCache} disabled={refreshing}>
-          <Trash2 size={15} aria-hidden="true" /><span>{mobileRuntime ? "清缓存" : "清理缓存"}</span>
-        </button>
-      </div>
+      <button type="button" className="action-btn screen-refresh-clear-btn" onClick={pruneCache} disabled={refreshing}>
+        <Trash2 size={15} aria-hidden="true" /><span>清理缓存</span>
+      </button>
     </div>
-  ) : null;
+  );
 
   const progressAndLog = mobileRuntime ? null : (
     <>
@@ -334,19 +325,24 @@ useEffect(() => {
           )}
         </section>
       ) : (
-        <section className="research-context-bar screen-toolbar screen-toolbar-card tools-open" aria-label="股票池数据工具栏">
-          <div className="data-source-main screen-toolbar-main">
-            <div className={statusMetricsClassName} aria-label="股票池状态">
-              <span className={statusMetricClassName}><em>股票池</em><strong>{formatNumber(status?.universe_count)}</strong></span>
-              <span className={statusMetricClassName}><em>缓存</em><strong>{formatBytes(status?.cache_bytes)}</strong></span>
-              <span className={`${statusMetricClassName} refresh-date`}><em>刷新日期</em><strong>{refreshDateText}</strong></span>
+        <section className={`research-context-bar screen-toolbar screen-toolbar-card screen-toolbar-compact ${refreshing ? "refreshing" : ""}`} aria-label="股票池数据工具栏">
+          <div className="screen-toolbar-compact-row">
+            <div className="screen-toolbar-compact-status" aria-label="股票池状态">
+              <span><em>股票池</em><strong>{formatNumber(status?.universe_count)}</strong></span>
+              <span><em>缓存</em><strong>{formatBytes(status?.cache_bytes)}</strong></span>
+              <span className="refresh-date"><em>刷新日期</em><strong>{refreshDateText}</strong></span>
+            </div>
+            <div className="screen-toolbar-compact-actions">
+              <button type="button" className="screen-toolbar-refresh-btn" onClick={refreshUniverse} disabled={refreshing}>
+                <RefreshCw className={refreshing ? "spin" : ""} size={15} aria-hidden="true" />
+                <span>{refreshing ? "刷新中" : "刷新"}</span>
+              </button>
+              <details className="screen-refresh-maintenance">
+                <summary aria-label="股票池维护设置"><Settings2 size={15} aria-hidden="true" /><span>维护</span></summary>
+                {maintenanceContent}
+              </details>
             </div>
           </div>
-
-          <div className="screen-toolbar-side">
-            {toolsContent}
-          </div>
-
           {progressAndLog}
         </section>
       )}

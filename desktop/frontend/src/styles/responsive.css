@@ -572,8 +572,7 @@
   .agent-workspace.rail-collapsed .agent-rail-brand,
   .agent-workspace.rail-collapsed .agent-new-chat-label,
   .agent-workspace.rail-collapsed .agent-rail-section,
-  .agent-workspace.rail-collapsed .agent-rail-footer,
-  .agent-workspace.rail-collapsed .agent-rail-search {
+  .agent-workspace.rail-collapsed .agent-rail-footer {
     display: initial;
   }
 
@@ -586,9 +585,6 @@
     display: flex;
   }
 
-  .agent-workspace.rail-collapsed .agent-rail-search {
-    display: flex;
-  }
 
   .agent-rail-scrim {
     position: fixed;
@@ -605,7 +601,6 @@
 
   .agent-chat-stage {
     height: 100%;
-    grid-template-rows: auto minmax(0, 1fr) auto;
   }
 
   .agent-mobile-actions {
@@ -626,14 +621,7 @@
     color: var(--text);
   }
 
-  .agent-topbar {
-    min-height: 46px;
-    padding: 5px 8px 5px 88px;
-  }
 
-  .agent-topbar-meta em {
-    display: none;
-  }
 
   .agent-thread {
     padding: 8px 7px;
@@ -863,12 +851,6 @@
     grid-template-columns: minmax(0, 1fr) 78px;
   }
 
-  .agent-topbar strong {
-    max-width: 42vw;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
 }
 
 @media (orientation: landscape) and (max-height: 560px) and (max-width: 980px) {
@@ -1247,9 +1229,6 @@ html.android-phone .metric-card dd {
   font-size: 0.9rem;
 }
 
-html.android-phone .agent-topbar {
-  min-height: 34px;
-}
 
 html.android-phone .agent-thread {
   padding: 4px;
@@ -1562,7 +1541,6 @@ html.android-phone .app[data-active-view="agent"] .workbench {
 
 html.android-phone .agent-chat-stage {
   height: 100%;
-  grid-template-rows: 34px minmax(0, 1fr) auto;
   background: var(--bg);
 }
 
@@ -1586,30 +1564,10 @@ html.android-phone .agent-mobile-new svg {
   height: 15px;
 }
 
-html.android-phone .agent-topbar {
-  min-height: 34px;
-  padding: 3px 6px 3px 72px;
-  gap: 6px;
-}
 
-html.android-phone .agent-topbar div {
-  gap: 4px;
-}
 
-html.android-phone .agent-topbar span,
-html.android-phone .agent-topbar em {
-  font-size: 7px;
-  line-height: 1;
-}
 
-html.android-phone .agent-topbar strong {
-  font-size: 8.5px;
-  line-height: 1;
-}
 
-html.android-phone .agent-topbar-meta span {
-  font-size: 7px;
-}
 
 html.android-phone .agent-thread {
   gap: 5px;
@@ -2225,15 +2183,6 @@ html.android-phone .app[data-active-view="agent"] .workbench {
   padding-bottom: calc(var(--bottom-nav-height) + var(--safe-bottom));
 }
 
-html.android-phone .agent-chat-stage {
-  grid-template-rows: 28px minmax(0, 1fr) auto;
-}
-
-html.android-phone .agent-topbar {
-  min-height: 28px;
-  height: 28px;
-  padding: 2px 4px 2px 64px;
-}
 
 html.android-phone .agent-mobile-menu,
 html.android-phone .agent-mobile-new {
@@ -3733,65 +3682,7 @@ html.android-phone .agent-mobile-new svg {
   height: 16px;
 }
 
-html.android-phone .agent-topbar {
-  border-top: 0;
-}
-/* Android Agent topbar one-line alignment pass. */
-html.android-phone .agent-mobile-actions {
-  top: 32px;
-  left: 6px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-html.android-phone .agent-topbar {
-  height: 28px;
-  min-height: 28px;
-  padding: 0 5px 0 74px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  line-height: 1;
-}
-
-html.android-phone .agent-topbar > div,
-html.android-phone .agent-topbar-meta {
-  height: 28px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-html.android-phone .agent-topbar span,
-html.android-phone .agent-topbar strong,
-html.android-phone .agent-topbar em,
-html.android-phone .agent-topbar-meta span {
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  line-height: 28px;
-}
-
-html.android-phone .agent-topbar strong {
-  max-width: 96px;
-}
-
-html.android-phone .agent-topbar-meta {
-  flex: 0 0 auto;
-  justify-content: flex-end;
-}
-
-html.android-phone .agent-mobile-menu,
-html.android-phone .agent-mobile-new {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-/* Android Agent topbar alignment correction: keep action buttons in the topbar row. */
+/* Android Agent mobile action alignment. */
 html.android-phone .agent-mobile-actions {
   top: 0;
   left: 6px;
@@ -3799,6 +3690,13 @@ html.android-phone .agent-mobile-actions {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+html.android-phone .agent-mobile-menu,
+html.android-phone .agent-mobile-new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 html.android-phone .agent-mobile-menu,
@@ -4613,15 +4511,6 @@ html.android-phone .chart-wrap {
   min-height: 153px;
 }
 
-html.android-phone .agent-chat-stage {
-  grid-template-rows: 36px minmax(0, 1fr) auto;
-}
-
-html.android-phone .agent-topbar {
-  min-height: 36px;
-  height: 36px;
-  padding: 3px 5px 3px 83px;
-}
 
 html.android-phone .agent-mobile-menu,
 html.android-phone .agent-mobile-new {
@@ -5295,12 +5184,12 @@ html.android-phone .observe-fundamental-primary > div {
 
 html.android-phone .observe-fundamental-primary dt,
 html.android-phone .observe-fundamental-grid dt {
-  font-size: 8px;
+  font-size: 9.5px;
 }
 
 html.android-phone .observe-fundamental-primary dd {
   margin-top: 3px;
-  font-size: 10.5px;
+  font-size: 12.5px;
 }
 
 html.android-phone .observe-fundamental-grid {
@@ -5313,7 +5202,7 @@ html.android-phone .observe-fundamental-grid > div {
 }
 
 html.android-phone .observe-fundamental-grid dd {
-  font-size: 8.5px;
+  font-size: 10px;
 }
 
 /* Android K-line controls: readable portrait rail and compact landscape fullscreen. */
@@ -5407,4 +5296,14 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-market-chart.mobile-chart .klin
   margin-top: 2px;
   font-size: 8px;
   line-height: 1.15;
+}
+
+@media (max-width: 768px) {
+  .app[data-active-view="agent"] .agent-thread {
+    padding-top: 50px;
+  }
+}
+
+html.android-phone .app[data-active-view="agent"] .agent-thread {
+  padding-top: 44px;
 }

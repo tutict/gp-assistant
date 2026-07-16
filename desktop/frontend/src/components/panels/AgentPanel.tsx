@@ -388,7 +388,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         </div>
       </aside>
 
-      <section className="agent-chat-stage" aria-label="Agent 对话">
+      <section className="agent-chat-stage" aria-label={`Agent 对话：${activeConversation?.title || "新对话"}，${activeMode.label}${activeProvider?.model ? `，模型 ${activeProvider.model}` : ""}`}>
         <button
           type="button"
           className="agent-rail-scrim"
@@ -412,17 +412,6 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             icon={<Plus size={18} aria-hidden="true" />}
           />
         </div>
-        <header className="agent-topbar">
-          <div>
-            <span>当前对话</span>
-            <strong>{activeConversation?.title || "新对话"}</strong>
-          </div>
-          <div className="agent-topbar-meta">
-            <span>{activeMode.label}</span>
-            {activeProvider?.model && <em>{activeProvider.name || activeProvider.model} · {activeProvider.model}</em>}
-          </div>
-        </header>
-
         <div className={`agent-thread ${messages.length === 0 ? "empty" : ""}`} ref={threadRef}>
           {messages.length === 0 ? (
             <AgentEmptyState
