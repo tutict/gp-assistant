@@ -3548,3 +3548,109 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
     transition: none;
   }
 }
+.backtest-volatility {
+  display: grid;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.backtest-volatility > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.backtest-volatility > header > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.backtest-volatility > header span {
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.backtest-volatility > header small,
+.volatility-grid small {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.backtest-volatility select {
+  width: min(180px, 45%);
+  min-width: 120px;
+  height: 34px;
+  padding: 5px 30px 5px 9px;
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+html.mobile-tauri .backtest-volatility select,
+html.android-phone .backtest-volatility select {
+  min-height: 44px;
+  height: 44px;
+}
+
+.volatility-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.volatility-grid > div {
+  display: grid;
+  grid-template-rows: auto auto minmax(1.9em, auto);
+  align-content: start;
+  gap: 3px;
+  min-width: 0;
+  min-height: 82px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+}
+
+.volatility-grid span {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.volatility-grid strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 0.94rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.volatility-empty {
+  margin: 0;
+  padding: 10px 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+@media (max-width: 640px) {
+  .backtest-volatility > header {
+    align-items: end;
+  }
+
+  .backtest-volatility select {
+    width: min(160px, 48%);
+    min-width: 0;
+    height: 44px;
+  }
+
+  .volatility-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .volatility-grid > div {
+    min-height: 88px;
+    padding: 9px 10px;
+  }
+}

@@ -1658,6 +1658,9 @@ fn backtests_with_native_history() {
     assert_eq!(result.metrics.strategy_mode, "candidate_snapshot");
     assert_eq!(result.strategy_mode, "candidate_snapshot");
     assert_eq!(result.metrics.rebalance_count, 1);
+    assert_eq!(result.volatility_snapshots.len(), 1);
+    assert_eq!(result.volatility_snapshots[0].symbol, "111111.SZ");
+    assert!(result.volatility_snapshots[0].atr.is_none());
 }
 
 #[test]
@@ -1937,6 +1940,7 @@ fn walk_forward_fold_return_requires_an_exact_end_date_price() {
             (NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), 10.0),
             (NaiveDate::from_ymd_opt(2020, 3, 1).unwrap(), 5.0),
         ]),
+        bars: Vec::new(),
     };
 
     assert_eq!(
@@ -2178,6 +2182,11 @@ fn walk_forward_does_not_fill_missing_snapshot_fields_from_current_data() {
 
     assert_eq!(result.rebalance_dates, vec!["2020-01-01"]);
     assert!((result.equity_curve.last().unwrap().equity - 1000.0).abs() < 1e-6);
+    assert!(result.volatility_snapshots.is_empty());
+    assert_eq!(
+        result.volatility_message.as_deref(),
+        Some("Walk-forward 末次调仓没有符合条件的标的。")
+    );
 }
 
 #[test]
@@ -2368,6 +2377,8 @@ fn walk_forward_does_not_trade_a_suspended_holding_at_a_stale_price() {
 
     assert!((result.equity_curve.last().unwrap().equity - 500.0).abs() < 1e-6);
     assert_eq!(result.symbols, vec!["111111.SZ", "222222.SZ"]);
+    assert_eq!(result.volatility_snapshots.len(), 1);
+    assert_eq!(result.volatility_snapshots[0].symbol, "222222.SZ");
     assert_eq!(result.walk_forward_folds[0].evaluated_selection_count, 1);
     assert_eq!(result.walk_forward_folds[0].hit_count, 0);
     assert_eq!(result.walk_forward_folds[0].precision_at_n, Some(0.0));

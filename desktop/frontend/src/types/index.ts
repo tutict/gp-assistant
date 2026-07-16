@@ -309,6 +309,72 @@ export interface EquityPoint {
   equity: number;
 }
 
+
+export interface AtrSnapshot {
+  period: number;
+  value: number;
+  percent_of_close: number;
+}
+
+export interface BollingerBandsSnapshot {
+  period: number;
+  multiplier: number;
+  upper: number;
+  middle: number;
+  lower: number;
+  bandwidth_percent?: number | null;
+  percent_b?: number | null;
+}
+
+export interface DonchianChannelSnapshot {
+  period: number;
+  upper: number;
+  middle: number;
+  lower: number;
+  width_percent?: number | null;
+  position_percent?: number | null;
+}
+
+export interface KeltnerChannelSnapshot {
+  ema_period: number;
+  atr_period: number;
+  multiplier: number;
+  upper: number;
+  middle: number;
+  lower: number;
+  width_percent?: number | null;
+  position_percent?: number | null;
+}
+
+export interface ChaikinVolatilitySnapshot {
+  ema_period: number;
+  roc_period: number;
+  value: number;
+}
+
+export interface RviSnapshot {
+  period: number;
+  value: number;
+}
+
+export interface IndicatorUnavailable {
+  indicator: string;
+  reason: string;
+}
+
+export interface VolatilitySnapshot {
+  symbol: string;
+  date: string;
+  close?: number | null;
+  atr?: AtrSnapshot | null;
+  bollinger_bands?: BollingerBandsSnapshot | null;
+  donchian_channel?: DonchianChannelSnapshot | null;
+  keltner_channel?: KeltnerChannelSnapshot | null;
+  chaikin_volatility?: ChaikinVolatilitySnapshot | null;
+  rvi?: RviSnapshot | null;
+  unavailable?: IndicatorUnavailable[];
+}
+
 export interface BacktestResult {
   metrics: BacktestMetrics;
   equity_curve: EquityPoint[];
@@ -317,6 +383,8 @@ export interface BacktestResult {
   benchmark_symbols?: string[];
   rebalance_dates?: string[];
   walk_forward_folds?: WalkForwardFold[];
+  volatility_snapshots?: VolatilitySnapshot[];
+  volatility_message?: string | null;
   strategy_mode?: string;
   notes?: string[];
 }

@@ -9,6 +9,12 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+mod volatility;
+pub use volatility::{
+    AtrSnapshot, BollingerBandsSnapshot, ChaikinVolatilitySnapshot, DonchianChannelSnapshot,
+    IndicatorUnavailable, KeltnerChannelSnapshot, RviSnapshot, VolatilitySnapshot,
+};
+
 #[derive(Debug, Clone)]
 pub struct CoreError {
     message: String,
@@ -772,6 +778,10 @@ pub struct BacktestResult {
     pub rebalance_dates: Vec<String>,
     #[serde(default)]
     pub walk_forward_folds: Vec<WalkForwardFold>,
+    #[serde(default)]
+    pub volatility_snapshots: Vec<VolatilitySnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volatility_message: Option<String>,
     #[serde(default = "default_backtest_strategy_mode")]
     pub strategy_mode: String,
     #[serde(default)]
@@ -1898,6 +1908,10 @@ pub fn backtest_with_source(
             benchmark_symbols: Vec::new(),
             rebalance_dates: Vec::new(),
             walk_forward_folds: Vec::new(),
+            volatility_snapshots: Vec::new(),
+            volatility_message: Some(
+                "回测区间没有可用于波动率计算的标的日线。".to_string(),
+            ),
             strategy_mode,
             notes: selection_notes,
         });
@@ -1955,6 +1969,11 @@ pub fn backtest_with_source(
     } else {
         available_symbols.clone()
     };
+    let volatility_symbols = if strategy_mode == "walk_forward" {
+        selected_symbols_from_latest_rebalance(&histories, &simulation.selections)
+    } else {
+        reported_symbols.clone()
+    };
     let evaluated_selection_count = walk_forward_folds
         .iter()
         .map(|fold| fold.evaluated_selection_count)
@@ -1993,6 +2012,33 @@ pub fn backtest_with_source(
     if benchmark_enabled {
         notes.push("基准为候选池买入持有等权曲线，用于衡量调仓与成本后的超额收益。".to_string());
     }
+    let history_by_code = histories
+        .iter()
+        .map(|history| (history.code.to_uppercase(), history))
+        .collect::<HashMap<_, _>>();
+    let volatility_snapshots = volatility_symbols
+        .iter()
+        .filter_map(|symbol| {
+            history_by_code
+                .get(&symbol.to_uppercase())
+                .and_then(|history| {
+                    volatility::calculate_volatility_snapshot(symbol, &history.bars)
+                })
+        })
+        .collect::<Vec<_>>();
+    let volatility_message = volatility_snapshots.is_empty().then(|| {
+        if strategy_mode == "walk_forward" && volatility_symbols.is_empty() {
+            "Walk-forward 末次调仓没有符合条件的标的。".to_string()
+        } else if volatility_symbols.is_empty() {
+            "候选快照没有符合条件的标的。".to_string()
+        } else {
+            "区间末标的没有可解析的日线日期。".to_string()
+        }
+    });
+    notes.push(
+        "波动率快照按区间末可见日线计算：ATR14、布林20/2、唐奇安20、凯尔特纳EMA20+2×ATR10、Chaikin 10/10、RVI14；历史不足的指标保持缺失。"
+            .to_string(),
+    );
 
     Ok(BacktestResult {
         metrics: BacktestMetrics {
@@ -2027,6 +2073,8 @@ pub fn backtest_with_source(
             .map(|date| date.format("%Y-%m-%d").to_string())
             .collect(),
         walk_forward_folds,
+        volatility_snapshots,
+        volatility_message,
         strategy_mode,
         notes,
     })
@@ -2035,6 +2083,7 @@ pub fn backtest_with_source(
 struct BacktestHistory {
     code: String,
     prices: BTreeMap<NaiveDate, f64>,
+    bars: Vec<HistoryBar>,
 }
 
 #[derive(Clone, Debug)]
@@ -2147,6 +2196,7 @@ fn load_backtest_histories(
             histories.push(BacktestHistory {
                 code: code.clone(),
                 prices,
+                bars,
             });
         }
     }
@@ -2644,6 +2694,22 @@ fn latest_price_on_or_before(history: &BacktestHistory, date: NaiveDate) -> Opti
 
 fn price_on_date(history: &BacktestHistory, date: NaiveDate) -> Option<f64> {
     history.prices.get(&date).copied()
+}
+
+fn selected_symbols_from_latest_rebalance(
+    histories: &[BacktestHistory],
+    selections: &[RebalanceSelection],
+) -> Vec<String> {
+    selections
+        .last()
+        .map(|selection| {
+            selection
+                .selected_indices
+                .iter()
+                .filter_map(|index| histories.get(*index).map(|history| history.code.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn selected_symbols_from_rebalances(

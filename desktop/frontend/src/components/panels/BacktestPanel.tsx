@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import type { BacktestResult, WatchlistItem } from "../../types";
+import { memo, useCallback, useEffect, useState } from "react";
+import type { BacktestResult, VolatilitySnapshot, WatchlistItem } from "../../types";
 import type { FilterCriteria } from "../FilterBar";
 import { postJson } from "../../lib/tauri";
 import { buildBacktestRequest } from "../../lib/contracts";
@@ -158,6 +158,11 @@ export function BacktestResultView({ result }: { result: BacktestResult }) {
         <div><span>Mode</span><strong>{metrics.strategy_mode === "walk_forward" ? "Walk-forward" : "Snapshot"}</strong></div>
       </section>
 
+      <VolatilityDiagnostics
+        snapshots={result.volatility_snapshots ?? []}
+        emptyMessage={result.volatility_message}
+      />
+
       {result.walk_forward_folds?.length ? (
         <section className="backtest-holdings">
           <header><span>样本外逐折结果</span><strong>{metrics.oos_fold_count ?? 0}</strong></header>
@@ -191,6 +196,117 @@ export function BacktestResultView({ result }: { result: BacktestResult }) {
   );
 }
 
+function formatVolatilityPercent(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${formatNumber(value)}%`
+    : "无定义（零波动）";
+}
+
+const VolatilityDiagnostics = memo(function VolatilityDiagnostics({
+  snapshots,
+  emptyMessage,
+}: {
+  snapshots: VolatilitySnapshot[];
+  emptyMessage?: string | null;
+}) {
+  const [selectedSymbol, setSelectedSymbol] = useState(() => snapshots[0]?.symbol ?? "");
+  const snapshot = snapshots.find((item) => item.symbol === selectedSymbol) ?? snapshots[0];
+  if (!snapshot) {
+    return (
+      <section className="backtest-volatility" aria-label="波动率快照">
+        <header>
+          <div>
+            <span>波动率快照</span>
+            <small>无可用区间末标的</small>
+          </div>
+        </header>
+        <p className="volatility-empty">{emptyMessage || "波动率快照不可用。"}</p>
+      </section>
+    );
+  }
+
+  const unavailable = new Map((snapshot.unavailable ?? []).map((item) => [item.indicator, item.reason]));
+  const reasonFor = (indicator: string) => unavailable.get(indicator) ?? "指标不可用";
+  const atr = snapshot.atr;
+  const bollinger = snapshot.bollinger_bands;
+  const donchian = snapshot.donchian_channel;
+  const keltner = snapshot.keltner_channel;
+  const chaikin = snapshot.chaikin_volatility;
+  const rvi = snapshot.rvi;
+  const items = [
+    {
+      key: "atr",
+      label: `ATR${atr?.period ?? 14}`,
+      value: atr ? formatNumber(atr.value) : "--",
+      detail: atr ? `占收盘 ${formatVolatilityPercent(atr.percent_of_close)}` : reasonFor("atr"),
+    },
+    {
+      key: "bollinger_bands",
+      label: `布林带 ${bollinger?.period ?? 20}/${bollinger?.multiplier ?? 2}`,
+      value: bollinger ? `中轨 ${formatNumber(bollinger.middle)}` : "--",
+      detail: bollinger
+        ? `%B ${formatVolatilityPercent(bollinger.percent_b)} · 带宽 ${formatVolatilityPercent(bollinger.bandwidth_percent)}`
+        : reasonFor("bollinger_bands"),
+    },
+    {
+      key: "donchian_channel",
+      label: `唐奇安通道 ${donchian?.period ?? 20}`,
+      value: donchian ? `${formatNumber(donchian.lower)}–${formatNumber(donchian.upper)}` : "--",
+      detail: donchian
+        ? `位置 ${formatVolatilityPercent(donchian.position_percent)} · 宽度 ${formatVolatilityPercent(donchian.width_percent)}`
+        : reasonFor("donchian_channel"),
+    },
+    {
+      key: "keltner_channel",
+      label: `凯尔特纳通道 ${keltner?.ema_period ?? 20}/${keltner?.atr_period ?? 10}/${keltner?.multiplier ?? 2}`,
+      value: keltner ? `${formatNumber(keltner.lower)}–${formatNumber(keltner.upper)}` : "--",
+      detail: keltner
+        ? `位置 ${formatVolatilityPercent(keltner.position_percent)} · 宽度 ${formatVolatilityPercent(keltner.width_percent)}`
+        : reasonFor("keltner_channel"),
+    },
+    {
+      key: "chaikin_volatility",
+      label: `Chaikin 波动率 ${chaikin?.ema_period ?? 10}/${chaikin?.roc_period ?? 10}`,
+      value: chaikin ? formatVolatilityPercent(chaikin.value) : "--",
+      detail: chaikin
+        ? `${chaikin.ema_period} 日高低价差 EMA 相对 ${chaikin.roc_period} 日前`
+        : reasonFor("chaikin_volatility"),
+    },
+    {
+      key: "rvi",
+      label: `相对波动率指数 RVI${rvi?.period ?? 14}`,
+      value: rvi ? formatNumber(rvi.value) : "--",
+      detail: rvi ? "范围 0–100，50 为方向均衡线" : reasonFor("rvi"),
+    },
+  ];
+
+  return (
+    <section className="backtest-volatility" aria-label="波动率快照">
+      <header>
+        <div>
+          <span>波动率快照</span>
+          <small>{snapshot.date} · 收盘 {formatNumber(snapshot.close)}</small>
+        </div>
+        <select
+          aria-label="波动率标的"
+          value={snapshot.symbol}
+          onChange={(event) => setSelectedSymbol(event.target.value)}
+        >
+          {snapshots.map((item) => <option key={item.symbol} value={item.symbol}>{item.symbol}</option>)}
+        </select>
+      </header>
+      <div className="volatility-grid">
+        {items.map((item) => (
+          <div key={item.key}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+            <small>{item.detail}</small>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+});
 function Sparkline({ curve }: { curve: { date: string; equity: number }[] }) {
   if (curve.length < 2) return null;
   const values = curve.map((point) => Number(point.equity)).filter(Number.isFinite);
