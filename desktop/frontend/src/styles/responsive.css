@@ -461,7 +461,7 @@
     padding-inline: 0;
   }
 
-  .kline-chart svg,
+  .kline-chart .kline-plot,
   .trend-chart svg,
   .macd-chart svg {
     width: 100%;
@@ -4008,7 +4008,7 @@ html.android-phone .kline-market-chart.mobile-chart .kline-legend span:first-chi
   display: none;
 }
 
-html.android-phone .kline-market-chart.mobile-chart svg {
+html.android-phone .kline-market-chart.mobile-chart .kline-plot {
   display: block;
   min-height: 0;
   height: auto;
@@ -4048,13 +4048,13 @@ html.android-phone .kline-market-chart.mobile-chart .kline-current-line {
 
 html.android-phone .kline-market-chart.mobile-chart .kline-axis-label {
   fill: #7F8A98;
-  font-size: 8.5px;
+  font-size: 14px;
   font-weight: 700;
 }
 
 html.android-phone .kline-market-chart.mobile-chart .kline-subpanel-title {
   fill: #9AA6B2;
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 800;
   letter-spacing: 0.35px;
 }
@@ -4103,13 +4103,13 @@ html.android-phone .kline-market-chart.mobile-chart .kline-inspector-card {
 
 html.android-phone .kline-market-chart.mobile-chart .kline-inspector-title {
   fill: #F2F5F8;
-  font-size: 9.6px;
+  font-size: 12.5px;
   font-weight: 800;
 }
 
 html.android-phone .kline-market-chart.mobile-chart .kline-inspector-text {
   fill: #AEB8C4;
-  font-size: 8.6px;
+  font-size: 11.2px;
   font-weight: 700;
 }
 
@@ -5411,4 +5411,105 @@ html.android-phone .observe-fundamental-grid > div {
 
 html.android-phone .observe-fundamental-grid dd {
   font-size: 8.5px;
+}
+
+/* Android K-line controls: readable portrait rail and compact landscape fullscreen. */
+html.android-phone .kline-market-chart.mobile-chart .kline-market-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  padding: 0 3px 4px;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-period-tabs,
+html.android-phone .kline-market-chart.mobile-chart .kline-nav {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-period-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-nav {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 2px;
+  padding: 2px;
+  border-color: #26313d;
+  background: #111820;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-period-tabs button,
+html.android-phone .kline-market-chart.mobile-chart .kline-nav button {
+  min-width: 0;
+  min-height: 32px;
+  height: 32px;
+  padding: 0 4px;
+  font-size: 9px;
+  line-height: 1;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-nav button {
+  gap: 3px;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-nav button svg {
+  width: 13px;
+  height: 13px;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-legend {
+  gap: 3px 7px;
+  font-size: 7.5px;
+  line-height: 1.2;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-last-price text {
+  font-size: 14px;
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-stats .kline-up {
+  color: var(--rise);
+}
+
+html.android-phone .kline-market-chart.mobile-chart .kline-stats .kline-down {
+  color: var(--fall);
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .kline-market-chart.mobile-chart .kline-market-header {
+  grid-template-columns: minmax(180px, 0.7fr) minmax(330px, 1.3fr);
+  align-items: center;
+  gap: 4px 8px;
+  padding: 0 0 4px;
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .kline-market-chart.mobile-chart .kline-period-tabs,
+html.mobile-tauri.kline-mobile-fullscreen .kline-market-chart.mobile-chart .kline-nav {
+  width: auto;
+  min-width: 0;
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .kline-market-chart.mobile-chart .kline-legend {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .kline-market-chart.mobile-chart {
+  padding: 4px 6px 3px;
+  border-radius: 0;
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .kline-market-chart.mobile-chart .kline-market-plot {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+html.mobile-tauri.kline-mobile-fullscreen .kline-market-chart.mobile-chart .chart-labels,
+html.mobile-tauri.kline-mobile-fullscreen .kline-market-chart.mobile-chart .kline-stats {
+  margin-top: 2px;
+  font-size: 8px;
+  line-height: 1.15;
 }

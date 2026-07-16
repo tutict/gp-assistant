@@ -569,8 +569,8 @@
 .kline-workspace.fullscreen .chart-wrap {
   flex: 0 0 auto;
 }
-.kline-chart svg { min-height: 300px; }
-.kline-workspace.fullscreen .kline-chart svg { min-height: min(56svh, 520px); }
+.kline-chart .kline-plot { min-height: 300px; }
+.kline-workspace.fullscreen .kline-chart .kline-plot { min-height: min(56svh, 520px); }
 html.mobile-tauri.kline-mobile-fullscreen,
 html.mobile-tauri.kline-mobile-fullscreen body {
   overflow: hidden !important;
@@ -590,9 +590,9 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen {
   background: #0d0f12 !important;
 }
 html.mobile-tauri.android-portrait.kline-mobile-fullscreen .kline-workspace.fullscreen {
+  inset: auto !important;
   top: 0 !important;
   left: 0 !important;
-  inset: auto !important;
   width: 100svh !important;
   height: 100svw !important;
   max-width: 100svh !important;
@@ -618,14 +618,14 @@ html.mobile-tauri.android-portrait.kline-mobile-fullscreen .kline-workspace.full
   border-radius: 0 !important;
 }
 html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-chart header {
-  display: flex !important;
-  flex-wrap: wrap !important;
+  display: grid !important;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(330px, 1.3fr) !important;
   align-items: center !important;
   gap: 6px 8px !important;
   margin-bottom: 6px !important;
 }
 html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-chart header > div:first-child {
-  flex: 1 1 100% !important;
+  flex: 1 1 220px !important;
 }
 html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-period-tabs {
   display: grid !important;
@@ -635,16 +635,16 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-per
 }
 html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-nav {
   display: grid !important;
-  grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
-  flex: 1 1 100% !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  flex: 1 1 340px !important;
   gap: 4px !important;
 }
 html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-period-tabs button,
 html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-nav button {
   min-height: 30px !important;
-  height: 30px !important;
+  height: 34px !important;
   padding: 0 6px !important;
-  font-size: 0.66rem !important;
+  font-size: 0.88rem !important;
 }
 html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-fullscreen-toggle {
   border-color: color-mix(in srgb, var(--accent) 52%, var(--line)) !important;
@@ -653,19 +653,19 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-ful
 html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-legend {
   margin-left: 0 !important;
   gap: 8px !important;
-  font-size: 0.68rem !important;
+  font-size: 0.8rem !important;
 }
-html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-chart svg {
+html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-chart .kline-plot {
   flex: 1 1 auto !important;
   min-height: clamp(240px, 72svh, 560px) !important;
 }
-html.mobile-tauri.android-portrait.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-chart svg {
+html.mobile-tauri.android-portrait.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-chart .kline-plot {
   min-height: 0 !important;
   height: 100% !important;
 }
 html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .chart-labels,
 html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
-  font-size: 0.66rem !important;
+  font-size: 0.8rem !important;
 }
 .kline-plot {
   cursor: grab;
@@ -677,53 +677,6 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
 .kline-chart header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .kline-chart header h4 { margin: 0; }
 .kline-chart header p { margin: 2px 0 0; color: var(--text-secondary); font-size: 0.76rem; }
-.kline-fullscreen-exit {
-  display: none;
-}
-
-.kline-mobile-fullscreen-toolbar {
-  position: fixed;
-  top: max(10px, env(safe-area-inset-top));
-  right: max(12px, env(safe-area-inset-right));
-  z-index: 10001;
-  display: none;
-  align-items: center;
-  gap: 8px;
-}
-
-.kline-mobile-fullscreen-tool {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 34px;
-  min-height: 32px;
-  padding: 0 10px;
-  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--line));
-  border-radius: 12px;
-  background: rgba(13, 15, 18, 0.92);
-  color: var(--text);
-  font-size: 0.84rem;
-  font-weight: 700;
-  line-height: 1;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
-}
-
-.kline-mobile-fullscreen-tool:disabled {
-  opacity: 0.42;
-}
-
-.kline-mobile-fullscreen-zoom-in,
-.kline-mobile-fullscreen-zoom-out {
-  padding: 0;
-}
-
-.kline-mobile-fullscreen-exit {
-  min-width: 56px;
-  padding: 0 12px;
-  font-size: 0.72rem;
-  white-space: nowrap;
-  writing-mode: horizontal-tb;
-}
 .kline-period-tabs {
   display: inline-flex;
   gap: 2px;
@@ -751,14 +704,22 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   display: inline-flex;
   gap: 4px;
   align-items: center;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
 }
 .kline-nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   min-width: 30px;
   height: 28px;
   padding: 0 8px;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 6px;
-  background: var(--surface-2);
+  background: transparent;
   color: var(--text);
   font-size: 0.78rem;
   font-weight: 700;
@@ -770,6 +731,17 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
 }
 .kline-nav .kline-fullscreen-toggle {
   min-width: 44px;
+}
+.kline-nav button:hover:not(:disabled),
+.kline-nav button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.kline-nav button svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  stroke-width: 2;
 }
 .kline-legend { display: inline-flex; gap: 10px; margin-left: auto; font-size: 0.74rem; font-weight: 600; }
 .kline-up { color: var(--rise); }
@@ -841,11 +813,58 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   font-size: 0.76rem;
 }
 .chart-labels { display: flex; justify-content: space-between; color: var(--text-secondary); font-size: 0.76rem; }
+
+/* K-line instrument rail and fullscreen workspace. */
+.kline-market-header {
+  align-items: center;
+  row-gap: 7px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+.kline-last-price rect {
+  fill: currentColor;
+}
+
+.kline-last-price text {
+  fill: #fff;
+  font-size: 11px;
+  font-weight: 850;
+  text-anchor: middle;
+}
+
+.kline-workspace.fullscreen,
+.kline-workspace:fullscreen {
+  overflow: hidden;
+  background: #05070a;
+}
+
+.kline-workspace.fullscreen .chart-wrap,
+.kline-workspace:fullscreen .chart-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.kline-workspace.fullscreen .kline-market-plot,
+.kline-workspace:fullscreen .kline-market-plot {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+.kline-workspace.fullscreen .kline-fullscreen-toggle,
+.kline-workspace:fullscreen .kline-fullscreen-toggle {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 @media (max-width: 768px) {
   .kline-workspace.fullscreen {
     padding: 8px;
   }
-  .kline-workspace.fullscreen .kline-chart svg {
+  .kline-workspace.fullscreen .kline-chart .kline-plot {
     min-height: 58svh;
   }
   .kline-chart header {

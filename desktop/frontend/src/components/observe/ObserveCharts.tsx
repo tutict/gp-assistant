@@ -1,4 +1,5 @@
 ﻿import { useEffect, useRef, useState } from "react";
+import { LocateFixed, Maximize2, Minimize2, ZoomIn, ZoomOut } from "lucide-react";
 import type { TrendIndicatorPoint } from "../../types";
 import {
   aggregateBars,
@@ -13,10 +14,16 @@ import {
 import { formatNumber, formatPrice } from "../../lib/format";
 import { isMobileTauriRuntime } from "../../lib/tauri";
 
+import { exitChartFullscreen, requestChartFullscreen, unlockChartOrientation } from "../../lib/chartFullscreen";
+import {
+  chartVisibleBounds,
+  clampChartVisibleCount,
+  zoomChartVisibleCount,
+  type ChartZoomDirection,
+} from "../../lib/chartViewport";
+
 const DEFAULT_VISIBLE_BARS = 96;
 const MOBILE_DEFAULT_VISIBLE_BARS = 72;
-const MIN_VISIBLE_BARS = 30;
-const MAX_VISIBLE_BARS = 180;
 
 type SeriesPoint = { date: string; [key: string]: number | string };
 type LayoutMode = "mobile" | "desktop";
@@ -55,6 +62,20 @@ const MOBILE_LAYOUT: ChartLayout = {
   height: 708,
 };
 
+const MOBILE_LANDSCAPE_LAYOUT: ChartLayout = {
+  mode: "mobile",
+  width: 1180,
+  priceTop: 10,
+  priceHeight: 160,
+  macdTop: 198,
+  macdHeight: 62,
+  rsiTop: 282,
+  rsiHeight: 58,
+  volumeTop: 358,
+  volumeHeight: 52,
+  height: 420,
+};
+
 const DESKTOP_LAYOUT: ChartLayout = {
   mode: "desktop",
   width: 1180,
@@ -75,21 +96,80 @@ const DESKTOP_LAYOUT: ChartLayout = {
 
 export function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
   const mobileRuntime = isMobileTauriRuntime();
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const nativeFullscreenRef = useRef(false);
   const [period, setPeriod] = useState<KlinePeriod>("daily");
   const [visibleCount, setVisibleCount] = useState(() => (mobileRuntime ? MOBILE_DEFAULT_VISIBLE_BARS : DEFAULT_VISIBLE_BARS));
   const [endIndex, setEndIndex] = useState<number | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const dailyBars = toDailyBars(series);
   const bars = aggregateBars(dailyBars, period);
 
   useEffect(() => {
     setEndIndex(bars.length);
-    setVisibleCount((count) =>
-      Math.min(
-        Math.max(count, MIN_VISIBLE_BARS),
-        Math.max(MIN_VISIBLE_BARS, Math.min(MAX_VISIBLE_BARS, bars.length || DEFAULT_VISIBLE_BARS)),
-      ),
-    );
+    setVisibleCount((count) => clampChartVisibleCount(count, bars.length));
   }, [period, bars.length]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const ownsFullscreen = document.fullscreenElement === workspaceRef.current;
+      if (ownsFullscreen) {
+        nativeFullscreenRef.current = true;
+        setIsFullscreen(true);
+      } else if (nativeFullscreenRef.current) {
+        nativeFullscreenRef.current = false;
+        setIsFullscreen(false);
+        unlockChartOrientation();
+      }
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      document.documentElement.classList.remove("kline-mobile-fullscreen");
+      if (nativeFullscreenRef.current) void exitChartFullscreen(workspaceRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("kline-mobile-fullscreen", isFullscreen);
+    if (!isFullscreen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !document.fullscreenElement) {
+        setIsFullscreen(false);
+        unlockChartOrientation();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isFullscreen]);
+
+  const enterFullscreen = async () => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    setIsFullscreen(true);
+    const fullscreenResult = await requestChartFullscreen(workspace, { lockLandscape: mobileRuntime });
+    const needsRotationFallback = mobileRuntime
+      && fullscreenResult.nativeFullscreen
+      && !fullscreenResult.orientationLocked
+      && window.innerWidth < window.innerHeight;
+    if (needsRotationFallback) {
+      nativeFullscreenRef.current = false;
+      await exitChartFullscreen(workspace);
+      setIsFullscreen(true);
+      return;
+    }
+    nativeFullscreenRef.current = fullscreenResult.nativeFullscreen;
+  };
+
+  const leaveFullscreen = async () => {
+    await exitChartFullscreen(workspaceRef.current);
+    nativeFullscreenRef.current = false;
+    setIsFullscreen(false);
+  };
+
+  const toggleFullscreen = () => {
+    void (isFullscreen ? leaveFullscreen() : enterFullscreen());
+  };
 
   if (dailyBars.length < 2) {
     return (
@@ -104,10 +184,8 @@ export function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
     );
   }
 
-  const effectiveCount = Math.min(
-    Math.max(visibleCount, MIN_VISIBLE_BARS),
-    Math.max(MIN_VISIBLE_BARS, Math.min(MAX_VISIBLE_BARS, bars.length)),
-  );
+  const effectiveCount = clampChartVisibleCount(visibleCount, bars.length);
+  const visibleBounds = chartVisibleBounds(bars.length);
   const effectiveEnd = Math.min(Math.max(endIndex ?? bars.length, Math.min(effectiveCount, bars.length)), bars.length);
   const visibleStart = Math.max(0, effectiveEnd - effectiveCount);
   const visibleBars = bars.slice(visibleStart, effectiveEnd);
@@ -117,8 +195,20 @@ export function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
     setEndIndex(Math.max(minEnd, Math.min(bars.length, targetEnd)));
   };
 
+  const changeVisibleCount = (count: number) => {
+    setVisibleCount(clampChartVisibleCount(count, bars.length));
+  };
+
+  const zoom = (direction: ChartZoomDirection) => {
+    changeVisibleCount(zoomChartVisibleCount(effectiveCount, direction, bars.length));
+  };
+
   return (
-    <div className={`signal-chart-stack kline-workspace kline-market-workspace ${mobileRuntime ? "mobile-board" : "desktop-board"}`}>
+    <div
+      ref={workspaceRef}
+      className={`signal-chart-stack kline-workspace kline-market-workspace ${mobileRuntime ? "mobile-board" : "desktop-board"} ${isFullscreen ? "fullscreen" : ""}`}
+      data-fullscreen={isFullscreen ? "true" : "false"}
+    >
       <CandlestickChart
         period={period}
         onPeriodChange={setPeriod}
@@ -128,6 +218,14 @@ export function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
         visibleEnd={effectiveEnd}
         onDragTo={dragTo}
         mobileRuntime={mobileRuntime}
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={toggleFullscreen}
+        onZoom={zoom}
+        onVisibleCountChange={changeVisibleCount}
+        onReturnLatest={() => setEndIndex(bars.length)}
+        canZoomIn={effectiveCount > visibleBounds.minimum}
+        canZoomOut={effectiveCount < visibleBounds.maximum}
+        isAtLatest={effectiveEnd >= bars.length}
       />
     </div>
   );
@@ -161,6 +259,14 @@ function CandlestickChart({
   visibleEnd,
   onDragTo,
   mobileRuntime,
+  isFullscreen,
+  onToggleFullscreen,
+  onZoom,
+  onVisibleCountChange,
+  onReturnLatest,
+  canZoomIn,
+  canZoomOut,
+  isAtLatest,
 }: {
   period: KlinePeriod;
   onPeriodChange: (period: KlinePeriod) => void;
@@ -170,11 +276,20 @@ function CandlestickChart({
   visibleEnd: number;
   onDragTo: (targetEnd: number) => void;
   mobileRuntime: boolean;
+  isFullscreen: boolean;
+  onToggleFullscreen: () => void;
+  onZoom: (direction: ChartZoomDirection) => void;
+  onVisibleCountChange: (count: number) => void;
+  onReturnLatest: () => void;
+  canZoomIn: boolean;
+  canZoomOut: boolean;
+  isAtLatest: boolean;
 }) {
-  const layout = mobileRuntime ? MOBILE_LAYOUT : DESKTOP_LAYOUT;
+  const layout = mobileRuntime ? (isFullscreen ? MOBILE_LANDSCAPE_LAYOUT : MOBILE_LAYOUT) : DESKTOP_LAYOUT;
   const { width, priceTop, priceHeight, volumeTop, volumeHeight, macdTop, macdHeight, height } = layout;
   const plotInsetStart = mobileRuntime ? 8 : 52;
-  const plotInsetEnd = mobileRuntime ? 8 : 48;
+  const currentPriceLabelWidth = mobileRuntime ? 68 : 76;
+  const plotInsetEnd = (mobileRuntime ? 8 : 48) + currentPriceLabelWidth;
 
   const priceMax = Math.max(...visibleBars.map((bar) => bar.high));
   const priceMin = Math.min(...visibleBars.map((bar) => bar.low));
@@ -226,12 +341,22 @@ function CandlestickChart({
   const selectedBar = selectedIndex >= 0 ? visibleBars[selectedIndex] : null;
   const latest = visibleBars[visibleBars.length - 1];
   const inspectedBar = selectedBar || latest;
+  const inspectedAbsoluteIndex = selectedIndex >= 0 ? visibleStart + selectedIndex : visibleEnd - 1;
+  const inspectedPrevious = allBars[inspectedAbsoluteIndex - 1];
+  const inspectedChangePercent = inspectedPrevious?.close
+    ? ((inspectedBar.close - inspectedPrevious.close) / inspectedPrevious.close) * 100
+    : null;
+  const latestPrevious = allBars[visibleEnd - 2];
+  const latestIsUp = !latestPrevious || latest.close >= latestPrevious.close;
   const selectedX = selectedIndex >= 0 ? center(selectedIndex) : null;
   const selectedY = selectedBar ? yPrice(selectedBar.close) : null;
   const startDate = visibleBars[0]?.date || "";
   const endDate = visibleBars[visibleBars.length - 1]?.date || "";
   const visibleRange = `${startDate} - ${endDate}`;
   const priceTicks = buildTicks(priceLower, priceUpper, 5);
+  const currentPriceY = yPrice(latest.close);
+  const currentPriceLabelX = width - plotInsetEnd;
+  const currentPriceLabelY = Math.max(priceTop, Math.min(priceTop + priceHeight - 24, currentPriceY - 12));
 
   const getBarIndexFromPointer = (event: React.PointerEvent<SVGSVGElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -242,13 +367,41 @@ function CandlestickChart({
   };
 
   const dragRef = useRef<{ pointerId: number; startX: number; startEnd: number; lastTargetEnd: number; moved: boolean } | null>(null);
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const pinchRef = useRef<{ startDistance: number; startCount: number; lastCount: number } | null>(null);
   const onPointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
     event.preventDefault();
-    dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startEnd: visibleEnd, lastTargetEnd: visibleEnd, moved: false };
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     setSelectedDate(null);
     event.currentTarget.setPointerCapture(event.pointerId);
+    if (pointersRef.current.size >= 2) {
+      const [first, second] = Array.from(pointersRef.current.values());
+      pinchRef.current = {
+        startDistance: Math.max(1, Math.hypot(first.x - second.x, first.y - second.y)),
+        startCount: visibleBars.length,
+        lastCount: visibleBars.length,
+      };
+      dragRef.current = null;
+      return;
+    }
+    dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startEnd: visibleEnd, lastTargetEnd: visibleEnd, moved: false };
   };
   const onPointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
+    if (pointersRef.current.has(event.pointerId)) {
+      pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    }
+    const pinch = pinchRef.current;
+    if (pinch && pointersRef.current.size >= 2) {
+      const [first, second] = Array.from(pointersRef.current.values());
+      const distance = Math.max(1, Math.hypot(first.x - second.x, first.y - second.y));
+      const targetCount = Math.round(pinch.startCount * (pinch.startDistance / distance));
+      if (targetCount !== pinch.lastCount) {
+        event.preventDefault();
+        onVisibleCountChange(targetCount);
+        pinch.lastCount = targetCount;
+      }
+      return;
+    }
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     const deltaX = drag.startX - event.clientX;
@@ -263,14 +416,22 @@ function CandlestickChart({
       drag.lastTargetEnd = targetEnd;
     }
   };
-  const endDrag = (event: React.PointerEvent<SVGSVGElement>, commitSelection = true) => {
+  const endGesture = (event: React.PointerEvent<SVGSVGElement>, commitSelection = true) => {
+    const wasPinching = pinchRef.current !== null || pointersRef.current.size > 1;
+    pointersRef.current.delete(event.pointerId);
     const drag = dragRef.current;
-    if (drag?.pointerId !== event.pointerId) return;
-    event.preventDefault();
-    dragRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+    if (wasPinching) {
+      event.preventDefault();
+      pinchRef.current = null;
+      dragRef.current = null;
+      return;
+    }
+    if (drag?.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    dragRef.current = null;
     if (commitSelection && !drag.moved) {
       const targetIndex = getBarIndexFromPointer(event);
       if (targetIndex !== null) setSelectedDate(visibleBars[targetIndex]?.date || null);
@@ -300,8 +461,20 @@ function CandlestickChart({
     <section className={`chart-wrap kline-chart kline-market-chart ${mobileRuntime ? "mobile-chart" : "desktop-chart"}`}>
       <header className="kline-market-header">
         <PeriodTabs period={period} onPeriodChange={onPeriodChange} />
-        <div className="kline-desktop-tools" aria-hidden="true">
-          <span>前复权</span><span>画线</span><span>工具</span>
+        <div className="kline-nav" aria-label="K线视图工具">
+          <button type="button" onClick={() => onZoom("in")} disabled={!canZoomIn} aria-label="放大K线" title="减少当前可见K线数量">
+            <ZoomIn aria-hidden="true" /><span>放大</span>
+          </button>
+          <button type="button" onClick={() => onZoom("out")} disabled={!canZoomOut} aria-label="缩小K线" title="增加当前可见K线数量">
+            <ZoomOut aria-hidden="true" /><span>缩小</span>
+          </button>
+          <button type="button" onClick={onReturnLatest} disabled={isAtLatest} aria-label="回到最新K线">
+            <LocateFixed aria-hidden="true" /><span>最新</span>
+          </button>
+          <button type="button" className="kline-fullscreen-toggle" onClick={onToggleFullscreen} aria-pressed={isFullscreen}>
+            {isFullscreen ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
+            <span>{isFullscreen ? "退出全屏" : mobileRuntime ? "横屏全屏" : "全屏"}</span>
+          </button>
         </div>
         <div className="kline-legend" aria-label="均线">
           <span>日线</span>
@@ -318,9 +491,8 @@ function CandlestickChart({
         style={{ touchAction: mobileRuntime ? "none" : "pan-y" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={(event) => endDrag(event, false)}
-        onPointerLeave={(event) => endDrag(event, false)}
+        onPointerUp={endGesture}
+        onPointerCancel={(event) => endGesture(event, false)}
       >
         <rect className="kline-plot-bg" x="0" y="0" width={width} height={height} />
         {priceTicks.map((tick) => {
@@ -333,7 +505,7 @@ function CandlestickChart({
             </g>
           );
         })}
-        <line className="kline-current-line" x1={plotInsetStart} x2={width - plotInsetEnd} y1={yPrice(latest.close)} y2={yPrice(latest.close)} />
+        <line className="kline-current-line" x1={plotInsetStart} x2={currentPriceLabelX} y1={currentPriceY} y2={currentPriceY} />
         {visibleBars.map((bar, index) => {
           const cx = center(index);
           const bodyTop = Math.min(yPrice(bar.open), yPrice(bar.close));
@@ -346,6 +518,10 @@ function CandlestickChart({
           );
         })}
         {maLines.map((line) => (line.points ? <polyline key={`ma-${line.window}`} className={line.className} points={line.points} fill="none" /> : null))}
+        <g className={`kline-last-price ${latestIsUp ? "kline-up" : "kline-down"}`} pointerEvents="none">
+          <rect x={currentPriceLabelX} y={currentPriceLabelY} width={currentPriceLabelWidth} height="24" rx="4" />
+          <text x={currentPriceLabelX + currentPriceLabelWidth / 2} y={currentPriceLabelY + 16}>{formatPrice(latest.close)}</text>
+        </g>
         {mobileRuntime ? (
           <>
             <rect className="kline-subpanel-bg" x="0" y={macdTop - 12} width={width} height={macdHeight + 24} />
@@ -397,12 +573,15 @@ function CandlestickChart({
         )}
       </svg>
       <div className="chart-labels"><span>{visibleRange}</span><span>{periodLabel(period)} · {visibleBars.length}/{allBars.length}</span></div>
-      <div className="kline-stats" aria-label={selectedBar ? "选中K线" : "当前周期最新K线"}>
-        <span>{selectedBar ? "选中" : "最新"} {inspectedBar?.date || "--"}</span>
+      <div className="kline-stats" aria-label={selectedBar ? "选中K线" : isAtLatest ? "当前周期最新K线" : "当前历史区间末端K线"}>
+        <span>{selectedBar ? "选中" : isAtLatest ? "最新" : "区间末"} {inspectedBar?.date || "--"}</span>
         <span>开 {formatPrice(inspectedBar?.open)}</span>
         <span>高 {formatPrice(inspectedBar?.high)}</span>
         <span>低 {formatPrice(inspectedBar?.low)}</span>
         <span>收 {formatPrice(inspectedBar?.close)}</span>
+        <span className={inspectedChangePercent !== null && inspectedChangePercent >= 0 ? "kline-up" : "kline-down"}>
+          涨跌 {formatSignedPercent(inspectedChangePercent)}
+        </span>
         <span>量 {formatNumber(inspectedBar?.volume)}</span>
       </div>
     </section>
@@ -668,6 +847,11 @@ function buildTicks(min: number, max: number, count: number): number[] {
 function formatWan(value: number): string {
   if (!Number.isFinite(value)) return "--";
   return `${formatNumber(value / 10_000)}万`;
+}
+
+function formatSignedPercent(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "--";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
 function periodLabel(period: KlinePeriod): string {
