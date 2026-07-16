@@ -5417,8 +5417,8 @@ html.android-phone .observe-fundamental-grid dd {
 html.android-phone .kline-market-chart.mobile-chart .kline-market-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 4px;
-  padding: 0 3px 4px;
+  gap: 3px;
+  padding: 0 3px 3px;
 }
 
 html.android-phone .kline-market-chart.mobile-chart .kline-period-tabs,
@@ -5435,8 +5435,8 @@ html.android-phone .kline-market-chart.mobile-chart .kline-period-tabs {
 html.android-phone .kline-market-chart.mobile-chart .kline-nav {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 2px;
-  padding: 2px;
+  gap: 1px;
+  padding: 1px;
   border-color: #26313d;
   background: #111820;
 }
@@ -5444,20 +5444,20 @@ html.android-phone .kline-market-chart.mobile-chart .kline-nav {
 html.android-phone .kline-market-chart.mobile-chart .kline-period-tabs button,
 html.android-phone .kline-market-chart.mobile-chart .kline-nav button {
   min-width: 0;
-  min-height: 32px;
-  height: 32px;
-  padding: 0 4px;
-  font-size: 9px;
+  min-height: 26px;
+  height: 26px;
+  padding: 0 3px;
+  font-size: 8.5px;
   line-height: 1;
 }
 
 html.android-phone .kline-market-chart.mobile-chart .kline-nav button {
-  gap: 3px;
+  gap: 2px;
 }
 
 html.android-phone .kline-market-chart.mobile-chart .kline-nav button svg {
-  width: 13px;
-  height: 13px;
+  width: 11px;
+  height: 11px;
 }
 
 html.android-phone .kline-market-chart.mobile-chart .kline-legend {
@@ -5481,8 +5481,8 @@ html.android-phone .kline-market-chart.mobile-chart .kline-stats .kline-down {
 html.mobile-tauri.kline-mobile-fullscreen .kline-market-chart.mobile-chart .kline-market-header {
   grid-template-columns: minmax(180px, 0.7fr) minmax(330px, 1.3fr);
   align-items: center;
-  gap: 4px 8px;
-  padding: 0 0 4px;
+  gap: 3px 6px;
+  padding: 0 0 3px;
 }
 
 html.mobile-tauri.kline-mobile-fullscreen .kline-market-chart.mobile-chart .kline-period-tabs,

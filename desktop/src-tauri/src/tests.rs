@@ -524,6 +524,217 @@ fn observe_financial_snapshot_merges_inferred_prior_year_eps() {
     assert_eq!(prior.get("value").and_then(Value::as_f64), Some(0.0545));
     assert_eq!(prior.get("inferred").and_then(Value::as_bool), Some(true));
 }
+
+#[test]
+fn observe_financial_snapshot_merges_detailed_fundamental_metrics() {
+    let mut data = json!({"financials": {}});
+    let snapshot = json!({
+        "financials": {
+            "000100.SZ": {
+                "period": "2026Q1",
+                "operating_revenue_billion": 434.778212,
+                "operating_revenue_yoy": 8.370839,
+                "parent_net_profit_billion": 15.564526,
+                "parent_net_profit_yoy": 53.712048,
+                "gross_margin": 12.497484,
+                "net_margin": 1.399071,
+                "roe": 2.47,
+                "asset_liability_ratio": 65.027185,
+                "goodwill_period": "2026一季报",
+                "pledged_share_period": "2026-07-10",
+                "dividend_period": "2025-12-31"
+            }
+        }
+    });
+
+    assert!(merge_observe_financial_snapshot(
+        &mut data,
+        "000100.SZ",
+        &snapshot
+    ));
+    let entry = data["financials"]["000100.SZ"]
+        .as_object()
+        .expect("financial entry should be merged");
+    assert_eq!(
+        finite_object_number(entry, "operating_revenue_billion"),
+        Some(434.778212)
+    );
+    assert_eq!(finite_object_number(entry, "gross_margin"), Some(12.497484));
+    assert_eq!(finite_object_number(entry, "roe"), Some(2.47));
+    assert_eq!(
+        finite_object_number(entry, "asset_liability_ratio"),
+        Some(65.027185)
+    );
+    assert_eq!(
+        entry.get("goodwill_period").and_then(Value::as_str),
+        Some("2026一季报")
+    );
+    assert_eq!(
+        entry.get("pledged_share_period").and_then(Value::as_str),
+        Some("2026-07-10")
+    );
+    assert_eq!(
+        entry.get("dividend_period").and_then(Value::as_str),
+        Some("2025-12-31")
+    );
+}
+
+#[test]
+fn eastmoney_fundamental_parsers_calculate_specialized_metrics() {
+    let balance = json!({
+        "result": {"data": [{
+            "REPORT_DATE_NAME": "2026一季报",
+            "GOODWILL": 11_436_177_181.0,
+            "TOTAL_PARENT_EQUITY": 63_684_356_235.0
+        }]}
+    });
+    let pledge = json!({
+        "result": {"data": [{"TRADE_DATE": "2026-07-10 00:00:00", "PLEDGE_RATIO": 0.74}]}
+    });
+    let dividend = json!({
+        "result": {"data": [{
+            "REPORT_DATE": "2025-12-31 00:00:00",
+            "PRETAX_BONUS_RMB": 0.9,
+            "BASIC_EPS": 0.2333,
+            "DIVIDENT_RATIO": 0.019271948608,
+            "EX_DIVIDEND_DATE": "2026-06-11 00:00:00"
+        }]}
+    });
+
+    let goodwill = parse_goodwill_to_net_assets(&balance).expect("goodwill ratio");
+    assert!((goodwill - 17.9575925).abs() < 0.00001);
+    assert_eq!(parse_latest_pledged_share_ratio(&pledge), Some(0.74));
+    let (dividend_yield, payout_ratio) = parse_latest_dividend_metrics(&dividend, Some(4.95));
+    assert!((dividend_yield.expect("dividend yield") - 1.8181818).abs() < 0.00001);
+    assert!((payout_ratio.expect("payout ratio") - 38.5769396).abs() < 0.00001);
+    assert_eq!(
+        eastmoney_metric_period(
+            eastmoney_result_rows(&balance)
+                .first()
+                .and_then(Value::as_object),
+            &["REPORT_DATE_NAME", "REPORT_DATE"]
+        ),
+        Some("2026一季报".to_string())
+    );
+    assert_eq!(
+        eastmoney_metric_period(
+            eastmoney_result_rows(&pledge)
+                .first()
+                .and_then(Value::as_object),
+            &["TRADE_DATE"]
+        ),
+        Some("2026-07-10".to_string())
+    );
+    assert_eq!(
+        eastmoney_metric_period(latest_dividend_row(&dividend), &["REPORT_DATE"]),
+        Some("2025-12-31".to_string())
+    );
+}
+
+#[test]
+fn eastmoney_empty_result_is_only_normalized_for_optional_datasets() {
+    let empty = json!({
+        "success": false,
+        "code": 9201,
+        "message": "返回数据为空",
+        "result": null
+    });
+
+    let normalized = normalize_eastmoney_public_json(empty.clone(), "optional", true)
+        .expect("optional empty response should be accepted");
+    assert!(eastmoney_result_rows(&normalized).is_empty());
+    assert_eq!(
+        normalized.get("success").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(normalize_eastmoney_public_json(empty, "required", false).is_err());
+}
+
+#[test]
+fn eastmoney_malformed_metric_rows_do_not_become_false_zeroes() {
+    let malformed_pledge = json!({"result": {"data": [{}]}});
+    let malformed_dividend = json!({"result": {"data": ["invalid"]}});
+
+    assert_eq!(parse_latest_pledged_share_ratio(&malformed_pledge), None);
+    assert_eq!(
+        parse_latest_dividend_metrics(&malformed_dividend, Some(4.95)),
+        (None, None)
+    );
+}
+
+#[test]
+fn observe_fundamental_supplement_records_freshness_and_refreshes_stale_values() {
+    let mut data = json!({"financials": {"000100.SZ": {}}});
+    let fields = json!({
+        "goodwill_to_net_assets": 17.96,
+        "goodwill_period": "2026一季报",
+        "pledged_share_ratio": 0.74,
+        "pledged_share_period": "2026-07-10",
+        "dividend_yield": 1.82,
+        "dividend_payout_ratio": 38.58,
+        "dividend_period": "2025-12-31"
+    })
+    .as_object()
+    .expect("supplement fields")
+    .clone();
+
+    assert!(observe_needs_fundamental_supplement(&data, "000100.SZ"));
+    assert!(merge_observe_fundamental_supplement(
+        &mut data,
+        "000100.SZ",
+        fields
+    ));
+    assert!(!observe_needs_fundamental_supplement(&data, "000100.SZ"));
+    assert_eq!(
+        data["financials"]["000100.SZ"]["goodwill_period"].as_str(),
+        Some("2026一季报")
+    );
+    assert_eq!(
+        data["financials"]["000100.SZ"]["pledged_share_period"].as_str(),
+        Some("2026-07-10")
+    );
+    assert_eq!(
+        data["financials"]["000100.SZ"]["dividend_period"].as_str(),
+        Some("2025-12-31")
+    );
+    assert!(cache_epoch_ms(Some(
+        &data["financials"]["000100.SZ"]["supplement_updated_at_epoch_ms"]
+    ))
+    .is_some());
+
+    data["financials"]["000100.SZ"]["supplement_updated_at_epoch_ms"] = json!("1");
+    assert!(observe_needs_fundamental_supplement(&data, "000100.SZ"));
+}
+
+#[test]
+fn observe_quote_snapshot_fills_exact_share_structure() {
+    let mut data = json!({
+        "stocks": [{"code": "000100.SZ", "name": "TCL", "price": 4.95}]
+    });
+    assert!(observe_needs_exact_share_refresh(&data, "000100.SZ"));
+    let quote = json!({
+        "total_shares": 20_800_862_447.0,
+        "circulating_shares": 20_118_326_408.0,
+        "market_cap_billion": 1029.64,
+        "circulating_market_cap_billion": 995.86,
+        "quote_time": "20260716150000"
+    });
+    assert!(merge_observe_quote_snapshot(
+        &mut data,
+        "000100.SZ",
+        quote.as_object().expect("quote object")
+    ));
+    assert!(!observe_needs_exact_share_refresh(&data, "000100.SZ"));
+    assert_eq!(
+        data["stocks"][0]["total_shares"].as_f64(),
+        Some(20_800_862_447.0)
+    );
+    assert_eq!(
+        data["stocks"][0]["circulating_shares"].as_f64(),
+        Some(20_118_326_408.0)
+    );
+}
+
 #[test]
 fn eastmoney_guba_parser_extracts_hottest_sentiment_items() {
     let rows = (0..12)

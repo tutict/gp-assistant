@@ -538,10 +538,10 @@ function ConvertTo-MobileSnapshotBillion {
     if ($null -eq $number) {
         return $null
     }
-    if ([Math]::Abs($number) -gt 1000000) {
-        return $number / 100000000
-    }
-    return $number
+    # tdx_fundamentals.csv stores monetary statement fields in CNY yuan.
+    # The mobile snapshot names use the existing *_billion convention but
+    # display these values in Chinese 亿, so conversion must always be / 1e8.
+    return $number / 100000000
 }
 
 function Normalize-MobileSnapshotCode {
@@ -625,6 +625,14 @@ function New-MobileFinancialEntry {
         deducted_net_profit_billion = $null
         deducted_net_profit_margin = $null
         deducted_net_profit_growth_rate = $null
+        operating_revenue_billion = $null
+        operating_revenue_yoy = $null
+        parent_net_profit_billion = $null
+        parent_net_profit_yoy = $null
+        gross_margin = $null
+        net_margin = $null
+        roe = $null
+        asset_liability_ratio = $null
         periods = @{}
         inferred_periods = @{}
     }
@@ -666,6 +674,13 @@ function Export-MobileFinancialSnapshot {
             }
             $growth = ConvertTo-MobileSnapshotNumber $row.KCFJCXSYJLRTZ
             $epsGrowth = ConvertTo-MobileSnapshotNumber $row.EPSJBTZ
+            $operatingRevenueYoy = ConvertTo-MobileSnapshotNumber $row.TOTALOPERATEREVETZ
+            $parentNetProfitBillion = ConvertTo-MobileSnapshotBillion $row.PARENTNETPROFIT
+            $parentNetProfitYoy = ConvertTo-MobileSnapshotNumber $row.PARENTNETPROFITTZ
+            $grossMargin = ConvertTo-MobileSnapshotNumber $row.XSMLL
+            $netMargin = ConvertTo-MobileSnapshotNumber $row.XSJLL
+            $roe = ConvertTo-MobileSnapshotNumber $row.ROEJQ
+            $assetLiabilityRatio = ConvertTo-MobileSnapshotNumber $row.ZCFZL
 
             if ($periodKey) {
                 if ($null -eq $entry.latest_period -or [string] $periodKey -gt [string] $entry.latest_period) {
@@ -690,10 +705,29 @@ function Export-MobileFinancialSnapshot {
                     $entry.latest_bps = $bps
                     $entry.latest_bps_period = $periodKey
                 }
-                if (($null -ne $profitBillion -or $null -ne $margin -or $null -ne $growth) -and ($null -eq $entry.latest_financial_period -or [string] $periodKey -gt [string] $entry.latest_financial_period)) {
+                if (($null -ne $profitBillion -or
+                    $null -ne $margin -or
+                    $null -ne $growth -or
+                    $null -ne $revenueBillion -or
+                    $null -ne $operatingRevenueYoy -or
+                    $null -ne $parentNetProfitBillion -or
+                    $null -ne $parentNetProfitYoy -or
+                    $null -ne $grossMargin -or
+                    $null -ne $netMargin -or
+                    $null -ne $roe -or
+                    $null -ne $assetLiabilityRatio) -and
+                    ($null -eq $entry.latest_financial_period -or [string] $periodKey -gt [string] $entry.latest_financial_period)) {
                     $entry.deducted_net_profit_billion = $profitBillion
                     $entry.deducted_net_profit_margin = $margin
                     $entry.deducted_net_profit_growth_rate = $growth
+                    $entry.operating_revenue_billion = $revenueBillion
+                    $entry.operating_revenue_yoy = $operatingRevenueYoy
+                    $entry.parent_net_profit_billion = $parentNetProfitBillion
+                    $entry.parent_net_profit_yoy = $parentNetProfitYoy
+                    $entry.gross_margin = $grossMargin
+                    $entry.net_margin = $netMargin
+                    $entry.roe = $roe
+                    $entry.asset_liability_ratio = $assetLiabilityRatio
                     $entry.latest_financial_period = $periodKey
                 }
             }
@@ -729,6 +763,12 @@ function Export-MobileFinancialSnapshot {
             if ($null -eq $entry.deducted_net_profit_billion -and
                 $null -eq $entry.deducted_net_profit_margin -and
                 $null -eq $entry.deducted_net_profit_growth_rate -and
+                $null -eq $entry.operating_revenue_billion -and
+                $null -eq $entry.parent_net_profit_billion -and
+                $null -eq $entry.gross_margin -and
+                $null -eq $entry.net_margin -and
+                $null -eq $entry.roe -and
+                $null -eq $entry.asset_liability_ratio -and
                 $null -eq $entry.latest_eps -and
                 $null -eq $entry.latest_bps -and
                 $quarterly.Count -eq 0) {
@@ -743,6 +783,14 @@ function Export-MobileFinancialSnapshot {
                 deducted_net_profit_billion = if ($null -eq $entry.deducted_net_profit_billion) { $null } else { [Math]::Round([double] $entry.deducted_net_profit_billion, 6) }
                 deducted_net_profit_margin = if ($null -eq $entry.deducted_net_profit_margin) { $null } else { [Math]::Round([double] $entry.deducted_net_profit_margin, 6) }
                 deducted_net_profit_growth_rate = if ($null -eq $entry.deducted_net_profit_growth_rate) { $null } else { [Math]::Round([double] $entry.deducted_net_profit_growth_rate, 6) }
+                operating_revenue_billion = if ($null -eq $entry.operating_revenue_billion) { $null } else { [Math]::Round([double] $entry.operating_revenue_billion, 6) }
+                operating_revenue_yoy = if ($null -eq $entry.operating_revenue_yoy) { $null } else { [Math]::Round([double] $entry.operating_revenue_yoy, 6) }
+                parent_net_profit_billion = if ($null -eq $entry.parent_net_profit_billion) { $null } else { [Math]::Round([double] $entry.parent_net_profit_billion, 6) }
+                parent_net_profit_yoy = if ($null -eq $entry.parent_net_profit_yoy) { $null } else { [Math]::Round([double] $entry.parent_net_profit_yoy, 6) }
+                gross_margin = if ($null -eq $entry.gross_margin) { $null } else { [Math]::Round([double] $entry.gross_margin, 6) }
+                net_margin = if ($null -eq $entry.net_margin) { $null } else { [Math]::Round([double] $entry.net_margin, 6) }
+                roe = if ($null -eq $entry.roe) { $null } else { [Math]::Round([double] $entry.roe, 6) }
+                asset_liability_ratio = if ($null -eq $entry.asset_liability_ratio) { $null } else { [Math]::Round([double] $entry.asset_liability_ratio, 6) }
                 latest_eps = if ($null -eq $entry.latest_eps) { $null } else { [Math]::Round([double] $entry.latest_eps, 6) }
                 latest_bps = if ($null -eq $entry.latest_bps) { $null } else { [Math]::Round([double] $entry.latest_bps, 6) }
                 period = $period
@@ -753,6 +801,14 @@ function Export-MobileFinancialSnapshot {
             $financials[$code] = [pscustomobject][ordered]@{
                 latest_eps = $stock.latest_eps
                 latest_bps = $stock.latest_bps
+                operating_revenue_billion = $stock.operating_revenue_billion
+                operating_revenue_yoy = $stock.operating_revenue_yoy
+                parent_net_profit_billion = $stock.parent_net_profit_billion
+                parent_net_profit_yoy = $stock.parent_net_profit_yoy
+                gross_margin = $stock.gross_margin
+                net_margin = $stock.net_margin
+                roe = $stock.roe
+                asset_liability_ratio = $stock.asset_liability_ratio
                 period = $stock.period
                 source = $stock.source
                 quarterly_eps = $stock.quarterly_eps

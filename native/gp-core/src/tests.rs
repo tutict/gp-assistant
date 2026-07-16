@@ -84,6 +84,21 @@ fn sample_data_set() -> CoreDataSet {
             StockFinancialSnapshot {
                 latest_eps: Some(0.42),
                 latest_bps: Some(12.5),
+                operating_revenue_billion: None,
+                operating_revenue_yoy: None,
+                parent_net_profit_billion: None,
+                parent_net_profit_yoy: None,
+                gross_margin: None,
+                net_margin: None,
+                roe: None,
+                asset_liability_ratio: None,
+                goodwill_to_net_assets: None,
+                pledged_share_ratio: None,
+                dividend_yield: None,
+                dividend_payout_ratio: None,
+                goodwill_period: None,
+                pledged_share_period: None,
+                dividend_period: None,
                 period: Some("2026Q1".to_string()),
                 source: Some("data/cache/tdx_fundamentals.csv".to_string()),
                 quarterly_eps: vec![
@@ -602,6 +617,85 @@ fn observe_with_data_returns_financial_and_trend_payloads() {
     assert!(result.order_book.is_none());
     assert!(result.notes.iter().any(|note| note.contains("Tauri/Rust")));
 }
+
+#[test]
+fn observe_with_data_preserves_detailed_fundamental_snapshot_metrics() {
+    let data = sample_data_set();
+    let mut payload = serde_json::to_value(ObserveWithDataRequest {
+        data,
+        request: StockObserveRequest {
+            code: "111111.SZ".to_string(),
+            start_date: "2020-01-01".to_string(),
+            end_date: "2020-01-03".to_string(),
+            series_limit: 40,
+            include_order_book: false,
+        },
+    })
+    .expect("observe payload should serialize");
+    payload["data"]["financials"]["111111.SZ"]["operating_revenue_billion"] = json!(43.477821);
+    payload["data"]["financials"]["111111.SZ"]["operating_revenue_yoy"] = json!(8.370839);
+    payload["data"]["financials"]["111111.SZ"]["parent_net_profit_billion"] = json!(1.556453);
+    payload["data"]["financials"]["111111.SZ"]["parent_net_profit_yoy"] = json!(53.712048);
+    payload["data"]["financials"]["111111.SZ"]["gross_margin"] = json!(12.497484);
+    payload["data"]["financials"]["111111.SZ"]["net_margin"] = json!(1.399071);
+    payload["data"]["financials"]["111111.SZ"]["roe"] = json!(0.07);
+    payload["data"]["financials"]["111111.SZ"]["asset_liability_ratio"] = json!(65.027185);
+    payload["data"]["financials"]["111111.SZ"]["goodwill_to_net_assets"] = json!(17.957322);
+    payload["data"]["financials"]["111111.SZ"]["pledged_share_ratio"] = json!(0.74);
+    payload["data"]["financials"]["111111.SZ"]["dividend_yield"] = json!(0.95);
+    payload["data"]["financials"]["111111.SZ"]["dividend_payout_ratio"] = json!(38.577797);
+    payload["data"]["financials"]["111111.SZ"]["goodwill_period"] = json!("2026Q1");
+    payload["data"]["financials"]["111111.SZ"]["pledged_share_period"] = json!("2026-07-10");
+    payload["data"]["financials"]["111111.SZ"]["dividend_period"] = json!("2025-12-31");
+
+    let result = observe_with_data_value(payload)
+        .expect("detailed financial snapshot should remain observable");
+    let items = result["financial_indicators"]["items"]
+        .as_array()
+        .expect("financial indicator items should exist");
+    for metric_key in [
+        "operating_revenue",
+        "operating_revenue_yoy",
+        "parent_net_profit",
+        "parent_net_profit_yoy",
+        "gross_margin",
+        "net_margin",
+        "roe",
+        "asset_liability_ratio",
+        "goodwill_to_net_assets",
+        "pledged_share_ratio",
+        "dividend_yield",
+        "dividend_payout_ratio",
+    ] {
+        assert!(
+            items
+                .iter()
+                .any(|item| item.get("metric_key").and_then(Value::as_str) == Some(metric_key)),
+            "missing detailed financial metric: {metric_key}"
+        );
+    }
+    let metric = |key: &str| {
+        items
+            .iter()
+            .find(|item| item.get("metric_key").and_then(Value::as_str) == Some(key))
+            .expect("financial metric should exist")
+    };
+    assert_eq!(metric("roe")["value"].as_str(), Some("0.070%"));
+    assert_eq!(
+        metric("pledged_share_ratio")["value"].as_str(),
+        Some("0.740%")
+    );
+    assert_eq!(
+        metric("pledged_share_ratio")["period"].as_str(),
+        Some("2026-07-10")
+    );
+    assert_eq!(metric("dividend_yield")["value"].as_str(), Some("0.950%"));
+    assert_eq!(
+        metric("dividend_yield")["period"].as_str(),
+        Some("2025-12-31")
+    );
+}
+
 #[test]
 fn observe_with_data_accepts_numeric_capital_metric_values() {
     let mut data = sample_data_set();

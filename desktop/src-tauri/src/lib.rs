@@ -30,6 +30,9 @@ const MOBILE_MARKET_WRITE_RETRY_ATTEMPTS: usize = 3;
 const MOBILE_MARKET_WRITE_RETRY_DELAY_MS: u64 = 50;
 const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
 const EASTMONEY_KLINE_ENDPOINT: &str = "https://push2his.eastmoney.com/api/qt/stock/kline/get";
+const EASTMONEY_DATACENTER_ENDPOINT: &str = "https://datacenter-web.eastmoney.com/api/data/v1/get";
+const EASTMONEY_SECURITIES_ENDPOINT: &str =
+    "https://datacenter.eastmoney.com/securities/api/data/v1/get";
 const TENCENT_DAILY_KLINE_ENDPOINT: &str = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get";
 const TENCENT_BATCH_SIZE: usize = 120;
 const TENCENT_FETCH_CONCURRENCY: usize = 12;
@@ -42,6 +45,8 @@ const TENCENT_NETWORK_PROBE_TIMEOUT_SECS: u64 = 4;
 const OBSERVE_TOTAL_TIMEOUT_SECS: u64 = 25;
 const OBSERVE_MOBILE_FAST_TOTAL_TIMEOUT_SECS: u64 = 35;
 const OBSERVE_FINANCIAL_TOTAL_TIMEOUT_SECS: u64 = 10;
+const OBSERVE_FUNDAMENTAL_TOTAL_TIMEOUT_SECS: u64 = 8;
+const OBSERVE_FUNDAMENTAL_REFRESH_INTERVAL_MS: u128 = 24 * 60 * 60 * 1_000;
 const OBSERVE_HISTORY_TOTAL_TIMEOUT_SECS: u64 = 12;
 const OBSERVE_HISTORY_TIMEOUT_SECS: u64 = 8;
 const TREND_SCREEN_HISTORY_TIMEOUT_SECS: u64 = 18;
@@ -242,6 +247,362 @@ fn enrich_observe_stock_quote_fields(result: &mut Value, core_payload: &Value) {
             target_stock.insert(field.to_string(), value.clone());
         }
     }
+}
+
+fn observe_needs_exact_share_refresh(data: &Value, code: &str) -> bool {
+    stock_object(data, code).is_none_or(|stock| {
+        ["total_shares", "circulating_shares"]
+            .iter()
+            .any(|field| object_f64(stock, field).is_none_or(|value| value <= 0.0))
+    })
+}
+
+fn observe_needs_fundamental_supplement(data: &Value, code: &str) -> bool {
+    let entry = data
+        .get("financials")
+        .and_then(Value::as_object)
+        .and_then(|financials| financials.get(code))
+        .and_then(Value::as_object);
+    let missing = [
+        "goodwill_to_net_assets",
+        "pledged_share_ratio",
+        "dividend_yield",
+        "dividend_payout_ratio",
+    ]
+    .iter()
+    .any(|field| {
+        entry
+            .and_then(|item| finite_object_number(item, field))
+            .is_none()
+    });
+    if missing {
+        return true;
+    }
+    let updated_at =
+        entry.and_then(|item| cache_epoch_ms(item.get("supplement_updated_at_epoch_ms")));
+    updated_at.is_none_or(|updated_at| {
+        epoch_millis().saturating_sub(updated_at) > OBSERVE_FUNDAMENTAL_REFRESH_INTERVAL_MS
+    })
+}
+
+async fn fetch_observe_quote_snapshot(
+    code: &str,
+    seed_stock: Option<serde_json::Map<String, Value>>,
+    payload: &Value,
+) -> Result<serde_json::Map<String, Value>, String> {
+    let client = build_http_client_with_proxy(
+        "Mozilla/5.0 GuXuanYou/0.3 observe-quote",
+        Duration::from_secs(TENCENT_REQUEST_TIMEOUT_SECS),
+        Some(payload),
+    )?;
+    let quote = fetch_tencent_quotes(
+        &client,
+        &[code.to_string()],
+        Duration::from_secs(TENCENT_REQUEST_TIMEOUT_SECS),
+    )
+    .await?;
+    let seed = HashMap::from([(code.to_string(), seed_stock.unwrap_or_default())]);
+    parse_tencent_quotes(&quote.text, &seed, false)
+        .into_iter()
+        .find(|stock| {
+            let code_matches = stock
+                .get("code")
+                .and_then(Value::as_str)
+                .and_then(normalize_stock_code)
+                .is_some_and(|parsed| parsed == code);
+            let has_exact_shares = ["total_shares", "circulating_shares"]
+                .iter()
+                .all(|field| object_f64(stock, field).is_some_and(|value| value > 0.0));
+            code_matches && has_exact_shares
+        })
+        .ok_or_else(|| format!("Tencent quote did not return exact share data for {code}"))
+}
+
+async fn fetch_eastmoney_public_json(
+    client: &reqwest::Client,
+    url: &str,
+    label: &str,
+    empty_is_valid: bool,
+) -> Result<Value, String> {
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("{label} request failed: {error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("{label} returned HTTP {}", status.as_u16()));
+    }
+    let text = response
+        .text()
+        .await
+        .map_err(|error| format!("{label} response read failed: {error}"))?;
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|error| format!("{label} JSON parse failed: {error}"))?;
+    normalize_eastmoney_public_json(value, label, empty_is_valid)
+}
+
+fn normalize_eastmoney_public_json(
+    mut value: Value,
+    label: &str,
+    empty_is_valid: bool,
+) -> Result<Value, String> {
+    if value.get("success").and_then(Value::as_bool) == Some(false) {
+        let empty_response = value.get("code").and_then(Value::as_i64) == Some(9201);
+        if empty_is_valid && empty_response {
+            value["result"] = json!({"data": []});
+            value["success"] = json!(true);
+            return Ok(value);
+        }
+        return Err(format!(
+            "{label} rejected the request: {}",
+            value
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown error")
+        ));
+    }
+    if value
+        .get("result")
+        .and_then(|result| result.get("data"))
+        .and_then(Value::as_array)
+        .is_none()
+    {
+        return Err(format!("{label} response did not contain result.data"));
+    }
+    Ok(value)
+}
+
+fn eastmoney_result_rows(value: &Value) -> &[Value] {
+    value
+        .get("result")
+        .and_then(|result| result.get("data"))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+}
+
+fn parse_goodwill_to_net_assets(value: &Value) -> Option<f64> {
+    let row = eastmoney_result_rows(value).first()?.as_object()?;
+    let parent_equity = json_f64(row.get("TOTAL_PARENT_EQUITY")).filter(|value| *value > 0.0)?;
+    let goodwill = json_f64(row.get("GOODWILL")).unwrap_or(0.0).max(0.0);
+    Some(goodwill / parent_equity * 100.0)
+}
+
+fn parse_latest_pledged_share_ratio(value: &Value) -> Option<f64> {
+    let rows = eastmoney_result_rows(value);
+    if rows.is_empty() {
+        return Some(0.0);
+    }
+    rows.first()
+        .and_then(Value::as_object)
+        .and_then(|row| json_f64(row.get("PLEDGE_RATIO")))
+}
+
+fn parse_latest_dividend_metrics(value: &Value, price: Option<f64>) -> (Option<f64>, Option<f64>) {
+    let rows = eastmoney_result_rows(value);
+    if rows.is_empty() {
+        return (Some(0.0), Some(0.0));
+    }
+    let row = latest_dividend_row(value);
+    let Some(row) = row else {
+        return (None, None);
+    };
+    let cash_per_share = json_f64(row.get("PRETAX_BONUS_RMB"))
+        .unwrap_or(0.0)
+        .max(0.0)
+        / 10.0;
+    let dividend_yield = price
+        .filter(|value| *value > 0.0)
+        .map(|value| cash_per_share / value * 100.0)
+        .or_else(|| json_f64(row.get("DIVIDENT_RATIO")).map(|value| value * 100.0));
+    let payout_ratio = json_f64(row.get("BASIC_EPS"))
+        .filter(|value| *value > 0.0)
+        .map(|eps| cash_per_share / eps * 100.0);
+    (dividend_yield, payout_ratio)
+}
+
+fn latest_dividend_row(value: &Value) -> Option<&serde_json::Map<String, Value>> {
+    let rows = eastmoney_result_rows(value);
+    rows.iter()
+        .filter_map(Value::as_object)
+        .find(|row| {
+            row.get("EX_DIVIDEND_DATE")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty())
+        })
+        .or_else(|| rows.first().and_then(Value::as_object))
+}
+
+fn eastmoney_metric_period(
+    row: Option<&serde_json::Map<String, Value>>,
+    fields: &[&str],
+) -> Option<String> {
+    fields.iter().find_map(|field| {
+        row.and_then(|row| row.get(*field))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.chars().take(10).collect())
+    })
+}
+
+async fn fetch_observe_fundamental_supplement(
+    code: &str,
+    price: Option<f64>,
+    payload: &Value,
+) -> Result<(serde_json::Map<String, Value>, Vec<String>), String> {
+    let digits = code
+        .get(..6)
+        .filter(|value| value.chars().all(|ch| ch.is_ascii_digit()))
+        .ok_or_else(|| format!("invalid stock code for fundamentals: {code}"))?;
+    let client = build_http_client_with_proxy(
+        "Mozilla/5.0 GuXuanYou/0.3 observe-fundamentals",
+        Duration::from_secs(OBSERVE_FUNDAMENTAL_TOTAL_TIMEOUT_SECS),
+        Some(payload),
+    )?;
+    let balance_url = format!(
+        "{EASTMONEY_SECURITIES_ENDPOINT}?reportName=RPT_F10_FINANCE_GBALANCE&columns=SECUCODE,REPORT_DATE,REPORT_DATE_NAME,GOODWILL,TOTAL_PARENT_EQUITY&filter=(SECUCODE%3D%22{code}%22)&pageNumber=1&pageSize=1&sortTypes=-1&sortColumns=REPORT_DATE&source=HSF10&client=PC"
+    );
+    let pledge_url = format!(
+        "{EASTMONEY_DATACENTER_ENDPOINT}?reportName=RPTA_APP_PLEDGERATIO&columns=SECURITY_CODE,TRADE_DATE,PLEDGE_RATIO&sortColumns=TRADE_DATE&sortTypes=-1&filter=(SECURITY_CODE%3D%22{digits}%22)&pageNumber=1&pageSize=1&source=DataCenter&client=APP"
+    );
+    let dividend_url = format!(
+        "{EASTMONEY_DATACENTER_ENDPOINT}?reportName=RPT_SHAREBONUS_DET&columns=SECUCODE,SECURITY_CODE,REPORT_DATE,PRETAX_BONUS_RMB,BASIC_EPS,DIVIDENT_RATIO,EX_DIVIDEND_DATE&sortColumns=REPORT_DATE&sortTypes=-1&filter=(SECURITY_CODE%3D%22{digits}%22)&pageNumber=1&pageSize=5&source=WEB&client=WEB"
+    );
+    let (balance, pledge, dividend) = futures::join!(
+        fetch_eastmoney_public_json(&client, &balance_url, "Eastmoney balance sheet", false),
+        fetch_eastmoney_public_json(&client, &pledge_url, "Eastmoney pledge ratio", true),
+        fetch_eastmoney_public_json(&client, &dividend_url, "Eastmoney dividend history", true),
+    );
+
+    let mut fields = serde_json::Map::new();
+    let mut notes = Vec::new();
+    match balance {
+        Ok(value) => {
+            if let Some(ratio) = parse_goodwill_to_net_assets(&value) {
+                fields.insert("goodwill_to_net_assets".to_string(), json!(ratio));
+            }
+            if let Some(period) = eastmoney_metric_period(
+                eastmoney_result_rows(&value)
+                    .first()
+                    .and_then(Value::as_object),
+                &["REPORT_DATE_NAME", "REPORT_DATE"],
+            ) {
+                fields.insert("goodwill_period".to_string(), json!(period));
+            }
+        }
+        Err(error) => notes.push(error),
+    }
+    match pledge {
+        Ok(value) => {
+            if let Some(ratio) = parse_latest_pledged_share_ratio(&value) {
+                fields.insert("pledged_share_ratio".to_string(), json!(ratio));
+            }
+            if let Some(period) = eastmoney_metric_period(
+                eastmoney_result_rows(&value)
+                    .first()
+                    .and_then(Value::as_object),
+                &["TRADE_DATE"],
+            ) {
+                fields.insert("pledged_share_period".to_string(), json!(period));
+            }
+        }
+        Err(error) => notes.push(error),
+    }
+    match dividend {
+        Ok(value) => {
+            let (dividend_yield, payout_ratio) = parse_latest_dividend_metrics(&value, price);
+            if let Some(value) = dividend_yield {
+                fields.insert("dividend_yield".to_string(), json!(value));
+            }
+            if let Some(value) = payout_ratio {
+                fields.insert("dividend_payout_ratio".to_string(), json!(value));
+            }
+            if let Some(period) =
+                eastmoney_metric_period(latest_dividend_row(&value), &["REPORT_DATE"])
+            {
+                fields.insert("dividend_period".to_string(), json!(period));
+            }
+        }
+        Err(error) => notes.push(error),
+    }
+    if fields.is_empty() {
+        return Err(if notes.is_empty() {
+            "Eastmoney fundamentals returned no usable metrics".to_string()
+        } else {
+            notes.join(" | ")
+        });
+    }
+    Ok((fields, notes))
+}
+
+fn merge_observe_quote_snapshot(
+    data: &mut Value,
+    code: &str,
+    quote: &serde_json::Map<String, Value>,
+) -> bool {
+    const FIELDS: [&str; 5] = [
+        "market_cap_billion",
+        "circulating_market_cap_billion",
+        "total_shares",
+        "circulating_shares",
+        "quote_time",
+    ];
+    let Some(stock) = data
+        .get_mut("stocks")
+        .and_then(Value::as_array_mut)
+        .and_then(|stocks| {
+            stocks.iter_mut().find(|stock| {
+                stock
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .and_then(normalize_stock_code)
+                    .is_some_and(|stock_code| stock_code == code)
+            })
+        })
+        .and_then(Value::as_object_mut)
+    else {
+        return false;
+    };
+    let mut changed = false;
+    for field in FIELDS {
+        let Some(value) = quote.get(field).filter(|value| !value.is_null()) else {
+            continue;
+        };
+        if stock.get(field) != Some(value) {
+            stock.insert(field.to_string(), value.clone());
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn merge_observe_fundamental_supplement(
+    data: &mut Value,
+    code: &str,
+    fields: serde_json::Map<String, Value>,
+) -> bool {
+    let entry = financial_entry_mut(data, code);
+    let mut changed = false;
+    for (field, value) in fields {
+        let valid_number = json_f64(Some(&value)).is_some();
+        let valid_period = field.ends_with("_period")
+            && value.as_str().is_some_and(|value| !value.trim().is_empty());
+        if (valid_number || valid_period) && entry.get(&field) != Some(&value) {
+            entry.insert(field, value);
+            changed = true;
+        }
+    }
+    if !entry.is_empty() {
+        let updated_at = json!(epoch_millis().to_string());
+        if entry.get("supplement_updated_at_epoch_ms") != Some(&updated_at) {
+            entry.insert("supplement_updated_at_epoch_ms".to_string(), updated_at);
+            changed = true;
+        }
+        append_financial_source(entry, "东方财富财报/质押/分红公开数据");
+    }
+    changed
 }
 
 #[tauri::command]
@@ -2810,6 +3171,29 @@ fn merge_financial_entry(
     if let Some(value) = finite_object_number_any(object, &["latest_bps", "bps", "BPS"]) {
         entry.insert("latest_bps".to_string(), json!(value));
     }
+    for field in [
+        "operating_revenue_billion",
+        "operating_revenue_yoy",
+        "parent_net_profit_billion",
+        "parent_net_profit_yoy",
+        "gross_margin",
+        "net_margin",
+        "roe",
+        "asset_liability_ratio",
+        "goodwill_to_net_assets",
+        "pledged_share_ratio",
+        "dividend_yield",
+        "dividend_payout_ratio",
+    ] {
+        if let Some(value) = finite_object_number(object, field) {
+            entry.insert(field.to_string(), json!(value));
+        }
+    }
+    for field in ["goodwill_period", "pledged_share_period", "dividend_period"] {
+        if let Some(value) = object_string(object, field).filter(|value| !value.trim().is_empty()) {
+            entry.insert(field.to_string(), json!(value));
+        }
+    }
     if let Some(period) = object_string_any(object, &["period", "latest_period", "report_period"])
         .filter(|value| !value.trim().is_empty())
     {
@@ -3874,6 +4258,12 @@ async fn observe_core_payload_with_cached_history(
         );
     let need_history =
         cache_lacks_history && (!mobile_fast_observe || requested_series_limit > 500);
+    let need_exact_share_refresh = observe_needs_exact_share_refresh(&data, &code);
+    let quote_seed_stock = stock_object(&data, &code).cloned();
+    let stock_price = quote_seed_stock
+        .as_ref()
+        .and_then(|stock| object_f64(stock, "price"));
+    let need_fundamental_supplement = observe_needs_fundamental_supplement(&data, &code);
 
     // Capital evidence, online EPS, and daily history are independent network groups — fetch them
     // concurrently, then merge each result into `data` sequentially below.
@@ -3882,7 +4272,7 @@ async fn observe_core_payload_with_cached_history(
     } else {
         OBSERVE_CAPITAL_TOTAL_TIMEOUT_SECS
     };
-    let (capital_outcome, eps_outcome, history_outcome) = futures::join!(
+    let (capital_outcome, eps_outcome, history_outcome, quote_outcome, supplement_outcome) = futures::join!(
         tokio::time::timeout(
             Duration::from_secs(capital_fetch_timeout),
             fetch_observe_capital_evidence_items(&code, &start_date, &end_date, Some(&payload)),
@@ -3913,7 +4303,72 @@ async fn observe_core_payload_with_cached_history(
                 None
             }
         },
+        async {
+            if need_exact_share_refresh {
+                Some(
+                    tokio::time::timeout(
+                        Duration::from_secs(TENCENT_BATCH_TIMEOUT_SECS),
+                        fetch_observe_quote_snapshot(&code, quote_seed_stock, &payload),
+                    )
+                    .await,
+                )
+            } else {
+                None
+            }
+        },
+        async {
+            if need_fundamental_supplement {
+                Some(
+                    tokio::time::timeout(
+                        Duration::from_secs(OBSERVE_FUNDAMENTAL_TOTAL_TIMEOUT_SECS),
+                        fetch_observe_fundamental_supplement(&code, stock_price, &payload),
+                    )
+                    .await,
+                )
+            } else {
+                None
+            }
+        },
     );
+
+    if need_exact_share_refresh {
+        match quote_outcome {
+            Some(Ok(Ok(quote))) => {
+                if merge_observe_quote_snapshot(&mut data, &code, &quote) {
+                    data_changed = true;
+                    notes.push(format!("已从腾讯实时行情补全 {code} 的总股本和流通股。"));
+                }
+            }
+            Some(Ok(Err(error))) => notes.push(format!("精确股本补全失败：{error}")),
+            Some(Err(_)) => notes.push(format!(
+                "精确股本补全超过 {TENCENT_BATCH_TIMEOUT_SECS} 秒，保留本地缓存。"
+            )),
+            None => {}
+        }
+    }
+
+    if need_fundamental_supplement {
+        match supplement_outcome {
+            Some(Ok(Ok((fields, supplement_notes)))) => {
+                if merge_observe_fundamental_supplement(&mut data, &code, fields) {
+                    data_changed = true;
+                    notes.push(format!(
+                        "已从东方财富公开数据补全 {code} 的商誉、质押和分红指标。"
+                    ));
+                }
+                notes.extend(
+                    supplement_notes
+                        .into_iter()
+                        .map(|note| format!("专项基本面补全：{note}")),
+                );
+            }
+            Some(Ok(Err(error))) => notes.push(format!("专项基本面补全失败：{error}")),
+            Some(Err(_)) => notes.push(format!(
+                "专项基本面补全超过 {OBSERVE_FUNDAMENTAL_TOTAL_TIMEOUT_SECS} 秒，保留本地财报快照。"
+            )),
+            None => {}
+        }
+    }
 
     // Merge capital evidence.
     match capital_outcome {

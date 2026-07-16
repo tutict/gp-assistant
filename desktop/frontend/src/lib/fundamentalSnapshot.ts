@@ -46,11 +46,11 @@ export function buildFundamentalSnapshotData(
     { label: "扣非净利同比", value: financialMetricAny(lookup, ["deducted_net_profit_growth_rate", "扣非净利同比", "扣非净利润增长率", "扣非增长"]) },
     { label: "毛利率", value: financialMetricAny(lookup, ["gross_margin", "gross_profit_margin", "毛利率"]) },
     { label: "净利率", value: financialMetricAny(lookup, ["net_margin", "net_profit_margin", "deducted_net_profit_margin", "净利率", "扣非净利率"]) },
-    { label: "净资产收益率", value: metricOrMissing(formatRatioPercent(stock.roe)) },
+    { label: "净资产收益率", value: financialMetricAny(lookup, ["roe", "return_on_equity", "净资产收益率", "ROE"], metricOrMissing(formatRatioPercent(stock.roe))) },
     { label: "资产负债率", value: financialMetricAny(lookup, ["asset_liability_ratio", "debt_to_asset_ratio", "资产负债率"]) },
     { label: "商誉净资产比", value: financialMetricAny(lookup, ["goodwill_to_net_assets", "goodwill_net_asset_ratio", "商誉净资产比"]) },
     { label: "质押总股本比", value: financialMetricAny(lookup, ["pledged_share_ratio", "pledge_total_share_ratio", "质押总股本比"]) },
-    { label: "股息率", value: metricOrMissing(formatRatioPercent(stock.dividend_yield)) },
+    { label: "股息率", value: financialMetricAny(lookup, ["dividend_yield", "股息率"], metricOrMissing(formatRatioPercent(stock.dividend_yield))) },
     { label: "股利支付率(静)", value: financialMetricAny(lookup, ["dividend_payout_ratio", "static_dividend_payout_ratio", "股利支付率(静)", "股利支付率"]) },
   ].map((item) => ({ ...item, tone: fundamentalMetricTone(item.label, item.value) }));
 

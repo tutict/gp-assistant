@@ -911,6 +911,36 @@ pub struct StockFinancialSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_bps: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operating_revenue_billion: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operating_revenue_yoy: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_net_profit_billion: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_net_profit_yoy: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gross_margin: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net_margin: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roe: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_liability_ratio: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goodwill_to_net_assets: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pledged_share_ratio: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dividend_yield: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dividend_payout_ratio: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goodwill_period: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pledged_share_period: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dividend_period: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub period: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
@@ -3049,6 +3079,7 @@ fn build_observation_financial_indicators(
             period = snapshot_period.clone();
         }
     }
+    let snapshot_period = financial.and_then(|snapshot| snapshot.period.as_deref());
 
     push_indicator(
         &mut items,
@@ -3064,13 +3095,30 @@ fn build_observation_financial_indicators(
         |value| format_number(value),
         "neutral",
     );
-    push_indicator(
-        &mut items,
-        "ROE",
-        stock.roe,
-        |value| format_percent(value),
-        indicator_tone(stock.roe),
-    );
+    let snapshot_roe = financial.and_then(|snapshot| snapshot.roe);
+    if snapshot_roe.is_some() {
+        push_indicator_with_meta(
+            &mut items,
+            "ROE",
+            snapshot_roe,
+            format_percentage_points,
+            indicator_tone(snapshot_roe),
+            Some("%"),
+            Some("roe"),
+            snapshot_period,
+        );
+    } else {
+        push_indicator_with_meta(
+            &mut items,
+            "ROE",
+            stock.roe,
+            format_percent,
+            indicator_tone(stock.roe),
+            Some("%"),
+            Some("roe"),
+            None,
+        );
+    }
     push_indicator(
         &mut items,
         "\u{5e02}\u{503c}",
@@ -3078,13 +3126,119 @@ fn build_observation_financial_indicators(
         |value| format!("{}\u{4ebf}", format_number(value)),
         "neutral",
     );
-    push_indicator(
+    let snapshot_dividend_yield = financial.and_then(|snapshot| snapshot.dividend_yield);
+    if snapshot_dividend_yield.is_some() {
+        push_indicator_with_meta(
+            &mut items,
+            "\u{80a1}\u{606f}\u{7387}",
+            snapshot_dividend_yield,
+            format_percentage_points,
+            "neutral",
+            Some("%"),
+            Some("dividend_yield"),
+            financial.and_then(|snapshot| snapshot.dividend_period.as_deref()),
+        );
+    } else {
+        push_indicator_with_meta(
+            &mut items,
+            "\u{80a1}\u{606f}\u{7387}",
+            stock.dividend_yield,
+            format_percent,
+            "neutral",
+            Some("%"),
+            Some("dividend_yield"),
+            None,
+        );
+    }
+    push_indicator_with_meta(
         &mut items,
-        "\u{80a1}\u{606f}\u{7387}",
-        stock.dividend_yield,
-        |value| format_percent(value),
+        "营业总收入",
+        financial.and_then(|snapshot| snapshot.operating_revenue_billion),
+        |value| format!("{}亿", format_number(value)),
         "neutral",
+        Some("亿"),
+        Some("operating_revenue"),
+        snapshot_period,
     );
+    push_indicator_with_meta(
+        &mut items,
+        "总营收同比",
+        financial.and_then(|snapshot| snapshot.operating_revenue_yoy),
+        format_percentage_points,
+        indicator_tone(financial.and_then(|snapshot| snapshot.operating_revenue_yoy)),
+        Some("%"),
+        Some("operating_revenue_yoy"),
+        snapshot_period,
+    );
+    push_indicator_with_meta(
+        &mut items,
+        "归母净利润",
+        financial.and_then(|snapshot| snapshot.parent_net_profit_billion),
+        |value| format!("{}亿", format_number(value)),
+        indicator_tone(financial.and_then(|snapshot| snapshot.parent_net_profit_billion)),
+        Some("亿"),
+        Some("parent_net_profit"),
+        snapshot_period,
+    );
+    push_indicator_with_meta(
+        &mut items,
+        "归母净利同比",
+        financial.and_then(|snapshot| snapshot.parent_net_profit_yoy),
+        format_percentage_points,
+        indicator_tone(financial.and_then(|snapshot| snapshot.parent_net_profit_yoy)),
+        Some("%"),
+        Some("parent_net_profit_yoy"),
+        snapshot_period,
+    );
+    for (label, metric_key, value, metric_period) in [
+        (
+            "毛利率",
+            "gross_margin",
+            financial.and_then(|snapshot| snapshot.gross_margin),
+            snapshot_period,
+        ),
+        (
+            "净利率",
+            "net_margin",
+            financial.and_then(|snapshot| snapshot.net_margin),
+            snapshot_period,
+        ),
+        (
+            "资产负债率",
+            "asset_liability_ratio",
+            financial.and_then(|snapshot| snapshot.asset_liability_ratio),
+            snapshot_period,
+        ),
+        (
+            "商誉净资产比",
+            "goodwill_to_net_assets",
+            financial.and_then(|snapshot| snapshot.goodwill_to_net_assets),
+            financial.and_then(|snapshot| snapshot.goodwill_period.as_deref()),
+        ),
+        (
+            "质押总股本比",
+            "pledged_share_ratio",
+            financial.and_then(|snapshot| snapshot.pledged_share_ratio),
+            financial.and_then(|snapshot| snapshot.pledged_share_period.as_deref()),
+        ),
+        (
+            "股利支付率(静)",
+            "dividend_payout_ratio",
+            financial.and_then(|snapshot| snapshot.dividend_payout_ratio),
+            financial.and_then(|snapshot| snapshot.dividend_period.as_deref()),
+        ),
+    ] {
+        push_indicator_with_meta(
+            &mut items,
+            label,
+            value,
+            format_percentage_points,
+            "neutral",
+            Some("%"),
+            Some(metric_key),
+            metric_period,
+        );
+    }
     push_indicator(
         &mut items,
         "\u{6263}\u{975e}\u{51c0}\u{5229}\u{6da6}",
@@ -3096,18 +3250,17 @@ fn build_observation_financial_indicators(
         &mut items,
         "\u{6263}\u{975e}\u{51c0}\u{5229}\u{7387}",
         stock.deducted_net_profit_margin,
-        |value| format_percent(value),
+        format_percentage_points,
         "neutral",
     );
     push_indicator(
         &mut items,
         "\u{6263}\u{975e}\u{51c0}\u{5229}\u{6da6}\u{589e}\u{957f}\u{7387}",
         stock.deducted_net_profit_growth_rate,
-        |value| format_percent(value),
+        format_percentage_points,
         indicator_tone(stock.deducted_net_profit_growth_rate),
     );
 
-    let snapshot_period = financial.and_then(|snapshot| snapshot.period.as_deref());
     let latest_eps = financial.and_then(|snapshot| snapshot.latest_eps);
     if latest_eps.is_some() {
         push_indicator_with_meta(
@@ -3282,6 +3435,10 @@ fn format_number(value: f64) -> String {
 fn format_percent(value: f64) -> String {
     let percent = as_percent(value).unwrap_or(value);
     format!("{}%", format_number(percent))
+}
+
+fn format_percentage_points(value: f64) -> String {
+    format!("{}%", format_number(value))
 }
 
 fn indicator_tone(value: Option<f64>) -> &'static str {

@@ -16,6 +16,7 @@ import {
 } from "./format";
 import { fetchObserveDailyHistoryRows } from "./observeHistory";
 import { hydrateObserveTrendFromHistory } from "./observeTrend";
+import { normalizeMobileFinancialSnapshotDetails } from "./mobileFinancialSnapshot";
 import type { ObserveResult } from "../types";
 
 declare global {
@@ -594,7 +595,7 @@ function normalizeMobileFinancialSnapshotStock(stock: Record<string, unknown>): 
 }
 
 function normalizeMobileFinancialSnapshotFinancial(source: Record<string, unknown>): Record<string, unknown> | null {
-  const financial: Record<string, unknown> = {};
+  const financial: Record<string, unknown> = normalizeMobileFinancialSnapshotDetails(source);
   const latestEps = parseLooseNumber(source.latest_eps ?? source.eps);
   if (latestEps !== null) financial.latest_eps = latestEps;
   const latestBps = parseLooseNumber(source.latest_bps ?? source.bps);
