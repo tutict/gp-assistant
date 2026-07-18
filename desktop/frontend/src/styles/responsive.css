@@ -32,10 +32,6 @@
     grid-template-columns: repeat(4, minmax(104px, 1fr));
   }
 
-  .backtest-controls .run-btn {
-    min-height: var(--touch-height);
-  }
-
   .observe-text-metric-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -168,6 +164,15 @@
   .screen-panel-tabs .panel-tab,
   .rag-tabs .panel-tab {
     min-width: calc((100vw - 34px) / 3.2);
+  }
+
+  .screen-panel-desktop-toolbar .screen-panel-tabs .panel-tab {
+    min-width: max-content;
+  }
+
+  .screen-panel-desktop-toolbar > .run-btn {
+    width: 108px;
+    flex: 0 0 108px;
   }
 
   .panel-controls,
@@ -482,16 +487,11 @@
 
   .backtest-context-controls {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .backtest-controls {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .backtest-controls .run-btn {
-    grid-column: 1 / -1;
-    width: 100%;
   }
 
   .plain-news-groups {
@@ -5201,4 +5201,218 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-market-chart.mobile-chart .klin
 
 html.android-phone .app[data-active-view="agent"] .agent-thread {
   padding-top: 44px;
+}
+
+/* Android backtest/watchlist: final flat layout after legacy compact passes. */
+html.android-phone .backtest-context {
+  min-height: 0;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+html.android-phone .backtest-context-head {
+  min-width: 0;
+  padding: 0 2px;
+}
+
+html.android-phone .backtest-context-controls {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+html.android-phone .backtest-context-controls .source-toggle {
+  min-height: 36px;
+  padding: 4px 5px;
+  border-radius: 6px;
+}
+
+html.android-phone .backtest-param-strip {
+  gap: 4px 9px;
+  padding: 0 2px;
+}
+
+html.android-phone .backtest-primary-chart {
+  padding: 8px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+html.android-phone .backtest-controls {
+  min-height: 0;
+  padding: 6px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+html.android-phone .app[data-active-view="backtest"] .panel-result > .panel-feedback {
+  min-height: 44px;
+  padding: 6px 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+html.android-phone .backtest-comparison {
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+html.android-phone .backtest-holdings {
+  padding: 8px 0;
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+  border-radius: 0;
+  background: transparent;
+}
+
+html.android-phone .backtest-volatility {
+  gap: 6px;
+  padding: 10px 0 2px;
+}
+
+html.android-phone .volatility-symbol-control {
+  gap: 2px;
+  width: min(140px, 44%);
+}
+
+html.android-phone .backtest-volatility select {
+  min-height: 34px;
+  height: 34px;
+  border-radius: 6px;
+}
+
+html.android-phone .volatility-grid {
+  gap: 0 10px;
+}
+
+html.android-phone .volatility-grid > div {
+  grid-template-rows: auto auto auto;
+  min-height: 0;
+  gap: 3px;
+  padding: 8px 2px;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  background: transparent;
+}
+
+html.android-phone .watchlist-panel {
+  margin-top: 6px;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+html.android-phone .watchlist-header {
+  min-height: 36px;
+  padding: 0 2px;
+  border-bottom: 0;
+}
+
+html.android-phone .watchlist-heading {
+  align-items: center;
+  gap: 4px;
+}
+
+html.android-phone .watchlist-header h3 {
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+html.android-phone .watchlist-count {
+  font-size: 9px;
+  line-height: 1.2;
+}
+
+html.android-phone .watchlist-collapse {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+html.android-phone .watchlist-header-actions {
+  gap: 2px;
+}
+
+html.android-phone .watchlist-backtest {
+  min-height: 44px;
+  height: 44px;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+}
+
+html.android-phone .watchlist-clear,
+html.android-phone .watchlist-news-action,
+html.android-phone .watchlist-remove {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+html.android-phone .watchlist-body:not([hidden]) {
+  border-top: 1px solid var(--line-soft);
+}
+
+html.android-phone .watchlist-body > .panel-feedback {
+  min-height: 42px;
+  border: 0;
+  border-radius: 0;
+}
+
+html.android-phone .watchlist-items {
+  max-height: min(30dvh, 180px);
+  gap: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+html.android-phone .watchlist-items .watchlist-item {
+  grid-template-columns: minmax(0, 1fr) 44px 44px;
+  min-height: 44px;
+  gap: 2px;
+  padding: 0 2px;
+  border-radius: 0;
+  background: transparent;
+}
+
+html.android-phone .watchlist-observe {
+  grid-template-columns: minmax(84px, auto) minmax(0, 1fr);
+  min-height: 44px;
+  gap: 5px;
+}
+
+html.android-phone .watchlist-code,
+html.android-phone .watchlist-name {
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+html.android-phone .watchlist-name.missing {
+  font-size: 9px;
 }

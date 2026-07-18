@@ -1664,6 +1664,34 @@ fn backtests_with_native_history() {
 }
 
 #[test]
+fn candidate_snapshot_rejects_selected_stocks_without_history() {
+    let mut data = sample_data_set();
+    data.histories.clear();
+    let error = backtest_with_data(
+        &data,
+        &BacktestRequest {
+            criteria: ScreenCriteria {
+                max_pe: Some(10.0),
+                ..ScreenCriteria::default()
+            },
+            source: default_backtest_source(),
+            strategy_mode: "candidate_snapshot".to_string(),
+            stock_codes: Vec::new(),
+            start_date: "20200101".to_string(),
+            end_date: "20200103".to_string(),
+            top_n: 1,
+            initial_cash: 1000.0,
+            rebalance_frequency: default_rebalance_frequency(),
+            transaction_cost_bps: default_transaction_cost_bps(),
+            benchmark: default_backtest_benchmark(),
+        },
+    )
+    .expect_err("selected stocks without history must not produce a zero-value result");
+
+    assert!(error.to_string().contains("历史日线"));
+}
+
+#[test]
 fn backtests_watchlist_codes_in_saved_order() {
     let result = backtest_with_data(
         &sample_data_set(),

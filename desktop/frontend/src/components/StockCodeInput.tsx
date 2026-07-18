@@ -9,6 +9,7 @@ interface StockCodeInputProps {
   onChange: (value: string) => void;
   placeholder?: string;
   listMode?: boolean;
+  resolveBareCode?: boolean;
 }
 
 const MARKET_OPTIONS = [
@@ -17,7 +18,14 @@ const MARKET_OPTIONS = [
   { key: "BJ", label: "北京", hint: "8 / 4" },
 ];
 
-export function StockCodeInput({ id, value, onChange, placeholder, listMode = false }: StockCodeInputProps) {
+export function StockCodeInput({
+  id,
+  value,
+  onChange,
+  placeholder,
+  listMode = false,
+  resolveBareCode = false,
+}: StockCodeInputProps) {
   const [suggestions, setSuggestions] = useState<StockItem[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -38,7 +46,7 @@ export function StockCodeInput({ id, value, onChange, placeholder, listMode = fa
   }, [digits, suggestions]);
   const hasExactSuggestion = Boolean(exactSuggestion);
   const showStockSuggest = open && !completeCode && (suggestions.length > 0 || loading);
-  const showMarketConfirm = open && digits.length === 6 && !hasMarketSuffix(lookupToken) && !loading && !hasExactSuggestion && suggestions.length === 0;
+  const showMarketConfirm = !resolveBareCode && open && digits.length === 6 && !hasMarketSuffix(lookupToken) && !loading && !hasExactSuggestion && suggestions.length === 0;
   const suggestedMarket = showMarketConfirm ? inferMarketFromDigits(digits) : "";
 
   useEffect(() => {
@@ -112,7 +120,22 @@ export function StockCodeInput({ id, value, onChange, placeholder, listMode = fa
         id={id}
         type="text"
         value={value}
-        onChange={(event) => { onChange(event.target.value); setOpen(true); }}
+        onChange={(event) => {
+          const next = event.target.value;
+          const resolved = resolveBareCode && !listMode && /^[0-9]{6}$/.test(next.trim())
+            ? normalizeStockCode(next)
+            : "";
+          if (resolved) {
+            requestId.current += 1;
+            setSuggestions([]);
+            setLoading(false);
+            setOpen(false);
+            onChange(resolved);
+            return;
+          }
+          onChange(next);
+          setOpen(true);
+        }}
         onFocus={() => setOpen(!completeCode)}
         onKeyDown={(event) => {
           if (!open || completeCode || !suggestions.length) return;

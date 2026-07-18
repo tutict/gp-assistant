@@ -1148,6 +1148,23 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   margin-top: var(--space-3);
 }
 
+.screen-panel-desktop-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.screen-panel-desktop-toolbar .screen-panel-tabs {
+  flex: 1 1 auto;
+  margin-top: 0;
+}
+
+.screen-panel-desktop-toolbar > .run-btn {
+  min-width: 108px;
+}
+
 .screen-panel-controls {
   flex-wrap: wrap;
 }
@@ -1775,14 +1792,21 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   flex-wrap: wrap;
 }
 
+.backtest-context-controls > .source-toggle:first-child {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--button-text);
+}
+
+.backtest-context-controls > .source-toggle:first-child:hover {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+}
+
 .backtest-controls {
   display: grid;
   grid-template-columns: repeat(7, minmax(94px, 1fr)) auto;
   align-items: end;
-}
-
-.backtest-controls .run-btn {
-  min-width: 112px;
 }
 
 .backtest-result {
@@ -1797,13 +1821,202 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   background: var(--surface);
 }
 
-.backtest-primary-chart .chart-wrap {
-  min-height: 190px;
+.backtest-chart-empty {
+  margin: 0;
+  padding: 7px 2px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
 }
 
-.backtest-primary-chart svg {
+.equity-chart {
+  --equity-portfolio: var(--score);
+  --equity-benchmark: #6ca8b2;
+  display: grid;
+  gap: 10px;
+}
+
+[data-theme="light"] .equity-chart {
+  --equity-benchmark: #26758a;
+}
+
+.equity-chart-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.equity-chart-header > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.equity-chart-header strong {
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.equity-chart-header small {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.equity-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px 16px;
+}
+
+.equity-chart-legend span,
+.equity-chart-tooltip span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.equity-chart-legend b {
+  color: var(--text);
+  font-size: inherit;
+}
+
+.equity-chart-legend i,
+.equity-chart-tooltip i {
+  width: 14px;
+  height: 2px;
+  flex: 0 0 auto;
+  background: currentColor;
+}
+
+.equity-chart-legend i.is-portfolio,
+.equity-chart-tooltip i.is-portfolio {
+  color: var(--equity-portfolio);
+}
+
+.equity-chart-legend i.is-benchmark,
+.equity-chart-tooltip i.is-benchmark {
+  color: var(--equity-benchmark);
+}
+
+.equity-chart-plot {
+  position: relative;
+  height: clamp(190px, 24vw, 250px);
+  min-width: 0;
+  outline: none;
+  cursor: crosshair;
+  touch-action: pan-y;
+}
+
+.equity-chart-plot:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.equity-chart-plot svg {
+  display: block;
   width: 100%;
-  color: var(--accent-strong);
+  height: 100%;
+  overflow: visible;
+}
+
+.equity-chart-grid line {
+  stroke: var(--line-soft);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.equity-chart-grid text {
+  fill: var(--text-tertiary);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.equity-chart-baseline {
+  stroke: color-mix(in srgb, var(--text-secondary) 38%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 3 5;
+  vector-effect: non-scaling-stroke;
+}
+
+.equity-chart-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.equity-chart-line.is-portfolio {
+  stroke: var(--equity-portfolio);
+  stroke-width: 2.6;
+}
+
+.equity-chart-line.is-benchmark {
+  stroke: var(--equity-benchmark);
+  stroke-width: 1.8;
+  stroke-dasharray: 6 4;
+}
+
+.equity-chart-cursor line {
+  stroke: var(--text-secondary);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.equity-chart-cursor circle {
+  stroke: var(--surface);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.equity-chart-cursor circle.is-portfolio {
+  fill: var(--equity-portfolio);
+}
+
+.equity-chart-cursor circle.is-benchmark {
+  fill: var(--equity-benchmark);
+}
+
+.equity-chart-tooltip {
+  position: absolute;
+  top: 8px;
+  z-index: 2;
+  display: grid;
+  gap: 4px;
+  min-width: 126px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.22);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.equity-chart-tooltip.is-start {
+  transform: translateX(0);
+}
+
+.equity-chart-tooltip.is-end {
+  transform: translateX(-100%);
+}
+
+.equity-chart-tooltip strong {
+  color: var(--text);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.equity-chart .chart-labels {
+  align-items: center;
+}
+
+.equity-chart .chart-labels span:nth-child(2) {
+  color: var(--text-tertiary);
 }
 
 .backtest-holdings {
@@ -2361,6 +2574,29 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   gap: 8px;
 }
 
+.watchlist-collapse {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.watchlist-collapse svg {
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.watchlist-collapse[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+
+.watchlist-body[hidden] {
+  display: none;
+}
+
 .watchlist-header h3 {
   margin: 0;
   font-size: 13px;
@@ -2374,13 +2610,16 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
 .watchlist-items {
   display: grid;
   gap: 0;
+  max-height: min(52vh, 420px);
   margin: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 0;
 }
 
 .watchlist-item {
   display: grid;
-  grid-template-columns: 110px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   min-height: 44px;
   align-items: center;
   gap: 10px;
@@ -2414,7 +2653,8 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   height: 32px;
 }
 
-.watchlist-panel > .panel-feedback {
+.watchlist-panel > .panel-feedback,
+.watchlist-body > .panel-feedback {
   min-height: 76px;
   border: 0;
   border-radius: 0;
@@ -2482,8 +2722,8 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
 .watchlist-observe {
   display: grid;
   grid-template-columns: minmax(88px, auto) minmax(0, 1fr);
-  flex: 1;
   min-width: 0;
+  min-height: 34px;
   gap: 12px;
   align-items: center;
   padding: 0;
@@ -2518,27 +2758,55 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
 .watchlist-header-actions {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
-.watchlist-backtest,
-.watchlist-news {
+.watchlist-backtest {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--line));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
   color: var(--accent);
-}
-
-.watchlist-news {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.02);
-  padding: 6px 10px;
-  font-size: 12px;
+  font-size: 0.78rem;
   font-weight: 700;
   white-space: nowrap;
 }
 
-.watchlist-news:hover {
+.watchlist-backtest:hover {
   border-color: var(--accent);
-  background: rgba(229, 57, 53, 0.12);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-2));
+}
+
+.watchlist-clear,
+.watchlist-news-action,
+.watchlist-remove {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+}
+
+.watchlist-news-action {
+  color: var(--accent);
+}
+
+.watchlist-clear,
+.watchlist-remove {
+  color: var(--text-secondary);
+}
+
+.watchlist-clear:hover,
+.watchlist-remove:hover {
+  border-color: color-mix(in srgb, var(--error) 52%, var(--line));
+  color: var(--error);
 }
 
 .rag-watchlist-actions {
@@ -3551,7 +3819,8 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
 .backtest-volatility {
   display: grid;
   gap: 10px;
-  padding: 4px 0;
+  padding: 14px 0 4px;
+  border-top: 1px solid var(--line-soft);
 }
 
 .backtest-volatility > header {
@@ -3567,7 +3836,7 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   min-width: 0;
 }
 
-.backtest-volatility > header span {
+.backtest-volatility > header > div > span {
   color: var(--text);
   font-size: 0.86rem;
   font-weight: 750;
@@ -3580,8 +3849,22 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   line-height: 1.35;
 }
 
+.volatility-symbol-control {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 180px);
+  align-items: center;
+  gap: 8px;
+}
+
+.volatility-symbol-control > span {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
 .backtest-volatility select {
-  width: min(180px, 45%);
+  width: 100%;
   min-width: 120px;
   height: 34px;
   padding: 5px 30px 5px 9px;
@@ -3635,12 +3918,30 @@ html.android-phone .backtest-volatility select {
 }
 
 @media (max-width: 640px) {
+  .equity-chart-header {
+    display: grid;
+    gap: 8px;
+  }
+
+  .equity-chart-legend {
+    justify-content: flex-start;
+  }
+
+  .equity-chart-plot {
+    height: 190px;
+  }
+
   .backtest-volatility > header {
     align-items: end;
   }
 
-  .backtest-volatility select {
+  .volatility-symbol-control {
+    grid-template-columns: 1fr;
+    gap: 3px;
     width: min(160px, 48%);
+  }
+
+  .backtest-volatility select {
     min-width: 0;
     height: 44px;
   }

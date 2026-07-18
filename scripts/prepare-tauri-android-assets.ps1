@@ -246,8 +246,16 @@ function Set-AndroidColorResource {
     New-Item -ItemType Directory -Path $ValuesDir -Force | Out-Null
     $colorsPath = Join-Path $ValuesDir "colors.xml"
     if (Test-Path -LiteralPath $colorsPath) {
-        $colorsXml = Get-Content -LiteralPath $colorsPath -Raw
+        $colorsXml = [System.IO.File]::ReadAllText($colorsPath)
     } else {
+        $colorsXml = ""
+    }
+    if (
+        -not $colorsXml.Trim() -or
+        $colorsXml.Contains([char]0) -or
+        $colorsXml -notmatch '<resources(?:\s[^>]*)?>' -or
+        $colorsXml -notmatch '</resources>'
+    ) {
         $colorsXml = @(
             "<?xml version=`"1.0`" encoding=`"utf-8`"?>",
             "<resources>",
@@ -256,14 +264,32 @@ function Set-AndroidColorResource {
     }
 
     $colorLine = "    <color name=`"$Name`">$Value</color>"
-    $colorPattern = "<color\s+name=`"$([regex]::Escape($Name))`">[^<]*</color>"
+    $colorPattern = "(?m)^[ \t]*<color\s+name=`"$([regex]::Escape($Name))`">[^<]*</color>"
     if ($colorsXml -match $colorPattern) {
         $colorsXml = [regex]::Replace($colorsXml, $colorPattern, $colorLine)
     } else {
         $colorsXml = $colorsXml -replace "</resources>", "$colorLine`r`n</resources>"
     }
 
-    Set-Content -LiteralPath $colorsPath -Value $colorsXml -Encoding UTF8
+    $tempColorsPath = "$colorsPath.$([guid]::NewGuid().ToString('N')).tmp"
+    $backupColorsPath = "$colorsPath.$([guid]::NewGuid().ToString('N')).bak"
+    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+    try {
+        $normalizedColorsXml = $colorsXml.TrimEnd("`r", "`n") + "`r`n"
+        [System.IO.File]::WriteAllText($tempColorsPath, $normalizedColorsXml, $utf8WithoutBom)
+        if (Test-Path -LiteralPath $colorsPath) {
+            [System.IO.File]::Replace($tempColorsPath, $colorsPath, $backupColorsPath)
+        } else {
+            [System.IO.File]::Move($tempColorsPath, $colorsPath)
+        }
+    } finally {
+        if (Test-Path -LiteralPath $tempColorsPath) {
+            Remove-Item -LiteralPath $tempColorsPath -Force
+        }
+        if (Test-Path -LiteralPath $backupColorsPath) {
+            Remove-Item -LiteralPath $backupColorsPath -Force
+        }
+    }
 }
 
 function Resolve-AndroidThemeParent {

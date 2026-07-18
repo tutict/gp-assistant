@@ -13,6 +13,7 @@ import {
   normalizeAgentStreamEvent,
   normalizeLlmSettings,
   normalizeNewsGroups,
+  requireBacktestResult,
   normalizeScreenGroups,
   normalizeScreenRows,
   parseSseBlock,
@@ -201,7 +202,7 @@ describe("contract payload builders", () => {
       rebalanceFrequency: "monthly",
       transactionCostBps: 10,
       benchmark: "candidate_equal_weight",
-    })).toMatchObject({ strategy_mode: "walk_forward" });
+    })).toMatchObject({ strategy_mode: "candidate_snapshot" });
     expect(buildNewsRagRequest("300750.SZ", 30)).toMatchObject({
       code: "300750.SZ",
       seed_codes: ["300750.SZ"],
@@ -212,6 +213,35 @@ describe("contract payload builders", () => {
 });
 
 describe("response normalizers", () => {
+  it("rejects empty backtest responses instead of silently returning to the empty state", () => {
+    expect(() => requireBacktestResult(undefined)).toThrow("回测接口未返回有效结果");
+    expect(() => requireBacktestResult({ metrics: [], equity_curve: [], symbols: [] })).toThrow("回测接口未返回有效结果");
+    expect(() => requireBacktestResult({ metrics: {}, equity_curve: [], symbols: [] })).toThrow("回测接口未返回有效结果");
+    expect(requireBacktestResult({
+      metrics: { total_return: 0.12, num_stocks: 1 },
+      equity_curve: [{ date: "2026-07-17", equity: 1.12 }],
+      symbols: ["002432.SZ"],
+    })).toMatchObject({ symbols: ["002432.SZ"] });
+  });
+
+  it("rejects malformed optional backtest structures before rendering", () => {
+    const valid = {
+      metrics: { total_return: 0.12, num_stocks: 1 },
+      equity_curve: [{ date: "2026-07-17", equity: 1.12 }],
+      symbols: ["002432.SZ"],
+    };
+
+    expect(() => requireBacktestResult({ ...valid, notes: [null] })).toThrow("回测接口未返回有效结果");
+    expect(() => requireBacktestResult({
+      ...valid,
+      walk_forward_folds: [{ selection_date: "2026-07-01", selected_symbols: null }],
+    })).toThrow("回测接口未返回有效结果");
+    expect(() => requireBacktestResult({
+      ...valid,
+      volatility_snapshots: [{ symbol: "002432.SZ", date: "2026-07-17", atr: { value: "bad" } }],
+    })).toThrow("回测接口未返回有效结果");
+  });
+
   it("normalizes nested screen, graph, and trend stock rows", () => {
     const rows = normalizeScreenRows({
       items: [

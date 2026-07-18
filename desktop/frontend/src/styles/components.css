@@ -367,15 +367,6 @@
 .backtest-controls input[type="number"] {
   width: 100%;
 }
-.backtest-controls .run-btn {
-  min-height: 36px;
-  min-width: 98px;
-  padding: 8px 16px;
-  margin-left: 0;
-  align-self: end;
-  white-space: nowrap;
-}
-
 @media (max-width: 1180px) {
   .backtest-context {
     grid-template-columns: auto minmax(0, 1fr);
@@ -390,9 +381,6 @@
     grid-template-columns: repeat(3, minmax(130px, 1fr));
   }
 
-  .backtest-controls .run-btn {
-    width: 100%;
-  }
 }
 
 @media (max-width: 640px) {
@@ -977,33 +965,36 @@
 
 /* --- Watchlist --- */
 .watchlist-panel {
-  margin-top: 10px;
-  padding: 14px;
+  margin-top: 12px;
+  padding: 12px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface) 90%, transparent);
   border: 1px solid var(--line-soft);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.035);
 }
-.watchlist-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.watchlist-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 40px; margin-bottom: 8px; }
+.watchlist-heading { display: inline-flex; align-items: baseline; gap: 7px; min-width: 0; }
 .watchlist-header h3 { margin: 0; font-size: 0.96rem; letter-spacing: 0; }
 .watchlist-count { color: var(--text-secondary); font-weight: 400; }
+.watchlist-count strong { color: var(--text); font-variant-numeric: tabular-nums; }
 .clear-btn {
   background: none; border: none; color: var(--text-secondary);
   cursor: pointer; font-size: 0.82rem;
 }
 .clear-btn:hover { color: var(--error); }
 
-.watchlist-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.watchlist-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .watchlist-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 10px; border-radius: 7px; background: var(--surface-2);
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px;
+  min-height: 44px; padding: 5px 7px; border-radius: 7px; background: var(--surface-2);
   border: 1px solid var(--line-soft);
 }
 .watchlist-code { font-family: monospace; font-size: 0.84rem; }
 .watchlist-name { flex: 1; font-size: 0.84rem; }
+.watchlist-name.missing { color: var(--text-muted); font-size: 0.76rem; }
 .watchlist-remove {
   background: none; border: none; color: var(--text-secondary);
-  cursor: pointer; padding: 2px; opacity: 0.6;
+  cursor: pointer; padding: 2px; opacity: 0.75;
 }
 .watchlist-remove:hover { opacity: 1; color: var(--error); }
 .watchlist-empty {

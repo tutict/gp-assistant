@@ -53,6 +53,9 @@ const TREND_SCREEN_HISTORY_TIMEOUT_SECS: u64 = 18;
 const TREND_SCREEN_HISTORY_CONCURRENCY: usize = 6;
 const TREND_SCREEN_HISTORY_PREFETCH_LIMIT: usize = 80;
 const MIN_TREND_SCREEN_HISTORY_BARS: usize = 45;
+const BACKTEST_HISTORY_TIMEOUT_SECS: u64 = 30;
+const BACKTEST_HISTORY_CONCURRENCY: usize = 6;
+const MIN_BACKTEST_HISTORY_BARS: usize = 2;
 const OBSERVE_CAPITAL_TOTAL_TIMEOUT_SECS: u64 = 10;
 const OBSERVE_CAPITAL_REQUEST_TIMEOUT_SECS: u64 = 6;
 const OBSERVE_GUBA_MAX_POSTS: usize = 10;
@@ -115,6 +118,14 @@ struct PreparedTrendScreen {
     stock_override: Option<Arc<Vec<gp_core::StockItem>>>,
     history_override: HashMap<String, Vec<gp_core::HistoryBar>>,
     request: gp_core::TrendScreenRequest,
+    notes: Vec<String>,
+}
+
+struct PreparedBacktest {
+    data: Arc<gp_core::CoreDataSet>,
+    stock_override: Option<Arc<Vec<gp_core::StockItem>>>,
+    history_override: HashMap<String, Vec<gp_core::HistoryBar>>,
+    request: gp_core::BacktestRequest,
     notes: Vec<String>,
 }
 
@@ -873,21 +884,44 @@ async fn api_trend_screen_inner(app: tauri::AppHandle, payload: Value) -> Result
 
 #[tauri::command]
 async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let data = cached_market_data_snapshot(&app)?;
-    let stock_override = screen_stock_override(&app, &data, &payload)?;
-    let request =
-        serde_json::from_value::<gp_core::BacktestRequest>(strip_core_side_payload_fields(payload))
-            .map_err(|error| format!("invalid backtest request: {error}"))?;
-    runtime::run_cpu_bound("api_backtest", move || {
-        let source = match stock_override.as_deref() {
-            Some(stocks) => gp_core::StaticDataSource::with_stocks(data.as_ref(), stocks),
-            None => gp_core::StaticDataSource::new(data.as_ref()),
-        };
+    let prepared = tokio::time::timeout(
+        Duration::from_secs(BACKTEST_HISTORY_TIMEOUT_SECS),
+        prepare_backtest(&app, payload),
+    )
+    .await
+    .map_err(|_| {
+        format!(
+            "backtest history prefetch exceeded {BACKTEST_HISTORY_TIMEOUT_SECS}s; retry after refreshing market data."
+        )
+    })??;
+    let PreparedBacktest {
+        data,
+        stock_override,
+        history_override,
+        request,
+        notes,
+    } = prepared;
+    let calculation = runtime::run_cpu_bound("api_backtest", move || {
+        let history_override = (!history_override.is_empty()).then_some(&history_override);
+        let source = gp_core::StaticDataSource::with_overrides(
+            data.as_ref(),
+            stock_override.as_deref().map(Vec::as_slice),
+            history_override,
+        );
         let result =
             gp_core::backtest_with_source(&source, &request).map_err(|error| error.to_string())?;
         serde_json::to_value(result).map_err(|error| error.to_string())
     })
-    .await?
+    .await?;
+    let mut result = calculation.map_err(|error| {
+        if notes.is_empty() {
+            error
+        } else {
+            format!("{error}；数据准备：{}", notes.join(" | "))
+        }
+    })?;
+    append_result_notes(&mut result, notes);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -4044,6 +4078,160 @@ async fn prepare_trend_screen(
     })
 }
 
+async fn prepare_backtest(
+    app: &tauri::AppHandle,
+    payload: Value,
+) -> Result<PreparedBacktest, String> {
+    let data = cached_market_data_snapshot(app)?;
+    let stock_override = screen_stock_override(app, &data, &payload)?;
+    let request =
+        serde_json::from_value::<gp_core::BacktestRequest>(strip_core_side_payload_fields(payload))
+            .map_err(|error| format!("invalid backtest request: {error}"))?;
+
+    if request
+        .strategy_mode
+        .trim()
+        .eq_ignore_ascii_case("walk_forward")
+    {
+        return Ok(PreparedBacktest {
+            data,
+            stock_override,
+            history_override: HashMap::new(),
+            request,
+            notes: Vec::new(),
+        });
+    }
+
+    let candidate_data = Arc::clone(&data);
+    let candidate_stocks = stock_override.clone();
+    let candidate_request = request.clone();
+    let candidates = runtime::run_cpu_bound("api_backtest_candidates", move || {
+        let universe = candidate_stocks
+            .as_deref()
+            .map(Vec::as_slice)
+            .unwrap_or(candidate_data.stocks.as_slice());
+        backtest_history_prefetch_codes(universe, &candidate_request)
+    })
+    .await?;
+    let missing = candidates
+        .iter()
+        .filter(|code| {
+            !typed_history_cache_has_bars(
+                data.as_ref(),
+                code,
+                &request.start_date,
+                &request.end_date,
+                MIN_BACKTEST_HISTORY_BARS,
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut notes = Vec::new();
+    if missing.is_empty() {
+        notes.push(format!(
+            "已复用 {} 只入选股票的本地日线缓存。",
+            candidates.len()
+        ));
+        return Ok(PreparedBacktest {
+            data,
+            stock_override,
+            history_override: HashMap::new(),
+            request,
+            notes,
+        });
+    }
+
+    let start_date = request.start_date.clone();
+    let end_date = request.end_date.clone();
+    let fetch_missing = missing.clone();
+    let fetches = runtime::with_heavy_network_permit("api_backtest_history_fetch", async move {
+        let results = stream::iter(fetch_missing)
+            .map(|code| {
+                let start_date = start_date.clone();
+                let end_date = end_date.clone();
+                async move {
+                    let result = fetch_observe_daily_history(&code, &start_date, &end_date).await;
+                    (code, result)
+                }
+            })
+            .buffer_unordered(BACKTEST_HISTORY_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await;
+        Ok(results)
+    })
+    .await?;
+
+    let mut history_override = HashMap::new();
+    let mut history_patch = serde_json::Map::new();
+    let mut fetched = 0usize;
+    let mut failed = 0usize;
+    let mut failure_samples = Vec::new();
+    for (code, result) in fetches {
+        match result {
+            Ok(rows) if backtest_history_rows_are_usable(&rows) => {
+                let typed =
+                    serde_json::from_value::<Vec<gp_core::HistoryBar>>(Value::Array(rows.clone()))
+                        .map_err(|error| {
+                            format!("backtest history parse failed for {code}: {error}")
+                        })?;
+                history_patch.insert(code.clone(), Value::Array(rows));
+                history_override.insert(code, typed);
+                fetched += 1;
+            }
+            Ok(rows) => {
+                failed += 1;
+                if failure_samples.len() < 3 {
+                    failure_samples.push(format!(
+                        "{code}: daily-history sources returned {} rows; at least {MIN_BACKTEST_HISTORY_BARS} are required",
+                        rows.len()
+                    ));
+                }
+            }
+            Err(error) => {
+                failed += 1;
+                if failure_samples.len() < 3 {
+                    failure_samples.push(format!("{code}: {error}"));
+                }
+            }
+        }
+    }
+    if fetched == 0 && !missing.is_empty() {
+        return Err(format!(
+            "无法获取回测所需的历史日线（{} 只）：{}",
+            missing.len(),
+            failure_samples.join("；")
+        ));
+    }
+    if !history_patch.is_empty() {
+        let patch = json!({ "histories": history_patch });
+        if let Err(error) = persist_market_data_patch_updates(app.clone(), patch).await {
+            notes.push(format!(
+                "Backtest fetched daily history for {fetched} stocks, but cache patch write failed: {error}"
+            ));
+        }
+    }
+    let fetched_bars = history_override.values().map(Vec::len).sum::<usize>();
+    notes.push(format!(
+        "回测数据准备：入选 {} 只，需联网补取 {} 只，成功 {fetched} 只（共 {fetched_bars} 根日线），失败 {failed} 只。",
+        candidates.len(),
+        missing.len()
+    ));
+    Ok(PreparedBacktest {
+        data,
+        stock_override,
+        history_override,
+        request,
+        notes,
+    })
+}
+
+fn backtest_history_prefetch_codes(
+    universe: &[gp_core::StockItem],
+    request: &gp_core::BacktestRequest,
+) -> Vec<String> {
+    gp_core::backtest_selected_symbols(universe, request)
+}
+
 fn typed_history_cache_has_bars(
     data: &gp_core::CoreDataSet,
     code: &str,
@@ -4061,12 +4249,31 @@ fn typed_history_cache_has_bars(
     };
     let start_key = compact_date_key(start_date).unwrap_or_else(|| "00000000".to_string());
     let end_key = compact_date_key(end_date).unwrap_or_else(|| "99999999".to_string());
+    let mut dates = HashSet::new();
     rows.iter()
+        .filter(|row| row.close.is_finite() && row.close > 0.0)
         .filter_map(|row| compact_date_key(&row.date))
         .filter(|date| date >= &start_key && date <= &end_key)
+        .filter(|date| dates.insert(date.clone()))
         .take(min_bars)
         .count()
         >= min_bars
+}
+
+fn backtest_history_rows_are_usable(rows: &[Value]) -> bool {
+    let mut dates = HashSet::new();
+    rows.iter()
+        .filter_map(|row| {
+            let close = json_f64(row.get("close"))?;
+            (close > 0.0)
+                .then(|| row.get("date").and_then(Value::as_str))
+                .flatten()
+                .and_then(compact_date_key)
+        })
+        .filter(|date| dates.insert(date.clone()))
+        .take(MIN_BACKTEST_HISTORY_BARS)
+        .count()
+        >= MIN_BACKTEST_HISTORY_BARS
 }
 
 fn trend_history_prefetch_codes_from_result(
@@ -6070,6 +6277,36 @@ async fn fetch_observe_daily_history(
     Err(errors.join("\u{ff1b}"))
 }
 
+async fn fetch_daily_history_text(
+    client: &reqwest::Client,
+    url: &str,
+    label: &str,
+) -> Result<String, String> {
+    let primary_error = match client.get(url).send().await {
+        Ok(response) if response.status().is_success() => match response.text().await {
+            Ok(text) => return Ok(text),
+            Err(error) => format!("{label} response read failed: {error}"),
+        },
+        Ok(response) => format!("{label} HTTP {}", response.status().as_u16()),
+        Err(error) => format!("{label} request failed: {error}"),
+    };
+
+    #[cfg(windows)]
+    {
+        let fallback_url = url.to_string();
+        let bytes = tokio::task::spawn_blocking(move || {
+            powershell_http_get_bytes(&fallback_url, OBSERVE_HISTORY_TIMEOUT_SECS)
+        })
+        .await
+        .map_err(|error| format!("{primary_error}; PowerShell fallback task failed: {error}"))?
+        .map_err(|error| format!("{primary_error}; PowerShell fallback failed: {error}"))?;
+        return Ok(decode_utf8_lossy(bytes));
+    }
+
+    #[cfg(not(windows))]
+    Err(primary_error)
+}
+
 async fn fetch_eastmoney_daily_history(
     client: &reqwest::Client,
     code: &str,
@@ -6088,16 +6325,7 @@ async fn fetch_eastmoney_daily_history(
     let url = format!(
         "{EASTMONEY_KLINE_ENDPOINT}?fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&ut=7eea3edcaed734bea9cbfc24409ed989&klt=101&fqt=0&secid={secid}&beg={beg}&end={end}",
     );
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(format!("HTTP {}", status.as_u16()));
-    }
-    let text = response.text().await.map_err(|error| error.to_string())?;
+    let text = fetch_daily_history_text(client, &url, "Eastmoney daily history").await?;
     let value: Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
     Ok(value
         .get("data")
@@ -6126,16 +6354,7 @@ async fn fetch_tencent_daily_history(
         "{TENCENT_DAILY_KLINE_ENDPOINT}?param={}",
         param.replace(',', "%2C")
     );
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(format!("HTTP {}", status.as_u16()));
-    }
-    let text = response.text().await.map_err(|error| error.to_string())?;
+    let text = fetch_daily_history_text(client, &url, "Tencent daily history").await?;
     let value: Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
     Ok(value
         .get("data")

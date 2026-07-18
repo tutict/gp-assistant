@@ -25,12 +25,19 @@ interface ObservePanelProps {
   onWatchlistChange: (items: WatchlistItem[]) => void;
   initialCode?: string;
   initialCodeRequestId?: number;
+  mobileRuntime?: boolean;
 }
 
 const OBSERVE_FULL_HISTORY_START = "1990-01-01";
 const OBSERVE_FULL_HISTORY_LIMIT = "10000";
 
-export function ObservePanel({ initialCode, initialCodeRequestId = 0, watchlist, onWatchlistChange }: ObservePanelProps) {
+export function ObservePanel({
+  initialCode,
+  initialCodeRequestId = 0,
+  watchlist,
+  onWatchlistChange,
+  mobileRuntime = false,
+}: ObservePanelProps) {
   const [code, setCode] = useState(initialCode || "");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ObserveResult | null>(null);
@@ -94,7 +101,13 @@ export function ObservePanel({ initialCode, initialCodeRequestId = 0, watchlist,
       <div className="panel-controls observe-panel-controls">
         <div className="form-row inline stock-code-row observe-code-row">
           <label htmlFor="observeCode">股票代码</label>
-          <StockCodeInput id="observeCode" value={code} onChange={setCode} placeholder="输入股票代码或名称" />
+          <StockCodeInput
+            id="observeCode"
+            value={code}
+            onChange={setCode}
+            placeholder="输入股票代码或名称"
+            resolveBareCode={!mobileRuntime}
+          />
         </div>
         <button type="button" className="run-btn observe-run-btn" onClick={runObserve} disabled={loading}>{loading ? "观察中..." : "开始观察"}</button>
       </div>
@@ -869,7 +882,6 @@ function finiteNumber(value: unknown): number | null {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 }
-
 
 
 

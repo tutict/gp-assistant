@@ -1,8 +1,8 @@
-import { memo, useCallback, useEffect, useState } from "react";
-import type { BacktestResult, VolatilitySnapshot, WatchlistItem } from "../../types";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import type { BacktestResult, EquityPoint, VolatilitySnapshot, WatchlistItem } from "../../types";
 import type { FilterCriteria } from "../FilterBar";
 import { postJson } from "../../lib/tauri";
-import { buildBacktestRequest } from "../../lib/contracts";
+import { buildBacktestRequest, requireBacktestResult } from "../../lib/contracts";
 import {
   currentSystemDateInputValue,
   formatMoney,
@@ -14,39 +14,71 @@ import {
 } from "../../lib/format";
 import { RawJson } from "../RawJson";
 import { PanelFeedback } from "../ui/PanelFeedback";
+import type { BacktestRouteRequest, BacktestSource } from "../../lib/viewNavigation";
 
 interface BacktestPanelProps {
   criteria: FilterCriteria;
   watchlist: WatchlistItem[];
-  preferredSource?: BacktestSource | null;
+  preferredSource?: BacktestRouteRequest | null;
+  onPreferredSourceConsumed?: (requestId: number) => void;
 }
 
-type BacktestSource = "criteria" | "watchlist";
-
-export function BacktestPanel({ criteria, watchlist, preferredSource }: BacktestPanelProps) {
+export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferredSourceConsumed }: BacktestPanelProps) {
   const [source, setSource] = useState<BacktestSource>("criteria");
   const [start, setStart] = useState("2020-01-01");
   const [end, setEnd] = useState(currentSystemDateInputValue());
   const [topN, setTopN] = useState(10);
   const [rebalance, setRebalance] = useState("monthly");
   const [benchmark, setBenchmark] = useState("candidate_equal_weight");
-  const [strategyMode, setStrategyMode] = useState("walk_forward");
+  const [strategyMode, setStrategyMode] = useState("candidate_snapshot");
   const [costBps, setCostBps] = useState(10);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const requestInFlightRef = useRef(false);
+  const requestVersionRef = useRef(0);
+  const watchlistSignature = watchlist.map((item) => item.code.toUpperCase()).join("|");
+  const previousWatchlistSignatureRef = useRef(watchlistSignature);
 
   useEffect(() => {
-    if (preferredSource) setSource(preferredSource);
-  }, [preferredSource]);
+    if (!preferredSource) return;
+    requestVersionRef.current += 1;
+    setSource(preferredSource.source);
+    setResult(null);
+    setError(null);
+    onPreferredSourceConsumed?.(preferredSource.requestId);
+  }, [onPreferredSourceConsumed, preferredSource]);
 
-  const run = useCallback(async () => {
+  useEffect(() => {
+    if (previousWatchlistSignatureRef.current === watchlistSignature) return;
+    previousWatchlistSignatureRef.current = watchlistSignature;
+    if (source !== "watchlist") return;
+    requestVersionRef.current += 1;
+    setResult(null);
+    setError(null);
+  }, [source, watchlistSignature]);
+
+  const selectSource = (nextSource: BacktestSource) => {
+    if (nextSource === source) return;
+    requestVersionRef.current += 1;
+    setSource(nextSource);
+    setResult(null);
+    setError(null);
+  };
+
+  const run = async () => {
+    if (requestInFlightRef.current) return;
     if (source === "watchlist" && watchlist.length === 0) {
+      setResult(null);
       setError("自选股为空，请先从筛选结果中收藏股票。");
       return;
     }
+
+    requestInFlightRef.current = true;
+    const requestVersion = ++requestVersionRef.current;
     setLoading(true);
     setError(null);
+    setResult(null);
     try {
       const payload = buildBacktestRequest({
         source,
@@ -60,14 +92,18 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
         benchmark,
         strategyMode,
       });
-      const data = await postJson<BacktestResult>("/api/backtest", payload);
-      setResult(data);
+      const data = await postJson<unknown>("/api/backtest", payload, { timeoutMs: 90_000 });
+      const nextResult = requireBacktestResult(data);
+      if (requestVersion === requestVersionRef.current) setResult(nextResult);
     } catch (err) {
-      setError((err as Error).message);
+      if (requestVersion === requestVersionRef.current) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
+      requestInFlightRef.current = false;
       setLoading(false);
     }
-  }, [benchmark, costBps, criteria, end, rebalance, source, start, strategyMode, topN, watchlist]);
+  };
 
   const sourceText = source === "watchlist"
     ? `${Math.min(topN, watchlist.length)} / ${watchlist.length} 只`
@@ -81,8 +117,18 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
           <strong>{sourceText}</strong>
         </div>
         <div className="backtest-context-controls">
-          <button type="button" className={`source-toggle ${source === "criteria" ? "active" : ""}`} onClick={() => setSource("criteria")}>当前条件</button>
-          <button type="button" className={`source-toggle ${source === "watchlist" ? "active" : ""}`} onClick={() => setSource("watchlist")}>自选股</button>
+          <button
+            type="button"
+            className="source-toggle"
+            aria-label="运行回测"
+            aria-disabled={loading}
+            disabled={loading}
+            onClick={run}
+          >
+            {loading ? "回测计算中..." : "运行回测"}
+          </button>
+          <button type="button" className={`source-toggle ${source === "criteria" ? "active" : ""}`} disabled={loading} onClick={() => selectSource("criteria")}>当前条件</button>
+          <button type="button" className={`source-toggle ${source === "watchlist" ? "active" : ""}`} disabled={loading} onClick={() => selectSource("watchlist")}>自选股</button>
         </div>
         <div className="backtest-param-strip">
           <span><b>持仓</b><strong>{topN}</strong></span>
@@ -95,12 +141,12 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
       </div>
 
       <div className="panel-controls backtest-controls">
-        <div className="form-row inline"><label htmlFor="btStart">开始</label><input id="btStart" type="date" value={start} onChange={(e) => setStart(e.target.value)} /></div>
-        <div className="form-row inline"><label htmlFor="btEnd">结束</label><input id="btEnd" type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
-        <div className="form-row inline"><label htmlFor="btTopN">持仓</label><input id="btTopN" type="number" min="1" max="100" value={topN} onChange={(e) => setTopN(Number(e.target.value) || 10)} /></div>
+        <div className="form-row inline"><label htmlFor="btStart">开始</label><input id="btStart" type="date" value={start} disabled={loading} onChange={(e) => setStart(e.target.value)} /></div>
+        <div className="form-row inline"><label htmlFor="btEnd">结束</label><input id="btEnd" type="date" value={end} disabled={loading} onChange={(e) => setEnd(e.target.value)} /></div>
+        <div className="form-row inline"><label htmlFor="btTopN">持仓</label><input id="btTopN" type="number" min="1" max="100" value={topN} disabled={loading} onChange={(e) => setTopN(Number(e.target.value) || 10)} /></div>
         <div className="form-row inline">
           <label htmlFor="btRebalance">调仓</label>
-          <select id="btRebalance" value={rebalance} onChange={(e) => setRebalance(e.target.value)}>
+          <select id="btRebalance" value={rebalance} disabled={loading} onChange={(e) => setRebalance(e.target.value)}>
             <option value="none">买入持有</option>
             <option value="monthly">月度调仓</option>
             <option value="quarterly">季度调仓</option>
@@ -108,14 +154,13 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
         </div>
         <div className="form-row inline">
           <label htmlFor="btBenchmark">基准</label>
-          <select id="btBenchmark" value={benchmark} onChange={(e) => setBenchmark(e.target.value)}>
+          <select id="btBenchmark" value={benchmark} disabled={loading} onChange={(e) => setBenchmark(e.target.value)}>
             <option value="candidate_equal_weight">候选池等权</option>
             <option value="none">无</option>
           </select>
         </div>
-        <div className="form-row inline"><label htmlFor="btStrategyMode">模式</label><select id="btStrategyMode" value={strategyMode} onChange={(e) => setStrategyMode(e.target.value)}><option value="candidate_snapshot">候选快照</option><option value="walk_forward">Walk-forward</option></select></div>
-        <div className="form-row inline"><label htmlFor="btCostBps">成本</label><input id="btCostBps" type="number" min="0" max="500" value={costBps} onChange={(e) => setCostBps(Number(e.target.value) || 0)} /></div>
-        <button type="button" className="run-btn" onClick={run} disabled={loading}>{loading ? "回测中..." : "运行回测"}</button>
+        <div className="form-row inline"><label htmlFor="btStrategyMode">模式</label><select id="btStrategyMode" value={strategyMode} disabled={loading} onChange={(e) => setStrategyMode(e.target.value)}><option value="candidate_snapshot">候选快照</option><option value="walk_forward">Walk-forward</option></select></div>
+        <div className="form-row inline"><label htmlFor="btCostBps">成本</label><input id="btCostBps" type="number" min="0" max="500" value={costBps} disabled={loading} onChange={(e) => setCostBps(Number(e.target.value) || 0)} /></div>
       </div>
 
       <div className="panel-result">
@@ -136,6 +181,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource }: Backtest
 
 export function BacktestResultView({ result }: { result: BacktestResult }) {
   const metrics = result.metrics || {};
+  const equityPointCount = result.equity_curve?.length ?? 0;
   return (
     <div className="backtest-result">
       <div className="metric-strip">
@@ -146,7 +192,18 @@ export function BacktestResultView({ result }: { result: BacktestResult }) {
         <div className="metric"><span>Precision@N</span><strong>{metrics.precision_at_n != null ? formatPercent(metrics.precision_at_n * 100) : "--"}</strong></div>
       </div>
 
-      {result.equity_curve?.length ? <section className="backtest-primary-chart"><Sparkline curve={result.equity_curve} /></section> : null}
+      {equityPointCount >= 2 ? (
+        <section className="backtest-primary-chart">
+          <EquityCurveChart
+            portfolio={result.equity_curve}
+            benchmark={result.benchmark_curve ?? []}
+            symbolCount={metrics.num_stocks ?? result.symbols?.length ?? 0}
+          />
+        </section>
+      ) : null}
+      {equityPointCount === 1 ? (
+        <p className="backtest-chart-empty">有效交易日不足，暂不绘制净值曲线。</p>
+      ) : null}
 
       <section className="backtest-comparison">
         <div><span>股票数</span><strong>{metrics.num_stocks ?? result.symbols?.length ?? 0}</strong></div>
@@ -287,13 +344,16 @@ const VolatilityDiagnostics = memo(function VolatilityDiagnostics({
           <span>波动率快照</span>
           <small>{snapshot.date} · 收盘 {formatNumber(snapshot.close)}</small>
         </div>
-        <select
-          aria-label="波动率标的"
-          value={snapshot.symbol}
-          onChange={(event) => setSelectedSymbol(event.target.value)}
-        >
-          {snapshots.map((item) => <option key={item.symbol} value={item.symbol}>{item.symbol}</option>)}
-        </select>
+        <label className="volatility-symbol-control">
+          <span>波动率标的</span>
+          <select
+            aria-label="波动率标的"
+            value={snapshot.symbol}
+            onChange={(event) => setSelectedSymbol(event.target.value)}
+          >
+            {snapshots.map((item) => <option key={item.symbol} value={item.symbol}>{item.symbol}</option>)}
+          </select>
+        </label>
       </header>
       <div className="volatility-grid">
         {items.map((item) => (
@@ -307,23 +367,194 @@ const VolatilityDiagnostics = memo(function VolatilityDiagnostics({
     </section>
   );
 });
-function Sparkline({ curve }: { curve: { date: string; equity: number }[] }) {
-  if (curve.length < 2) return null;
-  const values = curve.map((point) => Number(point.equity)).filter(Number.isFinite);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const points = values.map((value, index) => {
-    const x = (index / Math.max(values.length - 1, 1)) * 720;
-    const y = 150 - ((value - min) / range) * 150;
-    return `${x.toFixed(2)},${y.toFixed(2)}`;
-  }).join(" ");
+
+const EQUITY_CHART = {
+  width: 760,
+  height: 210,
+  left: 46,
+  right: 748,
+  top: 14,
+  bottom: 190,
+} as const;
+
+interface NormalizedEquityPoint {
+  date: string;
+  value: number;
+}
+
+function normalizeEquityCurve(curve: EquityPoint[]): NormalizedEquityPoint[] {
+  const valid = curve
+    .map((point) => ({ date: point.date, equity: Number(point.equity) }))
+    .filter((point) => point.date && Number.isFinite(point.equity));
+  const base = valid[0]?.equity;
+  if (!Number.isFinite(base) || base === 0) return [];
+  return valid.map((point) => ({ date: point.date, value: (point.equity / base) * 100 }));
+}
+
+function curveReturn(curve: NormalizedEquityPoint[]): number | null {
+  const last = curve[curve.length - 1]?.value;
+  return Number.isFinite(last) ? last - 100 : null;
+}
+
+function EquityCurveChart({
+  portfolio,
+  benchmark,
+  symbolCount,
+}: {
+  portfolio: EquityPoint[];
+  benchmark: EquityPoint[];
+  symbolCount: number;
+}) {
+  const chart = useMemo(() => {
+    const portfolioSeries = normalizeEquityCurve(portfolio);
+    const benchmarkSeries = normalizeEquityCurve(benchmark);
+    const dates = Array.from(new Set([
+      ...portfolioSeries.map((point) => point.date),
+      ...benchmarkSeries.map((point) => point.date),
+    ])).sort();
+    const dateIndexes = new Map(dates.map((date, index) => [date, index]));
+    const values = [
+      100,
+      ...portfolioSeries.map((point) => point.value),
+      ...benchmarkSeries.map((point) => point.value),
+    ];
+    const rawMin = Math.min(...values);
+    const rawMax = Math.max(...values);
+    const visibleRange = Math.max(rawMax - rawMin, 4);
+    const min = Math.max(0, rawMin - visibleRange * 0.12);
+    const max = rawMax + visibleRange * 0.12;
+    const plotWidth = EQUITY_CHART.right - EQUITY_CHART.left;
+    const plotHeight = EQUITY_CHART.bottom - EQUITY_CHART.top;
+    const xForDate = (date: string) => {
+      const index = dateIndexes.get(date) ?? 0;
+      return EQUITY_CHART.left + (index / Math.max(dates.length - 1, 1)) * plotWidth;
+    };
+    const yForValue = (value: number) => EQUITY_CHART.top + ((max - value) / (max - min)) * plotHeight;
+    const pointsFor = (series: NormalizedEquityPoint[]) => series
+      .map((point) => `${xForDate(point.date).toFixed(2)},${yForValue(point.value).toFixed(2)}`)
+      .join(" ");
+    const ticks = Array.from({ length: 5 }, (_, index) => max - ((max - min) * index) / 4);
+
+    return {
+      portfolioSeries,
+      benchmarkSeries,
+      dates,
+      portfolioByDate: new Map(portfolioSeries.map((point) => [point.date, point.value])),
+      benchmarkByDate: new Map(benchmarkSeries.map((point) => [point.date, point.value])),
+      portfolioPoints: pointsFor(portfolioSeries),
+      benchmarkPoints: pointsFor(benchmarkSeries),
+      ticks,
+      xForDate,
+      yForValue,
+    };
+  }, [benchmark, portfolio]);
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+
+  if (chart.portfolioSeries.length < 2 || chart.dates.length < 2) return null;
+
+  const updateActivePoint = (clientX: number, bounds: DOMRect) => {
+    const chartX = ((clientX - bounds.left) / Math.max(bounds.width, 1)) * EQUITY_CHART.width;
+    const ratio = Math.max(0, Math.min(
+      1,
+      (chartX - EQUITY_CHART.left) / (EQUITY_CHART.right - EQUITY_CHART.left),
+    ));
+    setActiveIndex(Math.round(ratio * (chart.dates.length - 1)));
+  };
+  const activeDate = activeIndex == null ? null : chart.dates[activeIndex];
+  const activePortfolio = activeDate ? chart.portfolioByDate.get(activeDate) : undefined;
+  const activeBenchmark = activeDate ? chart.benchmarkByDate.get(activeDate) : undefined;
+  const activeX = activeDate ? chart.xForDate(activeDate) : 0;
+  const tooltipAlignment = activeIndex != null && activeIndex <= chart.dates.length * 0.18
+    ? "is-start"
+    : activeIndex != null && activeIndex >= chart.dates.length * 0.82
+      ? "is-end"
+      : "";
+
   return (
-    <div className="chart-wrap">
-      <svg viewBox="0 0 720 150" role="img" aria-label="净值曲线">
-        <polyline points={points} fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-      <div className="chart-labels"><span>{curve[0]?.date}</span><span>{curve[curve.length - 1]?.date}</span></div>
+    <div className="equity-chart">
+      <header className="equity-chart-header">
+        <div>
+          <strong>组合净值曲线</strong>
+          <small>{symbolCount > 0 ? `${symbolCount} 只股票组合` : "回测组合"} · 起点归一为 100</small>
+        </div>
+        <div className="equity-chart-legend" aria-label="净值曲线图例">
+          <span><i className="is-portfolio" />组合净值 <b>{formatSignedPercent(curveReturn(chart.portfolioSeries))}</b></span>
+          {chart.benchmarkSeries.length ? (
+            <span><i className="is-benchmark" />候选池基准 <b>{formatSignedPercent(curveReturn(chart.benchmarkSeries))}</b></span>
+          ) : null}
+        </div>
+      </header>
+      <div
+        className="equity-chart-plot"
+        tabIndex={0}
+        aria-label="使用左右方向键查看净值数据点"
+        onBlur={() => setActiveIndex(null)}
+        onFocus={() => setActiveIndex((current) => current ?? chart.dates.length - 1)}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+          event.preventDefault();
+          const step = event.key === "ArrowLeft" ? -1 : 1;
+          setActiveIndex((current) => Math.max(0, Math.min(chart.dates.length - 1, (current ?? chart.dates.length - 1) + step)));
+        }}
+        onPointerDown={(event) => updateActivePoint(event.clientX, event.currentTarget.getBoundingClientRect())}
+        onPointerMove={(event) => updateActivePoint(event.clientX, event.currentTarget.getBoundingClientRect())}
+        onPointerLeave={() => setActiveIndex(null)}
+      >
+        <svg
+          viewBox={`0 0 ${EQUITY_CHART.width} ${EQUITY_CHART.height}`}
+          preserveAspectRatio="none"
+          role="img"
+          aria-label={chart.benchmarkSeries.length ? "组合与基准净值曲线" : "组合净值曲线"}
+        >
+          <title>组合净值曲线，起点归一为 100</title>
+          <g className="equity-chart-grid" aria-hidden="true">
+            {chart.ticks.map((tick) => {
+              const y = chart.yForValue(tick);
+              return (
+                <g key={tick.toFixed(4)}>
+                  <line x1={EQUITY_CHART.left} x2={EQUITY_CHART.right} y1={y} y2={y} />
+                  <text x="2" y={y + 4}>{tick.toFixed(chart.ticks[0] - chart.ticks[4] < 20 ? 1 : 0)}</text>
+                </g>
+              );
+            })}
+          </g>
+          <line
+            className="equity-chart-baseline"
+            x1={EQUITY_CHART.left}
+            x2={EQUITY_CHART.right}
+            y1={chart.yForValue(100)}
+            y2={chart.yForValue(100)}
+          />
+          {chart.benchmarkPoints ? (
+            <polyline className="equity-chart-line is-benchmark" points={chart.benchmarkPoints} />
+          ) : null}
+          <polyline className="equity-chart-line is-portfolio" points={chart.portfolioPoints} />
+          {activeDate ? (
+            <g className="equity-chart-cursor" aria-hidden="true">
+              <line x1={activeX} x2={activeX} y1={EQUITY_CHART.top} y2={EQUITY_CHART.bottom} />
+              {activePortfolio != null ? <circle className="is-portfolio" cx={activeX} cy={chart.yForValue(activePortfolio)} r="4" /> : null}
+              {activeBenchmark != null ? <circle className="is-benchmark" cx={activeX} cy={chart.yForValue(activeBenchmark)} r="3.5" /> : null}
+            </g>
+          ) : null}
+        </svg>
+        {activeDate ? (
+          <div
+            className={`equity-chart-tooltip ${tooltipAlignment}`}
+            style={{ left: `${(activeX / EQUITY_CHART.width) * 100}%` }}
+          >
+            <strong>{activeDate}</strong>
+            <span><i className="is-portfolio" />组合 {activePortfolio != null ? formatNumber(activePortfolio) : "--"}</span>
+            {chart.benchmarkSeries.length ? (
+              <span><i className="is-benchmark" />基准 {activeBenchmark != null ? formatNumber(activeBenchmark) : "--"}</span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      <div className="chart-labels">
+        <span>{chart.dates[0]}</span>
+        <span>净值指数</span>
+        <span>{chart.dates[chart.dates.length - 1]}</span>
+      </div>
     </div>
   );
 }

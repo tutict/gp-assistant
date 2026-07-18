@@ -1822,6 +1822,14 @@ pub fn backtest_with_data(
     backtest_with_source(&source, request)
 }
 
+pub fn backtest_selected_symbols(universe: &[StockItem], request: &BacktestRequest) -> Vec<String> {
+    selected_backtest_items_from_universe(universe, request)
+        .0
+        .into_iter()
+        .map(|item| item.stock.code)
+        .collect()
+}
+
 pub fn backtest_with_source(
     source: &impl MarketDataSource,
     request: &BacktestRequest,
@@ -1895,6 +1903,12 @@ pub fn backtest_with_source(
         }
     }
     if histories.is_empty() {
+        if !symbols.is_empty() {
+            return Err(CoreError::new(format!(
+                "回测区间缺少已选 {} 只股票的历史日线，无法计算净值曲线。请联网重试或先刷新行情缓存。",
+                symbols.len()
+            )));
+        }
         let reported_symbols = if strategy_mode == "walk_forward" {
             Vec::new()
         } else {
@@ -1909,9 +1923,7 @@ pub fn backtest_with_source(
             rebalance_dates: Vec::new(),
             walk_forward_folds: Vec::new(),
             volatility_snapshots: Vec::new(),
-            volatility_message: Some(
-                "回测区间没有可用于波动率计算的标的日线。".to_string(),
-            ),
+            volatility_message: Some("回测区间没有可用于波动率计算的标的日线。".to_string()),
             strategy_mode,
             notes: selection_notes,
         });
@@ -4585,7 +4597,8 @@ fn agent_beginner_stock_sections(response: &AgentResponse) -> Option<Vec<AgentAn
     let pe = json_f64(stock, "pe").map(|value| format_number(value));
     let pb = json_f64(stock, "pb").map(|value| format_number(value));
     let roe = json_f64(stock, "roe").map(format_percent);
-    let market_cap = json_f64(stock, "market_cap_billion").map(|value| format!("{}亿", format_number(value)));
+    let market_cap =
+        json_f64(stock, "market_cap_billion").map(|value| format!("{}亿", format_number(value)));
 
     let trend_signal = data.get("trend").and_then(|trend| trend.get("signal"));
     let status = trend_signal.and_then(|signal| json_string(signal, "status"));
@@ -4638,11 +4651,27 @@ fn agent_beginner_stock_sections(response: &AgentResponse) -> Option<Vec<AgentAn
     .collect::<Vec<_>>()
     .join("，");
     if quote.is_empty() {
-        conclusion.push(format!("{}{}：已找到本地个股数据，但行情字段不完整。", name, code_suffix(&code)));
+        conclusion.push(format!(
+            "{}{}：已找到本地个股数据，但行情字段不完整。",
+            name,
+            code_suffix(&code)
+        ));
     } else {
-        conclusion.push(format!("{}{}：{}。这些是先看公司价格、估值和盈利质量的基础信息。", name, code_suffix(&code), quote));
+        conclusion.push(format!(
+            "{}{}：{}。这些是先看公司价格、估值和盈利质量的基础信息。",
+            name,
+            code_suffix(&code),
+            quote
+        ));
     }
-    conclusion.push(agent_beginner_trend_sentence(status.as_deref(), signal_type.as_deref(), swl, sws, quant_score, quant_score_max));
+    conclusion.push(agent_beginner_trend_sentence(
+        status.as_deref(),
+        signal_type.as_deref(),
+        swl,
+        sws,
+        quant_score,
+        quant_score_max,
+    ));
     conclusion.push("简单理解：现在更像是“可继续观察”的状态，不等于马上买入；新手应先看趋势有没有延续，再看跌破哪个位置说明判断失效。".to_string());
 
     let mut evidence = Vec::new();
@@ -4655,10 +4684,14 @@ fn agent_beginner_stock_sections(response: &AgentResponse) -> Option<Vec<AgentAn
         evidence.push(format!("机构席位：{text}。新手可以把它理解为“大资金是否留下过明显痕迹”的线索，但它不是实时买卖信号。"));
     }
     if let Some(text) = fund_summary {
-        evidence.push(format!("量价资金：{text}。这是用本地成交量和价格估算的资金线索，可靠性低于真实资金流数据。"));
+        evidence.push(format!(
+            "量价资金：{text}。这是用本地成交量和价格估算的资金线索，可靠性低于真实资金流数据。"
+        ));
     }
     if let Some(text) = technical_summary {
-        evidence.push(format!("技术承接：{text}。意思是价格趋势和指标是否互相支持。"));
+        evidence.push(format!(
+            "技术承接：{text}。意思是价格趋势和指标是否互相支持。"
+        ));
     }
     if evidence.len() == 1 {
         evidence.push(agent_data_summary(response));
@@ -4669,10 +4702,16 @@ fn agent_beginner_stock_sections(response: &AgentResponse) -> Option<Vec<AgentAn
         levels.push(format!("支撑位约 {}、压力位约 {}。支撑位可以理解为“跌到这里附近要小心是否撑不住”，压力位可以理解为“涨到这里附近可能遇到卖压”。", format_price_text(support), format_price_text(resistance)));
     }
     if let Some(breakout) = breakout {
-        levels.push(format!("突破观察位约 {}：如果放量站上，才说明上攻更有说服力。", format_price_text(breakout)));
+        levels.push(format!(
+            "突破观察位约 {}：如果放量站上，才说明上攻更有说服力。",
+            format_price_text(breakout)
+        ));
     }
     if let Some(reversal) = reversal {
-        levels.push(format!("风险观察位约 {}：如果跌破，说明原来的上升判断可能失效。", format_price_text(reversal)));
+        levels.push(format!(
+            "风险观察位约 {}：如果跌破，说明原来的上升判断可能失效。",
+            format_price_text(reversal)
+        ));
     }
     if let (Some(k), Some(d), Some(j)) = (k, d, j) {
         let cross = if golden_cross {
@@ -4682,7 +4721,12 @@ fn agent_beginner_stock_sections(response: &AgentResponse) -> Option<Vec<AgentAn
         } else {
             "当前没有明确 KDJ 金叉或死叉，说明短线拐点信号还不够明确。"
         };
-        levels.push(format!("KDJ：K={}、D={}、J={}。{cross}", format_number(k), format_number(d), format_number(j)));
+        levels.push(format!(
+            "KDJ：K={}、D={}、J={}。{cross}",
+            format_number(k),
+            format_number(d),
+            format_number(j)
+        ));
     }
     if levels.is_empty() {
         levels.push("关键价位和指标暂不完整，建议先补足历史行情后再判断趋势。".to_string());
@@ -4692,7 +4736,10 @@ fn agent_beginner_stock_sections(response: &AgentResponse) -> Option<Vec<AgentAn
     if risk_flags.is_empty() {
         risks.push("本地指标没有给出明确风险旗标，但这不代表没有风险；它只代表当前规则没有识别到特别异常。".to_string());
     } else {
-        risks.push(format!("本地风险旗标：{}。出现风险旗标时，新手应降低仓促决策的倾向。", risk_flags.join("、")));
+        risks.push(format!(
+            "本地风险旗标：{}。出现风险旗标时，新手应降低仓促决策的倾向。",
+            risk_flags.join("、")
+        ));
     }
     risks.push("不要把“趋势较好”理解成“必涨”。股价会受大盘、行业、公告、业绩和情绪影响，任何单一指标都可能失效。".to_string());
     risks.push("这不是投资建议，不输出买入、卖出、目标价、仓位或收益承诺。".to_string());
@@ -4739,9 +4786,21 @@ fn agent_beginner_trend_sentence(
         _ => "暂时没有特别清晰的信号类型",
     };
     let line_text = match (swl, sws) {
-        (Some(swl), Some(sws)) if swl > sws => format!("SWL 高于 SWS（{} > {}），可以粗略理解为短中期趋势线偏强。", format_price_text(swl), format_price_text(sws)),
-        (Some(swl), Some(sws)) if swl < sws => format!("SWL 低于 SWS（{} < {}），可以粗略理解为趋势线偏弱。", format_price_text(swl), format_price_text(sws)),
-        (Some(swl), Some(sws)) => format!("SWL 和 SWS 接近（{} / {}），说明趋势强弱还不明显。", format_price_text(swl), format_price_text(sws)),
+        (Some(swl), Some(sws)) if swl > sws => format!(
+            "SWL 高于 SWS（{} > {}），可以粗略理解为短中期趋势线偏强。",
+            format_price_text(swl),
+            format_price_text(sws)
+        ),
+        (Some(swl), Some(sws)) if swl < sws => format!(
+            "SWL 低于 SWS（{} < {}），可以粗略理解为趋势线偏弱。",
+            format_price_text(swl),
+            format_price_text(sws)
+        ),
+        (Some(swl), Some(sws)) => format!(
+            "SWL 和 SWS 接近（{} / {}），说明趋势强弱还不明显。",
+            format_price_text(swl),
+            format_price_text(sws)
+        ),
         _ => "SWL/SWS 趋势线数据不完整。".to_string(),
     };
     let score_text = quant_score
@@ -4760,7 +4819,11 @@ fn agent_capital_item_summary(capital: Option<&Value>, category: &str) -> Option
         return Some(note);
     }
     if let Some(score) = json_f64(item, "score") {
-        return Some(format!("得分 {}，方向 {}", format_number(score), json_string(item, "sentiment").unwrap_or_else(|| "未知".to_string())));
+        return Some(format!(
+            "得分 {}，方向 {}",
+            format_number(score),
+            json_string(item, "sentiment").unwrap_or_else(|| "未知".to_string())
+        ));
     }
     json_string(item, "title")
 }
@@ -4770,7 +4833,10 @@ fn json_string(value: &Value, key: &str) -> Option<String> {
 }
 
 fn json_f64(value: &Value, key: &str) -> Option<f64> {
-    value.get(key).and_then(Value::as_f64).filter(|value| value.is_finite())
+    value
+        .get(key)
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
 }
 
 fn json_i64(value: &Value, key: &str) -> Option<i64> {
@@ -4789,7 +4855,10 @@ fn format_price_text(value: f64) -> String {
     if value.abs() >= 100.0 {
         format!("{value:.2}")
     } else {
-        format!("{value:.3}").trim_end_matches('0').trim_end_matches('.').to_string()
+        format!("{value:.3}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
     }
 }
 

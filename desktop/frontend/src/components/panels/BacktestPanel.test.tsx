@@ -74,6 +74,30 @@ const unavailableResult = {
 };
 
 describe("BacktestResultView volatility diagnostics", () => {
+  it("identifies the portfolio curve, renders its benchmark, and scopes the symbol selector", () => {
+    const html = renderToStaticMarkup(
+      <BacktestResultView
+        result={{
+          ...result,
+          equity_curve: [
+            { date: "2026-07-01", equity: 1 },
+            { date: "2026-07-02", equity: 1.08 },
+          ],
+          benchmark_curve: [
+            { date: "2026-07-01", equity: 1 },
+            { date: "2026-07-02", equity: 1.03 },
+          ],
+        }}
+      />,
+    );
+
+    expect(html).toContain("组合净值曲线");
+    expect(html).toContain("组合净值");
+    expect(html).toContain("候选池基准");
+    expect(html).toContain("波动率标的");
+    expect(html).toContain('aria-label="组合与基准净值曲线"');
+  });
+
   it("renders all six volatility indicators for the selected symbol", () => {
     const html = renderToStaticMarkup(<BacktestResultView result={result} />);
 
@@ -110,5 +134,16 @@ describe("BacktestResultView volatility diagnostics", () => {
 
     expect(html).toContain("无可用区间末标的");
     expect(html).toContain("候选快照没有符合条件的标的");
+  });
+
+  it("does not render an empty chart frame for a single equity point", () => {
+    const html = renderToStaticMarkup(
+      <BacktestResultView
+        result={{ ...result, equity_curve: [{ date: "2026-07-17", equity: 1.12 }] }}
+      />,
+    );
+
+    expect(html).not.toContain("backtest-primary-chart");
+    expect(html).toContain("有效交易日不足，暂不绘制净值曲线");
   });
 });

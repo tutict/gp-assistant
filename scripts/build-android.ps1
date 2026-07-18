@@ -404,14 +404,37 @@ function Use-LocalGradleDistribution {
     }
 
     $GradleUrl = "file:///" + ($GradleZip -replace "\\", "/")
-    $Updated = Get-Content -LiteralPath $WrapperProperties | ForEach-Object {
-        if ($_ -like "distributionUrl=*") {
+    $Current = [System.IO.File]::ReadAllText($WrapperProperties)
+    if (-not $Current.Trim() -or $Current.Contains([char]0)) {
+        $Updated = @(
+            "distributionBase=GRADLE_USER_HOME"
+            "distributionPath=wrapper/dists"
             "distributionUrl=$GradleUrl"
-        } else {
-            $_
+            "networkTimeout=10000"
+            "validateDistributionUrl=true"
+            "zipStoreBase=GRADLE_USER_HOME"
+            "zipStorePath=wrapper/dists"
+        ) -join [Environment]::NewLine
+    } elseif ($Current -match '(?m)^distributionUrl=.*$') {
+        $Updated = [regex]::Replace($Current, '(?m)^distributionUrl=.*$', "distributionUrl=$GradleUrl")
+    } else {
+        $Updated = $Current.TrimEnd() + [Environment]::NewLine + "distributionUrl=$GradleUrl"
+    }
+
+    $TempProperties = "$WrapperProperties.$([guid]::NewGuid().ToString('N')).tmp"
+    $BackupProperties = "$WrapperProperties.$([guid]::NewGuid().ToString('N')).bak"
+    try {
+        $Normalized = $Updated.TrimEnd("`r", "`n") + [Environment]::NewLine
+        [System.IO.File]::WriteAllText($TempProperties, $Normalized, [System.Text.Encoding]::ASCII)
+        [System.IO.File]::Replace($TempProperties, $WrapperProperties, $BackupProperties)
+    } finally {
+        if (Test-Path -LiteralPath $TempProperties) {
+            Remove-Item -LiteralPath $TempProperties -Force
+        }
+        if (Test-Path -LiteralPath $BackupProperties) {
+            Remove-Item -LiteralPath $BackupProperties -Force
         }
     }
-    Set-Content -LiteralPath $WrapperProperties -Value $Updated -Encoding ASCII
 }
 
 function Remove-CheckedDirectory {

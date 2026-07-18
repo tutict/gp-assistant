@@ -129,27 +129,30 @@ export function ScreenPanel({
     </button>
   );
 
+  const modeTabs = (
+    <div className="panel-tabs screen-panel-tabs" role="tablist" aria-label="选股模式">
+      {TABS.map((tab) => (
+        <button
+          key={tab.key}
+          className={`panel-tab ${mode === tab.key ? "active" : ""}`}
+          onClick={() => {
+            setMode(tab.key);
+            setResult(null);
+            setError(null);
+          }}
+          type="button"
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <div className={`panel-container screen-panel-container ${result != null ? "has-result" : ""}`}>
-      <div className="panel-tabs screen-panel-tabs" role="tablist" aria-label="选股模式">
-        {TABS.map((tab) => (
-          <button
-            key={tab.key}
-            className={`panel-tab ${mode === tab.key ? "active" : ""}`}
-            onClick={() => {
-              setMode(tab.key);
-              setResult(null);
-              setError(null);
-            }}
-            type="button"
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
       {mobileRuntime ? (
         <>
+          {modeTabs}
           {hasControlFields && (
             <div className={controlsClassName}>
               {controlFields}
@@ -160,10 +163,17 @@ export function ScreenPanel({
           </div>
         </>
       ) : (
-        <div className={controlsClassName}>
-          {controlFields}
-          {runButton}
-        </div>
+        <>
+          <div className="screen-panel-desktop-toolbar">
+            {modeTabs}
+            {runButton}
+          </div>
+          {hasControlFields && (
+            <div className={controlsClassName}>
+              {controlFields}
+            </div>
+          )}
+        </>
       )}
 
       <div className="panel-result screen-panel-result">

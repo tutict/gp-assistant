@@ -15,6 +15,12 @@ import { AgentPanel } from "./components/panels/AgentPanel";
 import { WatchlistPanel } from "./components/panels/WatchlistPanel";
 import { LlmSettingsPanel } from "./components/panels/LlmSettingsPanel";
 import type { WatchlistItem, LlmSettings } from "./types";
+import {
+  consumeBacktestRouteRequest,
+  nextBacktestRouteRequest,
+  revealActivePanels,
+  type BacktestRouteRequest,
+} from "./lib/viewNavigation";
 
 type ViewKey = "screen" | "observe" | "backtest" | "news" | "agent";
 type LlmSettingsUpdater = LlmSettings | null | ((prev: LlmSettings | null) => LlmSettings | null);
@@ -43,7 +49,7 @@ export default function App({ onMounted }: AppProps) {
   const [mobileRuntime, setMobileRuntime] = useState(false);
   const [observeRequest, setObserveRequest] = useState<StockRouteRequest | null>(null);
   const [newsRequest, setNewsRequest] = useState<StockRouteRequest | null>(null);
-  const [backtestPreferredSource, setBacktestPreferredSource] = useState<"criteria" | "watchlist" | null>(null);
+  const [backtestRouteRequest, setBacktestRouteRequest] = useState<BacktestRouteRequest | null>(null);
 
   // Persistent state
   const [watchlistLocalSnapshot] = useState<WatchlistItem[]>(() => loadLocalWatchlistSnapshot());
@@ -164,6 +170,7 @@ export default function App({ onMounted }: AppProps) {
     if (window.location.hash !== hrefMap[v]) {
       history.replaceState(null, "", hrefMap[v]);
     }
+    revealActivePanels();
   }, []);
 
   const observeStock = useCallback((code: string) => {
@@ -172,14 +179,18 @@ export default function App({ onMounted }: AppProps) {
   }, [navigate]);
 
   const runCurrentCriteriaBacktest = useCallback(() => {
-    setBacktestPreferredSource("criteria");
+    setBacktestRouteRequest((previous) => nextBacktestRouteRequest(previous, "criteria"));
     navigate("backtest");
   }, [navigate]);
 
   const runWatchlistBacktest = useCallback(() => {
-    setBacktestPreferredSource("watchlist");
+    setBacktestRouteRequest((previous) => nextBacktestRouteRequest(previous, "watchlist"));
     navigate("backtest");
   }, [navigate]);
+
+  const handleBacktestRouteConsumed = useCallback((requestId: number) => {
+    setBacktestRouteRequest((current) => consumeBacktestRouteRequest(current, requestId));
+  }, []);
 
   const openNewsForStock = useCallback((code: string) => {
     setNewsRequest((prev) => ({ code, requestId: (prev?.requestId ?? 0) + 1 }));
@@ -232,13 +243,15 @@ export default function App({ onMounted }: AppProps) {
               onWatchlistChange={setWatchlist}
               initialCode={observeRequest?.code || ""}
               initialCodeRequestId={observeRequest?.requestId ?? 0}
+              mobileRuntime={mobileRuntime}
             />
           )}
           {view === "backtest" && (
             <BacktestPanel
               criteria={criteria}
               watchlist={watchlist}
-              preferredSource={backtestPreferredSource}
+              preferredSource={backtestRouteRequest}
+              onPreferredSourceConsumed={handleBacktestRouteConsumed}
             />
           )}
           {view === "news" && (

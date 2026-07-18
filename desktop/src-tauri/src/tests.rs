@@ -1053,6 +1053,61 @@ fn trend_history_cache_requires_enough_bars_inside_requested_window() {
 }
 
 #[test]
+fn backtest_prefetch_matches_core_watchlist_top_n_slots() {
+    let universe = ["000001.SZ", "600000.SH", "002432.SZ"]
+        .into_iter()
+        .map(|code| gp_core::StockItem {
+            code: code.to_string(),
+            ..gp_core::StockItem::default()
+        })
+        .collect::<Vec<_>>();
+    let request = gp_core::BacktestRequest {
+        criteria: gp_core::ScreenCriteria::default(),
+        source: "watchlist".to_string(),
+        strategy_mode: "candidate_snapshot".to_string(),
+        stock_codes: vec![
+            "600000".to_string(),
+            "unknown".to_string(),
+            "600000.SH".to_string(),
+            "000001.SZ".to_string(),
+            "002432.SZ".to_string(),
+        ],
+        start_date: "20200101".to_string(),
+        end_date: "20260717".to_string(),
+        top_n: 2,
+        initial_cash: 1000.0,
+        rebalance_frequency: "monthly".to_string(),
+        transaction_cost_bps: 10.0,
+        benchmark: "none".to_string(),
+    };
+
+    assert_eq!(
+        backtest_history_prefetch_codes(&universe, &request),
+        vec!["600000.SH".to_string()]
+    );
+}
+
+#[test]
+fn backtest_prefetch_rejects_single_history_row() {
+    assert!(!backtest_history_rows_are_usable(&[json!({
+        "date": "2026-07-17",
+        "close": 10.0
+    })]));
+    assert!(backtest_history_rows_are_usable(&[
+        json!({ "date": "2026-07-16", "close": 9.8 }),
+        json!({ "date": "2026-07-17", "close": 10.0 }),
+    ]));
+    assert!(!backtest_history_rows_are_usable(&[
+        json!({ "date": "2026-07-17", "close": 9.8 }),
+        json!({ "date": "2026-07-17", "close": 10.0 }),
+    ]));
+    assert!(!backtest_history_rows_are_usable(&[
+        json!({ "date": "2026-07-16", "close": 0.0 }),
+        json!({ "date": "2026-07-17", "close": 10.0 }),
+    ]));
+}
+
+#[test]
 fn market_data_patch_updates_only_requested_stock() {
     let source = json!({
         "stocks": [

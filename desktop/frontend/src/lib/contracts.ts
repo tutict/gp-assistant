@@ -142,7 +142,7 @@ export function buildBacktestRequest(args: {
   return {
     source: args.source,
     criteria: buildScreenCriteria(args.criteria, { limit: 100, score_profile: "quality" }),
-    strategy_mode: args.strategyMode || "walk_forward",
+    strategy_mode: args.strategyMode || "candidate_snapshot",
     stock_codes: args.source === "watchlist" ? args.watchlist.map((item) => item.code).filter(Boolean).slice(0, 100) : [],
     start_date: normalizeDateParam(args.startDate, "20200101"),
     end_date: normalizeDateParam(args.endDate, currentSystemDateCompact()),
@@ -151,6 +151,130 @@ export function buildBacktestRequest(args: {
     transaction_cost_bps: clampFloat(args.transactionCostBps, 0, 500, 10),
     benchmark: args.benchmark || "candidate_equal_weight",
   };
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string" && item.trim().length > 0);
+}
+
+function isOptionalFinite(value: unknown): boolean {
+  return value == null || Number.isFinite(value);
+}
+
+function isNumericRecord(value: unknown, required: string[], optional: string[] = []): boolean {
+  if (!isRecordValue(value)) return false;
+  return required.every((key) => Number.isFinite(value[key]))
+    && optional.every((key) => isOptionalFinite(value[key]));
+}
+
+function isEquityPoint(value: unknown): boolean {
+  return isRecordValue(value) && typeof value.date === "string" && Number.isFinite(value.equity);
+}
+
+function isWalkForwardFold(value: unknown): boolean {
+  if (!isRecordValue(value)) return false;
+  return typeof value.selection_date === "string"
+    && (value.evaluation_end_date == null || typeof value.evaluation_end_date === "string")
+    && isStringArray(value.selected_symbols)
+    && Number.isFinite(value.eligible_symbol_count)
+    && Number.isFinite(value.evaluated_selection_count)
+    && Number.isFinite(value.hit_count)
+    && [
+      value.precision_at_n,
+      value.average_forward_return,
+      value.benchmark_forward_return,
+      value.average_excess_return,
+    ].every(isOptionalFinite);
+}
+
+function isVolatilitySnapshot(value: unknown): boolean {
+  if (!isRecordValue(value) || typeof value.symbol !== "string" || !value.symbol.trim() || typeof value.date !== "string") {
+    return false;
+  }
+  const unavailableValid = value.unavailable == null || (
+    Array.isArray(value.unavailable)
+    && value.unavailable.every((item) => isRecordValue(item)
+      && typeof item.indicator === "string"
+      && typeof item.reason === "string")
+  );
+  return isOptionalFinite(value.close)
+    && (value.atr == null || isNumericRecord(value.atr, ["period", "value", "percent_of_close"]))
+    && (value.bollinger_bands == null || isNumericRecord(
+      value.bollinger_bands,
+      ["period", "multiplier", "upper", "middle", "lower"],
+      ["bandwidth_percent", "percent_b"],
+    ))
+    && (value.donchian_channel == null || isNumericRecord(
+      value.donchian_channel,
+      ["period", "upper", "middle", "lower"],
+      ["width_percent", "position_percent"],
+    ))
+    && (value.keltner_channel == null || isNumericRecord(
+      value.keltner_channel,
+      ["ema_period", "atr_period", "multiplier", "upper", "middle", "lower"],
+      ["width_percent", "position_percent"],
+    ))
+    && (value.chaikin_volatility == null || isNumericRecord(
+      value.chaikin_volatility,
+      ["ema_period", "roc_period", "value"],
+    ))
+    && (value.rvi == null || isNumericRecord(value.rvi, ["period", "value"]))
+    && unavailableValid;
+}
+
+export function requireBacktestResult(value: unknown): BacktestResult {
+  const result = asRecord(value);
+  const metrics = asRecord(result.metrics);
+  const equityCurve = Array.isArray(result.equity_curve) ? result.equity_curve : null;
+  const symbols = Array.isArray(result.symbols) ? result.symbols : null;
+  const optionalMetricKeys = [
+    "annualized_return",
+    "max_drawdown",
+    "benchmark_total_return",
+    "benchmark_annualized_return",
+    "benchmark_max_drawdown",
+    "excess_return",
+    "total_transaction_cost",
+    "total_turnover",
+    "rebalance_count",
+    "oos_fold_count",
+    "evaluated_selection_count",
+    "selection_hit_count",
+    "precision_at_n",
+  ];
+  if (
+    Array.isArray(result.metrics)
+    || !Number.isFinite(metrics.total_return)
+    || !Number.isFinite(metrics.num_stocks)
+    || optionalMetricKeys.some((key) => !isOptionalFinite(metrics[key]))
+    || (metrics.strategy_mode != null && typeof metrics.strategy_mode !== "string")
+    || !equityCurve
+    || equityCurve.some((point) => !isEquityPoint(point))
+    || !symbols
+    || !isStringArray(symbols)
+    || (result.benchmark_curve != null && (
+      !Array.isArray(result.benchmark_curve) || result.benchmark_curve.some((point) => !isEquityPoint(point))
+    ))
+    || (result.benchmark_symbols != null && !isStringArray(result.benchmark_symbols))
+    || (result.rebalance_dates != null && !isStringArray(result.rebalance_dates))
+    || (result.walk_forward_folds != null && (
+      !Array.isArray(result.walk_forward_folds) || result.walk_forward_folds.some((fold) => !isWalkForwardFold(fold))
+    ))
+    || (result.volatility_snapshots != null && (
+      !Array.isArray(result.volatility_snapshots)
+      || result.volatility_snapshots.some((snapshot) => !isVolatilitySnapshot(snapshot))
+    ))
+    || (result.volatility_message != null && typeof result.volatility_message !== "string")
+    || (result.strategy_mode != null && typeof result.strategy_mode !== "string")
+    || (result.notes != null && !isStringArray(result.notes))
+  ) {
+    throw new Error("回测接口未返回有效结果，请刷新数据后重试。");
+  }
+  return value as BacktestResult;
 }
 
 export function buildNewsRagRequest(code: string, days: number, llm?: LlmClientConfig): Record<string, unknown> {
