@@ -4,6 +4,8 @@ import { computeKdj, toDailyBars } from "../../lib/kline";
 import { calculateObserveQuant } from "../../lib/observeQuant";
 import type { ObserveQuantConclusion } from "../../lib/observeQuant";
 import { buildFundamentalSnapshotData } from "../../lib/fundamentalSnapshot";
+import { buildMainFundFlowView, isLocalFundFlowProxy } from "../../lib/mainFundFlow";
+import { buildSeatBehaviorViews } from "../../lib/seatBehavior";
 import { getJson } from "../../lib/tauri";
 import { CollapsibleNotes } from "../CollapsibleNotes";
 import { RawJson } from "../RawJson";
@@ -405,12 +407,9 @@ function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null
   const items = capital?.items || [];
   const institution = items.find((item) => item.category === "institution_lhb");
   const institutionStatus = items.find((item) => item.category === "institution_lhb_status");
-  const proxy = items.find((item) => item.category === "fund_flow" && (
-    item.title?.includes("量价资金代理")
-    || item.source?.includes("Tauri/Rust")
-    || capitalMetricValue(item, "证据类型") === "本地日线量价代理"
-  ));
-  if (!institution && !institutionStatus && !proxy) return null;
+  const proxy = items.find((item) => item.category === "fund_flow" && isLocalFundFlowProxy(item));
+  const mainFlow = buildMainFundFlowView(capital);
+  const seatBehaviors = buildSeatBehaviorViews(institution);
 
   const institutionTone = capitalSentimentTone(institution?.sentiment);
   const institutionMetrics: CapitalQuantMetric[] = institution ? [
@@ -447,11 +446,29 @@ function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null
   ].filter(Boolean).join(" · ") : "";
 
   return (
-    <section className="observe-capital-quant" aria-label="机构与暗盘资金量化">
+    <section className="observe-capital-quant" aria-label="主力资金与龙虎榜公开席位">
       <header>
         <h4>资金量化证据</h4>
-        <small>公开席位 · 本地估算</small>
+        <small>真实资金流 · 机构/营业部 · 本地估算</small>
       </header>
+      <article className={"capital-main-flow " + mainFlow.tone + (mainFlow.available ? "" : " unavailable")}>
+        <header>
+          <div>
+            <h5>最新交易日主力资金</h5>
+            <small>{mainFlow.tradeDate} · {mainFlow.source}</small>
+          </div>
+          <span>{mainFlow.status}</span>
+        </header>
+        <CapitalQuantMetrics metrics={[
+          { label: "主力净流入额", value: mainFlow.netAmount, tone: mainFlow.tone },
+          { label: "主力净占比", value: mainFlow.netRatio, tone: mainFlow.tone },
+          { label: "主力介入度", value: mainFlow.involvement },
+        ]} />
+        <p className="capital-main-flow-conclusion">
+          <strong>怎么看：</strong>{mainFlow.conclusion}
+        </p>
+        <p className="capital-quant-note">介入度按净占比绝对值分档：低 &lt;3%，中 3%-8%，高 ≥8%；高介入只代表主力交易影响较大，不代表一定上涨。</p>
+      </article>
       <div className="capital-quant-lanes">
         <article className="capital-quant-lane institution">
           <header>
@@ -494,6 +511,44 @@ function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null
           </article>
         )}
       </div>
+      {institution && (
+        <article className="capital-seat-behavior">
+          <header>
+            <div>
+              <h5>机构与活跃营业部</h5>
+              <small>{institution.date || "窗口内"} · 龙虎榜公开席位 · 行为画像为推断</small>
+            </div>
+            <span>{seatBehaviors.length ? seatBehaviors.length + " 席" : "明细暂缺"}</span>
+          </header>
+          {seatBehaviors.length ? (
+            <ul className="capital-seat-list">
+              {seatBehaviors.map((seat) => (
+                <li key={seat.key} className={seat.tone}>
+                  <div className="capital-seat-name">
+                    <strong>{seat.name}</strong>
+                    <span>{seat.typeLabel}</span>
+                  </div>
+                  <div className="capital-seat-flow">
+                    <strong>{seat.directionLabel}</strong>
+                    <span>{seat.amountLabel}</span>
+                  </div>
+                  <div className="capital-seat-tactic">
+                    <strong>常见形态：{seat.tactic}</strong>
+                    <p>{seat.explanation}</p>
+                    {seat.stats && <small>{seat.stats}</small>}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="capital-quant-empty">本次未取得公开营业部买卖明细，机构汇总数据仍可单独参考。</p>
+          )}
+          {institution.seat_detail_status !== "complete" && institution.seat_detail_note && (
+            <p className="capital-quant-note">{institution.seat_detail_note}</p>
+          )}
+          <p className="capital-seat-disclaimer">营业部名称只代表公开交易通道，不能确认具体游资、账户实际控制人或是否使用量化程序。</p>
+        </article>
+      )}
     </section>
   );
 }
@@ -882,7 +937,5 @@ function finiteNumber(value: unknown): number | null {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 }
-
-
 
 

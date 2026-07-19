@@ -827,6 +827,148 @@ fn eastmoney_lhb_parser_returns_no_hit_status() {
 }
 
 #[test]
+fn eastmoney_lhb_seats_merge_buy_and_sell_without_inventing_one_sided_net() {
+    let buy_raw = r#"{"result":{"data":[
+        {"SECURITY_CODE":"600360","TRADE_DATE":"2026-07-14","OPERATEDEPT_CODE":"A","OPERATEDEPT_NAME":"机构专用","BUY":100000000.0,"TOTAL_BUYRIO":12.5,"CHANGE_RATE":9.91,"EXPLANATION":"日涨幅偏离值达到7%"},
+        {"SECURITY_CODE":"600360","TRADE_DATE":"2026-07-14","OPERATEDEPT_CODE":"B","OPERATEDEPT_NAME":"某证券上海营业部","BUY":50000000.0,"CHANGE_RATE":9.91}
+    ]}}"#;
+    let sell_raw = r#"{"result":{"data":[
+        {"SECURITY_CODE":"600360","TRADE_DATE":"2026-07-14","OPERATEDEPT_CODE":"A","OPERATEDEPT_NAME":"机构专用","SELL":30000000.0,"TOTAL_SELLRIO":4.2},
+        {"SECURITY_CODE":"600360","TRADE_DATE":"2026-07-14","OPERATEDEPT_CODE":"C","OPERATEDEPT_NAME":"某证券深圳营业部","SELL":80000000.0,"CHANGE_RATE":9.91}
+    ]}}"#;
+
+    let buy = parse_eastmoney_lhb_seat_side(buy_raw, "600360", true).unwrap();
+    let sell = parse_eastmoney_lhb_seat_side(sell_raw, "600360", false).unwrap();
+    let seats = merge_eastmoney_lhb_seats(buy, sell);
+
+    assert_eq!(seats.len(), 3);
+    let institution = seats
+        .iter()
+        .find(|seat| seat.get("seat_code").and_then(Value::as_str) == Some("A"))
+        .expect("institution seat");
+    assert_eq!(
+        institution.get("direction").and_then(Value::as_str),
+        Some("both")
+    );
+    assert_eq!(
+        institution.get("net_amount").and_then(Value::as_f64),
+        Some(70_000_000.0)
+    );
+
+    let buy_only = seats
+        .iter()
+        .find(|seat| seat.get("seat_code").and_then(Value::as_str) == Some("B"))
+        .expect("buy-only seat");
+    assert_eq!(
+        buy_only.get("direction").and_then(Value::as_str),
+        Some("buy")
+    );
+    assert!(buy_only.get("net_amount").is_some_and(Value::is_null));
+}
+
+#[test]
+fn eastmoney_main_fund_flow_parser_uses_latest_requested_trade_date() {
+    let raw = r#"{"data":{"klines":["2026-07-15,762761376.0,-551448.0,-762209936.0,582441216.0,180320160.0,8.55,-0.01,-8.54,6.53,2.02,1251.06,2.98","2026-07-16,-79273120.0,-267954.0,79541072.0,81928864.0,-161201984.0,-1.32,-0.00,1.33,1.37,-2.69,1258.99,0.63","2026-07-17,-854126672.0,-610634.0,854737312.0,-71324912.0,-782801760.0,-11.66,-0.01,11.67,-0.97,-10.69,1253.00,-0.48"]}}"#;
+
+    let item = parse_eastmoney_main_fund_flow_item(raw, "600519.SH", "2026-07-16").unwrap();
+
+    assert_eq!(
+        item.get("category").and_then(Value::as_str),
+        Some("fund_flow")
+    );
+    assert_eq!(item.get("date").and_then(Value::as_str), Some("2026-07-16"));
+    assert_eq!(
+        item.get("sentiment").and_then(Value::as_str),
+        Some("uncertain")
+    );
+    let metrics = item.get("metrics").and_then(Value::as_object).unwrap();
+    assert_eq!(
+        metrics.get("主力净占比").and_then(Value::as_str),
+        Some("-1.32%")
+    );
+    assert_eq!(
+        metrics.get("主力介入度").and_then(Value::as_str),
+        Some("低（1.32%）")
+    );
+    assert!(metrics
+        .get("通俗结论")
+        .and_then(Value::as_str)
+        .unwrap()
+        .contains("净卖出"));
+}
+
+#[test]
+fn main_fund_flow_conclusion_explains_high_outflow_is_not_positive() {
+    assert_eq!(main_fund_involvement(-11.66), "高");
+    let conclusion = main_fund_flow_plain_conclusion(-11.66);
+    assert!(conclusion.contains("每 100 元成交约有 11.66 元"));
+    assert!(conclusion.contains("净卖出"));
+    assert!(conclusion.contains("影响较大"));
+}
+
+#[test]
+fn merging_real_main_fund_flow_preserves_local_proxy() {
+    let code = "000001.SZ";
+    let mut data = json!({
+        "capital_evidence": {
+            "000001.SZ": {
+                "items": [
+                    {
+                        "category": "fund_flow",
+                        "title": "本地量价资金代理",
+                        "source": "Tauri/Rust 日线量价",
+                        "metrics": {"证据类型": "本地日线量价代理"}
+                    },
+                    {
+                        "category": "fund_flow",
+                        "title": "旧主力资金流",
+                        "date": "2026-07-16",
+                        "metrics": {"主力净占比": "1.00%"}
+                    }
+                ]
+            }
+        }
+    });
+    let refreshed = json!({
+        "category": "fund_flow",
+        "title": "当日主力资金流",
+        "date": "2026-07-17",
+        "metrics": {"主力净占比": "-2.00%"}
+    });
+
+    assert!(merge_capital_evidence_items(
+        &mut data,
+        code,
+        vec![refreshed],
+        "2026-07-17",
+    ));
+
+    let items = data["capital_evidence"][code]["items"]
+        .as_array()
+        .expect("merged capital evidence items");
+    let fund_flow_items = items
+        .iter()
+        .filter(|item| item.get("category").and_then(Value::as_str) == Some("fund_flow"))
+        .collect::<Vec<_>>();
+    assert_eq!(fund_flow_items.len(), 2);
+    assert_eq!(
+        fund_flow_items
+            .iter()
+            .filter(|item| is_local_fund_flow_proxy_value(item))
+            .count(),
+        1
+    );
+    let real_item = fund_flow_items
+        .iter()
+        .find(|item| !is_local_fund_flow_proxy_value(item))
+        .expect("real fund flow item");
+    assert_eq!(
+        real_item.get("date").and_then(Value::as_str),
+        Some("2026-07-17")
+    );
+}
+
+#[test]
 fn ths_quarterly_eps_parser_extracts_metric_value() {
     let raw = json!({
         "data": {

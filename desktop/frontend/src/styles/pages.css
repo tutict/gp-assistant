@@ -3485,6 +3485,72 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   font-size: 10px;
 }
 
+.capital-main-flow {
+  --capital-accent: var(--accent);
+  position: relative;
+  padding: 13px 14px 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.capital-main-flow::before {
+  position: absolute;
+  top: 0;
+  left: 14px;
+  width: 44px;
+  height: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--capital-accent) 76%, transparent);
+  content: "";
+}
+
+.capital-main-flow.positive { --capital-accent: var(--rise); }
+.capital-main-flow.negative { --capital-accent: var(--fall); }
+.capital-main-flow.unavailable { --capital-accent: var(--text-tertiary); }
+
+.capital-main-flow > header {
+  display: flex;
+  min-width: 0;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.capital-main-flow > header h5 {
+  margin: 3px 0 0;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.capital-main-flow > header small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.capital-main-flow > header > span {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--capital-accent) 72%, var(--text));
+  font-size: 9px;
+}
+
+.capital-main-flow .capital-quant-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 10px;
+}
+
+.capital-main-flow-conclusion {
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.capital-main-flow-conclusion strong {
+  color: color-mix(in srgb, var(--capital-accent) 70%, var(--text));
+  font-weight: 760;
+}
+
 .capital-quant-lanes {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3597,6 +3663,127 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   min-height: 48px;
   color: var(--text-secondary);
   font-size: 11px;
+}
+
+.capital-seat-behavior {
+  padding: 13px 14px 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.capital-seat-behavior > header {
+  display: flex;
+  min-width: 0;
+  align-items: start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.capital-seat-behavior > header h5 {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.capital-seat-behavior > header small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.capital-seat-behavior > header > span {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.capital-seat-list {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.capital-seat-list > li {
+  --seat-tone: var(--text-tertiary);
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(120px, 0.7fr) minmax(260px, 1.65fr);
+  min-width: 0;
+  gap: 16px;
+  padding: 11px 8px 11px 10px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.capital-seat-list > li::before {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 2px;
+  background: color-mix(in srgb, var(--seat-tone) 68%, transparent);
+  content: "";
+}
+
+.capital-seat-list > li.positive { --seat-tone: var(--rise); }
+.capital-seat-list > li.negative { --seat-tone: var(--fall); }
+.capital-seat-list > li.warning { --seat-tone: var(--warning); }
+
+.capital-seat-name,
+.capital-seat-flow,
+.capital-seat-tactic {
+  min-width: 0;
+}
+
+.capital-seat-name strong {
+  display: block;
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 680;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.capital-seat-name span,
+.capital-seat-flow span,
+.capital-seat-tactic small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: 8.5px;
+  line-height: 1.35;
+}
+
+.capital-seat-flow strong {
+  color: color-mix(in srgb, var(--seat-tone) 70%, var(--text));
+  font-size: 10.5px;
+  font-weight: 740;
+}
+
+.capital-seat-flow span {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.capital-seat-tactic strong {
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.capital-seat-tactic p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.capital-seat-disclaimer {
+  margin: 9px 0 0;
+  padding-top: 9px;
+  border-top: 1px dashed var(--line-soft);
+  color: var(--text-tertiary);
+  font-size: 9px;
+  line-height: 1.45;
 }
 
 /* Four derived conclusions only; formulas and raw values remain in details. */
@@ -3824,6 +4011,14 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
     min-height: 0;
     padding: 13px 0 8px;
     border-bottom: 0;
+  }
+
+  html:not(.mobile-tauri) .capital-main-flow {
+    padding: 12px 0 13px;
+  }
+
+  html:not(.mobile-tauri) .capital-main-flow::before {
+    left: 0;
   }
 
   html:not(.mobile-tauri) .observe-capital-quant > header h4 {

@@ -30,6 +30,8 @@ const MOBILE_MARKET_WRITE_RETRY_ATTEMPTS: usize = 3;
 const MOBILE_MARKET_WRITE_RETRY_DELAY_MS: u64 = 50;
 const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
 const EASTMONEY_KLINE_ENDPOINT: &str = "https://push2his.eastmoney.com/api/qt/stock/kline/get";
+const EASTMONEY_FUND_FLOW_ENDPOINT: &str =
+    "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get";
 const EASTMONEY_DATACENTER_ENDPOINT: &str = "https://datacenter-web.eastmoney.com/api/data/v1/get";
 const EASTMONEY_SECURITIES_ENDPOINT: &str =
     "https://datacenter.eastmoney.com/securities/api/data/v1/get";
@@ -58,6 +60,7 @@ const BACKTEST_HISTORY_CONCURRENCY: usize = 6;
 const MIN_BACKTEST_HISTORY_BARS: usize = 2;
 const OBSERVE_CAPITAL_TOTAL_TIMEOUT_SECS: u64 = 10;
 const OBSERVE_CAPITAL_REQUEST_TIMEOUT_SECS: u64 = 6;
+const OBSERVE_LHB_SEAT_REQUEST_TIMEOUT_SECS: u64 = 3;
 const OBSERVE_GUBA_MAX_POSTS: usize = 10;
 const MIN_OBSERVE_HISTORY_BARS: usize = 3;
 const MIN_FULL_OBSERVE_HISTORY_BARS: usize = 750;
@@ -4607,6 +4610,11 @@ async fn observe_core_payload_with_cached_history(
                         &end_date,
                         "东方财富龙虎榜机构统计请求超时。",
                     ),
+                    eastmoney_fund_flow_unavailable_item(
+                        &code,
+                        &end_date,
+                        "东方财富当日主力资金请求超时。",
+                    ),
                 ],
                 &end_date,
             );
@@ -4817,11 +4825,31 @@ async fn fetch_observe_capital_evidence_items(
         }
     };
 
-    // Guba sentiment and LHB institution stats hit independent endpoints — fetch concurrently.
-    let (guba_fetch, lhb_fetch) = futures::join!(
+    // The three evidence sources are independent, so keep their network latency concurrent.
+    let (fund_flow_fetch, guba_fetch, lhb_fetch) = futures::join!(
+        fetch_eastmoney_main_fund_flow(&client, code, end_date),
         fetch_eastmoney_guba_sentiment(&client, code),
         fetch_eastmoney_institution_lhb(&client, code, start_date, end_date),
     );
+    match fund_flow_fetch {
+        Ok(item) => {
+            let date = item.get("date").and_then(Value::as_str).unwrap_or(end_date);
+            notes.push(format!(
+                "当日主力资金已接入东方财富个股资金流：{code}，数据日 {date}。"
+            ));
+            items.push(item);
+        }
+        Err(error) => {
+            let detail = format!(
+                "东方财富当日主力资金抓取失败：{}",
+                truncate_for_note(&error, 180)
+            );
+            items.push(eastmoney_fund_flow_unavailable_item(
+                code, end_date, &detail,
+            ));
+            notes.push(detail);
+        }
+    }
     match guba_fetch {
         Ok(mut guba_items) if !guba_items.is_empty() => {
             let count = guba_items.len();
@@ -4870,6 +4898,167 @@ async fn fetch_observe_capital_evidence_items(
     }
 
     (items, notes)
+}
+
+async fn fetch_eastmoney_main_fund_flow(
+    client: &reqwest::Client,
+    code: &str,
+    end_date: &str,
+) -> Result<Value, String> {
+    let normalized =
+        normalize_stock_code(code).ok_or_else(|| format!("无效资金流股票代码：{code}"))?;
+    let digits = normalized
+        .get(..6)
+        .ok_or_else(|| format!("无效资金流股票代码：{code}"))?;
+    let market = eastmoney_market_code(&normalized)
+        .ok_or_else(|| format!("无法识别资金流股票代码：{code}"))?;
+    let secid = format!("{market}.{digits}");
+    let url = reqwest::Url::parse_with_params(
+        EASTMONEY_FUND_FLOW_ENDPOINT,
+        &[
+            ("lmt", "20"),
+            ("klt", "101"),
+            ("secid", secid.as_str()),
+            ("fields1", "f1,f2,f3,f7"),
+            (
+                "fields2",
+                "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63",
+            ),
+            ("ut", "7eea3edcaed734bea9cbfc24409ed989"),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    let text = http_get_text_with_headers_first(
+        client,
+        &url.to_string(),
+        OBSERVE_CAPITAL_REQUEST_TIMEOUT_SECS,
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "https://data.eastmoney.com/zjlx/detail.html",
+    )
+    .await?;
+    parse_eastmoney_main_fund_flow_item(&text, &normalized, end_date)
+}
+
+fn parse_eastmoney_main_fund_flow_item(
+    text: &str,
+    _code: &str,
+    end_date: &str,
+) -> Result<Value, String> {
+    let value: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
+    let rows = value
+        .get("data")
+        .and_then(|data| data.get("klines"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| "资金流接口没有返回日线数据".to_string())?;
+    let requested_end = normalize_history_date(end_date);
+    let latest = rows
+        .iter()
+        .filter_map(Value::as_str)
+        .filter_map(parse_eastmoney_main_fund_flow_row)
+        .filter(|row| {
+            requested_end
+                .as_deref()
+                .map(|end| row.0.as_str() <= end)
+                .unwrap_or(true)
+        })
+        .max_by(|left, right| left.0.cmp(&right.0))
+        .ok_or_else(|| format!("资金流接口在 {end_date} 之前没有可用交易日数据"))?;
+    let (trade_date, net_amount, net_ratio) = latest;
+    let involvement = main_fund_involvement(net_ratio);
+    let score = main_fund_flow_score(net_ratio);
+    let conclusion = main_fund_flow_plain_conclusion(net_ratio);
+    Ok(json!({
+        "category": "fund_flow",
+        "source": "东方财富个股资金流",
+        "title": "当日主力资金流",
+        "date": trade_date,
+        "metrics": {
+            "主力净流入额": format_amount_wan(net_amount),
+            "主力净流入额原值": format!("{net_amount:.2}"),
+            "主力净占比": format!("{net_ratio:.2}%"),
+            "主力介入度": format!("{}（{:.2}%）", involvement, net_ratio.abs()),
+            "介入度口径": "按主力净占比绝对值分档：低 <3%，中 3%-8%，高 >=8%",
+            "通俗结论": conclusion,
+            "证据类型": "外部个股资金流",
+        },
+        "sentiment": score_sentiment_label(score),
+        "weight": 0.35,
+        "confidence": "中",
+        "url": "https://data.eastmoney.com/zjlx/detail.html",
+        "score": round2_value(score),
+        "note": "东方财富个股资金流最新交易日口径；主力介入度由主力净占比绝对值分档，高介入只表示主力交易影响较大，不代表方向利好。",
+    }))
+}
+
+fn parse_eastmoney_main_fund_flow_row(raw: &str) -> Option<(String, f64, f64)> {
+    let parts = raw.split(',').collect::<Vec<_>>();
+    if parts.len() < 7 {
+        return None;
+    }
+    Some((
+        normalize_history_date(parts.first().copied()?)?,
+        parse_f64_str(parts.get(1).copied()?)?,
+        parse_f64_str(parts.get(6).copied()?)?,
+    ))
+}
+
+fn main_fund_involvement(net_ratio: f64) -> &'static str {
+    let magnitude = net_ratio.abs();
+    if magnitude >= 8.0 {
+        "高"
+    } else if magnitude >= 3.0 {
+        "中"
+    } else {
+        "低"
+    }
+}
+
+fn main_fund_flow_score(net_ratio: f64) -> f64 {
+    round2_value((50.0 + net_ratio.clamp(-16.0, 16.0) * 2.5).clamp(10.0, 90.0))
+}
+
+fn main_fund_flow_plain_conclusion(net_ratio: f64) -> String {
+    let magnitude = net_ratio.abs();
+    let direction = if net_ratio > 0.05 {
+        "净买入"
+    } else if net_ratio < -0.05 {
+        "净卖出"
+    } else {
+        "净流入接近持平"
+    };
+    let strength = match main_fund_involvement(net_ratio) {
+        "高" => "影响较大",
+        "中" => "影响中等",
+        _ => "影响有限",
+    };
+    if magnitude <= 0.05 {
+        "主力净流入接近零，当天没有明确的资金方向。".to_string()
+    } else {
+        format!(
+            "按成交占比看，每 100 元成交约有 {magnitude:.2} 元形成主力{direction}，当天主力交易对价格的{strength}。"
+        )
+    }
+}
+
+fn eastmoney_fund_flow_unavailable_item(code: &str, end_date: &str, detail: &str) -> Value {
+    json!({
+        "category": "fund_flow_status",
+        "source": "东方财富个股资金流",
+        "title": "当日主力资金流暂不可用",
+        "date": normalize_history_date(end_date),
+        "metrics": {
+            "状态": "接口不可用",
+            "查询截至": normalize_history_date(end_date).unwrap_or_else(|| end_date.to_string()),
+            "失败原因": detail,
+            "股票": code,
+        },
+        "sentiment": "uncertain",
+        "weight": 0.35,
+        "confidence": "低",
+        "url": "https://data.eastmoney.com/zjlx/detail.html",
+        "score": Value::Null,
+        "note": "未取得真实主力资金流；不能用本地量价代理替代主力净流入额或净占比。",
+    })
 }
 
 async fn fetch_eastmoney_guba_sentiment(
@@ -5032,7 +5221,56 @@ async fn fetch_eastmoney_institution_lhb(
         "https://data.eastmoney.com/stock/jgmmtj.html",
     )
     .await?;
-    parse_eastmoney_lhb_item(&text, &normalized, &start, &end)
+    let mut item = parse_eastmoney_lhb_item(&text, &normalized, &start, &end)?;
+    if item.get("category").and_then(Value::as_str) != Some("institution_lhb") {
+        return Ok(item);
+    }
+    let Some(trade_date) = item
+        .get("date")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+    else {
+        return Ok(item);
+    };
+    let (buy_rows, sell_rows) = futures::join!(
+        fetch_eastmoney_lhb_seat_side(client, digits, &trade_date, true),
+        fetch_eastmoney_lhb_seat_side(client, digits, &trade_date, false),
+    );
+    let (seats, status, note) = match (buy_rows, sell_rows) {
+        (Ok(buy), Ok(sell)) => (
+            merge_eastmoney_lhb_seats(buy, sell),
+            "complete",
+            "营业部名称和买卖额来自公开龙虎榜；行为手法仅按当日榜单特征推断。".to_string(),
+        ),
+        (Ok(buy), Err(error)) => (
+            merge_eastmoney_lhb_seats(buy, Vec::new()),
+            "partial",
+            format!("卖方席位明细暂不可用：{}", truncate_for_note(&error, 120)),
+        ),
+        (Err(error), Ok(sell)) => (
+            merge_eastmoney_lhb_seats(Vec::new(), sell),
+            "partial",
+            format!("买方席位明细暂不可用：{}", truncate_for_note(&error, 120)),
+        ),
+        (Err(buy_error), Err(sell_error)) => (
+            Vec::new(),
+            "unavailable",
+            format!(
+                "席位明细暂不可用：买方 {}；卖方 {}",
+                truncate_for_note(&buy_error, 80),
+                truncate_for_note(&sell_error, 80)
+            ),
+        ),
+    };
+    if let Some(metrics) = item.get_mut("metrics").and_then(Value::as_object_mut) {
+        metrics.insert("公开席位数".to_string(), json!(seats.len()));
+    }
+    if let Some(object) = item.as_object_mut() {
+        object.insert("seats".to_string(), Value::Array(seats));
+        object.insert("seat_detail_status".to_string(), json!(status));
+        object.insert("seat_detail_note".to_string(), json!(note));
+    }
+    Ok(item)
 }
 
 fn parse_eastmoney_lhb_item(
@@ -5102,6 +5340,179 @@ fn parse_eastmoney_lhb_item(
         "score": round2_value(score),
         "note": "东方财富龙虎榜机构买卖每日统计；口径为公开龙虎榜机构专用席位，不等同于全部机构持仓变化。",
     }))
+}
+
+#[derive(Clone, Debug, Default)]
+struct EastmoneyLhbSeatRow {
+    key: String,
+    seat_code: Option<String>,
+    name: String,
+    trade_date: Option<String>,
+    buy_amount: Option<f64>,
+    sell_amount: Option<f64>,
+    buy_ratio: Option<f64>,
+    sell_ratio: Option<f64>,
+    change_rate: Option<f64>,
+    reason: Option<String>,
+    three_day_rise_probability: Option<f64>,
+    three_day_activity_count: Option<f64>,
+}
+
+async fn fetch_eastmoney_lhb_seat_side(
+    client: &reqwest::Client,
+    code: &str,
+    trade_date: &str,
+    buy_side: bool,
+) -> Result<Vec<EastmoneyLhbSeatRow>, String> {
+    let report_name = if buy_side {
+        "RPT_BILLBOARD_DAILYDETAILSBUY"
+    } else {
+        "RPT_BILLBOARD_DAILYDETAILSSELL"
+    };
+    let sort_column = if buy_side { "BUY" } else { "SELL" };
+    let filter = format!(r#"(TRADE_DATE='{trade_date}')(SECURITY_CODE="{code}")"#);
+    let url = reqwest::Url::parse_with_params(
+        EASTMONEY_DATACENTER_ENDPOINT,
+        &[
+            ("sortColumns", sort_column),
+            ("sortTypes", "-1"),
+            ("pageSize", "50"),
+            ("pageNumber", "1"),
+            ("reportName", report_name),
+            ("columns", "ALL"),
+            ("source", "WEB"),
+            ("client", "WEB"),
+            ("filter", filter.as_str()),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    let text = http_get_text_with_headers_first(
+        client,
+        &url.to_string(),
+        OBSERVE_LHB_SEAT_REQUEST_TIMEOUT_SECS,
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "https://data.eastmoney.com/stock/tradedetail.html",
+    )
+    .await?;
+    parse_eastmoney_lhb_seat_side(&text, code, buy_side)
+}
+
+fn parse_eastmoney_lhb_seat_side(
+    text: &str,
+    code: &str,
+    buy_side: bool,
+) -> Result<Vec<EastmoneyLhbSeatRow>, String> {
+    let value: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
+    let rows = value
+        .get("result")
+        .and_then(|result| result.get("data"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut parsed = Vec::new();
+    for row in rows {
+        let Some(object) = row.as_object() else {
+            continue;
+        };
+        if object_string_any(object, &["SECURITY_CODE"]).as_deref() != Some(code) {
+            continue;
+        }
+        let Some(name) = object_string_any(object, &["OPERATEDEPT_NAME"]) else {
+            continue;
+        };
+        let seat_code = object_string_any(object, &["OPERATEDEPT_CODE"]);
+        let key = seat_code.clone().unwrap_or_else(|| name.clone());
+        parsed.push(EastmoneyLhbSeatRow {
+            key,
+            seat_code,
+            name,
+            trade_date: object_string_any(object, &["TRADE_DATE"])
+                .and_then(|value| normalize_history_date(&value)),
+            buy_amount: buy_side
+                .then(|| object_number_any_loose(object, &["BUY"]))
+                .flatten(),
+            sell_amount: (!buy_side)
+                .then(|| object_number_any_loose(object, &["SELL"]))
+                .flatten(),
+            buy_ratio: buy_side
+                .then(|| object_number_any_loose(object, &["TOTAL_BUYRIO", "TOTAL_BUY_RATIO"]))
+                .flatten(),
+            sell_ratio: (!buy_side)
+                .then(|| object_number_any_loose(object, &["TOTAL_SELLRIO", "TOTAL_SELL_RATIO"]))
+                .flatten(),
+            change_rate: object_number_any_loose(object, &["CHANGE_RATE"]),
+            reason: object_string_any(object, &["EXPLANATION"]),
+            three_day_rise_probability: object_number_any_loose(object, &["RISE_PROBABILITY_3DAY"]),
+            three_day_activity_count: object_number_any_loose(
+                object,
+                &["TOTAL_BUYER_SALESTIMES_3DAY", "TOTAL_SELLER_BUYTIMES_3DAY"],
+            ),
+        });
+    }
+    Ok(parsed)
+}
+
+fn merge_eastmoney_lhb_seats(
+    buy_rows: Vec<EastmoneyLhbSeatRow>,
+    sell_rows: Vec<EastmoneyLhbSeatRow>,
+) -> Vec<Value> {
+    let mut merged: HashMap<String, EastmoneyLhbSeatRow> = HashMap::new();
+    for row in buy_rows.into_iter().chain(sell_rows) {
+        if let Some(current) = merged.get_mut(&row.key) {
+            current.buy_amount = current.buy_amount.or(row.buy_amount);
+            current.sell_amount = current.sell_amount.or(row.sell_amount);
+            current.buy_ratio = current.buy_ratio.or(row.buy_ratio);
+            current.sell_ratio = current.sell_ratio.or(row.sell_ratio);
+            current.trade_date = current.trade_date.clone().or(row.trade_date);
+            current.change_rate = current.change_rate.or(row.change_rate);
+            current.reason = current.reason.clone().or(row.reason);
+            current.three_day_rise_probability = current
+                .three_day_rise_probability
+                .or(row.three_day_rise_probability);
+            current.three_day_activity_count = current
+                .three_day_activity_count
+                .or(row.three_day_activity_count);
+        } else {
+            merged.insert(row.key.clone(), row);
+        }
+    }
+    let mut rows = merged.into_values().collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        let left_total = left.buy_amount.unwrap_or(0.0) + left.sell_amount.unwrap_or(0.0);
+        let right_total = right.buy_amount.unwrap_or(0.0) + right.sell_amount.unwrap_or(0.0);
+        right_total
+            .partial_cmp(&left_total)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    rows.into_iter().map(eastmoney_lhb_seat_value).collect()
+}
+
+fn eastmoney_lhb_seat_value(row: EastmoneyLhbSeatRow) -> Value {
+    let direction = match (row.buy_amount.is_some(), row.sell_amount.is_some()) {
+        (true, true) => "both",
+        (true, false) => "buy",
+        (false, true) => "sell",
+        (false, false) => "unknown",
+    };
+    let net_amount = match (row.buy_amount, row.sell_amount) {
+        (Some(buy), Some(sell)) => Some(buy - sell),
+        _ => None,
+    };
+    json!({
+        "seat_code": row.seat_code,
+        "name": row.name,
+        "trade_date": row.trade_date,
+        "buy_amount": row.buy_amount,
+        "sell_amount": row.sell_amount,
+        "net_amount": net_amount,
+        "buy_ratio": row.buy_ratio,
+        "sell_ratio": row.sell_ratio,
+        "direction": direction,
+        "change_rate": row.change_rate,
+        "reason": row.reason,
+        "three_day_rise_probability": row.three_day_rise_probability,
+        "three_day_activity_count": row.three_day_activity_count,
+    })
 }
 
 fn guba_status_item(code: &str, end_date: &str, detail: &str) -> Value {
@@ -5239,10 +5650,16 @@ fn merge_capital_evidence_items(
                 _ => vec![category],
             };
             merged_items.retain(|old| {
-                old.get("category")
-                    .and_then(Value::as_str)
-                    .map(|old_category| !replacement_categories.contains(&old_category))
-                    .unwrap_or(true)
+                let old_category = old.get("category").and_then(Value::as_str).unwrap_or("");
+                if matches!(category, "fund_flow" | "fund_flow_status") {
+                    if !matches!(old_category, "fund_flow" | "fund_flow_status") {
+                        return true;
+                    }
+                    let incoming_is_proxy = is_local_fund_flow_proxy_value(&item);
+                    let old_is_proxy = is_local_fund_flow_proxy_value(old);
+                    return incoming_is_proxy != old_is_proxy;
+                }
+                !replacement_categories.contains(&old_category)
             });
         }
         merged_items.push(item);
@@ -5258,13 +5675,31 @@ fn merge_capital_evidence_items(
             "as_of_trade_date": normalize_history_date(end_date),
             "freshness": "refreshed",
             "contributions": {},
-            "summary": "已接入东方财富股吧情绪与东方财富龙虎榜机构统计，最终分数由 Rust 规则合成。",
+            "summary": "已尝试接入东方财富当日主力资金、股吧情绪与龙虎榜机构统计，最终分数由 Rust 规则合成。",
             "sections": [],
             "items": merged_items,
-            "notes": ["东方财富股吧仅作社区情绪线索；东方财富龙虎榜机构统计为公开机构专用席位口径。"],
+            "notes": ["主力资金为东方财富个股资金流口径；股吧仅作社区情绪线索；龙虎榜机构统计为公开机构专用席位口径。"],
         }),
     );
     true
+}
+
+fn is_local_fund_flow_proxy_value(item: &Value) -> bool {
+    item.get("title")
+        .and_then(Value::as_str)
+        .map(|title| title.contains("量价资金代理"))
+        .unwrap_or(false)
+        || item
+            .get("source")
+            .and_then(Value::as_str)
+            .map(|source| source.contains("Tauri/Rust"))
+            .unwrap_or(false)
+        || item
+            .get("metrics")
+            .and_then(Value::as_object)
+            .and_then(|metrics| metrics.get("证据类型"))
+            .and_then(Value::as_str)
+            == Some("本地日线量价代理")
 }
 
 async fn http_get_text_with_headers_first(
@@ -5274,9 +5709,25 @@ async fn http_get_text_with_headers_first(
     user_agent: &str,
     referer: &str,
 ) -> Result<String, String> {
-    match powershell_http_get_bytes_with_headers(url, timeout_secs, user_agent, referer) {
-        Ok(bytes) => return Ok(decode_utf8_lossy(bytes)),
-        Err(powershell_error) => match client
+    let fetch = async {
+        let powershell_url = url.to_string();
+        let powershell_user_agent = user_agent.to_string();
+        let powershell_referer = referer.to_string();
+        let powershell_result = tokio::task::spawn_blocking(move || {
+            powershell_http_get_bytes_with_headers(
+                &powershell_url,
+                timeout_secs,
+                &powershell_user_agent,
+                &powershell_referer,
+            )
+        })
+        .await;
+        let powershell_error = match powershell_result {
+            Ok(Ok(bytes)) => return Ok(decode_utf8_lossy(bytes)),
+            Ok(Err(error)) => error,
+            Err(error) => format!("PowerShell HTTP task failed: {error}"),
+        };
+        match client
             .get(url)
             .header("User-Agent", user_agent)
             .header("Referer", referer)
@@ -5292,7 +5743,13 @@ async fn http_get_text_with_headers_first(
                 response.status().as_u16()
             )),
             Err(error) => Err(format!("PowerShell: {powershell_error}; reqwest: {error}")),
-        },
+        }
+    };
+    match tokio::time::timeout(Duration::from_secs(timeout_secs), fetch).await {
+        Ok(result) => result,
+        Err(_) => Err(format!(
+            "PowerShell/reqwest HTTP request timed out after {timeout_secs} seconds"
+        )),
     }
 }
 

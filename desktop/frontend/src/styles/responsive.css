@@ -4914,6 +4914,19 @@ html.android-phone .observe-decision-summary > .observe-metric-analysis-disclaim
     padding-top: 8px;
     border-top: 1px solid var(--line-soft);
   }
+
+  .capital-seat-list > li {
+    grid-template-columns: minmax(0, 1fr) minmax(92px, auto);
+    gap: 8px 12px;
+  }
+
+  .capital-seat-flow {
+    text-align: right;
+  }
+
+  .capital-seat-tactic {
+    grid-column: 1 / -1;
+  }
 }
 
 html.android-phone .observe-capital-quant {
@@ -4935,6 +4948,68 @@ html.android-phone .observe-capital-quant > header h4 {
 
 html.android-phone .observe-capital-quant > header > small {
   font-size: 8px;
+}
+
+html.android-phone .capital-main-flow {
+  padding: 11px 10px 10px;
+}
+
+html.android-phone .capital-main-flow::before {
+  left: 10px;
+  width: 34px;
+}
+
+html.android-phone .capital-main-flow > header {
+  gap: 8px;
+}
+
+html.android-phone .capital-main-flow > header h5 {
+  margin-top: 3px;
+  font-size: 10.5px;
+  line-height: 1.15;
+}
+
+html.android-phone .capital-main-flow > header small {
+  max-width: 66%;
+  font-size: 8px;
+  line-height: 1.25;
+}
+
+html.android-phone .capital-main-flow > header > span {
+  font-size: 8px;
+}
+
+html.android-phone .capital-main-flow .capital-quant-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 8px;
+}
+
+html.android-phone .capital-main-flow .capital-quant-metrics > div {
+  min-height: 38px;
+  padding: 3px 4px;
+}
+
+html.android-phone .capital-main-flow .capital-quant-metrics > div:nth-child(n + 3) {
+  margin-top: 0;
+  padding-top: 3px;
+  border-top: 0;
+}
+
+html.android-phone .capital-main-flow .capital-quant-metrics dt {
+  font-size: 8px;
+  line-height: 1.15;
+}
+
+html.android-phone .capital-main-flow .capital-quant-metrics dd {
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 1.1;
+}
+
+html.android-phone .capital-main-flow-conclusion {
+  margin-top: 8px;
+  font-size: 9px;
+  line-height: 1.42;
 }
 
 html.android-phone .capital-quant-lane {
@@ -4997,6 +5072,59 @@ html.android-phone .capital-quant-empty {
 html.android-phone .capital-quant-empty {
   min-height: 40px;
   font-size: 9.5px;
+}
+
+html.android-phone .capital-seat-behavior {
+  padding: 11px 10px 10px;
+}
+
+html.android-phone .capital-seat-behavior > header {
+  gap: 8px;
+}
+
+html.android-phone .capital-seat-behavior > header h5 {
+  font-size: 10.5px;
+}
+
+html.android-phone .capital-seat-behavior > header small,
+html.android-phone .capital-seat-behavior > header > span {
+  font-size: 8px;
+  line-height: 1.3;
+}
+
+html.android-phone .capital-seat-list {
+  margin-top: 8px;
+}
+
+html.android-phone .capital-seat-list > li {
+  gap: 7px 10px;
+  padding: 9px 4px 9px 8px;
+}
+
+html.android-phone .capital-seat-list > li::before {
+  top: 10px;
+  bottom: 10px;
+}
+
+html.android-phone .capital-seat-name strong,
+html.android-phone .capital-seat-flow strong {
+  font-size: 9.5px;
+}
+
+html.android-phone .capital-seat-name span,
+html.android-phone .capital-seat-flow span,
+html.android-phone .capital-seat-tactic small {
+  font-size: 8px;
+}
+
+html.android-phone .capital-seat-tactic strong {
+  font-size: 9px;
+}
+
+html.android-phone .capital-seat-tactic p,
+html.android-phone .capital-seat-disclaimer {
+  font-size: 8.5px;
+  line-height: 1.4;
 }
 
 @media (max-width: 760px) {

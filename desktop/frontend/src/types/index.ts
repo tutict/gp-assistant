@@ -227,6 +227,22 @@ export interface FinancialIndicatorSection {
   notes?: string[];
 }
 
+export interface CapitalEvidenceSeat {
+  seat_code?: string | null;
+  name?: string;
+  trade_date?: string | null;
+  buy_amount?: number | null;
+  sell_amount?: number | null;
+  net_amount?: number | null;
+  buy_ratio?: number | null;
+  sell_ratio?: number | null;
+  direction?: "buy" | "sell" | "both" | "unknown";
+  change_rate?: number | null;
+  reason?: string | null;
+  three_day_rise_probability?: number | null;
+  three_day_activity_count?: number | null;
+}
+
 export interface CapitalEvidenceItem {
   category?: string;
   source?: string;
@@ -239,6 +255,9 @@ export interface CapitalEvidenceItem {
   url?: string | null;
   score?: number | null;
   note?: string | null;
+  seats?: CapitalEvidenceSeat[];
+  seat_detail_status?: string;
+  seat_detail_note?: string | null;
 }
 
 export interface CapitalEvidenceSection {
@@ -256,6 +275,10 @@ export interface CapitalEvidenceResult {
   generated_at?: string;
   composite_score?: number | null;
   confidence?: string;
+  model_used?: boolean;
+  as_of_trade_date?: string | null;
+  freshness?: string;
+  contributions?: Record<string, unknown>;
   summary?: string | null;
   sections?: CapitalEvidenceSection[];
   items?: CapitalEvidenceItem[];
