@@ -117,9 +117,29 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
           <strong>{sourceText}</strong>
         </div>
         <div className="backtest-context-controls">
+          <div className="backtest-source-switch" role="group" aria-label="回测股票来源">
+            <button
+              type="button"
+              className={`source-toggle ${source === "criteria" ? "active" : ""}`}
+              aria-pressed={source === "criteria"}
+              disabled={loading}
+              onClick={() => selectSource("criteria")}
+            >
+              当前条件
+            </button>
+            <button
+              type="button"
+              className={`source-toggle ${source === "watchlist" ? "active" : ""}`}
+              aria-pressed={source === "watchlist"}
+              disabled={loading}
+              onClick={() => selectSource("watchlist")}
+            >
+              自选股
+            </button>
+          </div>
           <button
             type="button"
-            className="source-toggle"
+            className="backtest-run-button"
             aria-label="运行回测"
             aria-disabled={loading}
             disabled={loading}
@@ -127,8 +147,6 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
           >
             {loading ? "回测计算中..." : "运行回测"}
           </button>
-          <button type="button" className={`source-toggle ${source === "criteria" ? "active" : ""}`} disabled={loading} onClick={() => selectSource("criteria")}>当前条件</button>
-          <button type="button" className={`source-toggle ${source === "watchlist" ? "active" : ""}`} disabled={loading} onClick={() => selectSource("watchlist")}>自选股</button>
         </div>
         <div className="backtest-param-strip">
           <span><b>持仓</b><strong>{topN}</strong></span>

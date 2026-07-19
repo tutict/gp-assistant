@@ -486,8 +486,20 @@
   }
 
   .backtest-context-controls {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .backtest-source-switch {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .backtest-context-controls .source-toggle,
+  .backtest-run-button {
+    min-height: 32px;
   }
 
   .backtest-controls {
@@ -1722,7 +1734,7 @@ html.android-phone .stock-grid {
 }
 
 html.android-phone .stock-title strong {
-  font-size: 8.5px;
+  font-size: 9px;
   line-height: 1.05;
 }
 
@@ -5220,8 +5232,10 @@ html.android-phone .backtest-context-head {
 }
 
 html.android-phone .backtest-context-controls {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -5229,14 +5243,53 @@ html.android-phone .backtest-context-controls {
 }
 
 html.android-phone .backtest-context-controls .source-toggle {
-  min-height: 36px;
-  padding: 4px 5px;
-  border-radius: 6px;
+  min-height: 32px;
+  padding: 0 7px;
+  border-radius: 0;
+}
+
+html.android-phone .backtest-run-button {
+  min-height: 32px;
+  padding-inline: 10px;
 }
 
 html.android-phone .backtest-param-strip {
   gap: 4px 9px;
   padding: 0 2px;
+}
+
+/* Android Agent empty state: keep the three modes on one measured baseline. */
+html.android-phone .app[data-active-view="agent"] .agent-empty-state .agent-mode-tabs {
+  display: grid;
+  width: min(252px, calc(100vw - 48px));
+  min-width: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--line) 90%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+}
+
+html.android-phone .app[data-active-view="agent"] .agent-empty-state .agent-mode-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  min-height: 34px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  font-size: 8.5px;
+  font-weight: 650;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+html.android-phone .app[data-active-view="agent"] .agent-empty-state .agent-mode-tabs button.active {
+  border-color: color-mix(in srgb, var(--accent-strong) 72%, var(--accent));
 }
 
 html.android-phone .backtest-primary-chart {

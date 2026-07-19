@@ -1787,20 +1787,72 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
 }
 
 .backtest-context-controls {
-  display: flex;
-  gap: var(--space-2);
-  flex-wrap: wrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
-.backtest-context-controls > .source-toggle:first-child {
-  border-color: var(--accent);
+.backtest-source-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.backtest-context-controls .source-toggle {
+  min-height: 30px;
+  padding: 0 7px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.backtest-context-controls .source-toggle:hover {
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+  background: transparent;
+  color: var(--text);
+}
+
+.backtest-context-controls .source-toggle.active {
+  border-bottom-color: var(--accent);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+}
+
+.backtest-run-button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
   background: var(--accent);
   color: var(--button-text);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 750;
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--ease-out);
 }
 
-.backtest-context-controls > .source-toggle:first-child:hover {
+.backtest-run-button:hover:not(:disabled) {
   border-color: var(--accent-strong);
   background: var(--accent-strong);
+  transform: translateY(-1px);
+}
+
+.backtest-run-button:disabled,
+.backtest-context-controls .source-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .backtest-controls {
