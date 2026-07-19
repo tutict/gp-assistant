@@ -7,7 +7,6 @@ export default defineConfig({
     outDir: "../mobile-dist",
     emptyOutDir: true,
     sourcemap: false,
-    minify: "esbuild",
     cssCodeSplit: true,
     assetsInlineLimit: 2048,
     reportCompressedSize: true,
