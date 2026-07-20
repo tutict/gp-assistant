@@ -134,7 +134,7 @@ struct PreparedBacktest {
 
 #[tauri::command]
 async fn api_observe(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    api_observe_inner(app, payload).await
+    Box::pin(api_observe_inner(app, payload)).await
 }
 
 async fn api_observe_inner(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
@@ -148,14 +148,12 @@ async fn api_observe_inner(app: tauri::AppHandle, payload: Value) -> Result<Valu
     } else {
         OBSERVE_TOTAL_TIMEOUT_SECS
     };
-    let observe_payload = tokio::time::timeout(
-        Duration::from_secs(observe_timeout_secs),
-        runtime::with_heavy_network_permit(
-            "api_observe_network",
-            observe_core_payload_with_cached_history(&app, payload),
-        ),
-    )
-    .await;
+    let observe_network = Box::pin(runtime::with_heavy_network_permit(
+        "api_observe_network",
+        observe_core_payload_with_cached_history(&app, payload),
+    ));
+    let observe_payload =
+        tokio::time::timeout(Duration::from_secs(observe_timeout_secs), observe_network).await;
 
     match observe_payload {
         Ok(Ok((core_payload, notes))) => match run_observe_calculation(&core_payload).await {
