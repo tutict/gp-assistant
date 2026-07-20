@@ -651,6 +651,51 @@ fn eastmoney_empty_result_is_only_normalized_for_optional_datasets() {
 }
 
 #[test]
+fn eastmoney_fetch_retries_direct_after_preferred_proxy_failure() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+    use std::time::Duration;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind local Eastmoney fixture");
+    let address = listener.local_addr().expect("local fixture address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept direct retry");
+        let mut buffer = [0_u8; 1024];
+        let _ = stream.read(&mut buffer).expect("read fixture request");
+        let body = r#"{"result":{"data":[{"PLEDGE_RATIO":0.69}]},"success":true,"code":0}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write fixture response");
+    });
+    let preferred_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .proxy(reqwest::Proxy::all("http://127.0.0.1:9").expect("bad proxy URL"))
+        .build()
+        .expect("preferred client");
+    let direct_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .no_proxy()
+        .build()
+        .expect("direct client");
+
+    let result = tauri::async_runtime::block_on(fetch_eastmoney_public_json_with_direct_retry(
+        &preferred_client,
+        &direct_client,
+        &format!("http://{address}"),
+        "Eastmoney fixture",
+        false,
+    ))
+    .expect("direct retry must recover the public metric");
+    assert_eq!(parse_latest_pledged_share_ratio(&result), Some(0.69));
+    server.join().expect("local Eastmoney fixture");
+}
+
+#[test]
 fn eastmoney_malformed_metric_rows_do_not_become_false_zeroes() {
     let malformed_pledge = json!({"result": {"data": [{}]}});
     let malformed_dividend = json!({"result": {"data": ["invalid"]}});

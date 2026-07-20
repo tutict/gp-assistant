@@ -48,6 +48,7 @@ const OBSERVE_TOTAL_TIMEOUT_SECS: u64 = 25;
 const OBSERVE_MOBILE_FAST_TOTAL_TIMEOUT_SECS: u64 = 35;
 const OBSERVE_FINANCIAL_TOTAL_TIMEOUT_SECS: u64 = 10;
 const OBSERVE_FUNDAMENTAL_TOTAL_TIMEOUT_SECS: u64 = 8;
+const OBSERVE_FUNDAMENTAL_PREFERRED_TIMEOUT_SECS: u64 = 3;
 const OBSERVE_FUNDAMENTAL_REFRESH_INTERVAL_MS: u128 = 24 * 60 * 60 * 1_000;
 const OBSERVE_HISTORY_TOTAL_TIMEOUT_SECS: u64 = 12;
 const OBSERVE_HISTORY_TIMEOUT_SECS: u64 = 8;
@@ -354,6 +355,30 @@ async fn fetch_eastmoney_public_json(
     normalize_eastmoney_public_json(value, label, empty_is_valid)
 }
 
+async fn fetch_eastmoney_public_json_with_direct_retry(
+    preferred_client: &reqwest::Client,
+    direct_client: &reqwest::Client,
+    url: &str,
+    label: &str,
+    empty_is_valid: bool,
+) -> Result<Value, String> {
+    let preferred_error = match tokio::time::timeout(
+        Duration::from_secs(OBSERVE_FUNDAMENTAL_PREFERRED_TIMEOUT_SECS),
+        fetch_eastmoney_public_json(preferred_client, url, label, empty_is_valid),
+    )
+    .await
+    {
+        Ok(Ok(value)) => return Ok(value),
+        Ok(Err(error)) => error,
+        Err(_) => format!(
+            "{label} preferred route timed out after {OBSERVE_FUNDAMENTAL_PREFERRED_TIMEOUT_SECS}s"
+        ),
+    };
+    fetch_eastmoney_public_json(direct_client, url, label, empty_is_valid)
+        .await
+        .map_err(|direct_error| format!("{preferred_error}; direct retry failed: {direct_error}"))
+}
+
 fn normalize_eastmoney_public_json(
     mut value: Value,
     label: &str,
@@ -473,6 +498,10 @@ async fn fetch_observe_fundamental_supplement(
         Duration::from_secs(OBSERVE_FUNDAMENTAL_TOTAL_TIMEOUT_SECS),
         Some(payload),
     )?;
+    let direct_client = build_direct_http_client(
+        "Mozilla/5.0 GuXuanYou/0.3 observe-fundamentals",
+        Duration::from_secs(OBSERVE_FUNDAMENTAL_TOTAL_TIMEOUT_SECS),
+    )?;
     let balance_url = format!(
         "{EASTMONEY_SECURITIES_ENDPOINT}?reportName=RPT_F10_FINANCE_GBALANCE&columns=SECUCODE,REPORT_DATE,REPORT_DATE_NAME,GOODWILL,TOTAL_PARENT_EQUITY&filter=(SECUCODE%3D%22{code}%22)&pageNumber=1&pageSize=1&sortTypes=-1&sortColumns=REPORT_DATE&source=HSF10&client=PC"
     );
@@ -483,9 +512,27 @@ async fn fetch_observe_fundamental_supplement(
         "{EASTMONEY_DATACENTER_ENDPOINT}?reportName=RPT_SHAREBONUS_DET&columns=SECUCODE,SECURITY_CODE,REPORT_DATE,PRETAX_BONUS_RMB,BASIC_EPS,DIVIDENT_RATIO,EX_DIVIDEND_DATE&sortColumns=REPORT_DATE&sortTypes=-1&filter=(SECURITY_CODE%3D%22{digits}%22)&pageNumber=1&pageSize=5&source=WEB&client=WEB"
     );
     let (balance, pledge, dividend) = futures::join!(
-        fetch_eastmoney_public_json(&client, &balance_url, "Eastmoney balance sheet", false),
-        fetch_eastmoney_public_json(&client, &pledge_url, "Eastmoney pledge ratio", true),
-        fetch_eastmoney_public_json(&client, &dividend_url, "Eastmoney dividend history", true),
+        fetch_eastmoney_public_json_with_direct_retry(
+            &client,
+            &direct_client,
+            &balance_url,
+            "Eastmoney balance sheet",
+            false,
+        ),
+        fetch_eastmoney_public_json_with_direct_retry(
+            &client,
+            &direct_client,
+            &pledge_url,
+            "Eastmoney pledge ratio",
+            true,
+        ),
+        fetch_eastmoney_public_json_with_direct_retry(
+            &client,
+            &direct_client,
+            &dividend_url,
+            "Eastmoney dividend history",
+            true,
+        ),
     );
 
     let mut fields = serde_json::Map::new();
@@ -1521,6 +1568,20 @@ pub(crate) fn build_tencent_http_client(
     timeout: Duration,
 ) -> Result<reqwest::Client, String> {
     build_http_client_with_proxy(user_agent, timeout, None)
+}
+
+fn build_direct_http_client(
+    user_agent: &str,
+    timeout: Duration,
+) -> Result<reqwest::Client, String> {
+    let builder = reqwest::Client::builder()
+        .timeout(timeout)
+        .connect_timeout(Duration::from_secs(TENCENT_CONNECT_TIMEOUT_SECS))
+        .user_agent(user_agent)
+        .no_proxy();
+    apply_android_tls_backend(builder)?
+        .build()
+        .map_err(|error| format!("create direct HTTP client failed: {error}"))
 }
 
 pub(crate) fn build_http_client_with_proxy(
