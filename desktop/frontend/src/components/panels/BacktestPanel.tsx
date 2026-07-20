@@ -15,6 +15,10 @@ import {
 import { RawJson } from "../RawJson";
 import { PanelFeedback } from "../ui/PanelFeedback";
 import type { BacktestRouteRequest, BacktestSource } from "../../lib/viewNavigation";
+import {
+  buildVolatilityInterpretation,
+  VOLATILITY_INTERPRETATION_METHOD,
+} from "../../lib/volatilityInterpretation";
 
 interface BacktestPanelProps {
   criteria: FilterCriteria;
@@ -354,6 +358,7 @@ const VolatilityDiagnostics = memo(function VolatilityDiagnostics({
       detail: rvi ? "范围 0–100，50 为方向均衡线" : reasonFor("rvi"),
     },
   ];
+  const interpretation = buildVolatilityInterpretation(snapshot);
 
   return (
     <section className="backtest-volatility" aria-label="波动率快照">
@@ -382,6 +387,28 @@ const VolatilityDiagnostics = memo(function VolatilityDiagnostics({
           </div>
         ))}
       </div>
+      <section className="volatility-interpretation" aria-label={`${snapshot.symbol} 波动率结论`}>
+        <header>
+          <strong>一句话看懂</strong>
+          <span>已返回 {interpretation.returnedCount}/6 项指标</span>
+        </header>
+        <p className="volatility-interpretation-summary">{interpretation.summary}</p>
+        <div className="volatility-interpretation-grid">
+          <div>
+            <h4>为什么这么说</h4>
+            <ul>{interpretation.evidence.map((item) => <li key={item}>{item}</li>)}</ul>
+          </div>
+          <div>
+            <h4>策略可以怎么改</h4>
+            <ul>{interpretation.adjustments.map((item) => <li key={item}>{item}</li>)}</ul>
+          </div>
+        </div>
+        <details className="volatility-interpretation-method">
+          <summary>这些判断怎么算的</summary>
+          <ul>{VOLATILITY_INTERPRETATION_METHOD.map((item) => <li key={item}>{item}</li>)}</ul>
+        </details>
+        <small className="volatility-interpretation-note">这里只说明回测结束时的状态，不会改动历史选股和调仓结果，也不是买卖建议。</small>
+      </section>
     </section>
   );
 });

@@ -5491,6 +5491,47 @@ html.android-phone .volatility-grid > div {
   background: transparent;
 }
 
+html.android-phone .volatility-interpretation {
+  gap: 7px;
+  padding-top: 9px;
+}
+
+html.android-phone .volatility-interpretation-summary {
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+html.android-phone .volatility-interpretation-grid {
+  gap: 9px;
+}
+
+html.android-phone .volatility-interpretation-grid h4 {
+  margin-bottom: 4px;
+  font-size: 9px;
+}
+
+html.android-phone .volatility-interpretation-grid ul {
+  gap: 4px;
+}
+
+html.android-phone .volatility-interpretation-grid li {
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+html.android-phone .volatility-interpretation-note {
+  font-size: 8px;
+}
+
+html.android-phone .volatility-interpretation-method {
+  font-size: 8px;
+}
+
+html.android-phone .volatility-interpretation-method ul {
+  gap: 3px;
+  margin-top: 5px;
+}
+
 html.android-phone .watchlist-panel {
   margin-top: 6px;
   padding: 0;
