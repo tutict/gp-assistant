@@ -4058,6 +4058,259 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   }
 }
 
+/* Desktop observe results: readable hierarchy without changing mobile density. */
+@media (min-width: 761px) {
+  html:not(.mobile-tauri) .observe-decision-summary {
+    padding: 0 22px 18px;
+  }
+
+  html:not(.mobile-tauri) .observe-decision-summary > .observe-decision-heading {
+    padding: 18px 0 14px;
+  }
+
+  html:not(.mobile-tauri) .observe-decision-summary .observe-decision-heading h3 {
+    font-size: 17px;
+    line-height: 1.2;
+  }
+
+  html:not(.mobile-tauri) .observe-decision-heading time {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  html:not(.mobile-tauri) .observe-verdict {
+    padding: 16px 0 18px 20px;
+  }
+
+  html:not(.mobile-tauri) .observe-verdict::before {
+    top: 21px;
+  }
+
+  html:not(.mobile-tauri) .observe-verdict h4 {
+    font-size: 17px;
+    line-height: 1.3;
+  }
+
+  html:not(.mobile-tauri) .observe-verdict p {
+    max-width: 90ch;
+    margin-top: 6px;
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+
+  html:not(.mobile-tauri) .observe-decision-item {
+    padding: 16px 20px 17px;
+  }
+
+  html:not(.mobile-tauri) .observe-decision-item > span {
+    font-size: 12px;
+    line-height: 1.25;
+  }
+
+  html:not(.mobile-tauri) .observe-decision-item > p {
+    margin-top: 7px;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  html:not(.mobile-tauri) .observe-special-quant-item {
+    padding: 15px 16px 16px;
+  }
+
+  html:not(.mobile-tauri) .observe-special-quant-item > span {
+    font-size: 10.5px;
+  }
+
+  html:not(.mobile-tauri) .observe-special-quant-item > strong {
+    margin-top: 7px;
+    font-size: 13.5px;
+    line-height: 1.25;
+  }
+
+  html:not(.mobile-tauri) .observe-special-quant-item > p {
+    margin-top: 6px;
+    font-size: 11px;
+    line-height: 1.55;
+  }
+
+  html:not(.mobile-tauri) .observe-next-signal {
+    grid-template-columns: 112px minmax(0, 1fr);
+    padding: 13px 0;
+  }
+
+  html:not(.mobile-tauri) .observe-next-signal > span {
+    font-size: 11px;
+  }
+
+  html:not(.mobile-tauri) .observe-next-signal > p {
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  html:not(.mobile-tauri) .observe-key-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    padding: 13px 0;
+  }
+
+  html:not(.mobile-tauri) .observe-key-metrics > div {
+    padding: 3px 18px;
+  }
+
+  html:not(.mobile-tauri) .observe-key-metrics dt {
+    font-size: 11px;
+    line-height: 1.25;
+  }
+
+  html:not(.mobile-tauri) .observe-key-metrics dd {
+    margin-top: 6px;
+    font-size: 15px;
+    line-height: 1.15;
+  }
+
+  html:not(.mobile-tauri) .observe-capital-quant > header {
+    padding: 18px 0 11px;
+  }
+
+  html:not(.mobile-tauri) .observe-capital-quant > header h4 {
+    font-size: 15px;
+    line-height: 1.25;
+  }
+
+  html:not(.mobile-tauri) .observe-capital-quant > header > small {
+    font-size: 10.5px;
+    line-height: 1.4;
+  }
+
+  html:not(.mobile-tauri) .capital-main-flow {
+    padding: 15px 0 17px;
+  }
+
+  html:not(.mobile-tauri) .capital-main-flow > header h5,
+  html:not(.mobile-tauri) .capital-quant-lane > header h5 {
+    font-size: 13px;
+    line-height: 1.3;
+  }
+
+  html:not(.mobile-tauri) .capital-main-flow > header small,
+  html:not(.mobile-tauri) .capital-quant-lane > header small {
+    margin-top: 5px;
+    font-size: 10px;
+    line-height: 1.4;
+  }
+
+  html:not(.mobile-tauri) .capital-main-flow > header > span {
+    font-size: 10.5px;
+    line-height: 1.4;
+  }
+
+  html:not(.mobile-tauri) .capital-quant-lane {
+    padding: 15px 20px 17px;
+  }
+
+  html:not(.mobile-tauri) .capital-quant-metrics {
+    margin-top: 13px;
+  }
+
+  html:not(.mobile-tauri) .capital-quant-metrics > div {
+    padding-inline: 12px;
+  }
+
+  html:not(.mobile-tauri) .capital-quant-metrics dt {
+    font-size: 10px;
+    line-height: 1.3;
+  }
+
+  html:not(.mobile-tauri) .capital-quant-metrics dd {
+    margin-top: 6px;
+    font-size: 13px;
+    line-height: 1.2;
+  }
+
+  html:not(.mobile-tauri) .capital-main-flow-conclusion {
+    max-width: 96ch;
+    margin-top: 13px;
+    font-size: 12px;
+    line-height: 1.65;
+  }
+
+  html:not(.mobile-tauri) .capital-quant-note {
+    max-width: 104ch;
+    margin-top: 9px;
+    font-size: 10.5px;
+    line-height: 1.55;
+  }
+
+  html:not(.mobile-tauri) .capital-quant-empty {
+    min-height: 0;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  html:not(.mobile-tauri) .capital-seat-behavior {
+    padding: 16px 0 17px;
+  }
+
+  html:not(.mobile-tauri) .capital-seat-behavior > header h5 {
+    font-size: 13px;
+    line-height: 1.3;
+  }
+
+  html:not(.mobile-tauri) .capital-seat-behavior > header small,
+  html:not(.mobile-tauri) .capital-seat-behavior > header > span {
+    font-size: 10px;
+    line-height: 1.4;
+  }
+
+  html:not(.mobile-tauri) .capital-seat-name strong,
+  html:not(.mobile-tauri) .capital-seat-flow strong {
+    font-size: 11.5px;
+  }
+
+  html:not(.mobile-tauri) .capital-seat-name span,
+  html:not(.mobile-tauri) .capital-seat-flow span,
+  html:not(.mobile-tauri) .capital-seat-tactic small {
+    font-size: 9.5px;
+  }
+
+  html:not(.mobile-tauri) .capital-seat-tactic strong {
+    font-size: 11px;
+  }
+
+  html:not(.mobile-tauri) .capital-seat-tactic p,
+  html:not(.mobile-tauri) .capital-seat-disclaimer {
+    font-size: 10.5px;
+    line-height: 1.55;
+  }
+
+  html:not(.mobile-tauri) .capital-quant-more > summary,
+  html:not(.mobile-tauri) .capital-quant-more > p {
+    font-size: 10.5px;
+    line-height: 1.55;
+  }
+
+  html:not(.mobile-tauri) .observe-detail-disclosure {
+    margin-top: 14px;
+  }
+
+  html:not(.mobile-tauri) .observe-detail-disclosure > summary {
+    min-height: 46px;
+  }
+
+  html:not(.mobile-tauri) .observe-detail-disclosure > summary > span {
+    font-size: 13px;
+  }
+
+  html:not(.mobile-tauri) .observe-detail-disclosure > summary > small {
+    font-size: 10.5px;
+  }
+
+  html:not(.mobile-tauri) .observe-decision-summary > .observe-metric-analysis-disclaimer {
+    margin-top: 10px;
+    font-size: 10.5px;
+    line-height: 1.5;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .capital-quant-more > summary::after {
     transition: none;
