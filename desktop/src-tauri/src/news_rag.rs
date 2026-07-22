@@ -8,6 +8,10 @@ use std::{
     collections::{HashMap, HashSet},
     env, fs,
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicU64, Ordering as AtomicOrdering},
+        Mutex, OnceLock,
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::Manager;
@@ -22,6 +26,8 @@ const CHAIN_RELATION_TYPES: [&str; 3] =
 const NEWS_TIMEOUT_SECS: u64 = 8;
 const NEWS_ANDROID_TIMEOUT_SECS: u64 = 5;
 const NEWS_MAX_CACHE_ITEMS: usize = 2_000;
+static NEWS_CACHE_WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static NEWS_CACHE_TMP_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) async fn api_news_rag_impl(
     app: tauri::AppHandle,
@@ -81,9 +87,7 @@ pub(crate) async fn api_news_rag_impl(
     };
     let (fetched, adapter_notes) = news_result;
     let cache_path = news_cache_path(&app)?;
-    let cached = read_news_cache_items(&cache_path);
-    let merged_cache = merge_news_items(cached, fetched);
-    write_news_cache_items(&cache_path, &merged_cache)?;
+    let merged_cache = merge_into_news_cache(&cache_path, fetched)?;
     let evidence = query_evidence(&merged_cache, &related_codes, days, max_items);
 
     let base_findings = if stock_only {
@@ -1246,6 +1250,17 @@ fn read_news_cache_items(path: &Path) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+fn merge_into_news_cache(path: &Path, fetched: Vec<Value>) -> Result<Vec<Value>, String> {
+    let cache_lock = NEWS_CACHE_WRITE_LOCK.get_or_init(|| Mutex::new(()));
+    let _guard = cache_lock
+        .lock()
+        .map_err(|_| "消息缓存写入锁已损坏".to_string())?;
+    let cached = read_news_cache_items(path);
+    let merged = merge_news_items(cached, fetched);
+    write_news_cache_items(path, &merged)?;
+    Ok(merged)
+}
+
 fn write_news_cache_items(path: &Path, items: &[Value]) -> Result<(), String> {
     let root = path
         .parent()
@@ -1255,7 +1270,11 @@ fn write_news_cache_items(path: &Path, items: &[Value]) -> Result<(), String> {
         json!({"schema_version": 1, "updated_at_epoch_ms": epoch_millis(), "items": items});
     let bytes =
         serde_json::to_vec(&payload).map_err(|error| format!("序列化消息缓存失败：{error}"))?;
-    let tmp_path = root.join(format!("{NEWS_CACHE_FILE}.tmp-{}", epoch_millis()));
+    let tmp_path = root.join(format!(
+        "{NEWS_CACHE_FILE}.tmp-{}-{}",
+        epoch_millis(),
+        NEWS_CACHE_TMP_COUNTER.fetch_add(1, AtomicOrdering::Relaxed)
+    ));
     fs::write(&tmp_path, &bytes).map_err(|error| format!("写入消息缓存临时文件失败：{error}"))?;
     if path.exists() {
         fs::remove_file(path).map_err(|error| format!("替换旧消息缓存失败：{error}"))?;
@@ -2535,6 +2554,43 @@ fn redact_secret(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concurrent_news_cache_merges_preserve_both_refreshes() {
+        let path = std::env::temp_dir().join(format!(
+            "gp-news-cache-test-{}-{}.json",
+            epoch_millis(),
+            NEWS_CACHE_TMP_COUNTER.fetch_add(1, AtomicOrdering::Relaxed)
+        ));
+        let first_path = path.clone();
+        let second_path = path.clone();
+        let first = std::thread::spawn(move || {
+            merge_into_news_cache(
+                &first_path,
+                vec![json!({"id": "first", "published_at_epoch_ms": 2})],
+            )
+            .unwrap();
+        });
+        let second = std::thread::spawn(move || {
+            merge_into_news_cache(
+                &second_path,
+                vec![json!({"id": "second", "published_at_epoch_ms": 1})],
+            )
+            .unwrap();
+        });
+        first.join().unwrap();
+        second.join().unwrap();
+
+        let ids = read_news_cache_items(&path)
+            .into_iter()
+            .filter_map(|item| item["id"].as_str().map(str::to_string))
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            ids,
+            HashSet::from(["first".to_string(), "second".to_string()])
+        );
+        let _ = fs::remove_file(path);
+    }
 
     #[test]
     fn sina_us_market_brief_parser_extracts_indices() {

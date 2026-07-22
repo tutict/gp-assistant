@@ -24,7 +24,7 @@ Android 导入后重建 FTS；Windows 导入后可在后台重新生成向量。
 3. 非 SQLite 文件按 v1 JSON 兼容解析；
 4. 导入后统一写入 v2 数据库并重建 FTS。
 
-旧包中的 `items`、`documents`、`source_documents`、`evidence_chunks` 和 `relation_edges` 会合并迁移；文档 ID 加入来源文件哈希和序号，避免不同旧表之间碰撞。
+旧包只接受数值 `schema_version=1` 或已知的 v1 格式标识。`items`、`documents`、`source_documents`、`evidence_chunks` 和 `relation_edges` 会合并迁移；唯一旧文档沿用稳定 ID，发生跨容器碰撞时再加入容器和序号哈希，兼顾升级兼容与防覆盖。
 
 ## Android 能力
 

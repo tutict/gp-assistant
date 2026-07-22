@@ -24,6 +24,19 @@ const MAX_PDF_OBJECT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_PDF_PAGE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 5;
 
+#[derive(Debug)]
+struct PdfExtraction {
+    documents: Vec<Value>,
+    page_count: usize,
+    skipped_pages: Vec<u32>,
+}
+
+impl PdfExtraction {
+    fn ocr_required(&self) -> bool {
+        !self.skipped_pages.is_empty()
+    }
+}
+
 pub(crate) async fn import_url(app: &tauri::AppHandle, payload: &Value) -> Result<Value, String> {
     let raw_url = payload
         .get("url")
@@ -103,8 +116,7 @@ pub(crate) async fn import_url(app: &tauri::AppHandle, payload: &Value) -> Resul
             .filter(|value| !value.is_empty())
             .unwrap_or(&page_title);
         let document_id = format!("url-{}", sha256_hex(url.as_str().as_bytes()));
-        let store = research::open_app_store(app)?;
-        let result = store.ingest_documents(&[json!({
+        let documents = [json!({
             "document_id": document_id,
             "title": title,
             "content": content,
@@ -115,7 +127,8 @@ pub(crate) async fn import_url(app: &tauri::AppHandle, payload: &Value) -> Resul
             "user_imported": true,
             "pinned": true,
             "metadata": {"import_kind": "url"}
-        })])?;
+        })];
+        let result = research::with_app_store(app, |store| store.ingest_documents(&documents))?;
         return Ok(json!({
             "kind": "url",
             "final_url": url.as_str(),
@@ -133,10 +146,30 @@ pub(crate) fn import_pdf(app: &tauri::AppHandle, payload: &Value) -> Result<Valu
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "bytes_base64 is required".to_string())?;
+    let bytes = decode_base64_with_limit(encoded, MAX_PDF_BYTES, "PDF")?;
+    import_pdf_bytes(app, payload, &bytes, None)
+}
+
+fn decode_base64_with_limit(
+    encoded: &str,
+    decoded_limit: usize,
+    label: &str,
+) -> Result<Vec<u8>, String> {
+    let encoded_limit = decoded_limit.div_ceil(3).saturating_mul(4);
+    if encoded.len() > encoded_limit {
+        return Err(format!(
+            "{label} exceeds the {decoded_limit} byte safety limit"
+        ));
+    }
     let bytes = general_purpose::STANDARD
         .decode(encoded)
-        .map_err(|error| format!("invalid PDF base64 payload: {error}"))?;
-    import_pdf_bytes(app, payload, &bytes, None)
+        .map_err(|error| format!("invalid {label} base64 payload: {error}"))?;
+    if bytes.len() > decoded_limit {
+        return Err(format!(
+            "{label} exceeds the {decoded_limit} byte safety limit"
+        ));
+    }
+    Ok(bytes)
 }
 
 fn import_pdf_bytes(
@@ -145,15 +178,20 @@ fn import_pdf_bytes(
     bytes: &[u8],
     source_url: Option<&str>,
 ) -> Result<Value, String> {
-    let documents = extract_pdf_documents(payload, bytes, source_url)?;
-    let page_count = documents.len();
-    let store = research::open_app_store(app)?;
-    let imported = store.ingest_documents(&documents)?;
+    let extraction = extract_pdf_documents(payload, bytes, source_url)?;
+    let page_count = extraction.page_count;
+    let extracted_page_count = extraction.documents.len();
+    let ocr_required = extraction.ocr_required();
+    let skipped_pages = extraction.skipped_pages.clone();
+    let imported =
+        research::with_app_store(app, |store| store.ingest_documents(&extraction.documents))?;
     Ok(json!({
         "kind": "pdf",
         "page_count": page_count,
+        "extracted_page_count": extracted_page_count,
+        "skipped_pages": skipped_pages,
         "imported": imported,
-        "ocr_required": false
+        "ocr_required": ocr_required
     }))
 }
 
@@ -161,7 +199,7 @@ fn extract_pdf_documents(
     payload: &Value,
     bytes: &[u8],
     source_url: Option<&str>,
-) -> Result<Vec<Value>, String> {
+) -> Result<PdfExtraction, String> {
     if bytes.len() > MAX_PDF_BYTES {
         return Err("PDF exceeds the 25 MB safety limit".to_string());
     }
@@ -183,11 +221,13 @@ fn extract_pdf_documents(
         .unwrap_or("用户导入 PDF");
     let pdf_hash = sha256_hex(bytes);
     let mut extracted = Vec::new();
+    let mut skipped_pages = Vec::new();
     for page_number in pages.keys().copied() {
         let text = document
             .extract_text_with_limit(&[page_number], MAX_PDF_PAGE_BYTES)
             .map_err(|error| format!("failed to extract PDF page {page_number}: {error}"))?;
         if text.trim().is_empty() {
+            skipped_pages.push(page_number);
             continue;
         }
         extracted.push(json!({
@@ -216,7 +256,11 @@ fn extract_pdf_documents(
                 .to_string(),
         );
     }
-    Ok(extracted)
+    Ok(PdfExtraction {
+        documents: extracted,
+        page_count: pages.len(),
+        skipped_pages,
+    })
 }
 
 async fn resolve_public_https_url(url: &Url) -> Result<Vec<SocketAddr>, String> {
@@ -354,6 +398,77 @@ fn sha256_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lopdf::{
+        content::{Content, Operation},
+        dictionary, Object, Stream, StringFormat,
+    };
+
+    fn mixed_text_and_scanned_pdf() -> Vec<u8> {
+        let mut document = Document::with_version("1.5");
+        let pages_id = document.new_object_id();
+        let font_id = document.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica"
+        });
+        let resources_id = document.add_object(dictionary! {
+            "Font" => dictionary! { "F1" => font_id }
+        });
+        let text_content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                Operation::new("Td", vec![50.into(), 700.into()]),
+                Operation::new(
+                    "Tj",
+                    vec![Object::String(
+                        b"This page contains enough extractable research evidence.".to_vec(),
+                        StringFormat::Literal,
+                    )],
+                ),
+                Operation::new("ET", vec![]),
+            ],
+        };
+        let text_stream = document.add_object(Stream::new(
+            dictionary! {},
+            text_content
+                .encode()
+                .expect("test PDF content should encode"),
+        ));
+        let empty_stream = document.add_object(Stream::new(dictionary! {}, Vec::new()));
+        let text_page = document.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Resources" => resources_id,
+            "Contents" => text_stream,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()]
+        });
+        let scanned_page = document.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Resources" => resources_id,
+            "Contents" => empty_stream,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()]
+        });
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![text_page.into(), scanned_page.into()],
+                "Count" => 2
+            }),
+        );
+        let catalog_id = document.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id
+        });
+        document.trailer.set("Root", catalog_id);
+        let mut bytes = Vec::new();
+        document
+            .save_to(&mut bytes)
+            .expect("test PDF should serialize");
+        bytes
+    }
 
     #[test]
     fn rejects_ssrf_targets_and_url_credentials() {
@@ -401,5 +516,28 @@ mod tests {
         assert!(extract_pdf_documents(&payload, &bytes, None)
             .unwrap_err()
             .contains("25 MB"));
+    }
+
+    #[test]
+    fn reports_scanned_pages_in_mixed_pdfs() {
+        let extraction = extract_pdf_documents(
+            &json!({"title": "mixed PDF"}),
+            &mixed_text_and_scanned_pdf(),
+            None,
+        )
+        .expect("mixed PDF should retain its text pages");
+
+        assert_eq!(extraction.page_count, 2);
+        assert_eq!(extraction.documents.len(), 1);
+        assert_eq!(extraction.skipped_pages, vec![2]);
+        assert!(extraction.ocr_required());
+    }
+
+    #[test]
+    fn rejects_encoded_pdf_before_allocating_decoded_bytes() {
+        let error = decode_base64_with_limit("QUJDRA==", 3, "PDF")
+            .expect_err("four decoded bytes must exceed a three-byte limit");
+
+        assert!(error.contains("safety limit"));
     }
 }

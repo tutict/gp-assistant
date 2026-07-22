@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "./hooks/useTheme";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { isMobileTauriRuntime } from "./lib/tauri";
 import { createPersistentWatchlistSetter, loadLocalWatchlistSnapshot, loadPersistentWatchlist } from "./lib/watchlistStore";
 import { sanitizePersistedLlmSettings } from "./lib/contracts";
+import { refreshResearchWatchlist } from "./lib/researchRefresh";
 import { Header } from "./components/Header";
 import { Sidebar } from "./components/Sidebar";
 import { FilterBar } from "./components/FilterBar";
@@ -24,6 +25,7 @@ import {
 type ViewKey = "screen" | "observe" | "backtest" | "news" | "agent";
 type LlmSettingsUpdater = LlmSettings | null | ((prev: LlmSettings | null) => LlmSettings | null);
 type StockRouteRequest = { code: string; requestId: number };
+const RESEARCH_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 
 interface AppProps {
   onMounted?: () => void;
@@ -53,6 +55,7 @@ export default function App({ onMounted }: AppProps) {
   // Persistent state
   const [watchlistLocalSnapshot] = useState<WatchlistItem[]>(() => loadLocalWatchlistSnapshot());
   const [watchlist, setWatchlistState] = useState<WatchlistItem[]>(watchlistLocalSnapshot);
+  const researchRefreshStateRef = useRef({ lastRun: 0, running: false, signature: "" });
   const [storedLlmSettings, setStoredLlmSettings] = useLocalStorage<LlmSettings | null>(
     "stock-optimizer-llm-settings",
     null,
@@ -65,6 +68,43 @@ export default function App({ onMounted }: AppProps) {
   useEffect(() => {
     void loadPersistentWatchlist(watchlistLocalSnapshot, setWatchlistState);
   }, [watchlistLocalSnapshot]);
+
+  useEffect(() => {
+    let disposed = false;
+    const signature = watchlist.map((item) => item.code.trim().toUpperCase()).sort().join("|");
+    if (researchRefreshStateRef.current.signature !== signature) {
+      researchRefreshStateRef.current.signature = signature;
+      researchRefreshStateRef.current.lastRun = 0;
+    }
+    const maybeRefresh = async () => {
+      const state = researchRefreshStateRef.current;
+      if (disposed || state.running || !watchlist.length
+        || document.visibilityState !== "visible" || !navigator.onLine) return;
+      const now = Date.now();
+      if (now - state.lastRun < RESEARCH_REFRESH_INTERVAL_MS) return;
+      state.running = true;
+      state.lastRun = now;
+      try {
+        const result = await refreshResearchWatchlist(watchlist);
+        if (result.failed.length) {
+          console.warn("background research refresh partially failed", result.failed);
+        }
+      } finally {
+        state.running = false;
+      }
+    };
+    const handleForeground = () => { void maybeRefresh(); };
+    const timer = window.setInterval(handleForeground, 60 * 1000);
+    document.addEventListener("visibilitychange", handleForeground);
+    window.addEventListener("online", handleForeground);
+    void maybeRefresh();
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleForeground);
+      window.removeEventListener("online", handleForeground);
+    };
+  }, [watchlist]);
 
   // Filter criteria state
   const [criteria, setCriteria] = useLocalStorage("stock-optimizer-criteria", {

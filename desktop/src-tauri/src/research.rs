@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering as AtomicOrdering},
-        Arc, Mutex, OnceLock,
+        Arc, Mutex, OnceLock, RwLock,
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -24,6 +24,7 @@ const MAX_CITATIONS: usize = 8;
 const MAX_PACK_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PACK_DOCUMENTS: usize = 50_000;
 const MAX_PACK_DOCUMENT_CHARS: usize = 4 * 1024 * 1024;
+const MAX_RESEARCH_CHUNKS: i64 = 50_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct ResearchMessage {
@@ -151,6 +152,12 @@ impl ResearchStore {
                 .get("page_number")
                 .and_then(Value::as_u64)
                 .and_then(|value| u32::try_from(value).ok());
+            let stock_codes_json = serde_json::to_string(&stock_codes)
+                .map_err(|error| format!("failed to encode stock codes: {error}"))?;
+            let entities_json = serde_json::to_string(&entities)
+                .map_err(|error| format!("failed to encode entities: {error}"))?;
+            let relation_types_json = serde_json::to_string(&relation_types)
+                .map_err(|error| format!("failed to encode relation types: {error}"))?;
             let metadata_json = document
                 .get("metadata")
                 .cloned()
@@ -181,6 +188,32 @@ impl ResearchStore {
                 .map_err(|error| format!("failed to inspect existing document: {error}"))?
                 .as_deref()
                 == Some(content_hash.as_str());
+            let derived_metadata_unchanged = content_unchanged
+                && transaction
+                    .query_row(
+                        "SELECT title, page_number, stock_codes_json, entities_json,
+                                relation_types_json, sentiment, source_tier, source_name,
+                                url, published_at
+                         FROM chunks WHERE document_id = ?1 ORDER BY ordinal LIMIT 1",
+                        params![document_id],
+                        |row| {
+                            Ok(row.get::<_, String>(0)? == title
+                                && row.get::<_, Option<u32>>(1)? == page_number
+                                && row.get::<_, String>(2)? == stock_codes_json
+                                && row.get::<_, String>(3)? == entities_json
+                                && row.get::<_, String>(4)? == relation_types_json
+                                && row.get::<_, String>(5)? == sentiment
+                                && row.get::<_, String>(6)? == source_tier
+                                && row.get::<_, String>(7)? == source_name
+                                && row.get::<_, Option<String>>(8)? == url
+                                && row.get::<_, Option<String>>(9)? == published_at)
+                        },
+                    )
+                    .optional()
+                    .map_err(|error| {
+                        format!("failed to inspect indexed document metadata: {error}")
+                    })?
+                    .unwrap_or(false);
 
             transaction
                 .execute(
@@ -215,7 +248,29 @@ impl ResearchStore {
                 )
                 .map_err(|error| format!("failed to store research document: {error}"))?;
 
+            if derived_metadata_unchanged {
+                continue;
+            }
+
             if content_unchanged {
+                refresh_unchanged_document_metadata(
+                    &transaction,
+                    &document_id,
+                    &title,
+                    page_number,
+                    &stock_codes_json,
+                    &entities_json,
+                    &relation_types_json,
+                    &sentiment,
+                    &source_tier,
+                    &source_name,
+                    url.as_deref(),
+                    published_at.as_deref(),
+                    &content,
+                    &stock_codes,
+                    imported_at,
+                )?;
+                invalidate_vector_cache(&self.path);
                 continue;
             }
 
@@ -243,12 +298,6 @@ impl ResearchStore {
             let chunks = split_text(&content, DEFAULT_CHUNK_CHARS, DEFAULT_CHUNK_OVERLAP);
             for (ordinal, chunk_text) in chunks.iter().enumerate() {
                 let chunk_id = format!("{document_id}:{ordinal}");
-                let stock_codes_json = serde_json::to_string(&stock_codes)
-                    .map_err(|error| format!("failed to encode stock codes: {error}"))?;
-                let entities_json = serde_json::to_string(&entities)
-                    .map_err(|error| format!("failed to encode entities: {error}"))?;
-                let relation_types_json = serde_json::to_string(&relation_types)
-                    .map_err(|error| format!("failed to encode relation types: {error}"))?;
                 transaction
                     .execute(
                         "INSERT INTO chunks (
@@ -325,13 +374,13 @@ impl ResearchStore {
             }
         }
 
+        let retention = prune_retention_transaction(&transaction, MAX_RESEARCH_CHUNKS)?;
         transaction
             .commit()
             .map_err(|error| format!("failed to commit research import: {error}"))?;
-        if chunk_count > 0 {
+        if chunk_count > 0 || retention["removed_chunks"].as_u64().unwrap_or(0) > 0 {
             invalidate_vector_cache(&self.path);
         }
-        let retention = self.prune_retention()?;
         Ok(json!({
             "document_count": documents.len(),
             "chunk_count": chunk_count,
@@ -341,75 +390,22 @@ impl ResearchStore {
     }
 
     pub(crate) fn prune_retention(&self) -> Result<Value, String> {
+        self.prune_retention_to_limit(MAX_RESEARCH_CHUNKS)
+    }
+
+    fn prune_retention_to_limit(&self, chunk_limit: i64) -> Result<Value, String> {
         let mut connection = self.connection()?;
         let transaction = connection
             .transaction()
             .map_err(|error| format!("failed to start research retention cleanup: {error}"))?;
-        let old_document_ids = {
-            let mut statement = transaction
-                .prepare(
-                    "SELECT id FROM documents
-                     WHERE source_tier IN ('news', 'community')
-                       AND user_imported = 0 AND pinned = 0 AND cited_count = 0
-                       AND published_at IS NOT NULL
-                       AND datetime(published_at) < datetime('now', '-365 days')",
-                )
-                .map_err(|error| format!("failed to prepare retention candidates: {error}"))?;
-            let rows = statement
-                .query_map([], |row| row.get::<_, String>(0))
-                .map_err(|error| format!("failed to query retention candidates: {error}"))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| format!("failed to read retention candidates: {error}"))?;
-            rows
-        };
-        let mut removed_documents = 0usize;
-        let mut removed_chunks = 0usize;
-        for document_id in old_document_ids {
-            removed_chunks += delete_document(&transaction, &document_id)?;
-            removed_documents += 1;
-        }
-        let mut chunk_count: i64 = transaction
-            .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
-            .map_err(|error| format!("failed to count retained chunks: {error}"))?;
-        if chunk_count > 50_000 {
-            let overflow_candidates = {
-                let mut statement = transaction
-                    .prepare(
-                        "SELECT id FROM documents
-                         WHERE source_tier IN ('news', 'community', 'research_report')
-                           AND user_imported = 0 AND pinned = 0 AND cited_count = 0
-                         ORDER BY COALESCE(published_at, ''), imported_at_epoch_ms, id",
-                    )
-                    .map_err(|error| format!("failed to prepare overflow cleanup: {error}"))?;
-                let rows = statement
-                    .query_map([], |row| row.get::<_, String>(0))
-                    .map_err(|error| format!("failed to query overflow cleanup: {error}"))?
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|error| format!("failed to read overflow cleanup: {error}"))?;
-                rows
-            };
-            for document_id in overflow_candidates {
-                if chunk_count <= 50_000 {
-                    break;
-                }
-                let deleted = delete_document(&transaction, &document_id)?;
-                chunk_count -= deleted as i64;
-                removed_chunks += deleted;
-                removed_documents += 1;
-            }
-        }
+        let retention = prune_retention_transaction(&transaction, chunk_limit)?;
         transaction
             .commit()
             .map_err(|error| format!("failed to commit retention cleanup: {error}"))?;
-        if removed_chunks > 0 {
+        if retention["removed_chunks"].as_u64().unwrap_or(0) > 0 {
             invalidate_vector_cache(&self.path);
         }
-        Ok(json!({
-            "removed_documents": removed_documents,
-            "removed_chunks": removed_chunks,
-            "chunk_limit": 50000,
-            "news_community_days": 365
-        }))
+        Ok(retention)
     }
 
     pub(crate) fn export_portable_pack(&self, destination: &Path) -> Result<Value, String> {
@@ -427,6 +423,7 @@ impl ResearchStore {
                 .map_err(|error| format!("failed to clear stale pack temporary file: {error}"))?;
         }
         let documents = self.portable_documents()?;
+        validate_portable_documents(&documents)?;
         let mut pack = Connection::open(&temporary)
             .map_err(|error| format!("failed to create SQLite v2 pack: {error}"))?;
         pack.execute_batch(
@@ -472,6 +469,16 @@ impl ResearchStore {
         pack.execute_batch("VACUUM;")
             .map_err(|error| format!("failed to finalize SQLite v2 pack: {error}"))?;
         drop(pack);
+        let temporary_bytes = fs::metadata(&temporary)
+            .map_err(|error| format!("failed to inspect SQLite v2 pack: {error}"))?
+            .len();
+        if temporary_bytes > MAX_PACK_BYTES {
+            let _ = fs::remove_file(&temporary);
+            return Err(format!(
+                "exported research pack exceeds the {} byte safety limit",
+                MAX_PACK_BYTES
+            ));
+        }
 
         let previous = destination.with_extension("sqlite.previous");
         if previous.exists() {
@@ -1405,7 +1412,11 @@ impl ResearchStore {
     }
 }
 
-pub(crate) fn open_app_store(app: &tauri::AppHandle) -> Result<ResearchStore, String> {
+fn open_app_store(app: &tauri::AppHandle) -> Result<ResearchStore, String> {
+    let migration_lock = LEGACY_MIGRATION_LOCK.get_or_init(|| Mutex::new(()));
+    let _guard = migration_lock
+        .lock()
+        .map_err(|_| "legacy research migration lock is poisoned".to_string())?;
     let app_data = app
         .path()
         .app_data_dir()
@@ -1415,12 +1426,50 @@ pub(crate) fn open_app_store(app: &tauri::AppHandle) -> Result<ResearchStore, St
         .map_err(|error| format!("failed to create research directory: {error}"))?;
     recover_research_files(&research_dir)?;
     let store = ResearchStore::open(research_dir.join("research.sqlite"))?;
-    let migration_lock = LEGACY_MIGRATION_LOCK.get_or_init(|| Mutex::new(()));
-    let _guard = migration_lock
-        .lock()
-        .map_err(|_| "legacy research migration lock is poisoned".to_string())?;
     migrate_legacy_sources(&store, &app_data)?;
     Ok(store)
+}
+
+pub(crate) fn with_app_store<T>(
+    app: &tauri::AppHandle,
+    operation: impl FnOnce(&ResearchStore) -> Result<T, String>,
+) -> Result<T, String> {
+    with_shared_app_database(|| {
+        let store = open_app_store(app)?;
+        operation(&store)
+    })
+}
+
+pub(crate) fn with_app_store_snapshot<T>(
+    app: &tauri::AppHandle,
+    operation: impl FnOnce(&ResearchStore) -> Result<T, String>,
+) -> Result<(u64, T), String> {
+    with_shared_app_database(|| {
+        let generation = APP_RESEARCH_DATABASE_GENERATION.load(AtomicOrdering::Acquire);
+        let store = open_app_store(app)?;
+        operation(&store).map(|result| (generation, result))
+    })
+}
+
+pub(crate) fn with_app_store_at_generation<T>(
+    app: &tauri::AppHandle,
+    expected_generation: u64,
+    operation: impl FnOnce(&ResearchStore) -> Result<T, String>,
+) -> Result<T, String> {
+    with_shared_app_database(|| {
+        ensure_app_database_generation(expected_generation)?;
+        let store = open_app_store(app)?;
+        operation(&store)
+    })
+}
+
+fn ensure_app_database_generation(expected_generation: u64) -> Result<(), String> {
+    if APP_RESEARCH_DATABASE_GENERATION.load(AtomicOrdering::Acquire) != expected_generation {
+        return Err(
+            "research database changed while the answer was generated; retry the query".to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn recover_research_files(research_dir: &Path) -> Result<(), String> {
@@ -1458,10 +1507,9 @@ pub(crate) fn ingest_news_cache(app: &tauri::AppHandle) -> Result<Value, String>
         .path()
         .app_data_dir()
         .map_err(|error| format!("failed to resolve app data directory: {error}"))?;
-    let store = open_app_store(app)?;
     let path = app_data.join("news").join("news-cache.json");
     let documents = legacy_documents_from_file(&path)?;
-    store.ingest_documents(&documents)
+    with_app_store(app, |store| store.ingest_documents(&documents))
 }
 
 pub(crate) fn export_app_pack(app: &tauri::AppHandle, payload: &Value) -> Result<Value, String> {
@@ -1477,10 +1525,14 @@ pub(crate) fn export_app_pack(app: &tauri::AppHandle, payload: &Value) -> Result
                 .join("exports")
                 .join("research-pack-v2.sqlite")
         });
-    open_app_store(app)?.export_portable_pack(&destination)
+    with_app_store(app, |store| store.export_portable_pack(&destination))
 }
 
 pub(crate) fn import_app_pack(app: &tauri::AppHandle, payload: &Value) -> Result<Value, String> {
+    with_exclusive_app_database(|| import_app_pack_unlocked(app, payload))
+}
+
+fn import_app_pack_unlocked(app: &tauri::AppHandle, payload: &Value) -> Result<Value, String> {
     let app_data = app
         .path()
         .app_data_dir()
@@ -1630,6 +1682,10 @@ fn preserve_local_research_state(
 }
 
 pub(crate) fn rollback_app_pack(app: &tauri::AppHandle) -> Result<Value, String> {
+    with_exclusive_app_database(|| rollback_app_pack_unlocked(app))
+}
+
+fn rollback_app_pack_unlocked(app: &tauri::AppHandle) -> Result<Value, String> {
     let app_data = app
         .path()
         .app_data_dir()
@@ -1770,6 +1826,7 @@ fn legacy_documents_from_file(path: &Path) -> Result<Vec<Value>, String> {
             path.display()
         )
     })?;
+    validate_legacy_pack_version(&value)?;
     let inherited_codes = normalized_string_array(value.get("stock_codes"));
     let mut candidates = Vec::new();
     for key in [
@@ -1780,16 +1837,114 @@ fn legacy_documents_from_file(path: &Path) -> Result<Vec<Value>, String> {
         "relation_edges",
     ] {
         if let Some(items) = value.get(key).and_then(Value::as_array) {
-            candidates.extend(items.iter().cloned());
+            candidates.extend(
+                items
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .map(|(ordinal, item)| (key.to_string(), ordinal, item)),
+            );
         }
     }
     if candidates.len() > MAX_PACK_DOCUMENTS {
         return Err("legacy research source contains too many documents".to_string());
     }
-    Ok(candidates
-        .into_iter()
-        .filter_map(|item| normalize_legacy_document(item, path, &inherited_codes))
-        .collect())
+    let path_hash = sha256_hex(path.display().to_string().as_bytes());
+    let mut seen_ids = HashSet::new();
+    let mut documents = Vec::new();
+    for (container, ordinal, item) in candidates {
+        validate_legacy_candidate_size(&item)?;
+        let Some(mut document) = normalize_legacy_document(item, path, &inherited_codes) else {
+            continue;
+        };
+        let document_id = document
+            .get("document_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "normalized legacy document is missing document_id".to_string())?;
+        if !seen_ids.insert(document_id.to_string()) {
+            let collision_hash = sha256_hex(
+                format!("{document_id}|container:{container}|ordinal:{ordinal}").as_bytes(),
+            );
+            let collision_id = format!("legacy-{}-{}", &path_hash[..16], &collision_hash[..24]);
+            document["document_id"] = Value::String(collision_id.clone());
+            seen_ids.insert(collision_id);
+        }
+        documents.push(document);
+    }
+    validate_portable_documents(&documents)?;
+    Ok(documents)
+}
+
+fn validate_legacy_pack_version(value: &Value) -> Result<(), String> {
+    let supported = match value.get("schema_version") {
+        Some(Value::Number(version)) => version.as_u64() == Some(1),
+        Some(Value::String(version)) => matches!(
+            version.as_str(),
+            "1" | "rag-pack-tauri-v1" | "upstream-rag-pack-v1" | "upstream-rag-pack-tauri-v1"
+        ),
+        _ => false,
+    };
+    if !supported {
+        return Err("unsupported legacy research pack schema; expected v1".to_string());
+    }
+    Ok(())
+}
+
+fn validate_legacy_candidate_size(item: &Value) -> Result<(), String> {
+    let Some(object) = item.as_object() else {
+        return Ok(());
+    };
+    let title = object
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("旧版研究资料")
+        .trim();
+    let content = object
+        .get("content")
+        .or_else(|| object.get("text"))
+        .or_else(|| object.get("evidence_text"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            object
+                .get("summary")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|summary| format!("{title}\n{summary}"))
+        });
+    if content.is_some_and(|content| content.chars().count() > MAX_PACK_DOCUMENT_CHARS) {
+        return Err("legacy research pack contains an oversized document".to_string());
+    }
+    Ok(())
+}
+
+fn validate_portable_documents(documents: &[Value]) -> Result<(), String> {
+    if documents.len() > MAX_PACK_DOCUMENTS {
+        return Err(format!(
+            "research pack contains {} documents; the limit is {MAX_PACK_DOCUMENTS}",
+            documents.len()
+        ));
+    }
+    let mut total_chars = 0usize;
+    for document in documents {
+        let content = document
+            .get("content")
+            .or_else(|| document.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let content_chars = content.chars().count();
+        if content_chars > MAX_PACK_DOCUMENT_CHARS {
+            return Err("research pack contains an oversized document".to_string());
+        }
+        total_chars = total_chars.saturating_add(content_chars);
+        if total_chars > MAX_PACK_BYTES as usize {
+            return Err("research pack contains too much text".to_string());
+        }
+    }
+    Ok(())
 }
 
 fn read_portable_pack(path: &Path) -> Result<Vec<Value>, String> {
@@ -1899,9 +2054,6 @@ fn normalize_legacy_document(
                 .filter(|value| !value.is_empty())
                 .map(|summary| format!("{title}\n{summary}"))
         })?;
-    if content.chars().count() > MAX_PACK_DOCUMENT_CHARS {
-        return None;
-    }
     let path_hash = sha256_hex(path.display().to_string().as_bytes());
     let original_id = object
         .get("document_id")
@@ -2007,6 +2159,27 @@ struct VectorCacheEntry {
 static VECTOR_CACHE: OnceLock<Mutex<HashMap<PathBuf, VectorCacheEntry>>> = OnceLock::new();
 static INITIALIZED_DATABASES: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 static LEGACY_MIGRATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static APP_RESEARCH_DATABASE_LOCK: OnceLock<RwLock<()>> = OnceLock::new();
+static APP_RESEARCH_DATABASE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+fn with_shared_app_database<T>(operation: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let lock = APP_RESEARCH_DATABASE_LOCK.get_or_init(|| RwLock::new(()));
+    let _guard = lock
+        .read()
+        .map_err(|_| "research database coordination lock is poisoned".to_string())?;
+    operation()
+}
+
+fn with_exclusive_app_database<T>(
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let lock = APP_RESEARCH_DATABASE_LOCK.get_or_init(|| RwLock::new(()));
+    let _guard = lock
+        .write()
+        .map_err(|_| "research database coordination lock is poisoned".to_string())?;
+    APP_RESEARCH_DATABASE_GENERATION.fetch_add(1, AtomicOrdering::AcqRel);
+    operation()
+}
 
 #[derive(Clone, Debug)]
 struct Candidate {
@@ -2117,6 +2290,218 @@ fn load_candidate(connection: &Connection, chunk_id: &str) -> Result<Candidate, 
             },
         )
         .map_err(|error| format!("failed to load vector candidate {chunk_id}: {error}"))
+}
+
+fn prune_retention_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    chunk_limit: i64,
+) -> Result<Value, String> {
+    if chunk_limit < 0 {
+        return Err("research chunk limit cannot be negative".to_string());
+    }
+    let old_document_ids = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT id FROM documents
+                 WHERE source_tier IN ('news', 'community')
+                   AND user_imported = 0 AND pinned = 0 AND cited_count = 0
+                   AND published_at IS NOT NULL
+                   AND datetime(published_at) < datetime('now', '-365 days')",
+            )
+            .map_err(|error| format!("failed to prepare retention candidates: {error}"))?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("failed to query retention candidates: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to read retention candidates: {error}"))?;
+        rows
+    };
+    let mut removed_documents = 0usize;
+    let mut removed_chunks = 0usize;
+    for document_id in old_document_ids {
+        removed_chunks += delete_document(transaction, &document_id)?;
+        removed_documents += 1;
+    }
+    let mut chunk_count: i64 = transaction
+        .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
+        .map_err(|error| format!("failed to count retained chunks: {error}"))?;
+    if chunk_count > chunk_limit {
+        let overflow_candidates = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT id FROM documents
+                     WHERE source_tier IN ('news', 'community', 'research_report')
+                       AND user_imported = 0 AND pinned = 0 AND cited_count = 0
+                     ORDER BY COALESCE(published_at, ''), imported_at_epoch_ms, id",
+                )
+                .map_err(|error| format!("failed to prepare overflow cleanup: {error}"))?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| format!("failed to query overflow cleanup: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("failed to read overflow cleanup: {error}"))?;
+            rows
+        };
+        for document_id in overflow_candidates {
+            if chunk_count <= chunk_limit {
+                break;
+            }
+            let deleted = delete_document(transaction, &document_id)?;
+            chunk_count -= deleted as i64;
+            removed_chunks += deleted;
+            removed_documents += 1;
+        }
+    }
+    if chunk_count > chunk_limit {
+        return Err(format!(
+            "research chunk limit {chunk_limit} cannot be satisfied: {chunk_count} protected chunks remain"
+        ));
+    }
+    Ok(json!({
+        "removed_documents": removed_documents,
+        "removed_chunks": removed_chunks,
+        "chunk_count": chunk_count,
+        "chunk_limit": chunk_limit,
+        "news_community_days": 365
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn refresh_unchanged_document_metadata(
+    transaction: &rusqlite::Transaction<'_>,
+    document_id: &str,
+    title: &str,
+    page_number: Option<u32>,
+    stock_codes_json: &str,
+    entities_json: &str,
+    relation_types_json: &str,
+    sentiment: &str,
+    source_tier: &str,
+    source_name: &str,
+    url: Option<&str>,
+    published_at: Option<&str>,
+    content: &str,
+    stock_codes: &[String],
+    imported_at: i64,
+) -> Result<(), String> {
+    let existing_messages = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT id, unread, created_at_epoch_ms
+                 FROM research_messages WHERE document_id = ?1",
+            )
+            .map_err(|error| format!("failed to prepare existing research messages: {error}"))?;
+        let rows = statement
+            .query_map(params![document_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    (row.get::<_, bool>(1)?, row.get::<_, i64>(2)?),
+                ))
+            })
+            .map_err(|error| format!("failed to query existing research messages: {error}"))?
+            .collect::<Result<HashMap<_, _>, _>>()
+            .map_err(|error| format!("failed to read existing research messages: {error}"))?;
+        rows
+    };
+    let chunk_rows = {
+        let mut statement = transaction
+            .prepare("SELECT id, content FROM chunks WHERE document_id = ?1 ORDER BY ordinal")
+            .map_err(|error| format!("failed to prepare unchanged research chunks: {error}"))?;
+        let rows = statement
+            .query_map(params![document_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|error| format!("failed to query unchanged research chunks: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to read unchanged research chunks: {error}"))?;
+        rows
+    };
+
+    transaction
+        .execute(
+            "DELETE FROM chunks_fts WHERE chunk_id IN (
+                SELECT id FROM chunks WHERE document_id = ?1
+             )",
+            params![document_id],
+        )
+        .map_err(|error| format!("failed to clear unchanged research FTS rows: {error}"))?;
+    transaction
+        .execute(
+            "UPDATE chunks SET
+                title = ?2, page_number = ?3, stock_codes_json = ?4,
+                entities_json = ?5, relation_types_json = ?6, sentiment = ?7,
+                source_tier = ?8, source_name = ?9, url = ?10, published_at = ?11
+             WHERE document_id = ?1",
+            params![
+                document_id,
+                title,
+                page_number,
+                stock_codes_json,
+                entities_json,
+                relation_types_json,
+                sentiment,
+                source_tier,
+                source_name,
+                url,
+                published_at
+            ],
+        )
+        .map_err(|error| format!("failed to refresh unchanged research chunks: {error}"))?;
+    for (chunk_id, chunk_content) in chunk_rows {
+        transaction
+            .execute(
+                "INSERT INTO chunks_fts (chunk_id, title_terms, entity_terms, body_terms)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    chunk_id,
+                    tokenize_for_fts(title),
+                    tokenize_for_fts(entities_json),
+                    tokenize_for_fts(&chunk_content)
+                ],
+            )
+            .map_err(|error| format!("failed to refresh unchanged research FTS row: {error}"))?;
+    }
+
+    transaction
+        .execute(
+            "DELETE FROM research_messages WHERE document_id = ?1",
+            params![document_id],
+        )
+        .map_err(|error| format!("failed to replace unchanged research messages: {error}"))?;
+    let message_stocks = if stock_codes.is_empty() {
+        vec![None]
+    } else {
+        stock_codes.iter().map(String::as_str).map(Some).collect()
+    };
+    for message_stock in message_stocks {
+        let message_scope = message_stock.unwrap_or("all");
+        let message_id = format!("message:{document_id}:{message_scope}");
+        let (unread, created_at) = existing_messages
+            .get(&message_id)
+            .map(|(unread, created_at)| (*unread, *created_at))
+            .unwrap_or((true, imported_at));
+        transaction
+            .execute(
+                "INSERT INTO research_messages (
+                    id, document_id, stock_code, title, summary, sentiment, source_tier,
+                    published_at, unread, created_at_epoch_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    message_id,
+                    document_id,
+                    message_stock,
+                    title,
+                    excerpt(content, 180),
+                    sentiment,
+                    source_tier,
+                    published_at,
+                    unread,
+                    created_at
+                ],
+            )
+            .map_err(|error| format!("failed to refresh unchanged research message: {error}"))?;
+    }
+    Ok(())
 }
 
 fn delete_document(
@@ -2473,41 +2858,136 @@ pub(crate) fn rrf_fuse(
     fused
 }
 
-pub(crate) fn validate_model_answer(
-    answer: &str,
-    allowed_citation_ids: &[String],
-) -> Result<(), String> {
-    let allowed = allowed_citation_ids
+pub(crate) fn validate_model_answer(answer: &str, citations: &[Value]) -> Result<(), String> {
+    let allowed = citations
         .iter()
-        .map(String::as_str)
-        .collect::<HashSet<_>>();
-    let mut remaining = answer;
-    let mut found = 0usize;
+        .filter_map(|citation| {
+            let citation_id = citation.get("citation_id")?.as_str()?;
+            let source_tier = citation
+                .get("source_tier")
+                .and_then(Value::as_str)
+                .unwrap_or("community");
+            Some((citation_id.to_string(), source_tier != "community"))
+        })
+        .collect::<HashMap<_, _>>();
+    if allowed.is_empty() {
+        return Err("model answer cannot be validated without citations".to_string());
+    }
+
+    let mut checked_segments = 0usize;
+    for segment in answer_segments(answer) {
+        let (plain_text, segment_citations) = inspect_answer_segment(segment, &allowed)?;
+        let substantive = plain_text.chars().any(|character| {
+            character.is_alphanumeric() || ('\u{3400}'..='\u{9fff}').contains(&character)
+        });
+        if !substantive {
+            continue;
+        }
+        checked_segments += 1;
+        if segment_citations.is_empty() {
+            return Err(format!(
+                "model answer contains an uncited statement: {}",
+                excerpt(plain_text.trim(), 80)
+            ));
+        }
+        if !segment_citations
+            .iter()
+            .any(|can_support_fact| *can_support_fact)
+            && !is_explicitly_unverified(&plain_text)
+        {
+            return Err(format!(
+                "community citation cannot support a factual statement: {}",
+                excerpt(plain_text.trim(), 80)
+            ));
+        }
+    }
+    if checked_segments == 0 {
+        return Err("model answer did not contain a cited statement".to_string());
+    }
+    Ok(())
+}
+
+fn answer_segments(answer: &str) -> Vec<&str> {
+    let characters = answer.char_indices().collect::<Vec<_>>();
+    let mut segments = Vec::new();
+    let mut start = 0usize;
+    for (position, (index, character)) in characters.iter().copied().enumerate() {
+        let decimal_point = character == '.'
+            && position > 0
+            && position + 1 < characters.len()
+            && characters[position - 1].1.is_ascii_digit()
+            && characters[position + 1].1.is_ascii_digit();
+        let numeric_separator = matches!(character, ',' | ':' | '，' | '：')
+            && position > 0
+            && position + 1 < characters.len()
+            && characters[position - 1].1.is_ascii_digit()
+            && characters[position + 1].1.is_ascii_digit();
+        let boundary = matches!(
+            character,
+            '。' | '！' | '？' | '!' | '?' | '；' | ';' | '，' | ',' | '：' | ':' | '\n'
+        ) && !numeric_separator
+            || (character == '.' && !decimal_point);
+        if !boundary {
+            continue;
+        }
+        let end = index + character.len_utf8();
+        segments.push(&answer[start..end]);
+        start = end;
+    }
+    if start < answer.len() {
+        segments.push(&answer[start..]);
+    }
+    segments
+}
+
+fn inspect_answer_segment(
+    segment: &str,
+    allowed: &HashMap<String, bool>,
+) -> Result<(String, Vec<bool>), String> {
+    let mut plain_text = String::new();
+    let mut citation_support = Vec::new();
+    let mut remaining = segment;
     while let Some(start) = remaining.find("[C") {
+        plain_text.push_str(&remaining[..start]);
         let after_prefix = &remaining[start + 2..];
         let digit_count = after_prefix
             .chars()
             .take_while(|character| character.is_ascii_digit())
             .count();
         if digit_count == 0 || after_prefix.as_bytes().get(digit_count) != Some(&b']') {
-            remaining = &after_prefix[after_prefix
-                .char_indices()
-                .nth(1)
-                .map(|(index, _)| index)
-                .unwrap_or(after_prefix.len())..];
+            plain_text.push_str("[C");
+            remaining = after_prefix;
             continue;
         }
         let citation_id = format!("C{}", &after_prefix[..digit_count]);
-        if !allowed.contains(citation_id.as_str()) {
-            return Err(format!("model returned unknown citation [{citation_id}]"));
-        }
-        found += 1;
+        let can_support_fact = allowed
+            .get(&citation_id)
+            .copied()
+            .ok_or_else(|| format!("model returned unknown citation [{citation_id}]"))?;
+        citation_support.push(can_support_fact);
         remaining = &after_prefix[digit_count + 1..];
     }
-    if !allowed.is_empty() && found == 0 {
-        return Err("model answer did not include any allowed citation".to_string());
-    }
-    Ok(())
+    plain_text.push_str(remaining);
+    Ok((plain_text, citation_support))
+}
+
+fn is_explicitly_unverified(text: &str) -> bool {
+    let normalized = text.to_ascii_lowercase();
+    [
+        "待核查",
+        "传闻",
+        "未经证实",
+        "不确定",
+        "可能",
+        "据称",
+        "社区讨论",
+        "rumor",
+        "unverified",
+        "uncertain",
+        "pending verification",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
 }
 
 fn split_text(text: &str, target_chars: usize, overlap_chars: usize) -> Vec<String> {
@@ -2760,6 +3240,68 @@ mod tests {
     }
 
     #[test]
+    fn unchanged_content_refreshes_search_and_message_metadata() {
+        let path = temporary_database_path("incremental-metadata");
+        let store = ResearchStore::open(&path).expect("research store should open");
+        store
+            .ingest_documents(&[json!({
+                "document_id": "stable-pdf-page",
+                "title": "Old title",
+                "content": "The underlying evidence text remains unchanged.",
+                "source_tier": "research_report",
+                "source_name": "Old source",
+                "stock_codes": ["600000.SH"],
+                "entities": ["Old entity"],
+                "sentiment": "uncertain"
+            })])
+            .expect("initial document should be ingested");
+        let work = store
+            .pending_embedding_chunks(10)
+            .unwrap()
+            .into_iter()
+            .map(|item| (item, vec![1.0; 512]))
+            .collect::<Vec<_>>();
+        store.store_embeddings(&work, "test-model").unwrap();
+
+        let result = store
+            .ingest_documents(&[json!({
+                "document_id": "stable-pdf-page",
+                "title": "Updated title",
+                "content": "The underlying evidence text remains unchanged.",
+                "source_tier": "filing",
+                "source_name": "Updated source",
+                "stock_codes": ["000001.SZ"],
+                "entities": ["Updated entity"],
+                "sentiment": "positive"
+            })])
+            .expect("metadata-only refresh should succeed");
+
+        assert_eq!(result["chunk_count"], 0);
+        assert_eq!(store.index_status().unwrap()["embedding_count"], 1);
+        assert_eq!(
+            store
+                .query(&json!({"query": "updated entity", "stock_code": "000001.SZ"}))
+                .unwrap()["citations"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+        assert!(store
+            .query(&json!({"query": "underlying evidence", "stock_code": "600000.SH"}))
+            .unwrap()["citations"]
+            .as_array()
+            .is_some_and(Vec::is_empty));
+        let messages = store.messages(&json!({})).unwrap();
+        assert_eq!(messages["items"].as_array().map(Vec::len), Some(1));
+        assert_eq!(messages["items"][0]["stock_code"], "000001.SZ");
+        assert_eq!(messages["items"][0]["title"], "Updated title");
+        assert_eq!(messages["items"][0]["sentiment"], "positive");
+
+        drop(store);
+        let _ = remove_sqlite_files(&path);
+    }
+
+    #[test]
     fn legacy_document_ids_do_not_depend_on_cache_order() {
         let first_item = json!({
             "id": "stable-news-id",
@@ -2780,8 +3322,10 @@ mod tests {
         let path = temporary_database_path("reordered-news-cache").with_extension("json");
         fs::write(
             &path,
-            serde_json::to_vec(&json!({"items": [first_item.clone(), second_item.clone()]}))
-                .expect("first cache should serialize"),
+            serde_json::to_vec(
+                &json!({"schema_version": 1, "items": [first_item.clone(), second_item.clone()]}),
+            )
+            .expect("first cache should serialize"),
         )
         .expect("first cache should be written");
         let original_ids = legacy_documents_from_file(&path)
@@ -2792,7 +3336,7 @@ mod tests {
 
         fs::write(
             &path,
-            serde_json::to_vec(&json!({"items": [second_item, first_item]}))
+            serde_json::to_vec(&json!({"schema_version": 1, "items": [second_item, first_item]}))
                 .expect("reordered cache should serialize"),
         )
         .expect("reordered cache should be written");
@@ -2803,6 +3347,108 @@ mod tests {
             .collect::<HashSet<_>>();
 
         assert_eq!(original_ids, reordered_ids);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn legacy_document_ids_include_their_source_container() {
+        let path = temporary_database_path("legacy-container-collision").with_extension("json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "schema_version": "upstream-rag-pack-v1",
+                "items": [{
+                    "id": "shared-id",
+                    "title": "News item",
+                    "content": "Evidence from the items container."
+                }],
+                "documents": [{
+                    "id": "shared-id",
+                    "title": "Research document",
+                    "content": "Evidence from the documents container."
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let documents = legacy_documents_from_file(&path).unwrap();
+        let ids = documents
+            .iter()
+            .map(|item| item["document_id"].as_str().unwrap())
+            .collect::<HashSet<_>>();
+
+        assert_eq!(documents.len(), 2);
+        assert_eq!(ids.len(), 2);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn unique_legacy_document_ids_remain_backward_compatible() {
+        let path = temporary_database_path("legacy-id-compatibility").with_extension("json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "schema_version": 1,
+                "items": [{
+                    "id": "stable-news-id",
+                    "title": "Stable news",
+                    "content": "Existing installations already use the original stable ID."
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let path_hash = sha256_hex(path.display().to_string().as_bytes());
+        let identity_hash = sha256_hex(b"id:stable-news-id");
+        let expected = format!("legacy-{}-{}", &path_hash[..16], &identity_hash[..24]);
+
+        let documents = legacy_documents_from_file(&path).unwrap();
+
+        assert_eq!(documents[0]["document_id"], expected);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn legacy_pack_import_rejects_unknown_versions() {
+        let path = temporary_database_path("legacy-unknown-version").with_extension("json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "schema_version": 7,
+                "items": [{"id": "future", "content": "Future schema evidence."}]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let error = legacy_documents_from_file(&path)
+            .expect_err("unknown legacy pack versions must not be guessed");
+
+        assert!(error.contains("expected v1"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn legacy_pack_import_rejects_oversized_documents() {
+        let path = temporary_database_path("legacy-oversized-document").with_extension("json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "schema_version": 1,
+                "items": [{
+                    "id": "oversized",
+                    "content": "x".repeat(MAX_PACK_DOCUMENT_CHARS + 1)
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let error = legacy_documents_from_file(&path)
+            .expect_err("oversized legacy documents must fail the whole import");
+
+        assert!(error.contains("oversized document"));
         let _ = fs::remove_file(path);
     }
 
@@ -2925,6 +3571,72 @@ mod tests {
     }
 
     #[test]
+    fn protected_documents_cannot_silently_exceed_chunk_limit() {
+        let path = temporary_database_path("protected-overflow");
+        let store = ResearchStore::open(&path).unwrap();
+        store
+            .ingest_documents(&[
+                json!({
+                    "document_id": "protected-a",
+                    "title": "Protected A",
+                    "content": "First protected evidence.",
+                    "source_tier": "filing",
+                    "pinned": true
+                }),
+                json!({
+                    "document_id": "protected-b",
+                    "title": "Protected B",
+                    "content": "Second protected evidence.",
+                    "source_tier": "filing",
+                    "pinned": true
+                }),
+            ])
+            .unwrap();
+
+        let error = store
+            .prune_retention_to_limit(1)
+            .expect_err("protected overflow must be rejected");
+
+        assert!(error.contains("chunk limit"));
+        assert_eq!(store.index_status().unwrap()["chunk_count"], 2);
+        drop(store);
+        let _ = remove_sqlite_files(&path);
+    }
+
+    #[test]
+    fn exclusive_database_switch_waits_for_shared_operations() {
+        let (shared_started_tx, shared_started_rx) = std::sync::mpsc::channel();
+        let (release_shared_tx, release_shared_rx) = std::sync::mpsc::channel();
+        let shared = std::thread::spawn(move || {
+            with_shared_app_database(|| {
+                shared_started_tx.send(()).unwrap();
+                release_shared_rx.recv().unwrap();
+                Ok(())
+            })
+            .unwrap();
+        });
+        shared_started_rx.recv().unwrap();
+
+        let lock = APP_RESEARCH_DATABASE_LOCK.get().unwrap();
+        assert!(lock.try_write().is_err());
+
+        release_shared_tx.send(()).unwrap();
+        shared.join().unwrap();
+        assert!(lock.try_write().is_ok());
+    }
+
+    #[test]
+    fn exclusive_database_switch_invalidates_in_flight_answers() {
+        let generation = APP_RESEARCH_DATABASE_GENERATION.load(AtomicOrdering::Acquire);
+        with_exclusive_app_database(|| Ok(())).unwrap();
+
+        let error = ensure_app_database_generation(generation)
+            .expect_err("an answer from the previous database generation must be rejected");
+
+        assert!(error.contains("database changed"));
+    }
+
+    #[test]
     fn portable_import_preserves_local_history_and_read_state() {
         let previous_path = temporary_database_path("state-previous");
         let staging_path = temporary_database_path("state-staging");
@@ -2977,10 +3689,44 @@ mod tests {
 
     #[test]
     fn rejects_unknown_or_missing_model_citations() {
-        let allowed = vec!["C1".to_string(), "C2".to_string()];
-        assert!(validate_model_answer("订单保持增长 [C1]。", &allowed).is_ok());
-        assert!(validate_model_answer("订单保持增长 [C9]。", &allowed).is_err());
-        assert!(validate_model_answer("订单保持增长。", &allowed).is_err());
+        let citations = vec![
+            json!({"citation_id": "C1", "source_tier": "filing"}),
+            json!({"citation_id": "C2", "source_tier": "community"}),
+        ];
+        assert!(validate_model_answer("订单保持增长 [C1]。", &citations).is_ok());
+        assert!(validate_model_answer("收入同比增长 3.5% [C1]。", &citations).is_ok());
+        assert!(validate_model_answer("订单保持增长 [C9]。", &citations).is_err());
+        assert!(validate_model_answer("订单保持增长。", &citations).is_err());
+        assert!(validate_model_answer("订单保持增长 [C1]。利润同步改善。", &citations).is_err());
+        assert!(validate_model_answer("公司已经获得大额订单 [C2]。", &citations).is_err());
+        assert!(validate_model_answer(
+            "社区传闻称可能获得订单 [C2]，该说法仍待核查 [C2]。",
+            &citations
+        )
+        .is_ok());
+        assert!(validate_model_answer(
+            "公告显示收入增长 [C1]，社区称已经获得订单 [C2]。",
+            &citations
+        )
+        .is_err());
+        assert!(validate_model_answer("收入增长 [C1]，利润下降。", &citations).is_err());
+        assert!(validate_model_answer(
+            "社区传闻称可能获得订单 [C2]，公司已经签约 [C2]。",
+            &citations
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn rejects_documents_that_cannot_fit_in_a_portable_pack() {
+        let oversized = "证".repeat(MAX_PACK_DOCUMENT_CHARS + 1);
+        let error = validate_portable_documents(&[json!({
+            "document_id": "oversized-pack-doc",
+            "content": oversized
+        })])
+        .expect_err("oversized portable documents must be rejected before export");
+
+        assert!(error.contains("oversized document"));
     }
 
     #[test]

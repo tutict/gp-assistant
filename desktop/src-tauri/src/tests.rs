@@ -1,5 +1,18 @@
 use super::*;
 
+#[cfg(target_os = "windows")]
+#[test]
+fn research_embedding_job_gate_replays_requests_arriving_during_a_run() {
+    let gate = ResearchEmbeddingJobGate::new();
+    assert!(gate.request());
+    gate.begin_cycle();
+    assert!(!gate.request());
+    assert!(gate.finish_cycle());
+    gate.begin_cycle();
+    assert!(!gate.finish_cycle());
+    assert!(gate.request());
+}
+
 #[test]
 fn llm_models_endpoint_appends_models_to_provider_base_path() {
     assert_eq!(

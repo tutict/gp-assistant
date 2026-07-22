@@ -5,6 +5,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 #[cfg(not(mobile))]
 use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -97,6 +99,48 @@ static SCREEN_STOCK_OVERLAY_CACHE: OnceLock<Mutex<HashMap<PathBuf, ScreenStockOv
 static MOBILE_MARKET_UPDATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static HTTP_CLIENT_CACHE: OnceLock<Mutex<HashMap<HttpClientCacheKey, reqwest::Client>>> =
     OnceLock::new();
+#[cfg(target_os = "windows")]
+static RESEARCH_EMBEDDING_JOB_GATE: ResearchEmbeddingJobGate = ResearchEmbeddingJobGate::new();
+
+#[cfg(target_os = "windows")]
+struct ResearchEmbeddingJobGate {
+    running: AtomicBool,
+    pending: AtomicBool,
+}
+
+#[cfg(target_os = "windows")]
+impl ResearchEmbeddingJobGate {
+    const fn new() -> Self {
+        Self {
+            running: AtomicBool::new(false),
+            pending: AtomicBool::new(false),
+        }
+    }
+
+    fn request(&self) -> bool {
+        self.pending.store(true, AtomicOrdering::Release);
+        self.running
+            .compare_exchange(false, true, AtomicOrdering::AcqRel, AtomicOrdering::Acquire)
+            .is_ok()
+    }
+
+    fn begin_cycle(&self) {
+        self.pending.store(false, AtomicOrdering::Release);
+    }
+
+    fn finish_cycle(&self) -> bool {
+        if self.pending.load(AtomicOrdering::Acquire) {
+            return true;
+        }
+        self.running.store(false, AtomicOrdering::Release);
+        if !self.pending.swap(false, AtomicOrdering::AcqRel) {
+            return false;
+        }
+        self.running
+            .compare_exchange(false, true, AtomicOrdering::AcqRel, AtomicOrdering::Acquire)
+            .is_ok()
+    }
+}
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct HttpClientCacheKey {
@@ -1042,12 +1086,15 @@ async fn api_news_rag(app: tauri::AppHandle, payload: Value) -> Result<Value, St
         news_rag::api_news_rag_impl(app.clone(), payload),
     )
     .await?;
-    if let Err(error) = research::ingest_news_cache(&app) {
-        let warning = Value::String(format!("research message ingest failed: {error}"));
-        if let Some(notes) = result.get_mut("notes").and_then(Value::as_array_mut) {
-            notes.push(warning);
-        } else {
-            result["notes"] = Value::Array(vec![warning]);
+    match research::ingest_news_cache(&app) {
+        Ok(_) => schedule_research_embeddings(app.clone()),
+        Err(error) => {
+            let warning = Value::String(format!("research message ingest failed: {error}"));
+            if let Some(notes) = result.get_mut("notes").and_then(Value::as_array_mut) {
+                notes.push(warning);
+            } else {
+                result["notes"] = Value::Array(vec![warning]);
+            }
         }
     }
     Ok(result)
@@ -1056,25 +1103,27 @@ async fn api_news_rag(app: tauri::AppHandle, payload: Value) -> Result<Value, St
 #[tauri::command]
 async fn api_research_overview(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
     runtime::run_io_bound("api_research_overview", move || {
-        let store = research::open_app_store(&app)?;
-        let mut overview = store.overview(&payload)?;
-        #[cfg(target_os = "windows")]
-        {
-            let index = store.index_status()?;
-            let embedding_count = index
-                .get("embedding_count")
-                .and_then(Value::as_i64)
-                .unwrap_or(0);
-            let mut vector = research_embeddings::model_status(&research_embedding_model_dir(&app));
-            let model_ready = vector
-                .get("ready")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            vector["ready"] = Value::Bool(model_ready && embedding_count > 0);
-            vector["embedding_count"] = json!(embedding_count);
-            overview["retrieval"]["vector"] = vector;
-        }
-        Ok(overview)
+        research::with_app_store(&app, |store| {
+            let mut overview = store.overview(&payload)?;
+            #[cfg(target_os = "windows")]
+            {
+                let index = store.index_status()?;
+                let embedding_count = index
+                    .get("embedding_count")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
+                let mut vector =
+                    research_embeddings::model_status(&research_embedding_model_dir(&app));
+                let model_ready = vector
+                    .get("ready")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                vector["ready"] = Value::Bool(model_ready && embedding_count > 0);
+                vector["embedding_count"] = json!(embedding_count);
+                overview["retrieval"]["vector"] = vector;
+            }
+            Ok(overview)
+        })
     })
     .await?
 }
@@ -1082,7 +1131,7 @@ async fn api_research_overview(app: tauri::AppHandle, payload: Value) -> Result<
 #[tauri::command]
 async fn api_research_messages(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
     runtime::run_io_bound("api_research_messages", move || {
-        research::open_app_store(&app)?.messages(&payload)
+        research::with_app_store(&app, |store| store.messages(&payload))
     })
     .await?
 }
@@ -1090,7 +1139,7 @@ async fn api_research_messages(app: tauri::AppHandle, payload: Value) -> Result<
 #[tauri::command]
 async fn api_research_mark_read(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
     runtime::run_io_bound("api_research_mark_read", move || {
-        research::open_app_store(&app)?.mark_read(&payload)
+        research::with_app_store(&app, |store| store.mark_read(&payload))
     })
     .await?
 }
@@ -1099,41 +1148,47 @@ async fn api_research_mark_read(app: tauri::AppHandle, payload: Value) -> Result
 async fn api_research_query(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
     let retrieval_app = app.clone();
     let retrieval_payload = payload.clone();
-    let mut response = runtime::run_cpu_bound("api_research_query", move || {
-        let store = research::open_app_store(&retrieval_app)?;
-        let response = {
-            #[cfg(target_os = "windows")]
-            {
-                let query_vector_result = retrieval_payload
-                    .get("query")
-                    .and_then(Value::as_str)
-                    .map(|query| {
-                        research_embeddings::embed(
-                            &research_embedding_model_dir(&retrieval_app),
-                            &[query.to_string()],
-                        )
-                    })
-                    .transpose();
-                match query_vector_result {
-                    Ok(vectors) => {
-                        let query_vector = vectors.and_then(|items| items.into_iter().next());
-                        store.query_with_vector(&retrieval_payload, query_vector.as_deref())?
+    let (database_generation, mut response) =
+        runtime::run_cpu_bound("api_research_query", move || {
+            research::with_app_store_snapshot(&retrieval_app, |store| {
+                let response = {
+                    #[cfg(target_os = "windows")]
+                    {
+                        let query_vector_result = retrieval_payload
+                            .get("query")
+                            .and_then(Value::as_str)
+                            .map(|query| {
+                                research_embeddings::embed(
+                                    &research_embedding_model_dir(&retrieval_app),
+                                    &[query.to_string()],
+                                )
+                            })
+                            .transpose();
+                        match query_vector_result {
+                            Ok(vectors) => {
+                                let query_vector =
+                                    vectors.and_then(|items| items.into_iter().next());
+                                store.query_with_vector(
+                                    &retrieval_payload,
+                                    query_vector.as_deref(),
+                                )?
+                            }
+                            Err(error) => {
+                                let mut fallback = store.query(&retrieval_payload)?;
+                                fallback["vector_warning"] = Value::String(error);
+                                fallback
+                            }
+                        }
                     }
-                    Err(error) => {
-                        let mut fallback = store.query(&retrieval_payload)?;
-                        fallback["vector_warning"] = Value::String(error);
-                        fallback
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        store.query(&retrieval_payload)?
                     }
-                }
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                store.query(&retrieval_payload)?
-            }
-        };
-        Ok::<Value, String>(response)
-    })
-    .await??;
+                };
+                Ok::<Value, String>(response)
+            })
+        })
+        .await??;
 
     let citations = response
         .get("citations")
@@ -1158,22 +1213,15 @@ async fn api_research_query(app: tauri::AppHandle, payload: Value) -> Result<Val
         )
         .await
         {
-            Ok(Some(answer)) => {
-                let allowed = citations
-                    .iter()
-                    .filter_map(|citation| citation.get("citation_id").and_then(Value::as_str))
-                    .map(ToOwned::to_owned)
-                    .collect::<Vec<_>>();
-                match research::validate_model_answer(&answer, &allowed) {
-                    Ok(()) => {
-                        response["answer"] = Value::String(answer);
-                        response["mode"] = Value::String("model".to_string());
-                    }
-                    Err(error) => {
-                        response["model_warning"] = Value::String(error);
-                    }
+            Ok(Some(answer)) => match research::validate_model_answer(&answer, &citations) {
+                Ok(()) => {
+                    response["answer"] = Value::String(answer);
+                    response["mode"] = Value::String("model".to_string());
                 }
-            }
+                Err(error) => {
+                    response["model_warning"] = Value::String(error);
+                }
+            },
             Ok(None) => {}
             Err(error) => {
                 response["model_warning"] = Value::String(error);
@@ -1181,24 +1229,27 @@ async fn api_research_query(app: tauri::AppHandle, payload: Value) -> Result<Val
         }
     }
 
-    if let Some(thread_id) = payload
+    let thread_id = payload
         .get("thread_id")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    {
-        let thread_id = thread_id.to_string();
-        let question = payload
-            .get("query")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let saved_response = response.clone();
-        runtime::run_io_bound("api_research_save_answer", move || {
-            research::open_app_store(&app)?.save_answer(&thread_id, &question, &saved_response)
+        .map(str::to_string);
+    let question = payload
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let saved_response = response.clone();
+    runtime::run_io_bound("api_research_save_answer", move || {
+        research::with_app_store_at_generation(&app, database_generation, |store| {
+            if let Some(thread_id) = thread_id.as_deref() {
+                store.save_answer(thread_id, &question, &saved_response)?;
+            }
+            Ok(())
         })
-        .await??;
-    }
+    })
+    .await??;
     Ok(response)
 }
 
@@ -1216,13 +1267,14 @@ async fn api_research_refresh(app: tauri::AppHandle, payload: Value) -> Result<V
         })
         .await??
     };
+    schedule_research_embeddings(app);
     Ok(json!({"news": news, "imported": imported}))
 }
 
 #[tauri::command]
 async fn api_research_threads(app: tauri::AppHandle) -> Result<Value, String> {
     runtime::run_io_bound("api_research_threads", move || {
-        research::open_app_store(&app)?.threads()
+        research::with_app_store(&app, |store| store.threads())
     })
     .await?
 }
@@ -1233,7 +1285,7 @@ async fn api_research_thread_create(
     payload: Value,
 ) -> Result<Value, String> {
     runtime::run_io_bound("api_research_thread_create", move || {
-        research::open_app_store(&app)?.create_thread(&payload)
+        research::with_app_store(&app, |store| store.create_thread(&payload))
     })
     .await?
 }
@@ -1250,7 +1302,7 @@ async fn api_research_thread_detail(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| "thread_id is required".to_string())?;
-        research::open_app_store(&app)?.thread(thread_id)
+        research::with_app_store(&app, |store| store.thread(thread_id))
     })
     .await?
 }
@@ -1258,15 +1310,16 @@ async fn api_research_thread_detail(
 #[tauri::command]
 async fn api_research_index_status(app: tauri::AppHandle) -> Result<Value, String> {
     runtime::run_io_bound("api_research_index_status", move || {
-        let store = research::open_app_store(&app)?;
-        let mut status = store.index_status()?;
-        status["documents"] = store.document_statuses()?["items"].clone();
-        #[cfg(target_os = "windows")]
-        {
-            status["vector"] =
-                research_embeddings::model_status(&research_embedding_model_dir(&app));
-        }
-        Ok(status)
+        research::with_app_store(&app, |store| {
+            let mut status = store.index_status()?;
+            status["documents"] = store.document_statuses()?["items"].clone();
+            #[cfg(target_os = "windows")]
+            {
+                status["vector"] =
+                    research_embeddings::model_status(&research_embedding_model_dir(&app));
+            }
+            Ok(status)
+        })
     })
     .await?
 }
@@ -1274,7 +1327,7 @@ async fn api_research_index_status(app: tauri::AppHandle) -> Result<Value, Strin
 #[tauri::command]
 async fn api_research_rebuild_index(app: tauri::AppHandle) -> Result<Value, String> {
     runtime::run_cpu_bound("api_research_rebuild_index", move || {
-        research::open_app_store(&app)?.rebuild_fts()
+        research::with_app_store(&app, |store| store.rebuild_fts())
     })
     .await?
 }
@@ -1284,35 +1337,7 @@ async fn api_research_rebuild_embeddings(app: tauri::AppHandle) -> Result<Value,
     #[cfg(target_os = "windows")]
     {
         runtime::run_cpu_bound("api_research_rebuild_embeddings", move || {
-            let store = research::open_app_store(&app)?;
-            let model_dir = research_embedding_model_dir(&app);
-            let mut stored = 0usize;
-            loop {
-                let pending = store.pending_embedding_chunks(256)?;
-                if pending.is_empty() {
-                    break;
-                }
-                let texts = pending
-                    .iter()
-                    .map(|item| item.text.clone())
-                    .collect::<Vec<_>>();
-                let vectors = research_embeddings::embed(&model_dir, &texts)?;
-                if vectors.len() != pending.len() {
-                    return Err("embedding service returned an unexpected batch size".to_string());
-                }
-                let items = pending.into_iter().zip(vectors).collect::<Vec<_>>();
-                stored += items.len();
-                store.store_embeddings(&items, research_embeddings::MODEL_ID)?;
-            }
-            Ok(json!({
-                "stored": stored,
-                "model_id": research_embeddings::MODEL_ID,
-                "notes": if stored == 0 {
-                    vec!["所有分块均已有当前内容哈希对应的向量。"]
-                } else {
-                    Vec::<&str>::new()
-                }
-            }))
+            rebuild_research_embeddings(&app)
         })
         .await?
     }
@@ -1323,21 +1348,105 @@ async fn api_research_rebuild_embeddings(app: tauri::AppHandle) -> Result<Value,
     }
 }
 
+#[cfg(target_os = "windows")]
+fn rebuild_research_embeddings(app: &tauri::AppHandle) -> Result<Value, String> {
+    research::with_app_store(app, |store| {
+        let model_dir = research_embedding_model_dir(app);
+        let mut stored = 0usize;
+        loop {
+            let pending = store.pending_embedding_chunks(256)?;
+            if pending.is_empty() {
+                break;
+            }
+            let texts = pending
+                .iter()
+                .map(|item| item.text.clone())
+                .collect::<Vec<_>>();
+            let vectors = research_embeddings::embed(&model_dir, &texts)?;
+            if vectors.len() != pending.len() {
+                return Err("embedding service returned an unexpected batch size".to_string());
+            }
+            let items = pending.into_iter().zip(vectors).collect::<Vec<_>>();
+            stored += items.len();
+            store.store_embeddings(&items, research_embeddings::MODEL_ID)?;
+        }
+        Ok(json!({
+            "stored": stored,
+            "model_id": research_embeddings::MODEL_ID,
+            "notes": if stored == 0 {
+                vec!["所有分块均已有当前内容哈希对应的向量。"]
+            } else {
+                Vec::<&str>::new()
+            }
+        }))
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn schedule_research_embeddings(app: tauri::AppHandle) {
+    if !RESEARCH_EMBEDDING_JOB_GATE.request() {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        loop {
+            RESEARCH_EMBEDDING_JOB_GATE.begin_cycle();
+            let worker_app = app.clone();
+            let result = runtime::run_cpu_bound("background_research_embeddings", move || {
+                rebuild_research_embeddings(&worker_app)
+            })
+            .await
+            .and_then(|result| result);
+            let event = match result {
+                Ok(status) => json!({"ok": true, "status": status}),
+                Err(error) => json!({"ok": false, "error": error}),
+            };
+            let _ = app.emit("research-embedding-status", event);
+            if !RESEARCH_EMBEDDING_JOB_GATE.finish_cycle() {
+                break;
+            }
+        }
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn schedule_research_embeddings(_app: tauri::AppHandle) {}
+
 #[tauri::command]
 async fn api_research_import_url(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    runtime::with_heavy_network_permit(
-        "api_research_import_url",
-        research_import::import_url(&app, &payload),
-    )
-    .await
+    #[cfg(mobile)]
+    {
+        let _ = (app, payload);
+        Err("URL research import is only available on desktop".to_string())
+    }
+    #[cfg(not(mobile))]
+    {
+        let result = runtime::with_heavy_network_permit(
+            "api_research_import_url",
+            research_import::import_url(&app, &payload),
+        )
+        .await?;
+        schedule_research_embeddings(app);
+        Ok(result)
+    }
 }
 
 #[tauri::command]
 async fn api_research_import_pdf(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    runtime::run_cpu_bound("api_research_import_pdf", move || {
-        research_import::import_pdf(&app, &payload)
-    })
-    .await?
+    #[cfg(mobile)]
+    {
+        let _ = (app, payload);
+        Err("PDF research import is only available on desktop".to_string())
+    }
+    #[cfg(not(mobile))]
+    {
+        let worker_app = app.clone();
+        let result = runtime::run_cpu_bound("api_research_import_pdf", move || {
+            research_import::import_pdf(&worker_app, &payload)
+        })
+        .await??;
+        schedule_research_embeddings(app);
+        Ok(result)
+    }
 }
 
 #[tauri::command]
@@ -1350,10 +1459,13 @@ async fn api_research_pack_export(app: tauri::AppHandle, payload: Value) -> Resu
 
 #[tauri::command]
 async fn api_research_pack_import(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    runtime::run_io_bound("api_research_pack_import", move || {
-        research::import_app_pack(&app, &payload)
+    let worker_app = app.clone();
+    let result = runtime::run_io_bound("api_research_pack_import", move || {
+        research::import_app_pack(&worker_app, &payload)
     })
-    .await?
+    .await??;
+    schedule_research_embeddings(app);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -8279,6 +8391,26 @@ fn sanitize_path_part(value: &str) -> String {
     part
 }
 
+fn schedule_research_maintenance(app: tauri::AppHandle) {
+    schedule_research_embeddings(app.clone());
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let worker_app = app.clone();
+            let result = runtime::run_io_bound("background_research_retention", move || {
+                research::with_app_store(&worker_app, |store| store.prune_retention())
+            })
+            .await
+            .and_then(|result| result);
+            let event = match result {
+                Ok(status) => json!({"ok": true, "status": status}),
+                Err(error) => json!({"ok": false, "error": error}),
+            };
+            let _ = app.emit("research-retention-status", event);
+            tokio::time::sleep(Duration::from_secs(6 * 60 * 60)).await;
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -8365,7 +8497,10 @@ pub fn run() {
     let builder = builder.setup(|app| setup_desktop(app).map_err(Into::into));
 
     #[cfg(mobile)]
-    let builder = builder.setup(|_| Ok(()));
+    let builder = builder.setup(|app| {
+        schedule_research_maintenance(app.handle().clone());
+        Ok(())
+    });
 
     builder
         .run(tauri::generate_context!())
@@ -8386,6 +8521,8 @@ fn setup_desktop(app: &mut tauri::App) -> tauri::Result<()> {
             }
         })
         .build()?;
+
+    schedule_research_maintenance(app.handle().clone());
 
     Ok(())
 }

@@ -23,17 +23,20 @@ interface NewsRagPanelProps {
   initialCodeRequestId?: number;
 }
 interface ThreadDetail { answers?: ResearchAnswer[]; }
-const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+const MAX_PDF_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_RESEARCH_PACK_BYTES = 64 * 1024 * 1024;
 
 export function NewsRagPanel(props: NewsRagPanelProps) {
   const mobile = isMobileTauriRuntime();
   const watchlist = props.watchlist || [];
   const [code, setCode] = useState(() => normalizeStockCode(props.initialCode || watchlist[0]?.code || ""));
+  const codeRef = useRef(code);
   const [overview, setOverview] = useState<ResearchOverview | null>(null);
   const [messages, setMessages] = useState<ResearchMessage[]>([]);
   const [threads, setThreads] = useState<ResearchThread[]>([]);
   const [threadId, setThreadId] = useState("");
   const threadIdRef = useRef("");
+  const workspaceGenerationRef = useRef(0);
   const [answers, setAnswers] = useState<ResearchAnswer[]>([]);
   const [question, setQuestion] = useState("");
   const [citation, setCitation] = useState<ResearchCitation | null>(null);
@@ -48,18 +51,35 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const [managementResult, setManagementResult] = useState<unknown>(null);
 
   useEffect(() => { threadIdRef.current = threadId; }, [threadId]);
+  const selectCode = useCallback((nextCode: string) => {
+    const normalized = normalizeStockCode(nextCode);
+    if (normalized === codeRef.current) return;
+    codeRef.current = normalized;
+    workspaceGenerationRef.current += 1;
+    setAsking(false);
+    setRefreshing(false);
+    setCode(normalized);
+  }, []);
   useEffect(() => {
     const next = normalizeStockCode(props.initialCode);
-    if (next) setCode(next);
-  }, [props.initialCode, props.initialCodeRequestId]);
+    if (next) selectCode(next);
+  }, [props.initialCode, props.initialCodeRequestId, selectCode]);
 
-  const loadThread = useCallback(async (id: string) => {
-    if (!id) { setAnswers([]); return; }
+  const loadThread = useCallback(async (
+    id: string,
+    generation = workspaceGenerationRef.current,
+  ) => {
+    if (!id) {
+      if (generation === workspaceGenerationRef.current) setAnswers([]);
+      return;
+    }
     const detail = await postJson<ThreadDetail>("/api/research/threads/detail", { thread_id: id });
+    if (generation !== workspaceGenerationRef.current) return;
     setAnswers(detail.answers || []);
   }, []);
 
   const loadWorkspace = useCallback(async (quiet = false) => {
+    const generation = ++workspaceGenerationRef.current;
     if (!quiet) setLoading(true);
     setError("");
     try {
@@ -71,6 +91,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         getJson<{ items?: ResearchMessage[] }>(`/api/research/messages${messageQuery}`),
         getJson<{ items?: ResearchThread[] }>("/api/research/threads"),
       ]);
+      if (generation !== workspaceGenerationRef.current) return;
       const nextThreads = threadResult.items || [];
       setOverview(nextOverview);
       setMessages(messageResult.items || []);
@@ -81,21 +102,27 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         || (!code ? nextThreads.find((item) => !item.stock_code) : undefined);
       if (preferred) {
         setThreadId(preferred.id);
-        await loadThread(preferred.id);
+        await loadThread(preferred.id, generation);
       } else {
         setThreadId("");
         setAnswers([]);
       }
     } catch (nextError) {
-      setError((nextError as Error).message);
+      if (generation === workspaceGenerationRef.current) {
+        setError((nextError as Error).message);
+      }
     } finally {
-      if (!quiet) setLoading(false);
+      if (!quiet && generation === workspaceGenerationRef.current) setLoading(false);
     }
   }, [code, loadThread]);
 
-  useEffect(() => { void loadWorkspace(); }, [loadWorkspace]);
+  useEffect(() => {
+    void loadWorkspace();
+    return () => { workspaceGenerationRef.current += 1; };
+  }, [loadWorkspace]);
 
   const refresh = useCallback(async (background = false) => {
+    const generation = workspaceGenerationRef.current;
     if (!code || !navigator.onLine || document.visibilityState !== "visible") {
       if (!background) await loadWorkspace();
       return;
@@ -103,20 +130,16 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     if (!background) setRefreshing(true);
     try {
       await postJson("/api/research/refresh", buildNewsRagRequest(code, 30));
+      if (generation !== workspaceGenerationRef.current) return;
       await loadWorkspace(true);
     } catch (nextError) {
-      if (!background) setError((nextError as Error).message);
+      if (!background && generation === workspaceGenerationRef.current) {
+        setError((nextError as Error).message);
+      }
     } finally {
-      if (!background) setRefreshing(false);
+      if (!background && generation === workspaceGenerationRef.current) setRefreshing(false);
     }
   }, [code, loadWorkspace]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible" && navigator.onLine) void refresh(true);
-    }, REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
 
   const visibleMessages = useMemo(
     () => code ? messages.filter((message) => message.stock_code === code) : messages,
@@ -170,10 +193,15 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     }
   }, []);
 
-  const createThread = useCallback(async () => {
+  const createThread = useCallback(async (
+    generation = workspaceGenerationRef.current,
+    requestedCode = code,
+  ): Promise<string | null> => {
     const thread = await postJson<ResearchThread>("/api/research/threads/create", {
-      title: code ? `${code} 研究` : "综合研究", stock_code: code || null,
+      title: requestedCode ? `${requestedCode} 研究` : "综合研究",
+      stock_code: requestedCode || null,
     });
+    if (generation !== workspaceGenerationRef.current) return null;
     setThreads((current) => [thread, ...current]);
     setThreadId(thread.id);
     setAnswers([]);
@@ -183,28 +211,32 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const ask = useCallback(async () => {
     const text = question.trim();
     if (!text || asking) return;
+    const generation = workspaceGenerationRef.current;
+    const requestedCode = code;
     setAsking(true);
     setError("");
     try {
       const selectedThread = threads.find((thread) => thread.id === threadId);
-      const activeThread = selectedThread && (selectedThread.stock_code || "") === code
+      const activeThread = selectedThread && (selectedThread.stock_code || "") === requestedCode
         ? selectedThread.id
-        : await createThread();
+        : await createThread(generation, requestedCode);
+      if (!activeThread || generation !== workspaceGenerationRef.current) return;
       const result = await postJson<ResearchQueryResult>("/api/research/query", {
-        query: text, stock_code: code || null, thread_id: activeThread, top_k: 8,
+        query: text, stock_code: requestedCode || null, thread_id: activeThread, top_k: 8,
         llm: buildLlmConfig(props.llmSettings),
       });
+      if (generation !== workspaceGenerationRef.current) return;
       const answer: ResearchAnswer = { ...result, question: text, citations: result.citations || [] };
       setAnswers((current) => [...current, answer]);
       setQuestion("");
       setCitation(answer.citations[0] || null);
       if (mobile) setInboxOpen(false);
       const nextThreads = await getJson<{ items?: ResearchThread[] }>("/api/research/threads");
-      setThreads(nextThreads.items || []);
+      if (generation === workspaceGenerationRef.current) setThreads(nextThreads.items || []);
     } catch (nextError) {
-      setError((nextError as Error).message);
+      if (generation === workspaceGenerationRef.current) setError((nextError as Error).message);
     } finally {
-      setAsking(false);
+      if (generation === workspaceGenerationRef.current) setAsking(false);
     }
   }, [asking, code, createThread, mobile, props.llmSettings, question, threadId, threads]);
 
@@ -251,14 +283,15 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         </span>
       </div>
       <div className="research-actions">
-        <span>前台每 15 分钟更新</span>
+        <span>自选股前台每 15 分钟更新</span>
         <button type="button" onClick={() => void refresh()} disabled={refreshing}>
           <RefreshCw size={15} className={refreshing ? "is-spinning" : ""} />
           {refreshing ? "更新中" : "立即更新"}
         </button>
-        {!mobile && <button type="button" onClick={openKnowledge}>
-          <Database size={15} />知识库管理
-        </button>}
+        <button type="button" onClick={openKnowledge}
+          aria-label={mobile ? "资料包同步" : "知识库管理"}>
+          <Database size={15} />{mobile ? "资料包同步" : "知识库管理"}
+        </button>
       </div>
     </header>
 
@@ -267,11 +300,11 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     </div>}
 
     <div className="research-columns">
-      <InboxPanel code={code} setCode={(next) => { setCode(next); setInboxOpen(false); }}
+      <InboxPanel code={code} setCode={(next) => { selectCode(next); setInboxOpen(false); }}
         watchlist={watchlist} unreadByStock={overview?.unread_by_stock || {}}
         threads={threads} threadId={threadId}
         setThread={(thread) => {
-          setCode(thread.stock_code || "");
+          selectCode(thread.stock_code || "");
           setThreadId(thread.id);
           void loadThread(thread.id);
           setInboxOpen(false);
@@ -326,7 +359,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
 
     {inboxOpen && <button type="button" className="research-mobile-overlay"
       aria-label="关闭自选股收件箱" onClick={() => setInboxOpen(false)} />}
-    {knowledgeOpen && !mobile && <KnowledgeDrawer panelProps={props} code={code}
+    {knowledgeOpen && <KnowledgeDrawer panelProps={props} code={code} mobile={mobile}
       status={indexStatus} management={management} busy={managementBusy}
       result={managementResult} close={() => setKnowledgeOpen(false)} />}
   </section>;
@@ -502,6 +535,7 @@ function CitationRichText(props: {
 function KnowledgeDrawer(props: {
   panelProps: NewsRagPanelProps;
   code: string;
+  mobile: boolean;
   status: ResearchIndexStatus | null;
   management: (action: () => Promise<unknown>) => Promise<void>;
   busy: boolean;
@@ -509,19 +543,21 @@ function KnowledgeDrawer(props: {
   close: () => void;
 }) {
   const [url, setUrl] = useState("");
-  const inputFile = async (file: File, endpoint: string) => props.management(async () =>
-    postJson(endpoint, {
+  const inputFile = async (file: File, endpoint: string) => props.management(async () => {
+    validateResearchFile(file, endpoint);
+    return postJson(endpoint, {
       bytes_base64: await fileToBase64(file),
       stock_codes: props.code ? [props.code] : [],
-    }));
-  const operationError = props.result && typeof props.result === "object" && "error" in props.result
-    ? String((props.result as { error: unknown }).error) : "";
+    });
+  });
+  const operationNotice = props.result == null ? null : researchOperationNotice(props.result);
 
   return <div className="knowledge-drawer-layer">
     <button type="button" className="knowledge-drawer-overlay"
-      aria-label="关闭知识库管理" onClick={props.close} />
+       aria-label="关闭知识库管理" onClick={props.close} />
     <aside className="knowledge-drawer">
-      <header><div><span>知识库管理</span><h2>资料、索引与模型</h2></div>
+      <header><div><span>{props.mobile ? "资料包同步" : "知识库管理"}</span>
+        <h2>{props.mobile ? "导入与回滚" : "资料、索引与模型"}</h2></div>
         <button type="button" className="research-icon-button" aria-label="关闭知识库管理"
           title="关闭" onClick={props.close}><X size={18} /></button>
       </header>
@@ -535,7 +571,7 @@ function KnowledgeDrawer(props: {
         <div><span>占用</span><strong>{formatBytes(props.status?.database_bytes)}</strong></div>
       </section>
 
-      <section className="knowledge-section">
+      {!props.mobile && <section className="knowledge-section">
         <h3>导入资料</h3>
         <label><span>公网 HTTPS 地址</span>
           <input value={url} onChange={(event) => setUrl(event.target.value)}
@@ -554,9 +590,9 @@ function KnowledgeDrawer(props: {
           }} />
         </label>
         <small>扫描件需先 OCR；单文件上限 25 MB、500 页。</small>
-      </section>
+      </section>}
 
-      <section className="knowledge-section">
+      {!props.mobile && <section className="knowledge-section">
         <h3>索引维护</h3>
         <div className="knowledge-button-row">
           <button type="button" disabled={props.busy}
@@ -572,16 +608,16 @@ function KnowledgeDrawer(props: {
         </div>
         <p>{props.status?.healthy ? "文档分块与 FTS 数量一致。"
           : "索引数量不一致，建议重建 FTS。"}</p>
-      </section>
+      </section>}
 
       <section className="knowledge-section">
         <h3>同步与回滚</h3>
-        <div className="knowledge-button-row">
-          <button type="button" disabled={props.busy}
+        <div className={`knowledge-button-row${props.mobile ? " single" : ""}`}>
+          {!props.mobile && <button type="button" disabled={props.busy}
             onClick={() => void props.management(() =>
               postJson("/api/research/pack/export", {}))}>
             <Upload size={15} />导出 v2 包
-          </button>
+          </button>}
           <button type="button" disabled={props.busy}
             onClick={() => void props.management(() =>
               postJson("/api/research/pack/rollback", {}))}>
@@ -607,9 +643,9 @@ function KnowledgeDrawer(props: {
       {props.busy && <div className="knowledge-operation">
         <RefreshCw size={15} className="is-spinning" />正在处理…
       </div>}
-      {!props.busy && props.result != null &&
-        <div className={`knowledge-operation${operationError ? " error" : ""}`}>
-          {operationError || "操作已完成，索引状态已刷新。"}
+      {!props.busy && operationNotice &&
+        <div className={`knowledge-operation ${operationNotice.tone}`}>
+          {operationNotice.text}
         </div>}
       <details className="knowledge-diagnostics"><summary>高级诊断</summary>
         <pre>{JSON.stringify(props.status, null, 2)}</pre>
@@ -617,6 +653,30 @@ function KnowledgeDrawer(props: {
       </details>
     </aside>
   </div>;
+}
+
+export function researchOperationNotice(result: unknown): {
+  tone: "success" | "warning" | "error";
+  text: string;
+} {
+  if (result && typeof result === "object") {
+    const record = result as Record<string, unknown>;
+    if ("error" in record) {
+      return { tone: "error", text: String(record.error) };
+    }
+    if (record.ocr_required === true) {
+      const skippedPages = Array.isArray(record.skipped_pages)
+        ? record.skipped_pages.filter((page): page is number => Number.isInteger(page)) : [];
+      const extracted = Number(record.extracted_page_count || 0);
+      const total = Number(record.page_count || extracted);
+      const pages = skippedPages.length ? `第 ${skippedPages.join("、")} 页` : "部分页面";
+      return {
+        tone: "warning",
+        text: `已导入 ${extracted}/${total} 页；${pages}没有可提取文本，需要 OCR 后重新导入。`,
+      };
+    }
+  }
+  return { tone: "success", text: "操作已完成，索引状态已刷新。" };
 }
 
 export function NewsRagView({ result }: { result: NewsRagResult }) {
@@ -685,11 +745,27 @@ function formatScore(value?: number | null): string {
   return Number.isFinite(value) ? Number(value).toFixed(4) : "—";
 }
 
-async function fileToBase64(file: File): Promise<string> {
-  const buffer = new Uint8Array(await file.arrayBuffer());
-  let binary = "";
-  for (let index = 0; index < buffer.length; index += 0x8000) {
-    binary += String.fromCharCode(...buffer.subarray(index, index + 0x8000));
+export function validateResearchFile(file: Pick<File, "name" | "size">, endpoint: string): void {
+  const pdf = endpoint === "/api/research/import-pdf";
+  const limit = pdf ? MAX_PDF_FILE_BYTES : MAX_RESEARCH_PACK_BYTES;
+  if (file.size > limit) {
+    throw new Error(`${file.name || "文件"} 超过 ${pdf ? "25 MB" : "64 MB"} 上限`);
   }
-  return window.btoa(binary);
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const separator = result.indexOf(",");
+      if (separator < 0) {
+        reject(new Error("文件编码失败"));
+        return;
+      }
+      resolve(result.slice(separator + 1));
+    };
+    reader.readAsDataURL(file);
+  });
 }
