@@ -108,6 +108,18 @@ export const TAURI_GET_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/data-sources": async ({ invoke }) => invoke("api_data_sources"),
   "/api/data-sources/status": async ({ invoke }) => invoke("api_market_status"),
   "/api/rag-pack/status": async ({ invoke }) => invoke("api_rag_pack_status"),
+  "/api/research/overview": async ({ invoke, parsed }) => invoke("api_research_overview", {
+    payload: { stock_code: parsed.searchParams.get("stock_code") || "" },
+  }),
+  "/api/research/messages": async ({ invoke, parsed }) => invoke("api_research_messages", {
+    payload: {
+      stock_code: parsed.searchParams.get("stock_code") || "",
+      unread_only: parsed.searchParams.get("unread_only") === "true",
+      limit: Number(parsed.searchParams.get("limit") || 100),
+    },
+  }),
+  "/api/research/threads": async ({ invoke }) => invoke("api_research_threads"),
+  "/api/research/index-status": async ({ invoke }) => invoke("api_research_index_status"),
   "/api/upstream-rag/mobile/list": async ({ invoke }) => invoke("core_upstream_rag_list"),
   "/api/upstream-rag/status": async ({ invoke }) => invoke("api_upstream_rag_status"),
   "/api/upstream-rag/mobile/detail": async ({ invoke, parsed }) => invoke("core_upstream_rag_detail", {
@@ -215,6 +227,18 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/news-rag": async ({ invoke, payload }) => isMobileTauriRuntime()
     ? withTimeout(analyzeMobileStockNews(invoke, asRecord(payload)), MOBILE_NEWS_RAG_TIMEOUT_MS, `移动端消息分析超过 ${Math.round(MOBILE_NEWS_RAG_TIMEOUT_MS / 1000)} 秒未返回，已中止等待。`)
     : invoke("api_news_rag", { payload }),
+  "/api/research/refresh": async ({ invoke, payload }) => invoke("api_research_refresh", { payload }),
+  "/api/research/mark-read": async ({ invoke, payload }) => invoke("api_research_mark_read", { payload }),
+  "/api/research/query": async ({ invoke, payload }) => invoke("api_research_query", { payload }),
+  "/api/research/threads/create": async ({ invoke, payload }) => invoke("api_research_thread_create", { payload }),
+  "/api/research/threads/detail": async ({ invoke, payload }) => invoke("api_research_thread_detail", { payload }),
+  "/api/research/rebuild-index": async ({ invoke }) => invoke("api_research_rebuild_index"),
+  "/api/research/rebuild-embeddings": async ({ invoke }) => invoke("api_research_rebuild_embeddings"),
+  "/api/research/import-url": async ({ invoke, payload }) => invoke("api_research_import_url", { payload }),
+  "/api/research/import-pdf": async ({ invoke, payload }) => invoke("api_research_import_pdf", { payload }),
+  "/api/research/pack/export": async ({ invoke, payload }) => invoke("api_research_pack_export", { payload }),
+  "/api/research/pack/import": async ({ invoke, payload }) => invoke("api_research_pack_import", { payload }),
+  "/api/research/pack/rollback": async ({ invoke }) => invoke("api_research_pack_rollback"),
   "/api/rag-pack/build": async ({ invoke, payload }) => invoke("api_rag_pack_build", { payload }),
   "/api/rag-pack/build-from-news-cache": async ({ invoke, payload }) => invoke("api_rag_pack_build_from_news_cache", { payload }),
   "/api/rag-pack/query": async ({ invoke, payload }) => invoke("api_rag_pack_query", { payload }),

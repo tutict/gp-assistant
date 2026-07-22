@@ -13,7 +13,6 @@ import { BacktestPanel } from "./components/panels/BacktestPanel";
 import { NewsRagPanel } from "./components/panels/NewsRagPanel";
 import { AgentPanel } from "./components/panels/AgentPanel";
 import { WatchlistPanel } from "./components/panels/WatchlistPanel";
-import { LlmSettingsPanel } from "./components/panels/LlmSettingsPanel";
 import type { WatchlistItem, LlmSettings } from "./types";
 import {
   consumeBacktestRouteRequest,
@@ -257,6 +256,7 @@ export default function App({ onMounted }: AppProps) {
           {view === "news" && (
             <NewsRagPanel
               llmSettings={llmSettings}
+              onLlmSettingsChange={setLlmSettings}
               watchlist={watchlist}
               initialCode={newsRequest?.code || ""}
               initialCodeRequestId={newsRequest?.requestId ?? 0}
@@ -272,7 +272,7 @@ export default function App({ onMounted }: AppProps) {
           )}
         </div>
 
-        {view !== "agent" && (
+        {view !== "agent" && view !== "news" && (
           <WatchlistPanel
             items={watchlist}
             onChange={setWatchlist}
@@ -282,12 +282,6 @@ export default function App({ onMounted }: AppProps) {
           />
         )}
 
-        {view === "news" && (
-          <LlmSettingsPanel
-            settings={llmSettings}
-            onChange={setLlmSettings}
-          />
-        )}
       </main>
     </div>
   );

@@ -1492,6 +1492,65 @@ struct LlmConfig {
     project: Option<String>,
 }
 
+pub(crate) async fn synthesize_research_answer(
+    llm_value: Option<&Value>,
+    question: &str,
+    citations: &[Value],
+) -> Result<Option<String>, String> {
+    let Some(config) = resolve_llm_config(llm_value) else {
+        return Ok(None);
+    };
+    if citations.is_empty() {
+        return Ok(None);
+    }
+    let client = build_http_client_with_proxy(
+        "Mozilla/5.0 GuXuanYou/0.4 research-answer",
+        Duration::from_secs(config.timeout_seconds),
+        None,
+    )
+    .map_err(|error| format!("create research LLM client failed: {error}"))?;
+    let system_prompt = "你是证据约束的股票研究助手。只能依据给定证据回答；每个事实结论必须紧邻引用 [C1] 这类已提供编号。社区证据不能单独支撑事实。证据不足时明确说待核查。不得创造引用编号。返回 JSON：{\"answer\":\"...\"}。";
+    let evidence_payload = json!({
+        "question": question,
+        "citations": citations,
+        "rules": {
+            "allowed_citation_ids": citations.iter().filter_map(|item| item.get("citation_id")).collect::<Vec<_>>(),
+            "community_cannot_stand_alone": true
+        }
+    });
+    let mut request = json!({
+        "model": config.model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": serde_json::to_string(&evidence_payload).unwrap_or_default()}
+        ],
+        "temperature": config.temperature,
+        "response_format": {"type": "json_object"}
+    });
+    let response = match post_llm_request(&client, &config, &request).await {
+        Ok(value) => value,
+        Err(first_error) => {
+            if let Some(object) = request.as_object_mut() {
+                object.remove("response_format");
+            }
+            post_llm_request(&client, &config, &request)
+                .await
+                .map_err(|second_error| {
+                    format!(
+                        "{first_error}; research answer retry without JSON mode failed: {second_error}"
+                    )
+                })?
+        }
+    };
+    let answer = response
+        .get("answer")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "research model response is missing answer".to_string())?;
+    Ok(Some(answer.to_string()))
+}
+
 fn resolve_llm_config(value: Option<&Value>) -> Option<LlmConfig> {
     let api_key = value
         .and_then(|item| item.get("api_key"))

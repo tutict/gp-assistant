@@ -5,6 +5,7 @@
 @import "./components.css" layer(components);
 @import "./shell.css" layer(shell);
 @import "./pages.css" layer(pages);
+@import "./research.css";
 @import "./responsive.css" layer(responsive);
 /* Hide scrollbars while preserving scroll interaction. */
 * {

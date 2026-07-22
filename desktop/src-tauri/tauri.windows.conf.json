@@ -1,0 +1,15 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run prepare:windows",
+    "beforeBuildCommand": "npm run prepare:windows"
+  },
+  "bundle": {
+    "resources": {
+      "../../models/bge-small-zh-v1.5-int8/config.json": "models/bge-small-zh-v1.5-int8/config.json",
+      "../../models/bge-small-zh-v1.5-int8/model_quantized.onnx": "models/bge-small-zh-v1.5-int8/model_quantized.onnx",
+      "../../models/bge-small-zh-v1.5-int8/special_tokens_map.json": "models/bge-small-zh-v1.5-int8/special_tokens_map.json",
+      "../../models/bge-small-zh-v1.5-int8/tokenizer.json": "models/bge-small-zh-v1.5-int8/tokenizer.json",
+      "../../models/bge-small-zh-v1.5-int8/tokenizer_config.json": "models/bge-small-zh-v1.5-int8/tokenizer_config.json"
+    }
+  }
+}

@@ -462,6 +462,108 @@ export interface NewsRagResult {
   notes?: string[];
 }
 
+export type ResearchSourceTier =
+  | "filing"
+  | "financial_snapshot"
+  | "news"
+  | "research_report"
+  | "community"
+  | string;
+
+export interface ResearchMessage {
+  id: string;
+  document_id: string;
+  stock_code?: string | null;
+  title: string;
+  summary: string;
+  sentiment: string;
+  source_tier: ResearchSourceTier;
+  published_at?: string | null;
+  unread: boolean;
+}
+
+export interface ResearchCitation {
+  citation_id: string;
+  document_id: string;
+  chunk_id: string;
+  title: string;
+  excerpt: string;
+  source_tier: ResearchSourceTier;
+  source_name: string;
+  published_at?: string | null;
+  url?: string | null;
+  page_number?: number | null;
+  lexical_score: number;
+  vector_score?: number | null;
+  retrieval_score: number;
+}
+
+export interface ResearchAnswer {
+  id?: string;
+  thread_id?: string | null;
+  mode: "evidence_only" | "model" | string;
+  question: string;
+  answer: string;
+  citations: ResearchCitation[];
+  created_at_epoch_ms?: number;
+  model_warning?: string;
+  vector_warning?: string;
+}
+
+export interface ResearchThread {
+  id: string;
+  title: string;
+  stock_code?: string | null;
+  created_at_epoch_ms: number;
+  updated_at_epoch_ms: number;
+}
+
+export interface KnowledgeDocumentStatus {
+  document_id: string;
+  title: string;
+  source_tier: ResearchSourceTier;
+  chunk_count: number;
+  embedding_count: number;
+  indexed: boolean;
+  updated_at_epoch_ms: number;
+}
+
+export interface ResearchOverview {
+  schema_version: number;
+  database_path?: string;
+  document_count: number;
+  chunk_count: number;
+  unread_count: number;
+  unread_by_stock?: Record<string, number>;
+  source_counts?: { source_tier: ResearchSourceTier; count: number }[];
+  messages: ResearchMessage[];
+  retrieval?: {
+    lexical?: string;
+    vector?: Record<string, unknown>;
+    rrf_k?: number;
+    citation_limit?: number;
+  };
+}
+
+export interface ResearchQueryResult extends ResearchAnswer {
+  query: string;
+  community_only?: boolean;
+  fact_supported?: boolean;
+  retrieval_mode?: "bm25" | "hybrid_rrf" | string;
+}
+
+export interface ResearchIndexStatus {
+  schema_version: number;
+  document_count: number;
+  chunk_count: number;
+  fts_count: number;
+  embedding_count: number;
+  database_bytes: number;
+  healthy: boolean;
+  vector?: Record<string, unknown>;
+  documents?: KnowledgeDocumentStatus[];
+}
+
 export interface RagPackBuildResult {
   path?: string;
   document_count?: number;

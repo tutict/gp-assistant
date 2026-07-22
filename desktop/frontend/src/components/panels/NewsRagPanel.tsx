@@ -1,557 +1,695 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type {
-  LlmSettings,
-  WatchlistItem,
-  NewsEvidence,
-  NewsImpactFinding,
-  NewsRagResult,
-  RagPackQueryResult,
-  UpstreamRagBuildResult,
-  UpstreamRagTransferResult,
-} from "../../types";
-import { getJson, isMobileTauriRuntime, postJson } from "../../lib/tauri";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  buildLlmConfig,
-  buildNewsRagRequest,
-  buildRagPackBuildRequest,
-  buildRagPackQueryRequest,
-  buildUpstreamRagBuildRequest,
-  fetchUpstreamImportPayload,
-  normalizeNewsGroups,
-  normalizeRagHit,
-  parseUpstreamImportDescriptor,
-} from "../../lib/contracts";
-import { formatBytes, formatDateTime, formatNumber, normalizeStockCode } from "../../lib/format";
-import { CollapsibleNotes } from "../CollapsibleNotes";
-import { RawJson } from "../RawJson";
+  BookOpen, Database, Download, ExternalLink, FileText, Inbox, Menu,
+  MessageSquareText, Plus, RefreshCw, RotateCcw, Search, Send, Upload, X,
+} from "lucide-react";
+import type {
+  LlmSettings, NewsRagResult, ResearchAnswer, ResearchCitation,
+  ResearchIndexStatus, ResearchMessage, ResearchOverview, ResearchQueryResult,
+  ResearchThread, WatchlistItem,
+} from "../../types";
+import { buildLlmConfig, buildNewsRagRequest, normalizeNewsGroups } from "../../lib/contracts";
+import { formatBytes, formatDateTime, normalizeStockCode } from "../../lib/format";
+import { getJson, isMobileTauriRuntime, postJson } from "../../lib/tauri";
+import { LlmSettingsPanel } from "./LlmSettingsPanel";
 import { PanelFeedback } from "../ui/PanelFeedback";
-import { StockCodeInput } from "../StockCodeInput";
 
-type NewsTab = "newsRag" | "ragPackBuild" | "ragPackQuery" | "upstreamScan" | "upstreamImport";
-
-const TABS: { key: NewsTab; label: string }[] = [
-  { key: "newsRag", label: "新闻 RAG" },
-  { key: "ragPackBuild", label: "构建包" },
-  { key: "ragPackQuery", label: "查询包" },
-  { key: "upstreamScan", label: "上游同步" },
-  { key: "upstreamImport", label: "移动导入" },
-];
-
+type LlmSettingsUpdater = LlmSettings | null | ((previous: LlmSettings | null) => LlmSettings | null);
 interface NewsRagPanelProps {
   llmSettings?: LlmSettings | null;
+  onLlmSettingsChange?: (value: LlmSettingsUpdater) => void;
   watchlist?: WatchlistItem[];
   initialCode?: string;
   initialCodeRequestId?: number;
 }
+interface ThreadDetail { answers?: ResearchAnswer[]; }
+const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 
-interface UpstreamMobileListResult {
-  root?: string;
-  packs?: Record<string, unknown>[];
-  notes?: string[];
-}
+export function NewsRagPanel(props: NewsRagPanelProps) {
+  const mobile = isMobileTauriRuntime();
+  const watchlist = props.watchlist || [];
+  const [code, setCode] = useState(() => normalizeStockCode(props.initialCode || watchlist[0]?.code || ""));
+  const [overview, setOverview] = useState<ResearchOverview | null>(null);
+  const [messages, setMessages] = useState<ResearchMessage[]>([]);
+  const [threads, setThreads] = useState<ResearchThread[]>([]);
+  const [threadId, setThreadId] = useState("");
+  const threadIdRef = useRef("");
+  const [answers, setAnswers] = useState<ResearchAnswer[]>([]);
+  const [question, setQuestion] = useState("");
+  const [citation, setCitation] = useState<ResearchCitation | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [error, setError] = useState("");
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
+  const [indexStatus, setIndexStatus] = useState<ResearchIndexStatus | null>(null);
+  const [managementBusy, setManagementBusy] = useState(false);
+  const [managementResult, setManagementResult] = useState<unknown>(null);
 
-export function NewsRagPanel({ llmSettings, watchlist = [], initialCode = "", initialCodeRequestId = 0 }: NewsRagPanelProps) {
-  const [tab, setTab] = useState<NewsTab>("newsRag");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<unknown>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [newsCode, setNewsCode] = useState("");
-  const [newsDays, setNewsDays] = useState(30);
-  const [seedCodes, setSeedCodes] = useState("");
-  const [queryText, setQueryText] = useState("");
-  const [manualUrls, setManualUrls] = useState("");
-  const [importPayload, setImportPayload] = useState("");
-  const [scanning, setScanning] = useState(false);
+  useEffect(() => { threadIdRef.current = threadId; }, [threadId]);
+  useEffect(() => {
+    const next = normalizeStockCode(props.initialCode);
+    if (next) setCode(next);
+  }, [props.initialCode, props.initialCodeRequestId]);
 
-  const normalizedCode = normalizeStockCode(newsCode);
-  const watchlistCodes = useMemo(() => watchlist.map((item) => item.code).filter(Boolean), [watchlist]);
+  const loadThread = useCallback(async (id: string) => {
+    if (!id) { setAnswers([]); return; }
+    const detail = await postJson<ThreadDetail>("/api/research/threads/detail", { thread_id: id });
+    setAnswers(detail.answers || []);
+  }, []);
+
+  const loadWorkspace = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
+    setError("");
+    try {
+      const messageQuery = code
+        ? `?stock_code=${encodeURIComponent(code)}&limit=120`
+        : "?limit=120";
+      const [nextOverview, messageResult, threadResult] = await Promise.all([
+        getJson<ResearchOverview>("/api/research/overview"),
+        getJson<{ items?: ResearchMessage[] }>(`/api/research/messages${messageQuery}`),
+        getJson<{ items?: ResearchThread[] }>("/api/research/threads"),
+      ]);
+      const nextThreads = threadResult.items || [];
+      setOverview(nextOverview);
+      setMessages(messageResult.items || []);
+      setThreads(nextThreads);
+      const preferred = nextThreads.find((item) =>
+        item.id === threadIdRef.current && (item.stock_code || "") === code)
+        || nextThreads.find((item) => item.stock_code === code)
+        || (!code ? nextThreads.find((item) => !item.stock_code) : undefined);
+      if (preferred) {
+        setThreadId(preferred.id);
+        await loadThread(preferred.id);
+      } else {
+        setThreadId("");
+        setAnswers([]);
+      }
+    } catch (nextError) {
+      setError((nextError as Error).message);
+    } finally {
+      if (!quiet) setLoading(false);
+    }
+  }, [code, loadThread]);
+
+  useEffect(() => { void loadWorkspace(); }, [loadWorkspace]);
+
+  const refresh = useCallback(async (background = false) => {
+    if (!code || !navigator.onLine || document.visibilityState !== "visible") {
+      if (!background) await loadWorkspace();
+      return;
+    }
+    if (!background) setRefreshing(true);
+    try {
+      await postJson("/api/research/refresh", buildNewsRagRequest(code, 30));
+      await loadWorkspace(true);
+    } catch (nextError) {
+      if (!background) setError((nextError as Error).message);
+    } finally {
+      if (!background) setRefreshing(false);
+    }
+  }, [code, loadWorkspace]);
 
   useEffect(() => {
-    if (initialCode) setNewsCode(initialCode);
-  }, [initialCode, initialCodeRequestId]);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible" && navigator.onLine) void refresh(true);
+    }, REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
 
-  const useFirstWatchlistCode = useCallback(() => {
-    if (watchlistCodes[0]) setNewsCode(watchlistCodes[0]);
-  }, [watchlistCodes]);
-
-  const importWatchlistSeeds = useCallback(() => {
-    if (watchlistCodes.length > 0) setSeedCodes(watchlistCodes.join(", "));
-  }, [watchlistCodes]);
-
-  const scanAndImport = useCallback(async () => {
-    setScanning(true);
-    try {
-      const raw = await scanQrCode();
-      setImportPayload(raw);
-      const descriptor = parseUpstreamImportDescriptor(raw);
-      const payload = await fetchUpstreamImportPayload(descriptor);
-      const data = await postJson("/api/upstream-rag/mobile/import", payload);
-      setResult(data);
-    } finally {
-      setScanning(false);
-    }
-  }, []);
-
-
-  const run = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      if (tab === "newsRag") {
-        if (!normalizedCode) throw new Error("请输入有效股票代码。");
-        const data = await postJson<NewsRagResult>("/api/news-rag", buildNewsRagRequest(normalizedCode, newsDays, buildLlmConfig(llmSettings)));
-        setResult(data);
-      } else if (tab === "ragPackBuild") {
-        const data = await postJson("/api/rag-pack/build-from-news-cache", buildRagPackBuildRequest(normalizedCode, newsDays, seedCodes));
-        setResult(data);
-      } else if (tab === "ragPackQuery") {
-        const data = await postJson<RagPackQueryResult>("/api/rag-pack/query", buildRagPackQueryRequest(queryText, normalizedCode, seedCodes));
-        setResult(data);
-      } else if (tab === "upstreamScan") {
-        if (isMobileTauriRuntime()) {
-          await scanAndImport();
-        } else {
-          if (!normalizedCode) throw new Error("桌面端构建上游同步包需要目标股票代码。");
-          const build = await postJson<UpstreamRagBuildResult>("/api/upstream-rag/build", buildUpstreamRagBuildRequest(normalizedCode, newsDays, manualUrls));
-          const manifest = build.manifest || {};
-          const transfer = manifest.valid
-            ? await postJson<UpstreamRagTransferResult>("/api/upstream-rag/transfer/start", { ttl_minutes: 15 })
-            : null;
-          setResult({ build, transfer });
-        }
-      } else if (tab === "upstreamImport") {
-        if (isMobileTauriRuntime()) {
-          const descriptor = parseUpstreamImportDescriptor(importPayload);
-          const payload = await fetchUpstreamImportPayload(descriptor);
-          const data = await postJson("/api/upstream-rag/mobile/import", payload);
-          setResult(data);
-        } else {
-          const data = await getJson("/api/upstream-rag/status");
-          setResult(data);
-        }
-      }
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [importPayload, llmSettings, manualUrls, newsDays, normalizedCode, queryText, scanAndImport, seedCodes, tab]);
-
-  const listMobilePacks = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = isMobileTauriRuntime()
-        ? await getJson<UpstreamMobileListResult>("/api/upstream-rag/mobile/list")
-        : await getJson("/api/upstream-rag/status");
-      setResult(data);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const showMobilePackDetail = useCallback(async (stockCode: string, packVersion = "") => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams({ stock_code: stockCode, pack_version: packVersion });
-      const data = await getJson(`/api/upstream-rag/mobile/detail?${params}`);
-      setResult(data);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const rollbackMobilePack = useCallback(async (stockCode: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await postJson("/api/upstream-rag/mobile/rollback", { stock_code: stockCode });
-      setResult(data);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  return (
-    <div className="panel-container">
-      <div className="panel-tabs rag-tabs" role="tablist" aria-label="消息工具">
-        {TABS.map((t) => (
-          <button key={t.key} type="button" className={`panel-tab ${tab === t.key ? "active" : ""}`} role="tab" aria-selected={tab === t.key} onClick={() => { setTab(t.key); setResult(null); setError(null); }}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="panel-controls rag-controls">
-        {(tab === "newsRag" || tab === "ragPackBuild" || tab === "ragPackQuery" || tab === "upstreamScan") && (
-          <>
-            <div className="form-row inline stock-code-row rag-code-field"><label htmlFor="newsCode">股票代码</label><StockCodeInput id="newsCode" value={newsCode} onChange={setNewsCode} placeholder="输入股票代码或名称" /></div>
-            <div className="form-row inline rag-days-field"><label htmlFor="newsDays">天数</label><input id="newsDays" type="number" min="1" max="3650" value={newsDays} onChange={(e) => setNewsDays(Number(e.target.value) || 30)} /></div>
-          </>
-        )}
-        {(tab === "ragPackBuild" || tab === "ragPackQuery") && (
-          <div className="form-row rag-wide-field"><label htmlFor="seedCodesForRag">种子股票</label><StockCodeInput id="seedCodesForRag" value={seedCodes} onChange={setSeedCodes} placeholder="可选，多个股票用逗号分隔" listMode /></div>
-        )}
-        {tab === "ragPackQuery" && (
-          <div className="form-row rag-wide-field"><label htmlFor="ragQuery">查询问题</label><input id="ragQuery" type="text" value={queryText} onChange={(e) => setQueryText(e.target.value)} placeholder="例如：供应链订单证据" /></div>
-        )}
-        {tab === "upstreamScan" && !isMobileTauriRuntime() && (
-          <div className="form-row rag-textarea-field"><label htmlFor="manualUrls">手动来源 URL</label><textarea id="manualUrls" rows={3} value={manualUrls} onChange={(e) => setManualUrls(e.target.value)} placeholder="可选公共来源链接，每行一个" /></div>
-        )}
-        {tab === "upstreamImport" && (
-          <div className="form-row rag-textarea-field"><label htmlFor="upstreamImportPayload">导入描述</label><textarea id="upstreamImportPayload" rows={5} value={importPayload} onChange={(e) => setImportPayload(e.target.value)} placeholder="粘贴二维码 JSON 或 manifest_url" /></div>
-        )}
-        {watchlistCodes.length > 0 && (tab === "newsRag" || tab === "ragPackBuild" || tab === "ragPackQuery" || tab === "upstreamScan") && (
-          <div className="rag-watchlist-actions">
-            <button type="button" className="action-btn" onClick={useFirstWatchlistCode}>首只自选</button>
-            {(tab === "ragPackBuild" || tab === "ragPackQuery") && <button type="button" className="action-btn" onClick={importWatchlistSeeds}>导入自选股</button>}
-          </div>
-        )}
-        <button type="button" className="run-btn rag-run-btn" onClick={run} disabled={loading || scanning}>{loading || scanning ? "运行中..." : "运行"}</button>
-        {(tab === "upstreamScan" || tab === "upstreamImport") && (
-          <button type="button" className="action-btn rag-secondary-btn" onClick={listMobilePacks} disabled={loading || scanning}>查看导入包</button>
-        )}
-      </div>
-
-      <div className="panel-result">
-        {error && <PanelFeedback kind="error" title="请求失败" description={error} />}
-        {loading && !result && !error && <PanelFeedback kind="loading" description="正在整理消息和证据..." />}
-        {result != null && !loading && <NewsResult tab={tab} result={result} onDetail={showMobilePackDetail} onRollback={rollbackMobilePack} />}
-        {!result && !loading && !error && <PanelFeedback kind="empty" description="选择消息工具并设置参数后运行。" />}
-      </div>
-    </div>
+  const visibleMessages = useMemo(
+    () => code ? messages.filter((message) => message.stock_code === code) : messages,
+    [code, messages],
   );
+  const todayMessages = useMemo(
+    () => visibleMessages.filter((message) => isToday(message.published_at)),
+    [visibleMessages],
+  );
+  const grouped = useMemo(() => ({
+    positive: todayMessages.filter((item) => ["positive", "bullish", "利好"].includes(item.sentiment)),
+    negative: todayMessages.filter((item) => ["negative", "bearish", "利空"].includes(item.sentiment)),
+    uncertain: todayMessages.filter((item) =>
+      !["positive", "bullish", "利好", "negative", "bearish", "利空"].includes(item.sentiment)),
+  }), [todayMessages]);
+  const eventGroups = useMemo(() => groupMessages(visibleMessages), [visibleMessages]);
+  const stock = watchlist.find((item) => normalizeStockCode(item.code) === code);
+  const summary = useMemo(() => {
+    if (!todayMessages.length) {
+      return code ? `${code} 暂无新增证据。可立即更新，或导入公告、研报后再核查。`
+        : "当前知识库暂无新增证据。请选择自选股或导入资料。";
+    }
+    const direction = grouped.positive.length > grouped.negative.length ? "利好线索较多"
+      : grouped.negative.length > grouped.positive.length ? "风险线索较多" : "多空线索接近";
+    return `今日共整理 ${todayMessages.length} 条事件，${direction}；其中 ${grouped.uncertain.length} 条仍需公告或财务数据交叉核验。`;
+  }, [code, grouped, todayMessages.length]);
+
+  const markRead = useCallback(async (message: ResearchMessage) => {
+    if (!message.unread) return;
+    try {
+      await postJson("/api/research/mark-read", { message_ids: [message.id] });
+      setMessages((current) => current.map((item) =>
+        item.id === message.id ? { ...item, unread: false } : item));
+      setOverview((current) => {
+        if (!current) return current;
+        const unreadByStock = { ...(current.unread_by_stock || {}) };
+        if (message.stock_code) {
+          unreadByStock[message.stock_code] = Math.max(
+            0,
+            (unreadByStock[message.stock_code] || 0) - 1,
+          );
+        }
+        return {
+          ...current,
+          unread_count: Math.max(0, current.unread_count - 1),
+          unread_by_stock: unreadByStock,
+        };
+      });
+    } catch (nextError) {
+      setError((nextError as Error).message);
+    }
+  }, []);
+
+  const createThread = useCallback(async () => {
+    const thread = await postJson<ResearchThread>("/api/research/threads/create", {
+      title: code ? `${code} 研究` : "综合研究", stock_code: code || null,
+    });
+    setThreads((current) => [thread, ...current]);
+    setThreadId(thread.id);
+    setAnswers([]);
+    return thread.id;
+  }, [code]);
+
+  const ask = useCallback(async () => {
+    const text = question.trim();
+    if (!text || asking) return;
+    setAsking(true);
+    setError("");
+    try {
+      const selectedThread = threads.find((thread) => thread.id === threadId);
+      const activeThread = selectedThread && (selectedThread.stock_code || "") === code
+        ? selectedThread.id
+        : await createThread();
+      const result = await postJson<ResearchQueryResult>("/api/research/query", {
+        query: text, stock_code: code || null, thread_id: activeThread, top_k: 8,
+        llm: buildLlmConfig(props.llmSettings),
+      });
+      const answer: ResearchAnswer = { ...result, question: text, citations: result.citations || [] };
+      setAnswers((current) => [...current, answer]);
+      setQuestion("");
+      setCitation(answer.citations[0] || null);
+      if (mobile) setInboxOpen(false);
+      const nextThreads = await getJson<{ items?: ResearchThread[] }>("/api/research/threads");
+      setThreads(nextThreads.items || []);
+    } catch (nextError) {
+      setError((nextError as Error).message);
+    } finally {
+      setAsking(false);
+    }
+  }, [asking, code, createThread, mobile, props.llmSettings, question, threadId, threads]);
+
+  const management = useCallback(async (action: () => Promise<unknown>) => {
+    setManagementBusy(true);
+    setManagementResult(null);
+    try {
+      setManagementResult(await action());
+      setIndexStatus(await getJson<ResearchIndexStatus>("/api/research/index-status"));
+      await loadWorkspace(true);
+    } catch (nextError) {
+      setManagementResult({ error: (nextError as Error).message });
+    } finally {
+      setManagementBusy(false);
+    }
+  }, [loadWorkspace]);
+
+  const openKnowledge = useCallback(() => {
+    setKnowledgeOpen(true);
+    void getJson<ResearchIndexStatus>("/api/research/index-status")
+      .then(setIndexStatus)
+      .catch((nextError) => setManagementResult({ error: (nextError as Error).message }));
+  }, []);
+
+  if (loading && !overview) {
+    return <div className="research-loading">
+      <PanelFeedback kind="loading" description="正在打开研究消息中心…" />
+    </div>;
+  }
+  const vectorReady = overview?.retrieval?.vector?.ready === true;
+
+  return <section className="research-workspace" aria-label="研究消息中心">
+    <header className="research-topbar">
+      <div className="research-context">
+        <button type="button" className="research-icon-button research-mobile-inbox-button"
+          aria-label="打开自选股收件箱" title="自选股收件箱" onClick={() => setInboxOpen(true)}>
+          <Menu size={18} />
+        </button>
+        <div><span className="research-eyebrow">研究消息中心</span><h1>
+          {stock?.name || code || "全部自选股"}{code && <small>{code}</small>}
+        </h1></div>
+        <span className="research-mode"><Search size={13} />
+          {vectorReady ? "混合检索" : "BM25 证据模式"}
+        </span>
+      </div>
+      <div className="research-actions">
+        <span>前台每 15 分钟更新</span>
+        <button type="button" onClick={() => void refresh()} disabled={refreshing}>
+          <RefreshCw size={15} className={refreshing ? "is-spinning" : ""} />
+          {refreshing ? "更新中" : "立即更新"}
+        </button>
+        {!mobile && <button type="button" onClick={openKnowledge}>
+          <Database size={15} />知识库管理
+        </button>}
+      </div>
+    </header>
+
+    {error && <div className="research-error">
+      <PanelFeedback kind="error" title="研究中心暂时不可用" description={error} />
+    </div>}
+
+    <div className="research-columns">
+      <InboxPanel code={code} setCode={(next) => { setCode(next); setInboxOpen(false); }}
+        watchlist={watchlist} unreadByStock={overview?.unread_by_stock || {}}
+        threads={threads} threadId={threadId}
+        setThread={(thread) => {
+          setCode(thread.stock_code || "");
+          setThreadId(thread.id);
+          void loadThread(thread.id);
+          setInboxOpen(false);
+        }}
+        unread={overview?.unread_count || 0} open={inboxOpen} close={() => setInboxOpen(false)}
+        createThread={() => void createThread()} />
+
+      <main className="research-stream">
+        <section className="research-daily-brief">
+          <div className="research-brief-rule"><span>今日摘要</span>
+            <time>{new Date().toLocaleDateString("zh-CN")}</time>
+          </div>
+          <p>{summary}</p>
+          <div className="research-brief-counts">
+            <span className="positive">利好 {grouped.positive.length}</span>
+            <span className="negative">利空 {grouped.negative.length}</span>
+            <span>待核查 {grouped.uncertain.length}</span>
+            <span>文档 {overview?.document_count || 0}</span>
+          </div>
+        </section>
+
+        <section className="research-event-section">
+          <div className="research-section-heading"><div><span>事件流</span>
+            <small>按来源等级与时间整理</small></div><span>{visibleMessages.length} 条</span>
+          </div>
+          {!visibleMessages.length ? <div className="research-empty-state">
+            <BookOpen size={22} /><strong>还没有可研究的消息</strong>
+            <p>选择一只自选股并立即更新，或从知识库管理导入公告与研报。</p>
+          </div> : <div className="research-event-list">
+            {eventGroups.map((group) => <EventGroup key={group.key}
+              label={group.label} tone={group.key} messages={group.messages}
+              markRead={markRead} />)}
+          </div>}
+        </section>
+
+        <Answers answers={answers} setCitation={setCitation} />
+        <form className="research-composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
+          <div><span>{buildLlmConfig(props.llmSettings)
+            ? "模型回答会强制引用证据" : "未配置模型，返回证据摘录"}</span>
+            <textarea value={question} onChange={(event) => setQuestion(event.target.value)}
+              placeholder={code ? `询问 ${code} 的公告、财务或消息…` : "询问当前知识库…"} rows={2} />
+          </div>
+          <button type="submit" aria-label="提交问题" title="提交问题"
+            disabled={!question.trim() || asking}>
+            {asking ? <RefreshCw size={18} className="is-spinning" /> : <Send size={18} />}
+          </button>
+        </form>
+      </main>
+
+      <EvidencePanel citation={citation} close={() => setCitation(null)} />
+    </div>
+
+    {inboxOpen && <button type="button" className="research-mobile-overlay"
+      aria-label="关闭自选股收件箱" onClick={() => setInboxOpen(false)} />}
+    {knowledgeOpen && !mobile && <KnowledgeDrawer panelProps={props} code={code}
+      status={indexStatus} management={management} busy={managementBusy}
+      result={managementResult} close={() => setKnowledgeOpen(false)} />}
+  </section>;
+}
+function EventGroup(props: {
+  label: string;
+  tone: string;
+  messages: ResearchMessage[];
+  markRead: (message: ResearchMessage) => Promise<void>;
+}) {
+  if (!props.messages.length) return null;
+  return <section className={`research-event-group ${props.tone}`}>
+    <header><span>{props.label}</span><b>{props.messages.length}</b></header>
+    {props.messages.map((message) => <button type="button" key={message.id}
+      className={`research-event ${sentimentClass(message.sentiment)}${message.unread ? " unread" : ""}`}
+      onClick={() => void props.markRead(message)}>
+      <span className="research-event-mark" />
+      <span className="research-event-content">
+        <span className="research-event-meta">
+          <span className={`research-source-tier ${message.source_tier}`}>
+            {sourceTierLabel(message.source_tier)}
+          </span>
+          <time>{formatDateTime(message.published_at)}</time>
+          {message.unread && <b>未读</b>}
+        </span>
+        <strong>{message.title}</strong>
+        <span className="research-event-summary">{message.summary}</span>
+      </span>
+    </button>)}
+  </section>;
 }
 
-function NewsResult({
-  tab,
-  result,
-  onDetail,
-  onRollback,
-}: {
-  tab: NewsTab;
-  result: unknown;
-  onDetail: (stockCode: string, packVersion?: string) => void;
-  onRollback: (stockCode: string) => void;
+
+function InboxPanel(props: {
+  code: string;
+  setCode: (value: string) => void;
+  watchlist: WatchlistItem[];
+  unreadByStock: Record<string, number>;
+  threads: ResearchThread[];
+  threadId: string;
+  setThread: (thread: ResearchThread) => void;
+  unread: number;
+  open: boolean;
+  close: () => void;
+  createThread: () => void;
 }) {
-  const record = asRecord(result);
-  if (tab === "newsRag") return <NewsRagView result={result as NewsRagResult} />;
-  if (tab === "ragPackQuery") return <RagPackQueryView result={result as RagPackQueryResult} />;
-  if (tab === "upstreamScan" && (record.build || record.transfer)) return <UpstreamBuildView result={result as { build?: UpstreamRagBuildResult; transfer?: UpstreamRagTransferResult | null }} />;
-  if (Array.isArray(record.packs)) return <UpstreamMobileListView result={record as UpstreamMobileListResult} onDetail={onDetail} onRollback={onRollback} />;
-  if (record.manifest && !record.imported && !record.rolled_back) return <UpstreamDetailView result={record} />;
-  if (record.imported || record.rolled_back) return <UpstreamImportView result={record} />;
-  return <GenericJsonResult result={result} />;
+  return <aside className={`research-inbox${props.open ? " mobile-open" : ""}`}>
+    <div className="research-pane-heading">
+      <div><span>自选股收件箱</span><strong>{props.unread} 条未读</strong></div>
+      <button className="research-icon-button research-mobile-close" type="button"
+        aria-label="关闭收件箱" title="关闭" onClick={props.close}><X size={17} /></button>
+    </div>
+    <button type="button" className={`research-stock-row${!props.code ? " active" : ""}`}
+      onClick={() => props.setCode("")}>
+      <span className="research-stock-monogram"><Inbox size={16} /></span>
+      <span><strong>全部消息</strong><small>跨股票研究流</small></span>
+      {props.unread > 0 && <b>{props.unread}</b>}
+    </button>
+    {props.watchlist.map((item) => {
+      const stockCode = normalizeStockCode(item.code);
+      const unread = props.unreadByStock[stockCode] || 0;
+      return <button type="button" key={stockCode}
+        className={`research-stock-row${props.code === stockCode ? " active" : ""}`}
+        onClick={() => props.setCode(stockCode)}>
+        <span className="research-stock-monogram">{(item.name || stockCode).slice(0, 1)}</span>
+        <span><strong>{item.name || stockCode}</strong><small>{stockCode}</small></span>
+        {unread > 0 && <b>{unread}</b>}
+      </button>;
+    })}
+    <div className="research-inbox-section">
+      <div className="research-pane-heading compact"><span>研究会话</span>
+        <button className="research-icon-button" type="button" aria-label="新建研究会话"
+          title="新建会话" onClick={props.createThread}><Plus size={16} /></button>
+      </div>
+      {props.threads.slice(0, 20).map((thread) => <button type="button" key={thread.id}
+        className={`research-thread-row${thread.id === props.threadId ? " active" : ""}`}
+        onClick={() => props.setThread(thread)}>
+        <MessageSquareText size={15} />
+        <span><strong>{thread.title}</strong><small>{formatEpoch(thread.updated_at_epoch_ms)}</small></span>
+      </button>)}
+    </div>
+  </aside>;
+}
+
+function Answers(props: {
+  answers: ResearchAnswer[];
+  setCitation: (value: ResearchCitation) => void;
+}) {
+  if (!props.answers.length) return null;
+  return <section className="research-answers">
+    <div className="research-section-heading"><div><span>历史问答</span>
+      <small>回答与引用均保存在本机</small></div>
+    </div>
+    {props.answers.map((answer, index) => <article
+      key={answer.id || answer.question + index} className="research-answer">
+      <div className="research-question"><span>问</span><p>{answer.question}</p></div>
+      <div className="research-answer-body">
+        <div className="research-answer-mode">
+          {answer.mode === "model" ? "模型综合" : "证据摘录"}
+        </div>
+        <p><CitationRichText text={answer.answer} citations={answer.citations}
+          onCitation={props.setCitation} /></p>
+        <div className="research-citation-chips">
+          {answer.citations.map((item) => <button type="button"
+            key={item.citation_id + index} onClick={() => props.setCitation(item)}>
+            <b>{item.citation_id}</b><span>{item.title}</span>
+          </button>)}
+        </div>
+        {(answer.model_warning || answer.vector_warning) &&
+          <small className="research-fallback-note">
+            已自动降级：{answer.model_warning || answer.vector_warning}
+          </small>}
+      </div>
+    </article>)}
+  </section>;
+}
+
+function EvidencePanel(props: { citation: ResearchCitation | null; close: () => void }) {
+  return <aside className={`research-evidence${props.citation ? " has-selection" : ""}`}
+    aria-label="引用证据检查器">
+    <div className="research-pane-heading">
+      <div><span>证据检查器</span><strong>原文可回溯</strong></div>
+      <button className="research-icon-button research-mobile-close" type="button"
+        aria-label="关闭证据检查器" title="关闭" onClick={props.close}><X size={17} /></button>
+    </div>
+    {props.citation ? <EvidenceInspector citation={props.citation} />
+      : <div className="research-evidence-empty"><span>C</span><strong>选择一条引用</strong>
+        <p>回答中的 C1、C2 会在这里展开原文、页码、来源等级和检索分数。</p>
+      </div>}
+  </aside>;
+}
+
+function EvidenceInspector({ citation: item }: { citation: ResearchCitation }) {
+  const externalUrl = safeExternalUrl(item.url);
+  return <div className="research-evidence-card">
+    <div className="research-citation-ledger"><span>{item.citation_id}</span>
+      <div><strong>{sourceTierLabel(item.source_tier)}</strong><small>{item.source_name}</small></div>
+    </div>
+    <h2>{item.title}</h2>
+    <div className="research-evidence-meta">
+      <span>{item.published_at ? formatDateTime(item.published_at) : "日期未提供"}</span>
+      {item.page_number != null && <span>第 {item.page_number} 页</span>}
+    </div>
+    <blockquote>{item.excerpt}</blockquote>
+    <dl>
+      <div><dt>融合分数</dt><dd>{formatScore(item.retrieval_score)}</dd></div>
+      <div><dt>BM25</dt><dd>{formatScore(item.lexical_score)}</dd></div>
+      <div><dt>向量</dt><dd>{item.vector_score == null ? "未使用" : formatScore(item.vector_score)}</dd></div>
+    </dl>
+    {externalUrl && <a href={externalUrl} target="_blank" rel="noreferrer">
+      <ExternalLink size={15} />打开原文
+    </a>}
+    {item.source_tier === "community" && <p className="research-community-warning">
+      社区信息只能作为线索，不能单独支撑事实结论。
+    </p>}
+  </div>;
+}
+
+function CitationRichText(props: {
+  text: string;
+  citations: ResearchCitation[];
+  onCitation: (citation: ResearchCitation) => void;
+}) {
+  return <>{props.text.split(/(\[C\d+\])/g).map((part, index) => {
+    const match = /^\[(C\d+)\]$/.exec(part);
+    const item = match ? props.citations.find((citation) =>
+      citation.citation_id === match[1]) : undefined;
+    return item ? <button type="button" className="research-inline-citation"
+      key={part + index} onClick={() => props.onCitation(item)}>{part}</button>
+      : <span key={part + index}>{part}</span>;
+  })}</>;
+}
+function KnowledgeDrawer(props: {
+  panelProps: NewsRagPanelProps;
+  code: string;
+  status: ResearchIndexStatus | null;
+  management: (action: () => Promise<unknown>) => Promise<void>;
+  busy: boolean;
+  result: unknown;
+  close: () => void;
+}) {
+  const [url, setUrl] = useState("");
+  const inputFile = async (file: File, endpoint: string) => props.management(async () =>
+    postJson(endpoint, {
+      bytes_base64: await fileToBase64(file),
+      stock_codes: props.code ? [props.code] : [],
+    }));
+  const operationError = props.result && typeof props.result === "object" && "error" in props.result
+    ? String((props.result as { error: unknown }).error) : "";
+
+  return <div className="knowledge-drawer-layer">
+    <button type="button" className="knowledge-drawer-overlay"
+      aria-label="关闭知识库管理" onClick={props.close} />
+    <aside className="knowledge-drawer">
+      <header><div><span>知识库管理</span><h2>资料、索引与模型</h2></div>
+        <button type="button" className="research-icon-button" aria-label="关闭知识库管理"
+          title="关闭" onClick={props.close}><X size={18} /></button>
+      </header>
+
+      <section className="knowledge-status">
+        <div><span>文档</span><strong>{props.status?.document_count || 0}</strong></div>
+        <div><span>分块 / FTS</span><strong>
+          {props.status?.chunk_count || 0} / {props.status?.fts_count || 0}
+        </strong></div>
+        <div><span>向量</span><strong>{props.status?.embedding_count || 0}</strong></div>
+        <div><span>占用</span><strong>{formatBytes(props.status?.database_bytes)}</strong></div>
+      </section>
+
+      <section className="knowledge-section">
+        <h3>导入资料</h3>
+        <label><span>公网 HTTPS 地址</span>
+          <input value={url} onChange={(event) => setUrl(event.target.value)}
+            placeholder="https://" />
+        </label>
+        <button type="button" disabled={props.busy || !url.trim()}
+          onClick={() => void props.management(() => postJson("/api/research/import-url", {
+            url: url.trim(), stock_codes: props.code ? [props.code] : [],
+          }))}><Download size={15} />导入 URL</button>
+        <label className="knowledge-file-button"><FileText size={16} />
+          <span>导入文本型 PDF</span>
+          <input type="file" accept="application/pdf,.pdf" onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void inputFile(file, "/api/research/import-pdf");
+            event.currentTarget.value = "";
+          }} />
+        </label>
+        <small>扫描件需先 OCR；单文件上限 25 MB、500 页。</small>
+      </section>
+
+      <section className="knowledge-section">
+        <h3>索引维护</h3>
+        <div className="knowledge-button-row">
+          <button type="button" disabled={props.busy}
+            onClick={() => void props.management(() =>
+              postJson("/api/research/rebuild-index", {}))}>
+            <RefreshCw size={15} />重建 FTS
+          </button>
+          <button type="button" disabled={props.busy}
+            onClick={() => void props.management(() =>
+              postJson("/api/research/rebuild-embeddings", {}))}>
+            <Search size={15} />生成向量
+          </button>
+        </div>
+        <p>{props.status?.healthy ? "文档分块与 FTS 数量一致。"
+          : "索引数量不一致，建议重建 FTS。"}</p>
+      </section>
+
+      <section className="knowledge-section">
+        <h3>同步与回滚</h3>
+        <div className="knowledge-button-row">
+          <button type="button" disabled={props.busy}
+            onClick={() => void props.management(() =>
+              postJson("/api/research/pack/export", {}))}>
+            <Upload size={15} />导出 v2 包
+          </button>
+          <button type="button" disabled={props.busy}
+            onClick={() => void props.management(() =>
+              postJson("/api/research/pack/rollback", {}))}>
+            <RotateCcw size={15} />回滚导入
+          </button>
+        </div>
+        <label className="knowledge-file-button"><Database size={16} />
+          <span>导入 SQLite v2 / 旧版包</span>
+          <input type="file" accept=".sqlite,.json" onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void inputFile(file, "/api/research/pack/import");
+            event.currentTarget.value = "";
+          }} />
+        </label>
+      </section>
+
+      {props.panelProps.onLlmSettingsChange && <section className="knowledge-model-settings">
+        <h3>回答模型</h3>
+        <LlmSettingsPanel settings={props.panelProps.llmSettings || null}
+          onChange={props.panelProps.onLlmSettingsChange} />
+      </section>}
+
+      {props.busy && <div className="knowledge-operation">
+        <RefreshCw size={15} className="is-spinning" />正在处理…
+      </div>}
+      {!props.busy && props.result != null &&
+        <div className={`knowledge-operation${operationError ? " error" : ""}`}>
+          {operationError || "操作已完成，索引状态已刷新。"}
+        </div>}
+      <details className="knowledge-diagnostics"><summary>高级诊断</summary>
+        <pre>{JSON.stringify(props.status, null, 2)}</pre>
+        {props.result != null && <pre>{JSON.stringify(props.result, null, 2)}</pre>}
+      </details>
+    </aside>
+  </div>;
 }
 
 export function NewsRagView({ result }: { result: NewsRagResult }) {
   const groups = normalizeNewsGroups(result.sentiment_groups);
-  const findings = result.findings || [];
-  const secondary = [...groups.mixed, ...groups.uncertain];
-
-  return (
-    <div className="news-rag-result">
-      <div className="metric-strip">
-        <div className="metric"><span>范围</span><strong>{result.scope_codes?.length ?? 0}</strong></div>
-        <div className="metric"><span>关系</span><strong>{result.relation_count ?? 0}</strong></div>
-        <div className="metric"><span>消息</span><strong>{result.message_count ?? 0}</strong></div>
-        <div className="metric"><span>模式</span><strong>{newsModeLabel(groups.mode)}</strong></div>
-      </div>
-
-      {findings.length > 0 && <Findings findings={findings} />}
-
-      <div className="plain-news-groups">
-        <EvidenceColumn title="利好" tone="positive" items={groups.positive} />
-        <EvidenceColumn title="利空" tone="negative" items={groups.negative} />
-        {secondary.length > 0 && (
-          <details className="plain-news-secondary" open>
-            <summary><span>混合 / 不确定 {secondary.length}</span><b className="plain-news-toggle" /></summary>
-            <EvidenceList items={secondary} />
-          </details>
-        )}
-      </div>
-
-      <CollapsibleNotes notes={result.notes || []} />
-      <RawJson result={result} />
-    </div>
-  );
+  const items = [...groups.positive, ...groups.negative, ...groups.mixed, ...groups.uncertain];
+  return <div className="agent-news-evidence">
+    <header><strong>消息证据</strong><span>{items.length} 条</span></header>
+    {!items.length ? <p>当前没有命中的消息证据。</p>
+      : items.slice(0, 12).map((item, index) => <article
+        key={(item.title || "消息") + index}>
+        <span>{sourceTierLabel(item.source_tier)}</span>
+        <div><strong>{item.title || "未命名消息"}</strong><p>{item.summary}</p></div>
+      </article>)}
+  </div>;
 }
 
-function Findings({ findings }: { findings: NewsImpactFinding[] }) {
-  return (
-    <div className="news-findings">
-      {findings.map((finding, index) => (
-        <section key={`${finding.target}-${index}`} className="news-finding">
-          <header>
-            <div><h3>{finding.target}</h3><p>{finding.impact_chain}</p></div>
-            <span className={`impact-pill ${finding.direction}`}>{directionLabel(finding.direction)}</span>
-          </header>
-          <div className="finding-meta"><span>置信度 {finding.confidence}</span><span>证据 {finding.evidence?.length ?? 0}</span></div>
-          <EvidenceList items={finding.evidence || []} />
-          {finding.pending_checks?.length ? <div className="checklist">{finding.pending_checks.map((item) => <span key={item}>{item}</span>)}</div> : null}
-        </section>
-      ))}
-    </div>
-  );
+function sourceTierLabel(value?: string): string {
+  const labels: Record<string, string> = {
+    filing: "公告", financial_snapshot: "财务快照", news: "新闻",
+    research: "研报", research_report: "研报", community: "社区",
+  };
+  return labels[String(value || "news")] || String(value || "新闻");
 }
 
-function EvidenceColumn({ title, tone, items }: { title: string; tone: string; items: NewsEvidence[] }) {
-  return (
-    <section className={`plain-news-column ${tone}`}>
-      <header><h3>{title}</h3><span>{items.length}</span></header>
-      <EvidenceList items={items} />
-    </section>
-  );
+function sentimentClass(value: string): string {
+  if (["positive", "bullish", "利好"].includes(value)) return "positive";
+  if (["negative", "bearish", "利空"].includes(value)) return "negative";
+  return "uncertain";
 }
 
-function EvidenceList({ items }: { items: NewsEvidence[] }) {
-  if (!items.length) return <div className="result-empty"><span>暂无证据。</span></div>;
-  return (
-    <div className="evidence-list">
-      {items.map((item, index) => (
-        <article key={`${item.title}-${index}`}>
-          <strong>{item.title || "--"}</strong>
-          <span className="evidence-source">
-            <span className={`source-tier ${item.source_tier || "news"}`}>{sourceTierLabel(item.source_tier)}</span>
-            <span>{item.source || ""}</span>
-            <span>{item.published_at || ""}</span>
-          </span>
-          {item.summary && <p>{item.summary}</p>}
-          {item.url && <a className="evidence-link" href={item.url} target="_blank" rel="noreferrer">来源</a>}
-        </article>
-      ))}
-    </div>
-  );
+function groupMessages(messages: ResearchMessage[]) {
+  return [
+    { key: "positive", label: "利好线索", messages: messages.filter((item) => ["positive", "bullish", "利好"].includes(item.sentiment)) },
+    { key: "negative", label: "利空与风险", messages: messages.filter((item) => ["negative", "bearish", "利空"].includes(item.sentiment)) },
+    { key: "uncertain", label: "待核查", messages: messages.filter((item) => !["positive", "bullish", "利好", "negative", "bearish", "利空"].includes(item.sentiment)) },
+  ];
 }
 
-function RagPackQueryView({ result }: { result: RagPackQueryResult }) {
-  const hits = result.hits || [];
-  return (
-    <div className="rag-query-result">
-      <div className="metric-strip"><div className="metric"><span>命中</span><strong>{hits.length}</strong></div><div className="metric"><span>版本</span><strong>{String(result.manifest?.pack_version || "--")}</strong></div></div>
-      <div className="evidence-list">
-        {hits.map((hit, i) => {
-          const item = normalizeRagHit(hit);
-          return <article key={`${item.title}-${i}`}><strong>{item.title}</strong><span className="evidence-source">{item.source} 分数 {item.score?.toFixed(3) ?? "--"}</span><p>{item.text}</p>{item.url && <a className="evidence-link" href={item.url} target="_blank" rel="noreferrer">来源</a>}</article>;
-        })}
-      </div>
-      <CollapsibleNotes notes={result.notes || []} />
-    </div>
-  );
+function isToday(value?: string | null): boolean {
+  if (!value) return false;
+  const date = new Date(value);
+  const today = new Date();
+  return !Number.isNaN(date.getTime())
+    && date.getFullYear() === today.getFullYear()
+    && date.getMonth() === today.getMonth()
+    && date.getDate() === today.getDate();
 }
 
-function UpstreamBuildView({ result }: { result: { build?: UpstreamRagBuildResult; transfer?: UpstreamRagTransferResult | null } }) {
-  const build = result.build || {};
-  const manifest = build.manifest || {};
-  const transfer = result.transfer;
-  return (
-    <div className="upstream-result">
-      <div className="metric-strip">
-        <div className="metric"><span>有效</span><strong>{manifest.valid ? "是" : "否"}</strong></div>
-        <div className="metric"><span>文档</span><strong>{String(manifest.document_count ?? 0)}</strong></div>
-        <div className="metric"><span>证据</span><strong>{String(manifest.evidence_count ?? 0)}</strong></div>
-        <div className="metric"><span>关系</span><strong>{String(manifest.relation_edge_count ?? 0)}</strong></div>
-      </div>
-      <section className="upstream-transfer">
-        <header>
-          <div><h3>{String(manifest.target_stock_name || "上游 RAG")} {String(manifest.target_stock_code || "")}</h3><p>{String(manifest.pack_version || "")} - {formatBytes(manifest.file_size)}</p></div>
-          {transfer?.qr_svg && <img src={transfer.qr_svg} alt="上游同步二维码" />}
-        </header>
-        {transfer && <div className="detail-grid"><div><span>清单</span><strong>{transfer.manifest_url}</strong></div><div><span>包文件</span><strong>{transfer.pack_url}</strong></div><div><span>过期时间</span><strong>{formatDateTime(transfer.expires_at)}</strong></div></div>}
-        {transfer?.descriptor_json && <textarea className="upstream-inline-descriptor" readOnly rows={4} value={transfer.descriptor_json} />}
-      </section>
-      <RelationGraph manifest={manifest} />
-      <CollapsibleNotes notes={build.notes || []} />
-      <RawJson result={result} />
-    </div>
-  );
-}
-
-function UpstreamMobileListView({
-  result,
-  onDetail,
-  onRollback,
-}: {
-  result: UpstreamMobileListResult;
-  onDetail: (stockCode: string, packVersion?: string) => void;
-  onRollback: (stockCode: string) => void;
-}) {
-  const packs = result.packs || [];
-  if (!packs.length) return <div className="result-empty"><span>{result.notes?.[0] || "暂无已导入的移动端 RAG 包。"}</span></div>;
-  return (
-    <div className="upstream-mobile-list">
-      <div className="metric-strip">
-        <div className="metric"><span>包数量</span><strong>{packs.length}</strong></div>
-        <div className="metric"><span>目录</span><strong>{result.root || "--"}</strong></div>
-      </div>
-      <div className="rag-pack-list">
-        {packs.map((pack, index) => {
-          const stockCode = String(pack.target_stock_code || "");
-          const version = String(pack.pack_version || "");
-          return (
-            <article key={`${stockCode}-${version}-${index}`} className="rag-pack-item">
-              <header>
-                <div><h3>{String(pack.target_stock_name || stockCode || "RAG 包")}</h3><p>{stockCode} {version}</p></div>
-                <span className={`pack-state ${pack.current ? "current" : "archived"}`}>{pack.current ? "当前" : "历史"}</span>
-              </header>
-              <div className="detail-grid">
-                <div><span>文档</span><strong>{String(pack.document_count ?? 0)}</strong></div>
-                <div><span>证据</span><strong>{String(pack.evidence_count ?? 0)}</strong></div>
-                <div><span>关系</span><strong>{String(pack.relation_edge_count ?? 0)}</strong></div>
-                <div><span>大小</span><strong>{formatBytes(pack.file_size)}</strong></div>
-              </div>
-              <div className="upstream-pack-actions">
-                <button type="button" className="action-btn" onClick={() => onDetail(stockCode, version)}>详情</button>
-                <button type="button" className="action-btn" onClick={() => onRollback(stockCode)}>回滚</button>
-              </div>
-            </article>
-          );
-        })}
-      </div>
-      <CollapsibleNotes notes={result.notes || []} />
-    </div>
-  );
-}
-
-function UpstreamImportView({ result }: { result: Record<string, unknown> }) {
-  const manifest = asRecord(result.manifest);
-  return (
-    <div className="upstream-result">
-      <div className="metric-strip">
-        <div className="metric"><span>导入</span><strong>{result.imported ? "已导入" : result.rolled_back ? "已回滚" : "已更新"}</strong></div>
-        <div className="metric"><span>股票</span><strong>{String(result.stock_code || manifest.target_stock_code || "--")}</strong></div>
-        <div className="metric"><span>版本</span><strong>{String(result.pack_version || manifest.pack_version || "--")}</strong></div>
-        <div className="metric"><span>文档</span><strong>{String(manifest.document_count ?? 0)}</strong></div>
-      </div>
-      <RelationGraph manifest={manifest} />
-      <CollapsibleNotes notes={Array.isArray(result.notes) ? result.notes.map((note) => String(note)) : []} />
-      <RawJson result={result} />
-    </div>
-  );
-}
-
-function UpstreamDetailView({ result }: { result: Record<string, unknown> }) {
-  const manifest = asRecord(result.manifest || result);
-  return (
-    <div className="upstream-result">
-      <div className="metric-strip">
-        <div className="metric"><span>目标</span><strong>{String(manifest.target_stock_code || "--")}</strong></div>
-        <div className="metric"><span>版本</span><strong>{String(manifest.pack_version || "--")}</strong></div>
-        <div className="metric"><span>证据</span><strong>{String(manifest.evidence_count ?? 0)}</strong></div>
-        <div className="metric"><span>大小</span><strong>{formatBytes(manifest.file_size)}</strong></div>
-      </div>
-      <section className="upstream-transfer">
-        <header><div><h3>{String(manifest.target_stock_name || "上游 RAG")}</h3><p>{String(manifest._local_pack_path || "")}</p></div></header>
-        <div className="detail-grid">
-          <div><span>sha256</span><strong>{String(manifest.sha256 || "--")}</strong></div>
-          <div><span>导入时间</span><strong>{formatDateTime(manifest.imported_at || manifest.generated_at)}</strong></div>
-        </div>
-      </section>
-      <RelationGraph manifest={manifest} />
-      <RawJson result={result} />
-    </div>
-  );
-}
-
-function RelationGraph({ manifest }: { manifest: Record<string, unknown> }) {
-  const edges = Array.isArray(manifest.relation_edges) ? manifest.relation_edges as Record<string, unknown>[] : [];
-  const chunks = Array.isArray(manifest.evidence_chunks) ? manifest.evidence_chunks as Record<string, unknown>[] : [];
-  return (
-    <>
-      {edges.length > 0 && <section className="upstream-graph"><header><h3>关系图</h3><span>{formatNumber(edges.length)}</span></header><div className="relation-map">{edges.slice(0, 18).map((edge, i) => <article key={i} className="relation-edge"><span>{String(asRecord(edge.source_entity).entity_name || edge.source_code || "--")}</span><strong>{String(edge.relation_type || "--")}</strong><span>{String(asRecord(edge.target_entity).entity_name || edge.target_code || "--")}</span></article>)}</div></section>}
-      {chunks.length > 0 && <section className="upstream-evidence"><header><h3>证据</h3><span>{chunks.length}</span></header><div className="evidence-list">{chunks.slice(0, 24).map((chunk, i) => <article key={i}><strong>{String(chunk.title || "--")}</strong><p>{String(chunk.evidence_text || chunk.text || "")}</p></article>)}</div></section>}
-    </>
-  );
-}
-
-function GenericJsonResult({ result }: { result: unknown }) {
-  return <RawJson result={result} className="raw-result" inline />;
-}
-
-async function scanQrCode(): Promise<string> {
-  if (!navigator.mediaDevices?.getUserMedia) throw new Error("当前 WebView 不支持摄像头。");
-  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } });
-  const video = document.createElement("video");
-  video.playsInline = true;
-  video.muted = true;
-  video.srcObject = stream;
-  await video.play();
-  const canvas = document.createElement("canvas");
+function safeExternalUrl(value?: string | null): string | null {
+  if (!value) return null;
   try {
-    const detectorCtor = (window as unknown as { BarcodeDetector?: new (options: { formats: string[] }) => { detect(video: HTMLVideoElement): Promise<{ rawValue?: string }[]> } }).BarcodeDetector;
-    const detector = detectorCtor ? new detectorCtor({ formats: ["qr_code"] }) : null;
-    for (let i = 0; i < 250; i++) {
-      if (detector) {
-        const codes = await detector.detect(video).catch(() => []);
-        if (codes[0]?.rawValue) return codes[0].rawValue;
-      } else {
-        const raw = detectWithJsQr(video, canvas);
-        if (raw) return raw;
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, 200));
-    }
-    throw new Error("未识别到二维码。");
-  } finally {
-    stream.getTracks().forEach((track) => track.stop());
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
   }
 }
 
-function detectWithJsQr(video: HTMLVideoElement, canvas: HTMLCanvasElement): string {
-  const jsQR = (window as unknown as { jsQR?: (data: Uint8ClampedArray, width: number, height: number, options?: Record<string, unknown>) => { data?: string } | null }).jsQR;
-  if (!jsQR || !video.videoWidth || !video.videoHeight) return "";
-  const maxDimension = 900;
-  const scale = Math.min(1, maxDimension / Math.max(video.videoWidth, video.videoHeight));
-  const width = Math.max(1, Math.round(video.videoWidth * scale));
-  const height = Math.max(1, Math.round(video.videoHeight * scale));
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext("2d");
-  if (!context) return "";
-  context.drawImage(video, 0, 0, width, height);
-  const image = context.getImageData(0, 0, width, height);
-  return jsQR(image.data, width, height, { inversionAttempts: "attemptBoth" })?.data || "";
+function formatEpoch(value?: number): string {
+  return value ? new Date(value).toLocaleDateString("zh-CN", {
+    month: "2-digit", day: "2-digit",
+  }) : "刚刚";
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+function formatScore(value?: number | null): string {
+  return Number.isFinite(value) ? Number(value).toFixed(4) : "—";
 }
 
-function newsModeLabel(mode?: string): string {
-  const labels: Record<string, string> = {
-    plain_news: "新闻分组",
-    rag: "RAG 检索",
-    direct: "直接分析",
-    cache: "缓存分析",
-  };
-  return labels[String(mode || "plain_news")] || String(mode || "--");
-}
-
-function directionLabel(direction: string): string {
-  const labels: Record<string, string> = {
-    positive: "利好",
-    negative: "利空",
-    mixed: "混合",
-    uncertain: "不确定",
-    bullish: "看多",
-    bearish: "看空",
-    neutral: "中性",
-  };
-  return labels[String(direction || "")] || String(direction || "--");
-}
-
-function sourceTierLabel(tier?: string): string {
-  const labels: Record<string, string> = {
-    filing: "公告",
-    news: "新闻",
-    community: "社区",
-    research: "研报",
-  };
-  return labels[String(tier || "news")] || String(tier || "新闻");
+async function fileToBase64(file: File): Promise<string> {
+  const buffer = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let index = 0; index < buffer.length; index += 0x8000) {
+    binary += String.fromCharCode(...buffer.subarray(index, index + 0x8000));
+  }
+  return window.btoa(binary);
 }
