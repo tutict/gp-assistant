@@ -21,6 +21,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri::{webview::PageLoadEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::ShellExt;
 
+mod agent_harness;
 mod news_rag;
 mod rag_pack;
 mod research;
@@ -1649,35 +1650,12 @@ fn api_upstream_rag_transfer_start(app: tauri::AppHandle, payload: Value) -> Res
 #[tauri::command]
 async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
     let data = cached_market_data(&app)?;
-    let message = payload
-        .get("message")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
-    let run_id = payload
-        .get("run_id")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
-    let mode = payload
-        .get("mode")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
-    let mut request = serde_json::Map::new();
-    request.insert("data".to_string(), data);
-    request.insert("message".to_string(), Value::String(message));
-    if let Some(run_id) = run_id {
-        request.insert("run_id".to_string(), Value::String(run_id));
-    }
-    if let Some(mode) = mode {
-        request.insert("mode".to_string(), Value::String(mode));
-    }
-    for key in ["context", "platform", "network"] {
-        if let Some(value) = payload.get(key) {
-            request.insert(key.to_string(), value.clone());
-        }
-    }
-    core_agent_stream_with_data(app, Value::Object(request)).await
+    let event_app = app.clone();
+    let outcome = agent_harness::execute_with_event_sink(payload, data, move |event| {
+        let _ = event_app.emit("agent-stream-event", event);
+    })
+    .await?;
+    Ok(outcome.response)
 }
 #[tauri::command]
 async fn core_validate_data_source(payload: Value) -> Result<Value, String> {

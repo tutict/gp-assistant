@@ -5420,6 +5420,15 @@ html.android-phone .app[data-active-view="agent"] .agent-empty-state .agent-mode
   border-color: color-mix(in srgb, var(--accent-strong) 72%, var(--accent));
 }
 
+html.android-phone .app[data-active-view="agent"] .agent-harness-meta {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+html.android-phone .app[data-active-view="agent"] .agent-harness-meta em {
+  grid-column: 2;
+  text-align: left;
+}
+
 html.android-phone .backtest-primary-chart {
   padding: 8px 0;
   border: 0;

@@ -644,6 +644,15 @@ export interface AgentEvidenceItem {
 export interface AgentAnswerSection {
   title?: string;
   bullets?: string[];
+  provenance?: "model_inference" | string;
+  evidence_basis?: string;
+}
+
+export interface AgentHarnessMeta {
+  prompt_version?: string;
+  profile_id?: "deterministic_v1" | "hot_money_early_v1" | "value_compounder_v1" | string;
+  model_used?: boolean;
+  model?: string | null;
 }
 
 export interface AgentResult {
@@ -653,6 +662,7 @@ export interface AgentResult {
   tool_calls?: AgentToolCall[];
   evidence_summary?: AgentEvidenceItem[];
   answer_sections?: AgentAnswerSection[];
+  model_answer_sections?: AgentAnswerSection[];
   warnings?: string[];
   next_actions?: string[];
   criteria?: ScreenCriteria | null;
@@ -663,6 +673,7 @@ export interface AgentResult {
   graph_screen?: Record<string, unknown> | null;
   trend_screen?: Record<string, unknown> | null;
   data?: Record<string, unknown> | null;
+  harness?: AgentHarnessMeta | null;
 }
 
 export interface AgentStreamEvent {

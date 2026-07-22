@@ -73,6 +73,7 @@ describe("LLM settings persistence", () => {
         remember_key: false,
       }],
     });
+    expect(buildLlmConfig(null)).toBeUndefined();
   });
 
   it("normalizes legacy settings and builds config from the active provider", () => {
@@ -308,7 +309,8 @@ describe("agent and upstream utilities", () => {
       intent: { kind: "stock_screen", mode: "expert" },
       tool_calls: [{ id: "t1", tool: "stock_screen", status: "ok" }],
       evidence_summary: [{ title: "Local", level: "primary", summary: "Returned rows" }],
-      answer_sections: [{ title: "Conclusion", bullets: ["ok"] }],
+        answer_sections: [{ title: "Conclusion", bullets: ["ok"] }],
+        model_answer_sections: [{ title: "Inference", bullets: ["verify"] }],
       warnings: ["For stock research only"],
       next_actions: ["Run trend analysis"],
     });
@@ -316,7 +318,8 @@ describe("agent and upstream utilities", () => {
     expect(normalized.intent?.kind).toBe("stock_screen");
     expect(normalized.tool_calls).toHaveLength(1);
     expect(normalized.evidence_summary).toHaveLength(1);
-    expect(normalized.answer_sections).toHaveLength(1);
+      expect(normalized.answer_sections).toHaveLength(1);
+      expect(normalized.model_answer_sections).toHaveLength(1);
 
     const legacy = normalizeAgentResult({ action: "trend_screen", data: { items: [] } });
     expect(actionResultKind(legacy)).toBe("trend");

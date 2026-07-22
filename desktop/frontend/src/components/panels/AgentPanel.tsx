@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentResult, AgentStreamEvent, BacktestResult, LlmSettings, NewsRagResult, ObserveResult, StockRowView, WatchlistItem } from "../../types";
 import { getTauriInvoke, getTauriListen, isTauriRuntime } from "../../lib/tauri";
 import { actionResultKind, activeLlmProvider, buildLlmConfig, normalizeAgentResult, normalizeAgentStreamEvent, normalizeScreenRows, parseSseBlock } from "../../lib/contracts";
-import { buildAgentStreamPayload } from "../../lib/agent";
+import { agentHarnessExecutionLabel, agentHarnessLabel, buildAgentStreamPayload } from "../../lib/agent";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { StockList } from "../StockList";
 import { BacktestResultView } from "./BacktestPanel";
@@ -46,8 +46,8 @@ interface AgentConversation {
 
 const AGENT_MODES = [
   { id: "quick", label: "快速模式", hint: "直接执行选股、观察和新闻查询" },
-  { id: "expert", label: "专家模式", hint: "要求更完整的证据、风险和下一步动作" },
-  { id: "research", label: "研报模式", hint: "聚焦上下游、公告和消息链路" },
+  { id: "expert", label: "专家模式", hint: "游资早期框架：环境、主线、情绪周期与失效条件" },
+  { id: "research", label: "研报模式", hint: "价值复利框架：企业质量、资本配置与估值" },
 ] as const;
 
 type AgentMode = typeof AGENT_MODES[number]["id"];
@@ -282,6 +282,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         llm: buildLlmConfig(llmSettings),
         mode,
         watchlist,
+        history: messages.map((message) => ({ role: message.role, content: message.content })),
       });
       if (!payload) return;
       await requestAgentStream(payload, applyEvent);
@@ -290,7 +291,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     } finally {
       setLoading(false);
     }
-  }, [activeConversation?.id, activeConversation?.mode, input, llmSettings, loading, updateConversation, watchlist]);
+  }, [activeConversation?.id, activeConversation?.mode, input, llmSettings, loading, messages, updateConversation, watchlist]);
 
   return (
     <div className={`panel-container agent-panel agent-workspace ${railCollapsed ? "rail-collapsed" : ""}`}>
@@ -520,12 +521,21 @@ function AgentStructuredResult({ result }: { result: AgentResult }) {
   const toolCalls = Array.isArray(result.tool_calls) ? result.tool_calls : [];
   const evidence = Array.isArray(result.evidence_summary) ? result.evidence_summary : [];
   const sections = Array.isArray(result.answer_sections) ? result.answer_sections : [];
+  const modelSections = Array.isArray(result.model_answer_sections) ? result.model_answer_sections : [];
   const warnings = Array.isArray(result.warnings) ? result.warnings : [];
   const nextActions = Array.isArray(result.next_actions) ? result.next_actions : [];
-  if (!result.intent && !toolCalls.length && !evidence.length && !sections.length && !warnings.length && !nextActions.length) return null;
+  const harness = result.harness;
+  if (!harness && !result.intent && !toolCalls.length && !evidence.length && !sections.length && !modelSections.length && !warnings.length && !nextActions.length) return null;
 
   return (
     <section className="agent-structured-result">
+      {harness && (
+        <div className="agent-harness-meta" aria-label="本次回答方法与模型状态">
+          <span>方法</span>
+          <strong>{agentHarnessLabel(harness.profile_id)}</strong>
+          <em>{agentHarnessExecutionLabel(harness.profile_id, harness.model_used, harness.model)}</em>
+        </div>
+      )}
       {result.intent && (
         <div className="agent-intent-card">
           <span>任务理解</span>
@@ -560,11 +570,28 @@ function AgentStructuredResult({ result }: { result: AgentResult }) {
         </div>
       )}
 
+      {modelSections.length > 0 && (
+        <div className="agent-model-answer-block">
+          <div className="agent-model-answer-head">
+            <strong>模型推断</strong>
+            <span>按 [E#] 邻近引用本地证据，仍需核验原始数据</span>
+          </div>
+          <div className="agent-answer-sections agent-model-answer-sections">
+            {modelSections.map((section, index) => (
+              <article key={String(section.title || "model-section") + "-" + index}>
+                <strong>{section.title || "研究推断"}</strong>
+                {(section.bullets || []).map((bullet, bulletIndex) => <p key={bulletIndex}>{bullet}</p>)}
+              </article>
+            ))}
+          </div>
+        </div>
+      )}
+
       {evidence.length > 0 && (
         <div className="agent-evidence-grid">
           {evidence.map((item, index) => (
             <article key={String(item.title || "evidence") + "-" + index}>
-              <span>{item.level || "evidence"}</span>
+              <span>{`E${index + 1} · ${item.level || "evidence"}`}</span>
               <strong>{item.title || item.source || "证据"}</strong>
               <p>{item.summary || item.source || "暂无证据摘要"}</p>
               {item.source && <em>{item.source}</em>}
@@ -777,6 +804,8 @@ async function requestTauriAgentStream(payload: Record<string, unknown>, onEvent
         context: payload.context,
         platform: payload.platform,
         network: payload.network,
+        llm: payload.llm,
+        history: payload.history,
       },
     });
     if (!sawResult && response) onEvent({ run_id: runId, type: "result", response: normalizeAgentResult(response) });
@@ -784,4 +813,3 @@ async function requestTauriAgentStream(payload: Record<string, unknown>, onEvent
     unlisten?.();
   }
 }
-

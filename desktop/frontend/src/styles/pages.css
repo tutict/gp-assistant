@@ -2509,6 +2509,7 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
 }
 
 .agent-intent-card,
+.agent-harness-meta,
 .agent-answer-sections article,
 .agent-evidence-grid article,
 .agent-warning-list,
@@ -2521,11 +2522,60 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   background: var(--surface);
 }
 
+.agent-harness-meta {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: baseline;
+  padding-block: 9px;
+}
+
+.agent-harness-meta span {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.agent-harness-meta strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.agent-harness-meta em {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-style: normal;
+  text-align: right;
+}
+
 .agent-answer-sections,
 .agent-evidence-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: var(--space-2);
+}
+
+.agent-model-answer-block {
+  display: grid;
+  gap: 6px;
+}
+
+.agent-model-answer-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+}
+
+.agent-model-answer-head strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.agent-model-answer-sections article {
+  border-style: dashed;
+  background: var(--surface-2);
 }
 
 .agent-next-actions {

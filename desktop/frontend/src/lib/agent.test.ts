@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAgentStreamPayload } from "./agent";
+import { agentHarnessExecutionLabel, agentHarnessLabel, buildAgentStreamPayload } from "./agent";
 import type { LlmClientConfig, WatchlistItem } from "../types";
 
 describe("buildAgentStreamPayload", () => {
@@ -63,5 +63,36 @@ describe("buildAgentStreamPayload", () => {
     const context = payload?.context as { watchlist?: unknown[] };
     expect(context.watchlist).toHaveLength(50);
     expect(context.watchlist?.at(-1)).toMatchObject({ code: "000049.SZ", name: "股票49" });
+  });
+
+  it("sends only the latest bounded conversation history to the harness", () => {
+    const history = Array.from({ length: 15 }, (_, index) => ({
+      role: index % 2 === 0 ? "user" as const : "assistant" as const,
+      content: ` message ${index} `,
+    }));
+
+    const payload = buildAgentStreamPayload({
+      message: "继续比较",
+      runId: "run-history",
+      mode: "research",
+      watchlist: [],
+      history,
+    });
+
+    expect(payload?.history).toEqual(history.slice(-12).map((item) => ({
+      ...item,
+      content: item.content.trim(),
+    })));
+  });
+});
+
+describe("agentHarnessLabel", () => {
+  it("exposes the active versioned method without impersonating an investor", () => {
+    expect(agentHarnessLabel("hot_money_early_v1")).toBe("游资早期研究 v1");
+    expect(agentHarnessLabel("value_compounder_v1")).toBe("价值复利研究 v1");
+    expect(agentHarnessLabel("deterministic_v1")).toBe("本地快速分析");
+    expect(agentHarnessExecutionLabel("deterministic_v1", false)).toBe("确定性工具执行");
+    expect(agentHarnessExecutionLabel("hot_money_early_v1", true, "qwen-plus")).toBe("模型综合 · qwen-plus");
+    expect(agentHarnessExecutionLabel("value_compounder_v1", false)).toBe("本地工具降级");
   });
 });

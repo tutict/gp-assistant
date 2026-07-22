@@ -340,7 +340,7 @@ export function sanitizePersistedLlmSettings(settings: LlmSettings | null | unde
 
 export function buildLlmConfig(settings: LlmSettings | null | undefined): LlmClientConfig | undefined {
   const active = activeLlmProvider(settings);
-  if (!active) return undefined;
+  if (!active?.base_url?.trim() || !active.model?.trim()) return undefined;
   const config: LlmClientConfig = {};
   if (active.api_key) config.api_key = active.api_key;
   if (active.base_url) config.base_url = active.base_url.replace(/\/+$/, "");
@@ -735,6 +735,7 @@ export function normalizeAgentResult(rawResult: unknown): AgentResult {
   if (!Array.isArray(normalized.tool_calls)) normalized.tool_calls = [];
   if (!Array.isArray(normalized.evidence_summary)) normalized.evidence_summary = [];
   if (!Array.isArray(normalized.answer_sections)) normalized.answer_sections = [];
+  if (!Array.isArray(normalized.model_answer_sections)) normalized.model_answer_sections = [];
   if (!Array.isArray(normalized.warnings)) normalized.warnings = [];
   if (!Array.isArray(normalized.next_actions)) normalized.next_actions = [];
   return normalized;

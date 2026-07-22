@@ -26,6 +26,8 @@ describe("AgentPanel empty state", () => {
     expect(html).toContain('role="group"');
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain("请先配置模型");
+    expect(html).toContain("游资早期框架：环境、主线、情绪周期与失效条件");
+    expect(html).toContain("价值复利框架：企业质量、资本配置与估值");
     expect(html).not.toContain("快速模式能力");
   });
 
