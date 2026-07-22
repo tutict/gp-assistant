@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   BookOpen, Database, Download, ExternalLink, FileText, Inbox, Menu,
   MessageSquareText, Plus, RefreshCw, RotateCcw, Search, Send, Upload, X,
@@ -28,6 +28,7 @@ const MAX_RESEARCH_PACK_BYTES = 64 * 1024 * 1024;
 
 export function NewsRagPanel(props: NewsRagPanelProps) {
   const mobile = isMobileTauriRuntime();
+  const questionInputId = useId();
   const watchlist = props.watchlist || [];
   const [code, setCode] = useState(() => normalizeStockCode(props.initialCode || watchlist[0]?.code || ""));
   const codeRef = useRef(code);
@@ -278,7 +279,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         <div><span className="research-eyebrow">研究消息中心</span><h1>
           {stock?.name || code || "全部自选股"}{code && <small>{code}</small>}
         </h1></div>
-        <span className="research-mode"><Search size={13} />
+        <span className={`research-mode ${vectorReady ? "ready" : "lexical"}`}><Search size={13} />
           {vectorReady ? "混合检索" : "BM25 证据模式"}
         </span>
       </div>
@@ -313,6 +314,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         createThread={() => void createThread()} />
 
       <main className="research-stream">
+        <div className="research-stream-body">
         <section className="research-daily-brief">
           <div className="research-brief-rule"><span>今日摘要</span>
             <time>{new Date().toLocaleDateString("zh-CN")}</time>
@@ -341,11 +343,16 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         </section>
 
         <Answers answers={answers} setCitation={setCitation} />
+        </div>
         <form className="research-composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
-          <div><span>{buildLlmConfig(props.llmSettings)
-            ? "模型回答会强制引用证据" : "未配置模型，返回证据摘录"}</span>
-            <textarea value={question} onChange={(event) => setQuestion(event.target.value)}
+          <div><label htmlFor={questionInputId}><span>研究问题</span><small>
+            {buildLlmConfig(props.llmSettings)
+              ? "模型回答会强制引用证据" : "未配置模型，返回证据摘录"}
+          </small></label>
+            <textarea id={questionInputId} value={question}
+              onChange={(event) => setQuestion(event.target.value)}
               placeholder={code ? `询问 ${code} 的公告、财务或消息…` : "询问当前知识库…"} rows={2} />
+            <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>
           </div>
           <button type="submit" aria-label="提交问题" title="提交问题"
             disabled={!question.trim() || asking}>
@@ -486,8 +493,15 @@ function EvidencePanel(props: { citation: ResearchCitation | null; close: () => 
         aria-label="关闭证据检查器" title="关闭" onClick={props.close}><X size={17} /></button>
     </div>
     {props.citation ? <EvidenceInspector citation={props.citation} />
-      : <div className="research-evidence-empty"><span>C</span><strong>选择一条引用</strong>
-        <p>回答中的 C1、C2 会在这里展开原文、页码、来源等级和检索分数。</p>
+      : <div className="research-evidence-empty">
+        <span className="research-evidence-empty-icon"><Search size={18} /></span>
+        <div><strong>证据会在这里展开</strong>
+          <p>完成一次证据问答，再点击回答中的引用编号查看原文。</p></div>
+        <ol aria-label="证据检查步骤">
+          <li><b>C1</b><span>定位回答中的引用</span></li>
+          <li><FileText size={14} /><span>核对原文、页码与来源</span></li>
+          <li><ExternalLink size={14} /><span>需要时回到公开原文</span></li>
+        </ol>
       </div>}
   </aside>;
 }

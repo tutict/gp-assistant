@@ -114,6 +114,31 @@ describe("NewsRagPanel", () => {
     });
   });
 
+  it("exposes a visible label for the research question input", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<NewsRagPanel llmSettings={null} />);
+    });
+
+    const textarea = renderer.root.findByType("textarea");
+    expect(textarea.props.id).toBeTruthy();
+    const label = renderer.root.find((node) =>
+      node.type === "label" && node.props.htmlFor === textarea.props.id
+    );
+    expect(textOf(label)).toContain("研究问题");
+    await act(async () => { renderer.unmount(); });
+  });
+
+  it("keeps the research-only risk boundary visible beside the question input", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<NewsRagPanel llmSettings={null} />);
+    });
+
+    expect(textOf(renderer.toJSON())).toContain("仅供研究，不构成投资建议");
+    await act(async () => { renderer.unmount(); });
+  });
+
   it("keeps the compatibility evidence view available to the agent page", () => {
     const html = renderToStaticMarkup(
       <NewsRagView
