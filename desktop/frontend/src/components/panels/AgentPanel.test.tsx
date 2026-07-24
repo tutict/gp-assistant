@@ -24,6 +24,7 @@ describe("AgentPanel empty state", () => {
 
     expect(html).toContain("<h2>开始对话</h2>");
     expect(html).toContain('role="group"');
+    expect(html).toContain('maxLength="8000"');
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain("请先配置模型");
     expect(html).toContain("游资早期框架：环境、主线、情绪周期与失效条件");
@@ -37,7 +38,7 @@ describe("AgentPanel empty state", () => {
         {...baseProps}
         llmSettings={{
           active_provider_id: "test",
-          providers: [{ id: "test", name: "Test", provider: "openai-compatible", model: "test-model" }],
+          providers: [{ id: "test", name: "Test", provider: "openai-compatible", model: "test-model", api_key: "test-key" }],
         }}
       />,
     );

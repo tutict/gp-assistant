@@ -95,6 +95,20 @@ describe("LLM settings persistence", () => {
     });
   });
 
+  it("keeps a model configuration when the provider uses the default endpoint", () => {
+    expect(buildLlmConfig({
+      active_provider_id: "missing-connection",
+      providers: [{ id: "missing-connection", model: "gpt-4o-mini" }],
+    })).toBeUndefined();
+
+    expect(buildLlmConfig({
+      active_provider_id: "default-endpoint",
+      providers: [{ id: "default-endpoint", model: "gpt-4o-mini", api_key: "sk-test" }],
+    })).toEqual({
+      api_key: "sk-test",
+      model: "gpt-4o-mini",
+    });
+  });
   it("keeps non-OpenAI provider metadata while building a compatible client config", () => {
     const settings: LlmSettings = {
       active_provider_id: "glm",

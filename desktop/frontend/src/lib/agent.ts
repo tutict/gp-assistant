@@ -2,6 +2,9 @@ import type { LlmClientConfig, WatchlistItem } from "../types";
 
 export type AgentMode = "quick" | "expert" | "research";
 
+export const MAX_AGENT_MESSAGE_CHARS = 8_000;
+export const MAX_AGENT_EVIDENCE_ITEMS = 16;
+
 export interface AgentHistoryMessage {
   role: "user" | "assistant";
   content: string;

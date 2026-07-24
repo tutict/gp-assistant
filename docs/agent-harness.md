@@ -22,7 +22,7 @@ Agent 页面采用“本地工具取证 → 模型综合 → 安全合并”的�
 4. 仅接收 `reply`、`answer_sections`、`warnings`、`next_actions` 四类模型字段；摘要和每条事实 bullet 都必须邻近引用证据目录中的有效 `[E#]`，缺失或未知编号会回退本地结果。
 5. 拒绝直接交易、收益承诺和操纵市场内容，并始终补上“仅供选股研究，不构成投资建议”。
 
-本地 Ollama、LM Studio、vLLM 等兼容服务可以不填 API Key。HTTP 只允许 loopback 本地模型，远程模型必须使用 HTTPS。显式配置的端点只使用该连接自身的凭据，不会继承 `OPENAI_*` 环境密钥；完全不传连接配置时才读取环境变量。IPC payload 限制为 512 KiB、问题限制为 8000 字符、模型请求与响应体各限制为 2 MiB；工具上下文被压缩时会向模型标记 `tool_result_truncated=true`。远程服务错误会脱敏。
+本地 Ollama、LM Studio、vLLM 等兼容服务可以不填 API Key。HTTP 仅允许 loopback 或私有局域网 IP 的本地模型；公共远程模型必须使用 HTTPS。专家和研报模式只会使用应用内显式配置后传入的连接及其自身凭据，未传连接配置时会回退本地工具结果，绝不会继承 `OPENAI_*` 环境密钥。IPC payload 限制为 512 KiB、问题限制为 8000 字符、模型请求与响应体各限制为 2 MiB；工具上下文被压缩时会向模型标记 `tool_result_truncated=true`。远程服务错误会脱敏。
 
 执行期间 Tauri 会依次推送本地工具、模型综合、证据校验和完成状态；界面不会在长模型请求期间一直停留在“准备中”。
 

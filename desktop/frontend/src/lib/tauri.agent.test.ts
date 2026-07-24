@@ -37,4 +37,24 @@ describe("Agent Tauri routes", () => {
 
     expect(invokeMock).toHaveBeenCalledWith("api_agent_stream", { payload });
   });
+
+  it("uses one canonical field whitelist for native Agent calls", async () => {
+    const { buildTauriAgentPayload } = await import("./tauri");
+    expect(buildTauriAgentPayload({
+      message: "test",
+      run_id: "run-1",
+      mode: "expert",
+      llm: { model: "test-model" },
+      ignored: "must not cross the bridge",
+    })).toEqual({
+      message: "test",
+      run_id: "run-1",
+      mode: "expert",
+      context: undefined,
+      platform: undefined,
+      network: undefined,
+      llm: { model: "test-model" },
+      history: undefined,
+    });
+  });
 });

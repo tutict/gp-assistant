@@ -1,7 +1,7 @@
 use crate::{build_http_client_with_proxy, runtime};
 use futures::StreamExt;
 use serde_json::{json, Map, Value};
-use std::{env, time::Duration};
+use std::{net::IpAddr, time::Duration};
 use stock_optimizer_core as gp_core;
 
 const BASE_PROMPT: &str = include_str!("../../../app/prompts/stock_soul.md");
@@ -15,6 +15,7 @@ const MAX_HISTORY_MESSAGES: usize = 12;
 const MAX_HISTORY_CHARS: usize = 2_000;
 const MAX_MODEL_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 const MAX_MODEL_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_EVIDENCE_CATALOG_ITEMS: usize = 16;
 
 struct PromptProfile {
     id: &'static str,
@@ -274,7 +275,7 @@ where
         ),
     );
     let model_result = if should_call_model {
-        call_model(llm_value, &preview).await
+        call_model_with_config(config.as_ref(), &preview).await
     } else {
         Ok(None)
     };
@@ -403,7 +404,15 @@ pub(crate) async fn call_model(
     llm_value: Option<&Value>,
     preview: &Value,
 ) -> Result<Option<Value>, String> {
-    let Some(config) = resolve_llm_config(llm_value) else {
+    let config = resolve_llm_config(llm_value);
+    call_model_with_config(config.as_ref(), preview).await
+}
+
+async fn call_model_with_config(
+    config: Option<&LlmConfig>,
+    preview: &Value,
+) -> Result<Option<Value>, String> {
+    let Some(config) = config else {
         return Ok(None);
     };
     validate_llm_config(&config)?;
@@ -454,99 +463,49 @@ pub(crate) async fn call_model(
 }
 
 fn resolve_llm_config(value: Option<&Value>) -> Option<LlmConfig> {
-    let explicitly_configured = value
+    let value = value
         .and_then(Value::as_object)
-        .is_some_and(|object| !object.is_empty());
-    let api_key = if explicitly_configured {
-        config_string(value, "api_key").unwrap_or_default()
-    } else {
-        env::var("OPENAI_API_KEY").ok().unwrap_or_default()
-    };
-    let base_url = if explicitly_configured {
-        config_string(value, "base_url")?
-    } else {
-        env::var("OPENAI_BASE_URL")
-            .ok()
-            .unwrap_or_else(|| "https://api.openai.com/v1".to_string())
-    }
-    .trim_end_matches('/')
-    .to_string();
-    let model = if explicitly_configured {
-        config_string(value, "model")?
-    } else {
-        env::var("OPENAI_MODEL").ok().unwrap_or_default()
-    };
-    if model.is_empty() && api_key.is_empty() {
+        .filter(|object| !object.is_empty())?;
+    let api_key = config_string(value, "api_key").unwrap_or_default();
+    let configured_base_url = config_string(value, "base_url");
+    if api_key.is_empty() && configured_base_url.is_none() {
         return None;
     }
+    let base_url = configured_base_url
+        .unwrap_or_else(|| "https://api.openai.com/v1".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let model = config_string(value, "model")?;
     Some(LlmConfig {
         api_key,
         base_url,
-        model: if model.is_empty() {
-            "gpt-4o-mini".to_string()
-        } else {
-            model
-        },
-        temperature: if explicitly_configured {
-            value
-                .and_then(|item| item.get("temperature"))
-                .and_then(Value::as_f64)
-        } else {
-            env::var("OPENAI_TEMPERATURE")
-                .ok()
-                .and_then(|item| item.parse().ok())
-        }
-        .unwrap_or(0.2)
-        .clamp(0.0, 2.0),
-        timeout_seconds: if explicitly_configured {
-            value
-                .and_then(|item| item.get("timeout_seconds"))
-                .and_then(Value::as_u64)
-        } else {
-            env::var("OPENAI_TIMEOUT_SECONDS")
-                .ok()
-                .and_then(|item| item.parse().ok())
-        }
-        .unwrap_or(45)
-        .clamp(1, 180),
-        json_mode: if explicitly_configured {
-            value
-                .and_then(|item| item.get("json_mode"))
-                .and_then(Value::as_bool)
-        } else {
-            env::var("OPENAI_JSON_MODE")
-                .ok()
-                .and_then(|item| parse_bool(&item))
-        }
-        .unwrap_or(true),
-        organization: if explicitly_configured {
-            config_string(value, "organization")
-        } else {
-            env::var("OPENAI_ORG_ID").ok()
-        },
-        project: if explicitly_configured {
-            config_string(value, "project")
-        } else {
-            env::var("OPENAI_PROJECT_ID").ok()
-        },
+        model,
+        temperature: value
+            .get("temperature")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.2)
+            .clamp(0.0, 2.0),
+        timeout_seconds: value
+            .get("timeout_seconds")
+            .and_then(Value::as_u64)
+            .unwrap_or(45)
+            .clamp(1, 180),
+        json_mode: value
+            .get("json_mode")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        organization: config_string(value, "organization"),
+        project: config_string(value, "project"),
     })
 }
 
-fn config_string(value: Option<&Value>, key: &str) -> Option<String> {
+fn config_string(value: &Map<String, Value>, key: &str) -> Option<String> {
     value
-        .and_then(|item| item.get(key))
+        .get(key)
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|item| !item.is_empty())
         .map(str::to_string)
-}
-
-fn parse_bool(value: &str) -> Option<bool> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Some(true),
-        "0" | "false" | "no" | "off" => Some(false),
-        _ => None,
-    }
 }
 
 fn validate_llm_config(config: &LlmConfig) -> Result<(), String> {
@@ -564,9 +523,9 @@ fn validate_llm_config(config: &LlmConfig) -> Result<(), String> {
     if !matches!(url.scheme(), "http" | "https") {
         return Err("Agent LLM base URL must use http or https".to_string());
     }
-    if url.scheme() == "http" && !is_loopback_host(url.host_str()) {
+    if url.scheme() == "http" && !is_loopback_or_private_network_host(url.host_str()) {
         return Err(
-            "Agent LLM remote endpoints must use https; http is limited to loopback".to_string(),
+            "Agent LLM remote endpoints must use https; http is limited to loopback or private LAN IP addresses".to_string(),
         );
     }
     if !url.username().is_empty() || url.password().is_some() {
@@ -575,17 +534,23 @@ fn validate_llm_config(config: &LlmConfig) -> Result<(), String> {
     Ok(())
 }
 
-fn is_loopback_host(host: Option<&str>) -> bool {
+fn is_loopback_or_private_network_host(host: Option<&str>) -> bool {
     let Some(host) = host else {
         return false;
     };
     host.eq_ignore_ascii_case("localhost")
         || host.ends_with(".localhost")
-        || host
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|address| address.is_loopback())
+        || host.parse::<IpAddr>().is_ok_and(|address| match address {
+            IpAddr::V4(address) => {
+                address.is_loopback() || address.is_private() || address.is_link_local()
+            }
+            IpAddr::V6(address) => {
+                address.is_loopback()
+                    || address.is_unique_local()
+                    || address.is_unicast_link_local()
+            }
+        })
 }
-
 pub(crate) fn should_retry_without_json_mode(error: &str) -> bool {
     let normalized = error.to_ascii_lowercase();
     let rejects_request_shape = normalized.contains("http 400") || normalized.contains("http 422");
@@ -691,7 +656,7 @@ fn build_evidence_catalog(tool_response: &Value) -> Vec<Value> {
         .map(|items| {
             items
                 .iter()
-                .take(16)
+                .take(MAX_EVIDENCE_CATALOG_ITEMS)
                 .enumerate()
                 .map(|(index, item)| {
                     json!({
@@ -715,7 +680,7 @@ fn validate_model_evidence(model_response: &Value, evidence_count: usize) -> Res
         .get("reply")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    validate_evidence_refs(reply, evidence_count)?;
+    let mut has_valid_reference = validate_evidence_refs(reply, evidence_count)?;
     if let Some(sections) = model_response
         .get("answer_sections")
         .and_then(Value::as_array)
@@ -723,38 +688,40 @@ fn validate_model_evidence(model_response: &Value, evidence_count: usize) -> Res
         for section in sections {
             if let Some(bullets) = section.get("bullets").and_then(Value::as_array) {
                 for bullet in bullets.iter().filter_map(Value::as_str) {
-                    validate_evidence_refs(bullet, evidence_count)?;
+                    has_valid_reference |= validate_evidence_refs(bullet, evidence_count)?;
                 }
             }
         }
     }
+    if !has_valid_reference {
+        return Err("agent model synthesis is missing an evidence citation".to_string());
+    }
     Ok(())
 }
 
-fn validate_evidence_refs(text: &str, evidence_count: usize) -> Result<(), String> {
+fn validate_evidence_refs(text: &str, evidence_count: usize) -> Result<bool, String> {
     let mut found = false;
-    for suffix in text.split("[E").skip(1) {
-        let digits = suffix
-            .chars()
-            .take_while(char::is_ascii_digit)
-            .collect::<String>();
-        if digits.is_empty() || !suffix[digits.len()..].starts_with(']') {
-            continue;
+    let mut remaining = text;
+    while let Some(index) = remaining.find("[E") {
+        let suffix = &remaining[index + 2..];
+        let digit_count = suffix
+            .bytes()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        if digit_count == 0 || !suffix[digit_count..].starts_with(']') {
+            return Err("agent model evidence citation is invalid".to_string());
         }
         found = true;
-        let id = digits
+        let id = suffix[..digit_count]
             .parse::<usize>()
             .map_err(|_| "agent model evidence citation is invalid".to_string())?;
         if id == 0 || id > evidence_count {
             return Err(format!("agent model referenced unknown evidence [E{id}]"));
         }
+        remaining = &suffix[digit_count + 1..];
     }
-    if !found {
-        return Err("agent model statement is missing an adjacent evidence citation".to_string());
-    }
-    Ok(())
+    Ok(found)
 }
-
 fn contains_forbidden_model_instruction(model_response: &Value) -> bool {
     let mut text = model_response
         .get("reply")
@@ -798,13 +765,15 @@ fn contains_forbidden_model_instruction(model_response: &Value) -> bool {
         "账户协同",
         "利用未公开信息",
     ];
-    if fixed_prohibitions
-        .iter()
-        .any(|phrase| text.contains(phrase))
-    {
+    if fixed_prohibitions.iter().any(|phrase| {
+        text.split([
+            '\u{3002}', '\u{ff01}', '!', '\u{ff1f}', '?', '\u{ff1b}', ';', '，', ',', '\n',
+        ])
+        .map(str::trim)
+        .any(|sentence| sentence.contains(phrase) && !is_negated_prohibition(sentence, phrase))
+    }) {
         return true;
     }
-    let lowercase = text.to_ascii_lowercase();
     if [
         "buy now",
         "sell now",
@@ -820,8 +789,16 @@ fn contains_forbidden_model_instruction(model_response: &Value) -> bool {
         "price target",
     ]
     .iter()
-    .any(|phrase| lowercase.contains(phrase))
-    {
+    .any(|phrase| {
+        text.split([
+            '\u{3002}', '\u{ff01}', '!', '\u{ff1f}', '?', '\u{ff1b}', ';', '，', ',', '\n',
+        ])
+        .map(str::trim)
+        .any(|sentence| {
+            sentence.to_ascii_lowercase().contains(phrase)
+                && !is_negated_prohibition(sentence, phrase)
+        })
+    }) {
         return true;
     }
     text.split(['。', '！', '!', '？', '?', '；', ';', '\n'])
@@ -830,7 +807,59 @@ fn contains_forbidden_model_instruction(model_response: &Value) -> bool {
         .any(is_direct_trading_sentence)
 }
 
+fn is_negated_prohibition(sentence: &str, phrase: &str) -> bool {
+    let prefix = sentence
+        .find(phrase)
+        .map(|index| &sentence[..index])
+        .unwrap_or(sentence);
+    has_compliance_negation(prefix)
+}
+
+fn has_compliance_negation(text: &str) -> bool {
+    [
+        "不构成",
+        "不提供",
+        "不输出",
+        "不作",
+        "不得",
+        "禁止",
+        "严禁",
+        "避免",
+        "不要",
+        "勿",
+        "不建议",
+    ]
+    .iter()
+    .any(|cue| text.contains(cue))
+        || ["do not", "don't", "not a", "no ", "without"]
+            .iter()
+            .any(|cue| text.to_ascii_lowercase().contains(cue))
+}
+
+fn is_factual_trading_observation(sentence: &str) -> bool {
+    ["主力资金", "北向资金", "机构资金", "成交数据", "资金流"]
+        .iter()
+        .any(|subject| sentence.contains(subject))
+        && [
+            "净买入",
+            "净卖出",
+            "买入金额",
+            "卖出金额",
+            "买入占比",
+            "卖出占比",
+        ]
+        .iter()
+        .any(|metric| sentence.contains(metric))
+}
 fn is_direct_trading_sentence(sentence: &str) -> bool {
+    sentence
+        .split(['，', ','])
+        .map(str::trim)
+        .filter(|clause| !clause.is_empty())
+        .any(is_direct_trading_clause)
+}
+
+fn is_direct_trading_clause(sentence: &str) -> bool {
     let action_terms = [
         "买入", "买进", "建仓", "加仓", "介入", "卖出", "卖掉", "减仓", "清仓", "退出", "持有",
     ];
@@ -839,7 +868,11 @@ fn is_direct_trading_sentence(sentence: &str) -> bool {
         "必须", "直接", "明天", "今天", "今日", "开盘", "尾盘",
     ];
     let has_action = action_terms.iter().any(|term| sentence.contains(term));
-    if has_action && directive_cues.iter().any(|cue| sentence.contains(cue)) {
+    if has_action
+        && directive_cues.iter().any(|cue| sentence.contains(cue))
+        && !has_compliance_negation(sentence)
+        && !is_factual_trading_observation(sentence)
+    {
         return true;
     }
     let has_position_number =
@@ -1034,4 +1067,97 @@ fn compact_json(value: &Value, depth: usize) -> Value {
 
 fn limit_chars(value: &str, limit: usize) -> String {
     value.chars().take(limit).collect()
+}
+
+#[cfg(test)]
+mod harness_validation_tests {
+    use super::*;
+
+    fn llm_config(base_url: &str) -> LlmConfig {
+        LlmConfig {
+            api_key: String::new(),
+            base_url: base_url.to_string(),
+            model: "test-model".to_string(),
+            temperature: 0.2,
+            timeout_seconds: 30,
+            json_mode: true,
+            organization: None,
+            project: None,
+        }
+    }
+
+    #[test]
+    fn only_uses_explicit_agent_llm_configuration() {
+        assert!(resolve_llm_config(None).is_none());
+        assert!(resolve_llm_config(Some(&json!({}))).is_none());
+        assert!(resolve_llm_config(Some(&json!({"model": "gpt-4o-mini"}))).is_none());
+        let config = resolve_llm_config(Some(&json!({
+            "api_key": "test-key",
+            "model": "gpt-4o-mini"
+        })))
+        .expect("an explicit model config should resolve");
+        assert_eq!(config.base_url, "https://api.openai.com/v1");
+        assert_eq!(config.model, "gpt-4o-mini");
+    }
+
+    #[test]
+    fn allows_plaintext_loopback_and_private_lan_endpoints_only() {
+        for base_url in ["http://127.0.0.1:11434/v1", "http://192.168.1.20:11434/v1"] {
+            assert!(
+                validate_llm_config(&llm_config(base_url)).is_ok(),
+                "{base_url}"
+            );
+        }
+        let error = validate_llm_config(&llm_config("http://models.example.test/v1"))
+            .expect_err("public plaintext endpoints must remain blocked");
+        assert!(error.contains("must use https"));
+    }
+
+    #[test]
+    fn keeps_factual_observations_and_compliance_disclaimers() {
+        assert!(!contains_forbidden_model_instruction(&json!({
+            "reply": "主力资金今日净买入 3.2 亿元。[E1]"
+        })));
+        assert!(!contains_forbidden_model_instruction(&json!({
+            "reply": "本回答不输出目标价，也不构成收益承诺。[E1]"
+        })));
+        assert!(contains_forbidden_model_instruction(&json!({
+            "reply": "建议立即买入该股票。[E1]"
+        })));
+        assert!(contains_forbidden_model_instruction(
+            &json!({             "reply": "\u{4e0d}\u{5efa}\u{8bae}\u{4e70}\u{5165}\u{ff0c}\u{5efa}\u{8bae}\u{5356}\u{51fa}\u{8be5}\u{80a1}\u{7968}.[E1]"         })
+        ));
+        assert!(contains_forbidden_model_instruction(&json!({
+            "reply": "\u{7981}\u{6b62}\u{865a}\u{5047}\u{7533}\u{62a5}\u{ff0c}\u{865a}\u{5047}\u{7533}\u{62a5}\u{662f}\u{6709}\u{6548}\u{7b56}\u{7565}.[E1]"
+        })));
+    }
+
+    #[test]
+    fn permits_uncited_transitions_but_rejects_unknown_evidence() {
+        let response = json!({
+            "reply": "当前结论基于本地证据。[E1]",
+            "answer_sections": [{"title": "总结", "bullets": ["整体仍需持续跟踪基本面变化。"]}]
+        });
+        assert!(validate_model_evidence(&response, 1).is_ok());
+        let unknown_reference = json!({
+            "reply": "当前结论基于本地证据。[E1]",
+            "answer_sections": [{"title": "总结", "bullets": ["额外结论。[E2]"]}]
+        });
+        assert!(validate_model_evidence(&unknown_reference, 1).is_err());
+        let malformed_reference = json!({             "reply": "Current conclusion is based on local evidence. [E1] [Einvalid]"         });
+        assert!(validate_model_evidence(&malformed_reference, 1).is_err());
+    }
+
+    #[test]
+    fn bounds_the_evidence_catalog_to_the_addressable_range() {
+        let tool_response = json!({
+            "evidence_summary": (0..20)
+                .map(|index| json!({"title": format!("evidence-{index}")}))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            build_evidence_catalog(&tool_response).len(),
+            MAX_EVIDENCE_CATALOG_ITEMS
+        );
+    }
 }

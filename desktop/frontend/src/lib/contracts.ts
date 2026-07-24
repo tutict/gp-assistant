@@ -340,7 +340,7 @@ export function sanitizePersistedLlmSettings(settings: LlmSettings | null | unde
 
 export function buildLlmConfig(settings: LlmSettings | null | undefined): LlmClientConfig | undefined {
   const active = activeLlmProvider(settings);
-  if (!active?.base_url?.trim() || !active.model?.trim()) return undefined;
+  if (!active?.model?.trim() || (!active.api_key?.trim() && !active.base_url?.trim())) return undefined;
   const config: LlmClientConfig = {};
   if (active.api_key) config.api_key = active.api_key;
   if (active.base_url) config.base_url = active.base_url.replace(/\/+$/, "");

@@ -260,20 +260,21 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/agent": async ({ invoke, payload }) => invokeAgent(invoke, payload),
   "/api/agent/stream": async ({ invoke, payload }) => invokeAgent(invoke, payload),
 };
+export function buildTauriAgentPayload(request: Record<string, unknown>): Record<string, unknown> {
+  return {
+    message: String(request.message || ""),
+    run_id: String(request.run_id || `react-agent-${Date.now()}`),
+    mode: String(request.mode || "quick"),
+    context: request.context,
+    platform: request.platform,
+    network: request.network,
+    llm: request.llm,
+    history: request.history,
+  };
+}
+
 function invokeAgent(invoke: InvokeFn, payload: unknown): Promise<unknown> {
-  const request = asRecord(payload);
-  return invoke("api_agent_stream", {
-    payload: {
-      message: String(request.message || ""),
-      run_id: String(request.run_id || `react-agent-${Date.now()}`),
-      mode: String(request.mode || "quick"),
-      context: request.context,
-      platform: request.platform,
-      network: request.network,
-      llm: request.llm,
-      history: request.history,
-    },
-  });
+  return invoke("api_agent_stream", { payload: buildTauriAgentPayload(asRecord(payload)) });
 }
 
 function tauriRouteHandler(method: string, path: string): TauriRouteHandler | null {

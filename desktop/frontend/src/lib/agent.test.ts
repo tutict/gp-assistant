@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentHarnessExecutionLabel, agentHarnessLabel, buildAgentStreamPayload } from "./agent";
+import { agentHarnessExecutionLabel, agentHarnessLabel, buildAgentStreamPayload, MAX_AGENT_EVIDENCE_ITEMS, MAX_AGENT_MESSAGE_CHARS } from "./agent";
 import type { LlmClientConfig, WatchlistItem } from "../types";
 
 describe("buildAgentStreamPayload", () => {
@@ -83,6 +83,11 @@ describe("buildAgentStreamPayload", () => {
       ...item,
       content: item.content.trim(),
     })));
+  });
+
+  it("shares the backend message and evidence bounds", () => {
+    expect(MAX_AGENT_MESSAGE_CHARS).toBe(8_000);
+    expect(MAX_AGENT_EVIDENCE_ITEMS).toBe(16);
   });
 });
 

@@ -1,9 +1,9 @@
 import { LoaderCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, Search, Send, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentResult, AgentStreamEvent, BacktestResult, LlmSettings, NewsRagResult, ObserveResult, StockRowView, WatchlistItem } from "../../types";
-import { getTauriInvoke, getTauriListen, isTauriRuntime } from "../../lib/tauri";
+import { buildTauriAgentPayload, getTauriInvoke, getTauriListen, isTauriRuntime } from "../../lib/tauri";
 import { actionResultKind, activeLlmProvider, buildLlmConfig, normalizeAgentResult, normalizeAgentStreamEvent, normalizeScreenRows, parseSseBlock } from "../../lib/contracts";
-import { agentHarnessExecutionLabel, agentHarnessLabel, buildAgentStreamPayload } from "../../lib/agent";
+import { agentHarnessExecutionLabel, agentHarnessLabel, buildAgentStreamPayload, MAX_AGENT_EVIDENCE_ITEMS, MAX_AGENT_MESSAGE_CHARS } from "../../lib/agent";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { StockList } from "../StockList";
 import { BacktestResultView } from "./BacktestPanel";
@@ -423,6 +423,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
 <textarea
             className="agent-input"
             value={input}
+            maxLength={MAX_AGENT_MESSAGE_CHARS}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -519,7 +520,7 @@ function AgentResultView({ result, watchlist, onToggleWatchlist }: {
 
 function AgentStructuredResult({ result }: { result: AgentResult }) {
   const toolCalls = Array.isArray(result.tool_calls) ? result.tool_calls : [];
-  const evidence = Array.isArray(result.evidence_summary) ? result.evidence_summary : [];
+  const evidence = Array.isArray(result.evidence_summary) ? result.evidence_summary.slice(0, MAX_AGENT_EVIDENCE_ITEMS) : [];
   const sections = Array.isArray(result.answer_sections) ? result.answer_sections : [];
   const modelSections = Array.isArray(result.model_answer_sections) ? result.model_answer_sections : [];
   const warnings = Array.isArray(result.warnings) ? result.warnings : [];
@@ -797,16 +798,7 @@ async function requestTauriAgentStream(payload: Record<string, unknown>, onEvent
       onEvent(normalized);
     });
     const response = await invoke<AgentResult>("api_agent_stream", {
-      payload: {
-        message: String(payload.message || ""),
-        run_id: runId,
-        mode: String(payload.mode || "quick"),
-        context: payload.context,
-        platform: payload.platform,
-        network: payload.network,
-        llm: payload.llm,
-        history: payload.history,
-      },
+      payload: buildTauriAgentPayload({ ...payload, run_id: runId }),
     });
     if (!sawResult && response) onEvent({ run_id: runId, type: "result", response: normalizeAgentResult(response) });
   } finally {
