@@ -1,5 +1,5 @@
-import { ArrowLeft, ChevronDown, Download, LoaderCircle, Plus } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { ArrowLeft, ChevronDown, Download, LoaderCircle, Plus, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LlmModelListResult, LlmModelOption, LlmProviderSettings, LlmSettings } from "../../types";
 import { activeLlmProvider, normalizeLlmSettings } from "../../lib/contracts";
 import { postJson } from "../../lib/tauri";
@@ -62,6 +62,7 @@ const PROVIDER_PRESETS = [
 interface LlmSettingsPanelProps {
   settings: LlmSettings | null;
   onChange: (settings: LlmSettings | null) => void;
+  presentation?: "inline" | "dialog";
 }
 
 interface ProviderModelCatalog {
@@ -115,7 +116,7 @@ function modelLoadError(error: unknown): string {
   return raw.replace(/^Error:\s*/i, "").trim().slice(0, 220) || "无法拉取模型列表，请检查连接配置。";
 }
 
-export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) {
+export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }: LlmSettingsPanelProps) {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<{ text: string; state: string }>({ text: "", state: "neutral" });
   const normalized = useMemo(() => normalizeLlmSettings(settings), [settings]);
@@ -125,6 +126,46 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
   const [modelCatalogs, setModelCatalogs] = useState<Record<string, ProviderModelCatalog>>({});
   const [modelMenuProviderId, setModelMenuProviderId] = useState<string | null>(null);
   const modelRequestTokens = useRef<Record<string, number>>({});
+  const toggleButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const isDialog = presentation === "dialog";
+  const closePanel = useCallback(() => {
+    setOpen(false);
+    setModelMenuProviderId(null);
+    if (isDialog) window.requestAnimationFrame(() => toggleButtonRef.current?.focus());
+  }, [isDialog]);
+
+  useEffect(() => {
+    if (!open || !isDialog) return undefined;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleDialogKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closePanel();
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => element.getClientRects().length > 0);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !dialogRef.current.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleDialogKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleDialogKeyDown);
+      document.body.style.overflow = previousBodyOverflow;
+    };
+  }, [closePanel, isDialog, open]);
   const editingProvider = providers.find((provider) => provider.id === editingProviderId) || active || providers[0];
   const activeState = endpointState(active);
   const editingCatalog = editingProvider?.id ? modelCatalogs[editingProvider.id] : undefined;
@@ -327,12 +368,15 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
   }, [commit, normalized, showStatus]);
 
   return (
-    <div className={`llm-settings-panel ${open ? "open" : ""}`}>
+    <div className={`llm-settings-panel ${open ? "open" : ""} ${isDialog ? "dialog" : ""}`}>
       <div className="llm-settings-header">
         <button
           type="button"
           className="llm-settings-toggle"
-          onClick={() => setOpen(!open)}
+          ref={toggleButtonRef}
+          onClick={() => open ? closePanel() : setOpen(true)}
+          aria-haspopup={isDialog ? "dialog" : undefined}
+          aria-expanded={open}
         >
           <span>模型连接</span>
           <strong>{active?.name || "未配置"}</strong>
@@ -342,17 +386,28 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
         </button>
       </div>
 
+      {open && isDialog && (
+        <button type="button" className="llm-settings-modal-backdrop" onClick={closePanel} tabIndex={-1} aria-hidden="true" />
+      )}
+
       {open && (
-        <div className="llm-settings-body llm-switcher">
+        <div
+          ref={isDialog ? dialogRef : undefined}
+          className="llm-settings-body llm-switcher"
+          role={isDialog ? "dialog" : undefined}
+          aria-modal={isDialog || undefined}
+          aria-label={isDialog ? "模型连接配置" : undefined}
+        >
           <div className="llm-switcher-summary">
             <button
               type="button"
               className="llm-sheet-back-btn"
-              onClick={() => setOpen(false)}
-              aria-label="返回"
-              title="返回"
+              onClick={closePanel}
+              aria-label={isDialog ? "关闭模型配置" : "返回"}
+              title={isDialog ? "关闭模型配置" : "返回"}
+              autoFocus={isDialog}
             >
-              <ArrowLeft size={17} aria-hidden="true" />
+              {isDialog ? <X size={17} aria-hidden="true" /> : <ArrowLeft size={17} aria-hidden="true" />}
             </button>
             <div>
               <span>当前 Endpoint</span>
@@ -460,7 +515,10 @@ export function LlmSettingsPanel({ settings, onChange }: LlmSettingsPanelProps) 
                     <div
                       className={"llm-model-picker " + (modelMenuOpen ? "open" : "")}
                       onKeyDown={(event) => {
-                        if (event.key === "Escape") setModelMenuProviderId(null);
+                        if (event.key === "Escape" && modelMenuOpen) {
+                          event.stopPropagation();
+                          setModelMenuProviderId(null);
+                        }
                       }}
                     >
                       <button

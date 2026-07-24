@@ -364,7 +364,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         </div>
 
         <div className="agent-rail-footer agent-rail-model-settings">
-          <LlmSettingsPanel settings={llmSettings} onChange={onLlmSettingsChange} />
+          <LlmSettingsPanel settings={llmSettings} onChange={onLlmSettingsChange} presentation="dialog" />
         </div>
       </aside>
 

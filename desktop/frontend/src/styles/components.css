@@ -1460,6 +1460,35 @@
 .agent-chat-stage > .llm-settings-panel.open .llm-settings-body {
   max-height: calc(100vh - 230px);
 }
+.llm-settings-modal-backdrop {
+  position: fixed;
+  z-index: calc(var(--z-modal) - 1);
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: rgb(0 0 0 / 56%);
+  cursor: default;
+}
+
+.llm-settings-panel.dialog.open .llm-settings-body {
+  position: fixed;
+  z-index: var(--z-modal);
+  top: 50%;
+  right: auto;
+  bottom: auto;
+  left: 50%;
+  width: min(880px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 32px));
+  margin: 0;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 94%, var(--bg));
+  transform: translate(-50%, -50%);
+  box-shadow: 0 24px 64px rgb(0 0 0 / 48%);
+}
 
 .llm-provider-card.active {
   border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
