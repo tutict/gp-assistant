@@ -10,6 +10,8 @@ use super::{
 pub const ADAPTIVE_ALGORITHM_VERSION: &str = "adaptive_swing_v1";
 const SCORE_SCALE: f64 = 20.0;
 const MIN_HISTORY_BARS: usize = 60;
+const MIN_MARKET_BREADTH_COVERAGE: f64 = 0.60;
+const MIN_MARKET_BREADTH_OBSERVATIONS: usize = 10;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AdaptiveScreenRequest {
@@ -68,6 +70,12 @@ pub struct AdaptiveDataCoverage {
     pub benchmark_requested: usize,
     pub benchmark_usable: usize,
     pub breadth_usable: bool,
+    #[serde(default)]
+    pub breadth_requested: usize,
+    #[serde(default)]
+    pub breadth_observed: usize,
+    #[serde(default)]
+    pub breadth_coverage_ratio: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -127,6 +135,7 @@ fn stage_one_candidates<'a>(
     let limit = limit.clamp(1, 200);
     let mut eligible = universe
         .iter()
+        .filter(|stock| !stock.is_st)
         .filter(|stock| matches_stock(stock, criteria).is_some())
         .filter(|stock| has_required_slow_data(stock))
         .collect::<Vec<_>>();
@@ -303,6 +312,21 @@ struct BenchmarkStats {
     atr_percentile: f64,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct MarketBreadth {
+    advancing_ratio: f64,
+    requested: usize,
+    observed: usize,
+    coverage_ratio: f64,
+}
+
+impl MarketBreadth {
+    fn is_usable(self) -> bool {
+        self.observed >= MIN_MARKET_BREADTH_OBSERVATIONS
+            && self.coverage_ratio + f64::EPSILON >= MIN_MARKET_BREADTH_COVERAGE
+    }
+}
+
 fn detect_regime(
     universe: &[StockItem],
     benchmarks: &HashMap<String, Vec<HistoryBar>>,
@@ -322,6 +346,7 @@ fn detect_regime(
         ));
     }
     let breadth = market_breadth(universe);
+    let usable_breadth = breadth.filter(|value| value.is_usable());
     let returns = stats.iter().map(|item| item.return_20).collect::<Vec<_>>();
     let spreads = stats.iter().map(|item| item.ma_spread).collect::<Vec<_>>();
     let efficiencies = stats.iter().map(|item| item.efficiency).collect::<Vec<_>>();
@@ -350,16 +375,16 @@ fn detect_regime(
     };
     let conflicting =
         returns.iter().any(|value| *value > 0.03) && returns.iter().any(|value| *value < -0.03);
-    if requested_mode == "auto" && breadth.is_none() {
+    if requested_mode == "auto" && usable_breadth.is_none() {
         return Err(CoreError::new(
-            "市场状态数据不足：自动模式缺少全市场上涨家数比例。",
+            "市场状态数据不足：自动模式的全市场上涨家数覆盖率不足60%或有效样本少于10只。",
         ));
     }
-    let sufficient_for_detection = stats.len() >= 2 && breadth.is_some();
+    let sufficient_for_detection = stats.len() >= 2 && usable_breadth.is_some();
     let detected = if !sufficient_for_detection {
         "insufficient"
     } else {
-        let breadth = breadth.expect("checked above");
+        let breadth = usable_breadth.expect("checked above").advancing_ratio;
         let median_return = median_return.expect("two valid benchmarks");
         let median_spread = median_spread.expect("two valid benchmarks");
         let median_efficiency = median_efficiency.expect("two valid benchmarks");
@@ -431,12 +456,20 @@ fn detect_regime(
             "识别高波动过渡",
         ));
     }
-    if let Some(value) = breadth {
+    if let Some(value) = usable_breadth {
         evidence.push(regime_evidence(
             "breadth",
             "上涨家数比例",
-            value,
+            value.advancing_ratio,
             "衡量全市场宽度",
+        ));
+    }
+    if let Some(value) = breadth {
+        evidence.push(regime_evidence(
+            "breadth_coverage",
+            "市场宽度报价覆盖率",
+            value.coverage_ratio,
+            "有效涨跌幅样本占全市场快照的比例",
         ));
     }
     Ok(AdaptiveMarketRegime {
@@ -456,7 +489,12 @@ fn detect_regime(
             },
             benchmark_requested: requested,
             benchmark_usable: stats.len(),
-            breadth_usable: breadth.is_some(),
+            breadth_usable: usable_breadth.is_some(),
+            breadth_requested: breadth
+                .map(|value| value.requested)
+                .unwrap_or(universe.len()),
+            breadth_observed: breadth.map(|value| value.observed).unwrap_or(0),
+            breadth_coverage_ratio: breadth.map(|value| value.coverage_ratio).unwrap_or(0.0),
         },
     })
 }
@@ -511,7 +549,11 @@ fn benchmark_stats(bars: &[HistoryBar]) -> Option<BenchmarkStats> {
     })
 }
 
-fn market_breadth(universe: &[StockItem]) -> Option<f64> {
+fn market_breadth(universe: &[StockItem]) -> Option<MarketBreadth> {
+    let requested = universe.len();
+    if requested == 0 {
+        return None;
+    }
     let changes = universe
         .iter()
         .filter_map(|stock| stock.change_pct.filter(|value| value.is_finite()))
@@ -520,7 +562,14 @@ fn market_breadth(universe: &[StockItem]) -> Option<f64> {
     if changes.is_empty() {
         return None;
     }
-    Some(changes.iter().filter(|value| **value > 0.0).count() as f64 / changes.len() as f64)
+    let observed = changes.len();
+    Some(MarketBreadth {
+        advancing_ratio: changes.iter().filter(|value| **value > 0.0).count() as f64
+            / observed as f64,
+        requested,
+        observed,
+        coverage_ratio: observed as f64 / requested as f64,
+    })
 }
 
 fn valid_closes(bars: &[HistoryBar]) -> Vec<f64> {
@@ -1014,9 +1063,7 @@ pub fn adaptive_screen_stocks(
         usable.push((stock.clone(), factors));
     }
     apply_industry_relative_strength(&mut usable);
-    let required = primary_limit
-        .min(staged.len())
-        .max(((staged.len() as f64) * 0.60).ceil() as usize);
+    let required = primary_limit.max(((staged.len() as f64) * 0.60).ceil() as usize);
     if usable.len() < required {
         return Err(CoreError::new(format!(
             "市场状态/历史数据不足：初选池 {} 只中仅 {} 只具备至少60根有效日线，最低需要 {} 只",

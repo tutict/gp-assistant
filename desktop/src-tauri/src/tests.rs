@@ -27,6 +27,22 @@ fn adaptive_screen_request_accepts_nested_and_legacy_contracts() {
 }
 
 #[test]
+fn legacy_adapter_uses_primary_limit_for_nested_requests_and_preserves_flat_limit() {
+    let nested = legacy_screen_criteria_from_payload(json!({
+        "criteria": { "limit": 80, "min_roe": 8.0 },
+        "primary_limit": 10,
+        "exploration_limit": 10
+    }))
+    .expect("nested request should map to legacy criteria");
+    assert_eq!(nested.limit, 10);
+    assert_eq!(nested.min_roe, Some(8.0));
+
+    let flat = legacy_screen_criteria_from_payload(json!({ "limit": 7, "min_roe": 6.0 }))
+        .expect("flat legacy request should preserve its own limit");
+    assert_eq!(flat.limit, 7);
+}
+
+#[test]
 fn adaptive_exposure_sqlite_deduplicates_same_day_and_keeps_five_trade_dates() {
     let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
     initialize_adaptive_exposure_db(&connection).expect("schema should initialize");
@@ -104,11 +120,75 @@ fn adaptive_cache_requires_sixty_rows_and_the_target_trade_date() {
 fn adaptive_runtime_limits_match_the_release_contract() {
     assert_eq!(ADAPTIVE_SCREEN_HISTORY_PREFETCH_LIMIT, 80);
     assert_eq!(ADAPTIVE_SCREEN_TOTAL_TIMEOUT_SECS, 20);
-    assert!(adaptive_screen_release_flag_enabled("1"));
-    assert!(adaptive_screen_release_flag_enabled("TRUE"));
-    assert!(adaptive_screen_release_flag_enabled("on"));
-    assert!(!adaptive_screen_release_flag_enabled(""));
-    assert!(!adaptive_screen_release_flag_enabled("0"));
+}
+
+#[test]
+fn adaptive_release_gate_uses_persisted_report_and_real_run_evidence() {
+    let connection = Connection::open_in_memory().expect("in-memory sqlite should open");
+    initialize_adaptive_exposure_db(&connection).expect("schema should initialize");
+    assert!(adaptive_release_gate_load_rows(&connection)
+        .expect("empty gate query should work")
+        .is_none());
+
+    for run in 0..5 {
+        let items = (0..4)
+            .map(|index| json!({ "stock": { "code": format!("{:06}.SZ", run * 4 + index + 1) } }))
+            .collect::<Vec<_>>();
+        let result = json!({
+            "algorithm_version": "adaptive_swing_v1",
+            "groups": [{ "key": "primary", "items": items }]
+        });
+        adaptive_release_run_record_rows(
+            &connection,
+            Some(&format!("run-{run}")),
+            &result,
+            "20260729",
+            if run == 0 { 19_000 } else { 1_900 },
+            run != 0,
+        )
+        .expect("run evidence should persist");
+    }
+    let evidence = adaptive_release_operational_evidence_rows(&connection)
+        .expect("operational evidence should aggregate");
+    assert_eq!(evidence, (Some(20), Some(19_000), Some(1_900)));
+
+    let input = gp_core::AdaptiveReleaseGateInput {
+        legacy_annualized_return: Some(0.10),
+        adaptive_annualized_return: Some(0.10),
+        legacy_max_drawdown: Some(-0.12),
+        adaptive_max_drawdown: Some(-0.12),
+        legacy_precision_at_10: Some(0.55),
+        adaptive_precision_at_10: Some(0.55),
+        max_primary_industry_count: Some(3),
+        average_adjacent_jaccard: Some(0.70),
+        five_run_unique_coverage: evidence.0,
+        first_run_millis: evidence.1,
+        cached_run_millis: evidence.2,
+    };
+    let report = gp_core::evaluate_adaptive_release_gate(&input);
+    assert!(report.passed);
+    adaptive_release_gate_store_rows(&connection, &input, &report)
+        .expect("passing gate should persist");
+    assert!(
+        adaptive_release_gate_load_rows(&connection)
+            .expect("stored gate should load")
+            .expect("gate should exist")
+            .passed
+    );
+
+    let failing_input = gp_core::AdaptiveReleaseGateInput {
+        cached_run_millis: Some(2_001),
+        ..input
+    };
+    let failing_report = gp_core::evaluate_adaptive_release_gate(&failing_input);
+    adaptive_release_gate_store_rows(&connection, &failing_input, &failing_report)
+        .expect("new report should replace the old version");
+    assert!(
+        !adaptive_release_gate_load_rows(&connection)
+            .expect("updated gate should load")
+            .expect("gate should exist")
+            .passed
+    );
 }
 
 #[test]

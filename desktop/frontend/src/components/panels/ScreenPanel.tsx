@@ -334,7 +334,9 @@ export const ScreenResultView = memo(function ScreenResultView({
             数据 {resultRecord.market_regime.as_of_date || "--"} ·
             候选覆盖 {(resultRecord.market_regime.coverage.candidate_ratio * 100).toFixed(0)}% ·
             宽基 {resultRecord.market_regime.coverage.benchmark_usable}/{resultRecord.market_regime.coverage.benchmark_requested} ·
-            市场宽度 {resultRecord.market_regime.coverage.breadth_usable ? "有效" : "缺失"}
+            市场宽度 {resultRecord.market_regime.coverage.breadth_usable ? "有效" : "不足"}
+            （{resultRecord.market_regime.coverage.breadth_observed}/{resultRecord.market_regime.coverage.breadth_requested}，
+            {(resultRecord.market_regime.coverage.breadth_coverage_ratio * 100).toFixed(0)}%）
           </p>
           <ul>
             {resultRecord.market_regime.evidence.map((item) => (
@@ -402,7 +404,8 @@ function formatRegimeEvidence(key: string, value: number): string {
     || key === "return_20"
     || key === "ma_spread"
     || key === "atr_percentile"
-    || key === "direction_consistency") {
+    || key === "direction_consistency"
+    || key === "breadth_coverage") {
     return (value * 100).toFixed(1) + "%";
   }
   return value.toFixed(2);

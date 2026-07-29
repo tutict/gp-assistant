@@ -44,6 +44,9 @@ describe("ScreenResultView", () => {
               benchmark_requested: 3,
               benchmark_usable: 3,
               breadth_usable: true,
+              breadth_requested: 5_200,
+              breadth_observed: 4_680,
+              breadth_coverage_ratio: 0.9,
             },
           },
           rollout: {
@@ -64,6 +67,8 @@ describe("ScreenResultView", () => {
     expect(markup).toContain("人工覆盖为 趋势");
     expect(markup).toContain("候选覆盖 80%");
     expect(markup).toContain("市场宽度 有效");
+    expect(markup).toContain("4680/5200");
+    expect(markup).toContain("90%");
     expect(markup).toContain("主榜");
     expect(markup).toContain("探索榜");
   });

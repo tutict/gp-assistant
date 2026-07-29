@@ -183,7 +183,7 @@ fn adaptive_screen_rejects_low_history_coverage_and_caps_primary_industry() {
     for stock in &mut stocks {
         stock.industry = "单一行业".to_string();
     }
-    let result = adaptive_screen_stocks(
+    let error = adaptive_screen_stocks(
         &stocks,
         &complete_histories,
         &benchmarks,
@@ -194,8 +194,8 @@ fn adaptive_screen_rejects_low_history_coverage_and_caps_primary_industry() {
             ..AdaptiveScreenRequest::default()
         },
     )
-    .expect("single-industry fixture should run");
-    assert_eq!(result.items.len(), 3);
+    .expect_err("a single-industry pool cannot satisfy a ten-stock primary list");
+    assert!(error.to_string().contains("10"));
 }
 
 #[test]
@@ -216,6 +216,33 @@ fn adaptive_candidate_prefetch_pool_is_capped_at_eighty_and_four_per_industry() 
         *counts.entry(by_code[code.as_str()]).or_default() += 1;
     }
     assert!(counts.values().all(|count| *count <= 4));
+}
+
+#[test]
+fn adaptive_candidate_pool_always_rejects_st_even_when_legacy_filter_allows_it() {
+    let mut stocks = (0..12).map(adaptive_stock).collect::<Vec<_>>();
+    stocks[0].is_st = true;
+    let criteria = ScreenCriteria {
+        include_st: true,
+        ..ScreenCriteria::default()
+    };
+    let codes = adaptive_candidate_codes(&stocks, &criteria, 80);
+    assert!(!codes.contains(&stocks[0].code));
+}
+
+#[test]
+fn adaptive_screen_rejects_a_pool_smaller_than_the_requested_primary_list() {
+    let (stocks, histories, benchmarks) = adaptive_fixture(0.0);
+    let stocks = stocks.into_iter().take(4).collect::<Vec<_>>();
+    let error = adaptive_screen_stocks(
+        &stocks,
+        &histories,
+        &benchmarks,
+        &[],
+        &AdaptiveScreenRequest::default(),
+    )
+    .expect_err("a partial list must not be returned when fewer than primary_limit are usable");
+    assert!(error.to_string().contains("10"));
 }
 
 #[test]
@@ -398,7 +425,7 @@ fn adaptive_auto_rejects_missing_breadth_while_manual_mode_marks_detection_insuf
         &AdaptiveScreenRequest::default(),
     )
     .expect_err("auto mode must not invent neutral market breadth");
-    assert!(automatic.to_string().contains("上涨家数比例"));
+    assert!(automatic.to_string().contains("覆盖率不足"));
 
     let manual = adaptive_screen_stocks(
         &stocks,
@@ -414,6 +441,40 @@ fn adaptive_auto_rejects_missing_breadth_while_manual_mode_marks_detection_insuf
     assert_eq!(manual.market_regime.detected, "insufficient");
     assert_eq!(manual.market_regime.effective, "range");
     assert_eq!(manual.market_regime.confidence, 0.0);
+    assert!(!manual.market_regime.coverage.breadth_usable);
+}
+
+#[test]
+fn adaptive_auto_rejects_partial_breadth_and_reports_observed_coverage() {
+    let (mut stocks, histories, benchmarks) = adaptive_fixture(0.0);
+    for stock in stocks.iter_mut().skip(5) {
+        stock.change_pct = None;
+    }
+    let automatic = adaptive_screen_stocks(
+        &stocks,
+        &histories,
+        &benchmarks,
+        &[],
+        &AdaptiveScreenRequest::default(),
+    )
+    .expect_err("a handful of quotes must not represent full-market breadth");
+    assert!(automatic.to_string().contains("60%"));
+
+    let manual = adaptive_screen_stocks(
+        &stocks,
+        &histories,
+        &benchmarks,
+        &[],
+        &AdaptiveScreenRequest {
+            mode: "range".to_string(),
+            ..AdaptiveScreenRequest::default()
+        },
+    )
+    .expect("manual mode should expose insufficient detection evidence");
+    assert_eq!(manual.market_regime.detected, "insufficient");
+    assert_eq!(manual.market_regime.coverage.breadth_requested, 18);
+    assert_eq!(manual.market_regime.coverage.breadth_observed, 5);
+    assert!((manual.market_regime.coverage.breadth_coverage_ratio - 5.0 / 18.0).abs() < 1e-6);
     assert!(!manual.market_regime.coverage.breadth_usable);
 }
 
@@ -2327,17 +2388,14 @@ fn walk_forward_uses_point_in_time_factor_snapshots() {
     .expect("walk-forward should use factor snapshots");
 
     assert_eq!(result.strategy_mode, "walk_forward");
-    assert_eq!(
-        result.rebalance_dates,
-        vec!["2020-01-01", "2020-02-01", "2020-03-01"]
-    );
+    assert_eq!(result.rebalance_dates, vec!["2020-02-01", "2020-03-01"]);
     assert_eq!(result.symbols, vec!["111111.SZ", "222222.SZ"]);
-    assert!((result.equity_curve.last().unwrap().equity - 1350.0).abs() < 1e-6);
-    assert_eq!(result.metrics.oos_fold_count, 2);
-    assert_eq!(result.metrics.evaluated_selection_count, 2);
+    assert!((result.equity_curve.last().unwrap().equity - 1333.3333333333333).abs() < 1e-6);
+    assert_eq!(result.metrics.oos_fold_count, 1);
+    assert_eq!(result.metrics.evaluated_selection_count, 1);
     assert_eq!(result.metrics.selection_hit_count, 1);
-    assert_eq!(result.metrics.precision_at_n, Some(0.5));
-    assert_eq!(result.walk_forward_folds.len(), 3);
+    assert_eq!(result.metrics.precision_at_n, Some(1.0));
+    assert_eq!(result.walk_forward_folds.len(), 2);
 }
 
 #[test]
@@ -2415,7 +2473,7 @@ fn walk_forward_does_not_fill_missing_snapshot_fields_from_current_data() {
     )
     .expect("strict walk-forward should hold cash when factors are missing");
 
-    assert_eq!(result.rebalance_dates, vec!["2020-01-01"]);
+    assert_eq!(result.rebalance_dates, vec!["2020-01-02"]);
     assert!((result.equity_curve.last().unwrap().equity - 1000.0).abs() < 1e-6);
     assert!(result.volatility_snapshots.is_empty());
     assert_eq!(
@@ -2506,11 +2564,8 @@ fn walk_forward_moves_to_cash_when_no_stock_matches_at_rebalance() {
     )
     .expect("walk-forward should rebalance an empty selection to cash");
 
-    assert_eq!(
-        result.rebalance_dates,
-        vec!["2020-01-01", "2020-02-01", "2020-03-01"]
-    );
-    assert!((result.equity_curve.last().unwrap().equity - 2000.0).abs() < 1e-6);
+    assert_eq!(result.rebalance_dates, vec!["2020-02-01", "2020-03-01"]);
+    assert!((result.equity_curve.last().unwrap().equity - 500.0).abs() < 1e-6);
 }
 
 #[test]
@@ -2610,7 +2665,7 @@ fn walk_forward_does_not_trade_a_suspended_holding_at_a_stale_price() {
     )
     .expect("suspended holdings should remain locked until an exact trade price exists");
 
-    assert!((result.equity_curve.last().unwrap().equity - 500.0).abs() < 1e-6);
+    assert!((result.equity_curve.last().unwrap().equity - 1000.0).abs() < 1e-6);
     assert_eq!(result.symbols, vec!["111111.SZ", "222222.SZ"]);
     assert_eq!(result.volatility_snapshots.len(), 1);
     assert_eq!(result.volatility_snapshots[0].symbol, "222222.SZ");

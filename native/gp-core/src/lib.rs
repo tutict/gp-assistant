@@ -2525,6 +2525,7 @@ fn simulate_walk_forward_portfolio_with_snapshots(
     let mut cash = initial_cash;
     let mut holdings = vec![0.0; histories.len()];
     let mut last_rebalance_date: Option<NaiveDate> = None;
+    let mut previous_trade_date: Option<NaiveDate> = None;
     let mut equity_curve = Vec::with_capacity(dates.len());
     let mut rebalance_dates = Vec::new();
     let mut total_transaction_cost = 0.0;
@@ -2554,7 +2555,13 @@ fn simulate_walk_forward_portfolio_with_snapshots(
 
         if should_rebalance(date, last_rebalance_date, rebalance_frequency)
             && equity_before_rebalance > 0.0
+            && previous_trade_date.is_some()
         {
+            let signal_date = previous_trade_date.expect("checked above");
+            let signal_prices = histories
+                .iter()
+                .map(|history| latest_price_on_or_before(history, signal_date))
+                .collect::<Vec<_>>();
             let active = if normalize_backtest_strategy_mode(&request.strategy_mode)
                 == "adaptive_swing_v1"
             {
@@ -2565,8 +2572,8 @@ fn simulate_walk_forward_portfolio_with_snapshots(
                     benchmark_histories,
                     snapshots_by_code,
                     &history_index,
-                    &trade_prices,
-                    date,
+                    &signal_prices,
+                    signal_date,
                 )?
             } else {
                 walk_forward_active_indices(
@@ -2574,8 +2581,8 @@ fn simulate_walk_forward_portfolio_with_snapshots(
                     request,
                     snapshots_by_code,
                     &history_index,
-                    &trade_prices,
-                    date,
+                    &signal_prices,
+                    signal_date,
                 )
             };
             let target_weight = if active.selected_indices.is_empty() {
@@ -2640,6 +2647,7 @@ fn simulate_walk_forward_portfolio_with_snapshots(
             date: date.format("%Y-%m-%d").to_string(),
             equity,
         });
+        previous_trade_date = Some(date);
     }
 
     Ok(PortfolioSimulation {
@@ -3208,8 +3216,8 @@ fn adaptive_backtest_requested_mode(value: &str) -> String {
 
 fn backtest_strategy_mode_note(value: &str) -> &'static str {
     match value {
-        "adaptive_swing_v1" => "策略模式：adaptive_swing_v1；每个调仓日仅使用当日可见的财务快照、OHLCV、三宽基指数和市场宽度重新判断状态并选股。",
-        "walk_forward" => "策略模式：walk_forward，仅使用 available_date 不晚于调仓日的因子快照和历史上市/ST/可交易状态；调仓只使用当日实际报价。",
+        "adaptive_swing_v1" => "策略模式：adaptive_swing_v1；使用前一交易日收盘前可见的财务快照、OHLCV、三宽基指数和市场宽度生成信号，并在下一交易日按实际报价调仓。",
+        "walk_forward" => "策略模式：walk_forward，仅使用成交日前一交易日已公开的因子快照和历史上市/ST/可交易状态；成交只使用执行日实际报价。",
         _ => "策略模式：candidate_snapshot，展示当前候选池的历史组合表现，不等同于严格可交易的逐日选股策略。",
     }
 }

@@ -112,6 +112,9 @@ export interface AdaptiveMarketRegime {
     benchmark_requested: number;
     benchmark_usable: number;
     breadth_usable: boolean;
+    breadth_requested: number;
+    breadth_observed: number;
+    breadth_coverage_ratio: number;
   };
 }
 
