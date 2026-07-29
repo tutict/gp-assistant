@@ -67,6 +67,7 @@ pub struct AdaptiveDataCoverage {
     pub candidate_ratio: f64,
     pub benchmark_requested: usize,
     pub benchmark_usable: usize,
+    pub breadth_usable: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -314,7 +315,8 @@ fn detect_regime(
         .filter_map(|bars| benchmark_stats(bars))
         .collect::<Vec<_>>();
     let requested = 3;
-    if request.mode.trim().eq_ignore_ascii_case("auto") && stats.len() < 2 {
+    let requested_mode = normalize_mode(&request.mode);
+    if requested_mode == "auto" && stats.len() < 2 {
         return Err(CoreError::new(
             "市场状态数据不足：自动模式至少需要两个有效宽基指数。",
         ));
@@ -327,10 +329,10 @@ fn detect_regime(
         .iter()
         .map(|item| item.atr_percentile)
         .collect::<Vec<_>>();
-    let median_return = median(&returns).unwrap_or(0.0);
-    let median_spread = median(&spreads).unwrap_or(0.0);
-    let median_efficiency = median(&efficiencies).unwrap_or(0.0);
-    let median_atr = median(&atrs).unwrap_or(0.0);
+    let median_return = median(&returns);
+    let median_spread = median(&spreads);
+    let median_efficiency = median(&efficiencies);
+    let median_atr = median(&atrs);
     let trend_votes = stats
         .iter()
         .filter(|item| item.return_20 > 0.03 && item.ma_spread > 0.02)
@@ -340,70 +342,110 @@ fn detect_regime(
         .filter(|item| item.return_20 < -0.03 && item.ma_spread < -0.02)
         .count();
     let direction_consistency = if stats.is_empty() {
-        0.0
+        None
     } else {
         let positive = returns.iter().filter(|value| **value > 0.0).count();
         let negative = returns.iter().filter(|value| **value < 0.0).count();
-        positive.max(negative) as f64 / stats.len() as f64
+        Some(positive.max(negative) as f64 / stats.len() as f64)
     };
     let conflicting =
         returns.iter().any(|value| *value > 0.03) && returns.iter().any(|value| *value < -0.03);
-    let detected = if median_atr > 0.75 || conflicting {
-        "transition"
-    } else if trend_votes >= 2 && breadth > 0.50 {
-        "trend"
-    } else if defensive_votes >= 2 || breadth < 0.40 {
-        "defensive"
-    } else if median_return.abs() <= 0.05
-        && median_spread.abs() <= 0.03
-        && median_efficiency <= 0.35
-        && (0.35..=0.65).contains(&breadth)
-    {
-        "range"
+    if requested_mode == "auto" && breadth.is_none() {
+        return Err(CoreError::new(
+            "市场状态数据不足：自动模式缺少全市场上涨家数比例。",
+        ));
+    }
+    let sufficient_for_detection = stats.len() >= 2 && breadth.is_some();
+    let detected = if !sufficient_for_detection {
+        "insufficient"
     } else {
-        "transition"
+        let breadth = breadth.expect("checked above");
+        let median_return = median_return.expect("two valid benchmarks");
+        let median_spread = median_spread.expect("two valid benchmarks");
+        let median_efficiency = median_efficiency.expect("two valid benchmarks");
+        let median_atr = median_atr.expect("two valid benchmarks");
+        if median_atr > 0.75 || conflicting {
+            "transition"
+        } else if trend_votes >= 2 && breadth > 0.50 {
+            "trend"
+        } else if defensive_votes >= 2 || breadth < 0.40 {
+            "defensive"
+        } else if median_return.abs() <= 0.05
+            && median_spread.abs() <= 0.03
+            && median_efficiency <= 0.35
+            && (0.35..=0.65).contains(&breadth)
+        {
+            "range"
+        } else {
+            "transition"
+        }
     };
-    let requested_mode = normalize_mode(&request.mode);
     let effective = if requested_mode == "auto" {
         detected
     } else {
         requested_mode
     };
-    let confidence = if detected == "transition" { 0.55 } else { 0.78 };
+    let confidence = match detected {
+        "insufficient" => 0.0,
+        "transition" => 0.55,
+        _ => 0.78,
+    };
+    let mut evidence = Vec::new();
+    if let Some(value) = median_return {
+        evidence.push(regime_evidence(
+            "return_20",
+            "宽基20日中位收益",
+            value,
+            "判断方向与区间",
+        ));
+    }
+    if let Some(value) = median_spread {
+        evidence.push(regime_evidence(
+            "ma_spread",
+            "MA20/MA60中位偏离",
+            value,
+            "判断趋势结构",
+        ));
+    }
+    if let Some(value) = median_efficiency {
+        evidence.push(regime_evidence(
+            "efficiency",
+            "趋势效率",
+            value,
+            "识别震荡噪声",
+        ));
+    }
+    if let Some(value) = direction_consistency {
+        evidence.push(regime_evidence(
+            "direction_consistency",
+            "三指数方向一致度",
+            value,
+            "识别指数分化",
+        ));
+    }
+    if let Some(value) = median_atr {
+        evidence.push(regime_evidence(
+            "atr_percentile",
+            "ATR历史分位",
+            value,
+            "识别高波动过渡",
+        ));
+    }
+    if let Some(value) = breadth {
+        evidence.push(regime_evidence(
+            "breadth",
+            "上涨家数比例",
+            value,
+            "衡量全市场宽度",
+        ));
+    }
     Ok(AdaptiveMarketRegime {
         detected: detected.to_string(),
         effective: effective.to_string(),
         confidence,
         overridden: requested_mode != "auto" && requested_mode != detected,
         as_of_date: request.as_of_date.clone(),
-        evidence: vec![
-            regime_evidence(
-                "return_20",
-                "宽基20日中位收益",
-                median_return,
-                "判断方向与区间",
-            ),
-            regime_evidence(
-                "ma_spread",
-                "MA20/MA60中位偏离",
-                median_spread,
-                "判断趋势结构",
-            ),
-            regime_evidence("efficiency", "趋势效率", median_efficiency, "识别震荡噪声"),
-            regime_evidence(
-                "direction_consistency",
-                "三指数方向一致度",
-                direction_consistency,
-                "识别指数分化",
-            ),
-            regime_evidence(
-                "atr_percentile",
-                "ATR历史分位",
-                median_atr,
-                "识别高波动过渡",
-            ),
-            regime_evidence("breadth", "上涨家数比例", breadth, "衡量全市场宽度"),
-        ],
+        evidence,
         coverage: AdaptiveDataCoverage {
             candidate_requested,
             candidate_usable,
@@ -414,6 +456,7 @@ fn detect_regime(
             },
             benchmark_requested: requested,
             benchmark_usable: stats.len(),
+            breadth_usable: breadth.is_some(),
         },
     })
 }
@@ -437,6 +480,9 @@ fn regime_evidence(key: &str, label: &str, value: f64, summary: &str) -> Adaptiv
 }
 
 fn benchmark_stats(bars: &[HistoryBar]) -> Option<BenchmarkStats> {
+    if !has_valid_ohlc_tail(bars, MIN_HISTORY_BARS) {
+        return None;
+    }
     let closes = valid_closes(bars);
     if closes.len() < MIN_HISTORY_BARS {
         return None;
@@ -461,26 +507,39 @@ fn benchmark_stats(bars: &[HistoryBar]) -> Option<BenchmarkStats> {
         return_20: last / earlier - 1.0,
         ma_spread: ma20 / ma60 - 1.0,
         efficiency,
-        atr_percentile: atr_percentile(bars),
+        atr_percentile: atr_percentile(bars)?,
     })
 }
 
-fn market_breadth(universe: &[StockItem]) -> f64 {
+fn market_breadth(universe: &[StockItem]) -> Option<f64> {
     let changes = universe
         .iter()
         .filter_map(|stock| stock.change_pct.filter(|value| value.is_finite()))
         .map(as_percent)
         .collect::<Vec<_>>();
     if changes.is_empty() {
-        return 0.5;
+        return None;
     }
-    changes.iter().filter(|value| **value > 0.0).count() as f64 / changes.len() as f64
+    Some(changes.iter().filter(|value| **value > 0.0).count() as f64 / changes.len() as f64)
 }
 
 fn valid_closes(bars: &[HistoryBar]) -> Vec<f64> {
     bars.iter()
         .filter_map(|bar| (bar.close.is_finite() && bar.close > 0.0).then_some(bar.close))
         .collect()
+}
+
+fn has_valid_ohlc_tail(bars: &[HistoryBar], count: usize) -> bool {
+    bars.len() >= count
+        && bars[bars.len() - count..].iter().all(|bar| {
+            let Some(high) = bar.high.filter(|value| value.is_finite()) else {
+                return false;
+            };
+            let Some(low) = bar.low.filter(|value| value.is_finite()) else {
+                return false;
+            };
+            bar.close.is_finite() && bar.close > 0.0 && high >= low
+        })
 }
 
 fn mean_tail(values: &[f64], count: usize) -> Option<f64> {
@@ -511,7 +570,7 @@ fn median(values: &[f64]) -> Option<f64> {
     })
 }
 
-fn atr_percentile(bars: &[HistoryBar]) -> f64 {
+fn atr_percentile(bars: &[HistoryBar]) -> Option<f64> {
     let true_ranges = bars
         .windows(2)
         .filter_map(|pair| {
@@ -539,7 +598,7 @@ fn atr_percentile(bars: &[HistoryBar]) -> f64 {
         .map(|window| window.iter().sum::<f64>() / window.len() as f64)
         .collect::<Vec<_>>();
     if atr_series.len() < 20 {
-        return 0.0;
+        return None;
     }
     let current = *atr_series.last().unwrap_or(&0.0);
     let tolerance = current.abs().max(1.0) * 1e-9;
@@ -551,7 +610,7 @@ fn atr_percentile(bars: &[HistoryBar]) -> f64 {
         .iter()
         .filter(|value| (**value - current).abs() <= tolerance)
         .count() as f64;
-    (below + tied * 0.5) / atr_series.len() as f64
+    Some((below + tied * 0.5) / atr_series.len() as f64)
 }
 
 #[derive(Clone)]
@@ -563,6 +622,9 @@ struct AdaptiveCandidate {
 }
 
 fn technical_factors(stock: &StockItem, bars: &[HistoryBar]) -> Option<BTreeMap<String, f64>> {
+    if !has_valid_ohlc_tail(bars, MIN_HISTORY_BARS) {
+        return None;
+    }
     let closes = valid_closes(bars);
     if closes.len() < MIN_HISTORY_BARS {
         return None;
@@ -620,7 +682,7 @@ fn technical_factors(stock: &StockItem, bars: &[HistoryBar]) -> Option<BTreeMap<
     let trend = ((return20 + 0.08) / 0.20).clamp(0.0, 1.0) * 0.45
         + ((ma20 / ma60 - 0.98) / 0.08).clamp(0.0, 1.0) * 0.35
         + trend_efficiency * 0.20;
-    let atr_risk = (1.0 - atr_percent_of_close(bars) / 0.06).clamp(0.0, 1.0);
+    let atr_risk = (1.0 - atr_percent_of_close(bars)? / 0.06).clamp(0.0, 1.0);
     let drawdown_risk = ((drawdown60 + 0.30) / 0.30).clamp(0.0, 1.0);
     let risk = atr_risk * 0.60 + drawdown_risk * 0.40;
     let relative = ((return20 + 0.10) / 0.20).clamp(0.0, 1.0);
@@ -700,9 +762,9 @@ fn path_efficiency(closes: &[f64], window: usize) -> f64 {
     }
 }
 
-fn atr_percent_of_close(bars: &[HistoryBar]) -> f64 {
+fn atr_percent_of_close(bars: &[HistoryBar]) -> Option<f64> {
     if bars.len() < 15 {
-        return 0.0;
+        return None;
     }
     let mut ranges = Vec::new();
     for pair in bars.windows(2).rev().take(14) {
@@ -721,15 +783,15 @@ fn atr_percent_of_close(bars: &[HistoryBar]) -> f64 {
             ranges.push(true_range);
         }
     }
-    if ranges.is_empty() {
-        return 0.0;
+    if ranges.len() < 14 {
+        return None;
     }
     let average = ranges.iter().sum::<f64>() / ranges.len() as f64;
     let close = bars.last().map(|bar| bar.close).unwrap_or(0.0);
     if close > 0.0 {
-        average / close
+        Some(average / close)
     } else {
-        0.0
+        None
     }
 }
 
@@ -738,7 +800,7 @@ fn overheat_factor(stock: &StockItem, distance_ma20: f64) -> f64 {
         .change_pct
         .filter(|value| value.is_finite())
         .map(as_percent)
-        .map(|value| ((value - 0.07) / 0.05).clamp(0.0, 1.0))
+        .map(|value| ((value - 7.0) / 5.0).clamp(0.0, 1.0))
         .unwrap_or(0.0);
     let volume = stock
         .volume_ratio
@@ -749,7 +811,7 @@ fn overheat_factor(stock: &StockItem, distance_ma20: f64) -> f64 {
         .turnover_rate
         .filter(|value| value.is_finite())
         .map(as_percent)
-        .map(|value| ((value - 0.06) / 0.12).clamp(0.0, 1.0))
+        .map(|value| ((value - 6.0) / 12.0).clamp(0.0, 1.0))
         .unwrap_or(0.0);
     let distance = ((distance_ma20 - 0.08) / 0.12).clamp(0.0, 1.0);
     (daily * 0.40 + volume * 0.20 + turnover * 0.20 + distance * 0.20).clamp(0.0, 1.0)
@@ -760,7 +822,7 @@ fn stability_factor(stock: &StockItem, risk: f64) -> f64 {
         .dividend_yield
         .filter(|value| value.is_finite())
         .map(as_percent)
-        .map(|value| (value / 0.05).clamp(0.0, 1.0))
+        .map(|value| (value / 5.0).clamp(0.0, 1.0))
         .unwrap_or(0.0);
     let profitability = stock
         .deducted_net_profit_billion
@@ -771,7 +833,7 @@ fn stability_factor(stock: &StockItem, risk: f64) -> f64 {
         .deducted_net_profit_growth_rate
         .filter(|value| value.is_finite())
         .map(as_percent)
-        .map(|value| ((value + 0.10) / 0.30).clamp(0.0, 1.0))
+        .map(|value| ((value + 10.0) / 30.0).clamp(0.0, 1.0))
         .unwrap_or(0.0);
     (risk * 0.45 + dividend * 0.25 + profitability * 0.20 + growth * 0.10).clamp(0.0, 1.0)
 }
@@ -937,7 +999,7 @@ pub fn adaptive_screen_stocks(
     }
     let primary_limit = request.primary_limit.clamp(1, 50);
     let exploration_limit = request.exploration_limit.min(50);
-    let pool_limit = ((primary_limit + exploration_limit) * 4).clamp(80, 200);
+    let pool_limit = 80;
     let staged = stage_one_candidates(universe, &request.criteria, pool_limit);
     if staged.is_empty() {
         return Err(CoreError::new("没有股票通过基础财务与有效报价过滤"));
@@ -1231,5 +1293,61 @@ fn factor_cosine(left: &BTreeMap<String, f64>, right: &BTreeMap<String, f64>) ->
         0.0
     } else {
         (dot / (left_norm * right_norm)).clamp(0.0, 1.0)
+    }
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn overheat_thresholds_use_percentage_points_without_early_penalties() {
+        let mut stock = StockItem {
+            change_pct: Some(0.069),
+            turnover_rate: Some(0.05),
+            volume_ratio: Some(2.0),
+            ..StockItem::default()
+        };
+        assert!(overheat_factor(&stock, 0.08).abs() < 1e-12);
+
+        stock.change_pct = Some(0.07);
+        assert!(overheat_factor(&stock, 0.08).abs() < 1e-12);
+        stock.change_pct = Some(0.071);
+        assert!(overheat_factor(&stock, 0.08) > 0.0);
+        stock.change_pct = Some(0.12);
+        assert!((overheat_factor(&stock, 0.08) - 0.40).abs() < 1e-9);
+    }
+
+    #[test]
+    fn defensive_stability_preserves_dividend_and_growth_gradients() {
+        let stock = StockItem {
+            dividend_yield: Some(0.02),
+            deducted_net_profit_growth_rate: Some(0.08),
+            ..StockItem::default()
+        };
+        assert!((stability_factor(&stock, 0.5) - 0.385).abs() < 1e-9);
+    }
+
+    #[test]
+    fn missing_ohlc_is_not_treated_as_zero_atr_or_low_risk() {
+        let bars = (0..60)
+            .map(|index| HistoryBar {
+                date: format!("{:08}", 20_260_101 + index),
+                open: None,
+                high: None,
+                low: None,
+                close: 10.0 + index as f64 * 0.01,
+                volume: Some(1_000.0),
+                capital: None,
+            })
+            .collect::<Vec<_>>();
+        assert!(atr_percentile(&bars).is_none());
+        assert!(atr_percent_of_close(&bars).is_none());
+        assert!(technical_factors(&StockItem::default(), &bars).is_none());
+    }
+
+    #[test]
+    fn missing_market_breadth_is_explicit() {
+        assert!(market_breadth(&[StockItem::default()]).is_none());
     }
 }

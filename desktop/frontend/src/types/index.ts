@@ -73,6 +73,11 @@ export interface ScreenResult {
   notes?: string[];
   algorithm_version?: string;
   market_regime?: AdaptiveMarketRegime;
+  rollout?: {
+    adaptive_available: boolean;
+    adaptive_default_enabled: boolean;
+    reason: string;
+  };
 }
 
 export type AdaptiveScreenMode = "auto" | "range" | "trend" | "defensive";
@@ -106,6 +111,7 @@ export interface AdaptiveMarketRegime {
     candidate_ratio: number;
     benchmark_requested: number;
     benchmark_usable: number;
+    breadth_usable: boolean;
   };
 }
 
@@ -446,6 +452,16 @@ export interface BacktestResult {
   volatility_message?: string | null;
   strategy_mode?: string;
   notes?: string[];
+  legacy_balanced_backtest?: BacktestResult;
+  adaptive_release_gate?: {
+    passed: boolean;
+    checks: {
+      key: string;
+      passed: boolean;
+      actual?: number | null;
+      requirement: string;
+    }[];
+  };
 }
 
 export interface LlmClientConfig {

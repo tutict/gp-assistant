@@ -15,6 +15,7 @@ import {
   buildCustomScreenRequest,
   buildSectorScreenRequest,
   buildTrendScreenRequest,
+  isAdaptiveProgressForRun,
   normalizeScreenGroups,
   normalizeScreenRows,
   normalizeSectorGroups,
@@ -71,7 +72,7 @@ export function ScreenPanel({
     let unlisten: (() => void) | undefined;
     void listen("adaptive-screen-progress", (event) => {
       const payload = (event as { payload?: { run_id?: string; percent?: number; message?: string } }).payload;
-      if (!payload || payload.run_id !== activeRunIdRef.current) return;
+      if (!isAdaptiveProgressForRun(payload, activeRunIdRef.current)) return;
       setAdaptiveProgress({
         percent: Number(payload.percent) || 0,
         message: payload.message || "正在计算",
@@ -276,7 +277,7 @@ function compactGroupMeta(meta: string) {
   const total = meta.match(/总数\s*([\d,]+)/)?.[1];
   return total ? `/ ${total}` : meta.replace(/返回\s*[\d,]+\s*\/\s*/, "");
 }
-const ScreenResultView = memo(function ScreenResultView({
+export const ScreenResultView = memo(function ScreenResultView({
   result,
   grouped,
   watchlist,
@@ -308,6 +309,17 @@ const ScreenResultView = memo(function ScreenResultView({
         <div className="metric"><span>最高分</span><strong>{rows[0]?.score?.toFixed(2) ?? "--"}</strong></div>
       </div>
 
+      {resultRecord.rollout && !resultRecord.rollout.adaptive_default_enabled && (
+        <section className="adaptive-regime-summary" aria-label="算法发布状态">
+          <div>
+            <span>当前算法</span>
+            <strong>旧版均衡筛选</strong>
+            <em>新版待发布门槛验证</em>
+          </div>
+          <p>{resultRecord.rollout.reason}</p>
+        </section>
+      )}
+
       {resultRecord.market_regime && (
         <section className="adaptive-regime-summary" aria-label="市场状态">
           <div>
@@ -321,7 +333,8 @@ const ScreenResultView = memo(function ScreenResultView({
             置信度 {(resultRecord.market_regime.confidence * 100).toFixed(0)}% ·
             数据 {resultRecord.market_regime.as_of_date || "--"} ·
             候选覆盖 {(resultRecord.market_regime.coverage.candidate_ratio * 100).toFixed(0)}% ·
-            宽基 {resultRecord.market_regime.coverage.benchmark_usable}/{resultRecord.market_regime.coverage.benchmark_requested}
+            宽基 {resultRecord.market_regime.coverage.benchmark_usable}/{resultRecord.market_regime.coverage.benchmark_requested} ·
+            市场宽度 {resultRecord.market_regime.coverage.breadth_usable ? "有效" : "缺失"}
           </p>
           <ul>
             {resultRecord.market_regime.evidence.map((item) => (
@@ -359,7 +372,14 @@ const ScreenResultView = memo(function ScreenResultView({
       {onRunBacktest && rows.length > 0 && (
         <div className="result-actions screen-result-actions">
           <div><span>下一步</span><strong>用当前条件回测</strong></div>
-          <button type="button" onClick={() => onRunBacktest(adaptiveRequest)}>回测</button>
+          <button
+            type="button"
+            onClick={() => onRunBacktest(
+              resultRecord.algorithm_version === "adaptive_swing_v1" ? adaptiveRequest : undefined,
+            )}
+          >
+            回测
+          </button>
         </div>
       )}
       <RawJson result={result} />
@@ -373,6 +393,7 @@ function regimeLabel(mode: string): string {
     trend: "趋势",
     defensive: "防守",
     transition: "过渡",
+    insufficient: "数据不足",
   }[mode] || mode;
 }
 

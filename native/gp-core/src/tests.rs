@@ -249,6 +249,98 @@ fn adaptive_backtest_contract_keeps_requested_mode_and_prefetches_the_point_in_t
 }
 
 #[test]
+fn adaptive_rebalance_propagates_market_data_errors_instead_of_silently_clearing_positions() {
+    let selection_date = NaiveDate::from_ymd_opt(2026, 4, 1).expect("valid date");
+    let snapshot_date = NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date");
+    let stocks = (0..12).map(adaptive_stock).collect::<Vec<_>>();
+    let histories = stocks
+        .iter()
+        .map(|stock| {
+            let bars = (0..90)
+                .map(|index| {
+                    let date = snapshot_date + chrono::Duration::days(index);
+                    HistoryBar {
+                        date: date.format("%Y-%m-%d").to_string(),
+                        open: Some(stock.price),
+                        high: Some(stock.price * 1.01),
+                        low: Some(stock.price * 0.99),
+                        close: stock.price,
+                        volume: Some(1_000_000.0),
+                        capital: None,
+                    }
+                })
+                .collect::<Vec<_>>();
+            BacktestHistory {
+                code: stock.code.clone(),
+                prices: BTreeMap::new(),
+                bars,
+            }
+        })
+        .collect::<Vec<_>>();
+    let history_index = histories
+        .iter()
+        .enumerate()
+        .map(|(index, history)| (history.code.to_ascii_uppercase(), index))
+        .collect::<HashMap<_, _>>();
+    let snapshots = stocks
+        .iter()
+        .map(|stock| {
+            (
+                stock.code.clone(),
+                BTreeMap::from([(
+                    snapshot_date,
+                    StockFactorSnapshot {
+                        date: "2026-01-01".to_string(),
+                        available_date: Some("2026-01-01".to_string()),
+                        name: Some(stock.name.clone()),
+                        industry: Some(stock.industry.clone()),
+                        is_st: Some(false),
+                        is_listed: Some(true),
+                        is_tradable: Some(true),
+                        price: Some(stock.price),
+                        pe: stock.pe,
+                        pb: stock.pb,
+                        roe: stock.roe,
+                        market_cap_billion: stock.market_cap_billion,
+                        change_pct: stock.change_pct,
+                        volume: stock.volume,
+                        amount: stock.amount,
+                        turnover_rate: stock.turnover_rate,
+                        volume_ratio: stock.volume_ratio,
+                        ..StockFactorSnapshot::default()
+                    },
+                )]),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let error = adaptive_walk_forward_active_indices(
+        &stocks,
+        &BacktestRequest {
+            criteria: ScreenCriteria::default(),
+            source: "criteria".to_string(),
+            strategy_mode: "adaptive_swing_v1:auto".to_string(),
+            stock_codes: Vec::new(),
+            start_date: "20260101".to_string(),
+            end_date: "20260401".to_string(),
+            top_n: 10,
+            initial_cash: 1_000_000.0,
+            rebalance_frequency: "monthly".to_string(),
+            transaction_cost_bps: 10.0,
+            benchmark: "candidate_equal_weight".to_string(),
+        },
+        &histories,
+        &HashMap::new(),
+        &snapshots,
+        &history_index,
+        &vec![Some(10.0); histories.len()],
+        selection_date,
+    )
+    .expect_err("missing benchmark histories must invalidate the rebalance");
+    assert!(error.to_string().contains("调仓日 2026-04-01 数据不足"));
+    assert!(error.to_string().contains("宽基指数"));
+}
+
+#[test]
 fn adaptive_exploration_exposure_is_soft_and_same_day_results_are_deterministic() {
     let (mut stocks, histories, benchmarks) = adaptive_fixture(0.0);
     for (index, stock) in stocks.iter_mut().enumerate() {
@@ -290,6 +382,69 @@ fn adaptive_exploration_exposure_is_soft_and_same_day_results_are_deterministic(
         .iter()
         .flat_map(|group| &group.items)
         .all(|item| item.score.is_finite() && (0.0..=20.0).contains(&item.score)));
+}
+
+#[test]
+fn adaptive_auto_rejects_missing_breadth_while_manual_mode_marks_detection_insufficient() {
+    let (mut stocks, histories, benchmarks) = adaptive_fixture(0.0);
+    for stock in &mut stocks {
+        stock.change_pct = None;
+    }
+    let automatic = adaptive_screen_stocks(
+        &stocks,
+        &histories,
+        &benchmarks,
+        &[],
+        &AdaptiveScreenRequest::default(),
+    )
+    .expect_err("auto mode must not invent neutral market breadth");
+    assert!(automatic.to_string().contains("上涨家数比例"));
+
+    let manual = adaptive_screen_stocks(
+        &stocks,
+        &histories,
+        &benchmarks,
+        &[],
+        &AdaptiveScreenRequest {
+            mode: "range".to_string(),
+            ..AdaptiveScreenRequest::default()
+        },
+    )
+    .expect("manual override can score while detection reports insufficient evidence");
+    assert_eq!(manual.market_regime.detected, "insufficient");
+    assert_eq!(manual.market_regime.effective, "range");
+    assert_eq!(manual.market_regime.confidence, 0.0);
+    assert!(!manual.market_regime.coverage.breadth_usable);
+}
+
+#[test]
+fn adaptive_release_gate_requires_every_performance_diversity_and_latency_check() {
+    let passing = evaluate_adaptive_release_gate(&AdaptiveReleaseGateInput {
+        legacy_annualized_return: Some(0.10),
+        adaptive_annualized_return: Some(0.09),
+        legacy_max_drawdown: Some(-0.12),
+        adaptive_max_drawdown: Some(-0.13),
+        legacy_precision_at_10: Some(0.55),
+        adaptive_precision_at_10: Some(0.52),
+        max_primary_industry_count: Some(3),
+        average_adjacent_jaccard: Some(0.70),
+        five_run_unique_coverage: Some(20),
+        first_run_millis: Some(20_000),
+        cached_run_millis: Some(2_000),
+    });
+    assert!(passing.passed);
+    assert!(passing.checks.iter().all(|check| check.passed));
+
+    let incomplete = evaluate_adaptive_release_gate(&AdaptiveReleaseGateInput {
+        legacy_annualized_return: Some(0.10),
+        adaptive_annualized_return: Some(0.12),
+        ..AdaptiveReleaseGateInput::default()
+    });
+    assert!(!incomplete.passed);
+    assert!(incomplete
+        .checks
+        .iter()
+        .any(|check| check.key == "cached_run_millis" && !check.passed));
 }
 
 fn sample_data_set() -> CoreDataSet {
@@ -1682,246 +1837,6 @@ fn quality_profile_penalizes_incomplete_core_financial_data() {
         .any(|factor| factor.key == "data_quality"));
 }
 
-#[allow(dead_code)]
-fn legacy_score_sort_biases_toward_hot_energy_and_tech_sectors() {
-    let base = StockItem {
-        code: "000001.SZ".to_string(),
-        name: "平安银行".to_string(),
-        industry: "银行".to_string(),
-        is_st: false,
-        price: 10.0,
-        pe: Some(10.0),
-        pb: Some(1.0),
-        roe: Some(0.1),
-        market_cap_billion: Some(100.0),
-        ..StockItem::default()
-    };
-    let mut chip = base.clone();
-    chip.code = "688001.SH".to_string();
-    chip.name = "芯片公司".to_string();
-    chip.industry = "半导体".to_string();
-    let mut solar = base.clone();
-    solar.code = "601012.SH".to_string();
-    solar.name = "光伏公司".to_string();
-    solar.industry = "光伏".to_string();
-
-    let result = screen_stocks(
-        &[base, chip, solar],
-        &ScreenCriteria {
-            sort_by: "score".to_string(),
-            sort_dir: "desc".to_string(),
-            ..ScreenCriteria::default()
-        },
-    );
-
-    assert_eq!(
-        result
-            .items
-            .iter()
-            .take(2)
-            .map(|item| item.stock.code.as_str())
-            .collect::<Vec<_>>(),
-        vec!["688001.SH", "601012.SH"]
-    );
-}
-#[allow(dead_code)]
-fn legacy_score_sort_promotes_hot_tech_and_energy_candidates_into_limited_results() {
-    let bank = StockItem {
-        code: "000001.SZ".to_string(),
-        name: "高分银行".to_string(),
-        industry: "银行".to_string(),
-        is_st: false,
-        price: 10.0,
-        pe: Some(2.0),
-        pb: Some(0.2),
-        roe: Some(0.3),
-        market_cap_billion: Some(100.0),
-        ..StockItem::default()
-    };
-    let mut ordinary_bank = bank.clone();
-    ordinary_bank.code = "600000.SH".to_string();
-    ordinary_bank.name = "普通银行".to_string();
-    ordinary_bank.pe = Some(3.0);
-    ordinary_bank.pb = Some(0.3);
-    ordinary_bank.roe = Some(0.2);
-    let mut chip = bank.clone();
-    chip.code = "688001.SH".to_string();
-    chip.name = "芯片公司".to_string();
-    chip.industry = "半导体".to_string();
-    chip.pe = Some(60.0);
-    chip.pb = Some(8.0);
-    chip.roe = Some(0.03);
-    let mut solar = chip.clone();
-    solar.code = "601012.SH".to_string();
-    solar.name = "光伏公司".to_string();
-    solar.industry = "光伏".to_string();
-    solar.pe = Some(50.0);
-    solar.pb = Some(7.0);
-
-    let result = screen_stocks(
-        &[bank, ordinary_bank, chip, solar],
-        &ScreenCriteria {
-            sort_by: "score".to_string(),
-            sort_dir: "desc".to_string(),
-            limit: 2,
-            ..ScreenCriteria::default()
-        },
-    );
-
-    assert_eq!(
-        result
-            .items
-            .iter()
-            .map(|item| item.stock.code.as_str())
-            .collect::<Vec<_>>(),
-        vec!["688001.SH", "601012.SH"]
-    );
-}
-#[allow(dead_code)]
-fn legacy_score_sort_promotes_duofuduo_like_hot_themes_and_deprioritizes_bank_infra() {
-    let bank = StockItem {
-        code: "000001.SZ".to_string(),
-        name: "高分银行".to_string(),
-        industry: "银行".to_string(),
-        is_st: false,
-        price: 10.0,
-        pe: Some(2.0),
-        pb: Some(0.2),
-        roe: Some(0.3),
-        market_cap_billion: Some(100.0),
-        ..StockItem::default()
-    };
-    let mut infra = bank.clone();
-    infra.code = "601668.SH".to_string();
-    infra.name = "中国建筑".to_string();
-    infra.industry = "建筑装饰".to_string();
-    infra.pe = Some(3.0);
-    infra.pb = Some(0.4);
-    infra.roe = Some(0.2);
-    let mut duofuduo = bank.clone();
-    duofuduo.code = "002407.SZ".to_string();
-    duofuduo.name = "多氟多".to_string();
-    duofuduo.industry = "化工".to_string();
-    duofuduo.pe = Some(70.0);
-    duofuduo.pb = Some(8.0);
-    duofuduo.roe = Some(0.03);
-    let mut material = duofuduo.clone();
-    material.code = "002408.SZ".to_string();
-    material.name = "氟材料公司".to_string();
-    material.industry = "锂电材料".to_string();
-    let mut chip = duofuduo.clone();
-    chip.code = "688001.SH".to_string();
-    chip.name = "芯片公司".to_string();
-    chip.industry = "半导体".to_string();
-    chip.pe = Some(60.0);
-    let mut solar = chip.clone();
-    solar.code = "601012.SH".to_string();
-    solar.name = "光伏公司".to_string();
-    solar.industry = "光伏".to_string();
-    solar.pe = Some(50.0);
-    solar.pb = Some(7.0);
-
-    let result = screen_stocks(
-        &[bank, infra, duofuduo, material, chip, solar],
-        &ScreenCriteria {
-            sort_by: "score".to_string(),
-            sort_dir: "desc".to_string(),
-            limit: 3,
-            ..ScreenCriteria::default()
-        },
-    );
-
-    let codes = result
-        .items
-        .iter()
-        .map(|item| item.stock.code.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(codes, vec!["002408.SZ", "688001.SH", "601012.SH"]);
-    assert!(!codes.contains(&"002407.SZ"));
-    assert!(!codes.contains(&"000001.SZ"));
-    assert!(!codes.contains(&"601668.SH"));
-}
-#[allow(dead_code)]
-fn legacy_score_sort_promotes_medical_and_game_candidates_with_other_hot_sectors() {
-    let bank = StockItem {
-        code: "000001.SZ".to_string(),
-        name: "高分银行".to_string(),
-        industry: "银行".to_string(),
-        is_st: false,
-        price: 10.0,
-        pe: Some(2.0),
-        pb: Some(0.2),
-        roe: Some(0.3),
-        market_cap_billion: Some(100.0),
-        ..StockItem::default()
-    };
-    let mut infra = bank.clone();
-    infra.code = "601668.SH".to_string();
-    infra.name = "中国建筑".to_string();
-    infra.industry = "建筑装饰".to_string();
-    infra.pe = Some(3.0);
-    infra.pb = Some(0.4);
-    infra.roe = Some(0.2);
-    let mut material = bank.clone();
-    material.code = "002408.SZ".to_string();
-    material.name = "氟材料公司".to_string();
-    material.industry = "锂电材料".to_string();
-    material.pe = Some(70.0);
-    material.pb = Some(8.0);
-    material.roe = Some(0.03);
-    let mut chip = material.clone();
-    chip.code = "688001.SH".to_string();
-    chip.name = "芯片公司".to_string();
-    chip.industry = "半导体".to_string();
-    chip.pe = Some(60.0);
-    let mut solar = chip.clone();
-    solar.code = "601012.SH".to_string();
-    solar.name = "光伏公司".to_string();
-    solar.industry = "光伏".to_string();
-    solar.pe = Some(50.0);
-    solar.pb = Some(7.0);
-    let mut game = chip.clone();
-    game.code = "002555.SZ".to_string();
-    game.name = "游戏公司".to_string();
-    game.industry = "网络游戏".to_string();
-    game.pe = Some(80.0);
-    game.pb = Some(9.0);
-    game.roe = Some(0.02);
-
-    let mut medical = chip.clone();
-    medical.code = "300015.SZ".to_string();
-    medical.name = "创新药公司".to_string();
-    medical.industry = "医疗器械".to_string();
-    medical.pe = Some(75.0);
-    medical.pb = Some(8.5);
-    medical.roe = Some(0.025);
-
-    let result = screen_stocks(
-        &[bank, infra, material, chip, solar, medical, game],
-        &ScreenCriteria {
-            sort_by: "score".to_string(),
-            sort_dir: "desc".to_string(),
-            limit: 5,
-            ..ScreenCriteria::default()
-        },
-    );
-
-    let codes = result
-        .items
-        .iter()
-        .map(|item| item.stock.code.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        codes,
-        vec![
-            "002408.SZ",
-            "688001.SH",
-            "601012.SH",
-            "300015.SZ",
-            "002555.SZ"
-        ]
-    );
-}
 #[test]
 fn backtests_with_native_history() {
     let result = backtest_with_data(

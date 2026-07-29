@@ -8,6 +8,7 @@ import {
   buildScreenCriteria,
   buildSectorScreenRequest,
   buildTrendScreenRequest,
+  isAdaptiveProgressForRun,
   fetchUpstreamImportPayload,
   buildLlmConfig,
   normalizeAgentResult,
@@ -256,6 +257,15 @@ describe("contract payload builders", () => {
       days: 30,
       max_items: 24,
     });
+  });
+});
+
+describe("adaptive progress isolation", () => {
+  it("accepts only events for the active run id", () => {
+    expect(isAdaptiveProgressForRun({ run_id: "run-current", percent: 40 }, "run-current")).toBe(true);
+    expect(isAdaptiveProgressForRun({ run_id: "run-old", percent: 100 }, "run-current")).toBe(false);
+    expect(isAdaptiveProgressForRun({ run_id: "run-current" }, null)).toBe(false);
+    expect(isAdaptiveProgressForRun(null, "run-current")).toBe(false);
   });
 });
 

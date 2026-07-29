@@ -793,6 +793,122 @@ pub struct BacktestResult {
     pub notes: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AdaptiveReleaseGateInput {
+    pub legacy_annualized_return: Option<f64>,
+    pub adaptive_annualized_return: Option<f64>,
+    pub legacy_max_drawdown: Option<f64>,
+    pub adaptive_max_drawdown: Option<f64>,
+    pub legacy_precision_at_10: Option<f64>,
+    pub adaptive_precision_at_10: Option<f64>,
+    pub max_primary_industry_count: Option<usize>,
+    pub average_adjacent_jaccard: Option<f64>,
+    pub five_run_unique_coverage: Option<usize>,
+    pub first_run_millis: Option<u64>,
+    pub cached_run_millis: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdaptiveReleaseGateCheck {
+    pub key: String,
+    pub passed: bool,
+    pub actual: Option<f64>,
+    pub requirement: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdaptiveReleaseGateReport {
+    pub passed: bool,
+    pub checks: Vec<AdaptiveReleaseGateCheck>,
+}
+
+pub fn evaluate_adaptive_release_gate(
+    input: &AdaptiveReleaseGateInput,
+) -> AdaptiveReleaseGateReport {
+    let mut checks = Vec::new();
+    let mut push = |key: &str, actual: Option<f64>, passed: bool, requirement: &str| {
+        checks.push(AdaptiveReleaseGateCheck {
+            key: key.to_string(),
+            passed,
+            actual,
+            requirement: requirement.to_string(),
+        });
+    };
+    let return_delta = input
+        .adaptive_annualized_return
+        .zip(input.legacy_annualized_return)
+        .map(|(adaptive, legacy)| adaptive - legacy);
+    push(
+        "annualized_return_delta",
+        return_delta,
+        return_delta.is_some_and(|value| value + 1e-12 >= -0.01),
+        "adaptive annualized return no worse than legacy by more than 1 percentage point",
+    );
+    let drawdown_delta = input
+        .adaptive_max_drawdown
+        .zip(input.legacy_max_drawdown)
+        .map(|(adaptive, legacy)| adaptive - legacy);
+    push(
+        "max_drawdown_delta",
+        drawdown_delta,
+        drawdown_delta.is_some_and(|value| value + 1e-12 >= -0.01),
+        "adaptive drawdown no worse than legacy by more than 1 percentage point",
+    );
+    let precision_delta = input
+        .adaptive_precision_at_10
+        .zip(input.legacy_precision_at_10)
+        .map(|(adaptive, legacy)| adaptive - legacy);
+    push(
+        "precision_at_10_delta",
+        precision_delta,
+        precision_delta.is_some_and(|value| value + 1e-12 >= -0.03),
+        "adaptive Precision@10 no worse than legacy by more than 3 percentage points",
+    );
+    push(
+        "max_primary_industry_count",
+        input.max_primary_industry_count.map(|value| value as f64),
+        input
+            .max_primary_industry_count
+            .is_some_and(|value| value <= 3),
+        "no primary industry exceeds 3/10",
+    );
+    push(
+        "average_adjacent_jaccard",
+        input.average_adjacent_jaccard,
+        input
+            .average_adjacent_jaccard
+            .is_some_and(|value| value <= 0.70),
+        "average adjacent primary Jaccard <= 0.70",
+    );
+    let coverage = input.five_run_unique_coverage.map(|value| value as f64);
+    push(
+        "five_run_unique_coverage",
+        coverage,
+        input
+            .five_run_unique_coverage
+            .is_some_and(|value| value >= 20),
+        "five consecutive primary+exploration runs cover at least 20 symbols",
+    );
+    let first_run = input.first_run_millis.map(|value| value as f64);
+    push(
+        "first_run_millis",
+        first_run,
+        input.first_run_millis.is_some_and(|value| value <= 20_000),
+        "first network run <= 20000 ms",
+    );
+    let cached_run = input.cached_run_millis.map(|value| value as f64);
+    push(
+        "cached_run_millis",
+        cached_run,
+        input.cached_run_millis.is_some_and(|value| value <= 2_000),
+        "same-day cached run <= 2000 ms",
+    );
+    AdaptiveReleaseGateReport {
+        passed: checks.iter().all(|check| check.passed),
+        checks,
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AgentRequest {
     pub message: String,
@@ -2380,7 +2496,7 @@ fn simulate_walk_forward_portfolio(
     } else {
         HashMap::new()
     };
-    Ok(simulate_walk_forward_portfolio_with_snapshots(
+    simulate_walk_forward_portfolio_with_snapshots(
         universe,
         request,
         histories,
@@ -2390,7 +2506,7 @@ fn simulate_walk_forward_portfolio(
         transaction_cost_rate,
         rebalance_frequency,
         &benchmark_histories,
-    ))
+    )
 }
 
 const MIN_HISTORY_BARS_FOR_ADAPTIVE_BACKTEST: usize = 60;
@@ -2405,7 +2521,7 @@ fn simulate_walk_forward_portfolio_with_snapshots(
     transaction_cost_rate: f64,
     rebalance_frequency: &str,
     benchmark_histories: &HashMap<String, Vec<HistoryBar>>,
-) -> PortfolioSimulation {
+) -> CoreResult<PortfolioSimulation> {
     let mut cash = initial_cash;
     let mut holdings = vec![0.0; histories.len()];
     let mut last_rebalance_date: Option<NaiveDate> = None;
@@ -2451,7 +2567,7 @@ fn simulate_walk_forward_portfolio_with_snapshots(
                     &history_index,
                     &trade_prices,
                     date,
-                )
+                )?
             } else {
                 walk_forward_active_indices(
                     universe,
@@ -2526,13 +2642,13 @@ fn simulate_walk_forward_portfolio_with_snapshots(
         });
     }
 
-    PortfolioSimulation {
+    Ok(PortfolioSimulation {
         equity_curve,
         rebalance_dates,
         total_transaction_cost,
         total_turnover,
         selections,
-    }
+    })
 }
 
 fn load_factor_snapshot_timeline(
@@ -2656,7 +2772,7 @@ fn adaptive_walk_forward_active_indices(
     history_index: &HashMap<String, usize>,
     current_prices: &[Option<f64>],
     date: NaiveDate,
-) -> ActiveSelection {
+) -> CoreResult<ActiveSelection> {
     let mut visible_universe = point_in_time_universe(
         universe,
         snapshots_by_code,
@@ -2669,10 +2785,10 @@ fn adaptive_walk_forward_active_indices(
         .filter_map(|stock| history_index.get(&stock.code.to_uppercase()).copied())
         .collect::<Vec<_>>();
     if visible_universe.is_empty() {
-        return ActiveSelection {
+        return Ok(ActiveSelection {
             eligible_indices,
             selected_indices: Vec::new(),
-        };
+        });
     }
 
     let mut point_in_time_histories = HashMap::new();
@@ -2701,7 +2817,7 @@ fn adaptive_walk_forward_active_indices(
         if bars.len() >= 2 {
             let latest = bars[bars.len() - 1].close;
             let previous = bars[bars.len() - 2].close;
-            stock.change_pct = (previous > 0.0).then_some((latest / previous - 1.0) * 100.0);
+            stock.change_pct = (previous > 0.0).then_some(latest / previous - 1.0);
         }
         point_in_time_histories.insert(stock.code.clone(), bars);
     }
@@ -2741,18 +2857,21 @@ fn adaptive_walk_forward_active_indices(
         &[],
         &adaptive_request,
     )
-    .map(|result| {
-        result
-            .items
-            .into_iter()
-            .filter_map(|item| history_index.get(&item.stock.code.to_uppercase()).copied())
-            .collect::<Vec<_>>()
-    })
-    .unwrap_or_default();
-    ActiveSelection {
+    .map_err(|error| {
+        CoreError::new(format!(
+            "adaptive_swing_v1 调仓日 {} 数据不足：{}",
+            date.format("%Y-%m-%d"),
+            error
+        ))
+    })?
+    .items
+    .into_iter()
+    .filter_map(|item| history_index.get(&item.stock.code.to_uppercase()).copied())
+    .collect::<Vec<_>>();
+    Ok(ActiveSelection {
         selected_indices,
         eligible_indices,
-    }
+    })
 }
 
 fn point_in_time_universe(

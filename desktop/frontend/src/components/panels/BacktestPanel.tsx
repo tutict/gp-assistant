@@ -245,8 +245,44 @@ export function BacktestResultView({ result }: { result: BacktestResult }) {
         <div><span>换手</span><strong>{formatNumber(metrics.total_turnover)}</strong></div>
         <div><span>调仓次数</span><strong>{metrics.rebalance_count ?? 0}</strong></div>
         <div><span>样本外折数</span><strong>{metrics.oos_fold_count ?? 0}</strong></div>
-        <div><span>Mode</span><strong>{metrics.strategy_mode === "walk_forward" ? "Walk-forward" : "Snapshot"}</strong></div>
+        <div><span>Mode</span><strong>{
+          metrics.strategy_mode === "adaptive_swing_v1"
+            ? "自适应波段"
+            : metrics.strategy_mode === "walk_forward" ? "Walk-forward" : "Snapshot"
+        }</strong></div>
       </section>
+
+      {result.adaptive_release_gate && (
+        <section className="backtest-holdings">
+          <header>
+            <span>adaptive_swing_v1 发布门槛</span>
+            <strong>{result.adaptive_release_gate.passed ? "全部通过" : "暂不切换默认"}</strong>
+          </header>
+          {result.legacy_balanced_backtest && (
+            <p>
+              同样本旧 balanced 年化 {
+                result.legacy_balanced_backtest.metrics.annualized_return != null
+                  ? formatSignedPercent(result.legacy_balanced_backtest.metrics.annualized_return * 100)
+                  : "--"
+              } · 新版年化 {
+                metrics.annualized_return != null
+                  ? formatSignedPercent(metrics.annualized_return * 100)
+                  : "--"
+              }
+            </p>
+          )}
+          <div className="backtest-fold-list">
+            {result.adaptive_release_gate.checks.map((check) => (
+              <div className="backtest-fold-row" key={check.key}>
+                <span><b>{releaseGateLabel(check.key)}</b><small>{check.requirement}</small></span>
+                <strong className={check.passed ? "positive" : "negative"}>
+                  {check.passed ? "通过" : check.actual == null ? "待采集" : "未通过"}
+                </strong>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <VolatilityDiagnostics
         snapshots={result.volatility_snapshots ?? []}
@@ -284,6 +320,19 @@ export function BacktestResultView({ result }: { result: BacktestResult }) {
       <RawJson result={result} />
     </div>
   );
+}
+
+function releaseGateLabel(key: string): string {
+  return {
+    annualized_return_delta: "年化收益差",
+    max_drawdown_delta: "最大回撤差",
+    precision_at_10_delta: "Precision@10 差",
+    max_primary_industry_count: "主榜单行业数量",
+    average_adjacent_jaccard: "相邻主榜 Jaccard",
+    five_run_unique_coverage: "连续五次覆盖",
+    first_run_millis: "首次运行耗时",
+    cached_run_millis: "缓存运行耗时",
+  }[key] || key;
 }
 
 function formatVolatilityPercent(value: number | null | undefined): string {

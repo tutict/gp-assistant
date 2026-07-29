@@ -68,6 +68,7 @@ const ADAPTIVE_SCREEN_TOTAL_TIMEOUT_SECS: u64 = 20;
 const ADAPTIVE_SCREEN_HISTORY_CONCURRENCY: usize = 6;
 const ADAPTIVE_SCREEN_HISTORY_PREFETCH_LIMIT: usize = 80;
 const MIN_ADAPTIVE_SCREEN_HISTORY_BARS: usize = 60;
+const ADAPTIVE_SCREEN_RELEASE_ENV: &str = "GP_ADAPTIVE_SWING_V1_ENABLED";
 const BACKTEST_HISTORY_TIMEOUT_SECS: u64 = 30;
 const BACKTEST_HISTORY_CONCURRENCY: usize = 6;
 const MIN_BACKTEST_HISTORY_BARS: usize = 2;
@@ -894,10 +895,13 @@ fn api_market_clear_cache(app: tauri::AppHandle) -> Result<Value, String> {
 
 #[tauri::command]
 async fn api_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    if payload
+    let internal_algorithm = payload
         .get("internal_algorithm")
         .and_then(Value::as_str)
-        .is_some_and(|value| value == "legacy_balanced")
+        .unwrap_or_default();
+    let force_adaptive = internal_algorithm == "adaptive_swing_v1";
+    if internal_algorithm == "legacy_balanced"
+        || (!force_adaptive && !adaptive_screen_release_enabled())
     {
         return api_legacy_screen(app, payload).await;
     }
@@ -996,13 +1000,16 @@ async fn api_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, Stri
 async fn api_legacy_screen(app: tauri::AppHandle, mut payload: Value) -> Result<Value, String> {
     let data = cached_market_data_snapshot(&app)?;
     let stock_override = screen_stock_override(&app, &data, &payload)?;
+    if let Some(criteria) = payload.get("criteria").cloned() {
+        payload = criteria;
+    }
     if let Some(object) = payload.as_object_mut() {
         object.remove("internal_algorithm");
     }
     let criteria =
         serde_json::from_value::<gp_core::ScreenCriteria>(strip_core_side_payload_fields(payload))
             .map_err(|error| format!("invalid legacy screen request: {error}"))?;
-    runtime::run_cpu_bound("api_legacy_screen", move || {
+    let mut result = runtime::run_cpu_bound("api_legacy_screen", move || {
         let result = match stock_override.as_deref() {
             Some(stocks) => gp_core::screen_stocks(stocks, &criteria),
             None => gp_core::screen_with_data(data.as_ref(), &criteria)
@@ -1010,7 +1017,40 @@ async fn api_legacy_screen(app: tauri::AppHandle, mut payload: Value) -> Result<
         };
         serde_json::to_value(result).map_err(|error| error.to_string())
     })
-    .await?
+    .await??;
+    if let Some(object) = result.as_object_mut() {
+        object.insert(
+            "algorithm_version".to_string(),
+            Value::String("legacy_balanced".to_string()),
+        );
+        object.insert(
+            "rollout".to_string(),
+            json!({
+                "adaptive_available": true,
+                "adaptive_default_enabled": false,
+                "reason": "adaptive_swing_v1 尚未取得全部样本外收益、回撤、Precision、分散度与时延发布门槛记录"
+            }),
+        );
+    }
+    append_result_notes(
+        &mut result,
+        vec!["发布门槛尚未全部验证，智能选股默认保留 legacy_balanced；可通过内部发布开关启用 adaptive_swing_v1。".to_string()],
+    );
+    Ok(result)
+}
+
+fn adaptive_screen_release_enabled() -> bool {
+    std::env::var(ADAPTIVE_SCREEN_RELEASE_ENV)
+        .ok()
+        .as_deref()
+        .is_some_and(adaptive_screen_release_flag_enabled)
+}
+
+fn adaptive_screen_release_flag_enabled(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 fn adaptive_screen_request_from_payload(
@@ -1157,6 +1197,15 @@ async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, St
     } = prepared;
     let calculation = runtime::run_cpu_bound("api_backtest", move || {
         let history_override = (!history_override.is_empty()).then_some(&history_override);
+        let adaptive_backtest = request
+            .strategy_mode
+            .trim()
+            .to_ascii_lowercase()
+            .starts_with("adaptive_swing_v1");
+        let universe = stock_override
+            .as_deref()
+            .map(Vec::as_slice)
+            .unwrap_or(data.stocks.as_slice());
         let source = gp_core::StaticDataSource::with_overrides(
             data.as_ref(),
             stock_override.as_deref().map(Vec::as_slice),
@@ -1164,7 +1213,43 @@ async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, St
         );
         let result =
             gp_core::backtest_with_source(&source, &request).map_err(|error| error.to_string())?;
-        serde_json::to_value(result).map_err(|error| error.to_string())
+        let mut value = serde_json::to_value(&result).map_err(|error| error.to_string())?;
+        if adaptive_backtest {
+            let mut legacy_request = request.clone();
+            legacy_request.strategy_mode = "walk_forward".to_string();
+            legacy_request.criteria.score_profile = "balanced".to_string();
+            let legacy = gp_core::backtest_with_source(&source, &legacy_request)
+                .map_err(|error| format!("legacy balanced comparison failed: {error}"))?;
+            let precision_pair = (request.top_n == 10)
+                .then_some((legacy.metrics.precision_at_n, result.metrics.precision_at_n));
+            let gate =
+                gp_core::evaluate_adaptive_release_gate(&gp_core::AdaptiveReleaseGateInput {
+                    legacy_annualized_return: legacy.metrics.annualized_return,
+                    adaptive_annualized_return: result.metrics.annualized_return,
+                    legacy_max_drawdown: legacy.metrics.max_drawdown,
+                    adaptive_max_drawdown: result.metrics.max_drawdown,
+                    legacy_precision_at_10: precision_pair.and_then(|pair| pair.0),
+                    adaptive_precision_at_10: precision_pair.and_then(|pair| pair.1),
+                    max_primary_industry_count: adaptive_backtest_max_industry_count(
+                        &result, universe,
+                    ),
+                    average_adjacent_jaccard: adaptive_backtest_average_jaccard(&result),
+                    five_run_unique_coverage: None,
+                    first_run_millis: None,
+                    cached_run_millis: None,
+                });
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "legacy_balanced_backtest".to_string(),
+                    serde_json::to_value(legacy).map_err(|error| error.to_string())?,
+                );
+                object.insert(
+                    "adaptive_release_gate".to_string(),
+                    serde_json::to_value(gate).map_err(|error| error.to_string())?,
+                );
+            }
+        }
+        Ok(value)
     })
     .await?;
     let mut result = calculation.map_err(|error| {
@@ -1176,6 +1261,63 @@ async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, St
     })?;
     append_result_notes(&mut result, notes);
     Ok(result)
+}
+
+fn adaptive_backtest_max_industry_count(
+    result: &gp_core::BacktestResult,
+    universe: &[gp_core::StockItem],
+) -> Option<usize> {
+    let industries = universe
+        .iter()
+        .map(|stock| {
+            (
+                stock.code.to_ascii_uppercase(),
+                if stock.industry.trim().is_empty() {
+                    "__unknown__".to_string()
+                } else {
+                    stock.industry.clone()
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    result
+        .walk_forward_folds
+        .iter()
+        .filter(|fold| !fold.selected_symbols.is_empty())
+        .map(|fold| {
+            let mut counts = HashMap::<String, usize>::new();
+            for code in &fold.selected_symbols {
+                let industry = industries
+                    .get(&code.to_ascii_uppercase())
+                    .cloned()
+                    .unwrap_or_else(|| "__unknown__".to_string());
+                *counts.entry(industry).or_default() += 1;
+            }
+            counts.values().copied().max().unwrap_or(0)
+        })
+        .max()
+}
+
+fn adaptive_backtest_average_jaccard(result: &gp_core::BacktestResult) -> Option<f64> {
+    let values = result
+        .walk_forward_folds
+        .windows(2)
+        .filter_map(|pair| {
+            let left = pair[0]
+                .selected_symbols
+                .iter()
+                .map(|code| code.to_ascii_uppercase())
+                .collect::<HashSet<_>>();
+            let right = pair[1]
+                .selected_symbols
+                .iter()
+                .map(|code| code.to_ascii_uppercase())
+                .collect::<HashSet<_>>();
+            let union = left.union(&right).count();
+            (union > 0).then_some(left.intersection(&right).count() as f64 / union as f64)
+        })
+        .collect::<Vec<_>>();
+    (!values.is_empty()).then_some(values.iter().sum::<f64>() / values.len() as f64)
 }
 
 #[tauri::command]
@@ -4656,14 +4798,25 @@ async fn prepare_adaptive_screen(
     let mut required_codes = candidates.clone();
     required_codes.extend(adaptive_benchmark_codes().into_iter().map(str::to_string));
     dedupe_stock_codes(&mut required_codes);
+    let target_history_date = request
+        .as_of_date
+        .as_deref()
+        .and_then(compact_date_key)
+        .or_else(|| {
+            let universe = stock_override
+                .as_deref()
+                .map(Vec::as_slice)
+                .unwrap_or(data.stocks.as_slice());
+            adaptive_quote_target_date(universe, &candidates)
+        })
+        .or_else(|| expected_market_quote_date_from_epoch_ms(epoch_millis()));
     let missing = required_codes
         .iter()
         .filter(|code| {
-            !typed_history_cache_has_bars(
+            !adaptive_history_cache_is_usable(
                 data.as_ref(),
                 code,
-                "20200101",
-                "20501231",
+                target_history_date.as_deref(),
                 MIN_ADAPTIVE_SCREEN_HISTORY_BARS,
             )
         })
@@ -4740,9 +4893,9 @@ async fn prepare_adaptive_screen(
             failed
         ));
     }
-    request.as_of_date = request
-        .as_of_date
-        .or_else(|| latest_adaptive_data_date(data.as_ref(), &history_override));
+    request.as_of_date =
+        latest_adaptive_data_date(data.as_ref(), &history_override, &required_codes)
+            .or(target_history_date);
     emit_adaptive_screen_progress(
         app,
         request.run_id.as_deref(),
@@ -4752,8 +4905,9 @@ async fn prepare_adaptive_screen(
     );
 
     let exposure_app = app.clone();
+    let exposure_date = request.as_of_date.clone();
     let recent_exposure = runtime::run_io_bound("adaptive_screen_exposure_read", move || {
-        adaptive_exposure_recent_sync(&exposure_app)
+        adaptive_exposure_recent_sync(&exposure_app, exposure_date.as_deref())
     })
     .await??;
     Ok(PreparedAdaptiveScreen {
@@ -4787,13 +4941,62 @@ fn adaptive_history_window(rows: &[gp_core::HistoryBar]) -> Vec<gp_core::History
 fn latest_adaptive_data_date(
     data: &gp_core::CoreDataSet,
     history_override: &HashMap<String, Vec<gp_core::HistoryBar>>,
+    required_codes: &[String],
 ) -> Option<String> {
-    history_override
-        .values()
-        .chain(data.histories.values())
-        .filter_map(|bars| bars.last())
-        .filter_map(|bar| compact_date_key(&bar.date))
+    required_codes
+        .iter()
+        .filter_map(|code| {
+            history_override
+                .get(code)
+                .or_else(|| data.histories.get(code))
+                .and_then(|bars| {
+                    bars.iter()
+                        .filter_map(|bar| compact_date_key(&bar.date))
+                        .max()
+                })
+        })
+        .min()
+}
+
+fn adaptive_quote_target_date(
+    universe: &[gp_core::StockItem],
+    candidate_codes: &[String],
+) -> Option<String> {
+    let candidates = candidate_codes
+        .iter()
+        .map(|code| code.to_ascii_uppercase())
+        .collect::<HashSet<_>>();
+    universe
+        .iter()
+        .filter(|stock| candidates.contains(&stock.code.to_ascii_uppercase()))
+        .filter_map(|stock| stock.quote_time.as_deref())
+        .filter_map(compact_date_key)
         .max()
+}
+
+fn adaptive_history_cache_is_usable(
+    data: &gp_core::CoreDataSet,
+    code: &str,
+    target_date: Option<&str>,
+    min_bars: usize,
+) -> bool {
+    if !typed_history_cache_has_bars(data, code, "20200101", "20501231", min_bars) {
+        return false;
+    }
+    let normalized = normalize_stock_code(code).unwrap_or_else(|| code.to_string());
+    let latest = data
+        .histories
+        .get(code)
+        .or_else(|| data.histories.get(&normalized))
+        .into_iter()
+        .flatten()
+        .filter_map(|bar| compact_date_key(&bar.date))
+        .max();
+    match (latest, target_date) {
+        (Some(latest), Some(target)) => latest.as_str() >= target,
+        (Some(_), None) => true,
+        _ => false,
+    }
 }
 
 async fn prepare_trend_screen(
@@ -8527,22 +8730,29 @@ fn open_adaptive_screen_db(app: &tauri::AppHandle) -> Result<Connection, String>
 
 fn adaptive_exposure_recent_rows(
     conn: &Connection,
+    current_trade_date: Option<&str>,
 ) -> Result<Vec<gp_core::AdaptiveRecentExposure>, String> {
+    let excluded_date = current_trade_date
+        .and_then(compact_date_key)
+        .unwrap_or_default();
     let mut statement = conn
         .prepare(
             "SELECT code, trade_date, bucket
              FROM adaptive_screen_exposure
-             WHERE trade_date IN (
-                 SELECT DISTINCT trade_date
-                 FROM adaptive_screen_exposure
-                 ORDER BY trade_date DESC
-                 LIMIT 5
-             )
+             WHERE trade_date <> ?1
+               AND
+             trade_date IN (
+                  SELECT DISTINCT trade_date
+                  FROM adaptive_screen_exposure
+                  WHERE trade_date <> ?1
+                  ORDER BY trade_date DESC
+                  LIMIT 5
+              )
              ORDER BY trade_date DESC, code ASC, bucket ASC",
         )
         .map_err(|error| format!("prepare adaptive exposure query failed: {error}"))?;
     let rows = statement
-        .query_map([], |row| {
+        .query_map(params![excluded_date], |row| {
             Ok(gp_core::AdaptiveRecentExposure {
                 code: row.get(0)?,
                 trade_date: row.get(1)?,
@@ -8556,8 +8766,9 @@ fn adaptive_exposure_recent_rows(
 
 fn adaptive_exposure_recent_sync(
     app: &tauri::AppHandle,
+    current_trade_date: Option<&str>,
 ) -> Result<Vec<gp_core::AdaptiveRecentExposure>, String> {
-    adaptive_exposure_recent_rows(&open_adaptive_screen_db(app)?)
+    adaptive_exposure_recent_rows(&open_adaptive_screen_db(app)?, current_trade_date)
 }
 
 fn adaptive_exposure_record_sync(
@@ -8632,6 +8843,12 @@ fn adaptive_exposure_record_rows(
             )
             .map_err(|error| format!("prepare adaptive exposure insert failed: {error}"))?;
         for (code, bucket) in selected {
+            transaction
+                .execute(
+                    "DELETE FROM adaptive_screen_exposure WHERE code = ?1 AND trade_date = ?2",
+                    params![code, trade_date],
+                )
+                .map_err(|error| format!("deduplicate adaptive exposure failed: {error}"))?;
             statement
                 .execute(params![
                     code,

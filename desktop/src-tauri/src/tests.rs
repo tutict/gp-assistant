@@ -47,7 +47,7 @@ fn adaptive_exposure_sqlite_deduplicates_same_day_and_keeps_five_trade_dates() {
         adaptive_exposure_record_rows(&mut connection, &result, &date)
             .expect("same-day rerun should upsert");
     }
-    let rows = adaptive_exposure_recent_rows(&connection).expect("recent rows should load");
+    let rows = adaptive_exposure_recent_rows(&connection, None).expect("recent rows should load");
     assert_eq!(rows.len(), 5);
     assert!(rows.iter().all(|row| row.trade_date.as_str() >= "20260702"));
     let count: i64 = connection
@@ -56,6 +56,88 @@ fn adaptive_exposure_sqlite_deduplicates_same_day_and_keeps_five_trade_dates() {
         })
         .expect("count should query");
     assert_eq!(count, 6);
+
+    let prior_rows = adaptive_exposure_recent_rows(&connection, Some("20260706"))
+        .expect("same-day rows should be excluded from novelty history");
+    assert_eq!(prior_rows.len(), 5);
+    assert!(prior_rows.iter().all(|row| row.trade_date != "20260706"));
+}
+
+#[test]
+fn adaptive_cache_requires_sixty_rows_and_the_target_trade_date() {
+    let rows = (0..60)
+        .map(|index| gp_core::HistoryBar {
+            date: format!("{:08}", 20_260_101 + index),
+            open: Some(10.0),
+            high: Some(10.2),
+            low: Some(9.8),
+            close: 10.0,
+            volume: Some(1_000.0),
+            capital: None,
+        })
+        .collect::<Vec<_>>();
+    let data = gp_core::CoreDataSet {
+        histories: HashMap::from([("600000.SH".to_string(), rows)]),
+        ..gp_core::CoreDataSet::default()
+    };
+    assert!(adaptive_history_cache_is_usable(
+        &data,
+        "600000.SH",
+        Some("20260160"),
+        60,
+    ));
+    assert!(!adaptive_history_cache_is_usable(
+        &data,
+        "600000.SH",
+        Some("20260161"),
+        60,
+    ));
+    assert!(!adaptive_history_cache_is_usable(
+        &data,
+        "000001.SZ",
+        Some("20260160"),
+        60,
+    ));
+}
+
+#[test]
+fn adaptive_runtime_limits_match_the_release_contract() {
+    assert_eq!(ADAPTIVE_SCREEN_HISTORY_PREFETCH_LIMIT, 80);
+    assert_eq!(ADAPTIVE_SCREEN_TOTAL_TIMEOUT_SECS, 20);
+    assert!(adaptive_screen_release_flag_enabled("1"));
+    assert!(adaptive_screen_release_flag_enabled("TRUE"));
+    assert!(adaptive_screen_release_flag_enabled("on"));
+    assert!(!adaptive_screen_release_flag_enabled(""));
+    assert!(!adaptive_screen_release_flag_enabled("0"));
+}
+
+#[test]
+fn adaptive_data_date_uses_only_participating_histories_and_the_common_minimum() {
+    let bar = |date: &str| gp_core::HistoryBar {
+        date: date.to_string(),
+        open: Some(10.0),
+        high: Some(10.2),
+        low: Some(9.8),
+        close: 10.0,
+        volume: Some(1_000.0),
+        capital: None,
+    };
+    let data = gp_core::CoreDataSet {
+        histories: HashMap::from([
+            ("600000.SH".to_string(), vec![bar("20260728")]),
+            ("000001.SH".to_string(), vec![bar("20260729")]),
+            ("999999.SH".to_string(), vec![bar("20991231")]),
+        ]),
+        ..gp_core::CoreDataSet::default()
+    };
+    assert_eq!(
+        latest_adaptive_data_date(
+            &data,
+            &HashMap::new(),
+            &["600000.SH".to_string(), "000001.SH".to_string()],
+        ),
+        Some("20260728".to_string()),
+    );
 }
 
 #[test]

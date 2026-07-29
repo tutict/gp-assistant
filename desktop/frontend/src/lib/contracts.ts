@@ -85,6 +85,14 @@ export function buildAdaptiveScreenRequest(
   };
 }
 
+export function isAdaptiveProgressForRun(
+  payload: unknown,
+  activeRunId: string | null,
+): payload is { run_id: string; percent?: number; message?: string } {
+  if (!activeRunId || !payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  return (payload as Record<string, unknown>).run_id === activeRunId;
+}
+
 export function buildSectorScreenRequest(
   criteria: FilterCriteria,
   groupBy: SectorScreenRequest["group_by"],

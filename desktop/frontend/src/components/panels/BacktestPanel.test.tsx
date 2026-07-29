@@ -153,4 +153,42 @@ describe("BacktestResultView volatility diagnostics", () => {
     expect(html).not.toContain("backtest-primary-chart");
     expect(html).toContain("有效交易日不足，暂不绘制净值曲线");
   });
+
+  it("shows the side-by-side legacy comparison and incomplete release gates", () => {
+    const html = renderToStaticMarkup(
+      <BacktestResultView
+        result={{
+          ...result,
+          metrics: { ...result.metrics, strategy_mode: "adaptive_swing_v1", annualized_return: 0.12 },
+          legacy_balanced_backtest: {
+            ...result,
+            metrics: { ...result.metrics, strategy_mode: "walk_forward", annualized_return: 0.10 },
+          },
+          adaptive_release_gate: {
+            passed: false,
+            checks: [
+              {
+                key: "annualized_return_delta",
+                passed: true,
+                actual: 0.02,
+                requirement: "adaptive annualized return no worse than legacy by more than 1 percentage point",
+              },
+              {
+                key: "cached_run_millis",
+                passed: false,
+                actual: null,
+                requirement: "same-day cached run <= 2000 ms",
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    expect(html).toContain("自适应波段");
+    expect(html).toContain("同样本旧 balanced 年化");
+    expect(html).toContain("暂不切换默认");
+    expect(html).toContain("缓存运行耗时");
+    expect(html).toContain("待采集");
+  });
 });
