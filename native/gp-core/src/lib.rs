@@ -2572,7 +2572,7 @@ fn simulate_walk_forward_portfolio_with_snapshots(
             let signal_date = previous_trade_date.expect("checked above");
             let signal_prices = histories
                 .iter()
-                .map(|history| latest_price_on_or_before(history, signal_date))
+                .map(|history| price_on_date(history, signal_date))
                 .collect::<Vec<_>>();
             let active = if normalize_backtest_strategy_mode(&request.strategy_mode)
                 == "adaptive_swing_v1"
@@ -2835,16 +2835,24 @@ fn adaptive_walk_forward_active_indices(
             .into_iter()
             .rev()
             .collect::<Vec<_>>();
+        if bars.last().and_then(|bar| parse_date(&bar.date).ok()) != Some(date) {
+            return Err(CoreError::new(format!(
+                "adaptive_swing_v1 调仓信号日缺少股票日线：{} {}",
+                stock.code,
+                date.format("%Y-%m-%d")
+            )));
+        }
         if bars.len() >= 2 {
             let latest = bars[bars.len() - 1].close;
             let previous = bars[bars.len() - 2].close;
             stock.change_pct = (previous > 0.0).then_some(latest / previous - 1.0);
         }
+        stock.quote_time = Some(date.format("%Y-%m-%d").to_string());
         point_in_time_histories.insert(stock.code.clone(), bars);
     }
     let point_in_time_benchmarks = benchmark_histories
         .iter()
-        .map(|(code, bars)| {
+        .filter_map(|(code, bars)| {
             let visible = bars
                 .iter()
                 .filter(|bar| {
@@ -2859,7 +2867,8 @@ fn adaptive_walk_forward_active_indices(
                 .into_iter()
                 .rev()
                 .collect::<Vec<_>>();
-            (code.clone(), visible)
+            (visible.last().and_then(|bar| parse_date(&bar.date).ok()) == Some(date))
+                .then(|| (code.clone(), visible))
         })
         .collect::<HashMap<_, _>>();
     let adaptive_request = AdaptiveScreenRequest {

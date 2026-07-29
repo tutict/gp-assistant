@@ -349,7 +349,7 @@ fn adaptive_rebalance_propagates_market_data_errors_instead_of_silently_clearing
     let histories = stocks
         .iter()
         .map(|stock| {
-            let bars = (0..90)
+            let bars = (0..91)
                 .map(|index| {
                     let date = snapshot_date + chrono::Duration::days(index);
                     HistoryBar {
@@ -561,6 +561,63 @@ fn adaptive_walk_forward_signals_on_the_prior_session_and_trades_on_the_next_ses
     assert_eq!(folds[0].selection_date, "2026-03-13");
     assert!((simulation.equity_curve[1].equity - 1_000.0).abs() < 1e-6);
     assert!((simulation.equity_curve[2].equity - 2_000.0).abs() < 1e-6);
+
+    let history_index = histories
+        .iter()
+        .enumerate()
+        .map(|(index, history)| (history.code.to_ascii_uppercase(), index))
+        .collect::<HashMap<_, _>>();
+    let exact_signal_prices = histories
+        .iter()
+        .map(|history| price_on_date(history, signal_date))
+        .collect::<Vec<_>>();
+    let auto_request = BacktestRequest {
+        criteria: ScreenCriteria::default(),
+        source: "criteria".to_string(),
+        strategy_mode: "adaptive_swing_v1:auto".to_string(),
+        stock_codes: Vec::new(),
+        start_date: signal_date.format("%Y%m%d").to_string(),
+        end_date: evaluation_date.format("%Y%m%d").to_string(),
+        top_n: 10,
+        initial_cash: 1_000.0,
+        rebalance_frequency: "monthly".to_string(),
+        transaction_cost_bps: 0.0,
+        benchmark: "candidate_equal_weight".to_string(),
+    };
+    let mut one_stale_stock = exact_signal_prices.clone();
+    one_stale_stock[0] = None;
+    let active = adaptive_walk_forward_active_indices(
+        &stocks,
+        &auto_request,
+        &histories,
+        &benchmark_histories,
+        &snapshots,
+        &history_index,
+        &one_stale_stock,
+        signal_date,
+    )
+    .expect("a stock without an exact signal-day quote should be excluded, not backfilled");
+    assert!(!active.selected_indices.contains(&0));
+
+    let mut stale_benchmarks = benchmark_histories.clone();
+    for code in ["000001.SH", "399001.SZ"] {
+        stale_benchmarks
+            .get_mut(code)
+            .expect("benchmark fixture should exist")
+            .retain(|bar| parse_date(&bar.date).ok() != Some(signal_date));
+    }
+    let error = adaptive_walk_forward_active_indices(
+        &stocks,
+        &auto_request,
+        &histories,
+        &stale_benchmarks,
+        &snapshots,
+        &history_index,
+        &exact_signal_prices,
+        signal_date,
+    )
+    .expect_err("auto mode must reject benchmarks without an exact signal-day bar");
+    assert!(error.to_string().contains("宽基指数"));
 }
 
 #[test]

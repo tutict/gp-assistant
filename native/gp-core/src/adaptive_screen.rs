@@ -345,7 +345,7 @@ fn detect_regime(
             "市场状态数据不足：自动模式至少需要两个有效宽基指数。",
         ));
     }
-    let breadth = market_breadth(universe);
+    let breadth = market_breadth(universe, request.as_of_date.as_deref());
     let usable_breadth = breadth.filter(|value| value.is_usable());
     let returns = stats.iter().map(|item| item.return_20).collect::<Vec<_>>();
     let spreads = stats.iter().map(|item| item.ma_spread).collect::<Vec<_>>();
@@ -549,13 +549,28 @@ fn benchmark_stats(bars: &[HistoryBar]) -> Option<BenchmarkStats> {
     })
 }
 
-fn market_breadth(universe: &[StockItem]) -> Option<MarketBreadth> {
+fn compact_date_key(value: &str) -> Option<String> {
+    let digits = value
+        .chars()
+        .filter(|character| character.is_ascii_digit())
+        .collect::<String>();
+    (digits.len() >= 8).then(|| digits[..8].to_string())
+}
+
+fn market_breadth(universe: &[StockItem], as_of_date: Option<&str>) -> Option<MarketBreadth> {
     let requested = universe.len();
     if requested == 0 {
         return None;
     }
     let changes = universe
         .iter()
+        .filter(|stock| {
+            as_of_date.is_none_or(|as_of| {
+                compact_date_key(as_of)
+                    .zip(stock.quote_time.as_deref().and_then(compact_date_key))
+                    .is_some_and(|(expected, observed)| expected == observed)
+            })
+        })
         .filter_map(|stock| stock.change_pct.filter(|value| value.is_finite()))
         .map(as_percent)
         .collect::<Vec<_>>();
@@ -1402,6 +1417,27 @@ mod unit_tests {
 
     #[test]
     fn missing_market_breadth_is_explicit() {
-        assert!(market_breadth(&[StockItem::default()]).is_none());
+        assert!(market_breadth(&[StockItem::default()], None).is_none());
+    }
+
+    #[test]
+    fn market_breadth_counts_only_quotes_from_the_requested_as_of_date() {
+        let stocks = [
+            StockItem {
+                change_pct: Some(1.0),
+                quote_time: Some("2026-07-29 15:00:00".to_string()),
+                ..StockItem::default()
+            },
+            StockItem {
+                change_pct: Some(-1.0),
+                quote_time: Some("2026-07-28".to_string()),
+                ..StockItem::default()
+            },
+        ];
+        let breadth = market_breadth(&stocks, Some("20260729")).expect("one quote is current");
+        assert_eq!(breadth.requested, 2);
+        assert_eq!(breadth.observed, 1);
+        assert_eq!(breadth.advancing_ratio, 1.0);
+        assert_eq!(breadth.coverage_ratio, 0.5);
     }
 }

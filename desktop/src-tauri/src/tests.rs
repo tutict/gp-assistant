@@ -428,6 +428,57 @@ fn adaptive_release_qualification_requires_auto_full_universe_long_oos_configura
 }
 
 #[test]
+fn adaptive_release_industry_count_uses_each_folds_point_in_time_snapshots() {
+    let fold = gp_core::WalkForwardFold {
+        signal_date: Some("2026-01-31".to_string()),
+        selection_date: "2026-02-01".to_string(),
+        evaluation_end_date: None,
+        selected_symbols: vec!["111111.SZ".to_string(), "222222.SZ".to_string()],
+        eligible_symbol_count: 2,
+        evaluated_selection_count: 0,
+        hit_count: 0,
+        precision_at_n: None,
+        average_forward_return: None,
+        benchmark_forward_return: None,
+        average_excess_return: None,
+    };
+    let snapshot = |industry: &str, available_date: &str| gp_core::StockFactorSnapshot {
+        date: "2025-12-31".to_string(),
+        available_date: Some(available_date.to_string()),
+        industry: Some(industry.to_string()),
+        ..gp_core::StockFactorSnapshot::default()
+    };
+    let data = gp_core::CoreDataSet {
+        factor_snapshots: HashMap::from([
+            (
+                "111111.SZ".to_string(),
+                vec![
+                    snapshot("历史行业甲", "20260110"),
+                    snapshot("未来行业", "20260210"),
+                ],
+            ),
+            (
+                "222222.SZ".to_string(),
+                vec![snapshot("历史行业乙", "20260110")],
+            ),
+        ]),
+        ..gp_core::CoreDataSet::default()
+    };
+    assert_eq!(
+        adaptive_backtest_fold_max_industry_count(&fold, &data),
+        Some(1),
+        "historical-only stocks in different PIT industries must not collapse into unknown"
+    );
+
+    let missing = gp_core::CoreDataSet::default();
+    assert_eq!(
+        adaptive_backtest_fold_max_industry_count(&fold, &missing),
+        None,
+        "missing historical industry evidence must fail the release metric closed"
+    );
+}
+
+#[test]
 fn adaptive_data_date_uses_only_participating_histories_and_the_common_minimum() {
     let bar = |date: &str| gp_core::HistoryBar {
         date: date.to_string(),

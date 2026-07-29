@@ -1288,10 +1288,6 @@ async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, St
     };
     let calculation = runtime::run_cpu_bound("api_backtest", move || {
         let history_override = (!history_override.is_empty()).then_some(&history_override);
-        let universe = stock_override
-            .as_deref()
-            .map(Vec::as_slice)
-            .unwrap_or(data.stocks.as_slice());
         let source = gp_core::StaticDataSource::with_overrides(
             data.as_ref(),
             stock_override.as_deref().map(Vec::as_slice),
@@ -1320,7 +1316,10 @@ async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, St
                 adaptive_max_drawdown: result.metrics.max_drawdown,
                 legacy_precision_at_10: precision_pair.and_then(|pair| pair.0),
                 adaptive_precision_at_10: precision_pair.and_then(|pair| pair.1),
-                max_primary_industry_count: adaptive_backtest_max_industry_count(&result, universe),
+                max_primary_industry_count: adaptive_backtest_max_industry_count(
+                    &result,
+                    data.as_ref(),
+                ),
                 average_adjacent_jaccard: adaptive_backtest_average_jaccard(&result),
                 five_run_unique_coverage: operational_evidence.0,
                 first_run_millis: operational_evidence.1,
@@ -1390,37 +1389,52 @@ async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, St
 
 fn adaptive_backtest_max_industry_count(
     result: &gp_core::BacktestResult,
-    universe: &[gp_core::StockItem],
+    data: &gp_core::CoreDataSet,
 ) -> Option<usize> {
-    let industries = universe
-        .iter()
-        .map(|stock| {
-            (
-                stock.code.to_ascii_uppercase(),
-                if stock.industry.trim().is_empty() {
-                    "__unknown__".to_string()
-                } else {
-                    stock.industry.clone()
-                },
-            )
-        })
-        .collect::<HashMap<_, _>>();
-    result
+    let counts = result
         .walk_forward_folds
         .iter()
         .filter(|fold| !fold.selected_symbols.is_empty())
-        .map(|fold| {
-            let mut counts = HashMap::<String, usize>::new();
-            for code in &fold.selected_symbols {
-                let industry = industries
-                    .get(&code.to_ascii_uppercase())
-                    .cloned()
-                    .unwrap_or_else(|| "__unknown__".to_string());
-                *counts.entry(industry).or_default() += 1;
-            }
-            counts.values().copied().max().unwrap_or(0)
-        })
-        .max()
+        .map(|fold| adaptive_backtest_fold_max_industry_count(fold, data))
+        .collect::<Option<Vec<_>>>()?;
+    counts.into_iter().max()
+}
+
+fn adaptive_backtest_fold_max_industry_count(
+    fold: &gp_core::WalkForwardFold,
+    data: &gp_core::CoreDataSet,
+) -> Option<usize> {
+    let as_of = compact_date_key(
+        fold.signal_date
+            .as_deref()
+            .unwrap_or(fold.selection_date.as_str()),
+    )?;
+    let mut counts = HashMap::<String, usize>::new();
+    for code in &fold.selected_symbols {
+        let normalized = normalize_stock_code(code).unwrap_or_else(|| code.to_ascii_uppercase());
+        let industry = data
+            .factor_snapshots
+            .get(code)
+            .or_else(|| data.factor_snapshots.get(&normalized))
+            .into_iter()
+            .flatten()
+            .filter_map(|snapshot| {
+                let available = snapshot
+                    .available_date
+                    .as_deref()
+                    .and_then(compact_date_key)?;
+                let industry = snapshot
+                    .industry
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())?;
+                (available <= as_of).then(|| (available, industry.to_string()))
+            })
+            .max_by(|left, right| left.0.cmp(&right.0))
+            .map(|(_, industry)| industry)?;
+        *counts.entry(industry).or_default() += 1;
+    }
+    counts.values().copied().max()
 }
 
 fn adaptive_backtest_average_jaccard(result: &gp_core::BacktestResult) -> Option<f64> {
