@@ -14,7 +14,7 @@ import { BacktestPanel } from "./components/panels/BacktestPanel";
 import { NewsRagPanel } from "./components/panels/NewsRagPanel";
 import { AgentPanel } from "./components/panels/AgentPanel";
 import { WatchlistPanel } from "./components/panels/WatchlistPanel";
-import type { WatchlistItem, LlmSettings } from "./types";
+import type { AdaptiveScreenRequest, WatchlistItem, LlmSettings } from "./types";
 import {
   consumeBacktestRouteRequest,
   nextBacktestRouteRequest,
@@ -217,8 +217,8 @@ export default function App({ onMounted }: AppProps) {
     navigate("observe");
   }, [navigate]);
 
-  const runCurrentCriteriaBacktest = useCallback(() => {
-    setBacktestRouteRequest((previous) => nextBacktestRouteRequest(previous, "criteria"));
+  const runCurrentCriteriaBacktest = useCallback((screenSpec?: AdaptiveScreenRequest) => {
+    setBacktestRouteRequest((previous) => nextBacktestRouteRequest(previous, "criteria", screenSpec));
     navigate("backtest");
   }, [navigate]);
 

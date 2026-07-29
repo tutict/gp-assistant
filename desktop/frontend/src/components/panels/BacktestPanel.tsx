@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import type { BacktestResult, EquityPoint, VolatilitySnapshot, WatchlistItem } from "../../types";
+import type { AdaptiveScreenRequest, BacktestResult, EquityPoint, VolatilitySnapshot, WatchlistItem } from "../../types";
 import type { FilterCriteria } from "../FilterBar";
 import { postJson } from "../../lib/tauri";
 import { buildBacktestRequest, requireBacktestResult } from "../../lib/contracts";
@@ -35,6 +35,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
   const [rebalance, setRebalance] = useState("monthly");
   const [benchmark, setBenchmark] = useState("candidate_equal_weight");
   const [strategyMode, setStrategyMode] = useState("candidate_snapshot");
+  const [adaptiveScreenSpec, setAdaptiveScreenSpec] = useState<AdaptiveScreenRequest | undefined>();
   const [costBps, setCostBps] = useState(10);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BacktestResult | null>(null);
@@ -48,6 +49,8 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     if (!preferredSource) return;
     requestVersionRef.current += 1;
     setSource(preferredSource.source);
+    setAdaptiveScreenSpec(preferredSource.adaptiveScreenSpec);
+    setStrategyMode(preferredSource.adaptiveScreenSpec ? "adaptive_swing_v1" : "candidate_snapshot");
     setResult(null);
     setError(null);
     onPreferredSourceConsumed?.(preferredSource.requestId);
@@ -95,6 +98,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
         transactionCostBps: costBps,
         benchmark,
         strategyMode,
+        adaptiveScreenSpec,
       });
       const data = await postJson<unknown>("/api/backtest", payload, { timeoutMs: 90_000 });
       const nextResult = requireBacktestResult(data);
@@ -158,7 +162,11 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
           <span><b>调仓</b><strong>{shortRebalanceLabel(rebalance)}</strong></span>
           <span><b>成本</b><strong>{formatNumber(costBps)}bps</strong></span>
           <span><b>基准</b><strong>{shortBenchmarkLabel(benchmark)}</strong></span>
-          <span><b>Mode</b><strong>{strategyMode === "walk_forward" ? "Walk-forward" : "Snapshot"}</strong></span>
+          <span><b>Mode</b><strong>{
+            strategyMode === "walk_forward"
+              ? "Walk-forward"
+              : strategyMode === "adaptive_swing_v1" ? "Adaptive swing" : "Snapshot"
+          }</strong></span>
         </div>
       </div>
 
@@ -181,7 +189,10 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
             <option value="none">无</option>
           </select>
         </div>
-        <div className="form-row inline"><label htmlFor="btStrategyMode">模式</label><select id="btStrategyMode" value={strategyMode} disabled={loading} onChange={(e) => setStrategyMode(e.target.value)}><option value="candidate_snapshot">候选快照</option><option value="walk_forward">Walk-forward</option></select></div>
+        <div className="form-row inline"><label htmlFor="btStrategyMode">模式</label><select id="btStrategyMode" value={strategyMode} disabled={loading} onChange={(e) => {
+          setStrategyMode(e.target.value);
+          if (e.target.value !== "adaptive_swing_v1") setAdaptiveScreenSpec(undefined);
+        }}><option value="candidate_snapshot">候选快照</option><option value="walk_forward">Walk-forward</option><option value="adaptive_swing_v1">自适应波段</option></select></div>
         <div className="form-row inline"><label htmlFor="btCostBps">成本</label><input id="btCostBps" type="number" min="0" max="500" value={costBps} disabled={loading} onChange={(e) => setCostBps(Number(e.target.value) || 0)} /></div>
       </div>
 

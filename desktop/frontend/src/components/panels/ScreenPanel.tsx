@@ -1,11 +1,18 @@
-import { memo, useCallback, useMemo, useState } from "react";
-import type { SectorScreenResult, StockRowView, WatchlistItem } from "../../types";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+  AdaptiveScreenMode,
+  AdaptiveScreenRequest,
+  ScreenResult,
+  SectorScreenResult,
+  StockRowView,
+  WatchlistItem,
+} from "../../types";
 import type { FilterCriteria } from "../FilterBar";
 import { CriteriaFields } from "../CriteriaFields";
-import { postJson } from "../../lib/tauri";
+import { getTauriListen, postJson } from "../../lib/tauri";
 import {
+  buildAdaptiveScreenRequest,
   buildCustomScreenRequest,
-  buildScreenCriteria,
   buildSectorScreenRequest,
   buildTrendScreenRequest,
   normalizeScreenGroups,
@@ -23,7 +30,7 @@ interface ScreenPanelProps {
   watchlist: WatchlistItem[];
   onWatchlistChange: (items: WatchlistItem[]) => void;
   onObserveStock?: (code: string) => void;
-  onRunBacktest?: () => void;
+  onRunBacktest?: (screenSpec?: AdaptiveScreenRequest) => void;
   mobileRuntime?: boolean;
 }
 
@@ -52,13 +59,48 @@ export function ScreenPanel({
   const [error, setError] = useState<string | null>(null);
   const [trendStart, setTrendStart] = useState(defaultTrendStartDateInputValue());
   const [trendEnd, setTrendEnd] = useState(currentSystemDateInputValue());
+  const [adaptiveMode, setAdaptiveMode] = useState<AdaptiveScreenMode>("auto");
+  const [adaptiveProgress, setAdaptiveProgress] = useState<{ percent: number; message: string } | null>(null);
+  const [lastAdaptiveRequest, setLastAdaptiveRequest] = useState<AdaptiveScreenRequest | undefined>();
+  const activeRunIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const listen = getTauriListen();
+    if (!listen) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen("adaptive-screen-progress", (event) => {
+      const payload = (event as { payload?: { run_id?: string; percent?: number; message?: string } }).payload;
+      if (!payload || payload.run_id !== activeRunIdRef.current) return;
+      setAdaptiveProgress({
+        percent: Number(payload.percent) || 0,
+        message: payload.message || "正在计算",
+      });
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   const run = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       let endpoint = "/api/screen";
-      let payload: unknown = buildScreenCriteria(criteria);
+      let payload: unknown;
+      if (mode === "screen") {
+        const request = buildAdaptiveScreenRequest(criteria, adaptiveMode);
+        activeRunIdRef.current = request.run_id;
+        setAdaptiveProgress({ percent: 2, message: "准备初选" });
+        setLastAdaptiveRequest(request);
+        payload = request;
+      } else {
+        payload = buildCustomScreenRequest(criteria);
+      }
 
       if (mode === "sectorScreen") {
         endpoint = "/api/sector-screen";
@@ -80,8 +122,9 @@ export function ScreenPanel({
       setError((err as Error).message);
     } finally {
       setLoading(false);
+      activeRunIdRef.current = null;
     }
-  }, [criteria, mode, trendEnd, trendStart]);
+  }, [adaptiveMode, criteria, mode, trendEnd, trendStart]);
 
   const toggleWatchlist = useCallback((item: StockRowView) => {
     const exists = watchlist.some((w) => w.code === item.code);
@@ -95,11 +138,35 @@ export function ScreenPanel({
     }
   }, [mode, onWatchlistChange, watchlist]);
 
-  const hasControlFields = mode !== "screen" && mode !== "sectorScreen" && mode !== "boardScreen";
+  const hasControlFields = mode !== "sectorScreen" && mode !== "boardScreen";
   const controlsClassName = `panel-controls screen-panel-controls ${mode === "customScreen" ? "custom-screen-controls" : mode === "sectorScreen" || mode === "boardScreen" ? "grouped-screen-controls" : ""}`;
 
   const controlFields = (
     <>
+      {mode === "screen" && (
+        <div className="adaptive-screen-controls">
+          <div className="form-row inline">
+            <label htmlFor="adaptiveMode">评分模式</label>
+            <select
+              id="adaptiveMode"
+              value={adaptiveMode}
+              disabled={loading}
+              onChange={(event) => setAdaptiveMode(event.target.value as AdaptiveScreenMode)}
+            >
+              <option value="auto">自动识别</option>
+              <option value="range">震荡</option>
+              <option value="trend">趋势</option>
+              <option value="defensive">防守</option>
+            </select>
+          </div>
+          <p className="adaptive-horizon"><strong>10–30 日波段</strong><span>每次按当日宽基、市场宽度和波动状态重新判断</span></p>
+          <details className="adaptive-advanced">
+            <summary>高级过滤</summary>
+            <CriteriaFields criteria={criteria} onChange={onCriteriaChange} idPrefix="adaptiveScreen" />
+          </details>
+        </div>
+      )}
+
       {mode === "customScreen" && (
         <div className="custom-screen-criteria">
           <CriteriaFields criteria={criteria} onChange={onCriteriaChange} idPrefix="customScreen" />
@@ -178,7 +245,14 @@ export function ScreenPanel({
 
       <div className="panel-result screen-panel-result">
         {error && <PanelFeedback kind="error" title="查询失败" description={error} />}
-        {loading && !result && !error && <PanelFeedback kind="loading" description="正在分析候选股票..." />}
+        {loading && !error && (
+          <PanelFeedback
+            kind="loading"
+            description={mode === "screen" && adaptiveProgress
+              ? adaptiveProgress.message + "（" + adaptiveProgress.percent + "%）"
+              : "正在分析候选股票..."}
+          />
+        )}
         {result != null && !loading && (
           <ScreenResultView
             key={mode}
@@ -188,6 +262,7 @@ export function ScreenPanel({
             onToggleWatchlist={toggleWatchlist}
             onObserveStock={onObserveStock}
             onRunBacktest={onRunBacktest}
+            adaptiveRequest={mode === "screen" ? lastAdaptiveRequest : undefined}
           />
         )}
         {!result && !loading && !error && <PanelFeedback kind="empty" description="设置筛选条件后运行查询。" />}
@@ -208,15 +283,17 @@ const ScreenResultView = memo(function ScreenResultView({
   onToggleWatchlist,
   onObserveStock,
   onRunBacktest,
+  adaptiveRequest,
 }: {
   result: unknown;
   grouped: boolean;
   watchlist: WatchlistItem[];
   onToggleWatchlist: (item: StockRowView) => void;
   onObserveStock?: (code: string) => void;
-  onRunBacktest?: () => void;
+  onRunBacktest?: (screenSpec?: AdaptiveScreenRequest) => void;
+  adaptiveRequest?: AdaptiveScreenRequest;
 }) {
-  const resultRecord = result as { total?: number; returned?: number; notes?: string[] };
+  const resultRecord = result as ScreenResult;
   const groups = useMemo(
     () => grouped ? normalizeSectorGroups(result as SectorScreenResult) : normalizeScreenGroups(result),
     [grouped, result],
@@ -231,11 +308,38 @@ const ScreenResultView = memo(function ScreenResultView({
         <div className="metric"><span>最高分</span><strong>{rows[0]?.score?.toFixed(2) ?? "--"}</strong></div>
       </div>
 
+      {resultRecord.market_regime && (
+        <section className="adaptive-regime-summary" aria-label="市场状态">
+          <div>
+            <span>系统识别</span>
+            <strong>{regimeLabel(resultRecord.market_regime.detected)}</strong>
+            {resultRecord.market_regime.overridden && (
+              <em>人工覆盖为 {regimeLabel(resultRecord.market_regime.effective)}</em>
+            )}
+          </div>
+          <p>
+            置信度 {(resultRecord.market_regime.confidence * 100).toFixed(0)}% ·
+            数据 {resultRecord.market_regime.as_of_date || "--"} ·
+            候选覆盖 {(resultRecord.market_regime.coverage.candidate_ratio * 100).toFixed(0)}% ·
+            宽基 {resultRecord.market_regime.coverage.benchmark_usable}/{resultRecord.market_regime.coverage.benchmark_requested}
+          </p>
+          <ul>
+            {resultRecord.market_regime.evidence.map((item) => (
+              <li key={item.key}><span>{item.label}</span><strong>{formatRegimeEvidence(item.key, item.value)}</strong></li>
+            ))}
+          </ul>
+        </section>
+      )}
+
 
       {groups.length > 0 ? (
         <div className="sector-groups">
           {groups.map((group, index) => (
-            <details key={`${group.title}-${index}`} className="sector-group">
+            <details
+              key={`${group.title}-${index}`}
+              className="sector-group"
+              open={group.key === "primary"}
+            >
               <summary>
                 <div className="sector-group-head"><h3>{group.title}</h3></div>
                 <span className="sector-group-meta" title={group.meta} aria-label={group.meta}><strong>{group.rows.length}</strong><small>{compactGroupMeta(group.meta)}</small></span>
@@ -255,10 +359,30 @@ const ScreenResultView = memo(function ScreenResultView({
       {onRunBacktest && rows.length > 0 && (
         <div className="result-actions screen-result-actions">
           <div><span>下一步</span><strong>用当前条件回测</strong></div>
-          <button type="button" onClick={onRunBacktest}>回测</button>
+          <button type="button" onClick={() => onRunBacktest(adaptiveRequest)}>回测</button>
         </div>
       )}
       <RawJson result={result} />
     </div>
   );
 });
+
+function regimeLabel(mode: string): string {
+  return {
+    range: "震荡",
+    trend: "趋势",
+    defensive: "防守",
+    transition: "过渡",
+  }[mode] || mode;
+}
+
+function formatRegimeEvidence(key: string, value: number): string {
+  if (key === "breadth"
+    || key === "return_20"
+    || key === "ma_spread"
+    || key === "atr_percentile"
+    || key === "direction_consistency") {
+    return (value * 100).toFixed(1) + "%";
+  }
+  return value.toFixed(2);
+}

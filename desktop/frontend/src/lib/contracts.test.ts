@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   actionResultKind,
   buildBacktestRequest,
+  buildAdaptiveScreenRequest,
   buildCustomScreenRequest,
   buildNewsRagRequest,
   buildScreenCriteria,
@@ -137,6 +138,17 @@ describe("LLM settings persistence", () => {
   });
 });
 describe("contract payload builders", () => {
+  it("builds the adaptive swing request as a nested deterministic contract", () => {
+    expect(buildAdaptiveScreenRequest(criteria, "defensive", "run-fixed")).toMatchObject({
+      criteria: { industry: "bank", limit: 80, min_roe: 0.15 },
+      mode: "defensive",
+      horizon: "swing_10_30d",
+      primary_limit: 10,
+      exploration_limit: 10,
+      run_id: "run-fixed",
+    });
+  });
+
   it("builds screen criteria in backend schema shape", () => {
     expect(buildScreenCriteria(criteria)).toMatchObject({
       include_st: false,
@@ -218,6 +230,26 @@ describe("contract payload builders", () => {
       transactionCostBps: 10,
       benchmark: "candidate_equal_weight",
     })).toMatchObject({ strategy_mode: "candidate_snapshot" });
+    expect(buildBacktestRequest({
+      source: "criteria",
+      criteria,
+      watchlist: [],
+      startDate: "2020-01-01",
+      endDate: "2026-06-27",
+      topN: 10,
+      rebalanceFrequency: "monthly",
+      transactionCostBps: 10,
+      benchmark: "candidate_equal_weight",
+      adaptiveScreenSpec: buildAdaptiveScreenRequest(criteria, "range", "screen-run"),
+    })).toMatchObject({
+      strategy_mode: "adaptive_swing_v1:range",
+      adaptive_screen_spec: {
+        mode: "range",
+        horizon: "swing_10_30d",
+        primary_limit: 10,
+        exploration_limit: 10,
+      },
+    });
     expect(buildNewsRagRequest("300750.SZ", 30)).toMatchObject({
       code: "300750.SZ",
       seed_codes: ["300750.SZ"],
@@ -269,20 +301,20 @@ describe("response normalizers", () => {
     expect(rows[1].score).toBe(88);
   });
 
-  it("normalizes ordinary screen hot and potential groups", () => {
+  it("normalizes adaptive primary and exploration groups", () => {
     const groups = normalizeScreenGroups({
       groups: [
         {
-          key: "hot",
-          title: "热门股",
-          description: "热门方向候选。",
+          key: "primary",
+          title: "主榜",
+          description: "自适应评分候选。",
           total: 2,
           returned: 1,
           items: [{ stock: { code: "300750.SZ", name: "宁德时代" }, score: 90, reasons: ["新能源"] }],
         },
         {
-          key: "potential",
-          title: "潜力股",
+          key: "exploration",
+          title: "探索榜",
           total: 3,
           returned: 1,
           items: [{ stock: { code: "600519.SH", name: "贵州茅台" }, score: 80, reasons: ["质量"] }],
@@ -290,21 +322,21 @@ describe("response normalizers", () => {
       ],
     });
 
-    expect(groups.map((group) => group.title)).toEqual(["热门股", "潜力股"]);
-    expect(groups[0]).toMatchObject({ key: "hot", meta: "返回 1 / 总数 2" });
+    expect(groups.map((group) => group.title)).toEqual(["主榜", "探索榜"]);
+    expect(groups[0]).toMatchObject({ key: "primary", meta: "返回 1 / 总数 2" });
     expect(groups[0].rows[0]).toMatchObject({ code: "300750.SZ", name: "宁德时代", score: 90 });
     expect(groups[1].rows[0]).toMatchObject({ code: "600519.SH", name: "贵州茅台" });
   });
 
-  it("keeps empty ordinary screen groups so users can see hot and potential sections", () => {
+  it("keeps empty adaptive groups so data-shortage states remain visible", () => {
     const groups = normalizeScreenGroups({
       groups: [
-        { key: "hot", title: "热门股", total: 0, returned: 0, items: [] },
-        { key: "potential", title: "潜力股", total: 0, returned: 0, items: [] },
+        { key: "primary", title: "主榜", total: 0, returned: 0, items: [] },
+        { key: "exploration", title: "探索榜", total: 0, returned: 0, items: [] },
       ],
     });
 
-    expect(groups.map((group) => group.title)).toEqual(["热门股", "潜力股"]);
+    expect(groups.map((group) => group.title)).toEqual(["主榜", "探索榜"]);
     expect(groups.every((group) => group.rows.length === 0)).toBe(true);
   });
 

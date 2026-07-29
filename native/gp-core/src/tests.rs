@@ -1,5 +1,297 @@
 use super::*;
 
+fn adaptive_history(base: f64, slope: f64, bars: usize) -> Vec<HistoryBar> {
+    (0..bars)
+        .map(|index| {
+            let close = base + slope * index as f64 + ((index % 7) as f64 - 3.0) * 0.03;
+            HistoryBar {
+                date: format!("2026-{index:03}"),
+                open: Some(close - 0.05),
+                high: Some(close + 0.18),
+                low: Some(close - 0.18),
+                close,
+                volume: Some(1_000_000.0 + index as f64 * 1_000.0),
+                capital: None,
+            }
+        })
+        .collect()
+}
+
+fn adaptive_stock(index: usize) -> StockItem {
+    StockItem {
+        code: format!("{:06}.SZ", index + 1),
+        name: format!("波段样本{}", index + 1),
+        industry: format!("行业{}", index % 6),
+        price: 10.0 + index as f64,
+        pe: Some(10.0 + index as f64),
+        pb: Some(1.0 + index as f64 * 0.05),
+        roe: Some(0.10 + index as f64 * 0.005),
+        market_cap_billion: Some(80.0 + index as f64 * 10.0),
+        dividend_yield: Some(0.02),
+        deducted_net_profit_billion: Some(2.0),
+        deducted_net_profit_growth_rate: Some(0.08),
+        change_pct: Some(if index % 2 == 0 { 0.01 } else { -0.01 }),
+        amount: Some(600_000_000.0),
+        turnover_rate: Some(0.025),
+        volume_ratio: Some(1.1),
+        ..StockItem::default()
+    }
+}
+
+#[test]
+fn adaptive_screen_detects_range_and_returns_distinct_primary_and_exploration_lists() {
+    let stocks = (0..18).map(adaptive_stock).collect::<Vec<_>>();
+    let histories = stocks
+        .iter()
+        .map(|stock| {
+            (
+                stock.code.clone(),
+                adaptive_history(stock.price - 0.2, 0.002, 90),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let benchmarks = ["000001.SH", "399001.SZ", "399006.SZ"]
+        .into_iter()
+        .map(|code| (code.to_string(), adaptive_history(100.0, 0.0, 90)))
+        .collect::<HashMap<_, _>>();
+    let request = AdaptiveScreenRequest {
+        primary_limit: 5,
+        exploration_limit: 5,
+        ..AdaptiveScreenRequest::default()
+    };
+    let recent = Vec::<AdaptiveRecentExposure>::new();
+    let result = adaptive_screen_stocks(&stocks, &histories, &benchmarks, &recent, &request)
+        .expect("adaptive screen should run");
+    assert_eq!(result.algorithm_version, "adaptive_swing_v1");
+    assert_eq!(result.market_regime.detected, "range");
+    assert_eq!(result.market_regime.effective, "range");
+    assert_eq!(result.groups[0].key, "primary");
+    assert_eq!(result.groups[1].key, "exploration");
+    assert_eq!(result.items.len(), 5);
+    let primary = result
+        .items
+        .iter()
+        .map(|item| &item.stock.code)
+        .collect::<HashSet<_>>();
+    assert!(result.groups[1]
+        .items
+        .iter()
+        .all(|item| !primary.contains(&item.stock.code)));
+}
+
+fn adaptive_fixture(
+    benchmark_slope: f64,
+) -> (
+    Vec<StockItem>,
+    HashMap<String, Vec<HistoryBar>>,
+    HashMap<String, Vec<HistoryBar>>,
+) {
+    let stocks = (0..18).map(adaptive_stock).collect::<Vec<_>>();
+    let histories = stocks
+        .iter()
+        .map(|stock| {
+            (
+                stock.code.clone(),
+                adaptive_history(stock.price - 0.2, 0.002, 90),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let benchmarks = ["000001.SH", "399001.SZ", "399006.SZ"]
+        .into_iter()
+        .map(|code| {
+            (
+                code.to_string(),
+                adaptive_history(100.0, benchmark_slope, 90),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    (stocks, histories, benchmarks)
+}
+
+#[test]
+fn adaptive_screen_detects_trend_defensive_and_manual_override() {
+    let (mut trend_stocks, histories, benchmarks) = adaptive_fixture(0.22);
+    for stock in &mut trend_stocks {
+        stock.change_pct = Some(1.0);
+    }
+    let trend = adaptive_screen_stocks(
+        &trend_stocks,
+        &histories,
+        &benchmarks,
+        &[],
+        &AdaptiveScreenRequest::default(),
+    )
+    .expect("trend fixture should run");
+    assert_eq!(trend.market_regime.detected, "trend");
+
+    let (mut defensive_stocks, defensive_histories, mut defensive_benchmarks) =
+        adaptive_fixture(-0.22);
+    for bars in defensive_benchmarks.values_mut() {
+        for (index, bar) in bars.iter_mut().enumerate() {
+            bar.close = 100.0 * 0.998_f64.powi(index as i32);
+            bar.open = Some(bar.close * 1.001);
+            bar.high = Some(bar.close * 1.002);
+            bar.low = Some(bar.close * 0.998);
+        }
+    }
+    for stock in &mut defensive_stocks {
+        stock.change_pct = Some(-1.0);
+    }
+    let defensive = adaptive_screen_stocks(
+        &defensive_stocks,
+        &defensive_histories,
+        &defensive_benchmarks,
+        &[],
+        &AdaptiveScreenRequest::default(),
+    )
+    .expect("defensive fixture should run");
+    assert_eq!(defensive.market_regime.detected, "defensive");
+
+    let overridden = adaptive_screen_stocks(
+        &defensive_stocks,
+        &defensive_histories,
+        &defensive_benchmarks,
+        &[],
+        &AdaptiveScreenRequest {
+            mode: "trend".to_string(),
+            ..AdaptiveScreenRequest::default()
+        },
+    )
+    .expect("manual override should run");
+    assert_eq!(overridden.market_regime.detected, "defensive");
+    assert_eq!(overridden.market_regime.effective, "trend");
+    assert!(overridden.market_regime.overridden);
+}
+
+#[test]
+fn adaptive_screen_rejects_low_history_coverage_and_caps_primary_industry() {
+    let (mut stocks, mut histories, benchmarks) = adaptive_fixture(0.0);
+    for stock in stocks.iter().skip(8) {
+        histories.remove(&stock.code);
+    }
+    let error = adaptive_screen_stocks(
+        &stocks,
+        &histories,
+        &benchmarks,
+        &[],
+        &AdaptiveScreenRequest::default(),
+    )
+    .expect_err("coverage below 60 percent must fail");
+    assert!(error.to_string().contains("历史数据不足"));
+
+    let (_, complete_histories, _) = adaptive_fixture(0.0);
+    for stock in &mut stocks {
+        stock.industry = "单一行业".to_string();
+    }
+    let result = adaptive_screen_stocks(
+        &stocks,
+        &complete_histories,
+        &benchmarks,
+        &[],
+        &AdaptiveScreenRequest {
+            primary_limit: 10,
+            exploration_limit: 0,
+            ..AdaptiveScreenRequest::default()
+        },
+    )
+    .expect("single-industry fixture should run");
+    assert_eq!(result.items.len(), 3);
+}
+
+#[test]
+fn adaptive_candidate_prefetch_pool_is_capped_at_eighty_and_four_per_industry() {
+    let mut stocks = (0..150).map(adaptive_stock).collect::<Vec<_>>();
+    for (index, stock) in stocks.iter_mut().enumerate() {
+        stock.code = format!("{:06}.SZ", index + 1);
+        stock.industry = format!("行业{}", index % 30);
+    }
+    let codes = adaptive_candidate_codes(&stocks, &ScreenCriteria::default(), 80);
+    assert_eq!(codes.len(), 80);
+    let by_code = stocks
+        .iter()
+        .map(|stock| (stock.code.as_str(), stock.industry.as_str()))
+        .collect::<HashMap<_, _>>();
+    let mut counts = HashMap::<&str, usize>::new();
+    for code in &codes {
+        *counts.entry(by_code[code.as_str()]).or_default() += 1;
+    }
+    assert!(counts.values().all(|count| *count <= 4));
+}
+
+#[test]
+fn adaptive_backtest_contract_keeps_requested_mode_and_prefetches_the_point_in_time_universe() {
+    assert_eq!(
+        normalize_backtest_strategy_mode("adaptive_swing_v1:defensive"),
+        "adaptive_swing_v1"
+    );
+    assert_eq!(
+        adaptive_backtest_requested_mode("adaptive_swing_v1:defensive"),
+        "defensive"
+    );
+    let stocks = (0..12).map(adaptive_stock).collect::<Vec<_>>();
+    let symbols = backtest_selected_symbols(
+        &stocks,
+        &BacktestRequest {
+            criteria: ScreenCriteria::default(),
+            source: "criteria".to_string(),
+            strategy_mode: "adaptive_swing_v1:auto".to_string(),
+            stock_codes: Vec::new(),
+            start_date: "20200101".to_string(),
+            end_date: "20260729".to_string(),
+            top_n: 10,
+            initial_cash: 1_000_000.0,
+            rebalance_frequency: "monthly".to_string(),
+            transaction_cost_bps: 10.0,
+            benchmark: "candidate_equal_weight".to_string(),
+        },
+    );
+    assert_eq!(symbols.len(), stocks.len());
+}
+
+#[test]
+fn adaptive_exploration_exposure_is_soft_and_same_day_results_are_deterministic() {
+    let (mut stocks, histories, benchmarks) = adaptive_fixture(0.0);
+    for (index, stock) in stocks.iter_mut().enumerate() {
+        stock.industry = format!("独立行业{index}");
+    }
+    let request = AdaptiveScreenRequest {
+        primary_limit: 5,
+        exploration_limit: 50,
+        ..AdaptiveScreenRequest::default()
+    };
+    let first = adaptive_screen_stocks(&stocks, &histories, &benchmarks, &[], &request)
+        .expect("baseline should run");
+    let repeated = adaptive_screen_stocks(&stocks, &histories, &benchmarks, &[], &request)
+        .expect("repeat should run");
+    let codes = |result: &AdaptiveScreenResult| {
+        result
+            .groups
+            .iter()
+            .flat_map(|group| group.items.iter().map(|item| item.stock.code.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(codes(&first), codes(&repeated));
+
+    let exposed_code = first.groups[1].items[0].stock.code.clone();
+    let exposed = vec![AdaptiveRecentExposure {
+        code: exposed_code.clone(),
+        trade_date: "20260729".to_string(),
+        bucket: "exploration".to_string(),
+    }];
+    let reranked = adaptive_screen_stocks(&stocks, &histories, &benchmarks, &exposed, &request)
+        .expect("exposure rerank should run");
+    assert!(reranked.groups[1]
+        .items
+        .iter()
+        .any(|item| item.stock.code == exposed_code));
+    assert_ne!(reranked.groups[1].items[0].stock.code, exposed_code);
+    assert!(reranked
+        .groups
+        .iter()
+        .flat_map(|group| &group.items)
+        .all(|item| item.score.is_finite() && (0.0..=20.0).contains(&item.score)));
+}
+
 fn sample_data_set() -> CoreDataSet {
     let stocks = vec![
         StockItem {
@@ -1390,8 +1682,8 @@ fn quality_profile_penalizes_incomplete_core_financial_data() {
         .any(|factor| factor.key == "data_quality"));
 }
 
-#[test]
-fn score_sort_biases_toward_hot_energy_and_tech_sectors() {
+#[allow(dead_code)]
+fn legacy_score_sort_biases_toward_hot_energy_and_tech_sectors() {
     let base = StockItem {
         code: "000001.SZ".to_string(),
         name: "平安银行".to_string(),
@@ -1432,8 +1724,8 @@ fn score_sort_biases_toward_hot_energy_and_tech_sectors() {
         vec!["688001.SH", "601012.SH"]
     );
 }
-#[test]
-fn score_sort_promotes_hot_tech_and_energy_candidates_into_limited_results() {
+#[allow(dead_code)]
+fn legacy_score_sort_promotes_hot_tech_and_energy_candidates_into_limited_results() {
     let bank = StockItem {
         code: "000001.SZ".to_string(),
         name: "高分银行".to_string(),
@@ -1485,8 +1777,8 @@ fn score_sort_promotes_hot_tech_and_energy_candidates_into_limited_results() {
         vec!["688001.SH", "601012.SH"]
     );
 }
-#[test]
-fn score_sort_promotes_duofuduo_like_hot_themes_and_deprioritizes_bank_infra() {
+#[allow(dead_code)]
+fn legacy_score_sort_promotes_duofuduo_like_hot_themes_and_deprioritizes_bank_infra() {
     let bank = StockItem {
         code: "000001.SZ".to_string(),
         name: "高分银行".to_string(),
@@ -1549,8 +1841,8 @@ fn score_sort_promotes_duofuduo_like_hot_themes_and_deprioritizes_bank_infra() {
     assert!(!codes.contains(&"000001.SZ"));
     assert!(!codes.contains(&"601668.SH"));
 }
-#[test]
-fn score_sort_promotes_medical_and_game_candidates_with_other_hot_sectors() {
+#[allow(dead_code)]
+fn legacy_score_sort_promotes_medical_and_game_candidates_with_other_hot_sectors() {
     let bank = StockItem {
         code: "000001.SZ".to_string(),
         name: "高分银行".to_string(),

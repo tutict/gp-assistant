@@ -18,6 +18,23 @@ describe("view navigation", () => {
     expect(consumeBacktestRouteRequest(current, 2)).toBeNull();
   });
 
+  it("carries the complete adaptive screen spec into the backtest route", () => {
+    const request = nextBacktestRouteRequest(null, "criteria", {
+      criteria: { min_roe: 0.1 },
+      mode: "auto",
+      horizon: "swing_10_30d",
+      primary_limit: 10,
+      exploration_limit: 10,
+      run_id: "screen-run",
+    });
+    expect(request.adaptiveScreenSpec).toMatchObject({
+      mode: "auto",
+      horizon: "swing_10_30d",
+      primary_limit: 10,
+      exploration_limit: 10,
+    });
+  });
+
   it("reveals the main panels after navigating from the watchlist at the page bottom", () => {
     const scrollIntoView = vi.fn();
     const root = {

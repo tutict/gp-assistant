@@ -1169,6 +1169,38 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
   flex-wrap: wrap;
 }
 
+.adaptive-screen-controls {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(170px, 0.45fr) minmax(280px, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.adaptive-horizon {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.adaptive-horizon strong {
+  color: var(--text);
+}
+
+.adaptive-advanced {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--line-soft);
+  padding-top: var(--space-2);
+}
+
+.adaptive-advanced summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-weight: 650;
+}
+
 .screen-panel-run-card {
   justify-content: flex-end;
   border: 0;
@@ -1188,6 +1220,49 @@ html.mobile-tauri.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-sta
 
 .screen-result-metric-strip {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.adaptive-regime-summary {
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  padding: var(--space-3);
+}
+
+.adaptive-regime-summary > div {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+.adaptive-regime-summary em {
+  color: var(--warning);
+  font-style: normal;
+}
+
+.adaptive-regime-summary p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.adaptive-regime-summary ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.adaptive-regime-summary li {
+  display: flex;
+  gap: 6px;
+  border-radius: 999px;
+  background: var(--surface);
+  padding: 5px 9px;
+  font-size: 12px;
 }
 
 .quote-table {

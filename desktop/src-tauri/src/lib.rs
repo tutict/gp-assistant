@@ -32,6 +32,7 @@ mod runtime;
 
 const MOBILE_MARKET_DATA_FILE: &str = "mobile-market-data.json";
 const WATCHLIST_DB_FILE: &str = "watchlist.sqlite";
+const ADAPTIVE_SCREEN_DB_FILE: &str = "adaptive-screen.sqlite";
 const MOBILE_MARKET_PATCH_DIR: &str = "mobile-market-data-patches";
 const MOBILE_MARKET_WRITE_RETRY_ATTEMPTS: usize = 3;
 const MOBILE_MARKET_WRITE_RETRY_DELAY_MS: u64 = 50;
@@ -63,6 +64,10 @@ const TREND_SCREEN_HISTORY_TIMEOUT_SECS: u64 = 18;
 const TREND_SCREEN_HISTORY_CONCURRENCY: usize = 6;
 const TREND_SCREEN_HISTORY_PREFETCH_LIMIT: usize = 80;
 const MIN_TREND_SCREEN_HISTORY_BARS: usize = 45;
+const ADAPTIVE_SCREEN_TOTAL_TIMEOUT_SECS: u64 = 20;
+const ADAPTIVE_SCREEN_HISTORY_CONCURRENCY: usize = 6;
+const ADAPTIVE_SCREEN_HISTORY_PREFETCH_LIMIT: usize = 80;
+const MIN_ADAPTIVE_SCREEN_HISTORY_BARS: usize = 60;
 const BACKTEST_HISTORY_TIMEOUT_SECS: u64 = 30;
 const BACKTEST_HISTORY_CONCURRENCY: usize = 6;
 const MIN_BACKTEST_HISTORY_BARS: usize = 2;
@@ -171,6 +176,16 @@ struct PreparedTrendScreen {
     stock_override: Option<Arc<Vec<gp_core::StockItem>>>,
     history_override: HashMap<String, Vec<gp_core::HistoryBar>>,
     request: gp_core::TrendScreenRequest,
+    notes: Vec<String>,
+}
+
+struct PreparedAdaptiveScreen {
+    data: Arc<gp_core::CoreDataSet>,
+    stock_override: Option<Arc<Vec<gp_core::StockItem>>>,
+    candidate_codes: Vec<String>,
+    history_override: HashMap<String, Vec<gp_core::HistoryBar>>,
+    request: gp_core::AdaptiveScreenRequest,
+    recent_exposure: Vec<gp_core::AdaptiveRecentExposure>,
     notes: Vec<String>,
 }
 
@@ -879,12 +894,115 @@ fn api_market_clear_cache(app: tauri::AppHandle) -> Result<Value, String> {
 
 #[tauri::command]
 async fn api_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    if payload
+        .get("internal_algorithm")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value == "legacy_balanced")
+    {
+        return api_legacy_screen(app, payload).await;
+    }
+    let prepared = tokio::time::timeout(
+        Duration::from_secs(ADAPTIVE_SCREEN_TOTAL_TIMEOUT_SECS),
+        prepare_adaptive_screen(&app, payload),
+    )
+    .await
+    .map_err(|_| {
+        format!(
+            "智能选股数据准备超过 {ADAPTIVE_SCREEN_TOTAL_TIMEOUT_SECS} 秒，请检查网络或刷新行情后重试"
+        )
+    })??;
+    let PreparedAdaptiveScreen {
+        data,
+        stock_override,
+        candidate_codes,
+        history_override,
+        request,
+        recent_exposure,
+        notes,
+    } = prepared;
+    emit_adaptive_screen_progress(
+        &app,
+        request.run_id.as_deref(),
+        "regime",
+        82,
+        "判断市场状态",
+    );
+    let calculation_request = request.clone();
+    let mut result = runtime::run_cpu_bound("api_screen", move || {
+        let universe = stock_override
+            .as_deref()
+            .map(Vec::as_slice)
+            .unwrap_or(data.stocks.as_slice());
+        let mut histories = candidate_codes
+            .iter()
+            .map(String::as_str)
+            .chain(adaptive_benchmark_codes())
+            .filter_map(|code| {
+                data.histories
+                    .get(code)
+                    .map(|rows| (code.to_string(), adaptive_history_window(rows)))
+            })
+            .collect::<HashMap<_, _>>();
+        histories.extend(history_override);
+        let benchmarks = adaptive_benchmark_codes()
+            .into_iter()
+            .filter_map(|code| {
+                histories
+                    .get(code)
+                    .cloned()
+                    .map(|rows| (code.to_string(), rows))
+            })
+            .collect::<HashMap<_, _>>();
+        let result = gp_core::adaptive_screen_stocks(
+            universe,
+            &histories,
+            &benchmarks,
+            &recent_exposure,
+            &calculation_request,
+        )
+        .map_err(|error| error.to_string())?;
+        serde_json::to_value(result).map_err(|error| error.to_string())
+    })
+    .await??;
+    append_result_notes(&mut result, notes);
+    emit_adaptive_screen_progress(
+        &app,
+        request.run_id.as_deref(),
+        "ranking",
+        94,
+        "生成主榜与探索榜",
+    );
+    let exposure_app = app.clone();
+    let exposure_result = result.clone();
+    let exposure_date = result
+        .pointer("/market_regime/as_of_date")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            local_yyyymmdd_from_epoch_ms(epoch_millis()).unwrap_or_else(|| "19700101".to_string())
+        });
+    let exposure_write = runtime::run_io_bound("adaptive_screen_exposure_write", move || {
+        adaptive_exposure_record_sync(&exposure_app, &exposure_result, &exposure_date)
+    })
+    .await?;
+    if let Err(error) = exposure_write {
+        append_result_notes(&mut result, vec![format!("近期曝光记录写入失败：{error}")]);
+    }
+    emit_adaptive_screen_progress(&app, request.run_id.as_deref(), "complete", 100, "选股完成");
+    Ok(result)
+}
+
+async fn api_legacy_screen(app: tauri::AppHandle, mut payload: Value) -> Result<Value, String> {
     let data = cached_market_data_snapshot(&app)?;
     let stock_override = screen_stock_override(&app, &data, &payload)?;
+    if let Some(object) = payload.as_object_mut() {
+        object.remove("internal_algorithm");
+    }
     let criteria =
         serde_json::from_value::<gp_core::ScreenCriteria>(strip_core_side_payload_fields(payload))
-            .map_err(|error| format!("invalid screen request: {error}"))?;
-    runtime::run_cpu_bound("api_screen", move || {
+            .map_err(|error| format!("invalid legacy screen request: {error}"))?;
+    runtime::run_cpu_bound("api_legacy_screen", move || {
         let result = match stock_override.as_deref() {
             Some(stocks) => gp_core::screen_stocks(stocks, &criteria),
             None => gp_core::screen_with_data(data.as_ref(), &criteria)
@@ -893,6 +1011,45 @@ async fn api_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, Stri
         serde_json::to_value(result).map_err(|error| error.to_string())
     })
     .await?
+}
+
+fn adaptive_screen_request_from_payload(
+    payload: Value,
+) -> Result<gp_core::AdaptiveScreenRequest, String> {
+    let payload = strip_core_side_payload_fields(payload);
+    if payload.get("criteria").is_some() {
+        serde_json::from_value(payload)
+            .map_err(|error| format!("invalid adaptive screen request: {error}"))
+    } else {
+        let criteria = serde_json::from_value::<gp_core::ScreenCriteria>(payload)
+            .map_err(|error| format!("invalid legacy screen request: {error}"))?;
+        Ok(gp_core::AdaptiveScreenRequest {
+            criteria,
+            ..gp_core::AdaptiveScreenRequest::default()
+        })
+    }
+}
+
+fn adaptive_benchmark_codes() -> [&'static str; 3] {
+    ["000001.SH", "399001.SZ", "399006.SZ"]
+}
+
+fn emit_adaptive_screen_progress(
+    app: &tauri::AppHandle,
+    run_id: Option<&str>,
+    stage: &str,
+    percent: usize,
+    message: &str,
+) {
+    let _ = app.emit(
+        "adaptive-screen-progress",
+        json!({
+            "run_id": run_id,
+            "stage": stage,
+            "percent": percent,
+            "message": message,
+        }),
+    );
 }
 
 #[tauri::command]
@@ -4443,17 +4600,200 @@ fn filter_seed_relations(seed: &Value, valid_codes: &HashSet<String>) -> Value {
 
 fn filter_seed_histories(seed: &Value, valid_codes: &HashSet<String>) -> Value {
     let mut histories = serde_json::Map::new();
+    let benchmark_codes = adaptive_benchmark_codes()
+        .into_iter()
+        .collect::<HashSet<_>>();
     if let Some(items) = seed.get("histories").and_then(Value::as_object) {
         for (raw_code, history) in items {
             let Some(code) = normalize_stock_code(raw_code) else {
                 continue;
             };
-            if valid_codes.contains(&code) {
+            if valid_codes.contains(&code) || benchmark_codes.contains(code.as_str()) {
                 histories.insert(code, history.clone());
             }
         }
     }
     Value::Object(histories)
+}
+
+async fn prepare_adaptive_screen(
+    app: &tauri::AppHandle,
+    payload: Value,
+) -> Result<PreparedAdaptiveScreen, String> {
+    let data = cached_market_data_snapshot(app)?;
+    let stock_override = screen_stock_override(app, &data, &payload)?;
+    let mut request = adaptive_screen_request_from_payload(payload)?;
+    emit_adaptive_screen_progress(
+        app,
+        request.run_id.as_deref(),
+        "candidate_scan",
+        8,
+        "初选候选池",
+    );
+    let candidate_data = Arc::clone(&data);
+    let candidate_stocks = stock_override.clone();
+    let criteria = request.criteria.clone();
+    let candidates = runtime::run_cpu_bound("adaptive_screen_candidates", move || {
+        let universe = candidate_stocks
+            .as_deref()
+            .map(Vec::as_slice)
+            .unwrap_or(candidate_data.stocks.as_slice());
+        gp_core::adaptive_candidate_codes(
+            universe,
+            &criteria,
+            ADAPTIVE_SCREEN_HISTORY_PREFETCH_LIMIT,
+        )
+    })
+    .await?;
+    emit_adaptive_screen_progress(
+        app,
+        request.run_id.as_deref(),
+        "history_fetch",
+        24,
+        "补齐120日行情",
+    );
+
+    let mut required_codes = candidates.clone();
+    required_codes.extend(adaptive_benchmark_codes().into_iter().map(str::to_string));
+    dedupe_stock_codes(&mut required_codes);
+    let missing = required_codes
+        .iter()
+        .filter(|code| {
+            !typed_history_cache_has_bars(
+                data.as_ref(),
+                code,
+                "20200101",
+                "20501231",
+                MIN_ADAPTIVE_SCREEN_HISTORY_BARS,
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let mut history_override = HashMap::new();
+    let mut notes = Vec::new();
+    if missing.is_empty() {
+        notes.push(format!(
+            "自适应选股复用本地日线缓存：候选 {} 只、宽基指数 3 个。",
+            candidates.len()
+        ));
+    } else {
+        let fetch_codes = missing.clone();
+        let history_start_date = adaptive_history_start_date();
+        let fetches =
+            runtime::with_heavy_network_permit("adaptive_screen_history_fetch", async move {
+                let results = stream::iter(fetch_codes)
+                    .map(|code| {
+                        let history_start_date = history_start_date.clone();
+                        async move {
+                            let result =
+                                fetch_observe_daily_history(&code, &history_start_date, "20501231")
+                                    .await;
+                            (code, result)
+                        }
+                    })
+                    .buffer_unordered(ADAPTIVE_SCREEN_HISTORY_CONCURRENCY)
+                    .collect::<Vec<_>>()
+                    .await;
+                Ok(results)
+            })
+            .await?;
+        let mut history_patch = serde_json::Map::new();
+        let mut failed = 0usize;
+        for (code, result) in fetches {
+            match result {
+                Ok(rows) if !rows.is_empty() => {
+                    let rows = rows
+                        .into_iter()
+                        .rev()
+                        .take(120)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect::<Vec<_>>();
+                    let typed = serde_json::from_value::<Vec<gp_core::HistoryBar>>(Value::Array(
+                        rows.clone(),
+                    ))
+                    .map_err(|error| {
+                        format!("adaptive screen history parse failed for {code}: {error}")
+                    })?;
+                    history_patch.insert(code.clone(), Value::Array(rows));
+                    history_override.insert(code, typed);
+                }
+                _ => failed += 1,
+            }
+        }
+        if !history_patch.is_empty() {
+            if let Err(error) = persist_market_data_patch_updates(
+                app.clone(),
+                json!({ "histories": history_patch }),
+            )
+            .await
+            {
+                notes.push(format!("行情已获取但写入本地缓存失败：{error}"));
+            }
+        }
+        notes.push(format!(
+            "自适应选股日线预取：需要 {} 个标的，补取成功 {} 个，失败 {} 个。",
+            required_codes.len(),
+            history_override.len(),
+            failed
+        ));
+    }
+    request.as_of_date = request
+        .as_of_date
+        .or_else(|| latest_adaptive_data_date(data.as_ref(), &history_override));
+    emit_adaptive_screen_progress(
+        app,
+        request.run_id.as_deref(),
+        "history_fetch",
+        72,
+        "历史行情准备完成",
+    );
+
+    let exposure_app = app.clone();
+    let recent_exposure = runtime::run_io_bound("adaptive_screen_exposure_read", move || {
+        adaptive_exposure_recent_sync(&exposure_app)
+    })
+    .await??;
+    Ok(PreparedAdaptiveScreen {
+        data,
+        stock_override,
+        candidate_codes: candidates,
+        history_override,
+        request,
+        recent_exposure,
+        notes,
+    })
+}
+
+fn adaptive_history_start_date() -> String {
+    const LOOKBACK_MILLIS: u128 = 220 * 24 * 60 * 60 * 1_000;
+    local_yyyymmdd_from_epoch_ms(epoch_millis().saturating_sub(LOOKBACK_MILLIS))
+        .unwrap_or_else(|| "20200101".to_string())
+}
+
+fn adaptive_history_window(rows: &[gp_core::HistoryBar]) -> Vec<gp_core::HistoryBar> {
+    rows.iter()
+        .rev()
+        .take(120)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
+
+fn latest_adaptive_data_date(
+    data: &gp_core::CoreDataSet,
+    history_override: &HashMap<String, Vec<gp_core::HistoryBar>>,
+) -> Option<String> {
+    history_override
+        .values()
+        .chain(data.histories.values())
+        .filter_map(|bars| bars.last())
+        .filter_map(|bar| compact_date_key(&bar.date))
+        .max()
 }
 
 async fn prepare_trend_screen(
@@ -4579,6 +4919,11 @@ async fn prepare_backtest(
     let request =
         serde_json::from_value::<gp_core::BacktestRequest>(strip_core_side_payload_fields(payload))
             .map_err(|error| format!("invalid backtest request: {error}"))?;
+    let adaptive_backtest = request
+        .strategy_mode
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with("adaptive_swing_v1");
 
     if request
         .strategy_mode
@@ -4597,7 +4942,7 @@ async fn prepare_backtest(
     let candidate_data = Arc::clone(&data);
     let candidate_stocks = stock_override.clone();
     let candidate_request = request.clone();
-    let candidates = runtime::run_cpu_bound("api_backtest_candidates", move || {
+    let mut candidates = runtime::run_cpu_bound("api_backtest_candidates", move || {
         let universe = candidate_stocks
             .as_deref()
             .map(Vec::as_slice)
@@ -4605,15 +4950,30 @@ async fn prepare_backtest(
         backtest_history_prefetch_codes(universe, &candidate_request)
     })
     .await?;
+    if adaptive_backtest {
+        candidates.extend(data.factor_snapshots.keys().cloned());
+        candidates.extend(adaptive_benchmark_codes().into_iter().map(str::to_string));
+        dedupe_stock_codes(&mut candidates);
+    }
+    let history_start_date = if adaptive_backtest {
+        "19900101".to_string()
+    } else {
+        request.start_date.clone()
+    };
+    let minimum_bars = if adaptive_backtest {
+        MIN_ADAPTIVE_SCREEN_HISTORY_BARS
+    } else {
+        MIN_BACKTEST_HISTORY_BARS
+    };
     let missing = candidates
         .iter()
         .filter(|code| {
             !typed_history_cache_has_bars(
                 data.as_ref(),
                 code,
-                &request.start_date,
+                &history_start_date,
                 &request.end_date,
-                MIN_BACKTEST_HISTORY_BARS,
+                minimum_bars,
             )
         })
         .cloned()
@@ -4633,7 +4993,7 @@ async fn prepare_backtest(
         });
     }
 
-    let start_date = request.start_date.clone();
+    let start_date = history_start_date;
     let end_date = request.end_date.clone();
     let fetch_missing = missing.clone();
     let fetches = runtime::with_heavy_network_permit("api_backtest_history_fetch", async move {
@@ -8120,6 +8480,173 @@ struct WatchlistRecord {
     added_at: String,
     source: Option<String>,
     screen_criteria_summary: Option<String>,
+}
+
+fn adaptive_screen_db_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let mut root = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("get app data dir failed: {error}"))?;
+    root.push("screening");
+    fs::create_dir_all(&root)
+        .map_err(|error| format!("create screening dir failed: {}: {error}", root.display()))?;
+    root.push(ADAPTIVE_SCREEN_DB_FILE);
+    Ok(root)
+}
+
+fn initialize_adaptive_exposure_db(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         CREATE TABLE IF NOT EXISTS adaptive_screen_exposure (
+             code TEXT NOT NULL,
+             trade_date TEXT NOT NULL,
+             bucket TEXT NOT NULL,
+             mode TEXT NOT NULL,
+             algorithm_version TEXT NOT NULL,
+             selected_at INTEGER NOT NULL,
+             PRIMARY KEY (code, trade_date, bucket)
+         );
+         CREATE INDEX IF NOT EXISTS idx_adaptive_exposure_date
+           ON adaptive_screen_exposure(trade_date DESC, selected_at DESC);",
+    )
+    .map_err(|error| format!("initialize adaptive screen sqlite failed: {error}"))
+}
+
+fn open_adaptive_screen_db(app: &tauri::AppHandle) -> Result<Connection, String> {
+    let path = adaptive_screen_db_path(app)?;
+    let conn = Connection::open(&path).map_err(|error| {
+        format!(
+            "open adaptive screen sqlite failed: {}: {error}",
+            path.display()
+        )
+    })?;
+    initialize_adaptive_exposure_db(&conn)?;
+    Ok(conn)
+}
+
+fn adaptive_exposure_recent_rows(
+    conn: &Connection,
+) -> Result<Vec<gp_core::AdaptiveRecentExposure>, String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT code, trade_date, bucket
+             FROM adaptive_screen_exposure
+             WHERE trade_date IN (
+                 SELECT DISTINCT trade_date
+                 FROM adaptive_screen_exposure
+                 ORDER BY trade_date DESC
+                 LIMIT 5
+             )
+             ORDER BY trade_date DESC, code ASC, bucket ASC",
+        )
+        .map_err(|error| format!("prepare adaptive exposure query failed: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(gp_core::AdaptiveRecentExposure {
+                code: row.get(0)?,
+                trade_date: row.get(1)?,
+                bucket: row.get(2)?,
+            })
+        })
+        .map_err(|error| format!("query adaptive exposure failed: {error}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("read adaptive exposure failed: {error}"))
+}
+
+fn adaptive_exposure_recent_sync(
+    app: &tauri::AppHandle,
+) -> Result<Vec<gp_core::AdaptiveRecentExposure>, String> {
+    adaptive_exposure_recent_rows(&open_adaptive_screen_db(app)?)
+}
+
+fn adaptive_exposure_record_sync(
+    app: &tauri::AppHandle,
+    result: &Value,
+    trade_date: &str,
+) -> Result<(), String> {
+    let mut conn = open_adaptive_screen_db(app)?;
+    adaptive_exposure_record_rows(&mut conn, result, trade_date)
+}
+
+fn adaptive_exposure_record_rows(
+    conn: &mut Connection,
+    result: &Value,
+    trade_date: &str,
+) -> Result<(), String> {
+    initialize_adaptive_exposure_db(conn)?;
+    let trade_date = compact_date_key(trade_date)
+        .ok_or_else(|| "adaptive screen trade date is invalid".to_string())?;
+    let selected_at = epoch_millis() as i64;
+    let keep_after = selected_at.saturating_sub(30 * 24 * 60 * 60 * 1_000);
+    let algorithm_version = result
+        .get("algorithm_version")
+        .and_then(Value::as_str)
+        .unwrap_or("adaptive_swing_v1");
+    let mode = result
+        .pointer("/market_regime/effective")
+        .and_then(Value::as_str)
+        .unwrap_or("auto");
+    let selected = result
+        .get("groups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|group| {
+            let bucket = group
+                .get("key")
+                .and_then(Value::as_str)
+                .unwrap_or("primary")
+                .to_string();
+            group
+                .get("items")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(move |item| {
+                    item.pointer("/stock/code")
+                        .and_then(Value::as_str)
+                        .map(|code| (code.to_ascii_uppercase(), bucket.clone()))
+                })
+        })
+        .collect::<Vec<_>>();
+    let transaction = conn
+        .transaction()
+        .map_err(|error| format!("begin adaptive exposure transaction failed: {error}"))?;
+    transaction
+        .execute(
+            "DELETE FROM adaptive_screen_exposure WHERE selected_at < ?1",
+            params![keep_after],
+        )
+        .map_err(|error| format!("prune adaptive exposure failed: {error}"))?;
+    {
+        let mut statement = transaction
+            .prepare(
+                "INSERT INTO adaptive_screen_exposure
+                   (code, trade_date, bucket, mode, algorithm_version, selected_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(code, trade_date, bucket) DO UPDATE SET
+                   mode = excluded.mode,
+                   algorithm_version = excluded.algorithm_version,
+                   selected_at = excluded.selected_at",
+            )
+            .map_err(|error| format!("prepare adaptive exposure insert failed: {error}"))?;
+        for (code, bucket) in selected {
+            statement
+                .execute(params![
+                    code,
+                    trade_date,
+                    bucket,
+                    mode,
+                    algorithm_version,
+                    selected_at
+                ])
+                .map_err(|error| format!("insert adaptive exposure failed: {error}"))?;
+        }
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("commit adaptive exposure failed: {error}"))
 }
 
 fn watchlist_db_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {

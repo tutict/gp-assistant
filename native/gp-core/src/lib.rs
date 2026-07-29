@@ -9,7 +9,12 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+mod adaptive_screen;
 mod volatility;
+pub use adaptive_screen::{
+    adaptive_candidate_codes, adaptive_screen_stocks, AdaptiveMarketRegime, AdaptiveRecentExposure,
+    AdaptiveScreenRequest, AdaptiveScreenResult,
+};
 pub use volatility::{
     AtrSnapshot, BollingerBandsSnapshot, ChaikinVolatilitySnapshot, DonchianChannelSnapshot,
     IndicatorUnavailable, KeltnerChannelSnapshot, RviSnapshot, VolatilitySnapshot,
@@ -1823,6 +1828,13 @@ pub fn backtest_with_data(
 }
 
 pub fn backtest_selected_symbols(universe: &[StockItem], request: &BacktestRequest) -> Vec<String> {
+    if normalize_backtest_strategy_mode(&request.strategy_mode) == "adaptive_swing_v1" {
+        return universe
+            .iter()
+            .filter(|stock| matches_stock(stock, &request.criteria).is_some())
+            .map(|stock| stock.code.clone())
+            .collect();
+    }
     selected_backtest_items_from_universe(universe, request)
         .0
         .into_iter()
@@ -1836,8 +1848,9 @@ pub fn backtest_with_source(
 ) -> CoreResult<BacktestResult> {
     let mut universe = source.stocks()?.to_vec();
     let strategy_mode = normalize_backtest_strategy_mode(&request.strategy_mode);
+    let dynamic_mode = strategy_mode != "candidate_snapshot";
     let source_mode = normalize_backtest_source(&request.source);
-    if strategy_mode == "walk_forward" && source_mode != "watchlist" {
+    if dynamic_mode && source_mode != "watchlist" {
         let mut known_codes = universe
             .iter()
             .map(|stock| stock.code.to_uppercase())
@@ -1853,13 +1866,12 @@ pub fn backtest_with_source(
             });
         }
     }
-    let (selected, selection_notes) =
-        if strategy_mode == "walk_forward" && source_mode != "watchlist" {
-            (Vec::new(), Vec::new())
-        } else {
-            selected_backtest_items(&universe, request)
-        };
-    let symbols: Vec<String> = if strategy_mode == "walk_forward" && source_mode != "watchlist" {
+    let (selected, selection_notes) = if dynamic_mode && source_mode != "watchlist" {
+        (Vec::new(), Vec::new())
+    } else {
+        selected_backtest_items(&universe, request)
+    };
+    let symbols: Vec<String> = if dynamic_mode && source_mode != "watchlist" {
         universe.iter().map(|item| item.code.clone()).collect()
     } else {
         selected
@@ -1868,7 +1880,7 @@ pub fn backtest_with_source(
             .collect()
     };
 
-    let history_symbols = if strategy_mode == "walk_forward" {
+    let history_symbols = if dynamic_mode {
         strict_walk_forward_history_symbols(
             source,
             &symbols,
@@ -1878,13 +1890,18 @@ pub fn backtest_with_source(
     } else {
         symbols.clone()
     };
+    let history_load_start = if strategy_mode == "adaptive_swing_v1" {
+        "19900101"
+    } else {
+        &request.start_date
+    };
     let histories = load_backtest_histories(
         source,
         &history_symbols,
-        &request.start_date,
+        history_load_start,
         &request.end_date,
     )?;
-    if strategy_mode == "walk_forward" {
+    if dynamic_mode {
         let available_codes = histories
             .iter()
             .map(|history| history.code.to_uppercase())
@@ -1909,11 +1926,7 @@ pub fn backtest_with_source(
                 symbols.len()
             )));
         }
-        let reported_symbols = if strategy_mode == "walk_forward" {
-            Vec::new()
-        } else {
-            symbols
-        };
+        let reported_symbols = if dynamic_mode { Vec::new() } else { symbols };
         return Ok(BacktestResult {
             metrics: empty_backtest_metrics(reported_symbols.len(), &strategy_mode),
             equity_curve: Vec::new(),
@@ -1933,7 +1946,7 @@ pub fn backtest_with_source(
     let cost_rate = sanitize_transaction_cost_rate(request.transaction_cost_bps);
     let rebalance_frequency = normalize_rebalance_frequency(&request.rebalance_frequency);
     let simulation = match strategy_mode.as_str() {
-        "walk_forward" => simulate_walk_forward_portfolio(
+        "walk_forward" | "adaptive_swing_v1" => simulate_walk_forward_portfolio(
             source,
             &universe,
             request,
@@ -1951,7 +1964,11 @@ pub fn backtest_with_source(
     };
     let benchmark_enabled = normalize_backtest_benchmark(&request.benchmark) != "none";
     let benchmark_curve = if benchmark_enabled {
-        equal_weight_benchmark_curve(&histories, initial_cash)
+        equal_weight_benchmark_curve(
+            &histories,
+            initial_cash,
+            parse_date(&request.start_date).ok(),
+        )
     } else {
         Vec::new()
     };
@@ -1971,17 +1988,17 @@ pub fn backtest_with_source(
         .iter()
         .map(|history| history.code.clone())
         .collect();
-    let walk_forward_folds = if strategy_mode == "walk_forward" {
+    let walk_forward_folds = if dynamic_mode {
         evaluate_walk_forward_folds(&histories, &simulation.selections)
     } else {
         Vec::new()
     };
-    let reported_symbols = if strategy_mode == "walk_forward" {
+    let reported_symbols = if dynamic_mode {
         selected_symbols_from_rebalances(&histories, &simulation.selections)
     } else {
         available_symbols.clone()
     };
-    let volatility_symbols = if strategy_mode == "walk_forward" {
+    let volatility_symbols = if dynamic_mode {
         selected_symbols_from_latest_rebalance(&histories, &simulation.selections)
     } else {
         reported_symbols.clone()
@@ -2015,7 +2032,7 @@ pub fn backtest_with_source(
         request.transaction_cost_bps.clamp(0.0, 500.0)
     ));
     notes.push(backtest_strategy_mode_note(&strategy_mode).to_string());
-    if strategy_mode == "walk_forward" {
+    if dynamic_mode {
         notes.push(format!(
             "滚动样本外评估共 {} 折，{} 个入选样本可计算相对候选池基准的命中率。",
             oos_fold_count, evaluated_selection_count
@@ -2039,7 +2056,7 @@ pub fn backtest_with_source(
         })
         .collect::<Vec<_>>();
     let volatility_message = volatility_snapshots.is_empty().then(|| {
-        if strategy_mode == "walk_forward" && volatility_symbols.is_empty() {
+        if dynamic_mode && volatility_symbols.is_empty() {
             "Walk-forward 末次调仓没有符合条件的标的。".to_string()
         } else if volatility_symbols.is_empty() {
             "候选快照没有符合条件的标的。".to_string()
@@ -2312,7 +2329,12 @@ fn simulate_walk_forward_portfolio(
     transaction_cost_rate: f64,
     rebalance_frequency: &str,
 ) -> CoreResult<PortfolioSimulation> {
-    let dates = backtest_calendar(histories);
+    let start_date = parse_date(&request.start_date)?;
+    let end_date = parse_date(&request.end_date)?;
+    let dates = backtest_calendar(histories)
+        .into_iter()
+        .filter(|date| *date >= start_date && *date <= end_date)
+        .collect::<Vec<_>>();
     let mut snapshots_by_code = HashMap::new();
     let mut missing_snapshot_codes = Vec::new();
     for history in histories {
@@ -2335,6 +2357,29 @@ fn simulate_walk_forward_portfolio(
             preview
         )));
     }
+    let benchmark_histories = if normalize_backtest_strategy_mode(&request.strategy_mode)
+        == "adaptive_swing_v1"
+    {
+        let histories = ["000001.SH", "399001.SZ", "399006.SZ"]
+            .into_iter()
+            .filter_map(|code| {
+                source
+                    .get_history(code, "19900101", &request.end_date)
+                    .ok()
+                    .filter(|bars| bars.len() >= MIN_HISTORY_BARS_FOR_ADAPTIVE_BACKTEST)
+                    .map(|bars| (code.to_string(), bars))
+            })
+            .collect::<HashMap<_, _>>();
+        if adaptive_backtest_requested_mode(&request.strategy_mode) == "auto" && histories.len() < 2
+        {
+            return Err(CoreError::new(
+                "adaptive_swing_v1 回测至少需要2个有效宽基指数的历史日线",
+            ));
+        }
+        histories
+    } else {
+        HashMap::new()
+    };
     Ok(simulate_walk_forward_portfolio_with_snapshots(
         universe,
         request,
@@ -2344,8 +2389,11 @@ fn simulate_walk_forward_portfolio(
         initial_cash,
         transaction_cost_rate,
         rebalance_frequency,
+        &benchmark_histories,
     ))
 }
+
+const MIN_HISTORY_BARS_FOR_ADAPTIVE_BACKTEST: usize = 60;
 
 fn simulate_walk_forward_portfolio_with_snapshots(
     universe: &[StockItem],
@@ -2356,6 +2404,7 @@ fn simulate_walk_forward_portfolio_with_snapshots(
     initial_cash: f64,
     transaction_cost_rate: f64,
     rebalance_frequency: &str,
+    benchmark_histories: &HashMap<String, Vec<HistoryBar>>,
 ) -> PortfolioSimulation {
     let mut cash = initial_cash;
     let mut holdings = vec![0.0; histories.len()];
@@ -2390,14 +2439,29 @@ fn simulate_walk_forward_portfolio_with_snapshots(
         if should_rebalance(date, last_rebalance_date, rebalance_frequency)
             && equity_before_rebalance > 0.0
         {
-            let active = walk_forward_active_indices(
-                universe,
-                request,
-                snapshots_by_code,
-                &history_index,
-                &trade_prices,
-                date,
-            );
+            let active = if normalize_backtest_strategy_mode(&request.strategy_mode)
+                == "adaptive_swing_v1"
+            {
+                adaptive_walk_forward_active_indices(
+                    universe,
+                    request,
+                    histories,
+                    benchmark_histories,
+                    snapshots_by_code,
+                    &history_index,
+                    &trade_prices,
+                    date,
+                )
+            } else {
+                walk_forward_active_indices(
+                    universe,
+                    request,
+                    snapshots_by_code,
+                    &history_index,
+                    &trade_prices,
+                    date,
+                )
+            };
             let target_weight = if active.selected_indices.is_empty() {
                 0.0
             } else {
@@ -2583,6 +2647,114 @@ fn walk_forward_active_indices(
     }
 }
 
+fn adaptive_walk_forward_active_indices(
+    universe: &[StockItem],
+    request: &BacktestRequest,
+    histories: &[BacktestHistory],
+    benchmark_histories: &HashMap<String, Vec<HistoryBar>>,
+    snapshots_by_code: &HashMap<String, BTreeMap<NaiveDate, StockFactorSnapshot>>,
+    history_index: &HashMap<String, usize>,
+    current_prices: &[Option<f64>],
+    date: NaiveDate,
+) -> ActiveSelection {
+    let mut visible_universe = point_in_time_universe(
+        universe,
+        snapshots_by_code,
+        history_index,
+        current_prices,
+        date,
+    );
+    let eligible_indices = visible_universe
+        .iter()
+        .filter_map(|stock| history_index.get(&stock.code.to_uppercase()).copied())
+        .collect::<Vec<_>>();
+    if visible_universe.is_empty() {
+        return ActiveSelection {
+            eligible_indices,
+            selected_indices: Vec::new(),
+        };
+    }
+
+    let mut point_in_time_histories = HashMap::new();
+    for stock in &mut visible_universe {
+        let Some(index) = history_index.get(&stock.code.to_uppercase()).copied() else {
+            continue;
+        };
+        let Some(history) = histories.get(index) else {
+            continue;
+        };
+        let bars = history
+            .bars
+            .iter()
+            .filter(|bar| {
+                parse_date(&bar.date)
+                    .map(|bar_date| bar_date <= date)
+                    .unwrap_or(false)
+            })
+            .rev()
+            .take(120)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>();
+        if bars.len() >= 2 {
+            let latest = bars[bars.len() - 1].close;
+            let previous = bars[bars.len() - 2].close;
+            stock.change_pct = (previous > 0.0).then_some((latest / previous - 1.0) * 100.0);
+        }
+        point_in_time_histories.insert(stock.code.clone(), bars);
+    }
+    let point_in_time_benchmarks = benchmark_histories
+        .iter()
+        .map(|(code, bars)| {
+            let visible = bars
+                .iter()
+                .filter(|bar| {
+                    parse_date(&bar.date)
+                        .map(|bar_date| bar_date <= date)
+                        .unwrap_or(false)
+                })
+                .rev()
+                .take(120)
+                .cloned()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>();
+            (code.clone(), visible)
+        })
+        .collect::<HashMap<_, _>>();
+    let adaptive_request = AdaptiveScreenRequest {
+        criteria: request.criteria.clone(),
+        mode: adaptive_backtest_requested_mode(&request.strategy_mode),
+        horizon: "swing_10_30d".to_string(),
+        primary_limit: request.top_n.clamp(1, 100),
+        exploration_limit: 0,
+        run_id: None,
+        as_of_date: Some(date.format("%Y%m%d").to_string()),
+    };
+    let selected_indices = adaptive_screen_stocks(
+        &visible_universe,
+        &point_in_time_histories,
+        &point_in_time_benchmarks,
+        &[],
+        &adaptive_request,
+    )
+    .map(|result| {
+        result
+            .items
+            .into_iter()
+            .filter_map(|item| history_index.get(&item.stock.code.to_uppercase()).copied())
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
+    ActiveSelection {
+        selected_indices,
+        eligible_indices,
+    }
+}
+
 fn point_in_time_universe(
     universe: &[StockItem],
     snapshots_by_code: &HashMap<String, BTreeMap<NaiveDate, StockFactorSnapshot>>,
@@ -2658,14 +2830,23 @@ fn apply_factor_snapshot(
 fn equal_weight_benchmark_curve(
     histories: &[BacktestHistory],
     initial_cash: f64,
+    start_date: Option<NaiveDate>,
 ) -> Vec<EquityPoint> {
     backtest_calendar(histories)
         .into_iter()
+        .filter(|date| start_date.is_none_or(|start| *date >= start))
         .filter_map(|date| {
             let values: Vec<f64> = histories
                 .iter()
                 .filter_map(|history| {
-                    let first = history.prices.values().next().copied()?;
+                    let first = match start_date {
+                        Some(start) => history
+                            .prices
+                            .range(start..)
+                            .next()
+                            .map(|(_, price)| *price)?,
+                        None => history.prices.values().next().copied()?,
+                    };
                     let price = latest_price_on_or_before(history, date)?;
                     if first > 0.0 && price > 0.0 {
                         Some(price / first)
@@ -2885,14 +3066,30 @@ fn normalize_backtest_benchmark(value: &str) -> String {
 }
 
 fn normalize_backtest_strategy_mode(value: &str) -> String {
-    match value.trim().to_ascii_lowercase().as_str() {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.starts_with("adaptive_swing_v1") {
+        return "adaptive_swing_v1".to_string();
+    }
+    match normalized.as_str() {
         "candidate_snapshot" | "snapshot" => "candidate_snapshot".to_string(),
         _ => "walk_forward".to_string(),
     }
 }
 
+fn adaptive_backtest_requested_mode(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .split_once(':')
+        .map(|(_, mode)| mode)
+        .filter(|mode| matches!(*mode, "auto" | "range" | "trend" | "defensive"))
+        .unwrap_or("auto")
+        .to_string()
+}
+
 fn backtest_strategy_mode_note(value: &str) -> &'static str {
     match value {
+        "adaptive_swing_v1" => "策略模式：adaptive_swing_v1；每个调仓日仅使用当日可见的财务快照、OHLCV、三宽基指数和市场宽度重新判断状态并选股。",
         "walk_forward" => "策略模式：walk_forward，仅使用 available_date 不晚于调仓日的因子快照和历史上市/ST/可交易状态；调仓只使用当日实际报价。",
         _ => "策略模式：candidate_snapshot，展示当前候选池的历史组合表现，不等同于严格可交易的逐日选股策略。",
     }

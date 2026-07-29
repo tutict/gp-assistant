@@ -1,8 +1,11 @@
+import type { AdaptiveScreenRequest } from "../types";
+
 export type BacktestSource = "criteria" | "watchlist";
 
 export interface BacktestRouteRequest {
   source: BacktestSource;
   requestId: number;
+  adaptiveScreenSpec?: AdaptiveScreenRequest;
 }
 
 interface PanelRevealRoot {
@@ -12,10 +15,12 @@ interface PanelRevealRoot {
 export function nextBacktestRouteRequest(
   previous: BacktestRouteRequest | null,
   source: BacktestSource,
+  adaptiveScreenSpec?: AdaptiveScreenRequest,
 ): BacktestRouteRequest {
   return {
     source,
     requestId: (previous?.requestId ?? 0) + 1,
+    ...(adaptiveScreenSpec ? { adaptiveScreenSpec } : {}),
   };
 }
 

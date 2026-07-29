@@ -71,6 +71,42 @@ export interface ScreenResult {
   items: ScreenedStock[];
   groups?: ScreenResultGroup[];
   notes?: string[];
+  algorithm_version?: string;
+  market_regime?: AdaptiveMarketRegime;
+}
+
+export type AdaptiveScreenMode = "auto" | "range" | "trend" | "defensive";
+
+export interface AdaptiveScreenRequest {
+  criteria: ScreenCriteria;
+  mode: AdaptiveScreenMode;
+  horizon: "swing_10_30d";
+  primary_limit: number;
+  exploration_limit: number;
+  run_id: string;
+}
+
+export interface AdaptiveRegimeEvidence {
+  key: string;
+  label: string;
+  value: number;
+  summary: string;
+}
+
+export interface AdaptiveMarketRegime {
+  detected: "range" | "trend" | "defensive" | "transition" | string;
+  effective: "range" | "trend" | "defensive" | "transition" | string;
+  confidence: number;
+  overridden: boolean;
+  as_of_date?: string | null;
+  evidence: AdaptiveRegimeEvidence[];
+  coverage: {
+    candidate_requested: number;
+    candidate_usable: number;
+    candidate_ratio: number;
+    benchmark_requested: number;
+    benchmark_usable: number;
+  };
 }
 
 export interface SectorScreenRequest {

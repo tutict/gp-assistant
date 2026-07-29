@@ -2,6 +2,8 @@ import type { FilterCriteria } from "../components/FilterBar";
 import type {
   AgentResult,
   AgentStreamEvent,
+  AdaptiveScreenMode,
+  AdaptiveScreenRequest,
   BacktestResult,
   GraphScreenResult,
   GraphStockSignal,
@@ -66,6 +68,21 @@ export function buildScreenCriteria(criteria: FilterCriteria, overrides: ScreenR
   if (criteria.maxPb) payload.max_pb = Number(criteria.maxPb);
   if (criteria.minMcap) payload.min_market_cap_billion = Number(criteria.minMcap);
   return payload;
+}
+
+export function buildAdaptiveScreenRequest(
+  criteria: FilterCriteria,
+  mode: AdaptiveScreenMode = "auto",
+  runId: string = crypto.randomUUID?.() || "screen-" + Date.now(),
+): AdaptiveScreenRequest {
+  return {
+    criteria: buildScreenCriteria(criteria, { limit: 80 }),
+    mode,
+    horizon: "swing_10_30d",
+    primary_limit: 10,
+    exploration_limit: 10,
+    run_id: runId,
+  };
 }
 
 export function buildSectorScreenRequest(
@@ -138,11 +155,17 @@ export function buildBacktestRequest(args: {
   transactionCostBps: number;
   benchmark: string;
   strategyMode?: string;
+  adaptiveScreenSpec?: AdaptiveScreenRequest;
 }): Record<string, unknown> {
+  const adaptiveScreenSpec = args.adaptiveScreenSpec;
   return {
     source: args.source,
-    criteria: buildScreenCriteria(args.criteria, { limit: 100, score_profile: "quality" }),
-    strategy_mode: args.strategyMode || "candidate_snapshot",
+    criteria: adaptiveScreenSpec?.criteria
+      || buildScreenCriteria(args.criteria, { limit: 100, score_profile: "quality" }),
+    strategy_mode: adaptiveScreenSpec
+      ? "adaptive_swing_v1:" + adaptiveScreenSpec.mode
+      : args.strategyMode || "candidate_snapshot",
+    ...(adaptiveScreenSpec ? { adaptive_screen_spec: adaptiveScreenSpec } : {}),
     stock_codes: args.source === "watchlist" ? args.watchlist.map((item) => item.code).filter(Boolean).slice(0, 100) : [],
     start_date: normalizeDateParam(args.startDate, "20200101"),
     end_date: normalizeDateParam(args.endDate, currentSystemDateCompact()),

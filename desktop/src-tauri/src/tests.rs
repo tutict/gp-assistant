@@ -1,6 +1,85 @@
 use super::*;
 
 #[test]
+fn adaptive_screen_request_accepts_nested_and_legacy_contracts() {
+    let nested = adaptive_screen_request_from_payload(json!({
+        "criteria": { "min_roe": 8.0, "limit": 10 },
+        "mode": "range",
+        "horizon": "swing_10_30d",
+        "primary_limit": 8,
+        "exploration_limit": 6,
+        "run_id": "run-1"
+    }))
+    .expect("nested adaptive request should parse");
+    assert_eq!(nested.mode, "range");
+    assert_eq!(nested.primary_limit, 8);
+    assert_eq!(nested.criteria.min_roe, Some(8.0));
+
+    let legacy = adaptive_screen_request_from_payload(json!({
+        "min_roe": 6.0,
+        "limit": 10,
+        "score_profile": "balanced"
+    }))
+    .expect("legacy flat request should map to adaptive auto mode");
+    assert_eq!(legacy.mode, "auto");
+    assert_eq!(legacy.horizon, "swing_10_30d");
+    assert_eq!(legacy.criteria.min_roe, Some(6.0));
+}
+
+#[test]
+fn adaptive_exposure_sqlite_deduplicates_same_day_and_keeps_five_trade_dates() {
+    let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
+    initialize_adaptive_exposure_db(&connection).expect("schema should initialize");
+    for day in 1..=6 {
+        let date = format!("202607{day:02}");
+        let result = json!({
+            "algorithm_version": "adaptive_swing_v1",
+            "market_regime": { "effective": "range" },
+            "groups": [
+                {
+                    "key": "primary",
+                    "items": [{ "stock": { "code": format!("60000{day}.SH") } }]
+                }
+            ]
+        });
+        adaptive_exposure_record_rows(&mut connection, &result, &date)
+            .expect("exposure should persist");
+        adaptive_exposure_record_rows(&mut connection, &result, &date)
+            .expect("same-day rerun should upsert");
+    }
+    let rows = adaptive_exposure_recent_rows(&connection).expect("recent rows should load");
+    assert_eq!(rows.len(), 5);
+    assert!(rows.iter().all(|row| row.trade_date.as_str() >= "20260702"));
+    let count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM adaptive_screen_exposure", [], |row| {
+            row.get(0)
+        })
+        .expect("count should query");
+    assert_eq!(count, 6);
+}
+
+#[test]
+fn market_refresh_preserves_cached_adaptive_benchmark_histories() {
+    let filtered = filter_seed_histories(
+        &json!({
+            "histories": {
+                "600000.SH": [{ "date": "20260729", "close": 10.0 }],
+                "000001.SH": [{ "date": "20260729", "close": 3800.0 }],
+                "399001.SZ": [{ "date": "20260729", "close": 12000.0 }],
+                "399006.SZ": [{ "date": "20260729", "close": 2500.0 }],
+                "900001.SH": [{ "date": "20260729", "close": 1.0 }]
+            }
+        }),
+        &HashSet::from(["600000.SH".to_string()]),
+    );
+    assert!(filtered.get("600000.SH").is_some());
+    for code in adaptive_benchmark_codes() {
+        assert!(filtered.get(code).is_some(), "{code} should remain cached");
+    }
+    assert!(filtered.get("900001.SH").is_none());
+}
+
+#[test]
 fn agent_harness_builds_an_expert_prompt_from_history_and_tool_evidence() {
     let preview = agent_harness::prompt_preview(
         &json!({
