@@ -946,6 +946,7 @@ async fn api_adaptive_screen(app: tauri::AppHandle, payload: Value) -> Result<Va
     );
     let calculation_request = request.clone();
     let mut result = runtime::run_cpu_bound("api_screen", move || {
+        let calculation_as_of = calculation_request.as_of_date.as_deref();
         let universe = stock_override
             .as_deref()
             .map(Vec::as_slice)
@@ -955,12 +956,19 @@ async fn api_adaptive_screen(app: tauri::AppHandle, payload: Value) -> Result<Va
             .map(String::as_str)
             .chain(adaptive_benchmark_codes())
             .filter_map(|code| {
-                data.histories
-                    .get(code)
-                    .map(|rows| (code.to_string(), adaptive_history_window(rows)))
+                data.histories.get(code).map(|rows| {
+                    (
+                        code.to_string(),
+                        adaptive_history_window(rows, calculation_as_of),
+                    )
+                })
             })
             .collect::<HashMap<_, _>>();
-        histories.extend(history_override);
+        histories.extend(
+            history_override
+                .into_iter()
+                .map(|(code, rows)| (code, adaptive_history_window(&rows, calculation_as_of))),
+        );
         let benchmarks = adaptive_benchmark_codes()
             .into_iter()
             .filter_map(|code| {
@@ -5146,15 +5154,35 @@ fn adaptive_history_start_date() -> String {
         .unwrap_or_else(|| "20200101".to_string())
 }
 
-fn adaptive_history_window(rows: &[gp_core::HistoryBar]) -> Vec<gp_core::HistoryBar> {
-    rows.iter()
+fn adaptive_history_window(
+    rows: &[gp_core::HistoryBar],
+    as_of_date: Option<&str>,
+) -> Vec<gp_core::HistoryBar> {
+    let target = match as_of_date {
+        Some(value) => match compact_date_key(value) {
+            Some(target) => Some(target),
+            None => return Vec::new(),
+        },
+        None => None,
+    };
+    let window = rows
+        .iter()
+        .filter(|bar| {
+            target.as_ref().is_none_or(|target| {
+                compact_date_key(&bar.date).is_some_and(|date| date.as_str() <= target.as_str())
+            })
+        })
         .rev()
         .take(120)
         .cloned()
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
-        .collect()
+        .collect::<Vec<_>>();
+    if target.is_some() && window.last().and_then(|bar| compact_date_key(&bar.date)) != target {
+        return Vec::new();
+    }
+    window
 }
 
 fn latest_adaptive_data_date(

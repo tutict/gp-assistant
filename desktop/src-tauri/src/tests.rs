@@ -127,6 +127,43 @@ fn adaptive_cache_requires_sixty_rows_and_the_target_trade_date() {
 }
 
 #[test]
+fn adaptive_history_window_is_invariant_to_bars_after_the_common_as_of_date() {
+    let rows = (0..62)
+        .map(|index| gp_core::HistoryBar {
+            date: format!("{:08}", 20_260_101 + index),
+            open: Some(10.0 + index as f64),
+            high: Some(10.2 + index as f64),
+            low: Some(9.8 + index as f64),
+            close: 10.0 + index as f64,
+            volume: Some(1_000.0),
+            capital: None,
+        })
+        .collect::<Vec<_>>();
+    let before_future = adaptive_history_window(&rows[..60], Some("20260160"));
+    let with_future = adaptive_history_window(&rows, Some("20260160"));
+    let signature = |bars: &[gp_core::HistoryBar]| {
+        bars.iter()
+            .map(|bar| (bar.date.clone(), bar.close))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(signature(&before_future), signature(&with_future));
+    assert_eq!(
+        with_future.last().map(|bar| bar.date.as_str()),
+        Some("20260160")
+    );
+
+    let without_exact_date = rows
+        .iter()
+        .filter(|bar| bar.date != "20260160")
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        adaptive_history_window(&without_exact_date, Some("20260160")).is_empty(),
+        "a candidate without an exact as-of bar must count as missing coverage"
+    );
+}
+
+#[test]
 fn adaptive_runtime_limits_match_the_release_contract() {
     assert_eq!(ADAPTIVE_SCREEN_HISTORY_PREFETCH_LIMIT, 80);
     assert_eq!(ADAPTIVE_SCREEN_TOTAL_TIMEOUT_SECS, 20);
