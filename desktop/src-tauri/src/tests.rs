@@ -164,6 +164,86 @@ fn adaptive_history_window_is_invariant_to_bars_after_the_common_as_of_date() {
 }
 
 #[test]
+fn adaptive_universe_drops_quote_fields_from_after_the_common_as_of_date() {
+    let stock = gp_core::StockItem {
+        code: "600000.SH".to_string(),
+        price: 99.0,
+        change_pct: Some(0.15),
+        volume: Some(9_999.0),
+        amount: Some(8_000_000_000.0),
+        turnover_rate: Some(0.25),
+        volume_ratio: Some(8.0),
+        quote_time: Some("2026-07-30 15:00:00".to_string()),
+        ..gp_core::StockItem::default()
+    };
+    let histories = HashMap::from([(
+        stock.code.clone(),
+        vec![
+            gp_core::HistoryBar {
+                date: "20260728".to_string(),
+                open: Some(10.0),
+                high: Some(10.0),
+                low: Some(10.0),
+                close: 10.0,
+                volume: Some(1_000.0),
+                capital: None,
+            },
+            gp_core::HistoryBar {
+                date: "20260729".to_string(),
+                open: Some(10.0),
+                high: Some(10.5),
+                low: Some(10.0),
+                close: 10.5,
+                volume: Some(1_500.0),
+                capital: None,
+            },
+        ],
+    )]);
+
+    let normalized = adaptive_point_in_time_universe(&[stock], &histories, Some("20260729"));
+    let item = &normalized[0];
+    assert_eq!(item.price, 10.5);
+    assert!((item.change_pct.unwrap_or_default() - 0.05).abs() < f64::EPSILON * 4.0);
+    assert_eq!(item.volume, Some(1_500.0));
+    assert_eq!(item.amount, None);
+    assert_eq!(item.turnover_rate, None);
+    assert_eq!(item.volume_ratio, None);
+    assert_eq!(item.quote_time.as_deref(), Some("20260729"));
+}
+
+#[test]
+fn adaptive_universe_keeps_same_day_quote_only_fields() {
+    let stock = gp_core::StockItem {
+        code: "600000.SH".to_string(),
+        price: 99.0,
+        amount: Some(800_000_000.0),
+        turnover_rate: Some(0.025),
+        volume_ratio: Some(1.2),
+        quote_time: Some("2026-07-29 15:00:00".to_string()),
+        ..gp_core::StockItem::default()
+    };
+    let histories = HashMap::from([(
+        stock.code.clone(),
+        vec![gp_core::HistoryBar {
+            date: "20260729".to_string(),
+            open: Some(10.0),
+            high: Some(10.5),
+            low: Some(10.0),
+            close: 10.5,
+            volume: Some(1_500.0),
+            capital: None,
+        }],
+    )]);
+
+    let normalized = adaptive_point_in_time_universe(&[stock], &histories, Some("20260729"));
+    let item = &normalized[0];
+    assert_eq!(item.price, 10.5);
+    assert_eq!(item.amount, Some(800_000_000.0));
+    assert_eq!(item.turnover_rate, Some(0.025));
+    assert_eq!(item.volume_ratio, Some(1.2));
+}
+
+#[test]
 fn adaptive_runtime_limits_match_the_release_contract() {
     assert_eq!(ADAPTIVE_SCREEN_HISTORY_PREFETCH_LIMIT, 80);
     assert_eq!(ADAPTIVE_SCREEN_TOTAL_TIMEOUT_SECS, 20);

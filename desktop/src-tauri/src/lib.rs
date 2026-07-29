@@ -978,8 +978,10 @@ async fn api_adaptive_screen(app: tauri::AppHandle, payload: Value) -> Result<Va
                     .map(|rows| (code.to_string(), rows))
             })
             .collect::<HashMap<_, _>>();
+        let point_in_time_universe =
+            adaptive_point_in_time_universe(universe, &histories, calculation_as_of);
         let result = gp_core::adaptive_screen_stocks(
-            universe,
+            &point_in_time_universe,
             &histories,
             &benchmarks,
             &recent_exposure,
@@ -5183,6 +5185,50 @@ fn adaptive_history_window(
         return Vec::new();
     }
     window
+}
+
+fn adaptive_point_in_time_universe(
+    universe: &[gp_core::StockItem],
+    histories: &HashMap<String, Vec<gp_core::HistoryBar>>,
+    as_of_date: Option<&str>,
+) -> Vec<gp_core::StockItem> {
+    let target = as_of_date.and_then(compact_date_key);
+    universe
+        .iter()
+        .map(|stock| {
+            let mut point_in_time = stock.clone();
+            let quote_matches_target = target.as_ref().is_some_and(|target| {
+                stock
+                    .quote_time
+                    .as_deref()
+                    .and_then(compact_date_key)
+                    .is_some_and(|quote_date| quote_date == *target)
+            });
+            let bars = histories.get(&stock.code);
+            if let Some(latest) = bars.and_then(|rows| rows.last()) {
+                point_in_time.price = latest.close;
+                point_in_time.volume = latest.volume;
+                point_in_time.change_pct = bars.and_then(|rows| {
+                    let previous = rows.get(rows.len().checked_sub(2)?)?.close;
+                    (previous.is_finite() && previous > 0.0 && latest.close.is_finite())
+                        .then_some(latest.close / previous - 1.0)
+                });
+            } else if target.is_some() {
+                point_in_time.price = 0.0;
+                point_in_time.change_pct = None;
+                point_in_time.volume = None;
+            }
+            if !quote_matches_target {
+                // These quote fields cannot be reconstructed reliably from OHLCV. Keeping a
+                // newer snapshot would leak future liquidity and overheat information.
+                point_in_time.amount = None;
+                point_in_time.turnover_rate = None;
+                point_in_time.volume_ratio = None;
+            }
+            point_in_time.quote_time = target.clone();
+            point_in_time
+        })
+        .collect()
 }
 
 fn latest_adaptive_data_date(
