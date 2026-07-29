@@ -133,6 +133,27 @@ fn adaptive_runtime_limits_match_the_release_contract() {
 }
 
 #[test]
+fn adaptive_operational_evidence_requires_the_default_release_screen_spec() {
+    let mut request = gp_core::AdaptiveScreenRequest::default();
+    assert!(adaptive_release_screen_request_qualified(&request));
+
+    request.mode = "range".to_string();
+    assert!(!adaptive_release_screen_request_qualified(&request));
+    request.mode = "auto".to_string();
+    request.criteria.max_pe = Some(20.0);
+    assert!(!adaptive_release_screen_request_qualified(&request));
+    request.criteria.max_pe = None;
+    request.primary_limit = 9;
+    assert!(!adaptive_release_screen_request_qualified(&request));
+    request.primary_limit = 10;
+    request.exploration_limit = 9;
+    assert!(!adaptive_release_screen_request_qualified(&request));
+    request.exploration_limit = 10;
+    request.horizon = "other".to_string();
+    assert!(!adaptive_release_screen_request_qualified(&request));
+}
+
+#[test]
 fn adaptive_prefetch_prepares_eighty_candidates_and_three_cached_benchmarks_offline() {
     let candidates = (1..=80)
         .map(|index| format!("{index:06}.SZ"))
@@ -215,17 +236,19 @@ fn adaptive_release_gate_uses_persisted_report_and_real_run_evidence() {
             "20260729",
             if run == 0 { 19_000 } else { 1_900 },
             run != 0,
+            true,
         )
         .expect("run evidence should persist");
     }
     connection
         .execute(
-            "INSERT INTO adaptive_screen_runs_v2
-               (run_id, implementation_fingerprint, trade_date, selected_codes_json, elapsed_millis, cache_hit, algorithm_version, recorded_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO adaptive_screen_runs_v3
+               (run_id, implementation_fingerprint, release_evidence_qualified, trade_date, selected_codes_json, elapsed_millis, cache_hit, algorithm_version, recorded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 "old-implementation-run",
                 "old-implementation-fingerprint",
+                1_i64,
                 "20260729",
                 "[]",
                 99_000_i64,
@@ -235,6 +258,22 @@ fn adaptive_release_gate_uses_persisted_report_and_real_run_evidence() {
             ],
         )
         .expect("old implementation evidence should persist independently");
+    adaptive_release_run_record_rows(
+        &connection,
+        Some("manual-mode-slow-run"),
+        &json!({
+            "algorithm_version": "adaptive_swing_v1",
+            "groups": [{
+                "key": "primary",
+                "items": [{ "stock": { "code": "999999.SZ" } }]
+            }]
+        }),
+        "20260729",
+        99_000,
+        true,
+        false,
+    )
+    .expect("non-release screen runs may persist without affecting gate evidence");
     let evidence = adaptive_release_operational_evidence_rows(&connection)
         .expect("operational evidence should aggregate");
     assert_eq!(evidence, (Some(20), Some(19_000), Some(1_900)));
@@ -286,6 +325,7 @@ fn adaptive_release_gate_uses_persisted_report_and_real_run_evidence() {
         "20260729",
         2_001,
         true,
+        true,
     )
     .expect("later operational evidence should recompute the persisted gate");
     assert!(
@@ -301,7 +341,7 @@ fn adaptive_release_gate_uses_persisted_report_and_real_run_evidence() {
         (epoch_millis().min(i64::MAX as u128) as i64).saturating_sub(31 * 24 * 60 * 60 * 1_000);
     connection
         .execute(
-            "UPDATE adaptive_screen_runs_v2
+            "UPDATE adaptive_screen_runs_v3
              SET recorded_at = ?1
              WHERE implementation_fingerprint = ?2",
             params![expired_at, adaptive_release_implementation_fingerprint()],
@@ -340,6 +380,7 @@ fn adaptive_release_uses_the_worst_of_every_consecutive_five_run_window() {
             "20260729",
             if run == 0 { 10_000 } else { 1_000 },
             run != 0,
+            true,
         )
         .expect("window evidence should persist");
     }

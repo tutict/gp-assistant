@@ -1011,6 +1011,7 @@ async fn api_adaptive_screen(app: tauri::AppHandle, payload: Value) -> Result<Va
     let run_app = app.clone();
     let run_result = result.clone();
     let run_id = request.run_id.clone();
+    let release_evidence_qualified = adaptive_release_screen_request_qualified(&request);
     let elapsed_millis = started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
     tauri::async_runtime::spawn(async move {
         let _ = runtime::run_io_bound("adaptive_screen_run_record", move || {
@@ -1021,6 +1022,7 @@ async fn api_adaptive_screen(app: tauri::AppHandle, payload: Value) -> Result<Va
                 &exposure_date,
                 elapsed_millis,
                 cache_hit,
+                release_evidence_qualified,
             )
         })
         .await;
@@ -1473,6 +1475,14 @@ fn adaptive_release_criteria_is_full_universe(criteria: &gp_core::ScreenCriteria
             .as_deref()
             .is_none_or(|value| value.trim().is_empty())
         && !criteria.include_st
+}
+
+fn adaptive_release_screen_request_qualified(request: &gp_core::AdaptiveScreenRequest) -> bool {
+    request.mode.trim().eq_ignore_ascii_case("auto")
+        && request.horizon.trim().eq_ignore_ascii_case("swing_10_30d")
+        && request.primary_limit == 10
+        && request.exploration_limit == 10
+        && adaptive_release_criteria_is_full_universe(&request.criteria)
 }
 
 fn adaptive_release_requested_mode(strategy_mode: &str) -> String {
@@ -8933,6 +8943,21 @@ fn initialize_adaptive_exposure_db(conn: &Connection) -> Result<(), String> {
          );
          CREATE INDEX IF NOT EXISTS idx_adaptive_runs_v2_recent
            ON adaptive_screen_runs_v2(implementation_fingerprint, recorded_at ASC, id ASC);
+         CREATE TABLE IF NOT EXISTS adaptive_screen_runs_v3 (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             run_id TEXT NOT NULL,
+             implementation_fingerprint TEXT NOT NULL,
+             release_evidence_qualified INTEGER NOT NULL,
+             trade_date TEXT NOT NULL,
+             selected_codes_json TEXT NOT NULL,
+             elapsed_millis INTEGER NOT NULL,
+             cache_hit INTEGER NOT NULL,
+             algorithm_version TEXT NOT NULL,
+             recorded_at INTEGER NOT NULL,
+             UNIQUE (run_id, implementation_fingerprint)
+         );
+         CREATE INDEX IF NOT EXISTS idx_adaptive_runs_v3_recent
+           ON adaptive_screen_runs_v3(implementation_fingerprint, release_evidence_qualified, recorded_at ASC, id ASC);
          CREATE TABLE IF NOT EXISTS adaptive_release_gate_reports (
              algorithm_version TEXT PRIMARY KEY,
              input_json TEXT NOT NULL,
@@ -8994,6 +9019,7 @@ fn adaptive_release_run_record_rows(
     trade_date: &str,
     elapsed_millis: u64,
     cache_hit: bool,
+    release_evidence_qualified: bool,
 ) -> Result<(), String> {
     initialize_adaptive_exposure_db(conn)?;
     let trade_date = compact_date_key(trade_date)
@@ -9013,15 +9039,16 @@ fn adaptive_release_run_record_rows(
         .unwrap_or("adaptive_swing_v1");
     let implementation_fingerprint = adaptive_release_implementation_fingerprint();
     conn.execute(
-        "DELETE FROM adaptive_screen_runs_v2 WHERE recorded_at < ?1",
+        "DELETE FROM adaptive_screen_runs_v3 WHERE recorded_at < ?1",
         params![keep_after],
     )
     .map_err(|error| format!("prune adaptive run evidence failed: {error}"))?;
     conn.execute(
-        "INSERT INTO adaptive_screen_runs_v2
-           (run_id, implementation_fingerprint, trade_date, selected_codes_json, elapsed_millis, cache_hit, algorithm_version, recorded_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        "INSERT INTO adaptive_screen_runs_v3
+           (run_id, implementation_fingerprint, release_evidence_qualified, trade_date, selected_codes_json, elapsed_millis, cache_hit, algorithm_version, recorded_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(run_id, implementation_fingerprint) DO UPDATE SET
+           release_evidence_qualified = excluded.release_evidence_qualified,
            trade_date = excluded.trade_date,
            selected_codes_json = excluded.selected_codes_json,
            elapsed_millis = excluded.elapsed_millis,
@@ -9031,6 +9058,7 @@ fn adaptive_release_run_record_rows(
         params![
             run_id,
             implementation_fingerprint,
+            i64::from(release_evidence_qualified),
             trade_date,
             selected_codes_json,
             elapsed_millis.min(i64::MAX as u64) as i64,
@@ -9051,6 +9079,7 @@ fn adaptive_release_run_record_sync(
     trade_date: &str,
     elapsed_millis: u64,
     cache_hit: bool,
+    release_evidence_qualified: bool,
 ) -> Result<(), String> {
     adaptive_release_run_record_rows(
         &open_adaptive_screen_db(app)?,
@@ -9059,6 +9088,7 @@ fn adaptive_release_run_record_sync(
         trade_date,
         elapsed_millis,
         cache_hit,
+        release_evidence_qualified,
     )
 }
 
@@ -9072,9 +9102,10 @@ fn adaptive_release_operational_evidence_rows(
         let mut statement = conn
             .prepare(
                 "SELECT selected_codes_json
-                 FROM adaptive_screen_runs_v2
+                 FROM adaptive_screen_runs_v3
                  WHERE algorithm_version = 'adaptive_swing_v1'
                    AND implementation_fingerprint = ?1
+                   AND release_evidence_qualified = 1
                    AND recorded_at >= ?2
                  ORDER BY recorded_at ASC, id ASC",
             )
@@ -9119,9 +9150,10 @@ fn adaptive_release_operational_evidence_rows(
         let value = conn
             .query_row(
                 "SELECT MAX(elapsed_millis)
-                 FROM adaptive_screen_runs_v2
+                 FROM adaptive_screen_runs_v3
                  WHERE algorithm_version = 'adaptive_swing_v1'
                    AND implementation_fingerprint = ?1
+                   AND release_evidence_qualified = 1
                    AND cache_hit = ?2
                    AND recorded_at >= ?3",
                 params![
