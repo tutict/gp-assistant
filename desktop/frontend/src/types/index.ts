@@ -360,6 +360,7 @@ export interface BacktestMetrics {
 }
 
 export interface WalkForwardFold {
+  signal_date?: string | null;
   selection_date: string;
   evaluation_end_date?: string | null;
   selected_symbols: string[];

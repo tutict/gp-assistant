@@ -164,6 +164,72 @@ fn adaptive_screen_detects_trend_defensive_and_manual_override() {
 }
 
 #[test]
+fn adaptive_manual_modes_produce_distinct_rankings_for_the_same_candidates() {
+    let (mut stocks, mut histories, benchmarks) = adaptive_fixture(0.0);
+    for (index, stock) in stocks.iter_mut().enumerate() {
+        stock.industry = format!("独立行业{index}");
+        match index % 3 {
+            0 => {
+                stock.roe = Some(0.06);
+                stock.pe = Some(40.0);
+                stock.pb = Some(6.0);
+                stock.dividend_yield = Some(0.0);
+                histories.insert(
+                    stock.code.clone(),
+                    adaptive_history(stock.price - 5.0, 0.08, 90),
+                );
+            }
+            1 => {
+                stock.roe = Some(0.18);
+                stock.pe = Some(12.0);
+                stock.pb = Some(1.5);
+                stock.dividend_yield = Some(0.025);
+                histories.insert(
+                    stock.code.clone(),
+                    adaptive_history(stock.price - 0.2, 0.002, 90),
+                );
+            }
+            _ => {
+                stock.roe = Some(0.35);
+                stock.pe = Some(6.0);
+                stock.pb = Some(0.8);
+                stock.dividend_yield = Some(0.08);
+                histories.insert(
+                    stock.code.clone(),
+                    adaptive_history(stock.price + 2.5, -0.025, 90),
+                );
+            }
+        }
+    }
+    let ranked_codes = |mode: &str| {
+        adaptive_screen_stocks(
+            &stocks,
+            &histories,
+            &benchmarks,
+            &[],
+            &AdaptiveScreenRequest {
+                mode: mode.to_string(),
+                primary_limit: 6,
+                exploration_limit: 0,
+                ..AdaptiveScreenRequest::default()
+            },
+        )
+        .expect("manual mode should rank the shared candidate set")
+        .items
+        .into_iter()
+        .map(|item| item.stock.code)
+        .collect::<Vec<_>>()
+    };
+
+    let range = ranked_codes("range");
+    let trend = ranked_codes("trend");
+    let defensive = ranked_codes("defensive");
+    assert_ne!(range, trend);
+    assert_ne!(range, defensive);
+    assert_ne!(trend, defensive);
+}
+
+#[test]
 fn adaptive_screen_rejects_low_history_coverage_and_caps_primary_industry() {
     let (mut stocks, mut histories, benchmarks) = adaptive_fixture(0.0);
     for stock in stocks.iter().skip(8) {
@@ -368,6 +434,136 @@ fn adaptive_rebalance_propagates_market_data_errors_instead_of_silently_clearing
 }
 
 #[test]
+fn adaptive_walk_forward_signals_on_the_prior_session_and_trades_on_the_next_session() {
+    let base_date = NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid base date");
+    let signal_date = base_date + chrono::Duration::days(70);
+    let execution_date = base_date + chrono::Duration::days(71);
+    let evaluation_date = base_date + chrono::Duration::days(72);
+    let stocks = (0..12).map(adaptive_stock).collect::<Vec<_>>();
+    let histories = stocks
+        .iter()
+        .map(|stock| {
+            let bars = (0..90)
+                .map(|index| {
+                    let date = base_date + chrono::Duration::days(index);
+                    let close = if index <= 70 {
+                        10.0
+                    } else if index == 71 {
+                        20.0
+                    } else {
+                        40.0
+                    };
+                    HistoryBar {
+                        date: date.format("%Y-%m-%d").to_string(),
+                        open: Some(close),
+                        high: Some(close * 1.01),
+                        low: Some(close * 0.99),
+                        close,
+                        volume: Some(1_000_000.0),
+                        capital: None,
+                    }
+                })
+                .collect::<Vec<_>>();
+            BacktestHistory {
+                code: stock.code.clone(),
+                prices: bars
+                    .iter()
+                    .map(|bar| (parse_date(&bar.date).expect("valid bar date"), bar.close))
+                    .collect(),
+                bars,
+            }
+        })
+        .collect::<Vec<_>>();
+    let snapshots = stocks
+        .iter()
+        .map(|stock| {
+            (
+                stock.code.clone(),
+                BTreeMap::from([(
+                    base_date,
+                    StockFactorSnapshot {
+                        date: base_date.format("%Y-%m-%d").to_string(),
+                        available_date: Some(base_date.format("%Y-%m-%d").to_string()),
+                        name: Some(stock.name.clone()),
+                        industry: Some(stock.industry.clone()),
+                        is_st: Some(false),
+                        is_listed: Some(true),
+                        is_tradable: Some(true),
+                        price: Some(10.0),
+                        pe: stock.pe,
+                        pb: stock.pb,
+                        roe: stock.roe,
+                        market_cap_billion: stock.market_cap_billion,
+                        dividend_yield: stock.dividend_yield,
+                        deducted_net_profit_billion: stock.deducted_net_profit_billion,
+                        deducted_net_profit_growth_rate: stock.deducted_net_profit_growth_rate,
+                        amount: stock.amount,
+                        turnover_rate: stock.turnover_rate,
+                        volume_ratio: stock.volume_ratio,
+                        ..StockFactorSnapshot::default()
+                    },
+                )]),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let benchmark_histories = ["000001.SH", "399001.SZ", "399006.SZ"]
+        .into_iter()
+        .map(|code| {
+            (
+                code.to_string(),
+                (0..90)
+                    .map(|index| {
+                        let date = base_date + chrono::Duration::days(index);
+                        HistoryBar {
+                            date: date.format("%Y-%m-%d").to_string(),
+                            open: Some(100.0),
+                            high: Some(101.0),
+                            low: Some(99.0),
+                            close: 100.0,
+                            volume: Some(1_000_000.0),
+                            capital: None,
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let simulation = simulate_walk_forward_portfolio_with_snapshots(
+        &stocks,
+        &BacktestRequest {
+            criteria: ScreenCriteria::default(),
+            source: "criteria".to_string(),
+            strategy_mode: "adaptive_swing_v1:range".to_string(),
+            stock_codes: Vec::new(),
+            start_date: signal_date.format("%Y%m%d").to_string(),
+            end_date: evaluation_date.format("%Y%m%d").to_string(),
+            top_n: 10,
+            initial_cash: 1_000.0,
+            rebalance_frequency: "monthly".to_string(),
+            transaction_cost_bps: 0.0,
+            benchmark: "candidate_equal_weight".to_string(),
+        },
+        &histories,
+        &snapshots,
+        vec![signal_date, execution_date, evaluation_date],
+        1_000.0,
+        0.0,
+        "monthly",
+        &benchmark_histories,
+    )
+    .expect("adaptive walk-forward should execute with point-in-time data");
+
+    assert_eq!(simulation.selections.len(), 1);
+    assert_eq!(simulation.selections[0].signal_date, signal_date);
+    assert_eq!(simulation.selections[0].date, execution_date);
+    let folds = evaluate_walk_forward_folds(&histories, &simulation.selections);
+    assert_eq!(folds[0].signal_date.as_deref(), Some("2026-03-12"));
+    assert_eq!(folds[0].selection_date, "2026-03-13");
+    assert!((simulation.equity_curve[1].equity - 1_000.0).abs() < 1e-6);
+    assert!((simulation.equity_curve[2].equity - 2_000.0).abs() < 1e-6);
+}
+
+#[test]
 fn adaptive_exploration_exposure_is_soft_and_same_day_results_are_deterministic() {
     let (mut stocks, histories, benchmarks) = adaptive_fixture(0.0);
     for (index, stock) in stocks.iter_mut().enumerate() {
@@ -481,6 +677,7 @@ fn adaptive_auto_rejects_partial_breadth_and_reports_observed_coverage() {
 #[test]
 fn adaptive_release_gate_requires_every_performance_diversity_and_latency_check() {
     let passing = evaluate_adaptive_release_gate(&AdaptiveReleaseGateInput {
+        release_configuration_qualified: Some(true),
         legacy_annualized_return: Some(0.10),
         adaptive_annualized_return: Some(0.09),
         legacy_max_drawdown: Some(-0.12),
@@ -506,6 +703,26 @@ fn adaptive_release_gate_requires_every_performance_diversity_and_latency_check(
         .checks
         .iter()
         .any(|check| check.key == "cached_run_millis" && !check.passed));
+}
+
+#[test]
+fn adaptive_screen_rejects_primary_list_shortened_by_industry_diversification() {
+    let (mut stocks, histories, benchmarks) = adaptive_fixture(0.0);
+    stocks.truncate(12);
+    for (index, stock) in stocks.iter_mut().enumerate() {
+        stock.industry = format!("industry-{}", index % 3);
+    }
+    let error = adaptive_screen_stocks(
+        &stocks,
+        &histories,
+        &benchmarks,
+        &[],
+        &AdaptiveScreenRequest::default(),
+    )
+    .expect_err(
+        "three industries can produce only nine primary names under the 3-per-industry cap",
+    );
+    assert!(error.to_string().contains("主榜仅能生成 9 只"));
 }
 
 fn sample_data_set() -> CoreDataSet {

@@ -68,6 +68,7 @@ const ADAPTIVE_SCREEN_TOTAL_TIMEOUT_SECS: u64 = 20;
 const ADAPTIVE_SCREEN_HISTORY_CONCURRENCY: usize = 6;
 const ADAPTIVE_SCREEN_HISTORY_PREFETCH_LIMIT: usize = 80;
 const MIN_ADAPTIVE_SCREEN_HISTORY_BARS: usize = 60;
+const ADAPTIVE_RELEASE_MIN_OOS_FOLDS: usize = 60;
 const BACKTEST_HISTORY_TIMEOUT_SECS: u64 = 30;
 const BACKTEST_HISTORY_CONCURRENCY: usize = 6;
 const MIN_BACKTEST_HISTORY_BARS: usize = 2;
@@ -905,12 +906,18 @@ async fn api_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, Stri
     {
         return api_legacy_screen(app, payload).await;
     }
-    tokio::time::timeout(
+    adaptive_screen_with_timeout(
         Duration::from_secs(ADAPTIVE_SCREEN_TOTAL_TIMEOUT_SECS),
         api_adaptive_screen(app, payload),
     )
     .await
-    .map_err(|_| {
+}
+
+async fn adaptive_screen_with_timeout<T>(
+    duration: Duration,
+    future: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    tokio::time::timeout(duration, future).await.map_err(|_| {
         format!(
             "智能选股端到端计算超过 {ADAPTIVE_SCREEN_TOTAL_TIMEOUT_SECS} 秒，请检查网络或刷新行情后重试"
         )
@@ -1000,28 +1007,24 @@ async fn api_adaptive_screen(app: tauri::AppHandle, payload: Value) -> Result<Va
     if let Err(error) = exposure_write {
         append_result_notes(&mut result, vec![format!("近期曝光记录写入失败：{error}")]);
     }
+    emit_adaptive_screen_progress(&app, request.run_id.as_deref(), "complete", 100, "选股完成");
     let run_app = app.clone();
     let run_result = result.clone();
     let run_id = request.run_id.clone();
     let elapsed_millis = started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
-    let run_write = runtime::run_io_bound("adaptive_screen_run_record", move || {
-        adaptive_release_run_record_sync(
-            &run_app,
-            run_id.as_deref(),
-            &run_result,
-            &exposure_date,
-            elapsed_millis,
-            cache_hit,
-        )
-    })
-    .await?;
-    if let Err(error) = run_write {
-        append_result_notes(
-            &mut result,
-            vec![format!("发布门槛运行证据写入失败：{error}")],
-        );
-    }
-    emit_adaptive_screen_progress(&app, request.run_id.as_deref(), "complete", 100, "选股完成");
+    tauri::async_runtime::spawn(async move {
+        let _ = runtime::run_io_bound("adaptive_screen_run_record", move || {
+            adaptive_release_run_record_sync(
+                &run_app,
+                run_id.as_deref(),
+                &run_result,
+                &exposure_date,
+                elapsed_millis,
+                cache_hit,
+            )
+        })
+        .await;
+    });
     Ok(result)
 }
 
@@ -1111,6 +1114,32 @@ fn adaptive_benchmark_codes() -> [&'static str; 3] {
     ["000001.SH", "399001.SZ", "399006.SZ"]
 }
 
+fn adaptive_required_history_codes(candidates: &[String]) -> Vec<String> {
+    let mut required_codes = candidates.to_vec();
+    required_codes.extend(adaptive_benchmark_codes().into_iter().map(str::to_string));
+    dedupe_stock_codes(&mut required_codes);
+    required_codes
+}
+
+fn adaptive_missing_history_codes(
+    data: &gp_core::CoreDataSet,
+    required_codes: &[String],
+    target_history_date: Option<&str>,
+) -> Vec<String> {
+    required_codes
+        .iter()
+        .filter(|code| {
+            !adaptive_history_cache_is_usable(
+                data,
+                code,
+                target_history_date,
+                MIN_ADAPTIVE_SCREEN_HISTORY_BARS,
+            )
+        })
+        .cloned()
+        .collect()
+}
+
 fn emit_adaptive_screen_progress(
     app: &tauri::AppHandle,
     run_id: Option<&str>,
@@ -1120,13 +1149,22 @@ fn emit_adaptive_screen_progress(
 ) {
     let _ = app.emit(
         "adaptive-screen-progress",
-        json!({
-            "run_id": run_id,
-            "stage": stage,
-            "percent": percent,
-            "message": message,
-        }),
+        adaptive_screen_progress_payload(run_id, stage, percent, message),
     );
+}
+
+fn adaptive_screen_progress_payload(
+    run_id: Option<&str>,
+    stage: &str,
+    percent: usize,
+    message: &str,
+) -> Value {
+    json!({
+        "run_id": run_id,
+        "stage": stage,
+        "percent": percent,
+        "message": message,
+    })
 }
 
 #[tauri::command]
@@ -1268,7 +1306,12 @@ async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, St
                 .map_err(|error| format!("legacy balanced comparison failed: {error}"))?;
             let precision_pair = (request.top_n == 10)
                 .then_some((legacy.metrics.precision_at_n, result.metrics.precision_at_n));
+            let release_qualification =
+                adaptive_release_backtest_qualification(&request, result.metrics.oos_fold_count);
             let gate_input = gp_core::AdaptiveReleaseGateInput {
+                release_configuration_qualified: release_qualification
+                    .get("qualified")
+                    .and_then(Value::as_bool),
                 legacy_annualized_return: legacy.metrics.annualized_return,
                 adaptive_annualized_return: result.metrics.annualized_return,
                 legacy_max_drawdown: legacy.metrics.max_drawdown,
@@ -1294,6 +1337,10 @@ async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, St
                 object.insert(
                     "adaptive_release_gate_input".to_string(),
                     serde_json::to_value(gate_input).map_err(|error| error.to_string())?,
+                );
+                object.insert(
+                    "adaptive_release_qualification".to_string(),
+                    release_qualification,
                 );
             }
         }
@@ -1322,9 +1369,13 @@ async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, St
                 .ok_or_else(|| "adaptive release gate report is missing".to_string())?,
         )
         .map_err(|error| format!("invalid adaptive release gate report: {error}"))?;
+        let qualification = result
+            .get("adaptive_release_qualification")
+            .cloned()
+            .ok_or_else(|| "adaptive release qualification is missing".to_string())?;
         let gate_app = app.clone();
         let gate_write = runtime::run_io_bound("adaptive_release_gate_store", move || {
-            adaptive_release_gate_store_sync(&gate_app, &gate_input, &gate_report)
+            adaptive_release_gate_store_sync(&gate_app, &gate_input, &gate_report, &qualification)
         })
         .await?;
         if let Err(error) = gate_write {
@@ -1390,6 +1441,85 @@ fn adaptive_backtest_average_jaccard(result: &gp_core::BacktestResult) -> Option
         })
         .collect::<Vec<_>>();
     (!values.is_empty()).then_some(values.iter().sum::<f64>() / values.len() as f64)
+}
+
+fn adaptive_release_implementation_fingerprint() -> &'static str {
+    static FINGERPRINT: OnceLock<String> = OnceLock::new();
+    FINGERPRINT
+        .get_or_init(|| {
+            let mut hasher = Sha256::new();
+            hasher.update(b"adaptive_swing_v1-release-contract-v2");
+            hasher.update(include_bytes!(
+                "../../../native/gp-core/src/adaptive_screen.rs"
+            ));
+            hasher.update(include_bytes!("../../../native/gp-core/src/lib.rs"));
+            hasher.update(include_bytes!("lib.rs"));
+            let digest = hasher.finalize();
+            digest.iter().map(|byte| format!("{byte:02x}")).collect()
+        })
+        .as_str()
+}
+
+fn adaptive_release_criteria_is_full_universe(criteria: &gp_core::ScreenCriteria) -> bool {
+    criteria.min_roe.is_none()
+        && criteria.max_pe.is_none()
+        && criteria.max_pb.is_none()
+        && criteria.min_market_cap_billion.is_none()
+        && criteria.min_deducted_net_profit_billion.is_none()
+        && criteria.min_deducted_net_profit_margin.is_none()
+        && criteria.min_deducted_net_profit_growth_rate.is_none()
+        && criteria
+            .industry
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+        && !criteria.include_st
+}
+
+fn adaptive_release_requested_mode(strategy_mode: &str) -> String {
+    let normalized = strategy_mode.trim().to_ascii_lowercase();
+    normalized
+        .split_once(':')
+        .map(|(_, mode)| mode)
+        .filter(|mode| matches!(*mode, "auto" | "range" | "trend" | "defensive"))
+        .unwrap_or("auto")
+        .to_string()
+}
+
+fn adaptive_release_backtest_qualification(
+    request: &gp_core::BacktestRequest,
+    oos_fold_count: usize,
+) -> Value {
+    let mode = adaptive_release_requested_mode(&request.strategy_mode);
+    let full_universe = request.source.trim().eq_ignore_ascii_case("criteria")
+        && request.stock_codes.is_empty()
+        && adaptive_release_criteria_is_full_universe(&request.criteria);
+    let qualified = mode == "auto"
+        && full_universe
+        && request.top_n == 10
+        && request
+            .rebalance_frequency
+            .trim()
+            .eq_ignore_ascii_case("monthly")
+        && (request.transaction_cost_bps - 10.0).abs() <= f64::EPSILON
+        && request
+            .benchmark
+            .trim()
+            .eq_ignore_ascii_case("candidate_equal_weight")
+        && oos_fold_count >= ADAPTIVE_RELEASE_MIN_OOS_FOLDS;
+    json!({
+        "implementation_fingerprint": adaptive_release_implementation_fingerprint(),
+        "qualified": qualified,
+        "mode": mode,
+        "full_universe": full_universe,
+        "source": request.source.as_str(),
+        "top_n": request.top_n,
+        "start_date": request.start_date.as_str(),
+        "end_date": request.end_date.as_str(),
+        "rebalance_frequency": request.rebalance_frequency.as_str(),
+        "transaction_cost_bps": request.transaction_cost_bps,
+        "benchmark": request.benchmark.as_str(),
+        "oos_fold_count": oos_fold_count,
+    })
 }
 
 #[tauri::command]
@@ -4867,9 +4997,7 @@ async fn prepare_adaptive_screen(
         "补齐120日行情",
     );
 
-    let mut required_codes = candidates.clone();
-    required_codes.extend(adaptive_benchmark_codes().into_iter().map(str::to_string));
-    dedupe_stock_codes(&mut required_codes);
+    let required_codes = adaptive_required_history_codes(&candidates);
     let target_history_date = request
         .as_of_date
         .as_deref()
@@ -4882,18 +5010,11 @@ async fn prepare_adaptive_screen(
             adaptive_quote_target_date(universe, &candidates)
         })
         .or_else(|| expected_market_quote_date_from_epoch_ms(epoch_millis()));
-    let missing = required_codes
-        .iter()
-        .filter(|code| {
-            !adaptive_history_cache_is_usable(
-                data.as_ref(),
-                code,
-                target_history_date.as_deref(),
-                MIN_ADAPTIVE_SCREEN_HISTORY_BARS,
-            )
-        })
-        .cloned()
-        .collect::<Vec<_>>();
+    let missing = adaptive_missing_history_codes(
+        data.as_ref(),
+        &required_codes,
+        target_history_date.as_deref(),
+    );
     let cache_hit = missing.is_empty();
 
     let mut history_override = HashMap::new();
@@ -8798,12 +8919,36 @@ fn initialize_adaptive_exposure_db(conn: &Connection) -> Result<(), String> {
          );
          CREATE INDEX IF NOT EXISTS idx_adaptive_runs_recent
            ON adaptive_screen_runs(id DESC, recorded_at DESC);
+         CREATE TABLE IF NOT EXISTS adaptive_screen_runs_v2 (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             run_id TEXT NOT NULL,
+             implementation_fingerprint TEXT NOT NULL,
+             trade_date TEXT NOT NULL,
+             selected_codes_json TEXT NOT NULL,
+             elapsed_millis INTEGER NOT NULL,
+             cache_hit INTEGER NOT NULL,
+             algorithm_version TEXT NOT NULL,
+             recorded_at INTEGER NOT NULL,
+             UNIQUE (run_id, implementation_fingerprint)
+         );
+         CREATE INDEX IF NOT EXISTS idx_adaptive_runs_v2_recent
+           ON adaptive_screen_runs_v2(implementation_fingerprint, recorded_at ASC, id ASC);
          CREATE TABLE IF NOT EXISTS adaptive_release_gate_reports (
              algorithm_version TEXT PRIMARY KEY,
              input_json TEXT NOT NULL,
              report_json TEXT NOT NULL,
              passed INTEGER NOT NULL,
              updated_at INTEGER NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS adaptive_release_gate_reports_v2 (
+             algorithm_version TEXT NOT NULL,
+             implementation_fingerprint TEXT NOT NULL,
+             qualification_json TEXT NOT NULL,
+             input_json TEXT NOT NULL,
+             report_json TEXT NOT NULL,
+             passed INTEGER NOT NULL,
+             updated_at INTEGER NOT NULL,
+             PRIMARY KEY (algorithm_version, implementation_fingerprint)
          );",
     )
     .map_err(|error| format!("initialize adaptive screen sqlite failed: {error}"))
@@ -8866,16 +9011,17 @@ fn adaptive_release_run_record_rows(
         .get("algorithm_version")
         .and_then(Value::as_str)
         .unwrap_or("adaptive_swing_v1");
+    let implementation_fingerprint = adaptive_release_implementation_fingerprint();
     conn.execute(
-        "DELETE FROM adaptive_screen_runs WHERE recorded_at < ?1",
+        "DELETE FROM adaptive_screen_runs_v2 WHERE recorded_at < ?1",
         params![keep_after],
     )
     .map_err(|error| format!("prune adaptive run evidence failed: {error}"))?;
     conn.execute(
-        "INSERT INTO adaptive_screen_runs
-           (run_id, trade_date, selected_codes_json, elapsed_millis, cache_hit, algorithm_version, recorded_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-         ON CONFLICT(run_id) DO UPDATE SET
+        "INSERT INTO adaptive_screen_runs_v2
+           (run_id, implementation_fingerprint, trade_date, selected_codes_json, elapsed_millis, cache_hit, algorithm_version, recorded_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(run_id, implementation_fingerprint) DO UPDATE SET
            trade_date = excluded.trade_date,
            selected_codes_json = excluded.selected_codes_json,
            elapsed_millis = excluded.elapsed_millis,
@@ -8884,6 +9030,7 @@ fn adaptive_release_run_record_rows(
            recorded_at = excluded.recorded_at",
         params![
             run_id,
+            implementation_fingerprint,
             trade_date,
             selected_codes_json,
             elapsed_millis.min(i64::MAX as u64) as i64,
@@ -8893,6 +9040,7 @@ fn adaptive_release_run_record_rows(
         ],
     )
     .map_err(|error| format!("record adaptive run evidence failed: {error}"))?;
+    adaptive_release_gate_recompute_operational_rows(conn)?;
     Ok(())
 }
 
@@ -8918,30 +9066,52 @@ fn adaptive_release_operational_evidence_rows(
     conn: &Connection,
 ) -> Result<(Option<usize>, Option<u64>, Option<u64>), String> {
     initialize_adaptive_exposure_db(conn)?;
+    let keep_after =
+        (epoch_millis().min(i64::MAX as u128) as i64).saturating_sub(30 * 24 * 60 * 60 * 1_000);
     let recent_json = {
         let mut statement = conn
             .prepare(
                 "SELECT selected_codes_json
-                 FROM adaptive_screen_runs
+                 FROM adaptive_screen_runs_v2
                  WHERE algorithm_version = 'adaptive_swing_v1'
-                 ORDER BY recorded_at DESC, id DESC
-                 LIMIT 5",
+                   AND implementation_fingerprint = ?1
+                   AND recorded_at >= ?2
+                 ORDER BY recorded_at ASC, id ASC",
             )
             .map_err(|error| format!("prepare adaptive run coverage query failed: {error}"))?;
         let rows = statement
-            .query_map([], |row| row.get::<_, String>(0))
+            .query_map(
+                params![adaptive_release_implementation_fingerprint(), keep_after],
+                |row| row.get::<_, String>(0),
+            )
             .map_err(|error| format!("query adaptive run coverage failed: {error}"))?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("read adaptive run coverage failed: {error}"))?
     };
-    let five_run_unique_coverage = if recent_json.len() == 5 {
-        let mut codes = HashSet::new();
-        for encoded in recent_json {
-            let row_codes = serde_json::from_str::<Vec<String>>(&encoded)
-                .map_err(|error| format!("parse adaptive run symbols failed: {error}"))?;
-            codes.extend(row_codes.into_iter().map(|code| code.to_ascii_uppercase()));
-        }
-        Some(codes.len())
+    let parsed_runs = recent_json
+        .into_iter()
+        .map(|encoded| {
+            serde_json::from_str::<Vec<String>>(&encoded)
+                .map(|codes| {
+                    codes
+                        .into_iter()
+                        .map(|code| code.to_ascii_uppercase())
+                        .collect::<HashSet<_>>()
+                })
+                .map_err(|error| format!("parse adaptive run symbols failed: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let five_run_unique_coverage = if parsed_runs.len() >= 5 {
+        parsed_runs
+            .windows(5)
+            .map(|window| {
+                window
+                    .iter()
+                    .flat_map(|codes| codes.iter().cloned())
+                    .collect::<HashSet<_>>()
+                    .len()
+            })
+            .min()
     } else {
         None
     };
@@ -8949,9 +9119,16 @@ fn adaptive_release_operational_evidence_rows(
         let value = conn
             .query_row(
                 "SELECT MAX(elapsed_millis)
-                 FROM adaptive_screen_runs
-                 WHERE algorithm_version = 'adaptive_swing_v1' AND cache_hit = ?1",
-                params![i64::from(cache_hit)],
+                 FROM adaptive_screen_runs_v2
+                 WHERE algorithm_version = 'adaptive_swing_v1'
+                   AND implementation_fingerprint = ?1
+                   AND cache_hit = ?2
+                   AND recorded_at >= ?3",
+                params![
+                    adaptive_release_implementation_fingerprint(),
+                    i64::from(cache_hit),
+                    keep_after
+                ],
                 |row| row.get::<_, Option<i64>>(0),
             )
             .map_err(|error| format!("query adaptive run latency failed: {error}"))?;
@@ -8974,22 +9151,28 @@ fn adaptive_release_gate_store_rows(
     conn: &Connection,
     input: &gp_core::AdaptiveReleaseGateInput,
     report: &gp_core::AdaptiveReleaseGateReport,
+    qualification: &Value,
 ) -> Result<(), String> {
     initialize_adaptive_exposure_db(conn)?;
     let input_json = serde_json::to_string(input)
         .map_err(|error| format!("serialize adaptive release input failed: {error}"))?;
     let report_json = serde_json::to_string(report)
         .map_err(|error| format!("serialize adaptive release report failed: {error}"))?;
+    let qualification_json = serde_json::to_string(qualification)
+        .map_err(|error| format!("serialize adaptive release qualification failed: {error}"))?;
     conn.execute(
-        "INSERT INTO adaptive_release_gate_reports
-           (algorithm_version, input_json, report_json, passed, updated_at)
-         VALUES ('adaptive_swing_v1', ?1, ?2, ?3, ?4)
-         ON CONFLICT(algorithm_version) DO UPDATE SET
+        "INSERT INTO adaptive_release_gate_reports_v2
+           (algorithm_version, implementation_fingerprint, qualification_json, input_json, report_json, passed, updated_at)
+         VALUES ('adaptive_swing_v1', ?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(algorithm_version, implementation_fingerprint) DO UPDATE SET
+           qualification_json = excluded.qualification_json,
            input_json = excluded.input_json,
            report_json = excluded.report_json,
            passed = excluded.passed,
            updated_at = excluded.updated_at",
         params![
+            adaptive_release_implementation_fingerprint(),
+            qualification_json,
             input_json,
             report_json,
             i64::from(report.passed),
@@ -9000,24 +9183,88 @@ fn adaptive_release_gate_store_rows(
     Ok(())
 }
 
+fn adaptive_release_gate_context_rows(
+    conn: &Connection,
+) -> Result<Option<(gp_core::AdaptiveReleaseGateInput, Value)>, String> {
+    let encoded = conn
+        .query_row(
+            "SELECT input_json, qualification_json
+             FROM adaptive_release_gate_reports_v2
+             WHERE algorithm_version = 'adaptive_swing_v1'
+               AND implementation_fingerprint = ?1",
+            params![adaptive_release_implementation_fingerprint()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|error| format!("load adaptive release gate context failed: {error}"))?;
+    encoded
+        .map(|(input_json, qualification_json)| {
+            let input = serde_json::from_str::<gp_core::AdaptiveReleaseGateInput>(&input_json)
+                .map_err(|error| format!("parse adaptive release input failed: {error}"))?;
+            let qualification = serde_json::from_str::<Value>(&qualification_json)
+                .map_err(|error| format!("parse adaptive release qualification failed: {error}"))?;
+            Ok((input, qualification))
+        })
+        .transpose()
+}
+
+fn adaptive_release_gate_recompute_operational_rows(conn: &Connection) -> Result<(), String> {
+    let Some((mut input, qualification)) = adaptive_release_gate_context_rows(conn)? else {
+        return Ok(());
+    };
+    let evidence = adaptive_release_operational_evidence_rows(conn)?;
+    input.five_run_unique_coverage = evidence.0;
+    input.first_run_millis = evidence.1;
+    input.cached_run_millis = evidence.2;
+    let report = gp_core::evaluate_adaptive_release_gate(&input);
+    adaptive_release_gate_store_rows(conn, &input, &report, &qualification)
+}
+
 fn adaptive_release_gate_load_rows(
     conn: &Connection,
 ) -> Result<Option<gp_core::AdaptiveReleaseGateReport>, String> {
     initialize_adaptive_exposure_db(conn)?;
     let encoded = conn
         .query_row(
-            "SELECT report_json FROM adaptive_release_gate_reports
-             WHERE algorithm_version = 'adaptive_swing_v1'",
-            [],
-            |row| row.get::<_, String>(0),
+            "SELECT input_json, report_json, qualification_json, passed
+             FROM adaptive_release_gate_reports_v2
+             WHERE algorithm_version = 'adaptive_swing_v1'
+               AND implementation_fingerprint = ?1",
+            params![adaptive_release_implementation_fingerprint()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
         )
         .optional()
         .map_err(|error| format!("load adaptive release gate failed: {error}"))?;
     encoded
-        .map(|value| {
-            serde_json::from_str(&value)
-                .map_err(|error| format!("parse adaptive release gate failed: {error}"))
-        })
+        .map(
+            |(input_json, report_json, qualification_json, stored_passed)| {
+                let input = serde_json::from_str::<gp_core::AdaptiveReleaseGateInput>(&input_json)
+                    .map_err(|error| format!("parse adaptive release input failed: {error}"))?;
+                let qualification =
+                    serde_json::from_str::<Value>(&qualification_json).map_err(|error| {
+                        format!("parse adaptive release qualification failed: {error}")
+                    })?;
+                let mut report =
+                    serde_json::from_str::<gp_core::AdaptiveReleaseGateReport>(&report_json)
+                        .map_err(|error| format!("parse adaptive release gate failed: {error}"))?;
+                report.passed = report.passed
+                    && stored_passed == 1
+                    && input.release_configuration_qualified == Some(true)
+                    && qualification.get("qualified").and_then(Value::as_bool) == Some(true)
+                    && qualification
+                        .get("implementation_fingerprint")
+                        .and_then(Value::as_str)
+                        == Some(adaptive_release_implementation_fingerprint());
+                Ok(report)
+            },
+        )
         .transpose()
 }
 
@@ -9025,33 +9272,41 @@ fn adaptive_release_gate_store_sync(
     app: &tauri::AppHandle,
     input: &gp_core::AdaptiveReleaseGateInput,
     report: &gp_core::AdaptiveReleaseGateReport,
+    qualification: &Value,
 ) -> Result<(), String> {
-    adaptive_release_gate_store_rows(&open_adaptive_screen_db(app)?, input, report)
+    adaptive_release_gate_store_rows(&open_adaptive_screen_db(app)?, input, report, qualification)
 }
 
 fn adaptive_release_gate_load_sync(
     app: &tauri::AppHandle,
 ) -> Result<Option<gp_core::AdaptiveReleaseGateReport>, String> {
-    adaptive_release_gate_load_rows(&open_adaptive_screen_db(app)?)
+    adaptive_release_gate_refresh_and_load_rows(&open_adaptive_screen_db(app)?)
+}
+
+fn adaptive_release_gate_refresh_and_load_rows(
+    conn: &Connection,
+) -> Result<Option<gp_core::AdaptiveReleaseGateReport>, String> {
+    adaptive_release_gate_recompute_operational_rows(conn)?;
+    adaptive_release_gate_load_rows(conn)
 }
 
 fn adaptive_exposure_recent_rows(
     conn: &Connection,
     current_trade_date: Option<&str>,
 ) -> Result<Vec<gp_core::AdaptiveRecentExposure>, String> {
-    let excluded_date = current_trade_date
+    let cutoff_date = current_trade_date
         .and_then(compact_date_key)
-        .unwrap_or_default();
+        .unwrap_or_else(|| "99999999".to_string());
     let mut statement = conn
         .prepare(
             "SELECT code, trade_date, bucket
              FROM adaptive_screen_exposure
-             WHERE trade_date <> ?1
+             WHERE trade_date < ?1
                AND
              trade_date IN (
                   SELECT DISTINCT trade_date
                   FROM adaptive_screen_exposure
-                  WHERE trade_date <> ?1
+                  WHERE trade_date < ?1
                   ORDER BY trade_date DESC
                   LIMIT 5
               )
@@ -9059,7 +9314,7 @@ fn adaptive_exposure_recent_rows(
         )
         .map_err(|error| format!("prepare adaptive exposure query failed: {error}"))?;
     let rows = statement
-        .query_map(params![excluded_date], |row| {
+        .query_map(params![cutoff_date], |row| {
             Ok(gp_core::AdaptiveRecentExposure {
                 code: row.get(0)?,
                 trade_date: row.get(1)?,

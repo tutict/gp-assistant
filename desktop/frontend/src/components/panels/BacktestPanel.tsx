@@ -296,7 +296,10 @@ export function BacktestResultView({ result }: { result: BacktestResult }) {
             {result.walk_forward_folds.map((fold) => (
               <div className="backtest-fold-row" key={`${fold.selection_date}-${fold.evaluation_end_date || "pending"}`}>
                 <span>
-                  <b>{fold.selection_date} → {fold.evaluation_end_date || "待评估"}</b>
+                  <b>
+                    {fold.signal_date ? `${fold.signal_date} 信号 → ` : ""}
+                    {fold.selection_date} 成交 → {fold.evaluation_end_date || "待评估"}
+                  </b>
                   <small>入选 {fold.selected_symbols.length} · 精度分母 {fold.evaluated_selection_count}/{fold.eligible_symbol_count}</small>
                 </span>
                 <span>

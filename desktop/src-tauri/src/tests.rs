@@ -77,6 +77,16 @@ fn adaptive_exposure_sqlite_deduplicates_same_day_and_keeps_five_trade_dates() {
         .expect("same-day rows should be excluded from novelty history");
     assert_eq!(prior_rows.len(), 5);
     assert!(prior_rows.iter().all(|row| row.trade_date != "20260706"));
+
+    let historical_rows = adaptive_exposure_recent_rows(&connection, Some("20260704"))
+        .expect("historical novelty history should use only prior trade dates");
+    assert_eq!(historical_rows.len(), 3);
+    assert!(
+        historical_rows
+            .iter()
+            .all(|row| row.trade_date.as_str() < "20260704"),
+        "future exposure must not affect a historical as-of rerun"
+    );
 }
 
 #[test]
@@ -123,6 +133,66 @@ fn adaptive_runtime_limits_match_the_release_contract() {
 }
 
 #[test]
+fn adaptive_prefetch_prepares_eighty_candidates_and_three_cached_benchmarks_offline() {
+    let candidates = (1..=80)
+        .map(|index| format!("{index:06}.SZ"))
+        .collect::<Vec<_>>();
+    let required = adaptive_required_history_codes(&candidates);
+    assert_eq!(required.len(), 83);
+    assert_eq!(&required[..80], candidates.as_slice());
+    assert!(adaptive_benchmark_codes()
+        .iter()
+        .all(|code| required.contains(&code.to_string())));
+
+    let rows = (0..60)
+        .map(|index| gp_core::HistoryBar {
+            date: format!("{:08}", 20_260_101 + index),
+            open: Some(10.0),
+            high: Some(10.2),
+            low: Some(9.8),
+            close: 10.0,
+            volume: Some(1_000.0),
+            capital: None,
+        })
+        .collect::<Vec<_>>();
+    let mut data = gp_core::CoreDataSet {
+        histories: required
+            .iter()
+            .map(|code| (code.clone(), rows.clone()))
+            .collect(),
+        ..gp_core::CoreDataSet::default()
+    };
+    assert!(
+        adaptive_missing_history_codes(&data, &required, Some("20260160")).is_empty(),
+        "complete local candidate and index histories must avoid network fetches"
+    );
+
+    data.histories.remove(&candidates[79]);
+    assert_eq!(
+        adaptive_missing_history_codes(&data, &required, Some("20260160")),
+        vec![candidates[79].clone()]
+    );
+}
+
+#[test]
+fn adaptive_timeout_and_progress_payloads_enforce_the_runtime_contract() {
+    let timed_out = tauri::async_runtime::block_on(adaptive_screen_with_timeout(
+        Duration::from_millis(1),
+        std::future::pending::<Result<(), String>>(),
+    ))
+    .expect_err("a pending adaptive run must respect the timeout wrapper");
+    assert!(timed_out.contains("20"));
+
+    let current =
+        adaptive_screen_progress_payload(Some("run-current"), "history_fetch", 24, "补齐日线");
+    let stale = adaptive_screen_progress_payload(Some("run-stale"), "complete", 100, "完成");
+    assert_eq!(current["run_id"], "run-current");
+    assert_eq!(current["stage"], "history_fetch");
+    assert_eq!(stale["run_id"], "run-stale");
+    assert_ne!(current["run_id"], stale["run_id"]);
+}
+
+#[test]
 fn adaptive_release_gate_uses_persisted_report_and_real_run_evidence() {
     let connection = Connection::open_in_memory().expect("in-memory sqlite should open");
     initialize_adaptive_exposure_db(&connection).expect("schema should initialize");
@@ -148,11 +218,29 @@ fn adaptive_release_gate_uses_persisted_report_and_real_run_evidence() {
         )
         .expect("run evidence should persist");
     }
+    connection
+        .execute(
+            "INSERT INTO adaptive_screen_runs_v2
+               (run_id, implementation_fingerprint, trade_date, selected_codes_json, elapsed_millis, cache_hit, algorithm_version, recorded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                "old-implementation-run",
+                "old-implementation-fingerprint",
+                "20260729",
+                "[]",
+                99_000_i64,
+                1_i64,
+                "adaptive_swing_v1",
+                epoch_millis().min(i64::MAX as u128) as i64,
+            ],
+        )
+        .expect("old implementation evidence should persist independently");
     let evidence = adaptive_release_operational_evidence_rows(&connection)
         .expect("operational evidence should aggregate");
     assert_eq!(evidence, (Some(20), Some(19_000), Some(1_900)));
 
     let input = gp_core::AdaptiveReleaseGateInput {
+        release_configuration_qualified: Some(true),
         legacy_annualized_return: Some(0.10),
         adaptive_annualized_return: Some(0.10),
         legacy_max_drawdown: Some(-0.12),
@@ -165,9 +253,16 @@ fn adaptive_release_gate_uses_persisted_report_and_real_run_evidence() {
         first_run_millis: evidence.1,
         cached_run_millis: evidence.2,
     };
+    let qualification = json!({
+        "implementation_fingerprint": adaptive_release_implementation_fingerprint(),
+        "qualified": true,
+        "mode": "auto",
+        "full_universe": true,
+        "oos_fold_count": 60
+    });
     let report = gp_core::evaluate_adaptive_release_gate(&input);
     assert!(report.passed);
-    adaptive_release_gate_store_rows(&connection, &input, &report)
+    adaptive_release_gate_store_rows(&connection, &input, &report, &qualification)
         .expect("passing gate should persist");
     assert!(
         adaptive_release_gate_load_rows(&connection)
@@ -176,18 +271,118 @@ fn adaptive_release_gate_uses_persisted_report_and_real_run_evidence() {
             .passed
     );
 
-    let failing_input = gp_core::AdaptiveReleaseGateInput {
-        cached_run_millis: Some(2_001),
-        ..input
-    };
-    let failing_report = gp_core::evaluate_adaptive_release_gate(&failing_input);
-    adaptive_release_gate_store_rows(&connection, &failing_input, &failing_report)
-        .expect("new report should replace the old version");
+    adaptive_release_run_record_rows(
+        &connection,
+        Some("run-slow-cache"),
+        &json!({
+            "algorithm_version": "adaptive_swing_v1",
+            "groups": [{
+                "key": "primary",
+                "items": (1..=4)
+                    .map(|code| json!({ "stock": { "code": format!("{code:06}.SZ") } }))
+                    .collect::<Vec<_>>()
+            }]
+        }),
+        "20260729",
+        2_001,
+        true,
+    )
+    .expect("later operational evidence should recompute the persisted gate");
     assert!(
         !adaptive_release_gate_load_rows(&connection)
             .expect("updated gate should load")
             .expect("gate should exist")
             .passed
+    );
+
+    adaptive_release_gate_store_rows(&connection, &input, &report, &qualification)
+        .expect("passing gate should be restaged for expiry verification");
+    let expired_at =
+        (epoch_millis().min(i64::MAX as u128) as i64).saturating_sub(31 * 24 * 60 * 60 * 1_000);
+    connection
+        .execute(
+            "UPDATE adaptive_screen_runs_v2
+             SET recorded_at = ?1
+             WHERE implementation_fingerprint = ?2",
+            params![expired_at, adaptive_release_implementation_fingerprint()],
+        )
+        .expect("current implementation evidence should expire");
+    assert!(
+        !adaptive_release_gate_refresh_and_load_rows(&connection)
+            .expect("route-time gate refresh should work")
+            .expect("gate should still exist")
+            .passed,
+        "expired operational evidence must disable adaptive routing before the next run"
+    );
+}
+
+#[test]
+fn adaptive_release_uses_the_worst_of_every_consecutive_five_run_window() {
+    let connection = Connection::open_in_memory().expect("in-memory sqlite should open");
+    initialize_adaptive_exposure_db(&connection).expect("schema should initialize");
+    for run in 0..6 {
+        let codes = if run < 5 {
+            (1..=4).collect::<Vec<_>>()
+        } else {
+            (100..120).collect::<Vec<_>>()
+        };
+        let items = codes
+            .into_iter()
+            .map(|code| json!({ "stock": { "code": format!("{code:06}.SZ") } }))
+            .collect::<Vec<_>>();
+        adaptive_release_run_record_rows(
+            &connection,
+            Some(&format!("window-run-{run}")),
+            &json!({
+                "algorithm_version": "adaptive_swing_v1",
+                "groups": [{ "key": "primary", "items": items }]
+            }),
+            "20260729",
+            if run == 0 { 10_000 } else { 1_000 },
+            run != 0,
+        )
+        .expect("window evidence should persist");
+    }
+    let evidence = adaptive_release_operational_evidence_rows(&connection)
+        .expect("all windows should aggregate");
+    assert_eq!(evidence.0, Some(4));
+}
+
+#[test]
+fn adaptive_release_qualification_requires_auto_full_universe_long_oos_configuration() {
+    let mut request = gp_core::BacktestRequest {
+        criteria: gp_core::ScreenCriteria::default(),
+        source: "criteria".to_string(),
+        strategy_mode: "adaptive_swing_v1:auto".to_string(),
+        stock_codes: Vec::new(),
+        start_date: "20200101".to_string(),
+        end_date: "20260729".to_string(),
+        top_n: 10,
+        initial_cash: 1_000_000.0,
+        rebalance_frequency: "monthly".to_string(),
+        transaction_cost_bps: 10.0,
+        benchmark: "candidate_equal_weight".to_string(),
+    };
+    let qualified = adaptive_release_backtest_qualification(&request, 60);
+    assert_eq!(qualified["qualified"], true);
+    assert_eq!(
+        qualified["implementation_fingerprint"],
+        adaptive_release_implementation_fingerprint()
+    );
+    assert_eq!(
+        adaptive_release_backtest_qualification(&request, 59)["qualified"],
+        false
+    );
+    request.strategy_mode = "adaptive_swing_v1:range".to_string();
+    assert_eq!(
+        adaptive_release_backtest_qualification(&request, 60)["qualified"],
+        false
+    );
+    request.strategy_mode = "adaptive_swing_v1:auto".to_string();
+    request.criteria.max_pe = Some(20.0);
+    assert_eq!(
+        adaptive_release_backtest_qualification(&request, 60)["qualified"],
+        false
     );
 }
 

@@ -1102,6 +1102,13 @@ pub fn adaptive_screen_stocks(
     });
 
     let primary_candidates = select_primary(&candidates, primary_limit);
+    if primary_candidates.len() < primary_limit {
+        return Err(CoreError::new(format!(
+            "市场状态/历史数据不足：行业分散上限应用后主榜仅能生成 {} 只，要求 {} 只",
+            primary_candidates.len(),
+            primary_limit
+        )));
+    }
     let primary_codes = primary_candidates
         .iter()
         .map(|candidate| candidate.stock.code.to_ascii_uppercase())

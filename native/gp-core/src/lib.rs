@@ -749,6 +749,8 @@ pub struct BacktestMetrics {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WalkForwardFold {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal_date: Option<String>,
     pub selection_date: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluation_end_date: Option<String>,
@@ -795,6 +797,7 @@ pub struct BacktestResult {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct AdaptiveReleaseGateInput {
+    pub release_configuration_qualified: Option<bool>,
     pub legacy_annualized_return: Option<f64>,
     pub adaptive_annualized_return: Option<f64>,
     pub legacy_max_drawdown: Option<f64>,
@@ -834,6 +837,14 @@ pub fn evaluate_adaptive_release_gate(
             requirement: requirement.to_string(),
         });
     };
+    push(
+        "release_configuration_qualified",
+        input
+            .release_configuration_qualified
+            .map(|value| if value { 1.0 } else { 0.0 }),
+        input.release_configuration_qualified == Some(true),
+        "auto mode, full universe, top 10, monthly, >=60 strict out-of-sample folds",
+    );
     let return_delta = input
         .adaptive_annualized_return
         .zip(input.legacy_annualized_return)
@@ -2248,6 +2259,7 @@ struct ActiveSelection {
 
 #[derive(Clone, Debug)]
 struct RebalanceSelection {
+    signal_date: NaiveDate,
     date: NaiveDate,
     selected_indices: Vec<usize>,
     eligible_indices: Vec<usize>,
@@ -2630,6 +2642,7 @@ fn simulate_walk_forward_portfolio_with_snapshots(
             total_turnover += turnover_value / equity_before_rebalance;
             rebalance_dates.push(date);
             selections.push(RebalanceSelection {
+                signal_date,
                 date,
                 selected_indices: active.selected_indices,
                 eligible_indices: active.eligible_indices,
@@ -3114,6 +3127,7 @@ fn evaluate_walk_forward_folds(
                     (0, 0, None)
                 };
             WalkForwardFold {
+                signal_date: Some(selection.signal_date.format("%Y-%m-%d").to_string()),
                 selection_date: selection.date.format("%Y-%m-%d").to_string(),
                 evaluation_end_date: evaluation_end.map(|date| date.format("%Y-%m-%d").to_string()),
                 selected_symbols,
