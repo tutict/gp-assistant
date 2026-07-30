@@ -34,6 +34,12 @@ function runButton(renderer: ReactTestRenderer) {
   );
 }
 
+function adaptiveModeSelect(renderer: ReactTestRenderer) {
+  return renderer.root.find(
+    (node) => node.type === "select" && node.props.id === "adaptiveMode",
+  );
+}
+
 function textContent(renderer: ReactTestRenderer): string {
   return renderer.root
     .findAll((node) => typeof node.children[0] === "string")
@@ -107,6 +113,37 @@ describe("ScreenPanel adaptive states", () => {
       await Promise.resolve();
     });
     expect(runButton(renderer).props.disabled).toBe(false);
+  });
+
+  it("enables manual regime modes only after the backend confirms adaptive rollout", async () => {
+    postJsonMock
+      .mockResolvedValueOnce({
+        algorithm_version: "legacy_balanced",
+        total: 0,
+        returned: 0,
+        items: [],
+        groups: [],
+      })
+      .mockResolvedValueOnce({
+        algorithm_version: "adaptive_swing_v1",
+        total: 0,
+        returned: 0,
+        items: [],
+        groups: [],
+      });
+    const renderer = await renderPanel();
+
+    expect(adaptiveModeSelect(renderer).props.disabled).toBe(true);
+
+    await act(async () => {
+      await runButton(renderer).props.onClick();
+    });
+    expect(adaptiveModeSelect(renderer).props.disabled).toBe(true);
+
+    await act(async () => {
+      await runButton(renderer).props.onClick();
+    });
+    expect(adaptiveModeSelect(renderer).props.disabled).toBe(false);
   });
 
   it.each([

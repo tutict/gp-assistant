@@ -39,6 +39,16 @@ const criteria: FilterCriteria = {
   scoreProfile: "balanced",
 };
 
+const fullUniverseCriteria: FilterCriteria = {
+  ...criteria,
+  requireInstitutionBuyRatio: false,
+  minRoe: "",
+  maxPe: "",
+  maxPb: "",
+  minMcap: "",
+  industry: "",
+};
+
 describe("LLM settings persistence", () => {
   it("drops API keys unless remember_key is enabled", () => {
     expect(sanitizePersistedLlmSettings({ api_key: "sk-test", model: "gpt", remember_key: false } as LlmSettings)).toEqual({
@@ -148,6 +158,15 @@ describe("contract payload builders", () => {
       exploration_limit: 10,
       run_id: "run-fixed",
     });
+  });
+
+  it("keeps an unfiltered adaptive request eligible for full-universe release evidence", () => {
+    const request = buildAdaptiveScreenRequest(fullUniverseCriteria, "auto", "run-release");
+
+    expect(request.criteria).not.toHaveProperty("min_deducted_net_profit_billion");
+    expect(request.criteria).not.toHaveProperty("min_deducted_net_profit_growth_rate");
+    expect(request.criteria).not.toHaveProperty("industry");
+    expect(request.criteria).not.toHaveProperty("min_roe");
   });
 
   it("builds screen criteria in backend schema shape", () => {
@@ -297,6 +316,45 @@ describe("response normalizers", () => {
       ...valid,
       volatility_snapshots: [{ symbol: "002432.SZ", date: "2026-07-17", atr: { value: "bad" } }],
     })).toThrow("回测接口未返回有效结果");
+  });
+
+  it("rejects malformed adaptive release extensions before rendering", () => {
+    const valid = {
+      metrics: { total_return: 0.12, num_stocks: 1 },
+      equity_curve: [{ date: "2026-07-17", equity: 1.12 }],
+      symbols: ["002432.SZ"],
+    };
+
+    expect(() => requireBacktestResult({
+      ...valid,
+      adaptive_release_gate: { passed: false, checks: {} },
+    })).toThrow("回测接口未返回有效结果");
+    expect(() => requireBacktestResult({
+      ...valid,
+      legacy_balanced_backtest: {},
+    })).toThrow("回测接口未返回有效结果");
+
+    expect(requireBacktestResult({
+      ...valid,
+      legacy_balanced_backtest: {
+        ...valid,
+        metrics: { ...valid.metrics, annualized_return: 0.1 },
+      },
+      adaptive_release_gate: {
+        passed: false,
+        checks: [{
+          key: "cached_run_millis",
+          passed: false,
+          actual: null,
+          requirement: "same-day cached run <= 2000 ms",
+        }],
+      },
+    })).toMatchObject({
+      adaptive_release_gate: {
+        passed: false,
+        checks: [{ key: "cached_run_millis" }],
+      },
+    });
   });
 
   it("normalizes nested screen, graph, and trend stock rows", () => {

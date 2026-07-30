@@ -75,8 +75,11 @@ export function buildAdaptiveScreenRequest(
   mode: AdaptiveScreenMode = "auto",
   runId: string = crypto.randomUUID?.() || "screen-" + Date.now(),
 ): AdaptiveScreenRequest {
+  const adaptiveCriteria = buildScreenCriteria(criteria, { limit: 80 });
+  delete adaptiveCriteria.min_deducted_net_profit_billion;
+  delete adaptiveCriteria.min_deducted_net_profit_growth_rate;
   return {
-    criteria: buildScreenCriteria(criteria, { limit: 80 }),
+    criteria: adaptiveCriteria,
     mode,
     horizon: "swing_10_30d",
     primary_limit: 10,
@@ -257,6 +260,27 @@ function isVolatilitySnapshot(value: unknown): boolean {
     && unavailableValid;
 }
 
+function isAdaptiveReleaseGate(value: unknown): boolean {
+  if (!isRecordValue(value) || typeof value.passed !== "boolean" || !Array.isArray(value.checks)) {
+    return false;
+  }
+  return value.checks.every((check) => isRecordValue(check)
+    && typeof check.key === "string"
+    && check.key.trim().length > 0
+    && typeof check.passed === "boolean"
+    && isOptionalFinite(check.actual)
+    && typeof check.requirement === "string");
+}
+
+function isNestedBacktestResult(value: unknown): boolean {
+  try {
+    requireBacktestResult(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function requireBacktestResult(value: unknown): BacktestResult {
   const result = asRecord(value);
   const metrics = asRecord(result.metrics);
@@ -301,6 +325,10 @@ export function requireBacktestResult(value: unknown): BacktestResult {
     ))
     || (result.volatility_message != null && typeof result.volatility_message !== "string")
     || (result.strategy_mode != null && typeof result.strategy_mode !== "string")
+    || (result.legacy_balanced_backtest != null
+      && !isNestedBacktestResult(result.legacy_balanced_backtest))
+    || (result.adaptive_release_gate != null
+      && !isAdaptiveReleaseGate(result.adaptive_release_gate))
     || (result.notes != null && !isStringArray(result.notes))
   ) {
     throw new Error("回测接口未返回有效结果，请刷新数据后重试。");

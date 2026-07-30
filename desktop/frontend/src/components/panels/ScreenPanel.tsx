@@ -37,6 +37,11 @@ interface ScreenPanelProps {
 
 type ScreenMode = "screen" | "sectorScreen" | "boardScreen" | "customScreen" | "trendScreen";
 
+function adaptiveRolloutEnabled(value: unknown): boolean {
+  return typeof value === "object" && value !== null
+    && (value as { algorithm_version?: unknown }).algorithm_version === "adaptive_swing_v1";
+}
+
 const TABS: { key: ScreenMode; label: string }[] = [
   { key: "screen", label: "智能选股" },
   { key: "sectorScreen", label: "概念分组" },
@@ -64,6 +69,7 @@ export function ScreenPanel({
   const [adaptiveProgress, setAdaptiveProgress] = useState<{ percent: number; message: string } | null>(null);
   const [lastAdaptiveRequest, setLastAdaptiveRequest] = useState<AdaptiveScreenRequest | undefined>();
   const activeRunIdRef = useRef<string | null>(null);
+  const manualAdaptiveModesEnabled = adaptiveRolloutEnabled(result);
 
   useEffect(() => {
     const listen = getTauriListen();
@@ -118,6 +124,9 @@ export function ScreenPanel({
       }
 
       const data = await postJson(endpoint, payload);
+      if (mode === "screen" && !adaptiveRolloutEnabled(data)) {
+        setAdaptiveMode("auto");
+      }
       setResult(data);
     } catch (err) {
       setError((err as Error).message);
@@ -151,7 +160,8 @@ export function ScreenPanel({
             <select
               id="adaptiveMode"
               value={adaptiveMode}
-              disabled={loading}
+              disabled={loading || !manualAdaptiveModesEnabled}
+              title={!manualAdaptiveModesEnabled ? "新版算法发布后可选择市场模式" : undefined}
               onChange={(event) => setAdaptiveMode(event.target.value as AdaptiveScreenMode)}
             >
               <option value="auto">自动识别</option>
