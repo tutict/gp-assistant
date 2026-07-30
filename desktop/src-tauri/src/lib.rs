@@ -5213,7 +5213,7 @@ fn adaptive_point_in_time_universe(
                     (previous.is_finite() && previous > 0.0 && latest.close.is_finite())
                         .then_some(latest.close / previous - 1.0)
                 });
-            } else if target.is_some() {
+            } else if target.is_some() && !quote_matches_target {
                 point_in_time.price = 0.0;
                 point_in_time.change_pct = None;
                 point_in_time.volume = None;
