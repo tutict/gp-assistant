@@ -287,11 +287,11 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         <span>自选股前台每 15 分钟更新</span>
         <button type="button" onClick={() => void refresh()} disabled={refreshing}>
           <RefreshCw size={15} className={refreshing ? "is-spinning" : ""} />
-          {refreshing ? "更新中" : "立即更新"}
+          <span>{refreshing ? "更新中" : "立即更新"}</span>
         </button>
         <button type="button" onClick={openKnowledge}
           aria-label={mobile ? "资料包同步" : "知识库管理"}>
-          <Database size={15} />{mobile ? "资料包同步" : "知识库管理"}
+          <Database size={15} /><span>{mobile ? "资料包同步" : "知识库管理"}</span>
         </button>
       </div>
     </header>

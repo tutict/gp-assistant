@@ -81,18 +81,19 @@
 .panel-actions { display: flex; gap: 8px; }
 .run-btn {
   min-width: 88px;
-  min-height: 40px;
+  min-height: var(--touch-comfort);
   background: var(--accent);
   color: var(--button-text);
   border: 1px solid color-mix(in srgb, var(--accent-strong) 70%, var(--accent));
-  padding: 8px 20px;
-  border-radius: 7px;
+  padding: 0 16px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-body);
   font-weight: 750;
   cursor: pointer;
-  box-shadow: 0 10px 24px rgba(226, 55, 47, 0.2);
-  transition: transform 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+  box-shadow: none;
+  transition: transform 0.16s ease, background 0.16s ease;
 }
-.run-btn:hover { background: var(--accent-strong); transform: translateY(-1px); box-shadow: 0 14px 28px rgba(226, 55, 47, 0.24); }
+.run-btn:hover { background: var(--accent-strong); transform: translateY(-1px); box-shadow: none; }
 .run-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
 /* News RAG controls */
@@ -281,7 +282,7 @@
   background: color-mix(in srgb, var(--surface-2) 88%, var(--bg));
 }
 .backtest-context-controls .source-toggle {
-  min-height: 28px;
+  min-height: var(--touch-dense);
   padding: 4px 10px;
   border-radius: 6px;
   background: transparent;
@@ -898,9 +899,8 @@
 }
 .agent-input {
   width: 100%;
-  height: 22px;
-  min-height: 22px;
-  max-height: 22px;
+  min-height: var(--touch-comfort);
+  max-height: 126px;
   resize: none;
   background: transparent;
   border: 0;
@@ -1402,7 +1402,7 @@
 }
 
 .llm-preset-btn {
-  min-height: 28px;
+  min-height: var(--touch-dense);
   padding: 4px 9px;
   border-color: color-mix(in srgb, var(--line-soft) 84%, transparent);
   border-radius: 8px;
@@ -1448,7 +1448,7 @@
   min-height: 32px;
   border-radius: 7px;
   padding: 6px 16px;
-  box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: none;
 }
 
 .llm-settings-panel.open .llm-settings-body {
@@ -1472,7 +1472,7 @@
   cursor: default;
 }
 
-.llm-settings-panel.dialog.open .llm-settings-body {
+.llm-settings-body.dialog {
   position: fixed;
   z-index: var(--z-modal);
   top: 50%;
@@ -1555,7 +1555,7 @@
   }
 
   .llm-flags label {
-    min-height: 22px;
+    min-height: var(--touch-dense);
   }
 
   .llm-preset-row {
@@ -1563,11 +1563,11 @@
   }
 
   .llm-preset-btn {
-    min-height: 26px;
+    min-height: var(--touch-dense);
   }
 
   .llm-switcher .save-btn {
-    min-height: 30px;
+    min-height: var(--touch-comfort);
   }
 }
 

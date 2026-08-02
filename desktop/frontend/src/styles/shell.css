@@ -15,7 +15,7 @@ body {
   overflow-x: hidden;
   background: var(--bg);
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--fs-body);
   line-height: 1.5;
   text-rendering: optimizeLegibility;
 }
@@ -267,7 +267,7 @@ a:hover {
 
 .panel-tab {
   min-width: 0;
-  min-height: 38px;
+  min-height: var(--touch-comfort);
   flex: 1 1 0;
   padding: 0 12px;
   border: 0;
@@ -275,7 +275,7 @@ a:hover {
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-data);
   font-weight: 700;
   white-space: nowrap;
   transition:
@@ -333,8 +333,8 @@ a:hover {
 .form-row textarea,
 .stock-code-input input {
   width: 100%;
-  min-height: var(--control-height);
-  padding: 8px 10px;
+  min-height: var(--touch-comfort);
+  padding: 8px 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
@@ -371,7 +371,7 @@ a:hover {
 .run-btn,
 .save-btn,
 .result-actions button {
-  min-height: var(--control-height);
+  min-height: var(--touch-comfort);
   padding: 0 16px;
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
@@ -379,7 +379,7 @@ a:hover {
   color: var(--button-text);
   box-shadow: none;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 750;
   transition:
     background-color var(--motion-fast) ease,
@@ -417,6 +417,20 @@ a:hover {
     color var(--motion-fast) ease,
     border-color var(--motion-fast) ease,
     background-color var(--motion-fast) ease;
+}
+
+.action-btn {
+  min-height: var(--touch-comfort);
+  padding-inline: 16px;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.run-btn:active,
+.save-btn:active,
+.action-btn:active {
+  filter: brightness(0.92);
+  transform: scale(0.98);
 }
 
 .action-btn:hover,

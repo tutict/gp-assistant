@@ -546,7 +546,7 @@
 
   .research-event-meta b {
     color: var(--accent);
-    font-size: 9px;
+    font-size: var(--fs-caption);
   }
 
   .research-source-tier {
@@ -555,7 +555,7 @@
     border-radius: var(--radius-xs);
     color: var(--text-secondary);
     background: var(--surface-2);
-    font-size: 9px;
+    font-size: var(--fs-caption);
     font-weight: 800;
   }
 
@@ -660,7 +660,7 @@
     padding: 2px 5px;
     border: 1px solid var(--line);
     color: var(--text-secondary);
-    font-size: 9px;
+    font-size: var(--fs-caption);
   }
 
   .agent-news-evidence article > div {
@@ -718,7 +718,7 @@
     }
   }
 
-  @media (max-width: 720px) {
+  @media (max-width: 768px) {
     .app[data-active-view="news"] .workbench {
       padding: 0;
     }
@@ -751,7 +751,7 @@
     }
 
     .research-eyebrow {
-      font-size: 9px;
+      font-size: var(--fs-caption);
     }
 
     .research-context h1 {
@@ -778,7 +778,11 @@
       min-width: 44px;
       min-height: 44px;
       padding: 10px;
-      font-size: 0;
+      font-size: var(--fs-caption);
+    }
+
+    .research-actions button > span {
+      display: none;
     }
 
     .research-icon-button {
@@ -1037,7 +1041,7 @@
     border-radius: var(--radius-xs);
     color: var(--text-secondary);
     background: var(--surface-2);
-    font-size: 9px;
+    font-size: var(--fs-caption);
     font-weight: 800;
   }
 
@@ -1075,7 +1079,7 @@
     align-items: center;
     gap: 5px;
     max-width: 220px;
-    min-height: 27px;
+    min-height: var(--touch-dense);
     padding: 3px 7px 3px 4px;
     border: 1px solid var(--line);
     border-radius: var(--radius-xs);
@@ -1096,7 +1100,7 @@
     height: 19px;
     color: #fff;
     background: var(--accent-muted);
-    font-size: 9px;
+    font-size: var(--fs-caption);
   }
 
   .research-citation-chips span {
@@ -1153,7 +1157,7 @@
   .research-composer label small {
     overflow: hidden;
     color: var(--text-secondary);
-    font-size: 9px;
+    font-size: var(--fs-caption);
     font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1178,7 +1182,7 @@
   .research-risk-boundary {
     margin: -2px 0 0;
     color: var(--text-secondary);
-    font-size: 9px;
+    font-size: var(--fs-caption);
     line-height: 1.35;
   }
 
@@ -1267,7 +1271,7 @@
 
   .research-evidence-empty li > b {
     font-family: "Fira Code", ui-monospace, Consolas, monospace;
-    font-size: 9px;
+    font-size: var(--fs-caption);
   }
 
   .research-evidence-card {
@@ -1311,7 +1315,7 @@
   .research-citation-ledger small {
     overflow: hidden;
     color: var(--text-tertiary);
-    font-size: 9px;
+    font-size: var(--fs-caption);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1329,7 +1333,7 @@
     flex-wrap: wrap;
     gap: 8px;
     color: var(--text-tertiary);
-    font-size: 9px;
+    font-size: var(--fs-caption);
   }
 
   .research-evidence-card blockquote {
@@ -1362,7 +1366,7 @@
 
   .research-evidence-card dt {
     color: var(--text-tertiary);
-    font-size: 9px;
+    font-size: var(--fs-caption);
   }
 
   .research-evidence-card dd {
@@ -1469,7 +1473,7 @@
   .knowledge-status span,
   .knowledge-section > small {
     color: var(--text-tertiary);
-    font-size: 9px;
+    font-size: var(--fs-caption);
   }
 
   .knowledge-status strong {
@@ -1597,7 +1601,7 @@
     border: 1px solid var(--line);
     color: var(--text-secondary);
     background: var(--bg);
-    font-size: 9px;
+    font-size: var(--fs-caption);
     white-space: pre-wrap;
   }
 }

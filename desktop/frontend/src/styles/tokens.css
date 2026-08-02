@@ -23,8 +23,18 @@
   --score: #f3c451;
   --score-soft: rgba(243, 196, 81, 0.14);
   --focus-ring: rgba(216, 61, 53, 0.34);
+  --fs-display: 24px;
+  --fs-headline: 20px;
+  --fs-title: 17px;
+  --fs-body: 14px;
+  --fs-data: 13px;
+  --fs-label: 12px;
+  --fs-caption: 11px;
   --control-height: 40px;
-  --touch-height: 44px;
+  --touch-comfort: 44px;
+  --touch-dense: 32px;
+  --touch-height: var(--touch-comfort);
+  --nav-height: 60px;
   --header-height: 56px;
   --sidebar-width: 208px;
   --bottom-nav-height: 66px;
@@ -49,6 +59,16 @@
   --z-modal: 50;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   color-scheme: dark;
+}
+
+@media (max-width: 768px) {
+  :root {
+    --fs-display: 20px;
+    --fs-headline: 18px;
+    --fs-title: 16px;
+    --header-height: 48px;
+    --bottom-nav-height: var(--nav-height);
+  }
 }
 
 [data-theme="light"] {
@@ -88,7 +108,10 @@ button,
 input,
 select,
 textarea {
-  font-family: Inter, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-family:
+    Inter, "Noto Sans SC", "Noto Sans CJK SC", "PingFang SC",
+    "HarmonyOS Sans", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei",
+    system-ui, sans-serif;
   letter-spacing: 0;
 }
 

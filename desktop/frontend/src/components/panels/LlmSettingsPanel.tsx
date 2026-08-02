@@ -1,5 +1,7 @@
 import { ArrowLeft, ChevronDown, Download, LoaderCircle, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { LlmModelListResult, LlmModelOption, LlmProviderSettings, LlmSettings } from "../../types";
 import { activeLlmProvider, normalizeLlmSettings } from "../../lib/contracts";
 import { postJson } from "../../lib/tauri";
@@ -70,6 +72,11 @@ interface ProviderModelCatalog {
   loaded: boolean;
   loading: boolean;
   error: string;
+}
+
+function DialogPortal({ children, enabled }: { children: ReactNode; enabled: boolean }) {
+  if (!enabled || typeof document === "undefined") return children;
+  return createPortal(children, document.body);
 }
 
 function providerId(prefix: string): string {
@@ -386,6 +393,7 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }
         </button>
       </div>
 
+      <DialogPortal enabled={open && isDialog}>
       {open && isDialog && (
         <button type="button" className="llm-settings-modal-backdrop" onClick={closePanel} tabIndex={-1} aria-hidden="true" />
       )}
@@ -393,7 +401,7 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }
       {open && (
         <div
           ref={isDialog ? dialogRef : undefined}
-          className="llm-settings-body llm-switcher"
+          className={"llm-settings-body llm-switcher" + (isDialog ? " dialog" : "")}
           role={isDialog ? "dialog" : undefined}
           aria-modal={isDialog || undefined}
           aria-label={isDialog ? "模型连接配置" : undefined}
@@ -678,6 +686,7 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }
           </div>
         </div>
       )}
+      </DialogPortal>
     </div>
   );
 }
