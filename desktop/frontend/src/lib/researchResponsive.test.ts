@@ -1,28 +1,68 @@
 import { describe, expect, it } from "vitest";
 
-describe("Android research workspace density", () => {
-  it("keeps the research feed compact even above the generic mobile breakpoint", async () => {
-    const nodeFs = "node:fs";
-    const { readFileSync } = await import(nodeFs);
-    const responsiveCss = readFileSync(new URL("../styles/responsive.css", import.meta.url), "utf8");
+const nodeFs = "node:fs";
+const { readdirSync, readFileSync } = await import(nodeFs);
+const stylesDirectory = new URL("../styles/", import.meta.url);
+const styleFiles = readdirSync(stylesDirectory) as string[];
+const styles: Array<{ file: string; css: string }> = styleFiles
+  .filter((file: string) => file.endsWith(".css"))
+  .map((file: string) => ({
+    file,
+    css: readFileSync(new URL(file, stylesDirectory), "utf8"),
+  }));
+const allCss = styles.map(({ file, css }) => `/* ${file} */\n${css}`).join("\n");
+const responsiveCss = styles.find(({ file }) => file === "responsive.css")?.css || "";
+const tokensCss = styles.find(({ file }) => file === "tokens.css")?.css || "";
 
+describe("mobile UI density contract", () => {
+  it("does not use platform classes to select layout density", () => {
+    expect(allCss).not.toMatch(
+      /\.(?:android-(?:phone|tablet|compact|bottom-nav|landscape|portrait)|mobile-tauri)\b/,
+    );
+  });
+
+  it("keeps root rem sizing stable and avoids text-only scaling", () => {
+    expect(allCss).not.toMatch(/(?:^|})\s*html\s*\{[^}]*\bfont-size\s*:/s);
+    for (const match of allCss.matchAll(/(?:-webkit-)?text-size-adjust\s*:\s*([^;}]+)/g)) {
+      expect(match[1].trim()).toBe("100%");
+    }
+  });
+
+  it("defines the shared typography and touch tokens", () => {
+    for (const token of [
+      "--fs-body: 14px",
+      "--fs-data: 13px",
+      "--fs-label: 12px",
+      "--fs-caption: 11px",
+      "--touch-comfort: 44px",
+      "--touch-dense: 32px",
+      "--nav-height: 60px",
+    ]) {
+      expect(tokensCss).toContain(token);
+    }
+  });
+
+  it("uses readable mobile navigation, tabs, and form controls", () => {
     expect(responsiveCss).toMatch(
-      /html\.android-phone \.research-workspace\s*\{[^}]*--research-header:\s*48px;[^}]*border:\s*0;/s,
+      /@media \(max-width: 768px\)[\s\S]*?\.nav-link\s*\{[^}]*font-size:\s*var\(--fs-caption\)/,
     );
     expect(responsiveCss).toMatch(
-      /html\.android-phone \.research-actions button\s*\{[^}]*width:\s*36px;[^}]*font-size:\s*0;/s,
+      /@media \(max-width: 768px\)[\s\S]*?\.panel-tab\s*\{[^}]*min-height:\s*var\(--touch-comfort\)[^}]*font-size:\s*var\(--fs-data\)/,
     );
     expect(responsiveCss).toMatch(
-      /html\.android-phone \.research-event-content > strong\s*\{[^}]*font-size:\s*11px;/s,
+      /\.form-row input,[\s\S]*?\.stock-code-input input\s*\{[^}]*min-height:\s*var\(--touch-comfort\)/,
     );
-    expect(responsiveCss).toMatch(
-      /html\.android-phone \.research-composer > button\s*\{[^}]*width:\s*36px;[^}]*height:\s*36px;/s,
-    );
-    expect(responsiveCss).toMatch(
-      /html\.android-phone \.research-inbox\s*\{[^}]*position:\s*fixed;[^}]*transform:\s*translateX\(-102%\);/s,
-    );
-    expect(responsiveCss).toMatch(
-      /html\.android-phone \.research-mobile-overlay\s*\{[^}]*position:\s*fixed;[^}]*display:\s*block;/s,
-    );
+  });
+
+  it("rejects literal font sizes below the readability floor", () => {
+    for (const { css } of styles) {
+      for (const match of css.matchAll(/font-size:\s*([\d.]+)px/g)) {
+        expect(Number(match[1])).toBeGreaterThanOrEqual(10);
+      }
+    }
+  });
+
+  it("keeps the responsive stylesheet within the maintainable limit", () => {
+    expect(responsiveCss.split(/\r?\n/).length).toBeLessThanOrEqual(1200);
   });
 });

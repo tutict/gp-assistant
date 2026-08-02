@@ -60,6 +60,8 @@ if (-not $SkipNode) {
     if (-not (Test-Path -LiteralPath (Join-Path $frontendDir "node_modules"))) {
         Invoke-Checked "Install frontend dependencies" $npm @("ci") $frontendDir
     }
+    Invoke-Checked "Frontend UI density guard" $npm @("run", "test:density") $frontendDir
+    Invoke-Checked "Frontend unit tests" $npm @("run", "test:unit") $frontendDir
     Invoke-Checked "Frontend React/TypeScript build" $npm @("run", "build") $frontendDir
 }
 
