@@ -13,10 +13,8 @@ interface WatchlistPanelProps {
 }
 
 function defaultWatchlistExpanded(): boolean {
-  if (typeof document !== "undefined" && document.documentElement.classList.contains("android-phone")) {
-    return false;
-  }
-  return typeof navigator === "undefined" || !/Android/i.test(navigator.userAgent || "");
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return true;
+  return !window.matchMedia("(max-width: 768px)").matches;
 }
 
 export function WatchlistPanel({ items, onChange, onObserve, onNews, onBacktest }: WatchlistPanelProps) {

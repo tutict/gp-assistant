@@ -27,11 +27,9 @@ describe("WatchlistPanel", () => {
     expect(html).toContain('aria-label="移除 002432.SZ"');
   });
 
-  it("starts collapsed on Android and can expand the stock list", async () => {
-    vi.stubGlobal("document", {
-      documentElement: {
-        classList: { contains: (name: string) => name === "android-phone" },
-      },
+  it("starts collapsed in a narrow viewport and can expand the stock list", async () => {
+    vi.stubGlobal("window", {
+      matchMedia: vi.fn().mockReturnValue({ matches: true }),
     });
     let renderer!: ReactTestRenderer;
     await act(async () => {

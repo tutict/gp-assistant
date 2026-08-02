@@ -124,46 +124,10 @@ export default function App({ onMounted }: AppProps) {
   useEffect(() => {
     const mobile = isMobileTauriRuntime();
     setMobileRuntime(mobile);
-
-    const updateRuntimeClasses = () => {
-      const root = document.documentElement;
-      const viewport = window.visualViewport;
-      const width = viewport?.width || window.innerWidth;
-      const height = viewport?.height || window.innerHeight;
-      const screenWidth = window.screen?.width || width;
-      const screenHeight = window.screen?.height || height;
-      const viewportShortSide = Math.min(width, height);
-      const viewportLongSide = Math.max(width, height);
-      const screenShortSide = Math.min(screenWidth, screenHeight);
-      const shortSide = Math.min(viewportShortSide, screenShortSide);
-      const pixelRatio = window.devicePixelRatio || 1;
-      const cssShortSide = screenShortSide / Math.max(pixelRatio, 1);
-      const highDensityPhone = pixelRatio >= 2.5 && cssShortSide <= 640;
-      const compact = mobile && (
-        highDensityPhone
-        || shortSide <= 560
-        || viewportShortSide <= 640
-        || (viewportShortSide <= 760 && viewportLongSide <= 1280)
-      );
-      const tablet = mobile && !compact;
-      root.classList.toggle("mobile-tauri", mobile);
-      root.classList.toggle("desktop-runtime", !mobile);
-      root.classList.toggle("android-tablet", tablet);
-      root.classList.toggle("android-phone", compact);
-      root.classList.toggle("android-compact", compact);
-      root.classList.toggle("android-bottom-nav", compact);
-      root.classList.toggle("android-landscape", compact && width >= height);
-      root.classList.toggle("android-portrait", compact && width < height);
-    };
-
-    updateRuntimeClasses();
-    window.addEventListener("resize", updateRuntimeClasses);
-    window.visualViewport?.addEventListener("resize", updateRuntimeClasses);
+    const root = document.documentElement;
+    root.classList.toggle("mobile-tauri", mobile);
+    root.classList.toggle("desktop-runtime", !mobile);
     onMounted?.();
-    return () => {
-      window.removeEventListener("resize", updateRuntimeClasses);
-      window.visualViewport?.removeEventListener("resize", updateRuntimeClasses);
-    };
   }, [onMounted]);
 
   // Hash routing
