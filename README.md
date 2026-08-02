@@ -64,6 +64,27 @@ Walk-forward 回测把每个调仓日至下一调仓日视为独立样本外区�
 这些约束会降低“漂亮但不可复现”的回测结果，更适合用于筛选规则迭代和发布前验证。
 
 从智能选股结果进入回测时，会携带完整的 adaptive_swing_v1 规格。每个调仓执行日使用前一交易日收盘前已公开的财务快照、行情、宽基指数和市场宽度重新判断状态，再于下一交易日成交，禁止复用今天的市场状态、未来数据或用同一收盘价同时生成信号并成交。
+### adaptive_swing_v1 发布验证
+
+
+发布验证前必须准备覆盖回测区间的全市场日线，以及带报告期和实际可见日期的历史因子快照；只有当前单期财务快照时，不能形成至少 60 个严格样本外折次的有效证据。
+
+先从 desktop/ 启动带 WebView2 调试端口的桌面开发版：
+
+~~~powershell
+cd desktop
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9223"
+npm run dev
+~~~
+
+然后在仓库根目录运行：
+
+~~~powershell
+node scripts/validate-adaptive-release.mjs
+~~~
+
+脚本会依次采集一次真实冷启动、四次同日缓存运行，执行符合发布资格的严格回测，并确认默认路由已切换到 adaptive_swing_v1。任一检查失败时脚本以非零状态退出，不会手工写入或伪造通过报告。代码指纹变化后可使用 --screens-only 只重采五次运行证据；补齐数据后可使用 --backtest-only 只重跑回测，也可通过 --end-date YYYYMMDD 固定验证截止日。
+
 
 ### 回测波动率快照
 

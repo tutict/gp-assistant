@@ -13,7 +13,7 @@ afterAll(() => {
 });
 
 describe("ScreenResultView", () => {
-  it("renders rollout status, regime evidence, override, coverage, and both adaptive lists", () => {
+  it("renders regime evidence, override, coverage, and both adaptive lists without rollout status", () => {
     const stock = (code: string, name: string) => ({
       stock: { code, name, industry: "测试行业", price: 10 },
       score: 15,
@@ -61,7 +61,8 @@ describe("ScreenResultView", () => {
       />,
     );
 
-    expect(markup).toContain("新版待发布门槛验证");
+    expect(markup).not.toContain("新版待发布门槛验证");
+    expect(markup).not.toContain("aria-label=\"算法发布状态\"");
     expect(markup).toContain("系统识别");
     expect(markup).toContain("震荡");
     expect(markup).toContain("人工覆盖为 趋势");

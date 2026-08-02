@@ -243,6 +243,43 @@ fn adaptive_runtime_limits_match_the_release_contract() {
 }
 
 #[test]
+fn backtest_history_timeout_is_extended_only_for_internal_release_validation() {
+    let mut payload = json!({});
+    assert_eq!(backtest_history_timeout_secs(&payload), 30);
+    payload[stringify!(internal_release_validation)] = json!(true);
+    assert_eq!(backtest_history_timeout_secs(&payload), 180);
+    payload[stringify!(internal_release_validation)] = json!(false);
+    assert_eq!(backtest_history_timeout_secs(&payload), 30);
+}
+
+#[test]
+fn adaptive_release_cold_start_flag_is_explicit() {
+    let mut payload = json!({});
+    assert_eq!(
+        adaptive_release_validation_force_cold_start(&payload),
+        false
+    );
+    payload[stringify!(internal_release_validation_cold_start)] = json!(true);
+    assert_eq!(adaptive_release_validation_force_cold_start(&payload), true);
+}
+
+#[test]
+fn adaptive_release_cold_start_adds_first_code_without_dropping_real_missing_codes() {
+    let required_codes = vec!["600000.SH".to_string(), "000001.SZ".to_string()];
+    let mut missing = vec!["000001.SZ".to_string()];
+    adaptive_release_force_cold_start_code(&mut missing, &required_codes);
+    assert_eq!(
+        missing,
+        vec!["000001.SZ".to_string(), "600000.SH".to_string()]
+    );
+    adaptive_release_force_cold_start_code(&mut missing, &required_codes);
+    assert_eq!(
+        missing,
+        vec!["000001.SZ".to_string(), "600000.SH".to_string()]
+    );
+}
+
+#[test]
 fn adaptive_operational_evidence_requires_the_default_release_screen_spec() {
     let mut request = gp_core::AdaptiveScreenRequest::default();
     assert!(adaptive_release_screen_request_qualified(&request));

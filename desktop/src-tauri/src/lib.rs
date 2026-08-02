@@ -70,6 +70,7 @@ const ADAPTIVE_SCREEN_HISTORY_PREFETCH_LIMIT: usize = 80;
 const MIN_ADAPTIVE_SCREEN_HISTORY_BARS: usize = 60;
 const ADAPTIVE_RELEASE_MIN_OOS_FOLDS: usize = 60;
 const BACKTEST_HISTORY_TIMEOUT_SECS: u64 = 30;
+const ADAPTIVE_RELEASE_BACKTEST_HISTORY_TIMEOUT_SECS: u64 = 180;
 const BACKTEST_HISTORY_CONCURRENCY: usize = 6;
 const MIN_BACKTEST_HISTORY_BARS: usize = 2;
 const OBSERVE_CAPITAL_TOTAL_TIMEOUT_SECS: u64 = 10;
@@ -1263,16 +1264,29 @@ async fn api_trend_screen_inner(app: tauri::AppHandle, payload: Value) -> Result
     Ok(result)
 }
 
+fn backtest_history_timeout_secs(payload: &Value) -> u64 {
+    if payload
+        .get(stringify!(internal_release_validation))
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        ADAPTIVE_RELEASE_BACKTEST_HISTORY_TIMEOUT_SECS
+    } else {
+        BACKTEST_HISTORY_TIMEOUT_SECS
+    }
+}
+
 #[tauri::command]
 async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let history_timeout_secs = backtest_history_timeout_secs(&payload);
     let prepared = tokio::time::timeout(
-        Duration::from_secs(BACKTEST_HISTORY_TIMEOUT_SECS),
+        Duration::from_secs(history_timeout_secs),
         prepare_backtest(&app, payload),
     )
     .await
     .map_err(|_| {
         format!(
-            "backtest history prefetch exceeded {BACKTEST_HISTORY_TIMEOUT_SECS}s; retry after refreshing market data."
+            "backtest history prefetch exceeded {history_timeout_secs}s; retry after refreshing market data."
         )
     })??;
     let PreparedBacktest {
@@ -4994,10 +5008,26 @@ fn filter_seed_histories(seed: &Value, valid_codes: &HashSet<String>) -> Value {
     Value::Object(histories)
 }
 
+fn adaptive_release_validation_force_cold_start(payload: &Value) -> bool {
+    payload
+        .get(stringify!(internal_release_validation_cold_start))
+        .and_then(Value::as_bool)
+        == Some(true)
+}
+
+fn adaptive_release_force_cold_start_code(missing: &mut Vec<String>, required_codes: &[String]) {
+    if let Some(code) = required_codes.first() {
+        if !missing.contains(code) {
+            missing.push(code.clone());
+        }
+    }
+}
+
 async fn prepare_adaptive_screen(
     app: &tauri::AppHandle,
     payload: Value,
 ) -> Result<PreparedAdaptiveScreen, String> {
+    let force_cold_start = adaptive_release_validation_force_cold_start(&payload);
     let data = cached_market_data_snapshot(app)?;
     let stock_override = screen_stock_override(app, &data, &payload)?;
     let mut request = adaptive_screen_request_from_payload(payload)?;
@@ -5044,11 +5074,14 @@ async fn prepare_adaptive_screen(
             adaptive_quote_target_date(universe, &candidates)
         })
         .or_else(|| expected_market_quote_date_from_epoch_ms(epoch_millis()));
-    let missing = adaptive_missing_history_codes(
+    let mut missing = adaptive_missing_history_codes(
         data.as_ref(),
         &required_codes,
         target_history_date.as_deref(),
     );
+    if force_cold_start {
+        adaptive_release_force_cold_start_code(&mut missing, &required_codes);
+    }
     let cache_hit = missing.is_empty();
 
     let mut history_override = HashMap::new();

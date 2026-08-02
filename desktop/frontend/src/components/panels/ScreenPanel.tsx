@@ -319,17 +319,6 @@ export const ScreenResultView = memo(function ScreenResultView({
         <div className="metric"><span>最高分</span><strong>{rows[0]?.score?.toFixed(2) ?? "--"}</strong></div>
       </div>
 
-      {resultRecord.rollout && !resultRecord.rollout.adaptive_default_enabled && (
-        <section className="adaptive-regime-summary" aria-label="算法发布状态">
-          <div>
-            <span>当前算法</span>
-            <strong>旧版均衡筛选</strong>
-            <em>新版待发布门槛验证</em>
-          </div>
-          <p>{resultRecord.rollout.reason}</p>
-        </section>
-      )}
-
       {resultRecord.market_regime && (
         <section className="adaptive-regime-summary" aria-label="市场状态">
           <div>
