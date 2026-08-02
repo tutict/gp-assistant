@@ -5658,3 +5658,296 @@ html.android-phone .watchlist-name {
 html.android-phone .watchlist-name.missing {
   font-size: 9px;
 }
+/* Android research workspace: compact the feed when the WebView is wider than 720px. */
+html.android-phone .app[data-active-view="news"] .workbench {
+  padding: 0 2px calc(var(--bottom-nav-height) + var(--safe-bottom) + 3px);
+}
+
+html.android-phone .research-workspace {
+  --research-header: 48px;
+  height: calc(100dvh - var(--header-height) - var(--bottom-nav-height));
+  min-height: 460px;
+  border: 0;
+  border-radius: 0;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html.android-phone .research-topbar {
+  gap: 6px;
+  padding: 5px 6px;
+}
+
+html.android-phone .research-context {
+  gap: 6px;
+}
+
+html.android-phone .research-context > div {
+  display: grid;
+  gap: 1px;
+}
+
+html.android-phone .research-mobile-inbox-button {
+  display: inline-grid;
+}
+
+html.android-phone .research-icon-button,
+html.android-phone .research-mobile-inbox-button {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+}
+
+html.android-phone .research-eyebrow {
+  font-size: 8px;
+}
+
+html.android-phone .research-context h1 {
+  max-width: 34vw;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.android-phone .research-context h1 small,
+html.android-phone .research-mode {
+  display: none;
+}
+
+html.android-phone .research-actions {
+  gap: 3px;
+}
+
+html.android-phone .research-actions > span {
+  display: none;
+}
+
+html.android-phone .research-actions button {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  gap: 0;
+  font-size: 0;
+}
+
+html.android-phone .research-actions button svg {
+  width: 15px;
+  height: 15px;
+}
+
+html.android-phone .research-columns {
+  display: block;
+}
+
+html.android-phone .research-stream {
+  height: 100%;
+}
+
+html.android-phone .research-stream-body {
+  padding: 0 8px 8px;
+}
+
+html.android-phone .research-daily-brief {
+  margin-top: 8px;
+  padding: 10px 11px 9px;
+  border-radius: 7px;
+}
+
+html.android-phone .research-brief-rule {
+  gap: 8px;
+}
+
+html.android-phone .research-brief-rule > span {
+  padding-left: 10px;
+  font-size: 10px;
+}
+
+html.android-phone .research-brief-rule > span::before {
+  width: 5px;
+  height: 5px;
+}
+
+html.android-phone .research-brief-rule time,
+html.android-phone .research-event-meta time {
+  font-size: 8px;
+}
+
+html.android-phone .research-daily-brief > p {
+  margin: 6px 0 8px;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+html.android-phone .research-brief-counts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 3px;
+}
+
+html.android-phone .research-brief-counts span {
+  padding: 3px 2px;
+  font-size: 8px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+html.android-phone .research-event-section,
+html.android-phone .research-answers {
+  padding-top: 12px;
+}
+
+html.android-phone .research-section-heading {
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+html.android-phone .research-section-heading > div {
+  gap: 2px;
+}
+
+html.android-phone .research-section-heading > div > span {
+  font-size: 11px;
+}
+
+html.android-phone .research-section-heading small,
+html.android-phone .research-section-heading > span {
+  font-size: 8px;
+}
+
+html.android-phone .research-event-list,
+html.android-phone .research-answers {
+  gap: 7px;
+}
+
+html.android-phone .research-event-group {
+  border-radius: 7px;
+}
+
+html.android-phone .research-event-group > header {
+  gap: 8px;
+  padding: 6px 9px;
+}
+
+html.android-phone .research-event-group > header span {
+  font-size: 10px;
+}
+
+html.android-phone .research-event-group > header b {
+  font-size: 8px;
+}
+
+html.android-phone .research-event {
+  grid-template-columns: 7px minmax(0, 1fr);
+  gap: 8px;
+  padding: 9px 10px;
+}
+
+html.android-phone .research-event-mark {
+  width: 6px;
+  height: 6px;
+  margin-top: 5px;
+}
+
+html.android-phone .research-event-content {
+  gap: 4px;
+}
+
+html.android-phone .research-event-meta {
+  gap: 5px;
+}
+
+html.android-phone .research-event-meta b,
+html.android-phone .research-source-tier {
+  font-size: 8px;
+}
+
+html.android-phone .research-source-tier {
+  padding: 1px 4px;
+}
+
+html.android-phone .research-event-content > strong {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+html.android-phone .research-event-summary {
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+html.android-phone .research-composer {
+  grid-template-columns: minmax(0, 1fr) 36px;
+  gap: 6px;
+  margin: 7px 6px 8px;
+  padding: 7px 7px 7px 9px;
+  border-radius: 7px;
+}
+
+html.android-phone .research-composer > div {
+  gap: 3px;
+}
+
+html.android-phone .research-composer label {
+  gap: 8px;
+  font-size: 9px;
+}
+
+html.android-phone .research-composer label small,
+html.android-phone .research-risk-boundary {
+  font-size: 8px;
+}
+
+html.android-phone .research-composer textarea {
+  min-height: 36px;
+  max-height: 90px;
+  padding: 4px 0 2px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+html.android-phone .research-composer > button {
+  width: 36px;
+  height: 36px;
+  border-radius: 7px;
+}
+
+html.android-phone .research-composer > button svg {
+  width: 16px;
+  height: 16px;
+}
+html.android-phone .research-inbox {
+  position: fixed;
+  z-index: var(--z-drawer);
+  top: var(--header-height);
+  bottom: calc(var(--bottom-nav-height) + var(--safe-bottom));
+  left: 0;
+  display: block;
+  width: min(310px, 86vw);
+  padding-top: 8px;
+  border-right: 1px solid var(--line);
+  transform: translateX(-102%);
+  transition: transform var(--motion-standard) var(--ease-out);
+  box-shadow: 14px 0 42px rgb(0 0 0 / 40%);
+}
+
+html.android-phone .research-inbox.mobile-open {
+  transform: translateX(0);
+}
+
+html.android-phone .research-inbox .research-mobile-close {
+  display: inline-grid;
+}
+
+html.android-phone .research-mobile-overlay {
+  position: fixed;
+  z-index: calc(var(--z-drawer) - 1);
+  inset: var(--header-height) 0 calc(var(--bottom-nav-height) + var(--safe-bottom));
+  display: block;
+  width: 100%;
+  border: 0;
+  background: rgb(0 0 0 / 58%);
+}
