@@ -27,6 +27,9 @@ struct LlmConfig {
     api_key: String,
     base_url: String,
     model: String,
+    api_format: String,
+    endpoint_mode: String,
+    custom_user_agent: Option<String>,
     temperature: f64,
     timeout_seconds: u64,
     json_mode: bool,
@@ -417,7 +420,10 @@ async fn call_model_with_config(
     };
     validate_llm_config(&config)?;
     let client = build_http_client_with_proxy(
-        "Mozilla/5.0 GuXuanYou/0.4 agent-harness",
+        config
+            .custom_user_agent
+            .as_deref()
+            .unwrap_or("Mozilla/5.0 GuXuanYou/0.4 agent-harness"),
         Duration::from_secs(config.timeout_seconds),
         None,
     )
@@ -476,10 +482,19 @@ fn resolve_llm_config(value: Option<&Value>) -> Option<LlmConfig> {
         .trim_end_matches('/')
         .to_string();
     let model = config_string(value, "model")?;
+    let api_format = normalize_api_format(config_string(value, "api_format").as_deref());
+    let endpoint_mode = if config_string(value, "endpoint_mode").as_deref() == Some("full_url") {
+        "full_url".to_string()
+    } else {
+        "base_url".to_string()
+    };
     Some(LlmConfig {
         api_key,
         base_url,
         model,
+        api_format,
+        endpoint_mode,
+        custom_user_agent: config_string(value, "custom_user_agent"),
         temperature: value
             .get("temperature")
             .and_then(Value::as_f64)
@@ -518,6 +533,13 @@ fn validate_llm_config(config: &LlmConfig) -> Result<(), String> {
     if config.api_key.len() > 8_192 {
         return Err("Agent LLM API key exceeds 8192 bytes".to_string());
     }
+    if config
+        .custom_user_agent
+        .as_ref()
+        .is_some_and(|value| value.len() > 256 || value.contains(['\r', '\n']))
+    {
+        return Err("Agent LLM custom User-Agent is invalid".to_string());
+    }
     let url = reqwest::Url::parse(&config.base_url)
         .map_err(|error| format!("Agent LLM base URL is invalid: {error}"))?;
     if !matches!(url.scheme(), "http" | "https") {
@@ -554,9 +576,15 @@ fn is_loopback_or_private_network_host(host: Option<&str>) -> bool {
 pub(crate) fn should_retry_without_json_mode(error: &str) -> bool {
     let normalized = error.to_ascii_lowercase();
     let rejects_request_shape = normalized.contains("http 400") || normalized.contains("http 422");
-    let identifies_json_mode = ["response_format", "json mode", "json_object", "json schema"]
-        .iter()
-        .any(|term| normalized.contains(term));
+    let identifies_json_mode = [
+        "response_format",
+        "text.format",
+        "json mode",
+        "json_object",
+        "json schema",
+    ]
+    .iter()
+    .any(|term| normalized.contains(term));
     rejects_request_shape && identifies_json_mode
 }
 
@@ -565,8 +593,14 @@ async fn post_model_request(
     config: &LlmConfig,
     request: &Value,
 ) -> Result<Value, String> {
-    let endpoint = chat_completions_endpoint(&config.base_url);
-    let body = serde_json::to_vec(request)
+    let endpoint = crate::llm_inference_endpoint(
+        &config.base_url,
+        &config.api_format,
+        config.endpoint_mode == "full_url",
+    )
+    .map_err(|error| format!("Agent LLM endpoint is invalid: {error}"))?;
+    let outbound_request = adapt_llm_request(request, &config.api_format);
+    let body = serde_json::to_vec(&outbound_request)
         .map_err(|error| format!("serialize Agent LLM request failed: {error}"))?;
     if body.len() > MAX_MODEL_REQUEST_BYTES {
         return Err("Agent LLM request exceeds 2 MiB".to_string());
@@ -575,7 +609,12 @@ async fn post_model_request(
         .post(endpoint)
         .header("Content-Type", "application/json")
         .body(body);
-    if !config.api_key.is_empty() {
+    if config.api_format == "anthropic_messages" {
+        builder = builder.header("anthropic-version", "2023-06-01");
+        if !config.api_key.is_empty() {
+            builder = builder.header("x-api-key", &config.api_key);
+        }
+    } else if !config.api_key.is_empty() {
         builder = builder.header("Authorization", format!("Bearer {}", config.api_key));
     }
     if let Some(organization) = &config.organization {
@@ -613,23 +652,92 @@ async fn post_model_request(
     }
     let envelope: Value = serde_json::from_str(&text)
         .map_err(|error| format!("parse Agent LLM envelope failed: {error}"))?;
-    let content = envelope
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
-        .and_then(|choice| choice.get("message"))
-        .and_then(|message| message.get("content"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| "Agent LLM response is missing choices[0].message.content".to_string())?;
+    let content = llm_response_content(&envelope, &config.api_format)
+        .ok_or_else(|| "Agent LLM response is missing generated text".to_string())?;
     parse_model_json(content)
 }
 
-fn chat_completions_endpoint(base_url: &str) -> String {
-    let base = base_url.trim_end_matches('/');
-    if base.ends_with("/chat/completions") {
-        base.to_string()
-    } else {
-        format!("{base}/chat/completions")
+fn normalize_api_format(value: Option<&str>) -> String {
+    match value {
+        Some("openai_responses") => "openai_responses",
+        Some("anthropic_messages") => "anthropic_messages",
+        _ => "openai_chat",
+    }
+    .to_string()
+}
+
+fn adapt_llm_request(request: &Value, api_format: &str) -> Value {
+    if api_format == "openai_chat" {
+        return request.clone();
+    }
+    if api_format == "openai_responses" {
+        let mut adapted = json!({
+            "model": request.get("model"),
+            "input": request.get("messages").cloned().unwrap_or_else(|| json!([])),
+            "temperature": request.get("temperature"),
+        });
+        if let Some(response_format) = request.get("response_format") {
+            adapted["text"] = json!({"format": response_format});
+        }
+        return adapted;
+    }
+
+    let messages = request
+        .get("messages")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let system = messages
+        .iter()
+        .filter(|message| message.get("role").and_then(Value::as_str) == Some("system"))
+        .filter_map(|message| message.get("content").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let messages = messages
+        .into_iter()
+        .filter(|message| message.get("role").and_then(Value::as_str) != Some("system"))
+        .collect::<Vec<_>>();
+    json!({
+        "model": request.get("model"),
+        "system": system,
+        "messages": messages,
+        "temperature": request.get("temperature"),
+        "max_tokens": 4096,
+    })
+}
+
+fn llm_response_content<'a>(envelope: &'a Value, api_format: &str) -> Option<&'a str> {
+    match api_format {
+        "openai_responses" => envelope
+            .get("output_text")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                envelope
+                    .get("output")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|item| item.get("content").and_then(Value::as_array))
+                    .flatten()
+                    .find_map(|content| content.get("text").and_then(Value::as_str))
+            }),
+        "anthropic_messages" => {
+            envelope
+                .get("content")
+                .and_then(Value::as_array)
+                .and_then(|items| {
+                    items
+                        .iter()
+                        .find_map(|item| item.get("text").and_then(Value::as_str))
+                })
+        }
+        _ => envelope
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("message"))
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_str),
     }
 }
 
@@ -1078,6 +1186,9 @@ mod harness_validation_tests {
             api_key: String::new(),
             base_url: base_url.to_string(),
             model: "test-model".to_string(),
+            api_format: "openai_chat".to_string(),
+            endpoint_mode: "base_url".to_string(),
+            custom_user_agent: None,
             temperature: 0.2,
             timeout_seconds: 30,
             json_mode: true,
@@ -1111,6 +1222,56 @@ mod harness_validation_tests {
         let error = validate_llm_config(&llm_config("http://models.example.test/v1"))
             .expect_err("public plaintext endpoints must remain blocked");
         assert!(error.contains("must use https"));
+    }
+
+    #[test]
+    fn adapts_endpoints_requests_and_responses_for_supported_protocols() {
+        assert_eq!(
+            crate::llm_inference_endpoint(
+                "https://api.example/v1/chat/completions",
+                "openai_responses",
+                false
+            )
+            .unwrap()
+            .as_str(),
+            "https://api.example/v1/responses"
+        );
+        assert_eq!(
+            crate::llm_inference_endpoint(
+                "https://api.example/custom/generate",
+                "anthropic_messages",
+                true
+            )
+            .unwrap()
+            .as_str(),
+            "https://api.example/custom/generate"
+        );
+        let request = json!({
+            "model": "test-model",
+            "messages": [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "user"}
+            ],
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"}
+        });
+        let responses = adapt_llm_request(&request, "openai_responses");
+        assert_eq!(responses["input"][0]["role"], "system");
+        assert_eq!(responses["text"]["format"]["type"], "json_object");
+        let anthropic = adapt_llm_request(&request, "anthropic_messages");
+        assert_eq!(anthropic["system"], "system");
+        assert_eq!(anthropic["messages"][0]["role"], "user");
+        assert_eq!(
+            llm_response_content(&json!({"output_text": "{\"ok\":true}"}), "openai_responses"),
+            Some("{\"ok\":true}")
+        );
+        assert_eq!(
+            llm_response_content(
+                &json!({"content": [{"type": "text", "text": "ok"}]}),
+                "anthropic_messages"
+            ),
+            Some("ok")
+        );
     }
 
     #[test]

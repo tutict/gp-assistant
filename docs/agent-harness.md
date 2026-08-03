@@ -14,13 +14,14 @@ Agent 页面采用“本地工具取证 → 模型综合 → 安全合并”的�
 
 ## 真实模型链路
 
-前端把当前模型连接、最近 12 条对话历史、模式和最多 50 只自选股上下文传给 Tauri。后端先运行 `gp-core` 的确定性工具，再调用模型连接的 OpenAI Chat Completions 兼容端点：
+前端把当前模型连接、最近 12 条对话历史、模式和最多 50 只自选股上下文传给 Tauri。后端先运行 `gp-core` 的确定性工具，再按连接档案选择 OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages 上游协议：
 
-1. 将配置的基础地址规范化为 `/chat/completions`。
+1. 校验模型地址与凭据边界；公网端点必须使用 HTTPS，基础地址按所选协议规范化。
 2. 发送 system 方法卡和包含问题、历史、压缩工具结果的 user JSON。
 3. 优先请求 JSON 模式；仅当端点以 400/422 明确拒绝 `response_format`/JSON 模式时，才重试一次普通请求。鉴权、超时、5xx、超限和解析错误不会重复计费请求。
-4. 仅接收 `reply`、`answer_sections`、`warnings`、`next_actions` 四类模型字段；摘要和每条事实 bullet 都必须邻近引用证据目录中的有效 `[E#]`，缺失或未知编号会回退本地结果。
-5. 拒绝直接交易、收益承诺和操纵市场内容，并始终补上“仅供选股研究，不构成投资建议”。
+4. 基础地址模式会按协议拼接 `/chat/completions`、`/responses` 或 `/messages`；完整 URL 模式则原样请求配置地址。
+5. 仅接收 `reply`、`answer_sections`、`warnings`、`next_actions` 四类模型字段；摘要和每条事实 bullet 都必须邻近引用证据目录中的有效 `[E#]`，缺失或未知编号会回退本地结果。
+6. 拒绝直接交易、收益承诺和操纵市场内容，并始终补上“仅供选股研究，不构成投资建议”。
 
 本地 Ollama、LM Studio、vLLM 等兼容服务可以不填 API Key。HTTP 仅允许 loopback 或私有局域网 IP 的本地模型；公共远程模型必须使用 HTTPS。专家和研报模式只会使用应用内显式配置后传入的连接及其自身凭据，未传连接配置时会回退本地工具结果，绝不会继承 `OPENAI_*` 环境密钥。IPC payload 限制为 512 KiB、问题限制为 8000 字符、模型请求与响应体各限制为 2 MiB；工具上下文被压缩时会向模型标记 `tool_result_truncated=true`。远程服务错误会脱敏。
 

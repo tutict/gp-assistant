@@ -257,6 +257,9 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/llm/models": async ({ invoke, payload }) => invoke("api_llm_models", {
     payload: withAndroidNetworkOptions(asRecord(payload)),
   }),
+  "/api/llm/test": async ({ invoke, payload }) => invoke("api_llm_test", {
+    payload: withAndroidNetworkOptions(asRecord(payload)),
+  }),
   "/api/agent": async ({ invoke, payload }) => invokeAgent(invoke, payload),
   "/api/agent/stream": async ({ invoke, payload }) => invokeAgent(invoke, payload),
 };

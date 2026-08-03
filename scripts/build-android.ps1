@@ -594,6 +594,24 @@ function Update-AndroidProjectForLanImport {
         }
     }
 }
+
+function Use-WindowsNpmCommandInAndroidBuildTask {
+    if (-not $IsWindows -and $env:OS -ne "Windows_NT") {
+        return
+    }
+
+    $BuildTask = Join-Path $AndroidProjectDir "buildSrc\src\main\java\com\tutict\stockoptimizer\kotlin\BuildTask.kt"
+    if (-not (Test-Path -LiteralPath $BuildTask)) {
+        return
+    }
+
+    $content = Get-Content -LiteralPath $BuildTask -Raw
+    $updated = $content -replace 'val executable = """npm""";', 'val executable = """npm.cmd""";'
+    if ($updated -ne $content) {
+        [System.IO.File]::WriteAllText($BuildTask, $updated, [System.Text.UTF8Encoding]::new($false))
+        Write-Host "Configured generated Android build task to use npm.cmd on Windows."
+    }
+}
 Initialize-AndroidEnvironment
 
 Assert-EnvPath "ANDROID_HOME" "Install Android SDK and set ANDROID_HOME to the SDK directory."
@@ -628,6 +646,7 @@ Invoke-Checked "Prepare Tauri Android frontend assets" "powershell.exe" @(
 Push-Location $DesktopDir
 try {
     Update-AndroidProjectForLanImport
+    Use-WindowsNpmCommandInAndroidBuildTask
     Use-LocalGradleDistribution
     Clear-TauriAndroidPluginCache
     $GradleProblemsReportDir = Join-Path $AndroidProjectDir "build\reports\problems"

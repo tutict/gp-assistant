@@ -1,8 +1,14 @@
-import { ArrowLeft, ChevronDown, Download, LoaderCircle, Plus, X } from "lucide-react";
+import { Activity, ArrowLeft, ChevronDown, Download, Eye, EyeOff, LoaderCircle, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { LlmModelListResult, LlmModelOption, LlmProviderSettings, LlmSettings } from "../../types";
+import type {
+  LlmConnectionTestResult,
+  LlmModelListResult,
+  LlmModelOption,
+  LlmProviderSettings,
+  LlmSettings,
+} from "../../types";
 import { activeLlmProvider, normalizeLlmSettings } from "../../lib/contracts";
 import { postJson } from "../../lib/tauri";
 
@@ -25,6 +31,8 @@ const PROVIDER_PRESETS = [
     provider: "deepseek",
     base_url: "https://api.deepseek.com/v1",
     model: "deepseek-chat",
+    api_format: "openai_chat",
+    endpoint_mode: "base_url",
     json_mode: false,
   },
   {
@@ -33,6 +41,8 @@ const PROVIDER_PRESETS = [
     provider: "zhipu",
     base_url: "https://open.bigmodel.cn/api/paas/v4",
     model: "glm-4-flash",
+    api_format: "openai_chat",
+    endpoint_mode: "base_url",
     json_mode: false,
   },
   {
@@ -41,6 +51,8 @@ const PROVIDER_PRESETS = [
     provider: "qwen",
     base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     model: "qwen-plus",
+    api_format: "openai_chat",
+    endpoint_mode: "base_url",
     json_mode: false,
   },
   {
@@ -49,6 +61,8 @@ const PROVIDER_PRESETS = [
     provider: "openai-compatible",
     base_url: "https://api.openai.com/v1",
     model: "gpt-4o-mini",
+    api_format: "openai_chat",
+    endpoint_mode: "base_url",
     json_mode: false,
   },
   {
@@ -57,6 +71,8 @@ const PROVIDER_PRESETS = [
     provider: "local",
     base_url: "http://127.0.0.1:11434/v1",
     model: "qwen2.5:7b",
+    api_format: "openai_chat",
+    endpoint_mode: "base_url",
     json_mode: false,
   },
 ] as const;
@@ -72,6 +88,11 @@ interface ProviderModelCatalog {
   loaded: boolean;
   loading: boolean;
   error: string;
+}
+
+interface ProviderConnectionState {
+  state: "idle" | "testing" | "success" | "error";
+  text: string;
 }
 
 function DialogPortal({ children, enabled }: { children: ReactNode; enabled: boolean }) {
@@ -131,8 +152,11 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }
   const providers = normalized.providers || [];
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
   const [modelCatalogs, setModelCatalogs] = useState<Record<string, ProviderModelCatalog>>({});
+  const [connectionStates, setConnectionStates] = useState<Record<string, ProviderConnectionState>>({});
+  const [visibleApiKeys, setVisibleApiKeys] = useState<Record<string, boolean>>({});
   const [modelMenuProviderId, setModelMenuProviderId] = useState<string | null>(null);
   const modelRequestTokens = useRef<Record<string, number>>({});
+  const connectionRequestTokens = useRef<Record<string, number>>({});
   const toggleButtonRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const isDialog = presentation === "dialog";
@@ -192,10 +216,10 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }
     : editingCatalog?.error
       ? editingCatalog.error
       : configuredModelUnavailable
-        ? "当前模型不在供应商返回的列表中，请重新选择。"
+        ? "当前模型不在返回列表中，可保留手动 ID 或重新选择。"
         : editingCatalog?.loaded
           ? "已拉取 " + availableModels.length + " 个模型，点击右侧箭头选择默认模型。"
-          : "填写接口地址及所需密钥后，先拉取供应商模型列表。";
+          : "可直接输入模型 ID，或从供应商拉取模型列表。";
   const modelHintTone = editingCatalog?.error
     ? "error"
     : configuredModelUnavailable
@@ -231,16 +255,34 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }
     setModelMenuProviderId((current) => current === id ? null : current);
   }, []);
 
+  const invalidateProviderConnection = useCallback((id?: string) => {
+    if (!id) return;
+    connectionRequestTokens.current[id] = (connectionRequestTokens.current[id] || 0) + 1;
+    setConnectionStates((current) => {
+      if (!current[id]) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+  }, []);
+
   const updateProvider = useCallback((id: string | undefined, patch: Partial<LlmProviderSettings>) => {
     if (!id) return;
-    if (["provider", "base_url", "api_key"].some((key) => Object.prototype.hasOwnProperty.call(patch, key))) {
+    if (["provider", "base_url", "api_key", "api_format", "endpoint_mode", "custom_user_agent"].some(
+      (key) => Object.prototype.hasOwnProperty.call(patch, key),
+    )) {
       invalidateProviderModels(id);
+    }
+    if (["provider", "base_url", "api_key", "model", "api_format", "endpoint_mode", "custom_user_agent"].some(
+      (key) => Object.prototype.hasOwnProperty.call(patch, key),
+    )) {
+      invalidateProviderConnection(id);
     }
     commit({
       ...normalized,
       providers: providers.map((provider) => provider.id === id ? { ...provider, ...patch } : provider),
     });
-  }, [commit, invalidateProviderModels, normalized, providers]);
+  }, [commit, invalidateProviderConnection, invalidateProviderModels, normalized, providers]);
 
   const fetchProviderModels = useCallback(async (provider: LlmProviderSettings) => {
     const id = provider.id;
@@ -279,6 +321,9 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }
         provider: provider.provider || "openai-compatible",
         base_url: baseUrl,
         api_key: provider.api_key || "",
+        api_format: provider.api_format || "openai_chat",
+        endpoint_mode: provider.endpoint_mode || "base_url",
+        custom_user_agent: provider.custom_user_agent || "",
         timeout_seconds: timeoutSeconds,
       }, { timeoutMs: (timeoutSeconds + 5) * 1000 });
       if (modelRequestTokens.current[id] !== requestToken) return;
@@ -315,6 +360,52 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }
     }
   }, [invalidateProviderModels, showStatus]);
 
+  const testProviderConnection = useCallback(async (provider: LlmProviderSettings) => {
+    const id = provider.id;
+    if (!id) return;
+    if (!provider.base_url?.trim() || !provider.model?.trim()) {
+      setConnectionStates((current) => ({
+        ...current,
+        [id]: { state: "error", text: "请先填写接口地址和默认模型。" },
+      }));
+      return;
+    }
+    const timeoutSeconds = Math.max(5, Math.min(120, Math.round(provider.timeout ?? 60)));
+    const requestToken = (connectionRequestTokens.current[id] || 0) + 1;
+    connectionRequestTokens.current[id] = requestToken;
+    setConnectionStates((current) => ({
+      ...current,
+      [id]: { state: "testing", text: "正在测试模型连接…" },
+    }));
+    try {
+      const result = await postJson<LlmConnectionTestResult>("/api/llm/test", {
+        base_url: provider.base_url.trim(),
+        api_key: provider.api_key || "",
+        model: provider.model.trim(),
+        api_format: provider.api_format || "openai_chat",
+        endpoint_mode: provider.endpoint_mode || "base_url",
+        custom_user_agent: provider.custom_user_agent || "",
+        timeout_seconds: timeoutSeconds,
+      }, { timeoutMs: (timeoutSeconds + 5) * 1000 });
+      if (connectionRequestTokens.current[id] !== requestToken) return;
+      setConnectionStates((current) => ({
+        ...current,
+        [id]: {
+          state: "success",
+          text: `连接成功 · ${result.elapsed_ms ?? 0} ms`,
+        },
+      }));
+      showStatus("连接成功");
+    } catch (error) {
+      if (connectionRequestTokens.current[id] !== requestToken) return;
+      setConnectionStates((current) => ({
+        ...current,
+        [id]: { state: "error", text: modelLoadError(error) },
+      }));
+      showStatus("连接失败", "neutral");
+    }
+  }, [showStatus]);
+
   const addPreset = useCallback((preset: typeof PROVIDER_PRESETS[number]) => {
     const nextProvider: LlmProviderSettings = {
       ...preset,
@@ -339,6 +430,9 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }
       provider: "custom",
       base_url: "",
       model: "",
+      api_format: "openai_chat",
+      endpoint_mode: "base_url",
+      custom_user_agent: "",
       temperature: 0.7,
       timeout: 60,
       json_mode: false,
@@ -353,26 +447,31 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }
   const removeProvider = useCallback((id?: string) => {
     if (!id || providers.length <= 1) return;
     invalidateProviderModels(id);
+    invalidateProviderConnection(id);
     const nextProviders = providers.filter((provider) => provider.id !== id);
     const activeProviderId = normalized.active_provider_id === id ? nextProviders[0]?.id : normalized.active_provider_id;
     commit({ active_provider_id: activeProviderId, providers: nextProviders });
     if (editingProviderId === id) setEditingProviderId(activeProviderId || null);
     showStatus("已删除", "neutral");
-  }, [commit, editingProviderId, invalidateProviderModels, normalized.active_provider_id, providers, showStatus]);
+  }, [commit, editingProviderId, invalidateProviderConnection, invalidateProviderModels, normalized.active_provider_id, providers, showStatus]);
 
   const clearAll = useCallback(() => {
     onChange(null);
     setEditingProviderId(null);
     setModelCatalogs({});
+    setConnectionStates({});
+    setVisibleApiKeys({});
     setModelMenuProviderId(null);
     modelRequestTokens.current = {};
+    connectionRequestTokens.current = {};
     showStatus("已清空", "neutral");
   }, [onChange, showStatus]);
 
   const save = useCallback(() => {
     commit(normalized);
     showStatus("已保存");
-  }, [commit, normalized, showStatus]);
+    closePanel();
+  }, [closePanel, commit, normalized, showStatus]);
 
   return (
     <div className={`llm-settings-panel ${open ? "open" : ""} ${isDialog ? "dialog" : ""}`}>
@@ -459,15 +558,33 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }
                       <span>连接配置</span>
                       <strong>{editingProvider.name || "自定义连接"}</strong>
                     </div>
-                    <button
-                      type="button"
-                      className="clear-btn"
-                      onClick={() => removeProvider(editingProvider.id)}
-                      disabled={providers.length <= 1}
-                    >
-                      删除
-                    </button>
+                    <div className="llm-editor-actions">
+                      <button
+                        type="button"
+                        className="llm-test-btn"
+                        onClick={() => void testProviderConnection(editingProvider)}
+                        disabled={connectionStates[editingProvider.id || ""]?.state === "testing"}
+                      >
+                        {connectionStates[editingProvider.id || ""]?.state === "testing"
+                          ? <LoaderCircle size={15} aria-hidden="true" />
+                          : <Activity size={15} aria-hidden="true" />}
+                        测试连接
+                      </button>
+                      <button
+                        type="button"
+                        className="clear-btn"
+                        onClick={() => removeProvider(editingProvider.id)}
+                        disabled={providers.length <= 1}
+                      >
+                        删除
+                      </button>
+                    </div>
                   </div>
+                  {connectionStates[editingProvider.id || ""] && (
+                    <p className={`llm-connection-state ${connectionStates[editingProvider.id || ""].state}`} role="status">
+                      {connectionStates[editingProvider.id || ""].text}
+                    </p>
+                  )}
 
                   <div className="llm-editor-row">
                     <div className="form-row">
@@ -483,38 +600,53 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }
 
                     <div className="form-row">
                       <label htmlFor="llmProviderKind">供应商类型</label>
-                      <div
-                        className="llm-provider-kind-grid"
-                        role="radiogroup"
-                        aria-label="供应商类型"
-                      >
-                        {PROVIDER_KINDS.map((kind) => {
-                          const selected = (editingProvider.provider || "custom") === kind.id;
-                          return (
-                            <button
-                              key={kind.id}
-                              type="button"
-                              role="radio"
-                              aria-checked={selected}
-                              className={`llm-provider-kind-option ${selected ? "active" : ""}`}
-                              onClick={() => updateProvider(editingProvider.id, { provider: kind.id })}
-                            >
-                              <span>{kind.label}</span>
-                            </button>
-                          );
+                      <select
+                        id="llmProviderKind"
+                        value={editingProvider.provider || "custom"}
+                        onChange={(event) => updateProvider(editingProvider.id, {
+                          provider: event.target.value,
+                          ...(event.target.value === "anthropic-compatible"
+                            ? { api_format: "anthropic_messages" as const }
+                            : {}),
                         })}
-                      </div>
+                      >
+                        {PROVIDER_KINDS.map((kind) => (
+                          <option key={kind.id} value={kind.id}>{kind.label}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
 
-                  <div className="form-row">
-                    <label htmlFor="llmBaseUrl">接口地址</label>
+                  <div className="form-row llm-endpoint-field">
+                    <div className="llm-field-label">
+                      <label htmlFor="llmBaseUrl">API 请求地址</label>
+                      <div className="llm-endpoint-mode" role="group" aria-label="请求地址模式">
+                        <button
+                          type="button"
+                          className={(editingProvider.endpoint_mode || "base_url") === "base_url" ? "active" : ""}
+                          aria-pressed={(editingProvider.endpoint_mode || "base_url") === "base_url"}
+                          onClick={() => updateProvider(editingProvider.id, { endpoint_mode: "base_url" })}
+                        >
+                          基础地址
+                        </button>
+                        <button
+                          type="button"
+                          className={editingProvider.endpoint_mode === "full_url" ? "active" : ""}
+                          aria-pressed={editingProvider.endpoint_mode === "full_url"}
+                          onClick={() => updateProvider(editingProvider.id, { endpoint_mode: "full_url" })}
+                        >
+                          完整 URL
+                        </button>
+                      </div>
+                    </div>
                     <input
                       id="llmBaseUrl"
                       type="url"
                       value={editingProvider.base_url || ""}
                       onChange={(event) => updateProvider(editingProvider.id, { base_url: normalizeBaseUrl(event.target.value) })}
-                      placeholder="https://api.example.com/v1"
+                      placeholder={editingProvider.endpoint_mode === "full_url"
+                        ? "https://api.example.com/custom/chat"
+                        : "https://api.example.com/v1"}
                     />
                   </div>
 
@@ -529,22 +661,16 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }
                         }
                       }}
                     >
-                      <button
+                      <input
                         id="llmModel"
-                        type="button"
+                        type="text"
                         className={"llm-model-selection " + (configuredModelUnavailable ? "warn" : "")}
-                        onClick={() => {
-                          if (!availableModels.length) return;
-                          setModelMenuProviderId(modelMenuOpen ? null : editingProvider.id || null);
-                        }}
-                        disabled={!availableModels.length}
-                        aria-haspopup="listbox"
-                        aria-expanded={modelMenuOpen}
+                        value={editingProvider.model || ""}
+                        onChange={(event) => updateProvider(editingProvider.id, { model: event.target.value })}
+                        placeholder="输入模型 ID"
                         aria-controls="llmModelList"
-                        aria-labelledby="llmModelLabel llmModel"
-                      >
-                        <span>{editingProvider.model || "请先拉取模型列表"}</span>
-                      </button>
+                        aria-labelledby="llmModelLabel"
+                      />
                       <button
                         type="button"
                         className={"llm-model-action refresh " + (editingCatalog?.loading ? "loading" : "")}
@@ -611,62 +737,111 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }
                     </p>
                   </div>
 
-                  <div className="form-row">
+                  <div className="form-row llm-api-key-field">
                     <label htmlFor="llmApiKey">API 密钥</label>
+                    <div className="llm-secret-input">
+                      <input
+                        id="llmApiKey"
+                        type={visibleApiKeys[editingProvider.id || ""] ? "text" : "password"}
+                        value={editingProvider.api_key || ""}
+                        onChange={(event) => updateProvider(editingProvider.id, { api_key: event.target.value })}
+                        placeholder={maskKey(editingProvider.api_key)}
+                        autoComplete="off"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setVisibleApiKeys((current) => ({
+                          ...current,
+                          [editingProvider.id || ""]: !current[editingProvider.id || ""],
+                        }))}
+                        aria-label={visibleApiKeys[editingProvider.id || ""] ? "隐藏 API 密钥" : "显示 API 密钥"}
+                        title={visibleApiKeys[editingProvider.id || ""] ? "隐藏密钥" : "显示密钥"}
+                      >
+                        {visibleApiKeys[editingProvider.id || ""]
+                          ? <EyeOff size={16} aria-hidden="true" />
+                          : <Eye size={16} aria-hidden="true" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <label className="llm-remember-key">
                     <input
-                      id="llmApiKey"
-                      type="password"
-                      value={editingProvider.api_key || ""}
-                      onChange={(event) => updateProvider(editingProvider.id, { api_key: event.target.value })}
-                      placeholder={maskKey(editingProvider.api_key)}
+                      type="checkbox"
+                      checked={editingProvider.remember_key ?? false}
+                      onChange={(event) => updateProvider(editingProvider.id, { remember_key: event.target.checked })}
                     />
-                  </div>
+                    记住 API 密钥
+                  </label>
 
-                  <div className="llm-editor-row compact">
+                  <details className="llm-advanced-settings">
+                    <summary>
+                      <span>高级选项</span>
+                      <ChevronDown size={16} aria-hidden="true" />
+                    </summary>
                     <div className="form-row">
-                      <label htmlFor="llmTemperature">温度</label>
-                      <input
-                        id="llmTemperature"
-                        type="number"
-                        step="0.1"
-                        min="0"
-                        max="2"
-                        value={editingProvider.temperature ?? 0.7}
-                        onChange={(event) => updateProvider(editingProvider.id, { temperature: Number(event.target.value) })}
-                      />
+                      <label htmlFor="llmApiFormat">上游协议</label>
+                      <select
+                        id="llmApiFormat"
+                        value={editingProvider.api_format || "openai_chat"}
+                        onChange={(event) => updateProvider(editingProvider.id, {
+                          api_format: event.target.value as LlmProviderSettings["api_format"],
+                        })}
+                      >
+                        <option value="openai_chat">OpenAI Chat Completions</option>
+                        <option value="openai_responses">OpenAI Responses</option>
+                        <option value="anthropic_messages">Anthropic Messages</option>
+                      </select>
                     </div>
 
                     <div className="form-row">
-                      <label htmlFor="llmTimeout">超时 (秒)</label>
+                      <label htmlFor="llmCustomUserAgent">自定义 User-Agent</label>
                       <input
-                        id="llmTimeout"
-                        type="number"
-                        min="10"
-                        max="300"
-                        value={editingProvider.timeout ?? 60}
-                        onChange={(event) => updateProvider(editingProvider.id, { timeout: Number(event.target.value) })}
+                        id="llmCustomUserAgent"
+                        type="text"
+                        value={editingProvider.custom_user_agent || ""}
+                        onChange={(event) => updateProvider(editingProvider.id, { custom_user_agent: event.target.value })}
+                        placeholder="使用应用默认值"
                       />
                     </div>
-                  </div>
 
-                  <div className="llm-flags">
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={editingProvider.json_mode ?? false}
-                        onChange={(event) => updateProvider(editingProvider.id, { json_mode: event.target.checked })}
-                      />
-                      JSON 模式
-                    </label>
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={editingProvider.remember_key ?? false}
-                        onChange={(event) => updateProvider(editingProvider.id, { remember_key: event.target.checked })}
-                      />
-                      记住 API 密钥
-                    </label>
-                  </div>
+                    <div className="llm-editor-row compact">
+                      <div className="form-row">
+                        <label htmlFor="llmTemperature">温度</label>
+                        <input
+                          id="llmTemperature"
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="2"
+                          value={editingProvider.temperature ?? 0.7}
+                          onChange={(event) => updateProvider(editingProvider.id, { temperature: Number(event.target.value) })}
+                        />
+                      </div>
+
+                      <div className="form-row">
+                        <label htmlFor="llmTimeout">超时 (秒)</label>
+                        <input
+                          id="llmTimeout"
+                          type="number"
+                          min="10"
+                          max="300"
+                          value={editingProvider.timeout ?? 60}
+                          onChange={(event) => updateProvider(editingProvider.id, { timeout: Number(event.target.value) })}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="llm-flags">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={editingProvider.json_mode ?? false}
+                          onChange={(event) => updateProvider(editingProvider.id, { json_mode: event.target.checked })}
+                        />
+                        JSON 模式
+                      </label>
+                    </div>
+                  </details>
                 </>
               )}
             </div>

@@ -1193,12 +1193,47 @@ fn llm_models_endpoint_appends_models_to_provider_base_path() {
         "https://gateway.example/v1/models"
     );
     assert_eq!(
+        llm_models_endpoint("https://gateway.example/v1/responses")
+            .unwrap()
+            .as_str(),
+        "https://gateway.example/v1/models"
+    );
+    assert_eq!(
         llm_models_endpoint("http://127.0.0.1:11434/v1/models")
             .unwrap()
             .as_str(),
         "http://127.0.0.1:11434/v1/models"
     );
+    assert!(llm_models_endpoint("http://models.example.test/v1").is_err());
+    assert!(llm_models_endpoint("https://user:secret@gateway.example/v1").is_err());
     assert!(llm_models_endpoint("file:///tmp/models").is_err());
+}
+
+#[test]
+fn llm_inference_endpoint_supports_protocol_switching_and_full_urls() {
+    assert_eq!(
+        llm_inference_endpoint(
+            "https://gateway.example/v1/chat/completions",
+            "openai_responses",
+            false,
+        )
+        .unwrap()
+        .as_str(),
+        "https://gateway.example/v1/responses"
+    );
+    assert_eq!(
+        llm_inference_endpoint(
+            "https://gateway.example/custom/generate?tenant=1",
+            "anthropic_messages",
+            true,
+        )
+        .unwrap()
+        .as_str(),
+        "https://gateway.example/custom/generate?tenant=1"
+    );
+    assert!(
+        llm_inference_endpoint("http://models.example.test/v1", "openai_chat", false,).is_err()
+    );
 }
 
 #[test]

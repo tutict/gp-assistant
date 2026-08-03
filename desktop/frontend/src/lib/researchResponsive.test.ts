@@ -54,6 +54,36 @@ describe("mobile UI density contract", () => {
     );
   });
 
+  it("keeps the mobile stock insight board on one compact row", () => {
+    expect(responsiveCss).toMatch(
+      /\.stock-insight-board\s*\{[^}]*grid-template-columns:\s*minmax\(0, 3fr\) minmax\(0, 4fr\)/,
+    );
+    expect(responsiveCss).toMatch(
+      /\.stock-insight-board \.score-strip\s*\{[^}]*grid-template-columns:\s*minmax\(0, 3fr\) minmax\(58px, 1fr\)[^}]*margin-top:\s*0/,
+    );
+    expect(responsiveCss).toMatch(
+      /\.stock-insight-board \.score-strip-primary\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    );
+  });
+
+  it("does not reserve an empty control-panel row above the mobile screen run button", () => {
+    expect(responsiveCss).toMatch(
+      /\.screen-panel-controls,\s*\.screen-panel-run-card\s*\{[^}]*min-height:\s*0[^}]*margin-top:\s*0/,
+    );
+  });
+
+  it("shows all five mobile screen modes in a two-row grid", () => {
+    expect(responsiveCss).toMatch(
+      /\.screen-panel-container > \.screen-panel-tabs\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*repeat\(6, minmax\(0, 1fr\)\)[^}]*overflow-x:\s*visible[^}]*scroll-snap-type:\s*none/,
+    );
+    expect(responsiveCss).toMatch(
+      /\.screen-panel-container > \.screen-panel-tabs \.panel-tab:nth-child\(-n \+ 3\)\s*\{[^}]*grid-column:\s*span 2/,
+    );
+    expect(responsiveCss).toMatch(
+      /\.screen-panel-container > \.screen-panel-tabs \.panel-tab:nth-child\(n \+ 4\)\s*\{[^}]*grid-column:\s*span 3/,
+    );
+  });
+
   it("rejects literal font sizes below the readability floor", () => {
     for (const { css } of styles) {
       for (const match of css.matchAll(/font-size:\s*([\d.]+)px/g)) {

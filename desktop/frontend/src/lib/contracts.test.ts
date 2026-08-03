@@ -51,10 +51,20 @@ const fullUniverseCriteria: FilterCriteria = {
 
 describe("LLM settings persistence", () => {
   it("drops API keys unless remember_key is enabled", () => {
-    expect(sanitizePersistedLlmSettings({ api_key: "sk-test", model: "gpt", remember_key: false } as LlmSettings)).toEqual({
+    const sanitized = sanitizePersistedLlmSettings({ api_key: "sk-test", model: "gpt", remember_key: false } as LlmSettings);
+    expect(sanitized).toMatchObject({
       active_provider_id: "legacy",
-      providers: [{ id: "legacy", name: "gpt", provider: "custom", model: "gpt", remember_key: false }],
+      providers: [{
+        id: "legacy",
+        name: "gpt",
+        provider: "custom",
+        model: "gpt",
+        api_format: "openai_chat",
+        endpoint_mode: "base_url",
+        remember_key: false,
+      }],
     });
+    expect(sanitized?.providers?.[0]).not.toHaveProperty("api_key");
     expect(sanitizePersistedLlmSettings({
       active_provider_id: "a",
       providers: [
@@ -79,6 +89,9 @@ describe("LLM settings persistence", () => {
         provider: "openai-compatible",
         base_url: "",
         model: "",
+        api_format: "openai_chat",
+        endpoint_mode: "base_url",
+        custom_user_agent: "",
         temperature: 0.7,
         timeout: 60,
         json_mode: false,
@@ -103,6 +116,8 @@ describe("LLM settings persistence", () => {
       api_key: "sk-test",
       base_url: "https://api.deepseek.com/v1",
       model: "deepseek-chat",
+      api_format: "openai_chat",
+      endpoint_mode: "base_url",
       timeout_seconds: 45,
     });
   });
@@ -119,6 +134,8 @@ describe("LLM settings persistence", () => {
     })).toEqual({
       api_key: "sk-test",
       model: "gpt-4o-mini",
+      api_format: "openai_chat",
+      endpoint_mode: "base_url",
     });
   });
   it("keeps non-OpenAI provider metadata while building a compatible client config", () => {
@@ -145,6 +162,34 @@ describe("LLM settings persistence", () => {
       api_key: "zhipu-key",
       base_url: "https://open.bigmodel.cn/api/paas/v4",
       model: "glm-4-flash",
+      api_format: "openai_chat",
+      endpoint_mode: "base_url",
+    });
+  });
+
+  it("preserves protocol, full endpoint mode, and a sanitized custom User-Agent", () => {
+    const settings: LlmSettings = {
+      active_provider_id: "responses",
+      providers: [{
+        id: "responses",
+        base_url: "https://gateway.example/custom/generate",
+        model: "gpt-compatible",
+        api_format: "openai_responses",
+        endpoint_mode: "full_url",
+        custom_user_agent: "  company-client/1.0  ",
+      }],
+    };
+    expect(normalizeLlmSettings(settings).providers?.[0]).toMatchObject({
+      api_format: "openai_responses",
+      endpoint_mode: "full_url",
+      custom_user_agent: "company-client/1.0",
+    });
+    expect(buildLlmConfig(settings)).toEqual({
+      base_url: "https://gateway.example/custom/generate",
+      model: "gpt-compatible",
+      api_format: "openai_responses",
+      endpoint_mode: "full_url",
+      custom_user_agent: "company-client/1.0",
     });
   });
 });

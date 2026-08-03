@@ -1,6 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
-  AdaptiveScreenMode,
   AdaptiveScreenRequest,
   ScreenResult,
   SectorScreenResult,
@@ -37,11 +36,6 @@ interface ScreenPanelProps {
 
 type ScreenMode = "screen" | "sectorScreen" | "boardScreen" | "customScreen" | "trendScreen";
 
-function adaptiveRolloutEnabled(value: unknown): boolean {
-  return typeof value === "object" && value !== null
-    && (value as { algorithm_version?: unknown }).algorithm_version === "adaptive_swing_v1";
-}
-
 const TABS: { key: ScreenMode; label: string }[] = [
   { key: "screen", label: "智能选股" },
   { key: "sectorScreen", label: "概念分组" },
@@ -65,11 +59,9 @@ export function ScreenPanel({
   const [error, setError] = useState<string | null>(null);
   const [trendStart, setTrendStart] = useState(defaultTrendStartDateInputValue());
   const [trendEnd, setTrendEnd] = useState(currentSystemDateInputValue());
-  const [adaptiveMode, setAdaptiveMode] = useState<AdaptiveScreenMode>("auto");
   const [adaptiveProgress, setAdaptiveProgress] = useState<{ percent: number; message: string } | null>(null);
   const [lastAdaptiveRequest, setLastAdaptiveRequest] = useState<AdaptiveScreenRequest | undefined>();
   const activeRunIdRef = useRef<string | null>(null);
-  const manualAdaptiveModesEnabled = adaptiveRolloutEnabled(result);
 
   useEffect(() => {
     const listen = getTauriListen();
@@ -100,7 +92,7 @@ export function ScreenPanel({
       let endpoint = "/api/screen";
       let payload: unknown;
       if (mode === "screen") {
-        const request = buildAdaptiveScreenRequest(criteria, adaptiveMode);
+        const request = buildAdaptiveScreenRequest(criteria);
         activeRunIdRef.current = request.run_id;
         setAdaptiveProgress({ percent: 2, message: "准备初选" });
         setLastAdaptiveRequest(request);
@@ -124,9 +116,6 @@ export function ScreenPanel({
       }
 
       const data = await postJson(endpoint, payload);
-      if (mode === "screen" && !adaptiveRolloutEnabled(data)) {
-        setAdaptiveMode("auto");
-      }
       setResult(data);
     } catch (err) {
       setError((err as Error).message);
@@ -134,7 +123,7 @@ export function ScreenPanel({
       setLoading(false);
       activeRunIdRef.current = null;
     }
-  }, [adaptiveMode, criteria, mode, trendEnd, trendStart]);
+  }, [criteria, mode, trendEnd, trendStart]);
 
   const toggleWatchlist = useCallback((item: StockRowView) => {
     const exists = watchlist.some((w) => w.code === item.code);
@@ -155,22 +144,6 @@ export function ScreenPanel({
     <>
       {mode === "screen" && (
         <div className="adaptive-screen-controls">
-          <div className="form-row inline">
-            <label htmlFor="adaptiveMode">评分模式</label>
-            <select
-              id="adaptiveMode"
-              value={adaptiveMode}
-              disabled={loading || !manualAdaptiveModesEnabled}
-              title={!manualAdaptiveModesEnabled ? "新版算法发布后可选择市场模式" : undefined}
-              onChange={(event) => setAdaptiveMode(event.target.value as AdaptiveScreenMode)}
-            >
-              <option value="auto">自动识别</option>
-              <option value="range">震荡</option>
-              <option value="trend">趋势</option>
-              <option value="defensive">防守</option>
-            </select>
-          </div>
-          <p className="adaptive-horizon"><strong>10–30 日波段</strong><span>每次按当日宽基、市场宽度和波动状态重新判断</span></p>
           <details className="adaptive-advanced">
             <summary>高级过滤</summary>
             <CriteriaFields criteria={criteria} onChange={onCriteriaChange} idPrefix="adaptiveScreen" />

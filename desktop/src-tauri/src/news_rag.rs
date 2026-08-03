@@ -1504,6 +1504,9 @@ struct LlmConfig {
     api_key: String,
     base_url: String,
     model: String,
+    api_format: String,
+    endpoint_mode: String,
+    custom_user_agent: Option<String>,
     temperature: f64,
     timeout_seconds: u64,
     json_mode: bool,
@@ -1523,7 +1526,10 @@ pub(crate) async fn synthesize_research_answer(
         return Ok(None);
     }
     let client = build_http_client_with_proxy(
-        "Mozilla/5.0 GuXuanYou/0.4 research-answer",
+        config
+            .custom_user_agent
+            .as_deref()
+            .unwrap_or("Mozilla/5.0 GuXuanYou/0.4 research-answer"),
         Duration::from_secs(config.timeout_seconds),
         None,
     )
@@ -1571,6 +1577,12 @@ pub(crate) async fn synthesize_research_answer(
 }
 
 fn resolve_llm_config(value: Option<&Value>) -> Option<LlmConfig> {
+    let configured_base_url = value
+        .and_then(|item| item.get("base_url"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| item.trim_end_matches('/').to_string());
     let api_key = value
         .and_then(|item| item.get("api_key"))
         .and_then(Value::as_str)
@@ -1581,13 +1593,12 @@ fn resolve_llm_config(value: Option<&Value>) -> Option<LlmConfig> {
             env::var("OPENAI_API_KEY")
                 .ok()
                 .filter(|item| !item.trim().is_empty())
-        })?;
-    let base_url = value
-        .and_then(|item| item.get("base_url"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .map(|item| item.trim_end_matches('/').to_string())
+        })
+        .unwrap_or_default();
+    if api_key.is_empty() && configured_base_url.is_none() {
+        return None;
+    }
+    let base_url = configured_base_url
         .or_else(|| {
             env::var("OPENAI_BASE_URL")
                 .ok()
@@ -1607,6 +1618,25 @@ fn resolve_llm_config(value: Option<&Value>) -> Option<LlmConfig> {
                 .filter(|item| !item.trim().is_empty())
         })
         .unwrap_or_else(|| "gpt-4o-mini".to_string());
+    let api_format = match value
+        .and_then(|item| item.get("api_format"))
+        .and_then(Value::as_str)
+    {
+        Some("openai_responses") => "openai_responses",
+        Some("anthropic_messages") => "anthropic_messages",
+        _ => "openai_chat",
+    }
+    .to_string();
+    let endpoint_mode = if value
+        .and_then(|item| item.get("endpoint_mode"))
+        .and_then(Value::as_str)
+        == Some("full_url")
+    {
+        "full_url"
+    } else {
+        "base_url"
+    }
+    .to_string();
     let temperature = value
         .and_then(|item| item.get("temperature"))
         .and_then(Value::as_f64)
@@ -1643,6 +1673,14 @@ fn resolve_llm_config(value: Option<&Value>) -> Option<LlmConfig> {
         api_key,
         base_url,
         model,
+        api_format,
+        endpoint_mode,
+        custom_user_agent: value
+            .and_then(|item| item.get("custom_user_agent"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|item| !item.is_empty() && item.len() <= 256 && !item.contains(['\r', '\n']))
+            .map(str::to_string),
         temperature,
         timeout_seconds,
         json_mode,
@@ -1672,7 +1710,10 @@ async fn call_news_llm(
     findings: &[Value],
 ) -> Result<Value, String> {
     let client = build_http_client_with_proxy(
-        "Mozilla/5.0 GuXuanYou/0.3 news-llm",
+        config
+            .custom_user_agent
+            .as_deref()
+            .unwrap_or("Mozilla/5.0 GuXuanYou/0.3 news-llm"),
         Duration::from_secs(config.timeout_seconds),
         None,
     )
@@ -1704,14 +1745,27 @@ async fn post_llm_request(
     config: &LlmConfig,
     request: &Value,
 ) -> Result<Value, String> {
-    let url = format!("{}/chat/completions", config.base_url.trim_end_matches('/'));
-    let body = serde_json::to_vec(request)
+    let url = crate::llm_inference_endpoint(
+        &config.base_url,
+        &config.api_format,
+        config.endpoint_mode == "full_url",
+    )
+    .map_err(|error| format!("LLM endpoint is invalid: {error}"))?;
+    let outbound_request = adapt_news_llm_request(request, &config.api_format);
+    let body = serde_json::to_vec(&outbound_request)
         .map_err(|error| format!("serialize LLM request failed: {error}"))?;
     let mut builder = client
         .post(url)
-        .header("Authorization", format!("Bearer {}", config.api_key))
         .header("Content-Type", "application/json")
         .body(body);
+    if config.api_format == "anthropic_messages" {
+        builder = builder.header("anthropic-version", "2023-06-01");
+        if !config.api_key.is_empty() {
+            builder = builder.header("x-api-key", &config.api_key);
+        }
+    } else if !config.api_key.is_empty() {
+        builder = builder.header("Authorization", format!("Bearer {}", config.api_key));
+    }
     if let Some(org) = &config.organization {
         builder = builder.header("OpenAI-Organization", org);
     }
@@ -1737,15 +1791,82 @@ async fn post_llm_request(
             limit_chars(&text, 160)
         )
     })?;
-    let content = response_json
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
-        .and_then(|choice| choice.get("message"))
-        .and_then(|message| message.get("content"))
-        .and_then(Value::as_str)
-        .unwrap_or("{}");
+    let content = news_llm_response_content(&response_json, &config.api_format).unwrap_or("{}");
     parse_json_response(content)
+}
+
+fn adapt_news_llm_request(request: &Value, api_format: &str) -> Value {
+    if api_format == "openai_chat" {
+        return request.clone();
+    }
+    if api_format == "openai_responses" {
+        let mut adapted = json!({
+            "model": request.get("model"),
+            "input": request.get("messages").cloned().unwrap_or_else(|| json!([])),
+            "temperature": request.get("temperature"),
+        });
+        if let Some(response_format) = request.get("response_format") {
+            adapted["text"] = json!({"format": response_format});
+        }
+        return adapted;
+    }
+    let messages = request
+        .get("messages")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let system = messages
+        .iter()
+        .filter(|message| message.get("role").and_then(Value::as_str) == Some("system"))
+        .filter_map(|message| message.get("content").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let messages = messages
+        .into_iter()
+        .filter(|message| message.get("role").and_then(Value::as_str) != Some("system"))
+        .collect::<Vec<_>>();
+    json!({
+        "model": request.get("model"),
+        "system": system,
+        "messages": messages,
+        "temperature": request.get("temperature"),
+        "max_tokens": 4096,
+    })
+}
+
+fn news_llm_response_content<'a>(response: &'a Value, api_format: &str) -> Option<&'a str> {
+    match api_format {
+        "openai_responses" => response
+            .get("output_text")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                response
+                    .get("output")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|item| item.get("content").and_then(Value::as_array))
+                    .flatten()
+                    .find_map(|content| content.get("text").and_then(Value::as_str))
+            }),
+        "anthropic_messages" => {
+            response
+                .get("content")
+                .and_then(Value::as_array)
+                .and_then(|items| {
+                    items
+                        .iter()
+                        .find_map(|item| item.get("text").and_then(Value::as_str))
+                })
+        }
+        _ => response
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("message"))
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_str),
+    }
 }
 
 fn news_llm_payload(
@@ -2554,6 +2675,31 @@ fn redact_secret(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn research_llm_protocol_adapter_keeps_prompt_roles_and_response_text() {
+        let request = json!({
+            "model": "test-model",
+            "messages": [
+                {"role": "system", "content": "evidence only"},
+                {"role": "user", "content": "question"}
+            ],
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"}
+        });
+        let responses = adapt_news_llm_request(&request, "openai_responses");
+        assert_eq!(responses["input"][0]["role"], "system");
+        assert_eq!(
+            news_llm_response_content(
+                &json!({"output": [{"content": [{"type": "output_text", "text": "{\"answer\":\"ok\"}"}]}]}),
+                "openai_responses",
+            ),
+            Some("{\"answer\":\"ok\"}")
+        );
+        let anthropic = adapt_news_llm_request(&request, "anthropic_messages");
+        assert_eq!(anthropic["system"], "evidence only");
+        assert_eq!(anthropic["messages"][0]["content"], "question");
+    }
 
     #[test]
     fn concurrent_news_cache_merges_preserve_both_refreshes() {

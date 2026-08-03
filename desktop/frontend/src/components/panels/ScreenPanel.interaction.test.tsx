@@ -34,12 +34,6 @@ function runButton(renderer: ReactTestRenderer) {
   );
 }
 
-function adaptiveModeSelect(renderer: ReactTestRenderer) {
-  return renderer.root.find(
-    (node) => node.type === "select" && node.props.id === "adaptiveMode",
-  );
-}
-
 function textContent(renderer: ReactTestRenderer): string {
   return renderer.root
     .findAll((node) => typeof node.children[0] === "string")
@@ -115,35 +109,11 @@ describe("ScreenPanel adaptive states", () => {
     expect(runButton(renderer).props.disabled).toBe(false);
   });
 
-  it("enables manual regime modes only after the backend confirms adaptive rollout", async () => {
-    postJsonMock
-      .mockResolvedValueOnce({
-        algorithm_version: "legacy_balanced",
-        total: 0,
-        returned: 0,
-        items: [],
-        groups: [],
-      })
-      .mockResolvedValueOnce({
-        algorithm_version: "adaptive_swing_v1",
-        total: 0,
-        returned: 0,
-        items: [],
-        groups: [],
-      });
+  it("does not render fixed adaptive mode and horizon controls", async () => {
     const renderer = await renderPanel();
 
-    expect(adaptiveModeSelect(renderer).props.disabled).toBe(true);
-
-    await act(async () => {
-      await runButton(renderer).props.onClick();
-    });
-    expect(adaptiveModeSelect(renderer).props.disabled).toBe(true);
-
-    await act(async () => {
-      await runButton(renderer).props.onClick();
-    });
-    expect(adaptiveModeSelect(renderer).props.disabled).toBe(false);
+    expect(renderer.root.findAll((node) => node.props.id === "adaptiveMode")).toHaveLength(0);
+    expect(renderer.root.findAll((node) => node.props.className === "adaptive-horizon")).toHaveLength(0);
   });
 
   it.each([

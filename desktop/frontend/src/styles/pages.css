@@ -1180,40 +1180,7 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 }
 
 .adaptive-screen-controls {
-  display: grid;
   width: 100%;
-  grid-template-columns: minmax(170px, 0.45fr) minmax(280px, 1fr);
-  gap: var(--space-3);
-  align-items: center;
-}
-
-.adaptive-screen-controls .form-row.inline label {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-
-.adaptive-screen-controls .form-row.inline select {
-  width: auto;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.adaptive-horizon {
-  display: flex;
-  gap: var(--space-2);
-  align-items: baseline;
-  margin: 0;
-  color: var(--text-secondary);
-}
-
-.adaptive-horizon strong {
-  color: var(--text);
-}
-
-.adaptive-advanced {
-  grid-column: 1 / -1;
-  border-top: 1px solid var(--line-soft);
-  padding-top: var(--space-2);
 }
 
 .adaptive-advanced summary {

@@ -168,6 +168,29 @@
     min-width: calc((100vw - 34px) / 3.2);
   }
 
+  .screen-panel-container > .screen-panel-tabs {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    width: 100%;
+    overflow-x: visible;
+    scroll-snap-type: none;
+  }
+
+  .screen-panel-container > .screen-panel-tabs .panel-tab {
+    width: 100%;
+    min-width: 0;
+    padding-inline: 6px;
+    scroll-snap-align: none;
+  }
+
+  .screen-panel-container > .screen-panel-tabs .panel-tab:nth-child(-n + 3) {
+    grid-column: span 2;
+  }
+
+  .screen-panel-container > .screen-panel-tabs .panel-tab:nth-child(n + 4) {
+    grid-column: span 3;
+  }
+
   .screen-panel-desktop-toolbar .screen-panel-tabs .panel-tab {
     min-width: max-content;
   }
@@ -278,31 +301,11 @@
   .screen-panel-controls,
   .screen-panel-run-card {
     display: block;
+    min-height: 0;
+    margin-top: 0;
     border: 0;
     background: transparent;
     padding: 0;
-  }
-
-  .adaptive-screen-controls {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-2);
-  }
-
-  .adaptive-screen-controls .form-row.inline label {
-    flex: 0 0 auto;
-    white-space: nowrap;
-  }
-
-  .adaptive-screen-controls .form-row.inline select {
-    width: auto;
-    min-width: 0;
-    flex: 1 1 auto;
-  }
-
-  .adaptive-horizon {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 2px;
   }
 
   .screen-panel-run-card .run-btn,
@@ -434,6 +437,28 @@
 
   .score-strip-primary strong {
     margin-top: 0;
+  }
+
+  .stock-insight-board {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 4fr);
+  }
+
+  .stock-insight-board .score-strip {
+    grid-template-columns: minmax(0, 3fr) minmax(58px, 1fr);
+    gap: 0;
+    margin-top: 0;
+  }
+
+  .stock-insight-board .score-strip-primary {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .stock-insight-board .quote-number,
+  .stock-insight-board .score-chip,
+  .stock-insight-board .score-strip-primary {
+    min-height: 56px;
+    padding: 6px 3px;
   }
 
   .stock-score-summary {

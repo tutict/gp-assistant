@@ -472,6 +472,9 @@ export interface LlmClientConfig {
   api_key?: string;
   base_url?: string;
   model?: string;
+  api_format?: LlmApiFormat;
+  endpoint_mode?: LlmEndpointMode;
+  custom_user_agent?: string;
   temperature?: number;
   timeout_seconds?: number;
   json_mode?: boolean;
@@ -777,6 +780,9 @@ export interface LlmSettings {
   providers?: LlmProviderSettings[];
 }
 
+export type LlmApiFormat = "openai_chat" | "openai_responses" | "anthropic_messages";
+export type LlmEndpointMode = "base_url" | "full_url";
+
 export interface LlmProviderSettings {
   id?: string;
   name?: string;
@@ -784,6 +790,9 @@ export interface LlmProviderSettings {
   api_key?: string;
   base_url?: string;
   model?: string;
+  api_format?: LlmApiFormat;
+  endpoint_mode?: LlmEndpointMode;
+  custom_user_agent?: string;
   temperature?: number;
   timeout?: number;
   json_mode?: boolean;
@@ -801,6 +810,14 @@ export interface LlmModelListResult {
   endpoint?: string;
   count?: number;
   models?: LlmModelOption[];
+}
+
+export interface LlmConnectionTestResult {
+  ok: boolean;
+  endpoint?: string;
+  status?: number;
+  elapsed_ms?: number;
+  api_format?: LlmApiFormat;
 }
 
 export interface StockRowView {

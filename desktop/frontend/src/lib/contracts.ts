@@ -404,6 +404,9 @@ export function buildLlmConfig(settings: LlmSettings | null | undefined): LlmCli
   if (active.api_key) config.api_key = active.api_key;
   if (active.base_url) config.base_url = active.base_url.replace(/\/+$/, "");
   if (active.model) config.model = active.model;
+  config.api_format = normalizeLlmApiFormat(active.api_format);
+  config.endpoint_mode = normalizeLlmEndpointMode(active.endpoint_mode);
+  if (active.custom_user_agent?.trim()) config.custom_user_agent = active.custom_user_agent.trim();
   if (active.temperature !== undefined) config.temperature = Number(active.temperature);
   if (active.timeout !== undefined) config.timeout_seconds = Number(active.timeout);
   if (active.json_mode !== undefined) config.json_mode = Boolean(active.json_mode);
@@ -421,6 +424,9 @@ export function normalizeLlmSettings(settings: LlmSettings | null | undefined): 
       id: provider.id || `provider-${index + 1}`,
       name: provider.name || provider.provider || provider.model || `Provider ${index + 1}`,
       provider: provider.provider || "custom",
+      api_format: normalizeLlmApiFormat(provider.api_format),
+      endpoint_mode: normalizeLlmEndpointMode(provider.endpoint_mode),
+      custom_user_agent: provider.custom_user_agent?.trim() || "",
     }));
     const activeProviderId = providers.some((provider) => provider.id === settings.active_provider_id)
       ? settings.active_provider_id
@@ -438,6 +444,9 @@ export function normalizeLlmSettings(settings: LlmSettings | null | undefined): 
       api_key: legacy.api_key,
       base_url: legacy.base_url,
       model: legacy.model,
+      api_format: normalizeLlmApiFormat(legacy.api_format),
+      endpoint_mode: normalizeLlmEndpointMode(legacy.endpoint_mode),
+      custom_user_agent: legacy.custom_user_agent?.trim() || "",
       temperature: legacy.temperature,
       timeout: legacy.timeout,
       json_mode: legacy.json_mode,
@@ -459,11 +468,22 @@ function defaultLlmProvider() {
     provider: "openai-compatible",
     base_url: "",
     model: "",
+    api_format: "openai_chat" as const,
+    endpoint_mode: "base_url" as const,
+    custom_user_agent: "",
     temperature: 0.7,
     timeout: 60,
     json_mode: false,
     remember_key: false,
   };
+}
+
+function normalizeLlmApiFormat(value: unknown): "openai_chat" | "openai_responses" | "anthropic_messages" {
+  return value === "openai_responses" || value === "anthropic_messages" ? value : "openai_chat";
+}
+
+function normalizeLlmEndpointMode(value: unknown): "base_url" | "full_url" {
+  return value === "full_url" ? "full_url" : "base_url";
 }
 
 export function normalizeScreenRows(result: ScreenResult | GraphScreenResult | TrendScreenResult | TrendIndicatorResult | unknown): StockRowView[] {
