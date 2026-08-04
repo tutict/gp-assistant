@@ -1277,19 +1277,10 @@ fn sector_screen_uses_full_filtered_universe_before_grouping() {
 }
 
 #[test]
-fn sector_screen_includes_a_generic_semiconductor_concept_group() {
-    let stocks = [
-        ("通用样本", "半导体"),
-        ("光刻机样本", "专用设备"),
-        ("芯片设计样本", "电子"),
-        ("存储芯片样本", "电子"),
-        ("算力样本", "半导体"),
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(index, (name, industry))| StockItem {
+fn sector_screen_expands_concept_group_display_limits_with_a_five_stock_threshold() {
+    let make_stock = |index: usize, name: String, industry: &str| StockItem {
         code: format!("688{index:03}.SH"),
-        name: name.to_string(),
+        name,
         industry: industry.to_string(),
         is_st: false,
         price: 20.0,
@@ -1302,23 +1293,45 @@ fn sector_screen_includes_a_generic_semiconductor_concept_group() {
         deducted_net_profit_margin: Some(12.0),
         deducted_net_profit_growth_rate: Some(18.0),
         ..StockItem::default()
-    })
-    .collect::<Vec<_>>();
+    };
+    let mut stocks = (0..12)
+        .map(|index| {
+            let (prefix, industry) = match index % 4 {
+                0 => ("芯片设计样本", "电子"),
+                1 => ("光刻机样本", "专用设备"),
+                2 => ("存储芯片样本", "电子"),
+                _ => ("算力样本", "半导体"),
+            };
+            make_stock(index, format!("{prefix}{index}"), industry)
+        })
+        .collect::<Vec<_>>();
+    stocks.extend((12..18).map(|index| make_stock(index, format!("食品样本{index}"), "食品饮料")));
     let result = sector_screen_stocks(
         &stocks,
         &SectorScreenRequest {
             group_by: "concept".to_string(),
             max_sectors: 10,
-            per_sector_limit: 5,
+            per_sector_limit: 10,
             min_sector_candidates: 5,
             ..SectorScreenRequest::default()
         },
     );
 
-    assert_eq!(result.sector_count, 1);
-    assert_eq!(result.groups[0].sector, "半导体");
-    assert_eq!(result.groups[0].total, 5);
-    assert_eq!(result.groups[0].returned, 5);
+    assert_eq!(result.sector_count, 2);
+    let semiconductor = result
+        .groups
+        .iter()
+        .find(|group| group.sector == "半导体")
+        .expect("semiconductor rollup");
+    assert_eq!(semiconductor.total, 12);
+    assert_eq!(semiconductor.returned, 10);
+    let consumer = result
+        .groups
+        .iter()
+        .find(|group| group.sector == "消费零售")
+        .expect("consumer group");
+    assert_eq!(consumer.total, 6);
+    assert_eq!(consumer.returned, 6);
 }
 
 #[test]

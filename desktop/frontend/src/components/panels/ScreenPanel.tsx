@@ -103,7 +103,7 @@ export function ScreenPanel({
 
       if (mode === "sectorScreen") {
         endpoint = "/api/sector-screen";
-        payload = buildSectorScreenRequest(criteria, "concept", 5, 12);
+        payload = buildSectorScreenRequest(criteria, "concept", 10, 12);
       } else if (mode === "boardScreen") {
         endpoint = "/api/sector-screen";
         payload = buildSectorScreenRequest(criteria, "board", 5, 5);

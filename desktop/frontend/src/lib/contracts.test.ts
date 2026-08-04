@@ -239,6 +239,12 @@ describe("contract payload builders", () => {
       min_sector_candidates: 5,
       criteria: { industry: "bank" },
     });
+    expect(buildSectorScreenRequest(criteria, "concept", 10, 12)).toMatchObject({
+      group_by: "concept",
+      per_sector_limit: 10,
+      max_sectors: 12,
+      min_sector_candidates: 5,
+    });
     expect(buildSectorScreenRequest(criteria, "board", 3, 5)).toMatchObject({
       group_by: "board",
       per_sector_limit: 3,

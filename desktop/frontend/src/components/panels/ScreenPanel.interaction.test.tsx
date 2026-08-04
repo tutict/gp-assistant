@@ -116,6 +116,30 @@ describe("ScreenPanel adaptive states", () => {
     expect(renderer.root.findAll((node) => node.props.className === "adaptive-horizon")).toHaveLength(0);
   });
 
+  it("requests ten stocks per concept group while retaining the five-stock group threshold", async () => {
+    postJsonMock.mockResolvedValue({ total: 0, returned: 0, groups: [] });
+    const renderer = await renderPanel();
+    const conceptTab = renderer.root.find(
+      (node) => node.type === "button" && node.children.includes("概念分组"),
+    );
+
+    await act(async () => {
+      conceptTab.props.onClick();
+    });
+    await act(async () => {
+      await runButton(renderer).props.onClick();
+    });
+
+    expect(postJsonMock).toHaveBeenCalledWith(
+      "/api/sector-screen",
+      expect.objectContaining({
+        group_by: "concept",
+        per_sector_limit: 10,
+        min_sector_candidates: 5,
+      }),
+    );
+  });
+
   it.each([
     "网络请求失败",
     "市场状态/历史数据不足：候选日线覆盖率低于 60%",

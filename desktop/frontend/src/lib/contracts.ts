@@ -108,7 +108,7 @@ export function buildSectorScreenRequest(
     group_by: groupBy,
     max_sectors: clampInt(maxSectors ?? (groupBy === "board" ? 5 : 12), 1, 50, groupBy === "board" ? 5 : 12),
     per_sector_limit: per,
-    min_sector_candidates: groupBy === "board" ? 1 : per,
+    min_sector_candidates: groupBy === "board" ? 1 : Math.min(per, 5),
   };
 }
 
