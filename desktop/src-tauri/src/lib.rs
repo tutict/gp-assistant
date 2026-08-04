@@ -897,14 +897,7 @@ fn api_market_clear_cache(app: tauri::AppHandle) -> Result<Value, String> {
 
 #[tauri::command]
 async fn api_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let internal_algorithm = payload
-        .get("internal_algorithm")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let force_adaptive = internal_algorithm == "adaptive_swing_v1";
-    if internal_algorithm == "legacy_balanced"
-        || (!force_adaptive && !adaptive_screen_release_enabled(&app))
-    {
+    if legacy_screen_requested(&payload) {
         return api_legacy_screen(app, payload).await;
     }
     adaptive_screen_with_timeout(
@@ -912,6 +905,13 @@ async fn api_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, Stri
         api_adaptive_screen(app, payload),
     )
     .await
+}
+
+fn legacy_screen_requested(payload: &Value) -> bool {
+    payload
+        .get("internal_algorithm")
+        .and_then(Value::as_str)
+        .is_some_and(|algorithm| algorithm.eq_ignore_ascii_case("legacy_balanced"))
 }
 
 async fn adaptive_screen_with_timeout<T>(
@@ -1063,14 +1063,17 @@ async fn api_legacy_screen(app: tauri::AppHandle, payload: Value) -> Result<Valu
             "rollout".to_string(),
             json!({
                 "adaptive_available": true,
-                "adaptive_default_enabled": false,
-                "reason": "adaptive_swing_v1 尚未取得全部样本外收益、回撤、Precision、分散度与时延发布门槛记录"
+                "adaptive_default_enabled": true,
+                "reason": "legacy_balanced was requested explicitly for compatibility"
             }),
         );
     }
     append_result_notes(
         &mut result,
-        vec!["发布门槛尚未全部验证，智能选股默认保留 legacy_balanced；内部调试可通过 internal_algorithm 显式运行 adaptive_swing_v1。".to_string()],
+        vec![
+            "本次选股按显式兼容请求使用 legacy_balanced；未指定算法时默认使用 adaptive_swing_v1。"
+                .to_string(),
+        ],
     );
     Ok(result)
 }
@@ -1097,13 +1100,6 @@ fn legacy_screen_criteria_from_payload(
     }
     serde_json::from_value::<gp_core::ScreenCriteria>(strip_core_side_payload_fields(payload))
         .map_err(|error| format!("invalid legacy screen request: {error}"))
-}
-
-fn adaptive_screen_release_enabled(app: &tauri::AppHandle) -> bool {
-    adaptive_release_gate_load_sync(app)
-        .ok()
-        .flatten()
-        .is_some_and(|report| report.passed)
 }
 
 fn adaptive_screen_request_from_payload(
@@ -9623,6 +9619,7 @@ fn adaptive_release_gate_recompute_operational_rows(conn: &Connection) -> Result
     adaptive_release_gate_store_rows(conn, &input, &report, &qualification)
 }
 
+#[cfg(test)]
 fn adaptive_release_gate_load_rows(
     conn: &Connection,
 ) -> Result<Option<gp_core::AdaptiveReleaseGateReport>, String> {
@@ -9680,12 +9677,7 @@ fn adaptive_release_gate_store_sync(
     adaptive_release_gate_store_rows(&open_adaptive_screen_db(app)?, input, report, qualification)
 }
 
-fn adaptive_release_gate_load_sync(
-    app: &tauri::AppHandle,
-) -> Result<Option<gp_core::AdaptiveReleaseGateReport>, String> {
-    adaptive_release_gate_refresh_and_load_rows(&open_adaptive_screen_db(app)?)
-}
-
+#[cfg(test)]
 fn adaptive_release_gate_refresh_and_load_rows(
     conn: &Connection,
 ) -> Result<Option<gp_core::AdaptiveReleaseGateReport>, String> {

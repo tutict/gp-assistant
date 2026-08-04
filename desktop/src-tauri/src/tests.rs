@@ -43,6 +43,22 @@ fn legacy_adapter_uses_primary_limit_for_nested_requests_and_preserves_flat_limi
 }
 
 #[test]
+fn screen_routing_defaults_to_adaptive_and_keeps_explicit_legacy_compatibility() {
+    assert!(
+        !legacy_screen_requested(&json!({})),
+        "ordinary screen requests must use adaptive_swing_v1"
+    );
+    assert!(
+        !legacy_screen_requested(&json!({ "internal_algorithm": "adaptive_swing_v1" })),
+        "an explicit adaptive request must use adaptive_swing_v1"
+    );
+    assert!(
+        legacy_screen_requested(&json!({ "internal_algorithm": "legacy_balanced" })),
+        "legacy_balanced remains available only through an explicit compatibility request"
+    );
+}
+
+#[test]
 fn adaptive_exposure_sqlite_deduplicates_same_day_and_keeps_five_trade_dates() {
     let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
     initialize_adaptive_exposure_db(&connection).expect("schema should initialize");
