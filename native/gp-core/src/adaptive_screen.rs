@@ -1132,7 +1132,7 @@ pub fn adaptive_screen_stocks(
         .last()
         .map(|candidate| candidate.score)
         .unwrap_or(0.0);
-    let exploration_candidates = select_exploration(
+    let (exploration_candidates, exploration_used_fallback) = select_exploration(
         &candidates,
         &primary_candidates,
         &primary_codes,
@@ -1173,10 +1173,16 @@ pub fn adaptive_screen_stocks(
         items: primary,
         groups,
         market_regime,
-        notes: vec![
-            "概念标签仅用于解释与分散，不参与原始评分".to_string(),
-            "仅供研究，不构成投资建议".to_string(),
-        ],
+        notes: {
+            let mut notes = vec![
+                "概念标签仅用于解释与分散，不参与原始评分".to_string(),
+                "仅供研究，不构成投资建议".to_string(),
+            ];
+            if exploration_used_fallback {
+                notes.push("探索榜候选不足目标数量，已使用放宽门槛的补位候选".to_string());
+            }
+            notes
+        },
     })
 }
 
@@ -1246,9 +1252,9 @@ fn select_exploration<'a>(
     primary_floor: f64,
     limit: usize,
     recent_exposure: &[AdaptiveRecentExposure],
-) -> Vec<&'a AdaptiveCandidate> {
+) -> (Vec<&'a AdaptiveCandidate>, bool) {
     if limit == 0 {
-        return Vec::new();
+        return (Vec::new(), false);
     }
     let recent = recent_exposure
         .iter()
@@ -1256,39 +1262,57 @@ fn select_exploration<'a>(
         .collect::<HashSet<_>>();
     let mut remaining = candidates
         .iter()
-        .filter(|candidate| {
-            !primary_codes.contains(&candidate.stock.code.to_ascii_uppercase())
-                && candidate.score >= 10.0
-                && candidate.score + 2.0 >= primary_floor
+        .filter(|candidate| !primary_codes.contains(&candidate.stock.code.to_ascii_uppercase()))
+        .map(|candidate| {
+            let strict = candidate.score >= 10.0 && candidate.score + 2.0 >= primary_floor;
+            (candidate, strict)
         })
         .collect::<Vec<_>>();
     let mut selected = Vec::new();
     let mut industry_counts = HashMap::<String, usize>::new();
+    let mut used_fallback = false;
     while selected.len() < limit && !remaining.is_empty() {
         remaining.sort_by(|left, right| {
-            let left_rank = exploration_rank(left, primary, &selected, &recent);
-            let right_rank = exploration_rank(right, primary, &selected, &recent);
+            let left_rank = exploration_rank(left.0, primary, &selected, &recent);
+            let right_rank = exploration_rank(right.0, primary, &selected, &recent);
             right_rank
                 .total_cmp(&left_rank)
-                .then_with(|| left.stock.code.cmp(&right.stock.code))
+                .then_with(|| left.0.stock.code.cmp(&right.0.stock.code))
         });
-        let index = remaining.iter().position(|candidate| {
+        let industry_available = |candidate: &AdaptiveCandidate| {
             industry_counts
                 .get(&normalized_industry(&candidate.stock))
                 .copied()
                 .unwrap_or(0)
                 < 2
-        });
+        };
+        let index = remaining
+            .iter()
+            .position(|(candidate, strict)| *strict && industry_available(candidate))
+            .or_else(|| {
+                remaining
+                    .iter()
+                    .position(|(candidate, _)| industry_available(candidate))
+            })
+            .or_else(|| {
+                if !remaining.is_empty() {
+                    used_fallback = true;
+                }
+                remaining.iter().position(|_| true)
+            });
         let Some(index) = index else {
             break;
         };
-        let candidate = remaining.remove(index);
+        let (candidate, strict) = remaining.remove(index);
+        if !strict {
+            used_fallback = true;
+        }
         *industry_counts
             .entry(normalized_industry(&candidate.stock))
             .or_default() += 1;
         selected.push(candidate);
     }
-    selected
+    (selected, used_fallback)
 }
 
 fn exploration_rank(

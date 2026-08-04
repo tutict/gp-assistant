@@ -79,6 +79,47 @@ fn adaptive_screen_detects_range_and_returns_distinct_primary_and_exploration_li
         .all(|item| !primary.contains(&item.stock.code)));
 }
 
+#[test]
+fn adaptive_exploration_fills_the_requested_ten_slots_with_fallback_candidates() {
+    let (mut stocks, mut histories, benchmarks) = adaptive_fixture(0.0);
+    for index in stocks.len()..24 {
+        let stock = adaptive_stock(index);
+        histories.insert(
+            stock.code.clone(),
+            adaptive_history(stock.price - 0.2, 0.002, 90),
+        );
+        stocks.push(stock);
+    }
+    for stock in stocks.iter_mut().skip(10) {
+        stock.roe = Some(-0.20);
+        stock.pe = Some(100.0);
+        stock.pb = Some(10.0);
+        stock.market_cap_billion = Some(5.0);
+        stock.dividend_yield = Some(0.0);
+        stock.deducted_net_profit_billion = Some(-2.0);
+        stock.deducted_net_profit_growth_rate = Some(-0.20);
+    }
+    let request = AdaptiveScreenRequest {
+        primary_limit: 10,
+        exploration_limit: 10,
+        ..AdaptiveScreenRequest::default()
+    };
+    let result = adaptive_screen_stocks(&stocks, &histories, &benchmarks, &[], &request)
+        .expect("adaptive screen should fill both requested lists");
+
+    assert_eq!(result.groups[0].items.len(), 10);
+    assert_eq!(result.groups[1].items.len(), 10);
+    let primary = result.groups[0]
+        .items
+        .iter()
+        .map(|item| item.stock.code.as_str())
+        .collect::<HashSet<_>>();
+    assert!(result.groups[1]
+        .items
+        .iter()
+        .all(|item| !primary.contains(item.stock.code.as_str())));
+}
+
 fn adaptive_fixture(
     benchmark_slope: f64,
 ) -> (
