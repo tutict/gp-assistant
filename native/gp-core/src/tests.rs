@@ -1277,6 +1277,69 @@ fn sector_screen_uses_full_filtered_universe_before_grouping() {
 }
 
 #[test]
+fn sector_screen_includes_a_generic_semiconductor_concept_group() {
+    let stocks = [
+        ("通用样本", "半导体"),
+        ("光刻机样本", "专用设备"),
+        ("芯片设计样本", "电子"),
+        ("存储芯片样本", "电子"),
+        ("算力样本", "半导体"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (name, industry))| StockItem {
+        code: format!("688{index:03}.SH"),
+        name: name.to_string(),
+        industry: industry.to_string(),
+        is_st: false,
+        price: 20.0,
+        pe: Some(18.0),
+        pb: Some(2.0),
+        roe: Some(0.16),
+        market_cap_billion: Some(80.0),
+        dividend_yield: Some(0.01),
+        deducted_net_profit_billion: Some(1.0),
+        deducted_net_profit_margin: Some(12.0),
+        deducted_net_profit_growth_rate: Some(18.0),
+        ..StockItem::default()
+    })
+    .collect::<Vec<_>>();
+    let result = sector_screen_stocks(
+        &stocks,
+        &SectorScreenRequest {
+            group_by: "concept".to_string(),
+            max_sectors: 10,
+            per_sector_limit: 5,
+            min_sector_candidates: 5,
+            ..SectorScreenRequest::default()
+        },
+    );
+
+    assert_eq!(result.sector_count, 1);
+    assert_eq!(result.groups[0].sector, "半导体");
+    assert_eq!(result.groups[0].total, 5);
+    assert_eq!(result.groups[0].returned, 5);
+}
+
+#[test]
+fn generic_semiconductor_group_preserves_more_specific_precedence() {
+    let cases = [
+        ("通用样本", "半导体设备", "半导体设备"),
+        ("算力样本", "半导体", "AI算力与芯片"),
+        ("新材料样本", "半导体", "半导体"),
+    ];
+
+    for (name, industry, expected) in cases {
+        let stock = StockItem {
+            name: name.to_string(),
+            industry: industry.to_string(),
+            ..StockItem::default()
+        };
+        assert_eq!(concept_group_for_stock(&stock), expected);
+    }
+}
+
+#[test]
 fn sector_screen_can_group_by_market_board() {
     let stocks = vec![
         StockItem {

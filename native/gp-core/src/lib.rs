@@ -1848,9 +1848,7 @@ pub fn sector_screen_stocks(
         let sector = if board_mode {
             board_group_for_stock(&item.stock).to_string()
         } else {
-            item.concept
-                .clone()
-                .unwrap_or_else(|| concept_group_for_stock(&item.stock))
+            concept_sector_group_for_stock(&item.stock)
         };
         by_sector.entry(sector).or_default().push(item.clone());
     }
@@ -6719,7 +6717,7 @@ const THEME_RULES: [(&str, &str, f64, &[&str]); 7] = [
         ],
     ),
 ];
-const CONCEPT_GROUP_RULES: [(&str, &[&str]); 20] = [
+const CONCEPT_GROUP_RULES: [(&str, &[&str]); 21] = [
     (
         "半导体设计",
         &[
@@ -6841,6 +6839,7 @@ const CONCEPT_GROUP_RULES: [(&str, &[&str]); 20] = [
             "pcb",
         ],
     ),
+    ("半导体", &["半导体", "集成电路", "芯片制造", "芯片产业"]),
     (
         "新材料",
         &[
@@ -7550,6 +7549,29 @@ fn concept_group_for_stock(stock: &StockItem) -> String {
         }
     }
     "\u{5176}\u{4ed6}\u{6982}\u{5ff5}".to_string()
+}
+
+fn concept_sector_group_for_stock(stock: &StockItem) -> String {
+    let concept = concept_group_for_stock(stock);
+    let semiconductor_group = matches!(
+        concept.as_str(),
+        "半导体设计"
+            | "半导体设备"
+            | "半导体材料"
+            | "半导体晶圆"
+            | "半导体封测"
+            | "存储芯片"
+            | "半导体"
+    ) || (concept == "AI算力与芯片"
+        && contains_any(
+            &stock_text(stock),
+            &["半导体", "集成电路", "芯片制造", "芯片产业"],
+        ));
+    if semiconductor_group {
+        "半导体".to_string()
+    } else {
+        concept
+    }
 }
 
 fn concept_rank(concept: &str) -> usize {
