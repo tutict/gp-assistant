@@ -255,7 +255,8 @@ fn adaptive_universe_keeps_same_day_market_breadth_without_prefetched_history() 
 #[test]
 fn adaptive_runtime_limits_match_the_release_contract() {
     assert_eq!(ADAPTIVE_SCREEN_HISTORY_PREFETCH_LIMIT, 80);
-    assert_eq!(ADAPTIVE_SCREEN_TOTAL_TIMEOUT_SECS, 20);
+    assert_eq!(ADAPTIVE_SCREEN_TOTAL_TIMEOUT_SECS, 120);
+    assert_eq!(ADAPTIVE_SCREEN_HISTORY_PREFETCH_TIMEOUT_SECS, 90);
 }
 
 #[test]
@@ -359,13 +360,60 @@ fn adaptive_prefetch_prepares_eighty_candidates_and_three_cached_benchmarks_offl
 }
 
 #[test]
+fn adaptive_history_progress_is_incremental_and_bounded() {
+    assert_eq!(adaptive_history_progress_percent(0, 83), 24);
+    assert_eq!(adaptive_history_progress_percent(1, 83), 25);
+    assert!(adaptive_history_progress_percent(40, 83) > 25);
+    assert_eq!(adaptive_history_progress_percent(83, 83), 72);
+    assert_eq!(adaptive_history_progress_percent(100, 83), 72);
+    assert_eq!(adaptive_history_progress_percent(0, 0), 72);
+}
+
+#[test]
+fn adaptive_history_timeout_keeps_completed_results_and_reports_progress() {
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let progress_sink = Arc::clone(&progress);
+    let outcome = tauri::async_runtime::block_on(collect_adaptive_history_results(
+        vec!["fast".to_string(), "slow".to_string()],
+        "20260101".to_string(),
+        Duration::from_millis(50),
+        2,
+        |code, _start_date| {
+            let slow = code == "slow";
+            async move {
+                if slow {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                Ok(Vec::<Value>::new())
+            }
+        },
+        move |completed, total| {
+            progress_sink
+                .lock()
+                .expect("progress mutex should lock")
+                .push((completed, total));
+        },
+    ));
+
+    assert!(outcome.timed_out);
+    assert_eq!(outcome.results.len(), 1);
+    assert_eq!(
+        progress
+            .lock()
+            .expect("progress mutex should lock")
+            .as_slice(),
+        &[(1, 2)]
+    );
+}
+
+#[test]
 fn adaptive_timeout_and_progress_payloads_enforce_the_runtime_contract() {
     let timed_out = tauri::async_runtime::block_on(adaptive_screen_with_timeout(
         Duration::from_millis(1),
         std::future::pending::<Result<(), String>>(),
     ))
     .expect_err("a pending adaptive run must respect the timeout wrapper");
-    assert!(timed_out.contains("20"));
+    assert!(timed_out.contains("120"));
 
     let current =
         adaptive_screen_progress_payload(Some("run-current"), "history_fetch", 24, "补齐日线");

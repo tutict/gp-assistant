@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose, Engine as _};
-use futures::stream::{self, StreamExt};
+use futures::stream::{self, FuturesUnordered, StreamExt};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -64,8 +64,9 @@ const TREND_SCREEN_HISTORY_TIMEOUT_SECS: u64 = 18;
 const TREND_SCREEN_HISTORY_CONCURRENCY: usize = 6;
 const TREND_SCREEN_HISTORY_PREFETCH_LIMIT: usize = 80;
 const MIN_TREND_SCREEN_HISTORY_BARS: usize = 45;
-const ADAPTIVE_SCREEN_TOTAL_TIMEOUT_SECS: u64 = 20;
+const ADAPTIVE_SCREEN_TOTAL_TIMEOUT_SECS: u64 = 120;
 const ADAPTIVE_SCREEN_HISTORY_CONCURRENCY: usize = 6;
+const ADAPTIVE_SCREEN_HISTORY_PREFETCH_TIMEOUT_SECS: u64 = 90;
 const ADAPTIVE_SCREEN_HISTORY_PREFETCH_LIMIT: usize = 80;
 const MIN_ADAPTIVE_SCREEN_HISTORY_BARS: usize = 60;
 const ADAPTIVE_RELEASE_MIN_OOS_FOLDS: usize = 60;
@@ -190,6 +191,11 @@ struct PreparedAdaptiveScreen {
     recent_exposure: Vec<gp_core::AdaptiveRecentExposure>,
     notes: Vec<String>,
     cache_hit: bool,
+}
+
+struct AdaptiveHistoryFetchOutcome {
+    results: Vec<(String, Result<Vec<Value>, String>)>,
+    timed_out: bool,
 }
 
 struct PreparedBacktest {
@@ -5269,6 +5275,87 @@ fn adaptive_release_force_cold_start_code(missing: &mut Vec<String>, required_co
     }
 }
 
+fn adaptive_history_progress_percent(completed: usize, total: usize) -> usize {
+    if total == 0 {
+        return 72;
+    }
+    let completed = completed.min(total);
+    24 + ((completed * 48 + total - 1) / total).min(48)
+}
+
+async fn collect_adaptive_history_results<F, Fut, P>(
+    fetch_codes: Vec<String>,
+    history_start_date: String,
+    timeout: Duration,
+    concurrency: usize,
+    fetcher: F,
+    mut on_progress: P,
+) -> AdaptiveHistoryFetchOutcome
+where
+    F: Fn(&str, &str) -> Fut + Send + Sync + 'static,
+    Fut: std::future::Future<Output = Result<Vec<Value>, String>> + Send + 'static,
+    P: FnMut(usize, usize) + Send,
+{
+    let total = fetch_codes.len();
+    if total == 0 {
+        return AdaptiveHistoryFetchOutcome {
+            results: Vec::new(),
+            timed_out: false,
+        };
+    }
+
+    let fetcher = Arc::new(fetcher);
+    let make_fetch = {
+        let fetcher = Arc::clone(&fetcher);
+        let history_start_date = history_start_date.clone();
+        move |code: String| {
+            let fetcher = Arc::clone(&fetcher);
+            let history_start_date = history_start_date.clone();
+            async move {
+                let result = fetcher(&code, &history_start_date).await;
+                (code, result)
+            }
+        }
+    };
+    let mut codes = fetch_codes.into_iter();
+    let mut pending = FuturesUnordered::new();
+    let concurrency = concurrency.max(1);
+    for _ in 0..concurrency {
+        if let Some(code) = codes.next() {
+            pending.push(make_fetch(code));
+        }
+    }
+
+    let deadline = Instant::now() + timeout;
+    let mut results = Vec::with_capacity(total);
+    let mut completed = 0usize;
+    let mut timed_out = false;
+    while completed < total {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            timed_out = true;
+            break;
+        }
+        match tokio::time::timeout(remaining, pending.next()).await {
+            Ok(Some(result)) => {
+                completed += 1;
+                on_progress(completed, total);
+                results.push(result);
+                if let Some(code) = codes.next() {
+                    pending.push(make_fetch(code));
+                }
+            }
+            Ok(None) => break,
+            Err(_) => {
+                timed_out = true;
+                break;
+            }
+        }
+    }
+
+    AdaptiveHistoryFetchOutcome { results, timed_out }
+}
+
 async fn prepare_adaptive_screen(
     app: &tauri::AppHandle,
     payload: Value,
@@ -5332,6 +5419,7 @@ async fn prepare_adaptive_screen(
 
     let mut history_override = HashMap::new();
     let mut notes = Vec::new();
+    let mut history_prefetch_timed_out = false;
     if missing.is_empty() {
         notes.push(format!(
             "自适应选股复用本地日线缓存：候选 {} 只、宽基指数 3 个。",
@@ -5340,24 +5428,49 @@ async fn prepare_adaptive_screen(
     } else {
         let fetch_codes = missing.clone();
         let history_start_date = adaptive_history_start_date();
-        let fetches =
+        let progress_app = app.clone();
+        let progress_run_id = request.run_id.clone();
+        let fetch_outcome =
             runtime::with_heavy_network_permit("adaptive_screen_history_fetch", async move {
-                let results = stream::iter(fetch_codes)
-                    .map(|code| {
-                        let history_start_date = history_start_date.clone();
-                        async move {
-                            let result =
-                                fetch_observe_daily_history(&code, &history_start_date, "20501231")
-                                    .await;
-                            (code, result)
-                        }
-                    })
-                    .buffer_unordered(ADAPTIVE_SCREEN_HISTORY_CONCURRENCY)
-                    .collect::<Vec<_>>()
+                let outcome =
+                    collect_adaptive_history_results(
+                        fetch_codes,
+                        history_start_date,
+                        Duration::from_secs(ADAPTIVE_SCREEN_HISTORY_PREFETCH_TIMEOUT_SECS),
+                        ADAPTIVE_SCREEN_HISTORY_CONCURRENCY,
+                        |code, start_date| {
+                            let code = code.to_string();
+                            let start_date = start_date.to_string();
+                            async move {
+                                fetch_observe_daily_history(&code, &start_date, "20501231").await
+                            }
+                        },
+                        move |completed, total| {
+                            let message = format!("补齐120日行情 {completed}/{total}");
+                            emit_adaptive_screen_progress(
+                                &progress_app,
+                                progress_run_id.as_deref(),
+                                "history_fetch",
+                                adaptive_history_progress_percent(completed, total),
+                                &message,
+                            );
+                        },
+                    )
                     .await;
-                Ok(results)
+                Ok(outcome)
             })
             .await?;
+        let AdaptiveHistoryFetchOutcome {
+            results: fetches,
+            timed_out,
+        } = fetch_outcome;
+        history_prefetch_timed_out = timed_out;
+        if timed_out {
+            notes.push(format!(
+                "历史行情预取达到 {} 秒预算，使用已完成的行情继续计算。",
+                ADAPTIVE_SCREEN_HISTORY_PREFETCH_TIMEOUT_SECS
+            ));
+        }
         let mut history_patch = serde_json::Map::new();
         let mut failed = 0usize;
         for (code, result) in fetches {
@@ -5408,7 +5521,11 @@ async fn prepare_adaptive_screen(
         request.run_id.as_deref(),
         "history_fetch",
         72,
-        "历史行情准备完成",
+        if history_prefetch_timed_out {
+            "历史行情预取已达时限，使用已完成数据继续"
+        } else {
+            "历史行情准备完成"
+        },
     );
 
     let exposure_app = app.clone();
