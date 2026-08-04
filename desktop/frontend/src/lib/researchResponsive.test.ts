@@ -12,6 +12,7 @@ const styles: Array<{ file: string; css: string }> = styleFiles
   }));
 const allCss = styles.map(({ file, css }) => `/* ${file} */\n${css}`).join("\n");
 const responsiveCss = styles.find(({ file }) => file === "responsive.css")?.css || "";
+const componentsCss = styles.find(({ file }) => file === "components.css")?.css || "";
 const tokensCss = styles.find(({ file }) => file === "tokens.css")?.css || "";
 
 describe("mobile UI density contract", () => {
@@ -81,6 +82,18 @@ describe("mobile UI density contract", () => {
     );
     expect(responsiveCss).toMatch(
       /\.screen-panel-container > \.screen-panel-tabs \.panel-tab:nth-child\(n \+ 4\)\s*\{[^}]*grid-column:\s*span 3/,
+    );
+  });
+
+  it("keeps agent conversation history as frameless list rows", () => {
+    expect(componentsCss).toMatch(
+      /\.agent-history-item\s*\{[^}]*border:\s*0[^}]*border-bottom:\s*1px solid var\(--line-soft\)[^}]*border-radius:\s*0/,
+    );
+    expect(componentsCss).toMatch(
+      /\.agent-history-item\.active\s*\{[^}]*box-shadow:\s*inset 2px 0 var\(--agent-accent\)/,
+    );
+    expect(componentsCss).toMatch(
+      /\.agent-history-main\s*\{[^}]*outline:\s*none[^}]*-webkit-tap-highlight-color:\s*transparent/,
     );
   });
 

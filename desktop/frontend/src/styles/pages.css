@@ -2383,19 +2383,6 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
   background: var(--surface-3);
   color: var(--text);
 }
-.agent-history-list {
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.agent-history-item {
-  border-radius: var(--radius-sm);
-}
-
-.agent-history-item.active {
-  background: var(--accent-soft);
-}
-
 .agent-history-remove {
   display: grid;
   width: 30px;
