@@ -1,7 +1,7 @@
 import { RefreshCw, Settings2, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getJson, getTauriInvoke, isMarketStatusStale, postJson, refreshTauriMarketData } from "../lib/tauri";
-import { formatBytes, formatMarketRefreshDate, formatNumber } from "../lib/format";
+import { formatBytes, formatMarketRefreshDate } from "../lib/format";
 import type { DataStatus } from "../types";
 
 export interface FilterCriteria {
@@ -20,6 +20,7 @@ export interface FilterCriteria {
 
 interface FilterBarProps {
   mobileRuntime: boolean;
+  onStatusChange?: (status: DataStatus | null) => void;
 }
 
 interface RefreshLogEntry {
@@ -38,7 +39,7 @@ const CACHE_POLICY = {
 };
 
 
-export function FilterBar({ mobileRuntime }: FilterBarProps) {
+export function FilterBar({ mobileRuntime, onStatusChange }: FilterBarProps) {
   const [status, setStatus] = useState<DataStatus | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshLog, setRefreshLog] = useState<RefreshLogEntry[]>([]);
@@ -74,6 +75,11 @@ useEffect(() => {
     setRefreshLog((prev) => [{ time: new Date().toLocaleTimeString("zh-CN"), message, tone }, ...prev].slice(0, 120));
   }, []);
 
+  const commitStatus = useCallback((nextStatus: DataStatus | null) => {
+    setStatus(nextStatus);
+    onStatusChange?.(nextStatus);
+  }, [onStatusChange]);
+
   const updateProgressFromRefresh = useCallback((entry: RefreshLogEntry) => {
     appendLog(entry.message, entry.tone);
     const match = entry.message.match(/(\d+)[-/](\d+|\?)/);
@@ -85,18 +91,18 @@ useEffect(() => {
 
     const value = Math.max(8, Math.min(98, Math.round((done / total) * 100)));
     setProgress({ label: `刷新批次 ${Math.min(done, total)}/${total}`, value });
-  }, [appendLog]);
+  }, [appendLog, commitStatus]);
 
   const loadStatus = useCallback(async () => {
     try {
       const data = await getJson<DataStatus>("/api/data-sources/status");
-      setStatus(data);
+      commitStatus(data);
       return data;
     } catch (err) {
       appendLog(`状态读取失败：${(err as Error).message}`, "error");
       return null;
     }
-  }, [appendLog]);
+  }, [appendLog, commitStatus]);
 
   useEffect(() => {
     void loadStatus();
@@ -133,7 +139,7 @@ useEffect(() => {
         ? await refreshTauriMarketData(invoke, { ...refreshOptions, onLog: updateProgressFromRefresh })
         : await postJson<{ status?: DataStatus; notes?: string[]; refreshed?: boolean }>("/api/data-sources/refresh-universe", refreshOptions);
       const nextStatus = (data.status || data) as DataStatus;
-      setStatus(nextStatus);
+      commitStatus(nextStatus);
       setProgress({ label: "刷新、落盘、校验完成", value: 100 });
       appendLog((Array.isArray(data.notes) ? data.notes.join(" ") : "") || (data.refreshed ? "刷新完成。" : "刷新检查完成。"), "success");
       scheduleRefreshLogCollapse();
@@ -145,7 +151,7 @@ useEffect(() => {
       setRefreshing(false);
       window.setTimeout(() => setProgress(null), 1400);
     }
-  }, [appendLog, clearRefreshLogTimer, mobileRuntime, refreshOptions, scheduleRefreshLogCollapse, updateProgressFromRefresh]);
+  }, [appendLog, clearRefreshLogTimer, commitStatus, mobileRuntime, refreshOptions, scheduleRefreshLogCollapse, updateProgressFromRefresh]);
 
   useEffect(() => {
     if (autoRefreshStartedRef.current || refreshing) return;
@@ -171,7 +177,7 @@ useEffect(() => {
         }
         const data = await postJson<{ status?: DataStatus; notes?: string[]; refreshed?: boolean; background_refresh?: boolean }>("/api/data-sources/auto-refresh-universe", autoRefreshOptions);
         const nextStatus = (data.status || data) as DataStatus;
-        setStatus(nextStatus);
+        commitStatus(nextStatus);
         setProgress({ label: data.background_refresh ? "后台刷新已启动" : "上一开盘日行情已同步", value: 100 });
         appendLog((Array.isArray(data.notes) ? data.notes.join(" ") : "") || (data.background_refresh ? "后台自动刷新已启动，筛选可继续运行。" : "上一开盘日行情已同步。"), "success");
         scheduleRefreshLogCollapse();
@@ -190,7 +196,7 @@ useEffect(() => {
     return () => {
       cancelled = true;
     };
-  }, [appendLog, autoRefreshOptions, clearRefreshLogTimer, loadStatus, mobileRuntime, refreshing, scheduleRefreshLogCollapse, status, updateProgressFromRefresh]);
+  }, [appendLog, autoRefreshOptions, clearRefreshLogTimer, commitStatus, loadStatus, mobileRuntime, refreshing, scheduleRefreshLogCollapse, status, updateProgressFromRefresh]);
 
   const pruneCache = useCallback(async () => {
     clearRefreshLogTimer();
@@ -203,7 +209,7 @@ useEffect(() => {
         "/api/data-sources/prune-cache",
         { ...CACHE_POLICY, mode: "clear" },
       );
-      setStatus(data.status || null);
+      commitStatus(data.status || null);
       setProgress({ label: "清理完成", value: 100 });
       appendLog(`已删除 ${data.removed_files || 0} 个文件，释放 ${formatBytes(data.removed_bytes)}。`, "success");
       scheduleRefreshLogCollapse();
@@ -215,7 +221,7 @@ useEffect(() => {
       setRefreshing(false);
       window.setTimeout(() => setProgress(null), 900);
     }
-  }, [appendLog, clearRefreshLogTimer, scheduleRefreshLogCollapse]);
+  }, [appendLog, clearRefreshLogTimer, commitStatus, scheduleRefreshLogCollapse]);
   const refreshDateSource = status?.quote_trade_date ?? status?.quote_generated_at ?? status?.generated_at ?? status?.universe_updated_at;
   const refreshDateText = formatMarketRefreshDate(refreshDateSource, mobileRuntime);
   const mobileUniverseCount = Number(status?.universe_count);
@@ -327,11 +333,7 @@ useEffect(() => {
       ) : (
         <section className={`research-context-bar screen-toolbar screen-toolbar-card screen-toolbar-compact ${refreshing ? "refreshing" : ""}`} aria-label="股票池数据工具栏">
           <div className="screen-toolbar-compact-row">
-            <div className="screen-toolbar-compact-status" aria-label="股票池状态">
-              <span><em>股票池</em><strong>{formatNumber(status?.universe_count)}</strong></span>
-              <span><em>缓存</em><strong>{formatBytes(status?.cache_bytes)}</strong></span>
-              <span className="refresh-date"><em>刷新日期</em><strong>{refreshDateText}</strong></span>
-            </div>
+
             <div className="screen-toolbar-compact-actions">
               <button type="button" className="screen-toolbar-refresh-btn" onClick={refreshUniverse} disabled={refreshing}>
                 <RefreshCw className={refreshing ? "spin" : ""} size={15} aria-hidden="true" />

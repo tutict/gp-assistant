@@ -101,6 +101,16 @@
   }
 }
 
+:root[data-density="compact"] {
+  --fs-body: 13px;
+  --fs-data: 12px;
+  --fs-label: 11px;
+  --control-height: 34px;
+  --touch-comfort: 36px;
+  --space-3: 10px;
+  --space-4: 12px;
+}
+
 [data-theme="light"] {
   --bg: #f4f6f8;
   --surface: #ffffff;

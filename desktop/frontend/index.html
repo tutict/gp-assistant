@@ -12,6 +12,11 @@
           ? requestedTheme
           : localStorage.getItem("stock-optimizer-theme");
       document.documentElement.dataset.theme = savedTheme || "dark";
+      const requestedDensity = new URLSearchParams(window.location.search).get("density");
+      const savedDensity = requestedDensity === "compact" || requestedDensity === "comfortable"
+        ? requestedDensity
+        : localStorage.getItem("stock-optimizer-density");
+      document.documentElement.dataset.density = savedDensity === "compact" ? "compact" : "comfortable";
     </script>
     <style>
       html, body {

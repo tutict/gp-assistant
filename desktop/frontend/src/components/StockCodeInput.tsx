@@ -1,5 +1,6 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getJson } from "../lib/tauri";
+import type { Ref } from "react";
 import { hasMarketSuffix, inferMarketFromDigits, normalizeStockCode, sanitizeStockLookupInput, stockCodeDigits } from "../lib/format";
 import type { StockItem } from "../types";
 
@@ -10,6 +11,9 @@ interface StockCodeInputProps {
   placeholder?: string;
   listMode?: boolean;
   resolveBareCode?: boolean;
+  inputRef?: Ref<HTMLInputElement>;
+  inputAriaLabel?: string;
+  onCommit?: (value: string) => void;
 }
 
 const MARKET_OPTIONS = [
@@ -25,6 +29,9 @@ export function StockCodeInput({
   placeholder,
   listMode = false,
   resolveBareCode = false,
+  inputRef,
+  inputAriaLabel,
+  onCommit,
 }: StockCodeInputProps) {
   const [suggestions, setSuggestions] = useState<StockItem[]>([]);
   const [open, setOpen] = useState(false);
@@ -106,17 +113,20 @@ export function StockCodeInput({
   const chooseSuggestion = useCallback((item: StockItem) => {
     applyValue(item.code);
     setOpen(false);
-  }, [applyValue]);
+    onCommit?.(item.code);
+  }, [applyValue, onCommit]);
 
   const chooseMarket = useCallback((market: string) => {
     const code = normalizeStockCode(digits, market);
     if (code) applyValue(code);
     setOpen(false);
-  }, [applyValue, digits]);
+    if (code) onCommit?.(code);
+  }, [applyValue, digits, onCommit]);
 
   return (
     <div className="stock-code-input" ref={wrapperRef}>
       <input
+        ref={inputRef}
         id={id}
         type="text"
         value={value}
@@ -138,6 +148,12 @@ export function StockCodeInput({
         }}
         onFocus={() => setOpen(!completeCode)}
         onKeyDown={(event) => {
+          if (event.key === "Enter" && completeCode && !listMode) {
+            event.preventDefault();
+            setOpen(false);
+            onCommit?.(value.trim());
+            return;
+          }
           if (!open || completeCode || !suggestions.length) return;
           if (event.key === "ArrowDown") {
             event.preventDefault();
@@ -154,6 +170,7 @@ export function StockCodeInput({
         }}
         placeholder={placeholder || "600519.SH"}
         autoComplete="off"
+        aria-label={inputAriaLabel}
         aria-autocomplete="list"
         aria-expanded={open}
       />

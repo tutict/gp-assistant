@@ -1,4 +1,4 @@
-﻿@media (min-width: 769px) and (max-width: 1180px) {
+@media (min-width: 769px) and (max-width: 1180px) {
   :root {
     --sidebar-width: 72px;
   }
@@ -72,6 +72,13 @@
   .app-header {
     min-height: var(--header-height);
     padding: 0 8px;
+  }
+
+  .header-search,
+  .header-status,
+  .density-control,
+  .shortcut-help-trigger {
+    display: none;
   }
 
   .app-logo {
@@ -939,6 +946,13 @@
 
   .app-header {
     grid-column: 1 / -1;
+  }
+
+  .header-search,
+  .header-status,
+  .density-control,
+  .shortcut-help-trigger {
+    display: none;
   }
 
   .sidebar {

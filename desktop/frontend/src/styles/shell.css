@@ -22,6 +22,7 @@
 
 .app-brand {
   display: flex;
+  flex: 0 0 auto;
   min-width: 0;
   align-items: center;
   gap: 9px;
@@ -43,9 +44,186 @@
 
 .header-actions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: var(--space-2);
   margin-left: auto;
+}
+
+.header-search {
+  position: relative;
+  display: flex;
+  width: clamp(240px, 28vw, 420px);
+  min-width: 0;
+  align-items: center;
+  margin-left: clamp(8px, 2vw, 32px);
+}
+
+.header-search > svg {
+  position: absolute;
+  z-index: 1;
+  left: 11px;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.header-search .stock-code-input {
+  width: 100%;
+}
+
+.header-search .stock-code-input > input {
+  min-height: 36px;
+  padding: 7px 34px;
+  background: var(--surface-2);
+}
+
+.header-search .stock-code-suggestions {
+  top: calc(100% + 6px);
+}
+
+.header-status {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 1px;
+  margin-left: auto;
+  color: var(--text-secondary);
+}
+
+.header-status > span {
+  display: grid;
+  min-width: 58px;
+  gap: 1px;
+  padding: 0 9px;
+  border-left: 1px solid var(--line);
+}
+
+.header-status em {
+  font-size: var(--fs-caption);
+  font-style: normal;
+}
+
+.header-status strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-data);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-status .status-warning {
+  color: var(--warning);
+}
+
+.density-control {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.density-control button {
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: var(--fs-caption);
+  font-weight: 700;
+}
+
+.density-control button.active {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
+.shortcut-help-trigger {
+  width: 36px;
+  min-height: 36px;
+  color: var(--text-secondary);
+}
+
+.shortcut-help-backdrop {
+  position: fixed;
+  z-index: var(--z-modal);
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--contrast-dark) 58%, transparent);
+}
+
+.shortcut-help {
+  width: min(420px, calc(100vw - 32px));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: 0 24px 60px color-mix(in srgb, var(--contrast-dark) 38%, transparent);
+}
+
+.shortcut-help > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.shortcut-help > header div {
+  display: grid;
+  gap: 2px;
+}
+
+.shortcut-help > header span {
+  color: var(--text-tertiary);
+  font-size: var(--fs-caption);
+}
+
+.shortcut-help > header strong {
+  color: var(--text);
+  font-size: var(--fs-title);
+}
+
+.shortcut-help dl {
+  margin: 0;
+  padding: var(--space-2) var(--space-4) var(--space-4);
+}
+
+.shortcut-help dl > div {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.shortcut-help dl > div:last-child {
+  border-bottom: 0;
+}
+
+.shortcut-help dt {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-data);
+  font-weight: 700;
+}
+
+.shortcut-help dd {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--fs-body);
+}
+
+@media (max-width: 1240px) {
+  .header-status {
+    display: none;
+  }
 }
 
 .theme-toggle {

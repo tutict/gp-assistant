@@ -1,5 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "./hooks/useTheme";
+import { useDensity } from "./hooks/useDensity";
+import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { isMobileTauriRuntime } from "./lib/tauri";
 import { createPersistentWatchlistSetter, loadLocalWatchlistSnapshot, loadPersistentWatchlist } from "./lib/watchlistStore";
@@ -11,7 +13,7 @@ import { FilterBar } from "./components/FilterBar";
 import { ScreenPanel } from "./components/panels/ScreenPanel";
 import { WatchlistPanel } from "./components/panels/WatchlistPanel";
 import { PanelFeedback } from "./components/ui/PanelFeedback";
-import type { AdaptiveScreenRequest, WatchlistItem, LlmSettings } from "./types";
+import type { AdaptiveScreenRequest, DataStatus, WatchlistItem, LlmSettings } from "./types";
 import {
   consumeBacktestRouteRequest,
   nextBacktestRouteRequest,
@@ -46,6 +48,7 @@ interface AppProps {
 
 export default function App({ onMounted }: AppProps) {
   const { theme, toggleTheme } = useTheme();
+  const { density, toggleDensity } = useDensity();
   const [view, setView] = useState<ViewKey>(() => {
     const hash = window.location.hash;
     const map: Record<string, ViewKey> = {
@@ -64,6 +67,10 @@ export default function App({ onMounted }: AppProps) {
   const [observeRequest, setObserveRequest] = useState<StockRouteRequest | null>(null);
   const [newsRequest, setNewsRequest] = useState<StockRouteRequest | null>(null);
   const [backtestRouteRequest, setBacktestRouteRequest] = useState<BacktestRouteRequest | null>(null);
+  const [searchCode, setSearchCode] = useState("");
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const [marketStatus, setMarketStatus] = useState<DataStatus | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Persistent state
   const [watchlistLocalSnapshot] = useState<WatchlistItem[]>(() => loadLocalWatchlistSnapshot());
@@ -162,16 +169,6 @@ export default function App({ onMounted }: AppProps) {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
-  // Escape key
-  useEffect(() => {
-    const onKeydown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setMobileNavOpen(false);
-      }
-    };
-    document.addEventListener("keydown", onKeydown);
-    return () => document.removeEventListener("keydown", onKeydown);
-  }, []);
 
   const navigate = useCallback((v: ViewKey) => {
     setView(v);
@@ -228,10 +225,49 @@ export default function App({ onMounted }: AppProps) {
     });
   }, [setStoredLlmSettings]);
 
+  const focusGlobalSearch = useCallback(() => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  }, []);
+
+  const handleGlobalSearchCommit = useCallback((code: string) => {
+    const normalizedCode = code.trim().toUpperCase();
+    if (!normalizedCode) return;
+    setSearchCode(normalizedCode);
+    observeStock(normalizedCode);
+  }, [observeStock]);
+
+  const toggleShortcutHelp = useCallback(() => {
+    setShortcutHelpOpen((open) => !open);
+  }, []);
+
+  const closeOverlays = useCallback(() => {
+    setShortcutHelpOpen(false);
+    setMobileNavOpen(false);
+    if (document.activeElement === searchInputRef.current) searchInputRef.current?.blur();
+  }, []);
+
+  useGlobalShortcuts({
+    onFocusSearch: focusGlobalSearch,
+    onNavigate: navigate,
+    onToggleHelp: toggleShortcutHelp,
+    onEscape: closeOverlays,
+  });
+
   return (
     <div className={`app ${mobileNavOpen ? "mobile-nav-open" : ""}`} data-active-view={view}>
       <Header
         theme={theme}
+        density={density}
+        searchCode={searchCode}
+        searchInputRef={searchInputRef}
+        watchlistCount={watchlist.length}
+        dataStatus={marketStatus}
+        shortcutHelpOpen={shortcutHelpOpen}
+        onSearchCodeChange={setSearchCode}
+        onSearchCommit={handleGlobalSearchCommit}
+        onToggleDensity={toggleDensity}
+        onToggleHelp={toggleShortcutHelp}
         onToggleTheme={toggleTheme}
         onToggleMobileNav={() => setMobileNavOpen(true)}
       />
@@ -245,7 +281,7 @@ export default function App({ onMounted }: AppProps) {
 
       <main className="workbench">
         {view === "screen" && (
-          <FilterBar mobileRuntime={mobileRuntime} />
+          <FilterBar mobileRuntime={mobileRuntime} onStatusChange={setMarketStatus} />
         )}
 
         <div className="panels">
