@@ -1,41 +1,64 @@
+# Local environments and secrets
 .venv*/
-.android-ndk-r27c
-.android-sdk/
+.env
+.env.*
+!.env.example
+!.env.*.example
+/.android-ndk-r27c/
+/.android-sdk/
+/.android-debug.keystore
+
+# Language and test caches
 __pycache__/
 .pytest_cache/
-*.pyc
-.env
-.idea/
-.claude/
-.agents/
-.impeccable/
-.playwright-cli/
+.mypy_cache/
+.ruff_cache/
+*.py[cod]
+*.tsbuildinfo
+coverage/
+
+# Editors, operating systems, and local tools
+/.idea/
+/.claude/
+/.agents/
+/.impeccable/
+/.playwright-cli/
+/.workbuddy/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+
+# Dependencies and compiler outputs
+node_modules/
+target/
 tmp/
 data/
 build/
 dist/
 logs/
+*.log
 output/
 .tmp/
 models/*
 !models/.gitkeep
-desktop/node_modules/
-desktop/frontend/node_modules/
-desktop/frontend/tsconfig.tsbuildinfo
 desktop/mobile-dist/
 desktop/src-tauri/gen/
-desktop/src-tauri/target/
 desktop/src-tauri/binaries/*
 !desktop/src-tauri/binaries/.gitkeep
-native/gp-core/target/
 desktop/src-tauri/keys/
-desktop/src-tauri/gen/android/app/build/outputs/apk/**/*-aligned.apk
-# Local debug artifacts
-/.android-debug.keystore
+
+# Local build and debug artifacts
+/artifacts/
 /codex-*.png
 /gp-agent-check.png
 /gp-window.xml
 /mumu-*.png
-/artifacts/
 /gp-*.png
 /gp_*.png
+
+# Local UI review notes and captures
+/docs/android-ui-revamp-plan.md
+/rag2-*.png
+/rag2-*.jpg
