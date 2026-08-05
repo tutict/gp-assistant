@@ -20,31 +20,31 @@ colors:
   warning: "#E7A33D"
 typography:
   display:
-    fontFamily: "Fira Sans, Inter, system-ui, sans-serif"
+    fontFamily: "Segoe UI, Microsoft YaHei UI, system-ui, sans-serif"
     fontSize: "24px"
     fontWeight: 700
     lineHeight: 1.15
     letterSpacing: "0"
   title:
-    fontFamily: "Fira Sans, Inter, system-ui, sans-serif"
+    fontFamily: "Segoe UI, Microsoft YaHei UI, system-ui, sans-serif"
     fontSize: "18px"
     fontWeight: 700
     lineHeight: 1.25
     letterSpacing: "0"
   body:
-    fontFamily: "Fira Sans, Inter, system-ui, sans-serif"
+    fontFamily: "Segoe UI, Microsoft YaHei UI, system-ui, sans-serif"
     fontSize: "14px"
     fontWeight: 400
     lineHeight: 1.55
     letterSpacing: "0"
   label:
-    fontFamily: "Fira Sans, Inter, system-ui, sans-serif"
+    fontFamily: "Segoe UI, Microsoft YaHei UI, system-ui, sans-serif"
     fontSize: "12px"
     fontWeight: 700
     lineHeight: 1.3
     letterSpacing: "0"
   data:
-    fontFamily: "Fira Code, ui-monospace, SFMono-Regular, Consolas, monospace"
+    fontFamily: "Consolas, Cascadia Mono, ui-monospace, monospace"
     fontSize: "13px"
     fontWeight: 500
     lineHeight: 1.35
@@ -122,9 +122,9 @@ The palette is graphite surfaces, disciplined red actions, amber caution, and se
 
 ## 3. Typography
 
-**Display Font:** Fira Sans with Inter and system fallbacks  
-**Body Font:** Fira Sans with Inter and system fallbacks  
-**Label/Mono Font:** Fira Code for stock codes, values, timestamps, and tabular data
+**Display Font:** Segoe UI with Microsoft YaHei UI and system fallbacks
+**Body Font:** Segoe UI with Microsoft YaHei UI and system fallbacks
+**Label/Mono Font:** Consolas with Cascadia Mono and generic monospace fallbacks for stock codes, values, timestamps, and tabular data
 
 **Character:** The type system is technical without becoming terminal cosplay. Labels are compact and firm; prose is readable; data uses tabular figures and monospace rhythm.
 

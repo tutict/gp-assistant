@@ -80,7 +80,7 @@
   .research-context h1 small {
     margin-left: 8px;
     color: var(--text-tertiary);
-    font-family: "Fira Code", ui-monospace, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 10px;
     font-weight: 600;
   }
@@ -341,7 +341,7 @@
     height: 20px;
     padding-inline: 5px;
     border-radius: 10px;
-    color: #fff;
+    color: var(--button-text);
     background: var(--accent);
     font-size: 10px;
   }
@@ -1008,7 +1008,7 @@
     width: 22px;
     height: 22px;
     border-radius: var(--radius-xs);
-    color: #fff;
+    color: var(--button-text);
     background: var(--accent);
     font-size: 10px;
     font-weight: 800;
@@ -1098,7 +1098,7 @@
     place-items: center;
     min-width: 24px;
     height: 19px;
-    color: #fff;
+    color: var(--button-text);
     background: var(--accent-muted);
     font-size: var(--fs-caption);
   }
@@ -1194,7 +1194,7 @@
     padding: 0;
     border: 0;
     border-radius: var(--radius-md);
-    color: #fff;
+    color: var(--button-text);
     background: var(--accent);
     cursor: pointer;
     transition: background-color var(--motion-fast) var(--ease-out),
@@ -1270,7 +1270,7 @@
   }
 
   .research-evidence-empty li > b {
-    font-family: "Fira Code", ui-monospace, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: var(--fs-caption);
   }
 
@@ -1295,7 +1295,7 @@
     height: 32px;
     border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--line));
     border-radius: var(--radius-xs);
-    color: #fff;
+    color: var(--button-text);
     background: var(--accent-muted);
     font-size: 11px;
     font-weight: 900;

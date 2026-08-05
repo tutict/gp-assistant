@@ -1,91 +1,3 @@
-*, *::before, *::after {
-  box-sizing: border-box;
-}
-
-html {
-  min-width: 320px;
-  background: var(--bg);
-  scroll-behavior: smooth;
-}
-
-body {
-  min-width: 320px;
-  min-height: 100vh;
-  margin: 0;
-  overflow-x: hidden;
-  background: var(--bg);
-  color: var(--text);
-  font-size: var(--fs-body);
-  line-height: 1.5;
-  text-rendering: optimizeLegibility;
-}
-
-button,
-input,
-select,
-textarea {
-  color: inherit;
-}
-
-button,
-a,
-input,
-select,
-textarea,
-summary {
-  -webkit-tap-highlight-color: transparent;
-}
-
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
-summary:focus-visible {
-  outline: 2px solid var(--accent-strong);
-  outline-offset: 2px;
-}
-
-button:disabled,
-input:disabled,
-select:disabled,
-textarea:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
-}
-
-a {
-  color: var(--accent-strong);
-}
-
-a:hover {
-  text-decoration-thickness: 1px;
-  text-underline-offset: 3px;
-}
-
-.icon-button {
-  display: inline-grid;
-  width: var(--control-height);
-  height: var(--control-height);
-  flex: 0 0 auto;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition:
-    color var(--motion-fast) ease,
-    background-color var(--motion-fast) ease,
-    border-color var(--motion-fast) ease;
-}
-
-.icon-button:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
 .app {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
@@ -234,6 +146,12 @@ a:hover {
   background: var(--bg);
 }
 
+@media (min-width: 1600px) {
+  .workbench {
+    padding-inline: max(22px, calc((100vw - 1560px) / 2));
+  }
+}
+
 .panels {
   min-width: 0;
 }
@@ -309,6 +227,8 @@ a:hover {
 .panel-controls,
 .backtest-controls,
 .rag-controls {
+  width: 100%;
+  max-width: 1200px;
   display: flex;
   align-items: end;
   gap: var(--space-3);
@@ -494,6 +414,56 @@ a:hover {
   animation: ui-spin 900ms linear infinite;
 }
 
+.panel-feedback-skeleton {
+  display: block;
+  min-height: 176px;
+}
+
+.skeleton-layout {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.skeleton {
+  display: block;
+  min-height: 18px;
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-2);
+  background-image:
+    linear-gradient(
+      100deg,
+      transparent 30%,
+      var(--surface-3) 50%,
+      transparent 70%
+    );
+  background-size: 200% 100%;
+  animation: skeleton-sweep 1.4s linear infinite;
+}
+
+.skeleton-line {
+  width: min(100%, 720px);
+}
+
+.skeleton-line-title {
+  width: min(42%, 320px);
+  min-height: 24px;
+}
+
+.skeleton-line-short {
+  width: min(68%, 520px);
+}
+
+.skeleton-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.skeleton-metrics .skeleton {
+  min-height: 64px;
+}
+
 .panel-feedback-action {
   margin-left: auto;
 }
@@ -569,11 +539,24 @@ a:hover {
 .notes p,
 .evidence-list p,
 .agent-final-reply {
+  max-width: 76ch;
   text-wrap: pretty;
 }
 
 @keyframes ui-spin {
   to { transform: rotate(360deg); }
+}
+
+@keyframes skeleton-sweep {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    background-image: none;
+    animation: none;
+  }
 }
 
 .run-btn,

@@ -5,31 +5,38 @@
 @import "./components.css" layer(components);
 @import "./shell.css" layer(shell);
 @import "./pages.css" layer(pages);
-@import "./research.css";
+@import "./research.css" layer(pages);
 @import "./responsive.css" layer(responsive);
-/* Hide scrollbars while preserving scroll interaction. */
+
 * {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  scrollbar-color: var(--surface-3) transparent;
+  scrollbar-width: thin;
 }
 
 *::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
+  width: 8px;
+  height: 8px;
 }
 
-html,
-body,
-#root {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+*::-webkit-scrollbar-thumb {
+  border-radius: var(--radius-xs);
+  background: var(--surface-3);
 }
 
-html::-webkit-scrollbar,
-body::-webkit-scrollbar,
-#root::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--line);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (max-width: 768px) {
+  * {
+    scrollbar-width: none;
+  }
+
+  *::-webkit-scrollbar {
+    display: none;
+  }
 }

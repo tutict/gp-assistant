@@ -1,4 +1,9 @@
 :root {
+  --font-sans:
+    "Segoe UI", "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei",
+    system-ui, sans-serif;
+  --font-mono:
+    Consolas, "Cascadia Mono", "SFMono-Regular", ui-monospace, monospace;
   --bg: #0d1014;
   --surface: #14191f;
   --surface-2: #1a2027;
@@ -17,11 +22,36 @@
   --success: #35b779;
   --warning: #e7a33d;
   --error: #f0645c;
+  --danger: var(--error);
+  --text-muted: var(--text-tertiary);
   --rise: #ee554c;
   --fall: #35b779;
   --flat: #a9b4bf;
   --score: #f3c451;
   --score-soft: rgba(243, 196, 81, 0.14);
+  --contrast-dark: #000000;
+  --splash-bg: #120e0d;
+  --splash-text: #fff4ef;
+  --agent-workspace-bg: #101114;
+  --agent-rail-bg: #17191d;
+  --agent-stage-bg: #121316;
+  --agent-composer-bg: #202124;
+  --agent-send-start: #ef4444;
+  --agent-send-end: #b91c1c;
+  --agent-send-hover-start: #f87171;
+  --agent-send-hover-end: #dc2626;
+  --agent-send-disabled-start: #7f1d1d;
+  --agent-send-disabled-end: #450a0a;
+  --chart-line-1: #4e9dff;
+  --chart-line-2: #f59d38;
+  --chart-line-3: #c36cff;
+  --chart-line-4: #18c7a9;
+  --chart-line-5: #ffd84d;
+  --chart-up: var(--rise);
+  --chart-down: var(--fall);
+  --chart-canvas: #0d0f12;
+  --chart-fullscreen: #05070a;
+  --chart-benchmark: #6ca8b2;
   --focus-ring: rgba(216, 61, 53, 0.34);
   --fs-display: 24px;
   --fs-headline: 20px;
@@ -95,6 +125,14 @@
   --flat: #667482;
   --score: #9d6b08;
   --score-soft: rgba(157, 107, 8, 0.1);
+  --chart-line-1: #1f6fd6;
+  --chart-line-2: #a8610a;
+  --chart-line-3: #7f49b5;
+  --chart-line-4: #087f70;
+  --chart-line-5: #95720a;
+  --chart-canvas: #f7f9fb;
+  --chart-fullscreen: #eef2f6;
+  --chart-benchmark: #26758a;
   --focus-ring: rgba(216, 61, 53, 0.24);
   color-scheme: light;
 }
@@ -108,10 +146,7 @@ button,
 input,
 select,
 textarea {
-  font-family:
-    Inter, "Noto Sans SC", "Noto Sans CJK SC", "PingFang SC",
-    "HarmonyOS Sans", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei",
-    system-ui, sans-serif;
+  font-family: var(--font-sans);
   letter-spacing: 0;
 }
 
@@ -124,4 +159,15 @@ b,
 .stock-code,
 time {
   font-variant-numeric: tabular-nums;
+}
+
+.metric strong,
+.quote-number strong,
+.screen-status-metric strong,
+.status-item strong,
+.backtest-param-strip strong,
+.score-badge b,
+.stock-code,
+.watchlist-code {
+  font-family: var(--font-mono);
 }

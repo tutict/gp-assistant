@@ -7,9 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "npm run test:density && vitest run",
+    "test": "npm run test:density && npm run test:architecture && vitest run",
     "test:unit": "vitest run",
     "test:density": "node ../../scripts/check-ui-density.mjs",
+    "test:architecture": "node ../../scripts/check-css-architecture.mjs",
     "ui:screenshots": "node ../../scripts/ui-screenshot.mjs"
   },
   "dependencies": {

@@ -22,5 +22,8 @@ describe("PanelFeedback", () => {
     expect(html).toContain('role="status"');
     expect(html).toContain('aria-live="polite"');
     expect(html).toContain("panel-feedback-loading");
+    expect(html).toContain("panel-feedback-skeleton");
+    expect(html).toContain("skeleton-line");
+    expect(html).toContain("正在加载");
   });
 });
