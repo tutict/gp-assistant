@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "./hooks/useTheme";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { isMobileTauriRuntime } from "./lib/tauri";
@@ -9,11 +9,8 @@ import { Header } from "./components/Header";
 import { Sidebar } from "./components/Sidebar";
 import { FilterBar } from "./components/FilterBar";
 import { ScreenPanel } from "./components/panels/ScreenPanel";
-import { ObservePanel } from "./components/panels/ObservePanel";
-import { BacktestPanel } from "./components/panels/BacktestPanel";
-import { NewsRagPanel } from "./components/panels/NewsRagPanel";
-import { AgentPanel } from "./components/panels/AgentPanel";
 import { WatchlistPanel } from "./components/panels/WatchlistPanel";
+import { PanelFeedback } from "./components/ui/PanelFeedback";
 import type { AdaptiveScreenRequest, WatchlistItem, LlmSettings } from "./types";
 import {
   consumeBacktestRouteRequest,
@@ -26,6 +23,22 @@ type ViewKey = "screen" | "observe" | "backtest" | "news" | "agent";
 type LlmSettingsUpdater = LlmSettings | null | ((prev: LlmSettings | null) => LlmSettings | null);
 type StockRouteRequest = { code: string; requestId: number };
 const RESEARCH_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+
+const loadObservePanel = () => import("./components/panels/ObservePanel");
+const loadBacktestPanel = () => import("./components/panels/BacktestPanel");
+const loadNewsRagPanel = () => import("./components/panels/NewsRagPanel");
+const loadAgentPanel = () => import("./components/panels/AgentPanel");
+const ObservePanel = lazy(async () => ({ default: (await loadObservePanel()).ObservePanel }));
+const BacktestPanel = lazy(async () => ({ default: (await loadBacktestPanel()).BacktestPanel }));
+const NewsRagPanel = lazy(async () => ({ default: (await loadNewsRagPanel()).NewsRagPanel }));
+const AgentPanel = lazy(async () => ({ default: (await loadAgentPanel()).AgentPanel }));
+const adjacentPanelLoaders: Record<ViewKey, Array<() => Promise<unknown>>> = {
+  screen: [loadObservePanel],
+  observe: [loadBacktestPanel],
+  backtest: [loadObservePanel, loadNewsRagPanel],
+  news: [loadBacktestPanel, loadAgentPanel],
+  agent: [loadNewsRagPanel],
+};
 
 interface AppProps {
   onMounted?: () => void;
@@ -176,6 +189,13 @@ export default function App({ onMounted }: AppProps) {
     revealActivePanels();
   }, []);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      for (const loadPanel of adjacentPanelLoaders[view]) void loadPanel();
+    }, 240);
+    return () => window.clearTimeout(timer);
+  }, [view]);
+
   const observeStock = useCallback((code: string) => {
     setObserveRequest((prev) => ({ code, requestId: (prev?.requestId ?? 0) + 1 }));
     navigate("observe");
@@ -229,51 +249,55 @@ export default function App({ onMounted }: AppProps) {
         )}
 
         <div className="panels">
-          {view === "screen" && (
-            <ScreenPanel
-              criteria={criteria}
-              onCriteriaChange={setCriteria}
-              watchlist={watchlist}
-              onWatchlistChange={setWatchlist}
-              onObserveStock={observeStock}
-              onRunBacktest={runCurrentCriteriaBacktest}
-              mobileRuntime={mobileRuntime}
-            />
-          )}
-          {view === "observe" && (
-            <ObservePanel
-              watchlist={watchlist}
-              onWatchlistChange={setWatchlist}
-              initialCode={observeRequest?.code || ""}
-              initialCodeRequestId={observeRequest?.requestId ?? 0}
-              mobileRuntime={mobileRuntime}
-            />
-          )}
-          {view === "backtest" && (
-            <BacktestPanel
-              criteria={criteria}
-              watchlist={watchlist}
-              preferredSource={backtestRouteRequest}
-              onPreferredSourceConsumed={handleBacktestRouteConsumed}
-            />
-          )}
-          {view === "news" && (
-            <NewsRagPanel
-              llmSettings={llmSettings}
-              onLlmSettingsChange={setLlmSettings}
-              watchlist={watchlist}
-              initialCode={newsRequest?.code || ""}
-              initialCodeRequestId={newsRequest?.requestId ?? 0}
-            />
-          )}
-          {view === "agent" && (
-            <AgentPanel
-              llmSettings={llmSettings}
-              onLlmSettingsChange={setLlmSettings}
-              watchlist={watchlist}
-              onWatchlistChange={setWatchlist}
-            />
-          )}
+          <Suspense
+            fallback={<PanelFeedback kind="loading" description="正在加载工作区..." />}
+          >
+            {view === "screen" && (
+              <ScreenPanel
+                criteria={criteria}
+                onCriteriaChange={setCriteria}
+                watchlist={watchlist}
+                onWatchlistChange={setWatchlist}
+                onObserveStock={observeStock}
+                onRunBacktest={runCurrentCriteriaBacktest}
+                mobileRuntime={mobileRuntime}
+              />
+            )}
+            {view === "observe" && (
+              <ObservePanel
+                watchlist={watchlist}
+                onWatchlistChange={setWatchlist}
+                initialCode={observeRequest?.code || ""}
+                initialCodeRequestId={observeRequest?.requestId ?? 0}
+                mobileRuntime={mobileRuntime}
+              />
+            )}
+            {view === "backtest" && (
+              <BacktestPanel
+                criteria={criteria}
+                watchlist={watchlist}
+                preferredSource={backtestRouteRequest}
+                onPreferredSourceConsumed={handleBacktestRouteConsumed}
+              />
+            )}
+            {view === "news" && (
+              <NewsRagPanel
+                llmSettings={llmSettings}
+                onLlmSettingsChange={setLlmSettings}
+                watchlist={watchlist}
+                initialCode={newsRequest?.code || ""}
+                initialCodeRequestId={newsRequest?.requestId ?? 0}
+              />
+            )}
+            {view === "agent" && (
+              <AgentPanel
+                llmSettings={llmSettings}
+                onLlmSettingsChange={setLlmSettings}
+                watchlist={watchlist}
+                onWatchlistChange={setWatchlist}
+              />
+            )}
+          </Suspense>
         </div>
 
         {view !== "agent" && view !== "news" && (

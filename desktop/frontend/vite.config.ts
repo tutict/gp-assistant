@@ -6,10 +6,29 @@ export default defineConfig({
   build: {
     outDir: "../mobile-dist",
     emptyOutDir: true,
+    manifest: true,
     sourcemap: false,
     cssCodeSplit: true,
     assetsInlineLimit: 2048,
     reportCompressedSize: true,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: "react",
+              test: /node_modules[\\/](?:react|react-dom|scheduler)[\\/]/,
+              priority: 20,
+            },
+            {
+              name: "icons",
+              test: /node_modules[\\/]lucide-react[\\/]/,
+              priority: 15,
+            },
+          ],
+        },
+      },
+    },
   },
   server: {
     proxy: {

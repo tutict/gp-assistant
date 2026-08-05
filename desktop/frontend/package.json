@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && npm run test:bundle",
     "preview": "vite preview",
     "test": "npm run test:density && npm run test:architecture && vitest run",
     "test:unit": "vitest run",
     "test:density": "node ../../scripts/check-ui-density.mjs",
     "test:architecture": "node ../../scripts/check-css-architecture.mjs",
+    "test:bundle": "node ../../scripts/check-bundle-budget.mjs",
     "ui:screenshots": "node ../../scripts/ui-screenshot.mjs"
   },
   "dependencies": {
