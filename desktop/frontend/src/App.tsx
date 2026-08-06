@@ -3,7 +3,7 @@ import { useTheme } from "./hooks/useTheme";
 import { useDensity } from "./hooks/useDensity";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useLocalStorage } from "./hooks/useLocalStorage";
-import { isMobileTauriRuntime } from "./lib/tauri";
+import { getJson, isMobileTauriRuntime } from "./lib/tauri";
 import { createPersistentWatchlistSetter, loadLocalWatchlistSnapshot, loadPersistentWatchlist } from "./lib/watchlistStore";
 import { sanitizePersistedLlmSettings } from "./lib/contracts";
 import { refreshResearchWatchlist } from "./lib/researchRefresh";
@@ -150,6 +150,20 @@ export default function App({ onMounted }: AppProps) {
     onMounted?.();
   }, [onMounted]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void getJson<DataStatus>("/api/data-sources/status")
+      .then((status) => {
+        if (!cancelled) setMarketStatus(status);
+      })
+      .catch(() => {
+        if (!cancelled) setMarketStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Hash routing
   useEffect(() => {
     const onHashChange = () => {
@@ -281,7 +295,11 @@ export default function App({ onMounted }: AppProps) {
 
       <main className="workbench">
         {view === "screen" && (
-          <FilterBar mobileRuntime={mobileRuntime} onStatusChange={setMarketStatus} />
+          <FilterBar
+            mobileRuntime={mobileRuntime}
+            status={marketStatus}
+            onStatusChange={setMarketStatus}
+          />
         )}
 
         <div className="panels">

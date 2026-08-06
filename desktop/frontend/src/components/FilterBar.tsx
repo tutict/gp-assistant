@@ -1,6 +1,6 @@
 import { RefreshCw, Settings2, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getJson, getTauriInvoke, isMarketStatusStale, postJson, refreshTauriMarketData } from "../lib/tauri";
+import { getTauriInvoke, isMarketStatusStale, postJson, refreshTauriMarketData } from "../lib/tauri";
 import { formatBytes, formatMarketRefreshDate } from "../lib/format";
 import type { DataStatus } from "../types";
 
@@ -20,6 +20,7 @@ export interface FilterCriteria {
 
 interface FilterBarProps {
   mobileRuntime: boolean;
+  status: DataStatus | null;
   onStatusChange?: (status: DataStatus | null) => void;
 }
 
@@ -39,8 +40,7 @@ const CACHE_POLICY = {
 };
 
 
-export function FilterBar({ mobileRuntime, onStatusChange }: FilterBarProps) {
-  const [status, setStatus] = useState<DataStatus | null>(null);
+export function FilterBar({ mobileRuntime, status, onStatusChange }: FilterBarProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshLog, setRefreshLog] = useState<RefreshLogEntry[]>([]);
   const [refreshLogOpen, setRefreshLogOpen] = useState(false);
@@ -76,7 +76,6 @@ useEffect(() => {
   }, []);
 
   const commitStatus = useCallback((nextStatus: DataStatus | null) => {
-    setStatus(nextStatus);
     onStatusChange?.(nextStatus);
   }, [onStatusChange]);
 
@@ -91,22 +90,7 @@ useEffect(() => {
 
     const value = Math.max(8, Math.min(98, Math.round((done / total) * 100)));
     setProgress({ label: `刷新批次 ${Math.min(done, total)}/${total}`, value });
-  }, [appendLog, commitStatus]);
-
-  const loadStatus = useCallback(async () => {
-    try {
-      const data = await getJson<DataStatus>("/api/data-sources/status");
-      commitStatus(data);
-      return data;
-    } catch (err) {
-      appendLog(`状态读取失败：${(err as Error).message}`, "error");
-      return null;
-    }
-  }, [appendLog, commitStatus]);
-
-  useEffect(() => {
-    void loadStatus();
-  }, [loadStatus]);
+  }, [appendLog]);
 
   const refreshOptions = useMemo(() => ({
     ...CACHE_POLICY,
@@ -158,8 +142,7 @@ useEffect(() => {
     let cancelled = false;
 
     const autoRefreshIfNeeded = async () => {
-      const currentStatus = status || await loadStatus();
-      if (cancelled || !currentStatus || !isMarketStatusStale(currentStatus)) return;
+      if (cancelled || !status || !isMarketStatusStale(status)) return;
 
       autoRefreshStartedRef.current = true;
       clearRefreshLogTimer();
@@ -196,7 +179,7 @@ useEffect(() => {
     return () => {
       cancelled = true;
     };
-  }, [appendLog, autoRefreshOptions, clearRefreshLogTimer, commitStatus, loadStatus, mobileRuntime, refreshing, scheduleRefreshLogCollapse, status, updateProgressFromRefresh]);
+  }, [appendLog, autoRefreshOptions, clearRefreshLogTimer, commitStatus, mobileRuntime, refreshing, scheduleRefreshLogCollapse, status, updateProgressFromRefresh]);
 
   const pruneCache = useCallback(async () => {
     clearRefreshLogTimer();

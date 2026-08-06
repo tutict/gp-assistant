@@ -61,8 +61,11 @@ if (-not $SkipNode) {
         Invoke-Checked "Install frontend dependencies" $npm @("ci") $frontendDir
     }
     Invoke-Checked "Frontend UI density guard" $npm @("run", "test:density") $frontendDir
+    Invoke-Checked "Frontend UI density contract tests" $npm @("run", "test:density-contract") $frontendDir
+    Invoke-Checked "Frontend CSS architecture guard" $npm @("run", "test:architecture") $frontendDir
     Invoke-Checked "Frontend unit tests" $npm @("run", "test:unit") $frontendDir
     Invoke-Checked "Frontend React/TypeScript build" $npm @("run", "build") $frontendDir
+    Invoke-Checked "Frontend desktop visual and shortcut harness" $npm @("run", "test:desktop:built") $frontendDir
 }
 
 if (-not $SkipPrepare) {

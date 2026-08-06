@@ -2,11 +2,9 @@ import { act, create } from "react-test-renderer";
 import type { ReactTestRenderer } from "react-test-renderer";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DataStatus } from "../types";
-import { getJson } from "../lib/tauri";
 import { FilterBar } from "./FilterBar";
 
 vi.mock("../lib/tauri", () => ({
-  getJson: vi.fn(),
   getTauriInvoke: vi.fn(() => null),
   isMarketStatusStale: vi.fn(() => false),
   postJson: vi.fn(),
@@ -22,29 +20,26 @@ describe("FilterBar", () => {
     });
   });
 
-  it("publishes loaded market status to the application shell", async () => {
+  it("renders the controlled market status on mobile", async () => {
     const status: DataStatus = {
       universe_count: 5231,
       quote_trade_date: "20260804",
       current_trade_date: "20260804",
       cache_bytes: 1024,
     };
-    vi.mocked(getJson).mockResolvedValue(status);
-    const onStatusChange = vi.fn();
 
+    let renderer!: ReactTestRenderer;
     await act(async () => {
-      create(<FilterBar mobileRuntime={false} onStatusChange={onStatusChange} />);
-      await Promise.resolve();
+      renderer = create(<FilterBar mobileRuntime status={status} />);
     });
 
-    expect(onStatusChange).toHaveBeenCalledWith(status);
+    expect(renderer.root.findByProps({ "aria-label": "股票池状态" })).toBeTruthy();
   });
 
   it("keeps desktop data status in the header instead of duplicating it in the page toolbar", async () => {
-    vi.mocked(getJson).mockResolvedValue({ universe_count: 5231 });
     let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<FilterBar mobileRuntime={false} />);
+      renderer = create(<FilterBar mobileRuntime={false} status={{ universe_count: 5231 }} />);
       await Promise.resolve();
     });
 

@@ -1,4 +1,5 @@
 import { CircleHelp, Menu, Moon, Search, Sun, X } from "lucide-react";
+import { useEffect, useRef } from "react";
 import type { Ref } from "react";
 import type { DataStatus } from "../types";
 import type { Density } from "../hooks/useDensity";
@@ -37,9 +38,10 @@ function formatCount(value: unknown): string {
 function freshnessLabel(status: DataStatus | null): string {
   if (!status) return "待检查";
   if (status.stale === true) return "待更新";
-  if (status.quote_trade_date && status.current_trade_date
-    && status.quote_trade_date !== status.current_trade_date) return "待更新";
-  return "最新";
+  if (status.quote_trade_date && status.current_trade_date) {
+    return status.quote_trade_date === status.current_trade_date ? "最新" : "待更新";
+  }
+  return status.stale === false ? "最新" : "待检查";
 }
 
 export function Header({
@@ -61,6 +63,24 @@ export function Header({
     ?? dataStatus?.quote_generated_at
     ?? dataStatus?.generated_at
     ?? dataStatus?.universe_updated_at;
+  const helpRef = useRef<HTMLElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!shortcutHelpOpen) {
+      previouslyFocusedRef.current?.focus();
+      previouslyFocusedRef.current = null;
+      return;
+    }
+    const activeElement = document.activeElement;
+    previouslyFocusedRef.current = activeElement && typeof (activeElement as HTMLElement).focus === "function"
+      ? activeElement as HTMLElement
+      : null;
+    const timer = window.setTimeout(() => {
+      helpRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [shortcutHelpOpen]);
 
   return (
     <>
@@ -78,17 +98,20 @@ export function Header({
         </div>
 
         <div className="header-search" role="search">
-          <Search size={16} aria-hidden="true" />
-          <StockCodeInput
-            id="global-stock-search"
-            value={searchCode}
-            onChange={onSearchCodeChange}
-            onCommit={onSearchCommit}
-            inputRef={searchInputRef}
-            inputAriaLabel="搜索股票"
-            placeholder="代码 / 名称"
-            resolveBareCode
-          />
+          <label className="header-search-label" htmlFor="global-stock-search">搜股</label>
+          <div className="header-search-field">
+            <Search size={16} aria-hidden="true" />
+            <StockCodeInput
+              id="global-stock-search"
+              value={searchCode}
+              onChange={onSearchCodeChange}
+              onCommit={onSearchCommit}
+              inputRef={searchInputRef}
+              inputAriaLabel="搜索股票"
+              placeholder="代码 / 名称"
+              resolveBareCode
+            />
+          </div>
         </div>
 
         <div className="header-status" aria-label="全局数据状态">
@@ -149,11 +172,17 @@ export function Header({
       {shortcutHelpOpen ? (
         <div className="shortcut-help-backdrop" onMouseDown={onToggleHelp}>
           <section
+            ref={helpRef}
             className="shortcut-help"
             role="dialog"
             aria-modal="true"
             aria-label="快捷键帮助"
             onMouseDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key !== "Tab") return;
+              event.preventDefault();
+              helpRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+            }}
           >
             <header>
               <div><span>桌面快捷键</span><strong>快速定位工作区</strong></div>

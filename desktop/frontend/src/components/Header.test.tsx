@@ -86,4 +86,31 @@ describe("Header", () => {
     expect(renderer.root.findByProps({ role: "dialog", "aria-label": "快捷键帮助" })).toBeTruthy();
     expect(renderer.root.findByProps({ "aria-label": "切换到舒适密度" })).toBeTruthy();
   });
+
+  it("does not claim fresh data without freshness evidence", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <Header
+          theme="dark"
+          density="comfortable"
+          searchCode=""
+          searchInputRef={createRef<HTMLInputElement>()}
+          watchlistCount={0}
+          dataStatus={{ universe_count: 5231 }}
+          shortcutHelpOpen={false}
+          onSearchCodeChange={vi.fn()}
+          onSearchCommit={vi.fn()}
+          onToggleDensity={vi.fn()}
+          onToggleHelp={vi.fn()}
+          onToggleTheme={vi.fn()}
+          onToggleMobileNav={vi.fn()}
+        />,
+      );
+    });
+
+    const values = renderer.root.findAllByType("strong").map((node) => node.children.join(""));
+    expect(values).toContain("\u5f85\u68c0\u67e5");
+    expect(values).not.toContain("\u6700\u65b0");
+  });
 });

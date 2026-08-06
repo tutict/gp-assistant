@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readdirSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const stylesDirectory = fileURLToPath(
@@ -10,6 +11,90 @@ const styleFiles = readdirSync(stylesDirectory)
   .filter((file) => file.endsWith(".css"))
   .sort();
 const errors = [];
+const shellArgumentIndex = process.argv.indexOf("--shell");
+const shellPath = shellArgumentIndex >= 0
+  ? process.argv[shellArgumentIndex + 1]
+  : `${stylesDirectory}/shell.css`;
+const frontendRequire = createRequire(
+  new URL("../desktop/frontend/package.json", import.meta.url),
+);
+const postcss = frontendRequire("postcss");
+const shell = readFileSync(shellPath, "utf8");
+const shellRoot = postcss.parse(shell, { from: "shell.css" });
+
+function shellLine(node) {
+  return node?.source?.start?.line ?? 1;
+}
+
+function shellError(node, message) {
+  errors.push(`shell.css:${shellLine(node)} ${message}`);
+}
+
+function hasSelector(rule, selector) {
+  return postcss.list
+    .comma(rule.selector)
+    .some((candidate) => candidate.replace(/\s+/g, " ").trim() === selector);
+}
+
+function hasDeclaration(rule, property, value) {
+  return rule.nodes?.some(
+    (node) => node.type === "decl" && node.prop === property && node.value.trim() === value,
+  );
+}
+
+function isWithinMedia(rule) {
+  let parent = rule.parent;
+  while (parent) {
+    if (parent.type === "atrule" && parent.name === "media") return true;
+    parent = parent.parent;
+  }
+  return false;
+}
+
+const wideScreenMedia = [];
+shellRoot.walkAtRules("media", (atRule) => {
+  if (/^\(min-width\s*:\s*1600px\)$/.test(atRule.params.replace(/\s+/g, " ").trim())) {
+    wideScreenMedia.push(atRule);
+  }
+});
+const workbenchRule = wideScreenMedia
+  .flatMap((atRule) => {
+    const rules = [];
+    atRule.walkRules((rule) => rules.push(rule));
+    return rules;
+  })
+  .find((rule) => hasSelector(rule, ".workbench") && hasDeclaration(
+    rule,
+    "padding-inline",
+    "max(22px, calc((100vw - 1560px) / 2))",
+  ));
+if (!workbenchRule) {
+  shellError(wideScreenMedia[0] ?? shellRoot, ".workbench must declare wide-screen centering");
+}
+
+for (const selector of [".panel-controls", ".backtest-controls", ".rag-controls"]) {
+  let rule;
+  shellRoot.walkRules((candidate) => {
+    if (!rule && !isWithinMedia(candidate)
+      && hasSelector(candidate, selector)
+      && hasDeclaration(candidate, "max-width", "1200px")) {
+      rule = candidate;
+    }
+  });
+  if (!rule) shellError(shellRoot, `${selector} must declare max-width: 1200px`);
+}
+
+for (const selector of [".notes p", ".evidence-list p", ".agent-final-reply"]) {
+  let rule;
+  shellRoot.walkRules((candidate) => {
+    if (!rule && !isWithinMedia(candidate)
+      && hasSelector(candidate, selector)
+      && hasDeclaration(candidate, "max-width", "76ch")) {
+      rule = candidate;
+    }
+  });
+  if (!rule) shellError(shellRoot, `${selector} must declare max-width: 76ch`);
+}
 const minimumFont = 10;
 const minimumTouch = 30;
 const platformClass =

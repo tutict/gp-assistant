@@ -5,13 +5,17 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && npm run test:bundle",
+    "build:app": "tsc -b && vite build",
+    "build": "npm run build:app && npm run test:bundle",
     "preview": "vite preview",
-    "test": "npm run test:density && npm run test:architecture && vitest run",
+    "test": "npm run test:density && npm run test:density-contract && npm run test:architecture && vitest run && npm run test:desktop",
     "test:unit": "vitest run",
     "test:density": "node ../../scripts/check-ui-density.mjs",
+    "test:density-contract": "node --test ../../scripts/check-ui-density.test.mjs",
     "test:architecture": "node ../../scripts/check-css-architecture.mjs",
     "test:bundle": "node ../../scripts/check-bundle-budget.mjs",
+    "test:desktop": "npm run build:app && npm run test:desktop:built",
+    "test:desktop:built": "node ../../scripts/ui-screenshot.mjs --serve --check-only",
     "ui:screenshots": "node ../../scripts/ui-screenshot.mjs"
   },
   "dependencies": {
