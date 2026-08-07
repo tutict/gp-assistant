@@ -22,6 +22,7 @@ describe("Agent Tauri routes", () => {
     const payload = {
       message: "继续研究",
       run_id: "agent-run",
+      conversation_id: "conversation-1",
       mode: "research",
       llm: { base_url: "http://127.0.0.1:11434/v1", model: "qwen2.5:7b" },
       history: [{ role: "user", content: "先看商业模式" }],
@@ -36,6 +37,32 @@ describe("Agent Tauri routes", () => {
     });
 
     expect(invokeMock).toHaveBeenCalledWith("api_agent_stream", { payload });
+  });
+
+  it("exposes lightweight Agent run history and full run detail routes", async () => {
+    const { TAURI_GET_ROUTES, TAURI_GET_PREFIX_ROUTES } = await import("./tauri");
+    const invokeMock = vi.fn(async (): Promise<unknown> => ({}));
+    const invoke = invokeMock as InvokeFn;
+
+    await TAURI_GET_ROUTES["/api/agent/runs"]?.({
+      invoke,
+      path: "/api/agent/runs",
+      parsed: new URL("http://tauri.localhost/api/agent/runs?conversation_id=conversation-1&limit=20"),
+    });
+
+    const detailRoute = TAURI_GET_PREFIX_ROUTES.find((route) => route.prefix === "/api/agent/runs/");
+    await detailRoute?.handler({
+      invoke,
+      path: "/api/agent/runs/run-1",
+      parsed: new URL("http://tauri.localhost/api/agent/runs/run-1"),
+    });
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "api_agent_run_list", {
+      payload: { conversation_id: "conversation-1", limit: 20 },
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "api_agent_run_get", {
+      payload: { run_id: "run-1" },
+    });
   });
 
   it("uses one canonical field whitelist for native Agent calls", async () => {

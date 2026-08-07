@@ -279,6 +279,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
       const payload = buildAgentStreamPayload({
         message: text,
         runId,
+        conversationId,
         llm: buildLlmConfig(llmSettings),
         mode,
         watchlist,

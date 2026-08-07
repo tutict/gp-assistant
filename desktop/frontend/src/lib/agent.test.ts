@@ -28,6 +28,7 @@ describe("buildAgentStreamPayload", () => {
     const payload = buildAgentStreamPayload({
       message: "  分析自选股里的电力机会  ",
       runId: "run-1",
+      conversationId: "conversation-1",
       mode: "research",
       llm,
       watchlist,
@@ -36,6 +37,7 @@ describe("buildAgentStreamPayload", () => {
     expect(payload).toMatchObject({
       message: "分析自选股里的电力机会",
       run_id: "run-1",
+      conversation_id: "conversation-1",
       mode: "research",
       llm,
       context: {

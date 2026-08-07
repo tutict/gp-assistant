@@ -120,6 +120,12 @@ export const TAURI_GET_ROUTES: Record<string, TauriRouteHandler> = {
   }),
   "/api/research/threads": async ({ invoke }) => invoke("api_research_threads"),
   "/api/research/index-status": async ({ invoke }) => invoke("api_research_index_status"),
+  "/api/agent/runs": async ({ invoke, parsed }) => invoke("api_agent_run_list", {
+    payload: {
+      conversation_id: parsed.searchParams.get("conversation_id") || "",
+      limit: Number(parsed.searchParams.get("limit") || 50),
+    },
+  }),
   "/api/upstream-rag/mobile/list": async ({ invoke }) => invoke("core_upstream_rag_list"),
   "/api/upstream-rag/status": async ({ invoke }) => invoke("api_upstream_rag_status"),
   "/api/upstream-rag/mobile/detail": async ({ invoke, parsed }) => invoke("core_upstream_rag_detail", {
@@ -134,6 +140,12 @@ export const TAURI_GET_ROUTES: Record<string, TauriRouteHandler> = {
 };
 
 export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandler }[] = [
+  {
+    prefix: "/api/agent/runs/",
+    handler: async ({ invoke, path }) => invoke("api_agent_run_get", {
+      payload: { run_id: decodeURIComponent(path.slice("/api/agent/runs/".length)) },
+    }),
+  },
   {
     prefix: "/api/stocks/",
     handler: async ({ invoke, path }) => invoke("api_stock_get", { payload: { code: decodeURIComponent(path.slice("/api/stocks/".length)) } }),
@@ -267,6 +279,9 @@ export function buildTauriAgentPayload(request: Record<string, unknown>): Record
   return {
     message: String(request.message || ""),
     run_id: String(request.run_id || `react-agent-${Date.now()}`),
+    ...(typeof request.conversation_id === "string" && request.conversation_id.trim()
+      ? { conversation_id: request.conversation_id.trim() }
+      : {}),
     mode: String(request.mode || "quick"),
     context: request.context,
     platform: request.platform,

@@ -13,6 +13,7 @@ export interface AgentHistoryMessage {
 export interface AgentStreamPayloadInput {
   message: string;
   runId: string;
+  conversationId?: string;
   mode: AgentMode;
   llm?: LlmClientConfig;
   watchlist: WatchlistItem[];
@@ -41,6 +42,7 @@ export function buildAgentStreamPayload(input: AgentStreamPayloadInput): Record<
   return {
     message,
     run_id: input.runId,
+    ...(input.conversationId?.trim() ? { conversation_id: input.conversationId.trim() } : {}),
     llm: input.llm,
     mode: input.mode,
     history: (input.history || [])

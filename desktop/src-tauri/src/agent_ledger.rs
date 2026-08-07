@@ -1,0 +1,486 @@
+use rusqlite::{params, Connection, OptionalExtension};
+use serde_json::{json, Map, Value};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+use tauri::Manager;
+
+pub(crate) struct AgentRunStore {
+    path: PathBuf,
+}
+
+pub(crate) fn with_app_store<T, F>(app: &tauri::AppHandle, operation: F) -> Result<T, String>
+where
+    F: FnOnce(&AgentRunStore) -> Result<T, String>,
+{
+    let mut root = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("failed to resolve agent ledger directory: {error}"))?;
+    root.push("agent");
+    root.push("agent-runs.sqlite");
+    let store = AgentRunStore::open(root)?;
+    operation(&store)
+}
+
+pub(crate) fn current_epoch_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(i64::MAX as u128) as i64
+}
+
+impl AgentRunStore {
+    pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self, String> {
+        let path = path.as_ref().to_path_buf();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("failed to create agent ledger directory: {error}"))?;
+        }
+        let connection = Connection::open(&path)
+            .map_err(|error| format!("failed to open agent ledger: {error}"))?;
+        connection
+            .busy_timeout(Duration::from_secs(5))
+            .map_err(|error| format!("failed to configure agent ledger: {error}"))?;
+        initialize_schema(&connection)?;
+        Ok(Self { path })
+    }
+
+    pub(crate) fn start_run(
+        &self,
+        payload: &Value,
+        started_at_epoch_ms: i64,
+    ) -> Result<(), String> {
+        let run_id = required_string(payload, "run_id")?;
+        let question = required_string(payload, "message")?;
+        let conversation_id = optional_string(payload, "conversation_id");
+        let mode = optional_string(payload, "mode").unwrap_or_else(|| "quick".to_string());
+        let request_json = serde_json::to_string(&sanitized_request(payload))
+            .map_err(|error| format!("failed to encode agent request: {error}"))?;
+        self.connection()?
+            .execute(
+                "INSERT INTO agent_runs (
+                    run_id, conversation_id, question, mode, status, started_at_epoch_ms,
+                    request_json, events_json
+                 ) VALUES (?1, ?2, ?3, ?4, 'running', ?5, ?6, '[]')",
+                params![
+                    run_id,
+                    conversation_id,
+                    question,
+                    mode,
+                    started_at_epoch_ms,
+                    request_json
+                ],
+            )
+            .map_err(|error| format!("failed to start agent run: {error}"))?;
+        Ok(())
+    }
+
+    pub(crate) fn complete_run(
+        &self,
+        run_id: &str,
+        events: &[Value],
+        result: &Value,
+        completed_at_epoch_ms: i64,
+    ) -> Result<(), String> {
+        let events_json = serde_json::to_string(events)
+            .map_err(|error| format!("failed to encode agent events: {error}"))?;
+        let result_json = serde_json::to_string(result)
+            .map_err(|error| format!("failed to encode agent result: {error}"))?;
+        let changed = self
+            .connection()?
+            .execute(
+                "UPDATE agent_runs
+                 SET status = 'completed', completed_at_epoch_ms = ?2,
+                     duration_ms = MAX(0, ?2 - started_at_epoch_ms),
+                     events_json = ?3, result_json = ?4, error = NULL
+                 WHERE run_id = ?1",
+                params![run_id, completed_at_epoch_ms, events_json, result_json],
+            )
+            .map_err(|error| format!("failed to complete agent run: {error}"))?;
+        ensure_run_updated(changed, run_id)
+    }
+
+    pub(crate) fn fail_run(
+        &self,
+        run_id: &str,
+        events: &[Value],
+        error: &str,
+        completed_at_epoch_ms: i64,
+    ) -> Result<(), String> {
+        let events_json = serde_json::to_string(events)
+            .map_err(|error| format!("failed to encode agent events: {error}"))?;
+        let changed = self
+            .connection()?
+            .execute(
+                "UPDATE agent_runs
+                 SET status = 'failed', completed_at_epoch_ms = ?2,
+                     duration_ms = MAX(0, ?2 - started_at_epoch_ms),
+                     events_json = ?3, result_json = NULL, error = ?4
+                 WHERE run_id = ?1",
+                params![run_id, completed_at_epoch_ms, events_json, error],
+            )
+            .map_err(|error| format!("failed to record agent failure: {error}"))?;
+        ensure_run_updated(changed, run_id)
+    }
+
+    pub(crate) fn list_runs(
+        &self,
+        limit: usize,
+        conversation_id: Option<&str>,
+    ) -> Result<Value, String> {
+        let limit = limit.clamp(1, 200) as i64;
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT run_id, conversation_id, question, mode, status,
+                        started_at_epoch_ms, completed_at_epoch_ms, duration_ms, error
+                 FROM agent_runs
+                 WHERE (?1 IS NULL OR conversation_id = ?1)
+                 ORDER BY started_at_epoch_ms DESC, run_id DESC
+                 LIMIT ?2",
+            )
+            .map_err(|error| format!("failed to prepare agent run list: {error}"))?;
+        let rows = statement
+            .query_map(params![conversation_id, limit], |row| {
+                Ok(json!({
+                    "run_id": row.get::<_, String>(0)?,
+                    "conversation_id": row.get::<_, Option<String>>(1)?,
+                    "question": row.get::<_, String>(2)?,
+                    "mode": row.get::<_, String>(3)?,
+                    "status": row.get::<_, String>(4)?,
+                    "started_at_epoch_ms": row.get::<_, i64>(5)?,
+                    "completed_at_epoch_ms": row.get::<_, Option<i64>>(6)?,
+                    "duration_ms": row.get::<_, Option<i64>>(7)?,
+                    "error": row.get::<_, Option<String>>(8)?,
+                }))
+            })
+            .map_err(|error| format!("failed to query agent run list: {error}"))?;
+        rows.map(|row| row.map_err(|error| format!("failed to decode agent run summary: {error}")))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::Array)
+    }
+
+    pub(crate) fn get_run(&self, run_id: &str) -> Result<Option<Value>, String> {
+        let stored = self
+            .connection()?
+            .query_row(
+                "SELECT run_id, conversation_id, question, mode, status,
+                        started_at_epoch_ms, completed_at_epoch_ms, duration_ms,
+                        request_json, events_json, result_json, error
+                 FROM agent_runs WHERE run_id = ?1",
+                params![run_id],
+                |row| {
+                    Ok(StoredAgentRun {
+                        run_id: row.get(0)?,
+                        conversation_id: row.get(1)?,
+                        question: row.get(2)?,
+                        mode: row.get(3)?,
+                        status: row.get(4)?,
+                        started_at_epoch_ms: row.get(5)?,
+                        completed_at_epoch_ms: row.get(6)?,
+                        duration_ms: row.get(7)?,
+                        request_json: row.get(8)?,
+                        events_json: row.get(9)?,
+                        result_json: row.get(10)?,
+                        error: row.get(11)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|error| format!("failed to read agent run: {error}"))?;
+        stored.map(decode_stored_run).transpose()
+    }
+
+    fn connection(&self) -> Result<Connection, String> {
+        let connection = Connection::open(&self.path)
+            .map_err(|error| format!("failed to open agent ledger: {error}"))?;
+        connection
+            .busy_timeout(Duration::from_secs(5))
+            .map_err(|error| format!("failed to configure agent ledger: {error}"))?;
+        Ok(connection)
+    }
+}
+
+struct StoredAgentRun {
+    run_id: String,
+    conversation_id: Option<String>,
+    question: String,
+    mode: String,
+    status: String,
+    started_at_epoch_ms: i64,
+    completed_at_epoch_ms: Option<i64>,
+    duration_ms: Option<i64>,
+    request_json: String,
+    events_json: String,
+    result_json: Option<String>,
+    error: Option<String>,
+}
+
+fn initialize_schema(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             CREATE TABLE IF NOT EXISTS agent_runs (
+                 run_id TEXT PRIMARY KEY,
+                 conversation_id TEXT,
+                 question TEXT NOT NULL,
+                 mode TEXT NOT NULL,
+                 status TEXT NOT NULL,
+                 started_at_epoch_ms INTEGER NOT NULL,
+                 completed_at_epoch_ms INTEGER,
+                 duration_ms INTEGER,
+                 request_json TEXT NOT NULL,
+                 events_json TEXT NOT NULL DEFAULT '[]',
+                 result_json TEXT,
+                 error TEXT
+             );
+             CREATE INDEX IF NOT EXISTS idx_agent_runs_started
+               ON agent_runs(started_at_epoch_ms DESC, run_id DESC);
+             CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
+               ON agent_runs(conversation_id, started_at_epoch_ms DESC);",
+        )
+        .map_err(|error| format!("failed to initialize agent ledger: {error}"))
+}
+
+fn sanitized_request(payload: &Value) -> Value {
+    let mut request = Map::new();
+    for key in [
+        "run_id",
+        "conversation_id",
+        "message",
+        "mode",
+        "context",
+        "platform",
+        "network",
+        "history",
+    ] {
+        if let Some(value) = payload.get(key) {
+            request.insert(key.to_string(), value.clone());
+        }
+    }
+    if let Some(llm) = payload.get("llm").and_then(Value::as_object) {
+        let mut safe_llm = Map::new();
+        for key in [
+            "provider",
+            "base_url",
+            "model",
+            "api_format",
+            "endpoint_mode",
+            "custom_user_agent",
+            "temperature",
+            "timeout_seconds",
+            "json_mode",
+        ] {
+            if let Some(value) = llm.get(key) {
+                safe_llm.insert(key.to_string(), value.clone());
+            }
+        }
+        request.insert("llm".to_string(), Value::Object(safe_llm));
+    }
+    Value::Object(request)
+}
+
+fn required_string(value: &Value, key: &str) -> Result<String, String> {
+    optional_string(value, key).ok_or_else(|| format!("{key} is required"))
+}
+
+fn optional_string(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+}
+
+fn ensure_run_updated(changed: usize, run_id: &str) -> Result<(), String> {
+    if changed == 0 {
+        Err(format!("agent run not found: {run_id}"))
+    } else {
+        Ok(())
+    }
+}
+
+fn decode_json(text: &str, field: &str) -> Result<Value, String> {
+    serde_json::from_str(text).map_err(|error| format!("failed to decode agent {field}: {error}"))
+}
+
+fn decode_stored_run(stored: StoredAgentRun) -> Result<Value, String> {
+    let request = decode_json(&stored.request_json, "request")?;
+    let events = decode_json(&stored.events_json, "events")?;
+    let result = stored
+        .result_json
+        .as_deref()
+        .map(|value| decode_json(value, "result"))
+        .transpose()?
+        .unwrap_or(Value::Null);
+    Ok(json!({
+        "run_id": stored.run_id,
+        "conversation_id": stored.conversation_id,
+        "question": stored.question,
+        "mode": stored.mode,
+        "status": stored.status,
+        "started_at_epoch_ms": stored.started_at_epoch_ms,
+        "completed_at_epoch_ms": stored.completed_at_epoch_ms,
+        "duration_ms": stored.duration_ms,
+        "request": request,
+        "events": events,
+        "result": result,
+        "error": stored.error,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentRunStore;
+    use serde_json::{json, Value};
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn temporary_database_path(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be valid")
+            .as_nanos();
+        std::env::temp_dir().join(format!("gp-assistant-agent-ledger-{name}-{unique}.sqlite"))
+    }
+
+    #[test]
+    fn records_completed_run_without_persisting_llm_secrets() {
+        let path = temporary_database_path("completed");
+        let store = AgentRunStore::open(&path).expect("agent run store should open");
+        let payload = json!({
+            "run_id": "run-completed",
+            "conversation_id": "conversation-1",
+            "message": "Compare the candidates",
+            "mode": "research",
+            "context": {"watchlist": [{"code": "000001.SZ"}]},
+            "history": [{"role": "user", "content": "Start with fundamentals"}],
+            "llm": {
+                "base_url": "https://llm.example.test/v1",
+                "model": "research-model",
+                "api_key": "must-never-be-persisted",
+                "organization": "sensitive-organization",
+                "project": "sensitive-project"
+            }
+        });
+
+        store
+            .start_run(&payload, 1_000)
+            .expect("run should be started");
+        store
+            .complete_run(
+                "run-completed",
+                &[json!({"type": "tool_result", "payload": {"tool": "screen"}})],
+                &json!({"reply": "Candidate A has stronger evidence"}),
+                1_275,
+            )
+            .expect("run should be completed");
+
+        let record = store
+            .get_run("run-completed")
+            .expect("run lookup should succeed")
+            .expect("run should exist");
+        assert_eq!(record["run_id"], "run-completed");
+        assert_eq!(record["conversation_id"], "conversation-1");
+        assert_eq!(record["question"], "Compare the candidates");
+        assert_eq!(record["mode"], "research");
+        assert_eq!(record["status"], "completed");
+        assert_eq!(record["started_at_epoch_ms"], 1_000);
+        assert_eq!(record["completed_at_epoch_ms"], 1_275);
+        assert_eq!(record["duration_ms"], 275);
+        assert_eq!(record["events"][0]["type"], "tool_result");
+        assert_eq!(
+            record["result"]["reply"],
+            "Candidate A has stronger evidence"
+        );
+        assert_eq!(record["request"]["llm"]["model"], "research-model");
+        assert_eq!(record["request"]["llm"]["api_key"], Value::Null);
+        assert_eq!(record["request"]["llm"]["organization"], Value::Null);
+        assert_eq!(record["request"]["llm"]["project"], Value::Null);
+        assert!(!record.to_string().contains("must-never-be-persisted"));
+        assert!(!record.to_string().contains("sensitive-organization"));
+        assert!(!record.to_string().contains("sensitive-project"));
+
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn records_failed_run_with_partial_events() {
+        let path = temporary_database_path("failed");
+        let store = AgentRunStore::open(&path).expect("agent run store should open");
+        store
+            .start_run(
+                &json!({
+                    "run_id": "run-failed",
+                    "conversation_id": "conversation-2",
+                    "message": "Run the screen",
+                    "mode": "expert"
+                }),
+                2_000,
+            )
+            .expect("run should be started");
+
+        store
+            .fail_run(
+                "run-failed",
+                &[json!({"type": "status", "stage": "tools"})],
+                "market data unavailable",
+                2_080,
+            )
+            .expect("run failure should be recorded");
+
+        let record = store
+            .get_run("run-failed")
+            .expect("run lookup should succeed")
+            .expect("run should exist");
+        assert_eq!(record["status"], "failed");
+        assert_eq!(record["duration_ms"], 80);
+        assert_eq!(record["events"][0]["stage"], "tools");
+        assert_eq!(record["result"], Value::Null);
+        assert_eq!(record["error"], "market data unavailable");
+
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn lists_newest_runs_as_lightweight_summaries() {
+        let path = temporary_database_path("list");
+        let store = AgentRunStore::open(&path).expect("agent run store should open");
+        for (run_id, started_at) in [("run-old", 3_000), ("run-new", 4_000)] {
+            store
+                .start_run(
+                    &json!({
+                        "run_id": run_id,
+                        "conversation_id": "conversation-list",
+                        "message": format!("Question for {run_id}"),
+                        "mode": "quick"
+                    }),
+                    started_at,
+                )
+                .expect("run should be started");
+        }
+
+        let runs = store
+            .list_runs(1, Some("conversation-list"))
+            .expect("run list should succeed");
+        assert_eq!(runs.as_array().map(Vec::len), Some(1));
+        assert_eq!(runs[0]["run_id"], "run-new");
+        assert_eq!(runs[0]["status"], "running");
+        assert!(runs[0].get("request").is_none());
+        assert!(runs[0].get("events").is_none());
+        assert!(runs[0].get("result").is_none());
+
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+}

@@ -22,6 +22,7 @@ use tauri::{webview::PageLoadEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::ShellExt;
 
 mod agent_harness;
+mod agent_ledger;
 mod news_rag;
 mod rag_pack;
 mod research;
@@ -2200,13 +2201,134 @@ fn api_upstream_rag_transfer_start(app: tauri::AppHandle, payload: Value) -> Res
 
 #[tauri::command]
 async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let data = cached_market_data(&app)?;
-    let event_app = app.clone();
-    let outcome = agent_harness::execute_with_event_sink(payload, data, move |event| {
-        let _ = event_app.emit("agent-stream-event", event);
+    let mut payload = payload;
+    if payload
+        .get("run_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        payload["run_id"] = Value::String(format!(
+            "gp-agent-run-{}",
+            agent_ledger::current_epoch_millis()
+        ));
+    }
+    let run_id = payload
+        .get("run_id")
+        .and_then(Value::as_str)
+        .unwrap_or("gp-agent-run")
+        .to_string();
+    let started_at_epoch_ms = agent_ledger::current_epoch_millis();
+    let ledger_payload = payload.clone();
+    let start_app = app.clone();
+    runtime::run_io_bound("agent_run_start", move || {
+        agent_ledger::with_app_store(&start_app, |store| {
+            store.start_run(&ledger_payload, started_at_epoch_ms)
+        })
     })
-    .await?;
-    Ok(outcome.response)
+    .await??;
+
+    let events = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let sink_events = Arc::clone(&events);
+    let event_app = app.clone();
+    let execution = match cached_market_data(&app) {
+        Ok(data) => {
+            agent_harness::execute_with_event_sink(payload, data, move |event| {
+                if let Ok(mut captured) = sink_events.lock() {
+                    captured.push(event.clone());
+                }
+                let _ = event_app.emit("agent-stream-event", event);
+            })
+            .await
+        }
+        Err(error) => Err(error),
+    };
+    let completed_at_epoch_ms = agent_ledger::current_epoch_millis();
+    let captured_events = events.lock().map(|items| items.clone()).unwrap_or_default();
+
+    match execution {
+        Ok(outcome) => {
+            let response = outcome.response;
+            let ledger_app = app.clone();
+            let ledger_events = captured_events;
+            let ledger_response = response.clone();
+            let completion = runtime::run_io_bound("agent_run_complete", move || {
+                agent_ledger::with_app_store(&ledger_app, |store| {
+                    store.complete_run(
+                        &run_id,
+                        &ledger_events,
+                        &ledger_response,
+                        completed_at_epoch_ms,
+                    )
+                })
+            })
+            .await
+            .and_then(|result| result);
+            if let Err(error) = completion {
+                eprintln!("agent run ledger completion failed: {error}");
+            }
+            Ok(response)
+        }
+        Err(error) => {
+            let ledger_app = app.clone();
+            let ledger_events = captured_events;
+            let ledger_error = error.clone();
+            let failure_recording = runtime::run_io_bound("agent_run_fail", move || {
+                agent_ledger::with_app_store(&ledger_app, |store| {
+                    store.fail_run(
+                        &run_id,
+                        &ledger_events,
+                        &ledger_error,
+                        completed_at_epoch_ms,
+                    )
+                })
+            })
+            .await
+            .and_then(|result| result);
+            if let Err(ledger_error) = failure_recording {
+                eprintln!("agent run ledger failure recording failed: {ledger_error}");
+            }
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+async fn api_agent_run_list(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let limit = payload
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(50)
+        .min(200) as usize;
+    let conversation_id = payload
+        .get("conversation_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    runtime::run_io_bound("api_agent_run_list", move || {
+        agent_ledger::with_app_store(&app, |store| {
+            let runs = store.list_runs(limit, conversation_id.as_deref())?;
+            Ok(json!({"runs": runs}))
+        })
+    })
+    .await?
+}
+
+#[tauri::command]
+async fn api_agent_run_get(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let run_id = payload
+        .get("run_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "run_id is required".to_string())?
+        .to_string();
+    runtime::run_io_bound("api_agent_run_get", move || {
+        agent_ledger::with_app_store(&app, |store| Ok(json!({"run": store.get_run(&run_id)?})))
+    })
+    .await?
 }
 #[tauri::command]
 async fn core_validate_data_source(payload: Value) -> Result<Value, String> {
@@ -10274,6 +10396,8 @@ pub fn run() {
             api_upstream_rag_build,
             api_upstream_rag_transfer_start,
             api_agent_stream,
+            api_agent_run_list,
+            api_agent_run_get,
             api_llm_models,
             api_llm_test,
             core_validate_data_source,
