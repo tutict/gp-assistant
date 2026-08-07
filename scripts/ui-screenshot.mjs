@@ -19,6 +19,7 @@ const checkOnly = process.argv.includes("--check-only");
 const serveBuild = process.argv.includes("--serve");
 let baseUrl = option("--url", "http://127.0.0.1:4173").replace(/\/$/, "");
 const date = new Date().toISOString().slice(0, 10);
+const checkSearchOverlay = process.argv.includes('--check-search-overlay');
 const defaultOutput = fileURLToPath(
   new URL("../artifacts/ui-shots/" + date + "/", import.meta.url),
 );
@@ -340,6 +341,54 @@ async function runShortcutChecks(page, device) {
   };
 }
 
+async function runSearchOverlayChecks(page, device) {
+  await page.route('**/api/stock-search?*', (route) => route.fulfill({ json: mockStocks }));
+  await page.goto(deviceUrl(device, '#sectionScreen'), { waitUntil: 'networkidle' });
+  await page.locator('.header-search input').fill('tc');
+  await page.locator('.header-search .stock-suggest button').first().waitFor({ state: 'visible' });
+
+  const layering = await page.evaluate(() => {
+    const header = document.querySelector('.app-header');
+    const sidebar = document.querySelector('.sidebar');
+    const dropdown = document.querySelector('.header-search .stock-suggest');
+    if (!header || !sidebar || !dropdown) throw new Error('Search overlay elements are missing');
+    const headerZIndex = Number.parseInt(getComputedStyle(header).zIndex, 10);
+    const sidebarZIndex = Number.parseInt(getComputedStyle(sidebar).zIndex, 10);
+    const dropdownBox = dropdown.getBoundingClientRect();
+    const sidebarBox = sidebar.getBoundingClientRect();
+    const overlapWidth = Math.max(0, Math.min(dropdownBox.right, sidebarBox.right) - Math.max(dropdownBox.left, sidebarBox.left));
+    const overlapHeight = Math.max(0, Math.min(dropdownBox.bottom, sidebarBox.bottom) - Math.max(dropdownBox.top, sidebarBox.top));
+    const sampleX = Math.max(dropdownBox.left, sidebarBox.left) + Math.min(8, overlapWidth / 2);
+    const sampleY = Math.max(dropdownBox.top, sidebarBox.top) + Math.min(8, overlapHeight / 2);
+    const topElement = overlapWidth > 0 && overlapHeight > 0
+      ? document.elementFromPoint(sampleX, sampleY)
+      : dropdown;
+    return {
+      headerZIndex,
+      sidebarZIndex,
+      dropdownIsTopLayer: Boolean(topElement && dropdown.contains(topElement)),
+      dropdownBox: {
+        x: Math.round(dropdownBox.x),
+        y: Math.round(dropdownBox.y),
+        width: Math.round(dropdownBox.width),
+        height: Math.round(dropdownBox.height),
+      },
+      sidebarBox: {
+        x: Math.round(sidebarBox.x),
+        y: Math.round(sidebarBox.y),
+        width: Math.round(sidebarBox.width),
+        height: Math.round(sidebarBox.height),
+      },
+      overlap: Math.round(overlapWidth * overlapHeight),
+    };
+  });
+
+  if (!layering.dropdownIsTopLayer) {
+    throw new Error('Header search overlay is obscured by the sidebar: ' + JSON.stringify(layering));
+  }
+  return layering;
+}
+
 async function captureDenseStates(page, device, targetRoot) {
   const directory = resolve(targetRoot, "desktop-1440-data");
   mkdirSync(directory, { recursive: true });
@@ -373,7 +422,7 @@ if (serveBuild) {
 
 const browser = await chromium.launch();
 try {
-  if (checkOnly) {
+  if (checkOnly || checkSearchOverlay) {
     const device = devices.find((item) => item.name === "desktop-1440");
     const context = await browser.newContext({
       viewport: { width: device.width, height: device.height },
@@ -389,6 +438,8 @@ try {
     page.on("pageerror", (error) => consoleIssues.push(error.message));
     await installHarnessState(page);
     const shortcutChecks = await runShortcutChecks(page, device);
+    const searchOverlayChecks = checkSearchOverlay ? await runSearchOverlayChecks(page, device) : null;
+    if (checkSearchOverlay) console.log('Desktop search overlay checks passed: ' + JSON.stringify(searchOverlayChecks));
     const diagnostics = await pageDiagnostics(page, "shortcuts");
     assertPageDiagnostics(diagnostics, device.name);
     if (consoleIssues.length) {
