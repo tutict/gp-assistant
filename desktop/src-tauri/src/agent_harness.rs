@@ -160,6 +160,29 @@ pub(crate) async fn execute(payload: Value, data: Value) -> Result<AgentHarnessO
     execute_with_event_sink(payload, data, |_| {}).await
 }
 
+pub(crate) fn validate_payload(payload: &Value) -> Result<(), String> {
+    let payload_bytes = serde_json::to_vec(payload)
+        .map_err(|error| format!("serialize Agent payload failed: {error}"))?
+        .len();
+    if payload_bytes > MAX_HARNESS_PAYLOAD_BYTES {
+        return Err("Agent payload exceeds 512 KiB".to_string());
+    }
+    let message = payload
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    if message.is_empty() {
+        return Err("Agent message is required".to_string());
+    }
+    if message.chars().count() > MAX_MESSAGE_CHARS {
+        return Err(format!(
+            "Agent message exceeds the {MAX_MESSAGE_CHARS} character limit"
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) async fn execute_with_event_sink<F>(
     payload: Value,
     data: Value,
@@ -168,12 +191,7 @@ pub(crate) async fn execute_with_event_sink<F>(
 where
     F: FnMut(Value) + Send,
 {
-    let payload_bytes = serde_json::to_vec(&payload)
-        .map_err(|error| format!("serialize Agent payload failed: {error}"))?
-        .len();
-    if payload_bytes > MAX_HARNESS_PAYLOAD_BYTES {
-        return Err("Agent payload exceeds 512 KiB".to_string());
-    }
+    validate_payload(&payload)?;
     let message = payload
         .get("message")
         .and_then(Value::as_str)
@@ -1195,6 +1213,17 @@ mod harness_validation_tests {
             organization: None,
             project: None,
         }
+    }
+
+    #[test]
+    fn validates_agent_payload_before_persistence() {
+        let oversized = json!({
+            "message": "screen the watchlist",
+            "padding": "x".repeat(MAX_HARNESS_PAYLOAD_BYTES)
+        });
+        let error = validate_payload(&oversized)
+            .expect_err("oversized Agent payloads must be rejected before persistence");
+        assert!(error.contains("512 KiB"));
     }
 
     #[test]

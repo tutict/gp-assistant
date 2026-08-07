@@ -256,7 +256,6 @@ fn sanitized_request(payload: &Value) -> Value {
         "mode",
         "context",
         "platform",
-        "network",
         "history",
     ] {
         if let Some(value) = payload.get(key) {
@@ -281,6 +280,15 @@ fn sanitized_request(payload: &Value) -> Value {
             }
         }
         request.insert("llm".to_string(), Value::Object(safe_llm));
+    }
+    if let Some(network) = payload.get("network").and_then(Value::as_object) {
+        let mut safe_network = Map::new();
+        for key in ["proxy_mode", "android_short_sources"] {
+            if let Some(value) = network.get(key) {
+                safe_network.insert(key.to_string(), value.clone());
+            }
+        }
+        request.insert("network".to_string(), Value::Object(safe_network));
     }
     Value::Object(request)
 }
@@ -363,6 +371,10 @@ mod tests {
             "mode": "research",
             "context": {"watchlist": [{"code": "000001.SZ"}]},
             "history": [{"role": "user", "content": "Start with fundamentals"}],
+            "network": {
+                "proxy_mode": "custom",
+                "proxy_url": "http://user:password@proxy.example.test:8080"
+            },
             "llm": {
                 "base_url": "https://llm.example.test/v1",
                 "model": "research-model",
@@ -408,6 +420,9 @@ mod tests {
         assert!(!record.to_string().contains("must-never-be-persisted"));
         assert!(!record.to_string().contains("sensitive-organization"));
         assert!(!record.to_string().contains("sensitive-project"));
+        assert!(!record
+            .to_string()
+            .contains("user:password@proxy.example.test"));
 
         drop(store);
         let _ = std::fs::remove_file(path);

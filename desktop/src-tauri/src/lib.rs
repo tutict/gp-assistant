@@ -2214,6 +2214,7 @@ async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value
             agent_ledger::current_epoch_millis()
         ));
     }
+    agent_harness::validate_payload(&payload)?;
     let run_id = payload
         .get("run_id")
         .and_then(Value::as_str)
@@ -2222,12 +2223,20 @@ async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value
     let started_at_epoch_ms = agent_ledger::current_epoch_millis();
     let ledger_payload = payload.clone();
     let start_app = app.clone();
-    runtime::run_io_bound("agent_run_start", move || {
+    let ledger_started = match runtime::run_io_bound("agent_run_start", move || {
         agent_ledger::with_app_store(&start_app, |store| {
             store.start_run(&ledger_payload, started_at_epoch_ms)
         })
     })
-    .await??;
+    .await
+    .and_then(|result| result)
+    {
+        Ok(()) => true,
+        Err(error) => {
+            eprintln!("agent run ledger start failed; continuing without persistence: {error}");
+            false
+        }
+    };
 
     let events = Arc::new(Mutex::new(Vec::<Value>::new()));
     let sink_events = Arc::clone(&events);
@@ -2250,44 +2259,48 @@ async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value
     match execution {
         Ok(outcome) => {
             let response = outcome.response;
-            let ledger_app = app.clone();
-            let ledger_events = captured_events;
-            let ledger_response = response.clone();
-            let completion = runtime::run_io_bound("agent_run_complete", move || {
-                agent_ledger::with_app_store(&ledger_app, |store| {
-                    store.complete_run(
-                        &run_id,
-                        &ledger_events,
-                        &ledger_response,
-                        completed_at_epoch_ms,
-                    )
+            if ledger_started {
+                let ledger_app = app.clone();
+                let ledger_events = captured_events;
+                let ledger_response = response.clone();
+                let completion = runtime::run_io_bound("agent_run_complete", move || {
+                    agent_ledger::with_app_store(&ledger_app, |store| {
+                        store.complete_run(
+                            &run_id,
+                            &ledger_events,
+                            &ledger_response,
+                            completed_at_epoch_ms,
+                        )
+                    })
                 })
-            })
-            .await
-            .and_then(|result| result);
-            if let Err(error) = completion {
-                eprintln!("agent run ledger completion failed: {error}");
+                .await
+                .and_then(|result| result);
+                if let Err(error) = completion {
+                    eprintln!("agent run ledger completion failed: {error}");
+                }
             }
             Ok(response)
         }
         Err(error) => {
-            let ledger_app = app.clone();
-            let ledger_events = captured_events;
-            let ledger_error = error.clone();
-            let failure_recording = runtime::run_io_bound("agent_run_fail", move || {
-                agent_ledger::with_app_store(&ledger_app, |store| {
-                    store.fail_run(
-                        &run_id,
-                        &ledger_events,
-                        &ledger_error,
-                        completed_at_epoch_ms,
-                    )
+            if ledger_started {
+                let ledger_app = app.clone();
+                let ledger_events = captured_events;
+                let ledger_error = error.clone();
+                let failure_recording = runtime::run_io_bound("agent_run_fail", move || {
+                    agent_ledger::with_app_store(&ledger_app, |store| {
+                        store.fail_run(
+                            &run_id,
+                            &ledger_events,
+                            &ledger_error,
+                            completed_at_epoch_ms,
+                        )
+                    })
                 })
-            })
-            .await
-            .and_then(|result| result);
-            if let Err(ledger_error) = failure_recording {
-                eprintln!("agent run ledger failure recording failed: {ledger_error}");
+                .await
+                .and_then(|result| result);
+                if let Err(ledger_error) = failure_recording {
+                    eprintln!("agent run ledger failure recording failed: {ledger_error}");
+                }
             }
             Err(error)
         }
