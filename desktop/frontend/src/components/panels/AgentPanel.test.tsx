@@ -1,10 +1,25 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { act, create } from "react-test-renderer";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+const tauriMocks = vi.hoisted(() => ({
+  getTauriInvoke: vi.fn(),
+  getTauriListen: vi.fn(),
+  isTauriRuntime: vi.fn(),
+}));
+
+vi.mock("../../lib/tauri", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/tauri")>()),
+  getTauriInvoke: tauriMocks.getTauriInvoke,
+  getTauriListen: tauriMocks.getTauriListen,
+  isTauriRuntime: tauriMocks.isTauriRuntime,
+}));
 
 let AgentPanel: typeof import("./AgentPanel").AgentPanel;
 let sanitizeAgentConversations: typeof import("./AgentPanel").sanitizeAgentConversations;
 
 beforeAll(async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { location: { href: "http://localhost/" } });
   ({ AgentPanel, sanitizeAgentConversations } = await import("./AgentPanel"));
 });
@@ -112,5 +127,71 @@ describe("AgentPanel empty state", () => {
     );
 
     expect(html).not.toContain("请先配置模型");
+  });
+});
+
+describe("AgentPanel send run ID", () => {
+  it("sends and persists the generated run ID in the lightweight transcript", async () => {
+    const storage = new Map<string, string>([
+      ["stock-optimizer-agent-conversations", JSON.stringify([{
+        id: "conversation-interaction",
+        title: "history",
+        mode: "quick",
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1,
+      }])],
+      ["stock-optimizer-agent-active-conversation", "conversation-interaction"],
+    ]);
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    vi.stubGlobal("crypto", { randomUUID: () => "run-send" });
+
+    let streamHandler: ((event: unknown) => void) | undefined;
+    const unlisten = vi.fn();
+    const listen = vi.fn(async (_event: string, handler: (event: unknown) => void) => {
+      streamHandler = handler;
+      return unlisten;
+    });
+    const invoke = vi.fn().mockResolvedValue({ reply: "finished" });
+    tauriMocks.isTauriRuntime.mockReturnValue(true);
+    tauriMocks.getTauriListen.mockReturnValue(listen);
+    tauriMocks.getTauriInvoke.mockReturnValue(invoke);
+
+    let renderer: ReturnType<typeof create> | undefined;
+    await act(async () => {
+      renderer = create(<AgentPanel {...baseProps} llmSettings={null} />);
+    });
+
+    const textarea = renderer!.root.findByType("textarea");
+    await act(async () => {
+      textarea.props.onChange({ target: { value: "send this" } });
+    });
+    expect(textarea.props.value).toBe("send this");
+
+    const sendButton = renderer!.root.find((node) => node.type === "button" && node.props.className === "send-btn");
+    await act(async () => {
+      await sendButton.props.onClick();
+    });
+
+    expect(tauriMocks.isTauriRuntime).toHaveBeenCalled();
+    expect(tauriMocks.getTauriInvoke).toHaveBeenCalled();
+    expect(tauriMocks.getTauriListen).toHaveBeenCalled();
+    expect(listen).toHaveBeenCalledWith("agent-stream-event", expect.any(Function));
+    expect(invoke).toHaveBeenCalledWith("api_agent_stream", {
+      payload: expect.objectContaining({ run_id: "run-send" }),
+    });
+    expect(streamHandler).toBeTypeOf("function");
+    expect(unlisten).toHaveBeenCalledTimes(1);
+
+    const persisted = JSON.parse(storage.get("stock-optimizer-agent-conversations") || "null");
+    const assistantMessage = persisted[0].messages.find((message: { role: string }) => message.role === "assistant");
+    expect(assistantMessage).toMatchObject({ role: "assistant", runId: "run-send" });
+    expect(assistantMessage).not.toHaveProperty("result");
+    expect(assistantMessage).not.toHaveProperty("steps");
+
+    renderer!.unmount();
   });
 });
