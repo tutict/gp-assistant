@@ -155,7 +155,15 @@ describe("AgentPanel send run ID", () => {
       streamHandler = handler;
       return unlisten;
     });
-    const invoke = vi.fn().mockResolvedValue({ reply: "finished" });
+    const invoke = vi.fn().mockImplementation((command: string) => {
+      expect(command).toBe("api_agent_stream");
+      const persistedAtInvoke = JSON.parse(storage.get("stock-optimizer-agent-conversations") || "null");
+      const assistantMessageAtInvoke = persistedAtInvoke[0].messages.find((message: { role: string }) => message.role === "assistant");
+      expect(assistantMessageAtInvoke).toMatchObject({ role: "assistant", runId: "run-send" });
+      expect(assistantMessageAtInvoke).not.toHaveProperty("result");
+      expect(assistantMessageAtInvoke).not.toHaveProperty("steps");
+      return Promise.resolve({ reply: "finished" });
+    });
     tauriMocks.isTauriRuntime.mockReturnValue(true);
     tauriMocks.getTauriListen.mockReturnValue(listen);
     tauriMocks.getTauriInvoke.mockReturnValue(invoke);
