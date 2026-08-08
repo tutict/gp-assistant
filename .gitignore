@@ -25,6 +25,7 @@ coverage/
 /.playwright-cli/
 /.workbuddy/
 /.superpowers/
+/.worktrees/
 .DS_Store
 Thumbs.db
 Desktop.ini
