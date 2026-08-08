@@ -155,14 +155,22 @@ describe("AgentPanel send run ID", () => {
       streamHandler = handler;
       return unlisten;
     });
-    const invoke = vi.fn().mockImplementation((command: string) => {
+    let resolveInvoke: ((value: { reply: string }) => void) | undefined;
+    const invokeResult = new Promise<{ reply: string }>((resolve) => {
+      resolveInvoke = resolve;
+    });
+    let payloadRunIdAtInvoke = "";
+    let payloadHadRunIdBeforeResolve = false;
+    const invoke = vi.fn().mockImplementation((command: string, args: { payload: { run_id?: unknown } }) => {
       expect(command).toBe("api_agent_stream");
+      payloadRunIdAtInvoke = String(args.payload.run_id || "");
+      payloadHadRunIdBeforeResolve = payloadRunIdAtInvoke === "run-send";
       const persistedAtInvoke = JSON.parse(storage.get("stock-optimizer-agent-conversations") || "null");
       const assistantMessageAtInvoke = persistedAtInvoke[0].messages.find((message: { role: string }) => message.role === "assistant");
       expect(assistantMessageAtInvoke).toMatchObject({ role: "assistant", runId: "run-send" });
       expect(assistantMessageAtInvoke).not.toHaveProperty("result");
       expect(assistantMessageAtInvoke).not.toHaveProperty("steps");
-      return Promise.resolve({ reply: "finished" });
+      return invokeResult;
     });
     tauriMocks.isTauriRuntime.mockReturnValue(true);
     tauriMocks.getTauriListen.mockReturnValue(listen);
@@ -180,14 +188,24 @@ describe("AgentPanel send run ID", () => {
     expect(textarea.props.value).toBe("send this");
 
     const sendButton = renderer!.root.find((node) => node.type === "button" && node.props.className === "send-btn");
+    let sendPromise: Promise<void> | undefined;
     await act(async () => {
-      await sendButton.props.onClick();
+      sendPromise = sendButton.props.onClick();
+      await Promise.resolve();
     });
 
     expect(tauriMocks.isTauriRuntime).toHaveBeenCalled();
     expect(tauriMocks.getTauriInvoke).toHaveBeenCalled();
     expect(tauriMocks.getTauriListen).toHaveBeenCalled();
     expect(listen).toHaveBeenCalledWith("agent-stream-event", expect.any(Function));
+    expect(payloadRunIdAtInvoke).toBe("run-send");
+    expect(payloadHadRunIdBeforeResolve).toBe(true);
+
+    await act(async () => {
+      resolveInvoke!({ reply: "finished" });
+      await sendPromise;
+    });
+
     expect(invoke).toHaveBeenCalledWith("api_agent_stream", {
       payload: expect.objectContaining({ run_id: "run-send" }),
     });
