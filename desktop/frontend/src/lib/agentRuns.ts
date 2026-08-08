@@ -11,6 +11,7 @@ import { normalizeAgentResult, normalizeAgentStreamEvent } from "./contracts";
 import { getJson } from "./tauri";
 
 export type AgentRunStatus = "running" | "completed" | "failed" | "unknown";
+export const MAX_AGENT_REPLAY_EVENTS = 1_000;
 
 export interface AgentRunSummary {
   runId: string;
@@ -42,19 +43,28 @@ const LONG_TEXT_MAX = 8_000;
 const COLLECTION_ITEMS_MAX = 100;
 const DOMAIN_DEPTH_MAX = 6;
 const DOMAIN_KEYS_MAX = 100;
-const SENSITIVE_KEY_PARTS = [
+const SENSITIVE_KEYS = new Set([
   "request",
+  "request_config",
   "llm",
+  "llm_config",
   "network",
-  "apikey",
+  "network_config",
+  "api_key",
   "authorization",
+  "authorization_header",
   "headers",
   "proxy",
+  "proxy_config",
+  "proxy_url",
   "credentials",
   "secret",
+  "client_secret",
   "token",
-  "config",
-] as const;
+  "access_token",
+  "runtime_config",
+  "provider_api_key_config",
+]);
 const DOMAIN_RESULT_KEYS = [
   "criteria",
   "backtest",
@@ -94,6 +104,11 @@ function boundedIdentity(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const identity = value.trim();
   return identity && identity.length <= 256 ? identity : undefined;
+}
+
+function boundedRunIdentity(value: unknown): string | undefined {
+  const identity = boundedIdentity(value);
+  return identity === "." || identity === ".." ? undefined : identity;
 }
 
 function optionalNumber(value: unknown): number | undefined {
@@ -136,8 +151,11 @@ function normalizeTimelinePayload(value: unknown): Record<string, string> | unde
 }
 
 function normalizeReplayEvent(value: unknown): AgentStreamEvent | null {
-  const normalized = normalizeAgentStreamEvent(value);
-  const record = asRecord(normalized);
+  const outerRecord = asRecord(value);
+  const directType = typeof outerRecord.type === "string" ? outerRecord.type.trim() : "";
+  const record = directType
+    ? outerRecord
+    : asRecord(normalizeAgentStreamEvent(value));
   const type = optionalBoundedText(record.type, SHORT_TEXT_MAX);
   if (!type) return null;
 
@@ -175,8 +193,14 @@ function hasFields(value: object): boolean {
 }
 
 function isSensitiveKey(key: string): boolean {
-  const compactKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
-  return SENSITIVE_KEY_PARTS.some((part) => compactKey.includes(part));
+  const normalizedKey = key
+    .trim()
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+  return SENSITIVE_KEYS.has(normalizedKey);
 }
 
 function cloneReplayJson(value: unknown, depth = 0, ancestors = new WeakSet<object>()): unknown {
@@ -339,7 +363,7 @@ function normalizeReplayResult(value: unknown): AgentResult {
 
 export function normalizeAgentRunSummary(value: unknown): AgentRunSummary | null {
   const record = asRecord(value);
-  const runId = boundedIdentity(record.run_id);
+  const runId = boundedRunIdentity(record.run_id);
   if (!runId) return null;
   const conversationId = boundedIdentity(record.conversation_id);
 
@@ -363,6 +387,7 @@ export function normalizeAgentRunDetail(value: unknown): AgentRunDetail | null {
 
   const events = Array.isArray(record.events)
     ? record.events
+      .slice(0, MAX_AGENT_REPLAY_EVENTS)
       .map(normalizeReplayEvent)
       .filter((event): event is AgentStreamEvent => Boolean(event))
     : [];
@@ -375,7 +400,8 @@ export function normalizeAgentRunDetail(value: unknown): AgentRunDetail | null {
 }
 
 export async function listAgentRuns(options: ListAgentRunsOptions = {}): Promise<AgentRunSummary[]> {
-  const params = new URLSearchParams({ limit: String(normalizeLimit(options.limit)) });
+  const limit = normalizeLimit(options.limit);
+  const params = new URLSearchParams({ limit: String(limit) });
   if (Object.prototype.hasOwnProperty.call(options, "conversationId")) {
     const conversationId = boundedIdentity(options.conversationId);
     if (!conversationId) return [];
@@ -385,15 +411,15 @@ export async function listAgentRuns(options: ListAgentRunsOptions = {}): Promise
   const response = asRecord(await getJson(`/api/agent/runs?${params.toString()}`, { signal: options.signal }));
   return Array.isArray(response.runs)
     ? response.runs
+      .slice(0, limit)
       .map(normalizeAgentRunSummary)
       .filter((run): run is AgentRunSummary => Boolean(run))
     : [];
 }
 
 export async function getAgentRun(runId: string, signal?: AbortSignal): Promise<AgentRunDetail | null> {
-  const identity = boundedIdentity(runId);
+  const identity = boundedRunIdentity(runId);
   if (!identity) return null;
-  const encodedRunId = identity === "." ? "%2E" : identity === ".." ? "%2E%2E" : encodeURIComponent(identity);
-  const response = asRecord(await getJson(`/api/agent/runs/${encodedRunId}`, { signal }));
+  const response = asRecord(await getJson(`/api/agent/runs/${encodeURIComponent(identity)}`, { signal }));
   return response.run == null ? null : normalizeAgentRunDetail(response.run);
 }

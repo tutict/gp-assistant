@@ -3,7 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { getJson } = vi.hoisted(() => ({ getJson: vi.fn() }));
 vi.mock("./tauri", () => ({ getJson }));
 
-import { getAgentRun, listAgentRuns, normalizeAgentRunDetail, normalizeAgentRunSummary } from "./agentRuns";
+import {
+  getAgentRun,
+  listAgentRuns,
+  MAX_AGENT_REPLAY_EVENTS,
+  normalizeAgentRunDetail,
+  normalizeAgentRunSummary,
+} from "./agentRuns";
 
 describe("agent run ledger client", () => {
   beforeEach(() => getJson.mockReset());
@@ -52,6 +58,8 @@ describe("agent run ledger client", () => {
 
     expect(normalizeAgentRunSummary({ question: "missing id" })).toBeNull();
     expect(normalizeAgentRunSummary({ run_id: "   " })).toBeNull();
+    expect(normalizeAgentRunSummary({ run_id: "." })).toBeNull();
+    expect(normalizeAgentRunSummary({ run_id: ".." })).toBeNull();
   });
 
   it("accepts only nonnegative safe integer timestamp and duration numbers", () => {
@@ -170,6 +178,69 @@ describe("agent run ledger client", () => {
       { type: "status" },
       { type: "status" },
     ]);
+  });
+
+  it("preserves direct ledger event types and allowlisted payloads", () => {
+    const detail = normalizeAgentRunDetail({
+      run_id: "run-direct-events",
+      events: [
+        {
+          type: "tool_start",
+          stage: "tools",
+          payload: {
+            id: "tool-1",
+            tool: "screen",
+            label: "Screen candidates",
+            request: { api_key: "drop" },
+          },
+        },
+        {
+          type: "tool_result",
+          payload: {
+            id: "tool-1",
+            status: "ok",
+            output_summary: "Found candidates",
+            unknown: "drop",
+          },
+        },
+      ],
+    });
+
+    expect(detail?.events).toEqual([
+      {
+        type: "tool_start",
+        stage: "tools",
+        payload: { id: "tool-1", tool: "screen", label: "Screen candidates" },
+      },
+      {
+        type: "tool_result",
+        payload: { id: "tool-1", status: "ok", output_summary: "Found candidates" },
+      },
+    ]);
+  });
+
+  it("caps raw replay event traversal before normalization", () => {
+    const capped = normalizeAgentRunDetail({
+      run_id: "run-event-cap",
+      events: [
+        ...Array.from({ length: MAX_AGENT_REPLAY_EVENTS }, (_, index) => ({
+          type: "status",
+          label: `Event ${index}`,
+        })),
+        { type: "error", message: "Beyond cap" },
+      ],
+    });
+    expect(capped?.events).toHaveLength(MAX_AGENT_REPLAY_EVENTS);
+    expect(capped?.events.at(-1)).toMatchObject({ label: `Event ${MAX_AGENT_REPLAY_EVENTS - 1}` });
+
+    const invalidBeforeCap = normalizeAgentRunDetail({
+      run_id: "run-event-traversal",
+      events: [
+        ...Array.from({ length: MAX_AGENT_REPLAY_EVENTS }, () => ({ type: "   " })),
+        { type: "status", label: "Must not be traversed" },
+      ],
+    });
+    expect(invalidBeforeCap?.events).toEqual([]);
   });
 
   it("constructs a fresh bounded allowlisted Agent result", () => {
@@ -296,6 +367,10 @@ describe("agent run ledger client", () => {
           rows: Array.from({ length: 105 }, (_, index) => ({ index })),
           sensitive: {
             ordinary: "keep me",
+            candidate_requested: true,
+            benchmark_requested: "CSI 300",
+            breadth_requested: 42,
+            configuration_status: "ready",
             Request: { value: "secret-marker" },
             API_KEY: "secret-marker",
             requestConfig: { value: "secret-marker" },
@@ -338,7 +413,13 @@ describe("agent run ledger client", () => {
     const data = result?.data as Record<string, unknown>;
     expect(data).toMatchObject({ enabled: true, missing: null, long_text: "d".repeat(8_000) });
     expect(data.rows).toHaveLength(100);
-    expect(data.sensitive).toEqual({ ordinary: "keep me" });
+    expect(data.sensitive).toEqual({
+      ordinary: "keep me",
+      candidate_requested: true,
+      benchmark_requested: "CSI 300",
+      breadth_requested: 42,
+      configuration_status: "ready",
+    });
     expect(JSON.stringify(result)).not.toContain("secret-marker");
     expect(result).not.toHaveProperty("unknown_payload");
   });
@@ -388,6 +469,18 @@ describe("agent run ledger client", () => {
     expect(getJson).toHaveBeenLastCalledWith("/api/agent/runs?limit=1", { signal: undefined });
   });
 
+  it("caps raw list traversal at the normalized requested limit", async () => {
+    getJson.mockResolvedValue({
+      runs: [
+        { run_id: "   " },
+        { question: "missing id" },
+        { run_id: "run-beyond-limit", status: "completed" },
+      ],
+    });
+
+    await expect(listAgentRuns({ limit: 2 })).resolves.toEqual([]);
+  });
+
   it("uses the default list limit for invalid runtime number values", async () => {
     getJson.mockResolvedValue({ runs: [] });
     const invalidLimits: unknown[] = ["25", "   ", true, [], 1.5, NaN, Infinity];
@@ -424,15 +517,9 @@ describe("agent run ledger client", () => {
     await expect(getAgentRun("omitted")).resolves.toBeNull();
   });
 
-  it("encodes dot-segment ids and rejects invalid lookup identities without requests", async () => {
-    getJson.mockResolvedValue({ run: null });
-
-    await getAgentRun(".");
-    await getAgentRun("..");
-    expect(getJson).toHaveBeenNthCalledWith(1, "/api/agent/runs/%2E", { signal: undefined });
-    expect(getJson).toHaveBeenNthCalledWith(2, "/api/agent/runs/%2E%2E", { signal: undefined });
-
-    getJson.mockClear();
+  it("rejects dot-only and invalid lookup identities without requests", async () => {
+    await expect(getAgentRun(".")).resolves.toBeNull();
+    await expect(getAgentRun("..")).resolves.toBeNull();
     await expect(getAgentRun("   ")).resolves.toBeNull();
     await expect(getAgentRun("r".repeat(257))).resolves.toBeNull();
     expect(getJson).not.toHaveBeenCalled();
