@@ -20,6 +20,7 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+  runId?: string;
   result?: AgentResult;
   steps?: AgentStep[];
   error?: boolean;
@@ -53,12 +54,13 @@ const AGENT_ACTIVE_KEY = "stock-optimizer-agent-active-conversation";
 const AGENT_RAIL_COLLAPSED_KEY = "stock-optimizer-agent-rail-collapsed";
 const AGENT_MOBILE_DRAWER_QUERY = "(max-width: 768px)";
 const MAX_AGENT_CONVERSATIONS = 40;
+const MAX_AGENT_RUN_ID_CHARS = 256;
 
 export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatchlistChange }: AgentPanelProps) {
   const [conversations, setConversations, quotaError] = useLocalStorage<AgentConversation[]>(
     AGENT_HISTORY_KEY,
     [createConversation()],
-    sanitizeConversations,
+    sanitizeAgentConversations,
   );
   const [activeConversationId, setActiveConversationId] = useLocalStorage<string>(AGENT_ACTIVE_KEY, "");
   const [railCollapsed, setRailCollapsed] = useLocalStorage<boolean>(AGENT_RAIL_COLLAPSED_KEY, false);
@@ -200,7 +202,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     const runId = crypto.randomUUID?.() || `agent-${Date.now()}`;
     const now = Date.now();
     const userMessage: ChatMessage = { role: "user", content: text, timestamp: now };
-    const assistantMessage: ChatMessage = { role: "assistant", content: "准备中...", timestamp: now, steps: [] };
+    const assistantMessage: ChatMessage = { role: "assistant", content: "准备中...", timestamp: now, runId, steps: [] };
     setInput("");
     setLoading(true);
 
@@ -555,7 +557,7 @@ function createConversation(mode: AgentMode = "quick"): AgentConversation {
   };
 }
 
-function sanitizeConversations(value: AgentConversation[]): AgentConversation[] {
+export function sanitizeAgentConversations(value: AgentConversation[]): AgentConversation[] {
   if (!Array.isArray(value)) return [createConversation()];
   const sanitized = value
     .filter((item) => item && typeof item === "object")
@@ -572,6 +574,9 @@ function sanitizeConversations(value: AgentConversation[]): AgentConversation[] 
               role: message.role,
               content: String(message.content || ""),
               timestamp: Number(message.timestamp || Date.now()),
+              ...(typeof message.runId === "string" && message.runId.trim() && message.runId.trim().length <= MAX_AGENT_RUN_ID_CHARS
+                ? { runId: message.runId.trim() }
+                : {}),
               error: Boolean(message.error),
             }))
         : [];
