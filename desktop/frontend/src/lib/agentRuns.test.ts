@@ -32,6 +32,18 @@ describe("agent run ledger client", () => {
       error: "x".repeat(2_000),
     });
 
+    expect(normalizeAgentRunSummary({
+      run_id: "r".repeat(300),
+      conversation_id: "c".repeat(300),
+      question: "q".repeat(8_100),
+      mode: "m".repeat(100),
+    })).toMatchObject({
+      runId: "r".repeat(256),
+      conversationId: "c".repeat(256),
+      question: "q".repeat(8_000),
+      mode: "m".repeat(64),
+    });
+
     expect(normalizeAgentRunSummary({ question: "missing id" })).toBeNull();
     expect(normalizeAgentRunSummary({ run_id: "   " })).toBeNull();
   });
