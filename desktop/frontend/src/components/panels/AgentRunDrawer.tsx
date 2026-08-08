@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowLeft, History, X } from "lucide-react";
+import { ArrowLeft, CircleCheck, CircleHelp, CircleX, History, LoaderCircle, X } from "lucide-react";
 import {
   getAgentRun,
   listAgentRuns,
@@ -35,6 +35,7 @@ type RunScope = "current" | "all";
 type RequestState = "idle" | "loading" | "ready" | "empty" | "missing" | "error";
 
 const TIMELINE_TEXT_MAX = 500;
+const ERROR_TEXT_MAX = 2_000;
 const FOCUSABLE_SELECTOR = [
   "a[href]",
   "button:not([disabled])",
@@ -140,6 +141,25 @@ function statusLabel(status: AgentRunStatus) {
   return "状态未知";
 }
 
+function StatusIndicator({ status, className = "agent-run-status" }: {
+  status: AgentRunStatus;
+  className?: string;
+}) {
+  const Icon = status === "running"
+    ? LoaderCircle
+    : status === "completed"
+      ? CircleCheck
+      : status === "failed"
+        ? CircleX
+        : CircleHelp;
+  return (
+    <span className={className} data-status={status}>
+      <span className="agent-run-status-icon"><Icon size={16} aria-hidden="true" /></span>
+      <span className="agent-run-status-label">{statusLabel(status)}</span>
+    </span>
+  );
+}
+
 function formatTimestamp(timestamp: number | undefined) {
   if (!timestamp || !Number.isFinite(timestamp)) return "未知";
   return new Intl.DateTimeFormat("zh-CN", {
@@ -162,13 +182,17 @@ function formatDuration(run: AgentRunSummary) {
   return `${minutes} 分 ${seconds} 秒`;
 }
 
+function hasDuration(run: AgentRunSummary) {
+  return run.durationMs !== undefined || Boolean(run.completedAtEpochMs && run.startedAtEpochMs);
+}
+
 function scopeKey(scope: RunScope, conversationId?: string) {
   return scope === "all" ? "all" : `current:${conversationId || ""}`;
 }
 
 function requestErrorText(error: unknown) {
   return error instanceof Error && error.message.trim()
-    ? error.message.trim()
+    ? error.message.trim().slice(0, ERROR_TEXT_MAX)
     : "运行记录加载失败";
 }
 
@@ -192,7 +216,6 @@ export function AgentRunDrawer({
   const [detailState, setDetailState] = useState<RequestState>("idle");
   const [detailError, setDetailError] = useState<string>();
   const closeControlRef = useRef<HTMLDivElement | null>(null);
-  const drawerRef = useRef<HTMLElement | null>(null);
   const listRequestTokenRef = useRef(0);
   const detailRequestTokenRef = useRef(0);
   const hasOpenedRef = useRef(false);
@@ -346,10 +369,8 @@ export function AgentRunDrawer({
     }
     if (event.key !== "Tab") return;
 
-    const focusableElements = drawerRef.current
-      ? Array.from(drawerRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
-        .filter((element) => element.getAttribute("aria-hidden") !== "true")
-      : [];
+    const focusableElements = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+      .filter((element) => element.getAttribute("aria-hidden") !== "true");
     if (!focusableElements.length) {
       event.preventDefault();
       return;
@@ -373,7 +394,6 @@ export function AgentRunDrawer({
 
   return (
     <aside
-      ref={drawerRef}
       className="agent-run-drawer"
       role="dialog"
       aria-modal={true}
@@ -385,7 +405,15 @@ export function AgentRunDrawer({
           <History size={18} aria-hidden="true" />
           <h2>Agent 运行复盘</h2>
         </div>
-        <div ref={closeControlRef}>
+        {view === "detail" && (
+          <IconButton
+            className="agent-run-drawer-back"
+            icon={<ArrowLeft size={18} />}
+            label="返回运行列表"
+            onClick={returnToList}
+          />
+        )}
+        <div ref={closeControlRef} className="agent-run-drawer-close-control">
           <IconButton
             className="agent-run-drawer-close"
             icon={<X size={18} />}
@@ -484,7 +512,8 @@ function RunList({
               >
                 <strong>{run.question || "未命名问题"}</strong>
                 <span>{run.mode}</span>
-                <span>{statusLabel(run.status)}</span>
+                <StatusIndicator status={run.status} />
+                {hasDuration(run) && <span className="agent-run-duration">{formatDuration(run)}</span>}
                 <time>{formatTimestamp(run.startedAtEpochMs)}</time>
               </button>
             </li>
@@ -541,7 +570,7 @@ function RunDetail({
         <h3>{detail.question || "未命名问题"}</h3>
         <dl>
           <div><dt>模式</dt><dd>{detail.mode}</dd></div>
-          <div><dt>状态</dt><dd>{statusLabel(detail.status)}</dd></div>
+          <div><dt>状态</dt><dd><StatusIndicator className="agent-run-overview-status" status={detail.status} /></dd></div>
           <div><dt>开始时间</dt><dd>{formatTimestamp(detail.startedAtEpochMs)}</dd></div>
           <div><dt>结束时间</dt><dd>{formatTimestamp(detail.completedAtEpochMs)}</dd></div>
           <div><dt>耗时</dt><dd>{formatDuration(detail)}</dd></div>
