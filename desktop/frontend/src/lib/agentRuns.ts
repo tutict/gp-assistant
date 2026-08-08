@@ -64,6 +64,15 @@ const SENSITIVE_KEYS = new Set([
   "access_token",
   "runtime_config",
   "provider_api_key_config",
+  "config",
+  "password",
+  "refresh_token",
+  "bearer_token",
+  "cookie",
+  "cookies",
+  "session_token",
+  "private_key",
+  "client_key",
 ]);
 const DOMAIN_RESULT_KEYS = [
   "criteria",
