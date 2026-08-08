@@ -110,8 +110,10 @@ function normalizeStatus(value: unknown): AgentRunStatus {
 
 function normalizeLimit(value: number | undefined): number {
   if (value === undefined) return 50;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return 50;
-  return Math.min(200, Math.max(1, value));
+  if (typeof value !== "number" || !Number.isFinite(value)) return 50;
+  if (value <= 0) return 1;
+  if (!Number.isSafeInteger(value)) return 50;
+  return Math.min(200, value);
 }
 
 function normalizeTimelinePayload(value: unknown): Record<string, string> | undefined {

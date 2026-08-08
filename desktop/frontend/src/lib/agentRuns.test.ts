@@ -382,11 +382,15 @@ describe("agent run ledger client", () => {
     getJson.mockResolvedValueOnce({ runs: "invalid" });
     await expect(listAgentRuns({ limit: 0 })).resolves.toEqual([]);
     expect(getJson).toHaveBeenLastCalledWith("/api/agent/runs?limit=1", { signal: undefined });
+
+    getJson.mockResolvedValueOnce({ runs: [] });
+    await expect(listAgentRuns({ limit: -1 })).resolves.toEqual([]);
+    expect(getJson).toHaveBeenLastCalledWith("/api/agent/runs?limit=1", { signal: undefined });
   });
 
   it("uses the default list limit for invalid runtime number values", async () => {
     getJson.mockResolvedValue({ runs: [] });
-    const invalidLimits: unknown[] = ["25", "   ", true, [], -1, 1.5, NaN, Infinity];
+    const invalidLimits: unknown[] = ["25", "   ", true, [], 1.5, NaN, Infinity];
 
     for (const limit of invalidLimits) await listAgentRuns({ limit: limit as number });
 
