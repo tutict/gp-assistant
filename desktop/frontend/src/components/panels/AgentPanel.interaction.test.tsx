@@ -101,15 +101,31 @@ function nodeText(node: ReactTestInstance): string {
   return node.children.map((child) => typeof child === "string" ? child : nodeText(child)).join("");
 }
 
-async function sendAndWait(renderer: ReactTestRenderer) {
+function deferred<T>() {
+  let resolve: (value: T) => void;
+  let reject: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, reject: reject!, resolve: resolve! };
+}
+
+async function beginDeferredSend(renderer: ReactTestRenderer, request: Promise<unknown>) {
+  invokeMock.mockReturnValueOnce(request);
   const textarea = renderer.root.findByType("textarea");
   await act(async () => {
     textarea.props.onChange({ target: { value: "run agent" } });
   });
 
-  await act(async () => {
-    await buttonWithClass(renderer, "send-btn").props.onClick();
+  let sendPromise: Promise<void> | undefined;
+  act(() => {
+    sendPromise = buttonWithClass(renderer, "send-btn").props.onClick();
   });
+  await Promise.resolve();
+  expect(streamHandler).toBeTypeOf("function");
+  expect(invokeMock).toHaveBeenCalledTimes(1);
+  return { sendPromise: sendPromise! };
 }
 
 beforeEach(() => {
@@ -166,10 +182,12 @@ describe("AgentPanel run replay interactions", () => {
     const renderer = await renderPanel();
     const trigger = { focus: vi.fn() } as unknown as HTMLElement;
 
-    expect(buttonsWithClass(renderer, "agent-thread-history")).toHaveLength(1);
-    expect(buttonsWithClass(renderer, "agent-mobile-history")).toHaveLength(1);
+    const desktopHistory = buttonWithClass(renderer, "agent-thread-history");
+    const mobileHistory = buttonWithClass(renderer, "agent-mobile-history");
+    expect(desktopHistory.props).toMatchObject({ "aria-label": "运行历史", title: "运行历史" });
+    expect(mobileHistory.props).toMatchObject({ "aria-label": "运行历史", title: "运行历史" });
     await act(async () => {
-      buttonWithClass(renderer, "agent-thread-history").props.onClick({ currentTarget: trigger });
+      desktopHistory.props.onClick({ currentTarget: trigger });
     });
 
     expect(drawerMock.props).toMatchObject({
@@ -193,9 +211,15 @@ describe("AgentPanel run replay interactions", () => {
     ])]);
     const renderer = await renderPanel();
     const trigger = { focus: vi.fn() } as unknown as HTMLElement;
+    const replayButton = buttonWithClass(renderer, "agent-message-replay");
+
+    expect(replayButton.props).toMatchObject({
+      "aria-label": "查看本次运行复盘",
+      title: "查看本次运行复盘",
+    });
 
     await act(async () => {
-      buttonWithClass(renderer, "agent-message-replay").props.onClick({ currentTarget: trigger });
+      replayButton.props.onClick({ currentTarget: trigger });
     });
 
     expect(drawerMock.props).toMatchObject({
@@ -241,40 +265,46 @@ describe("AgentPanel run replay interactions", () => {
       open: false,
       activeConversationId: "conversation-2",
       initialRunId: undefined,
+      returnFocusElement: null,
     });
   });
 
-  it.each([
-    { type: "result", response: { reply: "done" } },
-    { type: "error", message: "stream failed" },
-  ])("publishes the active run after a terminal $type event", async (terminalEvent) => {
+  it("waits for the stream invoke to resolve before publishing a result completion", async () => {
     seedConversations([conversation("conversation-1", "Terminal")]);
-    tauriMocks.getTauriListen.mockReturnValueOnce(vi.fn(async (
-      _event: string,
-      handler: (event: unknown) => void,
-    ) => {
-      streamHandler = handler;
-      handler({ payload: { run_id: "run-generated", ...terminalEvent } });
-      return unlistenMock;
-    }));
-    invokeMock.mockResolvedValueOnce(undefined);
+    const request = deferred<unknown>();
     const renderer = await renderPanel();
-    await sendAndWait(renderer);
+    const { sendPromise } = await beginDeferredSend(renderer, request.promise);
 
+    await act(async () => {
+      streamHandler!({ payload: { run_id: "run-generated", type: "result", response: { reply: "done" } } });
+    });
+
+    expect(drawerMock.props?.finishedRunId).toBeUndefined();
+    const repliesBeforePersistence = renderer.root.findAll((node) => hasClass(node, "agent-final-reply")).map(nodeText);
+    expect(repliesBeforePersistence).toContain("done");
+    await act(async () => {
+      request.resolve(undefined);
+      await sendPromise;
+    });
     expect(drawerMock.props?.finishedRunId).toBe("run-generated");
-    expect(streamHandler).toBeTypeOf("function");
   });
 
-  it("publishes the active run when the stream request throws", async () => {
-    seedConversations([conversation("conversation-1", "Catch")]);
-    invokeMock.mockRejectedValueOnce(new Error("invoke failed"));
+  it("publishes completion only after an early error event reaches the catch path", async () => {
+    seedConversations([conversation("conversation-1", "Terminal error")]);
+    const request = deferred<unknown>();
     const renderer = await renderPanel();
-    const textarea = renderer.root.findByType("textarea");
+    const { sendPromise } = await beginDeferredSend(renderer, request.promise);
+
     await act(async () => {
-      textarea.props.onChange({ target: { value: "run agent" } });
+      streamHandler!({ payload: { run_id: "run-generated", type: "error", message: "stream failed" } });
     });
+
+    expect(drawerMock.props?.finishedRunId).toBeUndefined();
+    const repliesBeforePersistence = renderer.root.findAll((node) => hasClass(node, "agent-final-reply")).map(nodeText);
+    expect(repliesBeforePersistence).toContain("stream failed");
     await act(async () => {
-      await buttonWithClass(renderer, "send-btn").props.onClick();
+      request.reject(new Error("invoke failed"));
+      await sendPromise;
     });
 
     expect(drawerMock.props?.finishedRunId).toBe("run-generated");

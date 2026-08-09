@@ -126,6 +126,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   useEffect(() => {
     setReplayOpen(false);
     setReplayRunId(undefined);
+    replayTriggerRef.current = null;
   }, [activeConversationId]);
 
   useEffect(() => {
@@ -292,10 +293,8 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
       } else if (event.type === "result") {
         const result = normalizeAgentResult(event.response || {});
         patchAssistant({ content: String(result.reply || "已完成。"), result, steps: undefined });
-        setFinishedRunId(runId);
       } else if (event.type === "error") {
         patchAssistant({ content: event.message || "智能体执行失败。", error: true, steps: undefined });
-        setFinishedRunId(runId);
       }
     };
 
@@ -311,6 +310,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
       });
       if (!payload) return;
       await requestAgentStream(payload, applyEvent);
+      setFinishedRunId(runId);
     } catch (err) {
       patchAssistant({ content: `错误：${(err as Error).message}`, error: true, steps: undefined });
       setFinishedRunId(runId);
