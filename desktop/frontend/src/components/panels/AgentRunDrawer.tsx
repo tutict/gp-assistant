@@ -161,7 +161,7 @@ function StatusIndicator({ status, className = "agent-run-status" }: {
 }
 
 function formatTimestamp(timestamp: number | undefined) {
-  if (timestamp === undefined || !Number.isFinite(timestamp)) return "未知";
+  if (!timestamp || !Number.isFinite(timestamp)) return "未知";
   const date = new Date(timestamp);
   if (!Number.isFinite(date.getTime())) return "未知";
   return new Intl.DateTimeFormat("zh-CN", {

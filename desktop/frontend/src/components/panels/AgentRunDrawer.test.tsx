@@ -176,6 +176,18 @@ describe("AgentRunDrawer list", () => {
     expect(nodeText(timestamps[0])).toBe("未知");
   });
 
+  it("renders unknown for a zero timestamp", async () => {
+    agentRunMocks.listAgentRuns.mockResolvedValueOnce([
+      summary("zero-time", { startedAtEpochMs: 0 }),
+    ]);
+    const renderer = await renderDrawer({ open: true });
+    await flush();
+
+    const timestamps = renderer.root.findAll((node) => node.type === "time");
+    expect(timestamps).toHaveLength(1);
+    expect(nodeText(timestamps[0])).toBe("未知");
+  });
+
   it("does not widen a current scope without a conversation id", async () => {
     const renderer = await renderDrawer({ open: true, activeConversationId: undefined });
     await flush();
