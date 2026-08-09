@@ -151,7 +151,7 @@ describe("AgentRunDrawer list", () => {
     await flush();
 
     expect(agentRunMocks.listAgentRuns).not.toHaveBeenCalled();
-    expect(classNodes(renderer, "agent-run-state")).toHaveLength(1);
+    expect(nodeText(classNodes(renderer, "agent-run-state")[0])).toBe("当前会话暂无运行记录");
   });
 
   it("does not let an older list response replace a newer scope", async () => {
@@ -209,27 +209,27 @@ describe("AgentRunDrawer list", () => {
       ]);
     const renderer = await renderDrawer({ open: true });
 
-    expect(classNodes(renderer, "agent-run-state")).toHaveLength(1);
+    expect(nodeText(classNodes(renderer, "agent-run-state")[0])).toBe("正在加载运行记录");
     await act(async () => {
       current.resolve([]);
       await Promise.resolve();
     });
-    expect(classNodes(renderer, "agent-run-state")).toHaveLength(1);
+    expect(nodeText(classNodes(renderer, "agent-run-state")[0])).toBe("当前会话暂无运行记录");
 
     await act(async () => {
       scopeButton(renderer, "all").props.onClick();
     });
     await flush();
-    expect(classNodes(renderer, "agent-run-state")).toHaveLength(1);
+    expect(nodeText(classNodes(renderer, "agent-run-state")[0])).toBe("暂无运行记录");
 
     await act(async () => {
       scopeButton(renderer, "all").props.onClick();
     });
     await flush();
     expect(classNodes(renderer, "agent-run-status-icon")).toHaveLength(4);
-    expect(classNodes(renderer, "agent-run-status-label").map(nodeText)).toEqual(
-      expect.arrayContaining([expect.any(String), expect.any(String), expect.any(String), expect.any(String)]),
-    );
+    expect(classNodes(renderer, "agent-run-status-label").map(nodeText)).toEqual([
+      "运行中", "已完成", "失败", "状态未知",
+    ]);
     expect(classNodes(renderer, "agent-run-status").map((node) => node.props["data-status"])).toEqual([
       "running", "completed", "failed", "unknown",
     ]);
@@ -335,6 +335,12 @@ describe("AgentRunDrawer detail", () => {
       });
       if (expectedCall > 1) await flush();
       expect(nodesWithClass(renderer, "agent-run-drawer-back")).toHaveLength(1);
+      if (expectedCall === 1) {
+        expect(nodeText(classNodes(renderer, "agent-run-state")[0])).toBe("正在加载运行详情");
+      }
+      if (expectedCall === 2) {
+        expect(nodeText(classNodes(renderer, "agent-run-state")[0])).toBe("本次运行未成功留痕");
+      }
       await act(async () => {
         backButton(renderer).props.onClick();
       });
@@ -373,7 +379,11 @@ describe("AgentRunDrawer detail", () => {
     const renderer = await renderDrawer({ open: true, initialRunId: "ordered" });
     await flush();
     const output = renderedText(renderer);
+    const detailBody = classNodes(renderer, "agent-run-detail")[0];
 
+    expect((detailBody.children[0] as ReactTestInstance).props.className).toBe("agent-run-overview");
+    expect(nodesWithClass(renderer, "agent-run-back")).toHaveLength(0);
+    expect(nodesWithClass(renderer, "agent-run-drawer-back")).toHaveLength(1);
     expect(output.indexOf("agent-run-overview")).toBeLessThan(output.indexOf("agent-run-timeline"));
     expect(output.indexOf("agent-run-timeline")).toBeLessThan(output.indexOf("agent-run-persisted-error"));
     expect(output.indexOf("agent-run-persisted-error")).toBeLessThan(output.indexOf("agent-run-result"));

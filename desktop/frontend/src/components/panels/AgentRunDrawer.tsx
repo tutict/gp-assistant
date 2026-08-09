@@ -439,7 +439,6 @@ export function AgentRunDrawer({
           error={detailError}
           state={detailState}
           watchlist={watchlist}
-          onBack={returnToList}
           onRetry={() => selectedRunId && loadDetail(selectedRunId)}
           onToggleWatchlist={onToggleWatchlist}
         />
@@ -529,7 +528,6 @@ function RunDetail({
   error,
   state,
   watchlist,
-  onBack,
   onRetry,
   onToggleWatchlist,
 }: {
@@ -537,7 +535,6 @@ function RunDetail({
   error?: string;
   state: RequestState;
   watchlist: WatchlistItem[];
-  onBack: () => void;
   onRetry: () => void;
   onToggleWatchlist: (item: StockRowView) => void;
 }) {
@@ -562,10 +559,6 @@ function RunDetail({
   const timeline = buildAgentRunTimeline(detail.events);
   return (
     <section className="agent-run-detail" aria-label="运行详情">
-      <button type="button" className="agent-run-back" onClick={onBack}>
-        <ArrowLeft size={16} aria-hidden="true" />
-        返回运行列表
-      </button>
       <section className="agent-run-overview" aria-label="运行概览">
         <h3>{detail.question || "未命名问题"}</h3>
         <dl>
