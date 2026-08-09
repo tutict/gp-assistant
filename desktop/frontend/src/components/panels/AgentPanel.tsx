@@ -1,4 +1,4 @@
-import { LoaderCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, Search, Send, Trash2 } from "lucide-react";
+import { FileSearch, History, LoaderCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, Search, Send, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentResult, AgentStreamEvent, LlmSettings, StockRowView, WatchlistItem } from "../../types";
 import { buildTauriAgentPayload, getTauriInvoke, getTauriListen, isTauriRuntime } from "../../lib/tauri";
@@ -6,6 +6,7 @@ import { activeLlmProvider, buildLlmConfig, normalizeAgentResult, normalizeAgent
 import { buildAgentStreamPayload, MAX_AGENT_MESSAGE_CHARS } from "../../lib/agent";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { AgentResultView } from "./AgentResultView";
+import { AgentRunDrawer } from "./AgentRunDrawer";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
 import { IconButton } from "../ui/IconButton";
 
@@ -67,7 +68,11 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const [input, setInput] = useState("");
   const [conversationSearch, setConversationSearch] = useState("");
   const [loading, setLoading] = useState(false);
+  const [replayOpen, setReplayOpen] = useState(false);
+  const [replayRunId, setReplayRunId] = useState<string>();
+  const [finishedRunId, setFinishedRunId] = useState<string>();
   const threadRef = useRef<HTMLDivElement>(null);
+  const replayTriggerRef = useRef<HTMLElement | null>(null);
   const activeProvider = activeLlmProvider(llmSettings);
 
   const activeConversation = conversations.find((item) => item.id === activeConversationId) || conversations[0] || null;
@@ -117,6 +122,11 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
   }, [messages, loading]);
+
+  useEffect(() => {
+    setReplayOpen(false);
+    setReplayRunId(undefined);
+  }, [activeConversationId]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
@@ -193,6 +203,20 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     }
   }, [onWatchlistChange, watchlist]);
 
+  const openRunHistory = useCallback((trigger: HTMLElement) => {
+    replayTriggerRef.current = trigger;
+    setReplayRunId(undefined);
+    setReplayOpen(true);
+  }, []);
+
+  const openRunReplay = useCallback((runId: string, trigger: HTMLElement) => {
+    replayTriggerRef.current = trigger;
+    setReplayRunId(runId);
+    setReplayOpen(true);
+  }, []);
+
+  const closeRunReplay = useCallback(() => setReplayOpen(false), []);
+
   const send = useCallback(async () => {
     const text = input.trim();
     const conversationId = activeConversation?.id;
@@ -268,8 +292,10 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
       } else if (event.type === "result") {
         const result = normalizeAgentResult(event.response || {});
         patchAssistant({ content: String(result.reply || "已完成。"), result, steps: undefined });
+        setFinishedRunId(runId);
       } else if (event.type === "error") {
         patchAssistant({ content: event.message || "智能体执行失败。", error: true, steps: undefined });
+        setFinishedRunId(runId);
       }
     };
 
@@ -287,6 +313,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
       await requestAgentStream(payload, applyEvent);
     } catch (err) {
       patchAssistant({ content: `错误：${(err as Error).message}`, error: true, steps: undefined });
+      setFinishedRunId(runId);
     } finally {
       setLoading(false);
     }
@@ -390,6 +417,23 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             label="新建对话"
             icon={<Plus size={18} aria-hidden="true" />}
           />
+          <IconButton
+            className="agent-mobile-history"
+            onClick={(event) => openRunHistory(event.currentTarget)}
+            label="运行历史"
+            title="运行历史"
+            icon={<History size={18} aria-hidden="true" />}
+          />
+        </div>
+        <div className="agent-thread-toolbar">
+          <strong>{activeConversation?.title || "新对话"}</strong>
+          <IconButton
+            className="agent-thread-history"
+            onClick={(event) => openRunHistory(event.currentTarget)}
+            label="运行历史"
+            title="运行历史"
+            icon={<History size={18} aria-hidden="true" />}
+          />
         </div>
         <div className={`agent-thread ${messages.length === 0 ? "empty" : ""}`} ref={threadRef}>
           {messages.length === 0 ? (
@@ -403,6 +447,15 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
               <div className="agent-message-meta">
                 <span>{msg.role === "user" ? "你" : "Agent"}</span>
                 <time>{new Date(msg.timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>
+                {msg.role === "assistant" && msg.runId && (
+                  <IconButton
+                    className="agent-message-replay"
+                    onClick={(event) => openRunReplay(msg.runId!, event.currentTarget)}
+                    label="查看本次运行复盘"
+                    title="查看本次运行复盘"
+                    icon={<FileSearch size={15} aria-hidden="true" />}
+                  />
+                )}
               </div>
               <div className="agent-message-body">
                 {msg.steps?.length ? <AgentSteps steps={msg.steps} /> : null}
@@ -443,6 +496,16 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             </button>
           </div>
         </div>
+        <AgentRunDrawer
+          open={replayOpen}
+          activeConversationId={activeConversation?.id}
+          initialRunId={replayRunId}
+          finishedRunId={finishedRunId}
+          returnFocusElement={replayTriggerRef.current}
+          watchlist={watchlist}
+          onToggleWatchlist={toggleWatchlist}
+          onClose={closeRunReplay}
+        />
       </section>
     </div>
   );

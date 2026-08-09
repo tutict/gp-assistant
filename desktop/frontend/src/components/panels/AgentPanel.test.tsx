@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { act, create } from "react-test-renderer";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const tauriMocks = vi.hoisted(() => ({
   getTauriInvoke: vi.fn(),
@@ -17,15 +17,40 @@ vi.mock("../../lib/tauri", async (importOriginal) => ({
 
 let AgentPanel: typeof import("./AgentPanel").AgentPanel;
 let sanitizeAgentConversations: typeof import("./AgentPanel").sanitizeAgentConversations;
+const renderers = new Set<ReactTestRenderer>();
 
-beforeAll(async () => {
+function stubTestGlobals() {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { location: { href: "http://localhost/" } });
-  ({ AgentPanel, sanitizeAgentConversations } = await import("./AgentPanel"));
+}
+
+beforeAll(async () => {
+  stubTestGlobals();
+  try {
+    ({ AgentPanel, sanitizeAgentConversations } = await import("./AgentPanel"));
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 
-afterAll(() => {
-  vi.unstubAllGlobals();
+beforeEach(() => {
+  stubTestGlobals();
+  tauriMocks.getTauriInvoke.mockReset();
+  tauriMocks.getTauriListen.mockReset();
+  tauriMocks.isTauriRuntime.mockReset();
+  baseProps.onLlmSettingsChange.mockReset();
+  baseProps.onWatchlistChange.mockReset();
+});
+
+afterEach(async () => {
+  try {
+    await act(async () => {
+      for (const renderer of renderers) renderer.unmount();
+    });
+  } finally {
+    renderers.clear();
+    vi.unstubAllGlobals();
+  }
 });
 
 const baseProps = {
@@ -112,6 +137,9 @@ describe("AgentPanel empty state", () => {
     expect(html).toContain("请先配置模型");
     expect(html).toContain("游资早期框架：环境、主线、情绪周期与失效条件");
     expect(html).toContain("价值复利框架：企业质量、资本配置与估值");
+    expect(html).toContain('aria-label="运行历史"');
+    expect(html).toContain('class="icon-button agent-thread-history"');
+    expect(html).toContain('class="icon-button agent-mobile-history"');
     expect(html).not.toContain("快速模式能力");
   });
 
@@ -180,6 +208,7 @@ describe("AgentPanel send run ID", () => {
     await act(async () => {
       renderer = create(<AgentPanel {...baseProps} llmSettings={null} />);
     });
+    renderers.add(renderer!);
 
     const textarea = renderer!.root.findByType("textarea");
     await act(async () => {
@@ -218,6 +247,5 @@ describe("AgentPanel send run ID", () => {
     expect(assistantMessage).not.toHaveProperty("result");
     expect(assistantMessage).not.toHaveProperty("steps");
 
-    renderer!.unmount();
   });
 });
