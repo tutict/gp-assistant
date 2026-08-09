@@ -1,5 +1,5 @@
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentRunDetail, AgentRunSummary } from "../../lib/agentRuns";
 import type { AgentStreamEvent } from "../../types";
 
@@ -12,6 +12,7 @@ vi.mock("../../lib/agentRuns", () => agentRunMocks);
 
 let AgentRunDrawer: typeof import("./AgentRunDrawer").AgentRunDrawer;
 let buildAgentRunTimeline: typeof import("./AgentRunDrawer").buildAgentRunTimeline;
+const renderers = new Set<ReactTestRenderer>();
 
 const baseProps = {
   activeConversationId: "conversation-1",
@@ -54,6 +55,7 @@ async function renderDrawer(
   await act(async () => {
     renderer = create(<AgentRunDrawer open={false} {...baseProps} {...overrides} />, options);
   });
+  renderers.add(renderer!);
   return renderer!;
 }
 
@@ -106,21 +108,37 @@ function backButton(renderer: ReactTestRenderer) {
   return match;
 }
 
-beforeAll(async () => {
+function stubTestGlobals() {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { location: { href: "http://localhost/" } });
-  ({ AgentRunDrawer, buildAgentRunTimeline } = await import("./AgentRunDrawer"));
+}
+
+beforeAll(async () => {
+  stubTestGlobals();
+  try {
+    ({ AgentRunDrawer, buildAgentRunTimeline } = await import("./AgentRunDrawer"));
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 
 beforeEach(() => {
+  stubTestGlobals();
   agentRunMocks.getAgentRun.mockReset();
   agentRunMocks.listAgentRuns.mockReset();
   baseProps.onClose.mockReset();
   baseProps.onToggleWatchlist.mockReset();
 });
 
-afterAll(() => {
-  vi.unstubAllGlobals();
+afterEach(async () => {
+  try {
+    await act(async () => {
+      for (const renderer of renderers) renderer.unmount();
+    });
+  } finally {
+    renderers.clear();
+    vi.unstubAllGlobals();
+  }
 });
 
 describe("AgentRunDrawer list", () => {
@@ -144,6 +162,18 @@ describe("AgentRunDrawer list", () => {
     await flush();
     expect(agentRunMocks.listAgentRuns).toHaveBeenLastCalledWith({});
     expect(renderedText(renderer)).toContain("Question all-run");
+  });
+
+  it("renders unknown instead of throwing for timestamps outside the Date range", async () => {
+    agentRunMocks.listAgentRuns.mockResolvedValueOnce([
+      summary("out-of-range-time", { startedAtEpochMs: Number.MAX_SAFE_INTEGER }),
+    ]);
+    const renderer = await renderDrawer({ open: true });
+    await flush();
+
+    const timestamps = renderer.root.findAll((node) => node.type === "time");
+    expect(timestamps).toHaveLength(1);
+    expect(nodeText(timestamps[0])).toBe("未知");
   });
 
   it("does not widen a current scope without a conversation id", async () => {
