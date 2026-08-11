@@ -3,6 +3,10 @@ use serde_json::{json, Map, Value};
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicU64, Ordering as AtomicOrdering},
+        Once,
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::Manager;
@@ -33,6 +37,20 @@ pub(crate) fn current_epoch_millis() -> i64 {
         .min(i64::MAX as u128) as i64
 }
 
+static RUN_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// `run_id` is the primary key, so a millisecond timestamp alone collides whenever two
+/// runs start in the same millisecond. The counter makes it unique within the process
+/// and the pid keeps two app instances sharing the ledger file apart.
+pub(crate) fn next_run_id() -> String {
+    format!(
+        "gp-agent-run-{}-{}-{}",
+        current_epoch_millis(),
+        std::process::id(),
+        RUN_ID_COUNTER.fetch_add(1, AtomicOrdering::Relaxed)
+    )
+}
+
 impl AgentRunStore {
     pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self, String> {
         let path = path.as_ref().to_path_buf();
@@ -46,6 +64,7 @@ impl AgentRunStore {
             .busy_timeout(Duration::from_secs(5))
             .map_err(|error| format!("failed to configure agent ledger: {error}"))?;
         initialize_schema(&connection)?;
+        reconcile_interrupted_runs_once(&connection);
         Ok(Self { path })
     }
 
@@ -247,6 +266,32 @@ fn initialize_schema(connection: &Connection) -> Result<(), String> {
         .map_err(|error| format!("failed to initialize agent ledger: {error}"))
 }
 
+static RECONCILE_ONCE: Once = Once::new();
+
+/// A run killed with the app (force quit, crash, webview death) never reaches
+/// `complete_run`/`fail_run`, so its row stays at `running` forever and the replay drawer
+/// keeps waiting on it. Settle those leftovers to the design's `unknown` status.
+///
+/// Only the first call in the process does the work: `open()` runs per command, and a
+/// later sweep would clobber the run that is in flight right now. The first `open()`
+/// necessarily precedes any `start_run` this process performs, so live runs are safe.
+fn reconcile_interrupted_runs_once(connection: &Connection) {
+    RECONCILE_ONCE.call_once(|| {
+        if let Err(error) = reconcile_interrupted_runs(connection) {
+            eprintln!("agent run ledger reconciliation failed: {error}");
+        }
+    });
+}
+
+fn reconcile_interrupted_runs(connection: &Connection) -> Result<usize, String> {
+    connection
+        .execute(
+            "UPDATE agent_runs SET status = 'unknown' WHERE status = 'running'",
+            [],
+        )
+        .map_err(|error| format!("failed to reconcile interrupted agent runs: {error}"))
+}
+
 fn sanitized_request(payload: &Value) -> Value {
     let mut request = Map::new();
     for key in [
@@ -345,9 +390,10 @@ fn decode_stored_run(stored: StoredAgentRun) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::AgentRunStore;
+    use super::{next_run_id, reconcile_interrupted_runs, AgentRunStore};
     use serde_json::{json, Value};
     use std::{
+        collections::HashSet,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -497,5 +543,86 @@ mod tests {
 
         drop(store);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn start_run_trims_run_id_so_terminal_updates_match_the_stored_row() {
+        let path = temporary_database_path("trim");
+        let store = AgentRunStore::open(&path).expect("agent run store should open");
+        store
+            .start_run(
+                &json!({
+                    "run_id": "  run-padded  ",
+                    "message": "Question with a padded id",
+                    "mode": "quick"
+                }),
+                5_000,
+            )
+            .expect("run should be started");
+
+        // The row is keyed by the trimmed id, so callers must complete with the trimmed value.
+        store
+            .complete_run("run-padded", &[], &json!({"reply": "done"}), 5_100)
+            .expect("trimmed run id should match the stored row");
+        assert!(store
+            .complete_run("  run-padded  ", &[], &json!({"reply": "done"}), 5_100)
+            .is_err());
+
+        let record = store
+            .get_run("run-padded")
+            .expect("run lookup should succeed")
+            .expect("run should exist");
+        assert_eq!(record["status"], "completed");
+
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn reconciles_interrupted_runs_to_unknown_without_touching_terminal_rows() {
+        let path = temporary_database_path("reconcile");
+        let store = AgentRunStore::open(&path).expect("agent run store should open");
+        for (run_id, started_at) in [("run-stranded", 6_000), ("run-settled", 6_100)] {
+            store
+                .start_run(
+                    &json!({
+                        "run_id": run_id,
+                        "message": format!("Question for {run_id}"),
+                        "mode": "quick"
+                    }),
+                    started_at,
+                )
+                .expect("run should be started");
+        }
+        store
+            .complete_run("run-settled", &[], &json!({"reply": "done"}), 6_200)
+            .expect("run should be completed");
+
+        // `run-stranded` stands in for a run whose process died before its terminal update.
+        let connection = store.connection().expect("ledger connection should open");
+        let reconciled =
+            reconcile_interrupted_runs(&connection).expect("reconciliation should succeed");
+        assert_eq!(reconciled, 1);
+
+        let stranded = store
+            .get_run("run-stranded")
+            .expect("run lookup should succeed")
+            .expect("run should exist");
+        assert_eq!(stranded["status"], "unknown");
+        let settled = store
+            .get_run("run-settled")
+            .expect("run lookup should succeed")
+            .expect("run should exist");
+        assert_eq!(settled["status"], "completed");
+
+        drop(connection);
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn generated_run_ids_stay_unique_within_one_millisecond() {
+        let ids: HashSet<String> = (0..512).map(|_| next_run_id()).collect();
+        assert_eq!(ids.len(), 512);
     }
 }

@@ -2202,24 +2202,20 @@ fn api_upstream_rag_transfer_start(app: tauri::AppHandle, payload: Value) -> Res
 #[tauri::command]
 async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
     let mut payload = payload;
-    if payload
+    let fields = payload
+        .as_object_mut()
+        .ok_or_else(|| "Agent payload must be an object".to_string())?;
+    // Normalize once and write the normalized value back: the ledger trims `run_id` when it
+    // inserts the row, so completing with the raw value would match no row and strand the run.
+    let run_id = fields
         .get("run_id")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .is_none()
-    {
-        payload["run_id"] = Value::String(format!(
-            "gp-agent-run-{}",
-            agent_ledger::current_epoch_millis()
-        ));
-    }
+        .map(str::to_string)
+        .unwrap_or_else(agent_ledger::next_run_id);
+    fields.insert("run_id".to_string(), Value::String(run_id.clone()));
     agent_harness::validate_payload(&payload)?;
-    let run_id = payload
-        .get("run_id")
-        .and_then(Value::as_str)
-        .unwrap_or("gp-agent-run")
-        .to_string();
     let started_at_epoch_ms = agent_ledger::current_epoch_millis();
     let ledger_payload = payload.clone();
     let start_app = app.clone();
