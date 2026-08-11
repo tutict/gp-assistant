@@ -160,11 +160,27 @@ pub(crate) async fn execute(payload: Value, data: Value) -> Result<AgentHarnessO
     execute_with_event_sink(payload, data, |_| {}).await
 }
 
+/// Counts encoded bytes without materializing the encoding. `validate_payload` runs on every
+/// request, once in the Tauri command (to gate the ledger insert) and once here, so allocating a
+/// 512 KiB `Vec` twice per request just to read its length is pure waste.
+struct EncodedByteCounter(usize);
+
+impl std::io::Write for EncodedByteCounter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 += buf.len();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 pub(crate) fn validate_payload(payload: &Value) -> Result<(), String> {
-    let payload_bytes = serde_json::to_vec(payload)
-        .map_err(|error| format!("serialize Agent payload failed: {error}"))?
-        .len();
-    if payload_bytes > MAX_HARNESS_PAYLOAD_BYTES {
+    let mut payload_bytes = EncodedByteCounter(0);
+    serde_json::to_writer(&mut payload_bytes, payload)
+        .map_err(|error| format!("serialize Agent payload failed: {error}"))?;
+    if payload_bytes.0 > MAX_HARNESS_PAYLOAD_BYTES {
         return Err("Agent payload exceeds 512 KiB".to_string());
     }
     let message = payload
@@ -198,14 +214,6 @@ where
         .unwrap_or_default()
         .trim()
         .to_string();
-    if message.is_empty() {
-        return Err("Agent message is required".to_string());
-    }
-    if message.chars().count() > MAX_MESSAGE_CHARS {
-        return Err(format!(
-            "Agent message exceeds the {MAX_MESSAGE_CHARS} character limit"
-        ));
-    }
     let run_id = payload
         .get("run_id")
         .and_then(Value::as_str)

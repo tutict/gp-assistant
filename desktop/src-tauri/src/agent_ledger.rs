@@ -2,7 +2,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Map, Value};
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         atomic::{AtomicU64, Ordering as AtomicOrdering},
         Once,
@@ -12,7 +12,7 @@ use std::{
 use tauri::Manager;
 
 pub(crate) struct AgentRunStore {
-    path: PathBuf,
+    connection: Connection,
 }
 
 pub(crate) fn with_app_store<T, F>(app: &tauri::AppHandle, operation: F) -> Result<T, String>
@@ -53,19 +53,19 @@ pub(crate) fn next_run_id() -> String {
 
 impl AgentRunStore {
     pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self, String> {
-        let path = path.as_ref().to_path_buf();
+        let path = path.as_ref();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|error| format!("failed to create agent ledger directory: {error}"))?;
         }
-        let connection = Connection::open(&path)
+        let connection = Connection::open(path)
             .map_err(|error| format!("failed to open agent ledger: {error}"))?;
         connection
             .busy_timeout(Duration::from_secs(5))
             .map_err(|error| format!("failed to configure agent ledger: {error}"))?;
         initialize_schema(&connection)?;
         reconcile_interrupted_runs_once(&connection);
-        Ok(Self { path })
+        Ok(Self { connection })
     }
 
     pub(crate) fn start_run(
@@ -79,7 +79,7 @@ impl AgentRunStore {
         let mode = optional_string(payload, "mode").unwrap_or_else(|| "quick".to_string());
         let request_json = serde_json::to_string(&sanitized_request(payload))
             .map_err(|error| format!("failed to encode agent request: {error}"))?;
-        self.connection()?
+        self.connection
             .execute(
                 "INSERT INTO agent_runs (
                     run_id, conversation_id, question, mode, status, started_at_epoch_ms,
@@ -110,7 +110,7 @@ impl AgentRunStore {
         let result_json = serde_json::to_string(result)
             .map_err(|error| format!("failed to encode agent result: {error}"))?;
         let changed = self
-            .connection()?
+            .connection
             .execute(
                 "UPDATE agent_runs
                  SET status = 'completed', completed_at_epoch_ms = ?2,
@@ -133,7 +133,7 @@ impl AgentRunStore {
         let events_json = serde_json::to_string(events)
             .map_err(|error| format!("failed to encode agent events: {error}"))?;
         let changed = self
-            .connection()?
+            .connection
             .execute(
                 "UPDATE agent_runs
                  SET status = 'failed', completed_at_epoch_ms = ?2,
@@ -152,8 +152,8 @@ impl AgentRunStore {
         conversation_id: Option<&str>,
     ) -> Result<Value, String> {
         let limit = limit.clamp(1, 200) as i64;
-        let connection = self.connection()?;
-        let mut statement = connection
+        let mut statement = self
+            .connection
             .prepare(
                 "SELECT run_id, conversation_id, question, mode, status,
                         started_at_epoch_ms, completed_at_epoch_ms, duration_ms, error
@@ -184,12 +184,15 @@ impl AgentRunStore {
     }
 
     pub(crate) fn get_run(&self, run_id: &str) -> Result<Option<Value>, String> {
+        // `request_json` is deliberately not selected: the replay drawer's AgentRunDetail has no
+        // `request` field, and the stored request still holds the chat history, the watchlist
+        // context, and the LLM endpoint — none of which belongs in the webview.
         let stored = self
-            .connection()?
+            .connection
             .query_row(
                 "SELECT run_id, conversation_id, question, mode, status,
                         started_at_epoch_ms, completed_at_epoch_ms, duration_ms,
-                        request_json, events_json, result_json, error
+                        events_json, result_json, error
                  FROM agent_runs WHERE run_id = ?1",
                 params![run_id],
                 |row| {
@@ -202,25 +205,15 @@ impl AgentRunStore {
                         started_at_epoch_ms: row.get(5)?,
                         completed_at_epoch_ms: row.get(6)?,
                         duration_ms: row.get(7)?,
-                        request_json: row.get(8)?,
-                        events_json: row.get(9)?,
-                        result_json: row.get(10)?,
-                        error: row.get(11)?,
+                        events_json: row.get(8)?,
+                        result_json: row.get(9)?,
+                        error: row.get(10)?,
                     })
                 },
             )
             .optional()
             .map_err(|error| format!("failed to read agent run: {error}"))?;
         stored.map(decode_stored_run).transpose()
-    }
-
-    fn connection(&self) -> Result<Connection, String> {
-        let connection = Connection::open(&self.path)
-            .map_err(|error| format!("failed to open agent ledger: {error}"))?;
-        connection
-            .busy_timeout(Duration::from_secs(5))
-            .map_err(|error| format!("failed to configure agent ledger: {error}"))?;
-        Ok(connection)
     }
 }
 
@@ -233,7 +226,6 @@ struct StoredAgentRun {
     started_at_epoch_ms: i64,
     completed_at_epoch_ms: Option<i64>,
     duration_ms: Option<i64>,
-    request_json: String,
     events_json: String,
     result_json: Option<String>,
     error: Option<String>,
@@ -364,7 +356,6 @@ fn decode_json(text: &str, field: &str) -> Result<Value, String> {
 }
 
 fn decode_stored_run(stored: StoredAgentRun) -> Result<Value, String> {
-    let request = decode_json(&stored.request_json, "request")?;
     let events = decode_json(&stored.events_json, "events")?;
     let result = stored
         .result_json
@@ -381,7 +372,6 @@ fn decode_stored_run(stored: StoredAgentRun) -> Result<Value, String> {
         "started_at_epoch_ms": stored.started_at_epoch_ms,
         "completed_at_epoch_ms": stored.completed_at_epoch_ms,
         "duration_ms": stored.duration_ms,
-        "request": request,
         "events": events,
         "result": result,
         "error": stored.error,
@@ -404,6 +394,19 @@ mod tests {
             .expect("system time should be valid")
             .as_nanos();
         std::env::temp_dir().join(format!("gp-assistant-agent-ledger-{name}-{unique}.sqlite"))
+    }
+
+    /// `get_run` no longer returns the request, so secret-redaction assertions read the column.
+    fn stored_request_json(store: &AgentRunStore, run_id: &str) -> Value {
+        let raw: String = store
+            .connection
+            .query_row(
+                "SELECT request_json FROM agent_runs WHERE run_id = ?1",
+                [run_id],
+                |row| row.get(0),
+            )
+            .expect("stored request should be readable");
+        serde_json::from_str(&raw).expect("stored request should be valid JSON")
     }
 
     #[test]
@@ -459,16 +462,20 @@ mod tests {
             record["result"]["reply"],
             "Candidate A has stronger evidence"
         );
-        assert_eq!(record["request"]["llm"]["model"], "research-model");
-        assert_eq!(record["request"]["llm"]["api_key"], Value::Null);
-        assert_eq!(record["request"]["llm"]["organization"], Value::Null);
-        assert_eq!(record["request"]["llm"]["project"], Value::Null);
-        assert!(!record.to_string().contains("must-never-be-persisted"));
-        assert!(!record.to_string().contains("sensitive-organization"));
-        assert!(!record.to_string().contains("sensitive-project"));
-        assert!(!record
-            .to_string()
-            .contains("user:password@proxy.example.test"));
+        // The detail contract has no `request` field, so the stored request must not ride along.
+        assert!(record.get("request").is_none());
+
+        // Secrets must be absent from the row itself, not merely from the detail response.
+        let stored_request = stored_request_json(&store, "run-completed");
+        assert_eq!(stored_request["llm"]["model"], "research-model");
+        assert_eq!(stored_request["llm"]["api_key"], Value::Null);
+        assert_eq!(stored_request["llm"]["organization"], Value::Null);
+        assert_eq!(stored_request["llm"]["project"], Value::Null);
+        let stored_request = stored_request.to_string();
+        assert!(!stored_request.contains("must-never-be-persisted"));
+        assert!(!stored_request.contains("sensitive-organization"));
+        assert!(!stored_request.contains("sensitive-project"));
+        assert!(!stored_request.contains("user:password@proxy.example.test"));
 
         drop(store);
         let _ = std::fs::remove_file(path);
@@ -599,9 +606,8 @@ mod tests {
             .expect("run should be completed");
 
         // `run-stranded` stands in for a run whose process died before its terminal update.
-        let connection = store.connection().expect("ledger connection should open");
         let reconciled =
-            reconcile_interrupted_runs(&connection).expect("reconciliation should succeed");
+            reconcile_interrupted_runs(&store.connection).expect("reconciliation should succeed");
         assert_eq!(reconciled, 1);
 
         let stranded = store
@@ -615,7 +621,6 @@ mod tests {
             .expect("run should exist");
         assert_eq!(settled["status"], "completed");
 
-        drop(connection);
         drop(store);
         let _ = std::fs::remove_file(path);
     }
