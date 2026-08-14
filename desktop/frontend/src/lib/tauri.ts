@@ -77,7 +77,6 @@ const DEDUCTED_FINANCIAL_FIELDS = [
 ];
 
 let financialSnapshotPromise: Promise<Record<string, unknown> | null> | null = null;
-let financialSnapshotSentToBackend = false;
 
 function hasTauriRuntime(): boolean {
   if (typeof window === "undefined") return false;
@@ -212,7 +211,6 @@ async function withFinancialSnapshotPayload(payload: unknown): Promise<unknown> 
   if (!isTauriRuntime()) return payload;
   const base = asRecord(payload);
   if (financialSnapshotPayload(asRecord(base.financial_snapshot))) return payload;
-  if (financialSnapshotSentToBackend) return payload;
   const snapshot = await loadBundledFinancialSnapshot().catch(() => null);
   const financialSnapshot = financialSnapshotPayload(snapshot, { includeStocks: false });
   return financialSnapshot ? { ...base, financial_snapshot: financialSnapshot } : payload;
@@ -220,12 +218,7 @@ async function withFinancialSnapshotPayload(payload: unknown): Promise<unknown> 
 
 async function invokeWithFinancialSnapshot(invoke: InvokeFn, command: string, payload: unknown): Promise<unknown> {
   const nextPayload = await withFinancialSnapshotPayload(payload);
-  const includedSnapshot = Boolean(
-    financialSnapshotPayload(asRecord(asRecord(nextPayload).financial_snapshot)),
-  );
-  const result = await invoke(command, { payload: nextPayload });
-  if (includedSnapshot) financialSnapshotSentToBackend = true;
-  return result;
+  return invoke(command, { payload: nextPayload });
 }
 
 export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
@@ -260,7 +253,6 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/data-sources/refresh-universe": async ({ invoke, payload }) => refreshTauriMarketData(invoke, asRecord(payload)),
   "/api/data-sources/prune-cache": async ({ invoke }) => {
     const result = await invoke("api_market_clear_cache");
-    financialSnapshotSentToBackend = false;
     return result;
   },
   "/api/upstream-rag/mobile/import": async ({ invoke, payload }) => invoke("core_upstream_rag_import", { payload }),

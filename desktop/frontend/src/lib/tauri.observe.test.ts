@@ -69,7 +69,7 @@ describe("desktop financial snapshot routes", () => {
     expect(payload).not.toHaveProperty("mobile_fast_observe");
   });
 
-  it("attaches complete screening financials and resends them after cache clearing", async () => {
+  it("attaches complete screening financials to every screen request and after cache clearing", async () => {
     vi.stubGlobal("window", {
       location: { href: "http://tauri.localhost/" },
       __TAURI_INTERNALS__: {},
@@ -115,7 +115,35 @@ describe("desktop financial snapshot routes", () => {
     await screenRoute?.(screenContext);
 
     let screenCalls = invokeMock.mock.calls.filter(([command]) => command === "api_screen");
-    expect(screenCalls[0]?.[1]).toEqual({
+    const expectScreenPayloadWithFinancials = (call: unknown) => {
+      expect(call).toEqual({
+        payload: expect.objectContaining({
+          limit: 10,
+          financial_snapshot: {
+            financials: {
+              "002432.SZ": expect.objectContaining({
+                deducted_net_profit_billion: 11.551,
+                deducted_net_profit_margin: 20.59,
+                deducted_net_profit_growth_rate: 7.48,
+                latest_eps: 0.7014,
+                period: "2026Q1",
+              }),
+            },
+          },
+        }),
+      });
+    };
+    expectScreenPayloadWithFinancials(screenCalls[0]?.[1]);
+    expectScreenPayloadWithFinancials(screenCalls[1]?.[1]);
+
+    await TAURI_POST_ROUTES["/api/trend-screen"]?.({
+      invoke,
+      path: "/api/trend-screen",
+      parsed: new URL("http://tauri.localhost/api/trend-screen"),
+      payload: { limit: 10 },
+    });
+    const trendScreenCalls = invokeMock.mock.calls.filter(([command]) => command === "api_trend_screen");
+    expect(trendScreenCalls[0]?.[1]).toEqual({
       payload: expect.objectContaining({
         limit: 10,
         financial_snapshot: {
@@ -131,8 +159,6 @@ describe("desktop financial snapshot routes", () => {
         },
       }),
     });
-    expect((screenCalls[1]?.[1] as { payload: Record<string, unknown> }).payload)
-      .not.toHaveProperty("financial_snapshot");
 
     await TAURI_POST_ROUTES["/api/data-sources/prune-cache"]?.({
       invoke,
