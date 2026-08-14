@@ -81,7 +81,8 @@ const OBSERVE_LHB_SEAT_REQUEST_TIMEOUT_SECS: u64 = 3;
 const OBSERVE_GUBA_MAX_POSTS: usize = 10;
 const MIN_OBSERVE_HISTORY_BARS: usize = 3;
 const MIN_FULL_OBSERVE_HISTORY_BARS: usize = 750;
-const OBSERVE_DAILY_HISTORY_LIMIT: usize = 10_000;
+// Tencent fqkline rejects very large count values with "param error".
+const OBSERVE_DAILY_HISTORY_LIMIT: usize = 2_000;
 const FINANCIAL_REQUEST_TIMEOUT_SECS: u64 = 6;
 const MAX_TENCENT_WEBVIEW_QUOTE_BYTES: usize = 1_048_576;
 const COMPLETE_QUARTERLY_EPS_POINTS: usize = 8;
@@ -8681,16 +8682,14 @@ async fn fetch_tencent_daily_history(
     let symbol = tencent_symbol(code).ok_or_else(|| {
         format!("\u{65e0}\u{6cd5}\u{8bc6}\u{522b}\u{884c}\u{60c5}\u{4ee3}\u{7801}\u{ff1a}{code}")
     })?;
-    let start = hyphen_date_param(start_date).unwrap_or_else(|| "2020-01-01".to_string());
-    let end = hyphen_date_param(end_date).unwrap_or_else(|| "2050-12-31".to_string());
-    let param = format!("{symbol},day,{start},{end},{OBSERVE_DAILY_HISTORY_LIMIT},");
+    let param = tencent_daily_history_param(&symbol);
     let url = format!(
         "{TENCENT_DAILY_KLINE_ENDPOINT}?param={}",
         param.replace(',', "%2C")
     );
     let text = fetch_daily_history_text(client, &url, "Tencent daily history").await?;
     let value: Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
-    Ok(value
+    let rows = value
         .get("data")
         .and_then(|data| data.get(&symbol))
         .and_then(|stock| stock.get("day").or_else(|| stock.get("qfqday")))
@@ -8698,7 +8697,35 @@ async fn fetch_tencent_daily_history(
         .into_iter()
         .flatten()
         .filter_map(parse_tencent_kline_row)
-        .collect())
+        .collect();
+    Ok(filter_daily_history_rows_by_date(
+        rows, start_date, end_date,
+    ))
+}
+
+fn tencent_daily_history_param(symbol: &str) -> String {
+    format!("{symbol},day,,,{OBSERVE_DAILY_HISTORY_LIMIT},")
+}
+
+fn filter_daily_history_rows_by_date(
+    rows: Vec<Value>,
+    start_date: &str,
+    end_date: &str,
+) -> Vec<Value> {
+    let start_key = compact_date_key(start_date).unwrap_or_else(|| "00000000".to_string());
+    let end_key = compact_date_key(end_date).unwrap_or_else(|| "99999999".to_string());
+    rows.into_iter()
+        .filter(|row| {
+            let Some(date) = row
+                .get("date")
+                .and_then(Value::as_str)
+                .and_then(compact_date_key)
+            else {
+                return false;
+            };
+            date.as_str() >= start_key.as_str() && date.as_str() <= end_key.as_str()
+        })
+        .collect()
 }
 
 fn eastmoney_market_code(code: &str) -> Option<u8> {
@@ -8761,10 +8788,6 @@ fn parse_f64_str(raw: &str) -> Option<f64> {
 fn normalize_history_date(raw: &str) -> Option<String> {
     let key = compact_date_key(raw)?;
     Some(format!("{}-{}-{}", &key[..4], &key[4..6], &key[6..8]))
-}
-
-fn hyphen_date_param(raw: &str) -> Option<String> {
-    normalize_history_date(raw)
 }
 
 fn compact_date_key(raw: &str) -> Option<String> {

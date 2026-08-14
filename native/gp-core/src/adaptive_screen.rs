@@ -149,7 +149,7 @@ fn stage_one_candidates<'a>(
     let mut used = HashSet::new();
     let mut counts = HashMap::<String, usize>::new();
     for stock in &eligible {
-        let industry = normalized_industry(stock);
+        let industry = diversification_group(stock);
         if counts.get(&industry).copied().unwrap_or(0) >= 2 {
             continue;
         }
@@ -164,7 +164,7 @@ fn stage_one_candidates<'a>(
         if used.contains(&stock.code) {
             continue;
         }
-        let industry = normalized_industry(stock);
+        let industry = diversification_group(stock);
         if counts.get(&industry).copied().unwrap_or(0) >= 4 {
             continue;
         }
@@ -209,6 +209,28 @@ fn normalized_industry(stock: &StockItem) -> String {
     } else {
         value.to_string()
     }
+}
+
+fn diversification_group(stock: &StockItem) -> String {
+    let industry = normalized_industry(stock);
+    if is_market_board_label(&industry) {
+        format!("__market_board__{}", stock.code.to_ascii_uppercase())
+    } else {
+        industry
+    }
+}
+
+fn is_market_board_label(value: &str) -> bool {
+    matches!(
+        value.trim(),
+        "\u{6caa}\u{5e02}A\u{80a1}"
+            | "\u{6df1}\u{5e02}A\u{80a1}"
+            | "\u{521b}\u{4e1a}\u{677f}"
+            | "\u{79d1}\u{521b}\u{677f}"
+            | "\u{5317}\u{4ea4}\u{6240}"
+            | "\u{6caa}\u{4e3b}\u{677f}"
+            | "\u{6df1}\u{4e3b}\u{677f}"
+    )
 }
 
 fn as_percent(value: f64) -> f64 {
@@ -1232,7 +1254,7 @@ fn select_primary<'a>(
     let mut selected = Vec::new();
     let mut industries = HashMap::<String, usize>::new();
     for candidate in candidates {
-        let industry = normalized_industry(&candidate.stock);
+        let industry = diversification_group(&candidate.stock);
         if industries.get(&industry).copied().unwrap_or(0) >= 3 {
             continue;
         }
@@ -1281,7 +1303,7 @@ fn select_exploration<'a>(
         });
         let industry_available = |candidate: &AdaptiveCandidate| {
             industry_counts
-                .get(&normalized_industry(&candidate.stock))
+                .get(&diversification_group(&candidate.stock))
                 .copied()
                 .unwrap_or(0)
                 < 2
@@ -1308,7 +1330,7 @@ fn select_exploration<'a>(
             used_fallback = true;
         }
         *industry_counts
-            .entry(normalized_industry(&candidate.stock))
+            .entry(diversification_group(&candidate.stock))
             .or_default() += 1;
         selected.push(candidate);
     }
@@ -1338,7 +1360,7 @@ fn exploration_rank(
 
 fn candidate_similarity(left: &AdaptiveCandidate, right: &AdaptiveCandidate) -> f64 {
     let industry =
-        (normalized_industry(&left.stock) == normalized_industry(&right.stock)) as u8 as f64;
+        (diversification_group(&left.stock) == diversification_group(&right.stock)) as u8 as f64;
     let concept = (concept_group_for_stock(&left.stock) == concept_group_for_stock(&right.stock))
         as u8 as f64;
     let size = (size_bucket(&left.stock) == size_bucket(&right.stock)) as u8 as f64;

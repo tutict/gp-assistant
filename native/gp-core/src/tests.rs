@@ -326,6 +326,26 @@ fn adaptive_candidate_prefetch_pool_is_capped_at_eighty_and_four_per_industry() 
 }
 
 #[test]
+fn adaptive_candidate_prefetch_does_not_cap_market_board_labels_as_industries() {
+    let board_labels = [
+        "\u{6caa}\u{5e02}A\u{80a1}",
+        "\u{6df1}\u{5e02}A\u{80a1}",
+        "\u{521b}\u{4e1a}\u{677f}",
+        "\u{79d1}\u{521b}\u{677f}",
+        "\u{5317}\u{4ea4}\u{6240}",
+    ];
+    let mut stocks = (0..120).map(adaptive_stock).collect::<Vec<_>>();
+    for (index, stock) in stocks.iter_mut().enumerate() {
+        stock.code = format!("{:06}.SZ", index + 1);
+        stock.industry = board_labels[index % board_labels.len()].to_string();
+    }
+
+    let codes = adaptive_candidate_codes(&stocks, &ScreenCriteria::default(), 80);
+
+    assert_eq!(codes.len(), 80);
+}
+
+#[test]
 fn adaptive_candidate_pool_always_rejects_st_even_when_legacy_filter_allows_it() {
     let mut stocks = (0..12).map(adaptive_stock).collect::<Vec<_>>();
     stocks[0].is_st = true;

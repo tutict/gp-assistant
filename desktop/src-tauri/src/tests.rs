@@ -143,6 +143,24 @@ fn adaptive_cache_requires_sixty_rows_and_the_target_trade_date() {
 }
 
 #[test]
+fn tencent_daily_history_uses_count_only_param_and_filters_dates_locally() {
+    assert_eq!(
+        tencent_daily_history_param("sh600266"),
+        format!("sh600266,day,,,{OBSERVE_DAILY_HISTORY_LIMIT},")
+    );
+
+    let rows = vec![
+        json!({ "date": "2026-01-01", "close": 10.0 }),
+        json!({ "date": "2026-02-01", "close": 11.0 }),
+        json!({ "date": "2026-03-01", "close": 12.0 }),
+    ];
+    let filtered = filter_daily_history_rows_by_date(rows, "20260201", "20260228");
+
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0]["date"].as_str(), Some("2026-02-01"));
+}
+
+#[test]
 fn adaptive_history_window_is_invariant_to_bars_after_the_common_as_of_date() {
     let rows = (0..62)
         .map(|index| gp_core::HistoryBar {
@@ -2614,5 +2632,209 @@ fn market_data_patch_updates_only_requested_stock() {
     assert_eq!(
         target["financials"]["600000.SH"]["latest_eps"].as_f64(),
         Some(0.8)
+    );
+}
+
+#[test]
+#[ignore = "requires GP_REAL_MARKET_CACHE and live Tencent daily history"]
+fn real_cached_adaptive_screen_smoke_uses_tencent_history() {
+    let cache_path = std::env::var("GP_REAL_MARKET_CACHE")
+        .expect("set GP_REAL_MARKET_CACHE to mobile-market-data.json");
+    let raw = std::fs::read_to_string(&cache_path)
+        .unwrap_or_else(|error| panic!("read real market cache failed at {cache_path}: {error}"));
+    let data_value = serde_json::from_str::<Value>(&raw)
+        .unwrap_or_else(|error| panic!("real market cache is not valid JSON: {error}"));
+    let (data, summary) =
+        parse_mobile_market_data_snapshot(&data_value, "real cached mobile market data")
+            .unwrap_or_else(|error| panic!("real market cache parse failed: {error}"));
+
+    let mut request = gp_core::AdaptiveScreenRequest::default();
+    request.criteria.limit = ADAPTIVE_SCREEN_HISTORY_PREFETCH_LIMIT;
+    request.primary_limit = 10;
+    request.exploration_limit = 10;
+
+    let candidates = gp_core::adaptive_candidate_codes(
+        data.stocks.as_slice(),
+        &request.criteria,
+        ADAPTIVE_SCREEN_HISTORY_PREFETCH_LIMIT,
+    );
+    assert_eq!(
+        candidates.len(),
+        ADAPTIVE_SCREEN_HISTORY_PREFETCH_LIMIT,
+        "real cache should produce the full adaptive prefetch pool; summary={summary}"
+    );
+
+    let required_codes = adaptive_required_history_codes(&candidates);
+    let target_history_date = adaptive_quote_target_date(data.stocks.as_slice(), &candidates)
+        .or_else(|| expected_market_quote_date_from_epoch_ms(epoch_millis()));
+    let missing = adaptive_missing_history_codes(
+        data.as_ref(),
+        &required_codes,
+        target_history_date.as_deref(),
+    );
+
+    let history_start_date = adaptive_history_start_date();
+    let fetch_outcome = tauri::async_runtime::block_on(collect_adaptive_history_results(
+        missing.clone(),
+        history_start_date,
+        Duration::from_secs(ADAPTIVE_SCREEN_HISTORY_PREFETCH_TIMEOUT_SECS),
+        ADAPTIVE_SCREEN_HISTORY_CONCURRENCY,
+        |code, start_date| {
+            let code = code.to_string();
+            let start_date = start_date.to_string();
+            async move { fetch_observe_daily_history(&code, &start_date, "20501231").await }
+        },
+        |_, _| {},
+    ));
+
+    let mut history_override = HashMap::new();
+    let mut failed = Vec::new();
+    for (code, result) in fetch_outcome.results {
+        match result {
+            Ok(rows) if !rows.is_empty() => {
+                let rows = rows
+                    .into_iter()
+                    .rev()
+                    .take(120)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>();
+                let typed = serde_json::from_value::<Vec<gp_core::HistoryBar>>(Value::Array(rows))
+                    .unwrap_or_else(|error| panic!("history parse failed for {code}: {error}"));
+                history_override.insert(code, typed);
+            }
+            Ok(_) => failed.push(format!("{code}: empty history")),
+            Err(error) => failed.push(format!("{code}: {error}")),
+        }
+    }
+
+    let fetched_count = history_override.len();
+    request.as_of_date =
+        latest_adaptive_data_date(data.as_ref(), &history_override, &required_codes)
+            .or_else(|| target_history_date.clone());
+    let calculation_as_of = request.as_of_date.as_deref();
+    let mut histories = candidates
+        .iter()
+        .map(String::as_str)
+        .chain(adaptive_benchmark_codes())
+        .filter_map(|code| {
+            data.histories.get(code).map(|rows| {
+                (
+                    code.to_string(),
+                    adaptive_history_window(rows, calculation_as_of),
+                )
+            })
+        })
+        .collect::<HashMap<_, _>>();
+    histories.extend(
+        history_override
+            .into_iter()
+            .map(|(code, rows)| (code, adaptive_history_window(&rows, calculation_as_of))),
+    );
+    let benchmark_histories = adaptive_benchmark_codes()
+        .into_iter()
+        .filter_map(|code| {
+            histories
+                .get(code)
+                .cloned()
+                .map(|rows| (code.to_string(), rows))
+        })
+        .collect::<HashMap<_, _>>();
+    let point_in_time_universe =
+        adaptive_point_in_time_universe(data.stocks.as_slice(), &histories, calculation_as_of);
+
+    println!(
+        "real adaptive smoke pre-core: cache={}, candidates={}, required={}, missing={}, fetched={}, failed={}, timed_out={}, target={:?}, as_of={:?}",
+        cache_path,
+        candidates.len(),
+        required_codes.len(),
+        missing.len(),
+        fetched_count,
+        failed.len(),
+        fetch_outcome.timed_out,
+        target_history_date,
+        request.as_of_date
+    );
+    if !failed.is_empty() {
+        println!(
+            "failed history samples: {:?}",
+            &failed[..failed.len().min(5)]
+        );
+    }
+
+    let result = gp_core::adaptive_screen_stocks(
+        &point_in_time_universe,
+        &histories,
+        &benchmark_histories,
+        &[],
+        &request,
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "real adaptive smoke failed: candidates={}, required={}, missing={}, fetched={}, failed={}, timed_out={}, as_of={:?}, error={}",
+            candidates.len(),
+            required_codes.len(),
+            missing.len(),
+            fetched_count,
+            failed.len(),
+            fetch_outcome.timed_out,
+            request.as_of_date,
+            error
+        )
+    });
+    let primary_count = result
+        .groups
+        .iter()
+        .find(|group| group.key == "primary")
+        .map(|group| group.items.len())
+        .unwrap_or(0);
+    let exploration_count = result
+        .groups
+        .iter()
+        .find(|group| group.key == "exploration")
+        .map(|group| group.items.len())
+        .unwrap_or(0);
+    println!(
+        "real adaptive smoke ok: cache={}, candidates={}, required={}, missing={}, fetched={}, failed={}, timed_out={}, as_of={:?}, total={}, returned={}, primary={}, exploration={}",
+        cache_path,
+        candidates.len(),
+        required_codes.len(),
+        missing.len(),
+        fetched_count,
+        failed.len(),
+        fetch_outcome.timed_out,
+        request.as_of_date,
+        result.total,
+        result.returned,
+        primary_count,
+        exploration_count
+    );
+
+    assert_eq!(primary_count, request.primary_limit);
+    assert!(
+        exploration_count > 0,
+        "exploration group should not be empty"
+    );
+}
+
+#[test]
+#[ignore = "requires live Tencent daily history"]
+fn real_tencent_daily_history_smoke_returns_rows() {
+    let rows = tauri::async_runtime::block_on(fetch_observe_daily_history(
+        "600989.SH",
+        "20260106",
+        "20501231",
+    ))
+    .unwrap_or_else(|error| panic!("real Tencent daily history smoke failed: {error}"));
+    println!(
+        "real Tencent daily history smoke: rows={}, first={:?}, last={:?}",
+        rows.len(),
+        rows.first().and_then(|row| row.get("date")).cloned(),
+        rows.last().and_then(|row| row.get("date")).cloned()
+    );
+    assert!(
+        rows.len() >= MIN_ADAPTIVE_SCREEN_HISTORY_BARS,
+        "real Tencent daily history should provide enough rows for adaptive screening"
     );
 }
