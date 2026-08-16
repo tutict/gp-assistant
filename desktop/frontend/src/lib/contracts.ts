@@ -35,6 +35,7 @@ import {
   parseCodes,
   trendScreenStartDateInputValue,
 } from "./format";
+import { normalizeScreenScope } from "./screenScopeOptions";
 
 export interface ScreenRequestOptions {
   limit?: number;
@@ -62,7 +63,8 @@ export function buildScreenCriteria(criteria: FilterCriteria, overrides: ScreenR
     sort_dir: criteria.sortDir || "desc",
     score_profile: overrides.score_profile || criteria.scoreProfile || "balanced",
   };
-  if (criteria.industry) payload.industry = criteria.industry;
+  const screenScope = normalizeScreenScope(criteria.industry);
+  if (screenScope) payload.industry = screenScope;
   if (criteria.minRoe) payload.min_roe = Number(criteria.minRoe) / 100;
   if (criteria.maxPe) payload.max_pe = Number(criteria.maxPe);
   if (criteria.maxPb) payload.max_pb = Number(criteria.maxPb);

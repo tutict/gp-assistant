@@ -32,7 +32,7 @@ const criteria: FilterCriteria = {
   maxPe: "30",
   maxPb: "5",
   minMcap: "50",
-  industry: "bank",
+  industry: "沪市A股",
   resultLimit: 10,
   sortBy: "score",
   sortDir: "desc",
@@ -196,7 +196,7 @@ describe("LLM settings persistence", () => {
 describe("contract payload builders", () => {
   it("builds the adaptive swing request as a nested deterministic contract", () => {
     expect(buildAdaptiveScreenRequest(criteria, "defensive", "run-fixed")).toMatchObject({
-      criteria: { industry: "bank", limit: 80, min_roe: 0.15 },
+      criteria: { industry: "沪市A股", limit: 80, min_roe: 0.15 },
       mode: "defensive",
       horizon: "swing_10_30d",
       primary_limit: 10,
@@ -231,13 +231,20 @@ describe("contract payload builders", () => {
     });
   });
 
+  it("drops stale industry labels and keeps supported market-scope filters", () => {
+    expect(buildScreenCriteria({ ...criteria, industry: "传媒" })).not.toHaveProperty("industry");
+    expect(buildScreenCriteria({ ...criteria, industry: "科创板" })).toMatchObject({
+      industry: "科创板",
+    });
+  });
+
   it("wraps sector and board requests instead of sending raw criteria", () => {
     expect(buildSectorScreenRequest(criteria, "concept", 5, 12)).toMatchObject({
       group_by: "concept",
       per_sector_limit: 5,
       max_sectors: 12,
       min_sector_candidates: 5,
-      criteria: { industry: "bank" },
+      criteria: { industry: "沪市A股" },
     });
     expect(buildSectorScreenRequest(criteria, "concept", 10, 12)).toMatchObject({
       group_by: "concept",

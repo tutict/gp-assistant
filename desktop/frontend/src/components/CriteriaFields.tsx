@@ -1,4 +1,5 @@
 import { clampInt } from "../lib/format";
+import { normalizeScreenScope, SCREEN_SCOPE_OPTIONS } from "../lib/screenScopeOptions";
 import type { FilterCriteria } from "./FilterBar";
 
 interface CriteriaFieldsProps {
@@ -6,48 +7,6 @@ interface CriteriaFieldsProps {
   onChange: (criteria: FilterCriteria) => void;
   idPrefix?: string;
 }
-
-const INDUSTRIES = [
-  "",
-  "银行",
-  "证券",
-  "保险",
-  "房地产开发",
-  "半导体",
-  "消费电子",
-  "医药生物",
-  "化学制药",
-  "中药",
-  "医疗器械",
-  "食品饮料",
-  "白酒",
-  "家用电器",
-  "汽车整车",
-  "零部件",
-  "电力设备",
-  "光伏",
-  "风电",
-  "有色金属",
-  "钢铁",
-  "煤炭",
-  "石油",
-  "化工",
-  "建材",
-  "建筑装饰",
-  "计算机",
-  "软件",
-  "通信",
-  "传媒",
-  "国防军工",
-  "航空航天",
-  "机械设备",
-  "环保",
-  "农业",
-  "纺织服装",
-  "商贸零售",
-  "社会服务",
-];
-
 
 const PROFILE_OPTIONS = [
   { value: "balanced", label: "综合平衡" },
@@ -66,21 +25,22 @@ const SORT_OPTIONS = [
 export function CriteriaFields({ criteria, onChange, idPrefix = "criteria" }: CriteriaFieldsProps) {
   const update = (patch: Partial<FilterCriteria>) => onChange({ ...criteria, ...patch });
   const id = (name: string) => `${idPrefix}-${name}`;
+  const selectedScope = normalizeScreenScope(criteria.industry);
 
   return (
     <>
       <section className="criteria-field-group criteria-field-group-primary" aria-label="基础范围">
         <header>
           <strong>基础范围</strong>
-          <span>限定行业和结果规模</span>
+          <span>限定市场范围和结果规模</span>
         </header>
 
         <div className="criteria-field-grid">
           <div className="form-row">
-            <label htmlFor={id("industry")}>行业</label>
-            <select id={id("industry")} value={criteria.industry} onChange={(event) => update({ industry: event.target.value })}>
-              {INDUSTRIES.map((industry) => (
-                <option key={industry} value={industry}>{industry || "全部行业"}</option>
+            <label htmlFor={id("industry")}>股票池范围</label>
+            <select id={id("industry")} value={selectedScope} onChange={(event) => update({ industry: event.target.value })}>
+              {SCREEN_SCOPE_OPTIONS.map((option) => (
+                <option key={option.value || "all"} value={option.value}>{option.label}</option>
               ))}
             </select>
           </div>
