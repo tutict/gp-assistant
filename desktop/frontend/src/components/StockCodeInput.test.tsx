@@ -20,6 +20,18 @@ function StockCodeInputHarness() {
   );
 }
 
+function PopulatedStockCodeInputHarness() {
+  const [value, setValue] = useState("600519.SH");
+  return (
+    <StockCodeInput
+      id="stockCode"
+      value={value}
+      onChange={setValue}
+      resolveBareCode
+    />
+  );
+}
+
 describe("StockCodeInput", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -46,6 +58,28 @@ describe("StockCodeInput", () => {
 
     expect(renderer.root.findByType("input").props.value).toBe("000100.SZ");
     expect(renderer.root.findAll((node) => node.props["aria-label"] === "选择市场")).toHaveLength(0);
+  });
+
+  it("allows deleting through a previously resolved stock code", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("document", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("window", {
+      setTimeout: vi.fn(() => 1),
+      clearTimeout: vi.fn(),
+    });
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<PopulatedStockCodeInputHarness />);
+    });
+
+    await act(async () => {
+      renderer.root.findByType("input").props.onChange({ target: { value: "600519" } });
+    });
+
+    expect(renderer.root.findByType("input").props.value).toBe("600519");
   });
 
   it("commits a complete code when Enter is pressed", async () => {

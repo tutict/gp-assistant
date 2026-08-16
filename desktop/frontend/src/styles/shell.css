@@ -50,12 +50,13 @@
 }
 
 .header-search {
-  position: relative;
+  position: absolute;
+  left: 50%;
   display: flex;
   width: clamp(240px, 28vw, 420px);
   min-width: 0;
   align-items: center;
-  margin-left: clamp(8px, 2vw, 32px);
+  transform: translateX(-50%);
 }
 
 .header-search-field {
@@ -224,7 +225,6 @@
 @media (max-width: 1240px) {
   .header-search {
     width: clamp(210px, 26vw, 320px);
-    margin-left: 8px;
   }
 
   .header-status > span:nth-child(-n + 2) {

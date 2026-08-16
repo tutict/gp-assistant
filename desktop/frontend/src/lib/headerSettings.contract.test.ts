@@ -28,6 +28,14 @@ describe("header settings contract", () => {
     expect(shell).toMatch(/\.settings-trigger,\s*\.shortcut-help-trigger\s*\{[^}]*min-height:\s*36px/s);
   });
 
+  it("centers the desktop stock search independently of surrounding controls", () => {
+    const search = ruleBody(shell, ".header-search");
+    expect(search).toMatch(/position\s*:\s*absolute/);
+    expect(search).toMatch(/left\s*:\s*50%/);
+    expect(search).toMatch(/transform\s*:\s*translateX\(-50%\)/);
+    expect(search).not.toMatch(/margin-left/);
+  });
+
   it("uses centered soft separators and tabular status values", () => {
     expect(ruleBody(shell, ".header-status > span")).not.toMatch(/border-left/);
     expect(shell).toMatch(/\.header-status > span::before\s*\{[^}]*height:\s*20px[^}]*background:\s*var\(--line-soft\)/s);

@@ -110,7 +110,7 @@ export function Header({
               onCommit={onSearchCommit}
               inputRef={searchInputRef}
               inputAriaLabel="搜索股票"
-              placeholder="代码 / 名称"
+              placeholder="股票代码 / 股票名称"
               resolveBareCode
             />
           </div>

@@ -132,7 +132,8 @@ export function StockCodeInput({
         value={value}
         onChange={(event) => {
           const next = event.target.value;
-          const resolved = resolveBareCode && !listMode && /^[0-9]{6}$/.test(next.trim())
+          const deletingResolvedSuffix = value.length > next.length && value.startsWith(next);
+          const resolved = resolveBareCode && !listMode && !deletingResolvedSuffix && /^[0-9]{6}$/.test(next.trim())
             ? normalizeStockCode(next)
             : "";
           if (resolved) {
