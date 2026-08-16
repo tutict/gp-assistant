@@ -111,6 +111,22 @@
   --space-4: 12px;
 }
 
+:root[data-font-scale="small"] {
+  --fs-body: 13px;
+  --fs-data: 12px;
+  --fs-label: 11px;
+  --fs-caption: 10px;
+  --fs-title: 16px;
+}
+
+:root[data-font-scale="large"] {
+  --fs-body: 15px;
+  --fs-data: 14px;
+  --fs-label: 13px;
+  --fs-caption: 12px;
+  --fs-title: 18px;
+}
+
 [data-theme="light"] {
   --bg: #f4f6f8;
   --surface: #ffffff;

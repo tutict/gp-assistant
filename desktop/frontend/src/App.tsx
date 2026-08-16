@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "./hooks/useTheme";
 import { useDensity } from "./hooks/useDensity";
+import { useFontScale } from "./hooks/useFontScale";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { getJson, isMobileTauriRuntime } from "./lib/tauri";
@@ -50,6 +51,7 @@ interface AppProps {
 export default function App({ onMounted }: AppProps) {
   const { theme, setTheme, toggleTheme } = useTheme();
   const { density, setDensity } = useDensity();
+  const { fontScale, setFontScale } = useFontScale();
   const [view, setView] = useState<ViewKey>(() => {
     const hash = window.location.hash;
     const map: Record<string, ViewKey> = {
@@ -268,7 +270,9 @@ export default function App({ onMounted }: AppProps) {
     setDensity,
     theme,
     setTheme,
-  }), [density, setDensity, setTheme, theme]);
+    fontScale,
+    setFontScale,
+  }), [density, fontScale, setDensity, setFontScale, setTheme, theme]);
 
   const closeOverlays = useCallback(() => {
     setShortcutHelpOpen(false);

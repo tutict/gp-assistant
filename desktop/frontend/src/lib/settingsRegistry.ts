@@ -1,4 +1,5 @@
 import type { Density } from "../hooks/useDensity";
+import type { FontScale } from "../hooks/useFontScale";
 import type { Theme } from "../hooks/useTheme";
 
 export type SettingValue = string | boolean;
@@ -26,6 +27,8 @@ interface SettingsRegistryState {
   setDensity: (density: Density) => void;
   theme: Theme;
   setTheme: (theme: Theme) => void;
+  fontScale: FontScale;
+  setFontScale: (fontScale: FontScale) => void;
 }
 
 export function createSettingsRegistry({
@@ -33,6 +36,8 @@ export function createSettingsRegistry({
   setDensity,
   theme,
   setTheme,
+  fontScale,
+  setFontScale,
 }: SettingsRegistryState): SettingDescriptor[] {
   return [
     {
@@ -59,6 +64,20 @@ export function createSettingsRegistry({
       get: () => theme,
       set: (value) => {
         if (value === "dark" || value === "light") setTheme(value);
+      },
+    },
+    {
+      key: "fontScale",
+      title: "字体大小",
+      type: "segmented",
+      options: [
+        { value: "small", label: "偏小" },
+        { value: "standard", label: "标准" },
+        { value: "large", label: "偏大" },
+      ],
+      get: () => fontScale,
+      set: (value) => {
+        if (value === "small" || value === "standard" || value === "large") setFontScale(value);
       },
     },
   ];
