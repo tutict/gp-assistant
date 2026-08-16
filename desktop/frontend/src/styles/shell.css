@@ -130,32 +130,7 @@
   color: var(--warning);
 }
 
-.density-control {
-  display: inline-grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-}
-
-.density-control button {
-  min-height: 30px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  font-size: var(--fs-caption);
-  font-weight: 700;
-}
-
-.density-control button.active {
-  background: var(--surface-raised);
-  color: var(--text);
-}
-
+.settings-trigger,
 .shortcut-help-trigger {
   width: 36px;
   min-height: 36px;

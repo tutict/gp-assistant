@@ -19,6 +19,17 @@ describe("Header", () => {
     });
   });
 
+  const commonProps = {
+    searchInputRef: createRef<HTMLInputElement>(),
+    settingsOpen: false,
+    settings: [],
+    onSearchCodeChange: vi.fn(),
+    onToggleHelp: vi.fn(),
+    onToggleSettings: vi.fn(),
+    onToggleTheme: vi.fn(),
+    onToggleMobileNav: vi.fn(),
+  };
+
   it("commits a stock from the global search", async () => {
     const onSearchCommit = vi.fn();
     let renderer!: ReactTestRenderer;
@@ -26,19 +37,13 @@ describe("Header", () => {
     await act(async () => {
       renderer = create(
         <Header
+          {...commonProps}
           theme="dark"
-          density="comfortable"
           searchCode="600519.SH"
-          searchInputRef={createRef<HTMLInputElement>()}
           watchlistCount={3}
           dataStatus={null}
           shortcutHelpOpen={false}
-          onSearchCodeChange={vi.fn()}
           onSearchCommit={onSearchCommit}
-          onToggleDensity={vi.fn()}
-          onToggleHelp={vi.fn()}
-          onToggleTheme={vi.fn()}
-          onToggleMobileNav={vi.fn()}
         />,
       );
     });
@@ -56,10 +61,9 @@ describe("Header", () => {
     await act(async () => {
       renderer = create(
         <Header
+          {...commonProps}
           theme="light"
-          density="compact"
           searchCode=""
-          searchInputRef={createRef<HTMLInputElement>()}
           watchlistCount={5}
           dataStatus={{
             universe_count: 5231,
@@ -69,12 +73,7 @@ describe("Header", () => {
             stale: false,
           }}
           shortcutHelpOpen
-          onSearchCodeChange={vi.fn()}
           onSearchCommit={vi.fn()}
-          onToggleDensity={vi.fn()}
-          onToggleHelp={vi.fn()}
-          onToggleTheme={vi.fn()}
-          onToggleMobileNav={vi.fn()}
         />,
       );
     });
@@ -84,7 +83,7 @@ describe("Header", () => {
       expect.arrayContaining(["5", "5,231", "2026/08/04", "最新"]),
     );
     expect(renderer.root.findByProps({ role: "dialog", "aria-label": "快捷键帮助" })).toBeTruthy();
-    expect(renderer.root.findByProps({ "aria-label": "切换到舒适密度" })).toBeTruthy();
+    expect(renderer.root.findByProps({ "aria-label": "设置" })).toBeTruthy();
   });
 
   it("does not claim fresh data without freshness evidence", async () => {
@@ -92,19 +91,13 @@ describe("Header", () => {
     await act(async () => {
       renderer = create(
         <Header
+          {...commonProps}
           theme="dark"
-          density="comfortable"
           searchCode=""
-          searchInputRef={createRef<HTMLInputElement>()}
           watchlistCount={0}
           dataStatus={{ universe_count: 5231 }}
           shortcutHelpOpen={false}
-          onSearchCodeChange={vi.fn()}
           onSearchCommit={vi.fn()}
-          onToggleDensity={vi.fn()}
-          onToggleHelp={vi.fn()}
-          onToggleTheme={vi.fn()}
-          onToggleMobileNav={vi.fn()}
         />,
       );
     });
@@ -112,5 +105,25 @@ describe("Header", () => {
     const values = renderer.root.findAllByType("strong").map((node) => node.children.join(""));
     expect(values).toContain("\u5f85\u68c0\u67e5");
     expect(values).not.toContain("\u6700\u65b0");
+  });
+
+  it("replaces the density control with a settings trigger", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <Header
+          {...commonProps}
+          theme="dark"
+          searchCode=""
+          watchlistCount={0}
+          dataStatus={null}
+          shortcutHelpOpen={false}
+          onSearchCommit={vi.fn()}
+        />,
+      );
+    });
+
+    expect(renderer.root.findByProps({ className: "icon-button settings-trigger" })).toBeTruthy();
+    expect(renderer.root.findAllByProps({ className: "density-control" })).toHaveLength(0);
   });
 });

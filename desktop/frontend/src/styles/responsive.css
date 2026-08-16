@@ -76,7 +76,6 @@
 
   .header-search,
   .header-status,
-  .density-control,
   .shortcut-help-trigger {
     display: none;
   }
@@ -1019,7 +1018,6 @@
 
   .header-search,
   .header-status,
-  .density-control,
   .shortcut-help-trigger {
     display: none;
   }

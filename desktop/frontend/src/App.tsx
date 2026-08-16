@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "./hooks/useTheme";
 import { useDensity } from "./hooks/useDensity";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
@@ -7,6 +7,7 @@ import { getJson, isMobileTauriRuntime } from "./lib/tauri";
 import { createPersistentWatchlistSetter, loadLocalWatchlistSnapshot, loadPersistentWatchlist } from "./lib/watchlistStore";
 import { sanitizePersistedLlmSettings } from "./lib/contracts";
 import { refreshResearchWatchlist } from "./lib/researchRefresh";
+import { createSettingsRegistry } from "./lib/settingsRegistry";
 import { Header } from "./components/Header";
 import { Sidebar } from "./components/Sidebar";
 import { FilterBar } from "./components/FilterBar";
@@ -47,8 +48,8 @@ interface AppProps {
 }
 
 export default function App({ onMounted }: AppProps) {
-  const { theme, toggleTheme } = useTheme();
-  const { density, toggleDensity } = useDensity();
+  const { theme, setTheme, toggleTheme } = useTheme();
+  const { density, setDensity } = useDensity();
   const [view, setView] = useState<ViewKey>(() => {
     const hash = window.location.hash;
     const map: Record<string, ViewKey> = {
@@ -69,6 +70,7 @@ export default function App({ onMounted }: AppProps) {
   const [backtestRouteRequest, setBacktestRouteRequest] = useState<BacktestRouteRequest | null>(null);
   const [searchCode, setSearchCode] = useState("");
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [marketStatus, setMarketStatus] = useState<DataStatus | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -252,11 +254,25 @@ export default function App({ onMounted }: AppProps) {
   }, [observeStock]);
 
   const toggleShortcutHelp = useCallback(() => {
+    setSettingsOpen(false);
     setShortcutHelpOpen((open) => !open);
   }, []);
 
+  const toggleSettings = useCallback(() => {
+    setShortcutHelpOpen(false);
+    setSettingsOpen((open) => !open);
+  }, []);
+
+  const settings = useMemo(() => createSettingsRegistry({
+    density,
+    setDensity,
+    theme,
+    setTheme,
+  }), [density, setDensity, setTheme, theme]);
+
   const closeOverlays = useCallback(() => {
     setShortcutHelpOpen(false);
+    setSettingsOpen(false);
     setMobileNavOpen(false);
     if (document.activeElement === searchInputRef.current) searchInputRef.current?.blur();
   }, []);
@@ -272,16 +288,17 @@ export default function App({ onMounted }: AppProps) {
     <div className={`app ${mobileNavOpen ? "mobile-nav-open" : ""}`} data-active-view={view}>
       <Header
         theme={theme}
-        density={density}
         searchCode={searchCode}
         searchInputRef={searchInputRef}
         watchlistCount={watchlist.length}
         dataStatus={marketStatus}
         shortcutHelpOpen={shortcutHelpOpen}
+        settingsOpen={settingsOpen}
+        settings={settings}
         onSearchCodeChange={setSearchCode}
         onSearchCommit={handleGlobalSearchCommit}
-        onToggleDensity={toggleDensity}
         onToggleHelp={toggleShortcutHelp}
+        onToggleSettings={toggleSettings}
         onToggleTheme={toggleTheme}
         onToggleMobileNav={() => setMobileNavOpen(true)}
       />

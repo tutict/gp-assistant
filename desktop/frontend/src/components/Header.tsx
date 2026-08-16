@@ -1,24 +1,26 @@
-import { CircleHelp, Menu, Moon, Search, Sun, X } from "lucide-react";
+import { CircleHelp, Menu, Moon, Search, Settings, Sun, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { Ref } from "react";
 import type { DataStatus } from "../types";
-import type { Density } from "../hooks/useDensity";
+import type { SettingDescriptor } from "../lib/settingsRegistry";
 import { formatBytes, formatMarketRefreshDate } from "../lib/format";
 import { StockCodeInput } from "./StockCodeInput";
+import { SettingsSheet } from "./settings/SettingsSheet";
 import { IconButton } from "./ui/IconButton";
 
 interface HeaderProps {
   theme: "dark" | "light";
-  density: Density;
   searchCode: string;
   searchInputRef: Ref<HTMLInputElement>;
   watchlistCount: number;
   dataStatus: DataStatus | null;
   shortcutHelpOpen: boolean;
+  settingsOpen: boolean;
+  settings: readonly SettingDescriptor[];
   onSearchCodeChange: (value: string) => void;
   onSearchCommit: (value: string) => void;
-  onToggleDensity: () => void;
   onToggleHelp: () => void;
+  onToggleSettings: () => void;
   onToggleTheme: () => void;
   onToggleMobileNav: () => void;
 }
@@ -46,16 +48,17 @@ function freshnessLabel(status: DataStatus | null): string {
 
 export function Header({
   theme,
-  density,
   searchCode,
   searchInputRef,
   watchlistCount,
   dataStatus,
   shortcutHelpOpen,
+  settingsOpen,
+  settings,
   onSearchCodeChange,
   onSearchCommit,
-  onToggleDensity,
   onToggleHelp,
+  onToggleSettings,
   onToggleTheme,
   onToggleMobileNav,
 }: HeaderProps) {
@@ -127,26 +130,12 @@ export function Header({
         </div>
 
         <div className="header-actions">
-          <div className="density-control" aria-label="信息密度">
-            <button
-              type="button"
-              className={density === "comfortable" ? "active" : ""}
-              aria-pressed={density === "comfortable"}
-              aria-label="切换到舒适密度"
-              onClick={density === "comfortable" ? undefined : onToggleDensity}
-            >
-              舒适
-            </button>
-            <button
-              type="button"
-              className={density === "compact" ? "active" : ""}
-              aria-pressed={density === "compact"}
-              aria-label="切换到紧凑密度"
-              onClick={density === "compact" ? undefined : onToggleDensity}
-            >
-              紧凑
-            </button>
-          </div>
+          <IconButton
+            className="settings-trigger"
+            label="设置"
+            icon={<Settings size={17} aria-hidden="true" />}
+            onClick={onToggleSettings}
+          />
           <IconButton
             className="shortcut-help-trigger"
             label="快捷键帮助"
@@ -168,6 +157,8 @@ export function Header({
           </button>
         </div>
       </header>
+
+      <SettingsSheet open={settingsOpen} onClose={onToggleSettings} settings={settings} />
 
       {shortcutHelpOpen ? (
         <div className="shortcut-help-backdrop" onMouseDown={onToggleHelp}>

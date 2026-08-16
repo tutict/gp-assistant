@@ -29,4 +29,34 @@ describe("SettingsSheet", () => {
     });
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it("renders segmented settings from descriptors", async () => {
+    const setDensity = vi.fn();
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <SettingsSheet
+          open
+          onClose={vi.fn()}
+          settings={[{
+            key: "density",
+            title: "信息密度",
+            type: "segmented",
+            options: [
+              { value: "comfortable", label: "舒适" },
+              { value: "compact", label: "紧凑" },
+            ],
+            get: () => "comfortable",
+            set: setDensity,
+          }]}
+        />,
+        { createNodeMock: () => ({ querySelectorAll: () => [] }) },
+      );
+    });
+
+    expect(renderer.root.findByProps({ className: "settings-item-title" }).children).toEqual(["信息密度"]);
+    const compact = renderer.root.findByProps({ "aria-label": "信息密度：紧凑" });
+    await act(async () => compact.props.onClick());
+    expect(setDensity).toHaveBeenCalledWith("compact");
+  });
 });

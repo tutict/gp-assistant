@@ -1836,6 +1836,117 @@
   padding: var(--space-2) var(--space-4) var(--space-5);
 }
 
+.settings-item {
+  position: relative;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.settings-item:last-child {
+  border-bottom: 0;
+}
+
+.settings-item-copy {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.settings-item-title {
+  color: var(--text);
+  font-size: var(--fs-body);
+  line-height: 1.2;
+}
+
+.settings-item-copy > span {
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+  line-height: 1.4;
+}
+
+.settings-item-badge {
+  position: absolute;
+  top: var(--space-4);
+  right: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  color: var(--text-tertiary);
+  font-size: var(--fs-caption);
+}
+
+.settings-item-disabled {
+  opacity: 0.5;
+}
+
+.settings-segmented {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.settings-segmented > button {
+  min-height: 36px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--fs-label);
+  font-weight: 700;
+}
+
+.settings-segmented > button.active {
+  background: var(--accent);
+  color: var(--button-text);
+}
+
+.settings-toggle {
+  position: relative;
+  width: 44px;
+  min-height: 30px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+}
+
+.settings-toggle > span {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-md);
+  background: var(--text-tertiary);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.settings-toggle[aria-checked="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.settings-toggle[aria-checked="true"] > span {
+  transform: translateX(12px);
+  background: var(--accent);
+}
+
+.settings-select {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-body);
+}
+
 @keyframes settings-sheet-enter {
   from {
     transform: translateX(100%);
