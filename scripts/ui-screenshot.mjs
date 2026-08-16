@@ -20,6 +20,7 @@ const serveBuild = process.argv.includes("--serve");
 let baseUrl = option("--url", "http://127.0.0.1:4173").replace(/\/$/, "");
 const date = new Date().toISOString().slice(0, 10);
 const checkSearchOverlay = process.argv.includes('--check-search-overlay');
+const headerSettingsOnly = process.argv.includes("--header-settings-only");
 const defaultOutput = fileURLToPath(
   new URL("../artifacts/ui-shots/" + date + "/", import.meta.url),
 );
@@ -180,6 +181,15 @@ const mockDataStatus = {
   stale: false,
 };
 
+const headerBaselineDevices = [
+  { name: "desktop-1440-dark", width: 1440, height: 900, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
+  { name: "desktop-1440-light", width: 1440, height: 900, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
+  { name: "desktop-1920-dark", width: 1920, height: 1080, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
+  { name: "desktop-1920-light", width: 1920, height: 1080, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
+  { name: "phone-390-dark", width: 390, height: 844, dpr: 3, mobile: true, theme: "dark", density: "comfortable" },
+  { name: "phone-390-light", width: 390, height: 844, dpr: 3, mobile: true, theme: "light", density: "comfortable" },
+];
+
 const replayConversationId = "ui-replay-conversation";
 const replayRunId = "ui-replay-run";
 const replayConversation = {
@@ -299,6 +309,54 @@ async function installHarnessState(page) {
   await page.route("**/api/research/threads", (route) => route.fulfill({ json: { items: [] } }));
   await page.route("**/api/research/index-status", (route) => route.fulfill({ json: {} }));
   await page.route("**/api/research/refresh*", (route) => route.fulfill({ json: { refreshed: true } }));
+}
+
+async function captureHeaderBaselines(browser, targetRoot) {
+  const reports = [];
+  for (const device of headerBaselineDevices) {
+    const context = await browser.newContext({
+      viewport: { width: device.width, height: device.height },
+      screen: { width: device.width, height: device.height },
+      deviceScaleFactor: device.dpr,
+      hasTouch: device.mobile,
+      isMobile: device.mobile,
+      colorScheme: device.theme,
+    });
+    try {
+      const page = await context.newPage();
+      await installHarnessState(page);
+      await page.goto(deviceUrl(device, "#sectionScreen"), { waitUntil: "networkidle" });
+      await page.locator(".app-header").waitFor({ state: "visible" });
+      const directory = resolve(targetRoot, "header-settings", device.name);
+      mkdirSync(directory, { recursive: true });
+      await page.screenshot({ path: resolve(directory, "header-default.png"), fullPage: false });
+
+      const trigger = page.locator(".settings-trigger");
+      await trigger.click();
+      const dialog = page.getByRole("dialog", { name: "设置" });
+      await dialog.waitFor({ state: "visible" });
+      await page.waitForTimeout(240);
+      await page.screenshot({ path: resolve(directory, "settings-open.png"), fullPage: false });
+
+      const panel = await dialog.boundingBox();
+      if (!panel) throw new Error(`${device.name} settings panel has no bounding box`);
+      const bottom = panel.y + panel.height;
+      if (device.mobile) {
+        if (panel.width < device.width - 2 || Math.abs(bottom - device.height) > 2
+          || panel.height > device.height * 0.78 + 2) {
+          throw new Error(`${device.name} settings sheet geometry is invalid: ${JSON.stringify(panel)}`);
+        }
+      } else if (Math.abs(panel.x + panel.width - device.width) > 2
+        || Math.abs(panel.height - device.height) > 2) {
+        throw new Error(`${device.name} settings drawer geometry is invalid: ${JSON.stringify(panel)}`);
+      }
+
+      reports.push({ device: device.name, panel });
+    } finally {
+      await context.close();
+    }
+  }
+  return reports;
 }
 
 const boxFor = async (page, selector) => {
@@ -725,9 +783,23 @@ try {
     console.log("Desktop shortcut checks passed: " + JSON.stringify(shortcutChecks));
     await context.close();
     await runAgentReplayChecks(browser);
+  } else if (headerSettingsOnly) {
+    mkdirSync(outputRoot, { recursive: true });
+    const headerBaselines = await captureHeaderBaselines(browser, outputRoot);
+    writeFileSync(
+      resolve(outputRoot, "header-settings-report.json"),
+      JSON.stringify({ baseUrl, generatedAt: new Date().toISOString(), headerBaselines }, null, 2) + "\n",
+    );
+    console.log("Header/settings screenshots written to " + outputRoot);
   } else {
     mkdirSync(outputRoot, { recursive: true });
-    const report = { baseUrl, generatedAt: new Date().toISOString(), devices: [], denseStates: [] };
+    const report = {
+      baseUrl,
+      generatedAt: new Date().toISOString(),
+      devices: [],
+      denseStates: [],
+      headerBaselines: [],
+    };
 
     for (const device of devices) {
       const consoleIssues = [];
@@ -794,6 +866,8 @@ try {
       report.devices.push(deviceReport);
       await context.close();
     }
+
+    report.headerBaselines = await captureHeaderBaselines(browser, outputRoot);
 
     writeFileSync(resolve(outputRoot, "report.json"), JSON.stringify(report, null, 2) + "\n");
     console.log("UI screenshots written to " + outputRoot);

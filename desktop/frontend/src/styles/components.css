@@ -1806,6 +1806,7 @@
 }
 
 .settings-sheet {
+  --settings-sheet-enter-transform: translateX(100%);
   width: min(360px, 92vw);
   height: 100%;
   overflow-y: auto;
@@ -1949,7 +1950,7 @@
 
 @keyframes settings-sheet-enter {
   from {
-    transform: translateX(100%);
+    transform: var(--settings-sheet-enter-transform);
   }
 
   to {

@@ -22,7 +22,7 @@ function SettingControl({ setting }: { setting: SettingDescriptor }) {
             aria-pressed={value === option.value}
             aria-label={`${setting.title}：${option.label}`}
             disabled={setting.disabled}
-            onClick={() => setting.set(option.value)}
+            onClick={setting.disabled ? undefined : () => setting.set(option.value)}
           >
             {option.label}
           </button>
@@ -40,7 +40,7 @@ function SettingControl({ setting }: { setting: SettingDescriptor }) {
         aria-checked={Boolean(value)}
         aria-label={setting.title}
         disabled={setting.disabled}
-        onClick={() => setting.set(!value)}
+        onClick={setting.disabled ? undefined : () => setting.set(!value)}
       >
         <span aria-hidden="true" />
       </button>
@@ -53,7 +53,7 @@ function SettingControl({ setting }: { setting: SettingDescriptor }) {
       value={String(value)}
       aria-label={setting.title}
       disabled={setting.disabled}
-      onChange={(event) => setting.set(event.currentTarget.value)}
+      onChange={setting.disabled ? undefined : (event) => setting.set(event.currentTarget.value)}
     >
       {setting.options?.map((option) => (
         <option key={option.value} value={option.value}>{option.label}</option>

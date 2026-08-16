@@ -15,7 +15,7 @@ describe("createSettingsRegistry", () => {
       setFontScale,
     });
 
-    expect(settings.map((setting) => setting.key)).toEqual(["density", "theme", "fontScale"]);
+    expect(settings.map((setting) => setting.key)).toEqual(["density", "theme", "fontScale", "market"]);
     expect(settings[0].get()).toBe("comfortable");
     expect(settings[1].get()).toBe("dark");
     expect(settings[2].get()).toBe("standard");
@@ -26,5 +26,11 @@ describe("createSettingsRegistry", () => {
     expect(setDensity).toHaveBeenCalledWith("compact");
     expect(setTheme).toHaveBeenCalledWith("light");
     expect(setFontScale).toHaveBeenCalledWith("large");
+    expect(settings[3]).toMatchObject({
+      key: "market",
+      type: "select",
+      disabled: true,
+      badge: "即将上线",
+    });
   });
 });

@@ -80,5 +80,16 @@ export function createSettingsRegistry({
         if (value === "small" || value === "standard" || value === "large") setFontScale(value);
       },
     },
+    {
+      key: "market",
+      title: "股票市场",
+      description: "A 股 · 港股等市场数据切换",
+      type: "select",
+      options: [{ value: "cn", label: "A 股" }],
+      get: () => "cn",
+      set: () => undefined,
+      disabled: true,
+      badge: "即将上线",
+    },
   ];
 }

@@ -32,6 +32,8 @@ export function Sheet({
 }: SheetProps) {
   const panelRef = useRef<HTMLElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
@@ -44,7 +46,7 @@ export function Sheet({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== "Tab" || focusable.length === 0) return;
@@ -65,7 +67,7 @@ export function Sheet({
       previouslyFocusedRef.current?.focus();
       previouslyFocusedRef.current = null;
     };
-  }, [onClose, open]);
+  }, [open]);
 
   if (!open) return null;
 

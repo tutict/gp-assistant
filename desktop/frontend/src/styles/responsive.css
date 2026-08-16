@@ -104,6 +104,21 @@
     display: none;
   }
 
+  .settings-sheet-backdrop {
+    align-items: flex-end;
+  }
+
+  .settings-sheet {
+    --settings-sheet-enter-transform: translateY(100%);
+    width: 100%;
+    height: auto;
+    max-height: 78dvh;
+    padding-bottom: var(--safe-bottom);
+    border-top: 1px solid var(--line);
+    border-left: 0;
+    border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  }
+
   .mobile-nav-toggle,
   .mobile-nav-close,
   .mobile-nav-overlay {
