@@ -215,7 +215,8 @@ describe("AgentPanel run replay interactions", () => {
 
     const desktopHistory = buttonWithClass(renderer, "agent-thread-history");
     const mobileHistory = buttonWithClass(renderer, "agent-mobile-history");
-    expect(desktopHistory.props).toMatchObject({ "aria-label": "运行历史", title: "运行历史" });
+    expect(desktopHistory.props).toMatchObject({ "aria-label": "运行复盘", title: "运行复盘" });
+    expect(nodeText(desktopHistory)).toBe("运行复盘");
     expect(mobileHistory.props).toMatchObject({ "aria-label": "运行历史", title: "运行历史" });
     await act(async () => {
       desktopHistory.props.onClick({ currentTarget: trigger });

@@ -553,13 +553,16 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         </div>
         <div className="agent-thread-toolbar">
           <strong>{activeConversation?.title || "新对话"}</strong>
-          <IconButton
-            className="agent-thread-history"
+          <button
+            type="button"
+            className="icon-button agent-thread-history"
             onClick={(event) => openRunHistory(event.currentTarget)}
-            label="运行历史"
-            title="运行历史"
-            icon={<History size={18} aria-hidden="true" />}
-          />
+            aria-label="运行复盘"
+            title="运行复盘"
+          >
+            <History size={17} aria-hidden="true" />
+            <span>运行复盘</span>
+          </button>
         </div>
         <div className={`agent-thread ${messages.length === 0 ? "empty" : ""}`} ref={threadRef}>
           {messages.length === 0 ? (

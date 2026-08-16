@@ -1,3 +1,18 @@
+.agent-thread-history {
+  display: inline-flex;
+  width: auto;
+  min-width: max-content;
+  height: var(--touch-dense);
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .agent-run-drawer-back,
 .agent-run-drawer-close {
   flex: 0 0 auto;

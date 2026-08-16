@@ -19,9 +19,13 @@ function extractRuleBlock(css, selector) {
 
 test("agent replay styles cover the actual drawer and replay controls", () => {
   const drawer = extractRuleBlock(pages, ".agent-run-drawer");
+  const historyTrigger = extractRuleBlock(replay, ".agent-thread-history");
 
   assert.match(pages, /\.agent-thread-toolbar\s*\{/);
   assert.match(pages, /grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)\s+auto/);
+  assert.match(historyTrigger, /width:\s*auto\s*;/);
+  assert.match(historyTrigger, /min-width:\s*max-content\s*;/);
+  assert.match(historyTrigger, /gap:\s*6px\s*;/);
   assert.match(drawer, /position:\s*absolute\s*;/);
   assert.match(drawer, /inset:\s*0\s+0\s+0\s+auto\s*;/);
   assert.match(drawer, /width:\s*clamp\(440px,\s*44vw,\s*640px\)\s*;/);
