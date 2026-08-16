@@ -182,7 +182,6 @@ b,
 .metric,
 .quote-number,
 .score-chip,
-.status-item,
 .stock-code,
 time {
   font-variant-numeric: tabular-nums;
@@ -191,7 +190,6 @@ time {
 .metric strong,
 .quote-number strong,
 .screen-status-metric strong,
-.status-item strong,
 .backtest-param-strip strong,
 .score-badge b,
 .stock-code,

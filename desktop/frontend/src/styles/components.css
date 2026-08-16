@@ -1479,9 +1479,6 @@
   .criteria-summary { white-space: normal; }
   .criteria-panel { width: 100%; }
   .data-source-bar { align-items: center; }
-  .data-source-status { gap: 8px; }
-  .data-source-actions { justify-content: stretch; flex-wrap: wrap; }
-  .data-source-actions .action-btn { flex: 1; min-width: 108px; }
   .panel-tabs { width: 100%; }
   .panel-tab { flex: 1 1 30%; min-width: 96px; }
   .panel-controls { align-items: stretch; }
@@ -1549,10 +1546,6 @@
 
 @media (max-width: 1180px) {
   .data-source-bar { align-items: center; }
-  .data-source-actions {
-    justify-content: flex-end;
-    flex-wrap: wrap;
-  }
 }
 
 /* Provider-backed default model picker. */

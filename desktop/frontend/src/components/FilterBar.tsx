@@ -1,4 +1,4 @@
-import { RefreshCw, Settings2, Trash2 } from "lucide-react";
+import { ChevronRight, RefreshCw, Settings, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getTauriInvoke, isMarketStatusStale, postJson, refreshTauriMarketData } from "../lib/tauri";
 import { formatBytes, formatMarketRefreshDate } from "../lib/format";
@@ -40,37 +40,96 @@ const CACHE_POLICY = {
   minute_days: 3,
 };
 
+function formatToolbarUniverseCount(value: unknown): string {
+  const count = Number(value);
+  return Number.isFinite(count) ? Math.max(0, Math.round(count)).toLocaleString("zh-CN") : "--";
+}
+
+function marketFreshnessTone(status: DataStatus | null): "fresh" | "warning" | "neutral" {
+  if (!status) return "neutral";
+  if (status.stale === true) return "warning";
+  if (status.quote_trade_date && status.current_trade_date) {
+    return status.quote_trade_date === status.current_trade_date ? "fresh" : "warning";
+  }
+  return status.stale === false ? "fresh" : "neutral";
+}
+
 
 export function FilterBar({ mobileRuntime, status, onStatusChange }: FilterBarProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshLog, setRefreshLog] = useState<RefreshLogEntry[]>([]);
   const [refreshLogOpen, setRefreshLogOpen] = useState(false);
   const refreshLogTimerRef = useRef<number | null>(null);
+  const refreshLogAutoCollapsePendingRef = useRef(false);
+  const refreshLogInteractionPausedRef = useRef(false);
   const autoRefreshStartedRef = useRef(false);
+  const maintenanceRef = useRef<HTMLDetailsElement>(null);
   const [progress, setProgress] = useState<{ label: string; value: number } | null>(null);
   const [batchCount, setBatchCount] = useState(mobileRuntime ? 12 : 32);
   const [maxCandidates, setMaxCandidates] = useState(15000);
   const [fullRebuild, setFullRebuild] = useState(true);
-useEffect(() => {
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
+
+  useEffect(() => {
     setBatchCount(mobileRuntime ? 12 : 32);
   }, [mobileRuntime]);
 
-  const clearRefreshLogTimer = useCallback(() => {
+  const clearRefreshLogTimeout = useCallback(() => {
     if (refreshLogTimerRef.current !== null) {
       window.clearTimeout(refreshLogTimerRef.current);
       refreshLogTimerRef.current = null;
     }
   }, []);
 
+  const cancelRefreshLogCollapse = useCallback(() => {
+    clearRefreshLogTimeout();
+    refreshLogAutoCollapsePendingRef.current = false;
+  }, [clearRefreshLogTimeout]);
+
   const scheduleRefreshLogCollapse = useCallback(() => {
-    clearRefreshLogTimer();
+    clearRefreshLogTimeout();
+    refreshLogAutoCollapsePendingRef.current = true;
+    if (refreshLogInteractionPausedRef.current) return;
     refreshLogTimerRef.current = window.setTimeout(() => {
       setRefreshLogOpen(false);
       refreshLogTimerRef.current = null;
+      refreshLogAutoCollapsePendingRef.current = false;
     }, REFRESH_LOG_AUTO_COLLAPSE_MS);
-  }, [clearRefreshLogTimer]);
+  }, [clearRefreshLogTimeout]);
 
-  useEffect(() => () => clearRefreshLogTimer(), [clearRefreshLogTimer]);
+  const pauseRefreshLogCollapse = useCallback(() => {
+    refreshLogInteractionPausedRef.current = true;
+    clearRefreshLogTimeout();
+  }, [clearRefreshLogTimeout]);
+
+  const resumeRefreshLogCollapse = useCallback(() => {
+    refreshLogInteractionPausedRef.current = false;
+    if (refreshLogAutoCollapsePendingRef.current && refreshLogOpen) scheduleRefreshLogCollapse();
+  }, [refreshLogOpen, scheduleRefreshLogCollapse]);
+
+  useEffect(() => () => clearRefreshLogTimeout(), [clearRefreshLogTimeout]);
+
+  useEffect(() => {
+    if (!maintenanceOpen || typeof document === "undefined") return;
+
+    const handleMouseDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (target && maintenanceRef.current?.contains(target)) return;
+      setMaintenanceOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setMaintenanceOpen(false);
+    };
+
+    document.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [maintenanceOpen]);
 
   const appendLog = useCallback((message: string, tone = "info") => {
     setRefreshLog((prev) => [{ time: new Date().toLocaleTimeString("zh-CN"), message, tone }, ...prev].slice(0, 120));
@@ -112,7 +171,7 @@ useEffect(() => {
   }), [mobileRuntime]);
 
   const refreshUniverse = useCallback(async () => {
-    clearRefreshLogTimer();
+    cancelRefreshLogCollapse();
     setRefreshing(true);
     setRefreshLogOpen(!mobileRuntime);
     setRefreshLog([]);
@@ -136,7 +195,7 @@ useEffect(() => {
       setRefreshing(false);
       window.setTimeout(() => setProgress(null), 1400);
     }
-  }, [appendLog, clearRefreshLogTimer, commitStatus, mobileRuntime, refreshOptions, scheduleRefreshLogCollapse, updateProgressFromRefresh]);
+  }, [appendLog, cancelRefreshLogCollapse, commitStatus, mobileRuntime, refreshOptions, scheduleRefreshLogCollapse, updateProgressFromRefresh]);
 
   useEffect(() => {
     if (autoRefreshStartedRef.current || refreshing) return;
@@ -146,7 +205,7 @@ useEffect(() => {
       if (cancelled || !status || !isMarketStatusStale(status)) return;
 
       autoRefreshStartedRef.current = true;
-      clearRefreshLogTimer();
+      cancelRefreshLogCollapse();
       setRefreshLogOpen(!mobileRuntime);
       setProgress({ label: "正在后台同步上一开盘日行情...", value: 6 });
       appendLog("检测到行情缓存不是最新开盘日，已在后台触发自动刷新。", "info");
@@ -180,10 +239,10 @@ useEffect(() => {
     return () => {
       cancelled = true;
     };
-  }, [appendLog, autoRefreshOptions, clearRefreshLogTimer, commitStatus, mobileRuntime, refreshing, scheduleRefreshLogCollapse, status, updateProgressFromRefresh]);
+  }, [appendLog, autoRefreshOptions, cancelRefreshLogCollapse, commitStatus, mobileRuntime, refreshing, scheduleRefreshLogCollapse, status, updateProgressFromRefresh]);
 
   const pruneCache = useCallback(async () => {
-    clearRefreshLogTimer();
+    cancelRefreshLogCollapse();
     setRefreshing(true);
     setRefreshLogOpen(true);
     setProgress({ label: "清理可丢弃缓存...", value: 30 });
@@ -205,7 +264,7 @@ useEffect(() => {
       setRefreshing(false);
       window.setTimeout(() => setProgress(null), 900);
     }
-  }, [appendLog, clearRefreshLogTimer, commitStatus, scheduleRefreshLogCollapse]);
+  }, [appendLog, cancelRefreshLogCollapse, commitStatus, scheduleRefreshLogCollapse]);
   const refreshDateSource = status?.quote_trade_date ?? status?.quote_generated_at ?? status?.generated_at ?? status?.universe_updated_at;
   const refreshDateText = formatMarketRefreshDate(refreshDateSource, mobileRuntime);
   const mobileUniverseCount = Number(status?.universe_count);
@@ -214,6 +273,8 @@ useEffect(() => {
     : "待同步";
   const mobileCacheText = status?.cache_bytes !== undefined ? `缓存 ${formatBytes(status.cache_bytes)}` : "缓存 --";
   const mobileRefreshSummary = `${mobileUniverseText} · ${refreshDateText} · ${mobileCacheText}`;
+  const desktopStatusTone = marketFreshnessTone(status);
+  const desktopRefreshSummary = `已同步 ${formatToolbarUniverseCount(status?.universe_count)} 只 · 数据 ${refreshDateText} · ${mobileCacheText}`;
   const maintenanceContent = (
     <div className="screen-refresh-maintenance-panel">
       <div className="refresh-options">
@@ -248,24 +309,24 @@ useEffect(() => {
       )}
 
       {refreshLog.length > 0 && (
-        <div className={`refresh-log-shell ${refreshLogOpen ? "open" : "collapsed"}`}>
-          <div className="refresh-log-header">
-            <span>刷新日志</span>
-            <div className="refresh-log-header-actions">
+        <div
+          id="refresh-log-panel"
+          className={`refresh-log-shell ${refreshLogOpen ? "open" : "collapsed"}`}
+          aria-hidden={!refreshLogOpen}
+          tabIndex={refreshLogOpen ? 0 : -1}
+          onMouseEnter={pauseRefreshLogCollapse}
+          onMouseLeave={resumeRefreshLogCollapse}
+          onFocus={pauseRefreshLogCollapse}
+          onBlur={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+            resumeRefreshLogCollapse();
+          }}
+        >
+          <div className="refresh-log-panel">
+            <div className="refresh-log-header">
+              <span>刷新日志</span>
               <strong>最近 {refreshLog.length} 条</strong>
-              <button
-                type="button"
-                className="refresh-log-toggle"
-                onClick={() => {
-                  clearRefreshLogTimer();
-                  setRefreshLogOpen((expanded) => !expanded);
-                }}
-              >
-                {refreshLogOpen ? "收起" : "展开"}
-              </button>
             </div>
-          </div>
-          {refreshLogOpen && (
             <div className="refresh-log">
               {refreshLog.map((entry, index) => (
                 <div key={`${entry.time}-${index}`} className={`refresh-log-entry ${entry.tone}`}>
@@ -274,7 +335,7 @@ useEffect(() => {
                 </div>
               ))}
             </div>
-          )}
+          </div>
         </div>
       )}
     </>
@@ -317,16 +378,45 @@ useEffect(() => {
       ) : (
         <section className={`research-context-bar screen-toolbar screen-toolbar-card screen-toolbar-compact ${refreshing ? "refreshing" : ""}`} aria-label="股票池数据工具栏">
           <div className="screen-toolbar-compact-row">
+            <div className={`screen-toolbar-status ${desktopStatusTone}`} aria-label="股票池状态" title={desktopRefreshSummary}>
+              <span className="screen-toolbar-status-dot" aria-hidden="true" />
+              <strong>{desktopRefreshSummary}</strong>
+            </div>
 
             <div className="screen-toolbar-compact-actions">
               <button type="button" className="screen-toolbar-refresh-btn" onClick={refreshUniverse} disabled={refreshing}>
                 <RefreshCw className={refreshing ? "spin" : ""} size={15} aria-hidden="true" />
                 <span>{refreshing ? "刷新中" : "刷新"}</span>
               </button>
-              <details className="screen-refresh-maintenance">
-                <summary aria-label="股票池维护设置"><Settings2 size={15} aria-hidden="true" /><span>维护</span></summary>
+              <details ref={maintenanceRef} className="screen-refresh-maintenance" open={maintenanceOpen}>
+                <summary
+                  aria-label="股票池维护设置"
+                  aria-expanded={maintenanceOpen}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    setMaintenanceOpen((open) => !open);
+                  }}
+                >
+                  <Settings size={15} aria-hidden="true" /><span>维护</span>
+                </summary>
                 {maintenanceContent}
               </details>
+              {refreshLog.length > 0 && (
+                <button
+                  type="button"
+                  className="refresh-log-toggle"
+                  aria-expanded={refreshLogOpen}
+                  aria-controls="refresh-log-panel"
+                  onClick={() => {
+                    cancelRefreshLogCollapse();
+                    setRefreshLogOpen((expanded) => !expanded);
+                  }}
+                >
+                  <ChevronRight className="refresh-log-toggle-icon" size={14} aria-hidden="true" />
+                  <span>日志</span>
+                  <span className="refresh-log-badge">{refreshLog.length}</span>
+                </button>
+              )}
             </div>
           </div>
           {progressAndLog}

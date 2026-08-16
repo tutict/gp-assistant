@@ -38,8 +38,32 @@ const devices = [
   { name: "desktop-1440-light", width: 1440, height: 900, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
   { name: "desktop-1440-compact", width: 1440, height: 900, dpr: 1, mobile: false, theme: "dark", density: "compact" },
 ];
+
+async function openCustomScreen(page) {
+  const tab = page.getByRole("tab", { name: "自定义选股" }).first();
+  if (await tab.count() === 0) return false;
+  await tab.click();
+  await page.locator(".custom-screen-criteria .criteria-field-grid").first().waitFor({ state: "visible", timeout: 5000 });
+  return true;
+}
+
+async function openSmartScreen(page) {
+  const tab = page.getByRole("tab", { name: "智能选股" }).first();
+  if (await tab.count() === 0) return false;
+  await tab.click();
+  return true;
+}
+
 const routes = [
   { name: "screen", hash: "#sectionScreen", ready: ".screen-panel-container" },
+  {
+    name: "screen-custom",
+    hash: "#sectionScreen",
+    ready: ".screen-panel-container",
+    prepare: async (page) => {
+      await openCustomScreen(page);
+    },
+  },
   { name: "observe", hash: "#sectionObserve", ready: ".observe-panel-container" },
   { name: "backtest", hash: "#sectionBacktest", ready: ".backtest-context" },
   { name: "news", hash: "#sectionNewsRag", ready: ".research-workspace" },
@@ -190,6 +214,13 @@ const headerBaselineDevices = [
   { name: "phone-390-light", width: 390, height: 844, dpr: 3, mobile: true, theme: "light", density: "comfortable" },
 ];
 
+const refreshToolbarBaselineDevices = [
+  { name: "desktop-1440-dark", width: 1440, height: 900, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
+  { name: "desktop-1440-light", width: 1440, height: 900, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
+  { name: "desktop-1920-dark", width: 1920, height: 1080, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
+  { name: "desktop-1920-light", width: 1920, height: 1080, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
+];
+
 const replayConversationId = "ui-replay-conversation";
 const replayRunId = "ui-replay-run";
 const replayConversation = {
@@ -300,6 +331,12 @@ async function installHarnessState(page) {
     ));
   }, mockStocks);
   await page.route("**/api/data-sources/status", (route) => route.fulfill({ json: mockDataStatus }));
+  await page.route("**/api/data-sources/refresh-universe", (route) => route.fulfill({
+    json: { status: mockDataStatus, refreshed: true, notes: ["截图 harness 注入的股票池刷新日志。"] },
+  }));
+  await page.route("**/api/data-sources/prune-cache", (route) => route.fulfill({
+    json: { status: mockDataStatus, removed_files: 2, removed_bytes: 1048576, notes: ["截图 harness 注入的缓存清理日志。"] },
+  }));
   await page.route("**/api/stocks?*", (route) => route.fulfill({ json: mockStocks }));
   await page.route("**/api/screen", (route) => route.fulfill({ json: mockScreenResult }));
   await page.route("**/api/observe/**", (route) => route.fulfill({ json: mockObserveResult }));
@@ -352,6 +389,78 @@ async function captureHeaderBaselines(browser, targetRoot) {
       }
 
       reports.push({ device: device.name, panel });
+    } finally {
+      await context.close();
+    }
+  }
+  return reports;
+}
+
+async function captureRefreshToolbarBaselines(browser, targetRoot) {
+  const captureToolbarClip = async (page, path) => {
+    const clip = await page.evaluate(() => {
+      const toolbar = document.querySelector(".screen-toolbar-card.screen-toolbar-compact");
+      if (!toolbar) return null;
+      const boxes = [toolbar.getBoundingClientRect()];
+      const panel = document.querySelector(".screen-refresh-maintenance[open] .screen-refresh-maintenance-panel");
+      if (panel) boxes.push(panel.getBoundingClientRect());
+      const left = Math.max(0, Math.floor(Math.min(...boxes.map((box) => box.left))));
+      const top = Math.max(0, Math.floor(Math.min(...boxes.map((box) => box.top))));
+      const right = Math.min(window.innerWidth, Math.ceil(Math.max(...boxes.map((box) => box.right))));
+      const bottom = Math.min(window.innerHeight, Math.ceil(Math.max(...boxes.map((box) => box.bottom))));
+      return { x: left, y: top, width: right - left, height: bottom - top };
+    });
+    if (!clip) throw new Error("Refresh toolbar clip target is missing");
+    await page.screenshot({ path, clip });
+  };
+
+  const reports = [];
+  for (const device of refreshToolbarBaselineDevices) {
+    const context = await browser.newContext({
+      viewport: { width: device.width, height: device.height },
+      screen: { width: device.width, height: device.height },
+      deviceScaleFactor: device.dpr,
+      hasTouch: false,
+      isMobile: false,
+      colorScheme: device.theme,
+    });
+    try {
+      const page = await context.newPage();
+      await installHarnessState(page);
+      await page.goto(deviceUrl(device, "#sectionScreen"), { waitUntil: "networkidle" });
+      const toolbar = page.locator(".screen-toolbar-card.screen-toolbar-compact");
+      await toolbar.waitFor({ state: "visible" });
+
+      await page.locator(".screen-toolbar-refresh-btn").click();
+      const logToggle = page.locator(".refresh-log-toggle");
+      await logToggle.waitFor({ state: "visible" });
+      await page.waitForTimeout(1600);
+
+      const directory = resolve(targetRoot, "refresh-toolbar", device.name);
+      mkdirSync(directory, { recursive: true });
+
+      if (await logToggle.getAttribute("aria-expanded") === "true") {
+        await logToggle.click();
+        await page.waitForTimeout(260);
+      }
+      await captureToolbarClip(page, resolve(directory, "collapsed.png"));
+
+      await logToggle.click();
+      await page.locator(".refresh-log-shell.open").waitFor({ state: "visible" });
+      await page.waitForTimeout(260);
+      await captureToolbarClip(page, resolve(directory, "log-expanded.png"));
+
+      await logToggle.click();
+      await page.waitForTimeout(260);
+      await page.locator(".screen-refresh-maintenance > summary").click();
+      await page.locator(".screen-refresh-maintenance[open] .screen-refresh-maintenance-panel").waitFor({ state: "visible" });
+      await page.waitForTimeout(180);
+      await captureToolbarClip(page, resolve(directory, "maintenance-open.png"));
+
+      reports.push({
+        device: device.name,
+        states: ["collapsed.png", "log-expanded.png", "maintenance-open.png"],
+      });
     } finally {
       await context.close();
     }
@@ -729,6 +838,10 @@ async function captureDenseStates(page, device, targetRoot) {
   mkdirSync(directory, { recursive: true });
 
   await page.goto(deviceUrl(device, "#sectionScreen"), { waitUntil: "networkidle" });
+  await openCustomScreen(page);
+  await page.screenshot({ path: resolve(directory, "screen-custom-criteria.png"), fullPage: false });
+
+  await openSmartScreen(page);
   await page.locator(".header-search input").fill("");
   await page.locator(".screen-panel-container .run-btn").click();
   await page.locator(".stock-row").first().waitFor();
@@ -745,7 +858,12 @@ async function captureDenseStates(page, device, targetRoot) {
   await page.locator(".backtest-result").waitFor();
   await page.screenshot({ path: resolve(directory, "backtest-dense.png"), fullPage: false });
 
-  return ["screen-dense.png", "observe-dense.png", "backtest-dense.png"];
+  return [
+    "screen-custom-criteria.png",
+    "screen-dense.png",
+    "observe-dense.png",
+    "backtest-dense.png",
+  ];
 }
 
 let localServer = null;
@@ -799,6 +917,7 @@ try {
       devices: [],
       denseStates: [],
       headerBaselines: [],
+      refreshToolbarBaselines: [],
     };
 
     for (const device of devices) {
@@ -868,6 +987,7 @@ try {
     }
 
     report.headerBaselines = await captureHeaderBaselines(browser, outputRoot);
+    report.refreshToolbarBaselines = await captureRefreshToolbarBaselines(browser, outputRoot);
 
     writeFileSync(resolve(outputRoot, "report.json"), JSON.stringify(report, null, 2) + "\n");
     console.log("UI screenshots written to " + outputRoot);

@@ -24,10 +24,6 @@
     grid-template-columns: 1fr;
   }
 
-  .screen-toolbar-side {
-    justify-content: flex-start;
-  }
-
   .backtest-controls {
     grid-template-columns: repeat(4, minmax(104px, 1fr));
   }
@@ -935,8 +931,7 @@
     gap: 7px;
   }
 
-  .metric strong,
-  .status-item strong {
+  .metric strong {
     margin-top: 2px;
   }
 
