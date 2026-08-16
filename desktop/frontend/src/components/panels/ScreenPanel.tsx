@@ -44,6 +44,24 @@ const TABS: { key: ScreenMode; label: string }[] = [
   { key: "trendScreen", label: "趋势选股" },
 ];
 
+const FULL_UNIVERSE_CRITERIA: FilterCriteria = {
+  includeSt: false,
+  requireInstitutionBuyRatio: false,
+  minRoe: "",
+  maxPe: "",
+  maxPb: "",
+  minMcap: "",
+  industry: "",
+  resultLimit: 10,
+  sortBy: "score",
+  sortDir: "desc",
+  scoreProfile: "balanced",
+};
+
+function criteriaForMode(mode: ScreenMode, customCriteria: FilterCriteria): FilterCriteria {
+  return mode === "customScreen" ? customCriteria : FULL_UNIVERSE_CRITERIA;
+}
+
 export function ScreenPanel({
   criteria,
   onCriteriaChange,
@@ -91,28 +109,29 @@ export function ScreenPanel({
     try {
       let endpoint = "/api/screen";
       let payload: unknown;
+      const requestCriteria = criteriaForMode(mode, criteria);
       if (mode === "screen") {
-        const request = buildAdaptiveScreenRequest(criteria);
+        const request = buildAdaptiveScreenRequest(requestCriteria);
         activeRunIdRef.current = request.run_id;
         setAdaptiveProgress({ percent: 2, message: "准备初选" });
         setLastAdaptiveRequest(request);
         payload = request;
       } else {
-        payload = buildCustomScreenRequest(criteria);
+        payload = buildCustomScreenRequest(requestCriteria);
       }
 
       if (mode === "sectorScreen") {
         endpoint = "/api/sector-screen";
-        payload = buildSectorScreenRequest(criteria, "concept", 10, 12);
+        payload = buildSectorScreenRequest(requestCriteria, "concept", 10, 12);
       } else if (mode === "boardScreen") {
         endpoint = "/api/sector-screen";
-        payload = buildSectorScreenRequest(criteria, "board", 5, 5);
+        payload = buildSectorScreenRequest(requestCriteria, "board", 5, 5);
       } else if (mode === "customScreen") {
         endpoint = "/api/custom-screen";
-        payload = buildCustomScreenRequest(criteria);
+        payload = buildCustomScreenRequest(requestCriteria);
       } else if (mode === "trendScreen") {
         endpoint = "/api/trend-screen";
-        payload = buildTrendScreenRequest(criteria, trendStart, trendEnd);
+        payload = buildTrendScreenRequest(requestCriteria, trendStart, trendEnd);
       }
 
       const data = await postJson(endpoint, payload);
@@ -137,20 +156,14 @@ export function ScreenPanel({
     }
   }, [mode, onWatchlistChange, watchlist]);
 
-  const hasControlFields = mode !== "sectorScreen" && mode !== "boardScreen";
+  const hasControlFields = mode === "customScreen" || mode === "trendScreen";
   const controlsClassName = `panel-controls screen-panel-controls ${mode === "customScreen" ? "custom-screen-controls" : mode === "sectorScreen" || mode === "boardScreen" ? "grouped-screen-controls" : ""}`;
+  const emptyDescription = mode === "customScreen"
+    ? "设置筛选条件后运行查询。"
+    : "点击运行查看当前模式的全市场筛选结果。";
 
   const controlFields = (
     <>
-      {mode === "screen" && (
-        <div className="adaptive-screen-controls">
-          <details className="adaptive-advanced">
-            <summary>高级过滤</summary>
-            <CriteriaFields criteria={criteria} onChange={onCriteriaChange} idPrefix="adaptiveScreen" />
-          </details>
-        </div>
-      )}
-
       {mode === "customScreen" && (
         <div className="custom-screen-criteria">
           <CriteriaFields criteria={criteria} onChange={onCriteriaChange} idPrefix="customScreen" />
@@ -186,6 +199,8 @@ export function ScreenPanel({
         <button
           key={tab.key}
           className={`panel-tab ${mode === tab.key ? "active" : ""}`}
+          role="tab"
+          aria-selected={mode === tab.key}
           onClick={() => {
             setMode(tab.key);
             setResult(null);
@@ -249,7 +264,7 @@ export function ScreenPanel({
             adaptiveRequest={mode === "screen" ? lastAdaptiveRequest : undefined}
           />
         )}
-        {!result && !loading && !error && <PanelFeedback kind="empty" description="设置筛选条件后运行查询。" />}
+        {!result && !loading && !error && <PanelFeedback kind="empty" description={emptyDescription} />}
       </div>
     </div>
   );
