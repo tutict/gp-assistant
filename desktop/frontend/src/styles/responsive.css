@@ -85,13 +85,17 @@
     height: 22px;
   }
 
+  .app-brand {
+    margin-right: auto;
+  }
+
   .app-title {
     font-size: var(--fs-data);
   }
 
   .theme-toggle {
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
     justify-content: center;
     padding: 0;
   }

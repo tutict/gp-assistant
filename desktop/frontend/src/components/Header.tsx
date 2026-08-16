@@ -101,7 +101,6 @@ export function Header({
         </div>
 
         <div className="header-search" role="search">
-          <label className="header-search-label" htmlFor="global-stock-search">搜股</label>
           <div className="header-search-field">
             <Search size={16} aria-hidden="true" />
             <StockCodeInput
