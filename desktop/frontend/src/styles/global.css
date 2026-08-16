@@ -5,6 +5,7 @@
 @import "./components.css" layer(components);
 @import "./shell.css" layer(shell);
 @import "./pages.css" layer(pages);
+@import "./agent-replay.css" layer(pages);
 @import "./research.css" layer(pages);
 @import "./responsive.css" layer(responsive);
 

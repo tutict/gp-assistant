@@ -1,0 +1,14 @@
+.agent-run-drawer-back,
+.agent-run-drawer-close {
+  flex: 0 0 auto;
+}
+
+.agent-run-status-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-run-final-reply {
+  max-width: 100%;
+}

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pages = readFileSync(resolve(repoRoot, "desktop", "frontend", "src", "styles", "pages.css"), "utf8");
+const replay = readFileSync(resolve(repoRoot, "desktop", "frontend", "src", "styles", "agent-replay.css"), "utf8");
 const responsive = readFileSync(resolve(repoRoot, "desktop", "frontend", "src", "styles", "responsive.css"), "utf8");
 
 function extractRuleBlock(css, selector) {
@@ -26,8 +27,11 @@ test("agent replay styles cover the actual drawer and replay controls", () => {
   assert.match(drawer, /width:\s*clamp\(440px,\s*44vw,\s*640px\)\s*;/);
   assert.match(drawer, /grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)\s*;/);
   assert.match(pages, /\.agent-run-drawer-header\s*\{/);
+  assert.match(replay, /\.agent-run-drawer-back\s*,\s*\.agent-run-drawer-close\s*\{/);
   assert.match(pages, /\.agent-run-list\s*,\s*\.agent-run-detail\s*\{/);
+  assert.match(replay, /\.agent-run-status-label\s*\{/);
   assert.match(pages, /\.agent-run-status\[data-status="failed"\]/);
+  assert.match(replay, /\.agent-run-final-reply\s*\{/);
   assert.match(pages, /\.agent-message-replay\s*\{/);
 });
 
