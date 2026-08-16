@@ -7,8 +7,13 @@ import type {
   AgentStreamEvent,
   AgentToolCall,
 } from "../types";
-import { normalizeAgentResult, normalizeAgentStreamEvent } from "./contracts";
-import { getJson } from "./tauri";
+import {
+  actionResultKind,
+  normalizeAgentResult,
+  normalizeAgentStreamEvent,
+  requireBacktestResult,
+} from "./contracts";
+import { getJson, postJson } from "./tauri";
 
 export type AgentRunStatus = "running" | "completed" | "failed" | "unknown";
 export const MAX_AGENT_REPLAY_EVENTS = 1_000;
@@ -28,6 +33,7 @@ export interface AgentRunSummary {
 export interface AgentRunDetail extends AgentRunSummary {
   events: AgentStreamEvent[];
   result?: AgentResult;
+  resultUnavailable?: boolean;
 }
 
 export interface ListAgentRunsOptions {
@@ -41,6 +47,7 @@ const METADATA_TEXT_MAX = 256;
 const DISPLAY_TEXT_MAX = 2_000;
 const LONG_TEXT_MAX = 8_000;
 const COLLECTION_ITEMS_MAX = 100;
+const DOMAIN_COLLECTION_ITEMS_MAX = 10_000;
 const DOMAIN_DEPTH_MAX = 6;
 const DOMAIN_KEYS_MAX = 100;
 const SENSITIVE_KEYS = new Set([
@@ -112,7 +119,7 @@ function optionalBoundedText(value: unknown, maxLength: number): string | undefi
 function boundedIdentity(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const identity = value.trim();
-  return identity && identity.length <= 256 ? identity : undefined;
+  return identity && new TextEncoder().encode(identity).byteLength <= 256 ? identity : undefined;
 }
 
 function boundedRunIdentity(value: unknown): string | undefined {
@@ -212,38 +219,68 @@ function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEYS.has(normalizedKey);
 }
 
-function cloneReplayJson(value: unknown, depth = 0, ancestors = new WeakSet<object>()): unknown {
-  if (depth > DOMAIN_DEPTH_MAX) return undefined;
+interface ReplayCloneState {
+  incomplete: boolean;
+}
+
+function cloneReplayJson(
+  value: unknown,
+  depth = 0,
+  ancestors = new WeakSet<object>(),
+  state: ReplayCloneState = { incomplete: false },
+): unknown {
+  if (depth > DOMAIN_DEPTH_MAX) {
+    state.incomplete = true;
+    return undefined;
+  }
   if (value === null || typeof value === "boolean") return value;
-  if (typeof value === "string") return value.slice(0, LONG_TEXT_MAX);
+  if (typeof value === "string") {
+    if (value.length > LONG_TEXT_MAX) state.incomplete = true;
+    return value.slice(0, LONG_TEXT_MAX);
+  }
   if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
 
   if (Array.isArray(value)) {
-    if (ancestors.has(value)) return undefined;
+    if (ancestors.has(value)) {
+      state.incomplete = true;
+      return undefined;
+    }
+    if (value.length > DOMAIN_COLLECTION_ITEMS_MAX) {
+      state.incomplete = true;
+      return undefined;
+    }
     ancestors.add(value);
     const items = value
-      .slice(0, COLLECTION_ITEMS_MAX)
-      .map((item) => cloneReplayJson(item, depth + 1, ancestors))
+      .map((item) => cloneReplayJson(item, depth + 1, ancestors, state))
       .filter((item) => item !== undefined);
     ancestors.delete(value);
     return items;
   }
 
-  if (!isPlainRecord(value) || ancestors.has(value)) return undefined;
+  if (!isPlainRecord(value) || ancestors.has(value)) {
+    state.incomplete = true;
+    return undefined;
+  }
   ancestors.add(value);
   const cloned: Record<string, unknown> = {};
   let keptKeys = 0;
   for (const [key, item] of Object.entries(value)) {
-    if (keptKeys >= DOMAIN_KEYS_MAX) break;
+    if (keptKeys >= DOMAIN_KEYS_MAX) {
+      state.incomplete = true;
+      break;
+    }
+    if (isSensitiveKey(key)) continue;
     if (
       !key
       || key.length > METADATA_TEXT_MAX
       || key === "__proto__"
       || key === "prototype"
       || key === "constructor"
-      || isSensitiveKey(key)
-    ) continue;
-    const clonedItem = cloneReplayJson(item, depth + 1, ancestors);
+    ) {
+      state.incomplete = true;
+      continue;
+    }
+    const clonedItem = cloneReplayJson(item, depth + 1, ancestors, state);
     if (clonedItem === undefined) continue;
     cloned[key] = clonedItem;
     keptKeys += 1;
@@ -257,6 +294,18 @@ function normalizeReplayRecord(value: unknown): Record<string, unknown> | undefi
   return isPlainRecord(cloned) ? cloned : undefined;
 }
 
+function normalizeReplayDomainRecord(value: unknown): {
+  complete: boolean;
+  record?: Record<string, unknown>;
+} {
+  const state: ReplayCloneState = { incomplete: false };
+  const cloned = cloneReplayJson(value, 0, new WeakSet<object>(), state);
+  return {
+    complete: !state.incomplete,
+    ...(isPlainRecord(cloned) ? { record: cloned } : {}),
+  };
+}
+
 function normalizeReplayIntent(value: unknown): AgentIntent | undefined {
   if (!isRecord(value)) return undefined;
   const intent: AgentIntent = {};
@@ -267,10 +316,11 @@ function normalizeReplayIntent(value: unknown): AgentIntent | undefined {
   const query = optionalBoundedText(value.query, DISPLAY_TEXT_MAX);
   if (query) intent.query = query;
   if (Array.isArray(value.symbols)) {
-    intent.symbols = value.symbols
+    const symbols = value.symbols
       .slice(0, COLLECTION_ITEMS_MAX)
       .map(boundedIdentity)
       .filter((symbol): symbol is string => Boolean(symbol));
+    if (symbols.length) intent.symbols = symbols;
   }
   return hasFields(intent) ? intent : undefined;
 }
@@ -290,8 +340,11 @@ function normalizeReplayToolCall(value: unknown): AgentToolCall | null {
     if (text) call[key] = text;
   }
   const input = normalizeReplayRecord(value.input);
-  if (input) call.input = input;
-  if (Array.isArray(value.warnings)) call.warnings = normalizeStringList(value.warnings);
+  if (input && hasFields(input)) call.input = input;
+  if (Array.isArray(value.warnings)) {
+    const warnings = normalizeStringList(value.warnings);
+    if (warnings.length) call.warnings = warnings;
+  }
   return hasFields(call) ? call : null;
 }
 
@@ -315,7 +368,10 @@ function normalizeReplayAnswerSection(value: unknown): AgentAnswerSection | null
   const section: AgentAnswerSection = {};
   const title = optionalBoundedText(value.title, METADATA_TEXT_MAX);
   if (title) section.title = title;
-  if (Array.isArray(value.bullets)) section.bullets = normalizeStringList(value.bullets);
+  if (Array.isArray(value.bullets)) {
+    const bullets = normalizeStringList(value.bullets);
+    if (bullets.length) section.bullets = bullets;
+  }
   const provenance = optionalBoundedText(value.provenance, SHORT_TEXT_MAX);
   if (provenance) section.provenance = provenance;
   const evidenceBasis = optionalBoundedText(value.evidence_basis, DISPLAY_TEXT_MAX);
@@ -342,7 +398,10 @@ function normalizeObjectList<T>(value: unknown, normalize: (item: unknown) => T 
     .filter((item): item is T => Boolean(item));
 }
 
-function normalizeReplayResult(value: unknown): AgentResult {
+function normalizeReplayResult(value: unknown): {
+  domainComplete: boolean;
+  result: AgentResult;
+} {
   const normalized = normalizeAgentResult(value);
   const result: AgentResult = {
     tool_calls: normalizeObjectList(normalized.tool_calls, normalizeReplayToolCall),
@@ -363,11 +422,46 @@ function normalizeReplayResult(value: unknown): AgentResult {
   if (harness) result.harness = harness;
   const normalizedRecord = normalized as unknown as Record<string, unknown>;
   const resultRecord = result as unknown as Record<string, unknown>;
+  let domainComplete = true;
   for (const key of DOMAIN_RESULT_KEYS) {
-    const domainValue = normalizeReplayRecord(normalizedRecord[key]);
-    if (domainValue) resultRecord[key] = domainValue;
+    if (normalizedRecord[key] == null) continue;
+    const domain = normalizeReplayDomainRecord(normalizedRecord[key]);
+    domainComplete &&= domain.complete;
+    if (domain.record && hasFields(domain.record)) resultRecord[key] = domain.record;
   }
-  return result;
+  return { domainComplete, result };
+}
+
+function hasMeaningfulReplayResult(result: AgentResult): boolean {
+  if (result.reply || result.action) return true;
+  if (result.intent && hasFields(result.intent)) return true;
+  if (result.harness && hasFields(result.harness)) return true;
+  if ([
+    result.tool_calls,
+    result.evidence_summary,
+    result.answer_sections,
+    result.model_answer_sections,
+    result.warnings,
+    result.next_actions,
+  ].some((items) => Array.isArray(items) && items.length > 0)) return true;
+
+  const resultRecord = result as unknown as Record<string, unknown>;
+  return DOMAIN_RESULT_KEYS.some((key) => {
+    const domainValue = resultRecord[key];
+    return isPlainRecord(domainValue) && hasFields(domainValue);
+  });
+}
+
+function hasRenderableReplayDomainResult(result: AgentResult): boolean {
+  if (actionResultKind(result) !== "backtest") return true;
+  const data = asRecord(result.data);
+  const backtest = hasFields(data) ? data : asRecord(result.backtest);
+  try {
+    requireBacktestResult(backtest);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function normalizeAgentRunSummary(value: unknown): AgentRunSummary | null {
@@ -401,11 +495,23 @@ export function normalizeAgentRunDetail(value: unknown): AgentRunDetail | null {
       .filter((event): event is AgentStreamEvent => Boolean(event))
     : [];
   const rawResult = record.result;
-  const result = rawResult && typeof rawResult === "object" && !Array.isArray(rawResult)
-    ? normalizeReplayResult(rawResult)
-    : undefined;
+  if (rawResult == null) {
+    return summary.status === "completed"
+      ? { ...summary, events, resultUnavailable: true }
+      : { ...summary, events };
+  }
+  if (!isPlainRecord(rawResult)) return { ...summary, events, resultUnavailable: true };
 
-  return { ...summary, events, result };
+  const normalizedResult = normalizeReplayResult(rawResult);
+  if (
+    !normalizedResult.domainComplete
+    || !hasMeaningfulReplayResult(normalizedResult.result)
+    || !hasRenderableReplayDomainResult(normalizedResult.result)
+  ) {
+    return { ...summary, events, resultUnavailable: true };
+  }
+
+  return { ...summary, events, result: normalizedResult.result };
 }
 
 export async function listAgentRuns(options: ListAgentRunsOptions = {}): Promise<AgentRunSummary[]> {
@@ -430,5 +536,16 @@ export async function getAgentRun(runId: string, signal?: AbortSignal): Promise<
   const identity = boundedRunIdentity(runId);
   if (!identity) return null;
   const response = asRecord(await getJson(`/api/agent/runs/${encodeURIComponent(identity)}`, { signal }));
-  return response.run == null ? null : normalizeAgentRunDetail(response.run);
+  if (response.run == null) return null;
+  const detail = normalizeAgentRunDetail(response.run);
+  return detail?.runId === identity ? detail : null;
+}
+
+export async function deleteAgentConversationRuns(conversationId: string): Promise<number> {
+  const identity = boundedIdentity(conversationId);
+  if (!identity) throw new Error("conversation_id is required");
+  const response = asRecord(await postJson("/api/agent/runs/delete-conversation", {
+    conversation_id: identity,
+  }, { timeoutMs: 10_000 }));
+  return optionalNumber(response.deleted) ?? 0;
 }

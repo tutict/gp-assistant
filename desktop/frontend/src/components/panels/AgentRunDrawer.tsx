@@ -9,13 +9,15 @@ import {
 } from "../../lib/agentRuns";
 import type { AgentStreamEvent, StockRowView, WatchlistItem } from "../../types";
 import { IconButton } from "../ui/IconButton";
-import { AgentResultView } from "./AgentResultView";
+import { AGENT_RESULT_UNAVAILABLE_TEXT, AgentResultView } from "./AgentResultView";
 
 export interface AgentRunDrawerProps {
   open: boolean;
   activeConversationId?: string;
   initialRunId?: string;
   finishedRunId?: string;
+  finishedRunConversationId?: string;
+  ledgerRevision?: number;
   returnFocusElement?: HTMLElement | null;
   watchlist: WatchlistItem[];
   onToggleWatchlist: (item: StockRowView) => void;
@@ -33,6 +35,7 @@ export interface AgentRunTimelineItem {
 type DrawerView = "list" | "detail";
 type RunScope = "current" | "all";
 type RequestState = "idle" | "loading" | "ready" | "empty" | "missing" | "error";
+type TransitionFocusTarget = "back" | "list";
 
 const TIMELINE_TEXT_MAX = 500;
 const ERROR_TEXT_MAX = 2_000;
@@ -198,11 +201,34 @@ function requestErrorText(error: unknown) {
     : "运行记录加载失败";
 }
 
+function isAbortError(error: unknown) {
+  return typeof error === "object"
+    && error !== null
+    && "name" in error
+    && error.name === "AbortError";
+}
+
+function summaryFromDetail(detail: AgentRunDetail): AgentRunSummary {
+  return {
+    runId: detail.runId,
+    conversationId: detail.conversationId,
+    question: detail.question,
+    mode: detail.mode,
+    status: detail.status,
+    startedAtEpochMs: detail.startedAtEpochMs,
+    completedAtEpochMs: detail.completedAtEpochMs,
+    durationMs: detail.durationMs,
+    error: detail.error,
+  };
+}
+
 export function AgentRunDrawer({
   open,
   activeConversationId,
   initialRunId,
   finishedRunId,
+  finishedRunConversationId,
+  ledgerRevision = 0,
   returnFocusElement,
   watchlist,
   onToggleWatchlist,
@@ -217,19 +243,53 @@ export function AgentRunDrawer({
   const [detail, setDetail] = useState<AgentRunDetail>();
   const [detailState, setDetailState] = useState<RequestState>("idle");
   const [detailError, setDetailError] = useState<string>();
+  const drawerRef = useRef<HTMLElement | null>(null);
   const closeControlRef = useRef<HTMLDivElement | null>(null);
   const listRequestTokenRef = useRef(0);
   const detailRequestTokenRef = useRef(0);
+  const listAbortControllerRef = useRef<AbortController | undefined>(undefined);
+  const detailAbortControllerRef = useRef<AbortController | undefined>(undefined);
+  const detailRequestRunIdRef = useRef<string | undefined>(undefined);
   const hasOpenedRef = useRef(false);
   const previousInitialRunIdRef = useRef<string | undefined>(undefined);
   const detailIntentRef = useRef(false);
   const observedCurrentConversationRef = useRef<string | undefined>(undefined);
   const listCacheRef = useRef(new Map<string, AgentRunSummary[]>());
-  const completionRefreshRunRef = useRef<string | undefined>(undefined);
+  const completionRefreshRunsRef = useRef(new Set<string>());
+  const completionListRefreshesRef = useRef(new Set<string>());
+  const observedLedgerRevisionRef = useRef(ledgerRevision);
   const focusWasOpenRef = useRef(false);
+  const transitionFocusTargetRef = useRef<TransitionFocusTarget | undefined>(undefined);
+
+  const cancelListRequest = useCallback(() => {
+    listAbortControllerRef.current?.abort();
+    listAbortControllerRef.current = undefined;
+    listRequestTokenRef.current += 1;
+  }, []);
+
+  const cancelDetailRequest = useCallback(() => {
+    detailAbortControllerRef.current?.abort();
+    detailAbortControllerRef.current = undefined;
+    detailRequestRunIdRef.current = undefined;
+    detailRequestTokenRef.current += 1;
+  }, []);
+
+  const syncTerminalDetail = useCallback((loadedDetail: AgentRunDetail) => {
+    if (loadedDetail.status === "running") return;
+    const updatedSummary = summaryFromDetail(loadedDetail);
+    for (const [key, cachedRuns] of listCacheRef.current) {
+      if (!cachedRuns.some((run) => run.runId === loadedDetail.runId)) continue;
+      listCacheRef.current.set(key, cachedRuns.map((run) => (
+        run.runId === loadedDetail.runId ? updatedSummary : run
+      )));
+    }
+    setRuns((currentRuns) => currentRuns.map((run) => (
+      run.runId === loadedDetail.runId ? updatedSummary : run
+    )));
+  }, []);
 
   const loadList = useCallback((nextScope: RunScope, conversationId?: string) => {
-    const requestToken = ++listRequestTokenRef.current;
+    cancelListRequest();
     setListError(undefined);
     if (nextScope === "current" && !conversationId) {
       setRuns([]);
@@ -237,45 +297,65 @@ export function AgentRunDrawer({
       return;
     }
 
+    const controller = new AbortController();
+    listAbortControllerRef.current = controller;
+    const requestToken = ++listRequestTokenRef.current;
     setListState("loading");
-    const options = nextScope === "current" ? { conversationId: conversationId! } : {};
+    const options = nextScope === "current"
+      ? { conversationId: conversationId!, signal: controller.signal }
+      : { signal: controller.signal };
     void listAgentRuns(options)
       .then((loadedRuns) => {
-        if (requestToken !== listRequestTokenRef.current) return;
+        if (controller.signal.aborted || requestToken !== listRequestTokenRef.current) return;
         listCacheRef.current.set(scopeKey(nextScope, conversationId), loadedRuns);
         setRuns(loadedRuns);
         setListState(loadedRuns.length ? "ready" : "empty");
       })
       .catch((error: unknown) => {
-        if (requestToken !== listRequestTokenRef.current) return;
+        if (controller.signal.aborted || isAbortError(error) || requestToken !== listRequestTokenRef.current) return;
         setRuns([]);
         setListError(requestErrorText(error));
         setListState("error");
+      })
+      .finally(() => {
+        if (listAbortControllerRef.current === controller) {
+          listAbortControllerRef.current = undefined;
+        }
       });
-  }, []);
+  }, [cancelListRequest]);
 
   const loadDetail = useCallback((runId: string) => {
+    cancelDetailRequest();
+    detailRequestRunIdRef.current = runId;
+    const controller = new AbortController();
+    detailAbortControllerRef.current = controller;
     const requestToken = ++detailRequestTokenRef.current;
     setSelectedRunId(runId);
     setDetail(undefined);
     setDetailError(undefined);
     setDetailState("loading");
-    void getAgentRun(runId)
+    void getAgentRun(runId, controller.signal)
       .then((loadedDetail) => {
-        if (requestToken !== detailRequestTokenRef.current) return;
+        if (controller.signal.aborted || requestToken !== detailRequestTokenRef.current) return;
         if (!loadedDetail) {
           setDetailState("missing");
           return;
         }
+        syncTerminalDetail(loadedDetail);
         setDetail(loadedDetail);
         setDetailState("ready");
       })
       .catch((error: unknown) => {
-        if (requestToken !== detailRequestTokenRef.current) return;
+        if (controller.signal.aborted || isAbortError(error) || requestToken !== detailRequestTokenRef.current) return;
         setDetailError(requestErrorText(error));
         setDetailState("error");
+      })
+      .finally(() => {
+        if (detailAbortControllerRef.current === controller) {
+          detailAbortControllerRef.current = undefined;
+        }
       });
-  }, []);
+  }, [cancelDetailRequest, syncTerminalDetail]);
 
   useEffect(() => {
     if (!open) {
@@ -283,31 +363,47 @@ export function AgentRunDrawer({
       detailIntentRef.current = false;
       observedCurrentConversationRef.current = undefined;
       previousInitialRunIdRef.current = undefined;
-      completionRefreshRunRef.current = undefined;
-      listRequestTokenRef.current += 1;
-      detailRequestTokenRef.current += 1;
+      completionRefreshRunsRef.current.clear();
+      completionListRefreshesRef.current.clear();
+      transitionFocusTargetRef.current = undefined;
+      cancelListRequest();
+      cancelDetailRequest();
+      setListState("idle");
+      setDetailState("idle");
+      setSelectedRunId(undefined);
+      setDetail(undefined);
+      setDetailError(undefined);
       return;
     }
 
     const isOpening = !hasOpenedRef.current;
-    const changedInitialRun = Boolean(initialRunId && initialRunId !== previousInitialRunIdRef.current);
+    const changedInitialRun = initialRunId !== previousInitialRunIdRef.current;
     hasOpenedRef.current = true;
     previousInitialRunIdRef.current = initialRunId;
 
     if (!isOpening && !changedInitialRun) return;
     if (initialRunId) {
+      cancelListRequest();
       detailIntentRef.current = true;
       setView("detail");
+      if (!isOpening) transitionFocusTargetRef.current = "back";
       loadDetail(initialRunId);
       return;
     }
 
+    cancelDetailRequest();
     detailIntentRef.current = false;
     setView("list");
     setScope("current");
+    if (!isOpening) transitionFocusTargetRef.current = "list";
     observedCurrentConversationRef.current = activeConversationId;
     loadList("current", activeConversationId);
-  }, [activeConversationId, initialRunId, loadDetail, loadList, open]);
+  }, [activeConversationId, cancelDetailRequest, cancelListRequest, initialRunId, loadDetail, loadList, open]);
+
+  useEffect(() => () => {
+    cancelListRequest();
+    cancelDetailRequest();
+  }, [cancelDetailRequest, cancelListRequest]);
 
   useEffect(() => {
     if (!open || view !== "list" || scope !== "current" || detailIntentRef.current) return;
@@ -321,13 +417,46 @@ export function AgentRunDrawer({
       !open
       || view !== "detail"
       || !selectedRunId
-      || detail?.status !== "running"
+      || detailRequestRunIdRef.current !== selectedRunId
+      || (detail?.status !== "running" && detailState !== "missing")
       || finishedRunId !== selectedRunId
-      || completionRefreshRunRef.current === selectedRunId
+      || completionRefreshRunsRef.current.has(selectedRunId)
     ) return;
-    completionRefreshRunRef.current = selectedRunId;
+    completionRefreshRunsRef.current.add(selectedRunId);
     loadDetail(selectedRunId);
-  }, [detail?.status, finishedRunId, loadDetail, open, selectedRunId, view]);
+  }, [detail?.status, detailState, finishedRunId, loadDetail, open, selectedRunId, view]);
+
+  useEffect(() => {
+    if (
+      !open
+      || view !== "list"
+      || !finishedRunId
+      || (listState !== "ready" && listState !== "empty")
+      || (scope === "current" && finishedRunConversationId && finishedRunConversationId !== activeConversationId)
+    ) return;
+    const cacheKey = scopeKey(scope, activeConversationId);
+    const refreshKey = `${cacheKey}:${finishedRunId}`;
+    if (completionListRefreshesRef.current.has(refreshKey)) return;
+    const visibleRun = runs.find((run) => run.runId === finishedRunId);
+    if (visibleRun && visibleRun.status !== "running") return;
+    completionListRefreshesRef.current.add(refreshKey);
+    listCacheRef.current.delete(cacheKey);
+    loadList(scope, activeConversationId);
+  }, [activeConversationId, finishedRunConversationId, finishedRunId, listState, loadList, open, runs, scope, view]);
+
+  useEffect(() => {
+    if (observedLedgerRevisionRef.current === ledgerRevision) return;
+    observedLedgerRevisionRef.current = ledgerRevision;
+    listCacheRef.current.clear();
+    completionRefreshRunsRef.current.clear();
+    completionListRefreshesRef.current.clear();
+    if (!open) return;
+    if (view === "detail" && selectedRunId) {
+      loadDetail(selectedRunId);
+      return;
+    }
+    loadList(scope, activeConversationId);
+  }, [activeConversationId, ledgerRevision, loadDetail, loadList, open, scope, selectedRunId, view]);
 
   useEffect(() => {
     if (open) {
@@ -338,19 +467,35 @@ export function AgentRunDrawer({
     focusWasOpenRef.current = open;
   }, [open, returnFocusElement]);
 
+  useEffect(() => {
+    const target = transitionFocusTargetRef.current;
+    if (!open || !target) return;
+    const selector = target === "back"
+      ? ".agent-run-drawer-back"
+      : ".agent-run-scope-option[aria-pressed='true']";
+    const focusTarget = drawerRef.current?.querySelector<HTMLElement>(selector)
+      || closeControlRef.current?.querySelector<HTMLButtonElement>("button");
+    focusTarget?.focus();
+    transitionFocusTargetRef.current = undefined;
+  }, [detailState, listState, open, view]);
+
   const selectScope = (nextScope: RunScope) => {
     setScope(nextScope);
     loadList(nextScope, activeConversationId);
   };
 
   const selectRun = (runId: string) => {
+    cancelListRequest();
     detailIntentRef.current = true;
+    transitionFocusTargetRef.current = "back";
     setView("detail");
     loadDetail(runId);
   };
 
   const returnToList = () => {
+    cancelDetailRequest();
     detailIntentRef.current = false;
+    transitionFocusTargetRef.current = "list";
     setView("list");
     const cachedRuns = listCacheRef.current.get(scopeKey(scope, activeConversationId));
     if (cachedRuns) {
@@ -361,6 +506,17 @@ export function AgentRunDrawer({
     }
     if (scope === "current") observedCurrentConversationRef.current = activeConversationId;
     loadList(scope, activeConversationId);
+  };
+
+  const retryList = () => {
+    transitionFocusTargetRef.current = "list";
+    loadList(scope, activeConversationId);
+  };
+
+  const retryDetail = () => {
+    if (!selectedRunId) return;
+    transitionFocusTargetRef.current = "back";
+    loadDetail(selectedRunId);
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
@@ -396,6 +552,7 @@ export function AgentRunDrawer({
 
   return (
     <aside
+      ref={drawerRef}
       className="agent-run-drawer"
       role="dialog"
       aria-modal={true}
@@ -431,7 +588,7 @@ export function AgentRunDrawer({
           runs={runs}
           scope={scope}
           state={listState}
-          onRetry={() => loadList(scope, activeConversationId)}
+          onRetry={retryList}
           onSelectRun={selectRun}
           onSelectScope={selectScope}
         />
@@ -441,7 +598,7 @@ export function AgentRunDrawer({
           error={detailError}
           state={detailState}
           watchlist={watchlist}
-          onRetry={() => selectedRunId && loadDetail(selectedRunId)}
+          onRetry={retryDetail}
           onToggleWatchlist={onToggleWatchlist}
         />
       )}
@@ -488,7 +645,7 @@ function RunList({
           全部运行
         </button>
       </div>
-      {state === "loading" && <p className="agent-run-state">正在加载运行记录</p>}
+      {state === "loading" && <p className="agent-run-state" role="status">正在加载运行记录</p>}
       {state === "error" && (
         <div className="agent-run-state agent-run-state-error" role="alert">
           <p>{error}</p>
@@ -496,7 +653,7 @@ function RunList({
         </div>
       )}
       {state === "empty" && (
-        <p className="agent-run-state">
+        <p className="agent-run-state" role="status">
           {scope === "current" && !activeConversationId ? "当前会话暂无运行记录" : (
             scope === "current" ? "当前会话暂无运行记录" : "暂无运行记录"
           )}
@@ -541,11 +698,16 @@ function RunDetail({
   onToggleWatchlist: (item: StockRowView) => void;
 }) {
   if (state === "loading" || state === "idle") {
-    return <p className="agent-run-state">正在加载运行详情</p>;
+    return <p className="agent-run-state" role="status">正在加载运行详情</p>;
   }
 
   if (state === "missing") {
-    return <p className="agent-run-state">本次运行未成功留痕</p>;
+    return (
+      <div className="agent-run-state">
+        <p role="status">本次运行未成功留痕</p>
+        <button type="button" className="agent-run-retry" onClick={onRetry}>重试</button>
+      </div>
+    );
   }
 
   if (state === "error") {
@@ -590,8 +752,16 @@ function RunDetail({
           <p>{detail.error}</p>
         </section>
       )}
-      {detail.status !== "failed" && detail.result && (
+      {detail.resultUnavailable && (
         <section className="agent-run-result" aria-label="运行结果">
+          <p role="status">{AGENT_RESULT_UNAVAILABLE_TEXT}</p>
+        </section>
+      )}
+      {!detail.resultUnavailable && detail.status !== "failed" && detail.result && (
+        <section className="agent-run-result" aria-label="运行结果">
+          {detail.result.reply && (
+            <p className="agent-final-reply agent-run-final-reply">{detail.result.reply}</p>
+          )}
           <AgentResultView result={detail.result} watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} />
         </section>
       )}

@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getJson } = vi.hoisted(() => ({ getJson: vi.fn() }));
-vi.mock("./tauri", () => ({ getJson }));
+const { getJson, postJson } = vi.hoisted(() => ({ getJson: vi.fn(), postJson: vi.fn() }));
+vi.mock("./tauri", () => ({ getJson, postJson }));
 
 import {
+  deleteAgentConversationRuns,
   getAgentRun,
   listAgentRuns,
   MAX_AGENT_REPLAY_EVENTS,
@@ -12,7 +13,10 @@ import {
 } from "./agentRuns";
 
 describe("agent run ledger client", () => {
-  beforeEach(() => getJson.mockReset());
+  beforeEach(() => {
+    getJson.mockReset();
+    postJson.mockReset();
+  });
 
   it("normalizes bounded summaries and rejects missing run ids", () => {
     expect(normalizeAgentRunSummary({
@@ -120,11 +124,97 @@ describe("agent run ledger client", () => {
     });
     expect(detail).not.toHaveProperty("request");
 
-    expect(normalizeAgentRunDetail({
-      run_id: "run-array-result",
+  });
+
+  it("distinguishes terminal unavailable results from in-progress and failed runs", () => {
+    for (const [runId, result] of [
+      ["run-string-result", "invalid"],
+      ["run-array-result", [{ reply: "invalid" }]],
+      ["run-empty-result", {}],
+      ["run-normalized-empty-result", { reply: "   ", unknown: "dropped" }],
+    ] as const) {
+      const detail = normalizeAgentRunDetail({ run_id: runId, status: "completed", events: [], result });
+      expect(detail).toMatchObject({ runId, resultUnavailable: true });
+      expect(detail?.result).toBeUndefined();
+    }
+
+    for (const input of [
+      { run_id: "run-completed-null-result", status: "completed", events: [], result: null },
+      { run_id: "run-completed-missing-result", status: "completed", events: [] },
+    ]) {
+      const detail = normalizeAgentRunDetail(input);
+      expect(detail).toMatchObject({ resultUnavailable: true });
+      expect(detail?.result).toBeUndefined();
+    }
+
+    for (const input of [
+      { run_id: "run-running-null-result", status: "running", events: [], result: null },
+      { run_id: "run-running-missing-result", status: "running", events: [] },
+      { run_id: "run-failed-null-result", status: "failed", error: "Model unavailable", events: [], result: null },
+      { run_id: "run-failed-missing-result", status: "failed", error: "Model unavailable", events: [] },
+    ]) {
+      const detail = normalizeAgentRunDetail(input);
+      expect(detail?.result).toBeUndefined();
+      expect(detail).not.toHaveProperty("resultUnavailable");
+    }
+
+    const valid = normalizeAgentRunDetail({
+      run_id: "run-valid-result",
+      status: "completed",
       events: [],
-      result: [{ reply: "invalid" }],
-    })?.result).toBeUndefined();
+      result: { reply: "Completed reply" },
+    });
+    expect(valid?.result).toMatchObject({ reply: "Completed reply" });
+    expect(valid).not.toHaveProperty("resultUnavailable");
+  });
+
+  it("rejects malformed replay backtests before the specialized renderer receives them", () => {
+    const detail = normalizeAgentRunDetail({
+      run_id: "run-malformed-backtest",
+      status: "completed",
+      events: [],
+      result: {
+        action: "backtest",
+        backtest: {
+          metrics: { total_return: 0, num_stocks: 1 },
+          equity_curve: [],
+          symbols: [],
+          adaptive_release_gate: { passed: false, checks: {} },
+        },
+      },
+    });
+
+    expect(detail).toMatchObject({
+      runId: "run-malformed-backtest",
+      resultUnavailable: true,
+    });
+    expect(detail?.result).toBeUndefined();
+  });
+
+  it("retains a complete valid replay backtest", () => {
+    const backtest = {
+      metrics: { total_return: 0.12, num_stocks: 1 },
+      equity_curve: [{ date: "2026-08-08", equity: 1.12 }],
+      symbols: ["002432.SZ"],
+      adaptive_release_gate: {
+        passed: true,
+        checks: [{
+          key: "cached_run_millis",
+          passed: true,
+          actual: 720,
+          requirement: "same-day cached run <= 2000 ms",
+        }],
+      },
+    };
+    const detail = normalizeAgentRunDetail({
+      run_id: "run-valid-backtest",
+      status: "completed",
+      events: [],
+      result: { action: "backtest", backtest },
+    });
+
+    expect(detail?.result?.backtest).toEqual(backtest);
+    expect(detail).not.toHaveProperty("resultUnavailable");
   });
 
   it("constructs bounded allowlisted timeline events", () => {
@@ -363,7 +453,7 @@ describe("agent run ledger client", () => {
           kept: "data",
           enabled: true,
           missing: null,
-          long_text: "d".repeat(8_100),
+          long_text: "d".repeat(8_000),
           rows: Array.from({ length: 105 }, (_, index) => ({ index })),
           sensitive: {
             ordinary: "keep me",
@@ -394,7 +484,7 @@ describe("agent run ledger client", () => {
             private_key: "secret-marker",
             clientKey: "secret-marker",
           },
-          deep: { a: { b: { c: { d: { e: { f: { too_deep: "secret-marker" } } } } } } },
+          deep: { a: { b: "keep me" } },
         },
         unknown_payload: { value: "must be dropped" },
       },
@@ -421,7 +511,7 @@ describe("agent run ledger client", () => {
 
     const data = result?.data as Record<string, unknown>;
     expect(data).toMatchObject({ enabled: true, missing: null, long_text: "d".repeat(8_000) });
-    expect(data.rows).toHaveLength(100);
+    expect(data.rows).toHaveLength(105);
     expect(data.sensitive).toEqual({
       ordinary: "keep me",
       candidate_requested: true,
@@ -431,6 +521,65 @@ describe("agent run ledger client", () => {
     });
     expect(JSON.stringify(result)).not.toContain("secret-marker");
     expect(result).not.toHaveProperty("unknown_payload");
+  });
+
+  it("preserves ordinary backtest series instead of silently truncating replay data", () => {
+    const equityCurve = Array.from({ length: 252 }, (_, index) => ({
+      date: `2026-${String(Math.floor(index / 28) + 1).padStart(2, "0")}-${String((index % 28) + 1).padStart(2, "0")}`,
+      equity: 1 + index / 1_000,
+    }));
+    const detail = normalizeAgentRunDetail({
+      run_id: "run-full-backtest",
+      status: "completed",
+      events: [],
+      result: {
+        action: "backtest",
+        backtest: {
+          metrics: { total_return: 0.25, num_stocks: 1 },
+          equity_curve: equityCurve,
+          symbols: ["000001.SZ"],
+        },
+      },
+    });
+
+    expect((detail?.result?.backtest as Record<string, unknown>).equity_curve).toEqual(equityCurve);
+    expect(detail?.resultUnavailable).toBeUndefined();
+  });
+
+  it("marks oversized domain collections unavailable instead of rendering partial data", () => {
+    const detail = normalizeAgentRunDetail({
+      run_id: "run-oversized-domain",
+      status: "completed",
+      events: [],
+      result: {
+        reply: "Do not show this as a complete result",
+        data: {
+          rows: Array.from({ length: 10_001 }, (_, index) => ({ index })),
+        },
+      },
+    });
+
+    expect(detail?.result).toBeUndefined();
+    expect(detail?.resultUnavailable).toBe(true);
+  });
+
+  it("marks depth, object-key, and string truncation unavailable", () => {
+    const tooDeep = { level: { level: { level: { level: { level: { level: { value: "hidden" } } } } } } };
+    const tooWide = Object.fromEntries(Array.from({ length: 101 }, (_, index) => [`field_${index}`, index]));
+    for (const [runId, data] of [
+      ["run-too-deep", tooDeep],
+      ["run-too-wide", tooWide],
+      ["run-long-domain-text", { analysis: "x".repeat(8_001) }],
+    ] as const) {
+      const detail = normalizeAgentRunDetail({
+        run_id: runId,
+        status: "completed",
+        events: [],
+        result: { reply: "must not look complete", data },
+      });
+      expect(detail).toMatchObject({ resultUnavailable: true });
+      expect(detail?.result).toBeUndefined();
+    }
   });
 
   it("requests current-conversation and all-run summaries with stable URLs", async () => {
@@ -447,9 +596,21 @@ describe("agent run ledger client", () => {
     expect(getJson).toHaveBeenNthCalledWith(2, "/api/agent/runs?limit=50", { signal: undefined });
   });
 
+  it("deletes conversation runs through the typed ledger boundary", async () => {
+    postJson.mockResolvedValue({ deleted: 2 });
+
+    await expect(deleteAgentConversationRuns("  conversation/1  ")).resolves.toBe(2);
+    expect(postJson).toHaveBeenCalledWith("/api/agent/runs/delete-conversation", {
+      conversation_id: "conversation/1",
+    }, { timeoutMs: 10_000 });
+    await expect(deleteAgentConversationRuns("   ")).rejects.toThrow("conversation_id is required");
+    await expect(deleteAgentConversationRuns("中".repeat(100))).rejects.toThrow("conversation_id is required");
+  });
+
   it("does not widen invalid explicit conversation scopes to all runs", async () => {
     await expect(listAgentRuns({ conversationId: "   " })).resolves.toEqual([]);
     await expect(listAgentRuns({ conversationId: "c".repeat(257) })).resolves.toEqual([]);
+    await expect(listAgentRuns({ conversationId: "中".repeat(100) })).resolves.toEqual([]);
     await expect(listAgentRuns({ conversationId: undefined })).resolves.toEqual([]);
 
     expect(getJson).not.toHaveBeenCalled();
@@ -524,6 +685,20 @@ describe("agent run ledger client", () => {
 
     getJson.mockResolvedValueOnce({});
     await expect(getAgentRun("omitted")).resolves.toBeNull();
+  });
+
+  it("rejects a detail response whose run id does not match the requested identity", async () => {
+    getJson.mockResolvedValueOnce({
+      run: {
+        run_id: "run-other",
+        status: "completed",
+        events: [],
+        result: { reply: "Wrong run" },
+      },
+    });
+
+    await expect(getAgentRun("  run-requested  ")).resolves.toBeNull();
+    expect(getJson).toHaveBeenLastCalledWith("/api/agent/runs/run-requested", { signal: undefined });
   });
 
   it("rejects dot-only and invalid lookup identities without requests", async () => {

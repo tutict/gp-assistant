@@ -60,8 +60,10 @@ if (-not $SkipNode) {
     if (-not (Test-Path -LiteralPath (Join-Path $frontendDir "node_modules"))) {
         Invoke-Checked "Install frontend dependencies" $npm @("ci") $frontendDir
     }
+    Invoke-Checked "Release version metadata consistency" $npm @("run", "test:version") $frontendDir
     Invoke-Checked "Frontend UI density guard" $npm @("run", "test:density") $frontendDir
     Invoke-Checked "Frontend UI density contract tests" $npm @("run", "test:density-contract") $frontendDir
+    Invoke-Checked "Frontend Agent replay CSS contract tests" $npm @("run", "test:agent-replay-css") $frontendDir
     Invoke-Checked "Frontend CSS architecture guard" $npm @("run", "test:architecture") $frontendDir
     Invoke-Checked "Frontend unit tests" $npm @("run", "test:unit") $frontendDir
     Invoke-Checked "Frontend React/TypeScript build" $npm @("run", "build") $frontendDir
@@ -75,9 +77,11 @@ if (-not $SkipPrepare) {
 
 if (-not $SkipRust) {
     $cargo = Resolve-CommandPath "cargo" "Install the Rust stable toolchain and retry."
-    Invoke-Checked "Rust gp-core tests" $cargo @("test", "--manifest-path", "native/gp-core/Cargo.toml")
-    Invoke-Checked "Tauri Rust tests" $cargo @("test", "--manifest-path", "desktop/src-tauri/Cargo.toml")
-    Invoke-Checked "Tauri cargo check" $cargo @("check", "--manifest-path", "desktop/src-tauri/Cargo.toml")
+    Invoke-Checked "Rust gp-core format check" $cargo @("fmt", "--manifest-path", "native/gp-core/Cargo.toml", "--", "--check")
+    Invoke-Checked "Tauri Rust format check" $cargo @("fmt", "--manifest-path", "desktop/src-tauri/Cargo.toml", "--", "--check")
+    Invoke-Checked "Rust gp-core tests" $cargo @("test", "--locked", "--manifest-path", "native/gp-core/Cargo.toml")
+    Invoke-Checked "Tauri Rust tests" $cargo @("test", "--locked", "--manifest-path", "desktop/src-tauri/Cargo.toml")
+    Invoke-Checked "Tauri cargo check" $cargo @("check", "--locked", "--manifest-path", "desktop/src-tauri/Cargo.toml")
 }
 
 if (-not $SkipAndroidPreflight) {

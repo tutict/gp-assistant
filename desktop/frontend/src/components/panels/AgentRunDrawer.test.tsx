@@ -47,6 +47,59 @@ function deferred<T>() {
   return { promise, reject: reject!, resolve: resolve! };
 }
 
+function abortError() {
+  return Object.assign(new Error("aborted"), { name: "AbortError" });
+}
+
+function focusHarness() {
+  const body = { name: "body" };
+  let activeElement: unknown = body;
+  const focusTarget = (name: string) => {
+    const target = {
+      name,
+      focus: vi.fn(() => {
+        activeElement = target;
+      }),
+      getAttribute: () => null,
+    } as unknown as HTMLElement;
+    return target;
+  };
+  const back = focusTarget("back");
+  const close = focusTarget("close");
+  const list = focusTarget("list");
+  const drawer = {
+    contains: (node: unknown) => [back, close, list].includes(node as HTMLElement),
+    querySelector: vi.fn((selector: string) => {
+      if (selector === ".agent-run-drawer-back") return back;
+      if (selector === ".agent-run-scope-option[aria-pressed='true']") return list;
+      return null;
+    }),
+  };
+  vi.stubGlobal("document", {
+    get activeElement() {
+      return activeElement;
+    },
+  });
+  return {
+    back,
+    body,
+    close,
+    drawer,
+    list,
+    get activeElement() {
+      return activeElement;
+    },
+    createNodeMock: (element: React.ReactElement) => {
+      const props = element.props as { className?: unknown };
+      if (element.type === "aside" && props.className === "agent-run-drawer") return drawer;
+      if (element.type === "div" && props.className === "agent-run-drawer-close-control") {
+        return { querySelector: () => close };
+      }
+      return null;
+    },
+  };
+}
+
 async function renderDrawer(
   overrides: Partial<React.ComponentProps<typeof AgentRunDrawer>> = {},
   options?: Parameters<typeof create>[1],
@@ -153,15 +206,36 @@ describe("AgentRunDrawer list", () => {
       renderer.update(<AgentRunDrawer open {...baseProps} />);
     });
     await flush();
-    expect(agentRunMocks.listAgentRuns).toHaveBeenCalledWith({ conversationId: "conversation-1" });
+    expect(agentRunMocks.listAgentRuns).toHaveBeenCalledWith({
+      conversationId: "conversation-1",
+      signal: expect.any(AbortSignal),
+    });
     expect(renderedText(renderer)).toContain("Question current-run");
 
     await act(async () => {
       scopeButton(renderer, "all").props.onClick();
     });
     await flush();
-    expect(agentRunMocks.listAgentRuns).toHaveBeenLastCalledWith({});
+    expect(agentRunMocks.listAgentRuns).toHaveBeenLastCalledWith({ signal: expect.any(AbortSignal) });
     expect(renderedText(renderer)).toContain("Question all-run");
+  });
+
+  it("invalidates the active scope cache after ledger deletion", async () => {
+    agentRunMocks.listAgentRuns
+      .mockResolvedValueOnce([summary("stale-current")])
+      .mockResolvedValueOnce([summary("fresh-current")]);
+    const renderer = await renderDrawer({ open: true, ledgerRevision: 0 });
+    await flush();
+    expect(renderedText(renderer)).toContain("Question stale-current");
+
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open {...baseProps} ledgerRevision={1} />);
+    });
+    await flush();
+
+    expect(agentRunMocks.listAgentRuns).toHaveBeenCalledTimes(2);
+    expect(renderedText(renderer)).not.toContain("Question stale-current");
+    expect(renderedText(renderer)).toContain("Question fresh-current");
   });
 
   it("renders unknown instead of throwing for timestamps outside the Date range", async () => {
@@ -220,6 +294,43 @@ describe("AgentRunDrawer list", () => {
     expect(renderedText(renderer)).not.toContain("Question stale-current");
   });
 
+  it("passes signals and aborts list requests on scope changes, close, and unmount", async () => {
+    agentRunMocks.listAgentRuns.mockImplementation(() => new Promise(() => undefined));
+    const renderer = await renderDrawer({ open: true });
+    const currentSignal = agentRunMocks.listAgentRuns.mock.calls[0][0].signal as AbortSignal;
+
+    await act(async () => {
+      scopeButton(renderer, "all").props.onClick();
+    });
+    const allSignal = agentRunMocks.listAgentRuns.mock.calls[1][0].signal as AbortSignal;
+    expect(currentSignal.aborted).toBe(true);
+    expect(allSignal.aborted).toBe(false);
+
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open={false} {...baseProps} />);
+    });
+    expect(allSignal.aborted).toBe(true);
+
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open {...baseProps} />);
+    });
+    const reopenedSignal = agentRunMocks.listAgentRuns.mock.calls[2][0].signal as AbortSignal;
+    await act(async () => {
+      renderer.unmount();
+    });
+    renderers.delete(renderer);
+    expect(reopenedSignal.aborted).toBe(true);
+  });
+
+  it("does not render an AbortError as a list failure", async () => {
+    agentRunMocks.listAgentRuns.mockRejectedValueOnce(abortError());
+    const renderer = await renderDrawer({ open: true });
+    await flush();
+
+    expect(renderer.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+    expect(renderedText(renderer)).not.toContain("aborted");
+  });
+
   it("retries a failed list request and bounds its visible error", async () => {
     const longError = "l".repeat(2_001);
     agentRunMocks.listAgentRuns
@@ -252,11 +363,13 @@ describe("AgentRunDrawer list", () => {
     const renderer = await renderDrawer({ open: true });
 
     expect(nodeText(classNodes(renderer, "agent-run-state")[0])).toBe("正在加载运行记录");
+    expect(classNodes(renderer, "agent-run-state")[0].props.role).toBe("status");
     await act(async () => {
       current.resolve([]);
       await Promise.resolve();
     });
     expect(nodeText(classNodes(renderer, "agent-run-state")[0])).toBe("当前会话暂无运行记录");
+    expect(classNodes(renderer, "agent-run-state")[0].props.role).toBe("status");
 
     await act(async () => {
       scopeButton(renderer, "all").props.onClick();
@@ -293,9 +406,25 @@ describe("AgentRunDrawer detail", () => {
     await flush();
 
     expect(agentRunMocks.listAgentRuns).not.toHaveBeenCalled();
-    expect(agentRunMocks.getAgentRun).toHaveBeenCalledWith("run-1");
+    expect(agentRunMocks.getAgentRun).toHaveBeenCalledWith("run-1", expect.any(AbortSignal));
     expect(renderedText(renderer)).toContain("Replay result is visible");
     expect(classNodes(renderer, "agent-run-overview-status")).toHaveLength(1);
+  });
+
+  it("renders the persisted final reply before the replay result details", async () => {
+    agentRunMocks.getAgentRun.mockResolvedValue(detail("run-reply", {
+      result: {
+        action: "screen",
+        reply: "Persisted final conclusion",
+        data: { rows: [{ code: "000001.SZ", name: "Candidate" }] },
+      },
+    }));
+    const renderer = await renderDrawer({ open: true, initialRunId: "run-reply" });
+    await flush();
+
+    const reply = classNodes(renderer, "agent-final-reply agent-run-final-reply");
+    expect(reply).toHaveLength(1);
+    expect(nodeText(reply[0])).toBe("Persisted final conclusion");
   });
 
   it("retries a failed detail request and bounds its visible error", async () => {
@@ -335,6 +464,240 @@ describe("AgentRunDrawer detail", () => {
     });
     await flush();
     expect(agentRunMocks.getAgentRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not let a closed run completion replace a newly opened direct detail", async () => {
+    agentRunMocks.getAgentRun
+      .mockResolvedValueOnce(detail("run-a", { status: "running" }))
+      .mockResolvedValueOnce(detail("run-b", { status: "completed" }));
+    const renderer = await renderDrawer({ open: true, initialRunId: "run-a" });
+    await flush();
+
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open={false} {...baseProps} initialRunId="run-a" />);
+    });
+    await flush();
+
+    await act(async () => {
+      renderer.update(
+        <AgentRunDrawer
+          open
+          {...baseProps}
+          initialRunId="run-b"
+          finishedRunId="run-a"
+          finishedRunConversationId="conversation-1"
+        />,
+      );
+    });
+    await flush();
+
+    expect(agentRunMocks.getAgentRun).toHaveBeenNthCalledWith(1, "run-a", expect.any(AbortSignal));
+    expect(agentRunMocks.getAgentRun).toHaveBeenNthCalledWith(2, "run-b", expect.any(AbortSignal));
+    expect(agentRunMocks.getAgentRun).toHaveBeenCalledTimes(2);
+    expect(renderedText(renderer)).toContain("Question run-b");
+  });
+
+  it("refreshes a missing selected detail exactly once when its completion signal arrives", async () => {
+    agentRunMocks.getAgentRun
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(detail("run-late", { status: "completed" }));
+    const renderer = await renderDrawer({ open: true, initialRunId: "run-late" });
+    await flush();
+    expect(renderedText(renderer)).toContain("本次运行未成功留痕");
+
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open {...baseProps} initialRunId="run-late" finishedRunId="run-late" />);
+    });
+    await flush();
+    expect(agentRunMocks.getAgentRun).toHaveBeenCalledTimes(2);
+    expect(classNodes(renderer, "agent-run-overview-status")[0].props["data-status"]).toBe("completed");
+
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open {...baseProps} initialRunId="run-late" finishedRunId="run-late" />);
+    });
+    await flush();
+    expect(agentRunMocks.getAgentRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes a visible running list item when its completion signal arrives", async () => {
+    agentRunMocks.listAgentRuns
+      .mockResolvedValueOnce([summary("run-list-live", { status: "running" })])
+      .mockResolvedValueOnce([summary("run-list-live", { status: "completed" })]);
+    const renderer = await renderDrawer({ open: true });
+    await flush();
+    expect(classNodes(renderer, "agent-run-status")[0].props["data-status"]).toBe("running");
+
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open {...baseProps} finishedRunId="run-list-live" />);
+    });
+    await flush();
+    expect(agentRunMocks.listAgentRuns).toHaveBeenCalledTimes(2);
+    expect(classNodes(renderer, "agent-run-status")[0].props["data-status"]).toBe("completed");
+
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open {...baseProps} finishedRunId="run-list-live" />);
+    });
+    await flush();
+    expect(agentRunMocks.listAgentRuns).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes once when completion arrives before the running list response", async () => {
+    const staleList = deferred<AgentRunSummary[]>();
+    agentRunMocks.listAgentRuns
+      .mockReturnValueOnce(staleList.promise)
+      .mockResolvedValueOnce([summary("run-list-race", { status: "completed" })]);
+    const renderer = await renderDrawer({ open: true });
+
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open {...baseProps} finishedRunId="run-list-race" />);
+    });
+    expect(agentRunMocks.listAgentRuns).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      staleList.resolve([summary("run-list-race", { status: "running" })]);
+      await staleList.promise;
+    });
+    await flush();
+
+    expect(agentRunMocks.listAgentRuns).toHaveBeenCalledTimes(2);
+    expect(classNodes(renderer, "agent-run-status")[0].props["data-status"]).toBe("completed");
+  });
+
+  it("refreshes once when a completed run was absent from the first list", async () => {
+    agentRunMocks.listAgentRuns
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([summary("run-list-late", { status: "completed" })]);
+    const renderer = await renderDrawer({ open: true });
+    await flush();
+
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open {...baseProps} finishedRunId="run-list-late" />);
+    });
+    await flush();
+
+    expect(agentRunMocks.listAgentRuns).toHaveBeenCalledTimes(2);
+    expect(renderedText(renderer)).toContain("Question run-list-late");
+  });
+
+  it("does not refresh a current-conversation list for another conversation's completion", async () => {
+    agentRunMocks.listAgentRuns.mockResolvedValueOnce([]);
+    const renderer = await renderDrawer({ open: true });
+    await flush();
+
+    await act(async () => {
+      renderer.update(
+        <AgentRunDrawer
+          open
+          {...baseProps}
+          finishedRunId="run-other-conversation"
+          finishedRunConversationId="conversation-2"
+        />,
+      );
+    });
+    await flush();
+
+    expect(agentRunMocks.listAgentRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows an explicit retry after a missing detail", async () => {
+    agentRunMocks.getAgentRun
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(detail("manual-retry"));
+    const renderer = await renderDrawer({ open: true, initialRunId: "manual-retry" });
+    await flush();
+
+    expect(retryButton(renderer)).toBeDefined();
+    expect(nodeText(renderer.root.findByProps({ role: "status" }))).toBe("本次运行未成功留痕");
+    await act(async () => {
+      retryButton(renderer).props.onClick();
+    });
+    await flush();
+    expect(agentRunMocks.getAgentRun).toHaveBeenCalledTimes(2);
+    expect(renderedText(renderer)).toContain("Question manual-retry");
+  });
+
+  it("passes signals and aborts detail requests on run changes, close, and unmount", async () => {
+    agentRunMocks.getAgentRun.mockImplementation(() => new Promise(() => undefined));
+    const renderer = await renderDrawer({ open: true, initialRunId: "run-a" });
+    const runASignal = agentRunMocks.getAgentRun.mock.calls[0][1] as AbortSignal;
+
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open {...baseProps} initialRunId="run-b" />);
+    });
+    const runBSignal = agentRunMocks.getAgentRun.mock.calls[1][1] as AbortSignal;
+    expect(runASignal.aborted).toBe(true);
+    expect(runBSignal.aborted).toBe(false);
+
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open={false} {...baseProps} />);
+    });
+    expect(runBSignal.aborted).toBe(true);
+
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open {...baseProps} initialRunId="run-c" />);
+    });
+    const runCSignal = agentRunMocks.getAgentRun.mock.calls[2][1] as AbortSignal;
+    await act(async () => {
+      renderer.unmount();
+    });
+    renderers.delete(renderer);
+    expect(runCSignal.aborted).toBe(true);
+  });
+
+  it("does not render an AbortError as a detail failure", async () => {
+    agentRunMocks.getAgentRun.mockRejectedValueOnce(abortError());
+    const renderer = await renderDrawer({ open: true, initialRunId: "aborted-detail" });
+    await flush();
+
+    expect(renderer.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+    expect(renderedText(renderer)).not.toContain("aborted");
+  });
+
+  it("updates cached list summaries after a running detail reaches a terminal state", async () => {
+    agentRunMocks.listAgentRuns.mockResolvedValueOnce([summary("cached-live", { status: "running" })]);
+    agentRunMocks.getAgentRun
+      .mockResolvedValueOnce(detail("cached-live", { status: "running" }))
+      .mockResolvedValueOnce(detail("cached-live", {
+        status: "completed",
+        completedAtEpochMs: 1_700_000_005_000,
+        durationMs: 5_000,
+      }));
+    const renderer = await renderDrawer({ open: true });
+    await flush();
+
+    await act(async () => {
+      buttonWithText(renderer, "Question cached-live").props.onClick();
+    });
+    await flush();
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open {...baseProps} finishedRunId="cached-live" />);
+    });
+    await flush();
+    await act(async () => {
+      backButton(renderer).props.onClick();
+    });
+
+    expect(classNodes(renderer, "agent-run-status")[0].props["data-status"]).toBe("completed");
+    expect(agentRunMocks.listAgentRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns to the current list when an open drawer clears its initial run", async () => {
+    agentRunMocks.getAgentRun.mockResolvedValueOnce(detail("direct-run"));
+    agentRunMocks.listAgentRuns.mockResolvedValueOnce([summary("current-run")]);
+    const renderer = await renderDrawer({ open: true, initialRunId: "direct-run" });
+    await flush();
+
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open {...baseProps} />);
+    });
+    await flush();
+
+    expect(nodesWithClass(renderer, "agent-run-drawer-back")).toHaveLength(0);
+    expect(renderedText(renderer)).toContain("Question current-run");
+    expect(agentRunMocks.listAgentRuns).toHaveBeenCalledWith({
+      conversationId: "conversation-1",
+      signal: expect.any(AbortSignal),
+    });
   });
 
   it("retains list summaries when returning from a normal selected detail", async () => {
@@ -381,7 +744,7 @@ describe("AgentRunDrawer detail", () => {
         expect(nodeText(classNodes(renderer, "agent-run-state")[0])).toBe("正在加载运行详情");
       }
       if (expectedCall === 2) {
-        expect(nodeText(classNodes(renderer, "agent-run-state")[0])).toBe("本次运行未成功留痕");
+        expect(nodeText(classNodes(renderer, "agent-run-state")[0])).toContain("本次运行未成功留痕");
       }
       await act(async () => {
         backButton(renderer).props.onClick();
@@ -429,6 +792,37 @@ describe("AgentRunDrawer detail", () => {
     expect(output.indexOf("agent-run-overview")).toBeLessThan(output.indexOf("agent-run-timeline"));
     expect(output.indexOf("agent-run-timeline")).toBeLessThan(output.indexOf("agent-run-persisted-error"));
     expect(output.indexOf("agent-run-persisted-error")).toBeLessThan(output.indexOf("agent-run-result"));
+  });
+
+  it("renders an unavailable result status without hiding the rest of the detail", async () => {
+    agentRunMocks.getAgentRun.mockResolvedValue(detail("unavailable", {
+      error: "persisted detail remains visible",
+      events: [{ type: "status", label: "timeline remains visible" }],
+      resultUnavailable: true,
+    }));
+    const renderer = await renderDrawer({ open: true, initialRunId: "unavailable" });
+    await flush();
+    const output = renderedText(renderer);
+    const unavailableStatus = renderer.root.findByProps({ role: "status" });
+
+    expect(nodeText(unavailableStatus)).toBe("结果不可用");
+    expect(output).toContain("Question unavailable");
+    expect(output).toContain("timeline remains visible");
+    expect(output).toContain("persisted detail remains visible");
+    expect(output.indexOf("agent-run-overview")).toBeLessThan(output.indexOf("agent-run-timeline"));
+    expect(output.indexOf("agent-run-timeline")).toBeLessThan(output.indexOf("agent-run-persisted-error"));
+    expect(output.indexOf("agent-run-persisted-error")).toBeLessThan(output.indexOf("agent-run-result"));
+  });
+
+  it("does not describe a missing result as unavailable", async () => {
+    agentRunMocks.getAgentRun.mockResolvedValue(detail("missing-result", {
+      events: [{ type: "status", label: "Still running" }],
+    }));
+    const renderer = await renderDrawer({ open: true, initialRunId: "missing-result" });
+    await flush();
+
+    expect(renderedText(renderer)).not.toContain("结果不可用");
+    expect(renderer.root.findAllByProps({ role: "status" })).toHaveLength(0);
   });
 
   it("does not render direct request or configuration values in drawer-owned timeline and error markup", async () => {
@@ -537,6 +931,69 @@ describe("AgentRunDrawer accessibility", () => {
       renderer.update(<AgentRunDrawer open={false} {...baseProps} returnFocusElement={returnFocus} />);
     });
     expect(returnFocus.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps focus in the drawer across select and back transitions so Escape still closes", async () => {
+    const focus = focusHarness();
+    agentRunMocks.listAgentRuns.mockResolvedValueOnce([summary("focus-run")]);
+    agentRunMocks.getAgentRun.mockResolvedValueOnce(detail("focus-run"));
+    const renderer = await renderDrawer({ open: true }, { createNodeMock: focus.createNodeMock });
+    await flush();
+    expect(focus.activeElement).toBe(focus.close);
+
+    await act(async () => {
+      buttonWithText(renderer, "Question focus-run").props.onClick();
+    });
+    await flush();
+    expect(focus.activeElement).toBe(focus.back);
+    expect(focus.drawer.contains(focus.activeElement)).toBe(true);
+
+    await act(async () => {
+      backButton(renderer).props.onClick();
+    });
+    expect(focus.activeElement).toBe(focus.list);
+    expect(focus.drawer.contains(focus.activeElement)).toBe(true);
+
+    const dialog = renderer.root.findByProps({ role: "dialog" });
+    await act(async () => {
+      dialog.props.onKeyDown({ key: "Escape", preventDefault: vi.fn() });
+    });
+    expect(baseProps.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps focus in the drawer after list and detail retries", async () => {
+    const listFocus = focusHarness();
+    agentRunMocks.listAgentRuns
+      .mockRejectedValueOnce(new Error("list failed"))
+      .mockResolvedValueOnce([]);
+    const listRenderer = await renderDrawer({ open: true }, { createNodeMock: listFocus.createNodeMock });
+    await flush();
+    await act(async () => {
+      retryButton(listRenderer).props.onClick();
+    });
+    expect(listFocus.activeElement).toBe(listFocus.list);
+    expect(listFocus.drawer.contains(listFocus.activeElement)).toBe(true);
+
+    const detailFocus = focusHarness();
+    agentRunMocks.getAgentRun
+      .mockRejectedValueOnce(new Error("detail failed"))
+      .mockResolvedValueOnce(detail("retry-focus"));
+    const detailRenderer = await renderDrawer(
+      { open: true, initialRunId: "retry-focus" },
+      { createNodeMock: detailFocus.createNodeMock },
+    );
+    await flush();
+    await act(async () => {
+      retryButton(detailRenderer).props.onClick();
+    });
+    expect(detailFocus.activeElement).toBe(detailFocus.back);
+    expect(detailFocus.drawer.contains(detailFocus.activeElement)).toBe(true);
+
+    const dialog = detailRenderer.root.findByProps({ role: "dialog" });
+    await act(async () => {
+      dialog.props.onKeyDown({ key: "Escape", preventDefault: vi.fn() });
+    });
+    expect(baseProps.onClose).toHaveBeenCalledTimes(1);
   });
 
   it("wraps Tab and Shift+Tab between only drawer focusable nodes", async () => {

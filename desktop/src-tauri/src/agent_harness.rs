@@ -1,7 +1,8 @@
 use crate::{build_http_client_with_proxy, runtime};
 use futures::StreamExt;
+use percent_encoding::percent_decode_str;
 use serde_json::{json, Map, Value};
-use std::{net::IpAddr, time::Duration};
+use std::{collections::HashMap, net::IpAddr, time::Duration};
 use stock_optimizer_core as gp_core;
 
 const BASE_PROMPT: &str = include_str!("../../../app/prompts/stock_soul.md");
@@ -16,10 +17,22 @@ const MAX_HISTORY_CHARS: usize = 2_000;
 const MAX_MODEL_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 const MAX_MODEL_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_EVIDENCE_CATALOG_ITEMS: usize = 16;
+const MAX_SECRET_PERCENT_DECODE_DEPTH: usize = 8;
+const MAX_SECRET_REDACTION_PASSES: usize = 32;
+const MAX_REDACTION_SECRETS: usize = 128;
+const MAX_REDACTION_SECRET_BYTES: usize = 16 * 1024;
 
 struct PromptProfile {
     id: &'static str,
     instructions: &'static str,
+}
+
+#[derive(Clone, Debug)]
+struct RedactionSecret {
+    value: String,
+    bounded: bool,
+    ascii_case_insensitive: bool,
+    fail_closed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -320,12 +333,10 @@ where
             tool_response,
             &profile_id,
             model_name,
-            Some(format!(
-                "模型调用失败，已回退本地结果：{}",
-                redact_model_error(&error, config.as_ref().map(|item| item.api_key.as_str()))
-            )),
+            Some(model_failure_warning(&error, config.as_ref())),
         ),
     };
+    let response = redact_response_for_config(response, config.as_ref());
     publish_event(
         &mut events,
         &mut sink,
@@ -413,12 +424,517 @@ fn status_event(run_id: &str, stage: &str, label: &str, percent: u8) -> Value {
     })
 }
 
-fn redact_model_error(error: &str, api_key: Option<&str>) -> String {
-    let mut result = error.to_string();
-    if let Some(secret) = api_key.filter(|item| !item.is_empty()) {
-        result = result.replace(secret, "***");
+fn model_failure_warning(error: &str, config: Option<&LlmConfig>) -> String {
+    format!(
+        "模型调用失败，已回退本地结果：{}",
+        redact_model_error(error, config)
+    )
+}
+
+fn redact_model_error(error: &str, config: Option<&LlmConfig>) -> String {
+    limit_chars(
+        &redact_text(
+            error,
+            &config
+                .map(model_config_sensitive_values)
+                .unwrap_or_default(),
+        ),
+        400,
+    )
+}
+
+fn model_config_sensitive_values(config: &LlmConfig) -> Vec<RedactionSecret> {
+    let mut secrets = Vec::new();
+    push_redaction_secret(&mut secrets, &config.api_key);
+    if let Some(organization) = config
+        .organization
+        .as_ref()
+        .filter(|value| !value.is_empty())
+    {
+        push_redaction_secret(&mut secrets, organization);
     }
-    limit_chars(&result, 400)
+    if let Some(project) = config.project.as_ref().filter(|value| !value.is_empty()) {
+        push_redaction_secret(&mut secrets, project);
+    }
+    if let Some(custom_user_agent) = config
+        .custom_user_agent
+        .as_ref()
+        .filter(|value| !value.is_empty())
+    {
+        push_redaction_secret(&mut secrets, custom_user_agent);
+    }
+    push_url_redaction_secret(&mut secrets, &config.base_url, false);
+    if redaction_is_fail_closed(&secrets) {
+        return secrets;
+    }
+    let Ok(url) = reqwest::Url::parse(&config.base_url) else {
+        return secrets;
+    };
+    push_url_redaction_secret(&mut secrets, url.as_str(), false);
+    if let Some(host) = url.host_str().filter(|value| !value.is_empty()) {
+        if is_sensitive_url_host(host) {
+            push_ascii_case_insensitive_redaction_secret(&mut secrets, host, false);
+            let components = host.split('.').collect::<Vec<_>>();
+            for component in components {
+                if !is_generic_url_component(component) {
+                    push_ascii_case_insensitive_redaction_secret(&mut secrets, component, true);
+                }
+            }
+        }
+    }
+    if !url.path().is_empty() && url.path() != "/" {
+        if let Some(segments) = url.path_segments() {
+            let sensitive_segments = segments
+                .filter(|segment| !is_generic_url_component(segment))
+                .collect::<Vec<_>>();
+            if !sensitive_segments.is_empty() {
+                push_url_redaction_secret(&mut secrets, url.path(), false);
+            }
+            for segment in sensitive_segments {
+                push_url_redaction_secret(&mut secrets, segment, true);
+            }
+        }
+    }
+    if !url.username().is_empty() {
+        push_url_redaction_secret(&mut secrets, url.username(), true);
+    }
+    if let Some(password) = url.password().filter(|value| !value.is_empty()) {
+        push_url_redaction_secret(&mut secrets, password, false);
+    }
+    if let Some(query) = url.query().filter(|value| !value.is_empty()) {
+        push_url_redaction_secret(&mut secrets, query, false);
+        for pair in query.split('&') {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            push_url_redaction_secret(&mut secrets, key, true);
+            push_url_redaction_secret(&mut secrets, value, false);
+            if redaction_is_fail_closed(&secrets) {
+                break;
+            }
+        }
+    }
+    if !redaction_is_fail_closed(&secrets) {
+        for (key, value) in url.query_pairs() {
+            push_url_redaction_secret(&mut secrets, &key, true);
+            push_url_redaction_secret(&mut secrets, &value, false);
+            if redaction_is_fail_closed(&secrets) {
+                break;
+            }
+        }
+    }
+    if let Some(fragment) = url.fragment().filter(|value| !value.is_empty()) {
+        push_url_redaction_secret(&mut secrets, fragment, false);
+    }
+    let mut without_fragment = url;
+    without_fragment.set_fragment(None);
+    push_url_redaction_secret(&mut secrets, without_fragment.as_str(), false);
+    secrets
+}
+
+fn is_generic_url_component(value: &str) -> bool {
+    let mut decoded = value.to_string();
+    for _ in 0..=MAX_SECRET_PERCENT_DECODE_DEPTH {
+        if matches!(
+            decoded.to_ascii_lowercase().as_str(),
+            "" | "api"
+                | "chat"
+                | "completions"
+                | "model"
+                | "models"
+                | "responses"
+                | "v1"
+                | "v2"
+                | "v3"
+                | "www"
+        ) {
+            return true;
+        }
+        let next = percent_decode_str(&decoded)
+            .decode_utf8_lossy()
+            .into_owned();
+        if next == decoded {
+            break;
+        }
+        decoded = next;
+    }
+    false
+}
+
+fn is_sensitive_url_host(host: &str) -> bool {
+    is_loopback_or_private_network_host(Some(host))
+        || !host.contains('.')
+        || [".internal", ".lan", ".local"]
+            .iter()
+            .any(|suffix| host.to_ascii_lowercase().ends_with(suffix))
+}
+
+fn push_redaction_secret(secrets: &mut Vec<RedactionSecret>, value: &str) {
+    push_redaction_secret_with_flags(secrets, value, false, false);
+}
+
+fn push_bounded_redaction_secret(secrets: &mut Vec<RedactionSecret>, value: &str) {
+    push_redaction_secret_with_flags(secrets, value, true, false);
+}
+
+fn push_ascii_case_insensitive_redaction_secret(
+    secrets: &mut Vec<RedactionSecret>,
+    value: &str,
+    bounded: bool,
+) {
+    push_redaction_secret_with_flags(secrets, value, bounded, true);
+}
+
+fn push_redaction_secret_with_flags(
+    secrets: &mut Vec<RedactionSecret>,
+    value: &str,
+    bounded: bool,
+    ascii_case_insensitive: bool,
+) {
+    if value.is_empty() || redaction_is_fail_closed(secrets) {
+        return;
+    }
+    let total_bytes = secrets.iter().fold(0usize, |total, secret| {
+        total.saturating_add(secret.value.len())
+    });
+    if secrets.len() >= MAX_REDACTION_SECRETS
+        || total_bytes.saturating_add(value.len()) > MAX_REDACTION_SECRET_BYTES
+    {
+        mark_redaction_fail_closed(secrets);
+        return;
+    }
+    secrets.push(RedactionSecret {
+        value: value.to_string(),
+        bounded,
+        ascii_case_insensitive,
+        fail_closed: false,
+    });
+}
+
+fn redaction_is_fail_closed(secrets: &[RedactionSecret]) -> bool {
+    secrets.iter().any(|secret| secret.fail_closed)
+}
+
+fn mark_redaction_fail_closed(secrets: &mut Vec<RedactionSecret>) {
+    secrets.clear();
+    secrets.push(RedactionSecret {
+        value: String::new(),
+        bounded: false,
+        ascii_case_insensitive: false,
+        fail_closed: true,
+    });
+}
+
+fn push_url_redaction_secret(secrets: &mut Vec<RedactionSecret>, value: &str, bounded: bool) {
+    if bounded {
+        push_bounded_redaction_secret(secrets, value);
+    } else {
+        push_redaction_secret(secrets, value);
+    }
+    if redaction_is_fail_closed(secrets) {
+        return;
+    }
+    let mut decoded = value.to_string();
+    for _ in 0..MAX_SECRET_PERCENT_DECODE_DEPTH {
+        let next = percent_decode_str(&decoded)
+            .decode_utf8_lossy()
+            .into_owned();
+        if next == decoded {
+            break;
+        }
+        if bounded {
+            push_bounded_redaction_secret(secrets, &next);
+        } else {
+            push_redaction_secret(secrets, &next);
+        }
+        decoded = next;
+    }
+    let next = percent_decode_str(&decoded)
+        .decode_utf8_lossy()
+        .into_owned();
+    if next != decoded {
+        mark_redaction_fail_closed(secrets);
+    }
+}
+
+fn redact_text(value: &str, secrets: &[RedactionSecret]) -> String {
+    if redaction_is_fail_closed(secrets) {
+        return "***".to_string();
+    }
+    let mut result = value.to_string();
+    let mut unique_secrets = HashMap::<String, RedactionSecret>::with_capacity(secrets.len());
+    for secret in secrets.iter().cloned() {
+        unique_secrets
+            .entry(secret.value.clone())
+            .and_modify(|existing| {
+                existing.bounded &= secret.bounded;
+                existing.ascii_case_insensitive |= secret.ascii_case_insensitive;
+            })
+            .or_insert(secret);
+    }
+    let mut unique_secrets = unique_secrets.into_values().collect::<Vec<_>>();
+    unique_secrets.sort_by_key(|secret| std::cmp::Reverse(secret.value.len()));
+    for secret in unique_secrets {
+        let bounded = secret.bounded || secret.value.chars().count() < 4;
+        result = if secret.ascii_case_insensitive {
+            redact_ascii_case_insensitive_secret(&result, &secret.value, bounded)
+        } else if bounded {
+            redact_bounded_secret(&result, &secret.value)
+        } else {
+            result.replace(&secret.value, "***")
+        };
+        result = redact_percent_encoded_secret(
+            &result,
+            &secret.value,
+            bounded,
+            secret.ascii_case_insensitive,
+        );
+    }
+    result
+}
+
+fn redact_ascii_case_insensitive_secret(value: &str, secret: &str, bounded: bool) -> String {
+    let folded_value = value.to_ascii_lowercase();
+    let folded_secret = secret.to_ascii_lowercase();
+    let spans = folded_value
+        .match_indices(&folded_secret)
+        .filter_map(|(start, _)| {
+            let end = start + secret.len();
+            if bounded && !has_ascii_token_boundaries(value.as_bytes(), start, end) {
+                return None;
+            }
+            Some((start, end))
+        })
+        .collect::<Vec<_>>();
+    replace_byte_spans(value, &spans)
+}
+
+fn redact_percent_encoded_secret(
+    value: &str,
+    secret: &str,
+    bounded: bool,
+    ascii_case_insensitive: bool,
+) -> String {
+    let mut result = value.to_string();
+    for _ in 0..MAX_SECRET_REDACTION_PASSES {
+        let scan = percent_encoded_secret_spans(
+            &result,
+            secret.as_bytes(),
+            bounded,
+            ascii_case_insensitive,
+        );
+        if scan.depth_exhausted {
+            return "***".to_string();
+        }
+        if scan.spans.is_empty() {
+            break;
+        }
+        result = replace_byte_spans(&result, &scan.spans);
+    }
+    let remaining =
+        percent_encoded_secret_spans(&result, secret.as_bytes(), bounded, ascii_case_insensitive);
+    if remaining.depth_exhausted || !remaining.spans.is_empty() {
+        "***".to_string()
+    } else {
+        result
+    }
+}
+
+struct PercentEncodedSecretScan {
+    spans: Vec<(usize, usize)>,
+    depth_exhausted: bool,
+}
+
+fn percent_encoded_secret_spans(
+    value: &str,
+    secret: &[u8],
+    bounded: bool,
+    ascii_case_insensitive: bool,
+) -> PercentEncodedSecretScan {
+    if secret.is_empty() {
+        return PercentEncodedSecretScan {
+            spans: Vec::new(),
+            depth_exhausted: false,
+        };
+    }
+    let mut decoded = value.as_bytes().to_vec();
+    let mut origins = (0..decoded.len())
+        .map(|index| (index, index + 1))
+        .collect::<Vec<_>>();
+    for _ in 0..MAX_SECRET_PERCENT_DECODE_DEPTH {
+        let (next, next_origins, changed) = percent_decode_bytes_with_origins(&decoded, &origins);
+        if !changed {
+            return PercentEncodedSecretScan {
+                spans: Vec::new(),
+                depth_exhausted: false,
+            };
+        }
+        decoded = next;
+        origins = next_origins;
+        let mut spans = Vec::new();
+        let mut cursor = 0;
+        while cursor + secret.len() <= decoded.len() {
+            let candidate = &decoded[cursor..cursor + secret.len()];
+            let matches = if ascii_case_insensitive {
+                candidate.eq_ignore_ascii_case(secret)
+            } else {
+                candidate == secret
+            };
+            if matches
+                && (!bounded || has_ascii_token_boundaries(&decoded, cursor, cursor + secret.len()))
+            {
+                spans.push((origins[cursor].0, origins[cursor + secret.len() - 1].1));
+                cursor += secret.len();
+            } else {
+                cursor += 1;
+            }
+        }
+        if !spans.is_empty() {
+            spans.sort_unstable();
+            spans.dedup();
+            return PercentEncodedSecretScan {
+                spans,
+                depth_exhausted: false,
+            };
+        }
+    }
+    let (_, _, depth_exhausted) = percent_decode_bytes_with_origins(&decoded, &origins);
+    PercentEncodedSecretScan {
+        spans: Vec::new(),
+        depth_exhausted,
+    }
+}
+
+fn percent_decode_bytes_with_origins(
+    value: &[u8],
+    origins: &[(usize, usize)],
+) -> (Vec<u8>, Vec<(usize, usize)>, bool) {
+    let mut decoded = Vec::with_capacity(value.len());
+    let mut decoded_origins = Vec::with_capacity(origins.len());
+    let mut cursor = 0;
+    let mut changed = false;
+    while cursor < value.len() {
+        let decoded_byte = if cursor + 2 < value.len() && value[cursor] == b'%' {
+            match (hex_value(value[cursor + 1]), hex_value(value[cursor + 2])) {
+                (Some(high), Some(low)) => Some((high << 4) | low),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(decoded_byte) = decoded_byte {
+            decoded.push(decoded_byte);
+            decoded_origins.push((origins[cursor].0, origins[cursor + 2].1));
+            cursor += 3;
+            changed = true;
+        } else {
+            decoded.push(value[cursor]);
+            decoded_origins.push(origins[cursor]);
+            cursor += 1;
+        }
+    }
+    (decoded, decoded_origins, changed)
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn has_ascii_token_boundaries(value: &[u8], start: usize, end: usize) -> bool {
+    let before_is_token = start > 0 && is_secret_token_byte(value[start - 1]);
+    let after_is_token = end < value.len() && is_secret_token_byte(value[end]);
+    !before_is_token && !after_is_token
+}
+
+fn is_secret_token_byte(value: u8) -> bool {
+    value.is_ascii_alphanumeric() || matches!(value, b'_' | b'-')
+}
+
+fn replace_byte_spans(value: &str, spans: &[(usize, usize)]) -> String {
+    if spans.is_empty() {
+        return value.to_string();
+    }
+    let mut redacted = value.to_string();
+    for &(start, end) in spans.iter().rev() {
+        if redacted.is_char_boundary(start) && redacted.is_char_boundary(end) {
+            redacted.replace_range(start..end, "***");
+        }
+    }
+    redacted
+}
+
+fn redact_bounded_secret(value: &str, secret: &str) -> String {
+    let mut redacted = String::with_capacity(value.len());
+    let mut cursor = 0;
+    let mut changed = false;
+    for (start, _) in value.match_indices(secret) {
+        if start < cursor {
+            continue;
+        }
+        let end = start + secret.len();
+        let before_is_token = value[..start]
+            .chars()
+            .next_back()
+            .is_some_and(is_secret_token_char);
+        let after_is_token = value[end..]
+            .chars()
+            .next()
+            .is_some_and(is_secret_token_char);
+        if before_is_token || after_is_token {
+            continue;
+        }
+        redacted.push_str(&value[cursor..start]);
+        redacted.push_str("***");
+        cursor = end;
+        changed = true;
+    }
+    if !changed {
+        return value.to_string();
+    }
+    redacted.push_str(&value[cursor..]);
+    redacted
+}
+
+fn is_secret_token_char(value: char) -> bool {
+    value.is_ascii_alphanumeric() || matches!(value, '_' | '-')
+}
+
+fn redact_response_for_config(value: Value, config: Option<&LlmConfig>) -> Value {
+    let secrets = config
+        .map(model_config_sensitive_values)
+        .unwrap_or_default();
+    redact_json_strings(value, &secrets)
+}
+
+fn redact_json_strings(value: Value, secrets: &[RedactionSecret]) -> Value {
+    match value {
+        Value::String(value) => Value::String(redact_text(&value, secrets)),
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .map(|item| redact_json_strings(item, secrets))
+                .collect(),
+        ),
+        Value::Object(items) => Value::Object(
+            items
+                .into_iter()
+                .map(|(key, item)| (key, redact_json_strings(item, secrets)))
+                .collect(),
+        ),
+        value => value,
+    }
+}
+
+pub(crate) fn redact_persisted_response(response: &Value, llm_value: Option<&Value>) -> Value {
+    let config = resolve_llm_config(llm_value);
+    redact_response_for_config(response.clone(), config.as_ref())
+}
+
+fn format_reqwest_error(context: &str, error: reqwest::Error) -> String {
+    format!("{context}: {}", error.without_url())
 }
 
 pub(crate) async fn call_model(
@@ -438,10 +954,11 @@ async fn call_model_with_config(
     };
     validate_llm_config(&config)?;
     let client = build_http_client_with_proxy(
-        config
-            .custom_user_agent
-            .as_deref()
-            .unwrap_or("Mozilla/5.0 GuXuanYou/0.4 agent-harness"),
+        config.custom_user_agent.as_deref().unwrap_or(concat!(
+            "Mozilla/5.0 GuXuanYou/",
+            env!("CARGO_PKG_VERSION"),
+            " agent-harness"
+        )),
         Duration::from_secs(config.timeout_seconds),
         None,
     )
@@ -644,7 +1161,7 @@ async fn post_model_request(
     let response = builder
         .send()
         .await
-        .map_err(|error| format!("Agent LLM request failed: {error}"))?;
+        .map_err(|error| format_reqwest_error("Agent LLM request failed", error))?;
     let status = response.status();
     if response
         .content_length()
@@ -655,7 +1172,8 @@ async fn post_model_request(
     let mut body = Vec::new();
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| format!("read Agent LLM response failed: {error}"))?;
+        let chunk =
+            chunk.map_err(|error| format_reqwest_error("read Agent LLM response failed", error))?;
         if body.len().saturating_add(chunk.len()) > MAX_MODEL_RESPONSE_BYTES {
             return Err("Agent LLM response exceeds 2 MiB".to_string());
         }
@@ -1215,6 +1733,18 @@ mod harness_validation_tests {
         }
     }
 
+    async fn unresponsive_loopback_full_url() -> (tokio::net::TcpListener, String) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a loopback port should be available");
+        let address = listener
+            .local_addr()
+            .expect("the loopback listener should have an address");
+        let url =
+            format!("http://{address}/v1/chat?replay_token_key=replay-secret#fragment-secret");
+        (listener, url)
+    }
+
     #[test]
     fn validates_agent_payload_before_persistence() {
         let oversized = json!({
@@ -1238,6 +1768,321 @@ mod harness_validation_tests {
         .expect("an explicit model config should resolve");
         assert_eq!(config.base_url, "https://api.openai.com/v1");
         assert_eq!(config.model, "gpt-4o-mini");
+    }
+
+    #[test]
+    fn strips_full_url_from_transport_errors_at_request_and_call_boundaries() {
+        tauri::async_runtime::block_on(async {
+            let (_listener, full_url) = unresponsive_loopback_full_url().await;
+            let mut config = llm_config(&full_url);
+            config.endpoint_mode = "full_url".to_string();
+            config.json_mode = false;
+            config.timeout_seconds = 1;
+            let client = build_http_client_with_proxy(
+                "GuXuanYou agent harness test",
+                Duration::from_secs(1),
+                None,
+            )
+            .expect("the test HTTP client should build");
+
+            let request_error =
+                post_model_request(&client, &config, &json!({"model": "test-model"}))
+                    .await
+                    .expect_err("the released loopback port should reject the request");
+            let call_error = call_model(
+                Some(&json!({
+                    "api_key": "api-key-secret",
+                    "base_url": full_url,
+                    "model": "test-model",
+                    "api_format": "openai_chat",
+                    "endpoint_mode": "full_url",
+                    "json_mode": false,
+                    "timeout_seconds": 1
+                })),
+                &json!({}),
+            )
+            .await
+            .expect_err("the model call should preserve the transport failure");
+
+            for error in [&request_error, &call_error] {
+                assert!(error.contains("Agent LLM request failed"), "{error}");
+                for secret in [
+                    "replay-secret",
+                    "replay_token_key",
+                    "fragment-secret",
+                    full_url.as_str(),
+                ] {
+                    assert!(!error.contains(secret), "leaked {secret:?} in {error:?}");
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn redacts_api_key_and_structured_full_url_secrets_defensively() {
+        let mut config = llm_config(
+            "https://url-user:url-pass@example.test/v1/%74enant-secret/chat?replay_token_key=query-secret#fragment-secret",
+        );
+        config.api_key = "api-key-secret".to_string();
+        config.endpoint_mode = "full_url".to_string();
+        config.organization = Some("organization-secret".to_string());
+        config.project = Some("project-secret".to_string());
+        let error = format!(
+            "request failed for {}; key api-key-secret; organization organization-secret; project project-secret; components url-user url-pass tenant-secret query-secret fragment-secret; 路径tenant-secret无效",
+            config.base_url
+        );
+
+        let redacted = redact_model_error(&error, Some(&config));
+
+        assert!(redacted.contains("request failed"));
+        for secret in [
+            "api-key-secret",
+            config.base_url.as_str(),
+            "url-user",
+            "url-pass",
+            "tenant-secret",
+            "replay_token_key",
+            "query-secret",
+            "fragment-secret",
+            "organization-secret",
+            "project-secret",
+        ] {
+            assert!(
+                !redacted.contains(secret),
+                "leaked {secret:?} in {redacted:?}"
+            );
+        }
+        assert!(redacted.contains("路径***无效"));
+    }
+
+    #[test]
+    fn fallback_warning_does_not_expose_model_configuration_secrets() {
+        let mut config = llm_config(
+            "https://example.test/v1/path-secret?replay_token_key=query-secret#fragment-secret",
+        );
+        config.api_key = "api-key-secret".to_string();
+        config.endpoint_mode = "full_url".to_string();
+        config.organization = Some("organization-secret".to_string());
+        config.project = Some("project-secret".to_string());
+        let raw_error = format!(
+            "Agent LLM request failed for {} with api-key-secret, organization organization-secret, and project project-secret",
+            config.base_url
+        );
+        let response = fallback_response(
+            json!({"warnings": []}),
+            "value_compounder_v1",
+            Some("test-model"),
+            Some(model_failure_warning(&raw_error, Some(&config))),
+        );
+        let warnings = response["warnings"].to_string();
+
+        assert!(warnings.contains("模型调用失败"));
+        for secret in [
+            "api-key-secret",
+            config.base_url.as_str(),
+            "replay_token_key",
+            "query-secret",
+            "fragment-secret",
+            "organization-secret",
+            "project-secret",
+        ] {
+            assert!(
+                !warnings.contains(secret),
+                "leaked {secret:?} in {warnings:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn redacts_configuration_values_from_successful_model_output_before_persistence() {
+        let mut config = llm_config(
+            "https://example.test/v1/path-secret/chat?replay_token_key=query-secret#fragment-secret",
+        );
+        config.api_key = "api-key-secret".to_string();
+        config.organization = Some("organization-secret".to_string());
+        config.project = Some("project-secret".to_string());
+        config.custom_user_agent = Some("user-agent-secret".to_string());
+        let result = redact_response_for_config(
+            json!({
+                "reply": "api-key-secret query-secret replay_token_key path-secret user-agent-secret",
+                "answer_sections": [{"bullets": ["organization-secret project-secret"]}],
+                "warnings": ["https://example.test/v1/path-secret/chat?replay_token_key=query-secret#fragment-secret"]
+            }),
+            Some(&config),
+        );
+        let serialized = result.to_string();
+
+        for secret in [
+            "api-key-secret",
+            "replay_token_key",
+            "query-secret",
+            "fragment-secret",
+            "path-secret",
+            "organization-secret",
+            "project-secret",
+            "user-agent-secret",
+        ] {
+            assert!(
+                !serialized.contains(secret),
+                "leaked {secret:?} in {serialized:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn redacts_percent_encoded_secret_variants_from_model_output() {
+        let config = llm_config("https://example.test/v1?token=abc-def");
+        let result = redact_response_for_config(
+            json!({
+                "reply": "abc%2Ddef abc%2ddef abc%252Ddef abc%25252Ddef abc%2525252Ddef",
+                "warnings": ["prefix-abc%2Ddef-suffix"]
+            }),
+            Some(&config),
+        );
+        let serialized = result.to_string();
+
+        for encoded_secret in [
+            "abc%2Ddef",
+            "abc%2ddef",
+            "abc%252Ddef",
+            "abc%25252Ddef",
+            "abc%2525252Ddef",
+        ] {
+            assert!(
+                !serialized.contains(encoded_secret),
+                "leaked {encoded_secret:?} in {serialized:?}"
+            );
+        }
+        assert!(serialized.contains("prefix-***-suffix"));
+    }
+
+    #[test]
+    fn redacts_raw_and_percent_encoded_plus_in_query_secrets() {
+        let config = llm_config("https://example.test/v1?token=abc+def");
+        let result = redact_response_for_config(
+            json!({"reply": "abc+def abc%2Bdef abc%2bdef abc def"}),
+            Some(&config),
+        );
+        let serialized = result.to_string();
+
+        for secret in ["abc+def", "abc%2Bdef", "abc%2bdef", "abc def"] {
+            assert!(
+                !serialized.contains(secret),
+                "leaked {secret:?} in {serialized:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn redacts_plaintext_from_deeply_encoded_configuration_secrets() {
+        let config = llm_config("https://example.test/v1?token=abc%2525252Ddef");
+        let result =
+            redact_response_for_config(json!({"reply": "provider echoed abc-def"}), Some(&config));
+
+        assert_eq!(result["reply"], "provider echoed ***");
+    }
+
+    #[test]
+    fn fails_closed_when_configuration_encoding_exceeds_the_decode_budget() {
+        let mut encoded_secret = "abc%2Ddef".to_string();
+        for _ in 0..MAX_SECRET_PERCENT_DECODE_DEPTH {
+            encoded_secret = encoded_secret.replace('%', "%25");
+        }
+        let config = llm_config(&format!("https://example.test/v1?token={encoded_secret}"));
+        let result = redact_response_for_config(
+            json!({"reply": "otherwise harmless model output"}),
+            Some(&config),
+        );
+
+        assert_eq!(result["reply"], "***");
+    }
+
+    #[test]
+    fn fails_closed_when_query_secrets_exceed_the_collection_budget() {
+        let query = (0..MAX_REDACTION_SECRETS)
+            .map(|index| format!("key-{index}=value-{index}"))
+            .collect::<Vec<_>>()
+            .join("&");
+        let config = llm_config(&format!("https://example.test/v1?{query}"));
+        let secrets = model_config_sensitive_values(&config);
+        let result = redact_response_for_config(
+            json!({"reply": "otherwise harmless model output"}),
+            Some(&config),
+        );
+
+        assert_eq!(secrets.len(), 1);
+        assert!(secrets[0].fail_closed);
+        assert_eq!(result["reply"], "***");
+    }
+
+    #[test]
+    fn fails_closed_when_percent_encoding_exceeds_the_redaction_budget() {
+        let config = llm_config("https://example.test/v1?token=abc-def");
+        let mut encoded_secret = "abc%2Ddef".to_string();
+        for _ in 0..MAX_SECRET_PERCENT_DECODE_DEPTH {
+            encoded_secret = encoded_secret.replace('%', "%25");
+        }
+        let result = redact_response_for_config(
+            json!({"reply": format!("prefix {encoded_secret} suffix")}),
+            Some(&config),
+        );
+
+        assert_eq!(result["reply"], "***");
+    }
+
+    #[test]
+    fn redacts_private_hosts_case_insensitively() {
+        let config = llm_config("https://model.internal/v1");
+        let result = redact_response_for_config(
+            json!({"reply": "MODEL.INTERNAL and MoDeL.InTeRnAl are private"}),
+            Some(&config),
+        );
+        let serialized = result.to_string().to_ascii_lowercase();
+
+        assert!(!serialized.contains("model.internal"), "{serialized}");
+        assert!(
+            serialized.contains("*** and *** are private"),
+            "{serialized}"
+        );
+    }
+
+    #[test]
+    fn redacts_low_entropy_values_only_at_token_boundaries() {
+        let mut config = llm_config("https://example.test/v1");
+        config.api_key = "x".to_string();
+        config.organization = Some("a".to_string());
+        config.project = Some("b".to_string());
+        config.custom_user_agent = Some("ua".to_string());
+        let result = redact_response_for_config(
+            json!({"reply": "analysis x a b ua xylophone remains readable; 前x后"}),
+            Some(&config),
+        );
+
+        assert_eq!(
+            result["reply"],
+            "analysis *** *** *** *** xylophone remains readable; 前***后"
+        );
+    }
+
+    #[test]
+    fn keeps_public_url_components_that_are_not_configuration_secrets() {
+        for base_url in [
+            "https://api.openai.com/v1/chat/completions",
+            "https://api.openai.com/%76%31/chat/completions",
+        ] {
+            let config = llm_config(base_url);
+            let result = redact_response_for_config(
+                json!({
+                    "reply": "Latest comparison cites https://api.openai.com/docs and https://evidence.com/v1/chat/completions."
+                }),
+                Some(&config),
+            );
+
+            assert_eq!(
+                result["reply"],
+                "Latest comparison cites https://api.openai.com/docs and https://evidence.com/v1/chat/completions."
+            );
+        }
     }
 
     #[test]

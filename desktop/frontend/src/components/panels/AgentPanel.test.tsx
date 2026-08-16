@@ -105,7 +105,7 @@ describe("sanitizeAgentConversations", () => {
     ]);
   });
 
-  it("omits blank and overlong run IDs but retains exactly 256 characters", () => {
+  it("omits blank and overlong UTF-8 run IDs but retains exactly 256 bytes", () => {
     const exactRunId = "x".repeat(256);
     const sanitized = sanitizeAgentConversations([{
       id: "conversation-3",
@@ -115,6 +115,7 @@ describe("sanitizeAgentConversations", () => {
         { role: "assistant", content: "blank", timestamp: 1, runId: "   " },
         { role: "assistant", content: "overlong", timestamp: 2, runId: "x".repeat(257) },
         { role: "assistant", content: "exact", timestamp: 3, runId: exactRunId },
+        { role: "assistant", content: "multibyte", timestamp: 4, runId: "中".repeat(100) },
       ],
       createdAt: 1,
       updatedAt: 3,
@@ -123,6 +124,21 @@ describe("sanitizeAgentConversations", () => {
     expect(sanitized[0].messages[0]).not.toHaveProperty("runId");
     expect(sanitized[0].messages[1]).not.toHaveProperty("runId");
     expect(sanitized[0].messages[2]).toHaveProperty("runId", exactRunId);
+    expect(sanitized[0].messages[3]).not.toHaveProperty("runId");
+  });
+
+  it("replaces restored conversation IDs outside the UTF-8 boundary", () => {
+    const sanitized = sanitizeAgentConversations([{
+      id: "中".repeat(100),
+      title: "history",
+      mode: "quick",
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1,
+    }]);
+
+    expect(new TextEncoder().encode(sanitized[0].id).byteLength).toBeLessThanOrEqual(256);
+    expect(sanitized[0].id).not.toBe("中".repeat(100));
   });
 });
 

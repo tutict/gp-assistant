@@ -1,3 +1,4 @@
+import { Component, type ReactNode } from "react";
 import type { AgentResult, BacktestResult, NewsRagResult, ObserveResult, StockRowView, WatchlistItem } from "../../types";
 import { actionResultKind, normalizeScreenRows } from "../../lib/contracts";
 import { agentHarnessExecutionLabel, agentHarnessLabel, MAX_AGENT_EVIDENCE_ITEMS } from "../../lib/agent";
@@ -7,32 +8,75 @@ import { BacktestResultView } from "./BacktestPanel";
 import { NewsRagView } from "./NewsRagPanel";
 import { ObserveResultView } from "./ObservePanel";
 
+export const AGENT_RESULT_UNAVAILABLE_TEXT = "结果不可用";
+
+interface ResultRenderBoundaryState {
+  failed: boolean;
+  result: AgentResult;
+}
+
+class ResultRenderBoundary extends Component<{
+  children: ReactNode;
+  result: AgentResult;
+}, ResultRenderBoundaryState> {
+  state: ResultRenderBoundaryState = { failed: false, result: this.props.result };
+
+  static getDerivedStateFromError(): Partial<ResultRenderBoundaryState> {
+    return { failed: true };
+  }
+
+  static getDerivedStateFromProps(
+    props: { result: AgentResult },
+    state: ResultRenderBoundaryState,
+  ): Partial<ResultRenderBoundaryState> | null {
+    return props.result === state.result ? null : { failed: false, result: props.result };
+  }
+
+  render() {
+    return this.state.failed
+      ? <p role="status">{AGENT_RESULT_UNAVAILABLE_TEXT}</p>
+      : this.props.children;
+  }
+}
+
 export function AgentResultView({ result, watchlist, onToggleWatchlist }: {
+  result: AgentResult;
+  watchlist: WatchlistItem[];
+  onToggleWatchlist: (item: StockRowView) => void;
+}) {
+  return (
+    <div className="agent-result-stack">
+      <ResultRenderBoundary result={result}>
+        <AgentStructuredResult result={result} />
+      </ResultRenderBoundary>
+      <ResultRenderBoundary result={result}>
+        <AgentDomainResult
+          result={result}
+          watchlist={watchlist}
+          onToggleWatchlist={onToggleWatchlist}
+        />
+      </ResultRenderBoundary>
+    </div>
+  );
+}
+
+function AgentDomainResult({ result, watchlist, onToggleWatchlist }: {
   result: AgentResult;
   watchlist: WatchlistItem[];
   onToggleWatchlist: (item: StockRowView) => void;
 }) {
   const kind = actionResultKind(result);
   const nested = agentNestedResult(result, kind);
-  const legacyView = (() => {
-    if (kind === "backtest") return <BacktestResultView result={nested as unknown as BacktestResult} />;
-    if (["screen", "sector", "graph", "trend"].includes(kind)) {
-      const rows = normalizeScreenRows(nested) as StockRowView[];
-      return rows.length
-        ? <StockList items={rows} watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} />
-        : <GenericAgentResult result={nested || result} />;
-    }
-    if (kind === "news") return <NewsRagView result={nested as unknown as NewsRagResult} />;
-    if (kind === "observe") return <ObserveResultView result={nested as unknown as ObserveResult} />;
-    return <GenericAgentResult result={result} />;
-  })();
-
-  return (
-    <div className="agent-result-stack">
-      <AgentStructuredResult result={result} />
-      {legacyView}
-    </div>
-  );
+  if (kind === "backtest") return <BacktestResultView result={nested as unknown as BacktestResult} />;
+  if (["screen", "sector", "graph", "trend"].includes(kind)) {
+    const rows = normalizeScreenRows(nested) as StockRowView[];
+    return rows.length
+      ? <StockList items={rows} watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} />
+      : <GenericAgentResult result={nested || result} />;
+  }
+  if (kind === "news") return <NewsRagView result={nested as unknown as NewsRagResult} />;
+  if (kind === "observe") return <ObserveResultView result={nested as unknown as ObserveResult} />;
+  return <GenericAgentResult result={result} />;
 }
 
 function AgentStructuredResult({ result }: { result: AgentResult }) {

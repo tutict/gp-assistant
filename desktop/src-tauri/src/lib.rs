@@ -2202,25 +2202,20 @@ fn api_upstream_rag_transfer_start(app: tauri::AppHandle, payload: Value) -> Res
 #[tauri::command]
 async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
     let mut payload = payload;
-    if payload
+    let fields = payload
+        .as_object_mut()
+        .ok_or_else(|| "Agent payload must be an object".to_string())?;
+    let run_id = fields
         .get("run_id")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .is_none()
-    {
-        payload["run_id"] = Value::String(format!(
-            "gp-agent-run-{}",
-            agent_ledger::current_epoch_millis()
-        ));
-    }
+        .map(str::to_string)
+        .unwrap_or_else(agent_ledger::next_run_id);
+    fields.insert("run_id".to_string(), Value::String(run_id.clone()));
     agent_harness::validate_payload(&payload)?;
-    let run_id = payload
-        .get("run_id")
-        .and_then(Value::as_str)
-        .unwrap_or("gp-agent-run")
-        .to_string();
     let started_at_epoch_ms = agent_ledger::current_epoch_millis();
+    let ledger_llm = payload.get("llm").cloned();
     let ledger_payload = payload.clone();
     let start_app = app.clone();
     let ledger_started = match runtime::run_io_bound("agent_run_start", move || {
@@ -2232,6 +2227,9 @@ async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value
     .and_then(|result| result)
     {
         Ok(()) => true,
+        Err(error) if agent_ledger::is_conversation_deleted_error(&error) => {
+            return Err(error);
+        }
         Err(error) => {
             eprintln!("agent run ledger start failed; continuing without persistence: {error}");
             false
@@ -2244,8 +2242,10 @@ async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value
     let execution = match cached_market_data(&app) {
         Ok(data) => {
             agent_harness::execute_with_event_sink(payload, data, move |event| {
-                if let Ok(mut captured) = sink_events.lock() {
-                    captured.push(event.clone());
+                if event.get("type").and_then(Value::as_str) != Some("result") {
+                    if let Ok(mut captured) = sink_events.lock() {
+                        captured.push(event.clone());
+                    }
                 }
                 let _ = event_app.emit("agent-stream-event", event);
             })
@@ -2262,7 +2262,8 @@ async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value
             if ledger_started {
                 let ledger_app = app.clone();
                 let ledger_events = captured_events;
-                let ledger_response = response.clone();
+                let ledger_response =
+                    agent_harness::redact_persisted_response(&response, ledger_llm.as_ref());
                 let completion = runtime::run_io_bound("agent_run_complete", move || {
                     agent_ledger::with_app_store(&ledger_app, |store| {
                         store.complete_run(
@@ -2320,6 +2321,15 @@ async fn api_agent_run_list(app: tauri::AppHandle, payload: Value) -> Result<Val
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
+    if conversation_id
+        .as_ref()
+        .is_some_and(|value| value.len() > agent_ledger::MAX_AGENT_LEDGER_ID_BYTES)
+    {
+        return Err(format!(
+            "conversation_id exceeds {} bytes",
+            agent_ledger::MAX_AGENT_LEDGER_ID_BYTES
+        ));
+    }
     runtime::run_io_bound("api_agent_run_list", move || {
         agent_ledger::with_app_store(&app, |store| {
             let runs = store.list_runs(limit, conversation_id.as_deref())?;
@@ -2327,6 +2337,16 @@ async fn api_agent_run_list(app: tauri::AppHandle, payload: Value) -> Result<Val
         })
     })
     .await?
+}
+
+fn agent_run_detail_response(run: Option<Value>) -> Value {
+    let run = run.map(|mut record| {
+        if let Some(object) = record.as_object_mut() {
+            object.remove("request");
+        }
+        record
+    });
+    json!({"run": run})
 }
 
 #[tauri::command]
@@ -2338,10 +2358,72 @@ async fn api_agent_run_get(app: tauri::AppHandle, payload: Value) -> Result<Valu
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "run_id is required".to_string())?
         .to_string();
+    if run_id.len() > agent_ledger::MAX_AGENT_LEDGER_ID_BYTES {
+        return Err(format!(
+            "run_id exceeds {} bytes",
+            agent_ledger::MAX_AGENT_LEDGER_ID_BYTES
+        ));
+    }
     runtime::run_io_bound("api_agent_run_get", move || {
-        agent_ledger::with_app_store(&app, |store| Ok(json!({"run": store.get_run(&run_id)?})))
+        agent_ledger::with_app_store(&app, |store| {
+            Ok(agent_run_detail_response(store.get_run(&run_id)?))
+        })
     })
     .await?
+}
+
+#[tauri::command]
+async fn api_agent_run_delete_conversation(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    let conversation_id = payload
+        .get("conversation_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "conversation_id is required".to_string())?
+        .to_string();
+    if conversation_id.len() > agent_ledger::MAX_AGENT_LEDGER_ID_BYTES {
+        return Err(format!(
+            "conversation_id exceeds {} bytes",
+            agent_ledger::MAX_AGENT_LEDGER_ID_BYTES
+        ));
+    }
+    runtime::run_io_bound("api_agent_run_delete_conversation", move || {
+        agent_ledger::with_app_store(&app, |store| {
+            let deleted = store.delete_conversation_runs(&conversation_id)?;
+            Ok(json!({"deleted": deleted}))
+        })
+    })
+    .await?
+}
+
+#[cfg(test)]
+mod agent_run_api_tests {
+    use super::agent_run_detail_response;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn detail_response_removes_request_and_preserves_replay_fields() {
+        let response = agent_run_detail_response(Some(json!({
+            "run_id": "run-1",
+            "request": {"llm": {"base_url": "https://example.test"}},
+            "events": [{"type": "status", "stage": "tools"}],
+            "result": {"reply": "done"},
+            "status": "completed"
+        })));
+
+        assert!(response["run"].get("request").is_none());
+        assert_eq!(response["run"]["events"][0]["stage"], "tools");
+        assert_eq!(response["run"]["result"]["reply"], "done");
+        assert_eq!(response["run"]["status"], "completed");
+    }
+
+    #[test]
+    fn detail_response_keeps_missing_run_as_null() {
+        assert_eq!(agent_run_detail_response(None)["run"], Value::Null);
+    }
 }
 #[tauri::command]
 async fn core_validate_data_source(payload: Value) -> Result<Value, String> {
@@ -10411,6 +10493,7 @@ pub fn run() {
             api_agent_stream,
             api_agent_run_list,
             api_agent_run_get,
+            api_agent_run_delete_conversation,
             api_llm_models,
             api_llm_test,
             core_validate_data_source,

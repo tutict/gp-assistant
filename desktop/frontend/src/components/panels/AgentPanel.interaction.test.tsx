@@ -7,6 +7,7 @@ const tauriMocks = vi.hoisted(() => ({
   getTauriInvoke: vi.fn(),
   getTauriListen: vi.fn(),
   isTauriRuntime: vi.fn(),
+  postJson: vi.fn(),
 }));
 
 const drawerMock = vi.hoisted(() => ({
@@ -28,7 +29,7 @@ vi.mock("./AgentRunDrawer", () => ({
   },
 }));
 
-import { AgentPanel } from "./AgentPanel";
+import { AgentPanel, resetAgentConversationDeletionCoordinatorForTests } from "./AgentPanel";
 
 interface StoredMessage {
   role: "user" | "assistant";
@@ -47,12 +48,14 @@ interface StoredConversation {
 }
 
 const storage = new Map<string, string>();
+const ledgerDeletionPrefix = "stock-optimizer-agent-failed-ledger-deletion:";
 const renderers = new Set<ReactTestRenderer>();
 const onLlmSettingsChange = vi.fn();
 const onWatchlistChange = vi.fn();
 const watchlist = [{ code: "000001.SZ", name: "平安银行" }];
 const unlistenMock = vi.fn();
 const invokeMock = vi.fn();
+const storageHandlers = new Set<(event: { key: string | null }) => void>();
 let streamHandler: ((event: unknown) => void) | undefined;
 
 const baseProps = {
@@ -111,6 +114,28 @@ function deferred<T>() {
   return { promise, reject: reject!, resolve: resolve! };
 }
 
+function localStorageDouble(shouldThrow?: (key: string) => boolean) {
+  return {
+    get length() {
+      return storage.size;
+    },
+    key: (index: number) => Array.from(storage.keys())[index] ?? null,
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      if (shouldThrow?.(key)) throw new Error("quota exceeded");
+      storage.set(key, value);
+    },
+    removeItem: (key: string) => storage.delete(key),
+  };
+}
+
+function storedLedgerDeletionIds() {
+  return Array.from(storage.keys())
+    .filter((key) => key.startsWith(ledgerDeletionPrefix) && storage.get(key) === "pending")
+    .map((key) => decodeURIComponent(key.slice(ledgerDeletionPrefix.length)))
+    .sort();
+}
+
 async function beginDeferredSend(renderer: ReactTestRenderer, request: Promise<unknown>) {
   invokeMock.mockReturnValueOnce(request);
   const textarea = renderer.root.findByType("textarea");
@@ -129,7 +154,9 @@ async function beginDeferredSend(renderer: ReactTestRenderer, request: Promise<u
 }
 
 beforeEach(() => {
+  resetAgentConversationDeletionCoordinatorForTests();
   storage.clear();
+  storageHandlers.clear();
   streamHandler = undefined;
   drawerMock.failure = false;
   drawerMock.props = undefined;
@@ -147,14 +174,18 @@ beforeEach(() => {
     return unlistenMock;
   }));
   tauriMocks.isTauriRuntime.mockReset().mockReturnValue(true);
+  tauriMocks.postJson.mockReset().mockResolvedValue({ deleted: 0 });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("crypto", { randomUUID: () => "run-generated" });
-  vi.stubGlobal("localStorage", {
-    getItem: (key: string) => storage.get(key) ?? null,
-    setItem: (key: string, value: string) => storage.set(key, value),
-  });
+  vi.stubGlobal("localStorage", localStorageDouble());
   vi.stubGlobal("window", {
     location: { href: "http://localhost/" },
+    addEventListener: (type: string, handler: (event: { key: string | null }) => void) => {
+      if (type === "storage") storageHandlers.add(handler);
+    },
+    removeEventListener: (type: string, handler: (event: { key: string | null }) => void) => {
+      if (type === "storage") storageHandlers.delete(handler);
+    },
     matchMedia: () => ({
       matches: false,
       addEventListener: vi.fn(),
@@ -266,6 +297,294 @@ describe("AgentPanel run replay interactions", () => {
       activeConversationId: "conversation-2",
       initialRunId: undefined,
       returnFocusElement: null,
+    });
+  });
+
+  it("removes local history immediately and invalidates replay after ledger cleanup", async () => {
+    seedConversations([
+      conversation("conversation-delete", "Delete me", [], 2),
+      conversation("conversation-keep", "Keep me", [], 1),
+    ]);
+    const cleanup = deferred<unknown>();
+    tauriMocks.postJson.mockReturnValueOnce(cleanup.promise);
+    const renderer = await renderPanel();
+    const removeButton = buttonsWithClass(renderer, "agent-history-remove")
+      .find((button) => nodeText(button.parent as ReactTestInstance).includes("Delete me"));
+    expect(removeButton).toBeDefined();
+
+    act(() => {
+      removeButton!.props.onClick({ stopPropagation: vi.fn() });
+    });
+
+    expect(tauriMocks.postJson).toHaveBeenCalledWith("/api/agent/runs/delete-conversation", {
+      conversation_id: "conversation-delete",
+    }, { timeoutMs: 10_000 });
+    expect(drawerMock.props?.ledgerRevision).toBe(0);
+    expect(JSON.parse(storage.get("stock-optimizer-agent-conversations") || "[]"))
+      .toEqual([expect.objectContaining({ id: "conversation-keep" })]);
+    expect(storedLedgerDeletionIds()).toEqual(["conversation-delete"]);
+
+    await act(async () => {
+      cleanup.resolve({ deleted: 1 });
+      await cleanup.promise;
+    });
+    expect(drawerMock.props?.ledgerRevision).toBe(1);
+    expect(storedLedgerDeletionIds()).toEqual([]);
+    expect(storage.get(`${ledgerDeletionPrefix}${encodeURIComponent("conversation-delete")}`))
+      .toBe("completed");
+  });
+
+  it("keeps normal deletion terminal state across unmount and remount", async () => {
+    seedConversations([
+      conversation("conversation-delete", "Delete me", [], 2),
+      conversation("conversation-keep", "Keep me", [], 1),
+    ]);
+    const cleanup = deferred<unknown>();
+    tauriMocks.postJson.mockReturnValueOnce(cleanup.promise);
+    const renderer = await renderPanel();
+
+    act(() => {
+      buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
+      renderer.unmount();
+      renderers.delete(renderer);
+    });
+    const remounted = await renderPanel();
+    expect(JSON.parse(storage.get("stock-optimizer-agent-conversations") || "[]"))
+      .toEqual([expect.objectContaining({ id: "conversation-keep" })]);
+    expect(storedLedgerDeletionIds()).toEqual(["conversation-delete"]);
+
+    await act(async () => {
+      cleanup.resolve({ deleted: 1 });
+      await cleanup.promise;
+    });
+
+    expect(JSON.parse(storage.get("stock-optimizer-agent-conversations") || "[]"))
+      .toEqual([expect.objectContaining({ id: "conversation-keep" })]);
+    expect(storedLedgerDeletionIds()).toEqual([]);
+    expect(nodeText(remounted.root)).not.toContain("Delete me");
+  });
+
+  it("does not touch the ledger when a durable deletion marker cannot be stored", async () => {
+    seedConversations([conversation("conversation-delete", "Delete me")]);
+    const renderer = await renderPanel();
+    vi.stubGlobal("localStorage", localStorageDouble((key) => key.startsWith(ledgerDeletionPrefix)));
+
+    act(() => {
+      buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
+    });
+
+    expect(JSON.parse(storage.get("stock-optimizer-agent-conversations") || "[]"))
+      .toEqual([expect.objectContaining({ id: "conversation-delete" })]);
+    expect(nodeText(renderer.root.findByProps({ role: "alert" }))).toContain("对话未删除");
+    expect(buttonsWithClass(renderer, "agent-history-remove")[0].props.disabled).toBe(false);
+
+    act(() => {
+      buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
+    });
+    expect(tauriMocks.postJson).not.toHaveBeenCalled();
+  });
+
+  it("recovers on retry after a one-time tombstone quota failure", async () => {
+    seedConversations([conversation("conversation-delete", "Delete me")]);
+    const cleanup = deferred<unknown>();
+    tauriMocks.postJson.mockReturnValueOnce(cleanup.promise);
+    const renderer = await renderPanel();
+    let tombstoneWrites = 0;
+    vi.stubGlobal("localStorage", localStorageDouble((key) => (
+      key.startsWith(ledgerDeletionPrefix) && tombstoneWrites++ === 0
+    )));
+
+    await act(async () => {
+      buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
+      await Promise.resolve();
+    });
+    expect(tauriMocks.postJson).not.toHaveBeenCalled();
+    expect(JSON.parse(storage.get("stock-optimizer-agent-conversations") || "[]"))
+      .toEqual([expect.objectContaining({ id: "conversation-delete" })]);
+
+    act(() => {
+      buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
+      renderer.unmount();
+      renderers.delete(renderer);
+    });
+    const remounted = await renderPanel();
+    expect(nodeText(remounted.root)).not.toContain("Delete me");
+    expect(tauriMocks.postJson).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      cleanup.resolve({ deleted: 1 });
+      await cleanup.promise;
+    });
+
+    expect(JSON.parse(storage.get("stock-optimizer-agent-conversations") || "[]"))
+      .not.toEqual([expect.objectContaining({ id: "conversation-delete" })]);
+    expect(remounted.root.findByType("textarea").props.disabled).toBe(false);
+  });
+
+  it("keeps the conversation when deletion preparation fails", async () => {
+    seedConversations([conversation("conversation-delete", "Delete me")]);
+    const renderer = await renderPanel();
+    vi.stubGlobal("localStorage", localStorageDouble((key) => key.startsWith(ledgerDeletionPrefix)));
+
+    await act(async () => {
+      buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
+      await Promise.resolve();
+    });
+
+    expect(JSON.parse(storage.get("stock-optimizer-agent-conversations") || "[]"))
+      .toEqual([expect.objectContaining({ id: "conversation-delete" })]);
+    expect(nodeText(renderer.root.findByProps({ role: "alert" }))).toContain("对话未删除");
+    expect(drawerMock.props?.ledgerRevision).toBe(0);
+    expect(tauriMocks.postJson).not.toHaveBeenCalled();
+  });
+
+  it("does not start concurrent ledger cleanup without durable tombstones", async () => {
+    seedConversations([
+      conversation("conversation-a", "Conversation A", [], 2),
+      conversation("conversation-b", "Conversation B", [], 1),
+    ]);
+    const renderer = await renderPanel();
+    vi.stubGlobal("localStorage", localStorageDouble((key) => key.startsWith(ledgerDeletionPrefix)));
+    const removeButtons = buttonsWithClass(renderer, "agent-history-remove");
+    const removeA = removeButtons.find((button) => nodeText(button.parent as ReactTestInstance).includes("Conversation A"));
+    const removeB = removeButtons.find((button) => nodeText(button.parent as ReactTestInstance).includes("Conversation B"));
+
+    act(() => {
+      removeA!.props.onClick({ stopPropagation: vi.fn() });
+      removeB!.props.onClick({ stopPropagation: vi.fn() });
+    });
+
+    expect(nodeText(renderer.root.findByProps({ role: "alert" }))).toContain("对话未删除");
+    expect(JSON.parse(storage.get("stock-optimizer-agent-conversations") || "[]"))
+      .toEqual([
+        expect.objectContaining({ id: "conversation-a" }),
+        expect.objectContaining({ id: "conversation-b" }),
+      ]);
+    expect(tauriMocks.postJson).not.toHaveBeenCalled();
+  });
+
+  it("keeps concurrent deletion tombstones independent", async () => {
+    seedConversations([
+      conversation("conversation-a", "Conversation A", [], 2),
+      conversation("conversation-b", "Conversation B", [], 1),
+    ]);
+    const cleanupA = deferred<unknown>();
+    const cleanupB = deferred<unknown>();
+    tauriMocks.postJson
+      .mockReturnValueOnce(cleanupA.promise)
+      .mockReturnValueOnce(cleanupB.promise);
+    const renderer = await renderPanel();
+    const removeButtons = buttonsWithClass(renderer, "agent-history-remove");
+    const removeA = removeButtons.find((button) => nodeText(button.parent as ReactTestInstance).includes("Conversation A"));
+    const removeB = removeButtons.find((button) => nodeText(button.parent as ReactTestInstance).includes("Conversation B"));
+
+    act(() => {
+      removeA!.props.onClick({ stopPropagation: vi.fn() });
+      removeB!.props.onClick({ stopPropagation: vi.fn() });
+    });
+    expect(storedLedgerDeletionIds()).toEqual(["conversation-a", "conversation-b"]);
+
+    await act(async () => {
+      cleanupA.reject(new Error("ledger unavailable"));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      cleanupB.resolve({ deleted: 1 });
+      await cleanupB.promise;
+    });
+
+    expect(storedLedgerDeletionIds()).toEqual(["conversation-a"]);
+    expect(nodeText(renderer.root.findByProps({ role: "alert" }))).toContain("1 个已删除对话");
+  });
+
+  it("applies a completed deletion marker from another browser context", async () => {
+    seedConversations([
+      conversation("conversation-a", "Conversation A", [], 2),
+      conversation("conversation-b", "Conversation B", [], 1),
+    ]);
+    const renderer = await renderPanel();
+    const tombstoneKey = `${ledgerDeletionPrefix}${encodeURIComponent("conversation-a")}`;
+    storage.set(tombstoneKey, "completed");
+    const textarea = renderer.root.findByType("textarea");
+    await act(async () => {
+      textarea.props.onChange({ target: { value: "must not run" } });
+    });
+    await act(async () => {
+      buttonWithClass(renderer, "send-btn").props.onClick();
+      await Promise.resolve();
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      for (const handler of storageHandlers) handler({ key: tombstoneKey });
+      await Promise.resolve();
+    });
+
+    expect(nodeText(renderer.root)).not.toContain("Conversation A");
+    expect(JSON.parse(storage.get("stock-optimizer-agent-conversations") || "[]"))
+      .toEqual([expect.objectContaining({ id: "conversation-b" })]);
+  });
+
+  it("keeps failed ledger cleanup retryable without blocking local conversation deletion", async () => {
+    seedConversations([conversation("conversation-delete", "Delete me")]);
+    tauriMocks.postJson
+      .mockRejectedValueOnce(new Error("ledger unavailable"))
+      .mockResolvedValueOnce({ deleted: 1 });
+    const renderer = await renderPanel();
+
+    await act(async () => {
+      buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
+      await Promise.resolve();
+    });
+
+    expect(JSON.parse(storage.get("stock-optimizer-agent-conversations") || "[]"))
+      .not.toEqual([expect.objectContaining({ id: "conversation-delete" })]);
+    expect(storedLedgerDeletionIds()).toEqual(["conversation-delete"]);
+    expect(nodeText(renderer.root.findByProps({ role: "alert" }))).toContain("运行记录仍待清理");
+    expect(drawerMock.props?.ledgerRevision).toBe(0);
+
+    await act(async () => {
+      renderer.root.findByProps({ "aria-label": "重试清理运行记录" }).props.onClick();
+      await Promise.resolve();
+    });
+
+    expect(tauriMocks.postJson).toHaveBeenCalledTimes(2);
+    expect(storedLedgerDeletionIds()).toEqual([]);
+    expect(drawerMock.props?.ledgerRevision).toBe(1);
+  });
+
+  it("uses the same best-effort ledger cleanup in browser mode", async () => {
+    tauriMocks.isTauriRuntime.mockReturnValue(false);
+    seedConversations([
+      conversation("conversation-delete", "Delete me", [], 2),
+      conversation("conversation-keep", "Keep me", [], 1),
+    ]);
+    const renderer = await renderPanel();
+
+    await act(async () => {
+      buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
+      await Promise.resolve();
+    });
+
+    expect(tauriMocks.postJson).toHaveBeenCalledWith("/api/agent/runs/delete-conversation", {
+      conversation_id: "conversation-delete",
+    }, { timeoutMs: 10_000 });
+    expect(JSON.parse(storage.get("stock-optimizer-agent-conversations") || "[]"))
+      .toEqual([expect.objectContaining({ id: "conversation-keep" })]);
+  });
+
+  it("disables conversation deletion while an Agent run is active", async () => {
+    seedConversations([conversation("conversation-running", "Running")]);
+    const request = deferred<unknown>();
+    const renderer = await renderPanel();
+    const { sendPromise } = await beginDeferredSend(renderer, request.promise);
+
+    expect(buttonsWithClass(renderer, "agent-history-remove")[0].props.disabled).toBe(true);
+    expect(tauriMocks.postJson).not.toHaveBeenCalled();
+
+    await act(async () => {
+      request.resolve(undefined);
+      await sendPromise;
     });
   });
 

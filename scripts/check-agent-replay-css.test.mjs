@@ -27,7 +27,6 @@ test("agent replay styles cover the actual drawer and replay controls", () => {
   assert.match(drawer, /grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)\s*;/);
   assert.match(pages, /\.agent-run-drawer-header\s*\{/);
   assert.match(pages, /\.agent-run-list\s*,\s*\.agent-run-detail\s*\{/);
-  assert.match(pages, /\.agent-run-status\.failed/);
   assert.match(pages, /\.agent-run-status\[data-status="failed"\]/);
   assert.match(pages, /\.agent-message-replay\s*\{/);
 });

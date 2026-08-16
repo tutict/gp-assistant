@@ -2833,6 +2833,17 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
   font-size: 11px;
 }
 
+.agent-cleanup-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-cleanup-retry {
+  flex: 0 0 auto;
+}
+
 .agent-input {
   grid-area: input;
   width: 100%;
@@ -3457,15 +3468,6 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
   box-shadow: -12px 0 28px rgba(0, 0, 0, 0.24);
   visibility: visible;
   transform: translateX(0);
-  transition:
-    transform var(--motion-standard) var(--ease-out),
-    visibility 0s linear var(--motion-standard);
-}
-
-.agent-run-drawer.open {
-  visibility: visible;
-  transform: translateX(0);
-  transition-delay: 0s;
 }
 
 .agent-run-drawer-header {
@@ -3556,8 +3558,7 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
   cursor: pointer;
 }
 
-.agent-run-scope-option[aria-pressed="true"],
-.agent-run-scope-option.active {
+.agent-run-scope-option[aria-pressed="true"] {
   border-color: color-mix(in srgb, var(--accent) 46%, var(--line));
   background: var(--accent-soft);
   color: var(--text);
@@ -3673,7 +3674,6 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
   color: var(--success);
 }
 
-.agent-run-status.failed,
 .agent-run-status[data-status="failed"],
 .agent-run-overview-status[data-status="failed"] {
   color: var(--error);
