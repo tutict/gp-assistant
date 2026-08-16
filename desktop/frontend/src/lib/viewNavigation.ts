@@ -1,4 +1,5 @@
 import type { AdaptiveScreenRequest } from "../types";
+import type { FilterCriteria } from "../components/FilterBar";
 
 export type BacktestSource = "criteria" | "watchlist";
 
@@ -6,6 +7,7 @@ export interface BacktestRouteRequest {
   source: BacktestSource;
   requestId: number;
   adaptiveScreenSpec?: AdaptiveScreenRequest;
+  criteriaSnapshot?: FilterCriteria;
 }
 
 interface PanelRevealRoot {
@@ -16,11 +18,13 @@ export function nextBacktestRouteRequest(
   previous: BacktestRouteRequest | null,
   source: BacktestSource,
   adaptiveScreenSpec?: AdaptiveScreenRequest,
+  criteriaSnapshot?: FilterCriteria,
 ): BacktestRouteRequest {
   return {
     source,
     requestId: (previous?.requestId ?? 0) + 1,
     ...(adaptiveScreenSpec ? { adaptiveScreenSpec } : {}),
+    ...(criteriaSnapshot ? { criteriaSnapshot } : {}),
   };
 }
 

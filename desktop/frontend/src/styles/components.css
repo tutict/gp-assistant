@@ -64,6 +64,162 @@
 }
 .form-row.checkbox-row { flex-direction: row; align-items: center; }
 
+/* Criteria form primitives shared by adaptive and custom screen panels. */
+.criteria-field-group {
+  min-width: 0;
+}
+
+.criteria-field-group-primary > header > strong,
+.criteria-field-group-secondary > header > strong {
+  color: var(--text);
+}
+
+.criteria-field-group > header {
+  display: grid;
+  min-width: 0;
+  align-items: start;
+  gap: 3px;
+  padding-bottom: var(--space-2);
+}
+
+.criteria-field-group > header > strong {
+  color: var(--text);
+  font-size: var(--fs-label);
+  font-weight: 720;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.criteria-field-group > header > span {
+  min-width: 0;
+  color: var(--text-tertiary);
+  font-size: var(--fs-caption);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.criteria-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-2) var(--space-3);
+  align-items: end;
+}
+
+.criteria-field-grid .form-row {
+  min-width: 0;
+}
+
+.criteria-field-grid .form-row label {
+  margin-bottom: 4px;
+  font-size: var(--fs-caption);
+  line-height: 1.2;
+}
+
+.criteria-num-field input {
+  max-width: 132px;
+  font-variant-numeric: tabular-nums;
+}
+
+.criteria-sort-dir-field {
+  flex: 0 0 auto;
+}
+
+.segmented {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.segmented > button {
+  min-height: var(--touch-dense);
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  font-weight: 680;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.segmented > button:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-3) 72%, transparent);
+}
+
+.segmented > button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.segmented > button.active {
+  background: var(--accent);
+  color: var(--button-text);
+}
+
+.criteria-toggle-row {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: end;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-bottom: 2px;
+}
+
+.toggle-chip {
+  position: relative;
+  display: inline-flex;
+  min-height: var(--control-height);
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  font-weight: 680;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.toggle-chip input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toggle-chip:hover {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--line));
+  color: var(--text);
+}
+
+.toggle-chip:has(input:focus-visible) {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.toggle-chip.active {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--line));
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
 .app[data-active-view="observe"] .panel-controls {
   gap: 10px 12px;
 }

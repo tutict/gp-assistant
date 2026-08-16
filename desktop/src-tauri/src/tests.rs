@@ -1776,6 +1776,28 @@ fn financial_snapshot_enriches_seed_without_preserving_snapshot_only_rows() {
 }
 
 #[test]
+fn bundled_industry_snapshot_replaces_legacy_market_labels() {
+    let seed = json!({
+        "stocks": [
+            {"code": "000001.SZ", "name": "平安银行", "industry": "深市A股", "price": 10.0}
+        ]
+    });
+    let snapshot = json!({
+        "industries": {"000001.SZ": "银行Ⅱ"}
+    });
+    let (seed_stocks, _) = seed_stock_maps(&seed);
+    let enriched = enriched_stock_maps(&seed_stocks, &snapshot);
+
+    assert_eq!(
+        enriched
+            .get("000001.SZ")
+            .and_then(|stock| stock.get("industry"))
+            .and_then(Value::as_str),
+        Some("银行Ⅱ")
+    );
+}
+
+#[test]
 fn observe_financial_snapshot_merges_inferred_prior_year_eps() {
     let mut data = json!({
         "financials": {

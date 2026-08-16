@@ -9,9 +9,10 @@ import { createPersistentWatchlistSetter, loadLocalWatchlistSnapshot, loadPersis
 import { sanitizePersistedLlmSettings } from "./lib/contracts";
 import { refreshResearchWatchlist } from "./lib/researchRefresh";
 import { createSettingsRegistry } from "./lib/settingsRegistry";
+import { DEFAULT_FILTER_CRITERIA, sanitizeFilterCriteria } from "./lib/screenCriteria";
 import { Header } from "./components/Header";
 import { Sidebar } from "./components/Sidebar";
-import { FilterBar } from "./components/FilterBar";
+import { FilterBar, type FilterCriteria } from "./components/FilterBar";
 import { ScreenPanel } from "./components/panels/ScreenPanel";
 import { WatchlistPanel } from "./components/panels/WatchlistPanel";
 import { PanelFeedback } from "./components/ui/PanelFeedback";
@@ -131,19 +132,11 @@ export default function App({ onMounted }: AppProps) {
   }, [watchlist]);
 
   // Filter criteria state
-  const [criteria, setCriteria] = useLocalStorage("stock-optimizer-criteria", {
-    includeSt: false,
-    requireInstitutionBuyRatio: false,
-    minRoe: "",
-    maxPe: "",
-    maxPb: "",
-    minMcap: "",
-    industry: "",
-    resultLimit: 10,
-    sortBy: "score",
-    sortDir: "desc",
-    scoreProfile: "balanced",
-  });
+  const [criteria, setCriteria] = useLocalStorage(
+    "stock-optimizer-criteria",
+    DEFAULT_FILTER_CRITERIA,
+    sanitizeFilterCriteria,
+  );
 
   useEffect(() => {
     const mobile = isMobileTauriRuntime();
@@ -216,8 +209,13 @@ export default function App({ onMounted }: AppProps) {
     navigate("observe");
   }, [navigate]);
 
-  const runCurrentCriteriaBacktest = useCallback((screenSpec?: AdaptiveScreenRequest) => {
-    setBacktestRouteRequest((previous) => nextBacktestRouteRequest(previous, "criteria", screenSpec));
+  const runCurrentCriteriaBacktest = useCallback((screenSpec?: AdaptiveScreenRequest, criteriaSnapshot?: FilterCriteria) => {
+    setBacktestRouteRequest((previous) => nextBacktestRouteRequest(
+      previous,
+      "criteria",
+      screenSpec,
+      criteriaSnapshot,
+    ));
     navigate("backtest");
   }, [navigate]);
 

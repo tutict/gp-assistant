@@ -30,6 +30,7 @@ export interface ScreenCriteria {
   min_deducted_net_profit_margin?: number;
   min_deducted_net_profit_growth_rate?: number;
   industry?: string;
+  market_scope?: string;
   require_institution_buy_ratio_gt_sell_ratio?: boolean;
   include_st?: boolean;
   limit?: number;

@@ -11,6 +11,7 @@ const criteria: FilterCriteria = {
   maxPb: "",
   minMcap: "",
   industry: "",
+  marketScope: "",
   resultLimit: 10,
   sortBy: "score",
   sortDir: "desc",
@@ -23,9 +24,14 @@ describe("CriteriaFields", () => {
       <CriteriaFields criteria={criteria} onChange={() => undefined} idPrefix="customScreen" />,
     );
 
+    expect(markup).toContain("行业");
     expect(markup).toContain("股票池范围");
     expect(markup).toContain("科创板");
-    expect(markup).toContain("深市 A 股");
-    expect(markup).not.toContain("传媒");
+    expect(markup).toContain("北交所");
+    expect(markup).toContain("影视院线");
+    expect(markup).toContain("传媒（大类）");
+    expect(markup).toContain("医药生物（大类）");
+    expect(markup).toContain("食品饮料（大类）");
+    expect(markup).toContain("社会服务（大类）");
   });
 });

@@ -6,6 +6,101 @@ describe("desktop financial snapshot routes", () => {
     vi.resetModules();
   });
 
+  it("fails closed for industry filters and retries a failed industry snapshot", async () => {
+    vi.stubGlobal("window", {
+      location: { href: "http://tauri.localhost/" },
+      __TAURI_INTERNALS__: {},
+    });
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+    vi.stubGlobal("localStorage", { getItem: vi.fn(() => null) });
+    let industryAttempts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/mobile-industry-snapshot.json")) {
+        industryAttempts += 1;
+        if (industryAttempts === 1) return new Response("unavailable", { status: 503 });
+        return new Response(JSON.stringify({ industries: { "002432.SZ": "医疗器械" } }));
+      }
+      if (url.endsWith("/mobile-financial-snapshot.json")) {
+        return new Response(JSON.stringify({ financials: {} }));
+      }
+      return new Response(JSON.stringify({ data: null }));
+    }));
+
+    const { TAURI_POST_ROUTES } = await import("./tauri");
+    const invokeMock = vi.fn(async (): Promise<unknown> => ({}));
+    const invoke = invokeMock as <T = unknown>(
+      command: string,
+      args?: Record<string, unknown>,
+    ) => Promise<T>;
+    const request = {
+      invoke,
+      path: "/api/custom-screen",
+      parsed: new URL("http://tauri.localhost/api/custom-screen"),
+      payload: { criteria: { industry: "医疗器械" } },
+    };
+
+    await expect(TAURI_POST_ROUTES["/api/custom-screen"]?.(request)).rejects.toThrow("行业分类数据加载失败");
+    expect(invokeMock).not.toHaveBeenCalled();
+
+    await TAURI_POST_ROUTES["/api/custom-screen"]?.(request);
+    expect(industryAttempts).toBe(2);
+    expect(invokeMock).toHaveBeenCalledWith("api_custom_screen", {
+      payload: expect.objectContaining({
+        financial_snapshot: expect.objectContaining({
+          industries: { "002432.SZ": "医疗器械" },
+        }),
+      }),
+    });
+  });
+
+  it("preserves caller-provided snapshot stocks while adding industry data", async () => {
+    vi.stubGlobal("window", {
+      location: { href: "http://tauri.localhost/" },
+      __TAURI_INTERNALS__: {},
+    });
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+    vi.stubGlobal("localStorage", { getItem: vi.fn(() => null) });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/mobile-industry-snapshot.json")) {
+        return new Response(JSON.stringify({ industries: { "002432.SZ": "医疗器械" } }));
+      }
+      if (url.endsWith("/mobile-financial-snapshot.json")) {
+        return new Response(JSON.stringify({ financials: {} }));
+      }
+      return new Response(JSON.stringify({ data: null }));
+    }));
+
+    const { TAURI_POST_ROUTES } = await import("./tauri");
+    const invokeMock = vi.fn(async (): Promise<unknown> => ({}));
+    const invoke = invokeMock as <T = unknown>(
+      command: string,
+      args?: Record<string, unknown>,
+    ) => Promise<T>;
+
+    await TAURI_POST_ROUTES["/api/custom-screen"]?.({
+      invoke,
+      path: "/api/custom-screen",
+      parsed: new URL("http://tauri.localhost/api/custom-screen"),
+      payload: {
+        criteria: { industry: "医疗器械" },
+        financial_snapshot: {
+          stocks: [{ code: "002432.SZ", name: "九安医疗", price: 10 }],
+        },
+      },
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("api_custom_screen", {
+      payload: expect.objectContaining({
+        financial_snapshot: expect.objectContaining({
+          stocks: [{ code: "002432.SZ", name: "九安医疗", price: 10 }],
+          industries: { "002432.SZ": "医疗器械" },
+        }),
+      }),
+    });
+  });
+
   it("attaches the bundled financial snapshot outside the mobile runtime", async () => {
     vi.stubGlobal("window", {
       location: { href: "http://tauri.localhost/" },
@@ -78,6 +173,11 @@ describe("desktop financial snapshot routes", () => {
     vi.stubGlobal("localStorage", { getItem: vi.fn(() => null) });
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.endsWith("/mobile-industry-snapshot.json")) {
+        return new Response(JSON.stringify({
+          industries: { "002432.SZ": "医疗器械" },
+        }));
+      }
       if (url.endsWith("/mobile-financial-snapshot.json")) {
         return new Response(JSON.stringify({
           financials: {
@@ -120,6 +220,9 @@ describe("desktop financial snapshot routes", () => {
         payload: expect.objectContaining({
           limit: 10,
           financial_snapshot: {
+            industries: {
+              "002432.SZ": "医疗器械",
+            },
             financials: {
               "002432.SZ": expect.objectContaining({
                 deducted_net_profit_billion: 11.551,
@@ -147,6 +250,9 @@ describe("desktop financial snapshot routes", () => {
       payload: expect.objectContaining({
         limit: 10,
         financial_snapshot: {
+          industries: {
+            "002432.SZ": "医疗器械",
+          },
           financials: {
             "002432.SZ": expect.objectContaining({
               deducted_net_profit_billion: 11.551,
@@ -157,6 +263,21 @@ describe("desktop financial snapshot routes", () => {
             }),
           },
         },
+      }),
+    });
+
+    await TAURI_POST_ROUTES["/api/backtest"]?.({
+      invoke,
+      path: "/api/backtest",
+      parsed: new URL("http://tauri.localhost/api/backtest"),
+      payload: { source: "criteria" },
+    });
+    expect(invokeMock).toHaveBeenCalledWith("api_backtest", {
+      payload: expect.objectContaining({
+        source: "criteria",
+        financial_snapshot: expect.objectContaining({
+          industries: { "002432.SZ": "医疗器械" },
+        }),
       }),
     });
 

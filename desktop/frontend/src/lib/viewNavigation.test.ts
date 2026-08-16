@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { consumeBacktestRouteRequest, nextBacktestRouteRequest, revealActivePanels } from "./viewNavigation";
+import { DEFAULT_FILTER_CRITERIA } from "./screenCriteria";
 
 describe("view navigation", () => {
   it("creates a new request when the same backtest source is selected again", () => {
@@ -33,6 +34,17 @@ describe("view navigation", () => {
       primary_limit: 10,
       exploration_limit: 10,
     });
+  });
+
+  it("carries the originating tab criteria into the backtest route", () => {
+    const criteriaSnapshot = {
+      ...DEFAULT_FILTER_CRITERIA,
+      industry: "影视院线",
+      marketScope: "北交所",
+    };
+    const request = nextBacktestRouteRequest(null, "criteria", undefined, criteriaSnapshot);
+
+    expect(request.criteriaSnapshot).toEqual(criteriaSnapshot);
   });
 
   it("reveals the main panels after navigating from the watchlist at the page bottom", () => {

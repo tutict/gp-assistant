@@ -30,7 +30,7 @@ interface ScreenPanelProps {
   watchlist: WatchlistItem[];
   onWatchlistChange: (items: WatchlistItem[]) => void;
   onObserveStock?: (code: string) => void;
-  onRunBacktest?: (screenSpec?: AdaptiveScreenRequest) => void;
+  onRunBacktest?: (screenSpec?: AdaptiveScreenRequest, criteriaSnapshot?: FilterCriteria) => void;
   mobileRuntime?: boolean;
 }
 
@@ -52,6 +52,7 @@ const FULL_UNIVERSE_CRITERIA: FilterCriteria = {
   maxPb: "",
   minMcap: "",
   industry: "",
+  marketScope: "",
   resultLimit: 10,
   sortBy: "score",
   sortDir: "desc",
@@ -79,7 +80,9 @@ export function ScreenPanel({
   const [trendEnd, setTrendEnd] = useState(currentSystemDateInputValue());
   const [adaptiveProgress, setAdaptiveProgress] = useState<{ percent: number; message: string } | null>(null);
   const [lastAdaptiveRequest, setLastAdaptiveRequest] = useState<AdaptiveScreenRequest | undefined>();
+  const [lastRequestCriteria, setLastRequestCriteria] = useState<FilterCriteria>(FULL_UNIVERSE_CRITERIA);
   const activeRunIdRef = useRef<string | null>(null);
+  const requestVersionRef = useRef(0);
 
   useEffect(() => {
     const listen = getTauriListen();
@@ -104,12 +107,14 @@ export function ScreenPanel({
   }, []);
 
   const run = useCallback(async () => {
+    const requestVersion = ++requestVersionRef.current;
     setLoading(true);
     setError(null);
     try {
       let endpoint = "/api/screen";
       let payload: unknown;
       const requestCriteria = criteriaForMode(mode, criteria);
+      setLastRequestCriteria({ ...requestCriteria });
       if (mode === "screen") {
         const request = buildAdaptiveScreenRequest(requestCriteria);
         activeRunIdRef.current = request.run_id;
@@ -135,12 +140,14 @@ export function ScreenPanel({
       }
 
       const data = await postJson(endpoint, payload);
-      setResult(data);
+      if (requestVersion === requestVersionRef.current) setResult(data);
     } catch (err) {
-      setError((err as Error).message);
+      if (requestVersion === requestVersionRef.current) setError((err as Error).message);
     } finally {
-      setLoading(false);
-      activeRunIdRef.current = null;
+      if (requestVersion === requestVersionRef.current) {
+        setLoading(false);
+        activeRunIdRef.current = null;
+      }
     }
   }, [criteria, mode, trendEnd, trendStart]);
 
@@ -202,7 +209,11 @@ export function ScreenPanel({
           role="tab"
           aria-selected={mode === tab.key}
           onClick={() => {
+            requestVersionRef.current += 1;
+            activeRunIdRef.current = null;
             setMode(tab.key);
+            setLoading(false);
+            setAdaptiveProgress(null);
             setResult(null);
             setError(null);
           }}
@@ -262,6 +273,7 @@ export function ScreenPanel({
             onObserveStock={onObserveStock}
             onRunBacktest={onRunBacktest}
             adaptiveRequest={mode === "screen" ? lastAdaptiveRequest : undefined}
+            criteriaSnapshot={lastRequestCriteria}
           />
         )}
         {!result && !loading && !error && <PanelFeedback kind="empty" description={emptyDescription} />}
@@ -283,14 +295,16 @@ export const ScreenResultView = memo(function ScreenResultView({
   onObserveStock,
   onRunBacktest,
   adaptiveRequest,
+  criteriaSnapshot,
 }: {
   result: unknown;
   grouped: boolean;
   watchlist: WatchlistItem[];
   onToggleWatchlist: (item: StockRowView) => void;
   onObserveStock?: (code: string) => void;
-  onRunBacktest?: (screenSpec?: AdaptiveScreenRequest) => void;
+  onRunBacktest?: (screenSpec?: AdaptiveScreenRequest, criteriaSnapshot?: FilterCriteria) => void;
   adaptiveRequest?: AdaptiveScreenRequest;
+  criteriaSnapshot?: FilterCriteria;
 }) {
   const resultRecord = result as ScreenResult;
   const groups = useMemo(
@@ -365,6 +379,7 @@ export const ScreenResultView = memo(function ScreenResultView({
             type="button"
             onClick={() => onRunBacktest(
               resultRecord.algorithm_version === "adaptive_swing_v1" ? adaptiveRequest : undefined,
+              criteriaSnapshot || FULL_UNIVERSE_CRITERIA,
             )}
           >
             回测

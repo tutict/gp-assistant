@@ -1516,6 +1516,10 @@ fn adaptive_release_criteria_is_full_universe(criteria: &gp_core::ScreenCriteria
             .industry
             .as_deref()
             .is_none_or(|value| value.trim().is_empty())
+        && criteria
+            .market_scope
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
         && !criteria.include_st
 }
 
@@ -3747,6 +3751,11 @@ fn financial_snapshot_payload_present(value: &Value) -> bool {
             .and_then(Value::as_object)
             .map(|financials| !financials.is_empty())
             .unwrap_or(false)
+        || value
+            .get("industries")
+            .and_then(Value::as_object)
+            .map(|industries| !industries.is_empty())
+            .unwrap_or(false)
 }
 
 fn refresh_seed_payload(app: &tauri::AppHandle, payload: &Value) -> Value {
@@ -4597,6 +4606,29 @@ fn enriched_stock_maps(
                 continue;
             };
             merge_stock_financial_fields(&mut enriched, &code, object);
+        }
+    }
+
+    if let Some(industries) = financial_snapshot
+        .get("industries")
+        .and_then(Value::as_object)
+    {
+        for (raw_code, value) in industries {
+            let Some(code) = normalize_stock_code(raw_code) else {
+                continue;
+            };
+            let Some(industry) = value.as_str().map(str::trim) else {
+                continue;
+            };
+            if industry.is_empty() || industry == "-" {
+                continue;
+            }
+            let target = enriched.entry(code.clone()).or_insert_with(|| {
+                let mut row = serde_json::Map::new();
+                row.insert("code".to_string(), json!(code));
+                row
+            });
+            target.insert("industry".to_string(), json!(industry));
         }
     }
 

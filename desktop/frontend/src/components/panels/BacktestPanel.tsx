@@ -36,6 +36,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
   const [benchmark, setBenchmark] = useState("candidate_equal_weight");
   const [strategyMode, setStrategyMode] = useState("candidate_snapshot");
   const [adaptiveScreenSpec, setAdaptiveScreenSpec] = useState<AdaptiveScreenRequest | undefined>();
+  const [criteriaSnapshot, setCriteriaSnapshot] = useState<FilterCriteria | undefined>();
   const [costBps, setCostBps] = useState(10);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BacktestResult | null>(null);
@@ -47,10 +48,14 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
 
   useEffect(() => {
     if (!preferredSource) return;
+    const nextAdaptiveScreenSpec = preferredSource.source === "criteria"
+      ? preferredSource.adaptiveScreenSpec
+      : undefined;
     requestVersionRef.current += 1;
     setSource(preferredSource.source);
-    setAdaptiveScreenSpec(preferredSource.adaptiveScreenSpec);
-    setStrategyMode(preferredSource.adaptiveScreenSpec ? "adaptive_swing_v1" : "candidate_snapshot");
+    setAdaptiveScreenSpec(nextAdaptiveScreenSpec);
+    setCriteriaSnapshot(preferredSource.source === "criteria" ? preferredSource.criteriaSnapshot : undefined);
+    setStrategyMode(nextAdaptiveScreenSpec ? "adaptive_swing_v1" : "candidate_snapshot");
     setResult(null);
     setError(null);
     onPreferredSourceConsumed?.(preferredSource.requestId);
@@ -69,6 +74,11 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     if (nextSource === source) return;
     requestVersionRef.current += 1;
     setSource(nextSource);
+    if (nextSource === "watchlist") {
+      setAdaptiveScreenSpec(undefined);
+      setCriteriaSnapshot(undefined);
+      setStrategyMode("candidate_snapshot");
+    }
     setResult(null);
     setError(null);
   };
@@ -89,7 +99,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     try {
       const payload = buildBacktestRequest({
         source,
-        criteria,
+        criteria: criteriaSnapshot || criteria,
         watchlist,
         startDate: start,
         endDate: end,
@@ -113,9 +123,14 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     }
   };
 
+  const effectiveCriteria = source === "criteria" ? adaptiveScreenSpec?.criteria : undefined;
+  const effectiveFilterCriteria = criteriaSnapshot || criteria;
+  const criteriaScopeText = effectiveCriteria
+    ? [effectiveCriteria.industry, effectiveCriteria.market_scope].filter(Boolean).join(" / ")
+    : [effectiveFilterCriteria.industry, effectiveFilterCriteria.marketScope].filter(Boolean).join(" / ");
   const sourceText = source === "watchlist"
     ? `${Math.min(topN, watchlist.length)} / ${watchlist.length} 只`
-    : (criteria.industry || "全部行业");
+    : (criteriaScopeText || "全部行业 / 全部范围");
 
   return (
     <div className="panel-container">

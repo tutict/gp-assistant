@@ -880,6 +880,7 @@ function Export-MobileFinancialSnapshot {
 }
 Assert-WorkspaceChildPath $OutputDir $Root
 
+& (Join-Path $PSScriptRoot "export-mobile-industry-snapshot.ps1")
 Build-ReactFrontend
 
 Export-MobileFinancialSnapshot

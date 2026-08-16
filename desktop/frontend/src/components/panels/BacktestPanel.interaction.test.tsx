@@ -1,7 +1,7 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FilterCriteria } from "../FilterBar";
-import type { BacktestResult, WatchlistItem } from "../../types";
+import type { AdaptiveScreenRequest, BacktestResult, WatchlistItem } from "../../types";
 
 const { postJsonMock } = vi.hoisted(() => ({ postJsonMock: vi.fn() }));
 
@@ -17,6 +17,7 @@ const criteria: FilterCriteria = {
   maxPb: "",
   minMcap: "",
   industry: "",
+  marketScope: "",
   resultLimit: 10,
   sortBy: "score",
   sortDir: "desc",
@@ -28,6 +29,20 @@ const result: BacktestResult = {
   metrics: { total_return: 0.12, num_stocks: 1 },
   equity_curve: [{ date: "2026-07-17", equity: 1.12 }],
   symbols: ["002432.SZ"],
+};
+const adaptiveScreenSpec: AdaptiveScreenRequest = {
+  criteria: {
+    include_st: false,
+    limit: 80,
+    sort_by: "score",
+    sort_dir: "desc",
+    score_profile: "balanced",
+  },
+  mode: "auto",
+  horizon: "swing_10_30d",
+  primary_limit: 10,
+  exploration_limit: 10,
+  run_id: "run-backtest",
 };
 
 function textContent(renderer: ReactTestRenderer): string {
@@ -55,6 +70,98 @@ describe("BacktestPanel interactions", () => {
   afterEach(() => {
     postJsonMock.mockReset();
     vi.unstubAllGlobals();
+  });
+
+  it("shows industry and market scope for criteria backtests", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <BacktestPanel
+          criteria={{ ...criteria, industry: "影视院线", marketScope: "北交所" }}
+          watchlist={watchlist}
+        />,
+      );
+    });
+
+    expect(textContent(renderer)).toContain("影视院线 / 北交所");
+  });
+
+  it("shows the effective adaptive scope instead of persisted custom filters", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <BacktestPanel
+          criteria={{ ...criteria, industry: "影视院线", marketScope: "北交所" }}
+          watchlist={watchlist}
+          preferredSource={{ source: "criteria", requestId: 1, adaptiveScreenSpec }}
+        />,
+      );
+    });
+
+    expect(textContent(renderer)).toContain("全部行业 / 全部范围");
+    expect(textContent(renderer)).not.toContain("影视院线 / 北交所");
+  });
+
+  it("uses the originating tab criteria snapshot instead of global custom filters", async () => {
+    postJsonMock.mockResolvedValue(result);
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <BacktestPanel
+          criteria={{ ...criteria, industry: "影视院线", marketScope: "北交所" }}
+          watchlist={watchlist}
+          preferredSource={{
+            source: "criteria",
+            requestId: 1,
+            criteriaSnapshot: { ...criteria, scoreProfile: "balanced" },
+          }}
+        />,
+      );
+    });
+
+    expect(textContent(renderer)).toContain("全部行业 / 全部范围");
+    await act(async () => {
+      await runButton(renderer).props.onClick();
+    });
+
+    const payload = postJsonMock.mock.calls[0][1];
+    expect(payload.criteria).not.toHaveProperty("industry");
+    expect(payload.criteria).not.toHaveProperty("market_scope");
+  });
+
+  it("clears the adaptive specification when switching to watchlist", async () => {
+    postJsonMock.mockResolvedValue(result);
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <BacktestPanel
+          criteria={criteria}
+          watchlist={watchlist}
+          preferredSource={{ source: "criteria", requestId: 1, adaptiveScreenSpec }}
+        />,
+      );
+    });
+    const watchlistButton = renderer.root.find(
+      (node) => node.type === "button" && node.children.includes("自选股"),
+    );
+
+    await act(async () => {
+      watchlistButton.props.onClick();
+    });
+    await act(async () => {
+      await runButton(renderer).props.onClick();
+    });
+
+    expect(postJsonMock).toHaveBeenCalledWith(
+      "/api/backtest",
+      expect.objectContaining({
+        source: "watchlist",
+        strategy_mode: "candidate_snapshot",
+        stock_codes: ["002432.SZ"],
+      }),
+      { timeoutMs: 90_000 },
+    );
+    expect(postJsonMock.mock.calls[0][1]).not.toHaveProperty("adaptive_screen_spec");
   });
 
   it("enters loading immediately and deduplicates repeated clicks", async () => {

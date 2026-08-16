@@ -1,5 +1,6 @@
 import { clampInt } from "../lib/format";
-import { normalizeScreenScope, SCREEN_SCOPE_OPTIONS } from "../lib/screenScopeOptions";
+import { MARKET_SCOPE_OPTIONS, normalizeMarketScope } from "../lib/screenScopeOptions";
+import { INDUSTRY_OPTIONS } from "../lib/screenIndustryOptions";
 import type { FilterCriteria } from "./FilterBar";
 
 interface CriteriaFieldsProps {
@@ -21,31 +22,81 @@ const SORT_OPTIONS = [
   { value: "roe", label: "净资产收益率" },
   { value: "change_pct", label: "涨跌幅" },
 ];
+const LEGACY_BROAD_INDUSTRY_OPTIONS = [
+  "银行",
+  "证券",
+  "保险",
+  "医药生物",
+  "食品饮料",
+  "白酒",
+  "家用电器",
+  "汽车整车",
+  "零部件",
+  "电力设备",
+  "光伏",
+  "风电",
+  "有色金属",
+  "钢铁",
+  "煤炭",
+  "石油",
+  "化工",
+  "建材",
+  "建筑装饰",
+  "计算机",
+  "软件",
+  "通信",
+  "传媒",
+  "国防军工",
+  "航空航天",
+  "机械设备",
+  "环保",
+  "农业",
+  "纺织服装",
+  "商贸零售",
+  "社会服务",
+];
+const LEGACY_BROAD_INDUSTRY_SET = new Set(LEGACY_BROAD_INDUSTRY_OPTIONS);
 
 export function CriteriaFields({ criteria, onChange, idPrefix = "criteria" }: CriteriaFieldsProps) {
   const update = (patch: Partial<FilterCriteria>) => onChange({ ...criteria, ...patch });
   const id = (name: string) => `${idPrefix}-${name}`;
-  const selectedScope = normalizeScreenScope(criteria.industry);
+  const selectedIndustry = criteria.industry.trim();
+  const selectedMarketScope = normalizeMarketScope(criteria.marketScope);
+  const baseIndustryOptions = [...new Set(["", ...LEGACY_BROAD_INDUSTRY_OPTIONS, ...INDUSTRY_OPTIONS])];
+  const industryOptions = selectedIndustry && !baseIndustryOptions.includes(selectedIndustry)
+    ? [selectedIndustry, ...baseIndustryOptions]
+    : baseIndustryOptions;
 
   return (
     <>
       <section className="criteria-field-group criteria-field-group-primary" aria-label="基础范围">
         <header>
           <strong>基础范围</strong>
-          <span>限定市场范围和结果规模</span>
+          <span>限定行业、市场范围和结果规模</span>
         </header>
 
         <div className="criteria-field-grid">
           <div className="form-row">
-            <label htmlFor={id("industry")}>股票池范围</label>
-            <select id={id("industry")} value={selectedScope} onChange={(event) => update({ industry: event.target.value })}>
-              {SCREEN_SCOPE_OPTIONS.map((option) => (
-                <option key={option.value || "all"} value={option.value}>{option.label}</option>
+            <label htmlFor={id("industry")}>行业</label>
+            <select id={id("industry")} value={selectedIndustry} onChange={(event) => update({ industry: event.target.value })}>
+              {industryOptions.map((industry) => (
+                <option key={industry || "all-industries"} value={industry}>
+                  {LEGACY_BROAD_INDUSTRY_SET.has(industry) ? `${industry}（大类）` : industry || "全部行业"}
+                </option>
               ))}
             </select>
           </div>
 
           <div className="form-row">
+            <label htmlFor={id("marketScope")}>股票池范围</label>
+            <select id={id("marketScope")} value={selectedMarketScope} onChange={(event) => update({ marketScope: event.target.value })}>
+              {MARKET_SCOPE_OPTIONS.map((option) => (
+                <option key={option.value || "all-scopes"} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="form-row criteria-num-field">
             <label htmlFor={id("resultLimit")}>返回数量</label>
             <input id={id("resultLimit")} type="number" min="1" max="200" value={criteria.resultLimit} onChange={(event) => update({ resultLimit: clampInt(event.target.value, 1, 200, 10) })} />
           </div>
@@ -59,22 +110,22 @@ export function CriteriaFields({ criteria, onChange, idPrefix = "criteria" }: Cr
         </header>
 
         <div className="criteria-field-grid">
-          <div className="form-row">
+          <div className="form-row criteria-num-field">
             <label htmlFor={id("minRoe")}>最低 ROE (%)</label>
             <input id={id("minRoe")} type="number" min="-100" max="100" step="0.1" value={criteria.minRoe} onChange={(event) => update({ minRoe: event.target.value })} placeholder="如 15" />
           </div>
 
-          <div className="form-row">
+          <div className="form-row criteria-num-field">
             <label htmlFor={id("maxPe")}>最高 PE</label>
             <input id={id("maxPe")} type="number" min="0.1" step="0.1" value={criteria.maxPe} onChange={(event) => update({ maxPe: event.target.value })} placeholder="如 30" />
           </div>
 
-          <div className="form-row">
+          <div className="form-row criteria-num-field">
             <label htmlFor={id("maxPb")}>最高 PB</label>
             <input id={id("maxPb")} type="number" min="0.1" step="0.1" value={criteria.maxPb} onChange={(event) => update({ maxPb: event.target.value })} placeholder="如 5" />
           </div>
 
-          <div className="form-row">
+          <div className="form-row criteria-num-field">
             <label htmlFor={id("minMcap")}>最低市值 (亿)</label>
             <input id={id("minMcap")} type="number" min="0" step="1" value={criteria.minMcap} onChange={(event) => update({ minMcap: event.target.value })} placeholder="如 50" />
           </div>
@@ -106,20 +157,34 @@ export function CriteriaFields({ criteria, onChange, idPrefix = "criteria" }: Cr
             </select>
           </div>
 
-          <div className="form-row">
-            <label htmlFor={id("sortDir")}>排序方向</label>
-            <select id={id("sortDir")} value={criteria.sortDir} onChange={(event) => update({ sortDir: event.target.value })}>
-              <option value="desc">降序</option>
-              <option value="asc">升序</option>
-            </select>
+          <div className="form-row criteria-sort-dir-field">
+            <label id={id("sortDir-label")}>排序方向</label>
+            <div className="segmented" role="group" aria-labelledby={id("sortDir-label")}>
+              <button
+                type="button"
+                className={criteria.sortDir === "desc" ? "active" : ""}
+                aria-pressed={criteria.sortDir === "desc"}
+                onClick={() => update({ sortDir: "desc" })}
+              >
+                降序
+              </button>
+              <button
+                type="button"
+                className={criteria.sortDir === "asc" ? "active" : ""}
+                aria-pressed={criteria.sortDir === "asc"}
+                onClick={() => update({ sortDir: "asc" })}
+              >
+                升序
+              </button>
+            </div>
           </div>
 
           <div className="criteria-toggle-row">
-            <label>
+            <label className={`toggle-chip ${criteria.includeSt ? "active" : ""}`}>
               <input type="checkbox" checked={criteria.includeSt} onChange={(event) => update({ includeSt: event.target.checked })} />
-              <span>包含ST股票</span>
+              <span>包含 ST</span>
             </label>
-            <label>
+            <label className={`toggle-chip ${criteria.requireInstitutionBuyRatio ? "active" : ""}`}>
               <input type="checkbox" checked={criteria.requireInstitutionBuyRatio} onChange={(event) => update({ requireInstitutionBuyRatio: event.target.checked })} />
               <span>机构净买入</span>
             </label>

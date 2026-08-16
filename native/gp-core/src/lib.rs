@@ -135,6 +135,8 @@ pub struct ScreenCriteria {
     #[serde(default)]
     pub industry: Option<String>,
     #[serde(default)]
+    pub market_scope: Option<String>,
+    #[serde(default)]
     pub include_st: bool,
     #[serde(default = "default_screen_limit")]
     pub limit: usize,
@@ -157,6 +159,7 @@ impl Default for ScreenCriteria {
             min_deducted_net_profit_margin: None,
             min_deducted_net_profit_growth_rate: None,
             industry: None,
+            market_scope: None,
             include_st: false,
             limit: default_screen_limit(),
             sort_by: default_sort_by(),
@@ -6475,14 +6478,18 @@ fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Option<Vec<Str
     }
 
     if let Some(industry) = criteria.industry.as_ref() {
-        let stock_value = stock.industry.trim().to_lowercase();
-        let selected_value = industry.trim().to_lowercase();
+        let stock_value = stock.industry.trim();
+        let selected_value = industry.trim();
         if !selected_value.is_empty()
-            && (stock_value.is_empty()
-                || (stock_value != selected_value
-                    && !stock_value.contains(&selected_value)
-                    && !selected_value.contains(&stock_value)))
+            && (stock_value.is_empty() || !industry_matches(stock_value, selected_value))
         {
+            return None;
+        }
+    }
+
+    if let Some(market_scope) = criteria.market_scope.as_ref() {
+        let selected_value = market_scope.trim();
+        if !selected_value.is_empty() && market_scope_for_stock(stock) != selected_value {
             return None;
         }
     }
@@ -6558,6 +6565,156 @@ fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Option<Vec<Str
     }
 
     Some(reasons)
+}
+
+fn industry_matches(stock_value: &str, selected_value: &str) -> bool {
+    if stock_value == selected_value {
+        return true;
+    }
+
+    if let Some(aliases) = legacy_industry_aliases(selected_value) {
+        return aliases
+            .iter()
+            .any(|alias| stock_value == *alias || stock_value.contains(alias));
+    }
+
+    false
+}
+
+fn legacy_industry_aliases(selected_value: &str) -> Option<&'static [&'static str]> {
+    match selected_value {
+        "银行" => Some(&["银行Ⅱ", "银行服务"]),
+        "证券" => Some(&["证券Ⅱ"]),
+        "保险" => Some(&["保险Ⅱ"]),
+        "中药" => Some(&["中药Ⅱ"]),
+        "医药生物" => Some(&[
+            "化学制药",
+            "中药Ⅱ",
+            "生物制品",
+            "医疗器械",
+            "医疗服务",
+            "医药商业",
+        ]),
+        "食品饮料" => Some(&[
+            "白酒Ⅱ",
+            "非白酒",
+            "食品加工",
+            "调味发酵品Ⅱ",
+            "饮料乳品",
+            "休闲食品",
+        ]),
+        "白酒" => Some(&["白酒Ⅱ"]),
+        "家用电器" => Some(&[
+            "白色家电",
+            "黑色家电",
+            "厨卫电器",
+            "小家电",
+            "照明设备Ⅱ",
+            "家电零部件Ⅱ",
+            "其他家电Ⅱ",
+        ]),
+        "汽车整车" => Some(&["乘用车", "商用车", "摩托车及其他"]),
+        "零部件" => Some(&["汽车零部件"]),
+        "电力设备" => Some(&[
+            "电池",
+            "电机Ⅱ",
+            "电网设备",
+            "光伏设备",
+            "风电设备",
+            "其他电源设备Ⅱ",
+        ]),
+        "光伏" => Some(&["光伏设备"]),
+        "风电" => Some(&["风电设备"]),
+        "有色金属" => Some(&["工业金属", "贵金属", "能源金属", "小金属", "金属新材料"]),
+        "钢铁" => Some(&["普钢", "特钢Ⅱ", "冶钢原料"]),
+        "煤炭" => Some(&["煤炭开采", "焦炭Ⅱ"]),
+        "石油" => Some(&["炼化及贸易", "油服工程", "油气开采Ⅱ"]),
+        "化工" => Some(&[
+            "化学纤维",
+            "化学原料",
+            "化学制品",
+            "农化制品",
+            "塑料",
+            "橡胶",
+            "非金属材料Ⅱ",
+        ]),
+        "建材" => Some(&["水泥", "玻璃玻纤", "装修建材"]),
+        "建筑装饰" => Some(&[
+            "房屋建设Ⅱ",
+            "基础建设",
+            "专业工程",
+            "工程咨询服务Ⅱ",
+            "装修装饰Ⅱ",
+        ]),
+        "计算机" => Some(&["计算机设备", "软件开发", "IT服务Ⅱ"]),
+        "软件" => Some(&["软件开发"]),
+        "通信" => Some(&["通信服务", "通信设备"]),
+        "传媒" => Some(&[
+            "出版",
+            "电视广播Ⅱ",
+            "广告营销",
+            "数字媒体",
+            "影视院线",
+            "游戏Ⅱ",
+        ]),
+        "国防军工" => Some(&[
+            "地面兵装Ⅱ",
+            "航海装备Ⅱ",
+            "航空装备Ⅱ",
+            "航天装备Ⅱ",
+            "军工电子Ⅱ",
+        ]),
+        "航空航天" => Some(&["航空装备Ⅱ", "航天装备Ⅱ"]),
+        "机械设备" => Some(&[
+            "工程机械",
+            "轨交设备Ⅱ",
+            "通用设备",
+            "专用设备",
+            "自动化设备",
+        ]),
+        "环保" => Some(&["环保设备Ⅱ", "环境治理"]),
+        "农业" => Some(&[
+            "动物保健Ⅱ",
+            "林业Ⅱ",
+            "农产品加工",
+            "农业综合Ⅱ",
+            "饲料",
+            "养殖业",
+            "渔业",
+            "种植业",
+        ]),
+        "纺织服装" => Some(&["纺织制造", "服装家纺", "饰品"]),
+        "商贸零售" => Some(&["贸易Ⅱ", "一般零售", "互联网电商", "专业连锁Ⅱ"]),
+        "社会服务" => Some(&[
+            "教育",
+            "酒店餐饮",
+            "旅游及景区",
+            "旅游零售Ⅱ",
+            "体育Ⅱ",
+            "专业服务",
+        ]),
+        _ => None,
+    }
+}
+
+fn market_scope_for_stock(stock: &StockItem) -> &'static str {
+    let code = stock.code.trim().to_ascii_uppercase();
+    let digits = code.split('.').next().unwrap_or("");
+    if code.ends_with(".BJ")
+        || digits.starts_with('8')
+        || digits.starts_with('4')
+        || digits.starts_with('9')
+    {
+        "北交所"
+    } else if digits.starts_with("688") || digits.starts_with("689") {
+        "科创板"
+    } else if digits.starts_with("300") || digits.starts_with("301") {
+        "创业板"
+    } else if code.ends_with(".SH") || digits.starts_with('6') {
+        "沪市A股"
+    } else {
+        "深市A股"
+    }
 }
 
 const SCREEN_GROUP_LIMIT: usize = 10;

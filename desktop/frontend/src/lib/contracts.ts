@@ -35,11 +35,12 @@ import {
   parseCodes,
   trendScreenStartDateInputValue,
 } from "./format";
-import { normalizeScreenScope } from "./screenScopeOptions";
+import { normalizeMarketScope } from "./screenScopeOptions";
 
 export interface ScreenRequestOptions {
   limit?: number;
   score_profile?: "balanced" | "quality" | "trend" | "rotation";
+  applyDeductedProfitRule?: boolean;
 }
 
 export interface StockGroupView {
@@ -56,15 +57,19 @@ export function buildScreenCriteria(criteria: FilterCriteria, overrides: ScreenR
   const payload: ScreenCriteria = {
     include_st: criteria.includeSt,
     require_institution_buy_ratio_gt_sell_ratio: criteria.requireInstitutionBuyRatio,
-    min_deducted_net_profit_billion: 0,
-    min_deducted_net_profit_growth_rate: 10,
     limit: clampInt(overrides.limit ?? criteria.resultLimit, 1, 200, 10),
     sort_by: criteria.sortBy || "score",
     sort_dir: criteria.sortDir || "desc",
     score_profile: overrides.score_profile || criteria.scoreProfile || "balanced",
   };
-  const screenScope = normalizeScreenScope(criteria.industry);
-  if (screenScope) payload.industry = screenScope;
+  if (overrides.applyDeductedProfitRule) {
+    payload.min_deducted_net_profit_billion = 0;
+    payload.min_deducted_net_profit_growth_rate = 10;
+  }
+  const industry = criteria.industry.trim();
+  if (industry) payload.industry = industry;
+  const marketScope = normalizeMarketScope(criteria.marketScope);
+  if (marketScope) payload.market_scope = marketScope;
   if (criteria.minRoe) payload.min_roe = Number(criteria.minRoe) / 100;
   if (criteria.maxPe) payload.max_pe = Number(criteria.maxPe);
   if (criteria.maxPb) payload.max_pb = Number(criteria.maxPb);
@@ -116,7 +121,7 @@ export function buildSectorScreenRequest(
 
 export function buildCustomScreenRequest(criteria: FilterCriteria): Record<string, unknown> {
   return {
-    criteria: buildScreenCriteria(criteria, { limit: 100 }),
+    criteria: buildScreenCriteria(criteria, { limit: 100, applyDeductedProfitRule: true }),
     seed_codes: [],
     seed_query: "",
     relation_depth: 1,
@@ -170,11 +175,15 @@ export function buildBacktestRequest(args: {
   strategyMode?: string;
   adaptiveScreenSpec?: AdaptiveScreenRequest;
 }): Record<string, unknown> {
-  const adaptiveScreenSpec = args.adaptiveScreenSpec;
+  const adaptiveScreenSpec = args.source === "criteria" ? args.adaptiveScreenSpec : undefined;
   return {
     source: args.source,
     criteria: adaptiveScreenSpec?.criteria
-      || buildScreenCriteria(args.criteria, { limit: 100, score_profile: "quality" }),
+      || buildScreenCriteria(args.criteria, {
+        limit: 100,
+        score_profile: "quality",
+        applyDeductedProfitRule: args.source === "criteria",
+      }),
     strategy_mode: adaptiveScreenSpec
       ? "adaptive_swing_v1:" + adaptiveScreenSpec.mode
       : args.strategyMode || "candidate_snapshot",

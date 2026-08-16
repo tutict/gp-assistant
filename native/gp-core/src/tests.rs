@@ -1952,6 +1952,156 @@ fn screens_native_data_with_partial_industry_match() {
 }
 
 #[test]
+fn broad_media_industry_matches_media_subsectors() {
+    let universe = vec![StockItem {
+        code: "600001.SH".to_string(),
+        name: "样本影视".to_string(),
+        industry: "影视院线".to_string(),
+        price: 10.0,
+        ..StockItem::default()
+    }];
+
+    let result = screen_stocks(
+        &universe,
+        &ScreenCriteria {
+            industry: Some("传媒".to_string()),
+            ..ScreenCriteria::default()
+        },
+    );
+
+    assert_eq!(result.returned, 1);
+}
+
+#[test]
+fn every_legacy_broad_industry_matches_a_current_subsector() {
+    let cases = [
+        ("银行", "银行Ⅱ"),
+        ("证券", "证券Ⅱ"),
+        ("保险", "保险Ⅱ"),
+        ("中药", "中药Ⅱ"),
+        ("医药生物", "生物制品"),
+        ("食品饮料", "饮料乳品"),
+        ("白酒", "白酒Ⅱ"),
+        ("家用电器", "白色家电"),
+        ("汽车整车", "乘用车"),
+        ("零部件", "汽车零部件"),
+        ("电力设备", "电网设备"),
+        ("光伏", "光伏设备"),
+        ("风电", "风电设备"),
+        ("有色金属", "工业金属"),
+        ("钢铁", "普钢"),
+        ("煤炭", "煤炭开采"),
+        ("石油", "油气开采Ⅱ"),
+        ("化工", "化学制品"),
+        ("建材", "装修建材"),
+        ("建筑装饰", "专业工程"),
+        ("计算机", "IT服务Ⅱ"),
+        ("软件", "软件开发"),
+        ("通信", "通信服务"),
+        ("传媒", "影视院线"),
+        ("国防军工", "军工电子Ⅱ"),
+        ("航空航天", "航天装备Ⅱ"),
+        ("机械设备", "通用设备"),
+        ("环保", "环境治理"),
+        ("农业", "种植业"),
+        ("纺织服装", "服装家纺"),
+        ("商贸零售", "一般零售"),
+        ("社会服务", "旅游及景区"),
+    ];
+
+    for (index, (selected, stock_industry)) in cases.into_iter().enumerate() {
+        let result = screen_stocks(
+            &[StockItem {
+                code: format!("{:06}.SZ", index + 1),
+                name: selected.to_string(),
+                industry: stock_industry.to_string(),
+                price: 10.0,
+                ..StockItem::default()
+            }],
+            &ScreenCriteria {
+                industry: Some(selected.to_string()),
+                ..ScreenCriteria::default()
+            },
+        );
+        assert_eq!(result.returned, 1, "legacy industry {selected}");
+    }
+}
+
+#[test]
+fn legacy_white_liquor_filter_does_not_match_non_white_liquor() {
+    let result = screen_stocks(
+        &[StockItem {
+            code: "000001.SZ".to_string(),
+            name: "非白酒样本".to_string(),
+            industry: "非白酒".to_string(),
+            price: 10.0,
+            ..StockItem::default()
+        }],
+        &ScreenCriteria {
+            industry: Some("白酒".to_string()),
+            ..ScreenCriteria::default()
+        },
+    );
+
+    assert_eq!(result.returned, 0);
+}
+
+#[test]
+fn current_industries_do_not_match_by_substring() {
+    for (selected, stock_industry) in [("综合Ⅱ", "农业综合Ⅱ"), ("农业综合Ⅱ", "综合Ⅱ")]
+    {
+        let result = screen_stocks(
+            &[StockItem {
+                code: "000001.SZ".to_string(),
+                name: "行业样本".to_string(),
+                industry: stock_industry.to_string(),
+                price: 10.0,
+                ..StockItem::default()
+            }],
+            &ScreenCriteria {
+                industry: Some(selected.to_string()),
+                ..ScreenCriteria::default()
+            },
+        );
+        assert_eq!(
+            result.returned, 0,
+            "{selected} must not match {stock_industry}"
+        );
+    }
+}
+
+#[test]
+fn market_scope_filter_is_independent_from_industry() {
+    let stock = StockItem {
+        code: "920001.BJ".to_string(),
+        name: "北交影视".to_string(),
+        industry: "影视院线".to_string(),
+        price: 12.0,
+        ..StockItem::default()
+    };
+
+    let matched = screen_stocks(
+        std::slice::from_ref(&stock),
+        &ScreenCriteria {
+            industry: Some("影视院线".to_string()),
+            market_scope: Some("北交所".to_string()),
+            ..ScreenCriteria::default()
+        },
+    );
+    let rejected = screen_stocks(
+        &[stock],
+        &ScreenCriteria {
+            industry: Some("影视院线".to_string()),
+            market_scope: Some("科创板".to_string()),
+            ..ScreenCriteria::default()
+        },
+    );
+
+    assert_eq!(matched.returned, 1);
+    assert_eq!(rejected.returned, 0);
+}
+
+#[test]
 fn selected_industry_does_not_match_empty_stock_industry() {
     let universe = vec![StockItem {
         code: "000001.SZ".to_string(),

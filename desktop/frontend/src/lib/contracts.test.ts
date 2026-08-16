@@ -32,7 +32,8 @@ const criteria: FilterCriteria = {
   maxPe: "30",
   maxPb: "5",
   minMcap: "50",
-  industry: "沪市A股",
+  industry: "影视院线",
+  marketScope: "沪市A股",
   resultLimit: 10,
   sortBy: "score",
   sortDir: "desc",
@@ -47,6 +48,7 @@ const fullUniverseCriteria: FilterCriteria = {
   maxPb: "",
   minMcap: "",
   industry: "",
+  marketScope: "",
 };
 
 describe("LLM settings persistence", () => {
@@ -196,7 +198,7 @@ describe("LLM settings persistence", () => {
 describe("contract payload builders", () => {
   it("builds the adaptive swing request as a nested deterministic contract", () => {
     expect(buildAdaptiveScreenRequest(criteria, "defensive", "run-fixed")).toMatchObject({
-      criteria: { industry: "沪市A股", limit: 80, min_roe: 0.15 },
+      criteria: { industry: "影视院线", market_scope: "沪市A股", limit: 80, min_roe: 0.15 },
       mode: "defensive",
       horizon: "swing_10_30d",
       primary_limit: 10,
@@ -222,8 +224,6 @@ describe("contract payload builders", () => {
       max_pe: 30,
       max_pb: 5,
       min_market_cap_billion: 50,
-      min_deducted_net_profit_billion: 0,
-      min_deducted_net_profit_growth_rate: 10,
       limit: 10,
       sort_by: "score",
       sort_dir: "desc",
@@ -231,10 +231,24 @@ describe("contract payload builders", () => {
     });
   });
 
-  it("drops stale industry labels and keeps supported market-scope filters", () => {
-    expect(buildScreenCriteria({ ...criteria, industry: "传媒" })).not.toHaveProperty("industry");
-    expect(buildScreenCriteria({ ...criteria, industry: "科创板" })).toMatchObject({
-      industry: "科创板",
+  it("preserves real industry labels and keeps market scopes separate", () => {
+    expect(buildScreenCriteria({ ...criteria, industry: "传媒" })).toMatchObject({
+      industry: "传媒",
+      market_scope: "沪市A股",
+    });
+    expect(buildScreenCriteria({ ...criteria, industry: "", marketScope: "科创板" })).toMatchObject({
+      market_scope: "科创板",
+    });
+  });
+
+  it("keeps a real industry and an independent market scope", () => {
+    expect(buildScreenCriteria({
+      ...criteria,
+      industry: "影视院线",
+      marketScope: "北交所",
+    })).toMatchObject({
+      industry: "影视院线",
+      market_scope: "北交所",
     });
   });
 
@@ -244,7 +258,7 @@ describe("contract payload builders", () => {
       per_sector_limit: 5,
       max_sectors: 12,
       min_sector_candidates: 5,
-      criteria: { industry: "沪市A股" },
+      criteria: { industry: "影视院线", market_scope: "沪市A股" },
     });
     expect(buildSectorScreenRequest(criteria, "concept", 10, 12)).toMatchObject({
       group_by: "concept",
@@ -258,6 +272,22 @@ describe("contract payload builders", () => {
       max_sectors: 5,
       min_sector_candidates: 1,
     });
+  });
+
+  it("applies deducted-profit defaults only to custom screening", () => {
+    const custom = buildCustomScreenRequest(fullUniverseCriteria).criteria as Record<string, unknown>;
+    const concept = buildSectorScreenRequest(fullUniverseCriteria, "concept", 10, 12).criteria;
+    const board = buildSectorScreenRequest(fullUniverseCriteria, "board", 5, 5).criteria;
+    const trend = buildTrendScreenRequest(fullUniverseCriteria, "2026-01-01", "2026-06-01").criteria as Record<string, unknown>;
+
+    expect(custom).toMatchObject({
+      min_deducted_net_profit_billion: 0,
+      min_deducted_net_profit_growth_rate: 10,
+    });
+    for (const criteriaPayload of [concept, board, trend]) {
+      expect(criteriaPayload).not.toHaveProperty("min_deducted_net_profit_billion");
+      expect(criteriaPayload).not.toHaveProperty("min_deducted_net_profit_growth_rate");
+    }
   });
 
   it("builds graph, trend, backtest, and news payloads with backend field names", () => {

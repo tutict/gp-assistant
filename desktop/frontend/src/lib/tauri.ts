@@ -70,6 +70,7 @@ const MOBILE_TENCENT_BATCHES_PER_STEP = 12;
 const OBSERVE_FULL_HISTORY_LIMIT = 10000;
 const OBSERVE_HISTORY_LIMIT = OBSERVE_FULL_HISTORY_LIMIT;
 const BUNDLED_FINANCIAL_SNAPSHOT_URL = new URL("mobile-financial-snapshot.json", window.location.href).toString();
+const BUNDLED_INDUSTRY_SNAPSHOT_URL = new URL("mobile-industry-snapshot.json", window.location.href).toString();
 const DEDUCTED_FINANCIAL_FIELDS = [
   "deducted_net_profit_billion",
   "deducted_net_profit_margin",
@@ -77,6 +78,7 @@ const DEDUCTED_FINANCIAL_FIELDS = [
 ];
 
 let financialSnapshotPromise: Promise<Record<string, unknown> | null> | null = null;
+let industrySnapshotPromise: Promise<Record<string, unknown> | null> | null = null;
 
 function hasTauriRuntime(): boolean {
   if (typeof window === "undefined") return false;
@@ -210,9 +212,30 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
 async function withFinancialSnapshotPayload(payload: unknown): Promise<unknown> {
   if (!isTauriRuntime()) return payload;
   const base = asRecord(payload);
-  if (financialSnapshotPayload(asRecord(base.financial_snapshot))) return payload;
-  const snapshot = await loadBundledFinancialSnapshot().catch(() => null);
-  const financialSnapshot = financialSnapshotPayload(snapshot, { includeStocks: false });
+  const requestedIndustry = typeof asRecord(base.criteria).industry === "string"
+    ? String(asRecord(base.criteria).industry).trim()
+    : "";
+  const existingSnapshot = asRecord(base.financial_snapshot);
+  const existingPayload = financialSnapshotPayload(existingSnapshot);
+  if (existingPayload && (!requestedIndustry || Object.keys(asRecord(existingPayload.industries)).length)) {
+    return payload;
+  }
+  const snapshot = await loadBundledScreenSnapshot().catch(() => null);
+  const existingStocks = Array.isArray(existingSnapshot.stocks) ? existingSnapshot.stocks : [];
+  const financialSnapshot = financialSnapshotPayload({
+    stocks: existingStocks,
+    financials: {
+      ...asRecord(snapshot?.financials),
+      ...asRecord(existingSnapshot.financials),
+    },
+    industries: {
+      ...asRecord(snapshot?.industries),
+      ...asRecord(existingSnapshot.industries),
+    },
+  }, { includeStocks: existingStocks.length > 0 });
+  if (requestedIndustry && !Object.keys(asRecord(financialSnapshot?.industries)).length) {
+    throw new Error("行业分类数据加载失败，无法执行行业筛选，请重试。");
+  }
   return financialSnapshot ? { ...base, financial_snapshot: financialSnapshot } : payload;
 }
 
@@ -228,7 +251,7 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/graph-screen": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_graph_screen", payload),
   "/api/trend": async ({ invoke, payload }) => invoke("api_trend_analyze", { payload }),
   "/api/trend-screen": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_trend_screen", payload),
-  "/api/backtest": async ({ invoke, payload }) => invoke("api_backtest", { payload }),
+  "/api/backtest": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_backtest", payload),
   "/api/news-rag": async ({ invoke, payload }) => isMobileTauriRuntime()
     ? withTimeout(analyzeMobileStockNews(invoke, asRecord(payload)), MOBILE_NEWS_RAG_TIMEOUT_MS, `移动端消息分析超过 ${Math.round(MOBILE_NEWS_RAG_TIMEOUT_MS / 1000)} 秒未返回，已中止等待。`)
     : invoke("api_news_rag", { payload }),
@@ -355,7 +378,7 @@ export async function refreshTauriMarketData(invoke: InvokeFn, options: MarketRe
   });
   try {
     logs("开始通过 Tauri/Rust 刷新股票池。", "info");
-    const financialSnapshot = await loadBundledFinancialSnapshot().catch(() => null);
+    const financialSnapshot = await loadBundledScreenSnapshot().catch(() => null);
     const baseOptions = sanitizeMarketRefreshOptions(options);
     const maxLoops = clampInt(Number(baseOptions.max_refresh_loops || 512), 1, 2048, 512);
     let batchStart = clampInt(baseOptions.batch_start, 0, 100000, 0);
@@ -597,12 +620,58 @@ async function loadBundledFinancialSnapshot(): Promise<Record<string, unknown> |
         const financial = normalizeBundledFinancialSnapshotFinancial(asRecord(value));
         if (code && financial) financials[code] = financial;
       }
-      return { ...snapshot, stocks, financials };
+      const industries: Record<string, string> = {};
+      for (const [rawCode, value] of Object.entries(asRecord(snapshot.industries))) {
+        const code = normalizeStockCode(rawCode);
+        const industry = typeof value === "string" ? value.trim() : "";
+        if (code && industry && industry !== "-") industries[code] = industry;
+      }
+      return { ...snapshot, stocks, financials, industries };
     } catch {
       return null;
     }
   })();
   return financialSnapshotPromise;
+}
+
+async function loadBundledIndustrySnapshot(): Promise<Record<string, unknown> | null> {
+  if (industrySnapshotPromise) return industrySnapshotPromise;
+  const loadPromise = (async () => {
+    try {
+      const response = await fetch(BUNDLED_INDUSTRY_SNAPSHOT_URL, { cache: "no-store" });
+      if (!response.ok) return null;
+      const snapshot = asRecord(await response.json());
+      const industries: Record<string, string> = {};
+      for (const [rawCode, value] of Object.entries(asRecord(snapshot.industries))) {
+        const code = normalizeStockCode(rawCode);
+        const industry = typeof value === "string" ? value.trim() : "";
+        if (code && industry && industry !== "-") industries[code] = industry;
+      }
+      return Object.keys(industries).length ? { ...snapshot, industries } : null;
+    } catch {
+      return null;
+    }
+  })();
+  industrySnapshotPromise = loadPromise.then((snapshot) => {
+    if (!snapshot) industrySnapshotPromise = null;
+    return snapshot;
+  });
+  return industrySnapshotPromise;
+}
+
+async function loadBundledScreenSnapshot(): Promise<Record<string, unknown> | null> {
+  const [financialSnapshot, industrySnapshot] = await Promise.all([
+    loadBundledFinancialSnapshot(),
+    loadBundledIndustrySnapshot(),
+  ]);
+  if (!financialSnapshot && !industrySnapshot) return null;
+  return {
+    ...(financialSnapshot || {}),
+    industries: {
+      ...asRecord(financialSnapshot?.industries),
+      ...asRecord(industrySnapshot?.industries),
+    },
+  };
 }
 
 function financialSnapshotPayload(
@@ -613,8 +682,9 @@ function financialSnapshotPayload(
   const includeStocks = options.includeStocks !== false;
   const stocks = includeStocks && Array.isArray(snapshot.stocks) ? snapshot.stocks : [];
   const financials = asRecord(snapshot.financials);
-  if (!stocks.length && !Object.keys(financials).length) return null;
-  return includeStocks ? { stocks, financials } : { financials };
+  const industries = asRecord(snapshot.industries);
+  if (!stocks.length && !Object.keys(financials).length && !Object.keys(industries).length) return null;
+  return includeStocks ? { stocks, financials, industries } : { financials, industries };
 }
 
 async function loadBundledFinancialSnapshotForCode(rawCode: string): Promise<Record<string, unknown> | null> {

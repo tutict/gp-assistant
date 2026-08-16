@@ -12,6 +12,7 @@ export interface FilterCriteria {
   maxPb: string;
   minMcap: string;
   industry: string;
+  marketScope: string;
   resultLimit: number;
   sortBy: string;
   sortDir: string;

@@ -1,6 +1,7 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FilterCriteria } from "../FilterBar";
+import type { AdaptiveScreenRequest } from "../../types";
 
 const { postJsonMock, getTauriListenMock } = vi.hoisted(() => ({
   postJsonMock: vi.fn(),
@@ -22,6 +23,7 @@ const criteria: FilterCriteria = {
   maxPb: "",
   minMcap: "",
   industry: "",
+  marketScope: "",
   resultLimit: 10,
   sortBy: "score",
   sortDir: "desc",
@@ -34,6 +36,7 @@ const restrictiveCriteria: FilterCriteria = {
   minRoe: "15",
   maxPe: "30",
   industry: "传媒",
+  marketScope: "北交所",
   sortBy: "roe",
   sortDir: "asc",
 };
@@ -52,9 +55,25 @@ function textContent(renderer: ReactTestRenderer): string {
     .join(" ");
 }
 
+function expectNoCustomFilters(criteriaPayload: Record<string, unknown>) {
+  for (const field of [
+    "industry",
+    "market_scope",
+    "min_roe",
+    "max_pe",
+    "min_deducted_net_profit_billion",
+    "min_deducted_net_profit_growth_rate",
+  ]) {
+    expect(criteriaPayload).not.toHaveProperty(field);
+  }
+  expect(criteriaPayload.include_st).toBe(false);
+  expect(criteriaPayload.require_institution_buy_ratio_gt_sell_ratio).toBe(false);
+}
+
 async function renderPanel(
   onCriteriaChange: (criteria: FilterCriteria) => void = () => undefined,
   panelCriteria: FilterCriteria = criteria,
+  onRunBacktest?: (screenSpec?: AdaptiveScreenRequest, criteriaSnapshot?: FilterCriteria) => void,
 ) {
   let renderer!: ReactTestRenderer;
   await act(async () => {
@@ -64,6 +83,7 @@ async function renderPanel(
         onCriteriaChange={onCriteriaChange}
         watchlist={[]}
         onWatchlistChange={() => undefined}
+        onRunBacktest={onRunBacktest}
       />,
     );
   });
@@ -130,17 +150,8 @@ describe("ScreenPanel adaptive states", () => {
       await runButton(renderer).props.onClick();
     });
 
-    expect(postJsonMock).toHaveBeenCalledWith(
-      "/api/screen",
-      expect.objectContaining({
-        criteria: expect.not.objectContaining({
-          industry: "传媒",
-          min_roe: 0.15,
-          max_pe: 30,
-          require_institution_buy_ratio_gt_sell_ratio: true,
-        }),
-      }),
-    );
+    expect(postJsonMock).toHaveBeenCalledWith("/api/screen", expect.any(Object));
+    expectNoCustomFilters(postJsonMock.mock.calls[0][1].criteria);
   });
 
   it("does not render fixed adaptive mode and horizon controls", async () => {
@@ -185,6 +196,69 @@ describe("ScreenPanel adaptive states", () => {
     expect(onCriteriaChange).toHaveBeenCalledWith(expect.objectContaining({ includeSt: true }));
   });
 
+  it("runs custom screening with independent industry and market-scope filters", async () => {
+    postJsonMock.mockResolvedValue({ total: 0, returned: 0, items: [], groups: [] });
+    const renderer = await renderPanel(undefined, {
+      ...criteria,
+      industry: "影视院线",
+      marketScope: "北交所",
+    });
+    const customTab = renderer.root.find(
+      (node) => node.type === "button" && node.children.includes("自定义选股"),
+    );
+
+    await act(async () => {
+      customTab.props.onClick();
+    });
+    await act(async () => {
+      await runButton(renderer).props.onClick();
+    });
+
+    expect(postJsonMock).toHaveBeenCalledWith(
+      "/api/custom-screen",
+      expect.objectContaining({
+        criteria: expect.objectContaining({
+          industry: "影视院线",
+          market_scope: "北交所",
+          min_deducted_net_profit_billion: 0,
+          min_deducted_net_profit_growth_rate: 10,
+        }),
+      }),
+    );
+  });
+
+  it("does not render a completed request after switching to another tab", async () => {
+    let resolveRequest: (value: unknown) => void = () => undefined;
+    postJsonMock.mockReturnValue(new Promise((resolve) => {
+      resolveRequest = resolve;
+    }));
+    const renderer = await renderPanel();
+    const customTab = renderer.root.find(
+      (node) => node.type === "button" && node.children.includes("自定义选股"),
+    );
+    const adaptiveTab = renderer.root.find(
+      (node) => node.type === "button" && node.children.includes("智能选股"),
+    );
+
+    await act(async () => {
+      customTab.props.onClick();
+    });
+    await act(async () => {
+      runButton(renderer).props.onClick();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      adaptiveTab.props.onClick();
+    });
+    await act(async () => {
+      resolveRequest({ total: 0, returned: 0, items: [], groups: [] });
+      await Promise.resolve();
+    });
+
+    expect(textContent(renderer)).not.toContain("暂无匹配股票");
+    expect(textContent(renderer)).toContain("点击运行查看当前模式的全市场筛选结果");
+  });
+
   it("requests ten stocks per concept group while retaining the five-stock group threshold", async () => {
     postJsonMock.mockResolvedValue({ total: 0, returned: 0, groups: [] });
     const renderer = await renderPanel(undefined, restrictiveCriteria);
@@ -205,14 +279,67 @@ describe("ScreenPanel adaptive states", () => {
         group_by: "concept",
         per_sector_limit: 10,
         min_sector_candidates: 5,
-        criteria: expect.not.objectContaining({
-          industry: "传媒",
-          min_roe: 0.15,
-          max_pe: 30,
-          require_institution_buy_ratio_gt_sell_ratio: true,
-        }),
       }),
     );
+    expectNoCustomFilters(postJsonMock.mock.calls[0][1].criteria);
+  });
+
+  it.each([
+    ["板块分组", "/api/sector-screen"],
+    ["趋势选股", "/api/trend-screen"],
+  ])("keeps %s independent from custom-screen filters", async (tabLabel, endpoint) => {
+    postJsonMock.mockResolvedValue({ total: 0, returned: 0, items: [], groups: [] });
+    const renderer = await renderPanel(undefined, restrictiveCriteria);
+    const tab = renderer.root.find(
+      (node) => node.type === "button" && node.children.includes(tabLabel),
+    );
+
+    await act(async () => {
+      tab.props.onClick();
+    });
+    await act(async () => {
+      await runButton(renderer).props.onClick();
+    });
+
+    expect(postJsonMock).toHaveBeenCalledWith(endpoint, expect.any(Object));
+    expectNoCustomFilters(postJsonMock.mock.calls[0][1].criteria);
+  });
+
+  it("passes the originating non-custom tab criteria into backtest navigation", async () => {
+    postJsonMock.mockResolvedValue({
+      total: 1,
+      returned: 1,
+      items: [{
+        stock: { code: "000001.SZ", name: "行业样本", industry: "银行Ⅱ", price: 10 },
+        score: 12,
+        reasons: [],
+      }],
+      groups: [],
+    });
+    const onRunBacktest = vi.fn();
+    const renderer = await renderPanel(undefined, restrictiveCriteria, onRunBacktest);
+    const trendTab = renderer.root.find(
+      (node) => node.type === "button" && node.children.includes("趋势选股"),
+    );
+
+    await act(async () => {
+      trendTab.props.onClick();
+    });
+    await act(async () => {
+      await runButton(renderer).props.onClick();
+    });
+    const backtestButton = renderer.root.find(
+      (node) => node.type === "button" && node.children.includes("回测"),
+    );
+    await act(async () => {
+      backtestButton.props.onClick();
+    });
+
+    expect(onRunBacktest).toHaveBeenCalledWith(undefined, expect.objectContaining({
+      industry: "",
+      marketScope: "",
+      minRoe: "",
+    }));
   });
 
   it.each([

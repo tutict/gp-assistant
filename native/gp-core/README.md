@@ -60,6 +60,8 @@ cargo build --manifest-path native/gp-core/Cargo.toml --release
 }
 ```
 
+筛选条件中的 `industry` 保留真实行业分类；市场范围使用独立的 `market_scope`，可选值为 `沪市A股`、`深市A股`、`创业板`、`科创板`、`北交所`。不要用市场范围覆盖股票的 `industry` 字段。
+
 JSON ABI 支持以下带数据集的调用：
 
 - `gp_core_validate_data_source_json(data_json)`
