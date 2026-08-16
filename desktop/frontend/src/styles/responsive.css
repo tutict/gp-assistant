@@ -678,6 +678,75 @@
     height: 100%;
   }
 
+  .agent-thread-toolbar {
+    min-height: 50px;
+    padding: 6px 7px 6px 137px;
+  }
+
+  .agent-thread-toolbar > strong {
+    max-width: 100%;
+  }
+
+  .agent-thread-history {
+    display: none;
+  }
+
+  .agent-mobile-history {
+    display: inline-grid;
+  }
+
+  .agent-mobile-menu,
+  .agent-mobile-new,
+  .agent-mobile-history {
+    width: 38px;
+    min-width: 38px;
+    height: 38px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .agent-run-drawer {
+    position: fixed;
+    z-index: calc(var(--z-drawer) + 1);
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    border-left: 0;
+  }
+
+  .agent-run-drawer-header {
+    min-height: calc(48px + env(safe-area-inset-top, 0px));
+    padding-top: max(7px, env(safe-area-inset-top, 0px));
+    padding-right: max(10px, env(safe-area-inset-right, 0px));
+  }
+
+  .agent-run-list,
+  .agent-run-detail {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .agent-run-select {
+    min-height: 76px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "question status"
+      "mode time"
+      "duration duration";
+    gap: 5px 8px;
+    padding: 11px 12px;
+  }
+
+  .agent-run-select > time {
+    justify-self: end;
+  }
+
+  .agent-run-overview dl > div {
+    grid-template-columns: minmax(76px, 0.5fr) minmax(0, 1fr);
+    gap: 8px;
+  }
+
   .agent-mobile-actions {
     position: absolute;
     z-index: 3;

@@ -180,6 +180,54 @@ const mockDataStatus = {
   stale: false,
 };
 
+const replayConversationId = "ui-replay-conversation";
+const replayRunId = "ui-replay-run";
+const replayConversation = {
+  id: replayConversationId,
+  title: "Agent 复盘浏览器门禁",
+  mode: "expert",
+  messages: [
+    { role: "user", content: "复盘这次市场诊断", timestamp: 1_786_423_200_000 },
+    {
+      role: "assistant",
+      content: "市场诊断已完成，可查看运行复盘。",
+      timestamp: 1_786_423_204_000,
+      runId: replayRunId,
+    },
+  ],
+  createdAt: 1_786_423_200_000,
+  updatedAt: 1_786_423_204_000,
+};
+const mockAgentRunSummary = {
+  run_id: replayRunId,
+  conversation_id: replayConversationId,
+  question: "复盘这次市场诊断",
+  mode: "expert",
+  status: "completed",
+  started_at_epoch_ms: 1_786_423_200_000,
+  completed_at_epoch_ms: 1_786_423_204_000,
+  duration_ms: 4_000,
+};
+const mockAgentRunDetail = {
+  ...mockAgentRunSummary,
+  events: [
+    { type: "status", stage: "planning", label: "市场状态诊断" },
+    { type: "tool_start", payload: { tool: "adaptive_screen", label: "自适应筛选" } },
+    { type: "tool_result", payload: { status: "completed", output_summary: "候选与证据已生成" } },
+    { type: "evidence", label: "证据目录已锁定" },
+    { type: "final", message: "复盘结论已生成" },
+  ],
+  result: {
+    reply: "市场诊断与决策路径已经完成。",
+    action: "data_status",
+    answer_sections: [
+      { title: "复盘结论", bullets: ["市场状态与证据方向一致。"] },
+    ],
+    warnings: ["仅用于浏览器门禁验证。"],
+    data: { source: "ui-replay-harness", state: "ready" },
+  },
+};
+
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -389,6 +437,235 @@ async function runSearchOverlayChecks(page, device) {
   return layering;
 }
 
+async function installAgentReplayState(page) {
+  await page.addInitScript(({ conversation, activeConversationId }) => {
+    localStorage.setItem("stock-optimizer-agent-conversations", JSON.stringify([conversation]));
+    localStorage.setItem("stock-optimizer-agent-active-conversation", JSON.stringify(activeConversationId));
+  }, {
+    conversation: replayConversation,
+    activeConversationId: replayConversationId,
+  });
+}
+
+async function installAgentReplayRoutes(page, requests) {
+  await page.route("**/api/agent/runs?*", (route) => {
+    const url = new URL(route.request().url());
+    requests.list.push({
+      conversationId: url.searchParams.get("conversation_id"),
+      url: url.toString(),
+    });
+    return route.fulfill({ json: { runs: [mockAgentRunSummary] } });
+  });
+  await page.route("**/api/agent/runs/**", (route) => {
+    const url = new URL(route.request().url());
+    requests.detail.push(url.toString());
+    if (url.pathname !== `/api/agent/runs/${replayRunId}`) {
+      return route.fulfill({ status: 404, json: { run: null } });
+    }
+    return route.fulfill({ json: { run: mockAgentRunDetail } });
+  });
+}
+
+function assertReplay(condition, message, diagnostics) {
+  if (condition) return;
+  const suffix = diagnostics === undefined ? "" : ": " + JSON.stringify(diagnostics);
+  throw new Error("Agent replay check failed: " + message + suffix);
+}
+
+function assertBoxInViewport(box, device, label) {
+  assertReplay(Boolean(box), label + " has no bounding box");
+  const tolerance = 2;
+  assertReplay(
+    box.x >= -tolerance
+      && box.y >= -tolerance
+      && box.x + box.width <= device.width + tolerance
+      && box.y + box.height <= device.height + tolerance,
+    label + " is outside the viewport",
+    { box, viewport: { width: device.width, height: device.height } },
+  );
+}
+
+async function replayGeometry(page) {
+  return page.evaluate(() => {
+    const rect = (selector) => {
+      const element = document.querySelector(selector);
+      if (!element) return null;
+      const box = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return {
+        x: box.x,
+        y: box.y,
+        width: box.width,
+        height: box.height,
+        right: box.right,
+        bottom: box.bottom,
+        position: style.position,
+        overflowY: style.overflowY,
+      };
+    };
+    const drawer = document.querySelector(".agent-run-drawer");
+    const sample = document.elementFromPoint(4, Math.floor(window.innerHeight / 2));
+    return {
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      bodyScrollWidth: document.body.scrollWidth,
+      rootScrollWidth: document.documentElement.scrollWidth,
+      drawer: rect(".agent-run-drawer"),
+      header: rect(".agent-run-drawer-header"),
+      body: rect(".agent-run-detail"),
+      back: rect(".agent-run-drawer-back"),
+      close: rect(".agent-run-drawer-close"),
+      rail: rect(".agent-rail"),
+      stage: rect(".agent-chat-stage"),
+      drawerOwnsMobileSample: Boolean(drawer && sample && drawer.contains(sample)),
+    };
+  });
+}
+
+function assertAgentReplayGeometry(geometry, device) {
+  const tolerance = 2;
+  const { drawer, header, body, back, close, rail, stage, viewport } = geometry;
+  assertReplay(Boolean(drawer && header && body && back && close && rail && stage), "layout elements are missing", geometry);
+  assertReplay(geometry.bodyScrollWidth <= viewport.width + 1, "body has horizontal overflow", geometry);
+  assertReplay(geometry.rootScrollWidth <= viewport.width + 1, "document has horizontal overflow", geometry);
+  for (const [label, box] of [["drawer", drawer], ["header", header], ["detail body", body], ["back", back], ["close", close]]) {
+    assertBoxInViewport(box, device, `${device.name} ${label}`);
+  }
+  assertReplay(body.y >= header.bottom - tolerance, "drawer header overlaps the scroll body", geometry);
+  assertReplay(body.bottom <= drawer.bottom + tolerance, "drawer scroll body is clipped", geometry);
+  assertReplay(Math.abs(header.x - drawer.x) <= tolerance && Math.abs(header.right - drawer.right) <= tolerance, "header width does not match drawer", geometry);
+  assertReplay(Math.abs(body.x - drawer.x) <= tolerance && Math.abs(body.right - drawer.right) <= tolerance, "scroll body width does not match drawer", geometry);
+  assertReplay(["auto", "scroll"].includes(body.overflowY), "detail body is not scrollable", geometry);
+
+  if (device.name === "desktop-1440") {
+    assertReplay(drawer.position === "absolute", "desktop drawer is not an overlay", geometry);
+    assertReplay(drawer.width >= 440 - tolerance && drawer.width <= 640 + tolerance, "desktop drawer width is outside clamp", geometry);
+    assertReplay(Math.abs(drawer.right - stage.right) <= tolerance, "desktop drawer is not aligned to the chat stage", geometry);
+    assertReplay(rail.right <= drawer.x + tolerance, "conversation rail overlaps the desktop drawer", geometry);
+    return "overlay:" + Math.round(drawer.width) + "px";
+  }
+
+  assertReplay(drawer.position === "fixed", "mobile drawer is not fixed", geometry);
+  assertReplay(
+    Math.abs(drawer.x) <= tolerance
+      && Math.abs(drawer.y) <= tolerance
+      && Math.abs(drawer.width - viewport.width) <= tolerance
+      && Math.abs(drawer.height - viewport.height) <= tolerance,
+    "mobile drawer is not a full-screen sheet",
+    geometry,
+  );
+  assertReplay(geometry.drawerOwnsMobileSample, "conversation rail covers the mobile drawer", geometry);
+  return "sheet:" + Math.round(drawer.width) + "x" + Math.round(drawer.height);
+}
+
+async function runAgentReplayChecks(browser) {
+  const replayDevices = devices.filter((device) => ["desktop-1440", "tablet-768", "phone-390"].includes(device.name));
+  const reports = [];
+
+  for (const device of replayDevices) {
+    const context = await browser.newContext({
+      viewport: { width: device.width, height: device.height },
+      screen: { width: device.width, height: device.height },
+      deviceScaleFactor: device.dpr,
+      hasTouch: device.mobile,
+      isMobile: device.mobile,
+      colorScheme: "dark",
+    });
+    const page = await context.newPage();
+    const consoleIssues = [];
+    const requests = { list: [], detail: [] };
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleIssues.push("console: " + message.text());
+    });
+    page.on("pageerror", (error) => consoleIssues.push("pageerror: " + error.message));
+
+    try {
+      await installHarnessState(page);
+      await installAgentReplayState(page);
+      await installAgentReplayRoutes(page, requests);
+      await page.goto(deviceUrl(device, "#sectionAgent"), { waitUntil: "networkidle" });
+      await page.locator(".agent-workspace").waitFor({ state: "visible" });
+
+      const historyTrigger = page.locator(device.mobile ? ".agent-mobile-history" : ".agent-thread-history");
+      assertReplay(await historyTrigger.isVisible(), `${device.name} history trigger is not visible`);
+      assertBoxInViewport(await historyTrigger.boundingBox(), device, `${device.name} history trigger`);
+
+      const currentRequest = page.waitForRequest((request) => {
+        const url = new URL(request.url());
+        return url.pathname === "/api/agent/runs" && url.searchParams.get("conversation_id") === replayConversationId;
+      });
+      await historyTrigger.click();
+      await currentRequest;
+
+      const dialog = page.getByRole("dialog", { name: "Agent 运行复盘" });
+      await dialog.waitFor({ state: "visible" });
+      const runRow = dialog.locator(".agent-run-select");
+      await runRow.waitFor({ state: "visible" });
+      const currentScope = dialog.getByRole("button", { name: "当前会话" });
+      const allScope = dialog.getByRole("button", { name: "全部运行" });
+      assertBoxInViewport(await currentScope.boundingBox(), device, `${device.name} current scope`);
+      assertBoxInViewport(await allScope.boundingBox(), device, `${device.name} all scope`);
+      assertReplay(requests.list[0]?.conversationId === replayConversationId, "current scope omitted conversation_id", requests.list);
+
+      const allRequest = page.waitForRequest((request) => {
+        const url = new URL(request.url());
+        return url.pathname === "/api/agent/runs" && !url.searchParams.has("conversation_id");
+      });
+      await allScope.click();
+      await allRequest;
+      await runRow.waitFor({ state: "visible" });
+      assertReplay(requests.list.some((request) => request.conversationId === null), "all scope retained conversation_id", requests.list);
+
+      const detailRequest = page.waitForRequest((request) => new URL(request.url()).pathname === `/api/agent/runs/${replayRunId}`);
+      await runRow.click();
+      await detailRequest;
+      const detail = dialog.locator(".agent-run-detail");
+      await detail.waitFor({ state: "visible" });
+      await dialog.locator(".agent-run-overview").getByText(mockAgentRunSummary.question).waitFor();
+      assertReplay(await dialog.locator(".agent-run-timeline-item").count() >= 4, "timeline events were not rendered");
+      await dialog.locator(".agent-answer-sections").getByText("复盘结论").waitFor();
+      await dialog.locator(".agent-warning-list").getByText("仅用于浏览器门禁验证。").waitFor();
+      await dialog.locator(".agent-run-result").waitFor({ state: "visible" });
+
+      const backButton = dialog.getByRole("button", { name: "返回运行列表" });
+      await page.waitForFunction(() => document.activeElement?.classList.contains("agent-run-drawer-back"));
+      assertReplay(await backButton.evaluate((element) => document.activeElement === element), "focus left the drawer after list-to-detail navigation");
+      const layout = assertAgentReplayGeometry(await replayGeometry(page), device);
+
+      await page.keyboard.press("Escape");
+      await dialog.waitFor({ state: "hidden" });
+      assertReplay(await historyTrigger.evaluate((element) => document.activeElement === element), "Escape did not restore focus to the history trigger");
+
+      const directTrigger = page.locator(".agent-message-replay");
+      assertReplay(await directTrigger.isVisible(), `${device.name} direct replay trigger is not visible`);
+      assertBoxInViewport(await directTrigger.boundingBox(), device, `${device.name} direct replay trigger`);
+      const directRequest = page.waitForRequest((request) => new URL(request.url()).pathname === `/api/agent/runs/${replayRunId}`);
+      await directTrigger.click();
+      await directRequest;
+      await dialog.locator(".agent-run-detail").waitFor({ state: "visible" });
+      await dialog.locator(".agent-run-overview").getByText(mockAgentRunSummary.question).waitFor();
+      assertReplay(requests.detail.length === 2, "direct replay did not load the exact detail", requests.detail);
+      await page.keyboard.press("Escape");
+      await dialog.waitFor({ state: "hidden" });
+      assertReplay(await directTrigger.evaluate((element) => document.activeElement === element), "direct replay did not restore focus");
+      assertReplay(consoleIssues.length === 0, `${device.name} logged browser errors`, consoleIssues);
+
+      reports.push({
+        device: device.name,
+        layout,
+        currentRequests: requests.list.filter((request) => request.conversationId === replayConversationId).length,
+        allRequests: requests.list.filter((request) => request.conversationId === null).length,
+        detailRequests: requests.detail.length,
+      });
+    } finally {
+      await context.close();
+    }
+  }
+
+  console.log("Agent replay checks passed: " + reports.map((report) => (
+    `${report.device}[${report.layout},current=${report.currentRequests},all=${report.allRequests},detail=${report.detailRequests}]`
+  )).join(" | "));
+}
+
 async function captureDenseStates(page, device, targetRoot) {
   const directory = resolve(targetRoot, "desktop-1440-data");
   mkdirSync(directory, { recursive: true });
@@ -447,6 +724,7 @@ try {
     }
     console.log("Desktop shortcut checks passed: " + JSON.stringify(shortcutChecks));
     await context.close();
+    await runAgentReplayChecks(browser);
   } else {
     mkdirSync(outputRoot, { recursive: true });
     const report = { baseUrl, generatedAt: new Date().toISOString(), devices: [], denseStates: [] };

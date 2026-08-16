@@ -2833,6 +2833,17 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
   font-size: 11px;
 }
 
+.agent-cleanup-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-cleanup-retry {
+  flex: 0 0 auto;
+}
+
 .agent-input {
   grid-area: input;
   width: 100%;
@@ -3403,6 +3414,468 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
   background: transparent;
   box-shadow: none;
 }
+
+/* Agent run replay: the drawer overlays the stage so the transcript stays comparable. */
+.agent-chat-stage {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.agent-thread-toolbar {
+  display: flex;
+  min-width: 0;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.agent-thread-toolbar > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-data);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-thread-history,
+.agent-mobile-history {
+  width: var(--touch-dense);
+  min-width: var(--touch-dense);
+  height: var(--touch-dense);
+}
+
+.agent-mobile-history {
+  display: none;
+}
+
+.agent-run-drawer {
+  position: absolute;
+  z-index: var(--z-drawer);
+  inset: 0 0 0 auto;
+  display: grid;
+  width: clamp(440px, 44vw, 640px);
+  max-width: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: -12px 0 28px rgba(0, 0, 0, 0.24);
+  visibility: visible;
+  transform: translateX(0);
+}
+
+.agent-run-drawer-header {
+  display: flex;
+  min-width: 0;
+  min-height: 48px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.agent-run-drawer-title {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+}
+
+.agent-run-drawer-title h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-title);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-run-drawer-close-control {
+  display: grid;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.agent-run-drawer .icon-button,
+.agent-message-replay {
+  width: var(--touch-dense);
+  min-width: var(--touch-dense);
+  height: var(--touch-dense);
+  border: 1px solid transparent;
+}
+
+.agent-run-drawer .icon-button:hover,
+.agent-run-drawer .icon-button:focus-visible,
+.agent-message-replay:hover,
+.agent-message-replay:focus-visible {
+  border-color: var(--line);
+  background: var(--surface-2);
+}
+
+.agent-run-list,
+.agent-run-detail {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 14px 16px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.agent-run-scope {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.agent-run-scope-option {
+  min-height: var(--touch-dense);
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.agent-run-scope-option[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--line));
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.agent-run-list-items {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-run-list-item {
+  min-width: 0;
+}
+
+.agent-run-select {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 72px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "question status time"
+    "mode duration time";
+  align-items: center;
+  gap: 5px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-run-select:hover,
+.agent-run-select:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 48%, var(--surface-2));
+}
+
+.agent-run-select > strong {
+  min-width: 0;
+  grid-area: question;
+  overflow: hidden;
+  font-size: var(--fs-data);
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-run-select > span:not(.agent-run-status):not(.agent-run-duration) {
+  min-width: 0;
+  grid-area: mode;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-run-select > time {
+  grid-area: time;
+  align-self: center;
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+}
+
+.agent-run-duration {
+  grid-area: duration;
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+}
+
+.agent-run-status,
+.agent-run-overview-status {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+}
+
+.agent-run-select > .agent-run-status {
+  grid-area: status;
+  justify-self: end;
+}
+
+.agent-run-status-icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.agent-run-status[data-status="running"] .agent-run-status-icon svg {
+  animation: spin 1.2s linear infinite;
+}
+
+.agent-run-status[data-status="running"],
+.agent-run-overview-status[data-status="running"] {
+  color: var(--warning);
+}
+
+.agent-run-status[data-status="completed"],
+.agent-run-overview-status[data-status="completed"] {
+  color: var(--success);
+}
+
+.agent-run-status[data-status="failed"],
+.agent-run-overview-status[data-status="failed"] {
+  color: var(--error);
+}
+
+.agent-run-state {
+  display: grid;
+  min-height: 140px;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 24px 12px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.agent-run-state:not(.agent-run-state-error) {
+  color: var(--text-secondary);
+}
+
+.agent-run-state-error {
+  color: var(--error);
+}
+
+.agent-run-state-error p {
+  max-width: 52ch;
+  margin: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.agent-run-retry {
+  min-height: var(--touch-dense);
+  padding: 5px 12px;
+  border: 1px solid color-mix(in srgb, var(--error) 54%, var(--line));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--error) 10%, var(--surface-2));
+  color: var(--error);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.agent-run-retry:hover,
+.agent-run-retry:focus-visible {
+  background: color-mix(in srgb, var(--error) 18%, var(--surface-2));
+}
+
+.agent-run-detail {
+  gap: 18px;
+}
+
+.agent-run-detail > section {
+  min-width: 0;
+}
+
+.agent-run-overview h3,
+.agent-run-timeline h3,
+.agent-run-persisted-error h3 {
+  margin: 0 0 9px;
+  color: var(--text);
+  font-size: var(--fs-data);
+}
+
+.agent-run-overview h3 {
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.agent-run-overview dl {
+  display: grid;
+  margin: 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.agent-run-overview dl > div {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.45fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.agent-run-overview dt {
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+}
+
+.agent-run-overview dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: var(--fs-label);
+  text-align: right;
+}
+
+.agent-run-overview-status {
+  justify-content: flex-end;
+}
+
+.agent-run-timeline ol {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-run-timeline-item {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 0 8px 18px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.agent-run-timeline-item::before {
+  position: absolute;
+  top: 13px;
+  left: 1px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--text-tertiary);
+  border-radius: 50%;
+  background: var(--surface);
+  content: "";
+}
+
+.agent-run-timeline-item strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: var(--fs-label);
+  line-height: 1.4;
+}
+
+.agent-run-timeline-item span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+  line-height: 1.45;
+}
+
+.agent-run-timeline-item.tone-active::before { border-color: var(--warning); }
+.agent-run-timeline-item.tone-success::before { border-color: var(--success); }
+.agent-run-timeline-item.tone-error::before { border-color: var(--error); }
+.agent-run-timeline-item.tone-error strong { color: var(--error); }
+
+.agent-run-timeline > p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+}
+
+.agent-run-persisted-error {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--error) 42%, var(--line-soft));
+  border-left: 3px solid var(--error);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+}
+
+.agent-run-persisted-error h3 {
+  color: var(--error);
+}
+
+.agent-run-persisted-error p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  line-height: 1.5;
+}
+
+.agent-run-result {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-message-meta {
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.agent-message-meta time {
+  margin-left: auto;
+}
+
+.agent-message-replay {
+  color: var(--accent-strong);
+}
+
+.agent-message-replay:hover,
+.agent-message-replay:focus-visible {
+  color: var(--text);
+}
+
 /* News page model connector compact strip: remove bottom high-contrast frame */
 .app[data-active-view="news"] .workbench > .llm-settings-panel {
   margin-top: 4px;

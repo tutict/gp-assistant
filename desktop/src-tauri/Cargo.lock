@@ -4381,6 +4381,7 @@ dependencies = [
  "futures",
  "jieba-rs",
  "lopdf",
+ "percent-encoding",
  "reqwest",
  "rusqlite",
  "rustls",

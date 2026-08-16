@@ -266,6 +266,7 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   }),
   "/api/agent": async ({ invoke, payload }) => invokeAgent(invoke, payload),
   "/api/agent/stream": async ({ invoke, payload }) => invokeAgent(invoke, payload),
+  "/api/agent/runs/delete-conversation": async ({ invoke, payload }) => invoke("api_agent_run_delete_conversation", { payload }),
 };
 export function buildTauriAgentPayload(request: Record<string, unknown>): Record<string, unknown> {
   return {

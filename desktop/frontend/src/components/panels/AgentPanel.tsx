@@ -1,16 +1,14 @@
-import { LoaderCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, Search, Send, Trash2 } from "lucide-react";
+import { FileSearch, History, LoaderCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Search, Send, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AgentResult, AgentStreamEvent, BacktestResult, LlmSettings, NewsRagResult, ObserveResult, StockRowView, WatchlistItem } from "../../types";
+import type { AgentResult, AgentStreamEvent, LlmSettings, StockRowView, WatchlistItem } from "../../types";
 import { buildTauriAgentPayload, getTauriInvoke, getTauriListen, isTauriRuntime } from "../../lib/tauri";
-import { actionResultKind, activeLlmProvider, buildLlmConfig, normalizeAgentResult, normalizeAgentStreamEvent, normalizeScreenRows, parseSseBlock } from "../../lib/contracts";
-import { agentHarnessExecutionLabel, agentHarnessLabel, buildAgentStreamPayload, MAX_AGENT_EVIDENCE_ITEMS, MAX_AGENT_MESSAGE_CHARS } from "../../lib/agent";
+import { activeLlmProvider, buildLlmConfig, normalizeAgentResult, normalizeAgentStreamEvent, parseSseBlock } from "../../lib/contracts";
+import { buildAgentStreamPayload, MAX_AGENT_MESSAGE_CHARS } from "../../lib/agent";
+import { deleteAgentConversationRuns } from "../../lib/agentRuns";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
-import { StockList } from "../StockList";
-import { BacktestResultView } from "./BacktestPanel";
+import { AgentResultView } from "./AgentResultView";
+import { AgentRunDrawer } from "./AgentRunDrawer";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
-import { NewsRagView } from "./NewsRagPanel";
-import { ObserveResultView } from "./ObservePanel";
-import { RawJson } from "../RawJson";
 import { IconButton } from "../ui/IconButton";
 
 interface AgentPanelProps {
@@ -24,6 +22,7 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+  runId?: string;
   result?: AgentResult;
   steps?: AgentStep[];
   error?: boolean;
@@ -55,24 +54,70 @@ type AgentMode = typeof AGENT_MODES[number]["id"];
 const AGENT_HISTORY_KEY = "stock-optimizer-agent-conversations";
 const AGENT_ACTIVE_KEY = "stock-optimizer-agent-active-conversation";
 const AGENT_RAIL_COLLAPSED_KEY = "stock-optimizer-agent-rail-collapsed";
+const AGENT_FAILED_LEDGER_DELETION_PREFIX = "stock-optimizer-agent-failed-ledger-deletion:";
 const AGENT_MOBILE_DRAWER_QUERY = "(max-width: 768px)";
 const MAX_AGENT_CONVERSATIONS = 40;
+const MAX_AGENT_RUN_ID_BYTES = 256;
+
+type ConversationDeletionEvent = {
+  conversationId: string;
+  type: "started" | "deleted" | "settled";
+  ledgerChanged?: boolean;
+  storageError?: boolean;
+};
+
+const conversationDeletionInFlightIds = new Set<string>();
+const conversationDeletionCompletedIds = new Set<string>();
+const conversationDeletionListeners = new Set<(event: ConversationDeletionEvent) => void>();
+
+export function resetAgentConversationDeletionCoordinatorForTests() {
+  conversationDeletionInFlightIds.clear();
+  conversationDeletionCompletedIds.clear();
+}
+
+function publishConversationDeletion(event: ConversationDeletionEvent) {
+  if (event.type === "started") {
+    conversationDeletionInFlightIds.add(event.conversationId);
+    conversationDeletionCompletedIds.delete(event.conversationId);
+  } else {
+    conversationDeletionInFlightIds.delete(event.conversationId);
+    if (event.type === "deleted") conversationDeletionCompletedIds.add(event.conversationId);
+  }
+  for (const listener of conversationDeletionListeners) listener(event);
+}
 
 export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatchlistChange }: AgentPanelProps) {
+  const [failedLedgerDeletionIds, ledgerDeletionMarkerIds, syncLedgerDeletionIds] = usePersistentLedgerDeletionIds();
   const [conversations, setConversations, quotaError] = useLocalStorage<AgentConversation[]>(
     AGENT_HISTORY_KEY,
     [createConversation()],
-    sanitizeConversations,
+    sanitizeAgentConversations,
   );
   const [activeConversationId, setActiveConversationId] = useLocalStorage<string>(AGENT_ACTIVE_KEY, "");
   const [railCollapsed, setRailCollapsed] = useLocalStorage<boolean>(AGENT_RAIL_COLLAPSED_KEY, false);
   const [input, setInput] = useState("");
   const [conversationSearch, setConversationSearch] = useState("");
   const [loading, setLoading] = useState(false);
+  const [replayOpen, setReplayOpen] = useState(false);
+  const [replayRunId, setReplayRunId] = useState<string>();
+  const [finishedRunId, setFinishedRunId] = useState<string>();
+  const [finishedRunConversationId, setFinishedRunConversationId] = useState<string>();
+  const [conversationDeleteStorageError, setConversationDeleteStorageError] = useState<string>();
+  const [ledgerDeletionInFlightIds, setLedgerDeletionInFlightIds] = useState<string[]>(
+    () => Array.from(conversationDeletionInFlightIds),
+  );
+  const [retryingLedgerDeletions, setRetryingLedgerDeletions] = useState(false);
+  const [ledgerRevision, setLedgerRevision] = useState(0);
   const threadRef = useRef<HTMLDivElement>(null);
+  const replayTriggerRef = useRef<HTMLElement | null>(null);
   const activeProvider = activeLlmProvider(llmSettings);
 
   const activeConversation = conversations.find((item) => item.id === activeConversationId) || conversations[0] || null;
+  const activeConversationDeleting = Boolean(
+    activeConversation
+      && (ledgerDeletionInFlightIds.includes(activeConversation.id)
+        || ledgerDeletionMarkerIds.includes(activeConversation.id)),
+  );
   const activeMode = AGENT_MODES.find((item) => item.id === activeConversation?.mode) || AGENT_MODES[0];
   const messages = activeConversation?.messages || [];
   const sortedConversations = useMemo(
@@ -121,6 +166,12 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   }, [messages, loading]);
 
   useEffect(() => {
+    setReplayOpen(false);
+    setReplayRunId(undefined);
+    replayTriggerRef.current = null;
+  }, [activeConversationId]);
+
+  useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
 
     const mobileDrawerQuery = window.matchMedia(AGENT_MOBILE_DRAWER_QUERY);
@@ -164,15 +215,90 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     }
   }, [setActiveConversationId, setRailCollapsed]);
 
-  const removeConversation = useCallback((conversationId: string) => {
+  const removeLocalConversation = useCallback((conversationId: string) => {
     setConversations((prev) => {
-      const next = prev.filter((conversation) => conversation.id !== conversationId);
-      if (conversationId === activeConversationId) {
-        setActiveConversationId(next[0]?.id || "");
-      }
-      return next.length ? next : [createConversation()];
+      const remaining = prev.filter((conversation) => conversation.id !== conversationId);
+      const next = remaining.length ? remaining : [createConversation()];
+      setActiveConversationId((current) => current === conversationId ? next[0].id : current);
+      return next;
     });
-  }, [activeConversationId, setActiveConversationId, setConversations]);
+  }, [setActiveConversationId, setConversations]);
+
+  useEffect(() => {
+    for (const conversationId of ledgerDeletionMarkerIds) {
+      removeLocalConversation(conversationId);
+    }
+  }, [ledgerDeletionMarkerIds, removeLocalConversation]);
+
+  useEffect(() => {
+    const listener = (event: ConversationDeletionEvent) => {
+      setLedgerDeletionInFlightIds(Array.from(conversationDeletionInFlightIds));
+      syncLedgerDeletionIds();
+      if (event.type === "deleted") {
+        removeLocalConversation(event.conversationId);
+        setLedgerRevision((revision) => revision + 1);
+        setConversationDeleteStorageError(event.storageError
+          ? "运行记录已清理，但对话历史未能持久删除。"
+          : undefined);
+      } else if (event.type === "settled" && event.ledgerChanged) {
+        setLedgerRevision((revision) => revision + 1);
+      }
+    };
+    conversationDeletionListeners.add(listener);
+    setLedgerDeletionInFlightIds(Array.from(conversationDeletionInFlightIds));
+    return () => {
+      conversationDeletionListeners.delete(listener);
+    };
+  }, [removeLocalConversation, syncLedgerDeletionIds]);
+
+  const removeConversation = useCallback((conversationId: string) => {
+    if (loading || conversationDeletionInFlightIds.has(conversationId)) return;
+    publishConversationDeletion({ conversationId, type: "started" });
+    setConversationDeleteStorageError(undefined);
+    if (!prepareConversationDeletion(conversationId)) {
+      setConversationDeleteStorageError("本地存储空间不足，对话未删除。");
+      publishConversationDeletion({ conversationId, type: "settled" });
+      return;
+    }
+
+    syncLedgerDeletionIds();
+    persistConversationRemoval(conversationId);
+    removeLocalConversation(conversationId);
+    void deleteAgentConversationRuns(conversationId)
+      .then(() => {
+        const persisted = persistConversationRemoval(conversationId);
+        if (persisted) persistLedgerDeletionCompletion(conversationId);
+        publishConversationDeletion({
+          conversationId,
+          type: "deleted",
+          ledgerChanged: true,
+          storageError: !persisted,
+        });
+      })
+      .catch(() => publishConversationDeletion({ conversationId, type: "settled" }));
+  }, [loading, removeLocalConversation, syncLedgerDeletionIds]);
+
+  const retryFailedLedgerDeletions = useCallback(() => {
+    if (retryingLedgerDeletions || failedLedgerDeletionIds.length === 0) return;
+    const retryIds = [...failedLedgerDeletionIds];
+    setRetryingLedgerDeletions(true);
+    void Promise.allSettled(retryIds.map((conversationId) => deleteAgentConversationRuns(conversationId)))
+      .then((results) => {
+        const succeededIds = retryIds.filter((_, index) => results[index].status === "fulfilled");
+        if (succeededIds.length === 0) return;
+        for (const conversationId of succeededIds) {
+          const persisted = persistConversationRemoval(conversationId);
+          if (persisted) persistLedgerDeletionCompletion(conversationId);
+          publishConversationDeletion({
+            conversationId,
+            type: "deleted",
+            ledgerChanged: true,
+            storageError: !persisted,
+          });
+        }
+      })
+      .finally(() => setRetryingLedgerDeletions(false));
+  }, [failedLedgerDeletionIds, retryingLedgerDeletions]);
 
   const changeMode = useCallback((mode: AgentMode) => {
     if (!activeConversation) return;
@@ -195,16 +321,36 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     }
   }, [onWatchlistChange, watchlist]);
 
+  const openRunHistory = useCallback((trigger: HTMLElement) => {
+    replayTriggerRef.current = trigger;
+    setReplayRunId(undefined);
+    setReplayOpen(true);
+  }, []);
+
+  const openRunReplay = useCallback((runId: string, trigger: HTMLElement) => {
+    replayTriggerRef.current = trigger;
+    setReplayRunId(runId);
+    setReplayOpen(true);
+  }, []);
+
+  const closeRunReplay = useCallback(() => setReplayOpen(false), []);
+
   const send = useCallback(async () => {
     const text = input.trim();
     const conversationId = activeConversation?.id;
     const mode = activeConversation?.mode || "quick";
-    if (!text || loading || !conversationId) return;
+    if (
+      !text
+      || loading
+      || !conversationId
+      || conversationDeletionInFlightIds.has(conversationId)
+      || persistedLedgerDeletionIds().has(conversationId)
+    ) return;
 
     const runId = crypto.randomUUID?.() || `agent-${Date.now()}`;
     const now = Date.now();
     const userMessage: ChatMessage = { role: "user", content: text, timestamp: now };
-    const assistantMessage: ChatMessage = { role: "assistant", content: "准备中...", timestamp: now, steps: [] };
+    const assistantMessage: ChatMessage = { role: "assistant", content: "准备中...", timestamp: now, runId, steps: [] };
     setInput("");
     setLoading(true);
 
@@ -287,8 +433,12 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
       });
       if (!payload) return;
       await requestAgentStream(payload, applyEvent);
+      setFinishedRunConversationId(conversationId);
+      setFinishedRunId(runId);
     } catch (err) {
       patchAssistant({ content: `错误：${(err as Error).message}`, error: true, steps: undefined });
+      setFinishedRunConversationId(conversationId);
+      setFinishedRunId(runId);
     } finally {
       setLoading(false);
     }
@@ -348,6 +498,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
                       type="button"
                       className="agent-history-remove"
                       aria-label="删除对话"
+                      disabled={loading || ledgerDeletionInFlightIds.includes(conversation.id)}
                       onClick={(event) => {
                         event.stopPropagation();
                         removeConversation(conversation.id);
@@ -392,6 +543,23 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             label="新建对话"
             icon={<Plus size={18} aria-hidden="true" />}
           />
+          <IconButton
+            className="agent-mobile-history"
+            onClick={(event) => openRunHistory(event.currentTarget)}
+            label="运行历史"
+            title="运行历史"
+            icon={<History size={18} aria-hidden="true" />}
+          />
+        </div>
+        <div className="agent-thread-toolbar">
+          <strong>{activeConversation?.title || "新对话"}</strong>
+          <IconButton
+            className="agent-thread-history"
+            onClick={(event) => openRunHistory(event.currentTarget)}
+            label="运行历史"
+            title="运行历史"
+            icon={<History size={18} aria-hidden="true" />}
+          />
         </div>
         <div className={`agent-thread ${messages.length === 0 ? "empty" : ""}`} ref={threadRef}>
           {messages.length === 0 ? (
@@ -405,6 +573,15 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
               <div className="agent-message-meta">
                 <span>{msg.role === "user" ? "你" : "Agent"}</span>
                 <time>{new Date(msg.timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>
+                {msg.role === "assistant" && msg.runId && (
+                  <IconButton
+                    className="agent-message-replay"
+                    onClick={(event) => openRunReplay(msg.runId!, event.currentTarget)}
+                    label="查看本次运行复盘"
+                    title="查看本次运行复盘"
+                    icon={<FileSearch size={15} aria-hidden="true" />}
+                  />
+                )}
               </div>
               <div className="agent-message-body">
                 {msg.steps?.length ? <AgentSteps steps={msg.steps} /> : null}
@@ -416,6 +593,23 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         </div>
 
         <div className="agent-composer-card">
+          {conversationDeleteStorageError && (
+            <div className="agent-quota-warning" role="alert">{conversationDeleteStorageError}</div>
+          )}
+          {failedLedgerDeletionIds.length > 0 && (
+            <div className="agent-quota-warning agent-cleanup-warning" role="alert">
+              <span>{failedLedgerDeletionIds.length} 个已删除对话的运行记录仍待清理。</span>
+              <IconButton
+                className="agent-cleanup-retry"
+                onClick={retryFailedLedgerDeletions}
+                disabled={retryingLedgerDeletions || ledgerDeletionInFlightIds.length > 0}
+                label="重试清理运行记录"
+                icon={retryingLedgerDeletions
+                  ? <LoaderCircle size={15} className="spin" aria-hidden="true" />
+                  : <RefreshCw size={15} aria-hidden="true" />}
+              />
+            </div>
+          )}
           {quotaError && (
             <div className="agent-quota-warning" role="alert">
               本地存储配额已满，部分对话历史未能保存，刷新后可能丢失。建议删除旧对话后重试。
@@ -434,17 +628,29 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             }}
             placeholder={`给股选优 Agent 发送消息，当前为 ${activeMode.label}`}
             rows={3}
-            disabled={loading}
+            disabled={loading || activeConversationDeleting}
           />
           <div className="agent-composer-tools">
             <span>{activeMode.label}</span>
           </div>
           <div className="agent-composer-footer">
-            <button type="button" className="send-btn" onClick={send} disabled={loading || !input.trim()} aria-label="发送">
+            <button type="button" className="send-btn" onClick={send} disabled={loading || activeConversationDeleting || !input.trim()} aria-label="发送">
               {loading ? <LoaderCircle className="spin" size={18} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
             </button>
           </div>
         </div>
+        <AgentRunDrawer
+          open={replayOpen}
+          activeConversationId={activeConversation?.id}
+          initialRunId={replayRunId}
+          finishedRunId={finishedRunId}
+          finishedRunConversationId={finishedRunConversationId}
+          ledgerRevision={ledgerRevision}
+          returnFocusElement={replayTriggerRef.current}
+          watchlist={watchlist}
+          onToggleWatchlist={toggleWatchlist}
+          onClose={closeRunReplay}
+        />
       </section>
     </div>
   );
@@ -489,148 +695,6 @@ function AgentSteps({ steps }: { steps: AgentStep[] }) {
       {steps.map((step) => <div key={step.stage} className="agent-stream-step"><span>{step.label}</span><strong>{Math.max(0, Math.min(100, step.percent))}%</strong></div>)}
     </div>
   );
-}
-
-function AgentResultView({ result, watchlist, onToggleWatchlist }: {
-  result: AgentResult;
-  watchlist: WatchlistItem[];
-  onToggleWatchlist: (item: StockRowView) => void;
-}) {
-  const kind = actionResultKind(result);
-  const nested = agentNestedResult(result, kind);
-  const legacyView = (() => {
-    if (kind === "backtest") return <BacktestResultView result={nested as unknown as BacktestResult} />;
-    if (["screen", "sector", "graph", "trend"].includes(kind)) {
-      const rows = normalizeScreenRows(nested) as StockRowView[];
-      return rows.length
-        ? <StockList items={rows} watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} />
-        : <GenericAgentResult result={nested || result} />;
-    }
-    if (kind === "news") return <NewsRagView result={nested as unknown as NewsRagResult} />;
-    if (kind === "observe") return <ObserveResultView result={nested as unknown as ObserveResult} />;
-    return <GenericAgentResult result={result} />;
-  })();
-
-  return (
-    <div className="agent-result-stack">
-      <AgentStructuredResult result={result} />
-      {legacyView}
-    </div>
-  );
-}
-
-function AgentStructuredResult({ result }: { result: AgentResult }) {
-  const toolCalls = Array.isArray(result.tool_calls) ? result.tool_calls : [];
-  const evidence = Array.isArray(result.evidence_summary) ? result.evidence_summary.slice(0, MAX_AGENT_EVIDENCE_ITEMS) : [];
-  const sections = Array.isArray(result.answer_sections) ? result.answer_sections : [];
-  const modelSections = Array.isArray(result.model_answer_sections) ? result.model_answer_sections : [];
-  const warnings = Array.isArray(result.warnings) ? result.warnings : [];
-  const nextActions = Array.isArray(result.next_actions) ? result.next_actions : [];
-  const harness = result.harness;
-  if (!harness && !result.intent && !toolCalls.length && !evidence.length && !sections.length && !modelSections.length && !warnings.length && !nextActions.length) return null;
-
-  return (
-    <section className="agent-structured-result">
-      {harness && (
-        <div className="agent-harness-meta" aria-label="本次回答方法与模型状态">
-          <span>方法</span>
-          <strong>{agentHarnessLabel(harness.profile_id)}</strong>
-          <em>{agentHarnessExecutionLabel(harness.profile_id, harness.model_used, harness.model)}</em>
-        </div>
-      )}
-      {result.intent && (
-        <div className="agent-intent-card">
-          <span>任务理解</span>
-          <strong>{result.intent.kind || result.action || "stock_research"}</strong>
-          <em>{[result.intent.mode, result.intent.depth, result.intent.window].filter(Boolean).join(" ? ")}</em>
-        </div>
-      )}
-
-      {toolCalls.length > 0 && (
-        <div className="agent-tool-trace" aria-label="工具调用轨迹">
-          {toolCalls.map((call, index) => (
-            <article key={call.id || String(call.tool || "tool") + "-" + index} className={["agent-tool-call", call.status || "ok"].join(" ")}>
-              <span>{index + 1}</span>
-              <div>
-                <strong>{call.label || call.tool || "工具调用"}</strong>
-                <em>{call.output_summary || call.status || "已完成"}</em>
-              </div>
-              <b>{call.status || "ok"}</b>
-            </article>
-          ))}
-        </div>
-      )}
-
-      {sections.length > 0 && (
-        <div className="agent-answer-sections">
-          {sections.map((section, index) => (
-            <article key={String(section.title || "section") + "-" + index}>
-              <strong>{section.title || "结论"}</strong>
-              {(section.bullets || []).map((bullet, bulletIndex) => <p key={bulletIndex}>{bullet}</p>)}
-            </article>
-          ))}
-        </div>
-      )}
-
-      {modelSections.length > 0 && (
-        <div className="agent-model-answer-block">
-          <div className="agent-model-answer-head">
-            <strong>模型推断</strong>
-            <span>按 [E#] 邻近引用本地证据，仍需核验原始数据</span>
-          </div>
-          <div className="agent-answer-sections agent-model-answer-sections">
-            {modelSections.map((section, index) => (
-              <article key={String(section.title || "model-section") + "-" + index}>
-                <strong>{section.title || "研究推断"}</strong>
-                {(section.bullets || []).map((bullet, bulletIndex) => <p key={bulletIndex}>{bullet}</p>)}
-              </article>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {evidence.length > 0 && (
-        <div className="agent-evidence-grid">
-          {evidence.map((item, index) => (
-            <article key={String(item.title || "evidence") + "-" + index}>
-              <span>{`E${index + 1} · ${item.level || "evidence"}`}</span>
-              <strong>{item.title || item.source || "证据"}</strong>
-              <p>{item.summary || item.source || "暂无证据摘要"}</p>
-              {item.source && <em>{item.source}</em>}
-            </article>
-          ))}
-        </div>
-      )}
-
-      {warnings.length > 0 && (
-        <div className="agent-warning-list">
-          {warnings.map((warning, index) => <p key={index}>{warning}</p>)}
-        </div>
-      )}
-
-      {nextActions.length > 0 && (
-        <div className="agent-next-actions">
-          {nextActions.map((action, index) => <button key={index} type="button" disabled>{action}</button>)}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function agentNestedResult(result: AgentResult, kind: string): Record<string, unknown> {
-  const data = asRecord(result.data);
-  if (Object.keys(data).length) return data;
-  if (kind === "backtest") return asRecord(result.backtest);
-  if (kind === "news") return asRecord(result.news_rag);
-  if (kind === "observe") return asRecord(result.observe);
-  if (kind === "sector") return asRecord(result.sector_screen);
-  if (kind === "graph") return asRecord(result.graph_screen);
-  if (kind === "trend") return asRecord(result.trend_screen);
-  return asRecord(result);
-}
-
-function GenericAgentResult({ result }: { result: unknown }) {
-  return <RawJson result={result} />;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -701,12 +765,82 @@ function createConversation(mode: AgentMode = "quick"): AgentConversation {
   };
 }
 
-function sanitizeConversations(value: AgentConversation[]): AgentConversation[] {
+function usePersistentLedgerDeletionIds(): [string[], string[], () => void] {
+  const [pendingIds, setPendingIds] = useState<string[]>(() => Array.from(persistedPendingLedgerDeletionIds()));
+  const [markerIds, setMarkerIds] = useState<string[]>(() => Array.from(persistedLedgerDeletionIds()));
+  const sync = useCallback(() => {
+    setPendingIds(Array.from(persistedPendingLedgerDeletionIds()));
+    setMarkerIds(Array.from(persistedLedgerDeletionIds()));
+  }, []);
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key.startsWith(AGENT_FAILED_LEDGER_DELETION_PREFIX)) sync();
+    };
+    window.addEventListener?.("storage", handleStorage);
+    return () => window.removeEventListener?.("storage", handleStorage);
+  }, [sync]);
+  return [pendingIds, markerIds, sync];
+}
+
+function ledgerDeletionTombstoneKey(conversationId: string): string {
+  return `${AGENT_FAILED_LEDGER_DELETION_PREFIX}${encodeURIComponent(conversationId)}`;
+}
+
+function prepareConversationDeletion(conversationId: string): boolean {
+  try {
+    localStorage.setItem(ledgerDeletionTombstoneKey(conversationId), "pending");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function persistLedgerDeletionCompletion(conversationId: string): boolean {
+  try {
+    localStorage.setItem(ledgerDeletionTombstoneKey(conversationId), "completed");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function persistConversationRemoval(conversationId: string): boolean {
+  try {
+    const stored = localStorage.getItem(AGENT_HISTORY_KEY);
+    const conversations = stored ? JSON.parse(stored) : [];
+    if (!Array.isArray(conversations)) return false;
+    const remaining = conversations.filter((conversation) => (
+      String(conversation?.id || "").trim() !== conversationId
+    ));
+    localStorage.setItem(
+      AGENT_HISTORY_KEY,
+      JSON.stringify(remaining.length ? remaining : [createConversation()]),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isBoundedAgentIdentity(value: string): boolean {
+  return value.length > 0 && new TextEncoder().encode(value).byteLength <= MAX_AGENT_RUN_ID_BYTES;
+}
+
+export function sanitizeAgentConversations(value: AgentConversation[]): AgentConversation[] {
   if (!Array.isArray(value)) return [createConversation()];
+  const pendingDeletionIds = persistedLedgerDeletionIds();
   const sanitized = value
-    .filter((item) => item && typeof item === "object")
+    .filter((item) => {
+      if (!item || typeof item !== "object") return false;
+      const id = String(item.id || "").trim();
+      return !conversationDeletionCompletedIds.has(id) && !pendingDeletionIds.has(id);
+    })
     .map((item) => {
       const mode = AGENT_MODES.some((modeItem) => modeItem.id === item.mode) ? item.mode : "quick";
+      const storedId = String(item.id || "").trim();
+      const id = isBoundedAgentIdentity(storedId)
+        ? storedId
+        : crypto.randomUUID?.() || `agent-conversation-${Date.now()}`;
       // Persist only a lightweight transcript: drop the heavy `result` payload and the
       // transient `steps` progress list. Screen/backtest/news results can be large and
       // would otherwise blow past the localStorage quota; the reply text in `content`
@@ -718,11 +852,14 @@ function sanitizeConversations(value: AgentConversation[]): AgentConversation[] 
               role: message.role,
               content: String(message.content || ""),
               timestamp: Number(message.timestamp || Date.now()),
+              ...(typeof message.runId === "string" && isBoundedAgentIdentity(message.runId.trim())
+                ? { runId: message.runId.trim() }
+                : {}),
               error: Boolean(message.error),
             }))
         : [];
       return {
-        id: String(item.id || crypto.randomUUID?.() || `agent-conversation-${Date.now()}`),
+        id,
         title: String(item.title || titleFromMessages(messages) || "新对话"),
         mode,
         messages,
@@ -733,6 +870,32 @@ function sanitizeConversations(value: AgentConversation[]): AgentConversation[] 
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, MAX_AGENT_CONVERSATIONS);
   return sanitized.length ? sanitized : [createConversation()];
+}
+
+function persistedLedgerDeletionIds(status?: "pending" | "completed"): Set<string> {
+  const ids = new Set<string>();
+  try {
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (!key?.startsWith(AGENT_FAILED_LEDGER_DELETION_PREFIX)) continue;
+      if (status && localStorage.getItem(key) !== status) continue;
+      const encodedId = key.slice(AGENT_FAILED_LEDGER_DELETION_PREFIX.length);
+      let id: string;
+      try {
+        id = decodeURIComponent(encodedId).trim();
+      } catch {
+        continue;
+      }
+      if (isBoundedAgentIdentity(id) && !conversationDeletionCompletedIds.has(id)) ids.add(id);
+    }
+  } catch {
+    return ids;
+  }
+  return ids;
+}
+
+function persistedPendingLedgerDeletionIds(): Set<string> {
+  return persistedLedgerDeletionIds("pending");
 }
 
 function titleFromMessages(messages: ChatMessage[]): string {

@@ -40,7 +40,7 @@ describe("Agent Tauri routes", () => {
   });
 
   it("exposes lightweight Agent run history and full run detail routes", async () => {
-    const { TAURI_GET_ROUTES, TAURI_GET_PREFIX_ROUTES } = await import("./tauri");
+    const { TAURI_GET_ROUTES, TAURI_GET_PREFIX_ROUTES, TAURI_POST_ROUTES } = await import("./tauri");
     const invokeMock = vi.fn(async (): Promise<unknown> => ({}));
     const invoke = invokeMock as InvokeFn;
 
@@ -56,12 +56,21 @@ describe("Agent Tauri routes", () => {
       path: "/api/agent/runs/run-1",
       parsed: new URL("http://tauri.localhost/api/agent/runs/run-1"),
     });
+    await TAURI_POST_ROUTES["/api/agent/runs/delete-conversation"]?.({
+      invoke,
+      path: "/api/agent/runs/delete-conversation",
+      parsed: new URL("http://tauri.localhost/api/agent/runs/delete-conversation"),
+      payload: { conversation_id: "conversation-1" },
+    });
 
     expect(invokeMock).toHaveBeenNthCalledWith(1, "api_agent_run_list", {
       payload: { conversation_id: "conversation-1", limit: 20 },
     });
     expect(invokeMock).toHaveBeenNthCalledWith(2, "api_agent_run_get", {
       payload: { run_id: "run-1" },
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "api_agent_run_delete_conversation", {
+      payload: { conversation_id: "conversation-1" },
     });
   });
 
