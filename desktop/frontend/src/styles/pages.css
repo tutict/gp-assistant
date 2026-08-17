@@ -2508,7 +2508,7 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 }
 
 .backtest-result > .metric-strip .metric-hero > strong {
-  font-size: var(--fs-display);
+  font-size: var(--fs-headline);
   font-weight: 800;
   line-height: 1.1;
 }
@@ -2562,7 +2562,7 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 }
 
 .equity-chart {
-  --equity-portfolio: var(--accent);
+  --equity-portfolio: var(--chart-line-1);
   --equity-benchmark: var(--chart-benchmark);
   display: grid;
   gap: var(--space-3);

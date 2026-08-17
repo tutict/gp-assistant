@@ -24,7 +24,7 @@
   └── .backtest-volatility（波动率快照：header+标的下拉、.volatility-grid 6 卡、.volatility-interpretation 一句话看懂/为什么这么说/策略可以怎么改/方法 details/免责）
 
 已核实缺陷清单：
-1. 【违反自家规范】pages.css L2463 `--equity-portfolio: var(--score)`——组合净值线用金色，违反 DESIGN.md Gold Score Rule（金色只属于综合评分）。改为 var(--accent)；基准线 --chart-benchmark 不变。
+1. 【违反自家规范】pages.css L2463 `--equity-portfolio: var(--score)`——组合净值线用金色，违反 DESIGN.md Gold Score Rule（金色只属于综合评分）。改为 `--equity-portfolio: var(--chart-line-1)`；基准线 `--chart-benchmark` 不变，且不占用仅供交互状态使用的 `--accent`。
 2. 【卡片疲劳】结果页 5+7+6=18 张同款数字卡（border+radius+bg 的 metric chrome 重复三遍），视觉单调无层级。
 3. 【字阶漂移】回测/波动率区一批 rem 魔法数：0.68/0.7/0.72/0.76/0.78/0.8/0.82/0.86/0.9/0.94rem——映射 token：0.68/0.7/0.72→--fs-caption、0.76/0.78/0.8/0.82→--fs-label、0.86→--fs-body、0.9/0.94→--fs-data。
 4. 【色彩语义】波动率卡中 Chaikin -25.06% 等带方向的值需要按 A 股语义着色（正=--rise 红、负=--fall 绿），无方向的值（通道区间、RVI）保持中性；一句话看懂正段整段禁止 tone 着色（用户截图显示为红色段落——无论来自旧构建还是级联，必须用运行时颜色审计锁死，见任务 D-2）。
@@ -35,7 +35,7 @@
 
 ## 任务 A：结果区层级重排（治"卡片疲劳"）
 
-1. Hero 指标带：总收益提为唯一 hero——.metric-strip 改 grid 为 [2fr 1fr 1fr 1fr 1fr]，首格（总收益）去卡片 chrome、数值升 --fs-display(24px→移动20) 800 tabular-nums 并按正负着色；其余 4 格合并为一个无边框 stat 带（label --fs-caption tertiary + value --fs-data 750），格间 1px line-soft 分隔。
+1. Hero 指标带：总收益提为唯一 hero——.metric-strip 改 grid 为 [2fr 1fr 1fr 1fr 1fr]，首格（总收益）去卡片 chrome、数值使用 --fs-headline(20px→移动18px) 800 tabular-nums 并按正负着色；其余 4 格合并为一个无边框 stat 带（label --fs-caption tertiary + value --fs-data 750），格间 1px line-soft 分隔。
 2. 次级统计（.backtest-comparison 7 项）：去卡片化，改为单行 stat 条带（同 1 的 stat 规格，横向 flex-wrap），不再 7 张带框卡。
 3. 净值曲线卡保持结构，仅精修：header 标题 --fs-label、legend --fs-caption、曲线区背景 surface 90%、网格线 line-soft；组合线色按缺陷 1 修正。
 4. .backtest-fold-list 行精修：行高 36px、date 列 tabular-nums、pass/fail 用 6px 圆点 + 文字（不再整行红绿）。
@@ -57,7 +57,7 @@
 - .volatility-grid 3→2 列（沿用现有 @media 640 规则，核对其字号也走 token）；
 - .volatility-interpretation-grid 2→1 列；
 - .backtest-context 参数长串：换行为两行（来源+按钮一行，参数串 caption 一行 wrap）；
-- hero 数值 --fs-headline(20)。
+- hero 数值 --fs-headline（移动端 token 为 18px）。
 
 ## 任务 D：测试与截图（随代码一起交付）
 

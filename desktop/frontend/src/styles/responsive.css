@@ -577,7 +577,7 @@
     border-left: 0;
   }
   .backtest-result > .metric-strip .metric-hero > strong {
-    font-size: var(--fs-display);
+    font-size: var(--fs-headline);
   }
   .backtest-result > .metric-strip > .metric:nth-child(even) {
     border-left: 0;

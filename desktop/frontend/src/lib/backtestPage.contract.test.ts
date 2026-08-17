@@ -14,6 +14,10 @@ const screenshotHarness = readFileSync(
   "utf8",
 );
 const frontendPackage = readFileSync(new URL("../../package.json", import.meta.url), "utf8");
+const backtestPrompt = readFileSync(
+  new URL("../../../../docs/backtest-page-harness-prompt.md", import.meta.url),
+  "utf8",
+);
 
 function withoutComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "");
@@ -40,9 +44,11 @@ function backtestRuleBodies(source: string): string[] {
 }
 
 describe("backtest page CSS contract", () => {
-  it("keeps the portfolio curve out of the score color", () => {
-    expect(pagesCss).not.toContain("--equity-portfolio: var(--score)");
-    expect(ruleBody(pagesCss, ".equity-chart")).toContain("--equity-portfolio: var(--accent)");
+  it("uses a chart-series token for the portfolio curve", () => {
+    const equityChart = ruleBody(pagesCss, ".equity-chart");
+    expect(equityChart).not.toContain("--equity-portfolio: var(--score)");
+    expect(equityChart).not.toContain("--equity-portfolio: var(--accent)");
+    expect(equityChart).toContain("--equity-portfolio: var(--chart-line-1)");
   });
 
   it("uses typography tokens throughout backtest and volatility rules", () => {
@@ -104,15 +110,16 @@ describe("backtest page CSS contract", () => {
       .toContain("fill: var(--text-secondary)");
   });
 
-  it("lets the mobile display token keep the return hero at 20px", () => {
+  it("keeps the return hero below the display typography tier", () => {
     const mobileHeroRules = ruleBodies(
       responsiveCss,
       ".backtest-result > .metric-strip .metric-hero > strong",
     ).join("\n");
-    expect(mobileHeroRules).not.toContain("font-size: var(--fs-headline)");
-    expect(mobileHeroRules).toContain("font-size: var(--fs-display)");
-    expect(ruleBody(pagesCss, ".backtest-result > .metric-strip .metric-hero > strong"))
-      .toContain("font-size: var(--fs-display)");
+    expect(mobileHeroRules).not.toContain("font-size: var(--fs-display)");
+    expect(mobileHeroRules).toContain("font-size: var(--fs-headline)");
+    const desktopHero = ruleBody(pagesCss, ".backtest-result > .metric-strip .metric-hero > strong");
+    expect(desktopHero).not.toContain("font-size: var(--fs-display)");
+    expect(desktopHero).toContain("font-size: var(--fs-headline)");
   });
 });
 
@@ -128,6 +135,15 @@ describe("backtest page markup contract", () => {
   it("renders the symbol chips as a semantic list", () => {
     expect(backtestPanel).toContain('<ul className="symbol-strip"');
     expect(backtestPanel).toContain('<li className="symbol-chip"');
+  });
+});
+
+describe("backtest page design guidance contract", () => {
+  it("keeps the executable prompt aligned with action-color and display-type rules", () => {
+    expect(backtestPrompt).not.toContain("--equity-portfolio: var(--accent)");
+    expect(backtestPrompt).toContain("--equity-portfolio: var(--chart-line-1)");
+    expect(backtestPrompt).not.toContain("--fs-display(24px");
+    expect(backtestPrompt).toContain("--fs-headline(20px");
   });
 });
 
@@ -154,6 +170,11 @@ describe("backtest page screenshot contract", () => {
     expect(screenshotHarness).toContain('styleFor(".backtest-gate-status.failed::before", "backgroundColor")');
     expect(screenshotHarness).toContain('styleFor(".metric-strip .metric > span")');
     expect(screenshotHarness).toContain('styleFor(".metric-strip .metric-hero > strong", "fontSize")');
+    expect(screenshotHarness).toContain('chartLine1: resolvedToken("--chart-line-1")');
+    expect(screenshotHarness).toContain('headline: getComputedStyle(document.documentElement).getPropertyValue("--fs-headline").trim()');
+    expect(screenshotHarness).toContain('portfolioCurve: styleFor(".equity-chart-line.is-portfolio", "stroke")');
+    expect(screenshotHarness).toContain("portfolioCurve: positive.tokens.chartLine1");
+    expect(screenshotHarness).toContain("heroFontSize: positive.tokens.headline");
   });
 
   it("hides fixed mobile navigation before the full-page backtest capture", () => {

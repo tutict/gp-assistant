@@ -1270,7 +1270,8 @@ async function assertBacktestRuntimeColors(page) {
         fall: resolvedToken("--fall"),
         success: resolvedToken("--success"),
         error: resolvedToken("--error"),
-        display: getComputedStyle(document.documentElement).getPropertyValue("--fs-display").trim(),
+        chartLine1: resolvedToken("--chart-line-1"),
+        headline: getComputedStyle(document.documentElement).getPropertyValue("--fs-headline").trim(),
       },
       summary: styleFor(".volatility-interpretation-summary"),
       positiveMetric: styleFor(".metric-strip .metric strong.positive"),
@@ -1283,6 +1284,7 @@ async function assertBacktestRuntimeColors(page) {
       volatilityLabel: styleFor(".volatility-symbol-control > span"),
       interpretationMeta: styleFor(".volatility-interpretation > header span"),
       heroFontSize: styleFor(".metric-strip .metric-hero > strong", "fontSize"),
+      portfolioCurve: styleFor(".equity-chart-line.is-portfolio", "stroke"),
     };
   });
 
@@ -1298,7 +1300,8 @@ async function assertBacktestRuntimeColors(page) {
     smallMetricLabel: positive.tokens.textSecondary,
     volatilityLabel: positive.tokens.textSecondary,
     interpretationMeta: positive.tokens.textSecondary,
-    heroFontSize: positive.tokens.display,
+    heroFontSize: positive.tokens.headline,
+    portfolioCurve: positive.tokens.chartLine1,
   };
   for (const [key, expected] of Object.entries(expectedPositive)) {
     if (positive[key] !== expected) {
