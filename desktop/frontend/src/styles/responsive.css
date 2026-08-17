@@ -1,3 +1,28 @@
+@media (min-width: 769px) {
+  .app[data-active-view="agent"] {
+    height: 100dvh;
+    overflow: hidden;
+  }
+  .app[data-active-view="agent"] .workbench {
+    height: calc(100dvh - var(--header-height));
+    overflow: hidden;
+  }
+  .app[data-active-view="agent"] .panels,
+  .app[data-active-view="agent"] .agent-panel {
+    height: 100%;
+    min-height: 0;
+  }
+  .app[data-active-view="agent"] .agent-workspace,
+  .app[data-active-view="agent"] .agent-workspace.rail-collapsed,
+  .app[data-active-view="agent"] .agent-rail,
+  .app[data-active-view="agent"] .agent-rail-section,
+  .app[data-active-view="agent"] .agent-history-list,
+  .app[data-active-view="agent"] .agent-thread,
+  .app[data-active-view="agent"] .agent-run-list,
+  .app[data-active-view="agent"] .agent-run-detail {
+    overflow: hidden;
+  }
+}
 @media (min-width: 769px) and (max-width: 1180px) {
   :root {
     --sidebar-width: 72px;
