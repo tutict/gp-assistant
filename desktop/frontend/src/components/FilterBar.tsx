@@ -208,7 +208,7 @@ export function FilterBar({ mobileRuntime, status, onStatusChange }: FilterBarPr
       cancelRefreshLogCollapse();
       setRefreshLogOpen(!mobileRuntime);
       setProgress({ label: "正在后台同步上一开盘日行情...", value: 6 });
-      appendLog("检测到行情缓存不是最新开盘日，已在后台触发自动刷新。", "info");
+      appendLog("检测到行情缓存日期过期或当日报价覆盖不完整，已在后台触发自动刷新。", "info");
 
       try {
         const invoke = getTauriInvoke();

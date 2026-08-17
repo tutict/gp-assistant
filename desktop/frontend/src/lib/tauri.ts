@@ -365,7 +365,7 @@ async function tauriAutoRefreshUniverse(invoke: InvokeFn, payload: Record<string
     notes: empty
       ? ["首次安装正在后台联网生成股票池，页面可以先操作；生成完成后会自动更新状态。"]
       : stale
-        ? ["检测到行情日期过期，正在后台刷新股票池。"]
+        ? ["检测到行情日期过期或当日报价覆盖不完整，正在后台刷新股票池。"]
         : ["已读取 Tauri/Rust 本地股票池缓存。"],
   };
 }

@@ -5399,14 +5399,21 @@ fn local_yyyymmdd_from_epoch_ms(epoch_ms: u128) -> Option<String> {
     Some(format!("{year:04}{month:02}{day:02}"))
 }
 
-fn market_quote_cache_stale(generated_at_epoch_ms: Option<u128>, now_epoch_ms: u128) -> bool {
+fn market_quote_cache_stale(
+    generated_at_epoch_ms: Option<u128>,
+    now_epoch_ms: u128,
+    quote_coverage_ratio: Option<f64>,
+) -> bool {
     let Some(quote_date) = generated_at_epoch_ms.and_then(local_yyyymmdd_from_epoch_ms) else {
         return true;
     };
     let Some(expected_date) = expected_market_quote_date_from_epoch_ms(now_epoch_ms) else {
         return true;
     };
-    quote_date != expected_date
+    let coverage_is_complete = quote_coverage_ratio.is_some_and(|ratio| {
+        ratio.is_finite() && ratio + f64::EPSILON >= gp_core::MIN_MARKET_BREADTH_COVERAGE
+    });
+    quote_date != expected_date || !coverage_is_complete
 }
 
 fn expected_market_quote_date_from_epoch_ms(epoch_ms: u128) -> Option<String> {
@@ -9098,11 +9105,20 @@ fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String> {
     let now_epoch_ms = epoch_millis();
     let quote_date = generated_at_epoch_ms.and_then(local_yyyymmdd_from_epoch_ms);
     let current_date = expected_market_quote_date_from_epoch_ms(now_epoch_ms);
-    let stale = market_quote_cache_stale(generated_at_epoch_ms, now_epoch_ms);
+    let quote_coverage_ratio = cache.get("quote_coverage_ratio").and_then(Value::as_f64);
+    let quote_requested = cache
+        .get("quote_requested")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let quote_observed = cache
+        .get("quote_observed")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let stale = market_quote_cache_stale(generated_at_epoch_ms, now_epoch_ms, quote_coverage_ratio);
     if stale {
-        notes.push(
-            "cached Tencent quote date is stale; refresh before rotation screening".to_string(),
-        );
+        notes.push(format!(
+            "cached Tencent quote snapshot is stale or incomplete: {quote_observed}/{quote_requested} same-day changes; refresh before rotation screening"
+        ));
     }
     Ok(json!({
         "source": "tencent",
@@ -9112,6 +9128,10 @@ fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String> {
         "universe_updated_at": updated_at_epoch_ms.map(|value| json!(value)).unwrap_or(Value::Null),
         "quote_generated_at": generated_at_epoch_ms.map(|value| json!(value)).unwrap_or(Value::Null),
         "quote_trade_date": quote_date,
+        "quote_coverage_trade_date": cache.get("quote_coverage_trade_date").cloned().unwrap_or(Value::Null),
+        "quote_requested": quote_requested,
+        "quote_observed": quote_observed,
+        "quote_coverage_ratio": quote_coverage_ratio.map(|value| json!(value)).unwrap_or(Value::Null),
         "current_trade_date": current_date,
         "stale": stale,
         "policy": { "mode": "tauri_native", "source": "cache" },
@@ -9279,6 +9299,41 @@ fn write_mobile_market_data_once(tmp_path: &Path, path: &Path, bytes: &[u8]) -> 
     Ok(())
 }
 
+fn market_quote_coverage(data: &Value, target_date: Option<&str>) -> (usize, usize, f64) {
+    let stocks = data
+        .get("stocks")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let requested = stocks.len();
+    let target = target_date.and_then(compact_date_key);
+    let observed = target
+        .as_ref()
+        .map(|target| {
+            stocks
+                .iter()
+                .filter(|stock| {
+                    stock
+                        .get("quote_time")
+                        .and_then(Value::as_str)
+                        .and_then(compact_date_key)
+                        .is_some_and(|quote_date| quote_date == *target)
+                        && stock
+                            .get("change_pct")
+                            .and_then(Value::as_f64)
+                            .is_some_and(f64::is_finite)
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    let ratio = if requested == 0 {
+        0.0
+    } else {
+        observed as f64 / requested as f64
+    };
+    (requested, observed, ratio)
+}
+
 fn market_cache_record(
     path: &Path,
     bytes: u64,
@@ -9304,6 +9359,9 @@ fn market_cache_record(
         .unwrap_or(Value::Null);
     let data_notes = data.get("notes").cloned().unwrap_or_else(|| json!([]));
     let generated_at_epoch_ms = cache_epoch_ms(Some(&generated_at));
+    let quote_coverage_trade_date = generated_at_epoch_ms.and_then(local_yyyymmdd_from_epoch_ms);
+    let (quote_requested, quote_observed, quote_coverage_ratio) =
+        market_quote_coverage(data, quote_coverage_trade_date.as_deref());
     let mut record = serde_json::Map::new();
     record.insert("exists".to_string(), json!(true));
     record.insert("bytes".to_string(), json!(bytes));
@@ -9322,6 +9380,18 @@ fn market_cache_record(
         generated_at_epoch_ms
             .map(|value| json!(value))
             .unwrap_or(Value::Null),
+    );
+    record.insert(
+        "quote_coverage_trade_date".to_string(),
+        quote_coverage_trade_date
+            .map(Value::String)
+            .unwrap_or(Value::Null),
+    );
+    record.insert("quote_requested".to_string(), json!(quote_requested));
+    record.insert("quote_observed".to_string(), json!(quote_observed));
+    record.insert(
+        "quote_coverage_ratio".to_string(),
+        json!(quote_coverage_ratio),
     );
     record.insert("data_notes".to_string(), data_notes);
     if include_data {

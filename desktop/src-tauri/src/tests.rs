@@ -1630,6 +1630,51 @@ fn market_cache_record_can_omit_data_payload() {
 }
 
 #[test]
+fn market_cache_record_reports_same_day_quote_coverage() {
+    let generated_at = cache_epoch_ms(Some(&json!("2026-06-26T10:00:00+08:00")))
+        .expect("fixture timestamp should parse");
+    let payload = json!({
+        "generated_at_epoch_ms": generated_at,
+        "stocks": [
+            {"code": "000001.SZ", "quote_time": "20260626100000", "change_pct": 0.01},
+            {"code": "000002.SZ", "quote_time": "2026-06-26 10:00:00", "change_pct": -0.02},
+            {"code": "000003.SZ", "quote_time": "20260626100000", "change_pct": null},
+            {"code": "000004.SZ", "quote_time": "20260625150000", "change_pct": 0.03}
+        ],
+        "relations": [],
+        "histories": {}
+    });
+    let record = market_cache_record(
+        Path::new("cache.json"),
+        42,
+        Some(generated_at),
+        json!({"stock_count": 4, "warnings": []}),
+        &payload,
+        false,
+        "cache written",
+    );
+
+    assert_eq!(
+        record
+            .get("quote_coverage_trade_date")
+            .and_then(Value::as_str),
+        Some("20260626")
+    );
+    assert_eq!(
+        record.get("quote_requested").and_then(Value::as_u64),
+        Some(4)
+    );
+    assert_eq!(
+        record.get("quote_observed").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        record.get("quote_coverage_ratio").and_then(Value::as_f64),
+        Some(0.5)
+    );
+}
+
+#[test]
 fn retry_with_attempts_retries_transient_failures() {
     let mut attempts = 0usize;
     let result = retry_with_attempts(3, 0, |_| {
@@ -1683,13 +1728,38 @@ fn market_quote_cache_stale_uses_quote_generation_date() {
     let june_25_quote = 1_782_381_094_692u128;
     let june_26_now = june_25_quote + 86_400_000;
 
-    assert!(market_quote_cache_stale(Some(june_25_quote), june_26_now));
-    assert!(!market_quote_cache_stale(Some(june_26_now), june_26_now));
-    assert!(market_quote_cache_stale(None, june_26_now));
+    assert!(market_quote_cache_stale(
+        Some(june_25_quote),
+        june_26_now,
+        Some(1.0)
+    ));
+    assert!(!market_quote_cache_stale(
+        Some(june_26_now),
+        june_26_now,
+        Some(1.0)
+    ));
+    assert!(market_quote_cache_stale(None, june_26_now, Some(1.0)));
     assert_eq!(
         local_yyyymmdd_from_epoch_ms(june_25_quote).as_deref(),
         Some("20260625")
     );
+}
+
+#[test]
+fn market_quote_cache_stale_rejects_partial_current_day_snapshot() {
+    let current_quote = cache_epoch_ms(Some(&json!("2026-06-26T10:00:00+08:00")))
+        .expect("fixture timestamp should parse");
+
+    assert!(market_quote_cache_stale(
+        Some(current_quote),
+        current_quote,
+        Some(gp_core::MIN_MARKET_BREADTH_COVERAGE - 0.001),
+    ));
+    assert!(!market_quote_cache_stale(
+        Some(current_quote),
+        current_quote,
+        Some(gp_core::MIN_MARKET_BREADTH_COVERAGE),
+    ));
 }
 
 #[test]

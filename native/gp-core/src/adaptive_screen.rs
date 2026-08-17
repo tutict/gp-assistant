@@ -10,7 +10,7 @@ use super::{
 pub const ADAPTIVE_ALGORITHM_VERSION: &str = "adaptive_swing_v1";
 const SCORE_SCALE: f64 = 20.0;
 const MIN_HISTORY_BARS: usize = 60;
-const MIN_MARKET_BREADTH_COVERAGE: f64 = 0.60;
+pub const MIN_MARKET_BREADTH_COVERAGE: f64 = 0.60;
 const MIN_MARKET_BREADTH_OBSERVATIONS: usize = 10;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

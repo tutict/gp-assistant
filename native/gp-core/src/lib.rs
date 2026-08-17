@@ -13,7 +13,7 @@ mod adaptive_screen;
 mod volatility;
 pub use adaptive_screen::{
     adaptive_candidate_codes, adaptive_screen_stocks, AdaptiveMarketRegime, AdaptiveRecentExposure,
-    AdaptiveScreenRequest, AdaptiveScreenResult,
+    AdaptiveScreenRequest, AdaptiveScreenResult, MIN_MARKET_BREADTH_COVERAGE,
 };
 pub use volatility::{
     AtrSnapshot, BollingerBandsSnapshot, ChaikinVolatilitySnapshot, DonchianChannelSnapshot,
