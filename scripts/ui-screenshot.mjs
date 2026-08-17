@@ -20,7 +20,10 @@ const serveBuild = process.argv.includes("--serve");
 let baseUrl = option("--url", "http://127.0.0.1:4173").replace(/\/$/, "");
 const date = new Date().toISOString().slice(0, 10);
 const checkSearchOverlay = process.argv.includes('--check-search-overlay');
+const checkNewsPage = process.argv.includes("--check-news-page");
 const headerSettingsOnly = process.argv.includes("--header-settings-only");
+const observeSummaryOnly = process.argv.includes("--observe-summary-only");
+const newsPageOnly = process.argv.includes("--news-page-only");
 const defaultOutput = fileURLToPath(
   new URL("../artifacts/ui-shots/" + date + "/", import.meta.url),
 );
@@ -125,7 +128,7 @@ const mockTrendSeries = Array.from({ length: 90 }, (_, index) => {
 });
 const mockObserveResult = {
   source: "ui-harness",
-  stock: mockStocks[0],
+  stock: { ...mockStocks[0], quote_time: "20260814161448" },
   financial_indicators: {
     title: "核心财务指标",
     period: "2026Q2",
@@ -137,19 +140,27 @@ const mockObserveResult = {
     ],
   },
   trend: {
-    stock: mockStocks[0],
+    stock: { ...mockStocks[0], quote_time: "20260814161448" },
     signal: {
       code: "600519.SH",
       date: "2026-07-29",
       close: 148.2,
       previous_close: 146.8,
       close_change_pct: 0.0095,
+      support: 142.4,
+      resistance: 154.8,
+      swl: 147.6,
+      sws: 143.2,
+      swl_above_sws: true,
       quant_score: 78,
       quant_score_max: 100,
       pattern_score: 8,
       pattern_score_max: 10,
       status: "hold",
-      reasons: ["中期趋势保持向上", "动量处于健康区间"],
+      signal_type: "trend_continuation",
+      risk_flags: ["low_volume"],
+      pattern_signals: ["bottom_accumulation", "dragon_trend_volume"],
+      reasons: ["signal_type:trend_continuation", "ma_bull_stack"],
     },
     series: mockTrendSeries,
   },
@@ -166,6 +177,104 @@ const mockObserveResult = {
     ],
   },
   notes: ["截图 harness 注入的确定性观察数据。"],
+};
+const mockObserveResultCompleteCapital = {
+  ...mockObserveResult,
+  capital_evidence: {
+    ...mockObserveResult.capital_evidence,
+    items: [
+      {
+        category: "fund_flow",
+        source: "东方财富个股资金流",
+        title: "最新交易日主力资金",
+        date: "2026-07-29",
+        confidence: "高",
+        metrics: {
+          主力净流入额: "1.28 亿",
+          主力净流入额原值: 128000000,
+          主力净占比: "6.4%",
+          主力介入度: "中（6.4%）",
+        },
+      },
+      {
+        category: "institution_lhb",
+        source: "公开龙虎榜",
+        title: "龙虎榜机构席位",
+        date: "2026-07-29",
+        confidence: "高",
+        sentiment: "positive",
+        metrics: {
+          机构买入额: "8200 万",
+          机构卖出额: "3100 万",
+          机构净买额: "5100 万",
+          净买额占成交额比: "2.1%",
+          机构买卖比: "2.6x",
+          买方机构数: "3",
+          卖方机构数: "1",
+        },
+        seat_detail_status: "complete",
+        seats: [
+          {
+            seat_code: "institution-demo-1",
+            name: "机构专用",
+            buy_amount: 82000000,
+            sell_amount: 31000000,
+            net_amount: 51000000,
+            direction: "both",
+            change_rate: 2.1,
+            reason: "换手率承接",
+            three_day_activity_count: 3,
+            three_day_rise_probability: 0.66,
+          },
+        ],
+      },
+      {
+        category: "fund_flow",
+        source: "Tauri/Rust 本地量价资金代理",
+        title: "量价资金代理",
+        confidence: "中",
+        score: 66,
+        metrics: {
+          证据类型: "本地日线量价代理",
+          推断方向: "偏流入",
+          量价热度: "68",
+          吸筹强度: "61",
+          趋势热度: "72",
+          异动热度: "46",
+        },
+      },
+    ],
+  },
+};
+const mockObserveResultUnavailableCapital = {
+  ...mockObserveResult,
+  capital_evidence: {
+    stock_code: "600519.SH",
+    composite_score: 52,
+    confidence: "medium",
+    as_of_trade_date: "2026-07-29",
+    freshness: "partial",
+    summary: "真实主力资金接口暂不可用，保留本地量价代理参考。",
+    sections: [],
+    items: [
+      { category: "fund_flow_status", source: "东方财富个股资金流", title: "接口暂不可用", date: "2026-07-29", metrics: { 状态: "暂不可用" } },
+      {
+        category: "fund_flow",
+        source: "Tauri/Rust 本地量价资金代理",
+        title: "量价资金代理",
+        confidence: "中",
+        score: 54,
+        metrics: {
+          证据类型: "本地日线量价代理",
+          推断方向: "中性",
+          量价热度: "54",
+          吸筹强度: "49",
+          趋势热度: "57",
+          异动热度: "42",
+        },
+      },
+    ],
+  },
 };
 const curve = Array.from({ length: 18 }, (_, index) => ({
   date: new Date(Date.UTC(2025, index, 1)).toISOString().slice(0, 10),
@@ -205,6 +314,160 @@ const mockDataStatus = {
   stale: false,
 };
 
+const mockResearchMessagesEmpty = [];
+const fixedResearchNow = Date.parse("2026-08-16T23:59:00+08:00");
+const mockResearchMessagesData = [
+  {
+    id: "news-msg-1",
+    document_id: "news-doc-1",
+    stock_code: "600519.SH",
+    title: "三季报预告上修，盈利弹性继续释放",
+    summary: "管理层披露的经营节奏继续改善，毛利率与费用率同步优化。",
+    sentiment: "positive",
+    source_tier: "filing",
+    published_at: "2026-08-16T09:10:00Z",
+    unread: true,
+  },
+  {
+    id: "news-msg-2",
+    document_id: "news-doc-2",
+    stock_code: "600519.SH",
+    title: "渠道库存回到更健康区间",
+    summary: "财务快照显示库存周转恢复正常，终端动销更平滑。",
+    sentiment: "bullish",
+    source_tier: "financial_snapshot",
+    published_at: "2026-08-16T10:05:00Z",
+    unread: false,
+  },
+  {
+    id: "news-msg-3",
+    document_id: "news-doc-3",
+    stock_code: "600519.SH",
+    title: "机构研报提示估值压力仍在",
+    summary: "部分研报认为短期估值修复已较充分，后续要看旺季兑现。",
+    sentiment: "negative",
+    source_tier: "research_report",
+    published_at: "2026-08-16T11:20:00Z",
+    unread: true,
+  },
+  {
+    id: "news-msg-4",
+    document_id: "news-doc-4",
+    stock_code: "600519.SH",
+    title: "行业价格带仍有扰动",
+    summary: "行业新闻显示竞品促销动作增加，价格节奏需要继续跟踪。",
+    sentiment: "bearish",
+    source_tier: "news",
+    published_at: "2026-08-16T14:00:00Z",
+    unread: false,
+  },
+  {
+    id: "news-msg-5",
+    document_id: "news-doc-5",
+    stock_code: "600519.SH",
+    title: "社区仍在讨论渠道变化",
+    summary: "社区消息围绕渠道、动销与补库存节奏展开，结论仍待核查。",
+    sentiment: "neutral",
+    source_tier: "community",
+    published_at: "2026-08-16T15:25:00Z",
+    unread: true,
+  },
+];
+const mockResearchCitationOne = {
+  citation_id: "C1",
+  document_id: "news-doc-1",
+  chunk_id: "news-doc-1-chunk-1",
+  title: "三季报预告上修",
+  excerpt: "公司披露的利润预告上修，反映经营弹性持续释放。",
+  source_tier: "filing",
+  source_name: "2026 年三季报预告",
+  published_at: "2026-08-16T09:10:00Z",
+  url: "https://example.com/research/news-doc-1",
+  page_number: 12,
+  lexical_score: 0.8632,
+  vector_score: 0.7521,
+  retrieval_score: 0.9014,
+};
+const mockResearchCitationTwo = {
+  citation_id: "C2",
+  document_id: "news-doc-2",
+  chunk_id: "news-doc-2-chunk-1",
+  title: "渠道库存回到健康区间",
+  excerpt: "财务快照显示库存周转恢复更平滑，经营质量有所改善。",
+  source_tier: "financial_snapshot",
+  source_name: "财务快照摘要",
+  published_at: "2026-08-16T10:05:00Z",
+  url: "https://example.com/research/news-doc-2",
+  page_number: 4,
+  lexical_score: 0.7114,
+  vector_score: 0.6318,
+  retrieval_score: 0.8427,
+};
+const mockResearchCitationThree = {
+  citation_id: "C3",
+  document_id: "news-doc-5",
+  chunk_id: "news-doc-5-chunk-1",
+  title: "社区讨论渠道变化",
+  excerpt: "社区信息提示市场仍在消化渠道节奏变化，结论需要继续核查。",
+  source_tier: "community",
+  source_name: "社区讨论摘录",
+  published_at: "2026-08-16T15:25:00Z",
+  url: "https://example.com/research/news-doc-5",
+  page_number: 1,
+  lexical_score: 0.6025,
+  vector_score: 0.5184,
+  retrieval_score: 0.7012,
+};
+const mockResearchThreads = [
+  {
+    id: "news-thread-1",
+    title: "贵州茅台 研究",
+    stock_code: "600519.SH",
+    created_at_epoch_ms: Date.parse("2026-08-16T08:00:00Z"),
+    updated_at_epoch_ms: Date.parse("2026-08-16T15:30:00Z"),
+  },
+];
+const mockResearchThreadDetail = {
+  answers: [
+    {
+      id: "news-answer-1",
+      thread_id: "news-thread-1",
+      mode: "model",
+      question: "利润弹性主要来自哪里？",
+      answer: "盈利弹性主要来自毛利率修复与费用率回落 [C1][C2]。",
+      citations: [mockResearchCitationOne, mockResearchCitationTwo],
+      created_at_epoch_ms: Date.parse("2026-08-16T15:31:00Z"),
+    },
+    {
+      id: "news-answer-2",
+      thread_id: "news-thread-1",
+      mode: "evidence_only",
+      question: "资金面是否同步改善？",
+      answer: "资金面仍需结合后续公告和渠道反馈继续观察 [C3]。",
+      citations: [mockResearchCitationThree],
+      created_at_epoch_ms: Date.parse("2026-08-16T15:33:00Z"),
+    },
+  ],
+};
+const mockResearchOverviewEmpty = {
+  schema_version: 2,
+  document_count: 0,
+  chunk_count: 0,
+  unread_count: 0,
+  unread_by_stock: {},
+  messages: mockResearchMessagesEmpty,
+  retrieval: { vector: { ready: false } },
+};
+const mockResearchOverviewData = {
+  schema_version: 2,
+  document_count: 18,
+  chunk_count: 52,
+  unread_count: 3,
+  unread_by_stock: { "600519.SH": 3 },
+  messages: mockResearchMessagesData,
+  retrieval: { vector: { ready: true } },
+};
+
 const headerBaselineDevices = [
   { name: "desktop-1440-dark", width: 1440, height: 900, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
   { name: "desktop-1440-light", width: 1440, height: 900, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
@@ -214,11 +477,31 @@ const headerBaselineDevices = [
   { name: "phone-390-light", width: 390, height: 844, dpr: 3, mobile: true, theme: "light", density: "comfortable" },
 ];
 
+const observeSummaryBaselineDevices = [
+  { name: "desktop-1440-dark", width: 1440, height: 900, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
+  { name: "desktop-1440-light", width: 1440, height: 900, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
+  { name: "desktop-1920-dark", width: 1920, height: 1080, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
+  { name: "desktop-1920-light", width: 1920, height: 1080, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
+  { name: "tablet-768-dark", width: 768, height: 1024, dpr: 2, mobile: true, theme: "dark", density: "comfortable" },
+  { name: "tablet-768-light", width: 768, height: 1024, dpr: 2, mobile: true, theme: "light", density: "comfortable" },
+  { name: "phone-390-dark", width: 390, height: 844, dpr: 3, mobile: true, theme: "dark", density: "comfortable" },
+  { name: "phone-390-light", width: 390, height: 844, dpr: 3, mobile: true, theme: "light", density: "comfortable" },
+];
+
 const refreshToolbarBaselineDevices = [
   { name: "desktop-1440-dark", width: 1440, height: 900, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
   { name: "desktop-1440-light", width: 1440, height: 900, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
   { name: "desktop-1920-dark", width: 1920, height: 1080, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
   { name: "desktop-1920-light", width: 1920, height: 1080, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
+];
+
+const newsPageBaselineDevices = [
+  { name: "desktop-1440-dark", width: 1440, height: 900, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
+  { name: "desktop-1440-light", width: 1440, height: 900, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
+  { name: "desktop-1920-dark", width: 1920, height: 1080, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
+  { name: "desktop-1920-light", width: 1920, height: 1080, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
+  { name: "phone-390-dark", width: 390, height: 844, dpr: 3, mobile: true, theme: "dark", density: "comfortable" },
+  { name: "phone-390-light", width: 390, height: 844, dpr: 3, mobile: true, theme: "light", density: "comfortable" },
 ];
 
 const replayConversationId = "ui-replay-conversation";
@@ -318,7 +601,24 @@ function deviceUrl(device, hash) {
   return baseUrl + "/" + (query.size ? "?" + query.toString() : "") + hash;
 }
 
-async function installHarnessState(page) {
+async function installFixedResearchClock(page) {
+  await page.addInitScript((fixedNow) => {
+    const NativeDate = Date;
+    globalThis.Date = new Proxy(NativeDate, {
+      apply: () => new NativeDate(fixedNow).toString(),
+      construct: (target, args, newTarget) => Reflect.construct(
+        target,
+        args.length ? args : [fixedNow],
+        newTarget,
+      ),
+      get: (target, property, receiver) => property === "now"
+        ? () => fixedNow
+        : Reflect.get(target, property, receiver),
+    });
+  }, fixedResearchNow);
+}
+
+async function installHarnessState(page, observeResult = mockObserveResult, researchState = null) {
   await page.addInitScript((stocks) => {
     localStorage.setItem("stock-optimizer-watchlist", JSON.stringify(
       stocks.map((stock) => ({
@@ -339,12 +639,18 @@ async function installHarnessState(page) {
   }));
   await page.route("**/api/stocks?*", (route) => route.fulfill({ json: mockStocks }));
   await page.route("**/api/screen", (route) => route.fulfill({ json: mockScreenResult }));
-  await page.route("**/api/observe/**", (route) => route.fulfill({ json: mockObserveResult }));
+  await page.route("**/api/observe/**", (route) => route.fulfill({ json: observeResult }));
   await page.route("**/api/backtest", (route) => route.fulfill({ json: mockBacktestResult }));
-  await page.route("**/api/research/overview", (route) => route.fulfill({ json: {} }));
-  await page.route("**/api/research/messages?*", (route) => route.fulfill({ json: { items: [] } }));
-  await page.route("**/api/research/threads", (route) => route.fulfill({ json: { items: [] } }));
-  await page.route("**/api/research/index-status", (route) => route.fulfill({ json: {} }));
+  const researchOverview = researchState?.overview ?? {};
+  const researchMessages = researchState?.messages ?? [];
+  const researchThreads = researchState?.threads ?? [];
+  const researchDetail = researchState?.detail ?? { answers: [] };
+  const researchIndexStatus = researchState?.indexStatus ?? {};
+  await page.route("**/api/research/overview", (route) => route.fulfill({ json: researchOverview }));
+  await page.route("**/api/research/messages?*", (route) => route.fulfill({ json: { items: researchMessages } }));
+  await page.route("**/api/research/threads", (route) => route.fulfill({ json: { items: researchThreads } }));
+  await page.route("**/api/research/threads/detail", (route) => route.fulfill({ json: researchDetail }));
+  await page.route("**/api/research/index-status", (route) => route.fulfill({ json: researchIndexStatus }));
   await page.route("**/api/research/refresh*", (route) => route.fulfill({ json: { refreshed: true } }));
 }
 
@@ -866,6 +1172,299 @@ async function captureDenseStates(page, device, targetRoot) {
   ];
 }
 
+async function captureObserveSummaryBaselines(browser, targetRoot) {
+  const scenarios = [
+    { name: "complete-capital", result: mockObserveResultCompleteCapital },
+    { name: "capital-unavailable", result: mockObserveResultUnavailableCapital },
+  ];
+  const reports = [];
+
+  for (const scenario of scenarios) {
+    for (const device of observeSummaryBaselineDevices) {
+      const context = await browser.newContext({
+        viewport: { width: device.width, height: device.height },
+        screen: { width: device.width, height: device.height },
+        deviceScaleFactor: device.dpr,
+        hasTouch: device.mobile,
+        isMobile: device.mobile,
+        colorScheme: device.theme,
+      });
+      const page = await context.newPage();
+      const consoleIssues = [];
+      page.on("console", (message) => {
+        if (message.type() === "warning" || message.type() === "error") {
+          consoleIssues.push(message.type() + ": " + message.text());
+        }
+      });
+      page.on("pageerror", (error) => consoleIssues.push("pageerror: " + error.message));
+
+      try {
+        await installHarnessState(page, scenario.result);
+        await page.goto(deviceUrl(device, "#sectionObserve"), { waitUntil: "networkidle" });
+        await page.locator("#observeCode").fill("600519.SH");
+        await page.locator(".observe-run-btn").click();
+        const summary = page.locator(".observe-decision-summary");
+        await summary.waitFor({ state: "visible" });
+        await summary.scrollIntoViewIfNeeded();
+        await page.waitForTimeout(180);
+
+        const directory = resolve(targetRoot, "observe-summary", scenario.name, device.name);
+        mkdirSync(directory, { recursive: true });
+        const fileName = "summary.png";
+        await summary.screenshot({ path: resolve(directory, fileName) });
+        const box = await summary.boundingBox();
+        const diagnostics = await pageDiagnostics(page, `observe-summary-${scenario.name}`);
+        assertPageDiagnostics(diagnostics, device.name);
+        if (consoleIssues.length) {
+          throw new Error(`${device.name}/${scenario.name} logged browser issues: ${consoleIssues.join(" | ")}`);
+        }
+        reports.push({ scenario: scenario.name, device: device.name, file: `observe-summary/${scenario.name}/${device.name}/${fileName}`, box });
+      } finally {
+        await context.close();
+      }
+    }
+  }
+
+  return reports;
+}
+
+async function assertNewsPageState(page, device, scenarioName) {
+  const riskBoundary = page.locator(".research-risk-boundary");
+  await riskBoundary.waitFor({ state: "visible" });
+  const riskText = (await riskBoundary.innerText()).trim();
+  if (riskText !== "仅供研究，不构成投资建议。") {
+    throw new Error(`${device.name}/${scenarioName} does not show the full research risk boundary`);
+  }
+
+  const composerBox = await page.locator(".research-composer").boundingBox();
+  if (!composerBox || (device.mobile && composerBox.height > 120.5)) {
+    throw new Error(`${device.name}/${scenarioName} composer exceeds the 120px mobile limit: ${JSON.stringify(composerBox)}`);
+  }
+
+  const checks = {
+    riskBoundary: riskText,
+    composerHeight: Math.round(composerBox.height * 10) / 10,
+  };
+
+  if (device.mobile) {
+    const touchTargets = await page.locator(
+      ".research-mobile-inbox-button, .research-actions button",
+    ).evaluateAll((elements) => elements.map((element) => {
+      const box = element.getBoundingClientRect();
+      return {
+        label: element.getAttribute("aria-label") || element.getAttribute("title") || element.textContent?.trim(),
+        width: box.width,
+        height: box.height,
+      };
+    }));
+    const undersized = touchTargets.filter((target) => target.width < 43.5 || target.height < 43.5);
+    if (touchTargets.length < 3 || undersized.length) {
+      throw new Error(`${device.name}/${scenarioName} has undersized topbar touch targets: ${JSON.stringify(undersized)}`);
+    }
+    checks.touchTargets = touchTargets;
+
+    if (scenarioName === "empty") {
+      const emptyActions = await page.locator(".research-empty-actions button")
+        .evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height));
+      if (!emptyActions.length || emptyActions.some((height) => height < 43.5)) {
+        throw new Error(`${device.name}/${scenarioName} has undersized empty-state actions: ${JSON.stringify(emptyActions)}`);
+      }
+      checks.emptyActionHeights = emptyActions;
+    }
+  }
+
+  if (!device.mobile && scenarioName === "empty") {
+    const evidenceOverflow = await page.locator(".research-evidence").evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    if (evidenceOverflow.scrollHeight > evidenceOverflow.clientHeight + 1) {
+      throw new Error(`${device.name}/${scenarioName} evidence empty state scrolls: ${JSON.stringify(evidenceOverflow)}`);
+    }
+    checks.evidenceOverflow = evidenceOverflow;
+  }
+
+  if (scenarioName === "data") {
+    const summaryCounts = await page.locator(".research-brief-stat > strong").allTextContents();
+    if (summaryCounts.length !== 4 || summaryCounts.slice(0, 3).some((value) => Number(value) === 0)) {
+      throw new Error(`${device.name}/${scenarioName} fixture is no longer counted as today: ${JSON.stringify(summaryCounts)}`);
+    }
+    checks.summaryCounts = summaryCounts;
+  }
+
+  return checks;
+}
+
+async function captureNewsPageBaselines(browser, targetRoot) {
+  const scenarios = [
+    {
+      name: "empty",
+      researchState: {
+        overview: mockResearchOverviewEmpty,
+        messages: mockResearchMessagesEmpty,
+        threads: [],
+        detail: { answers: [] },
+        indexStatus: {},
+      },
+      selectCitation: false,
+    },
+    {
+      name: "data",
+      researchState: {
+        overview: mockResearchOverviewData,
+        messages: mockResearchMessagesData,
+        threads: mockResearchThreads,
+        detail: mockResearchThreadDetail,
+        indexStatus: { schema_version: 1, document_count: 18, chunk_count: 52 },
+      },
+      selectCitation: true,
+    },
+  ];
+  const reports = [];
+
+  for (const scenario of scenarios) {
+    for (const device of newsPageBaselineDevices) {
+      const context = await browser.newContext({
+        viewport: { width: device.width, height: device.height },
+        screen: { width: device.width, height: device.height },
+        deviceScaleFactor: device.dpr,
+        hasTouch: device.mobile,
+        isMobile: device.mobile,
+        colorScheme: device.theme,
+      });
+      const page = await context.newPage();
+      const consoleIssues = [];
+      page.on("console", (message) => {
+        if (message.type() === "warning" || message.type() === "error") {
+          consoleIssues.push(message.type() + ": " + message.text());
+        }
+      });
+      page.on("pageerror", (error) => consoleIssues.push("pageerror: " + error.message));
+
+      try {
+        await installFixedResearchClock(page);
+        await installHarnessState(page, mockObserveResult, scenario.researchState);
+        await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
+        await page.locator("#root").waitFor({ state: "visible" });
+        await page.locator(".research-workspace").waitFor({ state: "visible" });
+        await page.mouse.move(device.width / 2, Math.min(180, device.height / 3));
+        await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+
+        if (scenario.selectCitation && !device.mobile) {
+          const citation = page.locator(".research-inline-citation").first();
+          await citation.waitFor({ state: "visible" });
+          await citation.click();
+          await page.waitForTimeout(160);
+          await page.locator(".research-stream-body").evaluate((element) => element.scrollTo(0, 0));
+        }
+
+        const checks = await assertNewsPageState(page, device, scenario.name);
+
+        const directory = resolve(targetRoot, "news", scenario.name, device.name);
+        mkdirSync(directory, { recursive: true });
+        await page.screenshot({ path: resolve(directory, "news.png"), fullPage: false });
+        const diagnostics = await pageDiagnostics(page, `news-${scenario.name}`);
+        assertPageDiagnostics(diagnostics, device.name);
+        if (consoleIssues.length) {
+          throw new Error(`${device.name}/${scenario.name} logged browser issues: ${consoleIssues.join(" | ")}`);
+        }
+        reports.push({
+          scenario: scenario.name,
+          device: device.name,
+          file: `news/${scenario.name}/${device.name}/news.png`,
+          box: await boxFor(page, ".research-workspace"),
+          checks,
+        });
+      } finally {
+        await context.close();
+      }
+    }
+  }
+
+  const phoneDark = newsPageBaselineDevices.find((device) => device.name === "phone-390-dark");
+  if (!phoneDark) return reports;
+
+  const overlayStates = [
+    {
+      name: "phone-inbox-open",
+      file: "inbox-open.png",
+      open: async (page) => {
+        await page.locator(".research-mobile-inbox-button").click();
+        await page.locator(".research-inbox.mobile-open").waitFor({ state: "visible" });
+      },
+    },
+    {
+      name: "phone-evidence-open",
+      file: "evidence-open.png",
+      open: async (page) => {
+        const citation = page.locator(".research-inline-citation").first();
+        await citation.waitFor({ state: "visible" });
+        await citation.click();
+        await page.locator(".research-evidence.has-selection").waitFor({ state: "visible" });
+      },
+    },
+  ];
+
+  for (const overlay of overlayStates) {
+    const context = await browser.newContext({
+      viewport: { width: phoneDark.width, height: phoneDark.height },
+      screen: { width: phoneDark.width, height: phoneDark.height },
+      deviceScaleFactor: phoneDark.dpr,
+      hasTouch: phoneDark.mobile,
+      isMobile: phoneDark.mobile,
+      colorScheme: phoneDark.theme,
+    });
+    const page = await context.newPage();
+    const consoleIssues = [];
+    page.on("console", (message) => {
+      if (message.type() === "warning" || message.type() === "error") {
+        consoleIssues.push(message.type() + ": " + message.text());
+      }
+    });
+    page.on("pageerror", (error) => consoleIssues.push("pageerror: " + error.message));
+
+    try {
+      await installFixedResearchClock(page);
+      await installHarnessState(page, mockObserveResult, {
+        overview: mockResearchOverviewData,
+        messages: mockResearchMessagesData,
+        threads: mockResearchThreads,
+        detail: mockResearchThreadDetail,
+        indexStatus: { schema_version: 1, document_count: 18, chunk_count: 52 },
+      });
+      await page.goto(deviceUrl(phoneDark, "#sectionNewsRag"), { waitUntil: "networkidle" });
+      await page.locator("#root").waitFor({ state: "visible" });
+      await page.locator(".research-workspace").waitFor({ state: "visible" });
+      await page.mouse.move(phoneDark.width / 2, Math.min(180, phoneDark.height / 3));
+      await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+      await page.locator(".research-inline-citation").first().waitFor({ state: "visible" });
+      await overlay.open(page);
+      await page.waitForTimeout(160);
+      const checks = await assertNewsPageState(page, phoneDark, "data");
+
+      const directory = resolve(targetRoot, "news", overlay.name, phoneDark.name);
+      mkdirSync(directory, { recursive: true });
+      await page.screenshot({ path: resolve(directory, overlay.file), fullPage: false });
+      const diagnostics = await pageDiagnostics(page, overlay.name);
+      assertPageDiagnostics(diagnostics, phoneDark.name);
+      if (consoleIssues.length) {
+        throw new Error(`${phoneDark.name}/${overlay.name} logged browser issues: ${consoleIssues.join(" | ")}`);
+      }
+      reports.push({
+        scenario: overlay.name,
+        device: phoneDark.name,
+        file: `news/${overlay.name}/${phoneDark.name}/${overlay.file}`,
+        box: await boxFor(page, ".research-workspace"),
+        checks,
+      });
+    } finally {
+      await context.close();
+    }
+  }
+
+  return reports;
+}
+
 let localServer = null;
 if (serveBuild) {
   const started = await startBuiltAppServer();
@@ -901,6 +1500,31 @@ try {
     console.log("Desktop shortcut checks passed: " + JSON.stringify(shortcutChecks));
     await context.close();
     await runAgentReplayChecks(browser);
+    if (checkNewsPage) {
+      mkdirSync(outputRoot, { recursive: true });
+      const newsPageBaselines = await captureNewsPageBaselines(browser, outputRoot);
+      writeFileSync(
+        resolve(outputRoot, "news-page-report.json"),
+        JSON.stringify({ baseUrl, generatedAt: new Date().toISOString(), newsPageBaselines }, null, 2) + "\n",
+      );
+      console.log("News page checks passed: " + newsPageBaselines.length + " captures");
+    }
+  } else if (observeSummaryOnly) {
+    mkdirSync(outputRoot, { recursive: true });
+    const observeSummaryBaselines = await captureObserveSummaryBaselines(browser, outputRoot);
+    writeFileSync(
+      resolve(outputRoot, "observe-summary-report.json"),
+      JSON.stringify({ baseUrl, generatedAt: new Date().toISOString(), observeSummaryBaselines }, null, 2) + "\n",
+    );
+    console.log("Observe summary screenshots written to " + outputRoot + " (" + observeSummaryBaselines.length + " captures)");
+  } else if (newsPageOnly) {
+    mkdirSync(outputRoot, { recursive: true });
+    const newsPageBaselines = await captureNewsPageBaselines(browser, outputRoot);
+    writeFileSync(
+      resolve(outputRoot, "news-page-report.json"),
+      JSON.stringify({ baseUrl, generatedAt: new Date().toISOString(), newsPageBaselines }, null, 2) + "\n",
+    );
+    console.log("News page screenshots written to " + outputRoot + " (" + newsPageBaselines.length + " captures)");
   } else if (headerSettingsOnly) {
     mkdirSync(outputRoot, { recursive: true });
     const headerBaselines = await captureHeaderBaselines(browser, outputRoot);
@@ -918,6 +1542,7 @@ try {
       denseStates: [],
       headerBaselines: [],
       refreshToolbarBaselines: [],
+      newsPageBaselines: [],
     };
 
     for (const device of devices) {
@@ -988,6 +1613,7 @@ try {
 
     report.headerBaselines = await captureHeaderBaselines(browser, outputRoot);
     report.refreshToolbarBaselines = await captureRefreshToolbarBaselines(browser, outputRoot);
+    report.newsPageBaselines = await captureNewsPageBaselines(browser, outputRoot);
 
     writeFileSync(resolve(outputRoot, "report.json"), JSON.stringify(report, null, 2) + "\n");
     console.log("UI screenshots written to " + outputRoot);

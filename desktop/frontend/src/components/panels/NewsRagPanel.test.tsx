@@ -139,6 +139,19 @@ describe("NewsRagPanel", () => {
     await act(async () => { renderer.unmount(); });
   });
 
+  it("keeps the full risk boundary visible on mobile", async () => {
+    tauriMocks.mobile = true;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<NewsRagPanel llmSettings={null} />);
+    });
+
+    const riskBoundary = renderer.root.findByProps({ className: "research-risk-boundary" });
+    expect(textOf(riskBoundary)).toBe("仅供研究，不构成投资建议。");
+    expect(renderer.root.findByType("textarea").props.placeholder).not.toContain("仅供研究");
+    await act(async () => { renderer.unmount(); });
+  });
+
   it("keeps the compatibility evidence view available to the agent page", () => {
     const html = renderToStaticMarkup(
       <NewsRagView

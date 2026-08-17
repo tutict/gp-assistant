@@ -158,6 +158,9 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   }), [todayMessages]);
   const eventGroups = useMemo(() => groupMessages(visibleMessages), [visibleMessages]);
   const stock = watchlist.find((item) => normalizeStockCode(item.code) === code);
+  const questionPlaceholder = code
+    ? `询问 ${code} 的公告、财务或消息…`
+    : "询问当前知识库…";
   const summary = useMemo(() => {
     if (!todayMessages.length) {
       return code ? `${code} 暂无新增证据。可立即更新，或导入公告、研报后再核查。`
@@ -321,10 +324,18 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
           </div>
           <p>{summary}</p>
           <div className="research-brief-counts">
-            <span className="positive">利好 {grouped.positive.length}</span>
-            <span className="negative">利空 {grouped.negative.length}</span>
-            <span>待核查 {grouped.uncertain.length}</span>
-            <span>文档 {overview?.document_count || 0}</span>
+            <span className="research-brief-stat positive">
+              <span>利好</span><strong>{grouped.positive.length}</strong>
+            </span>
+            <span className="research-brief-stat negative">
+              <span>利空</span><strong>{grouped.negative.length}</strong>
+            </span>
+            <span className="research-brief-stat">
+              <span>待核查</span><strong>{grouped.uncertain.length}</strong>
+            </span>
+            <span className="research-brief-stat">
+              <span>文档</span><strong>{overview?.document_count || 0}</strong>
+            </span>
           </div>
         </section>
 
@@ -332,10 +343,11 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
           <div className="research-section-heading"><div><span>事件流</span>
             <small>按来源等级与时间整理</small></div><span>{visibleMessages.length} 条</span>
           </div>
-          {!visibleMessages.length ? <div className="research-empty-state">
-            <BookOpen size={22} /><strong>还没有可研究的消息</strong>
-            <p>选择一只自选股并立即更新，或从知识库管理导入公告与研报。</p>
-          </div> : <div className="research-event-list">
+          {!visibleMessages.length ? <ResearchEmptyState
+            refreshing={refreshing}
+            onRefresh={() => void refresh()}
+            onKnowledge={openKnowledge}
+          /> : <div className="research-event-list">
             {eventGroups.map((group) => <EventGroup key={group.key}
               label={group.label} tone={group.key} messages={group.messages}
               markRead={markRead} />)}
@@ -351,7 +363,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
           </small></label>
             <textarea id={questionInputId} value={question}
               onChange={(event) => setQuestion(event.target.value)}
-              placeholder={code ? `询问 ${code} 的公告、财务或消息…` : "询问当前知识库…"} rows={2} />
+              placeholder={questionPlaceholder} rows={2} />
             <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>
           </div>
           <button type="submit" aria-label="提交问题" title="提交问题"
@@ -397,6 +409,29 @@ function EventGroup(props: {
       </span>
     </button>)}
   </section>;
+}
+
+function ResearchEmptyState(props: {
+  refreshing: boolean;
+  onRefresh: () => void;
+  onKnowledge: () => void;
+}) {
+  return <div className="research-empty">
+    <BookOpen size={28} />
+    <strong>还没有可研究的消息</strong>
+    <p>选择一只自选股并立即更新，或从知识库管理导入公告与研报。</p>
+    <div className="research-empty-actions">
+      <button type="button" className="research-empty-primary"
+        disabled={props.refreshing} onClick={props.onRefresh}>
+        <RefreshCw size={15} className={props.refreshing ? "is-spinning" : ""} />
+        <span>{props.refreshing ? "更新中" : "立即更新"}</span>
+      </button>
+      <button type="button" className="research-empty-ghost" onClick={props.onKnowledge}>
+        <Database size={15} />
+        <span>知识库管理</span>
+      </button>
+    </div>
+  </div>;
 }
 
 
@@ -498,9 +533,9 @@ function EvidencePanel(props: { citation: ResearchCitation | null; close: () => 
         <div><strong>证据会在这里展开</strong>
           <p>完成一次证据问答，再点击回答中的引用编号查看原文。</p></div>
         <ol aria-label="证据检查步骤">
-          <li><b>C1</b><span>定位回答中的引用</span></li>
-          <li><FileText size={14} /><span>核对原文、页码与来源</span></li>
-          <li><ExternalLink size={14} /><span>需要时回到公开原文</span></li>
+          <li><span>1</span><div><strong>定位引用</strong><p>先点回答中的引用编号。</p></div></li>
+          <li><span>2</span><div><strong>核对原文</strong><p>对照页码、来源与摘录。</p></div></li>
+          <li><span>3</span><div><strong>回到原文</strong><p>需要时打开公开链接复核。</p></div></li>
         </ol>
       </div>}
   </aside>;
@@ -712,7 +747,8 @@ function sourceTierLabel(value?: string): string {
     filing: "公告", financial_snapshot: "财务快照", news: "新闻",
     research: "研报", research_report: "研报", community: "社区",
   };
-  return labels[String(value || "news")] || String(value || "新闻");
+  const key = value ? String(value) : "news";
+  return labels[key] || "新闻";
 }
 
 function sentimentClass(value: string): string {
