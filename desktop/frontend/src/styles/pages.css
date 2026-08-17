@@ -2436,7 +2436,7 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 
 .backtest-controls {
   display: grid;
-  grid-template-columns: repeat(7, minmax(94px, 1fr)) auto;
+  grid-template-columns: repeat(auto-fit, minmax(94px, 1fr));
   align-items: end;
 }
 

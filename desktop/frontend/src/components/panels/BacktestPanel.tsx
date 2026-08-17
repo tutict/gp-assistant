@@ -15,6 +15,8 @@ import {
 import { RawJson } from "../RawJson";
 import { PanelFeedback } from "../ui/PanelFeedback";
 import type { BacktestRouteRequest, BacktestSource } from "../../lib/viewNavigation";
+import { ALL_INDUSTRY_OPTIONS, isLegacyBroadIndustry } from "../../lib/screenIndustryOptions";
+import { MARKET_SCOPE_OPTIONS, normalizeMarketScope } from "../../lib/screenScopeOptions";
 import {
   buildVolatilityInterpretation,
   VOLATILITY_INTERPRETATION_METHOD,
@@ -36,30 +38,37 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
   const [benchmark, setBenchmark] = useState("candidate_equal_weight");
   const [strategyMode, setStrategyMode] = useState("candidate_snapshot");
   const [adaptiveScreenSpec, setAdaptiveScreenSpec] = useState<AdaptiveScreenRequest | undefined>();
-  const [criteriaSnapshot, setCriteriaSnapshot] = useState<FilterCriteria | undefined>();
+  const [workingCriteria, setWorkingCriteria] = useState<FilterCriteria>(() => ({ ...criteria }));
   const [costBps, setCostBps] = useState(10);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const requestInFlightRef = useRef(false);
   const requestVersionRef = useRef(0);
+  const consumedPreferredRequestIdRef = useRef<number | null>(null);
   const watchlistSignature = watchlist.map((item) => item.code.toUpperCase()).join("|");
   const previousWatchlistSignatureRef = useRef(watchlistSignature);
 
   useEffect(() => {
     if (!preferredSource) return;
+    if (consumedPreferredRequestIdRef.current === preferredSource.requestId) return;
+    consumedPreferredRequestIdRef.current = preferredSource.requestId;
     const nextAdaptiveScreenSpec = preferredSource.source === "criteria"
       ? preferredSource.adaptiveScreenSpec
       : undefined;
     requestVersionRef.current += 1;
     setSource(preferredSource.source);
     setAdaptiveScreenSpec(nextAdaptiveScreenSpec);
-    setCriteriaSnapshot(preferredSource.source === "criteria" ? preferredSource.criteriaSnapshot : undefined);
+    setWorkingCriteria(
+      preferredSource.source === "criteria"
+        ? { ...(preferredSource.criteriaSnapshot ?? criteria) }
+        : { ...criteria },
+    );
     setStrategyMode(nextAdaptiveScreenSpec ? "adaptive_swing_v1" : "candidate_snapshot");
     setResult(null);
     setError(null);
     onPreferredSourceConsumed?.(preferredSource.requestId);
-  }, [onPreferredSourceConsumed, preferredSource]);
+  }, [criteria, onPreferredSourceConsumed, preferredSource]);
 
   useEffect(() => {
     if (previousWatchlistSignatureRef.current === watchlistSignature) return;
@@ -75,12 +84,17 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     requestVersionRef.current += 1;
     setSource(nextSource);
     if (nextSource === "watchlist") {
+      if (adaptiveScreenSpec) setWorkingCriteria({ ...criteria });
       setAdaptiveScreenSpec(undefined);
-      setCriteriaSnapshot(undefined);
       setStrategyMode("candidate_snapshot");
     }
     setResult(null);
     setError(null);
+  };
+
+  const effectiveFilterCriteria = source === "criteria" ? workingCriteria : criteria;
+  const updateWorkingCriteria = (patch: Partial<FilterCriteria>) => {
+    setWorkingCriteria((current) => ({ ...current, ...patch }));
   };
 
   const run = async () => {
@@ -99,7 +113,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     try {
       const payload = buildBacktestRequest({
         source,
-        criteria: criteriaSnapshot || criteria,
+        criteria: effectiveFilterCriteria,
         watchlist,
         startDate: start,
         endDate: end,
@@ -124,13 +138,17 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
   };
 
   const effectiveCriteria = source === "criteria" ? adaptiveScreenSpec?.criteria : undefined;
-  const effectiveFilterCriteria = criteriaSnapshot || criteria;
   const criteriaScopeText = effectiveCriteria
     ? [effectiveCriteria.industry, effectiveCriteria.market_scope].filter(Boolean).join(" / ")
     : [effectiveFilterCriteria.industry, effectiveFilterCriteria.marketScope].filter(Boolean).join(" / ");
   const sourceText = source === "watchlist"
     ? `${Math.min(topN, watchlist.length)} / ${watchlist.length} 只`
     : (criteriaScopeText || "全部行业 / 全部范围");
+  const selectedIndustry = effectiveFilterCriteria.industry.trim();
+  const industryOptions = selectedIndustry && !ALL_INDUSTRY_OPTIONS.includes(selectedIndustry)
+    ? [selectedIndustry, ...ALL_INDUSTRY_OPTIONS]
+    : ALL_INDUSTRY_OPTIONS;
+  const canEditCriteria = source === "criteria" && !adaptiveScreenSpec;
 
   return (
     <div className="panel-container">
@@ -186,6 +204,28 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
       </div>
 
       <div className="panel-controls backtest-controls">
+        {canEditCriteria && <>
+          <div className="form-row inline">
+            <label htmlFor="btIndustry">行业（本页）</label>
+            <select id="btIndustry" value={selectedIndustry} disabled={loading}
+              onChange={(event) => updateWorkingCriteria({ industry: event.target.value })}>
+              {industryOptions.map((industry) => (
+                <option key={industry || "all-industries"} value={industry}>
+                  {isLegacyBroadIndustry(industry) ? `${industry}（大类）` : industry || "全部行业"}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-row inline">
+            <label htmlFor="btMarketScope">股票池范围（本页）</label>
+            <select id="btMarketScope" value={normalizeMarketScope(effectiveFilterCriteria.marketScope)} disabled={loading}
+              onChange={(event) => updateWorkingCriteria({ marketScope: event.target.value })}>
+              {MARKET_SCOPE_OPTIONS.map((option) => (
+                <option key={option.value || "all-scopes"} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+        </>}
         <div className="form-row inline"><label htmlFor="btStart">开始</label><input id="btStart" type="date" value={start} disabled={loading} onChange={(e) => setStart(e.target.value)} /></div>
         <div className="form-row inline"><label htmlFor="btEnd">结束</label><input id="btEnd" type="date" value={end} disabled={loading} onChange={(e) => setEnd(e.target.value)} /></div>
         <div className="form-row inline"><label htmlFor="btTopN">持仓</label><input id="btTopN" type="number" min="1" max="100" value={topN} disabled={loading} onChange={(e) => setTopN(Number(e.target.value) || 10)} /></div>

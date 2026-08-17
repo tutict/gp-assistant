@@ -129,6 +129,143 @@ describe("BacktestPanel interactions", () => {
     expect(payload.criteria).not.toHaveProperty("market_scope");
   });
 
+  it("submits the originating custom industry and market scope", async () => {
+    postJsonMock.mockResolvedValue(result);
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <BacktestPanel
+          criteria={{ ...criteria, industry: "传媒", marketScope: "沪市A股" }}
+          watchlist={watchlist}
+          preferredSource={{
+            source: "criteria",
+            requestId: 1,
+            criteriaSnapshot: {
+              ...criteria,
+              industry: "影视院线",
+              marketScope: "北交所",
+            },
+          }}
+        />,
+      );
+    });
+
+    expect(textContent(renderer)).toContain("影视院线 / 北交所");
+    const industrySelect = renderer.root.findByProps({ id: "btIndustry" });
+    const marketScopeSelect = renderer.root.findByProps({ id: "btMarketScope" });
+    await act(async () => {
+      industrySelect.props.onChange({ target: { value: "传媒" } });
+      marketScopeSelect.props.onChange({ target: { value: "沪市A股" } });
+    });
+    expect(textContent(renderer)).toContain("传媒 / 沪市A股");
+    await act(async () => {
+      await runButton(renderer).props.onClick();
+    });
+
+    expect(postJsonMock.mock.calls[0][1].criteria).toMatchObject({
+      industry: "传媒",
+      market_scope: "沪市A股",
+    });
+  });
+
+  it("preserves the local criteria draft when switching back from watchlist", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <BacktestPanel
+          criteria={{ ...criteria, industry: "影视院线", marketScope: "北交所" }}
+          watchlist={watchlist}
+        />,
+      );
+    });
+
+    await act(async () => {
+      renderer.root.findByProps({ id: "btIndustry" }).props.onChange({ target: { value: "传媒" } });
+    });
+    await act(async () => {
+      renderer.root.find((node) => node.type === "button" && node.children.includes("自选股")).props.onClick();
+    });
+    await act(async () => {
+      renderer.root.find((node) => node.type === "button" && node.children.includes("当前条件")).props.onClick();
+    });
+
+    expect(textContent(renderer)).toContain("传媒 / 北交所");
+  });
+
+  it("does not reapply a consumed route snapshot after parent criteria changes", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <BacktestPanel
+          criteria={{ ...criteria, industry: "银行", marketScope: "沪市A股" }}
+          watchlist={watchlist}
+          preferredSource={{
+            source: "criteria",
+            requestId: 7,
+            criteriaSnapshot: { ...criteria, industry: "影视院线", marketScope: "北交所" },
+          }}
+        />,
+      );
+    });
+
+    await act(async () => {
+      renderer.root.findByProps({ id: "btIndustry" }).props.onChange({ target: { value: "传媒" } });
+    });
+    await act(async () => {
+      renderer.update(
+        <BacktestPanel
+          criteria={{ ...criteria, industry: "证券", marketScope: "深市A股" }}
+          watchlist={watchlist}
+          preferredSource={{
+            source: "criteria",
+            requestId: 7,
+            criteriaSnapshot: { ...criteria, industry: "影视院线", marketScope: "北交所" },
+          }}
+        />,
+      );
+    });
+
+    expect(textContent(renderer)).toContain("传媒 / 北交所");
+    expect(textContent(renderer)).not.toContain("影视院线 / 北交所");
+  });
+
+  it("keeps the backtest criteria draft independent from later custom-screen changes", async () => {
+    postJsonMock.mockResolvedValue(result);
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <BacktestPanel
+          criteria={{ ...criteria, industry: "影视院线", marketScope: "北交所" }}
+          watchlist={watchlist}
+        />,
+      );
+    });
+
+    const industrySelect = renderer.root.findByProps({ id: "btIndustry" });
+    await act(async () => {
+      industrySelect.props.onChange({ target: { value: "传媒" } });
+    });
+    await act(async () => {
+      renderer.update(
+        <BacktestPanel
+          criteria={{ ...criteria, industry: "银行", marketScope: "沪市A股" }}
+          watchlist={watchlist}
+        />,
+      );
+    });
+
+    expect(textContent(renderer)).toContain("传媒 / 北交所");
+    expect(textContent(renderer)).not.toContain("银行 / 沪市A股");
+    await act(async () => {
+      await runButton(renderer).props.onClick();
+    });
+
+    expect(postJsonMock.mock.calls[0][1].criteria).toMatchObject({
+      industry: "传媒",
+      market_scope: "北交所",
+    });
+  });
+
   it("clears the adaptive specification when switching to watchlist", async () => {
     postJsonMock.mockResolvedValue(result);
     let renderer!: ReactTestRenderer;
@@ -162,6 +299,63 @@ describe("BacktestPanel interactions", () => {
       { timeoutMs: 90_000 },
     );
     expect(postJsonMock.mock.calls[0][1]).not.toHaveProperty("adaptive_screen_spec");
+  });
+
+  it("uses live criteria for watchlist backtests after a custom-screen update", async () => {
+    postJsonMock.mockResolvedValue(result);
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <BacktestPanel
+          criteria={{ ...criteria, includeSt: false }}
+          watchlist={watchlist}
+          preferredSource={{ source: "watchlist", requestId: 3 }}
+        />,
+      );
+    });
+    await act(async () => {
+      renderer.update(
+        <BacktestPanel
+          criteria={{ ...criteria, includeSt: true }}
+          watchlist={watchlist}
+        />,
+      );
+    });
+    await act(async () => {
+      await runButton(renderer).props.onClick();
+    });
+
+    expect(postJsonMock.mock.calls[0][1].criteria).toMatchObject({ include_st: true });
+  });
+
+  it("refreshes the criteria draft after leaving an adaptive source", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <BacktestPanel
+          criteria={{ ...criteria, industry: "银行" }}
+          watchlist={watchlist}
+          preferredSource={{ source: "criteria", requestId: 4, adaptiveScreenSpec }}
+        />,
+      );
+    });
+    await act(async () => {
+      renderer.update(
+        <BacktestPanel
+          criteria={{ ...criteria, industry: "传媒" }}
+          watchlist={watchlist}
+          preferredSource={{ source: "criteria", requestId: 4, adaptiveScreenSpec }}
+        />,
+      );
+    });
+    await act(async () => {
+      renderer.root.find((node) => node.type === "button" && node.children.includes("自选股")).props.onClick();
+    });
+    await act(async () => {
+      renderer.root.find((node) => node.type === "button" && node.children.includes("当前条件")).props.onClick();
+    });
+
+    expect(renderer.root.findByProps({ id: "btIndustry" }).props.value).toBe("传媒");
   });
 
   it("enters loading immediately and deduplicates repeated clicks", async () => {

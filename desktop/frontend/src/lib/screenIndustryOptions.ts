@@ -1,3 +1,37 @@
+export const LEGACY_BROAD_INDUSTRY_OPTIONS = [
+  "银行",
+  "证券",
+  "保险",
+  "医药生物",
+  "食品饮料",
+  "白酒",
+  "家用电器",
+  "汽车整车",
+  "零部件",
+  "电力设备",
+  "光伏",
+  "风电",
+  "有色金属",
+  "钢铁",
+  "煤炭",
+  "石油",
+  "化工",
+  "建材",
+  "建筑装饰",
+  "计算机",
+  "软件",
+  "通信",
+  "传媒",
+  "国防军工",
+  "航空航天",
+  "机械设备",
+  "环保",
+  "农业",
+  "纺织服装",
+  "商贸零售",
+  "社会服务",
+] as const;
+
 export const INDUSTRY_OPTIONS = [
   "",
   "IT服务Ⅱ",
@@ -129,3 +163,13 @@ export const INDUSTRY_OPTIONS = [
   "饲料",
   "黑色家电",
 ] as const;
+
+export const ALL_INDUSTRY_OPTIONS = [
+  ...new Set(["", ...LEGACY_BROAD_INDUSTRY_OPTIONS, ...INDUSTRY_OPTIONS]),
+];
+
+const LEGACY_BROAD_INDUSTRY_SET = new Set<string>(LEGACY_BROAD_INDUSTRY_OPTIONS);
+
+export function isLegacyBroadIndustry(value: string): boolean {
+  return LEGACY_BROAD_INDUSTRY_SET.has(value);
+}

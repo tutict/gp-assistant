@@ -1,6 +1,6 @@
 import { clampInt } from "../lib/format";
 import { MARKET_SCOPE_OPTIONS, normalizeMarketScope } from "../lib/screenScopeOptions";
-import { INDUSTRY_OPTIONS } from "../lib/screenIndustryOptions";
+import { ALL_INDUSTRY_OPTIONS, isLegacyBroadIndustry } from "../lib/screenIndustryOptions";
 import type { FilterCriteria } from "./FilterBar";
 
 interface CriteriaFieldsProps {
@@ -22,47 +22,12 @@ const SORT_OPTIONS = [
   { value: "roe", label: "净资产收益率" },
   { value: "change_pct", label: "涨跌幅" },
 ];
-const LEGACY_BROAD_INDUSTRY_OPTIONS = [
-  "银行",
-  "证券",
-  "保险",
-  "医药生物",
-  "食品饮料",
-  "白酒",
-  "家用电器",
-  "汽车整车",
-  "零部件",
-  "电力设备",
-  "光伏",
-  "风电",
-  "有色金属",
-  "钢铁",
-  "煤炭",
-  "石油",
-  "化工",
-  "建材",
-  "建筑装饰",
-  "计算机",
-  "软件",
-  "通信",
-  "传媒",
-  "国防军工",
-  "航空航天",
-  "机械设备",
-  "环保",
-  "农业",
-  "纺织服装",
-  "商贸零售",
-  "社会服务",
-];
-const LEGACY_BROAD_INDUSTRY_SET = new Set(LEGACY_BROAD_INDUSTRY_OPTIONS);
-
 export function CriteriaFields({ criteria, onChange, idPrefix = "criteria" }: CriteriaFieldsProps) {
   const update = (patch: Partial<FilterCriteria>) => onChange({ ...criteria, ...patch });
   const id = (name: string) => `${idPrefix}-${name}`;
   const selectedIndustry = criteria.industry.trim();
   const selectedMarketScope = normalizeMarketScope(criteria.marketScope);
-  const baseIndustryOptions = [...new Set(["", ...LEGACY_BROAD_INDUSTRY_OPTIONS, ...INDUSTRY_OPTIONS])];
+  const baseIndustryOptions = ALL_INDUSTRY_OPTIONS;
   const industryOptions = selectedIndustry && !baseIndustryOptions.includes(selectedIndustry)
     ? [selectedIndustry, ...baseIndustryOptions]
     : baseIndustryOptions;
@@ -81,7 +46,7 @@ export function CriteriaFields({ criteria, onChange, idPrefix = "criteria" }: Cr
             <select id={id("industry")} value={selectedIndustry} onChange={(event) => update({ industry: event.target.value })}>
               {industryOptions.map((industry) => (
                 <option key={industry || "all-industries"} value={industry}>
-                  {LEGACY_BROAD_INDUSTRY_SET.has(industry) ? `${industry}（大类）` : industry || "全部行业"}
+                  {isLegacyBroadIndustry(industry) ? `${industry}（大类）` : industry || "全部行业"}
                 </option>
               ))}
             </select>

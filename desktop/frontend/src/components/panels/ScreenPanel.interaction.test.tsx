@@ -227,6 +227,40 @@ describe("ScreenPanel adaptive states", () => {
     );
   });
 
+  it("carries custom-screen industry and market scope into the current-condition backtest", async () => {
+    postJsonMock.mockResolvedValue({
+      total: 1,
+      returned: 1,
+      items: [{
+        stock: { code: "000001.SZ", name: "行业样本", industry: "影视院线", price: 10 },
+        score: 12,
+        reasons: [],
+      }],
+      groups: [],
+    });
+    const onRunBacktest = vi.fn();
+    const renderer = await renderPanel(undefined, {
+      ...criteria,
+      industry: "影视院线",
+      marketScope: "北交所",
+    }, onRunBacktest);
+    const customTab = renderer.root.find(
+      (node) => node.type === "button" && node.children.includes("自定义选股"),
+    );
+
+    await act(async () => { customTab.props.onClick(); });
+    await act(async () => { await runButton(renderer).props.onClick(); });
+    const backtestButton = renderer.root.find(
+      (node) => node.type === "button" && node.children.includes("回测"),
+    );
+    await act(async () => { backtestButton.props.onClick(); });
+
+    expect(onRunBacktest).toHaveBeenCalledWith(undefined, expect.objectContaining({
+      industry: "影视院线",
+      marketScope: "北交所",
+    }));
+  });
+
   it("does not render a completed request after switching to another tab", async () => {
     let resolveRequest: (value: unknown) => void = () => undefined;
     postJsonMock.mockReturnValue(new Promise((resolve) => {
