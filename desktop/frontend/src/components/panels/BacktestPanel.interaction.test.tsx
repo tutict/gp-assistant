@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FilterCriteria } from "../FilterBar";
 import type { AdaptiveScreenRequest, BacktestResult, WatchlistItem } from "../../types";
 
-const { postJsonMock } = vi.hoisted(() => ({ postJsonMock: vi.fn() }));
+const { getJsonMock, postJsonMock } = vi.hoisted(() => ({ getJsonMock: vi.fn(), postJsonMock: vi.fn() }));
 
-vi.mock("../../lib/tauri", () => ({ postJson: postJsonMock }));
+vi.mock("../../lib/tauri", () => ({ getJson: getJsonMock, postJson: postJsonMock }));
 
 import { BacktestPanel } from "./BacktestPanel";
 
@@ -68,8 +68,38 @@ describe("BacktestPanel interactions", () => {
   });
 
   afterEach(() => {
+    getJsonMock.mockReset();
     postJsonMock.mockReset();
     vi.unstubAllGlobals();
+  });
+
+  it("fills missing volatility stock names from stock detail lookup", async () => {
+    postJsonMock.mockResolvedValue({
+      ...result,
+      symbols: ["000600.SZ"],
+      volatility_snapshots: [{
+        symbol: "000600.SZ",
+        date: "2026-08-14",
+        close: 8.23,
+      }],
+    });
+    getJsonMock.mockResolvedValue({ code: "000600.SZ", name: "建投能源" });
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<BacktestPanel criteria={criteria} watchlist={watchlist} />);
+    });
+    await act(async () => {
+      await runButton(renderer).props.onClick();
+      await Promise.resolve();
+    });
+
+    expect(textContent(renderer)).toContain("000600.SZ");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(getJsonMock).toHaveBeenCalledWith("/api/stocks/000600.SZ", { timeoutMs: 5000 });
+    expect(textContent(renderer)).toContain("建投能源（000600.SZ）");
   });
 
   it("shows industry and market scope for criteria backtests", async () => {

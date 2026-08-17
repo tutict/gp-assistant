@@ -385,6 +385,7 @@ describe("response normalizers", () => {
       metrics: { total_return: 0.12, num_stocks: 1 },
       equity_curve: [{ date: "2026-07-17", equity: 1.12 }],
       symbols: ["002432.SZ"],
+      volatility_snapshots: [{ symbol: "002432.SZ", name: "九安医疗", date: "2026-07-17" }],
     })).toMatchObject({ symbols: ["002432.SZ"] });
   });
 
@@ -403,6 +404,10 @@ describe("response normalizers", () => {
     expect(() => requireBacktestResult({
       ...valid,
       volatility_snapshots: [{ symbol: "002432.SZ", date: "2026-07-17", atr: { value: "bad" } }],
+    })).toThrow("回测接口未返回有效结果");
+    expect(() => requireBacktestResult({
+      ...valid,
+      volatility_snapshots: [{ symbol: "002432.SZ", name: 2432, date: "2026-07-17" }],
     })).toThrow("回测接口未返回有效结果");
   });
 

@@ -21,9 +21,12 @@ let baseUrl = option("--url", "http://127.0.0.1:4173").replace(/\/$/, "");
 const date = new Date().toISOString().slice(0, 10);
 const checkSearchOverlay = process.argv.includes('--check-search-overlay');
 const checkNewsPage = process.argv.includes("--check-news-page");
+const checkBacktestPage = process.argv.includes("--check-backtest-page");
 const headerSettingsOnly = process.argv.includes("--header-settings-only");
 const observeSummaryOnly = process.argv.includes("--observe-summary-only");
 const newsPageOnly = process.argv.includes("--news-page-only");
+const backtestPageOnly = process.argv.includes("--backtest-page-only");
+const stableReport = process.argv.includes("--stable-report");
 const defaultOutput = fileURLToPath(
   new URL("../artifacts/ui-shots/" + date + "/", import.meta.url),
 );
@@ -92,6 +95,16 @@ const mockStocks = [
   { code: "600519.SH", name: "贵州茅台", industry: "食品饮料", price: 1428.6, change_pct: 0.018, pe: 22.4, pb: 7.3, roe: 31.2 },
   { code: "000858.SZ", name: "五粮液", industry: "食品饮料", price: 128.4, change_pct: -0.006, pe: 18.7, pb: 4.6, roe: 24.1 },
   { code: "300750.SZ", name: "宁德时代", industry: "电力设备", price: 286.1, change_pct: 0.012, pe: 19.8, pb: 4.1, roe: 22.7 },
+];
+const mockBacktestSymbols = [
+  ...mockStocks,
+  { code: "601318.SH", name: "中国平安" },
+  { code: "600036.SH", name: "招商银行" },
+  { code: "000333.SZ", name: "美的集团" },
+  { code: "002594.SZ", name: "比亚迪" },
+  { code: "601012.SH", name: "隆基绿能" },
+  { code: "600276.SH", name: "恒瑞医药" },
+  { code: "000651.SZ", name: "格力电器" },
 ];
 const mockScreenResult = {
   total: mockStocks.length,
@@ -301,9 +314,52 @@ const mockBacktestResult = {
   },
   equity_curve: curve,
   benchmark_curve: benchmarkCurve,
-  symbols: mockStocks.map((stock) => stock.code),
+  symbols: mockBacktestSymbols.map((stock) => stock.code),
   benchmark_symbols: mockStocks.map((stock) => stock.code),
   strategy_mode: "candidate_snapshot",
+  adaptive_release_gate: {
+    passed: false,
+    checks: [
+      {
+        key: "annualized_return_delta",
+        passed: true,
+        actual: 0.068,
+        requirement: "年化收益不低于旧策略超过 1 个百分点",
+      },
+      {
+        key: "cached_run_millis",
+        passed: false,
+        actual: null,
+        requirement: "同日缓存运行不超过 2000ms",
+      },
+    ],
+  },
+  volatility_snapshots: [
+    {
+      symbol: "600519.SH",
+      name: "贵州茅台",
+      date: "2026-08-14",
+      close: 1428.6,
+      atr: { period: 14, value: 38.2, percent_of_close: 2.6746 },
+      bollinger_bands: { period: 20, multiplier: 2, upper: 1518.4, middle: 1432.6, lower: 1346.8, bandwidth_percent: 11.9782, percent_b: 47.6689 },
+      donchian_channel: { period: 20, upper: 1532.2, middle: 1435.8, lower: 1339.4, width_percent: 13.4276, position_percent: 46.2656 },
+      keltner_channel: { ema_period: 20, atr_period: 10, multiplier: 2, upper: 1506.8, middle: 1430.2, lower: 1353.6, width_percent: 10.7118, position_percent: 48.9569 },
+      chaikin_volatility: { ema_period: 10, roc_period: 10, value: 25.06 },
+      rvi: { period: 14, value: 58.4 },
+    },
+    {
+      symbol: "000858.SZ",
+      name: "五粮液",
+      date: "2026-08-14",
+      close: 128.4,
+      atr: { period: 14, value: 3.1, percent_of_close: 2.4143 },
+      bollinger_bands: { period: 20, multiplier: 2, upper: 136.8, middle: 129.2, lower: 121.6, bandwidth_percent: 11.7647, percent_b: 44.7368 },
+      donchian_channel: { period: 20, upper: 138.1, middle: 129.4, lower: 120.7, width_percent: 13.4467, position_percent: 44.2529 },
+      keltner_channel: { ema_period: 20, atr_period: 10, multiplier: 2, upper: 135.5, middle: 129.1, lower: 122.7, width_percent: 9.9148, position_percent: 44.5313 },
+      chaikin_volatility: { ema_period: 10, roc_period: 10, value: -25.06 },
+      rvi: { period: 14, value: 46.8 },
+    },
+  ],
   notes: ["截图 harness 注入的确定性回测数据。"],
 };
 const mockDataStatus = {
@@ -504,6 +560,15 @@ const newsPageBaselineDevices = [
   { name: "phone-390-light", width: 390, height: 844, dpr: 3, mobile: true, theme: "light", density: "comfortable" },
 ];
 
+const backtestPageBaselineDevices = [
+  { name: "desktop-1440-dark", width: 1440, height: 900, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
+  { name: "desktop-1440-light", width: 1440, height: 900, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
+  { name: "desktop-1920-dark", width: 1920, height: 1080, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
+  { name: "desktop-1920-light", width: 1920, height: 1080, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
+  { name: "phone-390-dark", width: 390, height: 844, dpr: 3, mobile: true, theme: "dark", density: "comfortable" },
+  { name: "phone-390-light", width: 390, height: 844, dpr: 3, mobile: true, theme: "light", density: "comfortable" },
+];
+
 const replayConversationId = "ui-replay-conversation";
 const replayRunId = "ui-replay-run";
 const replayConversation = {
@@ -638,6 +703,14 @@ async function installHarnessState(page, observeResult = mockObserveResult, rese
     json: { status: mockDataStatus, removed_files: 2, removed_bytes: 1048576, notes: ["截图 harness 注入的缓存清理日志。"] },
   }));
   await page.route("**/api/stocks?*", (route) => route.fulfill({ json: mockStocks }));
+  await page.route("**/api/stocks/*", (route) => {
+    const symbol = decodeURIComponent(new URL(route.request().url()).pathname.split("/").pop() || "");
+    const stock = mockBacktestSymbols.find((item) => item.code === symbol);
+    return route.fulfill({
+      status: stock ? 200 : 404,
+      json: stock ?? { error: "stock not found" },
+    });
+  });
   await page.route("**/api/screen", (route) => route.fulfill({ json: mockScreenResult }));
   await page.route("**/api/observe/**", (route) => route.fulfill({ json: observeResult }));
   await page.route("**/api/backtest", (route) => route.fulfill({ json: mockBacktestResult }));
@@ -1172,6 +1245,147 @@ async function captureDenseStates(page, device, targetRoot) {
   ];
 }
 
+async function assertBacktestRuntimeColors(page) {
+  const readColors = () => page.evaluate(() => {
+    const resolvedToken = (token) => {
+      const probe = document.createElement("span");
+      probe.style.color = `var(${token})`;
+      document.body.appendChild(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    };
+    const styleFor = (selector, property = "color") => {
+      const pseudoElement = selector.endsWith("::before") ? "::before" : null;
+      const elementSelector = pseudoElement ? selector.slice(0, -8) : selector;
+      const element = document.querySelector(elementSelector);
+      if (!element) throw new Error(`Missing color audit target: ${selector}`);
+      return getComputedStyle(element, pseudoElement)[property];
+    };
+    return {
+      tokens: {
+        text: resolvedToken("--text"),
+        textSecondary: resolvedToken("--text-secondary"),
+        rise: resolvedToken("--rise"),
+        fall: resolvedToken("--fall"),
+        success: resolvedToken("--success"),
+        error: resolvedToken("--error"),
+        display: getComputedStyle(document.documentElement).getPropertyValue("--fs-display").trim(),
+      },
+      summary: styleFor(".volatility-interpretation-summary"),
+      positiveMetric: styleFor(".metric-strip .metric strong.positive"),
+      negativeMetric: styleFor(".metric-strip .metric strong.negative"),
+      directionalVolatility: styleFor(".volatility-grid .volatility-value.positive"),
+      neutralVolatility: styleFor(".volatility-grid > div:last-child .volatility-value"),
+      gatePassed: styleFor(".backtest-gate-status.passed::before", "backgroundColor"),
+      gateFailed: styleFor(".backtest-gate-status.failed::before", "backgroundColor"),
+      smallMetricLabel: styleFor(".metric-strip .metric > span"),
+      volatilityLabel: styleFor(".volatility-symbol-control > span"),
+      interpretationMeta: styleFor(".volatility-interpretation > header span"),
+      heroFontSize: styleFor(".metric-strip .metric-hero > strong", "fontSize"),
+    };
+  });
+
+  const positive = await readColors();
+  const expectedPositive = {
+    summary: positive.tokens.text,
+    positiveMetric: positive.tokens.rise,
+    negativeMetric: positive.tokens.fall,
+    directionalVolatility: positive.tokens.rise,
+    neutralVolatility: positive.tokens.text,
+    gatePassed: positive.tokens.success,
+    gateFailed: positive.tokens.error,
+    smallMetricLabel: positive.tokens.textSecondary,
+    volatilityLabel: positive.tokens.textSecondary,
+    interpretationMeta: positive.tokens.textSecondary,
+    heroFontSize: positive.tokens.display,
+  };
+  for (const [key, expected] of Object.entries(expectedPositive)) {
+    if (positive[key] !== expected) {
+      throw new Error(`Backtest color audit failed for ${key}: expected ${expected}, received ${positive[key]}`);
+    }
+  }
+
+  const select = page.locator(".volatility-symbol-control select");
+  await select.selectOption("000858.SZ");
+  await page.locator(".volatility-grid .volatility-value.negative").waitFor({ state: "visible" });
+  const negativeVolatility = await page.locator(".volatility-grid .volatility-value.negative")
+    .evaluate((element) => getComputedStyle(element).color);
+  if (negativeVolatility !== positive.tokens.fall) {
+    throw new Error(`Backtest color audit failed for negative volatility: expected ${positive.tokens.fall}, received ${negativeVolatility}`);
+  }
+
+  return { ...positive, negativeVolatility };
+}
+
+async function captureBacktestPageBaselines(browser, targetRoot) {
+  const reports = [];
+  for (const device of backtestPageBaselineDevices) {
+    const context = await browser.newContext({
+      viewport: { width: device.width, height: device.height },
+      screen: { width: device.width, height: device.height },
+      deviceScaleFactor: device.dpr,
+      hasTouch: device.mobile,
+      isMobile: device.mobile,
+      colorScheme: device.theme,
+    });
+    const page = await context.newPage();
+    const consoleIssues = [];
+    page.on("console", (message) => {
+      if (message.type() === "warning" || message.type() === "error") {
+        consoleIssues.push(message.type() + ": " + message.text());
+      }
+    });
+    page.on("pageerror", (error) => consoleIssues.push("pageerror: " + error.message));
+
+    try {
+      await installHarnessState(page);
+      await page.goto(deviceUrl(device, "#sectionBacktest"), { waitUntil: "networkidle" });
+      await page.getByLabel("运行回测").click();
+      await page.locator(".backtest-result").waitFor({ state: "visible" });
+      await page.locator(".backtest-volatility").waitFor({ state: "visible" });
+      await page.waitForTimeout(180);
+
+      const diagnostics = await pageDiagnostics(page, "backtest-page");
+      assertPageDiagnostics(diagnostics, device.name);
+      const directory = resolve(targetRoot, "backtest-page", device.name);
+      mkdirSync(directory, { recursive: true });
+      const mobileNavigationOverride = await page.addStyleTag({
+        content: "@media (max-width: 768px) { .sidebar { visibility: hidden !important; } }",
+      });
+      await page.screenshot({ path: resolve(directory, "backtest.png"), fullPage: true });
+      const volatility = page.locator(".backtest-volatility");
+      await volatility.scrollIntoViewIfNeeded();
+      const stickyHeaderOverride = await page.addStyleTag({
+        content: ".app-header { visibility: hidden !important; }",
+      });
+      await volatility.screenshot({ path: resolve(directory, "volatility.png") });
+      await stickyHeaderOverride.evaluate((element) => element.remove());
+      await mobileNavigationOverride.evaluate((element) => element.remove());
+      const runtimeColors = await assertBacktestRuntimeColors(page);
+      if (consoleIssues.length) {
+        throw new Error(`${device.name} logged browser issues: ${consoleIssues.join(" | ")}`);
+      }
+      reports.push({
+        device: device.name,
+        page: `backtest-page/${device.name}/backtest.png`,
+        volatility: `backtest-page/${device.name}/volatility.png`,
+        selector: ".backtest-volatility",
+        diagnostics,
+        runtimeColors,
+      });
+    } finally {
+      await context.close();
+    }
+  }
+  return reports;
+}
+
+function backtestPageReport(backtestPageBaselines) {
+  if (stableReport) return { backtestPageBaselines };
+  return { baseUrl, generatedAt: new Date().toISOString(), backtestPageBaselines };
+}
+
 async function captureObserveSummaryBaselines(browser, targetRoot) {
   const scenarios = [
     { name: "complete-capital", result: mockObserveResultCompleteCapital },
@@ -1509,6 +1723,23 @@ try {
       );
       console.log("News page checks passed: " + newsPageBaselines.length + " captures");
     }
+    if (checkBacktestPage) {
+      mkdirSync(outputRoot, { recursive: true });
+      const backtestPageBaselines = await captureBacktestPageBaselines(browser, outputRoot);
+      writeFileSync(
+        resolve(outputRoot, "backtest-page-report.json"),
+        JSON.stringify(backtestPageReport(backtestPageBaselines), null, 2) + "\n",
+      );
+      console.log("Backtest page checks passed: " + backtestPageBaselines.length + " captures");
+    }
+  } else if (backtestPageOnly) {
+    mkdirSync(outputRoot, { recursive: true });
+    const backtestPageBaselines = await captureBacktestPageBaselines(browser, outputRoot);
+    writeFileSync(
+      resolve(outputRoot, "backtest-page-report.json"),
+      JSON.stringify(backtestPageReport(backtestPageBaselines), null, 2) + "\n",
+    );
+    console.log("Backtest page screenshots written to " + outputRoot + " (" + backtestPageBaselines.length + " captures)");
   } else if (observeSummaryOnly) {
     mkdirSync(outputRoot, { recursive: true });
     const observeSummaryBaselines = await captureObserveSummaryBaselines(browser, outputRoot);

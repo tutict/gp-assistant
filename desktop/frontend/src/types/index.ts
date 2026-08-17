@@ -9,6 +9,7 @@ export interface StockItem {
   pb?: number;
   eps?: number;
   latest_eps?: number;
+  latest_bps?: number;
   roe?: number;
   market_cap_billion?: number;
   market_cap?: number;
@@ -16,6 +17,9 @@ export interface StockItem {
   total_shares?: number;
   circulating_shares?: number;
   dividend_yield?: number;
+  deducted_net_profit_billion?: number;
+  deducted_net_profit_margin?: number;
+  deducted_net_profit_growth_rate?: number;
   is_st?: boolean;
   quote_time?: string;
   [key: string]: unknown;
@@ -434,6 +438,7 @@ export interface IndicatorUnavailable {
 
 export interface VolatilitySnapshot {
   symbol: string;
+  name?: string | null;
   date: string;
   close?: number | null;
   atr?: AtrSnapshot | null;

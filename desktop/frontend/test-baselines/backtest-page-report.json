@@ -1,0 +1,280 @@
+{
+  "backtestPageBaselines": [
+    {
+      "device": "desktop-1440-dark",
+      "page": "backtest-page/desktop-1440-dark/backtest.png",
+      "volatility": "backtest-page/desktop-1440-dark/volatility.png",
+      "selector": ".backtest-volatility",
+      "diagnostics": {
+        "route": "backtest-page",
+        "title": "股选优",
+        "activeView": "backtest",
+        "rootTextLength": 2513,
+        "rootWidth": 1440,
+        "rootScrollWidth": 1440,
+        "bodyWidth": 1440,
+        "bodyScrollWidth": 1440,
+        "frameworkOverlay": false,
+        "workspaceClass": "",
+        "railTransform": "",
+        "railPosition": "",
+        "activeNavLabels": [
+          "回测"
+        ]
+      },
+      "runtimeColors": {
+        "tokens": {
+          "text": "rgb(244, 247, 250)",
+          "textSecondary": "rgb(169, 180, 191)",
+          "rise": "rgb(238, 85, 76)",
+          "fall": "rgb(53, 183, 121)",
+          "success": "rgb(53, 183, 121)",
+          "error": "rgb(240, 100, 92)",
+          "display": "24px"
+        },
+        "summary": "rgb(244, 247, 250)",
+        "positiveMetric": "rgb(238, 85, 76)",
+        "negativeMetric": "rgb(53, 183, 121)",
+        "directionalVolatility": "rgb(238, 85, 76)",
+        "neutralVolatility": "rgb(244, 247, 250)",
+        "gatePassed": "rgb(53, 183, 121)",
+        "gateFailed": "rgb(240, 100, 92)",
+        "smallMetricLabel": "rgb(169, 180, 191)",
+        "volatilityLabel": "rgb(169, 180, 191)",
+        "interpretationMeta": "rgb(169, 180, 191)",
+        "heroFontSize": "24px",
+        "negativeVolatility": "rgb(53, 183, 121)"
+      }
+    },
+    {
+      "device": "desktop-1440-light",
+      "page": "backtest-page/desktop-1440-light/backtest.png",
+      "volatility": "backtest-page/desktop-1440-light/volatility.png",
+      "selector": ".backtest-volatility",
+      "diagnostics": {
+        "route": "backtest-page",
+        "title": "股选优",
+        "activeView": "backtest",
+        "rootTextLength": 2513,
+        "rootWidth": 1440,
+        "rootScrollWidth": 1440,
+        "bodyWidth": 1440,
+        "bodyScrollWidth": 1440,
+        "frameworkOverlay": false,
+        "workspaceClass": "",
+        "railTransform": "",
+        "railPosition": "",
+        "activeNavLabels": [
+          "回测"
+        ]
+      },
+      "runtimeColors": {
+        "tokens": {
+          "text": "rgb(24, 33, 42)",
+          "textSecondary": "rgb(86, 100, 115)",
+          "rise": "rgb(216, 61, 53)",
+          "fall": "rgb(22, 134, 83)",
+          "success": "rgb(22, 134, 83)",
+          "error": "rgb(201, 55, 48)",
+          "display": "24px"
+        },
+        "summary": "rgb(24, 33, 42)",
+        "positiveMetric": "rgb(216, 61, 53)",
+        "negativeMetric": "rgb(22, 134, 83)",
+        "directionalVolatility": "rgb(216, 61, 53)",
+        "neutralVolatility": "rgb(24, 33, 42)",
+        "gatePassed": "rgb(22, 134, 83)",
+        "gateFailed": "rgb(201, 55, 48)",
+        "smallMetricLabel": "rgb(86, 100, 115)",
+        "volatilityLabel": "rgb(86, 100, 115)",
+        "interpretationMeta": "rgb(86, 100, 115)",
+        "heroFontSize": "24px",
+        "negativeVolatility": "rgb(22, 134, 83)"
+      }
+    },
+    {
+      "device": "desktop-1920-dark",
+      "page": "backtest-page/desktop-1920-dark/backtest.png",
+      "volatility": "backtest-page/desktop-1920-dark/volatility.png",
+      "selector": ".backtest-volatility",
+      "diagnostics": {
+        "route": "backtest-page",
+        "title": "股选优",
+        "activeView": "backtest",
+        "rootTextLength": 2513,
+        "rootWidth": 1920,
+        "rootScrollWidth": 1920,
+        "bodyWidth": 1920,
+        "bodyScrollWidth": 1920,
+        "frameworkOverlay": false,
+        "workspaceClass": "",
+        "railTransform": "",
+        "railPosition": "",
+        "activeNavLabels": [
+          "回测"
+        ]
+      },
+      "runtimeColors": {
+        "tokens": {
+          "text": "rgb(244, 247, 250)",
+          "textSecondary": "rgb(169, 180, 191)",
+          "rise": "rgb(238, 85, 76)",
+          "fall": "rgb(53, 183, 121)",
+          "success": "rgb(53, 183, 121)",
+          "error": "rgb(240, 100, 92)",
+          "display": "24px"
+        },
+        "summary": "rgb(244, 247, 250)",
+        "positiveMetric": "rgb(238, 85, 76)",
+        "negativeMetric": "rgb(53, 183, 121)",
+        "directionalVolatility": "rgb(238, 85, 76)",
+        "neutralVolatility": "rgb(244, 247, 250)",
+        "gatePassed": "rgb(53, 183, 121)",
+        "gateFailed": "rgb(240, 100, 92)",
+        "smallMetricLabel": "rgb(169, 180, 191)",
+        "volatilityLabel": "rgb(169, 180, 191)",
+        "interpretationMeta": "rgb(169, 180, 191)",
+        "heroFontSize": "24px",
+        "negativeVolatility": "rgb(53, 183, 121)"
+      }
+    },
+    {
+      "device": "desktop-1920-light",
+      "page": "backtest-page/desktop-1920-light/backtest.png",
+      "volatility": "backtest-page/desktop-1920-light/volatility.png",
+      "selector": ".backtest-volatility",
+      "diagnostics": {
+        "route": "backtest-page",
+        "title": "股选优",
+        "activeView": "backtest",
+        "rootTextLength": 2513,
+        "rootWidth": 1920,
+        "rootScrollWidth": 1920,
+        "bodyWidth": 1920,
+        "bodyScrollWidth": 1920,
+        "frameworkOverlay": false,
+        "workspaceClass": "",
+        "railTransform": "",
+        "railPosition": "",
+        "activeNavLabels": [
+          "回测"
+        ]
+      },
+      "runtimeColors": {
+        "tokens": {
+          "text": "rgb(24, 33, 42)",
+          "textSecondary": "rgb(86, 100, 115)",
+          "rise": "rgb(216, 61, 53)",
+          "fall": "rgb(22, 134, 83)",
+          "success": "rgb(22, 134, 83)",
+          "error": "rgb(201, 55, 48)",
+          "display": "24px"
+        },
+        "summary": "rgb(24, 33, 42)",
+        "positiveMetric": "rgb(216, 61, 53)",
+        "negativeMetric": "rgb(22, 134, 83)",
+        "directionalVolatility": "rgb(216, 61, 53)",
+        "neutralVolatility": "rgb(24, 33, 42)",
+        "gatePassed": "rgb(22, 134, 83)",
+        "gateFailed": "rgb(201, 55, 48)",
+        "smallMetricLabel": "rgb(86, 100, 115)",
+        "volatilityLabel": "rgb(86, 100, 115)",
+        "interpretationMeta": "rgb(86, 100, 115)",
+        "heroFontSize": "24px",
+        "negativeVolatility": "rgb(22, 134, 83)"
+      }
+    },
+    {
+      "device": "phone-390-dark",
+      "page": "backtest-page/phone-390-dark/backtest.png",
+      "volatility": "backtest-page/phone-390-dark/volatility.png",
+      "selector": ".backtest-volatility",
+      "diagnostics": {
+        "route": "backtest-page",
+        "title": "股选优",
+        "activeView": "backtest",
+        "rootTextLength": 2513,
+        "rootWidth": 390,
+        "rootScrollWidth": 390,
+        "bodyWidth": 390,
+        "bodyScrollWidth": 390,
+        "frameworkOverlay": false,
+        "workspaceClass": "",
+        "railTransform": "",
+        "railPosition": "",
+        "activeNavLabels": [
+          "回测"
+        ]
+      },
+      "runtimeColors": {
+        "tokens": {
+          "text": "rgb(244, 247, 250)",
+          "textSecondary": "rgb(169, 180, 191)",
+          "rise": "rgb(238, 85, 76)",
+          "fall": "rgb(53, 183, 121)",
+          "success": "rgb(53, 183, 121)",
+          "error": "rgb(240, 100, 92)",
+          "display": "20px"
+        },
+        "summary": "rgb(244, 247, 250)",
+        "positiveMetric": "rgb(238, 85, 76)",
+        "negativeMetric": "rgb(53, 183, 121)",
+        "directionalVolatility": "rgb(238, 85, 76)",
+        "neutralVolatility": "rgb(244, 247, 250)",
+        "gatePassed": "rgb(53, 183, 121)",
+        "gateFailed": "rgb(240, 100, 92)",
+        "smallMetricLabel": "rgb(169, 180, 191)",
+        "volatilityLabel": "rgb(169, 180, 191)",
+        "interpretationMeta": "rgb(169, 180, 191)",
+        "heroFontSize": "20px",
+        "negativeVolatility": "rgb(53, 183, 121)"
+      }
+    },
+    {
+      "device": "phone-390-light",
+      "page": "backtest-page/phone-390-light/backtest.png",
+      "volatility": "backtest-page/phone-390-light/volatility.png",
+      "selector": ".backtest-volatility",
+      "diagnostics": {
+        "route": "backtest-page",
+        "title": "股选优",
+        "activeView": "backtest",
+        "rootTextLength": 2513,
+        "rootWidth": 390,
+        "rootScrollWidth": 390,
+        "bodyWidth": 390,
+        "bodyScrollWidth": 390,
+        "frameworkOverlay": false,
+        "workspaceClass": "",
+        "railTransform": "",
+        "railPosition": "",
+        "activeNavLabels": [
+          "回测"
+        ]
+      },
+      "runtimeColors": {
+        "tokens": {
+          "text": "rgb(24, 33, 42)",
+          "textSecondary": "rgb(86, 100, 115)",
+          "rise": "rgb(216, 61, 53)",
+          "fall": "rgb(22, 134, 83)",
+          "success": "rgb(22, 134, 83)",
+          "error": "rgb(201, 55, 48)",
+          "display": "20px"
+        },
+        "summary": "rgb(24, 33, 42)",
+        "positiveMetric": "rgb(216, 61, 53)",
+        "negativeMetric": "rgb(22, 134, 83)",
+        "directionalVolatility": "rgb(216, 61, 53)",
+        "neutralVolatility": "rgb(24, 33, 42)",
+        "gatePassed": "rgb(22, 134, 83)",
+        "gateFailed": "rgb(201, 55, 48)",
+        "smallMetricLabel": "rgb(86, 100, 115)",
+        "volatilityLabel": "rgb(86, 100, 115)",
+        "interpretationMeta": "rgb(86, 100, 115)",
+        "heroFontSize": "20px",
+        "negativeVolatility": "rgb(22, 134, 83)"
+      }
+    }
+  ]
+}

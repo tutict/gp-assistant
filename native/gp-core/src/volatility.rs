@@ -21,6 +21,8 @@ const RVI_PERIOD: usize = 14;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VolatilitySnapshot {
     pub symbol: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub date: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub close: Option<f64>,
@@ -152,6 +154,7 @@ pub(crate) fn calculate_volatility_snapshot(
 
     Some(VolatilitySnapshot {
         symbol: symbol.to_string(),
+        name: None,
         date: latest.date.format("%Y-%m-%d").to_string(),
         close: latest_close.map(round4),
         atr,

@@ -384,6 +384,7 @@ export function statusLabel(status: unknown): string {
 }
 
 export function reasonLabel(reason: unknown): string {
+  const raw = String(reason || "").trim();
   const labels: Record<string, string> = {
     // 刷新/行情状态
     market_closed: "休市",
@@ -405,7 +406,9 @@ export function reasonLabel(reason: unknown): string {
     // 趋势信号
     short_buy_signal: "短线买入信号",
     red_hold: "红柱持有",
-    swl_above_sws: "SWL上穿SWS",
+    swl_above_sws: "短期均线上穿长期均线",
+    swl_strength: "短期均线强于长期均线",
+    swl_below_sws: "短期均线低于长期均线",
     kdj_golden_cross: "KDJ金叉",
     kdj_dead_cross: "KDJ死叉",
     kdj_oversold: "KDJ超卖",
@@ -416,8 +419,28 @@ export function reasonLabel(reason: unknown): string {
     oversold: "超卖",
     accumulation_strength: "吸筹强度高",
     swing_opportunity: "波段机会",
+    bottom_accumulation: "底部吸筹",
+    rebound_signal: "反弹信号",
+    dragon_trend_volume: "趋势量能共振",
+    ma_bull_stack: "均线多头排列",
+    price_above_ma20: "价格站上20日均线",
+    technical_score_strong: "技术层评分强",
+    pattern_score_strong: "形态层评分强",
+    quality_soft_bonus: "质量评分加分",
+    "signal_type:trend_continuation": "趋势延续",
+    "signal_type:trend_reversal": "趋势反转",
+    "signal_type:range_bound": "区间震荡",
+    "signal_type:breakout_attempt": "突破尝试",
+    "signal_type:risk_warning": "风险预警",
+    "signal_type:breakout_chase": "突破追踪",
+    "signal_type:pullback_buy": "回踩买点",
   };
-  return labels[String(reason || "")] || String(reason || "");
+  if (labels[raw]) return labels[raw];
+  if (/\b[a-z]+_[a-z_]+\b/.test(raw) || raw.includes(":")) {
+    console.warn(`[format] unmapped reason label: ${raw}`);
+    return "未识别原因";
+  }
+  return raw;
 }
 
 export function relationTypeLabel(type: unknown): string {

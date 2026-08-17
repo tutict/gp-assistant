@@ -660,7 +660,6 @@
 
 .metric-strip,
 .detail-grid,
-.backtest-comparison,
 .overview-metric-grid,
 .signal-grid,
 .financial-indicator-grid {
@@ -671,7 +670,6 @@
 
 .metric,
 .detail-grid > div,
-.backtest-comparison > div,
 .overview-metric-grid > div,
 .signal-grid > div,
 .financial-indicator-item {
@@ -685,7 +683,6 @@
 
 .metric span,
 .detail-grid span,
-.backtest-comparison span,
 .overview-metric-grid span,
 .signal-grid span,
 .financial-indicator-item span {
@@ -697,7 +694,6 @@
 
 .metric strong,
 .detail-grid strong,
-.backtest-comparison strong,
 .overview-metric-grid strong,
 .signal-grid strong,
 .financial-indicator-item strong {

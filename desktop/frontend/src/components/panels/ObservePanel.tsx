@@ -246,7 +246,7 @@ function ObserveTextMetrics({
         ["ROE", formatRatioPercent(stock.roe)],
         ["股息率", formatRatioPercent(stock.dividend_yield)],
         ["总市值", formatMarketCap(stock)],
-        ["行情时间", String(stock.quote_time || signal?.date || latest?.date || "--")],
+        ["行情时间", formatObserveTime(stock.quote_time || signal?.date || latest?.date, "--")],
       ]),
     },
     {
@@ -254,9 +254,9 @@ function ObserveTextMetrics({
       items: compactMetricItems([
         ["信号状态", signalStatusLabel(signal?.status)],
         ["信号类型", signalTypeLabel(signal?.signal_type)],
-        ["SWL", formatNumber(signal?.swl ?? latest?.swl)],
-        ["SWS", formatNumber(signal?.sws ?? latest?.sws)],
-        ["多空线", signal?.swl_above_sws ? "SWL 高于 SWS" : signal?.swl_above_sws === false ? "SWL 低于 SWS" : "--"],
+        ["短期均线", formatNumber(signal?.swl ?? latest?.swl)],
+        ["长期均线", formatNumber(signal?.sws ?? latest?.sws)],
+        ["多空线", signal?.swl_above_sws ? "短期均线高于长期均线" : signal?.swl_above_sws === false ? "短期均线低于长期均线" : "--"],
         ["支撑位", formatPrice(signal?.support)],
         ["压力位", formatPrice(signal?.resistance)],
         ["风险标记", formatList(signal?.risk_flags, riskFlagLabel)],
@@ -330,7 +330,7 @@ function ObserveTextMetrics({
     <section className="observe-text-metrics observe-decision-summary" aria-label="观察判断">
       <header className="observe-decision-heading">
         <h3>观察摘要</h3>
-        <time>{String(stock.quote_time || signal?.date || latest?.date || "数据时间未知")}</time>
+        <time>{formatObserveTime(stock.quote_time || signal?.date || latest?.date)}</time>
       </header>
 
       <section className={`observe-verdict ${verdict.tone}`} aria-label="当前观察结论">
@@ -338,9 +338,18 @@ function ObserveTextMetrics({
         <p>{verdict.summary}</p>
       </section>
 
+      <dl className="observe-key-metrics" aria-label="关键数值">
+        {keyMetrics.map((item) => (
+          <div key={item.label} className={`observe-fact ${item.tone || "neutral"}`}>
+            <dt>{item.label}</dt>
+            <dd>{item.value}</dd>
+          </div>
+        ))}
+      </dl>
+
       <div className="observe-decision-grid" aria-label="核心判断">
         {decisionItems.map((item) => (
-          <article key={item.title} className={`observe-decision-item ${item.tone}`}>
+          <article key={item.title} className={`observe-fact observe-decision-item ${item.tone}`}>
             <span>{observationDecisionLabel(item.title)}</span>
             <p>{firstSentence(item.text)}</p>
           </article>
@@ -349,19 +358,10 @@ function ObserveTextMetrics({
 
       <ObserveSpecialQuant conclusions={specialQuant.conclusions} />
 
-      <section className="observe-next-signal" aria-label="下一步观察信号">
+      <section className="observe-next-signal observe-fact" aria-label="下一步观察信号">
         <span>下一步看什么</span>
         <p>{nextSignal}</p>
       </section>
-
-      <dl className="observe-key-metrics" aria-label="关键数值">
-        {keyMetrics.map((item) => (
-          <div key={item.label} className={item.tone || "neutral"}>
-            <dt>{item.label}</dt>
-            <dd>{item.value}</dd>
-          </div>
-        ))}
-      </dl>
 
       <CapitalQuantPanel capital={capital} />
 
@@ -393,7 +393,7 @@ function ObserveSpecialQuant({ conclusions }: { conclusions: ObserveQuantConclus
   return (
     <section className="observe-special-quant" aria-label="特殊量化结论">
       {conclusions.map((item) => (
-        <article key={item.key} className={`observe-special-quant-item ${item.tone}`}>
+        <article key={item.key} className={`observe-fact observe-special-quant-item ${item.tone}`}>
           <span>{item.label}</span>
           <strong>{item.state}</strong>
           <p>{item.summary}</p>
@@ -459,18 +459,27 @@ function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null
           </div>
           <span>{mainFlow.status}</span>
         </header>
-        <CapitalQuantMetrics metrics={[
-          { label: "主力净流入额", value: mainFlow.netAmount, tone: mainFlow.tone },
-          { label: "主力净占比", value: mainFlow.netRatio, tone: mainFlow.tone },
-          { label: "主力介入度", value: mainFlow.involvement },
-        ]} />
-        <p className="capital-main-flow-conclusion">
-          <strong>怎么看：</strong>{mainFlow.conclusion}
-        </p>
-        <p className="capital-quant-note">介入度按净占比绝对值分档：低 &lt;3%，中 3%-8%，高 ≥8%；高介入只代表主力交易影响较大，不代表一定上涨。</p>
+        {mainFlow.available ? (
+          <CapitalQuantMetrics metrics={[
+            { label: "主力净流入额", value: mainFlow.netAmount, tone: mainFlow.tone },
+            { label: "主力净占比", value: mainFlow.netRatio, tone: mainFlow.tone },
+            { label: "主力介入度", value: mainFlow.involvement },
+          ]} />
+        ) : (
+          <p className="capital-main-flow-missing">
+            {proxy
+              ? "主力资金接口暂不可用，以下为本地量价代理估算。"
+              : "主力资金接口暂不可用，当前没有可用的量价代理估算。"}
+          </p>
+        )}
+        <details className="capital-quant-note-details">
+          <summary>口径说明</summary>
+          <p><strong>怎么看：</strong>{mainFlow.conclusion}</p>
+          <p>介入度按净占比绝对值分档：低 &lt;3%，中 3%-8%，高 ≥8%；高介入只代表主力交易影响较大，不代表一定上涨。</p>
+        </details>
       </article>
       <div className="capital-quant-lanes">
-        <article className="capital-quant-lane institution">
+        <article className="observe-fact capital-quant-lane institution">
           <header>
             <h5>龙虎榜机构席位</h5>
             <small>{institution ? `${institution.date || "窗口内"} · ${institution.confidence || "高"}置信` : "当前无公开记录"}</small>
@@ -495,7 +504,7 @@ function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null
         </article>
 
         {proxy && (
-          <article className="capital-quant-lane proxy">
+          <article className="observe-fact capital-quant-lane proxy">
             <header>
               <h5>量价资金代理</h5>
               <small className="capital-quant-estimate">估算 · {proxy.confidence || "中"}置信</small>
@@ -563,7 +572,7 @@ function CapitalQuantMetrics({ metrics }: { metrics: CapitalQuantMetric[] }) {
   return (
     <dl className="capital-quant-metrics">
       {metrics.map((metric) => (
-        <div key={metric.label} className={metric.tone || "neutral"}>
+        <div key={metric.label} className={`observe-fact ${metric.tone || "neutral"}${isMissingMetricText(metric.value) ? " is-missing" : ""}`}>
           <dt>{metric.label}</dt>
           <dd>{metric.value}</dd>
         </div>
@@ -585,6 +594,11 @@ function capitalMetricPart(label: string, value: string): string {
 
 function capitalMetricPair(label: string, left: string, right: string): string {
   return left === "暂无" && right === "暂无" ? "" : `${label} ${left}/${right}`;
+}
+
+function isMissingMetricText(value: string): boolean {
+  const text = String(value || "").trim();
+  return !text || text === "暂无" || text === "--" || text === "—" || text === "-";
 }
 
 function proxyDirectionFromScore(score: number): string {
@@ -654,7 +668,7 @@ function buildObservationNextSignal(signal?: TrendIndicatorSignal | null): strin
   if (signal?.kdj_overbought) return `先看超买状态能否降温，同时确认回落时 ${supportText} 是否有效。`;
   if (signal?.kdj_dead_cross) return `先看 KDJ 死叉是否修复，并确认价格能否守住 ${supportText}。`;
   if (tone === "positive") return `关注能否放量突破 ${resistanceText}；若回落，再看 ${supportText} 是否有效。`;
-  if (tone === "negative") return `关注价格能否重新站稳 ${supportText}，并等待 SWL 与 SWS 关系改善。`;
+  if (tone === "negative") return `关注价格能否重新站稳 ${supportText}，并等待短期均线与长期均线关系改善。`;
   return `等待趋势方向与成交量形成一致；向上关注 ${resistanceText}，向下关注 ${supportText}。`;
 }
 function buildMetricAnalysis({
@@ -709,7 +723,7 @@ function buildMetricAnalysis({
 
   const signalState = signalStatusLabel(signal?.status);
   const signalType = signalTypeLabel(signal?.signal_type);
-  const trendPosition = signal?.swl_above_sws === true ? "SWL 位于 SWS 上方，趋势结构偏积极" : signal?.swl_above_sws === false ? "SWL 位于 SWS 下方，趋势结构仍需观察" : "SWL/SWS 关系暂不完整";
+  const trendPosition = signal?.swl_above_sws === true ? "短期均线位于长期均线上方，趋势结构偏积极" : signal?.swl_above_sws === false ? "短期均线位于长期均线下方，趋势结构仍需观察" : "短期均线/长期均线关系暂不完整";
   const riskText = Array.isArray(signal?.risk_flags) && signal.risk_flags.length ? `风险标记包括 ${formatList(signal.risk_flags, riskFlagLabel)}。` : "暂未识别到明确风险标记。";
   items.push({
     title: "趋势位置",
@@ -752,8 +766,22 @@ function buildMetricAnalysis({
     });
   }
 
-  const eps = financialLookup.get("eps") || financialLookup.get("EPS");
-  const profitGrowth = financialLookup.get("deducted_net_profit_growth_rate") || financialLookup.get("扣非增长");
+  const eps = financialMetricValue(financialLookup, [
+    "latest_eps",
+    "eps",
+    "EPS",
+    "最新每股收益",
+    "每股收益",
+    "estimated_eps",
+    "每股收益(估算)",
+    "每股收益(计算)",
+  ]) || formatStockEps(stock);
+  const profitGrowth = financialMetricValue(financialLookup, [
+    "deducted_net_profit_growth_rate",
+    "扣非净利润增长率",
+    "扣非净利同比",
+    "扣非增长",
+  ]) || formatStockProfitGrowth(stock);
   const capitalText = capital ? `资金综合分 ${formatNumber(capitalScore)}，证据置信度 ${capital.confidence || "--"}；资金流 ${capitalSummary.fundFlow}，机构席位 ${capitalSummary.institution}。` : "资金证据暂缺，不能把缺失数据解读为流入或流出。";
   items.push({
     title: "财务资金",
@@ -772,6 +800,24 @@ function buildFinancialLookup(items: FinancialIndicatorItem[]): Map<string, stri
     if (item.label) lookup.set(item.label, value);
   }
   return lookup;
+}
+
+function financialMetricValue(lookup: Map<string, string>, keys: string[]): string {
+  for (const key of keys) {
+    const value = lookup.get(key)?.trim();
+    if (value && !["--", "—", "暂无", "暂缺"].includes(value)) return value;
+  }
+  return "";
+}
+
+function formatStockEps(stock: StockItem): string {
+  const value = formatNumber(stock.latest_eps ?? stock.eps);
+  return value === "—" ? "" : `${value}元`;
+}
+
+function formatStockProfitGrowth(stock: StockItem): string {
+  const value = formatRatioPercent(stock.deducted_net_profit_growth_rate);
+  return value === "--" ? "" : value;
 }
 function summarizeCapitalEvidence(capital?: CapitalEvidenceResult | null): Record<string, string> {
   const sections = capital?.sections || [];
@@ -821,6 +867,27 @@ function formatSignedPercent(value: unknown): string {
   return `${percent > 0 ? "+" : ""}${percent.toFixed(2)}%`;
 }
 
+export function formatObserveTime(value: unknown, fallback = "数据时间未知"): string {
+  if (value == null || value === "") return fallback;
+  const text = String(value).trim();
+  if (!text) return fallback;
+
+  const compact = text.match(/^(\d{4})(\d{2})(\d{2})(?:(\d{2})(\d{2})(\d{2})?)?$/);
+  if (compact) {
+    const [, year, month, day, hour, minute] = compact;
+    return hour && minute ? `${year}-${month}-${day} ${hour}:${minute}` : `${year}-${month}-${day}`;
+  }
+
+  const separated = text.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::\d{2})?)?/);
+  if (separated) {
+    const [, year, month, day, hour, minute] = separated;
+    const date = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    return hour && minute ? `${date} ${hour.padStart(2, "0")}:${minute}` : date;
+  }
+
+  return text;
+}
+
 function formatMarketCap(stock: StockItem): string {
   if (stock.market_cap_billion != null) return `${formatNumber(stock.market_cap_billion)}亿`;
   return formatNumber(stock.market_cap);
@@ -839,7 +906,20 @@ function formatList(values: unknown, mapper?: (value: unknown) => string): strin
   return values.map((item) => mapper ? mapper(item) : String(item)).filter(Boolean).join("、") || "--";
 }
 
-function signalTypeLabel(value: unknown): string {
+const warnedObserveLabelValues = new Set<string>();
+
+function unmappedObserveLabel(kind: string, value: unknown, fallback = "未识别类型"): string {
+  const text = String(value || "").trim();
+  if (!text) return "--";
+  const key = `${kind}:${text}`;
+  if (!warnedObserveLabelValues.has(key)) {
+    warnedObserveLabelValues.add(key);
+    console.warn(`[observe-summary] unmapped ${kind}: ${text}`);
+  }
+  return fallback;
+}
+
+export function signalTypeLabel(value: unknown): string {
   const labels: Record<string, string> = {
     bullish: "看多",
     bearish: "看空",
@@ -848,34 +928,56 @@ function signalTypeLabel(value: unknown): string {
     buy_setup: "买点预备",
     exit: "离场",
     uptrend: "上升趋势",
+    trend_continuation: "趋势延续",
+    trend_reversal: "趋势反转",
+    range_bound: "区间震荡",
+    breakout_attempt: "突破尝试",
+    risk_warning: "风险预警",
+    breakout_chase: "突破追踪",
+    pullback_buy: "回踩买点",
   };
-  return labels[String(value || "")] || String(value || "--");
+  const key = String(value || "").trim();
+  return labels[key] || unmappedObserveLabel("signal_type", value);
 }
 
-function riskFlagLabel(value: unknown): string {
+export function riskFlagLabel(value: unknown): string {
   const labels: Record<string, string> = {
     high_upper_shadow: "上影线偏长",
     bearish_long_ma_stack: "均线空头排列",
     kdj_overbought: "KDJ 超买",
     kdj_dead_cross: "KDJ 死叉",
     below_support: "跌破支撑",
+    insufficient_history: "历史样本不足",
+    low_volume: "成交量不足",
+    breakdown_ma20: "跌破 20 日均线",
+    white_exit: "白线离场",
+    volume_stall: "放量滞涨",
+    macd_bearish_divergence: "MACD 顶背离",
+    swl_below_sws: "短期均线低于长期均线",
+    weak_final_score: "综合评分偏弱",
   };
-  return labels[String(value || "")] || String(value || "");
+  const key = String(value || "").trim();
+  return labels[key] || unmappedObserveLabel("risk_flag", value);
 }
 
-function patternSignalLabel(value: unknown): string {
+export function patternSignalLabel(value: unknown): string {
   const labels: Record<string, string> = {
     red_hold: "红持",
     cyan_watch: "青观",
     short_buy: "短买",
     white_exit: "白离",
-    swl_above_sws: "SWL 高于 SWS",
+    swl_above_sws: "短期均线高于长期均线",
+    swl_below_sws: "短期均线低于长期均线",
     kdj_golden_cross: "KDJ 金叉",
     kdj_dead_cross: "KDJ 死叉",
     accumulation_strength: "吸筹增强",
+    bottom_accumulation: "底部吸筹",
     swing_opportunity: "波段机会",
+    rebound_signal: "反弹信号",
+    dragon_trend_volume: "趋势量能共振",
   };
-  return labels[String(value || "")] || String(value || "");
+  const key = String(value || "").trim();
+  return labels[key] || unmappedObserveLabel("pattern_signal", value);
 }
 
 function kdjFromSignal(signal: { k?: number | null; d?: number | null; j?: number | null } | null | undefined) {
@@ -937,5 +1039,3 @@ function finiteNumber(value: unknown): number | null {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 }
-
-

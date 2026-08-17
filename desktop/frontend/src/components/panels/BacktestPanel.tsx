@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import type { AdaptiveScreenRequest, BacktestResult, EquityPoint, VolatilitySnapshot, WatchlistItem } from "../../types";
+import type { AdaptiveScreenRequest, BacktestResult, EquityPoint, StockItem, VolatilitySnapshot, WatchlistItem } from "../../types";
 import type { FilterCriteria } from "../FilterBar";
-import { postJson } from "../../lib/tauri";
+import { getJson, postJson } from "../../lib/tauri";
 import { buildBacktestRequest, requireBacktestResult } from "../../lib/contracts";
 import {
   currentSystemDateInputValue,
@@ -9,6 +9,7 @@ import {
   formatNumber,
   formatPercent,
   formatSignedPercent,
+  normalizeStockCode,
   shortBenchmarkLabel,
   shortRebalanceLabel,
 } from "../../lib/format";
@@ -260,23 +261,90 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
             : error}
         />}
         {loading && !result && !error && <PanelFeedback kind="loading" description="正在计算组合表现..." />}
-        {result && !loading && <BacktestResultView result={result} />}
+        {result && !loading && <BacktestResultView result={result} watchlist={watchlist} />}
         {!result && !loading && !error && <PanelFeedback kind="empty" description="选择股票来源并设置参数后运行回测。" />}
       </div>
     </div>
   );
 }
 
-export function BacktestResultView({ result }: { result: BacktestResult }) {
+type SymbolNameLookup = Record<string, string>;
+
+function symbolKey(symbol: string): string {
+  return normalizeStockCode(symbol) || symbol.trim().toUpperCase();
+}
+
+function addSymbolName(target: SymbolNameLookup, symbol: string | undefined, name: string | null | undefined): void {
+  const code = symbol?.trim();
+  const displayName = name?.trim();
+  if (!code || !displayName || displayName === code) return;
+  target[symbolKey(code)] = displayName;
+}
+
+function symbolDisplayLabel(symbol: string, names: SymbolNameLookup): string {
+  const name = names[symbolKey(symbol)]?.trim();
+  return name && name !== symbol ? `${name}（${symbol}）` : symbol;
+}
+
+function useBacktestSymbolNames(result: BacktestResult, watchlist: WatchlistItem[]): SymbolNameLookup {
+  const requestedSymbols = useMemo(() => {
+    const symbols = new Set<string>();
+    for (const symbol of result.symbols ?? []) if (symbol?.trim()) symbols.add(symbol.trim());
+    for (const snapshot of result.volatility_snapshots ?? []) if (snapshot.symbol?.trim()) symbols.add(snapshot.symbol.trim());
+    return [...symbols];
+  }, [result.symbols, result.volatility_snapshots]);
+  const providedNames = useMemo(() => {
+    const names: SymbolNameLookup = {};
+    for (const item of watchlist) addSymbolName(names, item.code, item.name);
+    for (const snapshot of result.volatility_snapshots ?? []) addSymbolName(names, snapshot.symbol, snapshot.name);
+    return names;
+  }, [result.volatility_snapshots, watchlist]);
+  const [fetchedNames, setFetchedNames] = useState<SymbolNameLookup>({});
+  const symbolNames = useMemo(() => ({ ...fetchedNames, ...providedNames }), [fetchedNames, providedNames]);
+  const requestedSignature = requestedSymbols.map(symbolKey).join("|");
+  const knownSignature = Object.entries(symbolNames).map(([key, name]) => `${key}:${name}`).sort().join("|");
+
+  useEffect(() => {
+    const missingSymbols = requestedSymbols.filter((symbol) => !symbolNames[symbolKey(symbol)]);
+    if (!missingSymbols.length) return;
+    let disposed = false;
+    void Promise.all(missingSymbols.map(async (symbol) => {
+      try {
+        const stock = await getJson<Partial<StockItem>>(`/api/stocks/${encodeURIComponent(symbol)}`, { timeoutMs: 5000 });
+        const name = typeof stock.name === "string" ? stock.name.trim() : "";
+        return name && name !== symbol ? [symbolKey(symbol), name] as const : null;
+      } catch {
+        return null;
+      }
+    })).then((entries) => {
+      if (disposed) return;
+      const nextEntries = entries.filter((entry): entry is readonly [string, string] => Boolean(entry));
+      if (!nextEntries.length) return;
+      setFetchedNames((current) => {
+        const next = { ...current };
+        for (const [key, name] of nextEntries) next[key] = name;
+        return next;
+      });
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [knownSignature, requestedSignature, requestedSymbols, symbolNames]);
+
+  return symbolNames;
+}
+
+export function BacktestResultView({ result, watchlist = [] }: { result: BacktestResult; watchlist?: WatchlistItem[] }) {
   const metrics = result.metrics || {};
   const equityPointCount = result.equity_curve?.length ?? 0;
+  const symbolNames = useBacktestSymbolNames(result, watchlist);
   return (
     <div className="backtest-result">
       <div className="metric-strip">
-        <div className="metric"><span>总收益</span><strong className={metrics.total_return > 0 ? "positive" : "negative"}>{formatSignedPercent((metrics.total_return ?? 0) * 100)}</strong></div>
-        <div className="metric"><span>年化收益</span><strong>{metrics.annualized_return != null ? formatSignedPercent(metrics.annualized_return * 100) : "--"}</strong></div>
-        <div className="metric"><span>最大回撤</span><strong className="negative">{metrics.max_drawdown != null ? formatSignedPercent(metrics.max_drawdown * 100) : "--"}</strong></div>
-        <div className="metric"><span>超额收益</span><strong>{metrics.excess_return != null ? formatSignedPercent(metrics.excess_return * 100) : "--"}</strong></div>
+        <div className="metric metric-hero"><span>总收益</span><strong className={(metrics.total_return ?? 0) > 0 ? "positive" : (metrics.total_return ?? 0) < 0 ? "negative" : undefined}>{formatSignedPercent((metrics.total_return ?? 0) * 100)}</strong></div>
+        <div className="metric"><span>年化收益</span><strong className={(metrics.annualized_return ?? 0) > 0 ? "positive" : (metrics.annualized_return ?? 0) < 0 ? "negative" : undefined}>{metrics.annualized_return != null ? formatSignedPercent(metrics.annualized_return * 100) : "--"}</strong></div>
+        <div className="metric"><span>最大回撤</span><strong className={(metrics.max_drawdown ?? 0) < 0 ? "negative" : undefined}>{metrics.max_drawdown != null ? formatSignedPercent(metrics.max_drawdown * 100) : "--"}</strong></div>
+        <div className="metric"><span>超额收益</span><strong className={(metrics.excess_return ?? 0) > 0 ? "positive" : (metrics.excess_return ?? 0) < 0 ? "negative" : undefined}>{metrics.excess_return != null ? formatSignedPercent(metrics.excess_return * 100) : "--"}</strong></div>
         <div className="metric"><span>Precision@N</span><strong>{metrics.precision_at_n != null ? formatPercent(metrics.precision_at_n * 100) : "--"}</strong></div>
       </div>
 
@@ -330,7 +398,7 @@ export function BacktestResultView({ result }: { result: BacktestResult }) {
             {result.adaptive_release_gate.checks.map((check) => (
               <div className="backtest-fold-row" key={check.key}>
                 <span><b>{releaseGateLabel(check.key)}</b><small>{check.requirement}</small></span>
-                <strong className={check.passed ? "positive" : "negative"}>
+                <strong className={`backtest-gate-status ${check.passed ? "passed" : "failed"}`}>
                   {check.passed ? "通过" : check.actual == null ? "待采集" : "未通过"}
                 </strong>
               </div>
@@ -342,6 +410,7 @@ export function BacktestResultView({ result }: { result: BacktestResult }) {
       <VolatilityDiagnostics
         snapshots={result.volatility_snapshots ?? []}
         emptyMessage={result.volatility_message}
+        symbolNames={symbolNames}
       />
 
       {result.walk_forward_folds?.length ? (
@@ -370,7 +439,11 @@ export function BacktestResultView({ result }: { result: BacktestResult }) {
       {result.symbols?.length ? (
         <section className="backtest-holdings">
           <header><span>{result.strategy_mode === "walk_forward" ? "滚动入选标的" : "标的"}</span><strong>{result.symbols.length}</strong></header>
-          <div className="symbol-strip">{result.symbols.join(" · ")}</div>
+          <ul className="symbol-strip">
+            {result.symbols.map((symbol) => (
+              <li className="symbol-chip" key={symbol}>{symbolDisplayLabel(symbol, symbolNames)}</li>
+            ))}
+          </ul>
         </section>
       ) : null}
 
@@ -399,12 +472,19 @@ function formatVolatilityPercent(value: number | null | undefined): string {
     : "无定义（零波动）";
 }
 
+function formatVolatilitySymbolLabel(snapshot: VolatilitySnapshot, names: SymbolNameLookup): string {
+  const name = snapshot.name?.trim() || names[symbolKey(snapshot.symbol)]?.trim();
+  return name && name !== snapshot.symbol ? `${name}（${snapshot.symbol}）` : snapshot.symbol;
+}
+
 const VolatilityDiagnostics = memo(function VolatilityDiagnostics({
   snapshots,
   emptyMessage,
+  symbolNames,
 }: {
   snapshots: VolatilitySnapshot[];
   emptyMessage?: string | null;
+  symbolNames: SymbolNameLookup;
 }) {
   const [selectedSymbol, setSelectedSymbol] = useState(() => snapshots[0]?.symbol ?? "");
   const snapshot = snapshots.find((item) => item.symbol === selectedSymbol) ?? snapshots[0];
@@ -436,6 +516,7 @@ const VolatilityDiagnostics = memo(function VolatilityDiagnostics({
       label: `ATR${atr?.period ?? 14}`,
       value: atr ? formatNumber(atr.value) : "--",
       detail: atr ? `占收盘 ${formatVolatilityPercent(atr.percent_of_close)}` : reasonFor("atr"),
+      tone: undefined,
     },
     {
       key: "bollinger_bands",
@@ -444,6 +525,7 @@ const VolatilityDiagnostics = memo(function VolatilityDiagnostics({
       detail: bollinger
         ? `%B ${formatVolatilityPercent(bollinger.percent_b)} · 带宽 ${formatVolatilityPercent(bollinger.bandwidth_percent)}`
         : reasonFor("bollinger_bands"),
+      tone: undefined,
     },
     {
       key: "donchian_channel",
@@ -452,6 +534,7 @@ const VolatilityDiagnostics = memo(function VolatilityDiagnostics({
       detail: donchian
         ? `位置 ${formatVolatilityPercent(donchian.position_percent)} · 宽度 ${formatVolatilityPercent(donchian.width_percent)}`
         : reasonFor("donchian_channel"),
+      tone: undefined,
     },
     {
       key: "keltner_channel",
@@ -460,6 +543,7 @@ const VolatilityDiagnostics = memo(function VolatilityDiagnostics({
       detail: keltner
         ? `位置 ${formatVolatilityPercent(keltner.position_percent)} · 宽度 ${formatVolatilityPercent(keltner.width_percent)}`
         : reasonFor("keltner_channel"),
+      tone: undefined,
     },
     {
       key: "chaikin_volatility",
@@ -468,22 +552,27 @@ const VolatilityDiagnostics = memo(function VolatilityDiagnostics({
       detail: chaikin
         ? `${chaikin.ema_period} 日高低价差 EMA 相对 ${chaikin.roc_period} 日前`
         : reasonFor("chaikin_volatility"),
+      tone: chaikin?.value == null || chaikin.value === 0
+        ? undefined
+        : chaikin.value > 0 ? "positive" : "negative",
     },
     {
       key: "rvi",
       label: `相对波动率指数 RVI${rvi?.period ?? 14}`,
       value: rvi ? formatNumber(rvi.value) : "--",
       detail: rvi ? "范围 0–100，50 为方向均衡线" : reasonFor("rvi"),
+      tone: undefined,
     },
   ];
   const interpretation = buildVolatilityInterpretation(snapshot);
+  const symbolLabel = formatVolatilitySymbolLabel(snapshot, symbolNames);
 
   return (
     <section className="backtest-volatility" aria-label="波动率快照">
       <header>
         <div>
           <span>波动率快照</span>
-          <small>{snapshot.date} · 收盘 {formatNumber(snapshot.close)}</small>
+          <small>{symbolLabel} · {snapshot.date} · 收盘 {formatNumber(snapshot.close)}</small>
         </div>
         <label className="volatility-symbol-control">
           <span>波动率标的</span>
@@ -492,7 +581,7 @@ const VolatilityDiagnostics = memo(function VolatilityDiagnostics({
             value={snapshot.symbol}
             onChange={(event) => setSelectedSymbol(event.target.value)}
           >
-            {snapshots.map((item) => <option key={item.symbol} value={item.symbol}>{item.symbol}</option>)}
+            {snapshots.map((item) => <option key={item.symbol} value={item.symbol}>{formatVolatilitySymbolLabel(item, symbolNames)}</option>)}
           </select>
         </label>
       </header>
@@ -500,12 +589,12 @@ const VolatilityDiagnostics = memo(function VolatilityDiagnostics({
         {items.map((item) => (
           <div key={item.key}>
             <span>{item.label}</span>
-            <strong>{item.value}</strong>
+            <strong className={`volatility-value${item.tone ? ` ${item.tone}` : ""}`}>{item.value}</strong>
             <small>{item.detail}</small>
           </div>
         ))}
       </div>
-      <section className="volatility-interpretation" aria-label={`${snapshot.symbol} 波动率结论`}>
+      <section className="volatility-interpretation" aria-label={`${symbolLabel} 波动率结论`}>
         <header>
           <strong>一句话看懂</strong>
           <span>已返回 {interpretation.returnedCount}/6 项指标</span>

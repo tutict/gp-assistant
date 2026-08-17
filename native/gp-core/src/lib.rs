@@ -2173,13 +2173,25 @@ pub fn backtest_with_source(
         .iter()
         .map(|history| (history.code.to_uppercase(), history))
         .collect::<HashMap<_, _>>();
+    let stock_name_by_code = universe
+        .iter()
+        .filter_map(|stock| {
+            let name = stock.name.trim();
+            (!name.is_empty()).then(|| (stock.code.to_uppercase(), name.to_string()))
+        })
+        .collect::<HashMap<_, _>>();
     let volatility_snapshots = volatility_symbols
         .iter()
         .filter_map(|symbol| {
             history_by_code
                 .get(&symbol.to_uppercase())
                 .and_then(|history| {
-                    volatility::calculate_volatility_snapshot(symbol, &history.bars)
+                    volatility::calculate_volatility_snapshot(symbol, &history.bars).map(
+                        |mut snapshot| {
+                            snapshot.name = stock_name_by_code.get(&symbol.to_uppercase()).cloned();
+                            snapshot
+                        },
+                    )
                 })
         })
         .collect::<Vec<_>>();

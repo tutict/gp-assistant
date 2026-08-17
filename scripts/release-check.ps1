@@ -64,6 +64,7 @@ if (-not $SkipNode) {
     Invoke-Checked "Frontend UI density guard" $npm @("run", "test:density") $frontendDir
     Invoke-Checked "Frontend UI density contract tests" $npm @("run", "test:density-contract") $frontendDir
     Invoke-Checked "Frontend Agent replay CSS contract tests" $npm @("run", "test:agent-replay-css") $frontendDir
+    Invoke-Checked "Frontend unstyled class guard" $npm @("run", "test:unstyled") $frontendDir
     Invoke-Checked "Frontend CSS architecture guard" $npm @("run", "test:architecture") $frontendDir
     Invoke-Checked "Frontend unit tests" $npm @("run", "test:unit") $frontendDir
     Invoke-Checked "Frontend React/TypeScript build" $npm @("run", "build") $frontendDir

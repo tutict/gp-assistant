@@ -246,7 +246,8 @@ function isVolatilitySnapshot(value: unknown): boolean {
       && typeof item.indicator === "string"
       && typeof item.reason === "string")
   );
-  return isOptionalFinite(value.close)
+  return (value.name == null || typeof value.name === "string")
+    && isOptionalFinite(value.close)
     && (value.atr == null || isNumericRecord(value.atr, ["period", "value", "percent_of_close"]))
     && (value.bollinger_bands == null || isNumericRecord(
       value.bollinger_bands,

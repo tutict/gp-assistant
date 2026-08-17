@@ -2489,6 +2489,10 @@ fn backtests_with_native_history() {
     assert_eq!(result.metrics.rebalance_count, 1);
     assert_eq!(result.volatility_snapshots.len(), 1);
     assert_eq!(result.volatility_snapshots[0].symbol, "111111.SZ");
+    assert_eq!(
+        result.volatility_snapshots[0].name.as_deref(),
+        Some("样本银行")
+    );
     assert!(result.volatility_snapshots[0].atr.is_none());
 }
 
@@ -3230,6 +3234,10 @@ fn walk_forward_does_not_trade_a_suspended_holding_at_a_stale_price() {
     assert_eq!(result.symbols, vec!["111111.SZ", "222222.SZ"]);
     assert_eq!(result.volatility_snapshots.len(), 1);
     assert_eq!(result.volatility_snapshots[0].symbol, "222222.SZ");
+    assert_eq!(
+        result.volatility_snapshots[0].name.as_deref(),
+        Some("样本汽车")
+    );
     assert_eq!(result.walk_forward_folds[0].evaluated_selection_count, 1);
     assert_eq!(result.walk_forward_folds[0].hit_count, 0);
     assert_eq!(result.walk_forward_folds[0].precision_at_n, Some(0.0));

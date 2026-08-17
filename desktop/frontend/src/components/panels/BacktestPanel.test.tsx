@@ -21,6 +21,7 @@ const result = {
   symbols: ["300750.SZ"],
   volatility_snapshots: [{
     symbol: "300750.SZ",
+    name: "宁德时代",
     date: "2026-07-15",
     close: 268.5,
     atr: { period: 14, value: 8.2, percent_of_close: 3.054 },
@@ -108,6 +109,7 @@ describe("BacktestResultView volatility diagnostics", () => {
     expect(html).toContain("凯尔特纳通道");
     expect(html).toContain("Chaikin 波动率");
     expect(html).toContain("RVI14");
+    expect(html).toContain("宁德时代（300750.SZ）");
     expect(html).toContain("300750.SZ");
     expect(html).toContain("12.50%");
     expect(html).toContain("一句话看懂");
@@ -116,6 +118,8 @@ describe("BacktestResultView volatility diagnostics", () => {
     expect(html).toContain("这些判断怎么算的");
     expect(html).toContain("48–52（含端点）为方向均衡");
     expect(html).toContain("最近上涨方向的波动明显更多");
+    expect(html).toContain('<ul class="symbol-strip"');
+    expect(html).toContain('<li class="symbol-chip"');
     expect(html).not.toContain("日内波幅扩张");
   });
 
@@ -190,5 +194,7 @@ describe("BacktestResultView volatility diagnostics", () => {
     expect(html).toContain("暂不切换默认");
     expect(html).toContain("缓存运行耗时");
     expect(html).toContain("待采集");
+    expect(html).toContain('class="backtest-gate-status passed"');
+    expect(html).toContain('class="backtest-gate-status failed"');
   });
 });
