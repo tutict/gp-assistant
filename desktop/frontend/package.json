@@ -1,15 +1,16 @@
 {
   "name": "gp-assistant-frontend",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build:app": "tsc -b && vite build",
     "build": "npm run build:app && npm run test:bundle",
     "preview": "vite preview",
-    "test": "npm run test:version && npm run test:density && npm run test:density-contract && npm run test:agent-replay-css && npm run test:unstyled && npm run test:architecture && vitest run && npm run test:desktop",
+    "test": "npm run test:version && npm run test:industry-export && npm run test:density && npm run test:density-contract && npm run test:agent-replay-css && npm run test:unstyled && npm run test:architecture && vitest run && npm run test:desktop",
     "test:version": "node ../../scripts/check-version-consistency.mjs",
+    "test:industry-export": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../scripts/export-mobile-industry-snapshot.test.ps1",
     "test:unit": "vitest run",
     "test:density": "node ../../scripts/check-ui-density.mjs",
     "test:density-contract": "node --test ../../scripts/check-ui-density.test.mjs",

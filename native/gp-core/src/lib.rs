@@ -1970,10 +1970,17 @@ pub fn backtest_selected_symbols(universe: &[StockItem], request: &BacktestReque
         .collect()
 }
 
-pub fn backtest_with_source(
+struct BacktestDataRequirements {
+    universe: Vec<StockItem>,
+    selection_notes: Vec<String>,
+    symbols: Vec<String>,
+    history_symbols: Vec<String>,
+}
+
+fn resolve_backtest_data_requirements(
     source: &impl MarketDataSource,
     request: &BacktestRequest,
-) -> CoreResult<BacktestResult> {
+) -> CoreResult<BacktestDataRequirements> {
     let mut universe = source.stocks()?.to_vec();
     let strategy_mode = normalize_backtest_strategy_mode(&request.strategy_mode);
     let dynamic_mode = strategy_mode != "candidate_snapshot";
@@ -2007,7 +2014,6 @@ pub fn backtest_with_source(
             .map(|item| item.stock.code.clone())
             .collect()
     };
-
     let history_symbols = if dynamic_mode {
         strict_walk_forward_history_symbols(
             source,
@@ -2018,6 +2024,33 @@ pub fn backtest_with_source(
     } else {
         symbols.clone()
     };
+    Ok(BacktestDataRequirements {
+        universe,
+        selection_notes,
+        symbols,
+        history_symbols,
+    })
+}
+
+pub fn backtest_required_history_symbols(
+    source: &impl MarketDataSource,
+    request: &BacktestRequest,
+) -> CoreResult<Vec<String>> {
+    Ok(resolve_backtest_data_requirements(source, request)?.history_symbols)
+}
+
+pub fn backtest_with_source(
+    source: &impl MarketDataSource,
+    request: &BacktestRequest,
+) -> CoreResult<BacktestResult> {
+    let strategy_mode = normalize_backtest_strategy_mode(&request.strategy_mode);
+    let dynamic_mode = strategy_mode != "candidate_snapshot";
+    let BacktestDataRequirements {
+        universe,
+        selection_notes,
+        symbols,
+        history_symbols,
+    } = resolve_backtest_data_requirements(source, request)?;
     let history_load_start = if strategy_mode == "adaptive_swing_v1" {
         "19900101"
     } else {

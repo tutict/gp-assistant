@@ -26,7 +26,7 @@
     ],
     "android": {
       "minSdkVersion": 24,
-      "versionCode": 500
+      "versionCode": 600
     }
   }
 }

@@ -6093,19 +6093,32 @@ async fn prepare_backtest(
         });
     }
 
-    let candidate_data = Arc::clone(&data);
-    let candidate_stocks = stock_override.clone();
-    let candidate_request = request.clone();
-    let mut candidates = runtime::run_cpu_bound("api_backtest_candidates", move || {
-        let universe = candidate_stocks
-            .as_deref()
-            .map(Vec::as_slice)
-            .unwrap_or(candidate_data.stocks.as_slice());
-        backtest_history_prefetch_codes(universe, &candidate_request)
-    })
-    .await?;
+    let mut candidates = if adaptive_backtest {
+        let candidate_data = Arc::clone(&data);
+        let candidate_stocks = stock_override.clone();
+        let candidate_request = request.clone();
+        runtime::run_cpu_bound("api_backtest_requirements", move || {
+            backtest_history_requirements(
+                candidate_data.as_ref(),
+                candidate_stocks.as_deref().map(Vec::as_slice),
+                &candidate_request,
+            )
+        })
+        .await??
+    } else {
+        let candidate_data = Arc::clone(&data);
+        let candidate_stocks = stock_override.clone();
+        let candidate_request = request.clone();
+        runtime::run_cpu_bound("api_backtest_candidates", move || {
+            let universe = candidate_stocks
+                .as_deref()
+                .map(Vec::as_slice)
+                .unwrap_or(candidate_data.stocks.as_slice());
+            backtest_history_prefetch_codes(universe, &candidate_request)
+        })
+        .await?
+    };
     if adaptive_backtest {
-        candidates.extend(data.factor_snapshots.keys().cloned());
         candidates.extend(adaptive_benchmark_codes().into_iter().map(str::to_string));
         dedupe_stock_codes(&mut candidates);
     }
@@ -6236,6 +6249,15 @@ fn backtest_history_prefetch_codes(
     request: &gp_core::BacktestRequest,
 ) -> Vec<String> {
     gp_core::backtest_selected_symbols(universe, request)
+}
+
+fn backtest_history_requirements(
+    data: &gp_core::CoreDataSet,
+    stocks: Option<&[gp_core::StockItem]>,
+    request: &gp_core::BacktestRequest,
+) -> Result<Vec<String>, String> {
+    let source = gp_core::StaticDataSource::with_overrides(data, stocks, None);
+    gp_core::backtest_required_history_symbols(&source, request).map_err(|error| error.to_string())
 }
 
 fn typed_history_cache_has_bars(

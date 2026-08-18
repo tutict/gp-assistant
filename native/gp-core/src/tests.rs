@@ -2549,6 +2549,31 @@ fn backtests_watchlist_codes_in_saved_order() {
 }
 
 #[test]
+fn strict_backtest_history_requirements_reject_missing_factor_snapshots_before_fetch() {
+    let data = sample_data_set();
+    let source = StaticDataSource::new(&data);
+    let request = BacktestRequest {
+        criteria: ScreenCriteria::default(),
+        source: "criteria".to_string(),
+        strategy_mode: "adaptive_swing_v1:auto".to_string(),
+        stock_codes: Vec::new(),
+        start_date: "20200101".to_string(),
+        end_date: "20260729".to_string(),
+        top_n: 10,
+        initial_cash: 1_000_000.0,
+        rebalance_frequency: "monthly".to_string(),
+        transaction_cost_bps: 10.0,
+        benchmark: "candidate_equal_weight".to_string(),
+    };
+
+    let error = backtest_required_history_symbols(&source, &request)
+        .expect_err("strict requirements must reject missing point-in-time factors");
+
+    assert!(error.to_string().contains("factor_snapshots"));
+    assert!(error.to_string().contains("111111.SZ"));
+}
+
+#[test]
 fn walk_forward_requires_point_in_time_factor_snapshots() {
     let error = backtest_with_data(
         &sample_data_set(),

@@ -61,6 +61,7 @@ if (-not $SkipNode) {
         Invoke-Checked "Install frontend dependencies" $npm @("ci") $frontendDir
     }
     Invoke-Checked "Release version metadata consistency" $npm @("run", "test:version") $frontendDir
+    Invoke-Checked "Mobile industry exporter contract" $npm @("run", "test:industry-export") $frontendDir
     Invoke-Checked "Frontend UI density guard" $npm @("run", "test:density") $frontendDir
     Invoke-Checked "Frontend UI density contract tests" $npm @("run", "test:density-contract") $frontendDir
     Invoke-Checked "Frontend Agent replay CSS contract tests" $npm @("run", "test:agent-replay-css") $frontendDir

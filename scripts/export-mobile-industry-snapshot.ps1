@@ -66,15 +66,23 @@ $json = $snapshot | ConvertTo-Json -Depth 5 -Compress
 [System.IO.File]::WriteAllText($OutputPath, $json, [System.Text.UTF8Encoding]::new($false))
 
 $optionLines = New-Object System.Collections.Generic.List[string]
-$optionLines.Add('export const INDUSTRY_OPTIONS = [') | Out-Null
 $optionLines.Add('  "",') | Out-Null
 foreach ($option in $options) {
     $escaped = $option.Replace('\', '\\').Replace('"', '\"')
     $optionLines.Add("  `"$escaped`",") | Out-Null
 }
-$optionLines.Add('] as const;') | Out-Null
+$templatePath = Join-Path $PSScriptRoot "templates\screenIndustryOptions.ts.template"
+if (-not (Test-Path -LiteralPath $templatePath)) {
+    throw "Industry options template is missing: $templatePath"
+}
+$template = [System.IO.File]::ReadAllText($templatePath, [System.Text.Encoding]::UTF8)
+$placeholder = '{{INDUSTRY_OPTION_LINES}}'
+if (-not $template.Contains($placeholder)) {
+    throw "Industry options template is missing placeholder: $placeholder"
+}
+$generatedOptions = $template.Replace($placeholder, ($optionLines -join [System.Environment]::NewLine))
 $optionsParent = Split-Path -Parent $OptionsOutputPath
 New-Item -ItemType Directory -Path $optionsParent -Force | Out-Null
-[System.IO.File]::WriteAllLines($OptionsOutputPath, $optionLines, [System.Text.UTF8Encoding]::new($false))
+[System.IO.File]::WriteAllText($OptionsOutputPath, $generatedOptions, [System.Text.UTF8Encoding]::new($false))
 
 Write-Host "Prepared mobile industry data: $($industries.Count) stocks, $($options.Count) industries"

@@ -945,6 +945,7 @@ fn format_reqwest_error(context: &str, error: reqwest::Error) -> String {
     format!("{context}: {}", error.without_url())
 }
 
+#[cfg(test)]
 pub(crate) async fn call_model(
     llm_value: Option<&Value>,
     preview: &Value,

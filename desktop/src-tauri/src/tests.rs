@@ -27,6 +27,65 @@ fn adaptive_screen_request_accepts_nested_and_legacy_contracts() {
 }
 
 #[test]
+fn adaptive_backtest_requirements_fail_before_history_fetch_without_point_in_time_factors() {
+    let data = gp_core::CoreDataSet {
+        stocks: vec![gp_core::StockItem {
+            code: "111111.SZ".to_string(),
+            ..gp_core::StockItem::default()
+        }],
+        ..gp_core::CoreDataSet::default()
+    };
+    let request = gp_core::BacktestRequest {
+        criteria: gp_core::ScreenCriteria::default(),
+        source: "criteria".to_string(),
+        strategy_mode: "adaptive_swing_v1:auto".to_string(),
+        stock_codes: Vec::new(),
+        start_date: "20200101".to_string(),
+        end_date: "20260729".to_string(),
+        top_n: 10,
+        initial_cash: 1_000_000.0,
+        rebalance_frequency: "monthly".to_string(),
+        transaction_cost_bps: 10.0,
+        benchmark: "candidate_equal_weight".to_string(),
+    };
+
+    let error = backtest_history_requirements(&data, None, &request)
+        .expect_err("adaptive requirements must reject missing point-in-time factors");
+
+    assert!(error.contains("factor_snapshots"));
+    assert!(error.contains("111111.SZ"));
+}
+
+#[test]
+fn candidate_snapshot_watchlist_requirements_keep_saved_codes() {
+    let data = gp_core::CoreDataSet {
+        stocks: vec![gp_core::StockItem {
+            code: "111111.SZ".to_string(),
+            ..gp_core::StockItem::default()
+        }],
+        ..gp_core::CoreDataSet::default()
+    };
+    let request = gp_core::BacktestRequest {
+        criteria: gp_core::ScreenCriteria::default(),
+        source: "watchlist".to_string(),
+        strategy_mode: "candidate_snapshot".to_string(),
+        stock_codes: vec!["111111.SZ".to_string()],
+        start_date: "20200101".to_string(),
+        end_date: "20200103".to_string(),
+        top_n: 10,
+        initial_cash: 1_000.0,
+        rebalance_frequency: "monthly".to_string(),
+        transaction_cost_bps: 10.0,
+        benchmark: "candidate_equal_weight".to_string(),
+    };
+
+    let symbols = backtest_history_requirements(&data, None, &request)
+        .expect("candidate snapshot requirements should keep watchlist codes");
+
+    assert_eq!(symbols, vec!["111111.SZ"]);
+}
+
+#[test]
 fn legacy_adapter_uses_primary_limit_for_nested_requests_and_preserves_flat_limit() {
     let nested = legacy_screen_criteria_from_payload(json!({
         "criteria": { "limit": 80, "min_roe": 8.0 },

@@ -1,6 +1,6 @@
 [package]
 name = "stock-optimizer-desktop"
-version = "0.5.0"
+version = "0.6.0"
 description = "Desktop shell for 鑲￠€変紭"
 authors = ["鑲￠€変紭"]
 edition = "2021"
