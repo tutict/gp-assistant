@@ -62,5 +62,8 @@ desktop/src-tauri/keys/
 
 # Local UI review notes and captures
 /docs/android-ui-revamp-plan.md
+/docs/*-plan.md
+/docs/*-prompt.md
+/docs/superpowers/
 /rag2-*.png
 /rag2-*.jpg

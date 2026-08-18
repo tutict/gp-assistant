@@ -14,10 +14,6 @@ const screenshotHarness = readFileSync(
   "utf8",
 );
 const frontendPackage = readFileSync(new URL("../../package.json", import.meta.url), "utf8");
-const backtestPrompt = readFileSync(
-  new URL("../../../../docs/backtest-page-harness-prompt.md", import.meta.url),
-  "utf8",
-);
 
 function withoutComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "");
@@ -135,15 +131,6 @@ describe("backtest page markup contract", () => {
   it("renders the symbol chips as a semantic list", () => {
     expect(backtestPanel).toContain('<ul className="symbol-strip"');
     expect(backtestPanel).toContain('<li className="symbol-chip"');
-  });
-});
-
-describe("backtest page design guidance contract", () => {
-  it("keeps the executable prompt aligned with action-color and display-type rules", () => {
-    expect(backtestPrompt).not.toContain("--equity-portfolio: var(--accent)");
-    expect(backtestPrompt).toContain("--equity-portfolio: var(--chart-line-1)");
-    expect(backtestPrompt).not.toContain("--fs-display(24px");
-    expect(backtestPrompt).toContain("--fs-headline(20px");
   });
 });
 
