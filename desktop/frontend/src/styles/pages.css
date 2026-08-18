@@ -1925,6 +1925,10 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
   overflow-wrap: anywhere;
 }
 
+.text-no-wrap {
+  white-space: nowrap;
+}
+
 .row-actions {
   display: flex;
   min-width: 0;

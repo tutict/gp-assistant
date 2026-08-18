@@ -1,6 +1,6 @@
 [package]
 name = "stock-optimizer-core"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 description = "Embeddable A-share screening core for 鑲￠€変紭"
 

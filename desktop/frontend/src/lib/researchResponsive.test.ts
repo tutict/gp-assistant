@@ -12,6 +12,7 @@ const styles: Array<{ file: string; css: string }> = styleFiles
   }));
 const allCss = styles.map(({ file, css }) => `/* ${file} */\n${css}`).join("\n");
 const responsiveCss = styles.find(({ file }) => file === "responsive.css")?.css || "";
+const pagesCss = styles.find(({ file }) => file === "pages.css")?.css || "";
 const componentsCss = styles.find(({ file }) => file === "components.css")?.css || "";
 const tokensCss = styles.find(({ file }) => file === "tokens.css")?.css || "";
 
@@ -55,16 +56,17 @@ describe("mobile UI density contract", () => {
     );
   });
 
-  it("keeps the mobile stock insight board on one compact row", () => {
+  it("keeps mobile stock insight metrics readable and summaries intact", () => {
     expect(responsiveCss).toMatch(
-      /\.stock-insight-board\s*\{[^}]*grid-template-columns:\s*minmax\(0, 3fr\) minmax\(0, 4fr\)/,
+      /\.stock-insight-board\s*\{[^}]*display:\s*block/,
     );
     expect(responsiveCss).toMatch(
-      /\.stock-insight-board \.score-strip\s*\{[^}]*grid-template-columns:\s*minmax\(0, 3fr\) minmax\(58px, 1fr\)[^}]*margin-top:\s*0/,
+      /\.stock-insight-board \.score-strip\s*\{[^}]*grid-template-columns:\s*minmax\(0, 3fr\) minmax\(88px, 1fr\)[^}]*gap:\s*4px[^}]*margin-top:\s*0/,
     );
     expect(responsiveCss).toMatch(
       /\.stock-insight-board \.score-strip-primary\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/,
     );
+    expect(pagesCss).toMatch(/\.text-no-wrap\s*\{[^}]*white-space:\s*nowrap/);
   });
 
   it("does not reserve an empty control-panel row above the mobile screen run button", () => {

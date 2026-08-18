@@ -21,7 +21,6 @@ export const StockList = memo(function StockList({ items, watchlist, onToggleWat
         {sortedItems.map((item, i) => {
           const inWatchlist = savedCodes.has(item.code);
           const tone = item.change_pct != null && item.change_pct > 0 ? "rise" : item.change_pct != null && item.change_pct < 0 ? "fall" : "neutral";
-          const scoreSummary = buildScoreSummary(item);
           return (
             <article key={`${item.code}-${i}`} className={`stock-row ${tone}`}>
               <header className="stock-row-head">
@@ -63,7 +62,7 @@ export const StockList = memo(function StockList({ items, watchlist, onToggleWat
                   </div>
                 </div>
               </div>
-              <p className="stock-score-summary">{scoreSummary}</p>
+              <ScoreSummary item={item} />
 
               <div className="row-actions">
                 <div className="stock-meta">
@@ -114,16 +113,21 @@ const ScoreChip = memo(function ScoreChip({ label, value, inverted = false }: { 
   );
 });
 
-function buildScoreSummary(item: StockRowView): string {
+const ScoreSummary = memo(function ScoreSummary({ item }: { item: StockRowView }) {
   const positiveTags = compactStrings([...(item.reasonTags || []), ...(item.reasons || []).map(reasonLabel)]).slice(0, 2);
   const riskTags = compactStrings(item.riskTags || []).slice(0, 2);
   const periods = compactStrings(item.suitablePeriods || []).slice(0, 2);
   const strongest = strongestContribution(item.scoreBreakdown || []);
   const highlights = positiveTags.length ? positiveTags.join("、") : strongest ? `${strongest.label}贡献较高` : "综合评分较为均衡";
   const riskText = riskTags.length ? `需关注${riskTags.join("、")}` : "暂未出现突出的扣分标签";
-  const periodText = periods.length ? `适合${periods.join("、")}观察` : "建议结合短中周期继续跟踪";
-  return `${highlights}，${riskText}，${periodText}；仅供选股研究，不构成投资建议。`;
-}
+  return (
+    <p className="stock-score-summary">
+      {highlights}，{riskText}，
+      {periods.length ? `适合${periods.join("、")}观察` : <><span className="text-no-wrap">建议</span>结合短中周期继续跟踪</>}
+      ；仅供选股研究，不构成<span className="text-no-wrap">投资建议</span>。
+    </p>
+  );
+});
 
 function strongestContribution(parts: ScoreContribution[]): ScoreContribution | null {
   return parts

@@ -454,11 +454,11 @@
     margin-top: 0;
   }
   .stock-insight-board {
-    grid-template-columns: minmax(0, 3fr) minmax(0, 4fr);
+    display: block;
   }
   .stock-insight-board .score-strip {
-    grid-template-columns: minmax(0, 3fr) minmax(58px, 1fr);
-    gap: 0;
+    grid-template-columns: minmax(0, 3fr) minmax(88px, 1fr);
+    gap: 4px;
     margin-top: 0;
   }
   .stock-insight-board .score-strip-primary {
@@ -469,7 +469,7 @@
   .stock-insight-board .score-chip,
   .stock-insight-board .score-strip-primary {
     min-height: 56px;
-    padding: 6px 3px;
+    padding: 6px 8px;
   }
   .stock-score-summary {
     font-size: var(--fs-caption);
