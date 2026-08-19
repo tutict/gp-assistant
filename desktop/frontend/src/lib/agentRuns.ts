@@ -46,7 +46,6 @@ export interface AgentRunMetrics {
   schemaVersion: number;
   sampleSize: number;
   sampleLimit: number;
-  conversationId?: string;
   statusCounts: Record<string, number>;
   profileCounts: Record<string, {
     count: number;
@@ -592,12 +591,10 @@ export function normalizeAgentRunMetrics(value: unknown): AgentRunMetrics | null
       fallback: optionalNumber(bucket.fallback) ?? 0,
     };
   }
-  const conversationId = boundedIdentity(record.conversation_id);
   return {
     schemaVersion: optionalNumber(record.schema_version) ?? 1,
     sampleSize,
     sampleLimit,
-    ...(conversationId ? { conversationId } : {}),
     statusCounts: normalizeCounts(record.status_counts),
     profileCounts,
     modelOutcomeCounts: normalizeCounts(record.model_outcome_counts),

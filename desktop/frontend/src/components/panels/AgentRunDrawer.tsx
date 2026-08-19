@@ -285,19 +285,13 @@ export function AgentRunDrawer({
   const syncTerminalDetail = useCallback((loadedDetail: AgentRunDetail) => {
     if (loadedDetail.status === "running") return;
     const updatedSummary = summaryFromDetail(loadedDetail);
-    for (const [key, snapshot] of listCacheRef.current) {
-      if (!snapshot.runs.some((run) => run.runId === loadedDetail.runId)) continue;
-      listCacheRef.current.set(key, {
-        ...snapshot,
-        runs: snapshot.runs.map((run) => (
-          run.runId === loadedDetail.runId ? updatedSummary : run
-        )),
-      });
-    }
+    listCacheRef.current.delete("all");
+    const conversationId = loadedDetail.conversationId || activeConversationId;
+    if (conversationId) listCacheRef.current.delete(scopeKey("current", conversationId));
     setRuns((currentRuns) => currentRuns.map((run) => (
       run.runId === loadedDetail.runId ? updatedSummary : run
     )));
-  }, []);
+  }, [activeConversationId]);
 
   const loadList = useCallback((nextScope: RunScope, conversationId?: string) => {
     cancelListRequest();

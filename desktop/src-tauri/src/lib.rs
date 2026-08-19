@@ -2292,7 +2292,8 @@ async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value
             let response = outcome.response;
             if ledger_started {
                 let ledger_app = app.clone();
-                let ledger_events = captured_events;
+                let ledger_events =
+                    agent_harness::redact_persisted_events(&captured_events, ledger_llm.as_ref());
                 let ledger_response =
                     agent_harness::redact_persisted_response(&response, ledger_llm.as_ref());
                 let completion = runtime::run_io_bound("agent_run_complete", move || {
@@ -2316,8 +2317,10 @@ async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value
         Err(error) => {
             if ledger_started {
                 let ledger_app = app.clone();
-                let ledger_events = captured_events;
-                let ledger_error = error.clone();
+                let ledger_events =
+                    agent_harness::redact_persisted_events(&captured_events, ledger_llm.as_ref());
+                let ledger_error =
+                    agent_harness::redact_persisted_error(&error, ledger_llm.as_ref());
                 let failure_recording = runtime::run_io_bound("agent_run_fail", move || {
                     agent_ledger::with_app_store(&ledger_app, |store| {
                         store.fail_run(

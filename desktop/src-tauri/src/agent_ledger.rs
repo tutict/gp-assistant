@@ -83,7 +83,10 @@ impl AgentRunStore {
         started_at_epoch_ms: i64,
     ) -> Result<(), String> {
         let run_id = required_string(payload, "run_id")?;
-        let question = required_string(payload, "message")?;
+        let question = crate::agent_harness::redact_persisted_question(
+            &required_string(payload, "message")?,
+            payload.get("llm"),
+        );
         let conversation_id = required_string(payload, "conversation_id")?;
         if run_id.len() > MAX_AGENT_LEDGER_ID_BYTES {
             return Err(format!("run_id exceeds {MAX_AGENT_LEDGER_ID_BYTES} bytes"));
@@ -313,7 +316,6 @@ impl AgentRunStore {
             "schema_version": AGENT_METRICS_SCHEMA_VERSION,
             "sample_size": sample_size,
             "sample_limit": limit,
-            "conversation_id": conversation_id,
             "status_counts": status_counts,
             "profile_counts": profile_counts,
             "model_outcome_counts": outcome_counts,
@@ -684,7 +686,7 @@ mod tests {
         let payload = json!({
             "run_id": "run-completed",
             "conversation_id": "conversation-1",
-            "message": "Compare the candidates",
+            "message": "Compare https://user:pass@private.model.test/v1?x-api-key=question-secret",
             "mode": "research",
             "context": {"watchlist": [{"code": "000001.SZ"}]},
             "history": [{"role": "user", "content": "Start with fundamentals"}],
@@ -719,7 +721,7 @@ mod tests {
             .expect("run should exist");
         assert_eq!(record["run_id"], "run-completed");
         assert_eq!(record["conversation_id"], "conversation-1");
-        assert_eq!(record["question"], "Compare the candidates");
+        assert_eq!(record["question"], "Compare ***");
         assert_eq!(record["mode"], "research");
         assert_eq!(record["status"], "completed");
         assert_eq!(record["started_at_epoch_ms"], 1_000);
@@ -732,6 +734,18 @@ mod tests {
         );
         // The detail contract has no `request` field, so the stored request must not ride along.
         assert!(record.get("request").is_none());
+
+        let runs = store
+            .list_runs(10, Some("conversation-1"))
+            .expect("run list should succeed");
+        assert_eq!(runs[0]["question"], "Compare ***");
+        let serialized_runs = runs.to_string();
+        for secret in ["user:pass", "private.model.test", "question-secret"] {
+            assert!(
+                !serialized_runs.contains(secret),
+                "leaked {secret:?} in {serialized_runs:?}"
+            );
+        }
 
         // The row itself retains only the non-sensitive schema marker.
         let stored_request = stored_request_json(&store, "run-completed");
@@ -1039,9 +1053,11 @@ mod tests {
         assert_eq!(metrics["duration_ms"]["count"], 2);
         assert_eq!(metrics["duration_ms"]["p50_ms"], 100);
         assert_eq!(metrics["duration_ms"]["p95_ms"], 300);
+        assert!(metrics.get("conversation_id").is_none());
         assert!(metrics.get("question").is_none());
         assert!(metrics.get("events").is_none());
         assert!(metrics.get("result").is_none());
+        assert!(metrics.get("error").is_none());
 
         drop(store);
         let _ = std::fs::remove_file(path);

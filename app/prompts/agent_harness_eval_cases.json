@@ -1,5 +1,5 @@
 {
-  "version": "agent-harness-eval-v1",
+  "version": "agent-harness-eval-v2",
   "profiles": {
     "expert": {
       "profile_id": "hot_money_early_v1",
@@ -146,6 +146,15 @@
     },
     {
       "reply": "建议七成持仓。"
+    },
+    {
+      "reply": "结论来自本地证据。[E1]",
+      "answer_sections": [
+        {
+          "title": "无引用事实",
+          "bullets": ["收入同比增长 20%。"]
+        }
+      ]
     },
     {
       "reply": "竞价介入并用八成资金参与，之后止盈退出并设置止损。"

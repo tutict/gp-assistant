@@ -603,7 +603,7 @@ describe("agent run ledger client", () => {
       schema_version: 1,
       sample_size: 2,
       sample_limit: 200,
-      conversation_id: "conversation-1",
+      conversation_id: "must not be surfaced",
       status_counts: { completed: 2, failed: 0 },
       profile_counts: {
         hot_money_early_v1: { count: 2, completed: 2, failed: 0, model_used: 1, fallback: 1 },
@@ -618,7 +618,6 @@ describe("agent run ledger client", () => {
       schemaVersion: 1,
       sampleSize: 2,
       sampleLimit: 200,
-      conversationId: "conversation-1",
       statusCounts: { completed: 2, failed: 0 },
       profileCounts: {
         hot_money_early_v1: { count: 2, completed: 2, failed: 0, modelUsed: 1, fallback: 1 },

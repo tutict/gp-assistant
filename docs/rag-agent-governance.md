@@ -34,10 +34,18 @@
 - 当前运行结果的 `model_outcome` 固定区分 `model_success`、`policy_rejected`、`not_configured`、`not_requested` 和 `request_failed`；聚合旧账本时还允许 `in_progress`、`run_failed`、`interrupted` 和 `legacy_unknown`。新增状态必须保持旧指标可解释，不能把策略拒绝混入网络失败。
 - `/api/agent/metrics` 只聚合最近至多 2000 条运行的状态、profile、模型结果、协议和耗时分位数。接口不得返回问题、事件、结果正文、错误正文或连接凭据；前端指标失败不能阻断运行记录复盘。
 
+指标口径固定如下：
+
+- 样本总体是按开始时间倒序选取的最近 `limit` 条运行，`limit` 取值为 1..2000；传入 `conversation_id` 时先按会话过滤再截取样本，但响应不回显会话 ID。
+- `status_counts`、`profile_counts`、`model_outcome_counts` 和 `api_format_counts` 分别按账本状态、解析后的 profile、模型结果和 API 协议计数；profile 的 `fallback` 包含 `not_configured`、`request_failed`、`policy_rejected` 和 `legacy_unknown`。
+- 耗时样本只包含非空且非负的 `duration_ms`。`average_ms` 使用整数除法；P50/P95 使用 nearest-rank，索引为 `ceil(n * p) - 1`；`max_ms` 取最大值。
+- 没有有效耗时样本时，平均值、分位数和最大值返回 `null`，前端显示 `--`。指标响应不包含会话 ID、问题、事件、结果正文、错误正文或模型连接配置。
+
 当前版本：
 
 - `prompt_version`: `agent-harness-v2.0`
 - `policy_version`: `agent-policy-v1`
+- `agent_harness_eval_version`: `agent-harness-eval-v2`
 - `agent_metrics_schema_version`: `1`
 
 提示词、profile id、证据规则或安全过滤器发生语义变化时，必须同步更新离线评测夹具，并保留旧版本结果用于对照。单纯修复脱敏或边界判断时，可以只升级 `policy_version`。

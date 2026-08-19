@@ -17,6 +17,8 @@ const MAX_HISTORY_MESSAGES: usize = 12;
 const MAX_HISTORY_CHARS: usize = 2_000;
 const MAX_MODEL_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 const MAX_MODEL_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_MERGED_REPLY_CHARS: usize = 6_000;
+const MIN_TOOL_REPLY_CHARS: usize = 1_000;
 const MAX_EVIDENCE_CATALOG_ITEMS: usize = 16;
 const MAX_SECRET_PERCENT_DECODE_DEPTH: usize = 8;
 const MAX_SECRET_REDACTION_PASSES: usize = 32;
@@ -58,6 +60,13 @@ struct ModelCallFailure {
 }
 
 impl ModelCallFailure {
+    fn policy(message: impl Into<String>) -> Self {
+        Self {
+            outcome: "policy_rejected",
+            message: message.into(),
+        }
+    }
+
     fn request(message: impl Into<String>) -> Self {
         Self {
             outcome: "request_failed",
@@ -65,8 +74,10 @@ impl ModelCallFailure {
         }
     }
 
-    fn from_model_response(message: String) -> Self {
-        let policy_rejected = message.starts_with("Agent LLM response exceeds")
+    fn classify(message: String) -> Self {
+        let policy_rejected = message.starts_with("Agent LLM request exceeds")
+            || message.starts_with("Agent LLM response exceeds")
+            || message.starts_with("Agent LLM endpoint is invalid")
             || message.starts_with("parse Agent LLM envelope failed")
             || message.starts_with("Agent LLM response is missing generated text")
             || message.starts_with("parse Agent model JSON failed");
@@ -143,11 +154,10 @@ pub(crate) fn merge_model_response(
         );
     }
     let evidence_count = build_evidence_catalog(&tool_response).len();
-    validate_model_evidence(model_response, evidence_count)?;
     let target = tool_response
         .as_object_mut()
         .ok_or_else(|| "agent tool response must be an object".to_string())?;
-    let reply = model_response
+    let raw_reply = model_response
         .get("reply")
         .and_then(Value::as_str)
         .map(str::trim)
@@ -157,16 +167,39 @@ pub(crate) fn merge_model_response(
         .get("reply")
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let combined_reply = tool_reply
-        .map(|tool_reply| format!("{tool_reply}\n\n模型综合：{reply}"))
-        .unwrap_or_else(|| reply.to_string());
-    target.insert(
-        "reply".to_string(),
-        Value::String(limit_chars(&combined_reply, 6_000)),
-    );
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let model_prefix = "\n\n模型综合：";
+    let model_reply_limit = if let Some(tool_reply) = tool_reply.as_ref() {
+        MAX_MERGED_REPLY_CHARS
+            .saturating_sub(model_prefix.chars().count())
+            .saturating_sub(tool_reply.chars().count().min(MIN_TOOL_REPLY_CHARS))
+    } else {
+        MAX_MERGED_REPLY_CHARS
+    };
+    let reply = limit_chars(raw_reply, model_reply_limit);
+    let sections = sanitized_sections(model_response.get("answer_sections"));
+    validate_model_evidence(
+        &json!({
+            "reply": reply.clone(),
+            "answer_sections": sections.clone().unwrap_or_default(),
+        }),
+        evidence_count,
+    )?;
+    let combined_reply = if let Some(tool_reply) = tool_reply {
+        let tool_reply_limit = MAX_MERGED_REPLY_CHARS
+            .saturating_sub(model_prefix.chars().count())
+            .saturating_sub(reply.chars().count());
+        format!(
+            "{}{model_prefix}{reply}",
+            limit_chars(&tool_reply, tool_reply_limit)
+        )
+    } else {
+        reply
+    };
+    target.insert("reply".to_string(), Value::String(combined_reply));
 
-    if let Some(sections) = sanitized_sections(model_response.get("answer_sections")) {
+    if let Some(sections) = sections {
         target.insert("model_answer_sections".to_string(), Value::Array(sections));
     }
 
@@ -534,12 +567,12 @@ fn model_failure_warning(error: &str, config: Option<&LlmConfig>) -> String {
 
 fn redact_model_error(error: &str, config: Option<&LlmConfig>) -> String {
     limit_chars(
-        &redact_text(
+        &redact_url_literals(&redact_text(
             error,
             &config
                 .map(model_config_sensitive_values)
                 .unwrap_or_default(),
-        ),
+        )),
         400,
     )
 }
@@ -1007,31 +1040,132 @@ fn redact_response_for_config(value: Value, config: Option<&LlmConfig>) -> Value
     let secrets = config
         .map(model_config_sensitive_values)
         .unwrap_or_default();
-    redact_json_strings(value, &secrets)
+    redact_json_strings_with_urls(value, &secrets)
 }
 
-fn redact_json_strings(value: Value, secrets: &[RedactionSecret]) -> Value {
+pub(crate) fn redact_persisted_response(response: &Value, llm_value: Option<&Value>) -> Value {
+    let config = resolve_llm_config(llm_value);
+    redact_response_for_config(response.clone(), config.as_ref())
+}
+
+pub(crate) fn redact_persisted_events(events: &[Value], llm_value: Option<&Value>) -> Vec<Value> {
+    let config = resolve_llm_config(llm_value);
+    let secrets = config
+        .as_ref()
+        .map(model_config_sensitive_values)
+        .unwrap_or_default();
+    events
+        .iter()
+        .cloned()
+        .map(|event| redact_json_strings_with_urls(event, &secrets))
+        .collect()
+}
+
+pub(crate) fn redact_persisted_error(error: &str, llm_value: Option<&Value>) -> String {
+    let config = resolve_llm_config(llm_value);
+    redact_model_error(error, config.as_ref())
+}
+
+pub(crate) fn redact_persisted_question(question: &str, llm_value: Option<&Value>) -> String {
+    let config = resolve_llm_config(llm_value);
+    let secrets = config
+        .as_ref()
+        .map(model_config_sensitive_values)
+        .unwrap_or_default();
+    redact_url_literals(&redact_text(question, &secrets))
+}
+
+fn redact_json_strings_with_urls(value: Value, secrets: &[RedactionSecret]) -> Value {
     match value {
-        Value::String(value) => Value::String(redact_text(&value, secrets)),
+        Value::String(value) => Value::String(redact_url_literals(&redact_text(&value, secrets))),
         Value::Array(items) => Value::Array(
             items
                 .into_iter()
-                .map(|item| redact_json_strings(item, secrets))
+                .map(|item| redact_json_strings_with_urls(item, secrets))
                 .collect(),
         ),
         Value::Object(items) => Value::Object(
             items
                 .into_iter()
-                .map(|(key, item)| (key, redact_json_strings(item, secrets)))
+                .map(|(key, item)| (key, redact_json_strings_with_urls(item, secrets)))
                 .collect(),
         ),
         value => value,
     }
 }
 
-pub(crate) fn redact_persisted_response(response: &Value, llm_value: Option<&Value>) -> Value {
-    let config = resolve_llm_config(llm_value);
-    redact_response_for_config(response.clone(), config.as_ref())
+fn redact_url_literals(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut cursor = 0;
+    while cursor < value.len() {
+        let remainder = &value[cursor..];
+        let normalized_remainder = remainder.to_ascii_lowercase();
+        let next = [
+            normalized_remainder.find("https://"),
+            normalized_remainder.find("http://"),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
+        let Some(offset) = next else {
+            output.push_str(remainder);
+            break;
+        };
+        let start = cursor + offset;
+        output.push_str(&value[cursor..start]);
+        let tail = &value[start..];
+        let end = tail
+            .find(char::is_whitespace)
+            .map(|length| start + length)
+            .unwrap_or(value.len());
+        let token = &value[start..end];
+        let trailing_len = token
+            .trim_end_matches(|character| matches!(character, '.' | ',' | ';' | ')' | ']' | '}'))
+            .len();
+        let url_token = &token[..trailing_len];
+        if url_token
+            .parse::<reqwest::Url>()
+            .ok()
+            .is_some_and(|url| persisted_url_is_sensitive(&url))
+        {
+            output.push_str("***");
+        } else {
+            output.push_str(url_token);
+        }
+        output.push_str(&token[trailing_len..]);
+        cursor = start + token.len();
+    }
+    output
+}
+
+fn persisted_url_is_sensitive(url: &reqwest::Url) -> bool {
+    let host = url.host_str().unwrap_or_default();
+    !url.username().is_empty()
+        || url.password().is_some()
+        || is_sensitive_url_host(host)
+        || host.ends_with(".internal")
+        || host.ends_with(".local")
+        || host.ends_with(".lan")
+        || url.query_pairs().any(|(key, _)| {
+            let key = key.to_ascii_lowercase().replace('-', "_").replace('.', "_");
+            [
+                "api_key",
+                "apikey",
+                "auth",
+                "bearer",
+                "cookie",
+                "credential",
+                "key",
+                "password",
+                "secret",
+                "session",
+                "sig",
+                "signature",
+                "token",
+            ]
+            .iter()
+            .any(|marker| key == *marker || key.ends_with(&format!("_{marker}")))
+        })
 }
 
 fn format_reqwest_error(context: &str, error: reqwest::Error) -> String {
@@ -1056,7 +1190,7 @@ async fn call_model_with_config(
     let Some(config) = config else {
         return Ok(None);
     };
-    validate_llm_config(&config).map_err(ModelCallFailure::request)?;
+    validate_llm_config(&config).map_err(ModelCallFailure::policy)?;
     let client = build_http_client_with_proxy(
         config.custom_user_agent.as_deref().unwrap_or(concat!(
             "Mozilla/5.0 GuXuanYou/",
@@ -1092,7 +1226,7 @@ async fn call_model_with_config(
 
     match post_model_request(&client, &config, &request)
         .await
-        .map_err(ModelCallFailure::from_model_response)
+        .map_err(ModelCallFailure::classify)
     {
         Ok(value) => Ok(Some(value)),
         Err(first_error)
@@ -1105,7 +1239,7 @@ async fn call_model_with_config(
                 .await
                 .map(Some)
                 .map_err(|second_error| {
-                    let second_error = ModelCallFailure::from_model_response(second_error);
+                    let second_error = ModelCallFailure::classify(second_error);
                     ModelCallFailure {
                         outcome: second_error.outcome,
                         message: format!(
@@ -1440,7 +1574,12 @@ fn validate_model_evidence(model_response: &Value, evidence_count: usize) -> Res
         .get("reply")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let mut has_valid_reference = validate_evidence_refs(reply, evidence_count)?;
+    if reply.trim().is_empty() {
+        return Err("agent model synthesis is missing a reply".to_string());
+    }
+    if !validate_evidence_refs(reply, evidence_count)? {
+        return Err("agent model reply is missing an evidence citation".to_string());
+    }
     if let Some(sections) = model_response
         .get("answer_sections")
         .and_then(Value::as_array)
@@ -1448,13 +1587,13 @@ fn validate_model_evidence(model_response: &Value, evidence_count: usize) -> Res
         for section in sections {
             if let Some(bullets) = section.get("bullets").and_then(Value::as_array) {
                 for bullet in bullets.iter().filter_map(Value::as_str) {
-                    has_valid_reference |= validate_evidence_refs(bullet, evidence_count)?;
+                    if !validate_evidence_refs(bullet, evidence_count)? {
+                        return Err("agent model factual bullet is missing an evidence citation"
+                            .to_string());
+                    }
                 }
             }
         }
-    }
-    if !has_valid_reference {
-        return Err("agent model synthesis is missing an evidence citation".to_string());
     }
     Ok(())
 }
@@ -1937,22 +2076,41 @@ mod harness_validation_tests {
         assert_eq!(unconfigured.response["harness"]["api_format"], "none");
 
         for message in [
+            "Agent LLM request exceeds 2 MiB",
             "Agent LLM response exceeds 2 MiB",
+            "Agent LLM endpoint is invalid: unsupported endpoint",
             "parse Agent LLM envelope failed: invalid JSON",
             "Agent LLM response is missing generated text",
             "parse Agent model JSON failed: invalid JSON",
         ] {
             assert_eq!(
-                ModelCallFailure::from_model_response(message.to_string()).outcome,
+                ModelCallFailure::classify(message.to_string()).outcome,
                 "policy_rejected",
                 "{message}"
             );
         }
         assert_eq!(
-            ModelCallFailure::from_model_response("Agent LLM request failed: timeout".to_string())
-                .outcome,
+            ModelCallFailure::classify("Agent LLM request failed: timeout".to_string()).outcome,
             "request_failed"
         );
+    }
+
+    #[test]
+    fn classifies_local_model_configuration_rejections_as_policy_failures() {
+        let mut invalid_user_agent = llm_config("https://models.example.test/v1");
+        invalid_user_agent.custom_user_agent = Some("invalid\r\nuser-agent".to_string());
+        let invalid_configs = [
+            llm_config("http://models.example.test/v1"),
+            llm_config("https://user:pass@models.example.test/v1"),
+            invalid_user_agent,
+        ];
+
+        for config in invalid_configs {
+            let failure =
+                tauri::async_runtime::block_on(call_model_with_config(Some(&config), &json!({})))
+                    .expect_err("local configuration rejection must not issue a request");
+            assert_eq!(failure.outcome, "policy_rejected", "{}", failure.message);
+        }
     }
 
     #[test]
@@ -2093,7 +2251,7 @@ mod harness_validation_tests {
     }
 
     #[test]
-    fn redacts_configuration_values_from_successful_model_output_before_persistence() {
+    fn redacts_configuration_values_from_live_model_output() {
         let mut config = llm_config(
             "https://example.test/v1/path-secret/chat?replay_token_key=query-secret#fragment-secret",
         );
@@ -2126,6 +2284,59 @@ mod harness_validation_tests {
                 "leaked {secret:?} in {serialized:?}"
             );
         }
+    }
+
+    #[test]
+    fn redacts_unknown_sensitive_urls_from_live_model_output_case_insensitively() {
+        let result = redact_response_for_config(
+            json!({
+                "reply": "upstream HTTPS://user:pass@PRIVATE.MODEL.TEST/v1/chat?X-API-KEY=query-secret failed",
+                "warnings": ["public https://evidence.example/docs?page=2"]
+            }),
+            None,
+        );
+        let serialized = result.to_string();
+
+        for secret in ["user:pass", "PRIVATE.MODEL.TEST", "query-secret"] {
+            assert!(
+                !serialized.contains(secret),
+                "leaked {secret:?} in {serialized:?}"
+            );
+        }
+        assert!(serialized.contains("https://evidence.example/docs?page=2"));
+    }
+
+    #[test]
+    fn redacts_unknown_urls_from_persisted_errors_and_events() {
+        let error =
+            "request failed for HTTPS://user:pass@private.model.test/v1/chat?api_key=query-secret";
+        let redacted_error = redact_persisted_error(error, None);
+        assert!(!redacted_error.contains("user:pass"));
+        assert!(!redacted_error.contains("private.model.test"));
+        assert!(!redacted_error.contains("query-secret"));
+
+        let events = redact_persisted_events(
+            &[json!({
+                "type": "error",
+                "message": "upstream HTTP://user:pass@private.model.test/v1/chat?token=query-secret failed"
+            })],
+            None,
+        );
+        let serialized = serde_json::to_string(&events).expect("events should serialize");
+        assert!(!serialized.contains("user:pass"));
+        assert!(!serialized.contains("private.model.test"));
+        assert!(!serialized.contains("query-secret"));
+
+        let response = redact_persisted_response(
+            &json!({
+                "reply": "provider https://user:pass@private.model.test/v1/chat?token=query-secret"
+            }),
+            None,
+        );
+        let serialized = response.to_string();
+        assert!(!serialized.contains("user:pass"));
+        assert!(!serialized.contains("private.model.test"));
+        assert!(!serialized.contains("query-secret"));
     }
 
     #[test]
@@ -2367,12 +2578,17 @@ mod harness_validation_tests {
     }
 
     #[test]
-    fn permits_uncited_transitions_but_rejects_unknown_evidence() {
+    fn requires_citations_for_reply_and_factual_bullets() {
         let response = json!({
+            "reply": "当前结论基于本地证据。[E1]",
+            "answer_sections": [{"title": "总结", "bullets": ["整体仍需持续跟踪基本面变化。[E1]"]}]
+        });
+        assert!(validate_model_evidence(&response, 1).is_ok());
+        let uncited_bullet = json!({
             "reply": "当前结论基于本地证据。[E1]",
             "answer_sections": [{"title": "总结", "bullets": ["整体仍需持续跟踪基本面变化。"]}]
         });
-        assert!(validate_model_evidence(&response, 1).is_ok());
+        assert!(validate_model_evidence(&uncited_bullet, 1).is_err());
         let unknown_reference = json!({
             "reply": "当前结论基于本地证据。[E1]",
             "answer_sections": [{"title": "总结", "bullets": ["额外结论。[E2]"]}]
@@ -2380,6 +2596,61 @@ mod harness_validation_tests {
         assert!(validate_model_evidence(&unknown_reference, 1).is_err());
         let malformed_reference = json!({             "reply": "Current conclusion is based on local evidence. [E1] [Einvalid]"         });
         assert!(validate_model_evidence(&malformed_reference, 1).is_err());
+    }
+
+    #[test]
+    fn validates_citations_after_output_limits_are_applied() {
+        let tool_response = json!({
+            "reply": "本地工具结论".repeat(MAX_MERGED_REPLY_CHARS),
+            "evidence_summary": [{"title": "公告", "summary": "本地证据"}],
+            "warnings": []
+        });
+        let late_reply_citation = json!({
+            "reply": format!("{} [E1]", "结论".repeat(MAX_MERGED_REPLY_CHARS)),
+        });
+        assert!(merge_model_response(
+            tool_response.clone(),
+            &late_reply_citation,
+            "value_compounder_v1",
+            Some("test-model"),
+        )
+        .is_err());
+
+        let late_bullet_citation = json!({
+            "reply": "结论仍需核验。[E1]",
+            "answer_sections": [{
+                "title": "总结",
+                "bullets": [format!("{} [E1]", "事实".repeat(600))]
+            }]
+        });
+        assert!(merge_model_response(
+            tool_response.clone(),
+            &late_bullet_citation,
+            "value_compounder_v1",
+            Some("test-model"),
+        )
+        .is_err());
+
+        let bounded = merge_model_response(
+            tool_response,
+            &json!({
+                "reply": format!("[E1] {}", "结论".repeat(MAX_MERGED_REPLY_CHARS)),
+                "answer_sections": [{
+                    "title": "总结",
+                    "bullets": [format!("[E1] {}", "事实".repeat(600))]
+                }]
+            }),
+            "value_compounder_v1",
+            Some("test-model"),
+        )
+        .expect("citations inside the published bounds should remain valid");
+        let reply = bounded["reply"].as_str().expect("reply should be text");
+        assert!(reply.starts_with("本地工具结论"));
+        assert!(reply.contains("[E1]"));
+        assert!(reply.chars().count() <= MAX_MERGED_REPLY_CHARS);
+        assert!(bounded["model_answer_sections"][0]["bullets"][0]
+            .as_str()
+            .is_some_and(|bullet| bullet.contains("[E1]")));
     }
 
     #[test]
