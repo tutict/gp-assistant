@@ -51,6 +51,36 @@ struct LlmConfig {
     project: Option<String>,
 }
 
+#[derive(Debug)]
+struct ModelCallFailure {
+    outcome: &'static str,
+    message: String,
+}
+
+impl ModelCallFailure {
+    fn request(message: impl Into<String>) -> Self {
+        Self {
+            outcome: "request_failed",
+            message: message.into(),
+        }
+    }
+
+    fn from_model_response(message: String) -> Self {
+        let policy_rejected = message.starts_with("Agent LLM response exceeds")
+            || message.starts_with("parse Agent LLM envelope failed")
+            || message.starts_with("Agent LLM response is missing generated text")
+            || message.starts_with("parse Agent model JSON failed");
+        Self {
+            outcome: if policy_rejected {
+                "policy_rejected"
+            } else {
+                "request_failed"
+            },
+            message,
+        }
+    }
+}
+
 pub(crate) struct AgentHarnessOutcome {
     #[cfg(test)]
     pub(crate) events: Vec<Value>,
@@ -361,9 +391,9 @@ where
                 tool_response,
                 &profile_id,
                 model_name,
-                Some(model_failure_warning(&error, config.as_ref())),
+                Some(model_failure_warning(&error.message, config.as_ref())),
             ),
-            "request_failed",
+            error.outcome,
         ),
     };
     let response = annotate_harness_diagnostics(
@@ -1014,17 +1044,19 @@ pub(crate) async fn call_model(
     preview: &Value,
 ) -> Result<Option<Value>, String> {
     let config = resolve_llm_config(llm_value);
-    call_model_with_config(config.as_ref(), preview).await
+    call_model_with_config(config.as_ref(), preview)
+        .await
+        .map_err(|error| error.message)
 }
 
 async fn call_model_with_config(
     config: Option<&LlmConfig>,
     preview: &Value,
-) -> Result<Option<Value>, String> {
+) -> Result<Option<Value>, ModelCallFailure> {
     let Some(config) = config else {
         return Ok(None);
     };
-    validate_llm_config(&config)?;
+    validate_llm_config(&config).map_err(ModelCallFailure::request)?;
     let client = build_http_client_with_proxy(
         config.custom_user_agent.as_deref().unwrap_or(concat!(
             "Mozilla/5.0 GuXuanYou/",
@@ -1034,7 +1066,9 @@ async fn call_model_with_config(
         Duration::from_secs(config.timeout_seconds),
         None,
     )
-    .map_err(|error| format!("create Agent LLM client failed: {error}"))?;
+    .map_err(|error| {
+        ModelCallFailure::request(format!("create Agent LLM client failed: {error}"))
+    })?;
     let system_prompt = preview
         .get("system_prompt")
         .and_then(Value::as_str)
@@ -1056,9 +1090,14 @@ async fn call_model_with_config(
         request["response_format"] = json!({"type": "json_object"});
     }
 
-    match post_model_request(&client, &config, &request).await {
+    match post_model_request(&client, &config, &request)
+        .await
+        .map_err(ModelCallFailure::from_model_response)
+    {
         Ok(value) => Ok(Some(value)),
-        Err(first_error) if config.json_mode && should_retry_without_json_mode(&first_error) => {
+        Err(first_error)
+            if config.json_mode && should_retry_without_json_mode(&first_error.message) =>
+        {
             if let Some(object) = request.as_object_mut() {
                 object.remove("response_format");
             }
@@ -1066,9 +1105,14 @@ async fn call_model_with_config(
                 .await
                 .map(Some)
                 .map_err(|second_error| {
-                    format!(
-                        "{first_error}; Agent model retry without JSON mode failed: {second_error}"
-                    )
+                    let second_error = ModelCallFailure::from_model_response(second_error);
+                    ModelCallFailure {
+                        outcome: second_error.outcome,
+                        message: format!(
+                            "{}; Agent model retry without JSON mode failed: {}",
+                            first_error.message, second_error.message
+                        ),
+                    }
                 })
         }
         Err(error) => Err(error),
@@ -1891,6 +1935,24 @@ mod harness_validation_tests {
             "not_configured"
         );
         assert_eq!(unconfigured.response["harness"]["api_format"], "none");
+
+        for message in [
+            "Agent LLM response exceeds 2 MiB",
+            "parse Agent LLM envelope failed: invalid JSON",
+            "Agent LLM response is missing generated text",
+            "parse Agent model JSON failed: invalid JSON",
+        ] {
+            assert_eq!(
+                ModelCallFailure::from_model_response(message.to_string()).outcome,
+                "policy_rejected",
+                "{message}"
+            );
+        }
+        assert_eq!(
+            ModelCallFailure::from_model_response("Agent LLM request failed: timeout".to_string())
+                .outcome,
+            "request_failed"
+        );
     }
 
     #[test]

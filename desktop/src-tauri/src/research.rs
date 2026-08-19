@@ -830,6 +830,9 @@ impl ResearchStore {
                     vector.len()
                 ));
             }
+            let vector = normalize_embedding(vector).map_err(|error| {
+                format!("embedding {} cannot be normalized: {error}", item.chunk_id)
+            })?;
             transaction
                 .execute(
                     "INSERT INTO embeddings (
@@ -845,7 +848,7 @@ impl ResearchStore {
                         item.chunk_id,
                         model_id,
                         vector.len() as i64,
-                        encode_f32_blob(vector),
+                        encode_f32_blob(&vector),
                         item.content_hash,
                         created_at
                     ],
@@ -1326,8 +1329,13 @@ impl ResearchStore {
             .map(|value| value.len())
             .unwrap_or(0);
         let fts_healthy = missing_fts_count == 0 && orphan_fts_count == 0;
-        let vector_supported = vector_backend_status()
+        let vector_status = vector_backend_status();
+        let vector_supported = vector_status
             .get("supported")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let model_ready = vector_status
+            .get("ready")
             .and_then(Value::as_bool)
             .unwrap_or(false);
         let embeddings_healthy = orphan_embedding_count == 0
@@ -1340,17 +1348,17 @@ impl ResearchStore {
             "fts_count": fts_count,
             "embedding_count": embedding_count,
             "database_bytes": database_bytes,
-            "healthy": fts_healthy,
+            "healthy": chunk_count == fts_count,
             "fts_healthy": fts_healthy,
             "integrity_healthy": fts_healthy && embeddings_healthy,
-            "hybrid_ready": vector_supported && embeddings_healthy,
+            "hybrid_ready": fts_healthy && model_ready && embedding_count > 0 && embeddings_healthy,
             "fts_missing_count": missing_fts_count,
             "fts_orphan_count": orphan_fts_count,
             "embedding_pending_count": pending_embedding_count,
             "embedding_stale_count": stale_embedding_count,
             "embedding_orphan_count": orphan_embedding_count,
             "embedding_invalid_count": invalid_embedding_count,
-            "vector": vector_backend_status()
+            "vector": vector_status
         }))
     }
 
@@ -2609,6 +2617,25 @@ fn encode_f32_blob(vector: &[f32]) -> Vec<u8> {
     bytes
 }
 
+fn normalize_embedding(vector: &[f32]) -> Result<Vec<f32>, String> {
+    if vector.iter().any(|value| !value.is_finite()) {
+        return Err("vector contains a non-finite value".to_string());
+    }
+    let norm = vector
+        .iter()
+        .map(|value| f64::from(*value).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    if !norm.is_finite() || norm <= f64::EPSILON {
+        return Err("vector norm is zero".to_string());
+    }
+    Ok(vector
+        .iter()
+        .map(|value| f64::from(*value) / norm)
+        .map(|value| value as f32)
+        .collect())
+}
+
 fn decode_f32_blob(bytes: &[u8]) -> Result<Vec<f32>, String> {
     if !bytes.len().is_multiple_of(std::mem::size_of::<f32>()) {
         return Err("embedding BLOB length is not aligned to f32".to_string());
@@ -3468,9 +3495,17 @@ mod tests {
         assert_eq!(pending["embedding_invalid_count"], 0);
         assert_eq!(pending["hybrid_ready"], false);
 
-        let work = store
+        let pending_work = store
             .pending_embedding_chunks(10)
-            .expect("pending embeddings should be readable")
+            .expect("pending embeddings should be readable");
+        let invalid_work = pending_work
+            .iter()
+            .cloned()
+            .map(|item| (item, vec![0.0; RESEARCH_EMBEDDING_DIMENSIONS as usize]))
+            .collect::<Vec<_>>();
+        assert!(store.store_embeddings(&invalid_work, "test-model").is_err());
+
+        let work = pending_work
             .into_iter()
             .map(|item| (item, vec![1.0; RESEARCH_EMBEDDING_DIMENSIONS as usize]))
             .collect::<Vec<_>>();
@@ -3484,6 +3519,43 @@ mod tests {
         assert_eq!(ready["embedding_pending_count"], 0);
         assert_eq!(ready["embedding_count"], 1);
         assert_eq!(ready["integrity_healthy"], true);
+        assert_eq!(ready["hybrid_ready"], false);
+        let stored_blob = store
+            .connection()
+            .expect("research connection should open")
+            .query_row("SELECT vector FROM embeddings LIMIT 1", [], |row| {
+                row.get::<_, Vec<u8>>(0)
+            })
+            .expect("stored embedding should be readable");
+        let stored_vector = decode_f32_blob(&stored_blob).expect("stored embedding should decode");
+        let norm = stored_vector
+            .iter()
+            .map(|value| f64::from(*value).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        assert!((norm - 1.0).abs() < 1e-5, "stored vector norm was {norm}");
+
+        let connection = store.connection().expect("research connection should open");
+        connection
+            .execute(
+                "DELETE FROM chunks_fts WHERE chunk_id = 'governance-doc:0'",
+                [],
+            )
+            .expect("FTS row should be removable for the integrity check");
+        connection
+            .execute(
+                "INSERT INTO chunks_fts (chunk_id, title_terms, entity_terms, body_terms)
+                 VALUES ('orphan-chunk', 'orphan', '', 'orphan')",
+                [],
+            )
+            .expect("orphan FTS row should be insertable for the integrity check");
+        let mismatched = store
+            .index_status()
+            .expect("mismatched index status should load");
+        assert_eq!(mismatched["chunk_count"], mismatched["fts_count"]);
+        assert_eq!(mismatched["healthy"], true);
+        assert_eq!(mismatched["fts_healthy"], false);
+        assert_eq!(mismatched["integrity_healthy"], false);
 
         drop(store);
         let _ = remove_sqlite_files(&path);

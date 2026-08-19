@@ -31,7 +31,7 @@
 - 模型输出的 `reply` 和事实 bullet 必须邻近引用有效 `[E#]`；直接交易建议、收益承诺和操纵市场内容必须拒绝。
 - 错误、成功结果和运行账本都必须脱敏 API key、完整 URL 凭据、查询参数秘密和私有模型地址。
 - 每次结果的 `harness` 元数据必须包含 `prompt_version`、`policy_version`、`profile_id`、`model_used`、`model_outcome` 和 `api_format`；提示预览还要包含当次限制快照。
-- `model_outcome` 固定区分 `model_success`、`policy_rejected`、`not_configured`、`not_requested` 和 `request_failed`。新增状态必须保持旧指标可解释，不能把策略拒绝混入网络失败。
+- 当前运行结果的 `model_outcome` 固定区分 `model_success`、`policy_rejected`、`not_configured`、`not_requested` 和 `request_failed`；聚合旧账本时还允许 `in_progress`、`run_failed`、`interrupted` 和 `legacy_unknown`。新增状态必须保持旧指标可解释，不能把策略拒绝混入网络失败。
 - `/api/agent/metrics` 只聚合最近至多 2000 条运行的状态、profile、模型结果、协议和耗时分位数。接口不得返回问题、事件、结果正文、错误正文或连接凭据；前端指标失败不能阻断运行记录复盘。
 
 当前版本：
@@ -55,15 +55,14 @@
 最小门禁：
 
 ```powershell
-cd desktop\frontend
-npm run test:unit
+npm --prefix desktop\frontend run test:unit
 ```
 
 RAG/Agent Rust 变更：
 
 ```powershell
-npm run build:app
-cargo test --manifest-path ..\src-tauri\Cargo.toml --lib
+npm --prefix desktop\frontend run build:app
+cargo test --manifest-path desktop\src-tauri\Cargo.toml --lib
 ```
 
 只运行固定 RAG 检索质量评测：

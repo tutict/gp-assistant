@@ -1872,14 +1872,35 @@ async fn api_research_index_status(app: tauri::AppHandle) -> Result<Value, Strin
             let mut status = store.index_status()?;
             status["documents"] = store.document_statuses()?["items"].clone();
             #[cfg(target_os = "windows")]
-            {
-                status["vector"] =
-                    research_embeddings::model_status(&research_embedding_model_dir(&app));
-            }
-            Ok(status)
+            let vector_status =
+                research_embeddings::model_status(&research_embedding_model_dir(&app));
+            #[cfg(not(target_os = "windows"))]
+            let vector_status = status["vector"].clone();
+            Ok(finalize_research_index_status(status, vector_status))
         })
     })
     .await?
+}
+
+fn finalize_research_index_status(mut status: Value, vector_status: Value) -> Value {
+    let count = |field: &str| status.get(field).and_then(Value::as_i64).unwrap_or(0);
+    let model_ready = vector_status
+        .get("ready")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let hybrid_ready = status
+        .get("fts_healthy")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && model_ready
+        && count("embedding_count") > 0
+        && count("embedding_pending_count") == 0
+        && count("embedding_stale_count") == 0
+        && count("embedding_orphan_count") == 0
+        && count("embedding_invalid_count") == 0;
+    status["vector"] = vector_status;
+    status["hybrid_ready"] = Value::Bool(hybrid_ready);
+    status
 }
 
 #[tauri::command]
@@ -2441,7 +2462,7 @@ async fn api_agent_run_delete_conversation(
 
 #[cfg(test)]
 mod agent_run_api_tests {
-    use super::agent_run_detail_response;
+    use super::{agent_run_detail_response, finalize_research_index_status};
     use serde_json::{json, Value};
 
     #[test]
@@ -2463,6 +2484,39 @@ mod agent_run_api_tests {
     #[test]
     fn detail_response_keeps_missing_run_as_null() {
         assert_eq!(agent_run_detail_response(None)["run"], Value::Null);
+    }
+
+    #[test]
+    fn hybrid_readiness_requires_verified_model_and_complete_nonempty_vectors() {
+        let base = json!({
+            "fts_healthy": true,
+            "embedding_count": 1,
+            "embedding_pending_count": 0,
+            "embedding_stale_count": 0,
+            "embedding_orphan_count": 0,
+            "embedding_invalid_count": 0
+        });
+        assert_eq!(
+            finalize_research_index_status(base.clone(), json!({"ready": false}))["hybrid_ready"],
+            false
+        );
+        assert_eq!(
+            finalize_research_index_status(base.clone(), json!({"ready": true}))["hybrid_ready"],
+            true
+        );
+
+        let mut empty = base.clone();
+        empty["embedding_count"] = json!(0);
+        assert_eq!(
+            finalize_research_index_status(empty, json!({"ready": true}))["hybrid_ready"],
+            false
+        );
+        let mut pending = base;
+        pending["embedding_pending_count"] = json!(1);
+        assert_eq!(
+            finalize_research_index_status(pending, json!({"ready": true}))["hybrid_ready"],
+            false
+        );
     }
 }
 #[tauri::command]

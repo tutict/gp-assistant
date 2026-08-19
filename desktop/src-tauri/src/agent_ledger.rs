@@ -559,6 +559,9 @@ fn profile_id_for_mode(mode: &str) -> &'static str {
 }
 
 fn legacy_model_outcome(mode: &str, status: &str, has_result: bool) -> String {
+    if status == "running" {
+        return "in_progress".to_string();
+    }
     if status == "failed" {
         return "run_failed".to_string();
     }
@@ -997,14 +1000,26 @@ mod tests {
         store
             .fail_run("metrics-failed", &[], "redacted failure", 2_300)
             .expect("failed run should be recorded");
+        store
+            .start_run(
+                &json!({
+                    "run_id": "metrics-running",
+                    "conversation_id": "conversation-metrics",
+                    "message": "running question",
+                    "mode": "expert"
+                }),
+                3_000,
+            )
+            .expect("running run should start");
 
         let metrics = store
             .metrics(2_000, Some("conversation-metrics"))
             .expect("metrics should load");
         assert_eq!(metrics["schema_version"], 1);
-        assert_eq!(metrics["sample_size"], 2);
+        assert_eq!(metrics["sample_size"], 3);
         assert_eq!(metrics["status_counts"]["completed"], 1);
         assert_eq!(metrics["status_counts"]["failed"], 1);
+        assert_eq!(metrics["status_counts"]["running"], 1);
         assert_eq!(
             metrics["profile_counts"]["hot_money_early_v1"]["model_used"],
             1
@@ -1015,8 +1030,12 @@ mod tests {
         );
         assert_eq!(metrics["model_outcome_counts"]["model_success"], 1);
         assert_eq!(metrics["model_outcome_counts"]["run_failed"], 1);
+        assert_eq!(metrics["model_outcome_counts"]["in_progress"], 1);
+        assert!(metrics["model_outcome_counts"]
+            .get("not_configured")
+            .is_none());
         assert_eq!(metrics["api_format_counts"]["openai_chat"], 1);
-        assert_eq!(metrics["api_format_counts"]["unknown"], 1);
+        assert_eq!(metrics["api_format_counts"]["unknown"], 2);
         assert_eq!(metrics["duration_ms"]["count"], 2);
         assert_eq!(metrics["duration_ms"]["p50_ms"], 100);
         assert_eq!(metrics["duration_ms"]["p95_ms"], 300);
