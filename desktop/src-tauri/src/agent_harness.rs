@@ -9,6 +9,7 @@ const BASE_PROMPT: &str = include_str!("../../../app/prompts/stock_soul.md");
 const HOT_MONEY_PROMPT: &str = include_str!("../../../app/prompts/hot_money_early_v1.md");
 const VALUE_COMPOUNDER_PROMPT: &str = include_str!("../../../app/prompts/value_compounder_v1.md");
 const PROMPT_VERSION: &str = "agent-harness-v2.0";
+const AGENT_POLICY_VERSION: &str = "agent-policy-v1";
 const RISK_NOTICE: &str = "仅供选股研究，不构成投资建议。";
 const MAX_HARNESS_PAYLOAD_BYTES: usize = 512 * 1024;
 const MAX_MESSAGE_CHARS: usize = 8_000;
@@ -80,7 +81,14 @@ pub(crate) fn prompt_preview(payload: &Value, tool_response: &Value) -> Value {
     );
     json!({
         "prompt_version": PROMPT_VERSION,
+        "policy_version": AGENT_POLICY_VERSION,
         "profile_id": profile.id,
+        "limits": {
+            "max_message_chars": MAX_MESSAGE_CHARS,
+            "max_history_messages": MAX_HISTORY_MESSAGES,
+            "max_history_chars": MAX_HISTORY_CHARS,
+            "max_evidence_items": MAX_EVIDENCE_CATALOG_ITEMS,
+        },
         "system_prompt": system_prompt,
         "user_payload": {
             "question": payload.get("message").and_then(Value::as_str).unwrap_or("").trim(),
@@ -160,6 +168,7 @@ pub(crate) fn merge_model_response(
         "harness".to_string(),
         json!({
             "prompt_version": PROMPT_VERSION,
+            "policy_version": AGENT_POLICY_VERSION,
             "profile_id": profile_id,
             "model_used": true,
             "model": model_name,
@@ -321,30 +330,48 @@ where
     } else {
         Ok(None)
     };
-    let response = match model_result {
+    let (response, model_outcome) = match model_result {
         Ok(Some(model_response)) => match merge_model_response(
             tool_response.clone(),
             &model_response,
             &profile_id,
             model_name,
         ) {
-            Ok(response) => response,
-            Err(error) => fallback_response(
+            Ok(response) => (response, "model_success"),
+            Err(error) => (
+                fallback_response(
+                    tool_response,
+                    &profile_id,
+                    model_name,
+                    Some(format!("模型输出未通过安全校验，已回退本地结果：{error}")),
+                ),
+                "policy_rejected",
+            ),
+        },
+        Ok(None) => (
+            fallback_response(tool_response, &profile_id, None, None),
+            if should_call_model {
+                "not_configured"
+            } else {
+                "not_requested"
+            },
+        ),
+        Err(error) => (
+            fallback_response(
                 tool_response,
                 &profile_id,
                 model_name,
-                Some(format!("模型输出未通过安全校验，已回退本地结果：{error}")),
+                Some(model_failure_warning(&error, config.as_ref())),
             ),
-        },
-        Ok(None) => fallback_response(tool_response, &profile_id, None, None),
-        Err(error) => fallback_response(
-            tool_response,
-            &profile_id,
-            model_name,
-            Some(model_failure_warning(&error, config.as_ref())),
+            "request_failed",
         ),
     };
-    let response = redact_response_for_config(response, config.as_ref());
+    let response = annotate_harness_diagnostics(
+        redact_response_for_config(response, config.as_ref()),
+        &profile_id,
+        config.as_ref(),
+        model_outcome,
+    );
     publish_event(
         &mut events,
         &mut sink,
@@ -413,6 +440,7 @@ fn fallback_response(
             "harness".to_string(),
             json!({
                 "prompt_version": PROMPT_VERSION,
+                "policy_version": AGENT_POLICY_VERSION,
                 "profile_id": profile_id,
                 "model_used": false,
                 "model": model_name,
@@ -420,6 +448,41 @@ fn fallback_response(
         );
     }
     tool_response
+}
+
+fn annotate_harness_diagnostics(
+    mut response: Value,
+    profile_id: &str,
+    config: Option<&LlmConfig>,
+    model_outcome: &str,
+) -> Value {
+    if let Some(harness) = response
+        .as_object_mut()
+        .and_then(|object| object.get_mut("harness"))
+        .and_then(Value::as_object_mut)
+    {
+        harness.insert(
+            "policy_version".to_string(),
+            Value::String(AGENT_POLICY_VERSION.to_string()),
+        );
+        harness.insert(
+            "profile_id".to_string(),
+            Value::String(profile_id.to_string()),
+        );
+        harness.insert(
+            "model_outcome".to_string(),
+            Value::String(model_outcome.to_string()),
+        );
+        harness.insert(
+            "api_format".to_string(),
+            Value::String(
+                config
+                    .map(|item| item.api_format.clone())
+                    .unwrap_or_else(|| "none".to_string()),
+            ),
+        );
+    }
+    response
 }
 
 fn status_event(run_id: &str, stage: &str, label: &str, percent: u8) -> Value {
@@ -1763,6 +1826,71 @@ mod harness_validation_tests {
         let error = validate_payload(&oversized)
             .expect_err("oversized Agent payloads must be rejected before persistence");
         assert!(error.contains("512 KiB"));
+    }
+
+    #[test]
+    fn publishes_stable_governance_metadata_for_prompt_and_result() {
+        let payload = json!({
+            "mode": "expert",
+            "message": "检查当前证据和风险"
+        });
+        let tool_response = json!({
+            "reply": "本地工具已返回证据。",
+            "evidence_summary": [{"title": "公告", "excerpt": "公告证据"}],
+            "warnings": []
+        });
+        let preview = prompt_preview(&payload, &tool_response);
+        assert_eq!(preview["prompt_version"], PROMPT_VERSION);
+        assert_eq!(preview["policy_version"], AGENT_POLICY_VERSION);
+        assert_eq!(preview["profile_id"], "hot_money_early_v1");
+        assert_eq!(
+            preview["limits"]["max_evidence_items"],
+            MAX_EVIDENCE_CATALOG_ITEMS
+        );
+
+        let merged = merge_model_response(
+            tool_response,
+            &json!({"reply": "结论仍需核验。[E1]"}),
+            "hot_money_early_v1",
+            Some("test-model"),
+        )
+        .expect("model response should pass governance checks");
+        assert_eq!(merged["harness"]["prompt_version"], PROMPT_VERSION);
+        assert_eq!(merged["harness"]["policy_version"], AGENT_POLICY_VERSION);
+        assert_eq!(merged["harness"]["profile_id"], "hot_money_early_v1");
+    }
+
+    #[test]
+    fn classifies_local_and_model_execution_outcomes_for_governance() {
+        let quick = tauri::async_runtime::block_on(execute(
+            json!({
+                "message": "查看自选股",
+                "run_id": "outcome-quick",
+                "mode": "quick",
+                "llm": {"base_url": "http://127.0.0.1:9/v1", "model": "unused"},
+                "context": {"watchlist": [{"code": "000001.SZ"}]}
+            }),
+            json!({}),
+        ))
+        .expect("quick execution should succeed");
+        assert_eq!(quick.response["harness"]["model_outcome"], "not_requested");
+        assert_eq!(quick.response["harness"]["api_format"], "none");
+
+        let unconfigured = tauri::async_runtime::block_on(execute(
+            json!({
+                "message": "查看自选股",
+                "run_id": "outcome-unconfigured",
+                "mode": "expert",
+                "context": {"watchlist": [{"code": "000001.SZ"}]}
+            }),
+            json!({}),
+        ))
+        .expect("unconfigured execution should fall back locally");
+        assert_eq!(
+            unconfigured.response["harness"]["model_outcome"],
+            "not_configured"
+        );
+        assert_eq!(unconfigured.response["harness"]["api_format"], "none");
     }
 
     #[test]

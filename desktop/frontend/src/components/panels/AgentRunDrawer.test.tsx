@@ -1,10 +1,11 @@
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentRunDetail, AgentRunSummary } from "../../lib/agentRuns";
+import type { AgentRunDetail, AgentRunMetrics, AgentRunSummary } from "../../lib/agentRuns";
 import type { AgentStreamEvent } from "../../types";
 
 const agentRunMocks = vi.hoisted(() => ({
   getAgentRun: vi.fn(),
+  getAgentRunMetrics: vi.fn(),
   listAgentRuns: vi.fn(),
 }));
 
@@ -178,6 +179,7 @@ beforeAll(async () => {
 beforeEach(() => {
   stubTestGlobals();
   agentRunMocks.getAgentRun.mockReset();
+  agentRunMocks.getAgentRunMetrics.mockReset().mockResolvedValue(null);
   agentRunMocks.listAgentRuns.mockReset();
   baseProps.onClose.mockReset();
   baseProps.onToggleWatchlist.mockReset();
@@ -195,6 +197,51 @@ afterEach(async () => {
 });
 
 describe("AgentRunDrawer list", () => {
+  it("renders scope-specific quality metrics without leaking the other scope", async () => {
+    const quality = (conversationId: string, sampleSize: number): AgentRunMetrics => ({
+      schemaVersion: 1,
+      sampleSize,
+      sampleLimit: 200,
+      conversationId,
+      statusCounts: { completed: sampleSize, failed: 0 },
+      profileCounts: {
+        hot_money_early_v1: { count: sampleSize, completed: sampleSize, failed: 0, modelUsed: sampleSize, fallback: 0 },
+      },
+      modelOutcomeCounts: { model_success: sampleSize },
+      apiFormatCounts: { openai_chat: sampleSize },
+      durationMs: { count: sampleSize, averageMs: 100, p50Ms: 100, p95Ms: 100, maxMs: 100 },
+    });
+    agentRunMocks.listAgentRuns
+      .mockResolvedValueOnce([summary("current-run")])
+      .mockResolvedValueOnce([summary("all-run")]);
+    agentRunMocks.getAgentRunMetrics
+      .mockResolvedValueOnce(quality("conversation-1", 1))
+      .mockResolvedValueOnce(quality("", 2));
+
+    const renderer = await renderDrawer({ open: true });
+    await flush();
+
+    expect(agentRunMocks.getAgentRunMetrics).toHaveBeenNthCalledWith(1, {
+      conversationId: "conversation-1",
+      signal: expect.any(AbortSignal),
+      limit: 200,
+    });
+    expect(nodeText(classNodes(renderer, "agent-run-metrics")[0])).toContain("样本1");
+    expect(classNodes(renderer, "agent-run-metrics")[0].props["aria-label"]).toBe("运行质量概览");
+
+    await act(async () => {
+      scopeButton(renderer, "all").props.onClick();
+    });
+    await flush();
+
+    expect(agentRunMocks.getAgentRunMetrics).toHaveBeenLastCalledWith({
+      signal: expect.any(AbortSignal),
+      limit: 200,
+    });
+    expect(nodeText(classNodes(renderer, "agent-run-metrics")[0])).toContain("样本2");
+    expect(nodeText(classNodes(renderer, "agent-run-metrics")[0])).not.toContain("样本1");
+  });
+
   it("does not request while closed, then loads current and all scopes", async () => {
     agentRunMocks.listAgentRuns
       .mockResolvedValueOnce([summary("current-run")])

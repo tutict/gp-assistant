@@ -127,6 +127,12 @@ export const TAURI_GET_ROUTES: Record<string, TauriRouteHandler> = {
       limit: Number(parsed.searchParams.get("limit") || 50),
     },
   }),
+  "/api/agent/metrics": async ({ invoke, parsed }) => invoke("api_agent_run_metrics", {
+    payload: {
+      conversation_id: parsed.searchParams.get("conversation_id") || "",
+      limit: Number(parsed.searchParams.get("limit") || 200),
+    },
+  }),
   "/api/upstream-rag/mobile/list": async ({ invoke }) => invoke("core_upstream_rag_list"),
   "/api/upstream-rag/status": async ({ invoke }) => invoke("api_upstream_rag_status"),
   "/api/upstream-rag/mobile/detail": async ({ invoke, parsed }) => invoke("core_upstream_rag_detail", {

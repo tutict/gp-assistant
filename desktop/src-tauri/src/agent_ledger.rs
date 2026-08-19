@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
 use std::{
+    collections::BTreeMap,
     fs,
     path::Path,
     sync::{
@@ -12,6 +13,8 @@ use std::{
 use tauri::Manager;
 
 const AGENT_LEDGER_SCHEMA_VERSION: i64 = 2;
+const AGENT_METRICS_SCHEMA_VERSION: i64 = 1;
+const MAX_AGENT_METRICS_ROWS: usize = 2_000;
 pub(crate) const MAX_AGENT_LEDGER_ID_BYTES: usize = 256;
 const AGENT_CONVERSATION_DELETED_ERROR: &str = "agent conversation was deleted";
 
@@ -205,6 +208,124 @@ impl AgentRunStore {
         rows.map(|row| row.map_err(|error| format!("failed to decode agent run summary: {error}")))
             .collect::<Result<Vec<_>, _>>()
             .map(Value::Array)
+    }
+
+    /// Returns bounded, aggregate-only run diagnostics. This intentionally reads only fields
+    /// already safe for replay plus the sanitized harness metadata inside result_json.
+    pub(crate) fn metrics(
+        &self,
+        limit: usize,
+        conversation_id: Option<&str>,
+    ) -> Result<Value, String> {
+        let limit = limit.clamp(1, MAX_AGENT_METRICS_ROWS) as i64;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT mode, status, duration_ms, result_json
+                 FROM agent_runs
+                 WHERE (?1 IS NULL OR conversation_id = ?1)
+                 ORDER BY started_at_epoch_ms DESC, run_id DESC
+                 LIMIT ?2",
+            )
+            .map_err(|error| format!("failed to prepare agent metrics: {error}"))?;
+        let rows = statement
+            .query_map(params![conversation_id, limit], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })
+            .map_err(|error| format!("failed to query agent metrics: {error}"))?;
+
+        let mut status_counts = BTreeMap::<String, usize>::new();
+        let mut profile_counts = BTreeMap::<String, MetricBucket>::new();
+        let mut outcome_counts = BTreeMap::<String, usize>::new();
+        let mut api_format_counts = BTreeMap::<String, usize>::new();
+        let mut durations = Vec::new();
+        let mut sample_size = 0usize;
+        for row in rows {
+            let (mode, status, duration_ms, result_json) =
+                row.map_err(|error| format!("failed to read agent metrics: {error}"))?;
+            sample_size += 1;
+            *status_counts.entry(status.clone()).or_default() += 1;
+            if let Some(duration_ms) = duration_ms.filter(|value| *value >= 0) {
+                durations.push(duration_ms);
+            }
+
+            let harness = result_json
+                .as_deref()
+                .and_then(|value| serde_json::from_str::<Value>(value).ok())
+                .and_then(|value| value.get("harness").cloned())
+                .unwrap_or(Value::Null);
+            let profile_id = harness
+                .get("profile_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| bounded_metric_label(value, 64))
+                .unwrap_or_else(|| profile_id_for_mode(&mode).to_string());
+            let model_used = harness
+                .get("model_used")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let outcome = harness
+                .get("model_outcome")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| bounded_metric_label(value, 64))
+                .unwrap_or_else(|| legacy_model_outcome(&mode, &status, result_json.is_some()));
+            let api_format = harness
+                .get("api_format")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| bounded_metric_label(value, 64))
+                .unwrap_or_else(|| "unknown".to_string());
+
+            *outcome_counts.entry(outcome.clone()).or_default() += 1;
+            *api_format_counts.entry(api_format).or_default() += 1;
+            let bucket = profile_counts.entry(profile_id).or_default();
+            bucket.count += 1;
+            bucket.model_used += usize::from(model_used);
+            bucket.completed += usize::from(status == "completed");
+            bucket.failed += usize::from(status == "failed");
+            bucket.fallback += usize::from(is_model_fallback(&outcome));
+        }
+
+        durations.sort_unstable();
+        let profile_counts = profile_counts
+            .into_iter()
+            .map(|(profile, bucket)| {
+                (
+                    profile,
+                    json!({
+                        "count": bucket.count,
+                        "completed": bucket.completed,
+                        "failed": bucket.failed,
+                        "model_used": bucket.model_used,
+                        "fallback": bucket.fallback,
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+
+        Ok(json!({
+            "schema_version": AGENT_METRICS_SCHEMA_VERSION,
+            "sample_size": sample_size,
+            "sample_limit": limit,
+            "conversation_id": conversation_id,
+            "status_counts": status_counts,
+            "profile_counts": profile_counts,
+            "model_outcome_counts": outcome_counts,
+            "api_format_counts": api_format_counts,
+            "duration_ms": {
+                "count": durations.len(),
+                "average_ms": average_duration(&durations),
+                "p50_ms": percentile_duration(&durations, 0.50),
+                "p95_ms": percentile_duration(&durations, 0.95),
+                "max_ms": durations.last().copied(),
+            },
+        }))
     }
 
     pub(crate) fn get_run(&self, run_id: &str) -> Result<Option<Value>, String> {
@@ -418,6 +539,68 @@ fn optional_string(value: &Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|item| !item.is_empty())
         .map(str::to_string)
+}
+
+#[derive(Default)]
+struct MetricBucket {
+    count: usize,
+    completed: usize,
+    failed: usize,
+    model_used: usize,
+    fallback: usize,
+}
+
+fn profile_id_for_mode(mode: &str) -> &'static str {
+    match mode.trim() {
+        "expert" => "hot_money_early_v1",
+        "research" => "value_compounder_v1",
+        _ => "deterministic_v1",
+    }
+}
+
+fn legacy_model_outcome(mode: &str, status: &str, has_result: bool) -> String {
+    if status == "failed" {
+        return "run_failed".to_string();
+    }
+    if status == "unknown" {
+        return "interrupted".to_string();
+    }
+    if mode.trim() == "quick" {
+        return "not_requested".to_string();
+    }
+    if has_result {
+        "legacy_unknown".to_string()
+    } else {
+        "not_configured".to_string()
+    }
+}
+
+fn is_model_fallback(outcome: &str) -> bool {
+    matches!(
+        outcome,
+        "not_configured" | "request_failed" | "policy_rejected" | "legacy_unknown"
+    )
+}
+
+fn bounded_metric_label(value: &str, max_chars: usize) -> String {
+    value.trim().chars().take(max_chars).collect()
+}
+
+fn average_duration(values: &[i64]) -> Option<i64> {
+    if values.is_empty() {
+        return None;
+    }
+    let sum = values.iter().map(|value| i128::from(*value)).sum::<i128>();
+    i64::try_from(sum / values.len() as i128).ok()
+}
+
+fn percentile_duration(values: &[i64], percentile: f64) -> Option<i64> {
+    if values.is_empty() {
+        return None;
+    }
+    let rank = (values.len() as f64 * percentile.clamp(0.0, 1.0)).ceil() as usize;
+    let index = rank.saturating_sub(1).min(values.len() - 1);
+    values.get(index).copied()
 }
 
 fn ensure_run_updated(changed: usize, run_id: &str) -> Result<(), String> {
@@ -765,6 +948,81 @@ mod tests {
         assert!(runs[0].get("request").is_none());
         assert!(runs[0].get("events").is_none());
         assert!(runs[0].get("result").is_none());
+
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn aggregates_bounded_run_quality_metrics_without_replay_payloads() {
+        let path = temporary_database_path("metrics");
+        let store = AgentRunStore::open(&path).expect("agent run store should open");
+        store
+            .start_run(
+                &json!({
+                    "run_id": "metrics-success",
+                    "conversation_id": "conversation-metrics",
+                    "message": "private question should not appear in metrics",
+                    "mode": "expert"
+                }),
+                1_000,
+            )
+            .expect("success run should start");
+        store
+            .complete_run(
+                "metrics-success",
+                &[],
+                &json!({
+                    "harness": {
+                        "profile_id": "hot_money_early_v1",
+                        "model_used": true,
+                        "model_outcome": "model_success",
+                        "api_format": "openai_chat"
+                    }
+                }),
+                1_100,
+            )
+            .expect("success run should complete");
+        store
+            .start_run(
+                &json!({
+                    "run_id": "metrics-failed",
+                    "conversation_id": "conversation-metrics",
+                    "message": "another private question",
+                    "mode": "research"
+                }),
+                2_000,
+            )
+            .expect("failed run should start");
+        store
+            .fail_run("metrics-failed", &[], "redacted failure", 2_300)
+            .expect("failed run should be recorded");
+
+        let metrics = store
+            .metrics(2_000, Some("conversation-metrics"))
+            .expect("metrics should load");
+        assert_eq!(metrics["schema_version"], 1);
+        assert_eq!(metrics["sample_size"], 2);
+        assert_eq!(metrics["status_counts"]["completed"], 1);
+        assert_eq!(metrics["status_counts"]["failed"], 1);
+        assert_eq!(
+            metrics["profile_counts"]["hot_money_early_v1"]["model_used"],
+            1
+        );
+        assert_eq!(
+            metrics["profile_counts"]["value_compounder_v1"]["failed"],
+            1
+        );
+        assert_eq!(metrics["model_outcome_counts"]["model_success"], 1);
+        assert_eq!(metrics["model_outcome_counts"]["run_failed"], 1);
+        assert_eq!(metrics["api_format_counts"]["openai_chat"], 1);
+        assert_eq!(metrics["api_format_counts"]["unknown"], 1);
+        assert_eq!(metrics["duration_ms"]["count"], 2);
+        assert_eq!(metrics["duration_ms"]["p50_ms"], 100);
+        assert_eq!(metrics["duration_ms"]["p95_ms"], 300);
+        assert!(metrics.get("question").is_none());
+        assert!(metrics.get("events").is_none());
+        assert!(metrics.get("result").is_none());
 
         drop(store);
         let _ = std::fs::remove_file(path);

@@ -25,6 +25,8 @@ const MAX_PACK_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PACK_DOCUMENTS: usize = 50_000;
 const MAX_PACK_DOCUMENT_CHARS: usize = 4 * 1024 * 1024;
 const MAX_RESEARCH_CHUNKS: i64 = 50_000;
+const RESEARCH_EMBEDDING_DIMENSIONS: i64 = 512;
+const RESEARCH_EMBEDDING_BLOB_BYTES: i64 = RESEARCH_EMBEDDING_DIMENSIONS * 4;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct ResearchMessage {
@@ -1267,9 +1269,70 @@ impl ResearchStore {
         let embedding_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))
             .map_err(|error| format!("failed to count embeddings: {error}"))?;
+        let missing_fts_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM chunks c
+                 LEFT JOIN chunks_fts f ON f.chunk_id = c.id
+                 WHERE f.chunk_id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("failed to count missing FTS rows: {error}"))?;
+        let orphan_fts_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM chunks_fts f
+                 LEFT JOIN chunks c ON c.id = f.chunk_id
+                 WHERE c.id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("failed to count orphan FTS rows: {error}"))?;
+        let pending_embedding_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM chunks c
+                 LEFT JOIN embeddings e ON e.chunk_id = c.id
+                 WHERE e.chunk_id IS NULL OR e.content_hash <> c.content_hash",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("failed to count pending embeddings: {error}"))?;
+        let stale_embedding_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM chunks c
+                 JOIN embeddings e ON e.chunk_id = c.id
+                 WHERE e.content_hash <> c.content_hash",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("failed to count stale embeddings: {error}"))?;
+        let orphan_embedding_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM embeddings e
+                 LEFT JOIN chunks c ON c.id = e.chunk_id
+                 WHERE c.id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("failed to count orphan embeddings: {error}"))?;
+        let invalid_embedding_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM embeddings
+                 WHERE dimensions <> ?1 OR length(vector) <> ?2 OR normalized <> 1",
+                params![RESEARCH_EMBEDDING_DIMENSIONS, RESEARCH_EMBEDDING_BLOB_BYTES],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("failed to count invalid embeddings: {error}"))?;
         let database_bytes = fs::metadata(&self.path)
             .map(|value| value.len())
             .unwrap_or(0);
+        let fts_healthy = missing_fts_count == 0 && orphan_fts_count == 0;
+        let vector_supported = vector_backend_status()
+            .get("supported")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let embeddings_healthy = orphan_embedding_count == 0
+            && invalid_embedding_count == 0
+            && (!vector_supported || pending_embedding_count == 0);
         Ok(json!({
             "schema_version": RESEARCH_SCHEMA_VERSION,
             "document_count": document_count,
@@ -1277,7 +1340,16 @@ impl ResearchStore {
             "fts_count": fts_count,
             "embedding_count": embedding_count,
             "database_bytes": database_bytes,
-            "healthy": chunk_count == fts_count,
+            "healthy": fts_healthy,
+            "fts_healthy": fts_healthy,
+            "integrity_healthy": fts_healthy && embeddings_healthy,
+            "hybrid_ready": vector_supported && embeddings_healthy,
+            "fts_missing_count": missing_fts_count,
+            "fts_orphan_count": orphan_fts_count,
+            "embedding_pending_count": pending_embedding_count,
+            "embedding_stale_count": stale_embedding_count,
+            "embedding_orphan_count": orphan_embedding_count,
+            "embedding_invalid_count": invalid_embedding_count,
             "vector": vector_backend_status()
         }))
     }
@@ -3066,6 +3138,181 @@ mod tests {
         std::env::temp_dir().join(format!("gp-assistant-{name}-{unique}.sqlite"))
     }
 
+    fn retrieval_eval_documents(case: &Value) -> Vec<Value> {
+        let mut documents = case
+            .get("documents")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for document in &mut documents {
+            let repeat = document
+                .get("repeat_content")
+                .and_then(Value::as_u64)
+                .unwrap_or(1)
+                .clamp(1, 100) as usize;
+            if repeat > 1 {
+                let content = document
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .repeat(repeat);
+                document["content"] = Value::String(content);
+            }
+        }
+        if let Some(generator) = case.get("generated_documents") {
+            let count = generator
+                .get("count")
+                .and_then(Value::as_u64)
+                .unwrap_or_default()
+                .min(100) as usize;
+            let prefix = generator
+                .get("document_id_prefix")
+                .and_then(Value::as_str)
+                .unwrap_or("generated-");
+            for index in 0..count {
+                documents.push(json!({
+                    "document_id": format!("{prefix}{index}"),
+                    "title": generator.get("title").cloned().unwrap_or_else(|| json!("Generated evidence")),
+                    "content": generator.get("content").cloned().unwrap_or_else(|| json!("generated evidence")),
+                    "source_tier": generator.get("source_tier").cloned().unwrap_or_else(|| json!("news")),
+                    "stock_codes": generator.get("stock_codes").cloned().unwrap_or_else(|| json!([])),
+                }));
+            }
+        }
+        documents
+    }
+
+    fn retrieval_eval_vector(label: &str) -> Vec<f32> {
+        let mut vector = vec![0.0; RESEARCH_EMBEDDING_DIMENSIONS as usize];
+        match label {
+            "query" => vector[0] = 1.0,
+            "secondary" => {
+                vector[0] = 0.8;
+                vector[1] = 0.6;
+            }
+            _ => vector[1] = 1.0,
+        }
+        vector
+    }
+
+    #[test]
+    fn fixed_retrieval_eval_suite_enforces_governance_invariants() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../app/prompts/research_retrieval_eval_cases.json"
+        ))
+        .expect("retrieval evaluation fixture should be valid JSON");
+        assert_eq!(fixture["version"], "research-retrieval-eval-v1");
+
+        for case in fixture["cases"]
+            .as_array()
+            .expect("retrieval evaluation cases should be an array")
+        {
+            let case_id = case["id"]
+                .as_str()
+                .expect("retrieval evaluation case should have an id");
+            let path = temporary_database_path(case_id);
+            let store = ResearchStore::open(&path).expect("research store should open");
+            let documents = retrieval_eval_documents(case);
+            store
+                .ingest_documents(&documents)
+                .unwrap_or_else(|error| panic!("{case_id}: documents should ingest: {error}"));
+
+            let query_vector = case
+                .get("query_vector")
+                .and_then(Value::as_str)
+                .map(retrieval_eval_vector);
+            if query_vector.is_some() {
+                let work = store.pending_embedding_chunks(500).unwrap_or_else(|error| {
+                    panic!("{case_id}: embedding work should load: {error}")
+                });
+                let embeddings = work
+                    .into_iter()
+                    .map(|item| {
+                        let label = documents
+                            .iter()
+                            .find(|document| {
+                                document
+                                    .get("document_id")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|id| item.chunk_id.starts_with(&format!("{id}:")))
+                            })
+                            .and_then(|document| document.get("embedding"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("orthogonal");
+                        (item, retrieval_eval_vector(label))
+                    })
+                    .collect::<Vec<_>>();
+                store
+                    .store_embeddings(&embeddings, "retrieval-eval-v1")
+                    .unwrap_or_else(|error| panic!("{case_id}: embeddings should store: {error}"));
+            }
+
+            let response = store
+                .query_with_vector(&case["request"], query_vector.as_deref())
+                .unwrap_or_else(|error| panic!("{case_id}: query should succeed: {error}"));
+            let citations = response["citations"]
+                .as_array()
+                .expect("retrieval response should contain citations");
+            let expected = &case["expect"];
+
+            if let Some(value) = expected.get("citation_count").and_then(Value::as_u64) {
+                assert_eq!(citations.len(), value as usize, "{case_id}: citation count");
+            }
+            if let Some(value) = expected.get("first_document_id").and_then(Value::as_str) {
+                assert_eq!(
+                    citations
+                        .first()
+                        .and_then(|citation| citation["document_id"].as_str()),
+                    Some(value),
+                    "{case_id}: first document"
+                );
+            }
+            for field in ["community_only", "fact_supported", "retrieval_mode"] {
+                if let Some(value) = expected.get(field) {
+                    assert_eq!(&response[field], value, "{case_id}: {field}");
+                }
+            }
+            if let Some(value) = expected.get("answer_contains").and_then(Value::as_str) {
+                assert!(
+                    response["answer"]
+                        .as_str()
+                        .is_some_and(|answer| answer.contains(value)),
+                    "{case_id}: answer should contain {value}"
+                );
+            }
+            if let (Some(document_id), Some(maximum)) = (
+                expected.get("document_id").and_then(Value::as_str),
+                expected
+                    .get("document_citation_max")
+                    .and_then(Value::as_u64),
+            ) {
+                let count = citations
+                    .iter()
+                    .filter(|citation| citation["document_id"] == document_id)
+                    .count();
+                assert!(
+                    count <= maximum as usize,
+                    "{case_id}: per-document citation cap"
+                );
+            }
+            if let Some(document_id) = expected
+                .get("vector_scored_document_id")
+                .and_then(Value::as_str)
+            {
+                assert!(
+                    citations.iter().any(|citation| {
+                        citation["document_id"] == document_id
+                            && citation["vector_score"].is_number()
+                    }),
+                    "{case_id}: vector candidate should survive hybrid fusion"
+                );
+            }
+
+            drop(store);
+            let _ = remove_sqlite_files(&path);
+        }
+    }
+
     #[test]
     fn stores_and_queries_research_evidence() {
         let path = temporary_database_path("research-evidence");
@@ -3195,6 +3442,51 @@ mod tests {
         assert_eq!(store.index_status().unwrap()["schema_version"], 2);
         drop(store);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn index_status_reports_retrieval_governance_state() {
+        let path = temporary_database_path("index-governance");
+        let store = ResearchStore::open(&path).expect("research store should open");
+        store
+            .ingest_documents(&[json!({
+                "document_id": "governance-doc",
+                "title": "治理状态",
+                "content": "索引完整性需要同时检查 FTS 与向量状态。",
+                "source_tier": "filing"
+            })])
+            .expect("document should be ingested");
+
+        let pending = store
+            .index_status()
+            .expect("index status should load before embeddings");
+        assert_eq!(pending["fts_missing_count"], 0);
+        assert_eq!(pending["fts_orphan_count"], 0);
+        assert_eq!(pending["embedding_pending_count"], 1);
+        assert_eq!(pending["embedding_stale_count"], 0);
+        assert_eq!(pending["embedding_orphan_count"], 0);
+        assert_eq!(pending["embedding_invalid_count"], 0);
+        assert_eq!(pending["hybrid_ready"], false);
+
+        let work = store
+            .pending_embedding_chunks(10)
+            .expect("pending embeddings should be readable")
+            .into_iter()
+            .map(|item| (item, vec![1.0; RESEARCH_EMBEDDING_DIMENSIONS as usize]))
+            .collect::<Vec<_>>();
+        store
+            .store_embeddings(&work, "test-model")
+            .expect("embedding should be stored");
+
+        let ready = store
+            .index_status()
+            .expect("index status should load after embeddings");
+        assert_eq!(ready["embedding_pending_count"], 0);
+        assert_eq!(ready["embedding_count"], 1);
+        assert_eq!(ready["integrity_healthy"], true);
+
+        drop(store);
+        let _ = remove_sqlite_files(&path);
     }
 
     #[test]

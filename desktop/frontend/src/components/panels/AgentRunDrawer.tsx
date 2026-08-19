@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "re
 import { ArrowLeft, CircleCheck, CircleHelp, CircleX, History, LoaderCircle, X } from "lucide-react";
 import {
   getAgentRun,
+  getAgentRunMetrics,
   listAgentRuns,
   type AgentRunDetail,
+  type AgentRunMetrics,
   type AgentRunStatus,
   type AgentRunSummary,
 } from "../../lib/agentRuns";
@@ -195,6 +197,11 @@ function scopeKey(scope: RunScope, conversationId?: string) {
   return scope === "all" ? "all" : `current:${conversationId || ""}`;
 }
 
+interface RunListSnapshot {
+  runs: AgentRunSummary[];
+  metrics?: AgentRunMetrics;
+}
+
 function requestErrorText(error: unknown) {
   return error instanceof Error && error.message.trim()
     ? error.message.trim().slice(0, ERROR_TEXT_MAX)
@@ -237,6 +244,7 @@ export function AgentRunDrawer({
   const [view, setView] = useState<DrawerView>("list");
   const [scope, setScope] = useState<RunScope>("current");
   const [runs, setRuns] = useState<AgentRunSummary[]>([]);
+  const [metrics, setMetrics] = useState<AgentRunMetrics>();
   const [listState, setListState] = useState<RequestState>("idle");
   const [listError, setListError] = useState<string>();
   const [selectedRunId, setSelectedRunId] = useState<string>();
@@ -254,7 +262,7 @@ export function AgentRunDrawer({
   const previousInitialRunIdRef = useRef<string | undefined>(undefined);
   const detailIntentRef = useRef(false);
   const observedCurrentConversationRef = useRef<string | undefined>(undefined);
-  const listCacheRef = useRef(new Map<string, AgentRunSummary[]>());
+  const listCacheRef = useRef(new Map<string, RunListSnapshot>());
   const completionRefreshRunsRef = useRef(new Set<string>());
   const completionListRefreshesRef = useRef(new Set<string>());
   const observedLedgerRevisionRef = useRef(ledgerRevision);
@@ -277,11 +285,14 @@ export function AgentRunDrawer({
   const syncTerminalDetail = useCallback((loadedDetail: AgentRunDetail) => {
     if (loadedDetail.status === "running") return;
     const updatedSummary = summaryFromDetail(loadedDetail);
-    for (const [key, cachedRuns] of listCacheRef.current) {
-      if (!cachedRuns.some((run) => run.runId === loadedDetail.runId)) continue;
-      listCacheRef.current.set(key, cachedRuns.map((run) => (
-        run.runId === loadedDetail.runId ? updatedSummary : run
-      )));
+    for (const [key, snapshot] of listCacheRef.current) {
+      if (!snapshot.runs.some((run) => run.runId === loadedDetail.runId)) continue;
+      listCacheRef.current.set(key, {
+        ...snapshot,
+        runs: snapshot.runs.map((run) => (
+          run.runId === loadedDetail.runId ? updatedSummary : run
+        )),
+      });
     }
     setRuns((currentRuns) => currentRuns.map((run) => (
       run.runId === loadedDetail.runId ? updatedSummary : run
@@ -293,6 +304,7 @@ export function AgentRunDrawer({
     setListError(undefined);
     if (nextScope === "current" && !conversationId) {
       setRuns([]);
+      setMetrics(undefined);
       setListState("empty");
       return;
     }
@@ -301,19 +313,28 @@ export function AgentRunDrawer({
     listAbortControllerRef.current = controller;
     const requestToken = ++listRequestTokenRef.current;
     setListState("loading");
+    setMetrics(undefined);
     const options = nextScope === "current"
       ? { conversationId: conversationId!, signal: controller.signal }
       : { signal: controller.signal };
-    void listAgentRuns(options)
-      .then((loadedRuns) => {
+    void Promise.all([
+      listAgentRuns(options),
+      getAgentRunMetrics({ ...options, limit: 200 }).catch(() => null),
+    ])
+      .then(([loadedRuns, loadedMetrics]) => {
         if (controller.signal.aborted || requestToken !== listRequestTokenRef.current) return;
-        listCacheRef.current.set(scopeKey(nextScope, conversationId), loadedRuns);
+        listCacheRef.current.set(scopeKey(nextScope, conversationId), {
+          runs: loadedRuns,
+          metrics: loadedMetrics || undefined,
+        });
         setRuns(loadedRuns);
+        setMetrics(loadedMetrics || undefined);
         setListState(loadedRuns.length ? "ready" : "empty");
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted || isAbortError(error) || requestToken !== listRequestTokenRef.current) return;
         setRuns([]);
+        setMetrics(undefined);
         setListError(requestErrorText(error));
         setListState("error");
       })
@@ -369,6 +390,7 @@ export function AgentRunDrawer({
       cancelListRequest();
       cancelDetailRequest();
       setListState("idle");
+      setMetrics(undefined);
       setDetailState("idle");
       setSelectedRunId(undefined);
       setDetail(undefined);
@@ -497,10 +519,11 @@ export function AgentRunDrawer({
     detailIntentRef.current = false;
     transitionFocusTargetRef.current = "list";
     setView("list");
-    const cachedRuns = listCacheRef.current.get(scopeKey(scope, activeConversationId));
-    if (cachedRuns) {
-      setRuns(cachedRuns);
-      setListState(cachedRuns.length ? "ready" : "empty");
+    const cachedSnapshot = listCacheRef.current.get(scopeKey(scope, activeConversationId));
+    if (cachedSnapshot) {
+      setRuns(cachedSnapshot.runs);
+      setMetrics(cachedSnapshot.metrics);
+      setListState(cachedSnapshot.runs.length ? "ready" : "empty");
       setListError(undefined);
       return;
     }
@@ -585,6 +608,7 @@ export function AgentRunDrawer({
         <RunList
           activeConversationId={activeConversationId}
           error={listError}
+          metrics={metrics}
           runs={runs}
           scope={scope}
           state={listState}
@@ -609,6 +633,7 @@ export function AgentRunDrawer({
 function RunList({
   activeConversationId,
   error,
+  metrics,
   runs,
   scope,
   state,
@@ -618,6 +643,7 @@ function RunList({
 }: {
   activeConversationId?: string;
   error?: string;
+  metrics?: AgentRunMetrics;
   runs: AgentRunSummary[];
   scope: RunScope;
   state: RequestState;
@@ -645,6 +671,7 @@ function RunList({
           全部运行
         </button>
       </div>
+      {metrics && metrics.sampleSize > 0 && <AgentMetricsSummary metrics={metrics} />}
       {state === "loading" && <p className="agent-run-state" role="status">正在加载运行记录</p>}
       {state === "error" && (
         <div className="agent-run-state agent-run-state-error" role="alert">
@@ -680,6 +707,28 @@ function RunList({
       )}
     </section>
   );
+}
+
+function AgentMetricsSummary({ metrics }: { metrics: AgentRunMetrics }) {
+  const completed = metrics.statusCounts.completed || 0;
+  const failed = metrics.statusCounts.failed || 0;
+  const modelSuccess = metrics.modelOutcomeCounts.model_success || 0;
+  const fallback = Object.values(metrics.profileCounts)
+    .reduce((total, profile) => total + profile.fallback, 0);
+  return (
+    <dl className="agent-run-metrics" aria-label="运行质量概览">
+      <div><dt>样本</dt><dd>{metrics.sampleSize}</dd></div>
+      <div><dt>完成 / 失败</dt><dd>{completed} / {failed}</dd></div>
+      <div><dt>模型成功 / 降级</dt><dd>{modelSuccess} / {fallback}</dd></div>
+      <div><dt>P95 耗时</dt><dd>{formatMetricDuration(metrics.durationMs.p95Ms)}</dd></div>
+    </dl>
+  );
+}
+
+function formatMetricDuration(duration: number | undefined) {
+  if (duration === undefined) return "--";
+  if (duration < 1_000) return `${duration} ms`;
+  return `${(duration / 1_000).toFixed(1)} s`;
 }
 
 function RunDetail({

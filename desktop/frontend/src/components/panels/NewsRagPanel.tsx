@@ -655,8 +655,15 @@ function KnowledgeDrawer(props: {
             <Search size={15} />生成向量
           </button>
         </div>
-        <p>{props.status?.healthy ? "文档分块与 FTS 数量一致。"
-          : "索引数量不一致，建议重建 FTS。"}</p>
+        <p>{!props.status ? "正在读取索引状态。"
+          : !(props.status.fts_healthy ?? props.status.healthy) ? "FTS 索引存在缺口，建议重建 FTS。"
+          : (props.status?.embedding_pending_count || 0) > 0
+            ? `FTS 索引完整；还有 ${props.status?.embedding_pending_count} 个分块等待生成向量。`
+            : props.status.integrity_healthy === false
+              ? "索引存在完整性问题，建议重建索引。"
+            : props.status?.hybrid_ready
+              ? "FTS 与向量索引完整，可执行混合检索。"
+              : "FTS 索引完整；当前平台使用 BM25 检索。"}</p>
       </section>}
 
       <section className="knowledge-section">

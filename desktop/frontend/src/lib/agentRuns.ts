@@ -42,6 +42,30 @@ export interface ListAgentRunsOptions {
   signal?: AbortSignal;
 }
 
+export interface AgentRunMetrics {
+  schemaVersion: number;
+  sampleSize: number;
+  sampleLimit: number;
+  conversationId?: string;
+  statusCounts: Record<string, number>;
+  profileCounts: Record<string, {
+    count: number;
+    completed: number;
+    failed: number;
+    modelUsed: number;
+    fallback: number;
+  }>;
+  modelOutcomeCounts: Record<string, number>;
+  apiFormatCounts: Record<string, number>;
+  durationMs: {
+    count: number;
+    averageMs?: number;
+    p50Ms?: number;
+    p95Ms?: number;
+    maxMs?: number;
+  };
+}
+
 const SHORT_TEXT_MAX = 64;
 const METADATA_TEXT_MAX = 256;
 const DISPLAY_TEXT_MAX = 2_000;
@@ -50,6 +74,7 @@ const COLLECTION_ITEMS_MAX = 100;
 const DOMAIN_COLLECTION_ITEMS_MAX = 10_000;
 const DOMAIN_DEPTH_MAX = 6;
 const DOMAIN_KEYS_MAX = 100;
+const MAX_AGENT_METRICS_ROWS = 2_000;
 const SENSITIVE_KEYS = new Set([
   "request",
   "request_config",
@@ -145,6 +170,14 @@ function normalizeLimit(value: number | undefined): number {
   if (value <= 0) return 1;
   if (!Number.isSafeInteger(value)) return 50;
   return Math.min(200, value);
+}
+
+function normalizeMetricsLimit(value: number | undefined): number {
+  if (value === undefined) return 200;
+  if (typeof value !== "number" || !Number.isFinite(value)) return 200;
+  if (value <= 0) return 1;
+  if (!Number.isSafeInteger(value)) return 200;
+  return Math.min(MAX_AGENT_METRICS_ROWS, value);
 }
 
 function normalizeTimelinePayload(value: unknown): Record<string, string> | undefined {
@@ -530,6 +563,65 @@ export async function listAgentRuns(options: ListAgentRunsOptions = {}): Promise
       .map(normalizeAgentRunSummary)
       .filter((run): run is AgentRunSummary => Boolean(run))
     : [];
+}
+
+function normalizeCounts(value: unknown): Record<string, number> {
+  if (!isPlainRecord(value)) return {};
+  return Object.fromEntries(Object.entries(value)
+    .map(([key, count]) => [boundedText(key, 64), optionalNumber(count) ?? 0] as const)
+    .filter(([key]) => Boolean(key)));
+}
+
+export function normalizeAgentRunMetrics(value: unknown): AgentRunMetrics | null {
+  const record = asRecord(value);
+  const duration = asRecord(record.duration_ms);
+  const sampleSize = optionalNumber(record.sample_size);
+  const sampleLimit = optionalNumber(record.sample_limit);
+  if (sampleSize === undefined || sampleLimit === undefined) return null;
+  const rawProfiles = isPlainRecord(record.profile_counts) ? record.profile_counts : {};
+  const profileCounts: AgentRunMetrics["profileCounts"] = {};
+  for (const [profile, raw] of Object.entries(rawProfiles)) {
+    const profileId = boundedText(profile, 64);
+    if (!profileId) continue;
+    const bucket = asRecord(raw);
+    profileCounts[profileId] = {
+      count: optionalNumber(bucket.count) ?? 0,
+      completed: optionalNumber(bucket.completed) ?? 0,
+      failed: optionalNumber(bucket.failed) ?? 0,
+      modelUsed: optionalNumber(bucket.model_used) ?? 0,
+      fallback: optionalNumber(bucket.fallback) ?? 0,
+    };
+  }
+  const conversationId = boundedIdentity(record.conversation_id);
+  return {
+    schemaVersion: optionalNumber(record.schema_version) ?? 1,
+    sampleSize,
+    sampleLimit,
+    ...(conversationId ? { conversationId } : {}),
+    statusCounts: normalizeCounts(record.status_counts),
+    profileCounts,
+    modelOutcomeCounts: normalizeCounts(record.model_outcome_counts),
+    apiFormatCounts: normalizeCounts(record.api_format_counts),
+    durationMs: {
+      count: optionalNumber(duration.count) ?? 0,
+      averageMs: optionalNumber(duration.average_ms),
+      p50Ms: optionalNumber(duration.p50_ms),
+      p95Ms: optionalNumber(duration.p95_ms),
+      maxMs: optionalNumber(duration.max_ms),
+    },
+  };
+}
+
+export async function getAgentRunMetrics(options: ListAgentRunsOptions = {}): Promise<AgentRunMetrics | null> {
+  const limit = normalizeMetricsLimit(options.limit);
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (Object.prototype.hasOwnProperty.call(options, "conversationId")) {
+    const conversationId = boundedIdentity(options.conversationId);
+    if (!conversationId) return null;
+    params.set("conversation_id", conversationId);
+  }
+  const response = await getJson(`/api/agent/metrics?${params.toString()}`, { signal: options.signal });
+  return normalizeAgentRunMetrics(response);
 }
 
 export async function getAgentRun(runId: string, signal?: AbortSignal): Promise<AgentRunDetail | null> {

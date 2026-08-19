@@ -27,3 +27,40 @@
 .agent-run-final-reply {
   max-width: 100%;
 }
+
+.agent-run-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 9px 0;
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.agent-run-metrics > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.agent-run-metrics dt {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-run-metrics dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-data);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

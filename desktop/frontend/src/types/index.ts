@@ -625,6 +625,15 @@ export interface ResearchIndexStatus {
   embedding_count: number;
   database_bytes: number;
   healthy: boolean;
+  fts_healthy?: boolean;
+  integrity_healthy?: boolean;
+  hybrid_ready?: boolean;
+  fts_missing_count?: number;
+  fts_orphan_count?: number;
+  embedding_pending_count?: number;
+  embedding_stale_count?: number;
+  embedding_orphan_count?: number;
+  embedding_invalid_count?: number;
   vector?: Record<string, unknown>;
   documents?: KnowledgeDocumentStatus[];
 }
@@ -715,9 +724,12 @@ export interface AgentAnswerSection {
 
 export interface AgentHarnessMeta {
   prompt_version?: string;
+  policy_version?: string;
   profile_id?: "deterministic_v1" | "hot_money_early_v1" | "value_compounder_v1" | string;
   model_used?: boolean;
   model?: string | null;
+  model_outcome?: string;
+  api_format?: string;
 }
 
 export interface AgentResult {

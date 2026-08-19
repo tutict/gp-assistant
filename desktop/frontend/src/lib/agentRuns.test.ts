@@ -6,9 +6,11 @@ vi.mock("./tauri", () => ({ getJson, postJson }));
 import {
   deleteAgentConversationRuns,
   getAgentRun,
+  getAgentRunMetrics,
   listAgentRuns,
   MAX_AGENT_REPLAY_EVENTS,
   normalizeAgentRunDetail,
+  normalizeAgentRunMetrics,
   normalizeAgentRunSummary,
 } from "./agentRuns";
 
@@ -594,6 +596,46 @@ describe("agent run ledger client", () => {
       { signal: undefined },
     );
     expect(getJson).toHaveBeenNthCalledWith(2, "/api/agent/runs?limit=50", { signal: undefined });
+  });
+
+  it("normalizes aggregate run metrics and keeps the request boundary typed", async () => {
+    const input = {
+      schema_version: 1,
+      sample_size: 2,
+      sample_limit: 200,
+      conversation_id: "conversation-1",
+      status_counts: { completed: 2, failed: 0 },
+      profile_counts: {
+        hot_money_early_v1: { count: 2, completed: 2, failed: 0, model_used: 1, fallback: 1 },
+        "   ": { count: 99, completed: 99, failed: 0, model_used: 0, fallback: 0 },
+      },
+      model_outcome_counts: { model_success: 1, not_configured: 1 },
+      api_format_counts: { openai_chat: 1, none: 1 },
+      duration_ms: { count: 2, average_ms: 120, p50_ms: 100, p95_ms: 200, max_ms: 200 },
+      question: "must not be surfaced",
+    };
+    expect(normalizeAgentRunMetrics(input)).toEqual({
+      schemaVersion: 1,
+      sampleSize: 2,
+      sampleLimit: 200,
+      conversationId: "conversation-1",
+      statusCounts: { completed: 2, failed: 0 },
+      profileCounts: {
+        hot_money_early_v1: { count: 2, completed: 2, failed: 0, modelUsed: 1, fallback: 1 },
+      },
+      modelOutcomeCounts: { model_success: 1, not_configured: 1 },
+      apiFormatCounts: { openai_chat: 1, none: 1 },
+      durationMs: { count: 2, averageMs: 120, p50Ms: 100, p95Ms: 200, maxMs: 200 },
+    });
+
+    getJson.mockResolvedValue(input);
+    await expect(getAgentRunMetrics({ conversationId: " conversation-1 ", limit: 999 })).resolves.toMatchObject({
+      sampleSize: 2,
+    });
+    expect(getJson).toHaveBeenCalledWith(
+      "/api/agent/metrics?limit=999&conversation_id=conversation-1",
+      { signal: undefined },
+    );
   });
 
   it("deletes conversation runs through the typed ledger boundary", async () => {

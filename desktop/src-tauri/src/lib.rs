@@ -2349,6 +2349,36 @@ async fn api_agent_run_list(app: tauri::AppHandle, payload: Value) -> Result<Val
     .await?
 }
 
+#[tauri::command]
+async fn api_agent_run_metrics(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let limit = payload
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(200)
+        .min(2_000) as usize;
+    let conversation_id = payload
+        .get("conversation_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if conversation_id
+        .as_ref()
+        .is_some_and(|value| value.len() > agent_ledger::MAX_AGENT_LEDGER_ID_BYTES)
+    {
+        return Err(format!(
+            "conversation_id exceeds {} bytes",
+            agent_ledger::MAX_AGENT_LEDGER_ID_BYTES
+        ));
+    }
+    runtime::run_io_bound("api_agent_run_metrics", move || {
+        agent_ledger::with_app_store(&app, |store| {
+            store.metrics(limit, conversation_id.as_deref())
+        })
+    })
+    .await?
+}
+
 fn agent_run_detail_response(run: Option<Value>) -> Value {
     let run = run.map(|mut record| {
         if let Some(object) = record.as_object_mut() {
@@ -10644,6 +10674,7 @@ pub fn run() {
             api_upstream_rag_transfer_start,
             api_agent_stream,
             api_agent_run_list,
+            api_agent_run_metrics,
             api_agent_run_get,
             api_agent_run_delete_conversation,
             api_llm_models,

@@ -733,6 +733,10 @@
   .agent-run-detail {
     padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   }
+
+  .agent-run-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .agent-run-select {
     min-height: 76px;
     grid-template-columns: minmax(0, 1fr) auto;

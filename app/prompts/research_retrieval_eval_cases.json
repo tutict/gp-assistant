@@ -1,0 +1,166 @@
+{
+  "version": "research-retrieval-eval-v1",
+  "cases": [
+    {
+      "id": "source_tier_priority",
+      "documents": [
+        {
+          "document_id": "priority-community",
+          "title": "Priority signal discussion",
+          "content": "prioritysignal order expansion",
+          "source_tier": "community",
+          "stock_codes": ["300750.SZ"]
+        },
+        {
+          "document_id": "priority-filing",
+          "title": "Priority signal disclosure",
+          "content": "prioritysignal order expansion",
+          "source_tier": "filing",
+          "stock_codes": ["300750.SZ"]
+        }
+      ],
+      "request": {
+        "query": "prioritysignal",
+        "stock_code": "300750.SZ"
+      },
+      "expect": {
+        "first_document_id": "priority-filing",
+        "community_only": false,
+        "fact_supported": true,
+        "retrieval_mode": "bm25"
+      }
+    },
+    {
+      "id": "stock_filter_before_candidate_limit",
+      "generated_documents": {
+        "count": 60,
+        "document_id_prefix": "filter-noise-",
+        "title": "Filter limit signal",
+        "content": "filterlimitsignal repeated candidate",
+        "source_tier": "news",
+        "stock_codes": ["600000.SH"]
+      },
+      "documents": [
+        {
+          "document_id": "filter-target",
+          "title": "Filter limit signal",
+          "content": "filterlimitsignal requested stock candidate",
+          "source_tier": "news",
+          "stock_codes": ["000001.SZ"]
+        }
+      ],
+      "request": {
+        "query": "filterlimitsignal",
+        "stock_code": "000001.SZ"
+      },
+      "expect": {
+        "first_document_id": "filter-target",
+        "citation_count": 1
+      }
+    },
+    {
+      "id": "community_only_gate",
+      "documents": [
+        {
+          "document_id": "community-only",
+          "title": "Rumor only signal",
+          "content": "rumoronlysignal remains unverified",
+          "source_tier": "community",
+          "stock_codes": ["000001.SZ"]
+        }
+      ],
+      "request": {
+        "query": "rumoronlysignal",
+        "stock_code": "000001.SZ"
+      },
+      "expect": {
+        "community_only": true,
+        "fact_supported": false,
+        "answer_contains": "不能单独作为事实结论"
+      }
+    },
+    {
+      "id": "per_document_chunk_cap",
+      "documents": [
+        {
+          "document_id": "chunk-cap-document",
+          "title": "Chunk cap evidence",
+          "content": "chunkcapsignal evidence paragraph with stable context. ",
+          "repeat_content": 50,
+          "source_tier": "filing",
+          "stock_codes": ["600000.SH"]
+        }
+      ],
+      "request": {
+        "query": "chunkcapsignal",
+        "stock_code": "600000.SH",
+        "top_k": 8
+      },
+      "expect": {
+        "document_id": "chunk-cap-document",
+        "document_citation_max": 2,
+        "citation_count": 2
+      }
+    },
+    {
+      "id": "top_k_hard_cap",
+      "generated_documents": {
+        "count": 10,
+        "document_id_prefix": "top-cap-",
+        "title": "Top cap evidence",
+        "content": "topcapsignal independent evidence",
+        "source_tier": "filing",
+        "stock_codes": ["600000.SH"]
+      },
+      "request": {
+        "query": "topcapsignal",
+        "stock_code": "600000.SH",
+        "top_k": 999
+      },
+      "expect": {
+        "citation_count": 8
+      }
+    },
+    {
+      "id": "hybrid_rrf_shared_candidate",
+      "documents": [
+        {
+          "document_id": "hybrid-lexical-only",
+          "title": "Hybrid lexical evidence",
+          "content": "hybridsharedsignal lexical match",
+          "source_tier": "news",
+          "stock_codes": ["300750.SZ"],
+          "embedding": "orthogonal"
+        },
+        {
+          "document_id": "hybrid-vector-only",
+          "title": "Semantic evidence",
+          "content": "conceptual order expansion",
+          "source_tier": "news",
+          "stock_codes": ["300750.SZ"],
+          "embedding": "secondary"
+        },
+        {
+          "document_id": "hybrid-shared",
+          "title": "Hybrid shared evidence",
+          "content": "hybridsharedsignal confirmed order expansion",
+          "source_tier": "news",
+          "stock_codes": ["300750.SZ"],
+          "embedding": "query"
+        }
+      ],
+      "request": {
+        "query": "hybridsharedsignal",
+        "stock_code": "300750.SZ",
+        "top_k": 3
+      },
+      "query_vector": "query",
+      "expect": {
+        "first_document_id": "hybrid-shared",
+        "retrieval_mode": "hybrid_rrf",
+        "citation_count": 3,
+        "vector_scored_document_id": "hybrid-vector-only"
+      }
+    }
+  ]
+}
