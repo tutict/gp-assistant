@@ -21,6 +21,7 @@ pub(crate) const RESEARCH_SCHEMA_VERSION: i64 = 2;
 const DEFAULT_CHUNK_CHARS: usize = 520;
 const DEFAULT_CHUNK_OVERLAP: usize = 80;
 const MAX_CITATIONS: usize = 8;
+pub(crate) const MAX_RESEARCH_THREAD_ID_BYTES: usize = 256;
 const MAX_PACK_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PACK_DOCUMENTS: usize = 50_000;
 const MAX_PACK_DOCUMENT_CHARS: usize = 4 * 1024 * 1024;
@@ -1170,6 +1171,26 @@ impl ResearchStore {
             });
         }
         Ok(json!({"thread": thread, "answers": answers}))
+    }
+
+    pub(crate) fn delete_thread(&self, thread_id: &str) -> Result<usize, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start research thread deletion: {error}"))?;
+        let deleted = transaction
+            .execute(
+                "DELETE FROM research_threads WHERE id = ?1",
+                params![thread_id],
+            )
+            .map_err(|error| format!("failed to delete research thread: {error}"))?;
+        if deleted == 0 {
+            return Err("research thread not found".to_string());
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit research thread deletion: {error}"))?;
+        Ok(deleted)
     }
 
     pub(crate) fn save_answer(
@@ -3467,6 +3488,41 @@ mod tests {
                 > 0.0
         );
         assert_eq!(store.index_status().unwrap()["schema_version"], 2);
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn deletes_only_the_selected_research_thread_and_cascades_answers() {
+        let path = temporary_database_path("delete-research-thread");
+        let store = ResearchStore::open(&path).expect("research store should open");
+        let first = store
+            .create_thread(&json!({"id": "thread-delete", "title": "待删除"}))
+            .expect("first thread should be created");
+        let second = store
+            .create_thread(&json!({"id": "thread-keep", "title": "保留"}))
+            .expect("second thread should be created");
+        let first_id = first["id"].as_str().unwrap();
+        let second_id = second["id"].as_str().unwrap();
+        store
+            .save_answer(
+                first_id,
+                "待删除的问题",
+                &json!({"answer": "待删除的回答", "citations": []}),
+            )
+            .expect("first answer should be persisted");
+        store
+            .save_answer(
+                second_id,
+                "保留的问题",
+                &json!({"answer": "保留的回答", "citations": []}),
+            )
+            .expect("second answer should be persisted");
+
+        assert_eq!(store.delete_thread(first_id).unwrap(), 1);
+        assert!(store.thread(first_id).is_err());
+        let remaining = store.thread(second_id).expect("other thread should remain");
+        assert_eq!(remaining["answers"].as_array().map(Vec::len), Some(1));
         drop(store);
         let _ = std::fs::remove_file(path);
     }

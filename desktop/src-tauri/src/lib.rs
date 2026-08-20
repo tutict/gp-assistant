@@ -1866,6 +1866,33 @@ async fn api_research_thread_detail(
 }
 
 #[tauri::command]
+async fn api_research_thread_delete(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    let thread_id = payload
+        .get("thread_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "thread_id is required".to_string())?
+        .to_string();
+    if thread_id.len() > research::MAX_RESEARCH_THREAD_ID_BYTES {
+        return Err(format!(
+            "thread_id exceeds {} bytes",
+            research::MAX_RESEARCH_THREAD_ID_BYTES
+        ));
+    }
+    runtime::run_io_bound("api_research_thread_delete", move || {
+        research::with_app_store(&app, |store| {
+            let deleted = store.delete_thread(&thread_id)?;
+            Ok(json!({"deleted": deleted}))
+        })
+    })
+    .await?
+}
+
+#[tauri::command]
 async fn api_research_index_status(app: tauri::AppHandle) -> Result<Value, String> {
     runtime::run_io_bound("api_research_index_status", move || {
         research::with_app_store(&app, |store| {
@@ -10714,6 +10741,7 @@ pub fn run() {
             api_research_threads,
             api_research_thread_create,
             api_research_thread_detail,
+            api_research_thread_delete,
             api_research_index_status,
             api_research_rebuild_index,
             api_research_rebuild_embeddings,

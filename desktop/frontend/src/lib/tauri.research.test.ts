@@ -65,6 +65,7 @@ describe("research Tauri routes", () => {
       ["/api/research/query", "api_research_query", true],
       ["/api/research/threads/create", "api_research_thread_create", true],
       ["/api/research/threads/detail", "api_research_thread_detail", true],
+      ["/api/research/threads/delete", "api_research_thread_delete", true],
       ["/api/research/rebuild-index", "api_research_rebuild_index", false],
       ["/api/research/rebuild-embeddings", "api_research_rebuild_embeddings", false],
       ["/api/research/import-url", "api_research_import_url", true],

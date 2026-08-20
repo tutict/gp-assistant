@@ -529,4 +529,82 @@ describe("NewsRagPanel", () => {
       renderer.unmount();
     });
   });
+
+  it("deletes a research thread after confirmation and clears its active answers", async () => {
+    const thread = {
+      id: "thread-delete",
+      title: "待删除会话",
+      stock_code: "",
+      created_at_epoch_ms: 1,
+      updated_at_epoch_ms: 2,
+    };
+    let deleted = false;
+    getJson.mockImplementation((path: string) => {
+      if (path.startsWith("/api/research/overview")) {
+        return Promise.resolve({ schema_version: 2, document_count: 0, chunk_count: 0,
+          unread_count: 0, retrieval: { vector: { ready: false } } });
+      }
+      if (path.startsWith("/api/research/messages")) return Promise.resolve({ items: [] });
+      if (path === "/api/research/threads") return Promise.resolve({ items: deleted ? [] : [thread] });
+      return Promise.resolve({});
+    });
+    postJson.mockImplementation((path: string) => {
+      if (path === "/api/research/threads/detail") {
+        return Promise.resolve({ answers: [{ id: "answer-1", question: "旧问题", answer: "旧回答", citations: [] }] });
+      }
+      if (path === "/api/research/threads/delete") {
+        deleted = true;
+        return Promise.resolve({ deleted: 1 });
+      }
+      return Promise.resolve({});
+    });
+    const confirmMock = vi.fn(() => true);
+    vi.stubGlobal("window", { setInterval: vi.fn(() => 1), clearInterval: vi.fn(), confirm: confirmMock });
+
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<NewsRagPanel llmSettings={null} />); });
+    expect(textOf(renderer.toJSON())).toContain("旧回答");
+    const deleteButton = renderer.root.findByProps({
+      "aria-label": "删除研究会话：待删除会话",
+    });
+    await act(async () => { deleteButton.props.onClick(); });
+
+    expect(confirmMock).toHaveBeenCalledWith("确认删除研究会话“待删除会话”？历史问答将一并删除。");
+    expect(postJson).toHaveBeenCalledWith("/api/research/threads/delete", {
+      thread_id: "thread-delete",
+    });
+    expect(textOf(renderer.toJSON())).not.toContain("旧回答");
+    await act(async () => { renderer.unmount(); });
+  });
+
+  it("does not delete a research thread when confirmation is cancelled", async () => {
+    const thread = {
+      id: "thread-cancel",
+      title: "保留会话",
+      stock_code: "",
+      created_at_epoch_ms: 1,
+      updated_at_epoch_ms: 2,
+    };
+    getJson.mockImplementation((path: string) => {
+      if (path === "/api/research/threads") return Promise.resolve({ items: [thread] });
+      if (path.startsWith("/api/research/messages")) return Promise.resolve({ items: [] });
+      if (path.startsWith("/api/research/overview")) {
+        return Promise.resolve({ schema_version: 2, document_count: 0, chunk_count: 0,
+          unread_count: 0, retrieval: { vector: { ready: false } } });
+      }
+      return Promise.resolve({});
+    });
+    const confirmMock = vi.fn(() => false);
+    vi.stubGlobal("window", { setInterval: vi.fn(() => 1), clearInterval: vi.fn(), confirm: confirmMock });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<NewsRagPanel llmSettings={null} />); });
+    const deleteButton = renderer.root.findByProps({
+      "aria-label": "删除研究会话：保留会话",
+    });
+    await act(async () => { deleteButton.props.onClick(); });
+    expect(confirmMock).toHaveBeenCalledTimes(1);
+    expect(postJson).not.toHaveBeenCalledWith("/api/research/threads/delete", expect.anything());
+    expect(textOf(renderer.toJSON())).toContain("保留会话");
+    await act(async () => { renderer.unmount(); });
+  });
 });

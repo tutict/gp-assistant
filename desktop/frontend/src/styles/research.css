@@ -337,7 +337,7 @@
   }
 
   .research-stock-row > span:nth-child(2),
-  .research-thread-row > span {
+  .research-thread-main > span {
     display: grid;
     min-width: 0;
     gap: 2px;
@@ -379,11 +379,9 @@
 
   .research-thread-row {
     display: grid;
-    grid-template-columns: 18px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 28px;
     align-items: center;
-    gap: var(--space-2);
     min-height: 42px;
-    padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-sm);
   }
 
@@ -395,6 +393,46 @@
 
   .research-thread-row.active svg {
     color: var(--accent);
+  }
+
+  .research-thread-main,
+  .research-thread-delete {
+    border: 0;
+    color: inherit;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .research-thread-main {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    min-height: 42px;
+    padding: var(--space-1) var(--space-2);
+    text-align: left;
+  }
+
+  .research-thread-delete {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+  }
+
+  .research-thread-delete:hover:not(:disabled),
+  .research-thread-delete:focus-visible {
+    color: var(--danger);
+    background: var(--surface-3);
+  }
+
+  .research-thread-delete:disabled {
+    cursor: wait;
+    opacity: 0.5;
   }
 
   .research-stream {

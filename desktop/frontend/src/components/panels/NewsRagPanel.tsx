@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import {
   BookOpen, Database, Download, ExternalLink, FileText, Inbox, Menu,
   MessageSquareText, Plus, RefreshCw, RotateCcw, Search, Send, Upload, X,
+  Trash2,
 } from "lucide-react";
 import type {
   LlmSettings, NewsRagResult, ResearchAnswer, ResearchCitation,
@@ -37,6 +38,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const [threads, setThreads] = useState<ResearchThread[]>([]);
   const [threadId, setThreadId] = useState("");
   const threadIdRef = useRef("");
+  const deletedThreadIdsRef = useRef(new Set<string>());
   const workspaceGenerationRef = useRef(0);
   const [answers, setAnswers] = useState<ResearchAnswer[]>([]);
   const [question, setQuestion] = useState("");
@@ -50,6 +52,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const [indexStatus, setIndexStatus] = useState<ResearchIndexStatus | null>(null);
   const [managementBusy, setManagementBusy] = useState(false);
   const [managementResult, setManagementResult] = useState<unknown>(null);
+  const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
 
   useEffect(() => { threadIdRef.current = threadId; }, [threadId]);
   const selectCode = useCallback((nextCode: string) => {
@@ -93,7 +96,9 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         getJson<{ items?: ResearchThread[] }>("/api/research/threads"),
       ]);
       if (generation !== workspaceGenerationRef.current) return;
-      const nextThreads = threadResult.items || [];
+      const nextThreads = (threadResult.items || []).filter(
+        (thread) => !deletedThreadIdsRef.current.has(thread.id),
+      );
       setOverview(nextOverview);
       setMessages(messageResult.items || []);
       setThreads(nextThreads);
@@ -212,9 +217,34 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     return thread.id;
   }, [code]);
 
+  const deleteThread = useCallback(async (thread: ResearchThread) => {
+    if (asking || deletingThreadId) return;
+    if (!window.confirm(`确认删除研究会话“${thread.title || "未命名会话"}”？历史问答将一并删除。`)) {
+      return;
+    }
+    const generation = workspaceGenerationRef.current;
+    setDeletingThreadId(thread.id);
+    setError("");
+    try {
+      await postJson("/api/research/threads/delete", { thread_id: thread.id });
+      deletedThreadIdsRef.current.add(thread.id);
+      setThreads((current) => current.filter((item) => item.id !== thread.id));
+      if (threadIdRef.current === thread.id) {
+        threadIdRef.current = "";
+        setThreadId("");
+        setAnswers([]);
+      }
+      if (generation === workspaceGenerationRef.current) await loadWorkspace(true);
+    } catch (nextError) {
+      if (generation === workspaceGenerationRef.current) setError((nextError as Error).message);
+    } finally {
+      setDeletingThreadId(null);
+    }
+  }, [asking, deletingThreadId, loadWorkspace]);
+
   const ask = useCallback(async () => {
     const text = question.trim();
-    if (!text || asking) return;
+    if (!text || asking || deletingThreadId) return;
     const generation = workspaceGenerationRef.current;
     const requestedCode = code;
     setAsking(true);
@@ -236,13 +266,17 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       setCitation(answer.citations[0] || null);
       if (mobile) setInboxOpen(false);
       const nextThreads = await getJson<{ items?: ResearchThread[] }>("/api/research/threads");
-      if (generation === workspaceGenerationRef.current) setThreads(nextThreads.items || []);
+      if (generation === workspaceGenerationRef.current) {
+        setThreads((nextThreads.items || []).filter(
+          (thread) => !deletedThreadIdsRef.current.has(thread.id),
+        ));
+      }
     } catch (nextError) {
       if (generation === workspaceGenerationRef.current) setError((nextError as Error).message);
     } finally {
       if (generation === workspaceGenerationRef.current) setAsking(false);
     }
-  }, [asking, code, createThread, mobile, props.llmSettings, question, threadId, threads]);
+  }, [asking, code, createThread, deletingThreadId, mobile, props.llmSettings, question, threadId, threads]);
 
   const management = useCallback(async (action: () => Promise<unknown>) => {
     setManagementBusy(true);
@@ -314,7 +348,10 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
           setInboxOpen(false);
         }}
         unread={overview?.unread_count || 0} open={inboxOpen} close={() => setInboxOpen(false)}
-        createThread={() => void createThread()} />
+        createThread={() => void createThread()}
+        deleteThread={(thread) => void deleteThread(thread)}
+        deletingThreadId={deletingThreadId}
+        asking={asking} />
 
       <main className="research-stream">
         <div className="research-stream-body">
@@ -367,8 +404,8 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
             <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>
           </div>
           <button type="submit" aria-label="提交问题" title="提交问题"
-            disabled={!question.trim() || asking}>
-            {asking ? <RefreshCw size={18} className="is-spinning" /> : <Send size={18} />}
+            disabled={!question.trim() || asking || Boolean(deletingThreadId)}>
+            {asking || deletingThreadId ? <RefreshCw size={18} className="is-spinning" /> : <Send size={18} />}
           </button>
         </form>
       </main>
@@ -447,6 +484,9 @@ function InboxPanel(props: {
   open: boolean;
   close: () => void;
   createThread: () => void;
+  deleteThread: (thread: ResearchThread) => void;
+  deletingThreadId: string | null;
+  asking: boolean;
 }) {
   return <aside className={`research-inbox${props.open ? " mobile-open" : ""}`}>
     <div className="research-pane-heading">
@@ -476,12 +516,20 @@ function InboxPanel(props: {
         <button className="research-icon-button" type="button" aria-label="新建研究会话"
           title="新建会话" onClick={props.createThread}><Plus size={16} /></button>
       </div>
-      {props.threads.slice(0, 20).map((thread) => <button type="button" key={thread.id}
-        className={`research-thread-row${thread.id === props.threadId ? " active" : ""}`}
-        onClick={() => props.setThread(thread)}>
-        <MessageSquareText size={15} />
-        <span><strong>{thread.title}</strong><small>{formatEpoch(thread.updated_at_epoch_ms)}</small></span>
-      </button>)}
+      {props.threads.slice(0, 20).map((thread) => <div key={thread.id}
+        className={`research-thread-row${thread.id === props.threadId ? " active" : ""}`}>
+        <button type="button" className="research-thread-main"
+          onClick={() => props.setThread(thread)}>
+          <MessageSquareText size={15} aria-hidden="true" />
+          <span><strong>{thread.title}</strong><small>{formatEpoch(thread.updated_at_epoch_ms)}</small></span>
+        </button>
+        <button type="button" className="research-thread-delete"
+          aria-label={`删除研究会话：${thread.title || "未命名会话"}`}
+          title="删除会话" disabled={props.asking || props.deletingThreadId === thread.id}
+          onClick={() => props.deleteThread(thread)}>
+          <Trash2 size={14} aria-hidden="true" />
+        </button>
+      </div>)}
     </div>
   </aside>;
 }

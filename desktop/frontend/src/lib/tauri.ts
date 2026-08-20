@@ -266,6 +266,7 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/research/query": async ({ invoke, payload }) => invoke("api_research_query", { payload }),
   "/api/research/threads/create": async ({ invoke, payload }) => invoke("api_research_thread_create", { payload }),
   "/api/research/threads/detail": async ({ invoke, payload }) => invoke("api_research_thread_detail", { payload }),
+  "/api/research/threads/delete": async ({ invoke, payload }) => invoke("api_research_thread_delete", { payload }),
   "/api/research/rebuild-index": async ({ invoke }) => invoke("api_research_rebuild_index"),
   "/api/research/rebuild-embeddings": async ({ invoke }) => invoke("api_research_rebuild_embeddings"),
   "/api/research/import-url": async ({ invoke, payload }) => invoke("api_research_import_url", { payload }),
