@@ -1178,6 +1178,24 @@ impl ResearchStore {
         let transaction = connection
             .transaction()
             .map_err(|error| format!("failed to start research thread deletion: {error}"))?;
+        let affected_document_ids = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT DISTINCT citations.document_id
+                     FROM research_answer_citations citations
+                     JOIN research_answers answers ON answers.id = citations.answer_id
+                     WHERE answers.thread_id = ?1",
+                )
+                .map_err(|error| {
+                    format!("failed to prepare cited documents for deletion: {error}")
+                })?;
+            let rows = statement
+                .query_map(params![thread_id], |row| row.get::<_, String>(0))
+                .map_err(|error| format!("failed to query cited documents for deletion: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("failed to read cited documents for deletion: {error}"))?;
+            rows
+        };
         let deleted = transaction
             .execute(
                 "DELETE FROM research_threads WHERE id = ?1",
@@ -1186,6 +1204,19 @@ impl ResearchStore {
             .map_err(|error| format!("failed to delete research thread: {error}"))?;
         if deleted == 0 {
             return Err("research thread not found".to_string());
+        }
+        for document_id in affected_document_ids {
+            transaction
+                .execute(
+                    "UPDATE documents
+                     SET cited_count = (
+                         SELECT COUNT(*) FROM research_answer_citations
+                         WHERE document_id = ?1
+                     )
+                     WHERE id = ?1",
+                    params![document_id],
+                )
+                .map_err(|error| format!("failed to reconcile cited document count: {error}"))?;
         }
         transaction
             .commit()
@@ -3496,6 +3527,14 @@ mod tests {
     fn deletes_only_the_selected_research_thread_and_cascades_answers() {
         let path = temporary_database_path("delete-research-thread");
         let store = ResearchStore::open(&path).expect("research store should open");
+        store
+            .ingest_documents(&[json!({
+                "document_id": "delete-doc",
+                "title": "待删除引用文档",
+                "content": "删除会话后引用计数必须回收。",
+                "source_tier": "filing"
+            })])
+            .expect("document should be ingested");
         let first = store
             .create_thread(&json!({"id": "thread-delete", "title": "待删除"}))
             .expect("first thread should be created");
@@ -3504,25 +3543,54 @@ mod tests {
             .expect("second thread should be created");
         let first_id = first["id"].as_str().unwrap();
         let second_id = second["id"].as_str().unwrap();
+        let evidence = store
+            .query(&json!({"query": "引用计数", "top_k": 1}))
+            .expect("evidence should be available for the deletion test");
         store
             .save_answer(
                 first_id,
                 "待删除的问题",
-                &json!({"answer": "待删除的回答", "citations": []}),
+                &json!({
+                    "answer": "待删除的回答",
+                    "citations": evidence["citations"].clone()
+                }),
             )
             .expect("first answer should be persisted");
         store
             .save_answer(
                 second_id,
                 "保留的问题",
-                &json!({"answer": "保留的回答", "citations": []}),
+                &json!({
+                    "answer": "保留的回答",
+                    "citations": evidence["citations"].clone()
+                }),
             )
             .expect("second answer should be persisted");
+        let cited_before: i64 = store
+            .connection()
+            .expect("research connection should open")
+            .query_row(
+                "SELECT cited_count FROM documents WHERE id = ?1",
+                params!["delete-doc"],
+                |row| row.get(0),
+            )
+            .expect("document citation count should be readable");
+        assert_eq!(cited_before, 2);
 
         assert_eq!(store.delete_thread(first_id).unwrap(), 1);
         assert!(store.thread(first_id).is_err());
         let remaining = store.thread(second_id).expect("other thread should remain");
         assert_eq!(remaining["answers"].as_array().map(Vec::len), Some(1));
+        let cited_after: i64 = store
+            .connection()
+            .expect("research connection should open")
+            .query_row(
+                "SELECT cited_count FROM documents WHERE id = ?1",
+                params!["delete-doc"],
+                |row| row.get(0),
+            )
+            .expect("document citation count should be readable after deletion");
+        assert_eq!(cited_after, 1);
         drop(store);
         let _ = std::fs::remove_file(path);
     }

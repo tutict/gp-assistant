@@ -161,8 +161,8 @@
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.16s ease, color 0.16s ease, background 0.16s ease;
+  opacity: 1;
+  transition: color 0.16s ease, background 0.16s ease;
 }
 
 .agent-history-remove:hover {

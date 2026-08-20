@@ -498,6 +498,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
                       type="button"
                       className="agent-history-remove"
                       aria-label="删除对话"
+                      title="删除对话"
                       disabled={loading || ledgerDeletionInFlightIds.includes(conversation.id)}
                       onClick={(event) => {
                         event.stopPropagation();
