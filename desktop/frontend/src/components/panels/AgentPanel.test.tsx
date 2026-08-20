@@ -222,7 +222,15 @@ describe("AgentPanel send run ID", () => {
 
     let renderer: ReturnType<typeof create> | undefined;
     await act(async () => {
-      renderer = create(<AgentPanel {...baseProps} llmSettings={null} />);
+      renderer = create(
+        <AgentPanel
+          {...baseProps}
+          llmSettings={{
+            active_provider_id: "test",
+            providers: [{ id: "test", name: "Test", provider: "openai-compatible", model: "test-model", api_key: "test-key" }],
+          }}
+        />,
+      );
     });
     renderers.add(renderer!);
 

@@ -13,14 +13,15 @@ describe("agent scroll contract", () => {
     );
   });
 
-  it("keeps the desktop agent surface non-scrollable", () => {
+  it("locks the outer desktop surface while keeping the thread scrollable", () => {
     expect(responsiveCss).toContain(".app[data-active-view=\"agent\"] {");
     expect(responsiveCss).toContain("height: 100dvh;");
     expect(responsiveCss).toContain("overflow: hidden;");
     expect(responsiveCss).toContain(".app[data-active-view=\"agent\"] .workbench {");
     expect(responsiveCss).toContain("height: calc(100dvh - var(--header-height));");
-    expect(responsiveCss).toContain(".app[data-active-view=\"agent\"] .agent-thread,");
     expect(responsiveCss).toContain(".app[data-active-view=\"agent\"] .agent-run-list,");
     expect(responsiveCss).toContain(".app[data-active-view=\"agent\"] .agent-run-detail {");
+    expect(responsiveCss).toContain(".app[data-active-view=\"agent\"] .agent-thread {");
+    expect(responsiveCss).toContain("overflow-y: auto;");
   });
 });

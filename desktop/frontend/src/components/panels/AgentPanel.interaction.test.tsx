@@ -1,5 +1,6 @@
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { LlmSettings } from "../../types";
 import type { AgentRunDrawerProps } from "./AgentRunDrawer";
 
 const tauriMocks = vi.hoisted(() => ({
@@ -59,7 +60,10 @@ const storageHandlers = new Set<(event: { key: string | null }) => void>();
 let streamHandler: ((event: unknown) => void) | undefined;
 
 const baseProps = {
-  llmSettings: null,
+  llmSettings: {
+    active_provider_id: "test",
+    providers: [{ id: "test", name: "Test", provider: "openai-compatible", model: "test-model", api_key: "test-key" }],
+  },
   onLlmSettingsChange,
   watchlist,
   onWatchlistChange,
@@ -79,10 +83,10 @@ function seedConversations(conversations: StoredConversation[], activeConversati
   storage.set("stock-optimizer-agent-active-conversation", activeConversationId);
 }
 
-async function renderPanel() {
+async function renderPanel(llmSettings: LlmSettings | null = baseProps.llmSettings) {
   let renderer: ReactTestRenderer | undefined;
   await act(async () => {
-    renderer = create(<AgentPanel {...baseProps} />);
+    renderer = create(<AgentPanel {...baseProps} llmSettings={llmSettings} />);
   });
   renderers.add(renderer!);
   return renderer!;
@@ -208,6 +212,27 @@ afterEach(async () => {
 });
 
 describe("AgentPanel run replay interactions", () => {
+  it("shows only the API setup prompt when no model is configured", async () => {
+    seedConversations([conversation("conversation-no-api", "New conversation")]);
+    const renderer = await renderPanel(null);
+    const textarea = renderer.root.findByType("textarea");
+
+    await act(async () => {
+      textarea.props.onChange({ target: { value: "hi" } });
+    });
+    await act(async () => {
+      buttonWithClass(renderer, "send-btn").props.onClick();
+      await Promise.resolve();
+    });
+
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(tauriMocks.getTauriListen).not.toHaveBeenCalled();
+    expect(nodeText(renderer.root)).toContain("请先配置 API 和模型，再开始 Agent 对话。");
+    expect(nodeText(renderer.root)).not.toContain("未返回结构化数据");
+    expect(nodeText(renderer.root)).not.toContain("原始 JSON");
+    expect(nodeText(renderer.root)).not.toContain("degraded");
+  });
+
   it("opens run history without an initial run and passes the drawer contract", async () => {
     seedConversations([conversation("conversation-1", "Current conversation")]);
     const renderer = await renderPanel();

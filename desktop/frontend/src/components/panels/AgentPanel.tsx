@@ -109,8 +109,10 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const [retryingLedgerDeletions, setRetryingLedgerDeletions] = useState(false);
   const [ledgerRevision, setLedgerRevision] = useState(0);
   const threadRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
   const replayTriggerRef = useRef<HTMLElement | null>(null);
   const activeProvider = activeLlmProvider(llmSettings);
+  const activeLlmConfig = useMemo(() => buildLlmConfig(llmSettings), [llmSettings]);
 
   const activeConversation = conversations.find((item) => item.id === activeConversationId) || conversations[0] || null;
   const activeConversationDeleting = Boolean(
@@ -161,9 +163,21 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     }
   }, [activeConversation, activeConversationId, conversations, setActiveConversationId]);
 
+  const handleThreadScroll = useCallback(() => {
+    const node = threadRef.current;
+    if (!node) return;
+    stickToBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+  }, []);
+
   useEffect(() => {
-    threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
-  }, [messages, loading]);
+    stickToBottomRef.current = true;
+  }, [activeConversationId]);
+
+  useEffect(() => {
+    const node = threadRef.current;
+    if (!node || !stickToBottomRef.current) return;
+    node.scrollTo({ top: node.scrollHeight });
+  }, [activeConversationId, messages, loading]);
 
   useEffect(() => {
     setReplayOpen(false);
@@ -347,6 +361,22 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
       || persistedLedgerDeletionIds().has(conversationId)
     ) return;
 
+    if (!activeLlmConfig) {
+      const now = Date.now();
+      setInput("");
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        title: conversation.messages.length ? conversation.title : titleFromMessage(text),
+        messages: [
+          ...conversation.messages,
+          { role: "user", content: text, timestamp: now },
+          { role: "assistant", content: "请先配置 API 和模型，再开始 Agent 对话。", timestamp: now, error: true },
+        ],
+        updatedAt: now,
+      }));
+      return;
+    }
+
     const runId = crypto.randomUUID?.() || `agent-${Date.now()}`;
     const now = Date.now();
     const userMessage: ChatMessage = { role: "user", content: text, timestamp: now };
@@ -426,7 +456,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         message: text,
         runId,
         conversationId,
-        llm: buildLlmConfig(llmSettings),
+        llm: activeLlmConfig,
         mode,
         watchlist,
         history: messages.map((message) => ({ role: message.role, content: message.content })),
@@ -442,7 +472,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     } finally {
       setLoading(false);
     }
-  }, [activeConversation?.id, activeConversation?.mode, input, llmSettings, loading, messages, updateConversation, watchlist]);
+  }, [activeConversation?.id, activeConversation?.mode, activeLlmConfig, input, loading, messages, updateConversation, watchlist]);
 
   return (
     <div className={`panel-container agent-panel agent-workspace ${railCollapsed ? "rail-collapsed" : ""}`}>
@@ -565,7 +595,11 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             <span>运行复盘</span>
           </button>
         </div>
-        <div className={`agent-thread ${messages.length === 0 ? "empty" : ""}`} ref={threadRef}>
+        <div
+          className={`agent-thread ${messages.length === 0 ? "empty" : ""}`}
+          ref={threadRef}
+          onScroll={handleThreadScroll}
+        >
           {messages.length === 0 ? (
             <AgentEmptyState
               mode={activeMode.id}

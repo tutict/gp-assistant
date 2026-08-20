@@ -17,10 +17,13 @@
   .app[data-active-view="agent"] .agent-rail,
   .app[data-active-view="agent"] .agent-rail-section,
   .app[data-active-view="agent"] .agent-history-list,
-  .app[data-active-view="agent"] .agent-thread,
   .app[data-active-view="agent"] .agent-run-list,
   .app[data-active-view="agent"] .agent-run-detail {
     overflow: hidden;
+  }
+  .app[data-active-view="agent"] .agent-thread {
+    overflow-x: hidden;
+    overflow-y: auto;
   }
   .app[data-active-view="agent"] .agent-run-detail {
     overflow-y: auto;
