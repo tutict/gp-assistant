@@ -14,6 +14,7 @@ const allCss = styles.map(({ file, css }) => `/* ${file} */\n${css}`).join("\n")
 const responsiveCss = styles.find(({ file }) => file === "responsive.css")?.css || "";
 const pagesCss = styles.find(({ file }) => file === "pages.css")?.css || "";
 const componentsCss = styles.find(({ file }) => file === "components.css")?.css || "";
+const researchCss = styles.find(({ file }) => file === "research.css")?.css || "";
 const tokensCss = styles.find(({ file }) => file === "tokens.css")?.css || "";
 
 describe("mobile UI density contract", () => {
@@ -96,6 +97,12 @@ describe("mobile UI density contract", () => {
     );
     expect(componentsCss).toMatch(
       /\.agent-history-main\s*\{[^}]*outline:\s*none[^}]*-webkit-tap-highlight-color:\s*transparent/,
+    );
+  });
+
+  it("keeps the research message stream as the scroll container", () => {
+    expect(researchCss).toMatch(
+      /\.research-stream-body\s*\{[^}]*height:\s*100%[^}]*min-height:\s*0[^}]*overflow-x:\s*hidden[^}]*overflow-y:\s*auto[^}]*overscroll-behavior:\s*contain/,
     );
   });
 

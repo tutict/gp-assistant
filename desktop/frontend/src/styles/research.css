@@ -444,10 +444,14 @@
   }
 
   .research-stream-body {
+    height: 100%;
     min-width: 0;
     min-height: 0;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 0 clamp(18px, 2vw, 28px) 18px;
+    scrollbar-gutter: stable;
   }
 
   .research-daily-brief {

@@ -53,6 +53,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const [managementBusy, setManagementBusy] = useState(false);
   const [managementResult, setManagementResult] = useState<unknown>(null);
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
+  const activeLlmConfig = useMemo(() => buildLlmConfig(props.llmSettings), [props.llmSettings]);
 
   useEffect(() => { threadIdRef.current = threadId; }, [threadId]);
   const selectCode = useCallback((nextCode: string) => {
@@ -244,7 +245,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
 
   const ask = useCallback(async () => {
     const text = question.trim();
-    if (!text || asking || deletingThreadId) return;
+    if (!text || asking || deletingThreadId || !activeLlmConfig) return;
     const generation = workspaceGenerationRef.current;
     const requestedCode = code;
     setAsking(true);
@@ -257,7 +258,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       if (!activeThread || generation !== workspaceGenerationRef.current) return;
       const result = await postJson<ResearchQueryResult>("/api/research/query", {
         query: text, stock_code: requestedCode || null, thread_id: activeThread, top_k: 8,
-        llm: buildLlmConfig(props.llmSettings),
+        llm: activeLlmConfig,
       });
       if (generation !== workspaceGenerationRef.current) return;
       const answer: ResearchAnswer = { ...result, question: text, citations: result.citations || [] };
@@ -276,7 +277,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     } finally {
       if (generation === workspaceGenerationRef.current) setAsking(false);
     }
-  }, [asking, code, createThread, deletingThreadId, mobile, props.llmSettings, question, threadId, threads]);
+  }, [activeLlmConfig, asking, code, createThread, deletingThreadId, mobile, question, threadId, threads]);
 
   const management = useCallback(async (action: () => Promise<unknown>) => {
     setManagementBusy(true);
@@ -395,8 +396,8 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         </div>
         <form className="research-composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
           <div><label htmlFor={questionInputId}><span>研究问题</span><small>
-            {buildLlmConfig(props.llmSettings)
-              ? "模型回答会强制引用证据" : "未配置模型，返回证据摘录"}
+            {activeLlmConfig
+              ? "模型回答会强制引用证据" : "请先配置 API 和模型"}
           </small></label>
             <textarea id={questionInputId} value={question}
               onChange={(event) => setQuestion(event.target.value)}
@@ -404,7 +405,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
             <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>
           </div>
           <button type="submit" aria-label="提交问题" title="提交问题"
-            disabled={!question.trim() || asking || Boolean(deletingThreadId)}>
+            disabled={!question.trim() || asking || Boolean(deletingThreadId) || !activeLlmConfig}>
             {asking || deletingThreadId ? <RefreshCw size={18} className="is-spinning" /> : <Send size={18} />}
           </button>
         </form>

@@ -34,6 +34,17 @@ const message: ResearchMessage = {
   unread: true,
 };
 
+const configuredLlmSettings = {
+  active_provider_id: "test",
+  providers: [{
+    id: "test",
+    name: "Test",
+    provider: "openai-compatible",
+    model: "test-model",
+    api_key: "test-key",
+  }],
+};
+
 function textOf(value: unknown): string {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) return value.map(textOf).join("");
@@ -167,6 +178,26 @@ describe("NewsRagPanel", () => {
     );
     expect(html).toContain("消息证据");
     expect(html).toContain("公告证据");
+  });
+
+  it("shows an API setup prompt and skips research queries without a model", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<NewsRagPanel llmSettings={null} />); });
+
+    const composer = renderer.root.find((node) => node.type === "form"
+      && node.props.className === "research-composer");
+    await act(async () => {
+      composer.findByType("textarea").props.onChange({ target: { value: "hi" } });
+    });
+    await act(async () => {
+      composer.props.onSubmit({ preventDefault: vi.fn() });
+      await Promise.resolve();
+    });
+
+    expect(textOf(renderer.toJSON())).toContain("请先配置 API 和模型");
+    expect(postJson).not.toHaveBeenCalledWith("/api/research/threads/create", expect.anything());
+    expect(postJson).not.toHaveBeenCalledWith("/api/research/query", expect.anything());
+    await act(async () => { renderer.unmount(); });
   });
 
   it("offers pack import and rollback on Android without desktop-only maintenance", async () => {
@@ -376,7 +407,7 @@ describe("NewsRagPanel", () => {
     await act(async () => {
       renderer = create(
         <NewsRagPanel
-          llmSettings={null}
+          llmSettings={configuredLlmSettings}
           watchlist={[
             { code: "600000.SH", name: "浦发银行" },
             { code: "000001.SZ", name: "平安银行" },
@@ -420,7 +451,7 @@ describe("NewsRagPanel", () => {
     await act(async () => {
       renderer = create(
         <NewsRagPanel
-          llmSettings={null}
+          llmSettings={configuredLlmSettings}
           watchlist={[
             { code: "600000.SH", name: "浦发银行" },
             { code: "000001.SZ", name: "平安银行" },
