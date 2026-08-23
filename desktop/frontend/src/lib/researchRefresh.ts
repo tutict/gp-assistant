@@ -21,9 +21,12 @@ export async function refreshResearchWatchlist(
     .map((item) => normalizeStockCode(item.code))
     .filter(Boolean))];
   const result: ResearchWatchlistRefreshResult = { refreshed: [], failed: [] };
-  for (const code of codes) {
+  for (const [index, code] of codes.entries()) {
     try {
-      await request("/api/research/refresh", buildNewsRagRequest(code, 30));
+      await request(
+        "/api/research/refresh",
+        buildNewsRagRequest(code, 30, undefined, watchlist, index === 0),
+      );
       result.refreshed.push(code);
     } catch (error) {
       result.failed.push({

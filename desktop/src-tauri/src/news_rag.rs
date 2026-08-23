@@ -2,11 +2,13 @@ use super::{
     build_http_client_with_proxy, cached_market_data, epoch_millis, normalize_stock_code,
     powershell_http_get_bytes_with_headers, read_json_file,
 };
+use scraper::{ElementRef, Html, Selector};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
+    net::IpAddr,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering as AtomicOrdering},
@@ -18,6 +20,8 @@ use tauri::Manager;
 
 const NEWS_CACHE_FILE: &str = "news-cache.json";
 const SOURCE_TIER_NEWS: &str = "news";
+const SOURCE_TIER_POLICY_OFFICIAL: &str = "policy_official";
+const SOURCE_TIER_NEWS_MEDIA: &str = "news_media";
 const SOURCE_TIER_COMMUNITY: &str = "community";
 const SOURCE_SINA_FINANCE: &str = "\u{65b0}\u{6d6a}\u{8d22}\u{7ecf}";
 const SOURCE_THS_F10: &str = "\u{540c}\u{82b1}\u{987a}F10\u{8d44}\u{8baf}";
@@ -62,6 +66,15 @@ pub(crate) async fn api_news_rag_impl(
         .iter()
         .filter_map(|code| stock_by_code.get(code).cloned())
         .collect::<Vec<_>>();
+    let watchlist_stocks = payload
+        .get("watchlist_stocks")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_else(|| related_stocks.clone());
+    let include_public_sources = payload
+        .get("include_public_sources")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
     let days = payload_u64(&payload, "days", 30, 1, 365) as i64;
     let max_items = payload_u64(&payload, "max_items", 24, 1, 100) as usize;
     let mobile_fast = payload
@@ -78,7 +91,15 @@ pub(crate) async fn api_news_rag_impl(
     let news_result = if mobile_fast {
         fetch_android_short_news_items(&related_stocks, &relations, days, Some(&payload)).await
     } else {
-        fetch_news_items(&related_stocks, &relations, days, None).await
+        fetch_news_items(
+            &related_stocks,
+            &relations,
+            days,
+            None,
+            Some(&watchlist_stocks),
+            include_public_sources,
+        )
+        .await
     };
     let us_market_brief = if include_us_market_brief {
         Some(fetch_us_market_brief().await)
@@ -383,6 +404,8 @@ async fn fetch_news_items(
     relations: &[Value],
     days: i64,
     network_payload: Option<&Value>,
+    watchlist_payload: Option<&Vec<Value>>,
+    include_public_sources: bool,
 ) -> (Vec<Value>, Vec<String>) {
     let client = match build_http_client_with_proxy(
         "Mozilla/5.0 GuXuanYou/0.3 news-rag",
@@ -532,7 +555,500 @@ async fn fetch_news_items(
         );
     }
 
+    if include_public_sources {
+        let policy_stocks = watchlist_payload
+            .map(|items| items.as_slice())
+            .filter(|items| !items.is_empty())
+            .unwrap_or(stocks);
+        let (policy_result, media_result) = futures::join!(
+            fetch_public_policy_sources(&client, policy_stocks, days),
+            fetch_public_media_sources(&client, policy_stocks, days),
+        );
+        let (policy_items, policy_errors) = policy_result;
+        let (media_items, media_errors) = media_result;
+        if !policy_errors.is_empty() {
+            notes.push(format!(
+                "官方政策源部分不可用：{}",
+                limit_chars(&policy_errors.join("；"), 300)
+            ));
+        }
+        if !media_errors.is_empty() {
+            notes.push(format!(
+                "财经媒体源部分不可用：{}",
+                limit_chars(&media_errors.join("；"), 300)
+            ));
+        }
+        {
+            notes.push(format!(
+                "已尝试公开官方政策源，获取 {} 条政策消息。",
+                policy_items.len()
+            ));
+            items.extend(policy_items);
+        }
+        {
+            notes.push(format!(
+                "已尝试公开财经媒体源，获取 {} 条媒体消息。",
+                media_items.len()
+            ));
+            items.extend(media_items);
+        }
+    }
+
     (dedupe_news_items(items), notes)
+}
+
+async fn fetch_public_policy_sources(
+    client: &reqwest::Client,
+    watchlist: &[Value],
+    days: i64,
+) -> (Vec<Value>, Vec<String>) {
+    let urls = configured_urls_with_defaults(
+        "GP_NEWS_POLICY_URLS",
+        &[
+            "https://www.gov.cn/zhengce/zhengceku/bmwj/home.htm",
+            "https://www.ndrc.gov.cn/xwdt/xwfb/",
+            "https://www.mof.gov.cn/zhengwuxinxi/zhengcefabu/",
+            "https://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html",
+            "https://www.csrc.gov.cn/csrc/c100028/common_list.shtml",
+        ],
+    );
+    fetch_public_sources(client, &urls, SOURCE_TIER_POLICY_OFFICIAL, watchlist, days).await
+}
+
+async fn fetch_public_media_sources(
+    client: &reqwest::Client,
+    watchlist: &[Value],
+    days: i64,
+) -> (Vec<Value>, Vec<String>) {
+    let urls = configured_urls_with_defaults(
+        "GP_NEWS_MEDIA_URLS",
+        &[
+            "https://www.yicai.com/?mode=rss",
+            "https://www.caixin.com/",
+            "https://www.stcn.com/",
+            "https://www.cnstock.com/",
+            "https://www.cs.com.cn/",
+        ],
+    );
+    fetch_public_sources(client, &urls, SOURCE_TIER_NEWS_MEDIA, watchlist, days).await
+}
+
+async fn fetch_public_sources(
+    client: &reqwest::Client,
+    urls: &[String],
+    source_tier: &str,
+    watchlist: &[Value],
+    days: i64,
+) -> (Vec<Value>, Vec<String>) {
+    let cutoff = cutoff_epoch_millis(days);
+    let mut items = Vec::new();
+    let mut errors = Vec::new();
+    let max_items = env_usize("GP_NEWS_PUBLIC_MAX_ITEMS", 40, 1, 200);
+    let valid_urls = urls
+        .iter()
+        .take(20)
+        .filter_map(|url| match validate_public_source_url(url) {
+            Ok(_) => Some(url),
+            Err(error) => {
+                errors.push(format!("{url}: {error}"));
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    let results = futures::future::join_all(
+        valid_urls
+            .into_iter()
+            .map(|url| async move { (url, http_get_text(client, url).await) }),
+    )
+    .await;
+    for (url, body_result) in results {
+        let body = match body_result {
+            Ok(body) => body,
+            Err(error) => {
+                errors.push(format!("{url}: {}", limit_chars(&error, 160)));
+                continue;
+            }
+        };
+        let source_name = source_tier_name(url);
+        let parsed = if looks_like_feed(&body) || url.contains("mode=rss") {
+            parse_public_feed(&body, &source_name, source_tier, max_items)
+        } else {
+            parse_public_html_list(&body, url, &source_name, source_tier, max_items)
+        };
+        for item in parsed {
+            if item_epoch(&item) >= cutoff {
+                items.push(classify_policy_item(item, watchlist));
+            }
+        }
+    }
+    (dedupe_news_items(items), errors)
+}
+
+fn configured_urls_with_defaults(env_name: &str, defaults: &[&str]) -> Vec<String> {
+    let configured = configured_urls(env_name);
+    let mut urls = configured;
+    urls.extend(defaults.iter().map(|value| (*value).to_string()));
+    let mut seen = HashSet::new();
+    urls.retain(|url| seen.insert(url.clone()));
+    urls
+}
+
+fn validate_public_source_url(raw: &str) -> Result<reqwest::Url, String> {
+    let url = reqwest::Url::parse(raw.trim()).map_err(|_| "URL 格式不正确".to_string())?;
+    if url.scheme() != "https" {
+        return Err("只允许 HTTPS 来源".to_string());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("来源 URL 不能包含凭据".to_string());
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| "来源 URL 缺少主机名".to_string())?;
+    if host.eq_ignore_ascii_case("localhost")
+        || host.eq_ignore_ascii_case("localhost.localdomain")
+        || host.ends_with(".local")
+    {
+        return Err("来源主机不允许使用本机或本地域名".to_string());
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        let blocked = match ip {
+            IpAddr::V4(ip) => {
+                ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified()
+            }
+            IpAddr::V6(ip) => {
+                ip.is_loopback()
+                    || ip.is_unique_local()
+                    || ip.is_unicast_link_local()
+                    || ip.is_unspecified()
+            }
+        };
+        if blocked {
+            return Err("来源主机不允许使用内网地址".to_string());
+        }
+    }
+    Ok(url)
+}
+
+fn source_tier_name(url: &str) -> String {
+    let host = reqwest::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| "公开来源".to_string());
+    match host.as_str() {
+        "gov.cn" | "www.gov.cn" => "中国政府网".to_string(),
+        "ndrc.gov.cn" | "www.ndrc.gov.cn" => "国家发展改革委".to_string(),
+        "mof.gov.cn" | "www.mof.gov.cn" => "财政部".to_string(),
+        "pbc.gov.cn" | "www.pbc.gov.cn" => "中国人民银行".to_string(),
+        "csrc.gov.cn" | "www.csrc.gov.cn" => "中国证监会".to_string(),
+        "yicai.com" | "www.yicai.com" => "第一财经".to_string(),
+        "caixin.com" | "www.caixin.com" => "财新".to_string(),
+        "stcn.com" | "www.stcn.com" => "证券时报".to_string(),
+        "cnstock.com" | "www.cnstock.com" => "上海证券报".to_string(),
+        "cs.com.cn" | "www.cs.com.cn" => "中国证券报".to_string(),
+        _ => host,
+    }
+}
+
+fn looks_like_feed(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("<rss") || lower.contains("<feed") || lower.contains("<channel")
+}
+
+fn parse_public_feed(body: &str, source_name: &str, source_tier: &str, limit: usize) -> Vec<Value> {
+    let mut items = Vec::new();
+    let lower = body.to_ascii_lowercase();
+    let container = if lower.contains("<item") {
+        "item"
+    } else {
+        "entry"
+    };
+    let open_tag = format!("<{container}");
+    let close_tag = format!("</{container}>");
+    let mut cursor = 0usize;
+    while let Some(relative_start) = lower[cursor..].find(&open_tag) {
+        let start = cursor + relative_start;
+        let Some(relative_end) = lower[start..].find(&close_tag) else {
+            break;
+        };
+        let end = start + relative_end + close_tag.len();
+        let fragment = &body[start..end];
+        let Some(title) = extract_tag_text(fragment, "title") else {
+            cursor = end;
+            continue;
+        };
+        let summary = extract_tag_text(fragment, "description")
+            .or_else(|| extract_tag_text(fragment, "summary"))
+            .unwrap_or_else(|| title.clone());
+        let url = extract_tag_text(fragment, "link")
+            .or_else(|| extract_tag_attribute(fragment, "link", "href"))
+            .unwrap_or_default();
+        let published_at = extract_tag_text(fragment, "pubdate")
+            .or_else(|| extract_tag_text(fragment, "published"))
+            .or_else(|| extract_tag_text(fragment, "updated"))
+            .map(|value| parse_news_time(&value));
+        items.push(classify_policy_item(
+            json!({
+                "title": title,
+                "summary": summary,
+                "source": source_name,
+                "source_tier": source_tier,
+                "published_at": published_at,
+                "url": url,
+                "stock_codes": [],
+                "relation_types": [],
+                "sentiment": "uncertain",
+                "fetched_at_epoch_ms": epoch_millis()
+            }),
+            &[],
+        ));
+        cursor = end;
+        if items.len() >= limit {
+            break;
+        }
+    }
+    items
+}
+
+fn extract_tag_attribute(fragment: &str, tag: &str, attribute: &str) -> Option<String> {
+    let lower = fragment.to_ascii_lowercase();
+    let marker = format!("<{tag}");
+    let start = lower.find(&marker)?;
+    let end = fragment[start..].find('>')? + start;
+    extract_first_attr_value(&fragment[start..=end], attribute)
+}
+
+fn parse_public_html_list(
+    body: &str,
+    base_url: &str,
+    source_name: &str,
+    source_tier: &str,
+    limit: usize,
+) -> Vec<Value> {
+    let document = Html::parse_document(body);
+    let Ok(selector) = Selector::parse("a") else {
+        return Vec::new();
+    };
+    let mut items = Vec::new();
+    for anchor in document.select(&selector) {
+        let title = clean_html(&anchor.text().collect::<Vec<_>>().join(" "));
+        if title.chars().count() < 6 || title.contains("首页") || title.contains("登录") {
+            continue;
+        }
+        let Some(href) = anchor.value().attr("href") else {
+            continue;
+        };
+        let Some(url) = absolute_public_url(base_url, href) else {
+            continue;
+        };
+        if !url.starts_with("https://") {
+            continue;
+        }
+        let published_at = ["datetime", "data-time", "data-date"]
+            .into_iter()
+            .find_map(|attribute| anchor.value().attr(attribute))
+            .map(parse_news_time)
+            .or_else(|| {
+                anchor
+                    .ancestors()
+                    .filter_map(ElementRef::wrap)
+                    .find_map(|element| {
+                        let context = clean_html(&element.text().collect::<Vec<_>>().join(" "));
+                        extract_sina_news_time(&context)
+                    })
+            });
+        if published_at.is_none() {
+            continue;
+        }
+        items.push(classify_policy_item(
+            json!({
+                "title": title,
+                "summary": title,
+                "source": source_name,
+                "source_tier": source_tier,
+                "published_at": published_at,
+                "url": url,
+                "stock_codes": [],
+                "relation_types": [],
+                "sentiment": "uncertain",
+                "fetched_at_epoch_ms": epoch_millis()
+            }),
+            &[],
+        ));
+        if items.len() >= limit {
+            break;
+        }
+    }
+    items
+}
+
+fn extract_tag_text(fragment: &str, tag: &str) -> Option<String> {
+    let lower = fragment.to_ascii_lowercase();
+    let open = format!("<{tag}");
+    let start = lower.find(&open)?;
+    let content_start = fragment[start..].find('>')? + start + 1;
+    let close = format!("</{tag}>");
+    let content_end = lower[content_start..].find(&close)? + content_start;
+    let value = clean_html(&fragment[content_start..content_end])
+        .trim()
+        .to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn absolute_public_url(base_url: &str, href: &str) -> Option<String> {
+    let trimmed = href.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("javascript:") {
+        return None;
+    }
+    let base = reqwest::Url::parse(base_url).ok()?;
+    base.join(trimmed).ok().map(|url| url.to_string())
+}
+
+fn classify_policy_item(mut item: Value, watchlist: &[Value]) -> Value {
+    let source_tier = normalize_public_source_tier(
+        item.get("source_tier")
+            .and_then(Value::as_str)
+            .unwrap_or(SOURCE_TIER_NEWS),
+    );
+    let entities_text = item
+        .get("entities")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default();
+    let text = format!(
+        "{} {} {}",
+        item.get("title").and_then(Value::as_str).unwrap_or(""),
+        item.get("summary").and_then(Value::as_str).unwrap_or(""),
+        entities_text
+    );
+    let normalized = text.to_ascii_lowercase();
+    let mut mapped = Vec::new();
+    let mut tags = Vec::new();
+    let mut scope_type = "macro";
+
+    for stock in watchlist {
+        let Some(code) = stock
+            .get("code")
+            .and_then(Value::as_str)
+            .and_then(normalize_stock_code)
+        else {
+            continue;
+        };
+        let name = stock.get("name").and_then(Value::as_str).unwrap_or("");
+        let digits = code_digits(&code).unwrap_or_default();
+        if (!name.is_empty() && text.contains(name)) || normalized.contains(&digits) {
+            mapped.push(code);
+        }
+    }
+    if !mapped.is_empty() {
+        scope_type = "company";
+        tags.push("公司".to_string());
+    } else {
+        for stock in watchlist {
+            let Some(code) = stock
+                .get("code")
+                .and_then(Value::as_str)
+                .and_then(normalize_stock_code)
+            else {
+                continue;
+            };
+            let industry = stock
+                .get("industry")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            if industry.len() >= 2 && text.contains(industry) {
+                mapped.push(code);
+                if !tags.iter().any(|tag| tag == industry) {
+                    tags.push(industry.to_string());
+                }
+            }
+        }
+        if !mapped.is_empty() {
+            scope_type = "industry";
+        } else {
+            for stock in watchlist {
+                let Some(code) = stock
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .and_then(normalize_stock_code)
+                else {
+                    continue;
+                };
+                let regions = ["province", "region", "city"]
+                    .into_iter()
+                    .filter_map(|key| stock.get(key).and_then(Value::as_str))
+                    .map(str::trim)
+                    .filter(|value| value.len() >= 2)
+                    .collect::<Vec<_>>();
+                if let Some(region) = regions.into_iter().find(|region| text.contains(region)) {
+                    mapped.push(code);
+                    if !tags.iter().any(|tag| tag == region) {
+                        tags.push(region.to_string());
+                    }
+                }
+            }
+            if !mapped.is_empty() {
+                scope_type = "region";
+            }
+        }
+    }
+    if scope_type == "macro" {
+        mapped.extend(watchlist.iter().filter_map(|stock| {
+            stock
+                .get("code")
+                .and_then(Value::as_str)
+                .and_then(normalize_stock_code)
+        }));
+        tags.push("宏观".to_string());
+    }
+    mapped.sort();
+    mapped.dedup();
+    if let Some(object) = item.as_object_mut() {
+        object.insert("source_tier".to_string(), json!(source_tier));
+        object.insert("scope_type".to_string(), json!(scope_type));
+        object.insert("scope_tags".to_string(), json!(tags));
+        object.insert("mapped_stock_codes".to_string(), json!(mapped.clone()));
+        if matches!(
+            source_tier.as_str(),
+            SOURCE_TIER_POLICY_OFFICIAL | SOURCE_TIER_NEWS_MEDIA
+        ) && !mapped.is_empty()
+        {
+            object.insert("stock_codes".to_string(), json!(mapped));
+        }
+    }
+    news_item(item)
+}
+
+fn normalize_public_source_tier(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "policy_official" | "official_policy" | "policy" => SOURCE_TIER_POLICY_OFFICIAL.to_string(),
+        "news_media" | "media" | "traditional_media" => SOURCE_TIER_NEWS_MEDIA.to_string(),
+        "filing" | "official" | "announcement" => "filing".to_string(),
+        "financial" | "financial_snapshot" | "finance" => "financial_snapshot".to_string(),
+        "research" | "research_report" | "report" => "research_report".to_string(),
+        "community" | "social" => SOURCE_TIER_COMMUNITY.to_string(),
+        _ => SOURCE_TIER_NEWS.to_string(),
+    }
+}
+
+#[cfg(test)]
+fn source_rank(value: &str) -> u8 {
+    match normalize_public_source_tier(value).as_str() {
+        SOURCE_TIER_POLICY_OFFICIAL => 7,
+        "filing" => 6,
+        "financial_snapshot" => 5,
+        SOURCE_TIER_NEWS_MEDIA => 4,
+        SOURCE_TIER_NEWS => 3,
+        "research_report" => 2,
+        SOURCE_TIER_COMMUNITY => 1,
+        _ => 0,
+    }
 }
 
 async fn fetch_us_market_brief() -> Value {
@@ -1317,18 +1833,7 @@ fn query_evidence(items: &[Value], codes: &[String], days: i64, limit: usize) ->
     let mut evidence = items
         .iter()
         .filter(|item| item_epoch(item) >= cutoff)
-        .filter(|item| {
-            item.get("stock_codes")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .any(|code| {
-                    normalize_stock_code(code)
-                        .map(|normalized| code_set.contains(&normalized))
-                        .unwrap_or(false)
-                })
-        })
+        .filter(|item| evidence_matches_codes(item, &code_set))
         .map(news_evidence)
         .collect::<Vec<_>>();
     evidence.sort_by(|left, right| item_epoch(right).cmp(&item_epoch(left)));
@@ -1336,6 +1841,21 @@ fn query_evidence(items: &[Value], codes: &[String], days: i64, limit: usize) ->
         .into_iter()
         .take(limit)
         .collect()
+}
+
+fn evidence_matches_codes(item: &Value, code_set: &HashSet<String>) -> bool {
+    ["stock_codes", "mapped_stock_codes"].iter().any(|key| {
+        item.get(*key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .any(|code| {
+                normalize_stock_code(code)
+                    .map(|normalized| code_set.contains(&normalized))
+                    .unwrap_or(false)
+            })
+    })
 }
 
 fn news_evidence(item: &Value) -> Value {
@@ -1347,7 +1867,10 @@ fn news_evidence(item: &Value) -> Value {
         "published_at": item.get("published_at").and_then(Value::as_str),
         "url": item.get("url").and_then(Value::as_str),
         "stock_codes": string_array(item.get("stock_codes")),
+        "mapped_stock_codes": string_array(item.get("mapped_stock_codes")),
         "relation_types": string_array(item.get("relation_types")),
+        "scope_type": item.get("scope_type").and_then(Value::as_str),
+        "scope_tags": string_array(item.get("scope_tags")),
         "sentiment": normalize_sentiment(item.get("sentiment").and_then(Value::as_str).unwrap_or("uncertain")),
     })
 }
@@ -2823,6 +3346,155 @@ mod tests {
         );
         assert_eq!(news_scope_mode(&json!({"mode":"plain_news"})), "stock_only");
         assert_eq!(news_scope_mode(&json!({})), "upstream");
+    }
+
+    #[test]
+    fn public_source_tiers_are_ranked_above_regular_news() {
+        assert_eq!(
+            normalize_public_source_tier("policy_official"),
+            "policy_official"
+        );
+        assert_eq!(normalize_public_source_tier("news_media"), "news_media");
+        assert!(source_rank("policy_official") > source_rank("news_media"));
+        assert!(source_rank("news_media") > source_rank("news"));
+    }
+
+    #[test]
+    fn public_feed_parser_extracts_rss_items() {
+        let xml = r#"
+          <rss><channel>
+            <item><title>国务院发布新能源政策</title>
+              <link>https://example.gov.cn/policy/1</link>
+              <description>支持电池产业发展</description>
+              <pubDate>2026-08-20 10:00:00</pubDate></item>
+          </channel></rss>
+        "#;
+        let items = parse_public_feed(xml, "政策源", SOURCE_TIER_POLICY_OFFICIAL, 5);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["title"], "国务院发布新能源政策");
+        assert_eq!(items[0]["source_tier"], SOURCE_TIER_POLICY_OFFICIAL);
+        assert_eq!(items[0]["url"], "https://example.gov.cn/policy/1");
+    }
+
+    #[test]
+    fn public_feed_parser_accepts_atom_entries() {
+        let xml = r#"
+          <feed><entry><title>第一财经政策解读</title>
+            <link href="https://example.com/article/1" />
+            <summary>市场影响分析</summary>
+            <updated>2026-08-21T09:00:00Z</updated></entry></feed>
+        "#;
+        let items = parse_public_feed(xml, "第一财经", SOURCE_TIER_NEWS_MEDIA, 5);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["url"], "https://example.com/article/1");
+        assert_eq!(items[0]["source_tier"], SOURCE_TIER_NEWS_MEDIA);
+    }
+
+    #[test]
+    fn public_html_parser_requires_and_extracts_list_item_date() {
+        let html = r#"
+          <ul><li><span class="date">2026-08-21 09:30:00</span>
+            <a href="https://example.com/policy">公开政策解读</a>
+          </li><li><a href="/nav">首页导航</a></li></ul>
+        "#;
+        let items = parse_public_html_list(
+            html,
+            "https://example.com/",
+            "示例媒体",
+            SOURCE_TIER_NEWS_MEDIA,
+            5,
+        );
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["published_at"], "2026-08-21 09:30:00");
+        assert_eq!(items[0]["title"], "公开政策解读");
+    }
+
+    #[test]
+    fn mapped_policy_evidence_matches_stock_queries() {
+        let item = json!({
+            "title": "电池产业政策",
+            "mapped_stock_codes": ["300750.SZ"],
+            "scope_type": "industry",
+        });
+        let codes = ["300750.SZ".to_string()].into_iter().collect();
+        assert!(evidence_matches_codes(&item, &codes));
+    }
+
+    #[test]
+    fn public_source_urls_require_https_without_private_hosts() {
+        assert!(validate_public_source_url("https://example.com/feed").is_ok());
+        assert!(validate_public_source_url("http://example.com/feed").is_err());
+        assert!(validate_public_source_url("https://127.0.0.1/feed").is_err());
+        assert!(validate_public_source_url("https://user:pass@example.com/feed").is_err());
+    }
+
+    #[test]
+    fn configured_public_urls_append_and_dedupe_defaults() {
+        std::env::set_var(
+            "GP_TEST_PUBLIC_URLS",
+            "https://custom.example/feed https://default.example/feed",
+        );
+        let urls = configured_urls_with_defaults(
+            "GP_TEST_PUBLIC_URLS",
+            &[
+                "https://default.example/feed",
+                "https://fallback.example/feed",
+            ],
+        );
+        std::env::remove_var("GP_TEST_PUBLIC_URLS");
+        assert_eq!(
+            urls,
+            vec![
+                "https://custom.example/feed",
+                "https://default.example/feed",
+                "https://fallback.example/feed"
+            ]
+        );
+    }
+
+    #[test]
+    fn policy_mapping_uses_entities_and_all_region_fields() {
+        let stocks = vec![json!({
+            "code":"300750.SZ", "name":"宁德时代", "industry":"电池",
+            "province":"江苏", "region":"华东", "city":"宁德"
+        })];
+        let entity_item = classify_policy_item(
+            json!({"title":"产业政策", "summary":"支持重点企业", "entities":["300750.SZ"], "source_tier":SOURCE_TIER_POLICY_OFFICIAL}),
+            &stocks,
+        );
+        assert_eq!(entity_item["scope_type"], "company");
+        assert_eq!(entity_item["mapped_stock_codes"], json!(["300750.SZ"]));
+
+        let city_item = classify_policy_item(
+            json!({"title":"宁德地区产业扶持政策", "summary":"区域政策落地", "source_tier":SOURCE_TIER_POLICY_OFFICIAL}),
+            &stocks,
+        );
+        assert_eq!(city_item["scope_type"], "region");
+        assert_eq!(city_item["scope_tags"], json!(["宁德"]));
+    }
+
+    #[test]
+    fn policy_scope_maps_macro_and_industry_messages_to_watchlist() {
+        let stocks = vec![
+            json!({"code":"300750.SZ", "name":"宁德时代", "industry":"电池", "province":"江苏"}),
+            json!({"code":"600000.SH", "name":"浦发银行", "industry":"银行", "province":"上海"}),
+        ];
+        let macro_item = classify_policy_item(
+            json!({"title":"国务院稳增长政策", "summary":"扩大内需", "source_tier":SOURCE_TIER_POLICY_OFFICIAL}),
+            &stocks,
+        );
+        assert_eq!(macro_item["scope_type"], "macro");
+        assert_eq!(
+            macro_item["mapped_stock_codes"].as_array().unwrap().len(),
+            2
+        );
+
+        let industry_item = classify_policy_item(
+            json!({"title":"新能源电池产业政策落地", "summary":"支持电池技术创新", "source_tier":SOURCE_TIER_POLICY_OFFICIAL}),
+            &stocks,
+        );
+        assert_eq!(industry_item["scope_type"], "industry");
+        assert_eq!(industry_item["mapped_stock_codes"], json!(["300750.SZ"]));
     }
 
     #[test]

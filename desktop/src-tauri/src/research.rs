@@ -38,8 +38,15 @@ pub(crate) struct ResearchMessage {
     pub summary: String,
     pub sentiment: String,
     pub source_tier: String,
+    pub source_name: String,
     pub published_at: Option<String>,
     pub unread: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope_tags: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mapped_stock_codes: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -161,11 +168,7 @@ impl ResearchStore {
                 .map_err(|error| format!("failed to encode entities: {error}"))?;
             let relation_types_json = serde_json::to_string(&relation_types)
                 .map_err(|error| format!("failed to encode relation types: {error}"))?;
-            let metadata_json = document
-                .get("metadata")
-                .cloned()
-                .unwrap_or_else(|| json!({}))
-                .to_string();
+            let metadata_json = document_metadata(document).to_string();
             let content_hash = sha256_hex(content.as_bytes());
             let existing_document = transaction
                 .query_row(
@@ -209,7 +212,16 @@ impl ResearchStore {
                                 && row.get::<_, String>(6)? == source_tier
                                 && row.get::<_, String>(7)? == source_name
                                 && row.get::<_, Option<String>>(8)? == url
-                                && row.get::<_, Option<String>>(9)? == published_at)
+                                && row.get::<_, Option<String>>(9)? == published_at
+                                && transaction
+                                    .query_row(
+                                        "SELECT metadata_json FROM documents WHERE id = ?1",
+                                        params![document_id],
+                                        |metadata_row| metadata_row.get::<_, String>(0),
+                                    )
+                                    .optional()?
+                                    .as_deref()
+                                    == Some(metadata_json.as_str()))
                         },
                     )
                     .optional()
@@ -1000,12 +1012,15 @@ impl ResearchStore {
             .min(50_000) as i64;
         let mut statement = connection
             .prepare(
-                "SELECT id, document_id, stock_code, title, summary, sentiment,
-                        source_tier, published_at, unread
-                 FROM research_messages
-                 WHERE (?1 IS NULL OR stock_code = ?1)
-                   AND (?2 = 0 OR unread = 1)
-                 ORDER BY COALESCE(published_at, '') DESC, created_at_epoch_ms DESC
+                "SELECT messages.id, messages.document_id, messages.stock_code, messages.title,
+                        messages.summary, messages.sentiment, messages.source_tier,
+                        documents.source_name, messages.published_at, messages.unread,
+                        documents.metadata_json
+                 FROM research_messages messages
+                 JOIN documents ON documents.id = messages.document_id
+                 WHERE (?1 IS NULL OR messages.stock_code = ?1)
+                   AND (?2 = 0 OR messages.unread = 1)
+                 ORDER BY COALESCE(messages.published_at, '') DESC, messages.created_at_epoch_ms DESC
                  LIMIT ?3 OFFSET ?4",
             )
             .map_err(|error| format!("failed to prepare research messages: {error}"))?;
@@ -1019,8 +1034,15 @@ impl ResearchStore {
                     summary: row.get(4)?,
                     sentiment: row.get(5)?,
                     source_tier: row.get(6)?,
-                    published_at: row.get(7)?,
-                    unread: row.get::<_, i64>(8)? != 0,
+                    source_name: row.get(7)?,
+                    published_at: row.get(8)?,
+                    unread: row.get::<_, i64>(9)? != 0,
+                    scope_type: metadata_string(row.get::<_, String>(10)?, "scope_type"),
+                    scope_tags: metadata_strings(row.get::<_, String>(10)?, "scope_tags"),
+                    mapped_stock_codes: metadata_strings(
+                        row.get::<_, String>(10)?,
+                        "mapped_stock_codes",
+                    ),
                 })
             })
             .map_err(|error| format!("failed to query research messages: {error}"))?
@@ -2216,11 +2238,24 @@ fn normalize_legacy_document(
     let stock_codes = {
         let own = normalized_string_array(object.get("stock_codes"));
         if own.is_empty() {
-            inherited_codes.to_vec()
+            let mapped = normalized_string_array(object.get("mapped_stock_codes"));
+            if mapped.is_empty() {
+                inherited_codes.to_vec()
+            } else {
+                mapped
+            }
         } else {
             own
         }
     };
+    let mut metadata = json!({"legacy_path": path.display().to_string()});
+    if let Some(metadata_object) = metadata.as_object_mut() {
+        for key in ["scope_type", "scope_tags", "mapped_stock_codes"] {
+            if let Some(value) = object.get(key) {
+                metadata_object.insert(key.to_string(), value.clone());
+            }
+        }
+    }
     Some(json!({
         "document_id": document_id,
         "title": title,
@@ -2246,7 +2281,7 @@ fn normalize_legacy_document(
             .get("sentiment")
             .and_then(Value::as_str)
             .unwrap_or("uncertain"),
-        "metadata": {"legacy_path": path.display().to_string()}
+        "metadata": metadata
     }))
 }
 
@@ -2880,6 +2915,43 @@ fn bool_field(value: &Value, key: &str) -> bool {
     value.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
+fn document_metadata(document: &Value) -> Value {
+    let mut metadata = document
+        .get("metadata")
+        .cloned()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    if let Some(object) = metadata.as_object_mut() {
+        for key in ["scope_type", "scope_tags", "mapped_stock_codes"] {
+            if let Some(value) = document.get(key) {
+                object.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+    metadata
+}
+
+fn metadata_string(raw: String, key: &str) -> Option<String> {
+    serde_json::from_str::<Value>(&raw).ok().and_then(|value| {
+        value
+            .get(key)
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn metadata_strings(raw: String, key: &str) -> Option<Vec<String>> {
+    serde_json::from_str::<Value>(&raw).ok().and_then(|value| {
+        value.get(key).and_then(Value::as_array).map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+    })
+}
+
 fn normalized_string_array(value: Option<&Value>) -> Vec<String> {
     let mut values = value
         .and_then(Value::as_array)
@@ -2897,6 +2969,8 @@ fn normalized_string_array(value: Option<&Value>) -> Vec<String> {
 
 fn normalize_source_tier(value: &str) -> String {
     match value.trim().to_ascii_lowercase().as_str() {
+        "policy_official" | "official_policy" | "policy" => "policy_official",
+        "news_media" | "media" | "traditional_media" => "news_media",
         "filing" | "official" | "announcement" => "filing",
         "financial" | "financial_snapshot" | "finance" => "financial_snapshot",
         "research" | "research_report" | "report" => "research_report",
@@ -2908,8 +2982,10 @@ fn normalize_source_tier(value: &str) -> String {
 
 fn source_rank(value: &str) -> u8 {
     match normalize_source_tier(value).as_str() {
-        "filing" => 5,
-        "financial_snapshot" => 4,
+        "policy_official" => 7,
+        "filing" => 6,
+        "financial_snapshot" => 5,
+        "news_media" => 4,
         "news" => 3,
         "research_report" => 2,
         "community" => 1,
@@ -3971,6 +4047,29 @@ mod tests {
         assert_eq!(overview["unread_by_stock"]["000001.SZ"], 1);
         drop(store);
         let _ = remove_sqlite_files(&path);
+    }
+
+    #[test]
+    fn messages_include_document_source_name_and_policy_metadata() {
+        let path = temporary_database_path("message-source-metadata");
+        let store = ResearchStore::open(&path).unwrap();
+        store
+            .ingest_documents(&[json!({
+                "document_id":"policy-doc",
+                "title":"政策原文",
+                "content":"区域政策正文",
+                "source_tier":"policy_official",
+                "source_name":"中国政府网",
+                "stock_codes":["300750.SZ"],
+                "scope_type":"region",
+                "scope_tags":["宁德"],
+                "mapped_stock_codes":["300750.SZ"]
+            })])
+            .unwrap();
+        let item = store.messages(&json!({"stock_code":"300750.SZ"})).unwrap()["items"][0].clone();
+        assert_eq!(item["source_name"], "中国政府网");
+        assert_eq!(item["scope_type"], "region");
+        assert_eq!(item["scope_tags"], json!(["宁德"]));
     }
 
     #[test]

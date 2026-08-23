@@ -348,7 +348,13 @@ export function requireBacktestResult(value: unknown): BacktestResult {
   return value as BacktestResult;
 }
 
-export function buildNewsRagRequest(code: string, days: number, llm?: LlmClientConfig): Record<string, unknown> {
+export function buildNewsRagRequest(
+  code: string,
+  days: number,
+  llm?: LlmClientConfig,
+  watchlist?: WatchlistItem[],
+  includePublicSources = true,
+): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     code,
     seed_codes: code ? [code] : [],
@@ -357,6 +363,17 @@ export function buildNewsRagRequest(code: string, days: number, llm?: LlmClientC
     max_items: 24,
   };
   if (llm) payload.llm = llm;
+  if (watchlist?.length) {
+    payload.watchlist_stocks = watchlist.slice(0, 200).map((item) => ({
+      code: normalizeStockCode(item.code),
+      name: item.name || "",
+      industry: item.industry || "",
+      province: item.province || "",
+      region: item.region || "",
+      city: item.city || "",
+    }));
+  }
+  payload.include_public_sources = includePublicSources;
   return payload;
 }
 

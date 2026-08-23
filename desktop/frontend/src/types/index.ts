@@ -498,6 +498,9 @@ export interface NewsEvidence {
   stock_codes?: string[];
   relation_types?: string[];
   sentiment?: string;
+  scope_type?: "macro" | "industry" | "region" | "company" | string;
+  scope_tags?: string[];
+  mapped_stock_codes?: string[];
 }
 
 export interface NewsImpactFinding {
@@ -528,6 +531,8 @@ export interface NewsRagResult {
 }
 
 export type ResearchSourceTier =
+  | "policy_official"
+  | "news_media"
   | "filing"
   | "financial_snapshot"
   | "news"
@@ -543,8 +548,12 @@ export interface ResearchMessage {
   summary: string;
   sentiment: string;
   source_tier: ResearchSourceTier;
+  source_name: string;
   published_at?: string | null;
   unread: boolean;
+  scope_type?: "macro" | "industry" | "region" | "company" | string;
+  scope_tags?: string[];
+  mapped_stock_codes?: string[];
 }
 
 export interface ResearchCitation {
@@ -788,6 +797,9 @@ export interface WatchlistItem {
   code: string;
   name?: string;
   industry?: string;
+  province?: string;
+  region?: string;
+  city?: string;
   added_at?: string;
   source?: string;
   screenCriteriaSummary?: string;

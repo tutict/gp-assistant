@@ -136,7 +136,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     }
     if (!background) setRefreshing(true);
     try {
-      await postJson("/api/research/refresh", buildNewsRagRequest(code, 30));
+      await postJson("/api/research/refresh", buildNewsRagRequest(code, 30, undefined, watchlist));
       if (generation !== workspaceGenerationRef.current) return;
       await loadWorkspace(true);
     } catch (nextError) {
@@ -146,7 +146,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     } finally {
       if (!background && generation === workspaceGenerationRef.current) setRefreshing(false);
     }
-  }, [code, loadWorkspace]);
+  }, [code, loadWorkspace, watchlist]);
 
   const visibleMessages = useMemo(
     () => code ? messages.filter((message) => message.stock_code === code) : messages,
@@ -439,6 +439,10 @@ function EventGroup(props: {
           <span className={`research-source-tier ${message.source_tier}`}>
             {sourceTierLabel(message.source_tier)}
           </span>
+          <span className="research-source-name">{message.source_name}</span>
+          {message.scope_type && <span className="research-scope-tag">
+            {scopeTypeLabel(message.scope_type)}{message.scope_tags?.length ? ` · ${message.scope_tags.join("、")}` : ""}
+          </span>}
           <time>{formatDateTime(message.published_at)}</time>
           {message.unread && <b>未读</b>}
         </span>
@@ -800,11 +804,17 @@ export function NewsRagView({ result }: { result: NewsRagResult }) {
 
 function sourceTierLabel(value?: string): string {
   const labels: Record<string, string> = {
+    policy_official: "官方政策",
+    news_media: "财经媒体",
     filing: "公告", financial_snapshot: "财务快照", news: "新闻",
     research: "研报", research_report: "研报", community: "社区",
   };
   const key = value ? String(value) : "news";
   return labels[key] || "新闻";
+}
+
+function scopeTypeLabel(value?: string): string {
+  return ({ macro: "宏观", industry: "行业", region: "区域", company: "公司" } as Record<string, string>)[value || ""] || value || "政策";
 }
 
 function sentimentClass(value: string): string {

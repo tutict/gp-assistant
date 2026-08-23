@@ -23,6 +23,13 @@ describe("refreshResearchWatchlist", () => {
     expect(request).toHaveBeenNthCalledWith(2, "/api/research/refresh", expect.objectContaining({
       code: "000001.SZ",
       days: 30,
+      include_public_sources: false,
+    }));
+    expect(request).toHaveBeenNthCalledWith(1, "/api/research/refresh", expect.objectContaining({
+      include_public_sources: true,
+      watchlist_stocks: expect.arrayContaining([
+        expect.objectContaining({ code: "600000.SH" }),
+      ]),
     }));
     expect(result.refreshed).toEqual(["600000.SH"]);
     expect(result.failed).toEqual([{ code: "000001.SZ", error: "offline source" }]);

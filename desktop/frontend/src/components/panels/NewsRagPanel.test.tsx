@@ -30,6 +30,7 @@ const message: ResearchMessage = {
   summary: "净利润预计同比增长。",
   sentiment: "positive",
   source_tier: "filing",
+  source_name: "公司公告",
   published_at: "2026-07-21T08:00:00Z",
   unread: true,
 };
@@ -123,6 +124,36 @@ describe("NewsRagPanel", () => {
     await act(async () => {
       renderer.unmount();
     });
+  });
+
+  it("labels official policy messages with their mapping scope", async () => {
+    const policyMessage: ResearchMessage = {
+      ...message,
+      id: "policy-message",
+      title: "国务院发布电池产业支持政策",
+      source_tier: "policy_official",
+      scope_type: "industry",
+      scope_tags: ["电池"],
+      mapped_stock_codes: ["600000.SH"],
+    };
+    getJson.mockImplementation((path: string) => {
+      if (path.startsWith("/api/research/overview")) return Promise.resolve({
+        schema_version: 2, document_count: 1, chunk_count: 1, unread_count: 1,
+        messages: [policyMessage], retrieval: { vector: { ready: false } },
+      });
+      if (path.startsWith("/api/research/messages")) return Promise.resolve({ items: [policyMessage] });
+      if (path === "/api/research/threads") return Promise.resolve({ items: [] });
+      return Promise.resolve({});
+    });
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<NewsRagPanel llmSettings={null}
+        watchlist={[{ code: "600000.SH", name: "浦发银行" }]} initialCode="600000.SH" />);
+    });
+    expect(textOf(renderer.toJSON())).toContain("官方政策");
+    expect(textOf(renderer.toJSON())).toContain("行业 · 电池");
+    expect(textOf(renderer.toJSON())).toContain("公司公告");
+    await act(async () => { renderer.unmount(); });
   });
 
   it("exposes a visible label for the research question input", async () => {

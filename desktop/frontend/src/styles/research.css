@@ -647,6 +647,12 @@
     font-size: var(--fs-caption);
     font-weight: 700;
   }
+  .research-scope-tag {
+    color: var(--text-tertiary);
+    font-size: 0.68rem;
+    font-weight: 650;
+  }
+  .research-source-name { color: var(--text-secondary); font-size: var(--fs-caption); }
 
   .research-source-tier.filing { color: var(--rise); }
   .research-source-tier.community { color: var(--warning); }
