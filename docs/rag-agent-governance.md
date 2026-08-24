@@ -26,6 +26,11 @@
 ### Agent
 
 - 执行顺序固定为“本地工具取证 -> 模型综合 -> 证据与风险校验 -> 安全合并”。模型不能覆盖工具返回的 `action`、`data` 或证据事实。
+- Rig runtime 位于 `desktop/src-tauri/src/rig_runtime.rs`，由 `rig-core` 和 `rig-agent` 0.42 提供 provider、消息、流、工具 schema、工具循环和错误类型；Tauri 只保留兼容 payload/event/ledger 边界。
+- `rig-core` 与 `rig-agent` 是桌面必选依赖，默认桌面和 Android 构建都使用同一 Rig runtime；`quick / deterministic_v1` 仍跳过 provider。
+- Rig 模型请求必须复用应用的 endpoint 校验、超时、请求/响应大小限制、代理、取消和脱敏策略；Rig 不能自行持有凭据或绕过审计。OpenAI-compatible `full_url` 使用 Rig provider extension 覆盖 completion path；Responses/Anthropic 的自定义 full URL fail closed 并回退本地结果。
+- Rig 工具只接收现有 dispatcher 的回调。授权、参数校验、超时、取消、脱敏和事件账本仍由原执行链负责，第一阶段不注册写操作或无限工具循环。
+- Rig 证据上下文只包装 `ResearchStore` 的结果，保留 `document_id`、`chunk_id`、来源名称/层级、公开 URL、发布时间、引用编号和检索分数；SQLite FTS5、向量 embedding、RRF 融合、来源排序与 `[C#]` 门禁不迁移。
 - 快速模式为 `deterministic_v1`，不调用模型；专家模式为 `hot_money_early_v1`；研报模式为 `value_compounder_v1`。
 - 仅接受显式传入的模型连接；错误、超时、无效 JSON、未知引用和越界内容必须回退本地工具结果。
 - 模型输出的 `reply` 和事实 bullet 必须邻近引用有效 `[E#]`；直接交易建议、收益承诺和操纵市场内容必须拒绝。
@@ -43,7 +48,7 @@
 
 当前版本：
 
-- `prompt_version`: `agent-harness-v2.0`
+- `prompt_version`: `rig-agent-runtime-v1`
 - `policy_version`: `agent-policy-v1`
 - `agent_harness_eval_version`: `agent-harness-eval-v2`
 - `agent_metrics_schema_version`: `1`

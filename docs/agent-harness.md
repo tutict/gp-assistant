@@ -1,4 +1,4 @@
-# Agent LLM Harness v2
+# Rig Agent Runtime
 
 Agent 页面采用“本地工具取证 → 模型综合 → 安全合并”的执行链。模型只能解释工具结果，不能替换工具返回的 `action`、`data` 和证据事实；工具的原始摘要、结构化区块、警告和下一步动作会保留，模型回复以“模型综合”追加，模型区块单独标记为“模型推断”。模型未配置、请求失败、JSON 无效或输出越界时，页面返回带风险提示的本地工具结果。
 
@@ -14,18 +14,18 @@ Agent 页面采用“本地工具取证 → 模型综合 → 安全合并”的�
 
 ## 真实模型链路
 
-前端把当前模型连接、最近 12 条对话历史、模式和最多 50 只自选股上下文传给 Tauri。后端先运行 `gp-core` 的确定性工具，再按连接档案选择 OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages 上游协议：
+前端把当前模型连接、最近 12 条对话历史、模式和最多 50 只自选股上下文传给 Tauri。后端通过 `rig-agent` 运行 Agent 状态机和工具循环，通过 `rig-core` 选择 OpenAI Chat Completions、OpenAI Responses、Anthropic 或 OpenAI-compatible model；协议请求、流式响应和 provider 错误不再由 `agent_harness` 手写：
 
-1. 校验模型地址与凭据边界；公网端点必须使用 HTTPS，基础地址按所选协议规范化。
-2. 发送 system 方法卡和包含问题、历史、压缩工具结果的 user JSON。
-3. 优先请求 JSON 模式；仅当端点以 400/422 明确拒绝 `response_format`/JSON 模式时，才重试一次普通请求。鉴权、超时、5xx、超限和解析错误不会重复计费请求。
-4. 基础地址模式会按协议拼接 `/chat/completions`、`/responses` 或 `/messages`；完整 URL 模式则原样请求配置地址。
+1. 校验模型地址与凭据边界；公网端点必须使用 HTTPS，基础地址按所选协议规范化。OpenAI-compatible 的 `full_url` 通过 Rig provider extension 覆盖 completion path，可使用 `/generate` 等自定义路径；Responses/Anthropic 的自定义 full URL 会安全拒绝并回退本地结果。
+2. 将历史转换为 Rig `Message`，将工具结果和证据作为 Rig context/document，并由 `AgentRunner` 管理多轮状态。
+3. Rig 负责 JSON/schema、请求、流式响应、工具调用和 provider 错误；应用边界仍校验 endpoint、大小、凭据脱敏、代理和取消。模型请求上下文、模型输出、工具参数和工具结果均有独立上限。
+4. 基础地址和完整 URL 配置在 Rig provider builder 前归一化，应用不再拼接 provider request body 或解析 SSE。
 5. 仅接收 `reply`、`answer_sections`、`warnings`、`next_actions` 四类模型字段；摘要和每条事实 bullet 都必须邻近引用证据目录中的有效 `[E#]`，缺失或未知编号会回退本地结果。
 6. 拒绝直接交易、收益承诺和操纵市场内容，并始终补上“仅供选股研究，不构成投资建议”。
 
 本地 Ollama、LM Studio、vLLM 等兼容服务可以不填 API Key。HTTP 仅允许 loopback 或私有局域网 IP 的本地模型；公共远程模型必须使用 HTTPS。专家和研报模式只会使用应用内显式配置后传入的连接及其自身凭据，未传连接配置时会回退本地工具结果，绝不会继承 `OPENAI_*` 环境密钥。IPC payload 限制为 512 KiB、问题限制为 8000 字符、模型请求与响应体各限制为 2 MiB；工具上下文被压缩时会向模型标记 `tool_result_truncated=true`。远程服务错误会脱敏。
 
-执行期间 Tauri 会依次推送本地工具、模型综合、证据校验和完成状态；界面不会在长模型请求期间一直停留在“准备中”。
+执行期间 Tauri 会依次推送 Rig 兼容的本地工具、模型综合、证据校验和完成状态；界面不会在长模型请求期间一直停留在“准备中”。`quick / deterministic_v1` 使用同一 Rig 工具 registry，但跳过 provider 和模型调用。
 
 ## 对照评测
 

@@ -29,6 +29,7 @@ mod research;
 #[cfg(target_os = "windows")]
 mod research_embeddings;
 mod research_import;
+mod rig_runtime;
 mod runtime;
 
 const MOBILE_MARKET_DATA_FILE: &str = "mobile-market-data.json";
@@ -833,37 +834,6 @@ async fn core_agent_with_data(payload: Value) -> Result<Value, String> {
         gp_core::agent_with_data_value(payload).map_err(|error| error.to_string())
     })
     .await?
-}
-
-#[tauri::command]
-async fn core_agent_stream_with_data(
-    app: tauri::AppHandle,
-    payload: Value,
-) -> Result<Value, String> {
-    let events = runtime::run_cpu_bound("core_agent_stream_with_data", move || {
-        gp_core::agent_stream_with_data_events_value(payload).map_err(|error| error.to_string())
-    })
-    .await??;
-    let mut final_response: Option<Value> = None;
-    let mut error_message: Option<String> = None;
-
-    for event in events {
-        let event_value = serde_json::to_value(&event).map_err(|error| error.to_string())?;
-        if event_value.get("type").and_then(Value::as_str) == Some("result") {
-            final_response = event_value.get("response").cloned();
-        }
-        if event_value.get("type").and_then(Value::as_str) == Some("error") {
-            error_message = event_value
-                .get("message")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned);
-        }
-        let _ = app.emit("agent-stream-event", event_value);
-    }
-
-    final_response.ok_or_else(|| {
-        error_message.unwrap_or_else(|| "agent stream did not produce result".to_string())
-    })
 }
 
 #[tauri::command]
@@ -2296,7 +2266,7 @@ async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value
     let event_app = app.clone();
     let execution = match cached_market_data(&app) {
         Ok(data) => {
-            agent_harness::execute_with_event_sink(payload, data, move |event| {
+            rig_runtime::execute_with_event_sink(payload, data, move |event| {
                 // The terminal `result` event carries the whole response, which `complete_run`
                 // already stores in `result_json`. Capturing it too would double every row and
                 // every detail payload. The webview still receives it for the live stream.
@@ -10706,7 +10676,6 @@ pub fn run() {
             core_trend_screen_with_data,
             core_agent,
             core_agent_with_data,
-            core_agent_stream_with_data,
             core_mobile_stock_skill,
             api_health,
             api_strategies,

@@ -1,21 +1,33 @@
+#[cfg(test)]
 use crate::{build_http_client_with_proxy, runtime};
+#[cfg(test)]
 use futures::StreamExt;
 use percent_encoding::percent_decode_str;
 use serde_json::{json, Map, Value};
-use std::{collections::HashMap, net::IpAddr, time::Duration};
+#[cfg(test)]
+use std::time::Duration;
+use std::{collections::HashMap, net::IpAddr};
+#[cfg(test)]
 use stock_optimizer_core as gp_core;
 
+#[cfg(test)]
 const BASE_PROMPT: &str = include_str!("../../../app/prompts/stock_soul.md");
+#[cfg(test)]
 const HOT_MONEY_PROMPT: &str = include_str!("../../../app/prompts/hot_money_early_v1.md");
+#[cfg(test)]
 const VALUE_COMPOUNDER_PROMPT: &str = include_str!("../../../app/prompts/value_compounder_v1.md");
 const PROMPT_VERSION: &str = "agent-harness-v2.0";
 const AGENT_POLICY_VERSION: &str = "agent-policy-v1";
 const RISK_NOTICE: &str = "仅供选股研究，不构成投资建议。";
 const MAX_HARNESS_PAYLOAD_BYTES: usize = 512 * 1024;
 const MAX_MESSAGE_CHARS: usize = 8_000;
+#[cfg(test)]
 const MAX_HISTORY_MESSAGES: usize = 12;
+#[cfg(test)]
 const MAX_HISTORY_CHARS: usize = 2_000;
+#[cfg(test)]
 const MAX_MODEL_REQUEST_BYTES: usize = 2 * 1024 * 1024;
+#[cfg(test)]
 const MAX_MODEL_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_MERGED_REPLY_CHARS: usize = 6_000;
 const MIN_TOOL_REPLY_CHARS: usize = 1_000;
@@ -25,6 +37,7 @@ const MAX_SECRET_REDACTION_PASSES: usize = 32;
 const MAX_REDACTION_SECRETS: usize = 128;
 const MAX_REDACTION_SECRET_BYTES: usize = 16 * 1024;
 
+#[cfg(test)]
 struct PromptProfile {
     id: &'static str,
     instructions: &'static str,
@@ -42,23 +55,31 @@ struct RedactionSecret {
 struct LlmConfig {
     api_key: String,
     base_url: String,
+    #[cfg(test)]
     model: String,
+    #[cfg(test)]
     api_format: String,
+    #[cfg(test)]
     endpoint_mode: String,
     custom_user_agent: Option<String>,
+    #[cfg(test)]
     temperature: f64,
+    #[cfg(test)]
     timeout_seconds: u64,
+    #[cfg(test)]
     json_mode: bool,
     organization: Option<String>,
     project: Option<String>,
 }
 
 #[derive(Debug)]
+#[cfg(test)]
 struct ModelCallFailure {
     outcome: &'static str,
     message: String,
 }
 
+#[cfg(test)]
 impl ModelCallFailure {
     fn policy(message: impl Into<String>) -> Self {
         Self {
@@ -92,12 +113,14 @@ impl ModelCallFailure {
     }
 }
 
+#[cfg(test)]
 pub(crate) struct AgentHarnessOutcome {
     #[cfg(test)]
     pub(crate) events: Vec<Value>,
     pub(crate) response: Value,
 }
 
+#[cfg(test)]
 fn publish_event<F>(events: &mut Vec<Value>, sink: &mut F, event: Value)
 where
     F: FnMut(Value),
@@ -106,6 +129,7 @@ where
     events.push(event);
 }
 
+#[cfg(test)]
 pub(crate) fn prompt_preview(payload: &Value, tool_response: &Value) -> Value {
     let mode = payload
         .get("mode")
@@ -284,6 +308,7 @@ pub(crate) fn validate_payload(payload: &Value) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) async fn execute_with_event_sink<F>(
     payload: Value,
     data: Value,
@@ -472,6 +497,7 @@ where
     })
 }
 
+#[cfg(test)]
 fn fallback_response(
     mut tool_response: Value,
     profile_id: &str,
@@ -513,6 +539,7 @@ fn fallback_response(
     tool_response
 }
 
+#[cfg(test)]
 fn annotate_harness_diagnostics(
     mut response: Value,
     profile_id: &str,
@@ -548,6 +575,7 @@ fn annotate_harness_diagnostics(
     response
 }
 
+#[cfg(test)]
 fn status_event(run_id: &str, stage: &str, label: &str, percent: u8) -> Value {
     json!({
         "run_id": run_id,
@@ -558,6 +586,7 @@ fn status_event(run_id: &str, stage: &str, label: &str, percent: u8) -> Value {
     })
 }
 
+#[cfg(test)]
 fn model_failure_warning(error: &str, config: Option<&LlmConfig>) -> String {
     format!(
         "模型调用失败，已回退本地结果：{}",
@@ -1168,6 +1197,7 @@ fn persisted_url_is_sensitive(url: &reqwest::Url) -> bool {
         })
 }
 
+#[cfg(test)]
 fn format_reqwest_error(context: &str, error: reqwest::Error) -> String {
     format!("{context}: {}", error.without_url())
 }
@@ -1183,6 +1213,7 @@ pub(crate) async fn call_model(
         .map_err(|error| error.message)
 }
 
+#[cfg(test)]
 async fn call_model_with_config(
     config: Option<&LlmConfig>,
     preview: &Value,
@@ -1266,8 +1297,13 @@ fn resolve_llm_config(value: Option<&Value>) -> Option<LlmConfig> {
         .unwrap_or_else(|| "https://api.openai.com/v1".to_string())
         .trim_end_matches('/')
         .to_string();
+    #[cfg(test)]
     let model = config_string(value, "model")?;
+    #[cfg(not(test))]
+    let _model = config_string(value, "model").unwrap_or_default();
+    #[cfg(test)]
     let api_format = normalize_api_format(config_string(value, "api_format").as_deref());
+    #[cfg(test)]
     let endpoint_mode = if config_string(value, "endpoint_mode").as_deref() == Some("full_url") {
         "full_url".to_string()
     } else {
@@ -1276,20 +1312,26 @@ fn resolve_llm_config(value: Option<&Value>) -> Option<LlmConfig> {
     Some(LlmConfig {
         api_key,
         base_url,
+        #[cfg(test)]
         model,
+        #[cfg(test)]
         api_format,
+        #[cfg(test)]
         endpoint_mode,
         custom_user_agent: config_string(value, "custom_user_agent"),
+        #[cfg(test)]
         temperature: value
             .get("temperature")
             .and_then(Value::as_f64)
             .unwrap_or(0.2)
             .clamp(0.0, 2.0),
+        #[cfg(test)]
         timeout_seconds: value
             .get("timeout_seconds")
             .and_then(Value::as_u64)
             .unwrap_or(45)
             .clamp(1, 180),
+        #[cfg(test)]
         json_mode: value
             .get("json_mode")
             .and_then(Value::as_bool)
@@ -1308,6 +1350,7 @@ fn config_string(value: &Map<String, Value>, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+#[cfg(test)]
 fn validate_llm_config(config: &LlmConfig) -> Result<(), String> {
     if config.base_url.len() > 2_048 {
         return Err("Agent LLM base URL exceeds 2048 bytes".to_string());
@@ -1341,7 +1384,7 @@ fn validate_llm_config(config: &LlmConfig) -> Result<(), String> {
     Ok(())
 }
 
-fn is_loopback_or_private_network_host(host: Option<&str>) -> bool {
+pub(crate) fn is_loopback_or_private_network_host(host: Option<&str>) -> bool {
     let Some(host) = host else {
         return false;
     };
@@ -1358,6 +1401,7 @@ fn is_loopback_or_private_network_host(host: Option<&str>) -> bool {
             }
         })
 }
+#[cfg(test)]
 pub(crate) fn should_retry_without_json_mode(error: &str) -> bool {
     let normalized = error.to_ascii_lowercase();
     let rejects_request_shape = normalized.contains("http 400") || normalized.contains("http 422");
@@ -1373,6 +1417,7 @@ pub(crate) fn should_retry_without_json_mode(error: &str) -> bool {
     rejects_request_shape && identifies_json_mode
 }
 
+#[cfg(test)]
 async fn post_model_request(
     client: &reqwest::Client,
     config: &LlmConfig,
@@ -1443,6 +1488,7 @@ async fn post_model_request(
     parse_model_json(content)
 }
 
+#[cfg(test)]
 fn normalize_api_format(value: Option<&str>) -> String {
     match value {
         Some("openai_responses") => "openai_responses",
@@ -1452,6 +1498,7 @@ fn normalize_api_format(value: Option<&str>) -> String {
     .to_string()
 }
 
+#[cfg(test)]
 fn adapt_llm_request(request: &Value, api_format: &str) -> Value {
     if api_format == "openai_chat" {
         return request.clone();
@@ -1492,6 +1539,7 @@ fn adapt_llm_request(request: &Value, api_format: &str) -> Value {
     })
 }
 
+#[cfg(test)]
 fn llm_response_content<'a>(envelope: &'a Value, api_format: &str) -> Option<&'a str> {
     match api_format {
         "openai_responses" => envelope
@@ -1527,6 +1575,7 @@ fn llm_response_content<'a>(envelope: &'a Value, api_format: &str) -> Option<&'a
     }
 }
 
+#[cfg(test)]
 fn parse_model_json(content: &str) -> Result<Value, String> {
     let trimmed = content.trim();
     let unwrapped = trimmed
@@ -1868,6 +1917,7 @@ fn sanitized_strings(value: Option<&Value>, limit: usize, chars: usize) -> Optio
     (!result.is_empty()).then_some(result)
 }
 
+#[cfg(test)]
 fn profile_for_mode(mode: &str) -> PromptProfile {
     match mode {
         "expert" => PromptProfile {
@@ -1885,6 +1935,7 @@ fn profile_for_mode(mode: &str) -> PromptProfile {
     }
 }
 
+#[cfg(test)]
 fn bounded_history(value: Option<&Value>) -> Vec<Value> {
     value
         .and_then(Value::as_array)
@@ -1915,6 +1966,7 @@ fn bounded_history(value: Option<&Value>) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+#[cfg(test)]
 fn bounded_context(value: Option<&Value>) -> Value {
     let watchlist = value
         .and_then(|item| item.get("watchlist"))
@@ -1940,6 +1992,7 @@ fn bounded_context(value: Option<&Value>) -> Value {
     json!({"watchlist": watchlist})
 }
 
+#[cfg(test)]
 fn compact_json(value: &Value, depth: usize) -> Value {
     if depth >= 6 {
         return Value::String("[内容已截断]".to_string());
