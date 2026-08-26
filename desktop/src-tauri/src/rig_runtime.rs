@@ -65,10 +65,7 @@ impl BoundedHttpClient {
     {
         let status = response.status();
         if !status.is_success() {
-            let body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "provider error".to_string());
+            let body = bounded_error_body(response).await;
             return Err(RigHttpError::InvalidStatusCodeWithMessage(
                 status,
                 limit_text(&body, 512),
@@ -92,6 +89,16 @@ impl BoundedHttpClient {
     }
 }
 
+fn validate_provider_request_body(body: &Bytes) -> Result<(), RigHttpError> {
+    if body.len() > MAX_MODEL_REQUEST_BYTES {
+        return Err(RigHttpError::InvalidStatusCodeWithMessage(
+            reqwest::StatusCode::PAYLOAD_TOO_LARGE,
+            "provider request exceeds 2 MiB".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 impl HttpClientExt for BoundedHttpClient {
     fn send<T, U>(
         &self,
@@ -108,6 +115,7 @@ impl HttpClientExt for BoundedHttpClient {
         let client = self.inner.clone();
         let body = body.into();
         async move {
+            validate_provider_request_body(&body)?;
             let request = client
                 .request(parts.method, endpoint)
                 .headers(parts.headers)
@@ -162,6 +170,7 @@ impl HttpClientExt for BoundedHttpClient {
         let client = self.inner.clone();
         let body = body.into();
         async move {
+            validate_provider_request_body(&body)?;
             let request = client
                 .request(parts.method, endpoint)
                 .headers(parts.headers)
@@ -174,10 +183,7 @@ impl HttpClientExt for BoundedHttpClient {
                 .map_err(|error| RigHttpError::Instance(Box::new(error)))?;
             if !response.status().is_success() {
                 let status = response.status();
-                let body = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "provider error".to_string());
+                let body = bounded_error_body(response).await;
                 return Err(RigHttpError::InvalidStatusCodeWithMessage(
                     status,
                     limit_text(&body, 512),
@@ -210,6 +216,23 @@ impl HttpClientExt for BoundedHttpClient {
             Ok(Response::new(Box::pin(bounded) as BoxedStream))
         }
     }
+}
+
+async fn bounded_error_body(response: reqwest::Response) -> String {
+    const MAX_ERROR_BYTES: usize = 4 * 1024;
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let Ok(chunk) = chunk else {
+            break;
+        };
+        let remaining = MAX_ERROR_BYTES.saturating_sub(body.len());
+        if remaining == 0 {
+            break;
+        }
+        body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+    }
+    limit_text(&String::from_utf8_lossy(&body), MAX_ERROR_BYTES)
 }
 
 static CONVERSATION_MEMORY: OnceLock<
@@ -447,7 +470,7 @@ fn build_model_with_payload(
             let client = rig_core::providers::openai::Client::builder()
                 .api_key(api_key)
                 .base_url(&base_url)
-                .http_client(http_client.clone())
+                .http_client(BoundedHttpClient::new(http_client.clone(), None))
                 .build()
                 .map_err(|error| RigAgentError::InvalidRequest(error.to_string()))?;
             Ok(ModelHandle::new(
@@ -458,7 +481,7 @@ fn build_model_with_payload(
             let client = rig_core::providers::anthropic::Client::builder()
                 .api_key(api_key)
                 .base_url(&base_url)
-                .http_client(http_client.clone())
+                .http_client(BoundedHttpClient::new(http_client.clone(), None))
                 .build()
                 .map_err(|error| RigAgentError::InvalidRequest(error.to_string()))?;
             Ok(ModelHandle::new(
@@ -1659,6 +1682,19 @@ fn config_string(object: &Map<String, Value>, key: &str) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn provider_request_body_limit_fails_closed() {
+        assert!(
+            validate_provider_request_body(&Bytes::from(vec![0u8; MAX_MODEL_REQUEST_BYTES]))
+                .is_ok()
+        );
+        assert!(validate_provider_request_body(&Bytes::from(vec![
+            0u8;
+            MAX_MODEL_REQUEST_BYTES + 1
+        ]))
+        .is_err());
+    }
 
     #[test]
     fn normalizes_supported_provider_formats_without_io() {
