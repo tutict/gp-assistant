@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
-  BookOpen, Database, Download, ExternalLink, FileText, Inbox, Menu,
-  MessageSquareText, Plus, RefreshCw, RotateCcw, Search, Send, Upload, X,
-  Trash2,
+  BookOpen, ChevronLeft, ChevronRight, Database, Download, ExternalLink, FileText, Inbox, Menu,
+  MessageSquareText, Plus, RefreshCw, RotateCcw, Search, Send, Upload, X, Trash2,
 } from "lucide-react";
 import type {
   LlmSettings, NewsRagResult, ResearchAnswer, ResearchCitation,
@@ -12,6 +11,7 @@ import type {
 import { buildLlmConfig, buildNewsRagRequest, normalizeNewsGroups } from "../../lib/contracts";
 import { formatBytes, formatDateTime, normalizeStockCode } from "../../lib/format";
 import { getJson, isMobileTauriRuntime, postJson } from "../../lib/tauri";
+import { applyMarkRead, pushCitation, useEventSelection } from "../../lib/newsInteractions";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
 import { PanelFeedback } from "../ui/PanelFeedback";
 
@@ -35,6 +35,8 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const codeRef = useRef(code);
   const [overview, setOverview] = useState<ResearchOverview | null>(null);
   const [messages, setMessages] = useState<ResearchMessage[]>([]);
+  const overviewRef = useRef<ResearchOverview | null>(null);
+  const messagesRef = useRef<ResearchMessage[]>([]);
   const [threads, setThreads] = useState<ResearchThread[]>([]);
   const [threadId, setThreadId] = useState("");
   const threadIdRef = useRef("");
@@ -42,7 +44,8 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const workspaceGenerationRef = useRef(0);
   const [answers, setAnswers] = useState<ResearchAnswer[]>([]);
   const [question, setQuestion] = useState("");
-  const [citation, setCitation] = useState<ResearchCitation | null>(null);
+  const [citationStack, setCitationStack] = useState<ResearchCitation[]>([]);
+  const [citationPointer, setCitationPointer] = useState(-1);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [asking, setAsking] = useState(false);
@@ -53,6 +56,19 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const [managementBusy, setManagementBusy] = useState(false);
   const [managementResult, setManagementResult] = useState<unknown>(null);
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
+  const [deleteCandidateId, setDeleteCandidateId] = useState<string | null>(null);
+  const [readNotice, setReadNotice] = useState("");
+  const [readNoticePulse, setReadNoticePulse] = useState(false);
+  const [evidenceNotice, setEvidenceNotice] = useState("");
+  const [highlightAnswerId, setHighlightAnswerId] = useState<string | null>(null);
+  const questionInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const answersRef = useRef<HTMLElement | null>(null);
+  const eventRefs = useRef(new Map<string, HTMLButtonElement>());
+  const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const evidenceNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { selectedId, toggle: toggleEvent, close: closeEvent } = useEventSelection();
+  const citation = citationPointer >= 0 ? citationStack[citationPointer] || null : null;
   const activeLlmConfig = useMemo(() => buildLlmConfig(props.llmSettings), [props.llmSettings]);
 
   useEffect(() => { threadIdRef.current = threadId; }, [threadId]);
@@ -63,6 +79,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     workspaceGenerationRef.current += 1;
     setAsking(false);
     setRefreshing(false);
+    setLoading(true);
     setCode(normalized);
   }, []);
   useEffect(() => {
@@ -100,8 +117,10 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       const nextThreads = (threadResult.items || []).filter(
         (thread) => !deletedThreadIdsRef.current.has(thread.id),
       );
+      overviewRef.current = nextOverview;
+      messagesRef.current = messageResult.items || [];
       setOverview(nextOverview);
-      setMessages(messageResult.items || []);
+      setMessages(messagesRef.current);
       setThreads(nextThreads);
       const preferred = nextThreads.find((item) =>
         item.id === threadIdRef.current && (item.stock_code || "") === code)
@@ -177,30 +196,93 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     return `今日共整理 ${todayMessages.length} 条事件，${direction}；其中 ${grouped.uncertain.length} 条仍需公告或财务数据交叉核验。`;
   }, [code, grouped, todayMessages.length]);
 
-  const markRead = useCallback(async (message: ResearchMessage) => {
-    if (!message.unread) return;
+  const markReadBatch = useCallback(async (ids: string[], notice = false) => {
+    const uniqueIds = [...new Set(ids)].filter(Boolean);
+    if (!uniqueIds.length) return;
     try {
-      await postJson("/api/research/mark-read", { message_ids: [message.id] });
-      setMessages((current) => current.map((item) =>
-        item.id === message.id ? { ...item, unread: false } : item));
-      setOverview((current) => {
-        if (!current) return current;
-        const unreadByStock = { ...(current.unread_by_stock || {}) };
-        if (message.stock_code) {
-          unreadByStock[message.stock_code] = Math.max(
-            0,
-            (unreadByStock[message.stock_code] || 0) - 1,
-          );
-        }
-        return {
-          ...current,
-          unread_count: Math.max(0, current.unread_count - 1),
-          unread_by_stock: unreadByStock,
-        };
-      });
+      await postJson("/api/research/mark-read", { message_ids: uniqueIds });
+      const result = applyMarkRead(messagesRef.current, overviewRef.current, uniqueIds);
+      messagesRef.current = result.messages;
+      overviewRef.current = result.overview;
+      setMessages(result.messages);
+      setOverview(result.overview);
+      if (notice) {
+        setReadNotice("已全部标为已读");
+        setReadNoticePulse(true);
+        if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+        noticeTimerRef.current = setTimeout(() => {
+          setReadNotice("");
+          setReadNoticePulse(false);
+        }, 2000);
+      }
     } catch (nextError) {
       setError((nextError as Error).message);
     }
+  }, []);
+
+  const markReadStock = useCallback(async (stockCode: string) => {
+    const ids = messages.filter((message) => message.stock_code === stockCode && message.unread)
+      .map((message) => message.id);
+    if (!ids.length) return;
+    try {
+      await postJson("/api/research/mark-read", { stock_code: stockCode });
+      const result = applyMarkRead(messagesRef.current, overviewRef.current, ids);
+      messagesRef.current = result.messages;
+      overviewRef.current = result.overview;
+      setMessages(result.messages);
+      setOverview(result.overview);
+    } catch (nextError) {
+      setError((nextError as Error).message);
+    }
+  }, [messages]);
+
+  const pushCitationSelection = useCallback((next: ResearchCitation) => {
+    const result = pushCitation(citationStack, citationPointer, next);
+    setCitationStack(result.stack);
+    setCitationPointer(result.pointer);
+    if (mobile && citationPointer < 0) {
+      setEvidenceNotice("证据已在下方展开");
+      if (evidenceNoticeTimerRef.current) clearTimeout(evidenceNoticeTimerRef.current);
+      evidenceNoticeTimerRef.current = setTimeout(() => setEvidenceNotice(""), 2200);
+    }
+  }, [citationPointer, citationStack, mobile]);
+
+  const closeCitation = useCallback(() => {
+    setCitationStack([]);
+    setCitationPointer(-1);
+  }, []);
+
+  const selectEvent = useCallback((message: ResearchMessage) => {
+    const wasSelected = selectedId === message.id;
+    toggleEvent(message.id);
+    if (wasSelected) return;
+    if (message.unread) void markReadBatch([message.id]);
+  }, [markReadBatch, selectedId, toggleEvent]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const element = eventRefs.current.get(selectedId);
+    if (!element || typeof element.scrollIntoView !== "function") return;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    element.scrollIntoView({ block: "nearest", behavior: reducedMotion ? "auto" : "smooth" });
+  }, [selectedId]);
+
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && selectedId) closeEvent();
+    };
+    window.addEventListener?.("keydown", handleEscape);
+    return () => {
+      window.removeEventListener?.("keydown", handleEscape);
+    };
+  }, [closeEvent, selectedId]);
+
+  useEffect(() => {
+    return () => {
+      if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current);
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+      if (evidenceNoticeTimerRef.current) clearTimeout(evidenceNoticeTimerRef.current);
+    };
   }, []);
 
   const createThread = useCallback(async (
@@ -215,14 +297,21 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     setThreads((current) => [thread, ...current]);
     setThreadId(thread.id);
     setAnswers([]);
+    closeEvent();
+    setInboxOpen(false);
+    queueMicrotask(() => questionInputRef.current?.focus());
     return thread.id;
-  }, [code]);
+  }, [code, closeEvent]);
 
   const deleteThread = useCallback(async (thread: ResearchThread) => {
     if (asking || deletingThreadId) return;
-    if (!window.confirm(`确认删除研究会话“${thread.title || "未命名会话"}”？历史问答将一并删除。`)) {
+    if (deleteCandidateId !== thread.id) {
+      setDeleteCandidateId(thread.id);
+      if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current);
+      deleteTimerRef.current = setTimeout(() => setDeleteCandidateId(null), 3000);
       return;
     }
+    setDeleteCandidateId(null);
     const generation = workspaceGenerationRef.current;
     setDeletingThreadId(thread.id);
     setError("");
@@ -241,7 +330,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     } finally {
       setDeletingThreadId(null);
     }
-  }, [asking, deletingThreadId, loadWorkspace]);
+  }, [asking, deleteCandidateId, deletingThreadId, loadWorkspace]);
 
   const ask = useCallback(async () => {
     const text = question.trim();
@@ -262,9 +351,11 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       });
       if (generation !== workspaceGenerationRef.current) return;
       const answer: ResearchAnswer = { ...result, question: text, citations: result.citations || [] };
+      const answerKey = answer.id || `${answer.question}-${answers.length}`;
       setAnswers((current) => [...current, answer]);
       setQuestion("");
-      setCitation(answer.citations[0] || null);
+      setHighlightAnswerId(answerKey);
+      if (answer.citations[0]) pushCitationSelection(answer.citations[0]);
       if (mobile) setInboxOpen(false);
       const nextThreads = await getJson<{ items?: ResearchThread[] }>("/api/research/threads");
       if (generation === workspaceGenerationRef.current) {
@@ -277,7 +368,18 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     } finally {
       if (generation === workspaceGenerationRef.current) setAsking(false);
     }
-  }, [activeLlmConfig, asking, code, createThread, deletingThreadId, mobile, question, threadId, threads]);
+  }, [activeLlmConfig, answers.length, asking, code, createThread, deletingThreadId, mobile, pushCitationSelection, question, threadId, threads]);
+
+  useEffect(() => {
+    if (!highlightAnswerId) return;
+    const element = answersRef.current;
+    if (element && typeof element.scrollIntoView === "function") {
+      const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      element.scrollIntoView({ block: "nearest", behavior: reducedMotion ? "auto" : "smooth" });
+    }
+    const timer = setTimeout(() => setHighlightAnswerId(null), 600);
+    return () => clearTimeout(timer);
+  }, [answers.length, highlightAnswerId]);
 
   const management = useCallback(async (action: () => Promise<unknown>) => {
     setManagementBusy(true);
@@ -306,6 +408,8 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     </div>;
   }
   const vectorReady = overview?.retrieval?.vector?.ready === true;
+  const unreadVisibleIds = visibleMessages.filter((message) => message.unread).map((message) => message.id);
+  const lastUpdated = formatResearchUpdatedAt(overview);
 
   return <section className="research-workspace" aria-label="研究消息中心">
     <header className="research-topbar">
@@ -322,7 +426,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         </span>
       </div>
       <div className="research-actions">
-        <span>自选股前台每 15 分钟更新</span>
+        <span>{lastUpdated ? `上次更新 ${lastUpdated} · 每 15 分钟自动更新` : "每 15 分钟自动更新"}</span>
         <button type="button" onClick={() => void refresh()} disabled={refreshing}>
           <RefreshCw size={15} className={refreshing ? "is-spinning" : ""} />
           <span>{refreshing ? "更新中" : "立即更新"}</span>
@@ -345,13 +449,16 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         setThread={(thread) => {
           selectCode(thread.stock_code || "");
           setThreadId(thread.id);
-          void loadThread(thread.id);
+          setLoading(true);
+          void loadThread(thread.id).finally(() => setLoading(false));
           setInboxOpen(false);
         }}
         unread={overview?.unread_count || 0} open={inboxOpen} close={() => setInboxOpen(false)}
         createThread={() => void createThread()}
         deleteThread={(thread) => void deleteThread(thread)}
+        markReadStock={(stockCode) => void markReadStock(stockCode)}
         deletingThreadId={deletingThreadId}
+        deleteCandidateId={deleteCandidateId}
         asking={asking} />
 
       <main className="research-stream">
@@ -362,46 +469,64 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
           </div>
           <p>{summary}</p>
           <div className="research-brief-counts">
-            <span className="research-brief-stat positive">
+            <span className="research-stat positive">
               <span>利好</span><strong>{grouped.positive.length}</strong>
             </span>
-            <span className="research-brief-stat negative">
+            <span className="research-stat negative">
               <span>利空</span><strong>{grouped.negative.length}</strong>
             </span>
-            <span className="research-brief-stat">
+            <span className="research-stat">
               <span>待核查</span><strong>{grouped.uncertain.length}</strong>
             </span>
-            <span className="research-brief-stat">
+            <span className="research-stat">
               <span>文档</span><strong>{overview?.document_count || 0}</strong>
             </span>
           </div>
         </section>
 
         <section className="research-event-section">
+          {refreshing && <div className="research-refresh-progress" aria-label="消息更新中" />}
           <div className="research-section-heading"><div><span>事件流</span>
-            <small>按来源等级与时间整理</small></div><span>{visibleMessages.length} 条</span>
+            <small>按来源等级与时间整理</small></div><div className="research-heading-actions">
+              {readNotice && <small className={readNoticePulse ? "is-flashing" : ""}>{readNotice}</small>}
+              {unreadVisibleIds.length > 0 && <button type="button" className="research-ghost-button"
+                onClick={() => void markReadBatch(unreadVisibleIds, true)}>全部已读</button>}
+              <span>{visibleMessages.length} 条</span>
+            </div>
           </div>
-          {!visibleMessages.length ? <ResearchEmptyState
+          {loading && overview ? <ResearchSkeletonList /> : !visibleMessages.length ? <ResearchEmptyState
             refreshing={refreshing}
             onRefresh={() => void refresh()}
             onKnowledge={openKnowledge}
           /> : <div className="research-event-list">
             {eventGroups.map((group) => <EventGroup key={group.key}
               label={group.label} tone={group.key} messages={group.messages}
-              markRead={markRead} />)}
+              selectedId={selectedId} selectEvent={selectEvent}
+              setEventRef={(id, element) => {
+                if (element) eventRefs.current.set(id, element);
+                else eventRefs.current.delete(id);
+              }} pushCitation={pushCitationSelection} />)}
           </div>}
         </section>
 
-        <Answers answers={answers} setCitation={setCitation} />
+        <Answers answers={answers} pushCitation={pushCitationSelection}
+          highlightedId={highlightAnswerId} sectionRef={answersRef} />
         </div>
         <form className="research-composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
+          {evidenceNotice && <div className="research-evidence-notice" role="status">{evidenceNotice}</div>}
           <div><label htmlFor={questionInputId}><span>研究问题</span><small>
             {activeLlmConfig
               ? "模型回答会强制引用证据" : "请先配置 API 和模型"}
           </small></label>
-            <textarea id={questionInputId} value={question}
+            <textarea ref={questionInputRef} id={questionInputId} value={question}
               onChange={(event) => setQuestion(event.target.value)}
-              placeholder={questionPlaceholder} rows={2} />
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                  event.preventDefault();
+                  void ask();
+                }
+              }}
+              placeholder={`${questionPlaceholder} · Ctrl+Enter 发送`} rows={2} />
             <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>
           </div>
           <button type="submit" aria-label="提交问题" title="提交问题"
@@ -411,7 +536,10 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         </form>
       </main>
 
-      <EvidencePanel citation={citation} close={() => setCitation(null)} />
+      <EvidencePanel citation={citation} citationIndex={citationPointer}
+        citationCount={citationStack.length} onPrevious={() => setCitationPointer((value) => Math.max(0, value - 1))}
+        onNext={() => setCitationPointer((value) => Math.min(citationStack.length - 1, value + 1))}
+        close={closeCitation} />
     </div>
 
     {inboxOpen && <button type="button" className="research-mobile-overlay"
@@ -425,31 +553,63 @@ function EventGroup(props: {
   label: string;
   tone: string;
   messages: ResearchMessage[];
-  markRead: (message: ResearchMessage) => Promise<void>;
+  selectedId: string | null;
+  selectEvent: (message: ResearchMessage) => void;
+  setEventRef: (id: string, element: HTMLButtonElement | null) => void;
+  pushCitation: (citation: ResearchCitation) => void;
 }) {
   if (!props.messages.length) return null;
   return <section className={`research-event-group ${props.tone}`}>
     <header><span>{props.label}</span><b>{props.messages.length}</b></header>
-    {props.messages.map((message) => <button type="button" key={message.id}
-      className={`research-event ${sentimentClass(message.sentiment)}${message.unread ? " unread" : ""}`}
-      onClick={() => void props.markRead(message)}>
-      <span className="research-event-mark" />
-      <span className="research-event-content">
-        <span className="research-event-meta">
-          <span className={`research-source-tier ${message.source_tier}`}>
-            {sourceTierLabel(message.source_tier)}
+    {props.messages.map((message) => {
+      const selected = props.selectedId === message.id;
+      return <div className={`research-event-shell${selected ? " selected expanded" : ""}`} key={message.id}>
+        <button type="button" ref={(element) => props.setEventRef(message.id, element)}
+          aria-expanded={selected}
+          className={`research-event ${sentimentClass(message.sentiment)}${message.unread ? " unread" : ""}${selected ? " selected" : ""}`}
+          onClick={() => props.selectEvent(message)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && selected) {
+              event.preventDefault();
+              props.selectEvent(message);
+            }
+          }}>
+          <span className={`research-dot ${sentimentDotTone(message.sentiment)}`} />
+          <span className="research-event-content">
+            <span className="research-event-meta">
+              <span className="research-badge">{sourceTierLabel(message.source_tier)}</span>
+              <span className="research-source-name">{message.source_name}</span>
+              {message.scope_type && <span className="research-scope-tag">
+                {scopeTypeLabel(message.scope_type)}{message.scope_tags?.length ? ` · ${message.scope_tags.join("、")}` : ""}
+              </span>}
+              <time>{formatDateTime(message.published_at)}</time>
+              {message.unread && <span className="research-pill">未读</span>}
+            </span>
+            <strong>{message.title}</strong>
+            <span className="research-event-summary">{message.summary}</span>
           </span>
-          <span className="research-source-name">{message.source_name}</span>
-          {message.scope_type && <span className="research-scope-tag">
-            {scopeTypeLabel(message.scope_type)}{message.scope_tags?.length ? ` · ${message.scope_tags.join("、")}` : ""}
-          </span>}
-          <time>{formatDateTime(message.published_at)}</time>
-          {message.unread && <b>未读</b>}
-        </span>
-        <strong>{message.title}</strong>
-        <span className="research-event-summary">{message.summary}</span>
-      </span>
-    </button>)}
+        </button>
+        {selected && <div className="research-event-detail">
+          <p>{message.summary}</p>
+          <div className="research-event-detail-meta">
+            <span className="research-badge">{sourceTierLabel(message.source_tier)}</span>
+            <span className="research-badge">{message.source_name}</span>
+            {message.scope_type && <span className="research-badge">{scopeTypeLabel(message.scope_type)}</span>}
+            {message.scope_tags?.map((tag) => <span className="research-badge" key={tag}>{tag}</span>)}
+            <time>{formatDateTime(message.published_at)}</time>
+          </div>
+          {message.citations?.length ? <div className="research-event-detail-evidence">
+            <span>已关联 {message.citations.length} 条证据</span>
+            <div className="research-event-citation-links">
+              {message.citations.slice(0, 3).map((item) => <button type="button"
+                key={item.citation_id} onClick={() => props.pushCitation(item)}>
+                查看 {item.citation_id}
+              </button>)}
+            </div>
+          </div> : null}
+        </div>}
+      </div>;
+    })}
   </section>;
 }
 
@@ -490,7 +650,9 @@ function InboxPanel(props: {
   close: () => void;
   createThread: () => void;
   deleteThread: (thread: ResearchThread) => void;
+  markReadStock: (stockCode: string) => void;
   deletingThreadId: string | null;
+  deleteCandidateId: string | null;
   asking: boolean;
 }) {
   return <aside className={`research-inbox${props.open ? " mobile-open" : ""}`}>
@@ -508,13 +670,17 @@ function InboxPanel(props: {
     {props.watchlist.map((item) => {
       const stockCode = normalizeStockCode(item.code);
       const unread = props.unreadByStock[stockCode] || 0;
-      return <button type="button" key={stockCode}
+      return <div className={`research-stock-row-wrap${props.code === stockCode ? " active" : ""}`} key={stockCode}>
+      <button type="button"
         className={`research-stock-row${props.code === stockCode ? " active" : ""}`}
         onClick={() => props.setCode(stockCode)}>
         <span className="research-stock-monogram">{(item.name || stockCode).slice(0, 1)}</span>
         <span><strong>{item.name || stockCode}</strong><small>{stockCode}</small></span>
         {unread > 0 && <b>{unread}</b>}
-      </button>;
+      </button>
+      {unread > 0 && <button type="button" className="research-stock-mark-read"
+        aria-label={`标记 ${stockCode} 全部已读`} onClick={() => props.markReadStock(stockCode)}>标记已读</button>}
+      </div>;
     })}
     <div className="research-inbox-section">
       <div className="research-pane-heading compact"><span>研究会话</span>
@@ -528,11 +694,11 @@ function InboxPanel(props: {
           <MessageSquareText size={15} aria-hidden="true" />
           <span><strong>{thread.title}</strong><small>{formatEpoch(thread.updated_at_epoch_ms)}</small></span>
         </button>
-        <button type="button" className="research-thread-delete"
+        <button type="button" className={`research-thread-delete${props.deleteCandidateId === thread.id ? " confirm" : ""}`}
           aria-label={`删除研究会话：${thread.title || "未命名会话"}`}
           title="删除会话" disabled={props.asking || props.deletingThreadId === thread.id}
           onClick={() => props.deleteThread(thread)}>
-          <Trash2 size={14} aria-hidden="true" />
+          {props.deleteCandidateId === thread.id ? "确认删除？" : <Trash2 size={14} aria-hidden="true" />}
         </button>
       </div>)}
     </div>
@@ -541,25 +707,28 @@ function InboxPanel(props: {
 
 function Answers(props: {
   answers: ResearchAnswer[];
-  setCitation: (value: ResearchCitation) => void;
+  pushCitation: (value: ResearchCitation) => void;
+  highlightedId: string | null;
+  sectionRef: React.MutableRefObject<HTMLElement | null>;
 }) {
   if (!props.answers.length) return null;
-  return <section className="research-answers">
+  return <section className="research-answers" ref={props.sectionRef}>
     <div className="research-section-heading"><div><span>历史问答</span>
       <small>回答与引用均保存在本机</small></div>
     </div>
     {props.answers.map((answer, index) => <article
-      key={answer.id || answer.question + index} className="research-answer">
+      key={answer.id || answer.question + index}
+      className={`research-answer${props.highlightedId === (answer.id || `${answer.question}-${index}`) ? " is-highlighted" : ""}`}>
       <div className="research-question"><span>问</span><p>{answer.question}</p></div>
       <div className="research-answer-body">
         <div className="research-answer-mode">
           {answer.mode === "model" ? "模型综合" : "证据摘录"}
         </div>
         <p><CitationRichText text={answer.answer} citations={answer.citations}
-          onCitation={props.setCitation} /></p>
+          onCitation={props.pushCitation} /></p>
         <div className="research-citation-chips">
           {answer.citations.map((item) => <button type="button"
-            key={item.citation_id + index} onClick={() => props.setCitation(item)}>
+            key={item.citation_id + index} onClick={() => props.pushCitation(item)}>
             <b>{item.citation_id}</b><span>{item.title}</span>
           </button>)}
         </div>
@@ -572,11 +741,25 @@ function Answers(props: {
   </section>;
 }
 
-function EvidencePanel(props: { citation: ResearchCitation | null; close: () => void }) {
+function EvidencePanel(props: {
+  citation: ResearchCitation | null;
+  citationIndex: number;
+  citationCount: number;
+  onPrevious: () => void;
+  onNext: () => void;
+  close: () => void;
+}) {
   return <aside className={`research-evidence${props.citation ? " has-selection" : ""}`}
     aria-label="引用证据检查器">
     <div className="research-pane-heading">
       <div><span>证据检查器</span><strong>原文可回溯</strong></div>
+      {props.citation && <div className="research-citation-history" aria-label="引用历史">
+        <button type="button" aria-label="上一条证据" title="上一条证据"
+          disabled={props.citationIndex <= 0} onClick={props.onPrevious}><ChevronLeft size={15} /></button>
+        <span>{props.citationIndex + 1} / {props.citationCount}</span>
+        <button type="button" aria-label="下一条证据" title="下一条证据"
+          disabled={props.citationIndex >= props.citationCount - 1} onClick={props.onNext}><ChevronRight size={15} /></button>
+      </div>}
       <button className="research-icon-button research-mobile-close" type="button"
         aria-label="关闭证据检查器" title="关闭" onClick={props.close}><X size={17} /></button>
     </div>
@@ -813,6 +996,15 @@ function sourceTierLabel(value?: string): string {
   return labels[key] || "新闻";
 }
 
+function ResearchSkeletonList() {
+  return <div className="research-skeleton-list" aria-label="正在切换研究消息">
+    {[0, 1, 2].map((index) => <div className="research-skeleton-row" key={index}>
+      <span className="research-dot neutral skeleton" />
+      <span><span className="skeleton" /><span className="skeleton" /><span className="skeleton" /></span>
+    </div>)}
+  </div>;
+}
+
 function scopeTypeLabel(value?: string): string {
   return ({ macro: "宏观", industry: "行业", region: "区域", company: "公司" } as Record<string, string>)[value || ""] || value || "政策";
 }
@@ -855,6 +1047,22 @@ function formatEpoch(value?: number): string {
   return value ? new Date(value).toLocaleDateString("zh-CN", {
     month: "2-digit", day: "2-digit",
   }) : "刚刚";
+}
+
+function sentimentDotTone(value: string): "positive" | "negative" | "warning" | "neutral" {
+  if (["positive", "bullish", "利好"].includes(value)) return "positive";
+  if (["negative", "bearish", "利空"].includes(value)) return "negative";
+  if (["warning", "uncertain", "待核查"].includes(value)) return "warning";
+  return "neutral";
+}
+
+function formatResearchUpdatedAt(overview: ResearchOverview | null): string {
+  if (!overview) return "";
+  const raw = overview.updated_at_epoch_ms || overview.last_refresh_at || overview.last_updated_at;
+  if (!raw) return "";
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 function formatScore(value?: number | null): string {

@@ -620,8 +620,7 @@ describe("NewsRagPanel", () => {
       }
       return Promise.resolve({});
     });
-    const confirmMock = vi.fn(() => true);
-    vi.stubGlobal("window", { setInterval: vi.fn(() => 1), clearInterval: vi.fn(), confirm: confirmMock });
+    vi.stubGlobal("window", { setInterval: vi.fn(() => 1), clearInterval: vi.fn() });
 
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(<NewsRagPanel llmSettings={null} />); });
@@ -630,8 +629,8 @@ describe("NewsRagPanel", () => {
       "aria-label": "删除研究会话：待删除会话",
     });
     await act(async () => { deleteButton.props.onClick(); });
-
-    expect(confirmMock).toHaveBeenCalledWith("确认删除研究会话“待删除会话”？历史问答将一并删除。");
+    expect(textOf(renderer.toJSON())).toContain("确认删除？");
+    await act(async () => { deleteButton.props.onClick(); });
     expect(postJson).toHaveBeenCalledWith("/api/research/threads/delete", {
       thread_id: "thread-delete",
     });
@@ -639,7 +638,7 @@ describe("NewsRagPanel", () => {
     await act(async () => { renderer.unmount(); });
   });
 
-  it("does not delete a research thread when confirmation is cancelled", async () => {
+  it("requires a second in-app confirmation before deleting a research thread", async () => {
     const thread = {
       id: "thread-cancel",
       title: "保留会话",
@@ -656,15 +655,14 @@ describe("NewsRagPanel", () => {
       }
       return Promise.resolve({});
     });
-    const confirmMock = vi.fn(() => false);
-    vi.stubGlobal("window", { setInterval: vi.fn(() => 1), clearInterval: vi.fn(), confirm: confirmMock });
+    vi.stubGlobal("window", { setInterval: vi.fn(() => 1), clearInterval: vi.fn() });
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(<NewsRagPanel llmSettings={null} />); });
     const deleteButton = renderer.root.findByProps({
       "aria-label": "删除研究会话：保留会话",
     });
     await act(async () => { deleteButton.props.onClick(); });
-    expect(confirmMock).toHaveBeenCalledTimes(1);
+    expect(textOf(renderer.toJSON())).toContain("确认删除？");
     expect(postJson).not.toHaveBeenCalledWith("/api/research/threads/delete", expect.anything());
     expect(textOf(renderer.toJSON())).toContain("保留会话");
     await act(async () => { renderer.unmount(); });
