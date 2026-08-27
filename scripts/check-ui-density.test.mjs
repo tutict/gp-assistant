@@ -32,13 +32,12 @@ test("rejects desktop layout declarations placed under the wrong selectors", () 
     .replace(/\.workbench\s*\{\s*padding-inline:\s*max\(22px, calc\(\(100vw - 1560px\) \/ 2\)\);/, ".wide-workbench-misplaced { padding-inline: max(22px, calc((100vw - 1560px) / 2));")
     .replace(/\.panel-controls\b/g, ".form-controls-misplaced")
     .replace(/\.backtest-controls\b/g, ".backtest-controls-misplaced")
-    .replace(/\.rag-controls\b/g, ".rag-controls-misplaced")
     .replace(/\.notes p\b/g, ".notes-misplaced p")
     .replace(/\.evidence-list p\b/g, ".evidence-list-misplaced p")
     .replace(/\.agent-final-reply\b/g, ".agent-final-reply-misplaced");
   const result = runGuard(misplaced);
   assert.ok(result, "the density guard must reject declarations in unrelated selectors");
-  const stderr = String(result.stderr);
+  const stderr = String(result.stderr ?? result.stdout ?? result.message ?? "");
   assert.match(stderr, /shell\.css:\d+ \.workbench must declare wide-screen centering/);
   assert.match(stderr, /shell\.css:\d+ \.panel-controls must declare max-width: 1200px/);
   assert.match(stderr, /shell\.css:\d+ \.notes p must declare max-width: 76ch/);
@@ -46,14 +45,14 @@ test("rejects desktop layout declarations placed under the wrong selectors", () 
 
 test("rejects desktop constraints that only exist in a mobile media block", () => {
   const original = readFileSync(shellPath, "utf8");
-  const controlsRule = /\.panel-controls,\s*\.backtest-controls,\s*\.rag-controls\s*\{[\s\S]*?\n\}/;
+  const controlsRule = /\.panel-controls,\s*\.backtest-controls\s*\{[\s\S]*?\n\}/;
   const proseRule = /\.notes p,\s*\.evidence-list p,\s*\.agent-final-reply\s*\{[\s\S]*?\n\}/;
   const misplaced = original
     .replace(controlsRule, (rule) => `@media (max-width: 768px) {\n${rule}\n}`)
     .replace(proseRule, (rule) => `@media (max-width: 768px) {\n${rule}\n}`);
   const result = runGuard(misplaced);
   assert.ok(result, "the density guard must reject mobile-only desktop constraints");
-  const stderr = String(result.stderr);
+  const stderr = String(result.stderr ?? result.stdout ?? result.message ?? "");
   assert.match(stderr, /\.panel-controls must declare max-width: 1200px/);
   assert.match(stderr, /\.notes p must declare max-width: 76ch/);
 });

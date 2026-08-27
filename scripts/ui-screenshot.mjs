@@ -21,6 +21,7 @@ let baseUrl = option("--url", "http://127.0.0.1:4173").replace(/\/$/, "");
 const date = new Date().toISOString().slice(0, 10);
 const checkSearchOverlay = process.argv.includes('--check-search-overlay');
 const checkNewsPage = process.argv.includes("--check-news-page");
+const checkNewsInteractions = process.argv.includes("--check-news-interactions");
 const checkBacktestPage = process.argv.includes("--check-backtest-page");
 const headerSettingsOnly = process.argv.includes("--header-settings-only");
 const observeSummaryOnly = process.argv.includes("--observe-summary-only");
@@ -725,6 +726,26 @@ async function installHarnessState(page, observeResult = mockObserveResult, rese
   await page.route("**/api/research/threads/detail", (route) => route.fulfill({ json: researchDetail }));
   await page.route("**/api/research/index-status", (route) => route.fulfill({ json: researchIndexStatus }));
   await page.route("**/api/research/refresh*", (route) => route.fulfill({ json: { refreshed: true } }));
+  await page.route("**/api/research/mark-read", (route) => route.fulfill({ json: { updated: 1 } }));
+  await page.route("**/api/research/threads/delete", (route) => route.fulfill({ json: { deleted: 1 } }));
+  await page.route("**/api/research/threads/create", (route) => route.fulfill({
+    json: {
+      id: "ui-created-thread",
+      title: "新研究会话",
+      stock_code: null,
+      created_at_epoch_ms: fixedResearchNow,
+      updated_at_epoch_ms: fixedResearchNow,
+    },
+  }));
+  await page.route("**/api/research/query", (route) => route.fulfill({
+    json: {
+      id: "ui-query-answer",
+      mode: "model",
+      answer: "研究回答 [C1]",
+      citations: [mockResearchCitationOne],
+      created_at_epoch_ms: fixedResearchNow,
+    },
+  }));
 }
 
 async function captureHeaderBaselines(browser, targetRoot) {
@@ -1502,7 +1523,7 @@ async function assertNewsPageState(page, device, scenarioName) {
   }
 
   if (scenarioName === "data") {
-    const summaryCounts = await page.locator(".research-brief-stat > strong").allTextContents();
+    const summaryCounts = await page.locator(".research-stat > strong").allTextContents();
     if (summaryCounts.length !== 4 || summaryCounts.slice(0, 3).some((value) => Number(value) === 0)) {
       throw new Error(`${device.name}/${scenarioName} fixture is no longer counted as today: ${JSON.stringify(summaryCounts)}`);
     }
@@ -1679,7 +1700,183 @@ async function captureNewsPageBaselines(browser, targetRoot) {
     }
   }
 
+  const interactionStates = [
+    {
+      name: "event-expanded",
+      open: async (page) => {
+        await page.locator(".research-event").first().click();
+        await page.locator(".research-event.selected").waitFor({ state: "visible" });
+      },
+    },
+    {
+      name: "evidence-history",
+      open: async (page) => {
+        const citations = page.locator(".research-inline-citation");
+        await citations.nth(0).click();
+        await citations.nth(1).click();
+        await page.getByRole("button", { name: "上一条证据" }).waitFor({ state: "visible" });
+      },
+    },
+    {
+      name: "delete-confirmation",
+      open: async (page) => {
+        const deleteButton = page.getByRole("button", { name: /删除研究会话/ }).first();
+        await deleteButton.click();
+        await page.getByText("确认删除？").waitFor({ state: "visible" });
+      },
+    },
+    {
+      name: "skeleton-loading",
+      open: async (page) => {
+        await page.route("**/api/research/messages?*", async (route) => {
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+          await route.fulfill({ json: { items: mockResearchMessagesData } });
+        });
+        await page.evaluate(() => {
+          const button = document.querySelector(".research-stock-row:not(.active)");
+          button?.click();
+        });
+        await page.locator(".research-skeleton-list").waitFor({ state: "visible" });
+      },
+    },
+  ];
+  const interactionDevices = newsPageBaselineDevices;
+  for (const state of interactionStates) {
+    for (const device of interactionDevices) {
+      const context = await browser.newContext({
+        viewport: { width: device.width, height: device.height },
+        screen: { width: device.width, height: device.height },
+        deviceScaleFactor: device.dpr,
+        hasTouch: device.mobile,
+        isMobile: device.mobile,
+        colorScheme: device.theme,
+      });
+      const page = await context.newPage();
+      try {
+      await installFixedResearchClock(page);
+      await installHarnessState(page, mockObserveResult, {
+        overview: mockResearchOverviewData,
+        messages: mockResearchMessagesData,
+        threads: mockResearchThreads,
+        detail: mockResearchThreadDetail,
+        indexStatus: { schema_version: 1, document_count: 18, chunk_count: 52 },
+      });
+      await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
+      await page.locator(".research-workspace").waitFor({ state: "visible" });
+      if (device.mobile && ["delete-confirmation", "skeleton-loading"].includes(state.name)) {
+        await page.locator(".research-mobile-inbox-button").click();
+        await page.locator(".research-inbox.mobile-open").waitFor({ state: "visible" });
+      }
+      await state.open(page);
+      await page.waitForTimeout(160);
+      const directory = resolve(targetRoot, "news", state.name, device.name);
+      mkdirSync(directory, { recursive: true });
+      await page.screenshot({ path: resolve(directory, `${state.name}.png`), fullPage: false });
+      reports.push({
+        scenario: state.name,
+        device: device.name,
+        file: `news/${state.name}/${device.name}/${state.name}.png`,
+        box: await boxFor(page, ".research-workspace"),
+      });
+    } finally {
+        await context.close();
+      }
+    }
+  }
+
   return reports;
+}
+
+async function runNewsInteractionChecks(browser) {
+  const device = devices.find((item) => item.name === "desktop-1440");
+  const context = await browser.newContext({
+    viewport: { width: device.width, height: device.height },
+    screen: { width: device.width, height: device.height },
+    deviceScaleFactor: device.dpr,
+    colorScheme: "dark",
+  });
+  const page = await context.newPage();
+  const markReadRequests = [];
+  await installFixedResearchClock(page);
+  await page.addInitScript(() => {
+    localStorage.setItem("stock-optimizer-llm-settings", JSON.stringify({
+      active_provider_id: "ui-test",
+      providers: [{
+        id: "ui-test",
+        name: "UI 测试模型",
+        provider: "openai-compatible",
+        base_url: "https://example.com/v1",
+        model: "ui-test-model",
+        api_key: "ui-test-key",
+      }],
+    }));
+  });
+  await installHarnessState(page, mockObserveResult, {
+    overview: mockResearchOverviewData,
+    messages: mockResearchMessagesData,
+    threads: mockResearchThreads,
+    detail: mockResearchThreadDetail,
+    indexStatus: { schema_version: 1, document_count: 18, chunk_count: 52 },
+  });
+  await page.route("**/api/research/mark-read", (route) => {
+    markReadRequests.push(JSON.parse(route.request().postData() || "{}"));
+    return route.fulfill({ json: { updated: 3 } });
+  });
+  await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
+  await page.locator(".research-workspace").waitFor({ state: "visible" });
+
+  const firstEvent = page.locator(".research-event").first();
+  await firstEvent.click();
+  await page.locator(".research-event.selected:not(.unread)").waitFor({ state: "visible" });
+  const eventExpanded = await firstEvent.getAttribute("aria-expanded");
+  const eventClass = await firstEvent.getAttribute("class");
+  const eventText = await firstEvent.innerText();
+  if (eventExpanded !== "true" || !eventClass?.includes("selected") || eventText.includes("未读")) {
+    throw new Error("event click did not expand/select and mark read: " + JSON.stringify({
+      expanded: eventExpanded,
+      className: eventClass,
+      text: eventText,
+      requests: markReadRequests,
+    }));
+  }
+  await page.keyboard.press("Escape");
+  if (await firstEvent.getAttribute("aria-expanded") !== "false") {
+    throw new Error("Escape did not collapse selected event");
+  }
+
+  const allRead = page.getByRole("button", { name: "全部已读", exact: true });
+  await allRead.click();
+  await page.getByText("已全部标为已读").waitFor({ state: "visible" });
+  if (await page.locator(".research-event .research-pill").count() !== 0
+    || !markReadRequests.some((payload) => Array.isArray(payload.message_ids)
+      && payload.message_ids.length >= 2)) {
+    throw new Error("all-read did not clear visible unread messages");
+  }
+
+  const textarea = page.locator(".research-composer textarea");
+  await textarea.fill("验证快捷提交");
+  await textarea.press("Control+Enter");
+  await page.getByText("研究回答").waitFor({ state: "visible" });
+
+  const citations = page.locator(".research-inline-citation");
+  await citations.nth(0).click();
+  await citations.nth(1).click();
+  const previous = page.getByRole("button", { name: "上一条证据" });
+  if (await previous.isDisabled()) throw new Error("citation history did not retain the previous citation");
+  await previous.click();
+  await page.locator(".research-evidence-card h2").filter({ hasText: "三季报预告上修" }).waitFor({ state: "visible" });
+
+  const deleteButton = page.getByRole("button", { name: /删除研究会话/ }).first();
+  await deleteButton.click();
+  await page.getByText("确认删除？").waitFor({ state: "visible" });
+  await deleteButton.click();
+  await page.waitForTimeout(80);
+  if (await page.getByText("贵州茅台 研究").count() !== 0) {
+    throw new Error("confirmed thread deletion did not remove the session");
+  }
+
+  await context.close();
+  console.log("News interaction checks passed: expand/escape/all-read/ctrl-enter/delete/citation-history");
 }
 
 let localServer = null;
@@ -1717,6 +1914,7 @@ try {
     console.log("Desktop shortcut checks passed: " + JSON.stringify(shortcutChecks));
     await context.close();
     await runAgentReplayChecks(browser);
+    if (checkNewsInteractions) await runNewsInteractionChecks(browser);
     if (checkNewsPage) {
       mkdirSync(outputRoot, { recursive: true });
       const newsPageBaselines = await captureNewsPageBaselines(browser, outputRoot);

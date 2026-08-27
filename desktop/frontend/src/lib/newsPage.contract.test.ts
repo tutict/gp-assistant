@@ -73,9 +73,10 @@ describe("news page CSS contract", () => {
     expect(newsPanel).not.toContain("!mobile && <p className=\"research-risk-boundary\"");
   });
 
-  it("limits source-tier tone classes to filing and community", () => {
-    expect(sourceTierToneRules()).toEqual(["community", "filing"]);
+  it("keeps source badges neutral and tokenized", () => {
+    expect(sourceTierToneRules()).toEqual([]);
     expect(researchCss).not.toContain("var(--score)");
+    expect(researchCss).toContain(".research-badge {");
   });
 });
 
@@ -101,6 +102,10 @@ describe("news page screenshot contract", () => {
       'name: "data"',
       'name: "phone-inbox-open"',
       'name: "phone-evidence-open"',
+      'name: "event-expanded"',
+      'name: "evidence-history"',
+      'name: "delete-confirmation"',
+      'name: "skeleton-loading"',
       "news-page-report.json",
     ]) {
       expect(screenshotHarness).toContain(marker);

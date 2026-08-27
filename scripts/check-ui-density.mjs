@@ -72,7 +72,7 @@ if (!workbenchRule) {
   shellError(wideScreenMedia[0] ?? shellRoot, ".workbench must declare wide-screen centering");
 }
 
-for (const selector of [".panel-controls", ".backtest-controls", ".rag-controls"]) {
+for (const selector of [".panel-controls", ".backtest-controls"]) {
   let rule;
   shellRoot.walkRules((candidate) => {
     if (!rule && !isWithinMedia(candidate)
