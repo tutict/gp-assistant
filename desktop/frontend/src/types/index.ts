@@ -554,6 +554,7 @@ export interface ResearchMessage {
   scope_type?: "macro" | "industry" | "region" | "company" | string;
   scope_tags?: string[];
   mapped_stock_codes?: string[];
+  citations?: ResearchCitation[];
 }
 
 export interface ResearchCitation {
@@ -609,6 +610,9 @@ export interface ResearchOverview {
   chunk_count: number;
   unread_count: number;
   unread_by_stock?: Record<string, number>;
+  updated_at_epoch_ms?: number;
+  last_refresh_at?: string | null;
+  last_updated_at?: string | null;
   source_counts?: { source_tier: ResearchSourceTier; count: number }[];
   messages: ResearchMessage[];
   retrieval?: {

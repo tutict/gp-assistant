@@ -170,8 +170,7 @@
     min-width: 0;
     padding: 7px 7px calc(var(--bottom-nav-height) + var(--safe-bottom) + 12px);
   }
-  .panel-tabs,
-  .rag-tabs {
+  .panel-tabs {
     gap: 2px;
     padding: 2px;
     scroll-snap-type: x proximity;
@@ -184,8 +183,7 @@
     font-size: var(--fs-data);
     scroll-snap-align: start;
   }
-  .screen-panel-tabs .panel-tab,
-  .rag-tabs .panel-tab {
+  .screen-panel-tabs .panel-tab {
     min-width: calc((100vw - 34px) / 3.2);
   }
   .screen-panel-container > .screen-panel-tabs {
@@ -215,8 +213,7 @@
     flex: 0 0 108px;
   }
   .panel-controls,
-  .backtest-controls,
-  .rag-controls {
+  .backtest-controls {
     margin-top: 6px;
     padding: 8px;
   }
@@ -226,7 +223,6 @@
   .clear-btn,
   .stock-row-action,
   .source-toggle,
-  .rag-secondary-btn,
   .llm-add-btn,
   .llm-preset-btn {
     min-height: var(--touch-comfort);
@@ -612,24 +608,6 @@
   .plain-news-secondary {
     grid-column: auto;
   }
-  .rag-controls {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 86px;
-  }
-  .rag-controls .rag-code-field,
-  .rag-controls .rag-wide-field,
-  .rag-controls .rag-textarea-field {
-    grid-column: 1 / -1;
-  }
-  .rag-controls .rag-days-field {
-    grid-column: 1;
-  }
-  .rag-controls .rag-run-btn {
-    grid-column: 2;
-  }
-  .rag-controls .rag-secondary-btn {
-    grid-column: 1 / -1;
-  }
   .evidence-list article {
     padding: 8px;
   }
@@ -853,8 +831,7 @@
   .signal-chart-stack,
   .plain-news-groups,
   .evidence-list,
-  .relation-map,
-  .rag-pack-list {
+  .relation-map {
     gap: 7px;
   }
   .metric strong {
@@ -921,8 +898,7 @@
   .workbench {
     padding-inline: 8px;
   }
-  .screen-panel-tabs .panel-tab,
-  .rag-tabs .panel-tab {
+  .screen-panel-tabs .panel-tab {
     min-width: calc((100vw - 28px) / 2.75);
   }
   .screen-mobile-status-inline {
@@ -957,9 +933,6 @@
   }
   .backtest-controls {
     grid-template-columns: 1fr 1fr;
-  }
-  .rag-controls {
-    grid-template-columns: minmax(0, 1fr) 78px;
   }
 }
 @media (orientation: landscape) and (max-height: 560px) and (max-width: 980px) {
@@ -1047,8 +1020,7 @@
   }
 }
 @media (max-width: 768px) {
-  .panel-tabs,
-  .rag-tabs {
+  .panel-tabs {
     width: 100%;
     flex-wrap: nowrap;
   }

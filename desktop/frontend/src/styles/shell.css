@@ -355,8 +355,7 @@
   box-shadow: none;
 }
 
-.panel-tabs,
-.rag-tabs {
+.panel-tabs {
   display: flex;
   min-width: 0;
   gap: 2px;
@@ -368,8 +367,7 @@
   scrollbar-width: none;
 }
 
-.panel-tabs::-webkit-scrollbar,
-.rag-tabs::-webkit-scrollbar {
+.panel-tabs::-webkit-scrollbar {
   display: none;
 }
 
@@ -404,7 +402,6 @@
 
 .panel-controls,
 .backtest-controls,
-.rag-controls,
 .research-context-bar,
 .data-source-bar {
   min-width: 0;
@@ -415,8 +412,7 @@
 }
 
 .panel-controls,
-.backtest-controls,
-.rag-controls {
+.backtest-controls {
   width: 100%;
   max-width: 1200px;
   display: flex;
@@ -510,7 +506,6 @@
 .clear-btn,
 .stock-row-action,
 .source-toggle,
-.rag-secondary-btn,
 .llm-add-btn,
 .llm-preset-btn {
   min-height: 36px;
@@ -547,7 +542,6 @@
 .clear-btn:hover,
 .stock-row-action:hover,
 .source-toggle:hover,
-.rag-secondary-btn:hover,
 .llm-add-btn:hover,
 .llm-preset-btn:hover {
   border-color: color-mix(in srgb, var(--accent) 48%, var(--line));
@@ -752,7 +746,6 @@
 .clear-btn,
 .stock-row-action,
 .source-toggle,
-.rag-secondary-btn,
 .llm-add-btn,
 .llm-preset-btn {
   display: inline-flex;
@@ -761,8 +754,7 @@
   gap: 7px;
 }
 
-.panel-tabs,
-.rag-tabs {
+.panel-tabs {
   width: fit-content;
   max-width: 100%;
   flex-wrap: nowrap;
