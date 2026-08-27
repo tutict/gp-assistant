@@ -26,15 +26,15 @@ const initialSettings: LlmSettings = {
   }],
 };
 
-function Harness() {
-  const [settings, setSettings] = useState<LlmSettings | null>(initialSettings);
+function Harness({ initial = initialSettings }: { initial?: LlmSettings }) {
+  const [settings, setSettings] = useState<LlmSettings | null>(initial);
   return <LlmSettingsPanel settings={settings} onChange={setSettings} />;
 }
 
-async function renderOpenPanel(): Promise<ReactTestRenderer> {
+async function renderOpenPanel(initial = initialSettings): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
   await act(async () => {
-    renderer = create(<Harness />);
+    renderer = create(<Harness initial={initial} />);
   });
   const toggle = renderer.root.find((node) => node.type === "button" && node.props.className === "llm-settings-toggle");
   await act(async () => {
@@ -122,6 +122,28 @@ describe("LlmSettingsPanel provider configuration", () => {
     expect(renderer.root.find((node) =>
       typeof node.props.className === "string" && node.props.className.includes("llm-connection-state"),
     ).children.join("")).toContain("42 ms");
+  });
+
+  it("keeps model discovery available for Anthropic-compatible relay endpoints", async () => {
+    const renderer = await renderOpenPanel({
+      active_provider_id: "deepseek-anthropic",
+      providers: [{
+        id: "deepseek-anthropic",
+        name: "DeepSeek Anthropic",
+        provider: "anthropic-compatible",
+        base_url: "https://api.deepseek.com/anthropic",
+        model: "deepseek-v4-flash",
+        api_key: "sk-secret",
+        api_format: "anthropic_messages",
+        endpoint_mode: "base_url",
+      }],
+    });
+    const refresh = renderer.root.find((node) => node.props["aria-label"] === "拉取供应商模型列表");
+    expect(refresh.props.disabled).toBeFalsy();
+    const hint = renderer.root.find((node) =>
+      typeof node.props.className === "string" && node.props.className.includes("llm-model-hint"),
+    );
+    expect(hint.children.join("")).toContain("可直接输入模型 ID");
   });
 
   it("ignores a stale connection result after the provider configuration changes", async () => {

@@ -231,6 +231,35 @@ describe("contract payload builders", () => {
     });
   });
 
+  it("migrates legacy Anthropic providers only when their protocol is missing", () => {
+    expect(normalizeLlmSettings({
+      active_provider_id: "legacy-anthropic",
+      providers: [{
+        id: "legacy-anthropic",
+        provider: "anthropic-compatible",
+        base_url: "https://gateway.example/anthropic",
+        model: "claude-compatible",
+      }],
+    }).providers?.[0]).toMatchObject({
+      provider: "anthropic-compatible",
+      api_format: "anthropic_messages",
+    });
+
+    expect(normalizeLlmSettings({
+      active_provider_id: "explicit-openai",
+      providers: [{
+        id: "explicit-openai",
+        provider: "anthropic-compatible",
+        base_url: "https://gateway.example/v1",
+        model: "openai-compatible",
+        api_format: "openai_chat",
+      }],
+    }).providers?.[0]).toMatchObject({
+      provider: "anthropic-compatible",
+      api_format: "openai_chat",
+    });
+  });
+
   it("preserves real industry labels and keeps market scopes separate", () => {
     expect(buildScreenCriteria({ ...criteria, industry: "传媒" })).toMatchObject({
       industry: "传媒",

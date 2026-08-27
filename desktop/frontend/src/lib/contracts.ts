@@ -453,7 +453,7 @@ export function normalizeLlmSettings(settings: LlmSettings | null | undefined): 
       id: provider.id || `provider-${index + 1}`,
       name: provider.name || provider.provider || provider.model || `Provider ${index + 1}`,
       provider: provider.provider || "custom",
-      api_format: normalizeLlmApiFormat(provider.api_format),
+      api_format: normalizeLlmApiFormat(provider.api_format, provider.provider),
       endpoint_mode: normalizeLlmEndpointMode(provider.endpoint_mode),
       custom_user_agent: provider.custom_user_agent?.trim() || "",
     }));
@@ -463,7 +463,11 @@ export function normalizeLlmSettings(settings: LlmSettings | null | undefined): 
     return { active_provider_id: activeProviderId, providers };
   }
 
-  const legacy = settings as LlmSettings & LlmClientConfig & { remember_key?: boolean; timeout?: number };
+  const legacy = settings as LlmSettings & LlmClientConfig & {
+    provider?: string;
+    remember_key?: boolean;
+    timeout?: number;
+  };
   return {
     active_provider_id: "legacy",
     providers: [{
@@ -473,7 +477,7 @@ export function normalizeLlmSettings(settings: LlmSettings | null | undefined): 
       api_key: legacy.api_key,
       base_url: legacy.base_url,
       model: legacy.model,
-      api_format: normalizeLlmApiFormat(legacy.api_format),
+      api_format: normalizeLlmApiFormat(legacy.api_format, legacy.provider),
       endpoint_mode: normalizeLlmEndpointMode(legacy.endpoint_mode),
       custom_user_agent: legacy.custom_user_agent?.trim() || "",
       temperature: legacy.temperature,
@@ -507,8 +511,18 @@ function defaultLlmProvider() {
   };
 }
 
-function normalizeLlmApiFormat(value: unknown): "openai_chat" | "openai_responses" | "anthropic_messages" {
-  return value === "openai_responses" || value === "anthropic_messages" ? value : "openai_chat";
+function normalizeLlmApiFormat(
+  value: unknown,
+  provider?: unknown,
+): "openai_chat" | "openai_responses" | "anthropic_messages" {
+  if (value === "openai_responses" || value === "anthropic_messages" || value === "openai_chat") {
+    return value;
+  }
+  return (value === undefined || value === null)
+    && typeof provider === "string"
+    && (provider.toLowerCase() === "anthropic-compatible" || provider.toLowerCase() === "anthropic")
+    ? "anthropic_messages"
+    : "openai_chat";
 }
 
 function normalizeLlmEndpointMode(value: unknown): "base_url" | "full_url" {

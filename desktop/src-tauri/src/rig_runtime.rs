@@ -339,11 +339,16 @@ pub(crate) fn normalize_provider_config(value: &Value) -> Result<ProviderConfig,
     {
         return Err("Rig API key is invalid or exceeds 8192 bytes".to_string());
     }
-    let api_format =
-        config_string(object, "api_format").unwrap_or_else(|| "openai_chat".to_string());
     let provider = config_string(object, "provider")
         .unwrap_or_default()
         .to_ascii_lowercase();
+    let api_format = config_string(object, "api_format").unwrap_or_else(|| {
+        if matches!(provider.as_str(), "anthropic-compatible" | "anthropic") {
+            "anthropic_messages".to_string()
+        } else {
+            "openai_chat".to_string()
+        }
+    });
     let kind = match api_format.as_str() {
         "openai_chat" => {
             if provider == "anthropic" {
@@ -386,14 +391,24 @@ fn provider_request_url(config: &ProviderConfig) -> Result<String, String> {
     url.set_fragment(None);
     let suffix = match config.kind {
         ProviderKind::OpenAiResponses => "/responses",
-        ProviderKind::Anthropic => "/messages",
+        ProviderKind::Anthropic => "/v1/messages",
         ProviderKind::OpenAiChat | ProviderKind::OpenAiCompatible => "/chat/completions",
     };
     let mut path = url.path().trim_end_matches('/').to_string();
-    for known_suffix in ["/chat/completions", "/responses", "/messages"] {
+    for known_suffix in [
+        "/chat/completions",
+        "/responses",
+        "/v1/messages",
+        "/messages",
+    ] {
         if let Some(base) = path.strip_suffix(known_suffix) {
             path = base.to_string();
             break;
+        }
+    }
+    if matches!(config.kind, ProviderKind::Anthropic) {
+        if let Some(base) = path.strip_suffix("/v1") {
+            path = base.to_string();
         }
     }
     if !path.ends_with(suffix) {
@@ -532,14 +547,19 @@ fn validate_full_endpoint_kind(config: &ProviderConfig) -> Result<(), RigAgentEr
     let parsed = reqwest::Url::parse(&config.base_url)
         .map_err(|error| RigAgentError::PolicyRejected(error.to_string()))?;
     let path = parsed.path().trim_end_matches('/');
-    let expected = match config.kind {
-        ProviderKind::OpenAiResponses => "/responses",
-        ProviderKind::Anthropic => "/messages",
+    let valid = match config.kind {
+        ProviderKind::OpenAiResponses => path.ends_with("/responses"),
+        ProviderKind::Anthropic => path.ends_with("/v1/messages"),
         ProviderKind::OpenAiChat | ProviderKind::OpenAiCompatible => unreachable!(),
     };
-    if path.ends_with(expected) {
+    if valid {
         Ok(())
     } else {
+        let expected = match config.kind {
+            ProviderKind::OpenAiResponses => "/responses",
+            ProviderKind::Anthropic => "/v1/messages",
+            ProviderKind::OpenAiChat | ProviderKind::OpenAiCompatible => unreachable!(),
+        };
         Err(RigAgentError::PolicyRejected(format!(
             "Rig {expected} full_url must end with {expected}"
         )))
@@ -553,10 +573,17 @@ fn provider_builder_base_url(config: &ProviderConfig) -> Result<String, RigAgent
             .map_err(|error| RigAgentError::PolicyRejected(error.to_string()))?;
         let mut base = parsed;
         let path = base.path().to_string();
-        let parent = path
-            .rsplit_once('/')
-            .map(|(parent, _)| parent)
-            .unwrap_or("");
+        let parent = if matches!(config.kind, ProviderKind::Anthropic) {
+            path.strip_suffix("/v1/messages").ok_or_else(|| {
+                RigAgentError::PolicyRejected(
+                    "Rig Anthropic full_url must end with /v1/messages".to_string(),
+                )
+            })?
+        } else {
+            path.rsplit_once('/')
+                .map(|(parent, _)| parent)
+                .unwrap_or("")
+        };
         base.set_path(if parent.is_empty() { "/" } else { parent });
         base.set_query(None);
         base.set_fragment(None);
@@ -1728,6 +1755,16 @@ mod tests {
             .kind,
             ProviderKind::Anthropic
         );
+        assert_eq!(
+            normalize_provider_config(&json!({
+                "provider": "anthropic-compatible",
+                "base_url": "https://api.example.test/anthropic",
+                "model": "legacy-anthropic"
+            }))
+            .expect("legacy Anthropic provider should normalize")
+            .api_format,
+            "anthropic_messages"
+        );
     }
 
     #[test]
@@ -1868,6 +1905,28 @@ mod tests {
         );
         assert_eq!(full_endpoint_path(&full_config).unwrap(), "/generate");
         assert!(build_model(&full_config).is_ok());
+
+        let legacy_anthropic_full_url = normalize_provider_config(&json!({
+            "api_format": "anthropic_messages",
+            "model": "test-model",
+            "base_url": "https://gateway.example.test/messages",
+            "endpoint_mode": "full_url"
+        }))
+        .expect("legacy Anthropic full URL should normalize before validation");
+        assert!(validate_full_endpoint_kind(&legacy_anthropic_full_url).is_err());
+
+        let standard_anthropic_full_url = normalize_provider_config(&json!({
+            "api_format": "anthropic_messages",
+            "model": "test-model",
+            "base_url": "https://gateway.example.test/v1/messages",
+            "endpoint_mode": "full_url"
+        }))
+        .expect("standard Anthropic full URL should normalize");
+        assert!(validate_full_endpoint_kind(&standard_anthropic_full_url).is_ok());
+        assert_eq!(
+            provider_builder_base_url(&standard_anthropic_full_url).unwrap(),
+            "https://gateway.example.test"
+        );
     }
 
     #[test]

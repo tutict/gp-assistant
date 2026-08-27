@@ -2681,6 +2681,7 @@ async fn api_llm_models(payload: Value) -> Result<Value, String> {
         .unwrap_or("openai-compatible")
         .trim()
         .to_ascii_lowercase();
+    let api_format = llm_api_format(&payload);
     let api_key = payload
         .get("api_key")
         .and_then(Value::as_str)
@@ -2696,7 +2697,7 @@ async fn api_llm_models(payload: Value) -> Result<Value, String> {
     if user_agent.len() > 256 || user_agent.contains(['\r', '\n']) {
         return Err("自定义 User-Agent 格式不正确。".to_string());
     }
-    let endpoint = llm_models_endpoint(base_url)?;
+    let endpoint = llm_models_endpoint(base_url, api_format)?;
     let client = build_http_client_with_proxy(
         user_agent,
         Duration::from_secs(timeout_seconds as u64),
@@ -2706,7 +2707,7 @@ async fn api_llm_models(payload: Value) -> Result<Value, String> {
     let mut request = client
         .get(endpoint.clone())
         .header("Accept", "application/json");
-    if provider == "anthropic-compatible" {
+    if llm_models_uses_anthropic_auth(base_url, api_format) {
         request = request.header("anthropic-version", "2023-06-01");
         if !api_key.is_empty() {
             request = request.header("x-api-key", api_key);
@@ -2769,11 +2770,7 @@ async fn api_llm_test(payload: Value) -> Result<Value, String> {
         .and_then(Value::as_str)
         .map(str::trim)
         .unwrap_or_default();
-    let api_format = match payload.get("api_format").and_then(Value::as_str) {
-        Some("openai_responses") => "openai_responses",
-        Some("anthropic_messages") => "anthropic_messages",
-        _ => "openai_chat",
-    };
+    let api_format = llm_api_format(&payload);
     let full_url = payload.get("endpoint_mode").and_then(Value::as_str) == Some("full_url");
     let endpoint = llm_inference_endpoint(base_url, api_format, full_url)?;
     let custom_user_agent = payload
@@ -2883,18 +2880,36 @@ pub(crate) fn llm_inference_endpoint(
         return Err("供应商接口地址不能包含用户名或密码。".to_string());
     }
     if full_url {
+        if api_format == "anthropic_messages" {
+            if url.query().is_some() || url.fragment().is_some() {
+                return Err("Anthropic 完整 URL 不能包含查询参数或片段。".to_string());
+            }
+            if !url.path().trim_end_matches('/').ends_with("/v1/messages") {
+                return Err("Anthropic 完整 URL 必须以 /v1/messages 结尾。".to_string());
+            }
+        }
         return Ok(url);
     }
     let suffix = match api_format {
         "openai_responses" => "/responses",
-        "anthropic_messages" => "/messages",
+        "anthropic_messages" => "/v1/messages",
         _ => "/chat/completions",
     };
     let mut path = url.path().trim_end_matches('/').to_string();
-    for known_suffix in ["/chat/completions", "/responses", "/messages"] {
+    for known_suffix in [
+        "/chat/completions",
+        "/responses",
+        "/v1/messages",
+        "/messages",
+    ] {
         if let Some(base) = path.strip_suffix(known_suffix) {
             path = base.to_string();
             break;
+        }
+    }
+    if api_format == "anthropic_messages" {
+        if let Some(base) = path.strip_suffix("/v1") {
+            path = base.to_string();
         }
     }
     if !path.ends_with(suffix) {
@@ -2965,7 +2980,7 @@ fn llm_connection_http_error(status: u16, body: &[u8], api_key: &str) -> String 
         .unwrap_or_else(|| format!("供应商返回 HTTP {status}，连接测试失败。"))
 }
 
-fn llm_models_endpoint(base_url: &str) -> Result<reqwest::Url, String> {
+fn llm_models_endpoint(base_url: &str, api_format: &str) -> Result<reqwest::Url, String> {
     let mut url = reqwest::Url::parse(base_url.trim())
         .map_err(|_| "供应商接口地址格式不正确。".to_string())?;
     if !matches!(url.scheme(), "http" | "https") {
@@ -2981,15 +2996,38 @@ fn llm_models_endpoint(base_url: &str) -> Result<reqwest::Url, String> {
         return Err("公网模型接口必须使用 HTTPS；HTTP 仅允许本机或私有局域网地址。".to_string());
     }
 
+    if is_official_deepseek_anthropic_base_url(&url, api_format) {
+        url.set_path("/models");
+        url.set_query(None);
+        url.set_fragment(None);
+        return Ok(url);
+    }
+
     let mut path = url.path().trim_end_matches('/').to_string();
-    for suffix in ["/chat/completions", "/responses", "/messages"] {
+    for suffix in [
+        "/chat/completions",
+        "/responses",
+        "/v1/messages",
+        "/messages",
+        "/models",
+    ] {
         if let Some(base) = path.strip_suffix(suffix) {
             path = base.to_string();
             break;
         }
     }
-    if !path.ends_with("/models") {
-        path.push_str("/models");
+    if api_format == "anthropic_messages" {
+        if let Some(base) = path.strip_suffix("/v1") {
+            path = base.to_string();
+        }
+    }
+    let suffix = if api_format == "anthropic_messages" {
+        "/v1/models"
+    } else {
+        "/models"
+    };
+    if !path.ends_with(suffix) {
+        path.push_str(suffix);
     }
     if path.is_empty() || !path.starts_with('/') {
         path.insert(0, '/');
@@ -2998,6 +3036,40 @@ fn llm_models_endpoint(base_url: &str) -> Result<reqwest::Url, String> {
     url.set_query(None);
     url.set_fragment(None);
     Ok(url)
+}
+
+fn llm_api_format(payload: &Value) -> &'static str {
+    match payload.get("api_format").and_then(Value::as_str) {
+        Some("openai_responses") => "openai_responses",
+        Some("anthropic_messages") => "anthropic_messages",
+        Some("openai_chat") => "openai_chat",
+        None if payload
+            .get("provider")
+            .and_then(Value::as_str)
+            .is_some_and(|provider| {
+                provider.eq_ignore_ascii_case("anthropic-compatible")
+                    || provider.eq_ignore_ascii_case("anthropic")
+            }) =>
+        {
+            "anthropic_messages"
+        }
+        _ => "openai_chat",
+    }
+}
+
+fn llm_models_uses_anthropic_auth(base_url: &str, api_format: &str) -> bool {
+    api_format == "anthropic_messages"
+        && !reqwest::Url::parse(base_url)
+            .ok()
+            .is_some_and(|url| is_official_deepseek_anthropic_base_url(&url, api_format))
+}
+
+fn is_official_deepseek_anthropic_base_url(url: &reqwest::Url, api_format: &str) -> bool {
+    api_format == "anthropic_messages"
+        && url
+            .host_str()
+            .is_some_and(|host| host.eq_ignore_ascii_case("api.deepseek.com"))
+        && url.path().trim_end_matches('/') == "/anthropic"
 }
 
 fn llm_plain_http_host_allowed(host: Option<&str>) -> bool {

@@ -2575,13 +2575,13 @@ mod harness_validation_tests {
         );
         assert_eq!(
             crate::llm_inference_endpoint(
-                "https://api.example/custom/generate",
+                "https://api.example/custom/v1/messages",
                 "anthropic_messages",
                 true
             )
             .unwrap()
             .as_str(),
-            "https://api.example/custom/generate"
+            "https://api.example/custom/v1/messages"
         );
         let request = json!({
             "model": "test-model",
