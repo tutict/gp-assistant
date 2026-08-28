@@ -19,9 +19,17 @@
       document.documentElement.dataset.density = savedDensity === "compact" ? "compact" : "comfortable";
     </script>
     <style>
+      html {
+        --splash-bg: #0d1014;
+        --splash-text: #f4f7fa;
+      }
+      html[data-theme="light"] {
+        --splash-bg: #f4f6f8;
+        --splash-text: #18212a;
+      }
       html, body {
-        background: #120e0d;
-        color: #fff4ef;
+        background: var(--splash-bg);
+        color: var(--splash-text);
         margin: 0;
         min-height: 100vh;
       }
@@ -31,8 +39,8 @@
         z-index: 9999;
         display: grid;
         place-items: center;
-        background: #120e0d;
-        color: #fff4ef;
+        background: var(--splash-bg);
+        color: var(--splash-text);
         font-family: system-ui, sans-serif;
       }
       #bootSplash .splash-logo {

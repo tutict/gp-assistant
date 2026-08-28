@@ -152,6 +152,13 @@
   --flat: #667482;
   --score: #9d6b08;
   --score-soft: rgba(157, 107, 8, 0.1);
+  --contrast-dark: #ffffff;
+  --splash-bg: var(--bg);
+  --splash-text: var(--text);
+  --agent-workspace-bg: #f7f8fa;
+  --agent-rail-bg: #ffffff;
+  --agent-stage-bg: #f4f6f8;
+  --agent-composer-bg: #eef1f5;
   --chart-line-1: #1f6fd6;
   --chart-line-2: #a8610a;
   --chart-line-3: #7f49b5;
