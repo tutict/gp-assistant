@@ -1879,15 +1879,16 @@ async function runNewsInteractionChecks(browser) {
   console.log("News interaction checks passed: expand/escape/all-read/ctrl-enter/delete/citation-history");
 }
 
-let localServer = null;
-if (serveBuild) {
-  const started = await startBuiltAppServer();
-  localServer = started.server;
-  baseUrl = started.url;
-}
+async function runScreenshotHarness() {
+  let localServer = null;
+  if (serveBuild) {
+    const started = await startBuiltAppServer();
+    localServer = started.server;
+    baseUrl = started.url;
+  }
 
-const browser = await chromium.launch();
-try {
+  const browser = await chromium.launch();
+  try {
   if (checkOnly || checkSearchOverlay) {
     const device = devices.find((item) => item.name === "desktop-1440");
     const context = await browser.newContext({
@@ -2050,9 +2051,16 @@ try {
     writeFileSync(resolve(outputRoot, "report.json"), JSON.stringify(report, null, 2) + "\n");
     console.log("UI screenshots written to " + outputRoot);
   }
-} finally {
-  await browser.close();
-  if (localServer) {
-    await new Promise((resolveClose) => localServer.close(resolveClose));
+  } finally {
+    await browser.close();
+    if (localServer) {
+      await new Promise((resolveClose) => localServer.close(resolveClose));
+    }
   }
 }
+
+export { installHarnessState, startBuiltAppServer };
+
+const isDirect = process.argv[1]
+  && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isDirect) await runScreenshotHarness();
