@@ -777,10 +777,14 @@
 .watchlist-heading { display: inline-flex; align-items: baseline; gap: 7px; min-width: 0; }
 .watchlist-count strong { color: var(--text); font-variant-numeric: tabular-nums; }
 .clear-btn {
-  background: none; border: none; color: var(--text-secondary);
+  background: none; border: none; color: var(--text);
   cursor: pointer; font-size: 0.82rem;
 }
 .clear-btn:hover { color: var(--error); }
+.llm-editor-actions .clear-btn:disabled {
+  color: var(--text);
+  opacity: 1;
+}
 .watchlist-name.missing { color: var(--text-muted); font-size: 0.76rem; }
 .watchlist-empty {
   display: flex;
@@ -837,7 +841,7 @@
 }
 .llm-endpoint-state.warn,
 .llm-provider-card b.warn {
-  color: var(--accent);
+  color: var(--text);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .llm-settings-body {
@@ -923,7 +927,7 @@
   height: 30px;
   border-radius: 50%;
   background: color-mix(in srgb, var(--accent) 18%, var(--surface));
-  color: var(--accent);
+  color: var(--text);
   display: grid;
   place-items: center;
   font-size: 0.78rem;

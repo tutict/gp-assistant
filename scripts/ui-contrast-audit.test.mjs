@@ -13,6 +13,12 @@ test("parses browser rgb and rgba colors", () => {
   assert.deepEqual(parseCssColor("rgba(255, 255, 255, 0.6)"), {
     r: 255, g: 255, b: 255, a: 0.6,
   });
+  assert.deepEqual(parseCssColor("color(srgb 0.995765 0.996706 0.997647)"), {
+    r: 253.920075,
+    g: 254.16003,
+    b: 254.399985,
+    a: 1,
+  });
 });
 
 test("composites translucent text before measuring contrast", () => {

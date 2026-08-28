@@ -2993,6 +2993,11 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
   color: var(--text);
 }
 
+.agent-rail-search input::placeholder {
+  color: var(--text-secondary);
+  opacity: 1;
+}
+
 .agent-new-chat {
   display: flex;
   min-height: 38px;
@@ -3014,7 +3019,7 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 .agent-workspace.rail-collapsed .agent-new-chat {
   border-color: var(--line);
   background: var(--surface-2);
-  color: var(--text-secondary);
+  color: var(--text);
 }
 
 .agent-workspace.rail-collapsed .agent-new-chat:hover {
@@ -3573,7 +3578,7 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
   border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--line));
   border-radius: 7px;
   background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
-  color: var(--accent);
+  color: var(--text);
   font-size: 0.78rem;
   font-weight: 700;
   white-space: nowrap;

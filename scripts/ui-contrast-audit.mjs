@@ -26,10 +26,11 @@ export function parseCssColor(value) {
   if (value.trim().toLowerCase() === "transparent") return { r: 0, g: 0, b: 0, a: 0 };
   const numbers = value.match(/-?\d*\.?\d+/g)?.map(Number) || [];
   if (numbers.length < 3) throw new Error(`Unsupported computed color: ${value}`);
+  const srgbScale = /^color\(srgb\b/i.test(value) ? 255 : 1;
   return {
-    r: clamp(numbers[0], 0, 255),
-    g: clamp(numbers[1], 0, 255),
-    b: clamp(numbers[2], 0, 255),
+    r: clamp(numbers[0] * srgbScale, 0, 255),
+    g: clamp(numbers[1] * srgbScale, 0, 255),
+    b: clamp(numbers[2] * srgbScale, 0, 255),
     a: clamp(numbers[3] ?? 1, 0, 1),
   };
 }

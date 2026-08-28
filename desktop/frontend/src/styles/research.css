@@ -515,7 +515,7 @@
 
   .research-stock-row small,
   .research-thread-row small {
-    color: var(--text-tertiary);
+    color: var(--text-secondary);
     font-size: var(--fs-caption);
   }
 
@@ -1339,7 +1339,7 @@
       content: "·";
     }
 
-    .research-brief-inline-counts .research-stat.positive strong { color: var(--rise); }
+    .research-brief-inline-counts .research-stat.positive strong { color: var(--error); }
     .research-brief-inline-counts .research-stat.negative strong { color: var(--fall); }
 
     .research-brief-preview {
@@ -1487,7 +1487,7 @@
     .research-workspace .research-composer-setup {
       position: static;
       margin: 0;
-      color: var(--text-tertiary);
+      color: var(--text-secondary);
       font-size: var(--fs-caption);
       font-weight: 600;
       line-height: 1.35;

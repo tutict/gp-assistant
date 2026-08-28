@@ -322,7 +322,7 @@
 .nav-link.active,
 .nav-link[aria-current="page"] {
   background: var(--accent-soft);
-  color: var(--accent-strong);
+  color: var(--text);
 }
 
 .nav-link svg {
