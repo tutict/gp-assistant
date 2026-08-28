@@ -1468,15 +1468,33 @@ async function captureObserveSummaryBaselines(browser, targetRoot) {
 
 async function assertNewsPageState(page, device, scenarioName) {
   const riskBoundary = page.locator(".research-risk-boundary");
-  await riskBoundary.waitFor({ state: "visible" });
-  const riskText = (await riskBoundary.innerText()).trim();
-  if (riskText !== "仅供研究，不构成投资建议。") {
-    throw new Error(`${device.name}/${scenarioName} does not show the full research risk boundary`);
+  let riskText = "";
+  if (device.mobile) {
+    const send = page.locator(".research-composer-send");
+    const title = await send.getAttribute("title");
+    const ariaLabel = await send.getAttribute("aria-label");
+    riskText = title || "";
+    if (!title?.includes("仅供研究，不构成投资建议")
+      || !ariaLabel?.includes("仅供研究，不构成投资建议")) {
+      throw new Error(`${device.name}/${scenarioName} does not expose the research boundary on send`);
+    }
+    if (await riskBoundary.isVisible()) {
+      throw new Error(`${device.name}/${scenarioName} still spends a composer row on the risk boundary`);
+    }
+    if (scenarioName === "empty") {
+      await page.locator(".research-empty-boundary").waitFor({ state: "visible" });
+    }
+  } else {
+    await riskBoundary.waitFor({ state: "visible" });
+    riskText = (await riskBoundary.innerText()).trim();
+    if (riskText !== "仅供研究，不构成投资建议。") {
+      throw new Error(`${device.name}/${scenarioName} does not show the full research risk boundary`);
+    }
   }
 
   const composerBox = await page.locator(".research-composer").boundingBox();
-  if (!composerBox || (device.mobile && composerBox.height > 120.5)) {
-    throw new Error(`${device.name}/${scenarioName} composer exceeds the 120px mobile limit: ${JSON.stringify(composerBox)}`);
+  if (!composerBox || (device.mobile && composerBox.height > 104.5)) {
+    throw new Error(`${device.name}/${scenarioName} composer exceeds the 104px mobile limit: ${JSON.stringify(composerBox)}`);
   }
 
   const checks = {
@@ -1523,9 +1541,22 @@ async function assertNewsPageState(page, device, scenarioName) {
   }
 
   if (scenarioName === "data") {
-    const summaryCounts = await page.locator(".research-stat > strong").allTextContents();
+    const expandedBrief = device.mobile
+      ? ".research-daily-brief-mobile"
+      : ".research-daily-brief-desktop";
+    const summaryCounts = await page.locator(
+      `${expandedBrief} .research-brief-expanded .research-stat > strong`,
+    ).allTextContents();
     if (summaryCounts.length !== 4 || summaryCounts.slice(0, 3).some((value) => Number(value) === 0)) {
       throw new Error(`${device.name}/${scenarioName} fixture is no longer counted as today: ${JSON.stringify(summaryCounts)}`);
+    }
+    if (device.mobile) {
+      const inlineCounts = await page.locator(
+        ".research-brief-inline-counts .research-stat > strong",
+      ).allTextContents();
+      if (inlineCounts.join(",") !== summaryCounts.join(",")) {
+        throw new Error(`${device.name}/${scenarioName} collapsed summary counts drifted: ${JSON.stringify(inlineCounts)}`);
+      }
     }
     checks.summaryCounts = summaryCounts;
   }

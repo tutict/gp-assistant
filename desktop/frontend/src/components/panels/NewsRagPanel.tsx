@@ -186,6 +186,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const questionPlaceholder = code
     ? `询问 ${code} 的公告、财务或消息…`
     : "询问当前知识库…";
+  const composerPlaceholder = mobile ? "询问公告、财务或消息…" : `${questionPlaceholder} · Ctrl+Enter 发送`;
   const summary = useMemo(() => {
     if (!todayMessages.length) {
       return code ? `${code} 暂无新增证据。可立即更新，或导入公告、研报后再核查。`
@@ -463,26 +464,27 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
 
       <main className="research-stream">
         <div className="research-stream-body">
-        <section className="research-daily-brief">
-          <div className="research-brief-rule"><span>今日摘要</span>
-            <time>{new Date().toLocaleDateString("zh-CN")}</time>
-          </div>
-          <p>{summary}</p>
-          <div className="research-brief-counts">
-            <span className="research-stat positive">
-              <span>利好</span><strong>{grouped.positive.length}</strong>
-            </span>
-            <span className="research-stat negative">
-              <span>利空</span><strong>{grouped.negative.length}</strong>
-            </span>
-            <span className="research-stat">
-              <span>待核查</span><strong>{grouped.uncertain.length}</strong>
-            </span>
-            <span className="research-stat">
-              <span>文档</span><strong>{overview?.document_count || 0}</strong>
-            </span>
-          </div>
+        <section className="research-daily-brief research-daily-brief-desktop">
+          <ResearchBriefExpanded summary={summary}
+            date={new Date().toLocaleDateString("zh-CN")}
+            positive={grouped.positive.length} negative={grouped.negative.length}
+            uncertain={grouped.uncertain.length} documents={overview?.document_count || 0} />
         </section>
+        <details className="research-daily-brief research-daily-brief-mobile">
+          <summary className="research-brief-summary">
+            <span className="research-brief-lead"><span className="research-dot neutral" />
+              <strong>今日摘要</strong></span>
+            <ResearchBriefCounts positive={grouped.positive.length}
+              negative={grouped.negative.length} uncertain={grouped.uncertain.length}
+              documents={overview?.document_count || 0} inline />
+            <span className="research-brief-preview">{summary}</span>
+            <ChevronRight className="research-brief-chevron" size={16} aria-hidden="true" />
+          </summary>
+          <ResearchBriefExpanded summary={summary}
+            date={new Date().toLocaleDateString("zh-CN")}
+            positive={grouped.positive.length} negative={grouped.negative.length}
+            uncertain={grouped.uncertain.length} documents={overview?.document_count || 0} />
+        </details>
 
         <section className="research-event-section">
           {refreshing && <div className="research-refresh-progress" aria-label="消息更新中" />}
@@ -514,25 +516,31 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         </div>
         <form className="research-composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
           {evidenceNotice && <div className="research-evidence-notice" role="status">{evidenceNotice}</div>}
-          <div><label htmlFor={questionInputId}><span>研究问题</span><small>
-            {activeLlmConfig
-              ? "模型回答会强制引用证据" : "请先配置 API 和模型"}
-          </small></label>
-            <textarea ref={questionInputRef} id={questionInputId} value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-                  event.preventDefault();
-                  void ask();
-                }
-              }}
-              placeholder={`${questionPlaceholder} · Ctrl+Enter 发送`} rows={2} />
+          <div><label className="research-composer-label" htmlFor={questionInputId}>
+            <span>研究问题</span>{activeLlmConfig && <small>模型回答会强制引用证据</small>}
+          </label>
+            {!activeLlmConfig && <small className="research-composer-setup">请先配置 API 和模型</small>}
+            <div className="research-composer-row">
+              <textarea ref={questionInputRef} id={questionInputId} value={question}
+                aria-label="研究问题"
+                onChange={(event) => setQuestion(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                    event.preventDefault();
+                    void ask();
+                  }
+                }}
+                placeholder={composerPlaceholder} rows={2} />
+              <button className="research-composer-send" type="submit"
+                aria-label="提交问题；仅供研究，不构成投资建议。"
+                title="提交问题；仅供研究，不构成投资建议。"
+                disabled={!question.trim() || asking || Boolean(deletingThreadId) || !activeLlmConfig}>
+                {asking || deletingThreadId
+                  ? <RefreshCw size={18} className="is-spinning" /> : <Send size={18} />}
+              </button>
+            </div>
             <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>
           </div>
-          <button type="submit" aria-label="提交问题" title="提交问题"
-            disabled={!question.trim() || asking || Boolean(deletingThreadId) || !activeLlmConfig}>
-            {asking || deletingThreadId ? <RefreshCw size={18} className="is-spinning" /> : <Send size={18} />}
-          </button>
         </form>
       </main>
 
@@ -574,9 +582,10 @@ function EventGroup(props: {
               props.selectEvent(message);
             }
           }}>
-          <span className={`research-dot ${sentimentDotTone(message.sentiment)}`} />
+          <span className={`research-dot research-event-dot-desktop ${sentimentDotTone(message.sentiment)}`} />
           <span className="research-event-content">
             <span className="research-event-meta">
+              <span className={`research-dot research-event-dot-mobile ${sentimentDotTone(message.sentiment)}`} />
               <span className="research-badge">{sourceTierLabel(message.source_tier)}</span>
               <span className="research-source-name">{message.source_name}</span>
               {message.scope_type && <span className="research-scope-tag">
@@ -633,6 +642,38 @@ function ResearchEmptyState(props: {
         <span>知识库管理</span>
       </button>
     </div>
+    <small className="research-empty-boundary">仅供研究，不构成投资建议。</small>
+  </div>;
+}
+
+function ResearchBriefCounts(props: {
+  positive: number;
+  negative: number;
+  uncertain: number;
+  documents: number;
+  inline?: boolean;
+}) {
+  return <span className={`research-brief-counts${props.inline ? " research-brief-inline-counts" : ""}`}>
+    <span className="research-stat positive"><span>利好</span><strong>{props.positive}</strong></span>
+    <span className="research-stat negative"><span>利空</span><strong>{props.negative}</strong></span>
+    <span className="research-stat"><span>待核查</span><strong>{props.uncertain}</strong></span>
+    <span className="research-stat"><span>文档</span><strong>{props.documents}</strong></span>
+  </span>;
+}
+
+function ResearchBriefExpanded(props: {
+  summary: string;
+  date: string;
+  positive: number;
+  negative: number;
+  uncertain: number;
+  documents: number;
+}) {
+  return <div className="research-brief-expanded">
+    <div className="research-brief-rule"><span>今日摘要</span><time>{props.date}</time></div>
+    <p>{props.summary}</p>
+    <ResearchBriefCounts positive={props.positive} negative={props.negative}
+      uncertain={props.uncertain} documents={props.documents} />
   </div>;
 }
 
@@ -656,6 +697,7 @@ function InboxPanel(props: {
   asking: boolean;
 }) {
   return <aside className={`research-inbox${props.open ? " mobile-open" : ""}`}>
+    <span className="research-sheet-handle" aria-hidden="true" />
     <div className="research-pane-heading">
       <div><span>自选股收件箱</span><strong>{props.unread} 条未读</strong></div>
       <button className="research-icon-button research-mobile-close" type="button"
@@ -751,6 +793,7 @@ function EvidencePanel(props: {
 }) {
   return <aside className={`research-evidence${props.citation ? " has-selection" : ""}`}
     aria-label="引用证据检查器">
+    <span className="research-sheet-handle" aria-hidden="true" />
     <div className="research-pane-heading">
       <div><span>证据检查器</span><strong>原文可回溯</strong></div>
       {props.citation && <div className="research-citation-history" aria-label="引用历史">

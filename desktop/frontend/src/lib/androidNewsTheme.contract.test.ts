@@ -4,10 +4,13 @@ const nodeFs = "node:fs";
 const { readFileSync } = await import(nodeFs);
 
 const tokensCss = readFileSync(new URL("../styles/tokens.css", import.meta.url), "utf8");
+const researchCss = readFileSync(new URL("../styles/research.css", import.meta.url), "utf8");
 const indexHtml = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
 
 function cssBlock(source: string, selector: string): string {
-  const start = source.indexOf(selector);
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`(?:^|\\n)[^\\n{}]*${escaped}\\s*\\{`).exec(source);
+  const start = match?.index ?? -1;
   if (start < 0) throw new Error(`Missing CSS selector: ${selector}`);
   const open = source.indexOf("{", start);
   let depth = 0;
@@ -55,5 +58,37 @@ describe("Android light theme contract", () => {
     expect(indexHtml).toContain("background: var(--splash-bg)");
     expect(indexHtml).toContain("color: var(--splash-text)");
     expect(indexHtml).toContain('html[data-theme="light"]');
+  });
+
+  it("keeps the Android news summary, metadata, and composer compact", () => {
+    const mobile = cssBlock(researchCss, "@media (max-width: 768px)");
+    const brief = cssBlock(mobile, ".research-daily-brief");
+    const sourceBadge = cssBlock(mobile, ".research-event-meta .research-badge");
+    const composerRow = cssBlock(mobile, ".research-composer-row");
+    const composerSend = cssBlock(mobile, ".research-composer-send");
+
+    expect(brief).toContain("margin-top: var(--space-2)");
+    expect(mobile).toContain(".research-brief-expanded");
+    expect(sourceBadge).toContain("background: var(--surface-2)");
+    expect(sourceBadge).toContain("color: var(--text-secondary)");
+    expect(sourceBadge).not.toContain("--rise");
+    expect(composerRow).toContain("grid-template-columns: minmax(0, 1fr) 40px");
+    expect(composerSend).toContain("width: 40px");
+    expect(mobile).toMatch(/\.research-composer-label[\s\S]*?display:\s*none/);
+    expect(mobile).toMatch(/\.research-risk-boundary[\s\S]*?display:\s*none/);
+  });
+
+  it("uses one bottom-sheet language for the Android inbox and evidence inspector", () => {
+    const mobile = cssBlock(researchCss, "@media (max-width: 768px)");
+    const inbox = cssBlock(mobile, ".research-inbox");
+    const evidence = cssBlock(mobile, ".research-evidence.has-selection");
+    const handle = cssBlock(mobile, ".research-sheet-handle");
+
+    expect(inbox).toContain("transform: translateY(calc(102% + var(--bottom-nav-height) + var(--safe-bottom)))");
+    expect(inbox).toContain("border-radius: var(--radius-sheet) var(--radius-sheet) 0 0");
+    expect(evidence).toContain("border-radius: var(--radius-sheet) var(--radius-sheet) 0 0");
+    expect(evidence).toContain("animation: research-sheet-in var(--motion-standard) var(--ease-out)");
+    expect(handle).toContain("width: 36px");
+    expect(handle).toContain("height: 4px");
   });
 });

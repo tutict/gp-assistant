@@ -171,26 +171,59 @@ describe("NewsRagPanel", () => {
     await act(async () => { renderer.unmount(); });
   });
 
-  it("keeps the research-only risk boundary visible beside the question input", async () => {
+  it("moves the research-only risk boundary to the send affordance and empty footer", async () => {
+    getJson.mockImplementation((path: string) => {
+      if (path.startsWith("/api/research/overview")) return Promise.resolve({
+        schema_version: 2, document_count: 0, chunk_count: 0, unread_count: 0,
+        retrieval: { vector: { ready: false } },
+      });
+      if (path.startsWith("/api/research/messages")) return Promise.resolve({ items: [] });
+      if (path === "/api/research/threads") return Promise.resolve({ items: [] });
+      return Promise.resolve({});
+    });
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(<NewsRagPanel llmSettings={null} />);
     });
 
-    expect(textOf(renderer.toJSON())).toContain("仅供研究，不构成投资建议");
+    const send = renderer.root.find((node) => node.type === "button"
+      && node.props.className === "research-composer-send");
+    expect(send.props.title).toContain("仅供研究，不构成投资建议");
+    expect(send.props["aria-label"]).toContain("仅供研究，不构成投资建议");
+    expect(textOf(renderer.root.findByProps({ className: "research-empty-boundary" })))
+      .toBe("仅供研究，不构成投资建议。");
     await act(async () => { renderer.unmount(); });
   });
 
-  it("keeps the full risk boundary visible on mobile", async () => {
+  it("uses a single-row mobile composer with an embedded send button", async () => {
     tauriMocks.mobile = true;
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(<NewsRagPanel llmSettings={null} />);
     });
 
-    const riskBoundary = renderer.root.findByProps({ className: "research-risk-boundary" });
-    expect(textOf(riskBoundary)).toBe("仅供研究，不构成投资建议。");
-    expect(renderer.root.findByType("textarea").props.placeholder).not.toContain("仅供研究");
+    const row = renderer.root.findByProps({ className: "research-composer-row" });
+    expect(row.findAllByType("textarea")).toHaveLength(1);
+    expect(row.findAll((node) => node.type === "button"
+      && node.props.className === "research-composer-send")).toHaveLength(1);
+    expect(renderer.root.findByType("textarea").props.placeholder).toContain("询问公告、财务或消息");
+    await act(async () => { renderer.unmount(); });
+  });
+
+  it("renders the daily brief as a collapsed native disclosure", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<NewsRagPanel llmSettings={null} />);
+    });
+
+    const brief = renderer.root.find((node) => node.type === "details"
+      && node.props.className === "research-daily-brief research-daily-brief-mobile");
+    const desktopBrief = renderer.root.find((node) => node.type === "section"
+      && node.props.className === "research-daily-brief research-daily-brief-desktop");
+    expect(brief.props.open).toBeUndefined();
+    expect(textOf(brief.findByType("summary"))).toContain("今日摘要");
+    expect(textOf(brief.findByType("summary"))).toContain("利好");
+    expect(textOf(desktopBrief)).toContain("今日摘要");
     await act(async () => { renderer.unmount(); });
   });
 
