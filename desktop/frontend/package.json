@@ -20,7 +20,7 @@
     "test:theme-parity-contract": "node --test ../../scripts/check-theme-parity.test.mjs ../../scripts/ui-contrast-audit.test.mjs",
     "test:theme-parity": "node ../../scripts/check-theme-parity.mjs",
     "test:contrast": "npm run build:app && npm run test:contrast:built",
-    "test:contrast:built": "node ../../scripts/ui-contrast-audit.mjs --serve --warn",
+    "test:contrast:built": "node ../../scripts/ui-contrast-audit.mjs --serve --fail",
     "test:bundle": "node ../../scripts/check-bundle-budget.mjs",
     "test:desktop": "npm run build:app && npm run test:desktop:built",
     "test:desktop:built": "node ../../scripts/ui-screenshot.mjs --serve --check-only --check-search-overlay --check-news-page --check-backtest-page --check-news-interactions",

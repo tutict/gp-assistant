@@ -71,7 +71,7 @@ if (-not $SkipNode) {
     Invoke-Checked "Frontend theme parity guard" $npm @("run", "test:theme-parity") $frontendDir
     Invoke-Checked "Frontend unit tests" $npm @("run", "test:unit") $frontendDir
     Invoke-Checked "Frontend React/TypeScript build" $npm @("run", "build") $frontendDir
-    Invoke-Checked "Frontend UI contrast audit" $npm @("run", "test:contrast:built") $frontendDir
+    Invoke-Checked "Frontend UI contrast audit (fail mode)" $npm @("run", "test:contrast:built") $frontendDir
     Invoke-Checked "Frontend desktop visual and shortcut harness" $npm @("run", "test:desktop:built") $frontendDir
 }
 

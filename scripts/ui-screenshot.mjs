@@ -44,6 +44,7 @@ const devices = [
   { name: "desktop-2560", width: 2560, height: 1440, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
   { name: "desktop-1440-light", width: 1440, height: 900, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
   { name: "desktop-1440-compact", width: 1440, height: 900, dpr: 1, mobile: false, theme: "dark", density: "compact" },
+  { name: "phone-390-light", width: 390, height: 844, dpr: 3, mobile: true, theme: "light", density: "comfortable" },
 ];
 
 async function openCustomScreen(page) {
@@ -557,6 +558,15 @@ const newsPageBaselineDevices = [
   { name: "desktop-1440-light", width: 1440, height: 900, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
   { name: "desktop-1920-dark", width: 1920, height: 1080, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
   { name: "desktop-1920-light", width: 1920, height: 1080, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
+  { name: "phone-390-dark", width: 390, height: 844, dpr: 3, mobile: true, theme: "dark", density: "comfortable" },
+  { name: "phone-390-light", width: 390, height: 844, dpr: 3, mobile: true, theme: "light", density: "comfortable" },
+  { name: "phone-430-dark", width: 430, height: 932, dpr: 3, mobile: true, theme: "dark", density: "comfortable" },
+  { name: "phone-430-light", width: 430, height: 932, dpr: 3, mobile: true, theme: "light", density: "comfortable" },
+];
+
+const agentThemeBaselineDevices = [
+  { name: "desktop-1440-dark", width: 1440, height: 900, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
+  { name: "desktop-1440-light", width: 1440, height: 900, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
   { name: "phone-390-dark", width: 390, height: 844, dpr: 3, mobile: true, theme: "dark", density: "comfortable" },
   { name: "phone-390-light", width: 390, height: 844, dpr: 3, mobile: true, theme: "light", density: "comfortable" },
 ];
@@ -1650,8 +1660,47 @@ async function captureNewsPageBaselines(browser, targetRoot) {
     }
   }
 
-  const phoneDark = newsPageBaselineDevices.find((device) => device.name === "phone-390-dark");
-  if (!phoneDark) return reports;
+  const mobileNewsDevices = newsPageBaselineDevices.filter((device) => device.mobile);
+  if (!mobileNewsDevices.length) return reports;
+
+  for (const device of mobileNewsDevices) {
+    const context = await browser.newContext({
+      viewport: { width: device.width, height: device.height },
+      screen: { width: device.width, height: device.height },
+      deviceScaleFactor: device.dpr,
+      hasTouch: true,
+      isMobile: true,
+      colorScheme: device.theme,
+    });
+    const page = await context.newPage();
+    try {
+      await installFixedResearchClock(page);
+      await installHarnessState(page, mockObserveResult, {
+        overview: mockResearchOverviewData,
+        messages: mockResearchMessagesData,
+        threads: mockResearchThreads,
+        detail: mockResearchThreadDetail,
+        indexStatus: { schema_version: 1, document_count: 18, chunk_count: 52 },
+      });
+      await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
+      await page.locator(".research-workspace").waitFor({ state: "visible" });
+      await page.locator(".research-brief-summary").click();
+      await page.locator(".research-daily-brief-mobile[open] .research-brief-expanded")
+        .waitFor({ state: "visible" });
+      const directory = resolve(targetRoot, "news", "brief-expanded", device.name);
+      mkdirSync(directory, { recursive: true });
+      const file = "brief-expanded.png";
+      await page.screenshot({ path: resolve(directory, file), fullPage: false });
+      reports.push({
+        scenario: "brief-expanded",
+        device: device.name,
+        file: `news/brief-expanded/${device.name}/${file}`,
+        box: await boxFor(page, ".research-workspace"),
+      });
+    } finally {
+      await context.close();
+    }
+  }
 
   const overlayStates = [
     {
@@ -1675,59 +1724,61 @@ async function captureNewsPageBaselines(browser, targetRoot) {
   ];
 
   for (const overlay of overlayStates) {
-    const context = await browser.newContext({
-      viewport: { width: phoneDark.width, height: phoneDark.height },
-      screen: { width: phoneDark.width, height: phoneDark.height },
-      deviceScaleFactor: phoneDark.dpr,
-      hasTouch: phoneDark.mobile,
-      isMobile: phoneDark.mobile,
-      colorScheme: phoneDark.theme,
-    });
-    const page = await context.newPage();
-    const consoleIssues = [];
-    page.on("console", (message) => {
-      if (message.type() === "warning" || message.type() === "error") {
-        consoleIssues.push(message.type() + ": " + message.text());
-      }
-    });
-    page.on("pageerror", (error) => consoleIssues.push("pageerror: " + error.message));
-
-    try {
-      await installFixedResearchClock(page);
-      await installHarnessState(page, mockObserveResult, {
-        overview: mockResearchOverviewData,
-        messages: mockResearchMessagesData,
-        threads: mockResearchThreads,
-        detail: mockResearchThreadDetail,
-        indexStatus: { schema_version: 1, document_count: 18, chunk_count: 52 },
+    for (const device of mobileNewsDevices) {
+      const context = await browser.newContext({
+        viewport: { width: device.width, height: device.height },
+        screen: { width: device.width, height: device.height },
+        deviceScaleFactor: device.dpr,
+        hasTouch: true,
+        isMobile: true,
+        colorScheme: device.theme,
       });
-      await page.goto(deviceUrl(phoneDark, "#sectionNewsRag"), { waitUntil: "networkidle" });
-      await page.locator("#root").waitFor({ state: "visible" });
-      await page.locator(".research-workspace").waitFor({ state: "visible" });
-      await page.mouse.move(phoneDark.width / 2, Math.min(180, phoneDark.height / 3));
-      await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
-      await page.locator(".research-inline-citation").first().waitFor({ state: "visible" });
-      await overlay.open(page);
-      await page.waitForTimeout(160);
-      const checks = await assertNewsPageState(page, phoneDark, "data");
-
-      const directory = resolve(targetRoot, "news", overlay.name, phoneDark.name);
-      mkdirSync(directory, { recursive: true });
-      await page.screenshot({ path: resolve(directory, overlay.file), fullPage: false });
-      const diagnostics = await pageDiagnostics(page, overlay.name);
-      assertPageDiagnostics(diagnostics, phoneDark.name);
-      if (consoleIssues.length) {
-        throw new Error(`${phoneDark.name}/${overlay.name} logged browser issues: ${consoleIssues.join(" | ")}`);
-      }
-      reports.push({
-        scenario: overlay.name,
-        device: phoneDark.name,
-        file: `news/${overlay.name}/${phoneDark.name}/${overlay.file}`,
-        box: await boxFor(page, ".research-workspace"),
-        checks,
+      const page = await context.newPage();
+      const consoleIssues = [];
+      page.on("console", (message) => {
+        if (message.type() === "warning" || message.type() === "error") {
+          consoleIssues.push(message.type() + ": " + message.text());
+        }
       });
-    } finally {
-      await context.close();
+      page.on("pageerror", (error) => consoleIssues.push("pageerror: " + error.message));
+
+      try {
+        await installFixedResearchClock(page);
+        await installHarnessState(page, mockObserveResult, {
+          overview: mockResearchOverviewData,
+          messages: mockResearchMessagesData,
+          threads: mockResearchThreads,
+          detail: mockResearchThreadDetail,
+          indexStatus: { schema_version: 1, document_count: 18, chunk_count: 52 },
+        });
+        await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
+        await page.locator("#root").waitFor({ state: "visible" });
+        await page.locator(".research-workspace").waitFor({ state: "visible" });
+        await page.mouse.move(device.width / 2, Math.min(180, device.height / 3));
+        await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+        await page.locator(".research-inline-citation").first().waitFor({ state: "visible" });
+        await overlay.open(page);
+        await page.waitForTimeout(160);
+        const checks = await assertNewsPageState(page, device, "data");
+
+        const directory = resolve(targetRoot, "news", overlay.name, device.name);
+        mkdirSync(directory, { recursive: true });
+        await page.screenshot({ path: resolve(directory, overlay.file), fullPage: false });
+        const diagnostics = await pageDiagnostics(page, overlay.name);
+        assertPageDiagnostics(diagnostics, device.name);
+        if (consoleIssues.length) {
+          throw new Error(`${device.name}/${overlay.name} logged browser issues: ${consoleIssues.join(" | ")}`);
+        }
+        reports.push({
+          scenario: overlay.name,
+          device: device.name,
+          file: `news/${overlay.name}/${device.name}/${overlay.file}`,
+          box: await boxFor(page, ".research-workspace"),
+          checks,
+        });
+      } finally {
+        await context.close();
+      }
     }
   }
 
@@ -1815,6 +1866,56 @@ async function captureNewsPageBaselines(browser, targetRoot) {
     }
   }
 
+  return reports;
+}
+
+async function captureAgentThemeBaselines(browser, targetRoot) {
+  const reports = [];
+  for (const device of agentThemeBaselineDevices) {
+    const context = await browser.newContext({
+      viewport: { width: device.width, height: device.height },
+      screen: { width: device.width, height: device.height },
+      deviceScaleFactor: device.dpr,
+      hasTouch: device.mobile,
+      isMobile: device.mobile,
+      colorScheme: device.theme,
+    });
+    const page = await context.newPage();
+    const consoleIssues = [];
+    page.on("console", (message) => {
+      if (message.type() === "warning" || message.type() === "error") {
+        consoleIssues.push(message.type() + ": " + message.text());
+      }
+    });
+    page.on("pageerror", (error) => consoleIssues.push("pageerror: " + error.message));
+    try {
+      await installHarnessState(page);
+      await page.goto(deviceUrl(device, "#sectionAgent"), { waitUntil: "networkidle" });
+      await page.locator(".agent-workspace").waitFor({ state: "visible" });
+      if (device.mobile) {
+        await page.locator(".agent-workspace.rail-collapsed").waitFor();
+        await page.waitForTimeout(260);
+      }
+      const directory = resolve(targetRoot, "agent", device.name);
+      mkdirSync(directory, { recursive: true });
+      const file = "agent.png";
+      await page.screenshot({ path: resolve(directory, file), fullPage: false });
+      const diagnostics = await pageDiagnostics(page, `agent-${device.name}`);
+      assertPageDiagnostics(diagnostics, device.name);
+      if (consoleIssues.length) {
+        throw new Error(`${device.name}/agent logged browser issues: ${consoleIssues.join(" | ")}`);
+      }
+      reports.push({
+        device: device.name,
+        file: `agent/${device.name}/${file}`,
+        workspace: await boxFor(page, ".agent-workspace"),
+        rail: await boxFor(page, ".agent-rail"),
+        stage: await boxFor(page, ".agent-chat-stage"),
+      });
+    } finally {
+      await context.close();
+    }
+  }
   return reports;
 }
 
@@ -1950,11 +2051,20 @@ async function runScreenshotHarness() {
     if (checkNewsPage) {
       mkdirSync(outputRoot, { recursive: true });
       const newsPageBaselines = await captureNewsPageBaselines(browser, outputRoot);
+      const agentThemeBaselines = await captureAgentThemeBaselines(browser, outputRoot);
       writeFileSync(
         resolve(outputRoot, "news-page-report.json"),
-        JSON.stringify({ baseUrl, generatedAt: new Date().toISOString(), newsPageBaselines }, null, 2) + "\n",
+        JSON.stringify({
+          baseUrl,
+          generatedAt: new Date().toISOString(),
+          newsPageBaselines,
+          agentThemeBaselines,
+        }, null, 2) + "\n",
       );
-      console.log("News page checks passed: " + newsPageBaselines.length + " captures");
+      console.log(
+        "News/Agent page checks passed: "
+          + `${newsPageBaselines.length} news + ${agentThemeBaselines.length} Agent captures`,
+      );
     }
     if (checkBacktestPage) {
       mkdirSync(outputRoot, { recursive: true });
@@ -1984,11 +2094,20 @@ async function runScreenshotHarness() {
   } else if (newsPageOnly) {
     mkdirSync(outputRoot, { recursive: true });
     const newsPageBaselines = await captureNewsPageBaselines(browser, outputRoot);
+    const agentThemeBaselines = await captureAgentThemeBaselines(browser, outputRoot);
     writeFileSync(
       resolve(outputRoot, "news-page-report.json"),
-      JSON.stringify({ baseUrl, generatedAt: new Date().toISOString(), newsPageBaselines }, null, 2) + "\n",
+      JSON.stringify({
+        baseUrl,
+        generatedAt: new Date().toISOString(),
+        newsPageBaselines,
+        agentThemeBaselines,
+      }, null, 2) + "\n",
     );
-    console.log("News page screenshots written to " + outputRoot + " (" + newsPageBaselines.length + " captures)");
+    console.log(
+      "News/Agent screenshots written to " + outputRoot + " ("
+        + `${newsPageBaselines.length} news + ${agentThemeBaselines.length} Agent captures)`,
+    );
   } else if (headerSettingsOnly) {
     mkdirSync(outputRoot, { recursive: true });
     const headerBaselines = await captureHeaderBaselines(browser, outputRoot);
@@ -2007,6 +2126,7 @@ async function runScreenshotHarness() {
       headerBaselines: [],
       refreshToolbarBaselines: [],
       newsPageBaselines: [],
+      agentThemeBaselines: [],
     };
 
     for (const device of devices) {
@@ -2078,6 +2198,7 @@ async function runScreenshotHarness() {
     report.headerBaselines = await captureHeaderBaselines(browser, outputRoot);
     report.refreshToolbarBaselines = await captureRefreshToolbarBaselines(browser, outputRoot);
     report.newsPageBaselines = await captureNewsPageBaselines(browser, outputRoot);
+    report.agentThemeBaselines = await captureAgentThemeBaselines(browser, outputRoot);
 
     writeFileSync(resolve(outputRoot, "report.json"), JSON.stringify(report, null, 2) + "\n");
     console.log("UI screenshots written to " + outputRoot);
