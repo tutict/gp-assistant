@@ -169,7 +169,7 @@ describe("backtest page screenshot contract", () => {
     const captureEnd = screenshotHarness.indexOf("async function captureObserveSummaryBaselines", captureStart);
     const captureSource = screenshotHarness.slice(captureStart, captureEnd);
     const hideNavigation = captureSource.indexOf('.sidebar { visibility: hidden !important; }');
-    const fullPageCapture = captureSource.indexOf('"backtest.png"), fullPage: true');
+    const fullPageCapture = captureSource.indexOf('path: backtestPath, fullPage: true');
     expect(hideNavigation).toBeGreaterThanOrEqual(0);
     expect(hideNavigation).toBeLessThan(fullPageCapture);
   });

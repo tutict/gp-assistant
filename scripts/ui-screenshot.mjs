@@ -1,9 +1,17 @@
 #!/usr/bin/env node
 
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
-import { extname, resolve, sep } from "node:path";
+import { dirname, extname, resolve, sep } from "node:path";
+import { inflateSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 
 const frontendRequire = createRequire(
@@ -28,6 +36,15 @@ const observeSummaryOnly = process.argv.includes("--observe-summary-only");
 const newsPageOnly = process.argv.includes("--news-page-only");
 const backtestPageOnly = process.argv.includes("--backtest-page-only");
 const stableReport = process.argv.includes("--stable-report");
+const compareBaselines = checkOnly || process.argv.includes("--compare-baselines");
+const compareAllBaselines = process.argv.includes("--compare-all-baselines");
+const updateBaselines = process.argv.includes("--update-baselines");
+const baselineRoot = resolve(option(
+  "--baseline-root",
+  fileURLToPath(new URL("../desktop/frontend/test-baselines/", import.meta.url)),
+));
+const baselinePixelThreshold = Number(option("--baseline-pixel-threshold", "8"));
+const baselineMaxDiffRatio = Number(option("--baseline-max-diff-ratio", "0.001"));
 const defaultOutput = fileURLToPath(
   new URL("../artifacts/ui-shots/" + date + "/", import.meta.url),
 );
@@ -558,6 +575,8 @@ const newsPageBaselineDevices = [
   { name: "desktop-1440-light", width: 1440, height: 900, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
   { name: "desktop-1920-dark", width: 1920, height: 1080, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
   { name: "desktop-1920-light", width: 1920, height: 1080, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
+  { name: "desktop-2560-dark", width: 2560, height: 1440, dpr: 1, mobile: false, theme: "dark", density: "comfortable" },
+  { name: "desktop-2560-light", width: 2560, height: 1440, dpr: 1, mobile: false, theme: "light", density: "comfortable" },
   { name: "phone-390-dark", width: 390, height: 844, dpr: 3, mobile: true, theme: "dark", density: "comfortable" },
   { name: "phone-390-light", width: 390, height: 844, dpr: 3, mobile: true, theme: "light", density: "comfortable" },
   { name: "phone-430-dark", width: 430, height: 932, dpr: 3, mobile: true, theme: "dark", density: "comfortable" },
@@ -677,6 +696,157 @@ function deviceUrl(device, hash) {
   return baseUrl + "/" + (query.size ? "?" + query.toString() : "") + hash;
 }
 
+// Decode the PNG formats emitted by Playwright without pulling another image dependency into the harness.
+function decodePng(source) {
+  const bytes = Buffer.isBuffer(source) ? source : readFileSync(source);
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (!bytes.subarray(0, 8).equals(signature)) throw new Error("Invalid PNG signature");
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  let interlace = 0;
+  const idat = [];
+  while (offset + 8 <= bytes.length) {
+    const length = bytes.readUInt32BE(offset);
+    const type = bytes.toString("ascii", offset + 4, offset + 8);
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    if (dataEnd + 4 > bytes.length) throw new Error("Truncated PNG chunk");
+    if (type === "IHDR") {
+      width = bytes.readUInt32BE(dataStart);
+      height = bytes.readUInt32BE(dataStart + 4);
+      bitDepth = bytes[dataStart + 8];
+      colorType = bytes[dataStart + 9];
+      interlace = bytes[dataStart + 12];
+    } else if (type === "IDAT") {
+      idat.push(bytes.subarray(dataStart, dataEnd));
+    } else if (type === "IEND") {
+      break;
+    }
+    offset = dataEnd + 4;
+  }
+  const channelsByType = { 0: 1, 2: 3, 4: 2, 6: 4 };
+  const channels = channelsByType[colorType];
+  if (!width || !height || bitDepth !== 8 || !channels || interlace !== 0) {
+    throw new Error(`Unsupported PNG format (${width}x${height}, depth ${bitDepth}, type ${colorType}, interlace ${interlace})`);
+  }
+  const rowBytes = width * channels;
+  const inflated = inflateSync(Buffer.concat(idat));
+  const rows = Buffer.alloc(height * rowBytes);
+  const bytesPerPixel = channels;
+  let sourceOffset = 0;
+  for (let y = 0; y < height; y += 1) {
+    const filter = inflated[sourceOffset++];
+    const rowStart = y * rowBytes;
+    for (let x = 0; x < rowBytes; x += 1) {
+      const raw = inflated[sourceOffset++];
+      const left = x >= bytesPerPixel ? rows[rowStart + x - bytesPerPixel] : 0;
+      const above = y > 0 ? rows[rowStart - rowBytes + x] : 0;
+      const aboveLeft = y > 0 && x >= bytesPerPixel
+        ? rows[rowStart - rowBytes + x - bytesPerPixel]
+        : 0;
+      let value;
+      if (filter === 0) value = raw;
+      else if (filter === 1) value = raw + left;
+      else if (filter === 2) value = raw + above;
+      else if (filter === 3) value = raw + Math.floor((left + above) / 2);
+      else if (filter === 4) {
+        const predictor = left + above - aboveLeft;
+        const pa = Math.abs(predictor - left);
+        const pb = Math.abs(predictor - above);
+        const pc = Math.abs(predictor - aboveLeft);
+        value = raw + (pa <= pb && pa <= pc ? left : pb <= pc ? above : aboveLeft);
+      } else throw new Error(`Unsupported PNG filter ${filter}`);
+      rows[rowStart + x] = value & 0xff;
+    }
+  }
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let index = 0; index < width * height; index += 1) {
+    const sourceIndex = index * channels;
+    const targetIndex = index * 4;
+    if (colorType === 6) {
+      rows.copy(rgba, targetIndex, sourceIndex, sourceIndex + 4);
+    } else if (colorType === 2) {
+      rows.copy(rgba, targetIndex, sourceIndex, sourceIndex + 3);
+      rgba[targetIndex + 3] = 255;
+    } else if (colorType === 4) {
+      rgba.fill(rows[sourceIndex], targetIndex, targetIndex + 3);
+      rgba[targetIndex + 3] = rows[sourceIndex + 1];
+    } else {
+      rgba.fill(rows[sourceIndex], targetIndex, targetIndex + 3);
+      rgba[targetIndex + 3] = 255;
+    }
+  }
+  return { width, height, rgba };
+}
+
+export function comparePngFiles(actualPath, baselinePath, options = {}) {
+  const actual = decodePng(actualPath);
+  const baseline = decodePng(baselinePath);
+  if (actual.width !== baseline.width || actual.height !== baseline.height) {
+    return {
+      pass: false,
+      reason: "dimensions",
+      actual: { width: actual.width, height: actual.height },
+      baseline: { width: baseline.width, height: baseline.height },
+      differentPixels: actual.width * actual.height,
+      totalPixels: actual.width * actual.height,
+      ratio: 1,
+    };
+  }
+  const channelThreshold = Math.max(0, Number(options.channelThreshold ?? baselinePixelThreshold));
+  const maxDiffRatio = Math.max(0, Number(options.maxDiffRatio ?? baselineMaxDiffRatio));
+  const totalPixels = actual.width * actual.height;
+  let differentPixels = 0;
+  let maxChannelDelta = 0;
+  for (let index = 0; index < actual.rgba.length; index += 4) {
+    let pixelDelta = 0;
+    for (let channel = 0; channel < 4; channel += 1) {
+      const delta = Math.abs(actual.rgba[index + channel] - baseline.rgba[index + channel]);
+      pixelDelta = Math.max(pixelDelta, delta);
+      maxChannelDelta = Math.max(maxChannelDelta, delta);
+    }
+    if (pixelDelta > channelThreshold) differentPixels += 1;
+  }
+  const ratio = totalPixels ? differentPixels / totalPixels : 0;
+  return {
+    pass: ratio <= maxDiffRatio,
+    reason: "pixels",
+    differentPixels,
+    totalPixels,
+    ratio,
+    maxChannelDelta,
+    channelThreshold,
+    maxDiffRatio,
+  };
+}
+
+function checkScreenshotBaseline(actualPath, relativePath) {
+  const baselinePath = resolve(baselineRoot, relativePath);
+  if (updateBaselines && (compareAllBaselines || relativePath.startsWith("news/"))) {
+    mkdirSync(dirname(baselinePath), { recursive: true });
+    if (resolve(actualPath) !== baselinePath) copyFileSync(actualPath, baselinePath);
+    return { status: "updated", path: baselinePath };
+  }
+  if (!compareBaselines || (!compareAllBaselines && !relativePath.startsWith("news/"))) {
+    return { status: "not-checked" };
+  }
+  if (!existsSync(baselinePath)) {
+    throw new Error(`Screenshot baseline is missing for ${relativePath}: ${baselinePath}`);
+  }
+  const comparison = comparePngFiles(actualPath, baselinePath);
+  if (!comparison.pass) {
+    throw new Error(
+      `Screenshot baseline mismatch for ${relativePath}: `
+      + `${comparison.reason === "dimensions" ? "dimensions differ" : `${comparison.differentPixels}/${comparison.totalPixels} pixels differ `
+        + `(ratio ${comparison.ratio.toFixed(5)}, limit ${comparison.maxDiffRatio})`}`,
+    );
+  }
+  return { status: "matched", path: baselinePath, ...comparison };
+}
+
 async function installFixedResearchClock(page) {
   await page.addInitScript((fixedNow) => {
     const NativeDate = Date;
@@ -692,6 +862,18 @@ async function installFixedResearchClock(page) {
         : Reflect.get(target, property, receiver),
     });
   }, fixedResearchNow);
+}
+
+async function disableResearchMotion(page) {
+  await page.addStyleTag({
+    content: `
+      *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+        caret-color: transparent !important;
+      }
+    `,
+  });
 }
 
 async function installHarnessState(page, observeResult = mockObserveResult, researchState = null) {
@@ -1387,13 +1569,19 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
       const mobileNavigationOverride = await page.addStyleTag({
         content: "@media (max-width: 768px) { .sidebar { visibility: hidden !important; } }",
       });
-      await page.screenshot({ path: resolve(directory, "backtest.png"), fullPage: true });
+      const backtestPath = resolve(directory, "backtest.png");
+      await page.screenshot({ path: backtestPath, fullPage: true });
+      const backtestRelativePath = `backtest-page/${device.name}/backtest.png`;
+      const backtestBaseline = checkScreenshotBaseline(backtestPath, backtestRelativePath);
       const volatility = page.locator(".backtest-volatility");
       await volatility.scrollIntoViewIfNeeded();
       const stickyHeaderOverride = await page.addStyleTag({
         content: ".app-header { visibility: hidden !important; }",
       });
-      await volatility.screenshot({ path: resolve(directory, "volatility.png") });
+      const volatilityPath = resolve(directory, "volatility.png");
+      await volatility.screenshot({ path: volatilityPath });
+      const volatilityRelativePath = `backtest-page/${device.name}/volatility.png`;
+      const volatilityBaseline = checkScreenshotBaseline(volatilityPath, volatilityRelativePath);
       await stickyHeaderOverride.evaluate((element) => element.remove());
       await mobileNavigationOverride.evaluate((element) => element.remove());
       const runtimeColors = await assertBacktestRuntimeColors(page);
@@ -1402,8 +1590,9 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
       }
       reports.push({
         device: device.name,
-        page: `backtest-page/${device.name}/backtest.png`,
-        volatility: `backtest-page/${device.name}/volatility.png`,
+        page: backtestRelativePath,
+        volatility: volatilityRelativePath,
+        baselines: { page: backtestBaseline, volatility: volatilityBaseline },
         selector: ".backtest-volatility",
         diagnostics,
         runtimeColors,
@@ -1495,8 +1684,11 @@ async function assertNewsPageState(page, device, scenarioName) {
       await page.locator(".research-empty-boundary").waitFor({ state: "visible" });
     }
   } else {
-    await riskBoundary.waitFor({ state: "visible" });
-    riskText = (await riskBoundary.innerText()).trim();
+    const boundary = await riskBoundary.count() > 0
+      ? riskBoundary
+      : page.locator(".research-empty-boundary");
+    await boundary.waitFor({ state: "visible" });
+    riskText = (await boundary.innerText()).trim();
     if (riskText !== "仅供研究，不构成投资建议。") {
       throw new Error(`${device.name}/${scenarioName} does not show the full research risk boundary`);
     }
@@ -1626,6 +1818,7 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
         await page.locator("#root").waitFor({ state: "visible" });
         await page.locator(".research-workspace").waitFor({ state: "visible" });
+        await disableResearchMotion(page);
         await page.mouse.move(device.width / 2, Math.min(180, device.height / 3));
         await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
 
@@ -1641,7 +1834,10 @@ async function captureNewsPageBaselines(browser, targetRoot) {
 
         const directory = resolve(targetRoot, "news", scenario.name, device.name);
         mkdirSync(directory, { recursive: true });
-        await page.screenshot({ path: resolve(directory, "news.png"), fullPage: false });
+        const screenshotPath = resolve(directory, "news.png");
+        await page.screenshot({ path: screenshotPath, fullPage: false });
+        const relativePath = `news/${scenario.name}/${device.name}/news.png`;
+        const baseline = checkScreenshotBaseline(screenshotPath, relativePath);
         const diagnostics = await pageDiagnostics(page, `news-${scenario.name}`);
         assertPageDiagnostics(diagnostics, device.name);
         if (consoleIssues.length) {
@@ -1650,7 +1846,8 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         reports.push({
           scenario: scenario.name,
           device: device.name,
-          file: `news/${scenario.name}/${device.name}/news.png`,
+          file: relativePath,
+          baseline,
           box: await boxFor(page, ".research-workspace"),
           checks,
         });
@@ -1684,17 +1881,21 @@ async function captureNewsPageBaselines(browser, targetRoot) {
       });
       await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
       await page.locator(".research-workspace").waitFor({ state: "visible" });
+      await disableResearchMotion(page);
       await page.locator(".research-brief-summary").click();
       await page.locator(".research-daily-brief-mobile[open] .research-brief-expanded")
         .waitFor({ state: "visible" });
       const directory = resolve(targetRoot, "news", "brief-expanded", device.name);
       mkdirSync(directory, { recursive: true });
       const file = "brief-expanded.png";
-      await page.screenshot({ path: resolve(directory, file), fullPage: false });
+      const screenshotPath = resolve(directory, file);
+      await page.screenshot({ path: screenshotPath, fullPage: false });
+      const relativePath = `news/brief-expanded/${device.name}/${file}`;
       reports.push({
         scenario: "brief-expanded",
         device: device.name,
-        file: `news/brief-expanded/${device.name}/${file}`,
+        file: relativePath,
+        baseline: checkScreenshotBaseline(screenshotPath, relativePath),
         box: await boxFor(page, ".research-workspace"),
       });
     } finally {
@@ -1754,6 +1955,7 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
         await page.locator("#root").waitFor({ state: "visible" });
         await page.locator(".research-workspace").waitFor({ state: "visible" });
+        await disableResearchMotion(page);
         await page.mouse.move(device.width / 2, Math.min(180, device.height / 3));
         await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
         await page.locator(".research-inline-citation").first().waitFor({ state: "visible" });
@@ -1763,7 +1965,10 @@ async function captureNewsPageBaselines(browser, targetRoot) {
 
         const directory = resolve(targetRoot, "news", overlay.name, device.name);
         mkdirSync(directory, { recursive: true });
-        await page.screenshot({ path: resolve(directory, overlay.file), fullPage: false });
+        const screenshotPath = resolve(directory, overlay.file);
+        await page.screenshot({ path: screenshotPath, fullPage: false });
+        const relativePath = `news/${overlay.name}/${device.name}/${overlay.file}`;
+        const baseline = checkScreenshotBaseline(screenshotPath, relativePath);
         const diagnostics = await pageDiagnostics(page, overlay.name);
         assertPageDiagnostics(diagnostics, device.name);
         if (consoleIssues.length) {
@@ -1772,7 +1977,8 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         reports.push({
           scenario: overlay.name,
           device: device.name,
-          file: `news/${overlay.name}/${device.name}/${overlay.file}`,
+          file: relativePath,
+          baseline,
           box: await boxFor(page, ".research-workspace"),
           checks,
         });
@@ -1845,6 +2051,7 @@ async function captureNewsPageBaselines(browser, targetRoot) {
       });
       await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
       await page.locator(".research-workspace").waitFor({ state: "visible" });
+      await disableResearchMotion(page);
       if (device.mobile && ["delete-confirmation", "skeleton-loading"].includes(state.name)) {
         await page.locator(".research-mobile-inbox-button").click();
         await page.locator(".research-inbox.mobile-open").waitFor({ state: "visible" });
@@ -1853,11 +2060,15 @@ async function captureNewsPageBaselines(browser, targetRoot) {
       await page.waitForTimeout(160);
       const directory = resolve(targetRoot, "news", state.name, device.name);
       mkdirSync(directory, { recursive: true });
-      await page.screenshot({ path: resolve(directory, `${state.name}.png`), fullPage: false });
+      const file = `${state.name}.png`;
+      const screenshotPath = resolve(directory, file);
+      await page.screenshot({ path: screenshotPath, fullPage: false });
+      const relativePath = `news/${state.name}/${device.name}/${file}`;
       reports.push({
         scenario: state.name,
         device: device.name,
-        file: `news/${state.name}/${device.name}/${state.name}.png`,
+        file: relativePath,
+        baseline: checkScreenshotBaseline(screenshotPath, relativePath),
         box: await boxFor(page, ".research-workspace"),
       });
     } finally {
@@ -1899,7 +2110,10 @@ async function captureAgentThemeBaselines(browser, targetRoot) {
       const directory = resolve(targetRoot, "agent", device.name);
       mkdirSync(directory, { recursive: true });
       const file = "agent.png";
-      await page.screenshot({ path: resolve(directory, file), fullPage: false });
+      const screenshotPath = resolve(directory, file);
+      await page.screenshot({ path: screenshotPath, fullPage: false });
+      const relativePath = `agent/${device.name}/${file}`;
+      const baseline = checkScreenshotBaseline(screenshotPath, relativePath);
       const diagnostics = await pageDiagnostics(page, `agent-${device.name}`);
       assertPageDiagnostics(diagnostics, device.name);
       if (consoleIssues.length) {
@@ -1907,7 +2121,8 @@ async function captureAgentThemeBaselines(browser, targetRoot) {
       }
       reports.push({
         device: device.name,
-        file: `agent/${device.name}/${file}`,
+        file: relativePath,
+        baseline,
         workspace: await boxFor(page, ".agent-workspace"),
         rail: await boxFor(page, ".agent-rail"),
         stage: await boxFor(page, ".agent-chat-stage"),

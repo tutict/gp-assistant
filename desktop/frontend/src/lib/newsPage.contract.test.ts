@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 const nodeFs = "node:fs";
-const { readFileSync } = await import(nodeFs);
+const { existsSync, readFileSync } = await import(nodeFs);
 
 const researchCss = readFileSync(new URL("../styles/research.css", import.meta.url), "utf8");
 const newsPanel = readFileSync(
@@ -71,6 +71,8 @@ describe("news page CSS contract", () => {
   it("keeps the full risk boundary permanently rendered", () => {
     expect(newsPanel).toContain('<p className="research-risk-boundary">仅供研究，不构成投资建议。</p>');
     expect(newsPanel).not.toContain("!mobile && <p className=\"research-risk-boundary\"");
+    expect(newsPanel.indexOf('className="research-risk-boundary"'))
+      .toBeLessThan(newsPanel.indexOf('<form className="research-composer"'));
   });
 
   it("keeps source badges neutral and tokenized", () => {
@@ -87,11 +89,15 @@ describe("news page screenshot contract", () => {
     expect(screenshotHarness).toContain("captureNewsPageBaselines");
     expect(screenshotHarness).toContain("installFixedResearchClock");
     expect(frontendPackage).toContain("--check-news-page");
+    expect(screenshotHarness).toContain("comparePngFiles");
+    expect(screenshotHarness).toContain("Screenshot baseline is missing");
     for (const device of [
       "desktop-1440-dark",
       "desktop-1440-light",
       "desktop-1920-dark",
       "desktop-1920-light",
+      "desktop-2560-dark",
+      "desktop-2560-light",
       "phone-390-dark",
       "phone-390-light",
     ]) {
@@ -109,6 +115,18 @@ describe("news page screenshot contract", () => {
       "news-page-report.json",
     ]) {
       expect(screenshotHarness).toContain(marker);
+    }
+  });
+
+  it("commits the desktop news baseline matrix for both themes", () => {
+    const devices = ["desktop-1440-dark", "desktop-1440-light", "desktop-1920-dark", "desktop-1920-light", "desktop-2560-dark", "desktop-2560-light"];
+    const states = ["empty", "data", "event-expanded", "evidence-history", "delete-confirmation", "skeleton-loading"];
+    for (const state of states) {
+      for (const device of devices) {
+        const file = state === "empty" || state === "data" ? "news.png" : `${state}.png`;
+        const path = new URL(`../../test-baselines/news/${state}/${device}/${file}`, import.meta.url);
+        expect(existsSync(path), `${state}/${device}/${file}`).toBe(true);
+      }
     }
   });
 });

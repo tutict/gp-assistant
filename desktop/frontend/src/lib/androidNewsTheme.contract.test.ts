@@ -72,8 +72,8 @@ describe("Android light theme contract", () => {
     expect(sourceBadge).toContain("background: var(--surface-2)");
     expect(sourceBadge).toContain("color: var(--text-secondary)");
     expect(sourceBadge).not.toContain("--rise");
-    expect(composerRow).toContain("grid-template-columns: minmax(0, 1fr) 40px");
-    expect(composerSend).toContain("width: 40px");
+    expect(composerRow).toContain("grid-template-columns: minmax(0, 1fr) var(--touch-comfort)");
+    expect(composerSend).toContain("width: var(--touch-comfort)");
     expect(mobile).toMatch(/\.research-composer-label[\s\S]*?display:\s*none/);
     expect(mobile).toMatch(/\.research-risk-boundary[\s\S]*?display:\s*none/);
   });

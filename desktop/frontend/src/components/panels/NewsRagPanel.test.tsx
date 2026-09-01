@@ -84,7 +84,12 @@ describe("NewsRagPanel", () => {
     postJson.mockResolvedValue({});
     vi.stubGlobal("navigator", { onLine: true });
     vi.stubGlobal("document", { visibilityState: "visible" });
-    vi.stubGlobal("window", { setInterval: vi.fn(() => 1), clearInterval: vi.fn() });
+    vi.stubGlobal("window", {
+      setInterval: vi.fn(() => 1),
+      clearInterval: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   });
 
@@ -124,6 +129,170 @@ describe("NewsRagPanel", () => {
     await act(async () => {
       renderer.unmount();
     });
+  });
+
+  it("marks a non-selected stock read using its inbox count", async () => {
+    const otherMessage: ResearchMessage = {
+      ...message,
+      id: "message-2",
+      stock_code: "000001.SZ",
+      title: "平安银行公告",
+    };
+    getJson.mockImplementation((path: string) => {
+      if (path.startsWith("/api/research/overview")) return Promise.resolve({
+        schema_version: 2,
+        document_count: 2,
+        chunk_count: 2,
+        unread_count: 2,
+        unread_by_stock: { "600000.SH": 1, "000001.SZ": 1 },
+        retrieval: { vector: { ready: false } },
+      });
+      if (path.includes("stock_code=600000.SH")) return Promise.resolve({ items: [message] });
+      if (path.startsWith("/api/research/messages")) return Promise.resolve({ items: [otherMessage] });
+      if (path === "/api/research/threads") return Promise.resolve({ items: [] });
+      return Promise.resolve({});
+    });
+
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<NewsRagPanel llmSettings={null}
+        watchlist={[
+          { code: "600000.SH", name: "浦发银行" },
+          { code: "000001.SZ", name: "平安银行" },
+        ]}
+        initialCode="600000.SH" />);
+    });
+
+    const markRead = renderer.root.findByProps({
+      "aria-label": "标记 000001.SZ 全部已读",
+    });
+    await act(async () => { markRead.props.onClick(); });
+
+    expect(postJson).toHaveBeenCalledWith("/api/research/mark-read", {
+      stock_code: "000001.SZ",
+    });
+    expect(renderer.root.findAllByProps({
+      "aria-label": "标记 000001.SZ 全部已读",
+    })).toHaveLength(0);
+    await act(async () => { renderer.unmount(); });
+  });
+
+  it("closes the evidence inspector with Escape and exposes a desktop close control", async () => {
+    const citation = {
+      citation_id: "C1",
+      title: "公告证据",
+      excerpt: "公告摘录",
+      source_tier: "filing",
+      source_name: "公司公告",
+    };
+    const thread = {
+      id: "thread-evidence",
+      title: "证据研究",
+      stock_code: "600000.SH",
+      created_at_epoch_ms: 1,
+      updated_at_epoch_ms: 2,
+    };
+    getJson.mockImplementation((path: string) => {
+      if (path.startsWith("/api/research/overview")) return Promise.resolve({
+        schema_version: 2,
+        document_count: 1,
+        chunk_count: 1,
+        unread_count: 0,
+        retrieval: { vector: { ready: false } },
+      });
+      if (path.startsWith("/api/research/messages")) return Promise.resolve({ items: [] });
+      if (path === "/api/research/threads") return Promise.resolve({ items: [thread] });
+      return Promise.resolve({});
+    });
+    postJson.mockImplementation((path: string) => {
+      if (path === "/api/research/threads/detail") {
+        return Promise.resolve({ answers: [{
+          id: "answer-evidence",
+          question: "问题",
+          answer: "回答 [C1]",
+          citations: [citation],
+        }] });
+      }
+      return Promise.resolve({});
+    });
+
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<NewsRagPanel llmSettings={null}
+        watchlist={[{ code: "600000.SH", name: "浦发银行" }]}
+        initialCode="600000.SH" />);
+    });
+    const close = renderer.root.findByProps({ "aria-label": "关闭证据检查器" });
+    expect(close.props.className).not.toContain("research-mobile-close");
+    const citationButton = renderer.root.findByProps({ className: "research-inline-citation" });
+    await act(async () => { citationButton.props.onClick(); });
+    expect(renderer.root.findByProps({ className: "research-evidence has-selection" })).toBeTruthy();
+
+    const keydownCalls = (window.addEventListener as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const keydown = keydownCalls.filter(([type]) => type === "keydown").at(-1)?.[1] as ((event: unknown) => void) | undefined;
+    expect(keydown).toBeTypeOf("function");
+    await act(async () => { keydown?.({ key: "Escape", preventDefault: vi.fn() }); });
+    expect(renderer.root.findByProps({ className: "research-evidence" })).toBeTruthy();
+    await act(async () => { renderer.unmount(); });
+  });
+
+  it("scrolls the newest answer card into view", async () => {
+    const thread = {
+      id: "thread-scroll",
+      title: "滚动研究",
+      stock_code: "600000.SH",
+      created_at_epoch_ms: 1,
+      updated_at_epoch_ms: 2,
+    };
+    getJson.mockImplementation((path: string) => {
+      if (path.startsWith("/api/research/overview")) return Promise.resolve({
+        schema_version: 2,
+        document_count: 1,
+        chunk_count: 1,
+        unread_count: 0,
+        retrieval: { vector: { ready: false } },
+      });
+      if (path.startsWith("/api/research/messages")) return Promise.resolve({ items: [] });
+      if (path === "/api/research/threads") return Promise.resolve({ items: [thread] });
+      return Promise.resolve({});
+    });
+    postJson.mockImplementation((path: string) => {
+      if (path === "/api/research/threads/detail") return Promise.resolve({ answers: [] });
+      if (path === "/api/research/query") return Promise.resolve({ answer: "最新回答", citations: [] });
+      return Promise.resolve({});
+    });
+
+    let renderer!: ReactTestRenderer;
+    let answerMock: { scrollIntoView: ReturnType<typeof vi.fn>; className?: string } | undefined;
+    await act(async () => {
+      renderer = create(<NewsRagPanel llmSettings={configuredLlmSettings}
+        watchlist={[{ code: "600000.SH", name: "浦发银行" }]}
+        initialCode="600000.SH" />, {
+        createNodeMock: (element) => {
+          const props = element.props as { className?: string };
+          if (element.type === "article") {
+            answerMock ||= { scrollIntoView: vi.fn(), className: props.className };
+            answerMock.className = props.className;
+            return answerMock;
+          }
+          return { scrollIntoView: vi.fn(), className: props.className };
+        },
+      });
+    });
+    const composer = renderer.root.findByProps({ className: "research-composer" });
+    await act(async () => {
+      composer.findByType("textarea").props.onChange({ target: { value: "新问题" } });
+    });
+    await act(async () => {
+      composer.props.onSubmit({ preventDefault: vi.fn() });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const answer = renderer.root.find((node) => node.type === "article"
+      && node.props.className.includes("research-answer"));
+    expect(answerMock).toBe(answer.instance);
+    expect(answerMock?.scrollIntoView).toHaveBeenCalledWith({ block: "end", behavior: "smooth" });
+    await act(async () => { renderer.unmount(); });
   });
 
   it("labels official policy messages with their mapping scope", async () => {
@@ -192,6 +361,8 @@ describe("NewsRagPanel", () => {
     expect(send.props["aria-label"]).toContain("仅供研究，不构成投资建议");
     expect(textOf(renderer.root.findByProps({ className: "research-empty-boundary" })))
       .toBe("仅供研究，不构成投资建议。");
+    expect(renderer.root.findAllByProps({ className: "research-risk-boundary" }))
+      .toHaveLength(0);
     await act(async () => { renderer.unmount(); });
   });
 

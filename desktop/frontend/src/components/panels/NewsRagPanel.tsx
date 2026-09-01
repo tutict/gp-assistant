@@ -222,20 +222,35 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   }, []);
 
   const markReadStock = useCallback(async (stockCode: string) => {
-    const ids = messages.filter((message) => message.stock_code === stockCode && message.unread)
+    const normalizedStockCode = normalizeStockCode(stockCode);
+    const ids = messagesRef.current.filter((message) => normalizeStockCode(message.stock_code) === normalizedStockCode && message.unread)
       .map((message) => message.id);
-    if (!ids.length) return;
+    const unreadCount = overviewRef.current?.unread_by_stock?.[normalizedStockCode] || 0;
+    if (!ids.length && unreadCount <= 0) return;
     try {
-      await postJson("/api/research/mark-read", { stock_code: stockCode });
-      const result = applyMarkRead(messagesRef.current, overviewRef.current, ids);
-      messagesRef.current = result.messages;
-      overviewRef.current = result.overview;
-      setMessages(result.messages);
-      setOverview(result.overview);
+      await postJson("/api/research/mark-read", { stock_code: normalizedStockCode });
+      const nextMessages = messagesRef.current.map((message) =>
+        ids.includes(message.id) ? { ...message, unread: false } : message,
+      );
+      const currentOverview = overviewRef.current;
+      const nextOverview = currentOverview ? (() => {
+        const unreadByStock = { ...(currentOverview.unread_by_stock || {}) };
+        const changed = Math.max(unreadCount, ids.length);
+        unreadByStock[normalizedStockCode] = 0;
+        return {
+          ...currentOverview,
+          unread_count: Math.max(0, currentOverview.unread_count - changed),
+          unread_by_stock: unreadByStock,
+        };
+      })() : currentOverview;
+      messagesRef.current = nextMessages;
+      overviewRef.current = nextOverview;
+      setMessages(nextMessages);
+      setOverview(nextOverview);
     } catch (nextError) {
       setError((nextError as Error).message);
     }
-  }, [messages]);
+  }, []);
 
   const pushCitationSelection = useCallback((next: ResearchCitation) => {
     const result = pushCitation(citationStack, citationPointer, next);
@@ -270,13 +285,19 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
 
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && selectedId) closeEvent();
+      if (event.key !== "Escape") return;
+      if (citation) {
+        event.preventDefault();
+        closeCitation();
+        return;
+      }
+      if (selectedId) closeEvent();
     };
     window.addEventListener?.("keydown", handleEscape);
     return () => {
       window.removeEventListener?.("keydown", handleEscape);
     };
-  }, [closeEvent, selectedId]);
+  }, [citation, closeCitation, closeEvent, selectedId]);
 
   useEffect(() => {
     return () => {
@@ -376,7 +397,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     const element = answersRef.current;
     if (element && typeof element.scrollIntoView === "function") {
       const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-      element.scrollIntoView({ block: "nearest", behavior: reducedMotion ? "auto" : "smooth" });
+      element.scrollIntoView({ block: "end", behavior: reducedMotion ? "auto" : "smooth" });
     }
     const timer = setTimeout(() => setHighlightAnswerId(null), 600);
     return () => clearTimeout(timer);
@@ -513,13 +534,15 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
 
         <Answers answers={answers} pushCitation={pushCitationSelection}
           highlightedId={highlightAnswerId} sectionRef={answersRef} />
+        {(visibleMessages.length > 0 || answers.length > 0) &&
+          <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>}
         </div>
+        {!activeLlmConfig && <small className="research-composer-setup">请先配置 API 和模型</small>}
         <form className="research-composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
           {evidenceNotice && <div className="research-evidence-notice" role="status">{evidenceNotice}</div>}
           <div><label className="research-composer-label" htmlFor={questionInputId}>
             <span>研究问题</span>{activeLlmConfig && <small>模型回答会强制引用证据</small>}
           </label>
-            {!activeLlmConfig && <small className="research-composer-setup">请先配置 API 和模型</small>}
             <div className="research-composer-row">
               <textarea ref={questionInputRef} id={questionInputId} value={question}
                 aria-label="研究问题"
@@ -539,7 +562,6 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
                   ? <RefreshCw size={18} className="is-spinning" /> : <Send size={18} />}
               </button>
             </div>
-            <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>
           </div>
         </form>
       </main>
@@ -754,12 +776,13 @@ function Answers(props: {
   sectionRef: React.MutableRefObject<HTMLElement | null>;
 }) {
   if (!props.answers.length) return null;
-  return <section className="research-answers" ref={props.sectionRef}>
+  return <section className="research-answers">
     <div className="research-section-heading"><div><span>历史问答</span>
       <small>回答与引用均保存在本机</small></div>
     </div>
     {props.answers.map((answer, index) => <article
       key={answer.id || answer.question + index}
+      ref={index === props.answers.length - 1 ? props.sectionRef : undefined}
       className={`research-answer${props.highlightedId === (answer.id || `${answer.question}-${index}`) ? " is-highlighted" : ""}`}>
       <div className="research-question"><span>问</span><p>{answer.question}</p></div>
       <div className="research-answer-body">
@@ -803,7 +826,7 @@ function EvidencePanel(props: {
         <button type="button" aria-label="下一条证据" title="下一条证据"
           disabled={props.citationIndex >= props.citationCount - 1} onClick={props.onNext}><ChevronRight size={15} /></button>
       </div>}
-      <button className="research-icon-button research-mobile-close" type="button"
+      <button className="research-icon-button research-evidence-close" type="button"
         aria-label="关闭证据检查器" title="关闭" onClick={props.close}><X size={17} /></button>
     </div>
     {props.citation ? <EvidenceInspector citation={props.citation} />

@@ -48,7 +48,7 @@ test("rejects light themes that omit direct and aliased color tokens", () => {
   assert.match(result.stderr, /--danger/);
   assert.doesNotMatch(result.stderr, /--touch-height/);
   assert.doesNotMatch(result.stderr, /--agent-send-start/);
-  assert.doesNotMatch(result.stderr, /--chart-up/);
+  assert.match(result.stderr, /--chart-up/);
 });
 
 test("accepts complete light color mappings and color-mix values", () => {

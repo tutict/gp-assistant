@@ -166,6 +166,8 @@
   --chart-line-3: #7f49b5;
   --chart-line-4: #087f70;
   --chart-line-5: #95720a;
+  --chart-up: var(--rise);
+  --chart-down: var(--fall);
   --chart-canvas: #f7f9fb;
   --chart-fullscreen: #eef2f6;
   --chart-benchmark: #26758a;

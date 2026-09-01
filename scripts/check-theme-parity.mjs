@@ -12,7 +12,9 @@ const postcss = frontendRequire("postcss");
 const defaultTokensPath = fileURLToPath(
   new URL("../desktop/frontend/src/styles/tokens.css", import.meta.url),
 );
-const exemptColorToken = /^(?:--agent-send-|--chart-)/;
+// Agent send colors are intentionally independent accents; all other color tokens,
+// including chart tokens, must have an explicit light-theme mapping.
+const exemptColorToken = /^--agent-send-/;
 const directColorValue = /(?:#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix)\(|\b(?:transparent|currentcolor)\b)/i;
 
 function option(name, fallback) {

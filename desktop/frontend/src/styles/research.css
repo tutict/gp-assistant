@@ -361,7 +361,8 @@
 
   .research-columns {
     display: grid;
-    grid-template-columns: clamp(196px, 15vw, 216px) minmax(420px, 1fr) clamp(248px, 20vw, 284px);
+    grid-template-columns: clamp(196px, 15vw, 216px) minmax(0, 1fr);
+    position: relative;
     min-width: 0;
     min-height: 0;
   }
@@ -385,10 +386,31 @@
   }
 
   .research-evidence {
+    position: absolute;
+    z-index: var(--z-drawer);
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: clamp(248px, 20vw, 284px);
     display: flex;
     flex-direction: column;
     padding: 14px 14px 22px;
     border-left: 1px solid var(--line);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(calc(100% + var(--space-3)));
+    transition: transform var(--motion-standard) var(--ease-out),
+      opacity var(--motion-standard) var(--ease-out);
+  }
+
+  .research-evidence.has-selection {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(0);
+  }
+
+  .research-evidence.has-selection .research-evidence-close {
+    display: inline-grid;
   }
 
   .research-citation-history {
@@ -401,8 +423,9 @@
   .research-citation-history button {
     display: grid;
     place-items: center;
-    width: 26px;
-    height: 26px;
+    width: var(--touch-dense);
+    height: var(--touch-dense);
+    min-width: var(--touch-dense);
     padding: 0;
     border: 1px solid var(--line-soft);
     border-radius: var(--radius-xs);
@@ -622,7 +645,7 @@
     position: absolute;
     top: 50%;
     right: calc(var(--space-2) + 30px);
-    min-height: 26px;
+    min-height: var(--touch-dense);
     padding: 0 var(--space-1);
     border: 0;
     border-radius: var(--radius-xs);
@@ -1070,9 +1093,12 @@
       border: 1px solid var(--line);
       background: var(--surface);
       box-shadow: 0 16px 50px rgb(0 0 0 / 45%);
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateX(0);
     }
 
-    .research-evidence.has-selection .research-mobile-close {
+    .research-evidence.has-selection .research-evidence-close {
       display: inline-grid;
       width: calc(var(--touch-dense) + var(--space-1));
       height: calc(var(--touch-dense) + var(--space-1));
@@ -1245,7 +1271,7 @@
     }
 
     .research-inbox .research-mobile-close,
-    .research-evidence.has-selection .research-mobile-close {
+    .research-evidence.has-selection .research-evidence-close {
       width: 40px;
       height: 40px;
       min-width: 40px;
@@ -1475,8 +1501,14 @@
     }
 
     .research-workspace .research-composer {
+      height: auto;
+      min-height: 0;
       margin: var(--space-2) var(--space-2) var(--space-3);
       padding: var(--space-2) var(--space-2) calc(var(--space-2) + var(--safe-bottom));
+    }
+
+    .research-workspace .research-composer > div {
+      height: auto;
     }
 
     .research-workspace .research-composer-label,
@@ -1485,6 +1517,7 @@
     }
 
     .research-workspace .research-composer-setup {
+      display: block;
       position: static;
       margin: 0;
       color: var(--text-secondary);
@@ -1494,8 +1527,9 @@
     }
 
     .research-workspace .research-composer-row {
-      grid-template-columns: minmax(0, 1fr) 40px;
+      grid-template-columns: minmax(0, 1fr) var(--touch-comfort);
       align-items: center;
+      height: auto;
       gap: var(--space-1);
     }
 
@@ -1512,8 +1546,8 @@
 
     .research-workspace .research-composer-send {
       position: relative;
-      width: 40px;
-      height: 40px;
+      width: var(--touch-comfort);
+      height: var(--touch-comfort);
       border: 0;
       color: var(--button-text);
       background: transparent;
@@ -1575,6 +1609,9 @@
       border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
       background: var(--surface);
       box-shadow: 0 -12px 32px rgb(3 8 13 / 32%);
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateX(0);
       animation: research-sheet-in var(--motion-standard) var(--ease-out);
     }
 
@@ -1830,10 +1867,12 @@
     z-index: 5;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-1);
+    gap: 0;
     width: auto;
+    height: calc(var(--touch-dense) + var(--space-1));
+    min-height: calc(var(--touch-dense) + var(--space-1));
     margin: var(--space-2) clamp(18px, 2vw, 28px) var(--space-3);
-    padding: var(--space-3);
+    padding: 0 var(--space-2);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
     background: var(--surface-raised);
@@ -1846,19 +1885,13 @@
 
   .research-composer > div {
     position: relative;
-    display: grid;
+    display: block;
+    height: 100%;
     min-width: 0;
-    gap: var(--space-1);
   }
 
   .research-composer-label {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    color: var(--text);
-    font-size: var(--fs-label);
-    font-weight: 700;
+    display: none;
   }
 
   .research-composer-label small,
@@ -1873,25 +1906,26 @@
 
   .research-composer-setup {
     display: block;
-    position: absolute;
-    top: 0;
-    right: 0;
+    position: static;
+    margin: var(--space-1) clamp(18px, 2vw, 28px) 0;
   }
 
   .research-composer-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) calc(var(--touch-dense) + var(--space-1));
-    align-items: end;
+    align-items: center;
     gap: var(--space-2);
+    height: 100%;
     min-width: 0;
   }
 
   .research-composer textarea {
     width: 100%;
-    min-height: 40px;
-    max-height: 120px;
-    resize: vertical;
-    padding: var(--space-1) 0;
+    height: calc(var(--touch-dense) + var(--space-1));
+    min-height: calc(var(--touch-dense) + var(--space-1));
+    max-height: calc(var(--touch-dense) + var(--space-1));
+    resize: none;
+    padding: 0 var(--space-1);
     border: 0;
     outline: 0;
     color: var(--text);
@@ -1903,7 +1937,8 @@
   .research-composer textarea::placeholder { color: var(--text-secondary); }
 
   .research-risk-boundary {
-    margin: -2px 0 0;
+    position: static;
+    margin: var(--space-1) 0 0;
     color: var(--text-secondary);
     font-size: var(--fs-caption);
     line-height: 1.35;
