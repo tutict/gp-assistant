@@ -595,15 +595,10 @@ fn model_failure_warning(error: &str, config: Option<&LlmConfig>) -> String {
 }
 
 fn redact_model_error(error: &str, config: Option<&LlmConfig>) -> String {
-    limit_chars(
-        &redact_url_literals(&redact_text(
-            error,
-            &config
-                .map(model_config_sensitive_values)
-                .unwrap_or_default(),
-        )),
-        400,
-    )
+    let secrets = config
+        .map(model_config_sensitive_values)
+        .unwrap_or_default();
+    limit_chars(&redact_text(&redact_url_literals(error), &secrets), 400)
 }
 
 fn model_config_sensitive_values(config: &LlmConfig) -> Vec<RedactionSecret> {
@@ -1101,12 +1096,12 @@ pub(crate) fn redact_persisted_question(question: &str, llm_value: Option<&Value
         .as_ref()
         .map(model_config_sensitive_values)
         .unwrap_or_default();
-    redact_url_literals(&redact_text(question, &secrets))
+    redact_text(&redact_url_literals(question), &secrets)
 }
 
 fn redact_json_strings_with_urls(value: Value, secrets: &[RedactionSecret]) -> Value {
     match value {
-        Value::String(value) => Value::String(redact_url_literals(&redact_text(&value, secrets))),
+        Value::String(value) => Value::String(redact_text(&redact_url_literals(&value), secrets)),
         Value::Array(items) => Value::Array(
             items
                 .into_iter()
