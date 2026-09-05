@@ -143,14 +143,14 @@ describe("sanitizeAgentConversations", () => {
 });
 
 describe("AgentPanel empty state", () => {
-  it("renders a compact mode selector and model setup hint", () => {
+  it("renders a compact mode selector and local fallback hint", () => {
     const html = renderToStaticMarkup(<AgentPanel {...baseProps} llmSettings={null} />);
 
     expect(html).toContain("<h2>开始对话</h2>");
     expect(html).toContain('role="group"');
     expect(html).toContain('maxLength="8000"');
     expect(html).toContain('aria-pressed="true"');
-    expect(html).toContain("请先配置模型");
+    expect(html).toContain("未配置模型时使用本地工具分析");
     expect(html).toContain("游资早期框架：环境、主线、情绪周期与失效条件");
     expect(html).toContain("价值复利框架：企业质量、资本配置与估值");
     expect(html).toContain('aria-label="运行历史"');
@@ -159,7 +159,7 @@ describe("AgentPanel empty state", () => {
     expect(html).not.toContain("快速模式能力");
   });
 
-  it("hides the setup hint when a model is configured", () => {
+  it("hides the local fallback hint when a model is configured", () => {
     const html = renderToStaticMarkup(
       <AgentPanel
         {...baseProps}
@@ -170,7 +170,7 @@ describe("AgentPanel empty state", () => {
       />,
     );
 
-    expect(html).not.toContain("请先配置模型");
+    expect(html).not.toContain("未配置模型时使用本地工具分析");
   });
 });
 

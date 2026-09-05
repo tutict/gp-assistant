@@ -5,7 +5,7 @@ use futures::StreamExt;
 use rig_agent::ModelHandle;
 use rig_core::{
     client::{Capabilities, Capable, CompletionClient, DebugExt, Nothing, Provider},
-    completion::{Message, ToolDefinition},
+    completion::Message,
     http_client::{
         sse::BoxedStream, Error as RigHttpError, HttpClientExt, LazyBody, MultipartForm, Request,
         Response, StreamingResponse,
@@ -15,8 +15,10 @@ use rig_core::{
     tool::{PortableDynamicTool, ToolExecutionError, ToolOutput},
 };
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use tauri::AppHandle;
+
+#[cfg(test)]
+use rig_core::completion::ToolDefinition;
 
 use crate::{agent_harness, runtime};
 use stock_optimizer_core as gp_core;
@@ -235,10 +237,6 @@ async fn bounded_error_body(response: reqwest::Response) -> String {
     limit_text(&String::from_utf8_lossy(&body), MAX_ERROR_BYTES)
 }
 
-static CONVERSATION_MEMORY: OnceLock<
-    Mutex<HashMap<String, rig_core::memory::InMemoryConversationMemory>>,
-> = OnceLock::new();
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProviderKind {
     OpenAiChat,
@@ -449,6 +447,7 @@ pub(crate) fn validate_provider_config(config: &ProviderConfig) -> Result<(), St
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn build_model(config: &ProviderConfig) -> Result<ModelHandle, RigAgentError> {
     build_model_with_payload(config, &Value::Null)
 }
@@ -633,14 +632,27 @@ pub(crate) struct RigToolRegistry {
     tools: Vec<PortableDynamicTool>,
     data: Value,
     context: Value,
+    research_evidence: Option<Value>,
+    research_app: Option<AppHandle>,
 }
 
 impl RigToolRegistry {
+    #[cfg(test)]
     pub(crate) fn new(data: Value, context: Value) -> Self {
-        Self::new_with_result(data.clone(), context, data)
+        Self::new_with_research(data, context, None, None)
     }
 
-    pub(crate) fn new_with_result(data: Value, context: Value, _result: Value) -> Self {
+    #[cfg(test)]
+    pub(crate) fn new_with_result(data: Value, context: Value, result: Value) -> Self {
+        Self::new_with_research(data, context, Some(result), None)
+    }
+
+    pub(crate) fn new_with_research(
+        data: Value,
+        context: Value,
+        research_evidence: Option<Value>,
+        research_app: Option<AppHandle>,
+    ) -> Self {
         let definitions = [
             (
                 "stock_screen",
@@ -672,15 +684,26 @@ impl RigToolRegistry {
             .map(|(name, description)| {
                 let data = data.clone();
                 let context = context.clone();
+                let research_evidence = research_evidence.clone();
+                let research_app = research_app.clone();
                 let tool_name = name.to_string();
                 PortableDynamicTool::new(name, description, tool_schema(name), move |arguments| {
                     let data = data.clone();
                     let context = context.clone();
+                    let research_evidence = research_evidence.clone();
+                    let research_app = research_app.clone();
                     let tool_name = tool_name.clone();
                     Box::pin(async move {
                         let result = tokio::time::timeout(
                             std::time::Duration::from_secs(MAX_TOOL_TIMEOUT_SECONDS),
-                            dispatch_tool(&tool_name, data, context, arguments),
+                            dispatch_tool(
+                                &tool_name,
+                                data,
+                                context,
+                                research_evidence,
+                                research_app,
+                                arguments,
+                            ),
                         )
                         .await
                         .map_err(|_| ToolExecutionError::other("Rig tool timed out"))?
@@ -694,9 +717,12 @@ impl RigToolRegistry {
             tools,
             data,
             context,
+            research_evidence,
+            research_app,
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn definitions(&self) -> Vec<ToolDefinition> {
         self.tools
             .iter()
@@ -709,7 +735,15 @@ impl RigToolRegistry {
     }
 
     pub(crate) async fn dispatch(&self, name: &str, arguments: Value) -> Result<Value, String> {
-        dispatch_tool(name, self.data.clone(), self.context.clone(), arguments).await
+        dispatch_tool(
+            name,
+            self.data.clone(),
+            self.context.clone(),
+            self.research_evidence.clone(),
+            self.research_app.clone(),
+            arguments,
+        )
+        .await
     }
 }
 
@@ -809,6 +843,8 @@ async fn dispatch_tool(
     name: &str,
     data: Value,
     context: Value,
+    research_evidence: Option<Value>,
+    research_app: Option<AppHandle>,
     arguments: Value,
 ) -> Result<Value, String> {
     validate_tool_arguments(name, &arguments)?;
@@ -825,34 +861,34 @@ async fn dispatch_tool(
                     criteria = value.clone();
                 }
                 gp_core::screen_with_data_value(json!({"data": data, "criteria": criteria}))
+                    .map_err(|error| error.to_string())
             }
             "stock_observe" => gp_core::observe_with_data_value(json!({
                 "data": data,
                 "request": arguments
-            })),
+            }))
+            .map_err(|error| error.to_string()),
             "trend_screen" => gp_core::trend_screen_with_data_value(json!({
                 "data": data,
                 "request": arguments
-            })),
+            }))
+            .map_err(|error| error.to_string()),
             "portfolio_backtest" => {
                 let request = arguments.get("request").cloned().unwrap_or(arguments);
                 gp_core::backtest_with_data_value(json!({"data": data, "request": request}))
+                    .map_err(|error| error.to_string())
             }
             "news_evidence" => {
                 let query = arguments
                     .get("query")
                     .and_then(Value::as_str)
                     .unwrap_or("新闻");
-                let message = format!("新闻 {query}");
-                let context = serde_json::from_value::<gp_core::AgentContext>(context)
-                    .map_err(|error| error.to_string())?;
-                gp_core::run_agent_with_data_and_context(
-                    &serde_json::from_value::<gp_core::CoreDataSet>(data)
-                        .map_err(|error| error.to_string())?,
-                    &message,
-                    &context,
+                research_evidence_for_query(
+                    query,
+                    research_evidence.as_ref(),
+                    research_app.as_ref(),
+                    context.get("stock_code").and_then(Value::as_str),
                 )
-                .and_then(|response| serde_json::to_value(response).map_err(Into::into))
             }
             "watchlist_review" => {
                 if !arguments
@@ -870,15 +906,45 @@ async fn dispatch_tool(
                     &context,
                 )
                 .and_then(|response| serde_json::to_value(response).map_err(Into::into))
+                .map_err(|error| error.to_string())
             }
             _ => return Err(format!("unknown Rig tool: {name}")),
-        }
-        .map_err(|error| error.to_string())?;
+        }?;
         bound_tool_output(output)
     })
     .await
     .map_err(|error| error.to_string())??;
     Ok(result)
+}
+
+fn research_evidence_for_query(
+    query: &str,
+    evidence: Option<&Value>,
+    app: Option<&AppHandle>,
+    stock_code: Option<&str>,
+) -> Result<Value, String> {
+    if let Some(app) = app {
+        let mut request = json!({"query": query, "top_k": 8});
+        if let Some(stock_code) = stock_code.filter(|value| !value.trim().is_empty()) {
+            request["stock_code"] = Value::String(stock_code.trim().to_string());
+        }
+        let mut result = crate::research::with_app_store(app, |store| store.query(&request))?;
+        if let Some(object) = result.as_object_mut() {
+            object.insert("research_store".to_string(), Value::Bool(true));
+        }
+        return Ok(result);
+    }
+    if let Some(evidence) = evidence {
+        let mut evidence = evidence.clone();
+        if let Some(object) = evidence.as_object_mut() {
+            object.insert("research_store".to_string(), Value::Bool(true));
+        }
+        return Ok(evidence);
+    }
+    Err(format!(
+        "ResearchStore is unavailable for news evidence query: {}",
+        limit_text(query, 80)
+    ))
 }
 
 fn validate_tool_arguments(name: &str, arguments: &Value) -> Result<(), String> {
@@ -970,10 +1036,35 @@ pub(crate) struct RigAgentOutcome {
     pub(crate) response: Value,
 }
 
+#[cfg(test)]
 pub(crate) async fn execute_with_event_sink<F>(
     payload: Value,
     data: Value,
     mut sink: F,
+) -> Result<RigAgentOutcome, String>
+where
+    F: FnMut(Value) + Send,
+{
+    execute_with_event_sink_inner(payload, data, None, &mut sink).await
+}
+
+pub(crate) async fn execute_with_app_and_event_sink<F>(
+    app: AppHandle,
+    payload: Value,
+    data: Value,
+    mut sink: F,
+) -> Result<RigAgentOutcome, String>
+where
+    F: FnMut(Value) + Send,
+{
+    execute_with_event_sink_inner(payload, data, Some(app), &mut sink).await
+}
+
+async fn execute_with_event_sink_inner<F>(
+    payload: Value,
+    data: Value,
+    research_app: Option<AppHandle>,
+    mut sink: &mut F,
 ) -> Result<RigAgentOutcome, String>
 where
     F: FnMut(Value) + Send,
@@ -1004,7 +1095,12 @@ where
         .filter(|value| value.is_object())
         .cloned()
         .unwrap_or_else(|| json!({}));
-    let registry = RigToolRegistry::new(data.clone(), context.clone());
+    let registry = RigToolRegistry::new_with_research(
+        data.clone(),
+        context.clone(),
+        payload.get("research_evidence").cloned(),
+        research_app,
+    );
     sink(status_event(&run_id, "tools", "执行本地工具", 12));
     sink(status_event(&run_id, "understand", "理解任务", 18));
     sink(status_event(&run_id, "intent", "选择 Rig 工具", 24));
@@ -1067,7 +1163,10 @@ where
             };
             let system_prompt = model_system_prompt(mode);
             let bounded_context = bounded_model_context(&base_response, &context);
-            let history = history_messages(payload.get("history").unwrap_or(&Value::Null));
+            let history = history_messages_for_model(
+                payload.get("history").unwrap_or(&Value::Null),
+                llm_value,
+            );
             let history_bytes = serde_json::to_vec(&history)
                 .map(|bytes| bytes.len())
                 .unwrap_or(usize::MAX);
@@ -1101,19 +1200,6 @@ where
                         .unwrap_or(0.2),
                 )
                 .output_schema_raw(model_output_schema());
-            let builder = if let Some(conversation_id) = payload
-                .get("conversation_id")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                let memory = conversation_memory(conversation_id);
-                builder
-                    .memory(memory)
-                    .conversation(conversation_id.to_string())
-            } else {
-                builder
-            };
             let mut tools = registry.tools().into_iter();
             let agent = if let Some(first) = tools.next() {
                 let mut configured = builder.portable_dynamic_tool(first);
@@ -1126,7 +1212,7 @@ where
             };
             let model_run = async {
                 let mut stream = agent
-                    .runner(Message::user(message))
+                    .runner(model_user_message(&message, llm_value))
                     .history(history)
                     .max_turns(4)
                     .stream()
@@ -1408,17 +1494,6 @@ fn bounded_model_context(baseline: &Value, context: &Value) -> String {
     limit_text(&value.to_string(), MAX_MODEL_REQUEST_BYTES / 2)
 }
 
-fn conversation_memory(conversation_id: &str) -> rig_core::memory::InMemoryConversationMemory {
-    let store = CONVERSATION_MEMORY.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = store
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    guard
-        .entry(conversation_id.to_string())
-        .or_insert_with(rig_core::memory::InMemoryConversationMemory::new)
-        .clone()
-}
-
 fn model_output_schema() -> schemars::Schema {
     serde_json::from_value(json!({
         "type": "object",
@@ -1589,6 +1664,7 @@ fn tool_start_event(run_id: &str, tool: &str, tool_call_id: &str, input: Value) 
     })
 }
 
+#[cfg(test)]
 pub(crate) fn history_messages(history: &Value) -> Vec<Message> {
     bounded_history(history)
         .into_iter()
@@ -1598,6 +1674,24 @@ pub(crate) fn history_messages(history: &Value) -> Vec<Message> {
             _ => None,
         })
         .collect()
+}
+
+fn history_messages_for_model(history: &Value, llm: Option<&Value>) -> Vec<Message> {
+    bounded_history(history)
+        .into_iter()
+        .filter_map(|entry| {
+            let content = agent_harness::redact_persisted_question(&entry.content, llm);
+            match entry.role.as_str() {
+                "assistant" => Some(Message::assistant(content)),
+                "user" => Some(Message::user(content)),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+fn model_user_message(message: &str, llm: Option<&Value>) -> Message {
+    Message::user(agent_harness::redact_persisted_question(message, llm))
 }
 
 pub(crate) fn bounded_history(value: &Value) -> Vec<HistoryEntry> {
@@ -1777,6 +1871,35 @@ mod tests {
         assert!(bounded
             .iter()
             .all(|item| item.content.chars().count() <= 2_000));
+    }
+
+    #[test]
+    fn redacts_model_history_before_rig_message_conversion() {
+        let history = json!([{
+            "role": "user",
+            "content": "token=history-secret https://user:pass@10.0.0.8/v1?api_key=query-secret"
+        }]);
+        let llm = json!({
+            "api_format": "openai_chat",
+            "base_url": "http://10.0.0.8/v1",
+            "api_key": "history-secret",
+            "model": "local-model"
+        });
+
+        let encoded = serde_json::to_string(&history_messages_for_model(&history, Some(&llm)))
+            .expect("Rig history should serialize");
+        let current = serde_json::to_string(&model_user_message(
+            "Review history-secret at http://10.0.0.8/v1?api_key=query-secret",
+            Some(&llm),
+        ))
+        .expect("current Rig message should serialize");
+
+        for redacted in [&encoded, &current] {
+            assert!(!redacted.contains("history-secret"), "{redacted}");
+            assert!(!redacted.contains("query-secret"), "{redacted}");
+            assert!(!redacted.contains("10.0.0.8"), "{redacted}");
+            assert!(redacted.contains("***"));
+        }
     }
 
     #[test]
@@ -1966,6 +2089,58 @@ mod tests {
                 .expect("stock screen dispatch should succeed");
         assert!(result.get("returned").is_some());
         assert!(serde_json::to_vec(&result).unwrap().len() <= MAX_TOOL_OUTPUT_BYTES);
+    }
+
+    #[test]
+    fn news_evidence_dispatch_wraps_research_store_citations() {
+        let path = std::env::temp_dir().join(format!(
+            "gp-assistant-rig-news-{}.sqlite",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time should be valid")
+                .as_nanos()
+        ));
+        let store =
+            crate::research::ResearchStore::open(&path).expect("research store should open");
+        store
+            .ingest_documents(&[json!({
+                "document_id": "rig-news-1",
+                "title": "储能订单公告",
+                "content": "公司公告储能订单增长，交付计划保持稳定。",
+                "source_tier": "filing",
+                "source_name": "官方公告",
+                "published_at": "2026-08-20T09:30:00+08:00",
+                "url": "https://example.test/news/rig-news-1",
+                "stock_codes": ["300750.SZ"]
+            })])
+            .expect("document should be ingested");
+        let evidence = store
+            .query(&json!({
+                "query": "储能订单",
+                "stock_code": "300750.SZ",
+                "top_k": 8
+            }))
+            .expect("research query should succeed");
+        let registry = RigToolRegistry::new_with_result(json!({}), json!({}), evidence);
+
+        let result = tauri::async_runtime::block_on(
+            registry.dispatch("news_evidence", json!({"query": "储能订单"})),
+        )
+        .expect("news evidence dispatch should succeed");
+
+        assert_eq!(result["mode"], "evidence_only");
+        let citation = &result["citations"][0];
+        assert_eq!(citation["citation_id"], "C1");
+        assert_eq!(citation["document_id"], "rig-news-1");
+        assert!(citation["chunk_id"].as_str().is_some());
+        assert_eq!(citation["source_tier"], "filing");
+        assert_eq!(citation["source_name"], "官方公告");
+        assert_eq!(citation["url"], "https://example.test/news/rig-news-1");
+        assert_eq!(citation["published_at"], "2026-08-20T09:30:00+08:00");
+        assert!(citation["retrieval_score"].as_f64().is_some());
+
+        drop(store);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

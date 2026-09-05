@@ -2266,7 +2266,7 @@ async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value
     let event_app = app.clone();
     let execution = match cached_market_data(&app) {
         Ok(data) => {
-            rig_runtime::execute_with_event_sink(payload, data, move |event| {
+            rig_runtime::execute_with_app_and_event_sink(app.clone(), payload, data, move |event| {
                 // The terminal `result` event carries the whole response, which `complete_run`
                 // already stores in `result_json`. Capturing it too would double every row and
                 // every detail payload. The webview still receives it for the live stream.

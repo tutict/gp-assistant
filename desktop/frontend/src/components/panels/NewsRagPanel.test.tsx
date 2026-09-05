@@ -415,9 +415,29 @@ describe("NewsRagPanel", () => {
     expect(html).toContain("公告证据");
   });
 
-  it("shows an API setup prompt and skips research queries without a model", async () => {
+  it("queries local research evidence and shows the risk boundary without a model", async () => {
+    postJson.mockImplementation((path: string) => {
+      if (path === "/api/research/threads/create") {
+        return Promise.resolve({
+          id: "thread-local",
+          title: "本地研究",
+          stock_code: "",
+          created_at_epoch_ms: 1,
+          updated_at_epoch_ms: 1,
+        });
+      }
+      if (path === "/api/research/query") {
+        return Promise.resolve({
+          id: "answer-local",
+          answer: "本地证据回答",
+          citations: [],
+        });
+      }
+      return Promise.resolve({});
+    });
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(<NewsRagPanel llmSettings={null} />); });
+    expect(textOf(renderer.toJSON())).toContain("未配置模型，将使用本地证据回答");
 
     const composer = renderer.root.find((node) => node.type === "form"
       && node.props.className === "research-composer");
@@ -425,13 +445,23 @@ describe("NewsRagPanel", () => {
       composer.findByType("textarea").props.onChange({ target: { value: "hi" } });
     });
     await act(async () => {
-      composer.props.onSubmit({ preventDefault: vi.fn() });
-      await Promise.resolve();
+      await composer.props.onSubmit({ preventDefault: vi.fn() });
     });
 
-    expect(textOf(renderer.toJSON())).toContain("请先配置 API 和模型");
-    expect(postJson).not.toHaveBeenCalledWith("/api/research/threads/create", expect.anything());
-    expect(postJson).not.toHaveBeenCalledWith("/api/research/query", expect.anything());
+    expect(postJson).toHaveBeenCalledWith("/api/research/threads/create", {
+      title: "综合研究",
+      stock_code: null,
+    });
+    const queryCall = postJson.mock.calls.find(([path]) => path === "/api/research/query");
+    expect(queryCall?.[1]).toMatchObject({
+      query: "hi",
+      stock_code: null,
+      thread_id: "thread-local",
+      top_k: 8,
+    });
+    expect(queryCall?.[1]?.llm).toBeUndefined();
+    expect(textOf(renderer.toJSON())).toContain("本地证据回答");
+    expect(textOf(renderer.toJSON())).toContain("仅供研究，不构成投资建议。");
     await act(async () => { renderer.unmount(); });
   });
 

@@ -3,7 +3,9 @@ param(
     [switch] $SkipAndroidPreflight,
     [switch] $SkipRust,
     [switch] $SkipNode,
-    [switch] $SkipPrepare
+    [switch] $SkipPrepare,
+    [switch] $SkipPackageBuild,
+    [switch] $AllowUnsignedAndroid
 )
 
 $ErrorActionPreference = "Stop"
@@ -92,6 +94,36 @@ if (-not $SkipRust) {
 if (-not $SkipAndroidPreflight) {
     $androidScript = Join-Path $Root "scripts/build-android.ps1"
     Invoke-Checked "Android build environment preflight" "powershell.exe" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $androidScript, "-PreflightOnly")
+}
+
+if (-not $SkipPackageBuild) {
+    $desktopDir = Join-Path $Root "desktop"
+    $androidArgs = @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $Root "scripts/build-android.ps1"),
+        "-Target", "aarch64"
+    )
+    if (-not $AllowUnsignedAndroid) {
+        $androidArgs += "-Signed"
+    }
+    Invoke-Checked "Build Android release package" "powershell.exe" $androidArgs
+    $androidOutputRoot = Join-Path $Root "desktop/src-tauri/gen/android/app/build/outputs/apk"
+    $androidArtifacts = @(Get-ChildItem -LiteralPath $androidOutputRoot -Recurse -File -Filter "*.apk" -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Name -match "release" -and ($AllowUnsignedAndroid -or $_.Name -match "signed")
+        })
+    if ($androidArtifacts.Count -eq 0) {
+        throw "Android release build completed without a release APK under $androidOutputRoot."
+    }
+    Write-Step "Android release artifact verified: $($androidArtifacts[-1].FullName)"
+
+    $npm = Resolve-CommandPath "npm.cmd" "Install Node.js/npm and retry."
+    Invoke-Checked "Build Windows NSIS installer" $npm @("run", "build:windows") $desktopDir
+    $windowsOutputRoot = Join-Path $Root "desktop/src-tauri/target/release/bundle/nsis"
+    $windowsArtifacts = @(Get-ChildItem -LiteralPath $windowsOutputRoot -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue)
+    if ($windowsArtifacts.Count -eq 0) {
+        throw "Windows release build completed without an NSIS installer under $windowsOutputRoot."
+    }
+    Write-Step "Windows NSIS artifact verified: $($windowsArtifacts[-1].FullName)"
 }
 
 Write-Host ""

@@ -361,22 +361,6 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
       || persistedLedgerDeletionIds().has(conversationId)
     ) return;
 
-    if (!activeLlmConfig) {
-      const now = Date.now();
-      setInput("");
-      updateConversation(conversationId, (conversation) => ({
-        ...conversation,
-        title: conversation.messages.length ? conversation.title : titleFromMessage(text),
-        messages: [
-          ...conversation.messages,
-          { role: "user", content: text, timestamp: now },
-          { role: "assistant", content: "请先配置 API 和模型，再开始 Agent 对话。", timestamp: now, error: true },
-        ],
-        updatedAt: now,
-      }));
-      return;
-    }
-
     const runId = crypto.randomUUID?.() || `agent-${Date.now()}`;
     const now = Date.now();
     const userMessage: ChatMessage = { role: "user", content: text, timestamp: now };
@@ -723,7 +707,7 @@ function AgentEmptyState({
         ))}
       </div>
 
-      {!activeModel && <p role="status">请先配置模型</p>}
+      {!activeModel && <p role="status">未配置模型时使用本地工具分析</p>}
     </div>
   );
 }

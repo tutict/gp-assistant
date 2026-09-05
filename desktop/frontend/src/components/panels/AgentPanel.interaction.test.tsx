@@ -42,7 +42,7 @@ interface StoredMessage {
 interface StoredConversation {
   id: string;
   title: string;
-  mode: "quick";
+  mode: "quick" | "expert" | "research";
   messages: StoredMessage[];
   createdAt: number;
   updatedAt: number;
@@ -212,26 +212,42 @@ afterEach(async () => {
 });
 
 describe("AgentPanel run replay interactions", () => {
-  it("shows only the API setup prompt when no model is configured", async () => {
-    seedConversations([conversation("conversation-no-api", "New conversation")]);
+  it.each(["quick", "expert", "research"] as const)(
+    "runs the local backend path and shows its risk boundary in %s mode without a model",
+    async (mode) => {
+    seedConversations([{ ...conversation("conversation-no-api", "New conversation"), mode }]);
+    invokeMock.mockResolvedValue({
+      reply: "本地工具结果",
+      warnings: ["仅供选股研究，不构成投资建议。"],
+      harness: {
+        profile_id: "deterministic_v1",
+        model_used: false,
+        model_outcome: "not_requested",
+      },
+    });
     const renderer = await renderPanel(null);
+    expect(nodeText(renderer.root)).toContain("未配置模型时使用本地工具分析");
     const textarea = renderer.root.findByType("textarea");
 
     await act(async () => {
       textarea.props.onChange({ target: { value: "hi" } });
     });
     await act(async () => {
-      buttonWithClass(renderer, "send-btn").props.onClick();
-      await Promise.resolve();
+      await buttonWithClass(renderer, "send-btn").props.onClick();
     });
 
-    expect(invokeMock).not.toHaveBeenCalled();
-    expect(tauriMocks.getTauriListen).not.toHaveBeenCalled();
-    expect(nodeText(renderer.root)).toContain("请先配置 API 和模型，再开始 Agent 对话。");
-    expect(nodeText(renderer.root)).not.toContain("未返回结构化数据");
-    expect(nodeText(renderer.root)).not.toContain("原始 JSON");
-    expect(nodeText(renderer.root)).not.toContain("degraded");
-  });
+    expect(invokeMock).toHaveBeenCalledWith("api_agent_stream", {
+      payload: expect.objectContaining({
+        message: "hi",
+        mode,
+      }),
+    });
+    expect(invokeMock.mock.calls[0]?.[1]?.payload.llm).toBeUndefined();
+    expect(nodeText(renderer.root)).toContain("本地工具结果");
+    expect(nodeText(renderer.root)).toContain("仅供选股研究，不构成投资建议。");
+    expect(nodeText(renderer.root)).not.toContain("请先配置 API 和模型，再开始 Agent 对话。");
+    },
+  );
 
   it("opens run history without an initial run and passes the drawer contract", async () => {
     seedConversations([conversation("conversation-1", "Current conversation")]);

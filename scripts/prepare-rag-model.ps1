@@ -34,13 +34,26 @@ $modelFiles = @(
     }
 )
 
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($stream)) -replace "-", "")
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 New-Item -ItemType Directory -Path $modelDirectory -Force | Out-Null
 
 foreach ($file in $modelFiles) {
     $destination = Join-Path $modelDirectory $file.Name
     $valid = $false
     if (Test-Path -LiteralPath $destination) {
-        $valid = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -eq $file.Sha256
+        $valid = (Get-Sha256Hex $destination) -eq $file.Sha256
     }
     if (-not $valid) {
         if ($SkipDownload) {
@@ -48,7 +61,7 @@ foreach ($file in $modelFiles) {
         }
         $temporary = "$destination.download"
         Invoke-WebRequest -UseBasicParsing -Uri $file.Url -OutFile $temporary
-        $actual = (Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash
+        $actual = Get-Sha256Hex $temporary
         if ($actual -ne $file.Sha256) {
             Remove-Item -LiteralPath $temporary -Force
             throw "RAG model checksum mismatch for $($file.Name): expected $($file.Sha256), got $actual"

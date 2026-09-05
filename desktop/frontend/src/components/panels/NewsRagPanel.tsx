@@ -356,7 +356,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
 
   const ask = useCallback(async () => {
     const text = question.trim();
-    if (!text || asking || deletingThreadId || !activeLlmConfig) return;
+    if (!text || asking || deletingThreadId) return;
     const generation = workspaceGenerationRef.current;
     const requestedCode = code;
     setAsking(true);
@@ -537,7 +537,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         {(visibleMessages.length > 0 || answers.length > 0) &&
           <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>}
         </div>
-        {!activeLlmConfig && <small className="research-composer-setup">请先配置 API 和模型</small>}
+        {!activeLlmConfig && <small className="research-composer-setup">未配置模型，将使用本地证据回答</small>}
         <form className="research-composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
           {evidenceNotice && <div className="research-evidence-notice" role="status">{evidenceNotice}</div>}
           <div><label className="research-composer-label" htmlFor={questionInputId}>
@@ -557,7 +557,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
               <button className="research-composer-send" type="submit"
                 aria-label="提交问题；仅供研究，不构成投资建议。"
                 title="提交问题；仅供研究，不构成投资建议。"
-                disabled={!question.trim() || asking || Boolean(deletingThreadId) || !activeLlmConfig}>
+                disabled={!question.trim() || asking || Boolean(deletingThreadId)}>
                 {asking || deletingThreadId
                   ? <RefreshCw size={18} className="is-spinning" /> : <Send size={18} />}
               </button>

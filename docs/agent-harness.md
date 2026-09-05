@@ -17,7 +17,7 @@ Agent 页面采用“本地工具取证 → 模型综合 → 安全合并”的�
 前端把当前模型连接、最近 12 条对话历史、模式和最多 50 只自选股上下文传给 Tauri。后端通过 `rig-agent` 运行 Agent 状态机和工具循环，通过 `rig-core` 选择 OpenAI Chat Completions、OpenAI Responses、Anthropic 或 OpenAI-compatible model；协议请求、流式响应和 provider 错误不再由 `agent_harness` 手写：
 
 1. 校验模型地址与凭据边界；公网端点必须使用 HTTPS，基础地址按所选协议规范化。OpenAI-compatible 的 `full_url` 通过 Rig provider extension 覆盖 completion path，可使用 `/generate` 等自定义路径；Responses/Anthropic 的自定义 full URL 会安全拒绝并回退本地结果。
-2. 将历史转换为 Rig `Message`，将工具结果和证据作为 Rig context/document，并由 `AgentRunner` 管理多轮状态。
+2. 将最近 12 条、每条最多 2000 字符的历史脱敏后转换为 Rig `Message`，将工具结果和证据作为 Rig context/document，并由 `AgentRunner` 管理单次运行内的工具循环。跨请求历史只来自显式 payload，进程内不保留全局 conversation memory。
 3. Rig 负责 JSON/schema、请求、流式响应、工具调用和 provider 错误；应用边界仍校验 endpoint、大小、凭据脱敏、代理和取消。模型请求上下文、模型输出、工具参数和工具结果均有独立上限。
 4. 基础地址和完整 URL 配置在 Rig provider builder 前归一化，应用不再拼接 provider request body 或解析 SSE。
 5. 仅接收 `reply`、`answer_sections`、`warnings`、`next_actions` 四类模型字段；摘要和每条事实 bullet 都必须邻近引用证据目录中的有效 `[E#]`，缺失或未知编号会回退本地结果。

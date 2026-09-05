@@ -2,7 +2,7 @@
 
 **股选优**是一款面向 A 股研究的跨平台工作台，将智能选股、个股观察、严格样本外回测、新闻与本地 RAG 证据、研究 Agent 集成在同一套工作流中。用户可以从市场与行业范围筛选候选标的，查看行情和量化诊断，将当前条件带入回测，再由 Agent 组织工具调用、证据和研究结论。
 
-项目使用 **Tauri 2 + Rust + React/TypeScript**，Windows 桌面端与 Android 端共享界面和 Rust 核心能力。当前稳定版本为 **v0.6.1**：补全了 Agent 运行历史复盘，改进了筛选条件隔离、数据刷新、回测与分析界面，新增持久化字体缩放和统一设置面板，并修复了桌面及 Android 窄屏下的选股结果布局。
+项目使用 **Tauri 2 + Rust + React/TypeScript**，Windows 桌面端与 Android 端共享界面和 Rust 核心能力。当前稳定版本为 **v0.6.2**：Agent 无模型时可回退本地工具，新闻工具统一读取 ResearchStore 证据，消息中心交互与视觉基线得到补强，并完善了 Windows/Android 发布资产门禁。
 
 > 股选优只提供研究、筛选和策略验证工具，不构成投资建议，不承诺任何收益。市场有风险，投资需谨慎。
 
@@ -10,7 +10,7 @@
 
 ## 下载与安装
 
-请前往 [股选优 v0.6.1](https://github.com/tutict/gp-assistant/releases/tag/v0.6.1) 下载当前稳定版，或在 [GitHub Releases](https://github.com/tutict/gp-assistant/releases) 查看全部版本：
+请前往 [股选优 v0.6.2](https://github.com/tutict/gp-assistant/releases/tag/v0.6.2) 下载当前稳定版，或在 [GitHub Releases](https://github.com/tutict/gp-assistant/releases) 查看全部版本：
 
 - **Windows 10/11 x64**：下载名称以 `_windows_x64_setup.exe` 结尾的安装程序。
 - **Android 7.0 及以上**：下载名称以 `_android_aarch64_release_signed.apk` 结尾的安装包。
@@ -69,7 +69,7 @@ Walk-forward 回测把每个调仓日至下一调仓日视为独立样本外区�
 
 ### adaptive_swing_v1 发布验证
 
-> **v0.6.1 状态：数据未就绪、尚未验证。** 当前可用数据不包含覆盖回测区间的全市场点时（PIT）历史因子、上市、ST 与可交易状态，因此本版本不宣称 adaptive 严格发布门槛已经通过。严格回测语义保持不变：缺少 `factor_snapshots` 等必要证据时会在历史行情预取前明确失败，不使用当前数据回填；普通 `candidate_snapshot` 回测仍可正常使用。完整 PIT 数据采集作为后续独立工作，不阻塞 v0.6.1 依据 `scripts/release-check.ps1` 完成常规发布检查。
+> **v0.6.2 状态：数据未就绪、尚未验证。** 当前可用数据不包含覆盖回测区间的全市场点时（PIT）历史因子、上市、ST 与可交易状态，因此本版本不宣称 adaptive 严格发布门槛已经通过。严格回测语义保持不变：缺少 `factor_snapshots` 等必要证据时会在历史行情预取前明确失败，不使用当前数据回填；普通 `candidate_snapshot` 回测仍可正常使用。完整 PIT 数据采集作为后续独立工作，不阻塞 v0.6.2 依据 `scripts/release-check.ps1` 完成常规发布检查。
 
 发布验证前必须准备覆盖回测区间的全市场日线，以及带报告期和实际可见日期的历史因子快照；只有当前单期财务快照时，不能形成至少 60 个严格样本外折次的有效证据。
 
@@ -201,7 +201,7 @@ cargo test --manifest-path desktop/src-tauri/Cargo.toml
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release-check.ps1
 ```
 
-该检查会执行前端生产构建、Rust 测试、Tauri `cargo check` 和 Android 环境预检。
+该检查会执行前端生产构建、Rust 测试、Tauri `cargo check`、Android 环境预检，并实际构建 Windows NSIS 与已签名 Android aarch64 APK。只运行代码与界面门禁时可显式传入 `-SkipPackageBuild`；仅供本地诊断的无签名 Android 构建需显式传入 `-AllowUnsignedAndroid`。
 
 ## 构建安装包
 

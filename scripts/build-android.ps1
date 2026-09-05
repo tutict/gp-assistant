@@ -153,9 +153,13 @@ function Invoke-Checked {
         [Parameter(Mandatory = $true)]
         [string] $FilePath,
         [Parameter(Mandatory = $true)]
-        [string[]] $Arguments
+        [string[]] $Arguments,
+        [switch] $SensitiveArguments
     )
 
+    if ($SensitiveArguments) {
+        Write-Host "  cmd: $FilePath [arguments redacted]"
+    }
     & $FilePath @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "$Description failed with exit code $LASTEXITCODE."
@@ -376,7 +380,7 @@ function Sign-AndroidReleaseApk {
         $unsignedApk.FullName,
         $alignedApk
     )
-    Invoke-Checked "Sign Android release APK" $apksigner @(
+    Invoke-Checked -Description "Sign Android release APK" -FilePath $apksigner -SensitiveArguments -Arguments @(
         "sign",
         "--ks", $config.Keystore,
         "--ks-key-alias", $config.Alias,
