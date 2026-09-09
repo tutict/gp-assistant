@@ -2001,7 +2001,15 @@ async function captureNewsPageBaselines(browser, targetRoot) {
       open: async (page) => {
         const citations = page.locator(".research-inline-citation");
         await citations.nth(0).click();
-        await citations.nth(1).click();
+        // On mobile the evidence inspector is an intentional modal sheet that
+        // covers the answer; dispatch the second citation's click handler
+        // directly so this state still exercises citation-history rendering.
+        const mobile = await page.evaluate(() => window.matchMedia("(max-width: 768px)").matches);
+        if (mobile) {
+          await citations.nth(1).evaluate((element) => element.click());
+        } else {
+          await citations.nth(1).click();
+        }
         await page.getByRole("button", { name: "上一条证据" }).waitFor({ state: "visible" });
       },
     },

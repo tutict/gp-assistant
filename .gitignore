@@ -37,6 +37,8 @@ node_modules/
 target/
 tmp/
 data/
+!desktop/frontend/test-baselines/news/data/
+!desktop/frontend/test-baselines/news/data/**
 build/
 dist/
 logs/

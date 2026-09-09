@@ -13,7 +13,7 @@ RAG 2.0 由 Tauri/Rust 统一维护新闻、公告、财务快照、研报、社
 
 文档更新采用内容哈希增量导入。内容未变化时保留消息已读状态和向量；已被历史回答引用的文档发生变化时创建确定性的 revision，旧分块不会被删除。
 
-首次打开时会事务化迁移 `news-cache.json`、旧 `rag-pack.json` 及实际为 JSON 的旧 `.sqlite` 包。迁移完成前不删除旧文件。
+首次打开时会事务化迁移 `news-cache.json`、旧 `rag-pack.json` 及实际为 JSON 的旧 `.sqlite` 包。导入成功前不移动旧文件；导入完成后将旧源及其 SQLite sidecar 原样移到 `research/legacy-v1/`，保留相对于 AppData 的目录结构，不做不可恢复删除。归档步骤使用独立的 `legacy_v1_archive_complete` 标记：若移动中断，下次打开会继续处理仍在活动目录中的文件，全部完成后才写入标记。需要人工回退旧链路时，可在应用关闭后将归档文件移回原相对路径。
 
 ## 检索
 

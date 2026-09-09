@@ -249,6 +249,25 @@ describe("AgentPanel run replay interactions", () => {
     },
   );
 
+  it("sends native cancellation when the user stops an active run", async () => {
+    seedConversations([conversation("conversation-running", "Running")]);
+    const request = deferred<unknown>();
+    const renderer = await renderPanel();
+    const { sendPromise } = await beginDeferredSend(renderer, request.promise);
+
+    const stopButton = buttonWithClass(renderer, "send-btn");
+    expect(stopButton.props["aria-label"]).toBe("停止");
+    await act(async () => {
+      stopButton.props.onClick();
+      await sendPromise;
+    });
+
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "api_agent_cancel", {
+      payload: { run_id: "run-generated" },
+    });
+    expect(nodeText(renderer.root)).toContain("已取消");
+  });
+
   it("opens run history without an initial run and passes the drawer contract", async () => {
     seedConversations([conversation("conversation-1", "Current conversation")]);
     const renderer = await renderPanel();

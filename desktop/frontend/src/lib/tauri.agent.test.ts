@@ -93,4 +93,46 @@ describe("Agent Tauri routes", () => {
       history: undefined,
     });
   });
+
+  it("routes Agent cancellation to the native run token", async () => {
+    const { TAURI_POST_ROUTES } = await import("./tauri");
+    const invokeMock = vi.fn(async (): Promise<unknown> => ({ cancelled: true }));
+    const invoke = invokeMock as InvokeFn;
+
+    await TAURI_POST_ROUTES["/api/agent/cancel"]?.({
+      invoke,
+      path: "/api/agent/cancel",
+      parsed: new URL("http://tauri.localhost/api/agent/cancel"),
+      payload: { run_id: " run-1 " },
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("api_agent_cancel", {
+      payload: { run_id: "run-1" },
+    });
+  });
+
+  it("propagates an aborted native Agent request to the backend run", async () => {
+    const stream = new Promise<unknown>(() => undefined);
+    const invokeMock = vi.fn((command: string): Promise<unknown> => (
+      command === "api_agent_stream" ? stream : Promise.resolve({ cancelled: true })
+    ));
+    vi.stubGlobal("window", {
+      location: { href: "http://tauri.localhost/" },
+      __TAURI__: { core: { invoke: invokeMock } },
+    });
+    const { postJson } = await import("./tauri");
+    const controller = new AbortController();
+
+    const request = postJson("/api/agent/stream", {
+      run_id: "run-abort",
+      message: "stop this",
+    }, { signal: controller.signal });
+    await Promise.resolve();
+    controller.abort();
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(invokeMock).toHaveBeenCalledWith("api_agent_cancel", {
+      payload: { run_id: "run-abort" },
+    });
+  });
 });

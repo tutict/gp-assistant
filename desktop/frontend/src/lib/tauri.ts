@@ -296,6 +296,9 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   }),
   "/api/agent": async ({ invoke, payload }) => invokeAgent(invoke, payload),
   "/api/agent/stream": async ({ invoke, payload }) => invokeAgent(invoke, payload),
+  "/api/agent/cancel": async ({ invoke, payload }) => invoke("api_agent_cancel", {
+    payload: { run_id: String(asRecord(payload).run_id || "").trim() },
+  }),
   "/api/agent/runs/delete-conversation": async ({ invoke, payload }) => invoke("api_agent_run_delete_conversation", { payload }),
 };
 export function buildTauriAgentPayload(request: Record<string, unknown>): Record<string, unknown> {
@@ -316,6 +319,16 @@ export function buildTauriAgentPayload(request: Record<string, unknown>): Record
 
 function invokeAgent(invoke: InvokeFn, payload: unknown): Promise<unknown> {
   return invoke("api_agent_stream", { payload: buildTauriAgentPayload(asRecord(payload)) });
+}
+
+export async function cancelTauriAgentRun(runId: string): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  const normalized = runId.trim();
+  if (!invoke || !normalized) return false;
+  const result = await invoke<{ cancelled?: unknown }>("api_agent_cancel", {
+    payload: { run_id: normalized },
+  });
+  return result?.cancelled === true;
 }
 
 function tauriRouteHandler(method: string, path: string): TauriRouteHandler | null {
@@ -1018,6 +1031,21 @@ function withAbortSignal<T>(promise: Promise<T>, signal: AbortSignal | null): Pr
 export async function requestJson<T = unknown>(method: string, url: string, payload?: unknown, headers: Record<string, string> = {}, options: RequestOptions = {}): Promise<T> {
   const timeoutSignal = createTimeoutSignal(options.timeoutMs);
   const signal = combineAbortSignals(options.signal ?? null, timeoutSignal.signal);
+  let removeNativeAgentAbortListener: (() => void) | undefined;
+  if (signal && isTauriRuntime()) {
+    const path = new URL(url, window.location.href).pathname;
+    const runId = String(asRecord(payload).run_id || "").trim();
+    if ((path === "/api/agent" || path === "/api/agent/stream") && runId) {
+      const cancelRun = () => {
+        void cancelTauriAgentRun(runId).catch(() => undefined);
+      };
+      if (signal.aborted) cancelRun();
+      else {
+        signal.addEventListener("abort", cancelRun, { once: true });
+        removeNativeAgentAbortListener = () => signal.removeEventListener("abort", cancelRun);
+      }
+    }
+  }
   try {
     const tauriResult = await withAbortSignal(requestTauriJson(method, url, payload), signal);
     if (tauriResult.handled) return tauriResult.data as T;
@@ -1028,6 +1056,7 @@ export async function requestJson<T = unknown>(method: string, url: string, payl
     if (!resp.ok) throw new Error(await resp.text() || `HTTP ${resp.status}`);
     return (await resp.json()) as T;
   } finally {
+    removeNativeAgentAbortListener?.();
     timeoutSignal.cancel();
   }
 }

@@ -37,7 +37,7 @@ sha2 = "0.10"
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 thiserror = "2"
-tokio = { version = "1", features = ["net", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "net", "sync", "time"] }
 webpki-roots = "1.0.6"
 rig-core = { version = "0.42.0", default-features = false, features = ["reqwest", "rustls"] }
 rig-agent = { version = "0.42.0", default-features = false }

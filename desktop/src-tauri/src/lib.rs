@@ -2339,6 +2339,28 @@ async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value
     }
 }
 
+/// Request cooperative cancellation of an active Agent run. The command returns immediately;
+/// the running `api_agent_stream` observes the shared token at the next model/tool await point.
+#[tauri::command]
+fn api_agent_cancel(payload: Value) -> Result<Value, String> {
+    let run_id = payload
+        .get("run_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "run_id is required".to_string())?;
+    if run_id.len() > agent_ledger::MAX_AGENT_LEDGER_ID_BYTES {
+        return Err(format!(
+            "run_id exceeds {} bytes",
+            agent_ledger::MAX_AGENT_LEDGER_ID_BYTES
+        ));
+    }
+    Ok(json!({
+        "run_id": run_id,
+        "cancelled": rig_runtime::request_cancel(run_id),
+    }))
+}
+
 #[tauri::command]
 async fn api_agent_run_list(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
     let limit = payload
@@ -10799,6 +10821,7 @@ pub fn run() {
             api_upstream_rag_build,
             api_upstream_rag_transfer_start,
             api_agent_stream,
+            api_agent_cancel,
             api_agent_run_list,
             api_agent_run_metrics,
             api_agent_run_get,

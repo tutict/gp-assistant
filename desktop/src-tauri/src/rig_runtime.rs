@@ -15,7 +15,13 @@ use rig_core::{
     tool::{PortableDynamicTool, ToolExecutionError, ToolOutput},
 };
 use serde_json::{json, Map, Value};
+use std::collections::HashMap;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex, OnceLock,
+};
 use tauri::AppHandle;
+use tokio::sync::Notify;
 
 #[cfg(test)]
 use rig_core::completion::ToolDefinition;
@@ -34,6 +40,79 @@ const MAX_MODEL_OUTPUT_CHARS: usize = 16 * 1024;
 const MAX_MODEL_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 const MAX_MODEL_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_RUN_SECONDS: u64 = 180;
+
+/// Cooperative cancellation state shared by the Tauri cancel command and an active run.
+/// Network/tool futures are dropped at their next await boundary after this flag is raised.
+#[derive(Debug, Default)]
+pub(crate) struct RunCancellation {
+    cancelled: AtomicBool,
+    notify: Notify,
+}
+
+impl RunCancellation {
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        // There is only one active cancellation wait at a time for each run. `notify_one`
+        // retains a permit when cancellation races just ahead of the next await boundary.
+        self.notify.notify_one();
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    async fn cancelled(&self) {
+        if self.is_cancelled() {
+            return;
+        }
+        self.notify.notified().await;
+    }
+}
+
+static ACTIVE_RUNS: OnceLock<Mutex<HashMap<String, Arc<RunCancellation>>>> = OnceLock::new();
+
+fn active_runs() -> &'static Mutex<HashMap<String, Arc<RunCancellation>>> {
+    ACTIVE_RUNS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(crate) fn register_run(run_id: &str) -> Arc<RunCancellation> {
+    let cancellation = Arc::new(RunCancellation::default());
+    if let Ok(mut runs) = active_runs().lock() {
+        runs.insert(run_id.to_string(), Arc::clone(&cancellation));
+    }
+    cancellation
+}
+
+pub(crate) fn request_cancel(run_id: &str) -> bool {
+    let cancellation = active_runs()
+        .lock()
+        .ok()
+        .and_then(|runs| runs.get(run_id).cloned());
+    if let Some(cancellation) = cancellation {
+        cancellation.cancel();
+        true
+    } else {
+        false
+    }
+}
+
+pub(crate) fn unregister_run(run_id: &str) {
+    if let Ok(mut runs) = active_runs().lock() {
+        runs.remove(run_id);
+    }
+}
+
+fn governed_model_outcome(outcome: &str) -> &'static str {
+    match outcome {
+        "model_success" => "model_success",
+        "policy_rejected" => "policy_rejected",
+        "not_configured" => "not_configured",
+        "not_requested" => "not_requested",
+        // Timeouts are failed provider requests for governance and metric purposes.
+        "timeout" | "request_failed" => "request_failed",
+        _ => "request_failed",
+    }
+}
 
 #[derive(Clone, Debug)]
 struct BoundedHttpClient {
@@ -310,12 +389,8 @@ pub(crate) enum RigAgentError {
     Model(#[from] rig_core::completion::CompletionError),
     #[error("Rig tool failed: {0}")]
     Tool(#[from] ToolExecutionError),
-    #[error("Rig stream failed: {0}")]
-    Stream(String),
     #[error("Agent run cancelled")]
     Cancelled,
-    #[error("Agent serialization failed: {0}")]
-    Serialization(String),
 }
 
 pub(crate) fn normalize_provider_config(value: &Value) -> Result<ProviderConfig, String> {
@@ -647,11 +722,28 @@ impl RigToolRegistry {
         Self::new_with_research(data, context, Some(result), None)
     }
 
+    #[cfg(test)]
     pub(crate) fn new_with_research(
         data: Value,
         context: Value,
         research_evidence: Option<Value>,
         research_app: Option<AppHandle>,
+    ) -> Self {
+        Self::new_with_research_and_cancel(
+            data,
+            context,
+            research_evidence,
+            research_app,
+            Arc::new(RunCancellation::default()),
+        )
+    }
+
+    pub(crate) fn new_with_research_and_cancel(
+        data: Value,
+        context: Value,
+        research_evidence: Option<Value>,
+        research_app: Option<AppHandle>,
+        cancellation: Arc<RunCancellation>,
     ) -> Self {
         let definitions = [
             (
@@ -686,28 +778,37 @@ impl RigToolRegistry {
                 let context = context.clone();
                 let research_evidence = research_evidence.clone();
                 let research_app = research_app.clone();
+                let cancellation = Arc::clone(&cancellation);
                 let tool_name = name.to_string();
                 PortableDynamicTool::new(name, description, tool_schema(name), move |arguments| {
                     let data = data.clone();
                     let context = context.clone();
                     let research_evidence = research_evidence.clone();
                     let research_app = research_app.clone();
+                    let cancellation = Arc::clone(&cancellation);
                     let tool_name = tool_name.clone();
                     Box::pin(async move {
-                        let result = tokio::time::timeout(
-                            std::time::Duration::from_secs(MAX_TOOL_TIMEOUT_SECONDS),
-                            dispatch_tool(
-                                &tool_name,
-                                data,
-                                context,
-                                research_evidence,
-                                research_app,
-                                arguments,
-                            ),
-                        )
-                        .await
-                        .map_err(|_| ToolExecutionError::other("Rig tool timed out"))?
-                        .map_err(ToolExecutionError::other)?;
+                        if cancellation.is_cancelled() {
+                            return Err(ToolExecutionError::other("Agent run cancelled"));
+                        }
+                        let result = tokio::select! {
+                            _ = cancellation.cancelled() => {
+                                return Err(ToolExecutionError::other("Agent run cancelled"));
+                            }
+                            result = tokio::time::timeout(
+                                std::time::Duration::from_secs(MAX_TOOL_TIMEOUT_SECONDS),
+                                dispatch_tool(
+                                    &tool_name,
+                                    data,
+                                    context,
+                                    research_evidence,
+                                    research_app,
+                                    arguments,
+                                ),
+                            ) => result
+                                .map_err(|_| ToolExecutionError::other("Rig tool timed out"))?
+                                .map_err(ToolExecutionError::other)?,
+                        };
                         Ok(ToolOutput::json(result))
                     })
                 })
@@ -1090,22 +1191,40 @@ where
         .unwrap_or("quick");
     let mode = normalize_mode(requested_mode)?;
 
+    let cancellation = register_run(&run_id);
+    struct RunRegistration(String);
+    impl Drop for RunRegistration {
+        fn drop(&mut self) {
+            unregister_run(&self.0);
+        }
+    }
+    let _registration = RunRegistration(run_id.clone());
+    if cancellation.is_cancelled() {
+        return Err(RigAgentError::Cancelled.to_string());
+    }
+
     let context = payload
         .get("context")
         .filter(|value| value.is_object())
         .cloned()
         .unwrap_or_else(|| json!({}));
-    let registry = RigToolRegistry::new_with_research(
+    let registry = RigToolRegistry::new_with_research_and_cancel(
         data.clone(),
         context.clone(),
         payload.get("research_evidence").cloned(),
         research_app,
+        Arc::clone(&cancellation),
     );
     sink(status_event(&run_id, "tools", "执行本地工具", 12));
     sink(status_event(&run_id, "understand", "理解任务", 18));
     sink(status_event(&run_id, "intent", "选择 Rig 工具", 24));
 
-    let base_response = run_deterministic_baseline(&registry, &message).await?;
+    let base_response = tokio::select! {
+        _ = cancellation.cancelled() => {
+            return Err(RigAgentError::Cancelled.to_string());
+        }
+        result = run_deterministic_baseline(&registry, &message) => result?,
+    };
     match run_mode(mode) {
         RunMode::Deterministic => {
             let response = add_runtime_harness(base_response, mode, "not_requested", None, None);
@@ -1211,14 +1330,28 @@ where
                 builder.build()
             };
             let model_run = async {
-                let mut stream = agent
+                let stream_future = agent
                     .runner(model_user_message(&message, llm_value))
                     .history(history)
                     .max_turns(4)
-                    .stream()
-                    .await;
+                    .stream();
+                let mut stream = tokio::select! {
+                    _ = cancellation.cancelled() => {
+                        return Err("Agent run cancelled".to_string());
+                    }
+                    stream = stream_future => stream,
+                };
                 let mut output = None;
-                while let Some(item) = stream.next().await {
+                loop {
+                    let item = tokio::select! {
+                        _ = cancellation.cancelled() => {
+                            return Err("Agent run cancelled".to_string());
+                        }
+                        item = stream.next() => item,
+                    };
+                    let Some(item) = item else {
+                        break;
+                    };
                     match item.map_err(|error| error.to_string())? {
                         rig_agent::agent::MultiTurnStreamItem::FinalResponse(response) => {
                             output = Some(response.output);
@@ -1268,6 +1401,9 @@ where
             {
                 Ok(Ok(output)) => output,
                 Ok(Err(error)) => {
+                    if cancellation.is_cancelled() {
+                        return Err(error);
+                    }
                     return complete_with_fallback(
                         &run_id,
                         base_response,
@@ -1282,11 +1418,14 @@ where
                     );
                 }
                 Err(_) => {
+                    if cancellation.is_cancelled() {
+                        return Err(RigAgentError::Cancelled.to_string());
+                    }
                     return complete_with_fallback(
                         &run_id,
                         base_response,
                         mode,
-                        "timeout",
+                        governed_model_outcome("timeout"),
                         "模型执行超时，已回退本地结果。",
                         Some(config.api_format.clone()),
                         &mut sink,
@@ -1573,6 +1712,7 @@ fn add_runtime_harness(
     warning: Option<String>,
     api_format: Option<String>,
 ) -> Value {
+    let outcome = governed_model_outcome(outcome);
     if let Some(object) = response.as_object_mut() {
         let mut warnings = object
             .get("warnings")
@@ -2182,5 +2322,22 @@ mod tests {
         assert!(events
             .iter()
             .any(|event| event["type"] == "result" && event["response"]["harness"].is_object()));
+    }
+
+    #[test]
+    fn timeout_is_recorded_as_a_governed_request_failure() {
+        assert_eq!(governed_model_outcome("timeout"), "request_failed");
+        assert_eq!(governed_model_outcome("request_failed"), "request_failed");
+    }
+
+    #[test]
+    fn cancelling_a_registered_run_sets_the_shared_flag() {
+        let run_id = "cancel-test-run";
+        let cancellation = register_run(run_id);
+        assert!(!cancellation.is_cancelled());
+        assert!(request_cancel(run_id));
+        assert!(cancellation.is_cancelled());
+        unregister_run(run_id);
+        assert!(!request_cancel(run_id));
     }
 }

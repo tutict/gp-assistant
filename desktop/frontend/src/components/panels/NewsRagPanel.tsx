@@ -675,6 +675,9 @@ function ResearchBriefCounts(props: {
   documents: number;
   inline?: boolean;
 }) {
+  const hasBriefStats = props.positive > 0 || props.negative > 0
+    || props.uncertain > 0 || props.documents > 0;
+  if (!hasBriefStats) return null;
   return <span className={`research-brief-counts${props.inline ? " research-brief-inline-counts" : ""}`}>
     <span className="research-stat positive"><span>利好</span><strong>{props.positive}</strong></span>
     <span className="research-stat negative"><span>利空</span><strong>{props.negative}</strong></span>
@@ -691,6 +694,13 @@ function ResearchBriefExpanded(props: {
   uncertain: number;
   documents: number;
 }) {
+  const hasBriefStats = props.positive > 0 || props.negative > 0
+    || props.uncertain > 0 || props.documents > 0;
+  if (!hasBriefStats) {
+    return <div className="research-brief-expanded research-brief-zero">
+      今日暂无可用事件或文档。
+    </div>;
+  }
   return <div className="research-brief-expanded">
     <div className="research-brief-rule"><span>今日摘要</span><time>{props.date}</time></div>
     <p>{props.summary}</p>
@@ -1122,7 +1132,7 @@ function sentimentDotTone(value: string): "positive" | "negative" | "warning" | 
   return "neutral";
 }
 
-function formatResearchUpdatedAt(overview: ResearchOverview | null): string {
+export function formatResearchUpdatedAt(overview: ResearchOverview | null): string {
   if (!overview) return "";
   const raw = overview.updated_at_epoch_ms || overview.last_refresh_at || overview.last_updated_at;
   if (!raw) return "";

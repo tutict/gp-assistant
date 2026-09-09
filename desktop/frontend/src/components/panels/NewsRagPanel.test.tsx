@@ -18,6 +18,7 @@ const { getJson, postJson } = tauriMocks;
 import {
   NewsRagPanel,
   NewsRagView,
+  formatResearchUpdatedAt,
   researchOperationNotice,
   validateResearchFile,
 } from "./NewsRagPanel";
@@ -96,6 +97,19 @@ describe("NewsRagPanel", () => {
   afterEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("formats the overview refresh timestamp for the desktop update label", () => {
+    const text = formatResearchUpdatedAt({
+      schema_version: 2,
+      document_count: 1,
+      chunk_count: 1,
+      unread_count: 0,
+      updated_at_epoch_ms: Date.UTC(2026, 0, 1, 0, 34),
+      messages: [],
+    });
+
+    expect(text).toMatch(/^\d{2}:\d{2}$/);
   });
 
   it("loads the selected stock inbox and marks an unread event read", async () => {

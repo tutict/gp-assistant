@@ -958,13 +958,24 @@ impl ResearchStore {
         let chunk_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
             .map_err(|error| format!("failed to count research chunks: {error}"))?;
+        let updated_at_epoch_ms: Option<i64> = connection
+            .query_row(
+                "SELECT COALESCE(
+                    (SELECT CAST(value AS INTEGER) FROM research_metadata WHERE key = 'last_refresh_at_epoch_ms'),
+                    (SELECT MAX(updated_at_epoch_ms) FROM documents)
+                )",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("failed to read research refresh time: {error}"))?;
         let mut source_statement = connection
             .prepare(
                 "SELECT source_tier, COUNT(*) FROM documents GROUP BY source_tier
                  ORDER BY CASE source_tier
-                    WHEN 'filing' THEN 1 WHEN 'financial_snapshot' THEN 2
-                    WHEN 'news' THEN 3 WHEN 'research_report' THEN 4
-                    WHEN 'community' THEN 5 ELSE 6 END",
+                    WHEN 'policy_official' THEN 1 WHEN 'filing' THEN 2
+                    WHEN 'financial_snapshot' THEN 3 WHEN 'news_media' THEN 4
+                    WHEN 'news' THEN 5 WHEN 'research_report' THEN 6
+                    WHEN 'community' THEN 7 ELSE 8 END",
             )
             .map_err(|error| format!("failed to prepare source summary: {error}"))?;
         let source_counts = source_statement
@@ -985,6 +996,7 @@ impl ResearchStore {
             "chunk_count": chunk_count,
             "unread_count": unread_count,
             "unread_by_stock": unread_by_stock,
+            "updated_at_epoch_ms": updated_at_epoch_ms,
             "source_counts": source_counts,
             "messages": messages["items"].clone(),
             "retrieval": {
@@ -1662,8 +1674,33 @@ pub(crate) fn ingest_news_cache(app: &tauri::AppHandle) -> Result<Value, String>
         .app_data_dir()
         .map_err(|error| format!("failed to resolve app data directory: {error}"))?;
     let path = app_data.join("news").join("news-cache.json");
-    let documents = legacy_documents_from_file(&path)?;
-    with_app_store(app, |store| store.ingest_documents(&documents))
+    with_app_store(app, |store| ingest_news_cache_file(store, &path))
+}
+
+fn ingest_news_cache_file(store: &ResearchStore, path: &Path) -> Result<Value, String> {
+    let documents = legacy_documents_from_file(path)?;
+    let result = store.ingest_documents(&documents)?;
+    let refresh_epoch_ms = if path.exists() {
+        serde_json::from_slice::<Value>(
+            &fs::read(path)
+                .map_err(|error| format!("failed to read news cache refresh metadata: {error}"))?,
+        )
+        .ok()
+        .and_then(|value| value.get("updated_at_epoch_ms").and_then(Value::as_i64))
+    } else {
+        None
+    };
+    if let Some(refresh_epoch_ms) = refresh_epoch_ms {
+        store
+            .connection()?
+            .execute(
+                "INSERT INTO research_metadata (key, value) VALUES ('last_refresh_at_epoch_ms', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![refresh_epoch_ms.to_string()],
+            )
+            .map_err(|error| format!("failed to record news refresh time: {error}"))?;
+    }
+    Ok(result)
 }
 
 pub(crate) fn export_app_pack(app: &tauri::AppHandle, payload: &Value) -> Result<Value, String> {
@@ -1906,7 +1943,7 @@ fn remove_sqlite_sidecars(path: &Path) -> Result<(), String> {
 
 fn migrate_legacy_sources(store: &ResearchStore, app_data: &Path) -> Result<(), String> {
     let connection = store.connection()?;
-    let completed = connection
+    let imported = connection
         .query_row(
             "SELECT value FROM research_metadata WHERE key = 'legacy_v1_import_complete'",
             [],
@@ -1916,10 +1953,51 @@ fn migrate_legacy_sources(store: &ResearchStore, app_data: &Path) -> Result<(), 
         .map_err(|error| format!("failed to read migration state: {error}"))?
         .as_deref()
         == Some("true");
-    if completed {
-        return Ok(());
-    }
+    let archived = connection
+        .query_row(
+            "SELECT value FROM research_metadata WHERE key = 'legacy_v1_archive_complete'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("failed to read legacy archive state: {error}"))?
+        .as_deref()
+        == Some("true");
 
+    let paths = legacy_source_paths(app_data);
+    if !imported {
+        let mut documents = Vec::new();
+        for path in &paths {
+            if !path.exists() {
+                continue;
+            }
+            documents.extend(legacy_documents_from_file(path)?);
+        }
+        if !documents.is_empty() {
+            store.ingest_documents(&documents)?;
+        }
+        connection
+            .execute(
+                "INSERT INTO research_metadata (key, value) VALUES ('legacy_v1_import_complete', 'true')
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [],
+            )
+            .map_err(|error| format!("failed to record migration state: {error}"))?;
+    }
+    if !archived {
+        archive_legacy_sources(app_data, &paths)?;
+        connection
+            .execute(
+                "INSERT INTO research_metadata (key, value) VALUES ('legacy_v1_archive_complete', 'true')
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [],
+            )
+            .map_err(|error| format!("failed to record legacy archive state: {error}"))?;
+    }
+    Ok(())
+}
+
+fn legacy_source_paths(app_data: &Path) -> Vec<PathBuf> {
     let mut paths = vec![
         app_data.join("news").join("news-cache.json"),
         app_data.join("rag").join("rag-pack.json"),
@@ -1930,23 +2008,70 @@ fn migrate_legacy_sources(store: &ResearchStore, app_data: &Path) -> Result<(), 
         3,
         &mut paths,
     );
-    let mut documents = Vec::new();
-    for path in paths {
-        if !path.exists() {
+    paths
+}
+
+fn archive_legacy_sources(app_data: &Path, paths: &[PathBuf]) -> Result<(), String> {
+    let archive_root = app_data.join("research").join("legacy-v1");
+    for source in paths {
+        let relative = source.strip_prefix(app_data).map_err(|error| {
+            format!(
+                "failed to resolve legacy archive path {}: {error}",
+                source.display()
+            )
+        })?;
+        let destination = archive_root.join(relative);
+        let sidecars = ["-wal", "-shm"]
+            .iter()
+            .map(|suffix| {
+                (
+                    PathBuf::from(format!("{}{}", source.display(), suffix)),
+                    PathBuf::from(format!("{}{}", destination.display(), suffix)),
+                )
+            })
+            .filter(|(sidecar, _)| sidecar.exists())
+            .collect::<Vec<_>>();
+        if !source.exists() && sidecars.is_empty() {
             continue;
         }
-        documents.extend(legacy_documents_from_file(&path)?);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "failed to create legacy archive directory {}: {error}",
+                    parent.display()
+                )
+            })?;
+        }
+        if source.exists() {
+            if destination.exists() {
+                return Err(format!(
+                    "legacy archive destination already exists while source remains: {}",
+                    destination.display()
+                ));
+            }
+            fs::rename(source, &destination).map_err(|error| {
+                format!(
+                    "failed to archive legacy source {}: {error}",
+                    source.display()
+                )
+            })?;
+        }
+
+        for (sidecar, sidecar_destination) in sidecars {
+            if sidecar_destination.exists() {
+                return Err(format!(
+                    "legacy archive sidecar destination already exists while source remains: {}",
+                    sidecar_destination.display()
+                ));
+            }
+            fs::rename(&sidecar, &sidecar_destination).map_err(|error| {
+                format!(
+                    "failed to archive legacy SQLite sidecar {}: {error}",
+                    sidecar.display()
+                )
+            })?;
+        }
     }
-    if !documents.is_empty() {
-        store.ingest_documents(&documents)?;
-    }
-    connection
-        .execute(
-            "INSERT INTO research_metadata (key, value) VALUES ('legacy_v1_import_complete', 'true')
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            [],
-        )
-        .map_err(|error| format!("failed to record migration state: {error}"))?;
     Ok(())
 }
 
@@ -4047,6 +4172,174 @@ mod tests {
         assert_eq!(overview["unread_by_stock"]["000001.SZ"], 1);
         drop(store);
         let _ = remove_sqlite_files(&path);
+    }
+
+    #[test]
+    fn legacy_sources_archive_after_import_and_resume_sidecars() {
+        let app_data = temporary_database_path("legacy-archive").with_extension("appdata");
+        let database_path = app_data.join("research").join("research.sqlite");
+        let source = app_data.join("news").join("news-cache.json");
+        let nested_source = app_data
+            .join("upstream_rag_desktop")
+            .join("session")
+            .join("rag_pack.sqlite");
+        fs::create_dir_all(source.parent().unwrap()).expect("news directory should be created");
+        fs::create_dir_all(nested_source.parent().unwrap())
+            .expect("legacy directory should be created");
+        let payload = serde_json::to_vec(&json!({
+            "schema_version": 1,
+            "items": [{
+                "document_id": "legacy-archive-doc",
+                "title": "Legacy archive",
+                "content": "Legacy content",
+                "source_tier": "news"
+            }]
+        }))
+        .expect("legacy payload should serialize");
+        fs::write(&source, &payload).expect("news cache should be written");
+        fs::write(&nested_source, &payload).expect("legacy sqlite JSON should be written");
+        fs::write(
+            PathBuf::from(format!("{}-wal", nested_source.display())),
+            b"wal",
+        )
+        .expect("legacy sidecar should be written");
+
+        let store = ResearchStore::open(&database_path).expect("research store should open");
+        migrate_legacy_sources(&store, &app_data).expect("legacy migration should complete");
+
+        let archive_root = app_data.join("research").join("legacy-v1");
+        assert!(!source.exists());
+        assert!(!nested_source.exists());
+        assert!(archive_root.join("news").join("news-cache.json").exists());
+        assert!(archive_root
+            .join("upstream_rag_desktop")
+            .join("session")
+            .join("rag_pack.sqlite")
+            .exists());
+        assert!(archive_root
+            .join("upstream_rag_desktop")
+            .join("session")
+            .join("rag_pack.sqlite-wal")
+            .exists());
+        let archive_marker = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT value FROM research_metadata WHERE key = 'legacy_v1_archive_complete'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(archive_marker, "true");
+
+        // Simulate a process interrupted after moving the primary file but before
+        // its SQLite sidecar; the next archive pass must finish the sidecar move.
+        let resume_source = app_data.join("rag").join("rag-pack.json");
+        let resume_destination = archive_root.join("rag").join("rag-pack.json");
+        fs::create_dir_all(resume_source.parent().unwrap()).expect("rag directory should exist");
+        fs::create_dir_all(resume_destination.parent().unwrap())
+            .expect("archive rag directory should exist");
+        fs::write(&resume_source, &payload).expect("resume source should be written");
+        fs::write(
+            PathBuf::from(format!("{}-wal", resume_source.display())),
+            b"wal",
+        )
+        .expect("resume sidecar should be written");
+        fs::rename(&resume_source, &resume_destination)
+            .expect("resume primary should be moved before retry");
+        archive_legacy_sources(&app_data, &[resume_source.clone()])
+            .expect("archive retry should move remaining sidecar");
+        assert!(archive_root.join("rag").join("rag-pack.json-wal").exists());
+
+        drop(store);
+        let _ = fs::remove_dir_all(&app_data);
+    }
+
+    #[test]
+    fn overview_reports_latest_refresh_time_and_source_quality_order() {
+        let path = temporary_database_path("overview-refresh-and-source-order");
+        let store = ResearchStore::open(&path).expect("research store should open");
+        store
+            .ingest_documents(&[
+                json!({
+                    "document_id": "overview-news",
+                    "title": "媒体消息",
+                    "content": "媒体消息内容。",
+                    "source_tier": "news_media"
+                }),
+                json!({
+                    "document_id": "overview-policy",
+                    "title": "官方政策",
+                    "content": "官方政策内容。",
+                    "source_tier": "policy_official"
+                }),
+                json!({
+                    "document_id": "overview-community",
+                    "title": "社区讨论",
+                    "content": "社区讨论内容。",
+                    "source_tier": "community"
+                }),
+            ])
+            .expect("documents should be ingested");
+        let connection = store.connection().expect("research connection should open");
+        connection
+            .execute(
+                "UPDATE documents SET updated_at_epoch_ms = CASE id
+                    WHEN 'overview-news' THEN 100
+                    WHEN 'overview-policy' THEN 300
+                    WHEN 'overview-community' THEN 200
+                    ELSE updated_at_epoch_ms END",
+                [],
+            )
+            .expect("document refresh timestamps should be writable");
+        connection
+            .execute(
+                "INSERT INTO research_metadata (key, value)
+                 VALUES ('last_refresh_at_epoch_ms', '400')",
+                [],
+            )
+            .expect("refresh timestamp should be writable");
+
+        let overview = store.overview(&json!({})).expect("overview should load");
+        assert_eq!(overview["updated_at_epoch_ms"], 400);
+        let tiers = overview["source_counts"]
+            .as_array()
+            .expect("source counts should be an array")
+            .iter()
+            .map(|item| item["source_tier"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(tiers, vec!["policy_official", "news_media", "community"]);
+
+        drop(connection);
+        drop(store);
+        let _ = remove_sqlite_files(&path);
+    }
+
+    #[test]
+    fn news_cache_ingest_records_refresh_time_even_when_no_documents_exist() {
+        let database_path = temporary_database_path("empty-news-cache-refresh");
+        let cache_path = database_path.with_extension("json");
+        let store = ResearchStore::open(&database_path).expect("research store should open");
+        fs::write(
+            &cache_path,
+            serde_json::to_vec(&json!({
+                "schema_version": 1,
+                "updated_at_epoch_ms": 1_780_000_000_123_i64,
+                "items": []
+            }))
+            .unwrap(),
+        )
+        .expect("empty news cache should be written");
+
+        ingest_news_cache_file(&store, &cache_path).expect("news cache should be recorded");
+
+        assert_eq!(
+            store.overview(&json!({})).unwrap()["updated_at_epoch_ms"],
+            1_780_000_000_123_i64
+        );
+        drop(store);
+        let _ = fs::remove_file(cache_path);
+        let _ = remove_sqlite_files(&database_path);
     }
 
     #[test]

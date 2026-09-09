@@ -1,4 +1,4 @@
-import { FileSearch, History, LoaderCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Search, Send, Trash2 } from "lucide-react";
+import { FileSearch, History, LoaderCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Search, Send, Square, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentResult, AgentStreamEvent, LlmSettings, StockRowView, WatchlistItem } from "../../types";
 import { buildTauriAgentPayload, getTauriInvoke, getTauriListen, isTauriRuntime } from "../../lib/tauri";
@@ -111,8 +111,11 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const threadRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const replayTriggerRef = useRef<HTMLElement | null>(null);
+  const runAbortControllerRef = useRef<AbortController | null>(null);
   const activeProvider = activeLlmProvider(llmSettings);
   const activeLlmConfig = useMemo(() => buildLlmConfig(llmSettings), [llmSettings]);
+
+  useEffect(() => () => runAbortControllerRef.current?.abort(), []);
 
   const activeConversation = conversations.find((item) => item.id === activeConversationId) || conversations[0] || null;
   const activeConversationDeleting = Boolean(
@@ -349,6 +352,10 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
 
   const closeRunReplay = useCallback(() => setReplayOpen(false), []);
 
+  const cancelActiveRun = useCallback(() => {
+    runAbortControllerRef.current?.abort();
+  }, []);
+
   const send = useCallback(async () => {
     const text = input.trim();
     const conversationId = activeConversation?.id;
@@ -365,6 +372,8 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     const now = Date.now();
     const userMessage: ChatMessage = { role: "user", content: text, timestamp: now };
     const assistantMessage: ChatMessage = { role: "assistant", content: "准备中...", timestamp: now, runId, steps: [] };
+    const controller = new AbortController();
+    runAbortControllerRef.current = controller;
     setInput("");
     setLoading(true);
 
@@ -446,14 +455,18 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         history: messages.map((message) => ({ role: message.role, content: message.content })),
       });
       if (!payload) return;
-      await requestAgentStream(payload, applyEvent);
+      await requestAgentStream(payload, applyEvent, controller.signal);
       setFinishedRunConversationId(conversationId);
       setFinishedRunId(runId);
     } catch (err) {
-      patchAssistant({ content: `错误：${(err as Error).message}`, error: true, steps: undefined });
+      const error = err as Error;
+      patchAssistant(controller.signal.aborted || error.name === "AbortError"
+        ? { content: "已取消。", error: false, steps: undefined }
+        : { content: `错误：${error.message}`, error: true, steps: undefined });
       setFinishedRunConversationId(conversationId);
       setFinishedRunId(runId);
     } finally {
+      if (runAbortControllerRef.current === controller) runAbortControllerRef.current = null;
       setLoading(false);
     }
   }, [activeConversation?.id, activeConversation?.mode, activeLlmConfig, input, loading, messages, updateConversation, watchlist]);
@@ -656,8 +669,14 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             <span>{activeMode.label}</span>
           </div>
           <div className="agent-composer-footer">
-            <button type="button" className="send-btn" onClick={send} disabled={loading || activeConversationDeleting || !input.trim()} aria-label="发送">
-              {loading ? <LoaderCircle className="spin" size={18} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
+            <button
+              type="button"
+              className="send-btn"
+              onClick={loading ? cancelActiveRun : send}
+              disabled={!loading && (activeConversationDeleting || !input.trim())}
+              aria-label={loading ? "停止" : "发送"}
+            >
+              {loading ? <Square size={17} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
             </button>
           </div>
         </div>
@@ -938,16 +957,25 @@ function formatConversationTime(timestamp: number): string {
   return date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
 }
 
-async function requestAgentStream(payload: Record<string, unknown>, onEvent: (event: AgentStreamEvent) => void): Promise<void> {
-  if (isTauriRuntime()) return requestTauriAgentStream(payload, onEvent);
-  return requestDesktopAgentStream(payload, onEvent);
+async function requestAgentStream(
+  payload: Record<string, unknown>,
+  onEvent: (event: AgentStreamEvent) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  if (isTauriRuntime()) return requestTauriAgentStream(payload, onEvent, signal);
+  return requestDesktopAgentStream(payload, onEvent, signal);
 }
 
-async function requestDesktopAgentStream(payload: Record<string, unknown>, onEvent: (event: AgentStreamEvent) => void): Promise<void> {
+async function requestDesktopAgentStream(
+  payload: Record<string, unknown>,
+  onEvent: (event: AgentStreamEvent) => void,
+  signal: AbortSignal,
+): Promise<void> {
   const response = await fetch("/api/agent/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal,
   });
   if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
   if (!response.body?.getReader) throw new Error("当前浏览器无法读取流式响应。");
@@ -969,13 +997,18 @@ async function requestDesktopAgentStream(payload: Record<string, unknown>, onEve
   if (trailing) onEvent(trailing);
 }
 
-async function requestTauriAgentStream(payload: Record<string, unknown>, onEvent: (event: AgentStreamEvent) => void): Promise<void> {
+async function requestTauriAgentStream(
+  payload: Record<string, unknown>,
+  onEvent: (event: AgentStreamEvent) => void,
+  signal: AbortSignal,
+): Promise<void> {
   const invoke = getTauriInvoke();
   const listen = getTauriListen();
   if (!invoke || !listen) throw new Error("Tauri 事件桥不可用。");
   const runId = String(payload.run_id || "");
   let sawResult = false;
   let unlisten: (() => void) | undefined;
+  let removeAbortListener: (() => void) | undefined;
   try {
     unlisten = await listen("agent-stream-event", (event) => {
       const normalized = normalizeAgentStreamEvent(event);
@@ -983,11 +1016,26 @@ async function requestTauriAgentStream(payload: Record<string, unknown>, onEvent
       if (normalized.type === "result") sawResult = true;
       onEvent(normalized);
     });
-    const response = await invoke<AgentResult>("api_agent_stream", {
+    const invocation = invoke<AgentResult>("api_agent_stream", {
       payload: buildTauriAgentPayload({ ...payload, run_id: runId }),
     });
+    const aborted = new Promise<never>((_, reject) => {
+      const abort = () => {
+        void Promise.resolve(invoke("api_agent_cancel", { payload: { run_id: runId } })).catch(() => undefined);
+        const error = new Error("已取消");
+        error.name = "AbortError";
+        reject(error);
+      };
+      if (signal.aborted) abort();
+      else {
+        signal.addEventListener("abort", abort, { once: true });
+        removeAbortListener = () => signal.removeEventListener("abort", abort);
+      }
+    });
+    const response = await Promise.race([invocation, aborted]);
     if (!sawResult && response) onEvent({ run_id: runId, type: "result", response: normalizeAgentResult(response) });
   } finally {
+    removeAbortListener?.();
     unlisten?.();
   }
 }
