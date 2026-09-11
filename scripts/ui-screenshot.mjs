@@ -68,11 +68,15 @@ async function openCustomScreen(page) {
   const tab = page.getByRole("tab", { name: "自定义选股" }).first();
   if (await tab.count() === 0) return false;
   await tab.click();
+  const mobileCriteria = page.getByRole("button", { name: "筛选条件", exact: true });
+  if (await mobileCriteria.isVisible()) await mobileCriteria.click();
   await page.locator(".custom-screen-criteria .criteria-field-grid").first().waitFor({ state: "visible", timeout: 5000 });
   return true;
 }
 
 async function openSmartScreen(page) {
+  const sheet = page.getByRole("dialog", { name: "筛选条件", exact: true });
+  if (await sheet.isVisible()) await sheet.getByRole("button", { name: "取消", exact: true }).click();
   const tab = page.getByRole("tab", { name: "智能选股" }).first();
   if (await tab.count() === 0) return false;
   await tab.click();
@@ -1559,7 +1563,7 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
       await page.goto(deviceUrl(device, "#sectionBacktest"), { waitUntil: "networkidle" });
       await page.getByLabel("运行回测").click();
       await page.locator(".backtest-result").waitFor({ state: "visible" });
-      await page.locator(".backtest-volatility").waitFor({ state: "visible" });
+      await page.getByRole("tab", { name: "结果概览", exact: true }).click();
       await page.waitForTimeout(180);
 
       const diagnostics = await pageDiagnostics(page, "backtest-page");
@@ -1574,6 +1578,7 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
       const backtestRelativePath = `backtest-page/${device.name}/backtest.png`;
       const backtestBaseline = checkScreenshotBaseline(backtestPath, backtestRelativePath);
       const volatility = page.locator(".backtest-volatility");
+      await page.getByRole("tab", { name: "波动率分析", exact: true }).click();
       await volatility.scrollIntoViewIfNeeded();
       const stickyHeaderOverride = await page.addStyleTag({
         content: ".app-header { visibility: hidden !important; }",
@@ -2434,7 +2439,7 @@ async function runScreenshotHarness() {
   }
 }
 
-export { installHarnessState, startBuiltAppServer };
+export { installHarnessState, startBuiltAppServer, installAgentReplayState, mockResearchOverviewData, mockResearchMessagesData, mockResearchThreads, mockResearchThreadDetail };
 
 const isDirect = process.argv[1]
   && resolve(process.argv[1]) === fileURLToPath(import.meta.url);

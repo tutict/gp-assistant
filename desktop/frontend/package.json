@@ -12,6 +12,7 @@
     "test:version": "node ../../scripts/check-version-consistency.mjs && node ../../scripts/release-check.test.mjs",
     "test:industry-export": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../scripts/export-mobile-industry-snapshot.test.ps1",
     "test:unit": "vitest run",
+    "test:upgrade": "node ../../scripts/ui-upgrade-check.mjs",
     "test:density": "node ../../scripts/check-ui-density.mjs",
     "test:density-contract": "node --test ../../scripts/check-ui-density.test.mjs",
     "test:agent-replay-css": "node --test ../../scripts/check-agent-replay-css.test.mjs",

@@ -153,6 +153,13 @@ function renderObserveSummary(result: ObserveResult): string {
 }
 
 describe("observe summary layout contract", () => {
+  it("presents the conclusion before charts, fundamentals, capital evidence and professional details", () => {
+    const html = renderToStaticMarkup(createElement(ObserveResultView, { result: baseObserveResult() }));
+    const markers = ['aria-label="当前观察结论"', 'class="signal-card observe-chart-card"', 'aria-label="最新基本面"', 'class="observe-capital-quant"', 'class="observe-detail-disclosure"'];
+    const positions = markers.map((marker) => html.indexOf(marker));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  });
   it("keeps the observe summary CSS tokenized and limited to the two dot markers", () => {
     const segment = observeCssSegment();
     expect(segment).not.toMatch(/font-size:\s*\d+(?:\.\d+)?px/);

@@ -28,12 +28,11 @@ describe("header settings contract", () => {
     expect(shell).toMatch(/\.settings-trigger,\s*\.shortcut-help-trigger\s*\{[^}]*min-height:\s*36px/s);
   });
 
-  it("centers the desktop stock search independently of surrounding controls", () => {
+  it("keeps desktop search in normal flex flow without overlapping status", () => {
     const search = ruleBody(shell, ".header-search");
-    expect(search).toMatch(/position\s*:\s*absolute/);
-    expect(search).toMatch(/left\s*:\s*50%/);
-    expect(search).toMatch(/transform\s*:\s*translateX\(-50%\)/);
-    expect(search).not.toMatch(/margin-left/);
+    expect(search).toMatch(/flex\s*:\s*1 1 320px/);
+    expect(search).toMatch(/min-width\s*:\s*0/);
+    expect(search).not.toMatch(/position\s*:\s*absolute|translateX/);
   });
 
   it("uses centered soft separators and tabular status values", () => {

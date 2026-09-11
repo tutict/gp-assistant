@@ -435,7 +435,7 @@
   }
 
   .research-citation-history button:disabled { cursor: not-allowed; opacity: 0.45; }
-  .research-citation-history span { color: var(--text-tertiary); font-size: var(--fs-caption); }
+  .research-citation-history span { color: var(--text-tertiary); font-size: var(--fs-caption); white-space: nowrap; }
 
   .research-pane-heading,
   .research-pane-heading > div {
@@ -444,6 +444,7 @@
   }
 
   .research-pane-heading {
+    flex-wrap: wrap;
     justify-content: space-between;
     gap: var(--space-2);
     min-height: calc(var(--touch-dense) + var(--space-1));
@@ -685,7 +686,7 @@
     scrollbar-gutter: stable;
   }
 
-  @media (min-width: 981px) {
+  @media (min-width: 1181px) {
     .research-columns:has(.research-evidence.has-selection) {
       grid-template-columns: clamp(196px, 15vw, 216px) minmax(0, 1fr) clamp(280px, 22vw, 320px);
     }
@@ -697,6 +698,18 @@
       grid-column: 3;
     }
   }
+
+  .research-surface-backdrop { align-items: stretch; }
+  .research-surface-sheet { position: relative; width: min(380px, 100%); overflow: auto; background: var(--surface); padding: var(--space-4); }
+  .research-surface-sheet .research-inbox.mobile-open,
+  .research-surface-sheet .research-evidence.has-selection { position: static; display: block; width: 100%; max-height: none; height: auto; border: 0; box-shadow: none; transform: none; padding: 0; }
+  .research-unread-label { color: var(--text-secondary); font-size: var(--fs-caption); font-weight: 650; }
+  .research-retrieval-details { margin-block: var(--space-3); font-size: var(--fs-label); }
+  .research-retrieval-details summary { cursor: pointer; color: var(--text-secondary); }
+  .research-evidence.has-selection .research-pane-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .research-evidence.has-selection .research-pane-heading > div:first-child { grid-column: 1; grid-row: 1; }
+  .research-evidence.has-selection .research-citation-history { grid-column: 1 / -1; grid-row: 2; margin-left: 0; }
+  .research-evidence.has-selection .research-evidence-close { grid-column: 2; grid-row: 1; }
 
   .research-daily-brief {
     margin-top: 16px;
@@ -1105,12 +1118,14 @@
 
 @layer responsive {
   @media (max-width: 1180px) {
+    .research-surface-sheet .research-inbox.mobile-open,
+    .research-surface-sheet .research-evidence.has-selection { position: static; display: block; width: 100%; max-height: none; height: auto; border: 0; box-shadow: none; transform: none; padding: 0; }
     .research-actions > span {
       display: none;
     }
   }
 
-  @media (max-width: 980px) {
+  @media (max-width: 1180px) {
     .research-columns {
       grid-template-columns: 220px minmax(0, 1fr);
     }
@@ -1144,6 +1159,8 @@
   }
 
   @media (max-width: 768px) {
+    .research-surface-backdrop { align-items: flex-end; }
+    .research-surface-sheet { width: 100%; max-height: 85dvh; padding-bottom: calc(var(--space-4) + var(--safe-bottom)); border-radius: var(--radius-sheet) var(--radius-sheet) 0 0; }
     .app[data-active-view="news"] .workbench {
       padding: 0;
     }
@@ -1354,7 +1371,8 @@
     }
 
     .research-brief-summary {
-      display: flex;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) 16px;
       align-items: center;
       gap: var(--space-1);
       min-height: var(--touch-comfort);
@@ -1406,6 +1424,8 @@
     .research-brief-inline-counts .research-stat.negative strong { color: var(--fall); }
 
     .research-brief-preview {
+      grid-column: 1 / -1;
+      grid-row: 2;
       min-width: 0;
       overflow: hidden;
       color: var(--text-secondary);
@@ -1415,6 +1435,8 @@
     }
 
     .research-brief-chevron {
+      grid-column: 3;
+      grid-row: 1;
       flex: 0 0 auto;
       color: var(--text-tertiary);
       transition: transform var(--motion-fast) var(--ease-out);
@@ -2168,7 +2190,7 @@
     margin: var(--space-3) 0;
     padding: var(--space-3);
     border: 0;
-    border-left: 2px solid var(--accent);
+    border-left: 1px solid var(--line);
     color: var(--text-secondary);
     background: var(--surface-2);
     max-height: 40%;

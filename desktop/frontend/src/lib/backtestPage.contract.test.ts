@@ -89,7 +89,7 @@ describe("backtest page CSS contract", () => {
     for (const selector of [
       ".backtest-param-strip",
       ".backtest-param-strip b",
-      ".backtest-result > .metric-strip .metric > span",
+      '.backtest-result > [role="tabpanel"] > .metric-strip .metric > span',
       ".equity-chart .chart-labels span:nth-child(2)",
       ".volatility-symbol-control > span",
       ".volatility-grid span",
@@ -109,11 +109,11 @@ describe("backtest page CSS contract", () => {
   it("keeps the return hero below the display typography tier", () => {
     const mobileHeroRules = ruleBodies(
       responsiveCss,
-      ".backtest-result > .metric-strip .metric-hero > strong",
+      '.backtest-result .metric-hero > strong',
     ).join("\n");
     expect(mobileHeroRules).not.toContain("font-size: var(--fs-display)");
     expect(mobileHeroRules).toContain("font-size: var(--fs-headline)");
-    const desktopHero = ruleBody(pagesCss, ".backtest-result > .metric-strip .metric-hero > strong");
+    const desktopHero = ruleBody(pagesCss, '.backtest-result > [role="tabpanel"] > .metric-strip .metric-hero > strong');
     expect(desktopHero).not.toContain("font-size: var(--fs-display)");
     expect(desktopHero).toContain("font-size: var(--fs-headline)");
   });

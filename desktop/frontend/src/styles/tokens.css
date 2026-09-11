@@ -10,6 +10,7 @@
   --surface-3: #222a33;
   --surface-raised: #272f39;
   --line: #303943;
+  --control-line: #657483;
   --line-soft: rgba(255, 255, 255, 0.075);
   --text: #f4f7fa;
   --text-secondary: #a9b4bf;
@@ -53,13 +54,14 @@
   --chart-fullscreen: #05070a;
   --chart-benchmark: #6ca8b2;
   --focus-ring: rgba(216, 61, 53, 0.34);
-  --fs-display: 24px;
+  --fs-display: 20px;
   --fs-headline: 20px;
-  --fs-title: 17px;
+  --fs-title: 18px;
   --fs-body: 14px;
   --fs-data: 13px;
   --fs-label: 12px;
-  --fs-caption: 11px;
+  --fs-caption: 12px;
+  --stock-row-height: 56px;
   --control-height: 40px;
   --touch-comfort: 44px;
   --touch-dense: 32px;
@@ -96,36 +98,43 @@
   :root {
     --fs-display: 20px;
     --fs-headline: 18px;
-    --fs-title: 16px;
+    --fs-title: 18px;
     --header-height: 48px;
     --bottom-nav-height: var(--nav-height);
   }
 }
 
 :root[data-density="compact"] {
-  --fs-body: 13px;
-  --fs-data: 12px;
-  --fs-label: 11px;
   --control-height: 34px;
-  --touch-comfort: 36px;
+  --stock-row-height: 48px;
   --space-3: 10px;
   --space-4: 12px;
+  --space-6: 20px;
 }
 
 :root[data-font-scale="small"] {
   --fs-body: 13px;
   --fs-data: 12px;
   --fs-label: 11px;
-  --fs-caption: 10px;
-  --fs-title: 16px;
+  --fs-caption: 11px;
+  --fs-title: 17px;
 }
 
 :root[data-font-scale="large"] {
   --fs-body: 15px;
   --fs-data: 14px;
   --fs-label: 13px;
-  --fs-caption: 12px;
-  --fs-title: 18px;
+  --fs-caption: 13px;
+  --fs-title: 19px;
+}
+
+@media (max-width: 768px) {
+  :root, :root[data-density="compact"] {
+    --control-height: 44px;
+    --touch-comfort: 44px;
+    --touch-dense: 44px;
+    --touch-height: 44px;
+  }
 }
 
 [data-theme="light"] {
@@ -135,6 +144,7 @@
   --surface-3: #e3e8ed;
   --surface-raised: #ffffff;
   --line: #cdd5dd;
+  --control-line: #7c8996;
   --line-soft: rgba(21, 31, 42, 0.1);
   --text: #18212a;
   --text-secondary: #566473;

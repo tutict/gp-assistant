@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { CapitalEvidenceItem, CapitalEvidenceResult, CapitalEvidenceSection, FinancialIndicatorItem, FinancialIndicatorSection, ObserveResult, StockItem, TrendIndicatorPoint, TrendIndicatorSignal, WatchlistItem } from "../../types";
 import { computeKdj, toDailyBars } from "../../lib/kline";
 import { calculateObserveQuant } from "../../lib/observeQuant";
@@ -115,7 +115,7 @@ export function ObservePanel({
       </div>
 
       <div className="panel-result observe-panel-result">
-        {error && <PanelFeedback kind="error" title="观察失败" description={error} />}
+        {error && <PanelFeedback kind="error" title="观察失败" description={error} action={<button type="button" className="action-btn" onClick={runObserve} disabled={loading}>重试</button>} />}
         {loading && !result && !error && <PanelFeedback kind="loading" description="正在加载行情、财务和趋势数据..." />}
         {result && !loading && <ObserveResultView result={result} inWatchlist={observedInWatchlist} onToggleWatchlist={toggleObservedWatchlist} />}
         {!result && !loading && !error && <PanelFeedback kind="empty" description="输入股票代码后开始观察。" />}
@@ -136,7 +136,7 @@ export function ObserveResultView({ result, inWatchlist = false, onToggleWatchli
     <div className="observe-result">
       <section className="observe-overview">
         <header className="observe-overview-header">
-          <div><h3>{stock.name || stock.code}</h3><p>{stock.code} {stock.industry || ""}</p></div>
+          <div><h3>{stock.name || stock.code}</h3><p>{stock.code} {stock.industry || ""} · {formatObserveTime(stock.quote_time || signal?.date || series.at(-1)?.date)}</p></div>
           <div className="observe-overview-actions">
             {signal?.status && <span className={`state-pill ${signalStatusTone(signal.status)}`}>{signalStatusLabel(signal.status)}</span>}
             {onToggleWatchlist && (
@@ -146,23 +146,14 @@ export function ObserveResultView({ result, inWatchlist = false, onToggleWatchli
             )}
           </div>
         </header>
-        <FundamentalSnapshot stock={stock} financial={financial} />
-        <ObserveTextMetrics stock={stock} signal={signal} series={series} capital={capital} financialItems={financial?.items || []} />
       </section>
-
-      {!signal && series.length > 1 ? (
+      <ObserveTextMetrics stock={stock} signal={signal} series={series} capital={capital} financialItems={financial?.items || []}>
         <section className="signal-card observe-chart-card">
-          <header><div><h3>行情图表</h3><p>K 线、均线、KDJ 与 MACD</p></div></header>
-          <TrendCharts series={series} />
+          <header><div><h3>行情图表</h3><p>K 线、均线与技术指标</p></div></header>
+          {series.length > 1 ? <TrendCharts series={series} /> : <PanelFeedback kind="empty" description="行情数据不足，暂时无法绘制图表。其他已取得的指标仍可查看。" />}
         </section>
-      ) : null}
-
-      {signal && (
-        <section className="signal-card observe-chart-card">
-          <header><div><h3>趋势信号</h3><p>{signal.date || ""}</p></div><span className={`state-pill ${signalStatusTone(signal.status)}`}>{signalStatusLabel(signal.status)}</span></header>
-          {series.length > 1 ? <TrendCharts series={series} /> : null}
-        </section>
-      )}
+        <FundamentalSnapshot stock={stock} financial={financial} />
+      </ObserveTextMetrics>
 
       <CollapsibleNotes notes={[...(result.notes || []), ...(signal?.notes || [])]} />
       <RawJson result={result} />
@@ -176,11 +167,10 @@ function FundamentalSnapshot({ stock, financial }: { stock: StockItem; financial
     <section className="observe-fundamental-snapshot" aria-label="最新基本面">
       <header>
         <div>
-          <span>基本面快照</span>
-          <h3>最新指标</h3>
+          <h3>基本面快照</h3>
         </div>
         <div className="observe-fundamental-periods">
-          <time><span>行情</span>{snapshot.quoteTime}</time>
+          <time><span>行情</span>{formatObserveTime(snapshot.quoteTime)}</time>
           <time><span>财务</span>{snapshot.financialPeriod}</time>
         </div>
       </header>
@@ -210,12 +200,14 @@ function ObserveTextMetrics({
   series,
   capital,
   financialItems,
+  children,
 }: {
   stock: StockItem;
   signal?: TrendIndicatorSignal | null;
   series: TrendIndicatorPoint[];
   capital?: CapitalEvidenceResult | null;
   financialItems: FinancialIndicatorItem[];
+  children?: ReactNode;
 }) {
   const latest = series.length ? series[series.length - 1] : null;
   const previous = series.length > 1 ? series[series.length - 2] : null;
@@ -356,17 +348,17 @@ function ObserveTextMetrics({
         ))}
       </div>
 
-      <ObserveSpecialQuant conclusions={specialQuant.conclusions} />
-
       <section className="observe-next-signal observe-fact" aria-label="下一步观察信号">
         <span>下一步看什么</span>
         <p>{nextSignal}</p>
       </section>
 
+      {children}
       <CapitalQuantPanel capital={capital} />
 
       <details className="observe-detail-disclosure">
         <summary><span>专业指标明细</span><small>需要时展开</small></summary>
+        <ObserveSpecialQuant conclusions={specialQuant.conclusions} />
         <div className="observe-text-metric-sections">
           {detailSections.filter((section) => section.items.length).map((section) => (
             <article key={section.title} className="observe-text-metric-section">

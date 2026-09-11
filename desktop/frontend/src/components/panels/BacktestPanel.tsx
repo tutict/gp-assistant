@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { AdaptiveScreenRequest, BacktestResult, EquityPoint, StockItem, VolatilitySnapshot, WatchlistItem } from "../../types";
 import type { FilterCriteria } from "../FilterBar";
 import { getJson, postJson } from "../../lib/tauri";
@@ -44,6 +44,8 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [paramsOpen, setParamsOpen] = useState(true);
+  const [resultSignature, setResultSignature] = useState("");
   const requestInFlightRef = useRef(false);
   const requestVersionRef = useRef(0);
   const consumedPreferredRequestIdRef = useRef<number | null>(null);
@@ -59,6 +61,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
       : undefined;
     requestVersionRef.current += 1;
     setSource(preferredSource.source);
+    setParamsOpen(true);
     setAdaptiveScreenSpec(nextAdaptiveScreenSpec);
     setWorkingCriteria(
       preferredSource.source === "criteria"
@@ -84,6 +87,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     if (nextSource === source) return;
     requestVersionRef.current += 1;
     setSource(nextSource);
+    setParamsOpen(true);
     if (nextSource === "watchlist") {
       if (adaptiveScreenSpec) setWorkingCriteria({ ...criteria });
       setAdaptiveScreenSpec(undefined);
@@ -97,6 +101,8 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
   const updateWorkingCriteria = (patch: Partial<FilterCriteria>) => {
     setWorkingCriteria((current) => ({ ...current, ...patch }));
   };
+
+  const parameterSignature = JSON.stringify({ source, start, end, topN, rebalance, benchmark, strategyMode, costBps, criteria: effectiveFilterCriteria, adaptiveScreenSpec, symbols: source === "watchlist" ? watchlistSignature : "" });
 
   const run = async () => {
     if (requestInFlightRef.current) return;
@@ -127,7 +133,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
       });
       const data = await postJson<unknown>("/api/backtest", payload, { timeoutMs: 90_000 });
       const nextResult = requireBacktestResult(data);
-      if (requestVersion === requestVersionRef.current) setResult(nextResult);
+      if (requestVersion === requestVersionRef.current) { setResult(nextResult); setResultSignature(parameterSignature); setParamsOpen(false); }
     } catch (err) {
       if (requestVersion === requestVersionRef.current) {
         setError(err instanceof Error ? err.message : String(err));
@@ -204,6 +210,9 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
         </div>
       </div>
 
+      {result && resultSignature !== parameterSignature && <p className="backtest-stale-notice" role="status">参数已修改，结果待更新</p>}
+      <details className="backtest-parameter-disclosure" open={paramsOpen} onToggle={event => setParamsOpen(event.currentTarget.open)}>
+      <summary>回测参数</summary>
       <div className="panel-controls backtest-controls">
         {canEditCriteria && <>
           <div className="form-row inline">
@@ -252,6 +261,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
         <div className="form-row inline"><label htmlFor="btCostBps">成本</label><input id="btCostBps" type="number" min="0" max="500" value={costBps} disabled={loading} onChange={(e) => setCostBps(Number(e.target.value) || 0)} /></div>
       </div>
 
+      </details>
       <div className="panel-result">
         {error && <PanelFeedback
           kind="error"
@@ -335,17 +345,23 @@ function useBacktestSymbolNames(result: BacktestResult, watchlist: WatchlistItem
 }
 
 export function BacktestResultView({ result, watchlist = [] }: { result: BacktestResult; watchlist?: WatchlistItem[] }) {
+  const [resultTab, setResultTab] = useState("overview");
+  const tabPrefix = useId();
   const metrics = result.metrics || {};
   const equityPointCount = result.equity_curve?.length ?? 0;
   const symbolNames = useBacktestSymbolNames(result, watchlist);
   return (
     <div className="backtest-result">
+      <div className="backtest-result-tabs" role="tablist" aria-label="回测结果视图">
+        {[["overview","结果概览"],["volatility","波动率分析"],["validation","验证明细"]].map(([key,label]) => <button type="button" role="tab" key={key} id={`${tabPrefix}-${key}-tab`} aria-selected={resultTab === key} aria-controls={`${tabPrefix}-${key}`} onClick={()=>setResultTab(key)}>{label}</button>)}
+      </div>
+      <div role="tabpanel" id={`${tabPrefix}-overview`} aria-labelledby={`${tabPrefix}-overview-tab`} hidden={resultTab !== "overview"}>
       <div className="metric-strip">
         <div className="metric metric-hero"><span>总收益</span><strong className={(metrics.total_return ?? 0) > 0 ? "positive" : (metrics.total_return ?? 0) < 0 ? "negative" : undefined}>{formatSignedPercent((metrics.total_return ?? 0) * 100)}</strong></div>
         <div className="metric"><span>年化收益</span><strong className={(metrics.annualized_return ?? 0) > 0 ? "positive" : (metrics.annualized_return ?? 0) < 0 ? "negative" : undefined}>{metrics.annualized_return != null ? formatSignedPercent(metrics.annualized_return * 100) : "--"}</strong></div>
         <div className="metric"><span>最大回撤</span><strong className={(metrics.max_drawdown ?? 0) < 0 ? "negative" : undefined}>{metrics.max_drawdown != null ? formatSignedPercent(metrics.max_drawdown * 100) : "--"}</strong></div>
         <div className="metric"><span>超额收益</span><strong className={(metrics.excess_return ?? 0) > 0 ? "positive" : (metrics.excess_return ?? 0) < 0 ? "negative" : undefined}>{metrics.excess_return != null ? formatSignedPercent(metrics.excess_return * 100) : "--"}</strong></div>
-        <div className="metric"><span>Precision@N</span><strong>{metrics.precision_at_n != null ? formatPercent(metrics.precision_at_n * 100) : "--"}</strong></div>
+        <div className="metric"><span title="前 N 只入选股票中满足回测有效标准的比例">选股命中率 Precision@N</span><strong>{metrics.precision_at_n != null ? formatPercent(metrics.precision_at_n * 100) : "--"}</strong></div>
       </div>
 
       {equityPointCount >= 2 ? (
@@ -375,6 +391,9 @@ export function BacktestResultView({ result, watchlist = [] }: { result: Backtes
         }</strong></div>
       </section>
 
+      {result.adaptive_release_gate && !result.adaptive_release_gate.passed && <p className="backtest-stale-notice">验证门槛尚未全部通过，请查看验证明细。</p>}
+      </div>
+      <div role="tabpanel" id={`${tabPrefix}-validation`} aria-labelledby={`${tabPrefix}-validation-tab`} hidden={resultTab !== "validation"}>
       {result.adaptive_release_gate && (
         <section className="backtest-holdings">
           <header>
@@ -407,12 +426,6 @@ export function BacktestResultView({ result, watchlist = [] }: { result: Backtes
         </section>
       )}
 
-      <VolatilityDiagnostics
-        snapshots={result.volatility_snapshots ?? []}
-        emptyMessage={result.volatility_message}
-        symbolNames={symbolNames}
-      />
-
       {result.walk_forward_folds?.length ? (
         <section className="backtest-holdings">
           <header><span>样本外逐折结果</span><strong>{metrics.oos_fold_count ?? 0}</strong></header>
@@ -436,6 +449,17 @@ export function BacktestResultView({ result, watchlist = [] }: { result: Backtes
         </section>
       ) : null}
 
+      <RawJson result={result} />
+      </div>
+      <div role="tabpanel" id={`${tabPrefix}-volatility`} aria-labelledby={`${tabPrefix}-volatility-tab`} hidden={resultTab !== "volatility"}>
+      <VolatilityDiagnostics
+        snapshots={result.volatility_snapshots ?? []}
+        emptyMessage={result.volatility_message}
+        symbolNames={symbolNames}
+      />
+
+      </div>
+      <div hidden={resultTab !== "overview"}>
       {result.symbols?.length ? (
         <section className="backtest-holdings">
           <header><span>{result.strategy_mode === "walk_forward" ? "滚动入选标的" : "标的"}</span><strong>{result.symbols.length}</strong></header>
@@ -447,8 +471,9 @@ export function BacktestResultView({ result, watchlist = [] }: { result: Backtes
         </section>
       ) : null}
 
+      </div>
       {result.notes?.length ? <div className="notes">{result.notes.map((note) => <p key={note}>{note}</p>)}</div> : null}
-      <RawJson result={result} />
+
     </div>
   );
 }

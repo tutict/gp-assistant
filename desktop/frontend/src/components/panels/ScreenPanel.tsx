@@ -20,7 +20,9 @@ import {
   normalizeSectorGroups,
 } from "../../lib/contracts";
 import { currentSystemDateInputValue, defaultTrendStartDateInputValue } from "../../lib/format";
-import { StockList } from "../StockList";
+import { StockList, displayStockScore } from "../StockList";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { Sheet } from "../ui/Sheet";
 import { RawJson } from "../RawJson";
 import { PanelFeedback } from "../ui/PanelFeedback";
 
@@ -70,8 +72,11 @@ export function ScreenPanel({
   onWatchlistChange,
   onObserveStock,
   onRunBacktest,
-  mobileRuntime = false,
 }: ScreenPanelProps) {
+  const mobileLayout = useMediaQuery("(max-width: 768px)");
+  const [criteriaOpen, setCriteriaOpen] = useState(false);
+  const [draftCriteria, setDraftCriteria] = useState(criteria);
+  const [draftDates, setDraftDates] = useState({ start: "", end: "" });
   const [mode, setMode] = useState<ScreenMode>("screen");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<unknown>(null);
@@ -164,6 +169,13 @@ export function ScreenPanel({
   }, [mode, onWatchlistChange, watchlist]);
 
   const hasControlFields = mode === "customScreen" || mode === "trendScreen";
+  const appliedCriteriaSummary = [
+    criteria.industry || "全部行业", criteria.marketScope || "全部范围",
+    criteria.includeSt ? "包含 ST" : "排除 ST",
+    criteria.maxPe && `PE≤${criteria.maxPe}`, criteria.maxPb && `PB≤${criteria.maxPb}`,
+    criteria.minRoe && `ROE≥${criteria.minRoe}`, criteria.minMcap && `市值≥${criteria.minMcap}亿`,
+    criteria.requireInstitutionBuyRatio && "机构买入占比高于卖出", `最多 ${criteria.resultLimit} 只`,
+  ].filter(Boolean).join(" · ");
   const controlsClassName = `panel-controls screen-panel-controls ${mode === "customScreen" ? "custom-screen-controls" : mode === "sectorScreen" || mode === "boardScreen" ? "grouped-screen-controls" : ""}`;
   const emptyDescription = mode === "customScreen"
     ? "设置筛选条件后运行查询。"
@@ -196,7 +208,7 @@ export function ScreenPanel({
 
   const runButton = (
     <button type="button" className="run-btn" onClick={run} disabled={loading}>
-      {loading ? "运行中..." : "运行"}
+      {loading ? "运行中..." : "运行筛选"}
     </button>
   );
 
@@ -208,10 +220,12 @@ export function ScreenPanel({
           className={`panel-tab ${mode === tab.key ? "active" : ""}`}
           role="tab"
           aria-selected={mode === tab.key}
-          onClick={() => {
+          onClick={(event) => {
+            if (mobileLayout) event?.currentTarget?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
             requestVersionRef.current += 1;
             activeRunIdRef.current = null;
             setMode(tab.key);
+            setCriteriaOpen(false);
             setLoading(false);
             setAdaptiveProgress(null);
             setResult(null);
@@ -227,14 +241,9 @@ export function ScreenPanel({
 
   return (
     <div className={`panel-container screen-panel-container ${result != null ? "has-result" : ""}`}>
-      {mobileRuntime ? (
+      {mobileLayout ? (
         <>
           {modeTabs}
-          {hasControlFields && (
-            <div className={controlsClassName}>
-              {controlFields}
-            </div>
-          )}
           <div className="panel-controls screen-panel-run-card">
             {runButton}
           </div>
@@ -253,8 +262,21 @@ export function ScreenPanel({
         </>
       )}
 
+      <div className="screen-criteria-summary">
+        <span>{mode === "customScreen" ? `当前条件：${appliedCriteriaSummary}` : mode === "trendScreen" ? `趋势区间：${trendStart} 至 ${trendEnd}` : "当前条件：全市场 · 按综合评分排序"}</span>
+        {mobileLayout && hasControlFields && <button type="button" className="action-btn" onClick={() => { setDraftCriteria({...criteria}); setDraftDates({start:trendStart,end:trendEnd}); setCriteriaOpen(true); }}>筛选条件</button>}
+      </div>
+      <Sheet open={mobileLayout && criteriaOpen} onClose={()=>setCriteriaOpen(false)} label="筛选条件" className="screen-criteria-sheet" backdropClassName="screen-criteria-sheet-backdrop">
+        <header><h3>筛选条件</h3><button type="button" className="action-btn" onClick={()=>setCriteriaOpen(false)}>取消</button></header>
+        {mode === "customScreen" ? <div className="custom-screen-criteria"><CriteriaFields criteria={draftCriteria} onChange={setDraftCriteria} idPrefix="mobileScreenDraft" /></div> : <>
+          <label>开始日期<input type="date" value={draftDates.start} onChange={e=>setDraftDates({...draftDates,start:e.target.value})} /></label>
+          <label>结束日期<input type="date" value={draftDates.end} onChange={e=>setDraftDates({...draftDates,end:e.target.value})} /></label>
+        </>}
+        <footer><button type="button" className="run-btn" onClick={()=>{ if(mode === "customScreen") onCriteriaChange({...draftCriteria}); else {setTrendStart(draftDates.start);setTrendEnd(draftDates.end);} setCriteriaOpen(false);}}>应用</button></footer>
+      </Sheet>
+
       <div className="panel-result screen-panel-result">
-        {error && <PanelFeedback kind="error" title="查询失败" description={error} />}
+        {error && <PanelFeedback kind="error" title="查询失败" description={error} action={<button type="button" className="action-btn" onClick={run}>重试</button>} />}
         {loading && !error && (
           <PanelFeedback
             kind="loading"
@@ -312,13 +334,17 @@ export const ScreenResultView = memo(function ScreenResultView({
     [grouped, result],
   );
   const rows = useMemo(() => normalizeScreenRows(result), [result]);
+  const highestScore = rows.reduce<number | undefined>((best, row) => {
+    const score = displayStockScore(row);
+    return score === undefined ? best : best === undefined ? score : Math.max(best, score);
+  }, undefined);
 
   return (
     <div className="result-list screen-result-list">
       <div className="metric-strip screen-result-metric-strip">
         <div className="metric"><span>返回数</span><strong>{resultRecord.returned ?? rows.length}</strong></div>
         <div className="metric"><span>总数</span><strong>{resultRecord.total ?? rows.length}</strong></div>
-        <div className="metric"><span>最高分</span><strong>{rows[0]?.score?.toFixed(2) ?? "--"}</strong></div>
+        <div className="metric"><span>最高分</span><strong>{highestScore?.toFixed(2) ?? "—"}</strong></div>
       </div>
 
       {resultRecord.market_regime && (

@@ -14,6 +14,7 @@ vi.mock("../../lib/tauri", () => ({
 }));
 
 import { ScreenPanel } from "./ScreenPanel";
+import { CriteriaFields } from "../CriteriaFields";
 
 const criteria: FilterCriteria = {
   includeSt: false,
@@ -91,6 +92,25 @@ async function renderPanel(
 }
 
 describe("ScreenPanel adaptive states", () => {
+  it("applies mobile criteria only on Apply and discards cancelled drafts", async () => {
+    Object.assign(window, {matchMedia: vi.fn(()=>({matches:true,addEventListener:vi.fn(),removeEventListener:vi.fn()}))});
+    vi.stubGlobal("document", {activeElement:null,addEventListener:vi.fn(),removeEventListener:vi.fn()});
+    const change = vi.fn();
+    const renderer = await renderPanel(change);
+    const button = (label: string) => renderer.root.find(node=>node.type === "button" && node.children.includes(label));
+    await act(async()=>button("自定义选股").props.onClick());
+    await act(async()=>button("筛选条件").props.onClick());
+    await act(async()=>renderer.root.findByType(CriteriaFields).props.onChange({...criteria,maxPe:"25"}));
+    expect(change).not.toHaveBeenCalled();
+    await act(async()=>button("取消").props.onClick());
+    await act(async()=>button("筛选条件").props.onClick());
+    expect(renderer.root.findByType(CriteriaFields).props.criteria.maxPe).toBe(criteria.maxPe);
+    await act(async()=>renderer.root.findByType(CriteriaFields).props.onChange({...criteria,maxPe:"35"}));
+    await act(async()=>button("应用").props.onClick());
+    expect(change).toHaveBeenCalledWith(expect.objectContaining({maxPe:"35"}));
+    expect(postJsonMock).not.toHaveBeenCalled();
+    await act(async()=>renderer.unmount());
+  });
   beforeEach(() => {
     vi.stubGlobal("window", { location: { href: "http://localhost/" } });
     getTauriListenMock.mockReturnValue(undefined);

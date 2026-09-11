@@ -381,6 +381,7 @@ describe("NewsRagPanel", () => {
   });
 
   it("uses a single-row mobile composer with an embedded send button", async () => {
+    Object.assign(window, { matchMedia: vi.fn(() => ({matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn()})) });
     tauriMocks.mobile = true;
     let renderer!: ReactTestRenderer;
     await act(async () => {

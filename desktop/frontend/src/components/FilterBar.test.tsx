@@ -37,6 +37,7 @@ describe("FilterBar", () => {
   });
 
   it("renders the controlled market status on mobile", async () => {
+    Object.assign(window, { matchMedia: vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })) });
     const status: DataStatus = {
       universe_count: 5231,
       quote_trade_date: "20260804",

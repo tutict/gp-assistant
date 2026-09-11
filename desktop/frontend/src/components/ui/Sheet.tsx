@@ -5,6 +5,7 @@ const FOCUSABLE_SELECTOR = [
   "input:not([disabled])",
   "select:not([disabled])",
   "textarea:not([disabled])",
+  "summary",
   "[href]",
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
@@ -39,20 +40,47 @@ export function Sheet({
     if (!open) return;
     previouslyFocusedRef.current = canFocus(document.activeElement) ? document.activeElement : null;
     const panel = panelRef.current;
-    const focusable = panel ? Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)) : [];
+    const getFocusable = () => panel ? Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+      .filter((element) => !element.closest?.('[hidden], [inert]')
+        && (typeof element.getClientRects !== "function" || element.getClientRects().length > 0)) : [];
+    const focusable = getFocusable();
     const initialFocusTarget = focusable[0] ?? (canFocus(panel) ? panel : null);
     initialFocusTarget?.focus();
+    const body = document.body;
+    const previousOverflow = body?.style.overflow;
+    if (body) body.style.overflow = "hidden";
+    // Disable siblings along the ancestor path, leaving only this overlay interactive.
+    const inertSiblings: Array<{ element: HTMLElement; previous: boolean }> = [];
+    let branch = panel?.parentElement;
+    while (branch?.parentElement && branch !== body) {
+      for (const sibling of Array.from(branch.parentElement.children)) {
+        if (sibling === branch || !(sibling instanceof HTMLElement)) continue;
+        inertSiblings.push({ element: sibling, previous: sibling.inert });
+        sibling.inert = true;
+      }
+      branch = branch.parentElement;
+    }
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
+        event.stopPropagation?.();
         onCloseRef.current();
         return;
       }
-      if (event.key !== "Tab" || focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      if (event.key !== "Tab") return;
+      const current = getFocusable();
+      if (current.length === 0) {
+        event.preventDefault();
+        panel?.focus();
+        return;
+      }
+      const first = current[0];
+      const last = current[current.length - 1];
+      if (panel && !panel.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus();
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -64,6 +92,8 @@ export function Sheet({
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
+      if (body) body.style.overflow = previousOverflow ?? "";
+      for (const { element, previous } of inertSiblings) element.inert = previous;
       previouslyFocusedRef.current?.focus();
       previouslyFocusedRef.current = null;
     };

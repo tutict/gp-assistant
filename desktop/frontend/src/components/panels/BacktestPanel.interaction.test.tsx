@@ -57,6 +57,20 @@ function runButton(renderer: ReactTestRenderer) {
 }
 
 describe("BacktestPanel interactions", () => {
+  it("keeps completed results visible and marks edited parameters stale", async () => {
+    postJsonMock.mockResolvedValue(result);
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<BacktestPanel criteria={criteria} watchlist={watchlist} />); });
+    await act(async () => { await runButton(renderer).props.onClick(); });
+    expect(renderer.root.findByProps({className:"backtest-parameter-disclosure"}).props.open).toBe(false);
+    await act(async () => renderer.root.findByProps({id:"btCostBps"}).props.onChange({target:{value:"25"}}));
+    expect(textContent(renderer)).toContain("参数已修改，结果待更新");
+    expect(renderer.root.findByProps({className:"backtest-result"})).toBeTruthy();
+    await act(async () => renderer.root.findAllByProps({role:"tab"})[1].props.onClick());
+    expect(renderer.root.findAllByProps({role:"tabpanel"}).filter(node=>!node.props.hidden)).toHaveLength(1);
+    expect(renderer.root.findAllByProps({role:"tab"})[1].props["aria-selected"]).toBe(true);
+    await act(async () => renderer.unmount());
+  });
   beforeEach(() => {
     vi.stubGlobal("window", {
       location: { href: "http://localhost/" },

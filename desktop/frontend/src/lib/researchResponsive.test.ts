@@ -12,7 +12,6 @@ const styles: Array<{ file: string; css: string }> = styleFiles
   }));
 const allCss = styles.map(({ file, css }) => `/* ${file} */\n${css}`).join("\n");
 const responsiveCss = styles.find(({ file }) => file === "responsive.css")?.css || "";
-const pagesCss = styles.find(({ file }) => file === "pages.css")?.css || "";
 const componentsCss = styles.find(({ file }) => file === "components.css")?.css || "";
 const researchCss = styles.find(({ file }) => file === "research.css")?.css || "";
 const tokensCss = styles.find(({ file }) => file === "tokens.css")?.css || "";
@@ -45,29 +44,21 @@ describe("mobile UI density contract", () => {
     }
   });
 
-  it("uses readable mobile navigation, tabs, and form controls", () => {
-    expect(responsiveCss).toMatch(
-      /@media \(max-width: 768px\)[\s\S]*?\.nav-link\s*\{[^}]*font-size:\s*var\(--fs-caption\)/,
-    );
-    expect(responsiveCss).toMatch(
-      /@media \(max-width: 768px\)[\s\S]*?\.panel-tab\s*\{[^}]*min-height:\s*var\(--touch-comfort\)[^}]*font-size:\s*var\(--fs-data\)/,
-    );
-    expect(responsiveCss).toMatch(
-      /\.form-row input,[\s\S]*?\.stock-code-input input\s*\{[^}]*min-height:\s*var\(--touch-comfort\)/,
-    );
+  it("keeps mobile hit areas independent of density", () => {
+    expect(responsiveCss).toContain("min-height: 44px");
+    expect(responsiveCss).toContain("min-width: 44px");
+    const compact = tokensCss.match(/:root\[data-density="compact"\]\s*\{([^}]*)\}/)?.[1] || "";
+    expect(compact).not.toContain("--fs-");
+    expect(tokensCss).toContain("--control-height: 44px");
   });
 
-  it("keeps mobile stock insight metrics readable and summaries intact", () => {
-    expect(responsiveCss).toMatch(
-      /\.stock-insight-board\s*\{[^}]*display:\s*block/,
-    );
-    expect(responsiveCss).toMatch(
-      /\.stock-insight-board \.score-strip\s*\{[^}]*grid-template-columns:\s*minmax\(0, 3fr\) minmax\(88px, 1fr\)[^}]*gap:\s*4px[^}]*margin-top:\s*0/,
-    );
-    expect(responsiveCss).toMatch(
-      /\.stock-insight-board \.score-strip-primary\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/,
-    );
-    expect(pagesCss).toMatch(/\.text-no-wrap\s*\{[^}]*white-space:\s*nowrap/);
+  it("uses a labeled mobile stock list and semantic desktop table", () => {
+    const stock = readFileSync(new URL("../components/StockList.tsx", import.meta.url), "utf8");
+    const css = readFileSync(new URL("../styles/screen.css", import.meta.url), "utf8");
+    expect(stock).toContain('<table className="stock-comparison-table">');
+    expect(stock).toContain('<dl className="stock-mobile-metrics">');
+    expect(stock).toContain('aria-expanded={expanded}');
+    expect(css).toContain('flex-wrap: nowrap');
   });
 
   it("does not reserve an empty control-panel row above the mobile screen run button", () => {
@@ -76,16 +67,8 @@ describe("mobile UI density contract", () => {
     );
   });
 
-  it("shows all five mobile screen modes in a two-row grid", () => {
-    expect(responsiveCss).toMatch(
-      /\.screen-panel-container > \.screen-panel-tabs\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*repeat\(6, minmax\(0, 1fr\)\)[^}]*overflow-x:\s*visible[^}]*scroll-snap-type:\s*none/,
-    );
-    expect(responsiveCss).toMatch(
-      /\.screen-panel-container > \.screen-panel-tabs \.panel-tab:nth-child\(-n \+ 3\)\s*\{[^}]*grid-column:\s*span 2/,
-    );
-    expect(responsiveCss).toMatch(
-      /\.screen-panel-container > \.screen-panel-tabs \.panel-tab:nth-child\(n \+ 4\)\s*\{[^}]*grid-column:\s*span 3/,
-    );
+  it("keeps all five mobile modes reachable in a horizontal rail", () => {
+    expect(responsiveCss).toMatch(/\.screen-panel-container > \.screen-panel-tabs\s*\{[^}]*display:\s*flex[^}]*overflow-x:\s*auto/);
   });
 
   it("keeps agent conversation history as frameless list rows", () => {

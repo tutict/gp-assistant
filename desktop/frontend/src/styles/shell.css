@@ -50,13 +50,13 @@
 }
 
 .header-search {
-  position: absolute;
-  left: 50%;
   display: flex;
+  flex: 1 1 320px;
+  max-width: 520px;
   width: clamp(240px, 28vw, 420px);
   min-width: 0;
   align-items: center;
-  transform: translateX(-50%);
+  margin-inline: auto;
 }
 
 .header-search-field {
@@ -396,8 +396,8 @@
 
 .panel-tab.active,
 .panel-tab[aria-selected="true"] {
-  background: var(--accent);
-  color: var(--button-text);
+  background: var(--accent-soft);
+  color: var(--text);
 }
 
 .panel-controls,
@@ -430,7 +430,7 @@
   display: block;
   margin-bottom: 5px;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-label);
   font-weight: 650;
 }
 
@@ -439,9 +439,9 @@
 .form-row textarea,
 .stock-code-input input {
   width: 100%;
-  min-height: var(--touch-comfort);
+  min-height: var(--control-height);
   padding: 8px 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--text);
@@ -477,11 +477,11 @@
 .run-btn,
 .save-btn,
 .result-actions button {
-  min-height: var(--touch-comfort);
+  min-height: var(--control-height);
   padding: 0 16px;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--accent-muted);
   border-radius: var(--radius-sm);
-  background: var(--accent);
+  background: var(--accent-muted);
   color: var(--button-text);
   box-shadow: none;
   cursor: pointer;
@@ -508,15 +508,15 @@
 .source-toggle,
 .llm-add-btn,
 .llm-preset-btn {
-  min-height: 36px;
+  min-height: var(--control-height);
   padding: 0 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--text);
   box-shadow: none;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 650;
   transition:
     color var(--motion-fast) ease,

@@ -48,4 +48,24 @@ describe("Sheet", () => {
     expect(trigger.focus).toHaveBeenCalledOnce();
     expect(renderer.toJSON()).toBeNull();
   });
+
+  it("traps Tab using the latest controls after content changes", async () => {
+    const lastControl = { focus: vi.fn() };
+    let controls = [firstControl];
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<Sheet open onClose={vi.fn()} label="动态内容"><button>操作</button></Sheet>, {
+        createNodeMock: (element) => element.type === "section"
+          ? { querySelectorAll: () => controls, contains: () => true }
+          : {},
+      });
+    });
+    controls = [firstControl, lastControl];
+    Object.defineProperty(document, "activeElement", { configurable: true, value: lastControl });
+    const preventDefault = vi.fn();
+    await act(async () => listeners.get("keydown")?.({ key: "Tab", preventDefault } as unknown as Event));
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(firstControl.focus).toHaveBeenCalledTimes(2);
+    await act(async () => renderer.unmount());
+  });
 });

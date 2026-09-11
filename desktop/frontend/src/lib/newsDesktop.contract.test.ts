@@ -124,7 +124,7 @@ describe("desktop research layout contract", () => {
     expect(title).toContain("font-size: var(--fs-title)");
 
     const quote = cssBlockLast(researchCss, ".research-evidence-card blockquote");
-    expect(quote).toContain("border-left: 2px solid var(--accent)");
+    expect(quote).toContain("border-left: 1px solid var(--line)");
     expect(quote).toContain("border: 0");
     expect(quote).toContain("max-height: 40%");
     expect(quote).toContain("overflow-y: auto");

@@ -21,7 +21,7 @@ colors:
 typography:
   display:
     fontFamily: "Segoe UI, Microsoft YaHei UI, system-ui, sans-serif"
-    fontSize: "24px"
+    fontSize: "20px"
     fontWeight: 700
     lineHeight: 1.15
     letterSpacing: "0"
@@ -129,7 +129,7 @@ The palette is graphite surfaces, disciplined red actions, amber caution, and se
 **Character:** The type system is technical without becoming terminal cosplay. Labels are compact and firm; prose is readable; data uses tabular figures and monospace rhythm.
 
 ### Hierarchy
-- **Display** (700, 24px, 1.15): app title and major page headings only.
+- **Display** (700, 20px, 1.15): major page headings only.
 - **Headline** (700, 20px, 1.2): primary module headings and drawer titles.
 - **Title** (700, 18px, 1.25): panel headings, result groups, and card titles.
 - **Body** (400, 14px, 1.55): explanations, evidence summaries, and helper copy.
@@ -191,7 +191,7 @@ Depth is conveyed mostly by tonal layering and thin borders. Shadows are structu
 - **Do** use research red only for action, selection, focus, and progress.
 - **Do** pair red/green market colors with text labels, arrows, or context.
 - **Do** keep controls at 44px minimum touch target on mobile.
-- **Do** treat Android compact workbench controls as the only mobile density exception: filter chips, screen status cells, and repeated dashboard controls may use 30px-36px targets when the surrounding view is scroll-dense and the command is repeated nearby.
+- **Do** keep mobile hit areas at least 44px in both density modes. Compact density only reduces non-interactive spacing; it never changes font size.
 - **Do** preserve reduced-motion support and use motion only for state changes.
 
 ### Don't:

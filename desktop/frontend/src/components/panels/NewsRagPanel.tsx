@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   BookOpen, ChevronLeft, ChevronRight, Database, Download, ExternalLink, FileText, Inbox, Menu,
   MessageSquareText, Plus, RefreshCw, RotateCcw, Search, Send, Upload, X, Trash2,
@@ -14,6 +14,9 @@ import { getJson, isMobileTauriRuntime, postJson } from "../../lib/tauri";
 import { applyMarkRead, pushCitation, useEventSelection } from "../../lib/newsInteractions";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
 import { PanelFeedback } from "../ui/PanelFeedback";
+import { useMobileComposer } from "../../hooks/useMobileComposer";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { Sheet } from "../ui/Sheet";
 
 type LlmSettingsUpdater = LlmSettings | null | ((previous: LlmSettings | null) => LlmSettings | null);
 interface NewsRagPanelProps {
@@ -28,7 +31,9 @@ const MAX_PDF_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_RESEARCH_PACK_BYTES = 64 * 1024 * 1024;
 
 export function NewsRagPanel(props: NewsRagPanelProps) {
-  const mobile = isMobileTauriRuntime();
+  const mobile = useMediaQuery("(max-width: 768px)");
+  const nativeMobile = isMobileTauriRuntime();
+  const compactEvidence = useMediaQuery("(max-width: 1180px)");
   const questionInputId = useId();
   const watchlist = props.watchlist || [];
   const [code, setCode] = useState(() => normalizeStockCode(props.initialCode || watchlist[0]?.code || ""));
@@ -61,7 +66,8 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const [readNoticePulse, setReadNoticePulse] = useState(false);
   const [evidenceNotice, setEvidenceNotice] = useState("");
   const [highlightAnswerId, setHighlightAnswerId] = useState<string | null>(null);
-  const questionInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const composer = useMobileComposer(question);
+  const questionInputRef = composer.textareaRef;
   const answersRef = useRef<HTMLElement | null>(null);
   const eventRefs = useRef(new Map<string, HTMLButtonElement>());
   const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -253,6 +259,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   }, []);
 
   const pushCitationSelection = useCallback((next: ResearchCitation) => {
+    setInboxOpen(false);
     const result = pushCitation(citationStack, citationPointer, next);
     setCitationStack(result.stack);
     setCitationPointer(result.pointer);
@@ -437,7 +444,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     <header className="research-topbar">
       <div className="research-context">
         <button type="button" className="research-icon-button research-mobile-inbox-button"
-          aria-label="打开自选股收件箱" title="自选股收件箱" onClick={() => setInboxOpen(true)}>
+          aria-label="打开自选股收件箱" title="自选股收件箱" onClick={() => { closeCitation(); setInboxOpen(true); }}>
           <Menu size={18} />
         </button>
         <div><span className="research-eyebrow">研究消息中心</span><h1>
@@ -454,8 +461,8 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
           <span>{refreshing ? "更新中" : "立即更新"}</span>
         </button>
         <button type="button" onClick={openKnowledge}
-          aria-label={mobile ? "资料包同步" : "知识库管理"}>
-          <Database size={15} /><span>{mobile ? "资料包同步" : "知识库管理"}</span>
+          aria-label={nativeMobile ? "资料包同步" : "知识库管理"}>
+          <Database size={15} /><span>{nativeMobile ? "资料包同步" : "知识库管理"}</span>
         </button>
       </div>
     </header>
@@ -465,6 +472,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     </div>}
 
     <div className="research-columns">
+      <ResearchSurfaceSheet active={mobile} open={inboxOpen} close={()=>setInboxOpen(false)} label="自选股收件箱">
       <InboxPanel code={code} setCode={(next) => { selectCode(next); setInboxOpen(false); }}
         watchlist={watchlist} unreadByStock={overview?.unread_by_stock || {}}
         threads={threads} threadId={threadId}
@@ -482,6 +490,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         deletingThreadId={deletingThreadId}
         deleteCandidateId={deleteCandidateId}
         asking={asking} />
+      </ResearchSurfaceSheet>
 
       <main className="research-stream">
         <div className="research-stream-body">
@@ -547,8 +556,10 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
               <textarea ref={questionInputRef} id={questionInputId} value={question}
                 aria-label="研究问题"
                 onChange={(event) => setQuestion(event.target.value)}
+                onFocus={composer.onFocus} onBlur={composer.onBlur}
+                onCompositionStart={composer.onCompositionStart} onCompositionEnd={composer.onCompositionEnd}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                  if (!composer.isComposing(event) && event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
                     event.preventDefault();
                     void ask();
                   }
@@ -566,18 +577,22 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         </form>
       </main>
 
+      <ResearchSurfaceSheet active={compactEvidence} open={Boolean(citation)} close={closeCitation} label="引用证据检查器">
       <EvidencePanel citation={citation} citationIndex={citationPointer}
         citationCount={citationStack.length} onPrevious={() => setCitationPointer((value) => Math.max(0, value - 1))}
         onNext={() => setCitationPointer((value) => Math.min(citationStack.length - 1, value + 1))}
         close={closeCitation} />
+      </ResearchSurfaceSheet>
     </div>
 
-    {inboxOpen && <button type="button" className="research-mobile-overlay"
-      aria-label="关闭自选股收件箱" onClick={() => setInboxOpen(false)} />}
-    {knowledgeOpen && <KnowledgeDrawer panelProps={props} code={code} mobile={mobile}
+    {knowledgeOpen && <KnowledgeDrawer panelProps={props} code={code} mobile={nativeMobile}
       status={indexStatus} management={management} busy={managementBusy}
       result={managementResult} close={() => setKnowledgeOpen(false)} />}
   </section>;
+}
+function ResearchSurfaceSheet({active,open,close,label,children}: {active:boolean;open:boolean;close:()=>void;label:string;children:ReactNode}) {
+  if (!active) return children;
+  return <Sheet open={open} onClose={close} label={label} className="research-surface-sheet" backdropClassName="research-surface-backdrop">{children}</Sheet>;
 }
 function EventGroup(props: {
   label: string;
@@ -614,7 +629,7 @@ function EventGroup(props: {
                 {scopeTypeLabel(message.scope_type)}{message.scope_tags?.length ? ` · ${message.scope_tags.join("、")}` : ""}
               </span>}
               <time>{formatDateTime(message.published_at)}</time>
-              {message.unread && <span className="research-pill">未读</span>}
+              {message.unread && <span className="research-unread-label">未读</span>}
             </span>
             <strong>{message.title}</strong>
             <span className="research-event-summary">{message.summary}</span>
@@ -865,11 +880,11 @@ function EvidenceInspector({ citation: item }: { citation: ResearchCitation }) {
       {item.page_number != null && <span>第 {item.page_number} 页</span>}
     </div>
     <blockquote>{item.excerpt}</blockquote>
-    <dl>
+    <details className="research-retrieval-details"><summary>检索技术详情</summary><dl>
       <div><dt>融合分数</dt><dd>{formatScore(item.retrieval_score)}</dd></div>
       <div><dt>BM25</dt><dd>{formatScore(item.lexical_score)}</dd></div>
       <div><dt>向量</dt><dd>{item.vector_score == null ? "未使用" : formatScore(item.vector_score)}</dd></div>
-    </dl>
+    </dl></details>
     {externalUrl && <a href={externalUrl} target="_blank" rel="noreferrer">
       <ExternalLink size={15} />打开原文
     </a>}

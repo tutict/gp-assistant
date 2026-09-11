@@ -33,7 +33,7 @@ export function PanelFeedback({ kind, title, description, action }: PanelFeedbac
             <span className="skeleton" />
           </div>
         </div>
-        <span className="visually-hidden">{description}</span>
+        <p>{description}</p>
       </div>
     );
   }

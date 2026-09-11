@@ -15,6 +15,7 @@ import {
 } from "../../lib/kline";
 import { formatNumber, formatPrice } from "../../lib/format";
 import { isMobileTauriRuntime } from "../../lib/tauri";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 
 import { exitChartFullscreen, requestChartFullscreen, unlockChartOrientation } from "../../lib/chartFullscreen";
 import {
@@ -101,7 +102,7 @@ const DESKTOP_LAYOUT: ChartLayout = {
 };
 
 export function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
-  const mobileRuntime = isMobileTauriRuntime();
+  const mobileRuntime = useMediaQuery("(max-width: 768px)");
   const workspaceRef = useRef<HTMLDivElement>(null);
   const nativeFullscreenRef = useRef(false);
   const [period, setPeriod] = useState<KlinePeriod>("daily");
@@ -153,7 +154,7 @@ export function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
     const workspace = workspaceRef.current;
     if (!workspace) return;
     setIsFullscreen(true);
-    const fullscreenResult = await requestChartFullscreen(workspace, { lockLandscape: mobileRuntime });
+    const fullscreenResult = await requestChartFullscreen(workspace, { lockLandscape: isMobileTauriRuntime() });
     const needsRotationFallback = mobileRuntime
       && fullscreenResult.nativeFullscreen
       && !fullscreenResult.orientationLocked

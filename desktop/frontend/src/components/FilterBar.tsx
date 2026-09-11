@@ -2,6 +2,7 @@ import { ChevronRight, RefreshCw, Settings, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getTauriInvoke, isMarketStatusStale, postJson, refreshTauriMarketData } from "../lib/tauri";
 import { formatBytes, formatMarketRefreshDate } from "../lib/format";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { DataStatus } from "../types";
 
 export interface FilterCriteria {
@@ -56,6 +57,7 @@ function marketFreshnessTone(status: DataStatus | null): "fresh" | "warning" | "
 
 
 export function FilterBar({ mobileRuntime, status, onStatusChange }: FilterBarProps) {
+  const mobileLayout = useMediaQuery("(max-width: 768px)");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshLog, setRefreshLog] = useState<RefreshLogEntry[]>([]);
   const [refreshLogOpen, setRefreshLogOpen] = useState(false);
@@ -266,7 +268,7 @@ export function FilterBar({ mobileRuntime, status, onStatusChange }: FilterBarPr
     }
   }, [appendLog, cancelRefreshLogCollapse, commitStatus, scheduleRefreshLogCollapse]);
   const refreshDateSource = status?.quote_trade_date ?? status?.quote_generated_at ?? status?.generated_at ?? status?.universe_updated_at;
-  const refreshDateText = formatMarketRefreshDate(refreshDateSource, mobileRuntime);
+  const refreshDateText = formatMarketRefreshDate(refreshDateSource, mobileLayout);
   const mobileUniverseCount = Number(status?.universe_count);
   const mobileUniverseText = Number.isFinite(mobileUniverseCount)
     ? `已同步 ${mobileUniverseCount >= 10000 ? `${(mobileUniverseCount / 10000).toFixed(1)}万` : Math.max(0, Math.round(mobileUniverseCount)).toString()}只`
@@ -297,7 +299,7 @@ export function FilterBar({ mobileRuntime, status, onStatusChange }: FilterBarPr
     </div>
   );
 
-  const progressAndLog = mobileRuntime ? null : (
+  const progressAndLog = mobileLayout ? null : (
     <>
       {progress && (
         <div className="refresh-progress">
@@ -343,7 +345,7 @@ export function FilterBar({ mobileRuntime, status, onStatusChange }: FilterBarPr
 
   return (
     <>
-      {mobileRuntime ? (
+      {mobileLayout ? (
         <section
           className={`research-context-bar screen-toolbar-card screen-mobile-toolbar-card ${refreshing ? "refreshing" : ""}`}
           aria-label="股票池数据工具栏"
@@ -369,6 +371,9 @@ export function FilterBar({ mobileRuntime, status, onStatusChange }: FilterBarPr
             </button>
           </div>
 
+          {progress && (
+            <p role="status">{progress.label} · {Math.round(progress.value)}%</p>
+          )}
           {progress && (
             <div className="screen-mobile-refresh-progress" aria-hidden="true">
               <div className="screen-mobile-refresh-progress-fill" style={{ width: `${progress.value}%` }} />

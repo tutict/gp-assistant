@@ -6,6 +6,7 @@ import { activeLlmProvider, buildLlmConfig, normalizeAgentResult, normalizeAgent
 import { buildAgentStreamPayload, MAX_AGENT_MESSAGE_CHARS } from "../../lib/agent";
 import { deleteAgentConversationRuns } from "../../lib/agentRuns";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useMobileComposer } from "../../hooks/useMobileComposer";
 import { AgentResultView } from "./AgentResultView";
 import { AgentRunDrawer } from "./AgentRunDrawer";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
@@ -96,6 +97,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const [activeConversationId, setActiveConversationId] = useLocalStorage<string>(AGENT_ACTIVE_KEY, "");
   const [railCollapsed, setRailCollapsed] = useLocalStorage<boolean>(AGENT_RAIL_COLLAPSED_KEY, false);
   const [input, setInput] = useState("");
+  const composer = useMobileComposer(input);
   const [conversationSearch, setConversationSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [replayOpen, setReplayOpen] = useState(false);
@@ -651,17 +653,20 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             </div>
           )}
 <textarea
+            ref={composer.textareaRef}
             className="agent-input"
             value={input}
             maxLength={MAX_AGENT_MESSAGE_CHARS}
             onChange={(e) => setInput(e.target.value)}
+            onFocus={composer.onFocus} onBlur={composer.onBlur}
+            onCompositionStart={composer.onCompositionStart} onCompositionEnd={composer.onCompositionEnd}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (!composer.mobile && !composer.isComposing(e) && e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 send();
               }
             }}
-            placeholder={`给股选优 Agent 发送消息，当前为 ${activeMode.label}`}
+            placeholder={composer.mobile ? "输入研究问题…" : `给股选优 Agent 发送消息，当前为 ${activeMode.label}`}
             rows={3}
             disabled={loading || activeConversationDeleting}
           />
