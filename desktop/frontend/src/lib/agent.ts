@@ -23,6 +23,7 @@ export interface AgentStreamPayloadInput {
 export function agentHarnessLabel(profileId?: string | null): string {
   if (profileId === "hot_money_early_v1") return "游资早期研究 v1";
   if (profileId === "value_compounder_v1") return "价值复利研究 v1";
+  if (profileId === "quick_agent_v1") return "快速模型分析";
   return "本地快速分析";
 }
 

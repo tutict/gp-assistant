@@ -97,6 +97,7 @@ describe("agentHarnessLabel", () => {
   it("exposes the active versioned method without impersonating an investor", () => {
     expect(agentHarnessLabel("hot_money_early_v1")).toBe("游资早期研究 v1");
     expect(agentHarnessLabel("value_compounder_v1")).toBe("价值复利研究 v1");
+    expect(agentHarnessLabel("quick_agent_v1")).toBe("快速模型分析");
     expect(agentHarnessLabel("deterministic_v1")).toBe("本地快速分析");
     expect(agentHarnessExecutionLabel("deterministic_v1", false)).toBe("确定性工具执行");
     expect(agentHarnessExecutionLabel("hot_money_early_v1", true, "qwen-plus")).toBe("模型综合 · qwen-plus");

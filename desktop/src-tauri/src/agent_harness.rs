@@ -1924,8 +1924,8 @@ fn profile_for_mode(mode: &str) -> PromptProfile {
             instructions: VALUE_COMPOUNDER_PROMPT,
         },
         _ => PromptProfile {
-            id: "deterministic_v1",
-            instructions: "快速模式只整理工具事实，保持简洁，不引入人物方法。",
+            id: "quick_agent_v1",
+            instructions: "快速模式调用已配置的模型，基于工具证据给出简洁、可核查的综合分析。不得只复述股票列表。",
         },
     }
 }
@@ -2104,8 +2104,8 @@ mod harness_validation_tests {
             json!({}),
         ))
         .expect("quick execution should succeed");
-        assert_eq!(quick.response["harness"]["model_outcome"], "not_requested");
-        assert_eq!(quick.response["harness"]["api_format"], "none");
+        assert_eq!(quick.response["harness"]["model_outcome"], "request_failed");
+        assert_eq!(quick.response["harness"]["api_format"], "openai_compatible");
 
         let unconfigured = tauri::async_runtime::block_on(execute(
             json!({

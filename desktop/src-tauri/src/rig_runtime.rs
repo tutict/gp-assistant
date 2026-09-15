@@ -1742,6 +1742,7 @@ fn profile_id_for_mode(mode: &str) -> &'static str {
     match mode {
         "expert" => "hot_money_early_v1",
         "research" => "value_compounder_v1",
+        "quick" => "quick_agent_v1",
         _ => "deterministic_v1",
     }
 }
@@ -1862,14 +1863,14 @@ pub(crate) fn bounded_history(value: &Value) -> Vec<HistoryEntry> {
 
 pub(crate) fn run_mode(value: &str) -> RunMode {
     match value.trim() {
-        "quick" | "deterministic_v1" => RunMode::Deterministic,
+        "deterministic_v1" => RunMode::Deterministic,
         _ => RunMode::Model,
     }
 }
 
 fn normalize_mode(value: &str) -> Result<&str, String> {
     match value.trim() {
-        "quick" | "deterministic_v1" => Ok("quick"),
+        "quick" | "deterministic_v1" => Ok(value.trim()),
         "expert" | "hot_money_early_v1" => Ok("expert"),
         "research" | "value_compounder_v1" => Ok("research"),
         other => Err(format!("unsupported Agent mode: {other}")),
@@ -2043,8 +2044,8 @@ mod tests {
     }
 
     #[test]
-    fn quick_mode_skips_model_creation() {
-        assert!(matches!(run_mode("quick"), RunMode::Deterministic));
+    fn quick_mode_uses_model_creation() {
+        assert!(matches!(run_mode("quick"), RunMode::Model));
         assert!(matches!(
             run_mode("deterministic_v1"),
             RunMode::Deterministic
@@ -2109,10 +2110,10 @@ mod tests {
             tauri::async_runtime::block_on(execute_with_event_sink(payload, data, |event| {
                 events.push(event);
             }))
-            .expect("quick runtime should complete without a model");
+            .expect("quick runtime should safely fall back when no model is configured");
         assert_eq!(
             outcome.response["harness"]["model_outcome"],
-            "not_requested"
+            "not_configured"
         );
         assert!(events.iter().any(|event| event["type"] == "result"));
         assert!(events
