@@ -95,7 +95,7 @@ const routes = [
   },
   { name: "observe", hash: "#sectionObserve", ready: ".observe-panel-container" },
   { name: "backtest", hash: "#sectionBacktest", ready: ".backtest-context" },
-  { name: "news", hash: "#sectionNewsRag", ready: ".research-workspace" },
+  { name: "news", hash: "#sectionNewsRag", ready: ".sentiment-panel" },
   { name: "agent", hash: "#sectionAgent", ready: ".agent-workspace" },
   {
     name: "settings",
@@ -1704,7 +1704,15 @@ async function assertNewsPageState(page, device, scenarioName) {
     throw new Error(`${device.name}/${scenarioName} composer exceeds the 104px mobile limit: ${JSON.stringify(composerBox)}`);
   }
 
+  const composerVisible = await page.locator(".research-composer").evaluate((element) => {
+    const r=element.getBoundingClientRect();
+    const nav=document.querySelector(".sidebar");
+    const bottom=innerWidth<=768 && nav ? nav.getBoundingClientRect().top : innerHeight;
+    return r.top>=0 && r.bottom<=bottom+1;
+  });
+  if (!composerVisible) throw new Error(device.name + "/" + scenarioName + " composer is obscured by viewport/navigation");
   const checks = {
+    composerVisible,
     riskBoundary: riskText,
     composerHeight: Math.round(composerBox.height * 10) / 10,
   };
@@ -1822,6 +1830,7 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         await installHarnessState(page, mockObserveResult, scenario.researchState);
         await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
         await page.locator("#root").waitFor({ state: "visible" });
+        await page.getByRole("button", { name: "消息与资料", exact: true }).click();
         await page.locator(".research-workspace").waitFor({ state: "visible" });
         await disableResearchMotion(page);
         await page.mouse.move(device.width / 2, Math.min(180, device.height / 3));
@@ -1885,7 +1894,8 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         indexStatus: { schema_version: 1, document_count: 18, chunk_count: 52 },
       });
       await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
-      await page.locator(".research-workspace").waitFor({ state: "visible" });
+      await page.getByRole("button", { name: "消息与资料", exact: true }).click();
+        await page.locator(".research-workspace").waitFor({ state: "visible" });
       await disableResearchMotion(page);
       await page.locator(".research-brief-summary").click();
       await page.locator(".research-daily-brief-mobile[open] .research-brief-expanded")
@@ -1959,6 +1969,7 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         });
         await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
         await page.locator("#root").waitFor({ state: "visible" });
+        await page.getByRole("button", { name: "消息与资料", exact: true }).click();
         await page.locator(".research-workspace").waitFor({ state: "visible" });
         await disableResearchMotion(page);
         await page.mouse.move(device.width / 2, Math.min(180, device.height / 3));
@@ -2063,7 +2074,8 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         indexStatus: { schema_version: 1, document_count: 18, chunk_count: 52 },
       });
       await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
-      await page.locator(".research-workspace").waitFor({ state: "visible" });
+      await page.getByRole("button", { name: "消息与资料", exact: true }).click();
+        await page.locator(".research-workspace").waitFor({ state: "visible" });
       await disableResearchMotion(page);
       if (device.mobile && ["delete-confirmation", "skeleton-loading"].includes(state.name)) {
         await page.locator(".research-mobile-inbox-button").click();
@@ -2183,7 +2195,8 @@ async function runNewsInteractionChecks(browser) {
     return route.fulfill({ json: { updated: 3 } });
   });
   await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
-  await page.locator(".research-workspace").waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "消息与资料", exact: true }).click();
+        await page.locator(".research-workspace").waitFor({ state: "visible" });
 
   const firstEvent = page.locator(".research-event").first();
   await firstEvent.click();

@@ -31,11 +31,11 @@ const RESEARCH_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 
 const loadObservePanel = () => import("./components/panels/ObservePanel");
 const loadBacktestPanel = () => import("./components/panels/BacktestPanel");
-const loadNewsRagPanel = () => import("./components/panels/NewsRagPanel");
+const loadNewsRagPanel = () => import("./components/panels/SentimentPanel");
 const loadAgentPanel = () => import("./components/panels/AgentPanel");
 const ObservePanel = lazy(async () => ({ default: (await loadObservePanel()).ObservePanel }));
 const BacktestPanel = lazy(async () => ({ default: (await loadBacktestPanel()).BacktestPanel }));
-const NewsRagPanel = lazy(async () => ({ default: (await loadNewsRagPanel()).NewsRagPanel }));
+const NewsRagPanel = lazy(async () => ({ default: (await loadNewsRagPanel()).SentimentPanel }));
 const AgentPanel = lazy(async () => ({ default: (await loadAgentPanel()).AgentPanel }));
 const adjacentPanelLoaders: Record<ViewKey, Array<() => Promise<unknown>>> = {
   screen: [loadObservePanel],

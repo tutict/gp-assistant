@@ -842,7 +842,8 @@
 .llm-endpoint-state.warn,
 .llm-provider-card b.warn {
   color: var(--text);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: var(--surface-2);
+  border: 1px solid var(--warning);
 }
 .llm-settings-body {
   margin-top: 8px;
@@ -1067,11 +1068,7 @@
   white-space: nowrap;
 }
 
-.llm-endpoint-state.warn,
-.llm-provider-card b.warn {
-  color: color-mix(in srgb, var(--accent) 86%, var(--button-text));
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
-}
+
 
 .llm-settings-body {
   padding: 12px;

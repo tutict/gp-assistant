@@ -9,7 +9,7 @@ const auditRoutes = [
   { name: "screen", hash: "#sectionScreen", ready: ".screen-panel-container" },
   { name: "observe", hash: "#sectionObserve", ready: ".observe-panel-container" },
   { name: "backtest", hash: "#sectionBacktest", ready: ".backtest-context" },
-  { name: "news", hash: "#sectionNewsRag", ready: ".research-workspace" },
+  { name: "news", hash: "#sectionNewsRag", ready: ".sentiment-panel" },
   { name: "agent", hash: "#sectionAgent", ready: ".agent-workspace" },
   { name: "settings", hash: "#sectionAgent", ready: ".agent-workspace", settings: true },
 ];

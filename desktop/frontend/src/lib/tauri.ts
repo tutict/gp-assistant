@@ -251,6 +251,13 @@ async function invokeWithFinancialSnapshot(invoke: InvokeFn, command: string, pa
 }
 
 export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
+  "/api/sentiment/snapshot": async ({ invoke, payload }) => invoke("api_sentiment_snapshot", { payload }),
+  "/api/sentiment/start": async ({ invoke, payload }) => invoke("api_sentiment_start", { payload: withAndroidNetworkOptions(asRecord(payload)) }),
+  "/api/sentiment/status": async ({ invoke, payload }) => invoke("api_sentiment_status", { payload }),
+  "/api/sentiment/cancel": async ({ invoke, payload }) => invoke("api_sentiment_cancel", { payload }),
+  "/api/sentiment/latest": async ({ invoke, payload }) => invoke("api_sentiment_latest", { payload }),
+  "/api/sentiment/history": async ({ invoke, payload }) => invoke("api_sentiment_history", { payload }),
+  "/api/sentiment/followup": async ({ invoke, payload }) => invoke("api_sentiment_followup", { payload: withAndroidNetworkOptions(asRecord(payload)) }),
   "/api/screen": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_screen", payload),
   "/api/sector-screen": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_sector_screen", payload),
   "/api/custom-screen": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_custom_screen", payload),

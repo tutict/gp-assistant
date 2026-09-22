@@ -13,7 +13,7 @@ const routes = [
   { name: "screen", hash: "sectionScreen", ready: ".screen-panel-container" },
   { name: "observe", hash: "sectionObserve", ready: ".observe-panel-container" },
   { name: "backtest", hash: "sectionBacktest", ready: ".backtest-run-button" },
-  { name: "news", hash: "sectionNewsRag", ready: ".research-workspace" },
+  { name: "news", hash: "sectionNewsRag", ready: ".sentiment-panel" },
   { name: "agent", hash: "sectionAgent", ready: ".agent-workspace" },
 ];
 const configurations = [];

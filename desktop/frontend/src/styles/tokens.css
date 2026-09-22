@@ -18,6 +18,7 @@
   --accent: #d83d35;
   --accent-strong: #c6322c;
   --accent-muted: #a92924;
+  --accent-action: #7f211c;
   --accent-soft: rgba(216, 61, 53, 0.14);
   --button-text: #ffffff;
   --success: #35b779;
@@ -152,6 +153,7 @@
   --accent: #d83d35;
   --accent-strong: #b92d28;
   --accent-muted: #a92924;
+  --accent-action: #7f211c;
   --accent-soft: rgba(216, 61, 53, 0.1);
   --button-text: #ffffff;
   --success: #168653;

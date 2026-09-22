@@ -8,6 +8,7 @@
 @import "./screen.css" layer(pages);
 @import "./agent-replay.css" layer(pages);
 @import "./research.css" layer(pages);
+@import "./sentiment.css" layer(pages);
 @import "./responsive.css" layer(responsive);
 
 * {
