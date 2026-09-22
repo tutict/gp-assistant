@@ -114,6 +114,15 @@ const routes = [
   },
 ];
 
+
+export async function openNewsResearchWorkspace(page) {
+  await page.locator(".sentiment-panel").waitFor({ state: "visible" });
+  const sources = page.getByRole("button", { name: "消息与资料", exact: true });
+  await sources.waitFor({ state: "visible" });
+  await sources.click();
+  await page.locator(".research-workspace").waitFor({ state: "visible" });
+}
+
 const mockStocks = [
   { code: "600519.SH", name: "贵州茅台", industry: "食品饮料", price: 1428.6, change_pct: 0.018, pe: 22.4, pb: 7.3, roe: 31.2 },
   { code: "000858.SZ", name: "五粮液", industry: "食品饮料", price: 128.4, change_pct: -0.006, pe: 18.7, pb: 4.6, roe: 24.1 },
@@ -1830,8 +1839,7 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         await installHarnessState(page, mockObserveResult, scenario.researchState);
         await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
         await page.locator("#root").waitFor({ state: "visible" });
-        await page.getByRole("button", { name: "消息与资料", exact: true }).click();
-        await page.locator(".research-workspace").waitFor({ state: "visible" });
+        await openNewsResearchWorkspace(page);
         await disableResearchMotion(page);
         await page.mouse.move(device.width / 2, Math.min(180, device.height / 3));
         await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
@@ -1894,8 +1902,7 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         indexStatus: { schema_version: 1, document_count: 18, chunk_count: 52 },
       });
       await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
-      await page.getByRole("button", { name: "消息与资料", exact: true }).click();
-        await page.locator(".research-workspace").waitFor({ state: "visible" });
+      await openNewsResearchWorkspace(page);
       await disableResearchMotion(page);
       await page.locator(".research-brief-summary").click();
       await page.locator(".research-daily-brief-mobile[open] .research-brief-expanded")
@@ -1969,8 +1976,7 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         });
         await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
         await page.locator("#root").waitFor({ state: "visible" });
-        await page.getByRole("button", { name: "消息与资料", exact: true }).click();
-        await page.locator(".research-workspace").waitFor({ state: "visible" });
+        await openNewsResearchWorkspace(page);
         await disableResearchMotion(page);
         await page.mouse.move(device.width / 2, Math.min(180, device.height / 3));
         await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
@@ -2074,8 +2080,7 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         indexStatus: { schema_version: 1, document_count: 18, chunk_count: 52 },
       });
       await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
-      await page.getByRole("button", { name: "消息与资料", exact: true }).click();
-        await page.locator(".research-workspace").waitFor({ state: "visible" });
+      await openNewsResearchWorkspace(page);
       await disableResearchMotion(page);
       if (device.mobile && ["delete-confirmation", "skeleton-loading"].includes(state.name)) {
         await page.locator(".research-mobile-inbox-button").click();
@@ -2195,8 +2200,7 @@ async function runNewsInteractionChecks(browser) {
     return route.fulfill({ json: { updated: 3 } });
   });
   await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "消息与资料", exact: true }).click();
-        await page.locator(".research-workspace").waitFor({ state: "visible" });
+  await openNewsResearchWorkspace(page);
 
   const firstEvent = page.locator(".research-event").first();
   await firstEvent.click();

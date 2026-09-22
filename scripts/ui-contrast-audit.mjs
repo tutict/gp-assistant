@@ -214,7 +214,7 @@ async function collectTextRecords(page) {
 export async function runContrastAudit({ baseUrl = defaultUrl, serve = false, fail = false } = {}) {
   const frontendRequire = createRequire(new URL("../desktop/frontend/package.json", import.meta.url));
   const { chromium } = frontendRequire("playwright");
-  const { installHarnessState, startBuiltAppServer } = await import("./ui-screenshot.mjs");
+  const { installHarnessState, openNewsResearchWorkspace, startBuiltAppServer } = await import("./ui-screenshot.mjs");
   let server = null;
   if (serve) {
     const started = await startBuiltAppServer();
@@ -240,19 +240,24 @@ export async function runContrastAudit({ baseUrl = defaultUrl, serve = false, fa
           await page.goto(auditUrl(baseUrl, theme, route.hash), { waitUntil: "networkidle" });
           await page.locator(route.ready).waitFor({ state: "visible" });
           if (route.settings) await prepareSettings(page, device.mobile);
-          const records = await collectTextRecords(page);
-          for (const record of records) {
-            const result = evaluateContrastRecord(record, theme);
-            if (result.ratio + 0.005 < result.required) {
-              violations.push({
-                route: route.name,
+          const surfaces = [route.name];
+          if (route.name === "news") surfaces.push("news-sources");
+          for (const surface of surfaces) {
+            if (surface === "news-sources") await openNewsResearchWorkspace(page);
+            const records = await collectTextRecords(page);
+            for (const record of records) {
+              const result = evaluateContrastRecord(record, theme);
+              if (result.ratio + 0.005 < result.required) {
+                violations.push({
+                  route: surface,
                 theme,
                 device: device.name,
                 selector: result.selector,
                 text: result.text,
                 ratio: Number(result.ratio.toFixed(2)),
                 required: result.required,
-              });
+                });
+              }
             }
           }
         }

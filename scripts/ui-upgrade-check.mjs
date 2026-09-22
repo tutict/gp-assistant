@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { installHarnessState, startBuiltAppServer, installAgentReplayState, mockResearchOverviewData, mockResearchMessagesData, mockResearchThreads, mockResearchThreadDetail } from "./ui-screenshot.mjs";
+import { installHarnessState, openNewsResearchWorkspace, startBuiltAppServer, installAgentReplayState, mockResearchOverviewData, mockResearchMessagesData, mockResearchThreads, mockResearchThreadDetail } from "./ui-screenshot.mjs";
 
 const require = createRequire(new URL("../desktop/frontend/package.json", import.meta.url));
 const { chromium } = require("playwright");
@@ -44,24 +44,29 @@ try {
       if(route.name==='screen') {await page.locator('.screen-panel-container .run-btn').click();await page.locator('.stock-row').first().waitFor();}
       if(route.name==='observe') {await page.locator('.observe-code-row input').fill('600519.SH');await page.locator('.observe-run-btn').click();await page.locator('.observe-result').waitFor();}
       if(route.name==='backtest') {await page.locator('.backtest-run-button').click();await page.locator('.backtest-result').waitFor();}
+      const surfaces=[{name:route.name,openSources:false}];
+      if(route.name==='news') surfaces.push({name:'news-sources',openSources:true});
+      for(const surface of surfaces) {
+      if(surface.openSources) await openNewsResearchWorkspace(page);
       const metrics=await page.evaluate(()=>{
         const visible=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden'&&!e.closest('[hidden], [inert]');};
         const ids=[...document.querySelectorAll('[id]')].map(e=>e.id);
         const hitAreas=[...document.querySelectorAll('button,select,summary,input:not([type=checkbox]):not([type=radio]),textarea,a.nav-link')].filter(visible).filter(e=>!e.closest('svg')).map(e=>({label:e.getAttribute('aria-label')||e.textContent?.trim().slice(0,40),width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height}));
         return {title:document.title,meaningful:document.querySelector('#root')?.textContent.length>30,overlay:!!document.querySelector('vite-error-overlay'),overflow:document.documentElement.scrollWidth>innerWidth+1,duplicateIds:ids.filter((id,i)=>ids.indexOf(id)!==i),shortTargets:innerWidth<=768?hitAreas.filter(r=>r.width<43.5||r.height<43.5):[],visibleRows:[...document.querySelectorAll('.stock-row')].filter(e=>{const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight-(innerWidth<=768?60:0)}).length};
       });
-      const check={configuration:name,route:route.name,...metrics,errors:[...errors]};
+      const check={configuration:name,route:surface.name,...metrics,errors:[...errors]};
       errors.length=0;
       report.checks.push(check);
       const rowTarget = route.name === 'screen' && config.fontScale === 'standard' && [390,1440].includes(config.width) ? config.width === 390 ? 2 : 8 : 0;
       if(metrics.overflow||metrics.overlay||!metrics.meaningful||metrics.duplicateIds.length||metrics.shortTargets.length||check.errors.length||metrics.visibleRows<rowTarget)report.failures.push(check);
       if([390,1440].includes(config.width)) {
         const directory=resolve(output,name);mkdirSync(directory,{recursive:true});
-        await page.screenshot({path:resolve(directory,route.name+'.png'),fullPage:false});
+        await page.screenshot({path:resolve(directory,surface.name+'.png'),fullPage:false});
+      }
       }
     }
     await context.close();
-    console.log(`${name}: checked five workspaces`);
+    console.log(`${name}: checked workspaces`);
   }
 } finally {await browser.close();await new Promise(r=>server.close(r));}
 writeFileSync(resolve(output,'report.json'),JSON.stringify(report,null,2));
