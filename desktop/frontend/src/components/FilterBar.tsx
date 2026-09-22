@@ -21,7 +21,6 @@ export interface FilterCriteria {
 }
 
 interface FilterBarProps {
-  mobileRuntime: boolean;
   status: DataStatus | null;
   onStatusChange?: (status: DataStatus | null) => void;
 }
@@ -56,7 +55,7 @@ function marketFreshnessTone(status: DataStatus | null): "fresh" | "warning" | "
 }
 
 
-export function FilterBar({ mobileRuntime, status, onStatusChange }: FilterBarProps) {
+export function FilterBar({ status, onStatusChange }: FilterBarProps) {
   const mobileLayout = useMediaQuery("(max-width: 768px)");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshLog, setRefreshLog] = useState<RefreshLogEntry[]>([]);
@@ -67,14 +66,14 @@ export function FilterBar({ mobileRuntime, status, onStatusChange }: FilterBarPr
   const autoRefreshStartedRef = useRef(false);
   const maintenanceRef = useRef<HTMLDetailsElement>(null);
   const [progress, setProgress] = useState<{ label: string; value: number } | null>(null);
-  const [batchCount, setBatchCount] = useState(mobileRuntime ? 12 : 32);
+  const [batchCount, setBatchCount] = useState(mobileLayout ? 12 : 32);
   const [maxCandidates, setMaxCandidates] = useState(15000);
   const [fullRebuild, setFullRebuild] = useState(true);
   const [maintenanceOpen, setMaintenanceOpen] = useState(false);
 
   useEffect(() => {
-    setBatchCount(mobileRuntime ? 12 : 32);
-  }, [mobileRuntime]);
+    setBatchCount(mobileLayout ? 12 : 32);
+  }, [mobileLayout]);
 
   const clearRefreshLogTimeout = useCallback(() => {
     if (refreshLogTimerRef.current !== null) {
@@ -167,17 +166,17 @@ export function FilterBar({ mobileRuntime, status, onStatusChange }: FilterBarPr
     ...CACHE_POLICY,
     mode: "light",
     batch_start: 0,
-    batch_count: mobileRuntime ? 12 : 32,
+    batch_count: mobileLayout ? 12 : 32,
     max_candidates: 15000,
     validate_after_write: true,
-  }), [mobileRuntime]);
+  }), [mobileLayout]);
 
   const refreshUniverse = useCallback(async () => {
     cancelRefreshLogCollapse();
     setRefreshing(true);
-    setRefreshLogOpen(!mobileRuntime);
+    setRefreshLogOpen(!mobileLayout);
     setRefreshLog([]);
-    setProgress({ label: mobileRuntime ? "准备移动端股票池全量刷新..." : "准备股票池刷新...", value: 6 });
+    setProgress({ label: mobileLayout ? "准备移动端股票池全量刷新..." : "准备股票池刷新...", value: 6 });
 
     try {
       const invoke = getTauriInvoke();
@@ -197,7 +196,7 @@ export function FilterBar({ mobileRuntime, status, onStatusChange }: FilterBarPr
       setRefreshing(false);
       window.setTimeout(() => setProgress(null), 1400);
     }
-  }, [appendLog, cancelRefreshLogCollapse, commitStatus, mobileRuntime, refreshOptions, scheduleRefreshLogCollapse, updateProgressFromRefresh]);
+  }, [appendLog, cancelRefreshLogCollapse, commitStatus, mobileLayout, refreshOptions, scheduleRefreshLogCollapse, updateProgressFromRefresh]);
 
   useEffect(() => {
     if (autoRefreshStartedRef.current || refreshing) return;
@@ -208,7 +207,7 @@ export function FilterBar({ mobileRuntime, status, onStatusChange }: FilterBarPr
 
       autoRefreshStartedRef.current = true;
       cancelRefreshLogCollapse();
-      setRefreshLogOpen(!mobileRuntime);
+      setRefreshLogOpen(!mobileLayout);
       setProgress({ label: "正在后台同步上一开盘日行情...", value: 6 });
       appendLog("检测到行情缓存日期过期或当日报价覆盖不完整，已在后台触发自动刷新。", "info");
 
@@ -241,7 +240,7 @@ export function FilterBar({ mobileRuntime, status, onStatusChange }: FilterBarPr
     return () => {
       cancelled = true;
     };
-  }, [appendLog, autoRefreshOptions, cancelRefreshLogCollapse, commitStatus, mobileRuntime, refreshing, scheduleRefreshLogCollapse, status, updateProgressFromRefresh]);
+  }, [appendLog, autoRefreshOptions, cancelRefreshLogCollapse, commitStatus, mobileLayout, refreshing, scheduleRefreshLogCollapse, status, updateProgressFromRefresh]);
 
   const pruneCache = useCallback(async () => {
     cancelRefreshLogCollapse();

@@ -47,7 +47,7 @@ describe("FilterBar", () => {
 
     let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<FilterBar mobileRuntime status={status} />);
+      renderer = create(<FilterBar status={status} />);
     });
 
     expect(renderer.root.findByProps({ "aria-label": "股票池状态" })).toBeTruthy();
@@ -56,7 +56,7 @@ describe("FilterBar", () => {
   it("renders the desktop data status as the compact toolbar summary", async () => {
     let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<FilterBar mobileRuntime={false} status={{ universe_count: 5231, quote_trade_date: "20260804", current_trade_date: "20260804", stale: false }} />);
+      renderer = create(<FilterBar status={{ universe_count: 5231, quote_trade_date: "20260804", current_trade_date: "20260804", stale: false }} />);
       await Promise.resolve();
     });
 
@@ -74,7 +74,7 @@ describe("FilterBar", () => {
 
     let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<FilterBar mobileRuntime={false} status={{ universe_count: 5231 }} />);
+      renderer = create(<FilterBar status={{ universe_count: 5231 }} />);
     });
 
     await act(async () => {
@@ -121,7 +121,7 @@ describe("FilterBar", () => {
 
     let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<FilterBar mobileRuntime={false} status={{ universe_count: 5231 }} />, {
+      renderer = create(<FilterBar status={{ universe_count: 5231 }} />, {
         createNodeMock: (element) => element.type === "details" ? maintenanceNode : {},
       });
     });

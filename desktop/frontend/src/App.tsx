@@ -315,7 +315,6 @@ export default function App({ onMounted }: AppProps) {
       <main className="workbench">
         {view === "screen" && (
           <FilterBar
-            mobileRuntime={mobileRuntime}
             status={marketStatus}
             onStatusChange={setMarketStatus}
           />

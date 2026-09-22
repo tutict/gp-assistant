@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LocateFixed, Maximize2, Minimize2, ZoomIn, ZoomOut } from "lucide-react";
 import type { TrendIndicatorPoint } from "../../types";
 import {
@@ -155,7 +155,7 @@ export function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
     if (!workspace) return;
     setIsFullscreen(true);
     const fullscreenResult = await requestChartFullscreen(workspace, { lockLandscape: isMobileTauriRuntime() });
-    const needsRotationFallback = mobileRuntime
+    const needsRotationFallback = isMobileTauriRuntime()
       && fullscreenResult.nativeFullscreen
       && !fullscreenResult.orientationLocked
       && window.innerWidth < window.innerHeight;
