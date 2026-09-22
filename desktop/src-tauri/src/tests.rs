@@ -1274,7 +1274,7 @@ fn agent_harness_executes_local_tools_then_synthesizes_the_final_result() {
 }
 
 #[test]
-fn agent_harness_keeps_quick_mode_deterministic_when_a_model_is_configured() {
+fn agent_harness_quick_mode_reports_configured_model_failure() {
     let outcome = tauri::async_runtime::block_on(agent_harness::execute(
         json!({
             "message": "查看自选股",
@@ -1282,28 +1282,21 @@ fn agent_harness_keeps_quick_mode_deterministic_when_a_model_is_configured() {
             "mode": "quick",
             "llm": {
                 "base_url": "http://127.0.0.1:9/v1",
-                "model": "must-not-be-called",
+                "model": "configured-model",
                 "timeout_seconds": 1
             },
             "context": {"watchlist": [{"code": "000001.SZ", "name": "平安银行"}]}
         }),
         json!({}),
     ))
-    .expect("quick harness should execute without a model request");
+    .expect("quick harness should preserve the model failure outcome");
 
-    assert_eq!(
-        outcome.response["harness"]["profile_id"],
-        "deterministic_v1"
-    );
+    assert_eq!(outcome.response["harness"]["profile_id"], "quick_agent_v1");
     assert_eq!(outcome.response["harness"]["model_used"], false);
-    assert!(!outcome.response["warnings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|warning| warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("模型调用失败")));
+    assert_eq!(
+        outcome.response["harness"]["model_outcome"],
+        "request_failed"
+    );
 }
 
 #[cfg(target_os = "windows")]

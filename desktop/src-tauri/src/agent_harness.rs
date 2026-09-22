@@ -2105,7 +2105,7 @@ mod harness_validation_tests {
         ))
         .expect("quick execution should succeed");
         assert_eq!(quick.response["harness"]["model_outcome"], "request_failed");
-        assert_eq!(quick.response["harness"]["api_format"], "openai_compatible");
+        assert_eq!(quick.response["harness"]["api_format"], "openai_chat");
 
         let unconfigured = tauri::async_runtime::block_on(execute(
             json!({
