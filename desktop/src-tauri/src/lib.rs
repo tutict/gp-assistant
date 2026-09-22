@@ -31,6 +31,9 @@ mod research_embeddings;
 mod research_import;
 mod rig_runtime;
 mod runtime;
+mod sentiment;
+mod sentiment_agent;
+mod sentiment_data;
 
 const MOBILE_MARKET_DATA_FILE: &str = "mobile-market-data.json";
 const WATCHLIST_DB_FILE: &str = "watchlist.sqlite";
@@ -10800,6 +10803,13 @@ pub fn run() {
             api_research_messages,
             api_research_mark_read,
             api_research_query,
+            sentiment::api_sentiment_snapshot,
+            sentiment::api_sentiment_start,
+            sentiment::api_sentiment_status,
+            sentiment::api_sentiment_cancel,
+            sentiment::api_sentiment_latest,
+            sentiment::api_sentiment_history,
+            sentiment::api_sentiment_followup,
             api_research_refresh,
             api_research_threads,
             api_research_thread_create,

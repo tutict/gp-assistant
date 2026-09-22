@@ -1570,6 +1570,56 @@ impl ResearchStore {
         Ok(citations)
     }
 
+    pub(crate) fn sentiment_documents(
+        &self,
+        stock_code: &str,
+        cutoff: i64,
+    ) -> Result<Vec<Value>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT d.id,d.title,d.content,d.source_tier,d.source_name,d.url,d.published_at,
+                    d.imported_at_epoch_ms,d.updated_at_epoch_ms,d.metadata_json,c.sentiment,c.stock_codes_json
+             FROM documents d JOIN chunks c ON c.id=(SELECT id FROM chunks WHERE document_id=d.id ORDER BY ordinal LIMIT 1)
+             WHERE d.imported_at_epoch_ms<=?2 AND d.updated_at_epoch_ms<=?2
+               AND (EXISTS(SELECT 1 FROM chunks sc,json_each(sc.stock_codes_json) code WHERE sc.document_id=d.id AND code.value=?1)
+                    OR EXISTS(SELECT 1 FROM json_each(d.metadata_json,'$.mapped_stock_codes') code WHERE code.value=?1))
+             ORDER BY d.published_at DESC,d.id LIMIT 10000"
+        ).map_err(|error| error.to_string())?;
+        let rows = statement.query_map(params![stock_code, cutoff], |row| {
+            let metadata: String = row.get(9)?;
+            let codes: String = row.get(11)?;
+            Ok(json!({
+                "document_id":row.get::<_,String>(0)?, "title":row.get::<_,String>(1)?,
+                "content":row.get::<_,String>(2)?, "source_tier":row.get::<_,String>(3)?,
+                "source_name":row.get::<_,String>(4)?, "url":row.get::<_,Option<String>>(5)?,
+                "published_at":row.get::<_,Option<String>>(6)?, "first_seen_at":row.get::<_,i64>(7)?,
+                "updated_at":row.get::<_,i64>(8)?, "metadata":serde_json::from_str::<Value>(&metadata).unwrap_or(json!({})),
+                "sentiment":row.get::<_,String>(10)?, "stock_codes":serde_json::from_str::<Value>(&codes).unwrap_or(json!([]))
+            }))
+        }).map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn sentiment_generation(&self) -> Result<String, String> {
+        let connection = self.connection()?;
+        connection.execute("INSERT OR IGNORE INTO research_metadata(key,value) VALUES('sentiment_generation',?1)",
+            [format!("{}-{}", epoch_millis(), unique_suffix())]).map_err(|error| error.to_string())?;
+        connection
+            .query_row(
+                "SELECT value FROM research_metadata WHERE key='sentiment_generation'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())
+    }
+
+    fn reset_sentiment_generation(&self) -> Result<(), String> {
+        self.connection()?.execute("INSERT OR REPLACE INTO research_metadata(key,value) VALUES('sentiment_generation',?1)",
+            [format!("{}-{}", epoch_millis(), unique_suffix())]).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     fn connection(&self) -> Result<Connection, String> {
         let connection = Connection::open(&self.path)
             .map_err(|error| format!("failed to open research database: {error}"))?;
@@ -1720,7 +1770,11 @@ pub(crate) fn export_app_pack(app: &tauri::AppHandle, payload: &Value) -> Result
 }
 
 pub(crate) fn import_app_pack(app: &tauri::AppHandle, payload: &Value) -> Result<Value, String> {
-    with_exclusive_app_database(|| import_app_pack_unlocked(app, payload))
+    with_exclusive_app_database(|| {
+        let result = import_app_pack_unlocked(app, payload)?;
+        open_app_store(app)?.reset_sentiment_generation()?;
+        Ok(result)
+    })
 }
 
 fn import_app_pack_unlocked(app: &tauri::AppHandle, payload: &Value) -> Result<Value, String> {
@@ -1873,7 +1927,11 @@ fn preserve_local_research_state(
 }
 
 pub(crate) fn rollback_app_pack(app: &tauri::AppHandle) -> Result<Value, String> {
-    with_exclusive_app_database(|| rollback_app_pack_unlocked(app))
+    with_exclusive_app_database(|| {
+        let result = rollback_app_pack_unlocked(app)?;
+        open_app_store(app)?.reset_sentiment_generation()?;
+        Ok(result)
+    })
 }
 
 fn rollback_app_pack_unlocked(app: &tauri::AppHandle) -> Result<Value, String> {

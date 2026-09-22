@@ -61,7 +61,7 @@ impl RunCancellation {
         self.cancelled.load(Ordering::Acquire)
     }
 
-    async fn cancelled(&self) {
+    pub(crate) async fn cancelled(&self) {
         if self.is_cancelled() {
             return;
         }
@@ -527,7 +527,7 @@ pub(crate) fn build_model(config: &ProviderConfig) -> Result<ModelHandle, RigAge
     build_model_with_payload(config, &Value::Null)
 }
 
-fn build_model_with_payload(
+pub(crate) fn build_model_with_payload(
     config: &ProviderConfig,
     network_payload: &Value,
 ) -> Result<ModelHandle, RigAgentError> {
