@@ -121,6 +121,7 @@ export const TAURI_GET_ROUTES: Record<string, TauriRouteHandler> = {
   }),
   "/api/research/threads": async ({ invoke }) => invoke("api_research_threads"),
   "/api/research/index-status": async ({ invoke }) => invoke("api_research_index_status"),
+  "/api/agent/prompt-overlays": async ({ invoke }) => invoke("api_agent_prompt_overlays"),
   "/api/agent/runs": async ({ invoke, parsed }) => invoke("api_agent_run_list", {
     payload: {
       conversation_id: parsed.searchParams.get("conversation_id") || "",
@@ -306,6 +307,7 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/agent/cancel": async ({ invoke, payload }) => invoke("api_agent_cancel", {
     payload: { run_id: String(asRecord(payload).run_id || "").trim() },
   }),
+  "/api/agent/prompt-overlays/revert": async ({ invoke, payload }) => invoke("api_agent_prompt_overlay_revert", { payload }),
   "/api/agent/runs/delete-conversation": async ({ invoke, payload }) => invoke("api_agent_run_delete_conversation", { payload }),
 };
 export function buildTauriAgentPayload(request: Record<string, unknown>): Record<string, unknown> {

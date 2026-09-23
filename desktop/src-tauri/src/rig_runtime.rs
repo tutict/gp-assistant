@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use futures::StreamExt;
-use rig_agent::ModelHandle;
+use rig_agent::{completion::Prompt, AgentBuilder, ModelHandle};
 use rig_core::{
     client::{Capabilities, Capable, CompletionClient, DebugExt, Nothing, Provider},
     completion::Message,
@@ -26,7 +26,7 @@ use tokio::sync::Notify;
 #[cfg(test)]
 use rig_core::completion::ToolDefinition;
 
-use crate::{agent_harness, runtime};
+use crate::{agent_harness, prompt_upgrade, runtime};
 use stock_optimizer_core as gp_core;
 
 const MAX_HISTORY_MESSAGES: usize = 12;
@@ -1208,6 +1208,7 @@ where
         .filter(|value| value.is_object())
         .cloned()
         .unwrap_or_else(|| json!({}));
+    let prompt_app = research_app.clone();
     let registry = RigToolRegistry::new_with_research_and_cancel(
         data.clone(),
         context.clone(),
@@ -1227,13 +1228,16 @@ where
     };
     match run_mode(mode) {
         RunMode::Deterministic => {
-            let response = add_runtime_harness(base_response, mode, "not_requested", None, None);
+            let response = add_runtime_harness(base_response, mode, "not_requested", None, None, prompt_upgrade::BASE_PROMPT_VERSION);
             sink(status_event(&run_id, "validate", "校验证据与风险边界", 94));
             emit_compatibility_events(&run_id, &response, &mut sink);
             Ok(RigAgentOutcome { response })
         }
         RunMode::Model => {
             sink(status_event(&run_id, "model", "Rig 模型综合", 70));
+            let resolved_prompt = prompt_upgrade::resolve_prompt(mode, prompt_app.as_ref());
+            let system_prompt = resolved_prompt.text;
+            let prompt_version = resolved_prompt.version;
             let llm_value = payload.get("llm");
             let config = match llm_value {
                 Some(value) => match normalize_provider_config(value) {
@@ -1246,6 +1250,7 @@ where
                             "not_configured",
                             &format!("模型配置不可用，已回退本地结果：{error}"),
                             None,
+                            &prompt_version,
                             &mut sink,
                         );
                     }
@@ -1258,6 +1263,7 @@ where
                         "not_configured",
                         "未配置模型连接，已回退本地结果。",
                         None,
+                        &prompt_version,
                         &mut sink,
                     );
                 }
@@ -1276,11 +1282,11 @@ where
                             safe_runtime_error(&error.to_string(), llm_value)
                         ),
                         Some(config.api_format.clone()),
+                        &prompt_version,
                         &mut sink,
                     );
                 }
             };
-            let system_prompt = model_system_prompt(mode);
             let bounded_context = bounded_model_context(&base_response, &context);
             let history = history_messages_for_model(
                 payload.get("history").unwrap_or(&Value::Null),
@@ -1302,6 +1308,7 @@ where
                     "policy_rejected",
                     "模型请求上下文超过 2 MiB 限制，已回退本地结果。",
                     Some(config.api_format.clone()),
+                    &prompt_version,
                     &mut sink,
                 );
             }
@@ -1414,6 +1421,7 @@ where
                             safe_runtime_error(&error, llm_value)
                         ),
                         Some(config.api_format.clone()),
+                        &prompt_version,
                         &mut sink,
                     );
                 }
@@ -1428,6 +1436,7 @@ where
                         governed_model_outcome("timeout"),
                         "模型执行超时，已回退本地结果。",
                         Some(config.api_format.clone()),
+                        &prompt_version,
                         &mut sink,
                     );
                 }
@@ -1440,6 +1449,7 @@ where
                     "policy_rejected",
                     "模型输出超过限制，已回退本地结果。",
                     Some(config.api_format.clone()),
+                    &prompt_version,
                     &mut sink,
                 );
             }
@@ -1453,6 +1463,7 @@ where
                         "policy_rejected",
                         &format!("模型输出不是有效结构化结果，已回退本地结果：{error}"),
                         Some(config.api_format.clone()),
+                        &prompt_version,
                         &mut sink,
                     );
                 }
@@ -1469,6 +1480,7 @@ where
                     "model_success",
                     None,
                     Some(config.api_format.clone()),
+                    &prompt_version,
                 ),
                 Err(error) => add_runtime_harness(
                     base_response,
@@ -1479,6 +1491,7 @@ where
                         safe_runtime_error(&error, llm_value)
                     )),
                     Some(config.api_format.clone()),
+                    &prompt_version,
                 ),
             };
             let response = agent_harness::redact_persisted_response(&response, llm_value);
@@ -1613,16 +1626,46 @@ fn extract_stock_code(message: &str) -> Option<String> {
     None
 }
 
-fn model_system_prompt(mode: &str) -> String {
-    let profile = match mode {
-        "expert" => include_str!("../../../app/prompts/hot_money_early_v1.md"),
-        "research" => include_str!("../../../app/prompts/value_compounder_v1.md"),
-        _ => include_str!("../../../app/prompts/stock_soul.md"),
-    };
-    format!(
-        "{}\n\n当前模式：{mode}。只使用只读工具和本地证据，不能覆盖或虚构工具事实，不提供买卖建议或收益承诺。最终输出必须符合 JSON schema；reply 和事实 bullet 必须邻近引用有效证据编号。",
-        limit_text(profile.trim(), 12_000)
-    )
+
+pub(crate) async fn draft_method_card(llm: &Value, request: &Value) -> Result<String, String> {
+    let config = normalize_provider_config(llm)?;
+    let model = build_model_with_payload(&config, llm)
+        .map_err(|error| agent_harness::redact_persisted_error(&error.to_string(), Some(llm)))?;
+    let preamble = "你只改写研究方法卡正文，不调用工具，不提供买卖、仓位或收益承诺。只返回 JSON 对象，字段 prompt_markdown 是完整方法卡。必须保留用户给出的必需词，不得加入禁止词，正文不超过 4000 字。";
+    let agent = AgentBuilder::from_model_handle(model)
+        .name("prompt-upgrade")
+        .preamble(preamble)
+        .default_max_turns(1)
+        .max_tokens(2_500)
+        .temperature(0.1)
+        .build();
+    let question = serde_json::to_string(request)
+        .map_err(|error| format!("failed to encode prompt upgrade request: {error}"))?;
+    let timeout = std::time::Duration::from_secs(config.timeout_seconds.min(60).max(1));
+    let result = tokio::time::timeout(timeout, agent.prompt(question))
+        .await
+        .map_err(|_| "prompt upgrade timed out".to_string())?
+        .map_err(|error| agent_harness::redact_persisted_error(&error.to_string(), Some(llm)))?;
+    Ok(extract_method_card(&result))
+}
+
+fn extract_method_card(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let without_prefix = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .unwrap_or(trimmed)
+        .trim();
+    let stripped = without_prefix
+        .strip_suffix("```")
+        .unwrap_or(without_prefix)
+        .trim();
+    if let Ok(value) = serde_json::from_str::<Value>(stripped) {
+        if let Some(card) = value.get("prompt_markdown").and_then(Value::as_str) {
+            return card.trim().to_string();
+        }
+    }
+    stripped.to_string()
 }
 
 fn bounded_model_context(baseline: &Value, context: &Value) -> String {
@@ -1667,6 +1710,7 @@ fn complete_with_fallback<F>(
     outcome: &str,
     warning: &str,
     api_format: Option<String>,
+    prompt_version: &str,
     sink: &mut F,
 ) -> Result<RigAgentOutcome, String>
 where
@@ -1678,6 +1722,7 @@ where
         outcome,
         Some(warning.to_string()),
         api_format,
+        prompt_version,
     );
     sink(status_event(run_id, "validate", "校验证据与风险边界", 94));
     emit_compatibility_events(run_id, &response, sink);
@@ -1711,6 +1756,7 @@ fn add_runtime_harness(
     outcome: &str,
     warning: Option<String>,
     api_format: Option<String>,
+    prompt_version: &str,
 ) -> Value {
     let outcome = governed_model_outcome(outcome);
     if let Some(object) = response.as_object_mut() {
@@ -1726,7 +1772,7 @@ fn add_runtime_harness(
         object.insert(
             "harness".to_string(),
             serde_json::json!({
-                "prompt_version": "rig-agent-runtime-v1",
+                "prompt_version": prompt_version,
                 "policy_version": "agent-policy-v1",
                 "profile_id": profile_id_for_mode(mode),
                 "model_used": outcome == "model_success",

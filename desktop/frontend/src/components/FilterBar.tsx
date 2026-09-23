@@ -40,11 +40,6 @@ const CACHE_POLICY = {
   minute_days: 3,
 };
 
-function formatToolbarUniverseCount(value: unknown): string {
-  const count = Number(value);
-  return Number.isFinite(count) ? Math.max(0, Math.round(count)).toLocaleString("zh-CN") : "--";
-}
-
 function marketFreshnessTone(status: DataStatus | null): "fresh" | "warning" | "neutral" {
   if (!status) return "neutral";
   if (status.stale === true) return "warning";
@@ -275,7 +270,6 @@ export function FilterBar({ status, onStatusChange }: FilterBarProps) {
   const mobileCacheText = status?.cache_bytes !== undefined ? `缓存 ${formatBytes(status.cache_bytes)}` : "缓存 --";
   const mobileRefreshSummary = `${mobileUniverseText} · ${refreshDateText} · ${mobileCacheText}`;
   const desktopStatusTone = marketFreshnessTone(status);
-  const desktopRefreshSummary = `已同步 ${formatToolbarUniverseCount(status?.universe_count)} 只 · 数据 ${refreshDateText} · ${mobileCacheText}`;
   const maintenanceContent = (
     <div className="screen-refresh-maintenance-panel">
       <div className="refresh-options">
@@ -351,12 +345,16 @@ export function FilterBar({ status, onStatusChange }: FilterBarProps) {
         >
           <div className="screen-mobile-toolbar-row">
             <div className="screen-mobile-toolbar-main">
-              <div className="screen-mobile-status-inline" aria-label="股票池状态" title={mobileRefreshSummary}>
-                <strong>{mobileUniverseText}</strong>
-                <span aria-hidden="true">·</span>
-                <strong className="refresh-date-value">{refreshDateText}</strong>
-                <span aria-hidden="true">·</span>
-                <strong>{mobileCacheText}</strong>
+              <div className={`screen-mobile-status-inline${desktopStatusTone === "warning" ? " screen-toolbar-status warning" : ""}`} aria-label="股票池状态" title={mobileRefreshSummary}>
+                {desktopStatusTone === "warning" ? <strong>行情待更新</strong> : (
+                  <>
+                    <strong>{mobileUniverseText}</strong>
+                    <span aria-hidden="true">·</span>
+                    <strong className="refresh-date-value">{refreshDateText}</strong>
+                    <span aria-hidden="true">·</span>
+                    <strong>{mobileCacheText}</strong>
+                  </>
+                )}
               </div>
             </div>
 
@@ -382,10 +380,12 @@ export function FilterBar({ status, onStatusChange }: FilterBarProps) {
       ) : (
         <section className={`research-context-bar screen-toolbar screen-toolbar-card screen-toolbar-compact ${refreshing ? "refreshing" : ""}`} aria-label="股票池数据工具栏">
           <div className="screen-toolbar-compact-row">
-            <div className={`screen-toolbar-status ${desktopStatusTone}`} aria-label="股票池状态" title={desktopRefreshSummary}>
-              <span className="screen-toolbar-status-dot" aria-hidden="true" />
-              <strong>{desktopRefreshSummary}</strong>
-            </div>
+            {desktopStatusTone === "warning" && (
+              <div className="screen-toolbar-status warning" aria-label="股票池状态">
+                <span className="screen-toolbar-status-dot" aria-hidden="true" />
+                <strong>行情待更新</strong>
+              </div>
+            )}
 
             <div className="screen-toolbar-compact-actions">
               <button type="button" className="screen-toolbar-refresh-btn" onClick={refreshUniverse} disabled={refreshing}>

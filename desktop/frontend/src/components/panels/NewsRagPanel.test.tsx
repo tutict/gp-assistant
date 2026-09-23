@@ -373,10 +373,27 @@ describe("NewsRagPanel", () => {
       && node.props.className === "research-composer-send");
     expect(send.props.title).toContain("仅供研究，不构成投资建议");
     expect(send.props["aria-label"]).toContain("仅供研究，不构成投资建议");
-    expect(textOf(renderer.root.findByProps({ className: "research-empty-boundary" })))
+    expect(renderer.root.findAllByProps({ className: "research-empty-boundary" })).toHaveLength(0);
+    expect(textOf(renderer.root.findByProps({ className: "research-risk-boundary" })))
       .toBe("仅供研究，不构成投资建议。");
-    expect(renderer.root.findAllByProps({ className: "research-risk-boundary" }))
-      .toHaveLength(0);
+    await act(async () => { renderer.unmount(); });
+  });
+
+  it("omits the inner research title bar when the workspace header owns the actions", async () => {
+    const onHeaderToolsChange = vi.fn();
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<NewsRagPanel llmSettings={null} embedded onHeaderToolsChange={onHeaderToolsChange} />);
+    });
+    expect(renderer.root.findAllByProps({ className: "research-topbar" })).toHaveLength(0);
+    expect(textOf(renderer.toJSON())).not.toContain("BM25");
+    expect(renderer.root.findAllByProps({ className: "research-eyebrow" })).toHaveLength(0);
+    expect(textOf(renderer.root.findByProps({ className: "research-risk-boundary" }))).toBe("仅供研究，不构成投资建议。");
+    expect(onHeaderToolsChange).toHaveBeenCalled();
+    const tools = onHeaderToolsChange.mock.calls.at(-1)?.[0];
+    expect(tools.vectorReady).toBe(false);
+    expect(typeof tools.onRefresh).toBe("function");
+    expect(typeof tools.onOpenKnowledge).toBe("function");
     await act(async () => { renderer.unmount(); });
   });
 
@@ -452,7 +469,7 @@ describe("NewsRagPanel", () => {
     });
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(<NewsRagPanel llmSettings={null} />); });
-    expect(textOf(renderer.toJSON())).toContain("未配置模型，将使用本地证据回答");
+    expect(textOf(renderer.toJSON())).toContain("未配置模型，将只用已导入资料回答");
 
     const composer = renderer.root.find((node) => node.type === "form"
       && node.props.className === "research-composer");
@@ -477,6 +494,7 @@ describe("NewsRagPanel", () => {
     expect(queryCall?.[1]?.llm).toBeUndefined();
     expect(textOf(renderer.toJSON())).toContain("本地证据回答");
     expect(textOf(renderer.toJSON())).toContain("仅供研究，不构成投资建议。");
+    expect(textOf(renderer.toJSON())).not.toContain("BM25");
     await act(async () => { renderer.unmount(); });
   });
 
@@ -916,4 +934,30 @@ describe("NewsRagPanel", () => {
     expect(textOf(renderer.toJSON())).toContain("保留会话");
     await act(async () => { renderer.unmount(); });
   });
+
+  it("sends an empty watchlist to screening instead of asking for a stock that is not there", async () => {
+    getJson.mockImplementation((path: string) => {
+      if (path.startsWith("/api/research/overview")) {
+        return Promise.resolve({ schema_version: 2, document_count: 0, chunk_count: 0, unread_count: 0, retrieval: { vector: { ready: false } } });
+      }
+      if (path.startsWith("/api/research/messages")) return Promise.resolve({ items: [] });
+      if (path === "/api/research/threads") return Promise.resolve({ items: [] });
+      return Promise.resolve({});
+    });
+    const onGoToScreen = vi.fn();
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<NewsRagPanel llmSettings={null} watchlist={[]} onGoToScreen={onGoToScreen} />);
+    });
+    await act(async () => { await Promise.resolve(); });
+    const rendered = textOf(renderer.toJSON());
+    expect(rendered).toContain("先去选股");
+    expect(rendered).toContain("去选股收藏");
+    expect(rendered).not.toContain("选择一只自选股并立即更新");
+    const button = renderer.root.find((node) => node.type === "button" && textOf(node).includes("去选股收藏"));
+    await act(async () => { button.props.onClick(); });
+    expect(onGoToScreen).toHaveBeenCalled();
+    await act(async () => { renderer.unmount(); });
+  });
+
 });

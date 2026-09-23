@@ -81,6 +81,8 @@ interface LlmSettingsPanelProps {
   settings: LlmSettings | null;
   onChange: (settings: LlmSettings | null) => void;
   presentation?: "inline" | "dialog";
+  statusMode?: "full" | "inline";
+  openRequest?: number;
 }
 
 interface ProviderModelCatalog {
@@ -144,8 +146,14 @@ function modelLoadError(error: unknown): string {
   return raw.replace(/^Error:\s*/i, "").trim().slice(0, 220) || "无法拉取模型列表，请检查连接配置。";
 }
 
-export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }: LlmSettingsPanelProps) {
+export function LlmSettingsPanel({ settings, onChange, presentation = "inline", statusMode = "full", openRequest = 0 }: LlmSettingsPanelProps) {
   const [open, setOpen] = useState(false);
+  const seenOpenRequest = useRef(openRequest);
+  useEffect(() => {
+    if (!openRequest || openRequest === seenOpenRequest.current) return;
+    seenOpenRequest.current = openRequest;
+    setOpen(true);
+  }, [openRequest]);
   const [status, setStatus] = useState<{ text: string; state: string }>({ text: "", state: "neutral" });
   const normalized = useMemo(() => normalizeLlmSettings(settings), [settings]);
   const active = activeLlmProvider(settings);
@@ -484,11 +492,17 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline" }
           aria-haspopup={isDialog ? "dialog" : undefined}
           aria-expanded={open}
         >
-          <span>模型连接</span>
-          <strong>{active?.name || "未配置"}</strong>
-          <em>{active?.model || "选择一个兼容接口"}</em>
-          <b className={`llm-endpoint-state ${activeState.tone}`}>{activeState.label}</b>
-          {status.text && <span className={`llm-status ${status.state}`}>{status.text}</span>}
+          {statusMode === "inline" ? (
+            <span>{active?.name ? `模型：${active.name}` : "模型：未配置"}</span>
+          ) : (
+            <>
+              <span>模型连接</span>
+              <strong>{active?.name || "未配置"}</strong>
+              <em>{active?.model || "选择一个兼容接口"}</em>
+              <b className={`llm-endpoint-state ${activeState.tone}`}>{activeState.label}</b>
+              {status.text && <span className={`llm-status ${status.state}`}>{status.text}</span>}
+            </>
+          )}
         </button>
       </div>
 

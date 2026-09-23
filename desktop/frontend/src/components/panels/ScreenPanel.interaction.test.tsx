@@ -92,6 +92,28 @@ async function renderPanel(
 }
 
 describe("ScreenPanel adaptive states", () => {
+  it("tells the user to refresh before screening when market data is unavailable", async () => {
+    const renderer = await renderPanel();
+    expect(textContent(renderer)).toContain("点击运行查看当前模式的全市场筛选结果");
+    await act(async () => { renderer.unmount(); });
+    let blocked!: ReactTestRenderer;
+    await act(async () => {
+      blocked = create(
+        <ScreenPanel
+          criteria={criteria}
+          onCriteriaChange={() => undefined}
+          watchlist={[]}
+          onWatchlistChange={() => undefined}
+          marketStatus={null}
+        />,
+      );
+    });
+    expect(textContent(blocked)).toContain("行情还没准备好");
+    expect(textContent(blocked)).toContain("待检查或待同步");
+    expect(textContent(blocked)).not.toContain("点击运行查看当前模式的全市场筛选结果");
+    await act(async () => { blocked.unmount(); });
+  });
+
   it("applies mobile criteria only on Apply and discards cancelled drafts", async () => {
     Object.assign(window, {matchMedia: vi.fn(()=>({matches:true,addEventListener:vi.fn(),removeEventListener:vi.fn()}))});
     vi.stubGlobal("document", {activeElement:null,addEventListener:vi.fn(),removeEventListener:vi.fn()});

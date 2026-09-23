@@ -49,3 +49,8 @@
  .stock-detail-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
  .screen-criteria-sheet { border-radius: var(--radius-sheet) var(--radius-sheet) 0 0; padding-bottom: calc(var(--space-4) + var(--safe-bottom)); }
 }
+
+.screen-result-lead { margin: 0; color: var(--text); font-size: var(--fs-body); line-height: 1.5; }
+.screen-result-regime-plain { margin: 0; color: var(--text); }
+.adaptive-regime-details summary { cursor: pointer; color: var(--text-secondary); font-size: var(--fs-label); }
+.stock-selection-reason { display: block; color: var(--text-secondary); font-size: var(--fs-caption); font-weight: 400; white-space: normal; }

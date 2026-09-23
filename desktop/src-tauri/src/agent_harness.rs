@@ -1665,6 +1665,10 @@ fn validate_evidence_refs(text: &str, evidence_count: usize) -> Result<bool, Str
     }
     Ok(found)
 }
+pub(crate) fn contains_prohibited_instruction_text(text: &str) -> bool {
+    contains_forbidden_model_instruction(&json!({ "reply": text }))
+}
+
 fn contains_forbidden_model_instruction(model_response: &Value) -> bool {
     let mut text = model_response
         .get("reply")

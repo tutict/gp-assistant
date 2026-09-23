@@ -12,7 +12,10 @@ fn text<'a>(v: &'a Value, key: &str) -> &'a str {
 }
 
 fn digest(s: &str) -> String {
-    format!("{:x}", Sha256::digest(s.as_bytes()))
+    Sha256::digest(s.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 pub(crate) fn day_string(day: i64) -> String {

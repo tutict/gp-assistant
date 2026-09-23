@@ -19,6 +19,12 @@ fn now() -> i64 {
 fn id() -> String {
     crate::agent_ledger::next_run_id()
 }
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
 fn field<'a>(v: &'a Value, key: &str) -> Result<&'a str, String> {
     v.get(key)
         .and_then(Value::as_str)
@@ -94,7 +100,7 @@ pub(crate) async fn api_sentiment_start(app: AppHandle, payload: Value) -> Resul
     let llm = payload.get("llm").ok_or("请先配置 API 模型，再分析情绪")?;
     let config = rig_runtime::normalize_provider_config(llm)?;
     rig_runtime::validate_provider_config(&config)?;
-    let request_key=format!("{:x}",Sha256::digest(serde_json::to_vec(&json!({"stock":stock,"window":payload.get("window_days"),"industry":payload.get("industry"),"llm":llm})).map_err(|e|e.to_string())?));
+    let request_key = sha256_hex(&serde_json::to_vec(&json!({"stock":stock,"window":payload.get("window_days"),"industry":payload.get("industry"),"llm":llm})).map_err(|e|e.to_string())?);
     let run_id = id();
     {
         let mut state = runs().lock().map_err(|_| "任务锁不可用")?;

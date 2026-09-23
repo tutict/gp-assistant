@@ -23,6 +23,7 @@ use tauri_plugin_shell::ShellExt;
 
 mod agent_harness;
 mod agent_ledger;
+mod prompt_upgrade;
 mod news_rag;
 mod rag_pack;
 mod research;
@@ -2310,6 +2311,17 @@ async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value
                 .and_then(|result| result);
                 if let Err(error) = completion {
                     eprintln!("agent run ledger completion failed: {error}");
+                } else if let Some(profile_id) = prompt_upgrade::rejected_profile(&response) {
+                    if let Some(llm) = ledger_llm.clone() {
+                        let upgrade_app = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(error) =
+                                upgrade_rejected_prompt(upgrade_app, llm, profile_id).await
+                            {
+                                eprintln!("agent prompt upgrade failed: {error}");
+                            }
+                        });
+                    }
                 }
             }
             Ok(response)
@@ -2340,6 +2352,53 @@ async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value
             Err(error)
         }
     }
+}
+
+async fn upgrade_rejected_prompt(app: tauri::AppHandle, llm: Value, profile_id: String) -> Result<(), String> {
+    let claim_app = app.clone();
+    let claim_profile = profile_id.clone();
+    let claim = runtime::run_io_bound("prompt_upgrade_claim", move || {
+        prompt_upgrade::claim_with_app(&claim_app, &claim_profile)
+    })
+    .await?
+    .map_err(|error| error)?;
+    let Some(claim) = claim else {
+        return Ok(());
+    };
+    let request = prompt_upgrade::draft_request(&claim);
+    let body = rig_runtime::draft_method_card(&llm, &request).await?;
+    let activate_app = app.clone();
+    runtime::run_io_bound("prompt_upgrade_activate", move || {
+        prompt_upgrade::activate_with_app(&activate_app, &profile_id, &body)
+    })
+    .await?
+    .map_err(|error| error)?;
+    Ok(())
+}
+
+#[tauri::command]
+fn api_agent_prompt_overlays(app: tauri::AppHandle) -> Result<Value, String> {
+    let profiles = prompt_upgrade::status_with_app(&app)?;
+    Ok(json!({
+        "profiles": profiles.into_iter().map(|status| json!({
+            "profile_id": status.profile_id,
+            "label": status.label,
+            "prompt_version": status.prompt_version,
+            "builtin": status.builtin,
+        })).collect::<Vec<_>>()
+    }))
+}
+
+#[tauri::command]
+fn api_agent_prompt_overlay_revert(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let profile_id = payload
+        .get("profile_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "profile_id is required".to_string())?;
+    prompt_upgrade::revert_with_app(&app, profile_id)?;
+    api_agent_prompt_overlays(app)
 }
 
 /// Request cooperative cancellation of an active Agent run. The command returns immediately;
@@ -10832,6 +10891,8 @@ pub fn run() {
             api_upstream_rag_transfer_start,
             api_agent_stream,
             api_agent_cancel,
+            api_agent_prompt_overlays,
+            api_agent_prompt_overlay_revert,
             api_agent_run_list,
             api_agent_run_metrics,
             api_agent_run_get,

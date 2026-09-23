@@ -47,7 +47,8 @@ interface EntryProps {
 const StockEntry = memo(function StockEntry({item, mobile, saved, expanded, detailId, onExpand, onToggleWatchlist, onObserveStock, onNewsStock}: EntryProps) {
   const tone = Number.isFinite(item.change_pct) ? Number(item.change_pct)>0 ? "rise" : Number(item.change_pct)<0 ? "fall" : "neutral" : "neutral";
   const change = typeof item.change_pct === "number" ? formatSignedPercent(item.change_pct * 100) : "—";
-  const identity = <div className="stock-title"><strong>{item.name || item.code}</strong><span>{item.code} {item.industry}</span>{Boolean(item.riskTags?.length) && <small className="stock-risk-summary">关注：{item.riskTags!.join("、")}</small>}</div>;
+  const reason = firstSelectionReason(item);
+  const identity = <div className="stock-title"><strong>{item.name || item.code}</strong><span>{item.code} {item.industry}</span>{reason ? <small className="stock-selection-reason">入选：{reason}</small> : null}{Boolean(item.riskTags?.length) && <small className="stock-risk-summary">关注：{item.riskTags!.join("、")}</small>}</div>;
   const actions = <div className="row-button-group">
     <button type="button" className={`stock-row-action watchlist-action ${saved ? "saved" : ""}`} aria-pressed={saved} onClick={() => onToggleWatchlist(item)}>{saved ? "已收藏" : "收藏"}</button>
     {onObserveStock && <button type="button" className="stock-row-action observe-action" onClick={()=>onObserveStock(item.code)}>观察</button>}
@@ -76,6 +77,15 @@ function StockDetails({item,id}: {item:StockRowView;id:string}) {
     {reasons.length ? <ul>{reasons.map((line,index)=><li key={index}>{line}</li>)}</ul> : <p>暂无详细入选依据，请结合公告与财务数据继续核查。</p>}
     {!!item.riskTags?.length && <p className="stock-risk-summary">需关注：{item.riskTags.join("、")}</p>}
   </section>;
+}
+
+function firstSelectionReason(item: StockRowView): string {
+  const lines = [
+    ...(item.reasonTags || []).map(reasonLabel),
+    ...(item.reasons || []).map(reasonLabel),
+    ...(item.explanation?.basis || []),
+  ].map((line) => line.trim()).filter((line) => line && line !== "未识别原因");
+  return [...new Set(lines)][0] || "";
 }
 
 export function displayStockScore(item: StockRowView): number | undefined {

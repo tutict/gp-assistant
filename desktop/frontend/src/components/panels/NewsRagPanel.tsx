@@ -27,6 +27,15 @@ interface NewsRagPanelProps {
   initialCodeRequestId?: number;
   code?: string;
   onCodeChange?: (code: string) => void;
+  onGoToScreen?: () => void;
+  embedded?: boolean;
+  onHeaderToolsChange?: (tools: {
+    refreshing: boolean;
+    vectorReady: boolean;
+    onRefresh: () => void;
+    onOpenKnowledge: () => void;
+    onOpenInbox: () => void;
+  }) => void;
 }
 interface ThreadDetail { answers?: ResearchAnswer[]; }
 const MAX_PDF_FILE_BYTES = 25 * 1024 * 1024;
@@ -437,18 +446,28 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       .then(setIndexStatus)
       .catch((nextError) => setManagementResult({ error: (nextError as Error).message }));
   }, []);
+  const vectorReady = overview?.retrieval?.vector?.ready === true;
+  useEffect(() => {
+    if (!props.embedded || !props.onHeaderToolsChange) return;
+    props.onHeaderToolsChange({
+      refreshing,
+      vectorReady,
+      onRefresh: () => { void refresh(); },
+      onOpenKnowledge: openKnowledge,
+      onOpenInbox: () => { closeCitation(); setInboxOpen(true); },
+    });
+  }, [openKnowledge, props.embedded, props.onHeaderToolsChange, refresh, refreshing, vectorReady]);
 
   if (loading && !overview) {
     return <div className="research-loading">
       <PanelFeedback kind="loading" description="正在打开研究消息中心…" />
     </div>;
   }
-  const vectorReady = overview?.retrieval?.vector?.ready === true;
   const unreadVisibleIds = visibleMessages.filter((message) => message.unread).map((message) => message.id);
   const lastUpdated = formatResearchUpdatedAt(overview);
 
   return <section className="research-workspace" aria-label="研究消息中心">
-    <header className="research-topbar">
+    {!props.embedded && <header className="research-topbar">
       <div className="research-context">
         <button type="button" className="research-icon-button research-mobile-inbox-button"
           aria-label="打开自选股收件箱" title="自选股收件箱" onClick={() => { closeCitation(); setInboxOpen(true); }}>
@@ -458,7 +477,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
           {stock?.name || code || "全部自选股"}{code && <small>{code}</small>}
         </h1></div>
         <span className={`research-mode ${vectorReady ? "ready" : "lexical"}`}><Search size={13} />
-          {vectorReady ? "混合检索" : "BM25 证据模式"}
+          {vectorReady ? "关键词 + 语义检索" : "关键词检索"}
         </span>
       </div>
       <div className="research-actions">
@@ -472,7 +491,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
           <Database size={15} /><span>{nativeMobile ? "资料包同步" : "知识库管理"}</span>
         </button>
       </div>
-    </header>
+    </header>}
 
     {error && <div className="research-error">
       <PanelFeedback kind="error" title="研究中心暂时不可用" description={error} />
@@ -537,6 +556,8 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
             refreshing={refreshing}
             onRefresh={() => void refresh()}
             onKnowledge={openKnowledge}
+            needsWatchlist={watchlist.length === 0}
+            onGoToScreen={props.onGoToScreen}
           /> : <div className="research-event-list">
             {eventGroups.map((group) => <EventGroup key={group.key}
               label={group.label} tone={group.key} messages={group.messages}
@@ -550,11 +571,9 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
 
         <Answers answers={answers} pushCitation={pushCitationSelection}
           highlightedId={highlightAnswerId} sectionRef={answersRef} />
-        {(visibleMessages.length > 0 || answers.length > 0) &&
-          <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>}
         </div>
-        {!activeLlmConfig && <small className="research-composer-setup">未配置模型，将使用本地证据回答</small>}
         <form className="research-composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
+          {!activeLlmConfig && <p className="research-composer-setup">未配置模型，将只用已导入资料回答</p>}
           {evidenceNotice && <div className="research-evidence-notice" role="status">{evidenceNotice}</div>}
           <div><label className="research-composer-label" htmlFor={questionInputId}>
             <span>研究问题</span>{activeLlmConfig && <small>模型回答会强制引用证据</small>}
@@ -581,6 +600,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
               </button>
             </div>
           </div>
+          <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>
         </form>
       </main>
 
@@ -670,23 +690,32 @@ function ResearchEmptyState(props: {
   refreshing: boolean;
   onRefresh: () => void;
   onKnowledge: () => void;
+  needsWatchlist?: boolean;
+  onGoToScreen?: () => void;
 }) {
   return <div className="research-empty">
     <BookOpen size={28} />
     <strong>还没有可研究的消息</strong>
-    <p>选择一只自选股并立即更新，或从知识库管理导入公告与研报。</p>
+    <p>{props.needsWatchlist
+      ? "消息按自选股整理。先去选股，在结果里点「收藏」，再回来更新。"
+      : "选择一只自选股并立即更新，或从知识库管理导入公告与研报。"}</p>
     <div className="research-empty-actions">
-      <button type="button" className="research-empty-primary"
-        disabled={props.refreshing} onClick={props.onRefresh}>
-        <RefreshCw size={15} className={props.refreshing ? "is-spinning" : ""} />
-        <span>{props.refreshing ? "更新中" : "立即更新"}</span>
-      </button>
+      {props.needsWatchlist ? (
+        <button type="button" className="research-empty-primary" onClick={props.onGoToScreen}>
+          <span>去选股收藏</span>
+        </button>
+      ) : (
+        <button type="button" className="research-empty-primary"
+          disabled={props.refreshing} onClick={props.onRefresh}>
+          <RefreshCw size={15} className={props.refreshing ? "is-spinning" : ""} />
+          <span>{props.refreshing ? "更新中" : "立即更新"}</span>
+        </button>
+      )}
       <button type="button" className="research-empty-ghost" onClick={props.onKnowledge}>
         <Database size={15} />
         <span>知识库管理</span>
       </button>
     </div>
-    <small className="research-empty-boundary">仅供研究，不构成投资建议。</small>
   </div>;
 }
 
@@ -763,6 +792,7 @@ function InboxPanel(props: {
       <span><strong>全部消息</strong><small>跨股票研究流</small></span>
       {props.unread > 0 && <b>{props.unread}</b>}
     </button>
+    {props.watchlist.length === 0 && <p className="research-inbox-empty-hint">还没有自选股。到选股结果里点「收藏」。</p>}
     {props.watchlist.map((item) => {
       const stockCode = normalizeStockCode(item.code);
       const unread = props.unreadByStock[stockCode] || 0;
@@ -889,7 +919,7 @@ function EvidenceInspector({ citation: item }: { citation: ResearchCitation }) {
     <blockquote>{item.excerpt}</blockquote>
     <details className="research-retrieval-details"><summary>检索技术详情</summary><dl>
       <div><dt>融合分数</dt><dd>{formatScore(item.retrieval_score)}</dd></div>
-      <div><dt>BM25</dt><dd>{formatScore(item.lexical_score)}</dd></div>
+      <div><dt>关键词</dt><dd>{formatScore(item.lexical_score)}</dd></div>
       <div><dt>向量</dt><dd>{item.vector_score == null ? "未使用" : formatScore(item.vector_score)}</dd></div>
     </dl></details>
     {externalUrl && <a href={externalUrl} target="_blank" rel="noreferrer">
@@ -997,7 +1027,7 @@ function KnowledgeDrawer(props: {
               ? "索引存在完整性问题，建议重建索引。"
             : props.status?.hybrid_ready
               ? "FTS 与向量索引完整，可执行混合检索。"
-              : "FTS 索引完整；当前平台使用 BM25 检索。"}</p>
+              : "FTS 索引完整；当前平台使用关键词检索。"}</p>
       </section>}
 
       <section className="knowledge-section">

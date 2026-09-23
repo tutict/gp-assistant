@@ -71,8 +71,11 @@ describe("news page CSS contract", () => {
   it("keeps the full risk boundary permanently rendered", () => {
     expect(newsPanel).toContain('<p className="research-risk-boundary">仅供研究，不构成投资建议。</p>');
     expect(newsPanel).not.toContain("!mobile && <p className=\"research-risk-boundary\"");
-    expect(newsPanel.indexOf('className="research-risk-boundary"'))
-      .toBeLessThan(newsPanel.indexOf('<form className="research-composer"'));
+    expect(newsPanel).not.toContain('className="research-empty-boundary"');
+    const formAt = newsPanel.indexOf('<form className="research-composer"');
+    const boundaryAt = newsPanel.indexOf('className="research-risk-boundary"');
+    expect(formAt).toBeGreaterThan(-1);
+    expect(boundaryAt).toBeGreaterThan(formAt);
   });
 
   it("keeps source badges neutral and tokenized", () => {

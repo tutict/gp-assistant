@@ -72,5 +72,9 @@ describe("ScreenResultView", () => {
     expect(markup).toContain("90%");
     expect(markup).toContain("主榜");
     expect(markup).toContain("探索榜");
+    expect(markup).toContain("按综合评分选出");
+    expect(markup).toContain("不是买卖建议");
+    expect(markup).toContain("入选：测试理由");
+    expect(markup).toContain("当前识别为趋势");
   });
 });

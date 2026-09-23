@@ -387,6 +387,95 @@ impl AgentRunStore {
             .map_err(|error| format!("failed to commit agent conversation deletion: {error}"))?;
         Ok(deleted)
     }
+
+    pub(crate) fn list_policy_rejections(
+        &self,
+        profile_id: &str,
+        prompt_version: &str,
+    ) -> Result<Vec<PolicyRejectionSample>, String> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT run_id, question, result_json
+                 FROM agent_runs
+                 WHERE status = 'completed' AND result_json IS NOT NULL
+                 ORDER BY completed_at_epoch_ms DESC, run_id DESC
+                 LIMIT 2000",
+            )
+            .map_err(|error| format!("failed to query policy rejections: {error}"))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|error| format!("failed to read policy rejections: {error}"))?;
+        let mut samples = Vec::new();
+        for row in rows {
+            let (run_id, question, result_json) =
+                row.map_err(|error| format!("failed to read policy rejection row: {error}"))?;
+            let result: Value = serde_json::from_str(&result_json).unwrap_or(Value::Null);
+            let harness = result.get("harness");
+            if harness
+                .and_then(|item| item.get("model_outcome"))
+                .and_then(Value::as_str)
+                != Some("policy_rejected")
+            {
+                continue;
+            }
+            if harness
+                .and_then(|item| item.get("profile_id"))
+                .and_then(Value::as_str)
+                != Some(profile_id)
+            {
+                continue;
+            }
+            if harness
+                .and_then(|item| item.get("prompt_version"))
+                .and_then(Value::as_str)
+                != Some(prompt_version)
+            {
+                continue;
+            }
+            samples.push(PolicyRejectionSample {
+                run_id,
+                question,
+                error: rejection_warning(&result),
+            });
+        }
+        Ok(samples)
+    }
+
+}
+
+
+fn rejection_warning(result: &Value) -> String {
+    let warnings = result
+        .get("warnings")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    warnings
+        .iter()
+        .copied()
+        .find(|item| item.contains("回退") || item.contains("安全"))
+        .unwrap_or_else(|| warnings.first().copied().unwrap_or("policy_rejected"))
+        .to_string()
+}
+
+pub(crate) struct PolicyRejectionSample {
+    pub run_id: String,
+    pub question: String,
+    pub error: String,
 }
 
 pub(crate) fn is_conversation_deleted_error(error: &str) -> bool {

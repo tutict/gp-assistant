@@ -638,3 +638,35 @@ export async function deleteAgentConversationRuns(conversationId: string): Promi
   }, { timeoutMs: 10_000 }));
   return optionalNumber(response.deleted) ?? 0;
 }
+
+export interface PromptOverlayStatus {
+  profileId: string;
+  label: string;
+  promptVersion: string;
+  builtin: boolean;
+}
+
+function normalizePromptOverlay(value: unknown): PromptOverlayStatus | null {
+  const record = asRecord(value);
+  const profileId = boundedText(record.profile_id, 64);
+  const label = boundedText(record.label, 32);
+  const promptVersion = boundedText(record.prompt_version, 128);
+  if (!profileId || !label || !promptVersion || typeof record.builtin !== "boolean") return null;
+  return { profileId, label, promptVersion, builtin: record.builtin };
+}
+
+export async function getPromptOverlays(signal?: AbortSignal): Promise<PromptOverlayStatus[]> {
+  const response = asRecord(await getJson("/api/agent/prompt-overlays", { signal }));
+  return Array.isArray(response.profiles)
+    ? response.profiles.map(normalizePromptOverlay).filter((item): item is PromptOverlayStatus => Boolean(item))
+    : [];
+}
+
+export async function revertPromptOverlay(profileId: string): Promise<PromptOverlayStatus[]> {
+  const identity = boundedText(profileId, 64);
+  if (!identity) throw new Error("profile_id is required");
+  const response = asRecord(await postJson("/api/agent/prompt-overlays/revert", { profile_id: identity }, { timeoutMs: 10_000 }));
+  return Array.isArray(response.profiles)
+    ? response.profiles.map(normalizePromptOverlay).filter((item): item is PromptOverlayStatus => Boolean(item))
+    : [];
+}

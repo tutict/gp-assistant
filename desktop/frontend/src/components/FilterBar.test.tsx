@@ -50,19 +50,34 @@ describe("FilterBar", () => {
       renderer = create(<FilterBar status={status} />);
     });
 
-    expect(renderer.root.findByProps({ "aria-label": "股票池状态" })).toBeTruthy();
+    const statusNode = renderer.root.findByProps({ "aria-label": "股票池状态" });
+    expect(statusNode.findAllByType("strong").map((node) => node.children.join("")).join(" ")).toContain("已同步");
+    expect(JSON.stringify(renderer.toJSON())).toContain("08/04");
   });
 
-  it("renders the desktop data status as the compact toolbar summary", async () => {
+  it("keeps the screen toolbar free of the global universe summary", async () => {
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(<FilterBar status={{ universe_count: 5231, quote_trade_date: "20260804", current_trade_date: "20260804", stale: false }} />);
       await Promise.resolve();
     });
 
+    expect(renderer.root.findAllByProps({ "aria-label": "股票池状态" })).toHaveLength(0);
+    expect(JSON.stringify(renderer.toJSON())).not.toContain("已同步 5,231 只");
+    expect(JSON.stringify(renderer.toJSON())).not.toContain("数据 2026");
+  });
+
+  it("shows only a stale warning in the screen toolbar", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<FilterBar status={{ universe_count: 5231, quote_trade_date: "20260804", current_trade_date: "20260805", stale: true }} />);
+      await Promise.resolve();
+    });
+
     const status = renderer.root.findByProps({ "aria-label": "股票池状态" });
-    expect(status.props.className).toContain("fresh");
-    expect(status.findByType("strong").children.join("")).toContain("已同步 5,231 只");
+    expect(status.props.className).toContain("warning");
+    expect(status.findByType("strong").children.join("")).toBe("行情待更新");
+    expect(JSON.stringify(renderer.toJSON())).not.toContain("已同步");
   });
 
   it("pauses automatic log collapse while the desktop log shell is hovered", async () => {

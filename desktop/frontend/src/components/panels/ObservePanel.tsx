@@ -134,6 +134,7 @@ export function ObservePanel({
 
   return (
     <div className="panel-container observe-panel-container">
+      <p className="workspace-boundary">仅供研究，不构成投资建议。</p>
       <div className="panel-controls observe-panel-controls">
         <div className="form-row inline stock-code-row observe-code-row">
           <label htmlFor="observeCode">股票代码</label>

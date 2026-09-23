@@ -205,18 +205,20 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
           </button>
         </div>
         <div className="backtest-param-strip">
-          <span><b>持仓</b><strong>{topN}</strong></span>
+          <span><b>持有只数</b><strong>{topN}</strong></span>
           <span><b>区间</b><strong>{start}~{end}</strong></span>
-          <span><b>调仓</b><strong>{shortRebalanceLabel(rebalance)}</strong></span>
-          <span><b>成本</b><strong>{formatNumber(costBps)}基点</strong></span>
+          <span><b>调仓频率</b><strong>{shortRebalanceLabel(rebalance)}</strong></span>
+          <span><b>单次成本</b><strong>{formatNumber(costBps)} 基点</strong></span>
           <span><b>基准</b><strong>{shortBenchmarkLabel(benchmark)}</strong></span>
           <span><b>方式</b><strong>{backtestStrategyLabel(strategyMode)}</strong></span>
         </div>
       </div>
 
       {result && resultSignature !== parameterSignature && <p className="backtest-stale-notice" role="status">参数已修改，结果待更新</p>}
+      <p className="workspace-boundary">仅供研究，不构成投资建议。</p>
       <details className="backtest-parameter-disclosure" open={paramsOpen} onToggle={event => setParamsOpen(event.currentTarget.open)}>
       <summary>回测参数</summary>
+      <p className="backtest-parameter-note">候选快照是当前名单的组合表现，滚动验证需要历史快照，自适应波段会按区间重新选股。</p>
       <div className="panel-controls backtest-controls">
         {canEditCriteria && <>
           <div className="form-row inline">
@@ -242,9 +244,9 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
         </>}
         <div className="form-row inline"><label htmlFor="btStart">开始</label><input id="btStart" type="date" value={start} disabled={loading} onChange={(e) => setStart(e.target.value)} /></div>
         <div className="form-row inline"><label htmlFor="btEnd">结束</label><input id="btEnd" type="date" value={end} disabled={loading} onChange={(e) => setEnd(e.target.value)} /></div>
-        <div className="form-row inline"><label htmlFor="btTopN">持仓</label><input id="btTopN" type="number" min="1" max="100" value={topN} disabled={loading} onChange={(e) => setTopN(Number(e.target.value) || 10)} /></div>
+        <div className="form-row inline"><label htmlFor="btTopN">持有只数</label><input id="btTopN" type="number" min="1" max="100" value={topN} disabled={loading} onChange={(e) => setTopN(Number(e.target.value) || 10)} /></div>
         <div className="form-row inline">
-          <label htmlFor="btRebalance">调仓</label>
+          <label htmlFor="btRebalance">调仓频率</label>
           <select id="btRebalance" value={rebalance} disabled={loading} onChange={(e) => setRebalance(e.target.value)}>
             <option value="none">买入持有</option>
             <option value="monthly">月度调仓</option>
@@ -262,7 +264,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
           setStrategyMode(e.target.value);
           if (e.target.value !== "adaptive_swing_v1") setAdaptiveScreenSpec(undefined);
         }}><option value="candidate_snapshot">候选快照</option><option value="walk_forward">滚动验证</option><option value="adaptive_swing_v1">自适应波段</option></select></div>
-        <div className="form-row inline"><label htmlFor="btCostBps">成本（基点）</label><input id="btCostBps" type="number" min="0" max="500" value={costBps} disabled={loading} onChange={(e) => setCostBps(Number(e.target.value) || 0)} /></div>
+        <div className="form-row inline"><label htmlFor="btCostBps">单次成本（基点，1 基点 = 0.01%）</label><input id="btCostBps" type="number" min="0" max="500" value={costBps} disabled={loading} onChange={(e) => setCostBps(Number(e.target.value) || 0)} /></div>
       </div>
 
       </details>

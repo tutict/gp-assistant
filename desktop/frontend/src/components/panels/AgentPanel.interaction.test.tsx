@@ -226,14 +226,25 @@ describe("AgentPanel run replay interactions", () => {
       },
     });
     const renderer = await renderPanel(null);
-    expect(nodeText(renderer.root)).toContain("未配置模型时使用本地工具分析");
+    expect(nodeText(renderer.root)).toContain("还不能做模型研究，可以先配置模型，或只用本地行情和财务核对。");
+    expect(nodeText(renderer.root)).toContain("配置模型");
     const textarea = renderer.root.findByType("textarea");
 
     await act(async () => {
       textarea.props.onChange({ target: { value: "hi" } });
     });
+    const send = buttonWithClass(renderer, "send-btn");
+    if (mode !== "quick") {
+      expect(send.props.disabled).toBe(true);
+      expect(nodeText(renderer.root)).toContain("需要模型");
+      await act(async () => {
+        await send.props.onClick();
+      });
+      expect(invokeMock).not.toHaveBeenCalled();
+      return;
+    }
     await act(async () => {
-      await buttonWithClass(renderer, "send-btn").props.onClick();
+      await send.props.onClick();
     });
 
     expect(invokeMock).toHaveBeenCalledWith("api_agent_stream", {
@@ -246,6 +257,7 @@ describe("AgentPanel run replay interactions", () => {
     expect(nodeText(renderer.root)).toContain("本地工具结果");
     expect(nodeText(renderer.root)).toContain("仅供选股研究，不构成投资建议。");
     expect(nodeText(renderer.root)).not.toContain("请先配置 API 和模型，再开始 Agent 对话。");
+    expect(nodeText(renderer.root)).not.toContain("需要模型");
     },
   );
 

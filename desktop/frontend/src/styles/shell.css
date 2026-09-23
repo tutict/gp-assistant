@@ -240,12 +240,12 @@
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 650;
   transition:
     color var(--motion-fast) ease,
@@ -350,6 +350,14 @@
   display: none !important;
 }
 
+.workspace-boundary {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+  line-height: 1.4;
+}
+
+
 .panel-container {
   min-width: 0;
   overflow: visible;
@@ -365,7 +373,7 @@
   gap: 2px;
   padding: 3px;
   overflow-x: auto;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line);
   border-radius: var(--radius-md);
   background: var(--surface);
   scrollbar-width: none;
@@ -468,14 +476,14 @@
   opacity: 1;
 }
 
-.form-row input:focus,
-.form-row select:focus,
-.form-row textarea:focus,
-.stock-code-input input:focus {
+.form-row input:focus-visible,
+.form-row select:focus-visible,
+.form-row textarea:focus-visible,
+.stock-code-input input:focus-visible {
   border-color: var(--accent);
   background: var(--surface-3);
-  box-shadow: 0 0 0 3px var(--focus-ring);
-  outline: 0;
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
 }
 
 .run-btn,
@@ -686,7 +694,7 @@
 .financial-indicator-item span {
   display: block;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
 }
 

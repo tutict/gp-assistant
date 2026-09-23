@@ -35,7 +35,7 @@ describe("mobile UI density contract", () => {
       "--fs-body: 14px",
       "--fs-data: 13px",
       "--fs-label: 12px",
-      "--fs-caption: 11px",
+      "--fs-caption: 12px",
       "--touch-comfort: 44px",
       "--touch-dense: 32px",
       "--nav-height: 60px",
@@ -79,7 +79,10 @@ describe("mobile UI density contract", () => {
       /\.agent-history-item\.active\s*\{[^}]*box-shadow:\s*inset 2px 0 var\(--agent-accent\)/,
     );
     expect(componentsCss).toMatch(
-      /\.agent-history-main\s*\{[^}]*outline:\s*none[^}]*-webkit-tap-highlight-color:\s*transparent/,
+      /\.agent-history-main\s*\{[^}]*-webkit-tap-highlight-color:\s*transparent/,
+    );
+    expect(componentsCss).toMatch(
+      /\.agent-history-main:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--accent-strong\)/,
     );
   });
 

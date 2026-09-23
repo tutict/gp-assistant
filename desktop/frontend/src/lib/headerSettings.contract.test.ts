@@ -43,11 +43,13 @@ describe("header settings contract", () => {
   });
 
   it("keeps font scale overrides token-only and registers all initial settings", () => {
-    for (const scale of ["small", "large"]) {
+    const expectedLengths = { small: 3, large: 5 };
+    for (const scale of ["small", "large"] as const) {
       const body = ruleBody(tokens, `:root[data-font-scale="${scale}"]`);
       const declarations = body.split(";").map((item) => item.trim()).filter(Boolean);
-      expect(declarations).toHaveLength(5);
+      expect(declarations).toHaveLength(expectedLengths[scale]);
       expect(declarations.every((declaration) => declaration.startsWith("--fs-"))).toBe(true);
+      expect(declarations.join(" ")).not.toContain("11px");
     }
 
     const settings = createSettingsRegistry({

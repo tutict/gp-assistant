@@ -1683,35 +1683,24 @@ async function captureObserveSummaryBaselines(browser, targetRoot) {
 async function assertNewsPageState(page, device, scenarioName) {
   const riskBoundary = page.locator(".research-risk-boundary");
   let riskText = "";
+  await riskBoundary.waitFor({ state: "visible" });
+  riskText = (await riskBoundary.innerText()).trim();
+  if (riskText !== "仅供研究，不构成投资建议。") {
+    throw new Error(`${device.name}/${scenarioName} does not show the full research risk boundary`);
+  }
   if (device.mobile) {
     const send = page.locator(".research-composer-send");
     const title = await send.getAttribute("title");
     const ariaLabel = await send.getAttribute("aria-label");
-    riskText = title || "";
     if (!title?.includes("仅供研究，不构成投资建议")
       || !ariaLabel?.includes("仅供研究，不构成投资建议")) {
       throw new Error(`${device.name}/${scenarioName} does not expose the research boundary on send`);
     }
-    if (await riskBoundary.isVisible()) {
-      throw new Error(`${device.name}/${scenarioName} still spends a composer row on the risk boundary`);
-    }
-    if (scenarioName === "empty") {
-      await page.locator(".research-empty-boundary").waitFor({ state: "visible" });
-    }
-  } else {
-    const boundary = await riskBoundary.count() > 0
-      ? riskBoundary
-      : page.locator(".research-empty-boundary");
-    await boundary.waitFor({ state: "visible" });
-    riskText = (await boundary.innerText()).trim();
-    if (riskText !== "仅供研究，不构成投资建议。") {
-      throw new Error(`${device.name}/${scenarioName} does not show the full research risk boundary`);
-    }
   }
 
   const composerBox = await page.locator(".research-composer").boundingBox();
-  if (!composerBox || (device.mobile && composerBox.height > 104.5)) {
-    throw new Error(`${device.name}/${scenarioName} composer exceeds the 104px mobile limit: ${JSON.stringify(composerBox)}`);
+  if (!composerBox || (device.mobile && composerBox.height > 180)) {
+    throw new Error(`${device.name}/${scenarioName} composer exceeds the 180px mobile limit: ${JSON.stringify(composerBox)}`);
   }
 
   const composerVisible = await page.locator(".research-composer").evaluate((element) => {

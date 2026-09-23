@@ -132,8 +132,24 @@ for (const file of styleFiles) {
   }
 
   for (const match of css.matchAll(/font-size:\s*([\d.]+)px/g)) {
-    if (Number(match[1]) < minimumFont) {
+    const size = Number(match[1]);
+    if (size < minimumFont) {
       addError(file, css, match.index, `font size ${match[1]}px is below ${minimumFont}px`);
+    }
+    if (size < 12) {
+      const before = css.slice(Math.max(0, match.index - 500), match.index);
+      const selectors = [...before.matchAll(/([^{}]+)\{/g)];
+      const selector = selectors.length ? selectors[selectors.length - 1][1] : "";
+      const chartTick = /kline-inspector-title|kline-inspector-text|kline-last-price/.test(selector) && size >= 11;
+      if (!chartTick) {
+        addError(file, css, match.index, `HTML font size ${match[1]}px is below 12px`);
+      }
+    }
+  }
+
+  for (const match of css.matchAll(/font-size:\s*(0\.\d+)rem/g)) {
+    if (Number(match[1]) < 0.75) {
+      addError(file, css, match.index, `font size ${match[1]}rem is below 0.75rem`);
     }
   }
 
@@ -172,7 +188,7 @@ for (const token of [
   "--fs-body: 14px",
   "--fs-data: 13px",
   "--fs-label: 12px",
-  "--fs-caption: 11px",
+  "--fs-caption: 12px",
   "--touch-comfort: 44px",
   "--touch-dense: 32px",
   "--nav-height: 60px",

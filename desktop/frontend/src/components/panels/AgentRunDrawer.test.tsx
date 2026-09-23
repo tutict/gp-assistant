@@ -6,7 +6,9 @@ import type { AgentStreamEvent } from "../../types";
 const agentRunMocks = vi.hoisted(() => ({
   getAgentRun: vi.fn(),
   getAgentRunMetrics: vi.fn(),
+  getPromptOverlays: vi.fn(),
   listAgentRuns: vi.fn(),
+  revertPromptOverlay: vi.fn(),
 }));
 
 vi.mock("../../lib/agentRuns", () => agentRunMocks);
@@ -201,7 +203,9 @@ beforeEach(() => {
   stubTestGlobals();
   agentRunMocks.getAgentRun.mockReset();
   agentRunMocks.getAgentRunMetrics.mockReset().mockResolvedValue(null);
+  agentRunMocks.getPromptOverlays.mockReset().mockResolvedValue([]);
   agentRunMocks.listAgentRuns.mockReset();
+  agentRunMocks.revertPromptOverlay.mockReset();
   baseProps.onClose.mockReset();
   baseProps.onToggleWatchlist.mockReset();
 });
@@ -1125,5 +1129,42 @@ describe("AgentRunDrawer accessibility", () => {
     expect(preventDefault).toHaveBeenCalledTimes(2);
     expect(last.focus).toHaveBeenCalledTimes(1);
     expect(currentTarget.querySelectorAll).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("AgentRunDrawer prompt overlay", () => {
+  it("shows the local prompt version and reverts to the built-in card", async () => {
+    agentRunMocks.listAgentRuns.mockResolvedValue([]);
+    agentRunMocks.getPromptOverlays.mockResolvedValue([
+      {
+        profileId: "hot_money_early_v1",
+        label: "专家模式",
+        promptVersion: "rig-agent-runtime-v1+hot_money_early_v1+1",
+        builtin: false,
+      },
+    ]);
+    agentRunMocks.revertPromptOverlay.mockResolvedValue([
+      {
+        profileId: "hot_money_early_v1",
+        label: "专家模式",
+        promptVersion: "rig-agent-runtime-v1",
+        builtin: true,
+      },
+    ]);
+    const renderer = await renderDrawer();
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open {...baseProps} />);
+    });
+    await flush();
+    const revert = renderer.root.findByProps({ children: "退回内置" });
+    await act(async () => {
+      revert.props.onClick();
+    });
+    await flush();
+    expect(agentRunMocks.revertPromptOverlay).toHaveBeenCalledWith("hot_money_early_v1");
+    const text = renderedText(renderer);
+    expect(text).toContain("内置");
+    expect(text).toContain("rig-agent-runtime-v1");
+    expect(text).not.toContain("退回内置");
   });
 });

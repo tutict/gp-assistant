@@ -16,7 +16,7 @@ const NAV_ITEMS: Array<{ key: ViewKey; label: string; icon: LucideIcon; href: st
   { key: "observe", label: "观察", icon: Eye, href: "#sectionObserve" },
   { key: "backtest", label: "回测", icon: ChartNoAxesCombined, href: "#sectionBacktest" },
   { key: "news", label: "消息", icon: Newspaper, href: "#sectionNewsRag" },
-  { key: "agent", label: "Agent", icon: Bot, href: "#sectionAgent" },
+  { key: "agent", label: "研究助手", icon: Bot, href: "#sectionAgent" },
 ];
 
 export function Sidebar({ view, onNavigate, open, onClose }: SidebarProps) {

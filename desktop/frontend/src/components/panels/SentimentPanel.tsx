@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
-import { Activity, ExternalLink, Play, RefreshCw, Send, X } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Activity, ExternalLink, Menu, Play, RefreshCw, Send, X } from "lucide-react";
 import type { LlmSettings, WatchlistItem } from "../../types";
 import type { SentimentEvidence, SentimentSnapshot, SentimentTimelinePoint } from "../../types/sentiment";
 import { normalizeStockCode } from "../../lib/format";
@@ -34,6 +34,14 @@ interface Props {
   initialCodeRequestId?: number;
   initialView?: WorkspaceView;
   onAskAgent?: (prompt: string) => void;
+  onGoToScreen?: () => void;
+}
+interface ResearchHeaderTools {
+  refreshing: boolean;
+  vectorReady: boolean;
+  onRefresh: () => void;
+  onOpenKnowledge: () => void;
+  onOpenInbox: () => void;
 }
 const dimensionLabels = { messages: "消息情绪", price: "价格与成交量", industry: "行业情绪" };
 const metricLabels: Record<string, string> = {
@@ -71,6 +79,19 @@ export function SentimentPanel(props: Props) {
   const state = useSentiment(code, watchlistCodes);
   const [input, setInput] = useState(code);
   const [view, setView] = useState<WorkspaceView>(props.initialView || "sources");
+  const [researchTools, setResearchTools] = useState<ResearchHeaderTools | null>(null);
+  const onHeaderToolsChange = useCallback((next: ResearchHeaderTools) => {
+    setResearchTools((current) => (
+      current
+      && current.refreshing === next.refreshing
+      && current.vectorReady === next.vectorReady
+      && current.onRefresh === next.onRefresh
+      && current.onOpenKnowledge === next.onOpenKnowledge
+      && current.onOpenInbox === next.onOpenInbox
+        ? current
+        : next
+    ));
+  }, []);
   const [mountedViews, setMountedViews] = useState(() => ({ sources: true, sentiment: props.initialView === "sentiment" }));
   const [inputError, setInputError] = useState("");
   const selectCode = (next: string) => {
@@ -137,14 +158,25 @@ export function SentimentPanel(props: Props) {
         <span className="sentiment-window">近 30 天</span>
       </form>
       <div className="sentiment-header-actions">
-        <LlmSettingsPanel settings={props.llmSettings || null} onChange={props.onLlmSettingsChange || (() => undefined)} presentation="dialog" />
+        {researchTools && <div className="sentiment-header-tools">
+          <button type="button" className="research-icon-button research-mobile-inbox-button" aria-label="打开自选股收件箱" title="自选股收件箱" onClick={researchTools.onOpenInbox}>
+            <Menu size={18} aria-hidden="true" />
+          </button>
+          <span className="sentiment-retrieval">{researchTools.vectorReady ? "关键词 + 语义检索" : "关键词检索"}</span>
+          <button type="button" className="btn" onClick={researchTools.onRefresh} disabled={researchTools.refreshing}>
+            {researchTools.refreshing ? "更新中" : "立即更新"}
+          </button>
+          <button type="button" className="btn" onClick={researchTools.onOpenKnowledge}>资料</button>
+        </div>}
+        <LlmSettingsPanel settings={props.llmSettings || null} onChange={props.onLlmSettingsChange || (() => undefined)} presentation="dialog" statusMode="inline" />
       </div>
     </header>
     {inputError && <p role="alert" className="sentiment-error">{inputError}</p>}
     <div id="sentiment-panel-sources" role="tabpanel" aria-labelledby="sentiment-tab-sources" className="sentiment-view sentiment-view-sources" hidden={view !== "sources"}>
-      {mountedViews.sources && <Suspense fallback={<p className="sentiment-empty">正在加载消息与资料…</p>}><NewsRagPanel llmSettings={props.llmSettings} onLlmSettingsChange={props.onLlmSettingsChange} watchlist={props.watchlist} code={code} onCodeChange={selectCode} /></Suspense>}
+      {mountedViews.sources && <Suspense fallback={<p className="sentiment-empty">正在加载消息与资料…</p>}><NewsRagPanel llmSettings={props.llmSettings} onLlmSettingsChange={props.onLlmSettingsChange} watchlist={props.watchlist} code={code} onCodeChange={selectCode} onGoToScreen={props.onGoToScreen} embedded onHeaderToolsChange={onHeaderToolsChange} /></Suspense>}
     </div>
     <div id="sentiment-panel-analysis" role="tabpanel" aria-labelledby="sentiment-tab-sentiment" className="sentiment-view sentiment-view-analysis" hidden={view !== "sentiment"}>
+      {view === "sentiment" && <p className="workspace-boundary">仅供研究，不构成投资建议。</p>}
       {mountedViews.sentiment && <StockWorkspace key={code} code={code} props={props} state={state} onSelect={selectCode} />}
     </div>
   </section>;

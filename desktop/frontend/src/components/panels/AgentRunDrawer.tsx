@@ -3,11 +3,14 @@ import { ArrowLeft, CircleCheck, CircleHelp, CircleX, History, LoaderCircle, X }
 import {
   getAgentRun,
   getAgentRunMetrics,
+  getPromptOverlays,
   listAgentRuns,
+  revertPromptOverlay,
   type AgentRunDetail,
   type AgentRunMetrics,
   type AgentRunStatus,
   type AgentRunSummary,
+  type PromptOverlayStatus,
 } from "../../lib/agentRuns";
 import type { AgentStreamEvent, StockRowView, WatchlistItem } from "../../types";
 import { IconButton } from "../ui/IconButton";
@@ -251,6 +254,7 @@ export function AgentRunDrawer({
   const [detail, setDetail] = useState<AgentRunDetail>();
   const [detailState, setDetailState] = useState<RequestState>("idle");
   const [detailError, setDetailError] = useState<string>();
+  const [overlays, setOverlays] = useState<PromptOverlayStatus[]>([]);
   const drawerRef = useRef<HTMLElement | null>(null);
   const closeControlRef = useRef<HTMLDivElement | null>(null);
   const listRequestTokenRef = useRef(0);
@@ -371,6 +375,22 @@ export function AgentRunDrawer({
         }
       });
   }, [cancelDetailRequest, syncTerminalDetail]);
+
+  useEffect(() => {
+    if (!open) {
+      setOverlays([]);
+      return;
+    }
+    const controller = new AbortController();
+    void getPromptOverlays(controller.signal)
+      .then((loaded) => {
+        if (!controller.signal.aborted) setOverlays(loaded);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setOverlays([]);
+      });
+    return () => controller.abort();
+  }, [open, ledgerRevision]);
 
   useEffect(() => {
     if (!open) {
@@ -598,6 +618,28 @@ export function AgentRunDrawer({
           />
         </div>
       </header>
+      {overlays.length > 0 && (
+        <div className="agent-prompt-overlays" aria-label="本机提示词版本">
+          {overlays.map((overlay) => (
+            <div key={overlay.profileId} className="agent-prompt-overlay">
+              <span>{overlay.label}提示词：{overlay.builtin ? "内置" : "本机"} {overlay.promptVersion}</span>
+              {!overlay.builtin && (
+                <button
+                  type="button"
+                  className="agent-run-retry"
+                  onClick={() => {
+                    void revertPromptOverlay(overlay.profileId)
+                      .then(setOverlays)
+                      .catch(() => undefined);
+                  }}
+                >
+                  退回内置
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       {view === "list" ? (
         <RunList
           activeConversationId={activeConversationId}

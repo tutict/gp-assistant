@@ -59,7 +59,7 @@ textarea:disabled {
 }
 
 a {
-  color: var(--accent-strong);
+  color: var(--link);
   text-decoration: none;
 }
 

@@ -6,7 +6,7 @@
   gap: 2px;
   flex-wrap: wrap;
   padding: 4px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--control-line);
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface) 82%, transparent);
   width: fit-content;
@@ -58,7 +58,8 @@
   font-size: 0.88rem;
 }
 .form-row input:focus, .form-row select:focus, .form-row textarea:focus {
-  outline: none;
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
@@ -130,7 +131,7 @@
   max-width: 100%;
   gap: 2px;
   padding: 2px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
 }
@@ -156,8 +157,8 @@
 }
 
 .segmented > button:focus-visible {
-  outline: 0;
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
 }
 
 .segmented > button.active {
@@ -210,8 +211,8 @@
 }
 
 .toggle-chip:has(input:focus-visible) {
-  outline: 0;
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
 }
 
 .toggle-chip.active {
@@ -387,7 +388,7 @@
   text-align: left;
   white-space: nowrap;
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: var(--fs-caption);
   font-weight: 700;
 }
 .backtest-controls input,
@@ -477,7 +478,7 @@
   border-bottom: 1px solid var(--line); font-size: 0.84rem;
 }
 .news-sentiment {
-  font-size: 0.72rem; padding: 1px 6px; border-radius: 3px; font-weight: 600;
+  font-size: var(--fs-caption); padding: 1px 6px; border-radius: 3px; font-weight: 600;
 }
 .news-sentiment.positive { background: rgba(231,76,60,0.12); color: var(--rise); }
 .news-sentiment.negative { background: rgba(46,204,113,0.12); color: var(--fall); }
@@ -544,7 +545,7 @@
 .agent-rail-footer span,
 .agent-rail-label {
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: var(--fs-caption);
   font-style: normal;
 }
 .agent-new-chat-label {
@@ -581,7 +582,7 @@
 }
 .agent-rail-section-head strong {
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: var(--fs-caption);
   font-weight: 700;
 }
 .agent-history-list {
@@ -613,7 +614,6 @@
   padding: 7px 38px 7px 10px;
   border: 0;
   border-radius: 3px;
-  outline: none;
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -631,8 +631,9 @@
   box-shadow: inset 2px 0 var(--agent-accent);
 }
 .agent-history-main:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
   background: color-mix(in srgb, var(--surface-2) 42%, transparent);
-  box-shadow: inset 2px 0 color-mix(in srgb, var(--text-secondary) 70%, transparent);
 }
 .agent-history-main span {
   grid-area: title;
@@ -645,7 +646,7 @@
 .agent-history-main em,
 .agent-history-main b {
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: var(--fs-caption);
   font-style: normal;
   font-weight: 650;
 }
@@ -831,7 +832,7 @@
   justify-self: end;
   padding: 3px 7px;
   border-radius: 999px;
-  font-size: 0.7rem;
+  font-size: var(--fs-caption);
   font-weight: 700;
 }
 .llm-endpoint-state.ready,
@@ -868,7 +869,7 @@
 .llm-switcher-summary span {
   display: block;
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: var(--fs-caption);
 }
 .llm-switcher-summary strong {
   display: block;
@@ -948,7 +949,7 @@
 }
 .llm-provider-card em {
   color: var(--text-secondary);
-  font-size: 0.74rem;
+  font-size: var(--fs-caption);
   font-style: normal;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -969,7 +970,7 @@
 .llm-editor-head span {
   display: block;
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: var(--fs-caption);
 }
 .llm-editor-head strong {
   display: block;
@@ -1014,7 +1015,7 @@
 .llm-preset-btn:hover { border-color: color-mix(in srgb, var(--accent) 54%, var(--line)); color: var(--accent); }
 .llm-status {
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: var(--fs-caption);
   white-space: nowrap;
 }
 .llm-status.success { color: var(--success); }
@@ -1063,7 +1064,7 @@
 .llm-endpoint-state,
 .llm-provider-card b {
   padding: 2px 7px;
-  font-size: 0.68rem;
+  font-size: var(--fs-caption);
   line-height: 1.4;
   white-space: nowrap;
 }
@@ -1138,7 +1139,7 @@
   height: 28px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-  font-size: 0.74rem;
+  font-size: var(--fs-caption);
 }
 
 .llm-provider-card strong {
@@ -1146,7 +1147,7 @@
 }
 
 .llm-provider-card em {
-  font-size: 0.72rem;
+  font-size: var(--fs-caption);
 }
 
 .llm-provider-editor {
@@ -1207,7 +1208,7 @@
 
 .llm-switcher .form-row label {
   color: color-mix(in srgb, var(--text-secondary) 90%, var(--text));
-  font-size: 0.74rem;
+  font-size: var(--fs-caption);
   font-weight: 650;
 }
 
@@ -1331,7 +1332,7 @@
   }
 
   .llm-switcher .form-row label {
-    font-size: 0.72rem;
+    font-size: var(--fs-caption);
   }
 
   .llm-switcher .form-row input,
@@ -1596,7 +1597,7 @@
   padding: 5px 8px;
   background: color-mix(in srgb, var(--surface) 96%, var(--bg));
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: var(--fs-caption);
 }
 
 .llm-model-menu-head span {
@@ -1604,7 +1605,7 @@
 }
 
 .llm-model-menu-head b {
-  font-size: 0.68rem;
+  font-size: var(--fs-caption);
   font-weight: 650;
 }
 
@@ -1624,9 +1625,13 @@
   cursor: pointer;
 }
 
-.llm-model-option:hover,
+.llm-model-option:hover {
+  background: color-mix(in srgb, var(--accent-soft) 28%, var(--surface-2));
+}
+
 .llm-model-option:focus-visible {
-  outline: none;
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
   background: color-mix(in srgb, var(--accent-soft) 28%, var(--surface-2));
 }
 
@@ -1652,7 +1657,7 @@
 .llm-model-option em {
   overflow: hidden;
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: var(--fs-caption);
   font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1663,7 +1668,7 @@
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
-  font-size: 0.64rem;
+  font-size: var(--fs-caption);
   white-space: nowrap;
 }
 
@@ -1671,7 +1676,7 @@
   min-height: 16px;
   margin: 0;
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: var(--fs-caption);
   line-height: 1.35;
 }
 
@@ -1703,7 +1708,7 @@
   border-radius: 7px;
   background: color-mix(in srgb, var(--accent-soft) 24%, var(--surface-2));
   color: var(--text);
-  font-size: 0.74rem;
+  font-size: var(--fs-caption);
   font-weight: 700;
   cursor: pointer;
 }
@@ -1727,7 +1732,7 @@
   min-width: 0;
   margin: -2px 0 0;
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: var(--fs-caption);
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -1757,7 +1762,7 @@
   border-radius: 5px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: var(--fs-caption);
   cursor: pointer;
 }
 
@@ -1799,7 +1804,7 @@
   gap: 7px;
   min-height: 32px;
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: var(--fs-caption);
   cursor: pointer;
 }
 
@@ -1972,7 +1977,7 @@
   grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
   gap: 2px;
   padding: 2px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
 }
@@ -1997,9 +2002,9 @@
 .settings-toggle {
   position: relative;
   width: 44px;
-  min-height: 30px;
+  min-height: var(--touch-dense);
   padding: 3px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line);
   border-radius: var(--radius-lg);
   background: var(--surface-2);
 }
@@ -2025,9 +2030,9 @@
 
 .settings-select {
   width: 100%;
-  min-height: 36px;
+  min-height: var(--touch-dense);
   padding: 0 var(--space-3);
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--text);

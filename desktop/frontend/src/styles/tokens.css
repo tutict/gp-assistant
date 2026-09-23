@@ -14,7 +14,7 @@
   --line-soft: rgba(255, 255, 255, 0.075);
   --text: #f4f7fa;
   --text-secondary: #a9b4bf;
-  --text-tertiary: #7f8b97;
+  --text-tertiary: #96a3b0;
   --accent: #d83d35;
   --accent-strong: #c6322c;
   --accent-muted: #a92924;
@@ -55,6 +55,7 @@
   --chart-fullscreen: #05070a;
   --chart-benchmark: #6ca8b2;
   --focus-ring: rgba(216, 61, 53, 0.34);
+  --link: #ffb4ae;
   --fs-display: 20px;
   --fs-headline: 20px;
   --fs-title: 18px;
@@ -116,8 +117,6 @@
 :root[data-font-scale="small"] {
   --fs-body: 13px;
   --fs-data: 12px;
-  --fs-label: 11px;
-  --fs-caption: 11px;
   --fs-title: 17px;
 }
 
@@ -149,7 +148,7 @@
   --line-soft: rgba(21, 31, 42, 0.1);
   --text: #18212a;
   --text-secondary: #566473;
-  --text-tertiary: #6e7b88;
+  --text-tertiary: #546270;
   --accent: #d83d35;
   --accent-strong: #b92d28;
   --accent-muted: #a92924;
@@ -184,6 +183,7 @@
   --chart-fullscreen: #eef2f6;
   --chart-benchmark: #26758a;
   --focus-ring: rgba(216, 61, 53, 0.24);
+  --link: #c6322c;
   color-scheme: light;
 }
 

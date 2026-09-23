@@ -107,6 +107,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const [activeConversationId, setActiveConversationId] = useLocalStorage<string>(AGENT_ACTIVE_KEY, "");
   const [railCollapsed, setRailCollapsed] = useLocalStorage<boolean>(AGENT_RAIL_COLLAPSED_KEY, false);
   const [input, setInput] = useState("");
+  const [settingsRequest, setSettingsRequest] = useState(0);
   const composer = useMobileComposer(input);
   const [conversationSearch, setConversationSearch] = useState("");
   const [runningConversationIds, setRunningConversationIds] = useState<string[]>([]);
@@ -146,6 +147,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const activeMode = AGENT_MODES.find((item) => item.id === activeConversation?.mode) || AGENT_MODES[0];
   const currentRunning = Boolean(activeConversation?.id && runningConversationIds.includes(activeConversation.id));
   const messages = activeConversation?.messages || [];
+  const modelRequired = activeMode.id !== "quick" && !activeLlmConfig;
   const sortedConversations = useMemo(
     () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
     [conversations],
@@ -404,6 +406,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     const mode = activeConversation?.mode || "quick";
     if (
       !text
+      || (mode !== "quick" && !activeLlmConfig)
       || activeRunsRef.current.has(conversationId || "")
       || !conversationId
       || conversationDeletionInFlightIds.has(conversationId)
@@ -596,7 +599,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         </div>
 
         <div className="agent-rail-footer agent-rail-model-settings">
-          <LlmSettingsPanel settings={llmSettings} onChange={onLlmSettingsChange} presentation="dialog" />
+          <LlmSettingsPanel settings={llmSettings} onChange={onLlmSettingsChange} presentation="dialog" openRequest={settingsRequest} />
         </div>
       </aside>
 
@@ -652,8 +655,9 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           {messages.length === 0 ? (
             <AgentEmptyState
               mode={activeMode.id}
-              activeModel={activeProvider?.model}
+              activeModel={activeLlmConfig?.model}
               onExample={setInput}
+              onConfigureModel={() => setSettingsRequest((value) => value + 1)}
             />
           ) : messages.map((msg, i) => (
             <article key={`${msg.timestamp}-${i}`} className={`agent-message ${msg.role} ${msg.error ? "error" : ""}`}>
@@ -717,7 +721,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
                 send();
               }
             }}
-            placeholder={composer.mobile ? "输入研究问题…" : `给股选优 Agent 发送消息，当前为 ${activeMode.label}`}
+            placeholder={composer.mobile ? "输入研究问题…" : `给研究助手发送消息，当前为 ${activeMode.label}`}
             rows={3}
             disabled={currentRunning || activeConversationDeleting}
           />
@@ -739,12 +743,13 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             </div>
             <p className="agent-mode-note">{activeMode.hint}{messages.length ? ` 下一条将使用${activeMode.label}。` : ""}</p>
           </div>
+          <p className="workspace-boundary">仅供研究，不构成投资建议。</p>
           <div className="agent-composer-footer">
             <button
               type="button"
               className="send-btn"
               onClick={currentRunning ? cancelActiveRun : send}
-              disabled={!currentRunning && (activeConversationDeleting || !input.trim())}
+              disabled={!currentRunning && (activeConversationDeleting || !input.trim() || modelRequired)}
               aria-label={currentRunning ? "停止" : "发送"}
             >
               {currentRunning ? <Square size={17} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
@@ -772,20 +777,35 @@ function AgentEmptyState({
   mode,
   activeModel,
   onExample,
+  onConfigureModel,
 }: {
   mode: AgentMode;
   activeModel?: string;
   onExample: (example: string) => void;
+  onConfigureModel: () => void;
 }) {
+  const needsModel = mode !== "quick" && !activeModel;
   return (
     <div className="agent-empty-state">
       <h2>开始对话</h2>
       <div className="agent-examples">
         {AGENT_EXAMPLES[mode].map((example) => (
-          <button key={example} type="button" onClick={() => onExample(example)}>{example}</button>
+          <button
+            key={example}
+            type="button"
+            disabled={needsModel}
+            onClick={() => { if (!needsModel) onExample(example); }}
+          >
+            {needsModel ? `${example}（需要模型）` : example}
+          </button>
         ))}
       </div>
-      {!activeModel && <p role="status">未配置模型时使用本地工具分析</p>}
+      {!activeModel && (
+        <div className="agent-model-gate">
+          <p role="status">还不能做模型研究，可以先配置模型，或只用本地行情和财务核对。</p>
+          <button type="button" className="action-btn" onClick={onConfigureModel}>配置模型</button>
+        </div>
+      )}
     </div>
   );
 }

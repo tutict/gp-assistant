@@ -75,7 +75,7 @@ describe("Android light theme contract", () => {
     expect(composerRow).toContain("grid-template-columns: minmax(0, 1fr) var(--touch-comfort)");
     expect(composerSend).toContain("width: var(--touch-comfort)");
     expect(mobile).toMatch(/\.research-composer-label[\s\S]*?display:\s*none/);
-    expect(mobile).toMatch(/\.research-risk-boundary[\s\S]*?display:\s*none/);
+    expect(mobile).toMatch(/\.research-risk-boundary[\s\S]*?display:\s*block/);
   });
 
   it("uses one bottom-sheet language for the Android inbox and evidence inspector", () => {

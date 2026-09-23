@@ -65,11 +65,12 @@ describe("desktop research layout contract", () => {
 
   it("keeps the desktop composer as a compact single row", () => {
     const composer = cssBlock(researchCss, ".research-composer");
-    expect(composer).toContain("height: calc(var(--touch-dense) + var(--space-1))");
-    expect(composer).toContain("padding: 0");
+    expect(composer).toContain("height: auto");
+    expect(composer).toContain("gap: 8px");
 
     const row = cssBlock(researchCss, ".research-composer-row");
     expect(row).toContain("align-items: center");
+    expect(row).toContain("border: 1px solid var(--control-line)");
 
     const label = cssBlock(researchCss, ".research-composer-label");
     expect(label).toContain("display: none");

@@ -353,6 +353,7 @@ export default function App({ onMounted }: AppProps) {
                 onNewsStock={openNewsForStock}
                 onRunBacktest={runCurrentCriteriaBacktest}
                 mobileRuntime={mobileRuntime}
+                marketStatus={marketStatus}
               />
             </div>
           )}
@@ -393,6 +394,7 @@ export default function App({ onMounted }: AppProps) {
                 initialCodeRequestId={newsRequest?.requestId ?? 0}
                 initialView={newsRequest?.view}
                 onAskAgent={handoffToAgent}
+                onGoToScreen={() => navigate("screen")}
               />
             </Suspense>
           )}

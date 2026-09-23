@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AdaptiveScreenRequest,
+  DataStatus,
   ScreenResult,
   SectorScreenResult,
   StockRowView,
@@ -35,6 +36,7 @@ interface ScreenPanelProps {
   onNewsStock?: (code: string) => void;
   onRunBacktest?: (screenSpec?: AdaptiveScreenRequest, criteriaSnapshot?: FilterCriteria) => void;
   mobileRuntime?: boolean;
+  marketStatus?: DataStatus | null;
 }
 
 type ScreenMode = "screen" | "sectorScreen" | "boardScreen" | "customScreen" | "trendScreen";
@@ -108,6 +110,7 @@ export function ScreenPanel({
   onObserveStock,
   onNewsStock,
   onRunBacktest,
+  marketStatus,
 }: ScreenPanelProps) {
   const mobileLayout = useMediaQuery("(max-width: 768px)");
   const [criteriaOpen, setCriteriaOpen] = useState(false);
@@ -272,9 +275,12 @@ export function ScreenPanel({
     criteria.requireInstitutionBuyRatio && "机构买入占比高于卖出", `最多 ${criteria.resultLimit} 只`,
   ].filter(Boolean).join(" · ");
   const controlsClassName = `panel-controls screen-panel-controls ${mode === "customScreen" ? "custom-screen-controls" : mode === "sectorScreen" || mode === "boardScreen" ? "grouped-screen-controls" : ""}`;
-  const emptyDescription = mode === "customScreen"
-    ? "设置筛选条件后运行查询。"
-    : "点击运行查看当前模式的全市场筛选结果。";
+  const dataUnavailable = marketDataUnavailable(marketStatus);
+  const emptyDescription = dataUnavailable
+    ? "行情还没准备好。先点上方「刷新」，完成后再运行筛选。顶部若显示待检查或待同步，就是还不能筛选。"
+    : mode === "customScreen"
+      ? "设置筛选条件后运行查询。"
+      : "点击运行查看当前模式的全市场筛选结果。";
 
   const controlFields = (
     <>
@@ -354,6 +360,7 @@ export function ScreenPanel({
         </>
       )}
 
+      <p className="workspace-boundary">仅供研究，不构成投资建议。</p>
       <div className="screen-criteria-summary">
         <span>{mode === "customScreen" ? `当前条件：${appliedCriteriaSummary}` : mode === "trendScreen" ? `趋势区间：${trendStart} 至 ${trendEnd}` : "当前条件：全市场 · 按综合评分排序"}</span>
         {mobileLayout && hasControlFields && <button type="button" className="action-btn" onClick={() => { setDraftCriteria({...criteria}); setDraftDates({start:trendStart,end:trendEnd}); setCriteriaOpen(true); }}>筛选条件</button>}
@@ -368,7 +375,7 @@ export function ScreenPanel({
       </Sheet>
 
       <div className="panel-result screen-panel-result">
-        {error && <PanelFeedback kind="error" title="查询失败" description={error} action={<button type="button" className="action-btn" onClick={() => void run()}>重试</button>} />}
+        {error && <PanelFeedback kind="error" title="查询失败" description={dataUnavailable ? `${error} 若顶部仍是待检查或待同步，先点「刷新」再重试。` : error} action={<button type="button" className="action-btn" onClick={() => void run()}>重试</button>} />}
         {loading && !error && (
           <PanelFeedback
             kind="loading"
@@ -397,6 +404,15 @@ export function ScreenPanel({
   );
 }
 
+
+
+function marketDataUnavailable(status: DataStatus | null | undefined): boolean {
+  if (status === undefined) return false;
+  if (status === null) return true;
+  const count = Number(status.universe_count);
+  if (!Number.isFinite(count) || count <= 0) return true;
+  return status.policy?.mode === "empty";
+}
 
 function compactGroupMeta(meta: string) {
   const total = meta.match(/总数\s*([\d,]+)/)?.[1];
@@ -436,6 +452,7 @@ export const ScreenResultView = memo(function ScreenResultView({
 
   return (
     <div className="result-list screen-result-list">
+      <p className="screen-result-lead">按综合评分选出 {rows.length} 只。分数高只说明更符合当前条件，不是买卖建议。每只股票下面有一条入选原因。</p>
       <div className="metric-strip screen-result-metric-strip">
         <div className="metric"><span>返回数</span><strong>{resultRecord.returned ?? rows.length}</strong></div>
         <div className="metric"><span>总数</span><strong>{resultRecord.total ?? rows.length}</strong></div>
@@ -451,20 +468,24 @@ export const ScreenResultView = memo(function ScreenResultView({
               <em>人工覆盖为 {regimeLabel(resultRecord.market_regime.effective)}</em>
             )}
           </div>
-          <p>
-            置信度 {(resultRecord.market_regime.confidence * 100).toFixed(0)}% ·
-            数据 {resultRecord.market_regime.as_of_date || "--"} ·
-            候选覆盖 {(resultRecord.market_regime.coverage.candidate_ratio * 100).toFixed(0)}% ·
-            宽基 {resultRecord.market_regime.coverage.benchmark_usable}/{resultRecord.market_regime.coverage.benchmark_requested} ·
-            市场宽度 {resultRecord.market_regime.coverage.breadth_usable ? "有效" : "不足"}
-            （{resultRecord.market_regime.coverage.breadth_observed}/{resultRecord.market_regime.coverage.breadth_requested}，
-            {(resultRecord.market_regime.coverage.breadth_coverage_ratio * 100).toFixed(0)}%）
-          </p>
-          <ul>
-            {resultRecord.market_regime.evidence.map((item) => (
-              <li key={item.key}><span>{item.label}</span><strong>{formatRegimeEvidence(item.key, item.value)}</strong></li>
-            ))}
-          </ul>
+          <p className="screen-result-regime-plain">当前识别为{regimeLabel(resultRecord.market_regime.effective || resultRecord.market_regime.detected)}。名单按这个状态排列，覆盖和证据可以展开。</p>
+          <details className="adaptive-regime-details">
+            <summary>查看覆盖和证据</summary>
+            <p>
+              置信度 {(resultRecord.market_regime.confidence * 100).toFixed(0)}% ·
+              数据 {resultRecord.market_regime.as_of_date || "--"} ·
+              候选覆盖 {(resultRecord.market_regime.coverage.candidate_ratio * 100).toFixed(0)}% ·
+              宽基 {resultRecord.market_regime.coverage.benchmark_usable}/{resultRecord.market_regime.coverage.benchmark_requested} ·
+              市场宽度 {resultRecord.market_regime.coverage.breadth_usable ? "有效" : "不足"}
+              （{resultRecord.market_regime.coverage.breadth_observed}/{resultRecord.market_regime.coverage.breadth_requested}，
+              {(resultRecord.market_regime.coverage.breadth_coverage_ratio * 100).toFixed(0)}%）
+            </p>
+            <ul>
+              {resultRecord.market_regime.evidence.map((item) => (
+                <li key={item.key}><span>{item.label}</span><strong>{formatRegimeEvidence(item.key, item.value)}</strong></li>
+              ))}
+            </ul>
+          </details>
         </section>
       )}
 

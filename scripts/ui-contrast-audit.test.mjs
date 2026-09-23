@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 import {
@@ -35,4 +37,29 @@ test("uses WCAG large-text thresholds", () => {
   assert.equal(requiredContrast({ fontSize: 14, fontWeight: 700 }), 3);
   assert.equal(requiredContrast({ fontSize: 14, fontWeight: 600 }), 4.5);
   assert.equal(requiredContrast({ fontSize: 17, fontWeight: 700 }), 3);
+});
+
+
+
+function hexColor(hex) {
+  const value = hex.replace("#", "");
+  const expanded = value.length === 3 ? value.split("").map((part) => part + part).join("") : value;
+  const number = Number.parseInt(expanded, 16);
+  return parseCssColor(`rgb(${(number >> 16) & 255}, ${(number >> 8) & 255}, ${number & 255})`);
+}
+
+test("keeps tertiary text and links above the body contrast floor", () => {
+  const tokens = readFileSync(fileURLToPath(new URL("../desktop/frontend/src/styles/tokens.css", import.meta.url)), "utf8");
+  const pairs = [
+    ["#96a3b0", "#222a33"],
+    ["#546270", "#edf1f5"],
+    ["#ffb4ae", "#14191f"],
+    ["#ffb4ae", "#0d1014"],
+    ["#c6322c", "#ffffff"],
+    ["#c6322c", "#f4f6f8"],
+  ];
+  for (const [foreground, background] of pairs) {
+    assert.ok(tokens.includes(foreground), `${foreground} should be declared`);
+    assert.ok(contrastRatio(hexColor(foreground), hexColor(background)) >= 4.5);
+  }
 });

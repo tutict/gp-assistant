@@ -64,3 +64,27 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.agent-prompt-overlays {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 0 4px;
+}
+
+.agent-prompt-overlay {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-prompt-overlay > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
