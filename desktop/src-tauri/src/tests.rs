@@ -1,4 +1,14 @@
+use super::{llm::*, market::*, observe::*, research::*, screening::*};
 use super::*;
+use rusqlite::{params, Connection};
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+use stock_optimizer_core as gp_core;
+
 
 #[test]
 fn adaptive_screen_request_accepts_nested_and_legacy_contracts() {

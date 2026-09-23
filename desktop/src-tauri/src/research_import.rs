@@ -541,3 +541,41 @@ mod tests {
         assert!(error.contains("safety limit"));
     }
 }
+
+#[tauri::command]
+pub(crate) async fn api_research_import_url(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    #[cfg(mobile)]
+    {
+        let _ = (app, payload);
+        Err("URL research import is only available on desktop".to_string())
+    }
+    #[cfg(not(mobile))]
+    {
+        let result = crate::runtime::with_heavy_network_permit(
+            "api_research_import_url",
+            crate::research_import::import_url(&app, &payload),
+        )
+        .await?;
+        crate::research::schedule_research_embeddings(app);
+        Ok(result)
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn api_research_import_pdf(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    #[cfg(mobile)]
+    {
+        let _ = (app, payload);
+        Err("PDF research import is only available on desktop".to_string())
+    }
+    #[cfg(not(mobile))]
+    {
+        let worker_app = app.clone();
+        let result = crate::runtime::run_cpu_bound("api_research_import_pdf", move || {
+            crate::research_import::import_pdf(&worker_app, &payload)
+        })
+        .await??;
+        crate::research::schedule_research_embeddings(app);
+        Ok(result)
+    }
+}

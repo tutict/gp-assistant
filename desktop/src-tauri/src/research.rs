@@ -3,6 +3,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+#[cfg(target_os = "windows")]
+use std::sync::atomic::AtomicBool;
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
@@ -13,9 +15,9 @@ use std::{
         atomic::{AtomicU64, Ordering as AtomicOrdering},
         Arc, Mutex, OnceLock, RwLock,
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 pub(crate) const RESEARCH_SCHEMA_VERSION: i64 = 2;
 const DEFAULT_CHUNK_CHARS: usize = 520;
@@ -4713,4 +4715,466 @@ mod tests {
             let _ = fs::remove_file(path);
         }
     }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) static RESEARCH_EMBEDDING_JOB_GATE: ResearchEmbeddingJobGate = ResearchEmbeddingJobGate::new();
+
+#[cfg(target_os = "windows")]
+pub(crate) struct ResearchEmbeddingJobGate {
+    pub(crate) running: AtomicBool,
+    pub(crate) pending: AtomicBool,
+}
+
+#[cfg(target_os = "windows")]
+impl ResearchEmbeddingJobGate {
+    pub(crate) const fn new() -> Self {
+        Self {
+            running: AtomicBool::new(false),
+            pending: AtomicBool::new(false),
+        }
+    }
+
+    pub(crate) fn request(&self) -> bool {
+        self.pending.store(true, AtomicOrdering::Release);
+        self.running
+            .compare_exchange(false, true, AtomicOrdering::AcqRel, AtomicOrdering::Acquire)
+            .is_ok()
+    }
+
+    pub(crate) fn begin_cycle(&self) {
+        self.pending.store(false, AtomicOrdering::Release);
+    }
+
+    pub(crate) fn finish_cycle(&self) -> bool {
+        if self.pending.load(AtomicOrdering::Acquire) {
+            return true;
+        }
+        self.running.store(false, AtomicOrdering::Release);
+        if !self.pending.swap(false, AtomicOrdering::AcqRel) {
+            return false;
+        }
+        self.running
+            .compare_exchange(false, true, AtomicOrdering::AcqRel, AtomicOrdering::Acquire)
+            .is_ok()
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn api_research_overview(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    crate::runtime::run_io_bound("api_research_overview", move || {
+        crate::research::with_app_store(&app, |store| {
+            let mut overview = store.overview(&payload)?;
+            #[cfg(target_os = "windows")]
+            {
+                let index = store.index_status()?;
+                let embedding_count = index
+                    .get("embedding_count")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
+                let mut vector =
+                    crate::research_embeddings::model_status(&research_embedding_model_dir(&app));
+                let model_ready = vector
+                    .get("ready")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                vector["ready"] = Value::Bool(model_ready && embedding_count > 0);
+                vector["embedding_count"] = json!(embedding_count);
+                overview["retrieval"]["vector"] = vector;
+            }
+            Ok(overview)
+        })
+    })
+    .await?
+}
+
+#[tauri::command]
+pub(crate) async fn api_research_messages(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    crate::runtime::run_io_bound("api_research_messages", move || {
+        crate::research::with_app_store(&app, |store| store.messages(&payload))
+    })
+    .await?
+}
+
+#[tauri::command]
+pub(crate) async fn api_research_mark_read(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    crate::runtime::run_io_bound("api_research_mark_read", move || {
+        crate::research::with_app_store(&app, |store| store.mark_read(&payload))
+    })
+    .await?
+}
+
+#[tauri::command]
+pub(crate) async fn api_research_query(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let retrieval_app = app.clone();
+    let retrieval_payload = payload.clone();
+    let (database_generation, mut response) =
+        crate::runtime::run_cpu_bound("api_research_query", move || {
+            crate::research::with_app_store_snapshot(&retrieval_app, |store| {
+                let response = {
+                    #[cfg(target_os = "windows")]
+                    {
+                        let query_vector_result = retrieval_payload
+                            .get("query")
+                            .and_then(Value::as_str)
+                            .map(|query| {
+                                crate::research_embeddings::embed(
+                                    &research_embedding_model_dir(&retrieval_app),
+                                    &[query.to_string()],
+                                )
+                            })
+                            .transpose();
+                        match query_vector_result {
+                            Ok(vectors) => {
+                                let query_vector =
+                                    vectors.and_then(|items| items.into_iter().next());
+                                store.query_with_vector(
+                                    &retrieval_payload,
+                                    query_vector.as_deref(),
+                                )?
+                            }
+                            Err(error) => {
+                                let mut fallback = store.query(&retrieval_payload)?;
+                                fallback["vector_warning"] = Value::String(error);
+                                fallback
+                            }
+                        }
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        store.query(&retrieval_payload)?
+                    }
+                };
+                Ok::<Value, String>(response)
+            })
+        })
+        .await??;
+
+    let citations = response
+        .get("citations")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let community_only = response
+        .get("community_only")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if community_only {
+        response["model_warning"] =
+            Value::String("仅命中社区信息，已保持证据模式，不调用模型生成事实结论。".to_string());
+    } else if payload.get("llm").is_some() && !citations.is_empty() {
+        let question = payload
+            .get("query")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        match crate::runtime::with_heavy_network_permit(
+            "api_research_answer",
+            crate::news_rag::synthesize_research_answer(payload.get("llm"), question, &citations),
+        )
+        .await
+        {
+            Ok(Some(answer)) => match crate::research::validate_model_answer(&answer, &citations) {
+                Ok(()) => {
+                    response["answer"] = Value::String(answer);
+                    response["mode"] = Value::String("model".to_string());
+                }
+                Err(error) => {
+                    response["model_warning"] = Value::String(error);
+                }
+            },
+            Ok(None) => {}
+            Err(error) => {
+                response["model_warning"] = Value::String(error);
+            }
+        }
+    }
+
+    let thread_id = payload
+        .get("thread_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let question = payload
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let saved_response = response.clone();
+    crate::runtime::run_io_bound("api_research_save_answer", move || {
+        crate::research::with_app_store_at_generation(&app, database_generation, |store| {
+            if let Some(thread_id) = thread_id.as_deref() {
+                store.save_answer(thread_id, &question, &saved_response)?;
+            }
+            Ok(())
+        })
+    })
+    .await??;
+    Ok(response)
+}
+
+#[tauri::command]
+pub(crate) async fn api_research_refresh(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let news = crate::runtime::with_heavy_network_permit(
+        "api_research_refresh",
+        crate::news_rag::api_news_rag_impl(app.clone(), payload),
+    )
+    .await?;
+    let imported = {
+        let app = app.clone();
+        crate::runtime::run_io_bound("api_research_ingest_news", move || {
+            crate::research::ingest_news_cache(&app)
+        })
+        .await??
+    };
+    schedule_research_embeddings(app);
+    Ok(json!({"news": news, "imported": imported}))
+}
+
+#[tauri::command]
+pub(crate) async fn api_research_threads(app: tauri::AppHandle) -> Result<Value, String> {
+    crate::runtime::run_io_bound("api_research_threads", move || {
+        crate::research::with_app_store(&app, |store| store.threads())
+    })
+    .await?
+}
+
+#[tauri::command]
+pub(crate) async fn api_research_thread_create(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    crate::runtime::run_io_bound("api_research_thread_create", move || {
+        crate::research::with_app_store(&app, |store| store.create_thread(&payload))
+    })
+    .await?
+}
+
+#[tauri::command]
+pub(crate) async fn api_research_thread_detail(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    crate::runtime::run_io_bound("api_research_thread_detail", move || {
+        let thread_id = payload
+            .get("thread_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "thread_id is required".to_string())?;
+        crate::research::with_app_store(&app, |store| store.thread(thread_id))
+    })
+    .await?
+}
+
+#[tauri::command]
+pub(crate) async fn api_research_thread_delete(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    let thread_id = payload
+        .get("thread_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "thread_id is required".to_string())?
+        .to_string();
+    if thread_id.len() > crate::research::MAX_RESEARCH_THREAD_ID_BYTES {
+        return Err(format!(
+            "thread_id exceeds {} bytes",
+            crate::research::MAX_RESEARCH_THREAD_ID_BYTES
+        ));
+    }
+    crate::runtime::run_io_bound("api_research_thread_delete", move || {
+        crate::research::with_app_store(&app, |store| {
+            let deleted = store.delete_thread(&thread_id)?;
+            Ok(json!({"deleted": deleted}))
+        })
+    })
+    .await?
+}
+
+#[tauri::command]
+pub(crate) async fn api_research_index_status(app: tauri::AppHandle) -> Result<Value, String> {
+    crate::runtime::run_io_bound("api_research_index_status", move || {
+        crate::research::with_app_store(&app, |store| {
+            let mut status = store.index_status()?;
+            status["documents"] = store.document_statuses()?["items"].clone();
+            #[cfg(target_os = "windows")]
+            let vector_status =
+                crate::research_embeddings::model_status(&research_embedding_model_dir(&app));
+            #[cfg(not(target_os = "windows"))]
+            let vector_status = status["vector"].clone();
+            Ok(finalize_research_index_status(status, vector_status))
+        })
+    })
+    .await?
+}
+
+pub(crate) fn finalize_research_index_status(mut status: Value, vector_status: Value) -> Value {
+    let count = |field: &str| status.get(field).and_then(Value::as_i64).unwrap_or(0);
+    let model_ready = vector_status
+        .get("ready")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let hybrid_ready = status
+        .get("fts_healthy")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && model_ready
+        && count("embedding_count") > 0
+        && count("embedding_pending_count") == 0
+        && count("embedding_stale_count") == 0
+        && count("embedding_orphan_count") == 0
+        && count("embedding_invalid_count") == 0;
+    status["vector"] = vector_status;
+    status["hybrid_ready"] = Value::Bool(hybrid_ready);
+    status
+}
+
+#[tauri::command]
+pub(crate) async fn api_research_rebuild_index(app: tauri::AppHandle) -> Result<Value, String> {
+    crate::runtime::run_cpu_bound("api_research_rebuild_index", move || {
+        crate::research::with_app_store(&app, |store| store.rebuild_fts())
+    })
+    .await?
+}
+
+#[tauri::command]
+pub(crate) async fn api_research_rebuild_embeddings(app: tauri::AppHandle) -> Result<Value, String> {
+    #[cfg(target_os = "windows")]
+    {
+        crate::runtime::run_cpu_bound("api_research_rebuild_embeddings", move || {
+            rebuild_research_embeddings(&app)
+        })
+        .await?
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        Err("Android uses BM25 only and does not load the Windows embedding model".to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn rebuild_research_embeddings(app: &tauri::AppHandle) -> Result<Value, String> {
+    crate::research::with_app_store(app, |store| {
+        let model_dir = research_embedding_model_dir(app);
+        let mut stored = 0usize;
+        loop {
+            let pending = store.pending_embedding_chunks(256)?;
+            if pending.is_empty() {
+                break;
+            }
+            let texts = pending
+                .iter()
+                .map(|item| item.text.clone())
+                .collect::<Vec<_>>();
+            let vectors = crate::research_embeddings::embed(&model_dir, &texts)?;
+            if vectors.len() != pending.len() {
+                return Err("embedding service returned an unexpected batch size".to_string());
+            }
+            let items = pending.into_iter().zip(vectors).collect::<Vec<_>>();
+            stored += items.len();
+            store.store_embeddings(&items, crate::research_embeddings::MODEL_ID)?;
+        }
+        Ok(json!({
+            "stored": stored,
+            "model_id": crate::research_embeddings::MODEL_ID,
+            "notes": if stored == 0 {
+                vec!["所有分块均已有当前内容哈希对应的向量。"]
+            } else {
+                Vec::<&str>::new()
+            }
+        }))
+    })
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn schedule_research_embeddings(app: tauri::AppHandle) {
+    if !RESEARCH_EMBEDDING_JOB_GATE.request() {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        loop {
+            RESEARCH_EMBEDDING_JOB_GATE.begin_cycle();
+            let worker_app = app.clone();
+            let result = crate::runtime::run_cpu_bound("background_research_embeddings", move || {
+                rebuild_research_embeddings(&worker_app)
+            })
+            .await
+            .and_then(|result| result);
+            let event = match result {
+                Ok(status) => json!({"ok": true, "status": status}),
+                Err(error) => json!({"ok": false, "error": error}),
+            };
+            let _ = app.emit("research-embedding-status", event);
+            if !RESEARCH_EMBEDDING_JOB_GATE.finish_cycle() {
+                break;
+            }
+        }
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn schedule_research_embeddings(_app: tauri::AppHandle) {}
+
+#[tauri::command]
+pub(crate) async fn api_research_pack_export(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    crate::runtime::run_io_bound("api_research_pack_export", move || {
+        crate::research::export_app_pack(&app, &payload)
+    })
+    .await?
+}
+
+#[tauri::command]
+pub(crate) async fn api_research_pack_import(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let worker_app = app.clone();
+    let result = crate::runtime::run_io_bound("api_research_pack_import", move || {
+        crate::research::import_app_pack(&worker_app, &payload)
+    })
+    .await??;
+    schedule_research_embeddings(app);
+    Ok(result)
+}
+
+#[tauri::command]
+pub(crate) async fn api_research_pack_rollback(app: tauri::AppHandle) -> Result<Value, String> {
+    crate::runtime::run_io_bound("api_research_pack_rollback", move || {
+        crate::research::rollback_app_pack(&app)
+    })
+    .await?
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn research_embedding_model_dir(app: &tauri::AppHandle) -> PathBuf {
+    let bundled = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|root| root.join("models").join("bge-small-zh-v1.5-int8"));
+    if let Some(path) = bundled.filter(|path| path.join("model_quantized.onnx").exists()) {
+        return path;
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../models/bge-small-zh-v1.5-int8")
+}
+
+pub(crate) fn schedule_research_maintenance(app: tauri::AppHandle) {
+    schedule_research_embeddings(app.clone());
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let worker_app = app.clone();
+            let result = crate::runtime::run_io_bound("background_research_retention", move || {
+                crate::research::with_app_store(&worker_app, |store| store.prune_retention())
+            })
+            .await
+            .and_then(|result| result);
+            let event = match result {
+                Ok(status) => json!({"ok": true, "status": status}),
+                Err(error) => json!({"ok": false, "error": error}),
+            };
+            let _ = app.emit("research-retention-status", event);
+            tokio::time::sleep(Duration::from_secs(6 * 60 * 60)).await;
+        }
+    });
 }

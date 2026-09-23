@@ -819,3 +819,280 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 }
+
+#[tauri::command]
+pub(crate) fn api_rag_pack_status(app: tauri::AppHandle) -> Result<Value, String> {
+    crate::rag_pack::rag_pack_status(app)
+}
+
+#[tauri::command]
+pub(crate) fn api_rag_pack_build(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    crate::rag_pack::rag_pack_build(app, payload)
+}
+
+#[tauri::command]
+pub(crate) fn api_rag_pack_build_from_news_cache(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    crate::rag_pack::rag_pack_build_from_news_cache(app, payload)
+}
+
+#[tauri::command]
+pub(crate) fn api_rag_pack_query(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    crate::rag_pack::rag_pack_query(app, payload)
+}
+
+#[tauri::command]
+pub(crate) fn api_upstream_rag_status(app: tauri::AppHandle) -> Result<Value, String> {
+    crate::rag_pack::upstream_rag_status(app)
+}
+
+#[tauri::command]
+pub(crate) fn api_upstream_rag_build(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let data = crate::market::cached_market_data(&app)?;
+    crate::rag_pack::upstream_rag_build(app, payload, data)
+}
+
+#[tauri::command]
+pub(crate) fn api_upstream_rag_transfer_start(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    crate::rag_pack::upstream_rag_transfer_start(app, payload)
+}
+
+#[tauri::command]
+pub(crate) fn core_upstream_rag_import(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let manifest_value = payload
+        .get("manifest")
+        .cloned()
+        .ok_or_else(|| "缺少 manifest。".to_string())?;
+    let mut manifest = match manifest_value {
+        Value::Object(map) => map,
+        _ => return Err("manifest 必须是 JSON 对象。".to_string()),
+    };
+    let pack_base64 = payload
+        .get("pack_base64")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "缺少 pack_base64。".to_string())?;
+    let pack_bytes = general_purpose::STANDARD
+        .decode(pack_base64)
+        .map_err(|error| format!("RAG 包解码失败：{error}"))?;
+
+    let expected_sha256 = manifest
+        .get("sha256")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "manifest 缺少 sha256。".to_string())?;
+    let actual_sha256 = crate::market::sha256_hex(&pack_bytes);
+    if !expected_sha256.eq_ignore_ascii_case(&actual_sha256) {
+        return Err(format!(
+            "RAG 包 sha256 校验失败：预期 {expected_sha256}，实际 {actual_sha256}。"
+        ));
+    }
+    if let Some(expected_size) = manifest.get("file_size").and_then(Value::as_u64) {
+        if expected_size != pack_bytes.len() as u64 {
+            return Err(format!(
+                "RAG 包大小校验失败：预期 {expected_size} 字节，实际 {} 字节。",
+                pack_bytes.len()
+            ));
+        }
+    }
+
+    let stock_code = manifest
+        .get("target_stock_code")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "manifest 缺少 target_stock_code。".to_string())?;
+    let pack_version = manifest
+        .get("pack_version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "manifest 缺少 pack_version。".to_string())?;
+    let stock_code_owned = stock_code.to_string();
+    let pack_version_owned = pack_version.to_string();
+
+    let root = upstream_rag_mobile_root(&app)?;
+    let stock_dir = root.join(crate::market::sanitize_path_part(&stock_code_owned));
+    fs::create_dir_all(&stock_dir).map_err(|error| format!("创建 RAG 目录失败：{error}"))?;
+
+    let version_dir = stock_dir.join(crate::market::sanitize_path_part(&pack_version_owned));
+    let tmp_dir = stock_dir.join(format!(
+        "{}.tmp-{}",
+        crate::market::sanitize_path_part(&pack_version_owned),
+        crate::market::epoch_millis()
+    ));
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|error| format!("清理临时目录失败：{error}"))?;
+    }
+    fs::create_dir_all(&tmp_dir).map_err(|error| format!("创建临时目录失败：{error}"))?;
+
+    let tmp_pack_path = tmp_dir.join("rag_pack.sqlite");
+    let tmp_manifest_path = tmp_dir.join("manifest.json");
+    fs::write(&tmp_pack_path, &pack_bytes).map_err(|error| format!("写入 RAG 包失败：{error}"))?;
+    manifest.insert(
+        "_local_pack_path".to_string(),
+        json!(version_dir.join("rag_pack.sqlite").display().to_string()),
+    );
+    manifest.insert(
+        "_local_manifest_path".to_string(),
+        json!(version_dir.join("manifest.json").display().to_string()),
+    );
+    manifest.insert("_imported_at_epoch_ms".to_string(), json!(crate::market::epoch_millis()));
+    fs::write(
+        &tmp_manifest_path,
+        serde_json::to_vec_pretty(&Value::Object(manifest.clone()))
+            .map_err(|error| format!("序列化 manifest 失败：{error}"))?,
+    )
+    .map_err(|error| format!("写入 manifest 失败：{error}"))?;
+
+    if version_dir.exists() {
+        fs::remove_dir_all(&version_dir).map_err(|error| format!("替换旧版本目录失败：{error}"))?;
+    }
+    fs::rename(&tmp_dir, &version_dir).map_err(|error| format!("提交 RAG 包失败：{error}"))?;
+
+    let current_manifest_path = stock_dir.join("current_manifest.json");
+    let previous_manifest_path = stock_dir.join("previous_manifest.json");
+    if current_manifest_path.exists() {
+        fs::copy(&current_manifest_path, &previous_manifest_path)
+            .map_err(|error| format!("保存回滚 manifest 失败：{error}"))?;
+    }
+    fs::write(
+        &current_manifest_path,
+        serde_json::to_vec_pretty(&Value::Object(manifest.clone()))
+            .map_err(|error| format!("序列化 current manifest 失败：{error}"))?,
+    )
+    .map_err(|error| format!("更新 current manifest 失败：{error}"))?;
+
+    Ok(json!({
+        "imported": true,
+        "root": root.display().to_string(),
+        "stock_code": stock_code_owned,
+        "pack_version": pack_version_owned,
+        "manifest": Value::Object(manifest),
+        "notes": ["已校验 sha256 并完成原子替换。"]
+    }))
+}
+
+#[tauri::command]
+pub(crate) fn core_upstream_rag_list(app: tauri::AppHandle) -> Result<Value, String> {
+    let root = upstream_rag_mobile_root(&app)?;
+    let mut packs = Vec::new();
+    if root.exists() {
+        for stock_entry in
+            fs::read_dir(&root).map_err(|error| format!("读取 RAG 目录失败：{error}"))?
+        {
+            let stock_entry =
+                stock_entry.map_err(|error| format!("读取 RAG 子目录失败：{error}"))?;
+            let stock_dir = stock_entry.path();
+            if !stock_dir.is_dir() {
+                continue;
+            }
+            let current_version = crate::market::read_json_file(&stock_dir.join("current_manifest.json"))
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("pack_version")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                });
+            for version_entry in fs::read_dir(&stock_dir)
+                .map_err(|error| format!("读取 RAG 版本目录失败：{error}"))?
+            {
+                let version_entry =
+                    version_entry.map_err(|error| format!("读取 RAG 版本失败：{error}"))?;
+                let version_dir = version_entry.path();
+                if !version_dir.is_dir() {
+                    continue;
+                }
+                if let Ok(mut manifest) = crate::market::read_json_file(&version_dir.join("manifest.json")) {
+                    let pack_version = manifest
+                        .get("pack_version")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    if let Value::Object(ref mut map) = manifest {
+                        map.insert(
+                            "current".to_string(),
+                            json!(Some(pack_version.clone()) == current_version),
+                        );
+                    }
+                    packs.push(manifest);
+                }
+            }
+        }
+    }
+    let notes = if packs.is_empty() {
+        vec!["安卓端尚未导入上下游 RAG 包。"]
+    } else {
+        Vec::<&str>::new()
+    };
+    Ok(json!({
+        "root": root.display().to_string(),
+        "packs": packs,
+        "notes": notes
+    }))
+}
+
+#[tauri::command]
+pub(crate) fn core_upstream_rag_detail(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let root = upstream_rag_mobile_root(&app)?;
+    let stock_code = payload
+        .get("stock_code")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let pack_version = payload
+        .get("pack_version")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let manifest_path = if !stock_code.is_empty() && !pack_version.is_empty() {
+        root.join(crate::market::sanitize_path_part(stock_code))
+            .join(crate::market::sanitize_path_part(pack_version))
+            .join("manifest.json")
+    } else if !stock_code.is_empty() {
+        root.join(crate::market::sanitize_path_part(stock_code))
+            .join("current_manifest.json")
+    } else {
+        crate::market::find_first_current_manifest(&root)
+            .ok_or_else(|| "安卓端尚未导入上下游 RAG 包。".to_string())?
+    };
+    let manifest = crate::market::read_json_file(&manifest_path)?;
+    Ok(json!({
+        "manifest": manifest,
+        "notes": []
+    }))
+}
+
+#[tauri::command]
+pub(crate) fn core_upstream_rag_rollback(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let root = upstream_rag_mobile_root(&app)?;
+    let stock_code = payload
+        .get("stock_code")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "缺少 stock_code。".to_string())?;
+    let stock_dir = root.join(crate::market::sanitize_path_part(stock_code));
+    let current_manifest_path = stock_dir.join("current_manifest.json");
+    let previous_manifest_path = stock_dir.join("previous_manifest.json");
+    if !previous_manifest_path.exists() {
+        return Err("没有可回滚的上一个 RAG 包。".to_string());
+    }
+    let current_bytes = fs::read(&current_manifest_path).ok();
+    let previous_bytes = fs::read(&previous_manifest_path)
+        .map_err(|error| format!("读取回滚 manifest 失败：{error}"))?;
+    fs::write(&current_manifest_path, previous_bytes)
+        .map_err(|error| format!("恢复 current manifest 失败：{error}"))?;
+    if let Some(bytes) = current_bytes {
+        fs::write(&previous_manifest_path, bytes)
+            .map_err(|error| format!("更新 previous manifest 失败：{error}"))?;
+    }
+    let manifest = crate::market::read_json_file(&current_manifest_path)?;
+    Ok(json!({
+        "rolled_back": true,
+        "manifest": manifest,
+        "notes": ["已切换到上一个 RAG 包。"]
+    }))
+}
+
+pub(crate) fn upstream_rag_mobile_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let mut root = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("获取应用数据目录失败：{error}"))?;
+    root.push("upstream_rag");
+    Ok(root)
+}

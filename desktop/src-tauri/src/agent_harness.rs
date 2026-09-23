@@ -1,5 +1,5 @@
 #[cfg(test)]
-use crate::{build_http_client_with_proxy, runtime};
+use crate::{market::build_http_client_with_proxy, runtime};
 #[cfg(test)]
 use futures::StreamExt;
 use percent_encoding::percent_decode_str;
@@ -1418,7 +1418,7 @@ async fn post_model_request(
     config: &LlmConfig,
     request: &Value,
 ) -> Result<Value, String> {
-    let endpoint = crate::llm_inference_endpoint(
+    let endpoint = crate::llm::llm_inference_endpoint(
         &config.base_url,
         &config.api_format,
         config.endpoint_mode == "full_url",
@@ -2563,7 +2563,7 @@ mod harness_validation_tests {
     #[test]
     fn adapts_endpoints_requests_and_responses_for_supported_protocols() {
         assert_eq!(
-            crate::llm_inference_endpoint(
+            crate::llm::llm_inference_endpoint(
                 "https://api.example/v1/chat/completions",
                 "openai_responses",
                 false
@@ -2573,7 +2573,7 @@ mod harness_validation_tests {
             "https://api.example/v1/responses"
         );
         assert_eq!(
-            crate::llm_inference_endpoint(
+            crate::llm::llm_inference_endpoint(
                 "https://api.example/custom/v1/messages",
                 "anthropic_messages",
                 true

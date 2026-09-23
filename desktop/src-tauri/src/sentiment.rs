@@ -14,7 +14,7 @@ fn runs() -> &'static Mutex<HashMap<String, Value>> {
     RUNS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 fn now() -> i64 {
-    crate::epoch_millis() as i64
+    crate::market::epoch_millis() as i64
 }
 fn id() -> String {
     crate::agent_ledger::next_run_id()
@@ -33,7 +33,7 @@ fn field<'a>(v: &'a Value, key: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("缺少有效的 {key}"))
 }
 fn code(v: &Value) -> Result<String, String> {
-    crate::normalize_stock_code(field(v, "stock_code")?).ok_or_else(|| "股票代码无效".into())
+    crate::market::normalize_stock_code(field(v, "stock_code")?).ok_or_else(|| "股票代码无效".into())
 }
 
 fn open(path: &Path) -> Result<Connection, String> {
@@ -70,7 +70,7 @@ async fn freeze(app: AppHandle, payload: Value) -> Result<Value, String> {
     }
     runtime::run_io_bound("sentiment_snapshot", move || {
         let cutoff = now();
-        let data = crate::cached_market_data(&app)?;
+        let data = crate::market::cached_market_data(&app)?;
         research::with_app_store(&app, |store| {
             sentiment_data::build_snapshot(
                 &stock,
@@ -231,7 +231,7 @@ fn code_list(payload: &Value) -> Result<Vec<String>, String> {
     let mut codes = Vec::new();
     for item in list {
         let Some(text) = item.as_str() else { continue };
-        let Some(code) = crate::normalize_stock_code(text) else {
+        let Some(code) = crate::market::normalize_stock_code(text) else {
             continue;
         };
         if !codes.contains(&code) {

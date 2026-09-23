@@ -19,7 +19,7 @@ fn digest(s: &str) -> String {
 }
 
 pub(crate) fn day_string(day: i64) -> String {
-    crate::civil_date_from_days(day)
+    crate::market::civil_date_from_days(day)
 }
 
 pub(crate) fn date_day(s: &str) -> Option<i64> {
@@ -32,7 +32,7 @@ pub(crate) fn date_day(s: &str) -> Option<i64> {
     if compact.len() != 8 || !compact.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    let day = crate::days_from_civil_key(&compact)?;
+    let day = crate::market::days_from_civil_key(&compact)?;
     (day_string(day) == date).then_some(day)
 }
 
@@ -42,7 +42,7 @@ pub(crate) fn timestamp(v: &Value) -> Option<i64> {
     }
     let s = v.as_str()?;
     date_day(s)?;
-    crate::parse_cache_datetime_epoch_ms(s).and_then(|n| i64::try_from(n).ok())
+    crate::market::parse_cache_datetime_epoch_ms(s).and_then(|n| i64::try_from(n).ok())
 }
 
 fn normalized(s: &str) -> String {

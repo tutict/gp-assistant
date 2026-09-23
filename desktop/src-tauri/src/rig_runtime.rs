@@ -20,7 +20,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex, OnceLock,
 };
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
 
 #[cfg(test)]
@@ -539,7 +539,7 @@ pub(crate) fn build_model_with_payload(
         env!("CARGO_PKG_VERSION"),
         " rig-agent"
     ));
-    let http_client = crate::build_http_client_with_proxy(
+    let http_client = crate::market::build_http_client_with_proxy(
         user_agent,
         std::time::Duration::from_secs(config.timeout_seconds),
         (!network_payload.is_null()).then_some(network_payload),
@@ -2386,5 +2386,384 @@ mod tests {
         assert!(cancellation.is_cancelled());
         unregister_run(run_id);
         assert!(!request_cancel(run_id));
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let mut payload = payload;
+    let fields = payload
+        .as_object_mut()
+        .ok_or_else(|| "Agent payload must be an object".to_string())?;
+    // Normalize once and write the normalized value back: the ledger trims `run_id` when it
+    // inserts the row, so completing with the raw value would match no row and strand the run.
+    let run_id = fields
+        .get("run_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(crate::agent_ledger::next_run_id);
+    fields.insert("run_id".to_string(), Value::String(run_id.clone()));
+    crate::agent_harness::validate_payload(&payload)?;
+    let started_at_epoch_ms = crate::agent_ledger::current_epoch_millis();
+    let ledger_llm = payload.get("llm").cloned();
+    let ledger_payload = payload.clone();
+    let start_app = app.clone();
+    let ledger_started = match crate::runtime::run_io_bound("agent_run_start", move || {
+        crate::agent_ledger::with_app_store(&start_app, |store| {
+            store.start_run(&ledger_payload, started_at_epoch_ms)
+        })
+    })
+    .await
+    .and_then(|result| result)
+    {
+        Ok(()) => true,
+        Err(error) if crate::agent_ledger::is_conversation_deleted_error(&error) => {
+            return Err(error);
+        }
+        Err(error) => {
+            eprintln!("agent run ledger start failed; continuing without persistence: {error}");
+            false
+        }
+    };
+
+    let events = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let sink_events = Arc::clone(&events);
+    let event_app = app.clone();
+    let execution = match crate::market::cached_market_data(&app) {
+        Ok(data) => {
+            crate::rig_runtime::execute_with_app_and_event_sink(app.clone(), payload, data, move |event| {
+                // The terminal `result` event carries the whole response, which `complete_run`
+                // already stores in `result_json`. Capturing it too would double every row and
+                // every detail payload. The webview still receives it for the live stream.
+                if event.get("type").and_then(Value::as_str) != Some("result") {
+                    if let Ok(mut captured) = sink_events.lock() {
+                        captured.push(event.clone());
+                    }
+                }
+                let _ = event_app.emit("agent-stream-event", event);
+            })
+            .await
+        }
+        Err(error) => Err(error),
+    };
+    let completed_at_epoch_ms = crate::agent_ledger::current_epoch_millis();
+    let captured_events = events.lock().map(|items| items.clone()).unwrap_or_default();
+
+    match execution {
+        Ok(outcome) => {
+            let response = outcome.response;
+            if ledger_started {
+                let ledger_app = app.clone();
+                let ledger_events =
+                    crate::agent_harness::redact_persisted_events(&captured_events, ledger_llm.as_ref());
+                let ledger_response =
+                    crate::agent_harness::redact_persisted_response(&response, ledger_llm.as_ref());
+                let completion = crate::runtime::run_io_bound("agent_run_complete", move || {
+                    crate::agent_ledger::with_app_store(&ledger_app, |store| {
+                        store.complete_run(
+                            &run_id,
+                            &ledger_events,
+                            &ledger_response,
+                            completed_at_epoch_ms,
+                        )
+                    })
+                })
+                .await
+                .and_then(|result| result);
+                if let Err(error) = completion {
+                    eprintln!("agent run ledger completion failed: {error}");
+                } else if let Some(profile_id) = crate::prompt_upgrade::rejected_profile(&response) {
+                    if let Some(llm) = ledger_llm.clone() {
+                        let upgrade_app = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(error) =
+                                upgrade_rejected_prompt(upgrade_app, llm, profile_id).await
+                            {
+                                eprintln!("agent prompt upgrade failed: {error}");
+                            }
+                        });
+                    }
+                }
+            }
+            Ok(response)
+        }
+        Err(error) => {
+            if ledger_started {
+                let ledger_app = app.clone();
+                let ledger_events =
+                    crate::agent_harness::redact_persisted_events(&captured_events, ledger_llm.as_ref());
+                let ledger_error =
+                    crate::agent_harness::redact_persisted_error(&error, ledger_llm.as_ref());
+                let failure_recording = crate::runtime::run_io_bound("agent_run_fail", move || {
+                    crate::agent_ledger::with_app_store(&ledger_app, |store| {
+                        store.fail_run(
+                            &run_id,
+                            &ledger_events,
+                            &ledger_error,
+                            completed_at_epoch_ms,
+                        )
+                    })
+                })
+                .await
+                .and_then(|result| result);
+                if let Err(ledger_error) = failure_recording {
+                    eprintln!("agent run ledger failure recording failed: {ledger_error}");
+                }
+            }
+            Err(error)
+        }
+    }
+}
+
+pub(crate) async fn upgrade_rejected_prompt(app: tauri::AppHandle, llm: Value, profile_id: String) -> Result<(), String> {
+    let claim_app = app.clone();
+    let claim_profile = profile_id.clone();
+    let claim = crate::runtime::run_io_bound("prompt_upgrade_claim", move || {
+        crate::prompt_upgrade::claim_with_app(&claim_app, &claim_profile)
+    })
+    .await?
+    .map_err(|error| error)?;
+    let Some(claim) = claim else {
+        return Ok(());
+    };
+    let request = crate::prompt_upgrade::draft_request(&claim);
+    let body = crate::rig_runtime::draft_method_card(&llm, &request).await?;
+    let activate_app = app.clone();
+    crate::runtime::run_io_bound("prompt_upgrade_activate", move || {
+        crate::prompt_upgrade::activate_with_app(&activate_app, &profile_id, &body)
+    })
+    .await?
+    .map_err(|error| error)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn api_agent_prompt_overlays(app: tauri::AppHandle) -> Result<Value, String> {
+    let profiles = crate::prompt_upgrade::status_with_app(&app)?;
+    Ok(json!({
+        "profiles": profiles.into_iter().map(|status| json!({
+            "profile_id": status.profile_id,
+            "label": status.label,
+            "prompt_version": status.prompt_version,
+            "builtin": status.builtin,
+        })).collect::<Vec<_>>()
+    }))
+}
+
+#[tauri::command]
+pub(crate) fn api_agent_prompt_overlay_revert(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let profile_id = payload
+        .get("profile_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "profile_id is required".to_string())?;
+    crate::prompt_upgrade::revert_with_app(&app, profile_id)?;
+    api_agent_prompt_overlays(app)
+}
+
+/// Request cooperative cancellation of an active Agent run. The command returns immediately;
+/// the running `api_agent_stream` observes the shared token at the next model/tool await point.
+#[tauri::command]
+pub(crate) fn api_agent_cancel(payload: Value) -> Result<Value, String> {
+    let run_id = payload
+        .get("run_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "run_id is required".to_string())?;
+    if run_id.len() > crate::agent_ledger::MAX_AGENT_LEDGER_ID_BYTES {
+        return Err(format!(
+            "run_id exceeds {} bytes",
+            crate::agent_ledger::MAX_AGENT_LEDGER_ID_BYTES
+        ));
+    }
+    Ok(json!({
+        "run_id": run_id,
+        "cancelled": crate::rig_runtime::request_cancel(run_id),
+    }))
+}
+
+#[tauri::command]
+pub(crate) async fn api_agent_run_list(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let limit = payload
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(50)
+        .min(200) as usize;
+    let conversation_id = payload
+        .get("conversation_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if conversation_id
+        .as_ref()
+        .is_some_and(|value| value.len() > crate::agent_ledger::MAX_AGENT_LEDGER_ID_BYTES)
+    {
+        return Err(format!(
+            "conversation_id exceeds {} bytes",
+            crate::agent_ledger::MAX_AGENT_LEDGER_ID_BYTES
+        ));
+    }
+    crate::runtime::run_io_bound("api_agent_run_list", move || {
+        crate::agent_ledger::with_app_store(&app, |store| {
+            let runs = store.list_runs(limit, conversation_id.as_deref())?;
+            Ok(json!({"runs": runs}))
+        })
+    })
+    .await?
+}
+
+#[tauri::command]
+pub(crate) async fn api_agent_run_metrics(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let limit = payload
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(200)
+        .min(2_000) as usize;
+    let conversation_id = payload
+        .get("conversation_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if conversation_id
+        .as_ref()
+        .is_some_and(|value| value.len() > crate::agent_ledger::MAX_AGENT_LEDGER_ID_BYTES)
+    {
+        return Err(format!(
+            "conversation_id exceeds {} bytes",
+            crate::agent_ledger::MAX_AGENT_LEDGER_ID_BYTES
+        ));
+    }
+    crate::runtime::run_io_bound("api_agent_run_metrics", move || {
+        crate::agent_ledger::with_app_store(&app, |store| {
+            store.metrics(limit, conversation_id.as_deref())
+        })
+    })
+    .await?
+}
+
+pub(crate) fn agent_run_detail_response(run: Option<Value>) -> Value {
+    let run = run.map(|mut record| {
+        if let Some(object) = record.as_object_mut() {
+            object.remove("request");
+        }
+        record
+    });
+    json!({"run": run})
+}
+
+#[tauri::command]
+pub(crate) async fn api_agent_run_get(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let run_id = payload
+        .get("run_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "run_id is required".to_string())?
+        .to_string();
+    if run_id.len() > crate::agent_ledger::MAX_AGENT_LEDGER_ID_BYTES {
+        return Err(format!(
+            "run_id exceeds {} bytes",
+            crate::agent_ledger::MAX_AGENT_LEDGER_ID_BYTES
+        ));
+    }
+    crate::runtime::run_io_bound("api_agent_run_get", move || {
+        crate::agent_ledger::with_app_store(&app, |store| {
+            Ok(agent_run_detail_response(store.get_run(&run_id)?))
+        })
+    })
+    .await?
+}
+
+#[tauri::command]
+pub(crate) async fn api_agent_run_delete_conversation(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    let conversation_id = payload
+        .get("conversation_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "conversation_id is required".to_string())?
+        .to_string();
+    if conversation_id.len() > crate::agent_ledger::MAX_AGENT_LEDGER_ID_BYTES {
+        return Err(format!(
+            "conversation_id exceeds {} bytes",
+            crate::agent_ledger::MAX_AGENT_LEDGER_ID_BYTES
+        ));
+    }
+    crate::runtime::run_io_bound("api_agent_run_delete_conversation", move || {
+        crate::agent_ledger::with_app_store(&app, |store| {
+            let deleted = store.delete_conversation_runs(&conversation_id)?;
+            Ok(json!({"deleted": deleted}))
+        })
+    })
+    .await?
+}
+
+#[cfg(test)]
+mod agent_run_api_tests {
+    use super::agent_run_detail_response;
+    use crate::research::finalize_research_index_status;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn detail_response_removes_request_and_preserves_replay_fields() {
+        let response = agent_run_detail_response(Some(json!({
+            "run_id": "run-1",
+            "request": {"llm": {"base_url": "https://example.test"}},
+            "events": [{"type": "status", "stage": "tools"}],
+            "result": {"reply": "done"},
+            "status": "completed"
+        })));
+
+        assert!(response["run"].get("request").is_none());
+        assert_eq!(response["run"]["events"][0]["stage"], "tools");
+        assert_eq!(response["run"]["result"]["reply"], "done");
+        assert_eq!(response["run"]["status"], "completed");
+    }
+
+    #[test]
+    fn detail_response_keeps_missing_run_as_null() {
+        assert_eq!(agent_run_detail_response(None)["run"], Value::Null);
+    }
+
+    #[test]
+    fn hybrid_readiness_requires_verified_model_and_complete_nonempty_vectors() {
+        let base = json!({
+            "fts_healthy": true,
+            "embedding_count": 1,
+            "embedding_pending_count": 0,
+            "embedding_stale_count": 0,
+            "embedding_orphan_count": 0,
+            "embedding_invalid_count": 0
+        });
+        assert_eq!(
+            finalize_research_index_status(base.clone(), json!({"ready": false}))["hybrid_ready"],
+            false
+        );
+        assert_eq!(
+            finalize_research_index_status(base.clone(), json!({"ready": true}))["hybrid_ready"],
+            true
+        );
+
+        let mut empty = base.clone();
+        empty["embedding_count"] = json!(0);
+        assert_eq!(
+            finalize_research_index_status(empty, json!({"ready": true}))["hybrid_ready"],
+            false
+        );
+        let mut pending = base;
+        pending["embedding_pending_count"] = json!(1);
+        assert_eq!(
+            finalize_research_index_status(pending, json!({"ready": true}))["hybrid_ready"],
+            false
+        );
     }
 }

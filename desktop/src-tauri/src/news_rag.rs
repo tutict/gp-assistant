@@ -1,4 +1,4 @@
-use super::{
+use crate::market::{
     build_http_client_with_proxy, cached_market_data, epoch_millis, normalize_stock_code,
     powershell_http_get_bytes_with_headers, read_json_file,
 };
@@ -2268,7 +2268,7 @@ async fn post_llm_request(
     config: &LlmConfig,
     request: &Value,
 ) -> Result<Value, String> {
-    let url = crate::llm_inference_endpoint(
+    let url = crate::llm::llm_inference_endpoint(
         &config.base_url,
         &config.api_format,
         config.endpoint_mode == "full_url",
@@ -3557,4 +3557,25 @@ mod tests {
         assert_eq!(merged[0]["confidence"], "中");
         assert_eq!(merged[0]["impact_chain"], "模型判断");
     }
+}
+
+#[tauri::command]
+pub(crate) async fn api_news_rag(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let mut result = crate::runtime::with_heavy_network_permit(
+        "api_news_rag",
+        crate::news_rag::api_news_rag_impl(app.clone(), payload),
+    )
+    .await?;
+    match crate::research::ingest_news_cache(&app) {
+        Ok(_) => crate::research::schedule_research_embeddings(app.clone()),
+        Err(error) => {
+            let warning = Value::String(format!("research message ingest failed: {error}"));
+            if let Some(notes) = result.get_mut("notes").and_then(Value::as_array_mut) {
+                notes.push(warning);
+            } else {
+                result["notes"] = Value::Array(vec![warning]);
+            }
+        }
+    }
+    Ok(result)
 }
