@@ -25,6 +25,8 @@ interface NewsRagPanelProps {
   watchlist?: WatchlistItem[];
   initialCode?: string;
   initialCodeRequestId?: number;
+  code?: string;
+  onCodeChange?: (code: string) => void;
 }
 interface ThreadDetail { answers?: ResearchAnswer[]; }
 const MAX_PDF_FILE_BYTES = 25 * 1024 * 1024;
@@ -36,7 +38,9 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const compactEvidence = useMediaQuery("(max-width: 1180px)");
   const questionInputId = useId();
   const watchlist = props.watchlist || [];
-  const [code, setCode] = useState(() => normalizeStockCode(props.initialCode || watchlist[0]?.code || ""));
+  const controlled = props.onCodeChange !== undefined;
+  const [uncontrolledCode, setUncontrolledCode] = useState(() => normalizeStockCode(props.initialCode || watchlist[0]?.code || ""));
+  const code = controlled ? normalizeStockCode(props.code || "") : uncontrolledCode;
   const codeRef = useRef(code);
   const [overview, setOverview] = useState<ResearchOverview | null>(null);
   const [messages, setMessages] = useState<ResearchMessage[]>([]);
@@ -78,6 +82,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const activeLlmConfig = useMemo(() => buildLlmConfig(props.llmSettings), [props.llmSettings]);
 
   useEffect(() => { threadIdRef.current = threadId; }, [threadId]);
+  useEffect(() => { codeRef.current = code; }, [code]);
   const selectCode = useCallback((nextCode: string) => {
     const normalized = normalizeStockCode(nextCode);
     if (normalized === codeRef.current) return;
@@ -86,12 +91,14 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     setAsking(false);
     setRefreshing(false);
     setLoading(true);
-    setCode(normalized);
-  }, []);
+    if (controlled) props.onCodeChange?.(normalized);
+    else setUncontrolledCode(normalized);
+  }, [controlled, props.onCodeChange]);
   useEffect(() => {
+    if (controlled) return;
     const next = normalizeStockCode(props.initialCode);
     if (next) selectCode(next);
-  }, [props.initialCode, props.initialCodeRequestId, selectCode]);
+  }, [controlled, props.initialCode, props.initialCodeRequestId, selectCode]);
 
   const loadThread = useCallback(async (
     id: string,

@@ -275,9 +275,9 @@ describe("AgentPanel run replay interactions", () => {
 
     const desktopHistory = buttonWithClass(renderer, "agent-thread-history");
     const mobileHistory = buttonWithClass(renderer, "agent-mobile-history");
-    expect(desktopHistory.props).toMatchObject({ "aria-label": "运行复盘", title: "运行复盘" });
-    expect(nodeText(desktopHistory)).toBe("运行复盘");
-    expect(mobileHistory.props).toMatchObject({ "aria-label": "运行历史", title: "运行历史" });
+    expect(desktopHistory.props).toMatchObject({ "aria-label": "运行记录", title: "运行记录" });
+    expect(nodeText(desktopHistory)).toBe("运行记录");
+    expect(mobileHistory.props).toMatchObject({ "aria-label": "运行记录", title: "运行记录" });
     await act(async () => {
       desktopHistory.props.onClick({ currentTarget: trigger });
     });
@@ -306,8 +306,8 @@ describe("AgentPanel run replay interactions", () => {
     const replayButton = buttonWithClass(renderer, "agent-message-replay");
 
     expect(replayButton.props).toMatchObject({
-      "aria-label": "查看本次运行复盘",
-      title: "查看本次运行复盘",
+      "aria-label": "运行记录",
+      title: "运行记录",
     });
 
     await act(async () => {
@@ -375,6 +375,7 @@ describe("AgentPanel run replay interactions", () => {
 
     act(() => {
       removeButton!.props.onClick({ stopPropagation: vi.fn() });
+      removeButton!.props.onClick({ stopPropagation: vi.fn() });
     });
 
     expect(tauriMocks.postJson).toHaveBeenCalledWith("/api/agent/runs/delete-conversation", {
@@ -406,6 +407,7 @@ describe("AgentPanel run replay interactions", () => {
 
     act(() => {
       buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
+      buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
       renderer.unmount();
       renderers.delete(renderer);
     });
@@ -432,6 +434,7 @@ describe("AgentPanel run replay interactions", () => {
 
     act(() => {
       buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
+      buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
     });
 
     expect(JSON.parse(storage.get("stock-optimizer-agent-conversations") || "[]"))
@@ -440,6 +443,7 @@ describe("AgentPanel run replay interactions", () => {
     expect(buttonsWithClass(renderer, "agent-history-remove")[0].props.disabled).toBe(false);
 
     act(() => {
+      buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
       buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
     });
     expect(tauriMocks.postJson).not.toHaveBeenCalled();
@@ -457,6 +461,7 @@ describe("AgentPanel run replay interactions", () => {
 
     await act(async () => {
       buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
+      buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
       await Promise.resolve();
     });
     expect(tauriMocks.postJson).not.toHaveBeenCalled();
@@ -464,6 +469,7 @@ describe("AgentPanel run replay interactions", () => {
       .toEqual([expect.objectContaining({ id: "conversation-delete" })]);
 
     act(() => {
+      buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
       buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
       renderer.unmount();
       renderers.delete(renderer);
@@ -489,6 +495,7 @@ describe("AgentPanel run replay interactions", () => {
 
     await act(async () => {
       buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
+      buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
       await Promise.resolve();
     });
 
@@ -512,6 +519,8 @@ describe("AgentPanel run replay interactions", () => {
 
     act(() => {
       removeA!.props.onClick({ stopPropagation: vi.fn() });
+      removeA!.props.onClick({ stopPropagation: vi.fn() });
+      removeB!.props.onClick({ stopPropagation: vi.fn() });
       removeB!.props.onClick({ stopPropagation: vi.fn() });
     });
 
@@ -541,6 +550,8 @@ describe("AgentPanel run replay interactions", () => {
 
     act(() => {
       removeA!.props.onClick({ stopPropagation: vi.fn() });
+      removeA!.props.onClick({ stopPropagation: vi.fn() });
+      removeB!.props.onClick({ stopPropagation: vi.fn() });
       removeB!.props.onClick({ stopPropagation: vi.fn() });
     });
     expect(storedLedgerDeletionIds()).toEqual(["conversation-a", "conversation-b"]);
@@ -595,6 +606,7 @@ describe("AgentPanel run replay interactions", () => {
 
     await act(async () => {
       buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
+      buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
       await Promise.resolve();
     });
 
@@ -623,6 +635,7 @@ describe("AgentPanel run replay interactions", () => {
     const renderer = await renderPanel();
 
     await act(async () => {
+      buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
       buttonsWithClass(renderer, "agent-history-remove")[0].props.onClick({ stopPropagation: vi.fn() });
       await Promise.resolve();
     });

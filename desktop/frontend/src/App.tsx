@@ -27,6 +27,8 @@ import {
 type ViewKey = "screen" | "observe" | "backtest" | "news" | "agent";
 type LlmSettingsUpdater = LlmSettings | null | ((prev: LlmSettings | null) => LlmSettings | null);
 type StockRouteRequest = { code: string; requestId: number };
+type NewsRouteRequest = StockRouteRequest & { view?: "sources" | "sentiment" };
+type AgentDraftRequest = { prompt: string; requestId: number };
 const RESEARCH_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 
 const loadObservePanel = () => import("./components/panels/ObservePanel");
@@ -69,7 +71,8 @@ export default function App({ onMounted }: AppProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileRuntime, setMobileRuntime] = useState(false);
   const [observeRequest, setObserveRequest] = useState<StockRouteRequest | null>(null);
-  const [newsRequest, setNewsRequest] = useState<StockRouteRequest | null>(null);
+  const [newsRequest, setNewsRequest] = useState<NewsRouteRequest | null>(null);
+  const [agentDraftRequest, setAgentDraftRequest] = useState<AgentDraftRequest | null>(null);
   const [backtestRouteRequest, setBacktestRouteRequest] = useState<BacktestRouteRequest | null>(null);
   const [searchCode, setSearchCode] = useState("");
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
@@ -229,8 +232,12 @@ export default function App({ onMounted }: AppProps) {
   }, []);
 
   const openNewsForStock = useCallback((code: string) => {
-    setNewsRequest((prev) => ({ code, requestId: (prev?.requestId ?? 0) + 1 }));
+    setNewsRequest((prev) => ({ code, requestId: (prev?.requestId ?? 0) + 1, view: "sources" }));
     navigate("news");
+  }, [navigate]);
+  const handoffToAgent = useCallback((prompt: string) => {
+    setAgentDraftRequest((prev) => ({ prompt, requestId: (prev?.requestId ?? 0) + 1 }));
+    navigate("agent");
   }, [navigate]);
 
   const setLlmSettings = useCallback((value: LlmSettingsUpdater) => {
@@ -359,6 +366,8 @@ export default function App({ onMounted }: AppProps) {
                 watchlist={watchlist}
                 initialCode={newsRequest?.code || ""}
                 initialCodeRequestId={newsRequest?.requestId ?? 0}
+                initialView={newsRequest?.view}
+                onAskAgent={handoffToAgent}
               />
             )}
             {view === "agent" && (
@@ -367,6 +376,8 @@ export default function App({ onMounted }: AppProps) {
                 onLlmSettingsChange={setLlmSettings}
                 watchlist={watchlist}
                 onWatchlistChange={setWatchlist}
+                draftPrompt={agentDraftRequest?.prompt || ""}
+                draftRequestId={agentDraftRequest?.requestId ?? 0}
               />
             )}
           </Suspense>

@@ -17,6 +17,8 @@ interface AgentPanelProps {
   onLlmSettingsChange: (settings: LlmSettings | null) => void;
   watchlist: WatchlistItem[];
   onWatchlistChange: (items: WatchlistItem[]) => void;
+  draftPrompt?: string;
+  draftRequestId?: number;
 }
 
 interface ChatMessage {
@@ -51,6 +53,14 @@ const AGENT_MODES = [
 ] as const;
 
 type AgentMode = typeof AGENT_MODES[number]["id"];
+const AGENT_EXAMPLES: Record<AgentMode, string[]> = {
+  quick: ["帮我筛选今天值得看的趋势股", "看一下自选股里哪些偏离了原有逻辑", "查询 600519 最近的公告和新闻"],
+  expert: ["当前市场情绪周期处在什么阶段，依据是什么", "哪条主线最强，什么证据会让它失效", "用游资早期框架看 600519，指出环境、主线和失效条件"],
+  research: ["用价值复利框架评估 600519 的企业质量", "这家公司的资本配置有什么值得担心的地方", "当前估值假设是否经得起盈利下修"],
+};
+function agentModeLabel(mode: string | undefined) {
+  return AGENT_MODES.find((item) => item.id === mode)?.label || "快速模式";
+}
 
 const AGENT_HISTORY_KEY = "stock-optimizer-agent-conversations";
 const AGENT_ACTIVE_KEY = "stock-optimizer-agent-active-conversation";
@@ -87,7 +97,7 @@ function publishConversationDeletion(event: ConversationDeletionEvent) {
   for (const listener of conversationDeletionListeners) listener(event);
 }
 
-export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatchlistChange }: AgentPanelProps) {
+export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatchlistChange, draftPrompt, draftRequestId }: AgentPanelProps) {
   const [failedLedgerDeletionIds, ledgerDeletionMarkerIds, syncLedgerDeletionIds] = usePersistentLedgerDeletionIds();
   const [conversations, setConversations, quotaError] = useLocalStorage<AgentConversation[]>(
     AGENT_HISTORY_KEY,
@@ -99,7 +109,8 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const [input, setInput] = useState("");
   const composer = useMobileComposer(input);
   const [conversationSearch, setConversationSearch] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [runningConversationIds, setRunningConversationIds] = useState<string[]>([]);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [replayOpen, setReplayOpen] = useState(false);
   const [replayRunId, setReplayRunId] = useState<string>();
   const [finishedRunId, setFinishedRunId] = useState<string>();
@@ -113,11 +124,18 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const threadRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const replayTriggerRef = useRef<HTMLElement | null>(null);
-  const runAbortControllerRef = useRef<AbortController | null>(null);
+  const activeRunsRef = useRef(new Map<string, { runId: string; controller: AbortController }>());
+  const draftsRef = useRef<Record<string, string>>({});
+  const inputValueRef = useRef(input);
+  const pendingDeleteRef = useRef<string | null>(null);
+  const appliedDraftRef = useRef(0);
+  inputValueRef.current = input;
   const activeProvider = activeLlmProvider(llmSettings);
   const activeLlmConfig = useMemo(() => buildLlmConfig(llmSettings), [llmSettings]);
 
-  useEffect(() => () => runAbortControllerRef.current?.abort(), []);
+  useEffect(() => () => {
+    for (const run of activeRunsRef.current.values()) run.controller.abort();
+  }, []);
 
   const activeConversation = conversations.find((item) => item.id === activeConversationId) || conversations[0] || null;
   const activeConversationDeleting = Boolean(
@@ -126,6 +144,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         || ledgerDeletionMarkerIds.includes(activeConversation.id)),
   );
   const activeMode = AGENT_MODES.find((item) => item.id === activeConversation?.mode) || AGENT_MODES[0];
+  const currentRunning = Boolean(activeConversation?.id && runningConversationIds.includes(activeConversation.id));
   const messages = activeConversation?.messages || [];
   const sortedConversations = useMemo(
     () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
@@ -182,7 +201,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     const node = threadRef.current;
     if (!node || !stickToBottomRef.current) return;
     node.scrollTo({ top: node.scrollHeight });
-  }, [activeConversationId, messages, loading]);
+  }, [activeConversationId, messages, runningConversationIds]);
 
   useEffect(() => {
     setReplayOpen(false);
@@ -216,23 +235,31 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     )));
   }, [setConversations]);
 
+  const rememberDraft = (conversationId?: string) => {
+    if (conversationId) draftsRef.current[conversationId] = inputValueRef.current;
+  };
+
   const startNewChat = useCallback(() => {
-    const next = createConversation(activeConversation?.mode || "quick");
+    rememberDraft(activeConversation?.id);
+    const next = createConversation("quick");
     setConversations((prev) => [next, ...prev].slice(0, MAX_AGENT_CONVERSATIONS));
     setActiveConversationId(next.id);
     setInput("");
     if (typeof window !== "undefined" && window.matchMedia?.(AGENT_MOBILE_DRAWER_QUERY).matches) {
       setRailCollapsed(true);
     }
-  }, [activeConversation?.mode, setActiveConversationId, setConversations, setRailCollapsed]);
+  }, [activeConversation?.id, setActiveConversationId, setConversations, setRailCollapsed]);
 
   const switchConversation = useCallback((conversationId: string) => {
+    rememberDraft(activeConversation?.id);
     setActiveConversationId(conversationId);
-    setInput("");
+    setInput(draftsRef.current[conversationId] || "");
+    pendingDeleteRef.current = null;
+    setPendingDeleteId(null);
     if (typeof window !== "undefined" && window.matchMedia?.(AGENT_MOBILE_DRAWER_QUERY).matches) {
       setRailCollapsed(true);
     }
-  }, [setActiveConversationId, setRailCollapsed]);
+  }, [activeConversation?.id, setActiveConversationId, setRailCollapsed]);
 
   const removeLocalConversation = useCallback((conversationId: string) => {
     setConversations((prev) => {
@@ -271,7 +298,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   }, [removeLocalConversation, syncLedgerDeletionIds]);
 
   const removeConversation = useCallback((conversationId: string) => {
-    if (loading || conversationDeletionInFlightIds.has(conversationId)) return;
+    if (activeRunsRef.current.has(conversationId) || conversationDeletionInFlightIds.has(conversationId)) return;
     publishConversationDeletion({ conversationId, type: "started" });
     setConversationDeleteStorageError(undefined);
     if (!prepareConversationDeletion(conversationId)) {
@@ -295,7 +322,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         });
       })
       .catch(() => publishConversationDeletion({ conversationId, type: "settled" }));
-  }, [loading, removeLocalConversation, syncLedgerDeletionIds]);
+  }, [removeLocalConversation, syncLedgerDeletionIds]);
 
   const retryFailedLedgerDeletions = useCallback(() => {
     if (retryingLedgerDeletions || failedLedgerDeletionIds.length === 0) return;
@@ -355,8 +382,21 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const closeRunReplay = useCallback(() => setReplayOpen(false), []);
 
   const cancelActiveRun = useCallback(() => {
-    runAbortControllerRef.current?.abort();
-  }, []);
+    const conversationId = activeConversation?.id;
+    if (!conversationId) return;
+    activeRunsRef.current.get(conversationId)?.controller.abort();
+  }, [activeConversation?.id]);
+
+  useEffect(() => {
+    if (!draftRequestId || appliedDraftRef.current === draftRequestId) return;
+    appliedDraftRef.current = draftRequestId;
+    const next = createConversation("quick");
+    setConversations((prev) => [next, ...prev].slice(0, MAX_AGENT_CONVERSATIONS));
+    setActiveConversationId(next.id);
+    const prompt = draftPrompt || "";
+    draftsRef.current[next.id] = prompt;
+    setInput(prompt);
+  }, [draftPrompt, draftRequestId, setActiveConversationId, setConversations]);
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -364,7 +404,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     const mode = activeConversation?.mode || "quick";
     if (
       !text
-      || loading
+      || activeRunsRef.current.has(conversationId || "")
       || !conversationId
       || conversationDeletionInFlightIds.has(conversationId)
       || persistedLedgerDeletionIds().has(conversationId)
@@ -375,9 +415,10 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     const userMessage: ChatMessage = { role: "user", content: text, timestamp: now };
     const assistantMessage: ChatMessage = { role: "assistant", content: "准备中...", timestamp: now, runId, steps: [] };
     const controller = new AbortController();
-    runAbortControllerRef.current = controller;
+    activeRunsRef.current.set(conversationId, { runId, controller });
+    setRunningConversationIds(Array.from(activeRunsRef.current.keys()));
+    draftsRef.current[conversationId] = "";
     setInput("");
-    setLoading(true);
 
     updateConversation(conversationId, (conversation) => {
       const nextMessages = [...conversation.messages, userMessage, assistantMessage];
@@ -468,10 +509,12 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
       setFinishedRunConversationId(conversationId);
       setFinishedRunId(runId);
     } finally {
-      if (runAbortControllerRef.current === controller) runAbortControllerRef.current = null;
-      setLoading(false);
+      if (activeRunsRef.current.get(conversationId)?.controller === controller) {
+        activeRunsRef.current.delete(conversationId);
+      }
+      setRunningConversationIds(Array.from(activeRunsRef.current.keys()));
     }
-  }, [activeConversation?.id, activeConversation?.mode, activeLlmConfig, input, loading, messages, updateConversation, watchlist]);
+  }, [activeConversation?.id, activeConversation?.mode, activeLlmConfig, input, messages, updateConversation, watchlist]);
 
   return (
     <div className={`panel-container agent-panel agent-workspace ${railCollapsed ? "rail-collapsed" : ""}`}>
@@ -520,21 +563,28 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
                   >
                     <button type="button" className="agent-history-main" onClick={() => switchConversation(conversation.id)}>
                       <span>{conversation.title || "新对话"}</span>
-                      <em>{formatConversationTime(conversation.updatedAt)}</em>
+                      <em>{formatConversationTime(conversation.updatedAt)} · {agentModeLabel(conversation.mode)}</em>
                       <b>{conversation.messages.length ? `${conversation.messages.length} 条` : "未开始"}</b>
                     </button>
                     <button
                       type="button"
-                      className="agent-history-remove"
-                      aria-label="删除对话"
-                      title="删除对话"
-                      disabled={loading || ledgerDeletionInFlightIds.includes(conversation.id)}
+                      className={`agent-history-remove${pendingDeleteId === conversation.id ? " is-confirming" : ""}`}
+                      aria-label={pendingDeleteId === conversation.id ? "确认删除" : "删除对话"}
+                      title={pendingDeleteId === conversation.id ? "确认删除" : "删除对话"}
+                      disabled={runningConversationIds.includes(conversation.id) || ledgerDeletionInFlightIds.includes(conversation.id)}
                       onClick={(event) => {
                         event.stopPropagation();
+                        if (pendingDeleteRef.current !== conversation.id) {
+                          pendingDeleteRef.current = conversation.id;
+                          setPendingDeleteId(conversation.id);
+                          return;
+                        }
+                        pendingDeleteRef.current = null;
+                        setPendingDeleteId(null);
                         removeConversation(conversation.id);
                       }}
                     >
-                      <Trash2 size={14} aria-hidden="true" />
+                      {pendingDeleteId === conversation.id ? "确认" : <Trash2 size={14} aria-hidden="true" />}
                     </button>
                   </article>
                 ))}
@@ -576,8 +626,8 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           <IconButton
             className="agent-mobile-history"
             onClick={(event) => openRunHistory(event.currentTarget)}
-            label="运行历史"
-            title="运行历史"
+            label="运行记录"
+            title="运行记录"
             icon={<History size={18} aria-hidden="true" />}
           />
         </div>
@@ -587,11 +637,11 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             type="button"
             className="icon-button agent-thread-history"
             onClick={(event) => openRunHistory(event.currentTarget)}
-            aria-label="运行复盘"
-            title="运行复盘"
+            aria-label="运行记录"
+            title="运行记录"
           >
             <History size={17} aria-hidden="true" />
-            <span>运行复盘</span>
+            <span>运行记录</span>
           </button>
         </div>
         <div
@@ -603,7 +653,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             <AgentEmptyState
               mode={activeMode.id}
               activeModel={activeProvider?.model}
-              onModeChange={changeMode}
+              onExample={setInput}
             />
           ) : messages.map((msg, i) => (
             <article key={`${msg.timestamp}-${i}`} className={`agent-message ${msg.role} ${msg.error ? "error" : ""}`}>
@@ -614,15 +664,16 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
                   <IconButton
                     className="agent-message-replay"
                     onClick={(event) => openRunReplay(msg.runId!, event.currentTarget)}
-                    label="查看本次运行复盘"
-                    title="查看本次运行复盘"
+                    label="运行记录"
+                    title="运行记录"
                     icon={<FileSearch size={15} aria-hidden="true" />}
                   />
                 )}
               </div>
               <div className="agent-message-body">
-                {msg.steps?.length ? <AgentSteps steps={msg.steps} /> : null}
-                <p className="agent-final-reply">{msg.role === "assistant" && !msg.result ? sanitizeLegacyAgentReply(msg.content) : msg.content}</p>
+                {msg.steps?.length ? <AgentSteps steps={msg.steps} /> : (
+                  <p className="agent-final-reply">{msg.role === "assistant" && !msg.result ? sanitizeLegacyAgentReply(msg.content) : msg.content}</p>
+                )}
                 {msg.result && <AgentResultView result={msg.result} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} />}
               </div>
             </article>
@@ -668,20 +719,35 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             }}
             placeholder={composer.mobile ? "输入研究问题…" : `给股选优 Agent 发送消息，当前为 ${activeMode.label}`}
             rows={3}
-            disabled={loading || activeConversationDeleting}
+            disabled={currentRunning || activeConversationDeleting}
           />
           <div className="agent-composer-tools">
-            <span>{activeMode.label}</span>
+            <div className="agent-mode-tabs" role="group" aria-label="对话模式">
+              {AGENT_MODES.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={item.id === activeMode.id ? "active" : ""}
+                  aria-pressed={item.id === activeMode.id}
+                  aria-label={`${item.label}：${item.hint}`}
+                  title={item.hint}
+                  onClick={() => changeMode(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            <p className="agent-mode-note">{activeMode.hint}{messages.length ? ` 下一条将使用${activeMode.label}。` : ""}</p>
           </div>
           <div className="agent-composer-footer">
             <button
               type="button"
               className="send-btn"
-              onClick={loading ? cancelActiveRun : send}
-              disabled={!loading && (activeConversationDeleting || !input.trim())}
-              aria-label={loading ? "停止" : "发送"}
+              onClick={currentRunning ? cancelActiveRun : send}
+              disabled={!currentRunning && (activeConversationDeleting || !input.trim())}
+              aria-label={currentRunning ? "停止" : "发送"}
             >
-              {loading ? <Square size={17} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
+              {currentRunning ? <Square size={17} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
             </button>
           </div>
         </div>
@@ -705,42 +771,28 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
 function AgentEmptyState({
   mode,
   activeModel,
-  onModeChange,
+  onExample,
 }: {
   mode: AgentMode;
   activeModel?: string;
-  onModeChange: (mode: AgentMode) => void;
+  onExample: (example: string) => void;
 }) {
   return (
     <div className="agent-empty-state">
       <h2>开始对话</h2>
-
-      <div className="agent-mode-tabs" role="group" aria-label="对话模式">
-        {AGENT_MODES.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={item.id === mode ? "active" : ""}
-            aria-pressed={item.id === mode}
-            aria-label={`${item.label}：${item.hint}`}
-            onClick={() => onModeChange(item.id)}
-            title={item.hint}
-          >
-            {item.label}
-          </button>
+      <div className="agent-examples">
+        {AGENT_EXAMPLES[mode].map((example) => (
+          <button key={example} type="button" onClick={() => onExample(example)}>{example}</button>
         ))}
       </div>
-
       {!activeModel && <p role="status">未配置模型时使用本地工具分析</p>}
     </div>
   );
 }
 function AgentSteps({ steps }: { steps: AgentStep[] }) {
-  return (
-    <div className="agent-stream-steps">
-      {steps.map((step) => <div key={step.stage} className="agent-stream-step"><span>{step.label}</span><strong>{Math.max(0, Math.min(100, step.percent))}%</strong></div>)}
-    </div>
-  );
+  const latest = steps[steps.length - 1];
+  if (!latest) return null;
+  return <p className="agent-stream-status" role="status">{latest.label}</p>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

@@ -104,3 +104,38 @@ it("keeps previous analysis when refreshing data fails", async () => {
   expect(state.analysis).toEqual(old);
   expect(state.error).toContain("offline");
 });
+
+it("keeps followups when leaving and returning to an analysis", async () => {
+  const newer = { ...old, analysis_id: "newer" } as SentimentAnalysis;
+  await mount();
+  await act(async () => { await state.ask("反证是什么？", llm); });
+  await act(async () => state.selectAnalysis(newer));
+  expect(state.followups).toEqual([]);
+  await act(async () => state.selectAnalysis(old));
+  expect(state.followups[0]?.answer).toBe("快照回答");
+});
+
+it("does not start a second followup while an earlier one is still running", async () => {
+  let resolveFollowup: (value: unknown) => void = () => undefined;
+  postJson.mockImplementation((path: string) => {
+    if (path.endsWith("/followup")) return new Promise((resolve) => { resolveFollowup = resolve; });
+    if (path.endsWith("/latest")) return Promise.resolve({ analysis: old });
+    if (path.endsWith("/history")) return Promise.resolve({ items: [old] });
+    return Promise.resolve({ snapshot_id: "fresh" });
+  });
+  await mount();
+  let first!: Promise<boolean>;
+  await act(async () => { first = state.ask("第一问", llm); });
+  await act(async () => state.selectAnalysis({ ...old, analysis_id: "newer" }));
+  let second = false;
+  await act(async () => { second = await state.ask("第二问", llm); });
+  expect(second).toBe(false);
+  expect(postJson.mock.calls.filter(([path]) => String(path).endsWith("/followup"))).toHaveLength(1);
+  await act(async () => {
+    resolveFollowup({ analysis_id: "old", answer: "稍后回答", evidence_ids: [], created_at: 2 });
+    await first;
+  });
+  await act(async () => state.selectAnalysis(old));
+  expect(state.followups.map((item) => item.answer)).toEqual(["稍后回答"]);
+  expect(state.asking).toBe(false);
+});

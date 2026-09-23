@@ -573,13 +573,13 @@ export function AgentRunDrawer({
       className="agent-run-drawer"
       role="dialog"
       aria-modal={true}
-      aria-label="Agent 运行复盘"
+      aria-label="运行记录"
       onKeyDown={handleKeyDown}
     >
       <header className="agent-run-drawer-header">
         <div className="agent-run-drawer-title">
           <History size={18} aria-hidden="true" />
-          <h2>Agent 运行复盘</h2>
+          <h2>运行记录</h2>
         </div>
         {view === "detail" && (
           <IconButton
@@ -593,7 +593,7 @@ export function AgentRunDrawer({
           <IconButton
             className="agent-run-drawer-close"
             icon={<X size={18} />}
-            label="关闭复盘"
+            label="关闭运行记录"
             onClick={onClose}
           />
         </div>

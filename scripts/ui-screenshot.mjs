@@ -117,10 +117,11 @@ const routes = [
 
 export async function openNewsResearchWorkspace(page) {
   await page.locator(".sentiment-panel").waitFor({ state: "visible" });
-  const sources = page.getByRole("button", { name: "消息与资料", exact: true });
-  await sources.waitFor({ state: "visible" });
-  await sources.click();
-  await page.locator(".research-workspace").waitFor({ state: "visible" });
+  const workspace = page.locator(".research-workspace");
+  if (!(await workspace.isVisible().catch(() => false))) {
+    await page.getByRole("tab", { name: "消息", exact: true }).click();
+  }
+  await workspace.waitFor({ state: "visible" });
 }
 
 const mockStocks = [
@@ -1368,7 +1369,7 @@ async function runAgentReplayChecks(browser) {
       await historyTrigger.click();
       await currentRequest;
 
-      const dialog = page.getByRole("dialog", { name: "Agent 运行复盘" });
+      const dialog = page.getByRole("dialog", { name: "运行记录" });
       await dialog.waitFor({ state: "visible" });
       const runRow = dialog.locator(".agent-run-select");
       await runRow.waitFor({ state: "visible" });

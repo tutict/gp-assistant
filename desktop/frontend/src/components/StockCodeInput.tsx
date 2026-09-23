@@ -57,6 +57,7 @@ export function StockCodeInput({
   const suggestedMarket = showMarketConfirm ? inferMarketFromDigits(digits) : "";
 
   useEffect(() => {
+    if (typeof document === "undefined") return;
     const onPointerDown = (event: PointerEvent) => {
       if (!wrapperRef.current?.contains(event.target as Node)) setOpen(false);
     };

@@ -17,7 +17,7 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
   const [error, setError] = useState("");
   const [stageError, setStageError] = useState("");
   const [asking, setAsking] = useState(false);
-  const [followups, setFollowups] = useState<Array<SentimentFollowup & { question: string }>>([]);
+  const [followupsByAnalysis, setFollowupsByAnalysis] = useState<Record<string, Array<SentimentFollowup & { question: string }>>>({});
   const generation = useRef(0);
   const loadedCode = useRef<string | null>(null);
   const operation = useRef(0);
@@ -50,7 +50,6 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
       setLatest(null);
       setAnalysis(null);
       setHistory([]);
-      setFollowups([]);
       setRun(null);
     }
     setStarting(false);
@@ -128,7 +127,6 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
           analysisRef.current = next.result;
           setLatest(next.result);
           setAnalysis(next.result);
-          setFollowups([]);
           setHistory((items) => [next.result!, ...items.filter((item) => item.analysis_id !== next.result!.analysis_id)].slice(0, 30));
           setStages((items) => [next.result!, ...items.filter((item) => item.stock_code !== next.result!.stock_code)].slice(0, 200));
         } else if (next.status === "failed") setError(next.error || "模型分析失败；上次结果已保留。");
@@ -198,7 +196,6 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
           analysisRef.current = next.result;
           setLatest(next.result);
           setAnalysis(next.result);
-          setFollowups([]);
         }
       }
     } catch (failure) {
@@ -209,21 +206,13 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
   const selectAnalysis = useCallback((next: SentimentAnalysis) => {
     analysisRef.current = next;
     setAnalysis(next);
-    setFollowups([]);
     setError("");
-    askingRef.current = false;
-    setAsking(false);
-    operation.current += 1;
   }, []);
 
   const showLatest = useCallback(() => {
     setAnalysis(latest);
     analysisRef.current = latest;
-    setFollowups([]);
     setError("");
-    askingRef.current = false;
-    setAsking(false);
-    operation.current += 1;
   }, [latest]);
 
   const ask = useCallback(async (question: string, llm: LlmClientConfig | undefined) => {
@@ -244,9 +233,12 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
         question: question.trim(),
         llm,
       });
-      if (current !== generation.current || op !== operation.current || analysisRef.current?.analysis_id !== target.analysis_id) return false;
-      setFollowups((items) => [...items, { ...answer, question: question.trim() }]);
-      return true;
+      if (current !== generation.current || op !== operation.current) return false;
+      setFollowupsByAnalysis((items) => ({
+        ...items,
+        [target.analysis_id]: [...(items[target.analysis_id] || []), { ...answer, question: question.trim() }],
+      }));
+      return analysisRef.current?.analysis_id === target.analysis_id;
     } catch (failure) {
       if (current === generation.current && op === operation.current) setError(`追问失败：${message(failure)}`);
       return false;
@@ -270,7 +262,7 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
     error,
     stageError,
     asking,
-    followups,
+    followups: analysis?.analysis_id ? followupsByAnalysis[analysis.analysis_id] || [] : [],
     start,
     cancel,
     ask,

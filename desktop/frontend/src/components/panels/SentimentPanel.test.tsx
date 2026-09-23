@@ -6,7 +6,15 @@ import { SentimentPanel } from "./SentimentPanel";
 const { postJson } = vi.hoisted(() => ({ postJson: vi.fn() }));
 vi.mock("../../lib/tauri", () => ({ postJson }));
 vi.mock("./LlmSettingsPanel", () => ({ LlmSettingsPanel: () => null }));
-vi.mock("./NewsRagPanel", () => ({ NewsRagPanel: () => <div>消息资料子视图</div> }));
+vi.mock("./NewsRagPanel", () => ({
+  NewsRagPanel: (props: { code?: string; onCodeChange?: (code: string) => void }) => (
+    <div>
+      <span>消息资料子视图</span>
+      <span>{props.code}</span>
+      <button type="button" onClick={() => props.onCodeChange?.("000001.SZ")}>消息内换股票</button>
+    </div>
+  ),
+}));
 
 const snapshot: SentimentSnapshot = {
   snapshot_id: "frozen", stock_code: "600000.SH", stock_name: "浦发银行", industry: "银行",
@@ -63,17 +71,17 @@ it("keeps the original run polling through the sources subview and displays its 
       active_provider_id: "fixture", providers: [{ id: "fixture", model: "fixture", base_url: "http://localhost" }],
     }} />);
   });
+  await click("情绪");
   await click("重新分析");
   expect(renderer!.root.findByType("progress").props.value).toBe(25);
   const readsBeforeSwitch = postJson.mock.calls.filter(([path]) => /\/(snapshot|latest|history)$/.test(path)).length;
-  await click("消息与资料");
+  await click("消息");
   expect(textOf(renderer!.toJSON())).toContain("消息资料子视图");
-  expect(renderer!.root.findAllByType("progress")).toHaveLength(0);
-  expect(renderer!.root.findAllByType("textarea")).toHaveLength(0);
+  expect(renderer!.root.findByProps({ className: "sentiment-view sentiment-view-analysis" }).props.hidden).toBe(true);
 
   status = { ...status, stage: "核对冻结证据", progress: 60 };
   await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-  await click("返回情绪分析");
+  await click("情绪");
   expect(renderer!.root.findByType("progress").props.value).toBe(60);
   expect(textOf(renderer!.toJSON())).toContain("取消分析");
   expect(textOf(renderer!.toJSON())).toContain("先前分析结论");
@@ -109,11 +117,18 @@ it("filters evidence by the Shanghai day and shows the current snapshot when ana
   });
   await act(async () => { renderer = create(<SentimentPanel initialCode="600000.SH" llmSettings={null} />); });
   const text = () => textOf(renderer!.toJSON());
+  await click("情绪");
   expect(text()).toContain("缺失数据不记为零");
-  expect(text()).toContain("历史快照，数据已变化");
+  expect(text()).toContain("已有更新的数据");
+  expect(text()).toContain("当前阶段");
+  expect(text()).not.toContain("上次结论");
+  expect(text()).not.toContain("UTC晚间公告");
+  expect(text()).toContain("重试加载");
+  expect(text()).toContain("先配置模型");
+  await click("查看新证据");
+  expect(text()).toContain("上次结论");
   expect(text()).toContain("UTC晚间公告");
   expect(text()).toContain("北京上午公告");
-  expect(text()).toContain("重试加载");
   const clickDay = async (day: string) => {
     const button = renderer!.root.findAllByType("button").find((item) => String(item.props["aria-label"] ?? "").startsWith(day));
     expect(button, day).toBeDefined();
@@ -128,6 +143,23 @@ it("filters evidence by the Shanghai day and shows the current snapshot when ana
   expect(text()).not.toContain("UTC晚间公告");
   const select = renderer!.root.findByType("select");
   await act(async () => select.props.onChange({ target: { value: "close" } }));
-  const marks = renderer!.root.findAll((node) => node.props.className === "sentiment-chart-mark");
-  expect(marks.map((mark) => mark.props.style.bottom)).toEqual(["8%", "88%"]);
+  const marks = renderer!.root.findAll((node) => node.props.className === "sentiment-line-hit");
+  expect(marks.map((mark) => mark.props["data-bottom"])).toEqual(["8%", "88%"]);
+});
+
+it("shares one stock across news and sentiment and only prefills agent", async () => {
+  const onAskAgent = vi.fn();
+  await act(async () => {
+    renderer = create(<SentimentPanel initialCode="600000.SH" watchlist={[{ code: "600000.SH", name: "浦发银行" }]} onAskAgent={onAskAgent} llmSettings={null} />);
+  });
+  expect(textOf(renderer!.toJSON())).toContain("消息资料子视图");
+  expect(renderer!.root.findByProps({ className: "sentiment-view sentiment-view-analysis" }).props.hidden).toBe(true);
+  await click("消息内换股票");
+  expect(renderer!.root.findByProps({ id: "sentiment-stock" }).props.value).toBe("000001.SZ");
+  await click("情绪");
+  expect(textOf(renderer!.toJSON())).toContain("000001.SZ");
+  await click("交给 Agent");
+  expect(onAskAgent).toHaveBeenCalledTimes(1);
+  expect(onAskAgent.mock.calls[0][0]).toContain("000001.SZ");
+  expect(onAskAgent.mock.calls[0][0]).toContain("证据不足");
 });

@@ -33,13 +33,14 @@ Evidence IDs E1... are document facts/discussion. Metric IDs M1 (messages), M2 (
 
 Source-spoofing, duplicate stories/posts, relevant/time filtering, no lookahead, missing dimensions, immutable followups, explicit model failure, cancellation races, store replacement, UI route switching, desktop/mobile light/dark, real configured API only when accessible without exposing secrets.
 
-## Layout revision — 2026-09-20
+## Layout revision — 2026-09-23
 
+- One news route hosts two peer tabs, 消息 and 情绪. The first visit and a watchlist news action open 消息. Choosing 情绪 and then using the sidebar again does not force the tab back. Both tabs share one stock code and stay mounted after they have been opened.
 - Desktop keeps the watchlist in the first grid column and analysis in the flexible second column. At 1181px and above, selecting a reference opens the third-column inspector; smaller viewports use the existing accessible Sheet.
-- Mobile renders a single watchlist trigger and mounts the watchlist inside a Sheet. The desktop watchlist is not duplicated in the mobile focus order.
-- Reading order: stock context and compact coverage, stage/verdicts, timeline, three dimensions, factual events/discussion, optional followup, history. Rationale and followup expand on demand.
+- Mobile renders a single watchlist trigger and mounts the watchlist inside a Sheet. The 30-day chart is a summary line with previous and next day controls. Follow-up input is fixed at the bottom while an analysis is open.
+- Reading order: stock context and compact coverage, stage/verdicts, follow-up, timeline, three dimensions, factual events/discussion, history. Conclusion and evidence use the same snapshot unless the user explicitly asks to see newer evidence.
 - Timeline controls expose messages, price/volume and industry without reloading snapshot data. Viewport changes preserve the selected analysis and do not issue requests.
-- Followup uses one controlled disclosure and the shared mobile composer. Composition Enter cannot submit; mobile sending uses the visible button.
+- Follow-up stays with its analysis for the page session and is not written to storage. Composition Enter cannot submit; mobile sending uses the visible button.
 - Browser regression now asserts actual analysis-column width, rather than accepting absence of overflow as proof of a correct desktop layout. No DOM-forced disclosure fallback.
 
 Verification: frontend 393 unit tests passed; production build and bundle budget passed; CSS architecture, density, theme parity and class coverage passed; contrast audit passed 24 combinations; fixed-data sentiment interaction matrix passed 8 combinations. The full npm test chain remains stopped at the previous news screenshot baseline (news/empty/desktop-1440-dark/news.png); no threshold was relaxed or screenshot baseline overwritten. Real Android keyboard/safe-area validation and an actual configured external model call are not covered by these UI fixtures.

@@ -5018,3 +5018,60 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
     gap: var(--space-2);
   }
 }
+
+.agent-composer-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  white-space: normal;
+  min-width: 0;
+}
+.agent-composer-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "input input"
+    "tools tools"
+    "footer footer";
+}
+.agent-mode-note {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: normal;
+}
+.agent-examples {
+  display: grid;
+  gap: 8px;
+  width: min(520px, 100%);
+}
+.agent-examples button {
+  min-height: 44px;
+  padding: 8px 12px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.agent-next-actions {
+  display: block;
+  margin: 0;
+  color: var(--text-secondary);
+}
+.agent-process { margin-top: 8px; }
+.agent-stream-status { margin: 0; }
+
+.agent-history-remove.is-confirming {
+  width: auto;
+  min-width: 44px;
+  height: auto;
+  min-height: 44px;
+  padding: 0 8px;
+  color: var(--text);
+  background: var(--surface-3);
+  font-size: 12px;
+}

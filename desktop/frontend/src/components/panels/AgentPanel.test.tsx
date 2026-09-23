@@ -153,7 +153,7 @@ describe("AgentPanel empty state", () => {
     expect(html).toContain("未配置模型时使用本地工具分析");
     expect(html).toContain("游资早期框架：环境、主线、情绪周期与失效条件");
     expect(html).toContain("价值复利框架：企业质量、资本配置与估值");
-    expect(html).toContain('aria-label="运行历史"');
+    expect(html).toContain('aria-label="运行记录"');
     expect(html).toContain('class="icon-button agent-thread-history"');
     expect(html).toContain('class="icon-button agent-mobile-history"');
     expect(html).not.toContain("快速模式能力");

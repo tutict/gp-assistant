@@ -1,7 +1,7 @@
 .sentiment-panel { padding: 0; overflow: visible; min-width: 0; }
-.sentiment-panel:has(> .research-workspace) { display: flex; flex-direction: column; height: calc(100dvh - var(--header-height) - 30px); min-height: 0; overflow: hidden; }
-.sentiment-panel > .research-workspace { flex: 1; min-height: 0; height: auto; }
-.sentiment-panel:has(> .research-workspace) > .sentiment-header { flex-shrink: 0; }
+.sentiment-panel.is-sources, .sentiment-panel.is-sentiment { display: flex; flex-direction: column; height: calc(100dvh - var(--header-height) - 30px); min-height: 0; overflow: hidden; }
+.sentiment-panel.is-sources .research-workspace, .sentiment-view-sources:not([hidden]) { flex: 1; min-height: 0; height: auto; }
+.sentiment-panel.is-sources > .sentiment-header, .sentiment-panel.is-sentiment > .sentiment-header, .sentiment-toolbar { flex-shrink: 0; }
 .sentiment-header, .sentiment-toolbar, .sentiment-stock-heading, .sentiment-section-heading, .sentiment-header-actions { display: flex; align-items: center; gap: var(--space-3); }
 .sentiment-header { justify-content: space-between; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); }
 .sentiment-panel h2, .sentiment-panel h3, .sentiment-panel h4 { margin: 0; color: var(--text); }
@@ -137,7 +137,11 @@
   .sentiment-reasoning { grid-template-columns: 1fr; gap: var(--space-3); }
 }
 @media (max-width: 768px) {
-  .sentiment-panel:has(> .research-workspace) { height: calc(100dvh - var(--header-height) - var(--bottom-nav-height) - var(--safe-bottom)); }
+  .sentiment-panel.is-sources, .sentiment-panel.is-sentiment { height: calc(100dvh - var(--header-height) - var(--bottom-nav-height) - var(--safe-bottom)); }
+  .sentiment-tabs button, .sentiment-scrubber .btn { min-height: 44px; }
+  .sentiment-followup-form.is-docked { position: fixed; z-index: 5; left: 8px; right: 8px; bottom: calc(var(--bottom-nav-height) + var(--safe-bottom) + 8px); display: flex; gap: var(--space-2); padding: var(--space-2); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+  .sentiment-view-analysis:not([hidden]):has(.is-docked) { padding-bottom: 132px; }
+  :root[data-composer-keyboard="open"] .sentiment-followup-form.is-docked { bottom: 8px; }
 
   .sentiment-header { align-items: center; flex-wrap: wrap; padding: var(--space-2) var(--space-3); gap: var(--space-2); }
   .sentiment-header > div:first-child > p { display: none; }
@@ -167,7 +171,7 @@
   .sentiment-followup > summary small { display: none; }
   .sentiment-followup form { align-items: stretch; flex-direction: column; }
   .sentiment-followup button { align-self: flex-end; }
-  .sentiment-chart > button { flex-basis: 44px; min-width: 44px; }
+  .sentiment-line-hit { min-width: 0; min-height: 0; }
   .sentiment-empty { padding: var(--space-4); }
   .sentiment-progress { flex-wrap: wrap; }
   .sentiment-history button { max-width: 100%; white-space: normal; text-align: left; }
@@ -177,3 +181,33 @@
 .sentiment-snapshot-switch { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-2) 0 var(--space-3); }
 .sentiment-snapshot-note, .sentiment-quality-note { color: var(--text-secondary); }
 .sentiment-panel .sentiment-snapshot-switch .btn[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+
+.sentiment-tabs { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.sentiment-tabs button { min-height: var(--control-height); padding: 0 var(--space-3); border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-secondary); cursor: pointer; }
+.sentiment-tabs button[aria-selected="true"] { background: var(--accent-soft); color: var(--text); }
+.sentiment-view[hidden] { display: none !important; }
+.sentiment-view:not([hidden]) { flex: 1; min-height: 0; overflow: auto; }
+.sentiment-view-sources:not([hidden]) { display: flex; flex-direction: column; overflow: hidden; }
+.sentiment-toolbar { position: relative; z-index: 2; }
+.sentiment-toolbar .stock-code-input { min-width: 180px; }
+.sentiment-line-chart { position: relative; margin-top: var(--space-3); }
+.sentiment-line-svg, .sentiment-spark { width: 100%; height: 180px; display: block; }
+.sentiment-spark { height: 88px; }
+.sentiment-line-svg polyline, .sentiment-spark polyline { fill: none; stroke: var(--chart-line-1); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+.sentiment-line-svg circle, .sentiment-spark circle { fill: var(--chart-line-1); }
+.sentiment-line-zero { stroke: var(--control-line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.sentiment-line-plot { position: relative; }
+.sentiment-line-hits { position: absolute; inset: 0; }
+.sentiment-line-dot { position: absolute; width: 7px; height: 7px; border-radius: 999px; background: var(--chart-line-1); transform: translate(-50%, -50%); pointer-events: none; }
+.sentiment-line-dot[data-negative="true"] { background: var(--chart-line-2); }
+.sentiment-line-hit { position: absolute; top: 0; bottom: 0; width: 14px; transform: translateX(-50%); border: 0; background: transparent; padding: 0; cursor: pointer; }
+.sentiment-line-hit[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.sentiment-line-axis { display: flex; justify-content: space-between; gap: var(--space-2); min-height: 22px; color: var(--text-secondary); font-size: var(--fs-caption); }
+.sentiment-line-axis span { text-align: center; }
+.sentiment-scrubber { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+.sentiment-scrubber strong { flex: 1; min-width: 140px; font-size: var(--fs-data); }
+.sentiment-followup-form { display: flex; align-items: end; gap: var(--space-3); margin-top: var(--space-3); }
+.sentiment-followup-form textarea { resize: vertical; min-width: 0; flex: 1; }
+.sentiment-conclusion-actions { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
+
+.sentiment-scrubber-chart { display: grid; gap: var(--space-2); }
