@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { CapitalEvidenceItem, CapitalEvidenceResult, CapitalEvidenceSection, FinancialIndicatorItem, FinancialIndicatorSection, ObserveResult, StockItem, TrendIndicatorPoint, TrendIndicatorSignal, WatchlistItem } from "../../types";
 import { computeKdj, toDailyBars } from "../../lib/kline";
 import { calculateObserveQuant } from "../../lib/observeQuant";
@@ -28,6 +28,13 @@ interface ObservePanelProps {
   initialCode?: string;
   initialCodeRequestId?: number;
   mobileRuntime?: boolean;
+  onOpenNews?: (code: string) => void;
+  onAskAgent?: (prompt: string) => void;
+}
+
+export function observeAgentPrompt(name: string, code: string): string {
+  const label = name.trim() || code;
+  return `请研究 ${label}（${code}）。结合行情、财务和趋势，说明现在值得继续观察还是需要回避，并指出主要依据。`;
 }
 
 const OBSERVE_FULL_HISTORY_START = "1990-01-01";
@@ -39,15 +46,26 @@ export function ObservePanel({
   watchlist,
   onWatchlistChange,
   mobileRuntime = false,
+  onOpenNews,
+  onAskAgent,
 }: ObservePanelProps) {
   const [code, setCode] = useState(initialCode || "");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ObserveResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (initialCode) setCode(initialCode);
-  }, [initialCode, initialCodeRequestId]);
+  const observeVersionRef = useRef(0);
+  const handledRequestRef = useRef(0);
+  const editCode = useCallback((value: string) => {
+    observeVersionRef.current += 1;
+    setCode(value);
+    setLoading(false);
+    setError(null);
+    const nextCode = normalizeStockCode(value);
+    setResult((current) => {
+      const currentCode = normalizeStockCode(current?.stock?.code);
+      return currentCode && nextCode && currentCode === nextCode ? current : null;
+    });
+  }, []);
 
   const toggleObservedWatchlist = useCallback(() => {
     const stock = result?.stock;
@@ -73,12 +91,16 @@ export function ObservePanel({
   const observedCode = normalizeStockCode(result?.stock?.code || code);
   const observedInWatchlist = Boolean(observedCode && watchlist.some((item) => normalizeStockCode(item.code) === observedCode));
 
-  const runObserve = useCallback(async () => {
-    const normalizedCode = normalizeStockCode(code);
+  const runObserve = useCallback(async (requestedCode?: string) => {
+    const explicit = typeof requestedCode === "string";
+    const normalizedCode = normalizeStockCode(explicit ? requestedCode : code);
+    const version = ++observeVersionRef.current;
     if (!normalizedCode) {
       setError("请输入有效股票代码。");
+      setLoading(false);
       return;
     }
+    if (explicit) setCode(normalizedCode);
     setLoading(true);
     setError(null);
     try {
@@ -90,13 +112,25 @@ export function ObservePanel({
         include_chip_distribution: "true",
       });
       const data = await getJson<ObserveResult>(`/api/observe/${encodeURIComponent(normalizedCode)}?${query}`);
+      if (version !== observeVersionRef.current) return;
       setResult(data);
     } catch (err) {
+      if (version !== observeVersionRef.current) return;
       setError((err as Error).message);
     } finally {
-      setLoading(false);
+      if (version === observeVersionRef.current) setLoading(false);
     }
   }, [code]);
+  const runObserveRef = useRef(runObserve);
+  runObserveRef.current = runObserve;
+
+  useEffect(() => {
+    if (!initialCodeRequestId || handledRequestRef.current === initialCodeRequestId) return;
+    handledRequestRef.current = initialCodeRequestId;
+    const requested = initialCode || "";
+    setCode(requested);
+    void runObserveRef.current(requested);
+  }, [initialCode, initialCodeRequestId]);
 
   return (
     <div className="panel-container observe-panel-container">
@@ -106,26 +140,33 @@ export function ObservePanel({
           <StockCodeInput
             id="observeCode"
             value={code}
-            onChange={setCode}
+            onChange={editCode}
             placeholder="输入股票代码或名称"
             resolveBareCode={!mobileRuntime}
           />
         </div>
-        <button type="button" className="run-btn observe-run-btn" onClick={runObserve} disabled={loading}>{loading ? "观察中..." : "开始观察"}</button>
+        <button type="button" className="run-btn observe-run-btn" onClick={() => runObserve()} disabled={loading}>{loading ? "观察中..." : "开始观察"}</button>
       </div>
 
       <div className="panel-result observe-panel-result">
-        {error && <PanelFeedback kind="error" title="观察失败" description={error} action={<button type="button" className="action-btn" onClick={runObserve} disabled={loading}>重试</button>} />}
-        {loading && !result && !error && <PanelFeedback kind="loading" description="正在加载行情、财务和趋势数据..." />}
-        {result && !loading && <ObserveResultView result={result} inWatchlist={observedInWatchlist} onToggleWatchlist={toggleObservedWatchlist} />}
+        {error && !loading && <PanelFeedback kind="error" title="观察失败" description={error} action={<button type="button" className="action-btn" onClick={() => runObserve()} disabled={loading}>重试</button>} />}
+        {loading && <PanelFeedback kind="loading" description="正在加载行情、财务和趋势数据..." />}
+        {result && !loading && <ObserveResultView result={result} inWatchlist={observedInWatchlist} onToggleWatchlist={toggleObservedWatchlist} onOpenNews={onOpenNews} onAskAgent={onAskAgent} />}
         {!result && !loading && !error && <PanelFeedback kind="empty" description="输入股票代码后开始观察。" />}
       </div>
     </div>
   );
 }
 
-export function ObserveResultView({ result, inWatchlist = false, onToggleWatchlist }: { result: ObserveResult; inWatchlist?: boolean; onToggleWatchlist?: () => void }) {
+export function ObserveResultView({ result, inWatchlist = false, onToggleWatchlist, onOpenNews, onAskAgent }: {
+  result: ObserveResult;
+  inWatchlist?: boolean;
+  onToggleWatchlist?: () => void;
+  onOpenNews?: (code: string) => void;
+  onAskAgent?: (prompt: string) => void;
+}) {
   const stock = result.stock || { code: "", name: "" };
+  const linkedCode = normalizeStockCode(stock.code) || stock.code;
   const trend = result.trend;
   const signal = trend?.signal;
   const series = trend?.series || [];
@@ -143,6 +184,12 @@ export function ObserveResultView({ result, inWatchlist = false, onToggleWatchli
               <button type="button" className={`stock-row-action watchlist-action ${inWatchlist ? "saved" : ""}`} onClick={onToggleWatchlist}>
                 {inWatchlist ? "已收藏" : "收藏"}
               </button>
+            )}
+            {linkedCode && onOpenNews && (
+              <button type="button" className="stock-row-action" onClick={() => onOpenNews(linkedCode)}>消息</button>
+            )}
+            {linkedCode && onAskAgent && (
+              <button type="button" className="stock-row-action" onClick={() => onAskAgent(observeAgentPrompt(stock.name || "", linkedCode))}>交给 Agent</button>
             )}
           </div>
         </header>

@@ -1,5 +1,7 @@
 import { X } from "lucide-react";
+import type { LlmSettings } from "../../types";
 import type { SettingDescriptor } from "../../lib/settingsRegistry";
+import { LlmSettingsPanel } from "../panels/LlmSettingsPanel";
 import { IconButton } from "../ui/IconButton";
 import { Sheet } from "../ui/Sheet";
 
@@ -7,6 +9,8 @@ interface SettingsSheetProps {
   open: boolean;
   onClose: () => void;
   settings: readonly SettingDescriptor[];
+  llmSettings?: LlmSettings | null;
+  onLlmSettingsChange?: (settings: LlmSettings | null) => void;
 }
 
 function SettingControl({ setting }: { setting: SettingDescriptor }) {
@@ -62,7 +66,7 @@ function SettingControl({ setting }: { setting: SettingDescriptor }) {
   );
 }
 
-export function SettingsSheet({ open, onClose, settings }: SettingsSheetProps) {
+export function SettingsSheet({ open, onClose, settings, llmSettings, onLlmSettingsChange }: SettingsSheetProps) {
   return (
     <Sheet
       open={open}
@@ -93,6 +97,15 @@ export function SettingsSheet({ open, onClose, settings }: SettingsSheetProps) {
             <SettingControl setting={setting} />
           </section>
         ))}
+        {onLlmSettingsChange ? (
+          <section className="settings-item">
+            <LlmSettingsPanel
+              settings={llmSettings ?? null}
+              onChange={onLlmSettingsChange}
+              presentation="dialog"
+            />
+          </section>
+        ) : null}
       </div>
     </Sheet>
   );

@@ -8,22 +8,24 @@ interface StockListProps {
   watchlist: WatchlistItem[];
   onToggleWatchlist: (item: StockRowView) => void;
   onObserveStock?: (code: string) => void;
+  onNewsStock?: (code: string) => void;
 }
 
-export const StockList = memo(function StockList({ items, watchlist, onToggleWatchlist, onObserveStock }: StockListProps) {
+export const StockList = memo(function StockList({ items, watchlist, onToggleWatchlist, onObserveStock, onNewsStock }: StockListProps) {
   const mobile = useMediaQuery("(max-width: 768px)");
   const savedCodes = useMemo(() => new Set(watchlist.map(item => item.code)), [watchlist]);
   const sortedItems = useMemo(() => sortStocksByDisplayScore(items), [items]);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const actions = useRef({onToggleWatchlist, onObserveStock});
-  actions.current = {onToggleWatchlist, onObserveStock};
+  const actions = useRef({onToggleWatchlist, onObserveStock, onNewsStock});
+  actions.current = {onToggleWatchlist, onObserveStock, onNewsStock};
   const toggleWatchlist = useCallback((item: StockRowView) => actions.current.onToggleWatchlist(item), []);
   const observeStock = useCallback((code: string) => actions.current.onObserveStock?.(code), []);
+  const newsStock = useCallback((code: string) => actions.current.onNewsStock?.(code), []);
   const id = useId();
   if (!sortedItems.length) return <div className="empty-list">暂无匹配股票</div>;
   const rows = sortedItems.map((item, index) => <StockEntry key={`${item.code}-${index}`} item={item} mobile={mobile}
     saved={savedCodes.has(item.code)} expanded={expanded === item.code} detailId={`${id}-${index}`}
-    onExpand={setExpanded} onToggleWatchlist={toggleWatchlist} onObserveStock={onObserveStock ? observeStock : undefined} />);
+    onExpand={setExpanded} onToggleWatchlist={toggleWatchlist} onObserveStock={onObserveStock ? observeStock : undefined} onNewsStock={onNewsStock ? newsStock : undefined} />);
   return <div className="quote-table">
     {mobile ? <div className="stock-list stock-mobile-list">{rows}</div> : <table className="stock-comparison-table">
       <caption className="visually-hidden">选股结果，按综合分从高到低排列</caption>
@@ -39,15 +41,17 @@ interface EntryProps {
   onExpand: (code: string | null) => void;
   onToggleWatchlist: StockListProps["onToggleWatchlist"];
   onObserveStock: StockListProps["onObserveStock"];
+  onNewsStock: StockListProps["onNewsStock"];
 }
 
-const StockEntry = memo(function StockEntry({item, mobile, saved, expanded, detailId, onExpand, onToggleWatchlist, onObserveStock}: EntryProps) {
+const StockEntry = memo(function StockEntry({item, mobile, saved, expanded, detailId, onExpand, onToggleWatchlist, onObserveStock, onNewsStock}: EntryProps) {
   const tone = Number.isFinite(item.change_pct) ? Number(item.change_pct)>0 ? "rise" : Number(item.change_pct)<0 ? "fall" : "neutral" : "neutral";
   const change = typeof item.change_pct === "number" ? formatSignedPercent(item.change_pct * 100) : "—";
   const identity = <div className="stock-title"><strong>{item.name || item.code}</strong><span>{item.code} {item.industry}</span>{Boolean(item.riskTags?.length) && <small className="stock-risk-summary">关注：{item.riskTags!.join("、")}</small>}</div>;
   const actions = <div className="row-button-group">
     <button type="button" className={`stock-row-action watchlist-action ${saved ? "saved" : ""}`} aria-pressed={saved} onClick={() => onToggleWatchlist(item)}>{saved ? "已收藏" : "收藏"}</button>
     {onObserveStock && <button type="button" className="stock-row-action observe-action" onClick={()=>onObserveStock(item.code)}>观察</button>}
+    {onNewsStock && <button type="button" className="stock-row-action" onClick={()=>onNewsStock(item.code)}>消息</button>}
     <button type="button" className="stock-row-action stock-details-toggle" aria-expanded={expanded} aria-controls={expanded ? detailId : undefined} onClick={()=>onExpand(expanded ? null : item.code)}>{expanded ? "收起依据" : "展开依据"}</button>
   </div>;
   const details = expanded ? <StockDetails item={item} id={detailId} /> : null;

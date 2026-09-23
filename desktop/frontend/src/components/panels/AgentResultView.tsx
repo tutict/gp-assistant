@@ -236,7 +236,7 @@ function agentNestedResult(result: AgentResult, kind: string): Record<string, un
 }
 
 function GenericAgentResult({ result }: { result: unknown }) {
-  return <RawJson result={result} />;
+  return <RawJson result={result} enabled />;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

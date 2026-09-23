@@ -19,6 +19,14 @@ interface SheetProps {
   backdropClassName?: string;
 }
 
+
+function eventTargetsNestedDialog(event: KeyboardEvent, panel: HTMLElement | null): boolean {
+  const target = event.target;
+  if (typeof Node === "undefined" || !(target instanceof Node) || !panel || panel.contains(target)) return false;
+  const element = target instanceof Element ? target : target.parentElement;
+  return Boolean(element?.closest?.("[role='dialog']"));
+}
+
 function canFocus(value: unknown): value is HTMLElement {
   return typeof (value as HTMLElement | null)?.focus === "function";
 }
@@ -63,12 +71,14 @@ export function Sheet({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (eventTargetsNestedDialog(event, panel)) return;
         event.preventDefault();
         event.stopPropagation?.();
         onCloseRef.current();
         return;
       }
       if (event.key !== "Tab") return;
+      if (eventTargetsNestedDialog(event, panel)) return;
       const current = getFocusable();
       if (current.length === 0) {
         event.preventDefault();

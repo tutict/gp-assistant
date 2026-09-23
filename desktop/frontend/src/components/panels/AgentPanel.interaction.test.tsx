@@ -729,4 +729,27 @@ describe("AgentPanel run replay interactions", () => {
     expect(buttonWithClass(renderer, "send-btn").props.disabled).toBe(false);
     expect(nodeText(renderer.root.find((node) => hasClass(node, "agent-final-reply")))).toBe("stable answer");
   });
+
+  it("prefills a new quick conversation from a handoff without sending", async () => {
+    seedConversations([conversation("conversation-1", "Existing", [
+      { role: "user", content: "old question", timestamp: 1 },
+    ])]);
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <AgentPanel
+          {...baseProps}
+          draftPrompt="请研究 贵州茅台（600519.SH）。"
+          draftRequestId={3}
+        />,
+      );
+    });
+    renderers.add(renderer);
+
+    expect(renderer.root.findByType("textarea").props.value).toBe("请研究 贵州茅台（600519.SH）。");
+    expect(renderer.root.findAll((node) => node.type === "article" && hasClass(node, "user"))).toHaveLength(0);
+    expect(invokeMock).not.toHaveBeenCalled();
+    const quick = renderer.root.find((node) => node.type === "button" && node.children.includes("快速模式"));
+    expect(quick.props["aria-pressed"]).toBe(true);
+  });
 });

@@ -112,7 +112,7 @@ describe("AgentResultView", () => {
     expect(html).toContain("All required datasets are ready.");
     expect(html).toContain("Intraday quotes are delayed.");
     expect(html).toContain('data-view="raw-json"');
-    expect(componentMocks.rawJson).toHaveBeenCalledWith({ result });
+    expect(componentMocks.rawJson).toHaveBeenCalledWith({ result, enabled: true });
   });
 
   it("dispatches a complete nested backtest payload to BacktestResultView", () => {
@@ -213,7 +213,7 @@ describe("AgentResultView", () => {
     const { html } = renderResult(result);
 
     expect(html).toContain('data-view="raw-json"');
-    expect(componentMocks.rawJson).toHaveBeenCalledWith({ result });
+    expect(componentMocks.rawJson).toHaveBeenCalledWith({ result, enabled: true });
     expect(componentMocks.backtest).not.toHaveBeenCalled();
     expect(componentMocks.news).not.toHaveBeenCalled();
     expect(componentMocks.observe).not.toHaveBeenCalled();

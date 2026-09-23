@@ -25,6 +25,25 @@ import {
 } from "./lib/viewNavigation";
 
 type ViewKey = "screen" | "observe" | "backtest" | "news" | "agent";
+
+function viewFromHash(hash: string): ViewKey {
+  const map: Record<string, ViewKey> = {
+    "#sectionScreen": "screen",
+    "#sectionGraph": "screen",
+    "#sectionTrend": "screen",
+    "#sectionObserve": "observe",
+    "#sectionBacktest": "backtest",
+    "#sectionNewsRag": "news",
+    "#sectionAgent": "agent",
+  };
+  return map[hash] || "screen";
+}
+
+type ResearchView = "screen" | "observe" | "backtest";
+
+function isResearchView(view: ViewKey): view is ResearchView {
+  return view === "screen" || view === "observe" || view === "backtest";
+}
 type LlmSettingsUpdater = LlmSettings | null | ((prev: LlmSettings | null) => LlmSettings | null);
 type StockRouteRequest = { code: string; requestId: number };
 type NewsRouteRequest = StockRouteRequest & { view?: "sources" | "sentiment" };
@@ -55,18 +74,14 @@ export default function App({ onMounted }: AppProps) {
   const { theme, setTheme, toggleTheme } = useTheme();
   const { density, setDensity } = useDensity();
   const { fontScale, setFontScale } = useFontScale();
-  const [view, setView] = useState<ViewKey>(() => {
-    const hash = window.location.hash;
-    const map: Record<string, ViewKey> = {
-      "#sectionScreen": "screen",
-      "#sectionGraph": "screen",
-      "#sectionTrend": "screen",
-      "#sectionObserve": "observe",
-      "#sectionBacktest": "backtest",
-      "#sectionNewsRag": "news",
-      "#sectionAgent": "agent",
+  const [view, setView] = useState<ViewKey>(() => viewFromHash(window.location.hash));
+  const [visitedResearch, setVisitedResearch] = useState<Record<ResearchView, boolean>>(() => {
+    const initial = viewFromHash(window.location.hash);
+    return {
+      screen: initial === "screen",
+      observe: initial === "observe",
+      backtest: initial === "backtest",
     };
-    return map[hash] || "screen";
   });
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileRuntime, setMobileRuntime] = useState(false);
@@ -167,17 +182,11 @@ export default function App({ onMounted }: AppProps) {
   // Hash routing
   useEffect(() => {
     const onHashChange = () => {
-      const hash = window.location.hash;
-      const map: Record<string, ViewKey> = {
-        "#sectionScreen": "screen",
-        "#sectionGraph": "screen",
-        "#sectionTrend": "screen",
-        "#sectionObserve": "observe",
-        "#sectionBacktest": "backtest",
-        "#sectionNewsRag": "news",
-        "#sectionAgent": "agent",
-      };
-      setView(map[hash] || "screen");
+      const next = viewFromHash(window.location.hash);
+      setView(next);
+      if (isResearchView(next)) {
+        setVisitedResearch((current) => current[next] ? current : { ...current, [next]: true });
+      }
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
@@ -186,6 +195,9 @@ export default function App({ onMounted }: AppProps) {
 
   const navigate = useCallback((v: ViewKey) => {
     setView(v);
+    if (isResearchView(v)) {
+      setVisitedResearch((current) => current[v] ? current : { ...current, [v]: true });
+    }
     setMobileNavOpen(false);
     const hrefMap: Record<ViewKey, string> = {
       screen: "#sectionScreen",
@@ -310,6 +322,8 @@ export default function App({ onMounted }: AppProps) {
         onToggleSettings={toggleSettings}
         onToggleTheme={toggleTheme}
         onToggleMobileNav={() => setMobileNavOpen(true)}
+        llmSettings={llmSettings}
+        onLlmSettingsChange={(settings) => setLlmSettings(settings)}
       />
 
       <Sidebar
@@ -328,38 +342,49 @@ export default function App({ onMounted }: AppProps) {
         )}
 
         <div className="panels">
-          <Suspense
-            fallback={<PanelFeedback kind="loading" description="正在加载工作区..." />}
-          >
-            {view === "screen" && (
+          {visitedResearch.screen && (
+            <div className="persistent-panel" hidden={view !== "screen"}>
               <ScreenPanel
                 criteria={criteria}
                 onCriteriaChange={setCriteria}
                 watchlist={watchlist}
                 onWatchlistChange={setWatchlist}
                 onObserveStock={observeStock}
+                onNewsStock={openNewsForStock}
                 onRunBacktest={runCurrentCriteriaBacktest}
                 mobileRuntime={mobileRuntime}
               />
-            )}
-            {view === "observe" && (
-              <ObservePanel
-                watchlist={watchlist}
-                onWatchlistChange={setWatchlist}
-                initialCode={observeRequest?.code || ""}
-                initialCodeRequestId={observeRequest?.requestId ?? 0}
-                mobileRuntime={mobileRuntime}
-              />
-            )}
-            {view === "backtest" && (
-              <BacktestPanel
-                criteria={criteria}
-                watchlist={watchlist}
-                preferredSource={backtestRouteRequest}
-                onPreferredSourceConsumed={handleBacktestRouteConsumed}
-              />
-            )}
-            {view === "news" && (
+            </div>
+          )}
+          {visitedResearch.observe && (
+            <Suspense fallback={view === "observe" ? <PanelFeedback kind="loading" description="正在加载工作区..." /> : null}>
+              <div className="persistent-panel" hidden={view !== "observe"}>
+                <ObservePanel
+                  watchlist={watchlist}
+                  onWatchlistChange={setWatchlist}
+                  initialCode={observeRequest?.code || ""}
+                  initialCodeRequestId={observeRequest?.requestId ?? 0}
+                  mobileRuntime={mobileRuntime}
+                  onOpenNews={openNewsForStock}
+                  onAskAgent={handoffToAgent}
+                />
+              </div>
+            </Suspense>
+          )}
+          {visitedResearch.backtest && (
+            <Suspense fallback={view === "backtest" ? <PanelFeedback kind="loading" description="正在加载工作区..." /> : null}>
+              <div className="persistent-panel" hidden={view !== "backtest"}>
+                <BacktestPanel
+                  criteria={criteria}
+                  watchlist={watchlist}
+                  preferredSource={backtestRouteRequest}
+                  onPreferredSourceConsumed={handleBacktestRouteConsumed}
+                />
+              </div>
+            </Suspense>
+          )}
+          {view === "news" && (
+            <Suspense fallback={<PanelFeedback kind="loading" description="正在加载工作区..." />}>
               <NewsRagPanel
                 llmSettings={llmSettings}
                 onLlmSettingsChange={setLlmSettings}
@@ -369,8 +394,10 @@ export default function App({ onMounted }: AppProps) {
                 initialView={newsRequest?.view}
                 onAskAgent={handoffToAgent}
               />
-            )}
-            {view === "agent" && (
+            </Suspense>
+          )}
+          {view === "agent" && (
+            <Suspense fallback={<PanelFeedback kind="loading" description="正在加载工作区..." />}>
               <AgentPanel
                 llmSettings={llmSettings}
                 onLlmSettingsChange={setLlmSettings}
@@ -379,8 +406,8 @@ export default function App({ onMounted }: AppProps) {
                 draftPrompt={agentDraftRequest?.prompt || ""}
                 draftRequestId={agentDraftRequest?.requestId ?? 0}
               />
-            )}
-          </Suspense>
+            </Suspense>
+          )}
         </div>
 
         {view !== "agent" && view !== "news" && (

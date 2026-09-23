@@ -1,6 +1,11 @@
 import { useState } from "react";
+import { vi } from "vitest";
+
+vi.mock("../panels/LlmSettingsPanel", () => ({
+  LlmSettingsPanel: () => null,
+}));
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { useDensity } from "../../hooks/useDensity";
 import { SettingsSheet } from "./SettingsSheet";
 

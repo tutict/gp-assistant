@@ -35,4 +35,18 @@ describe("stock comparison interactions",()=>{
     await act(async()=>renderer.unmount());
     vi.unstubAllGlobals();
   });
+
+  it("opens news for the selected row without leaving the list", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const onNewsStock = vi.fn();
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<StockList items={items} watchlist={[]} onToggleWatchlist={() => undefined} onNewsStock={onNewsStock} />);
+    });
+    const news = renderer.root.findAll((node) => node.type === "button" && node.children.includes("消息"));
+    await act(async () => news[0].props.onClick());
+    expect(onNewsStock).toHaveBeenCalledWith("600000.SH");
+    await act(async () => renderer.unmount());
+    vi.unstubAllGlobals();
+  });
 });

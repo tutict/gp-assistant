@@ -106,9 +106,14 @@ describe("ScreenPanel adaptive states", () => {
     await act(async()=>button("筛选条件").props.onClick());
     expect(renderer.root.findByType(CriteriaFields).props.criteria.maxPe).toBe(criteria.maxPe);
     await act(async()=>renderer.root.findByType(CriteriaFields).props.onChange({...criteria,maxPe:"35"}));
-    await act(async()=>button("应用").props.onClick());
-    expect(change).toHaveBeenCalledWith(expect.objectContaining({maxPe:"35"}));
     expect(postJsonMock).not.toHaveBeenCalled();
+    await act(async()=>button("应用并筛选").props.onClick());
+    expect(change).toHaveBeenCalledWith(expect.objectContaining({maxPe:"35"}));
+    expect(postJsonMock).toHaveBeenCalledTimes(1);
+    expect(postJsonMock).toHaveBeenCalledWith(
+      "/api/custom-screen",
+      expect.objectContaining({ criteria: expect.objectContaining({ max_pe: 35 }) }),
+    );
     await act(async()=>renderer.unmount());
   });
   beforeEach(() => {
@@ -311,6 +316,54 @@ describe("ScreenPanel adaptive states", () => {
 
     expect(textContent(renderer)).not.toContain("暂无匹配股票");
     expect(textContent(renderer)).toContain("点击运行查看当前模式的全市场筛选结果");
+    expect(runButton(renderer).props.disabled).toBe(false);
+
+    await act(async () => {
+      customTab.props.onClick();
+    });
+    expect(textContent(renderer)).toContain("暂无匹配股票");
+    expect(textContent(renderer)).toContain("用你设置的财务和市值条件筛选");
+  });
+
+  it("restores each mode result and shows its fixed description", async () => {
+    postJsonMock.mockResolvedValueOnce({
+      total: 1,
+      returned: 1,
+      items: [{ stock: { code: "000001.SZ", name: "自定义样本", price: 10 }, score: 8, reasons: [] }],
+      groups: [],
+    }).mockResolvedValueOnce({
+      total: 1,
+      returned: 1,
+      items: [{ stock: { code: "600519.SH", name: "智能样本", price: 20 }, score: 9, reasons: [] }],
+      groups: [],
+    });
+    const renderer = await renderPanel();
+    const customTab = renderer.root.find((node) => node.type === "button" && node.children.includes("自定义选股"));
+    const adaptiveTab = renderer.root.find((node) => node.type === "button" && node.children.includes("智能选股"));
+    const conceptTab = renderer.root.find((node) => node.type === "button" && node.children.includes("概念分组"));
+    const boardTab = renderer.root.find((node) => node.type === "button" && node.children.includes("板块分组"));
+    const trendTab = renderer.root.find((node) => node.type === "button" && node.children.includes("趋势选股"));
+
+    await act(async () => { customTab.props.onClick(); });
+    await act(async () => { await runButton(renderer).props.onClick(); });
+    expect(textContent(renderer)).toContain("自定义样本");
+
+    await act(async () => { adaptiveTab.props.onClick(); });
+    expect(textContent(renderer)).not.toContain("自定义样本");
+    expect(textContent(renderer)).toContain("按当前市场状态从全市场挑出综合评分较高的股票");
+    await act(async () => { await runButton(renderer).props.onClick(); });
+    expect(textContent(renderer)).toContain("智能样本");
+
+    await act(async () => { customTab.props.onClick(); });
+    expect(textContent(renderer)).toContain("自定义样本");
+    expect(textContent(renderer)).not.toContain("智能样本");
+
+    await act(async () => { conceptTab.props.onClick(); });
+    expect(textContent(renderer)).toContain("按概念把候选股票分组查看");
+    await act(async () => { boardTab.props.onClick(); });
+    expect(textContent(renderer)).toContain("按行业板块分组查看");
+    await act(async () => { trendTab.props.onClick(); });
+    expect(textContent(renderer)).toContain("在指定日期区间里看趋势强度");
   });
 
   it("requests ten stocks per concept group while retaining the five-stock group threshold", async () => {

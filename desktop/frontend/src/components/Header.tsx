@@ -1,7 +1,7 @@
 import { CircleHelp, Menu, Moon, Search, Settings, Sun, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { Ref } from "react";
-import type { DataStatus } from "../types";
+import type { DataStatus, LlmSettings } from "../types";
 import type { SettingDescriptor } from "../lib/settingsRegistry";
 import { formatBytes, formatMarketRefreshDate } from "../lib/format";
 import { StockCodeInput } from "./StockCodeInput";
@@ -23,6 +23,8 @@ interface HeaderProps {
   onToggleSettings: () => void;
   onToggleTheme: () => void;
   onToggleMobileNav: () => void;
+  llmSettings?: LlmSettings | null;
+  onLlmSettingsChange?: (settings: LlmSettings | null) => void;
 }
 
 const SHORTCUTS = [
@@ -61,6 +63,8 @@ export function Header({
   onToggleSettings,
   onToggleTheme,
   onToggleMobileNav,
+  llmSettings,
+  onLlmSettingsChange,
 }: HeaderProps) {
   const refreshDate = dataStatus?.quote_trade_date
     ?? dataStatus?.quote_generated_at
@@ -157,7 +161,13 @@ export function Header({
         </div>
       </header>
 
-      <SettingsSheet open={settingsOpen} onClose={onToggleSettings} settings={settings} />
+      <SettingsSheet
+        open={settingsOpen}
+        onClose={onToggleSettings}
+        settings={settings}
+        llmSettings={llmSettings}
+        onLlmSettingsChange={onLlmSettingsChange}
+      />
 
       {shortcutHelpOpen ? (
         <div className="shortcut-help-backdrop" onMouseDown={onToggleHelp}>

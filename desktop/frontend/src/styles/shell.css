@@ -346,6 +346,10 @@
   min-width: 0;
 }
 
+.persistent-panel[hidden] {
+  display: none !important;
+}
+
 .panel-container {
   min-width: 0;
   overflow: visible;

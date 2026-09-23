@@ -65,6 +65,15 @@ describe("BacktestPanel interactions", () => {
     expect(renderer.root.findByProps({className:"backtest-parameter-disclosure"}).props.open).toBe(false);
     await act(async () => renderer.root.findByProps({id:"btCostBps"}).props.onChange({target:{value:"25"}}));
     expect(textContent(renderer)).toContain("参数已修改，结果待更新");
+    expect(textContent(renderer)).toContain("重新回测");
+    expect(textContent(renderer)).toContain("基点");
+    expect(textContent(renderer)).toContain("候选快照");
+    expect(textContent(renderer)).toContain("滚动验证");
+    expect(textContent(renderer)).not.toContain("bps");
+    expect(textContent(renderer)).not.toContain("Walk-forward");
+    expect(textContent(renderer)).not.toContain("Snapshot");
+    expect(textContent(renderer)).not.toContain("Adaptive swing");
+    expect(textContent(renderer)).not.toContain("Mode");
     expect(renderer.root.findByProps({className:"backtest-result"})).toBeTruthy();
     await act(async () => renderer.root.findAllByProps({role:"tab"})[1].props.onClick());
     expect(renderer.root.findAllByProps({role:"tabpanel"}).filter(node=>!node.props.hidden)).toHaveLength(1);

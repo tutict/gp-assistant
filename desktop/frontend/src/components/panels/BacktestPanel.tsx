@@ -23,6 +23,13 @@ import {
   VOLATILITY_INTERPRETATION_METHOD,
 } from "../../lib/volatilityInterpretation";
 
+
+export function backtestStrategyLabel(mode: unknown): string {
+  if (mode === "walk_forward") return "滚动验证";
+  if (mode === "adaptive_swing_v1") return "自适应波段";
+  return "候选快照";
+}
+
 interface BacktestPanelProps {
   criteria: FilterCriteria;
   watchlist: WatchlistItem[];
@@ -156,6 +163,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     ? [selectedIndustry, ...ALL_INDUSTRY_OPTIONS]
     : ALL_INDUSTRY_OPTIONS;
   const canEditCriteria = source === "criteria" && !adaptiveScreenSpec;
+  const runLabel = loading ? "回测计算中..." : result && resultSignature !== parameterSignature ? "重新回测" : "运行回测";
 
   return (
     <div className="panel-container">
@@ -188,25 +196,21 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
           <button
             type="button"
             className="backtest-run-button"
-            aria-label="运行回测"
+            aria-label={loading ? "运行回测" : runLabel}
             aria-disabled={loading}
             disabled={loading}
             onClick={run}
           >
-            {loading ? "回测计算中..." : "运行回测"}
+            {runLabel}
           </button>
         </div>
         <div className="backtest-param-strip">
           <span><b>持仓</b><strong>{topN}</strong></span>
           <span><b>区间</b><strong>{start}~{end}</strong></span>
           <span><b>调仓</b><strong>{shortRebalanceLabel(rebalance)}</strong></span>
-          <span><b>成本</b><strong>{formatNumber(costBps)}bps</strong></span>
+          <span><b>成本</b><strong>{formatNumber(costBps)}基点</strong></span>
           <span><b>基准</b><strong>{shortBenchmarkLabel(benchmark)}</strong></span>
-          <span><b>Mode</b><strong>{
-            strategyMode === "walk_forward"
-              ? "Walk-forward"
-              : strategyMode === "adaptive_swing_v1" ? "Adaptive swing" : "Snapshot"
-          }</strong></span>
+          <span><b>方式</b><strong>{backtestStrategyLabel(strategyMode)}</strong></span>
         </div>
       </div>
 
@@ -257,8 +261,8 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
         <div className="form-row inline"><label htmlFor="btStrategyMode">模式</label><select id="btStrategyMode" value={strategyMode} disabled={loading} onChange={(e) => {
           setStrategyMode(e.target.value);
           if (e.target.value !== "adaptive_swing_v1") setAdaptiveScreenSpec(undefined);
-        }}><option value="candidate_snapshot">候选快照</option><option value="walk_forward">Walk-forward</option><option value="adaptive_swing_v1">自适应波段</option></select></div>
-        <div className="form-row inline"><label htmlFor="btCostBps">成本</label><input id="btCostBps" type="number" min="0" max="500" value={costBps} disabled={loading} onChange={(e) => setCostBps(Number(e.target.value) || 0)} /></div>
+        }}><option value="candidate_snapshot">候选快照</option><option value="walk_forward">滚动验证</option><option value="adaptive_swing_v1">自适应波段</option></select></div>
+        <div className="form-row inline"><label htmlFor="btCostBps">成本（基点）</label><input id="btCostBps" type="number" min="0" max="500" value={costBps} disabled={loading} onChange={(e) => setCostBps(Number(e.target.value) || 0)} /></div>
       </div>
 
       </details>
@@ -384,11 +388,7 @@ export function BacktestResultView({ result, watchlist = [] }: { result: Backtes
         <div><span>换手</span><strong>{formatNumber(metrics.total_turnover)}</strong></div>
         <div><span>调仓次数</span><strong>{metrics.rebalance_count ?? 0}</strong></div>
         <div><span>样本外折数</span><strong>{metrics.oos_fold_count ?? 0}</strong></div>
-        <div><span>Mode</span><strong>{
-          metrics.strategy_mode === "adaptive_swing_v1"
-            ? "自适应波段"
-            : metrics.strategy_mode === "walk_forward" ? "Walk-forward" : "Snapshot"
-        }</strong></div>
+        <div><span>方式</span><strong>{backtestStrategyLabel(metrics.strategy_mode)}</strong></div>
       </section>
 
       {result.adaptive_release_gate && !result.adaptive_release_gate.passed && <p className="backtest-stale-notice">验证门槛尚未全部通过，请查看验证明细。</p>}
@@ -397,7 +397,7 @@ export function BacktestResultView({ result, watchlist = [] }: { result: Backtes
       {result.adaptive_release_gate && (
         <section className="backtest-holdings">
           <header>
-            <span>adaptive_swing_v1 发布门槛</span>
+            <span>自适应波段发布门槛</span>
             <strong>{result.adaptive_release_gate.passed ? "全部通过" : "暂不切换默认"}</strong>
           </header>
           {result.legacy_balanced_backtest && (

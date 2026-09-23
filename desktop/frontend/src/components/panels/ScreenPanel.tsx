@@ -32,6 +32,7 @@ interface ScreenPanelProps {
   watchlist: WatchlistItem[];
   onWatchlistChange: (items: WatchlistItem[]) => void;
   onObserveStock?: (code: string) => void;
+  onNewsStock?: (code: string) => void;
   onRunBacktest?: (screenSpec?: AdaptiveScreenRequest, criteriaSnapshot?: FilterCriteria) => void;
   mobileRuntime?: boolean;
 }
@@ -45,6 +46,14 @@ const TABS: { key: ScreenMode; label: string }[] = [
   { key: "customScreen", label: "自定义选股" },
   { key: "trendScreen", label: "趋势选股" },
 ];
+
+const MODE_NOTES: Record<ScreenMode, string> = {
+  screen: "按当前市场状态从全市场挑出综合评分较高的股票",
+  sectorScreen: "按概念把候选股票分组查看",
+  boardScreen: "按行业板块分组查看",
+  customScreen: "用你设置的财务和市值条件筛选",
+  trendScreen: "在指定日期区间里看趋势强度",
+};
 
 const FULL_UNIVERSE_CRITERIA: FilterCriteria = {
   includeSt: false,
@@ -61,8 +70,34 @@ const FULL_UNIVERSE_CRITERIA: FilterCriteria = {
   scoreProfile: "balanced",
 };
 
+type ScreenRunState = {
+  result: unknown | null;
+  error: string | null;
+  loading: boolean;
+  progress: { percent: number; message: string } | null;
+  adaptiveRequest?: AdaptiveScreenRequest;
+  criteriaSnapshot: FilterCriteria;
+};
+
+type ScreenRunOverride = {
+  mode?: ScreenMode;
+  criteria?: FilterCriteria;
+  trendStart?: string;
+  trendEnd?: string;
+};
+
 function criteriaForMode(mode: ScreenMode, customCriteria: FilterCriteria): FilterCriteria {
   return mode === "customScreen" ? customCriteria : FULL_UNIVERSE_CRITERIA;
+}
+
+function emptyRunState(criteriaSnapshot: FilterCriteria): ScreenRunState {
+  return {
+    result: null,
+    error: null,
+    loading: false,
+    progress: null,
+    criteriaSnapshot,
+  };
 }
 
 export function ScreenPanel({
@@ -71,6 +106,7 @@ export function ScreenPanel({
   watchlist,
   onWatchlistChange,
   onObserveStock,
+  onNewsStock,
   onRunBacktest,
 }: ScreenPanelProps) {
   const mobileLayout = useMediaQuery("(max-width: 768px)");
@@ -78,16 +114,33 @@ export function ScreenPanel({
   const [draftCriteria, setDraftCriteria] = useState(criteria);
   const [draftDates, setDraftDates] = useState({ start: "", end: "" });
   const [mode, setMode] = useState<ScreenMode>("screen");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<unknown>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [runs, setRuns] = useState<Record<ScreenMode, ScreenRunState>>(() => ({
+    screen: emptyRunState(FULL_UNIVERSE_CRITERIA),
+    sectorScreen: emptyRunState(FULL_UNIVERSE_CRITERIA),
+    boardScreen: emptyRunState(FULL_UNIVERSE_CRITERIA),
+    customScreen: emptyRunState(criteria),
+    trendScreen: emptyRunState(FULL_UNIVERSE_CRITERIA),
+  }));
   const [trendStart, setTrendStart] = useState(defaultTrendStartDateInputValue());
   const [trendEnd, setTrendEnd] = useState(currentSystemDateInputValue());
-  const [adaptiveProgress, setAdaptiveProgress] = useState<{ percent: number; message: string } | null>(null);
-  const [lastAdaptiveRequest, setLastAdaptiveRequest] = useState<AdaptiveScreenRequest | undefined>();
-  const [lastRequestCriteria, setLastRequestCriteria] = useState<FilterCriteria>(FULL_UNIVERSE_CRITERIA);
   const activeRunIdRef = useRef<string | null>(null);
-  const requestVersionRef = useRef(0);
+  const requestVersions = useRef<Record<ScreenMode, number>>({
+    screen: 0,
+    sectorScreen: 0,
+    boardScreen: 0,
+    customScreen: 0,
+    trendScreen: 0,
+  });
+
+  const updateRun = useCallback((
+    target: ScreenMode,
+    patch: Partial<ScreenRunState> | ((current: ScreenRunState) => ScreenRunState),
+  ) => {
+    setRuns((current) => ({
+      ...current,
+      [target]: typeof patch === "function" ? patch(current[target]) : { ...current[target], ...patch },
+    }));
+  }, []);
 
   useEffect(() => {
     const listen = getTauriListen();
@@ -95,11 +148,13 @@ export function ScreenPanel({
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void listen("adaptive-screen-progress", (event) => {
-      const payload = (event as { payload?: { run_id?: string; percent?: number; message?: string } }).payload;
+      const payload = (event as { payload?: unknown }).payload;
       if (!isAdaptiveProgressForRun(payload, activeRunIdRef.current)) return;
-      setAdaptiveProgress({
-        percent: Number(payload.percent) || 0,
-        message: payload.message || "正在计算",
+      updateRun("screen", {
+        progress: {
+          percent: Number(payload.percent) || 0,
+          message: payload.message || "正在计算",
+        },
       });
     }).then((stop) => {
       if (disposed) stop();
@@ -109,52 +164,89 @@ export function ScreenPanel({
       disposed = true;
       unlisten?.();
     };
-  }, []);
+  }, [updateRun]);
 
-  const run = useCallback(async () => {
-    const requestVersion = ++requestVersionRef.current;
-    setLoading(true);
-    setError(null);
+  const run = useCallback(async (override?: ScreenRunOverride) => {
+    const requestMode = override?.mode ?? mode;
+    const requestCriteria = criteriaForMode(requestMode, override?.criteria ?? criteria);
+    const requestTrendStart = override?.trendStart ?? trendStart;
+    const requestTrendEnd = override?.trendEnd ?? trendEnd;
+    const requestVersion = ++requestVersions.current[requestMode];
+    let adaptiveRequest: AdaptiveScreenRequest | undefined;
+    updateRun(requestMode, (current) => ({
+      ...current,
+      loading: true,
+      error: null,
+      criteriaSnapshot: { ...requestCriteria },
+      progress: requestMode === "screen" ? { percent: 2, message: "准备初选" } : null,
+    }));
     try {
       let endpoint = "/api/screen";
       let payload: unknown;
-      const requestCriteria = criteriaForMode(mode, criteria);
-      setLastRequestCriteria({ ...requestCriteria });
-      if (mode === "screen") {
+      if (requestMode === "screen") {
         const request = buildAdaptiveScreenRequest(requestCriteria);
+        adaptiveRequest = request;
         activeRunIdRef.current = request.run_id;
-        setAdaptiveProgress({ percent: 2, message: "准备初选" });
-        setLastAdaptiveRequest(request);
         payload = request;
       } else {
         payload = buildCustomScreenRequest(requestCriteria);
       }
 
-      if (mode === "sectorScreen") {
+      if (requestMode === "sectorScreen") {
         endpoint = "/api/sector-screen";
         payload = buildSectorScreenRequest(requestCriteria, "concept", 10, 12);
-      } else if (mode === "boardScreen") {
+      } else if (requestMode === "boardScreen") {
         endpoint = "/api/sector-screen";
         payload = buildSectorScreenRequest(requestCriteria, "board", 5, 5);
-      } else if (mode === "customScreen") {
+      } else if (requestMode === "customScreen") {
         endpoint = "/api/custom-screen";
         payload = buildCustomScreenRequest(requestCriteria);
-      } else if (mode === "trendScreen") {
+      } else if (requestMode === "trendScreen") {
         endpoint = "/api/trend-screen";
-        payload = buildTrendScreenRequest(requestCriteria, trendStart, trendEnd);
+        payload = buildTrendScreenRequest(requestCriteria, requestTrendStart, requestTrendEnd);
       }
 
       const data = await postJson(endpoint, payload);
-      if (requestVersion === requestVersionRef.current) setResult(data);
+      if (requestVersion !== requestVersions.current[requestMode]) return;
+      updateRun(requestMode, (current) => ({
+        ...current,
+        result: data,
+        loading: false,
+        error: null,
+        progress: null,
+        adaptiveRequest: requestMode === "screen" ? adaptiveRequest : current.adaptiveRequest,
+        criteriaSnapshot: { ...requestCriteria },
+      }));
     } catch (err) {
-      if (requestVersion === requestVersionRef.current) setError((err as Error).message);
+      if (requestVersion !== requestVersions.current[requestMode]) return;
+      updateRun(requestMode, (current) => ({
+        ...current,
+        loading: false,
+        error: (err as Error).message,
+        progress: null,
+      }));
     } finally {
-      if (requestVersion === requestVersionRef.current) {
-        setLoading(false);
+      if (requestVersion === requestVersions.current[requestMode] && requestMode === "screen") {
         activeRunIdRef.current = null;
       }
     }
-  }, [criteria, mode, trendEnd, trendStart]);
+  }, [criteria, mode, trendEnd, trendStart, updateRun]);
+
+  const applyDraftAndRun = () => {
+    if (mode === "customScreen") {
+      const nextCriteria = { ...draftCriteria };
+      onCriteriaChange(nextCriteria);
+      setCriteriaOpen(false);
+      void run({ mode, criteria: nextCriteria });
+      return;
+    }
+    const nextStart = draftDates.start;
+    const nextEnd = draftDates.end;
+    setTrendStart(nextStart);
+    setTrendEnd(nextEnd);
+    setCriteriaOpen(false);
+    void run({ mode, trendStart: nextStart, trendEnd: nextEnd });
+  };
 
   const toggleWatchlist = useCallback((item: StockRowView) => {
     const exists = watchlist.some((w) => w.code === item.code);
@@ -168,6 +260,9 @@ export function ScreenPanel({
     }
   }, [mode, onWatchlistChange, watchlist]);
 
+  const current = runs[mode];
+  const { result, error, loading } = current;
+  const adaptiveProgress = current.progress;
   const hasControlFields = mode === "customScreen" || mode === "trendScreen";
   const appliedCriteriaSummary = [
     criteria.industry || "全部行业", criteria.marketScope || "全部范围",
@@ -207,7 +302,7 @@ export function ScreenPanel({
   );
 
   const runButton = (
-    <button type="button" className="run-btn" onClick={run} disabled={loading}>
+    <button type="button" className="run-btn" onClick={() => void run()} disabled={loading}>
       {loading ? "运行中..." : "运行筛选"}
     </button>
   );
@@ -222,14 +317,8 @@ export function ScreenPanel({
           aria-selected={mode === tab.key}
           onClick={(event) => {
             if (mobileLayout) event?.currentTarget?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-            requestVersionRef.current += 1;
-            activeRunIdRef.current = null;
             setMode(tab.key);
             setCriteriaOpen(false);
-            setLoading(false);
-            setAdaptiveProgress(null);
-            setResult(null);
-            setError(null);
           }}
           type="button"
         >
@@ -238,12 +327,14 @@ export function ScreenPanel({
       ))}
     </div>
   );
+  const modeNote = <p className="screen-mode-note">{MODE_NOTES[mode]}</p>;
 
   return (
     <div className={`panel-container screen-panel-container ${result != null ? "has-result" : ""}`}>
       {mobileLayout ? (
         <>
           {modeTabs}
+          {modeNote}
           <div className="panel-controls screen-panel-run-card">
             {runButton}
           </div>
@@ -254,6 +345,7 @@ export function ScreenPanel({
             {modeTabs}
             {runButton}
           </div>
+          {modeNote}
           {hasControlFields && (
             <div className={controlsClassName}>
               {controlFields}
@@ -272,11 +364,11 @@ export function ScreenPanel({
           <label>开始日期<input type="date" value={draftDates.start} onChange={e=>setDraftDates({...draftDates,start:e.target.value})} /></label>
           <label>结束日期<input type="date" value={draftDates.end} onChange={e=>setDraftDates({...draftDates,end:e.target.value})} /></label>
         </>}
-        <footer><button type="button" className="run-btn" onClick={()=>{ if(mode === "customScreen") onCriteriaChange({...draftCriteria}); else {setTrendStart(draftDates.start);setTrendEnd(draftDates.end);} setCriteriaOpen(false);}}>应用</button></footer>
+        <footer><button type="button" className="run-btn" onClick={applyDraftAndRun} disabled={loading}>应用并筛选</button></footer>
       </Sheet>
 
       <div className="panel-result screen-panel-result">
-        {error && <PanelFeedback kind="error" title="查询失败" description={error} action={<button type="button" className="action-btn" onClick={run}>重试</button>} />}
+        {error && <PanelFeedback kind="error" title="查询失败" description={error} action={<button type="button" className="action-btn" onClick={() => void run()}>重试</button>} />}
         {loading && !error && (
           <PanelFeedback
             kind="loading"
@@ -293,9 +385,10 @@ export function ScreenPanel({
             watchlist={watchlist}
             onToggleWatchlist={toggleWatchlist}
             onObserveStock={onObserveStock}
+            onNewsStock={onNewsStock}
             onRunBacktest={onRunBacktest}
-            adaptiveRequest={mode === "screen" ? lastAdaptiveRequest : undefined}
-            criteriaSnapshot={lastRequestCriteria}
+            adaptiveRequest={mode === "screen" ? current.adaptiveRequest : undefined}
+            criteriaSnapshot={current.criteriaSnapshot}
           />
         )}
         {!result && !loading && !error && <PanelFeedback kind="empty" description={emptyDescription} />}
@@ -315,6 +408,7 @@ export const ScreenResultView = memo(function ScreenResultView({
   watchlist,
   onToggleWatchlist,
   onObserveStock,
+  onNewsStock,
   onRunBacktest,
   adaptiveRequest,
   criteriaSnapshot,
@@ -324,6 +418,7 @@ export const ScreenResultView = memo(function ScreenResultView({
   watchlist: WatchlistItem[];
   onToggleWatchlist: (item: StockRowView) => void;
   onObserveStock?: (code: string) => void;
+  onNewsStock?: (code: string) => void;
   onRunBacktest?: (screenSpec?: AdaptiveScreenRequest, criteriaSnapshot?: FilterCriteria) => void;
   adaptiveRequest?: AdaptiveScreenRequest;
   criteriaSnapshot?: FilterCriteria;
@@ -387,13 +482,13 @@ export const ScreenResultView = memo(function ScreenResultView({
                 <span className="sector-group-meta" title={group.meta} aria-label={group.meta}><strong>{group.rows.length}</strong><small>{compactGroupMeta(group.meta)}</small></span>
               </summary>
               <div className="sector-group-content">
-                <StockList items={group.rows} watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} onObserveStock={onObserveStock} />
+                <StockList items={group.rows} watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} onObserveStock={onObserveStock} onNewsStock={onNewsStock} />
               </div>
             </details>
           ))}
         </div>
       ) : (
-        <StockList items={rows} watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} onObserveStock={onObserveStock} />
+        <StockList items={rows} watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} onObserveStock={onObserveStock} onNewsStock={onNewsStock} />
       )}
 
       {resultRecord.notes?.length ? <div className="notes">{resultRecord.notes.map((note) => <p key={note}>{note}</p>)}</div> : null}

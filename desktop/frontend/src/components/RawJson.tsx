@@ -9,16 +9,19 @@ interface RawJsonProps {
   result: unknown;
   className?: string;
   inline?: boolean;
+  enabled?: boolean;
 }
 
-export function RawJson({ result, className = "raw-json", inline = false }: RawJsonProps) {
-  const [expanded, setExpanded] = useState(inline && rawJsonEnabled);
+export function RawJson({ result, className = "raw-json", inline = false, enabled }: RawJsonProps) {
+  const visible = enabled ?? rawJsonEnabled;
+  const [expanded, setExpanded] = useState(inline && visible);
   const json = useMemo(() => {
-    if (!expanded && !rawJsonEnabled) return "";
+    if (!visible && !expanded) return "";
     return stringifyJson(result);
-  }, [expanded, result]);
-  const limit = rawJsonEnabled ? RAW_JSON_DEV_LIMIT : RAW_JSON_PREVIEW_LIMIT;
+  }, [expanded, result, visible]);
+  const limit = visible ? RAW_JSON_DEV_LIMIT : RAW_JSON_PREVIEW_LIMIT;
   const visibleJson = json.length > limit && !expanded ? `${json.slice(0, limit)}\n...` : json;
+  if (!visible) return null;
 
   if (inline) {
     return <pre className={className}>{visibleJson || "Release 已延迟渲染原始调试数据。"}</pre>;
@@ -30,11 +33,7 @@ export function RawJson({ result, className = "raw-json", inline = false }: RawJ
       onToggle={(event) => setExpanded((event.currentTarget as HTMLDetailsElement).open)}
     >
       <summary>原始 JSON</summary>
-      {expanded || rawJsonEnabled ? (
-        <pre>{visibleJson}</pre>
-      ) : (
-        <p className="raw-json-hint">Release 默认延迟渲染完整调试数据，展开后再生成。</p>
-      )}
+      <pre>{visibleJson}</pre>
     </details>
   );
 }
