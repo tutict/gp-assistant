@@ -110,7 +110,7 @@ export function SentimentPanel(props: Props) {
   }, [props.initialCode, props.initialCodeRequestId, props.initialView]);
   return <section className={`sentiment-panel ${view === "sources" ? "is-sources" : "is-sentiment"}`} id="sectionNewsRag" aria-label="研究工作区">
     <header className="sentiment-header">
-      <div>
+      <div className="sentiment-title">
         <h2><Activity size={19} aria-hidden="true" /> {view === "sources" ? "消息" : "个股情绪"}</h2>
         <p>{view === "sources" ? "公告、新闻与资料，按股票查阅" : "事实、讨论与市场表现，交叉验证情绪阶段"}</p>
       </div>
@@ -130,16 +130,16 @@ export function SentimentPanel(props: Props) {
         <button type="button" id="sentiment-tab-sources" role="tab" aria-selected={view === "sources"} aria-controls="sentiment-panel-sources" tabIndex={view === "sources" ? 0 : -1} onClick={() => openView("sources")}>消息</button>
         <button type="button" id="sentiment-tab-sentiment" role="tab" aria-selected={view === "sentiment"} aria-controls="sentiment-panel-analysis" tabIndex={view === "sentiment" ? 0 : -1} onClick={() => openView("sentiment")}>情绪</button>
       </div>
+      <form className="sentiment-toolbar" onSubmit={(event) => { event.preventDefault(); commitInput(input); }}>
+        <label htmlFor="sentiment-stock">股票</label>
+        <StockCodeInput id="sentiment-stock" value={input} onChange={(value) => { setInput(value); setInputError(""); }} onCommit={commitInput} placeholder="代码或名称" inputAriaLabel="股票代码或名称" />
+        <button className="btn" type="submit">查看</button>
+        <span className="sentiment-window">近 30 天</span>
+      </form>
       <div className="sentiment-header-actions">
         <LlmSettingsPanel settings={props.llmSettings || null} onChange={props.onLlmSettingsChange || (() => undefined)} presentation="dialog" />
       </div>
     </header>
-    <form className="sentiment-toolbar" onSubmit={(event) => { event.preventDefault(); commitInput(input); }}>
-      <label htmlFor="sentiment-stock">股票</label>
-      <StockCodeInput id="sentiment-stock" value={input} onChange={(value) => { setInput(value); setInputError(""); }} onCommit={commitInput} placeholder="代码或名称" inputAriaLabel="股票代码或名称" />
-      <button className="btn" type="submit">查看</button>
-      <span className="sentiment-window">近 30 天</span>
-    </form>
     {inputError && <p role="alert" className="sentiment-error">{inputError}</p>}
     <div id="sentiment-panel-sources" role="tabpanel" aria-labelledby="sentiment-tab-sources" className="sentiment-view sentiment-view-sources" hidden={view !== "sources"}>
       {mountedViews.sources && <Suspense fallback={<p className="sentiment-empty">正在加载消息与资料…</p>}><NewsRagPanel llmSettings={props.llmSettings} onLlmSettingsChange={props.onLlmSettingsChange} watchlist={props.watchlist} code={code} onCodeChange={selectCode} /></Suspense>}

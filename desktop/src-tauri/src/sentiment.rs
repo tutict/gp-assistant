@@ -225,7 +225,9 @@ fn code_list(payload: &Value) -> Result<Vec<String>, String> {
     let mut codes = Vec::new();
     for item in list {
         let Some(text) = item.as_str() else { continue };
-        let Some(code) = crate::normalize_stock_code(text) else { continue };
+        let Some(code) = crate::normalize_stock_code(text) else {
+            continue;
+        };
         if !codes.contains(&code) {
             codes.push(code);
         }
@@ -244,7 +246,9 @@ fn load_latest_for_codes(app: &AppHandle, codes: &[String]) -> Result<Vec<Value>
     );
     let mut query = db.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = query
-        .query_map(params_from_iter(codes.iter()), |row| row.get::<_, String>(0))
+        .query_map(params_from_iter(codes.iter()), |row| {
+            row.get::<_, String>(0)
+        })
         .map_err(|e| e.to_string())?;
     let mut seen = HashSet::new();
     let mut items = Vec::new();

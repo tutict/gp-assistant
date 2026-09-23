@@ -667,7 +667,7 @@
   .research-stream {
     position: relative;
     display: grid;
-    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr) auto auto;
     overflow: hidden;
     background: var(--bg);
   }

@@ -196,6 +196,10 @@ fn number(metrics: &mut Map<String, Value>, key: &str, value: Option<f64>) {
     metrics.insert(key.to_owned(), json!(value.filter(|v| v.is_finite())));
 }
 
+fn observed_near_window_end(day: i64, end: i64) -> bool {
+    end - day <= 2
+}
+
 fn balance(docs: &[&Document]) -> Option<f64> {
     let positive = docs.iter().filter(|d| d.sentiment == "positive").count() as f64;
     let negative = docs.iter().filter(|d| d.sentiment == "negative").count() as f64;
@@ -447,6 +451,14 @@ pub(crate) fn build_snapshot(
     if prices.len() < 15 {
         gaps.insert("Fewer than 15 completed price days in the 30-day window".into());
     }
+    let price_reaches_window = prices
+        .last()
+        .is_some_and(|(day, _)| observed_near_window_end(*day, end));
+    if !prices.is_empty() && !price_reaches_window {
+        gaps.insert(
+            "Latest completed price day is more than two days before the window end".into(),
+        );
+    }
     if prices.iter().any(|(_, b)| b.volume.is_none()) || prices.is_empty() {
         gaps.insert("Daily volume coverage is incomplete".into());
     }
@@ -645,7 +657,7 @@ pub(crate) fn build_snapshot(
     );
     let return_between = |start_day: i64| -> Option<f64> {
         let (last_day, last) = target_bars.range(start..=end).next_back()?;
-        if end - last_day > 2 {
+        if !observed_near_window_end(*last_day, end) {
             return None;
         }
         let (_, first) = target_bars.range(..=start_day).next_back()?;
@@ -696,8 +708,11 @@ pub(crate) fn build_snapshot(
     let latest_industry = industry_daily
         .iter()
         .rev()
-        .find(|(_, v)| v.0.is_some())
+        .find(|(day, v)| v.0.is_some() && observed_near_window_end(**day, end))
         .map(|(_, v)| *v);
+    if industry_daily.values().any(|v| v.0.is_some()) && latest_industry.is_none() {
+        gaps.insert("Latest industry return is more than two days before the window end".into());
+    }
     number(
         &mut metrics,
         "industry_return_pct",
@@ -716,7 +731,7 @@ pub(crate) fn build_snapshot(
     );
     let industry_period = |since: i64| -> Option<f64> {
         let finish_day = *trade_days.range(start..=end).next_back()?;
-        if end - finish_day > 2 {
+        if !observed_near_window_end(finish_day, end) {
             return None;
         }
         let beginning = trade_days.range(..=since).next_back()?;
@@ -752,7 +767,7 @@ pub(crate) fn build_snapshot(
         let coverage = if text(&d.raw["metadata"], "coverage") == "full_text" || d.raw["metadata"]["full_text"].as_bool() == Some(true) { "full_text" } else { "excerpt" };
         json!({"id": format!("E{}",i+1), "document_id": d.raw["document_id"], "event_id": format!("event-{}", &digest(d.canonical.as_deref().unwrap_or(&d.normalized))[..16]), "title": d.raw["title"], "excerpt": content.chars().take(1200).collect::<String>(), "source_name": d.raw["source_name"], "source_tier": d.tier, "source_verified": d.verified, "published_at": d.raw["published_at"], "first_seen_at": d.first_seen, "url": d.canonical, "sentiment": d.sentiment, "pool": if d.discussion {"discussion"} else {"fact"}, "coverage": coverage, "duplicate_count": d.duplicates.len(), "provenance": {"original_url": d.raw["url"], "original_source_tier": d.raw["source_tier"], "raw_content": content, "raw_content_sha256": digest(content), "duplicate_versions": d.duplicates, "correction_of": d.raw["metadata"]["correction_of"], "retracted": d.raw["metadata"]["retracted"], "source_verification": "host ownership only; article claims are not validated"}})
     }).collect();
-    let mut snapshot = json!({"snapshot_id": "", "stock_code": stock_code, "stock_name": stock.map(|v| text(v,"name")).unwrap_or(stock_code), "industry": industry, "window_days": 30, "cutoff": cutoff, "generation": generation, "rule_version": RULE_VERSION, "evidence": evidence, "timeline": timeline, "metrics": metrics, "coverage": {"facts": facts.len(), "discussions": discussions.len(), "price_days": prices.len(), "history_days": history_days, "industry_members": members.len(), "industry_covered": latest_industry_covered, "gaps": gaps.into_iter().collect::<Vec<_>>()}, "industry_member_codes": members.into_iter().collect::<Vec<_>>(), "baseline": {"start": day_string(baseline_start), "end": day_string(start-1), "natural_days":90, "verified_documents":history.len(), "heat_comparison_windows": historical_heats.len()}, "quality_gates": {"messages": facts.len() >= 10 && facts.iter().filter(|d| matches!(d.sentiment,"positive"|"negative")).count() >= 5, "price": prices.len()>=15, "industry":latest_industry.is_some(), "historical_heat":heat.is_some()}, "metric_references": {"M1": ["positive_count","negative_count","sentiment_balance","discussion_count","sentiment_change_7d","heat_percentile"], "M2": ["price_return_30d_pct","price_return_7d_pct","volume_change_7d_pct"], "M3": ["industry_return_30d_pct","industry_return_7d_pct","industry_breadth_pct","industry_coverage_pct"]}});
+    let mut snapshot = json!({"snapshot_id": "", "stock_code": stock_code, "stock_name": stock.map(|v| text(v,"name")).unwrap_or(stock_code), "industry": industry, "window_days": 30, "cutoff": cutoff, "generation": generation, "rule_version": RULE_VERSION, "evidence": evidence, "timeline": timeline, "metrics": metrics, "coverage": {"facts": facts.len(), "discussions": discussions.len(), "price_days": prices.len(), "history_days": history_days, "industry_members": members.len(), "industry_covered": latest_industry_covered, "gaps": gaps.into_iter().collect::<Vec<_>>()}, "industry_member_codes": members.into_iter().collect::<Vec<_>>(), "baseline": {"start": day_string(baseline_start), "end": day_string(start-1), "natural_days":90, "verified_documents":history.len(), "heat_comparison_windows": historical_heats.len()}, "quality_gates": {"messages": facts.len() >= 10 && facts.iter().filter(|d| matches!(d.sentiment,"positive"|"negative")).count() >= 5, "price": price_reaches_window && prices.len() >= 15, "industry": latest_industry.is_some(), "historical_heat":heat.is_some()}, "metric_references": {"M1": ["positive_count","negative_count","sentiment_balance","discussion_count","sentiment_change_7d","heat_percentile"], "M2": ["price_return_30d_pct","price_return_7d_pct","volume_change_7d_pct"], "M3": ["industry_return_30d_pct","industry_return_7d_pct","industry_breadth_pct","industry_coverage_pct"]}});
     snapshot["snapshot_id"] = json!(format!("snapshot-{}", &digest(&snapshot.to_string())[..24]));
     Ok(snapshot)
 }

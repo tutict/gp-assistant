@@ -43,6 +43,13 @@ fn date_tokens(text: &str) -> Vec<&str> {
         .collect()
 }
 
+fn non_claim_text(text: &str) -> bool {
+    let compact = text
+        .trim()
+        .trim_matches(|c: char| matches!(c, '。' | '，' | ',' | '.' | ' '));
+    compact == "待确认" || text.contains("证据不足") || text.contains("无法回答")
+}
+
 fn has_prose_without_citations(text: &str) -> bool {
     let mut prose = String::new();
     for part in text.split(|c: char| !c.is_ascii_alphanumeric()) {
@@ -82,8 +89,7 @@ fn validate_cited_text(
         }
         push_unique(refs, id);
     }
-    if citation_tokens(text).is_empty() && !text.contains("证据不足") && !text.contains("无法回答")
-    {
+    if citation_tokens(text).is_empty() && !non_claim_text(text) {
         return Err(format!("{field} must contain an inline evidence citation"));
     }
     if !has_prose_without_citations(text) {
@@ -226,17 +232,18 @@ fn validate(mut out: Value, snapshot: &Value) -> Result<Value, String> {
             validate_cited_text(item, field, &known, &mut refs)?;
         }
     }
-    if let Some(items) = obj.get("invalidation").and_then(Value::as_array) {
+    if let Some(value) = obj.get("invalidation") {
+        let items = value.as_array().ok_or("invalidation must be array")?;
         for item in items {
-            if let Some(text) = item.as_str() {
-                if !text.trim().is_empty() {
-                    for id in citation_tokens(text) {
-                        if !known.contains(id) {
-                            return Err(format!("unknown evidence id {id}"));
-                        }
-                        push_unique(&mut refs, id);
-                    }
+            let text = item.as_str().ok_or("invalidation must contain strings")?;
+            if text.trim().is_empty() {
+                continue;
+            }
+            for id in citation_tokens(text) {
+                if !known.contains(id) {
+                    return Err(format!("unknown evidence id {id}"));
                 }
+                push_unique(&mut refs, id);
             }
         }
     }
@@ -290,16 +297,11 @@ fn validate(mut out: Value, snapshot: &Value) -> Result<Value, String> {
         return Err("evidence不足 stage requires sufficiency不足".into());
     }
     if let Some(s) = obj.get("turning_signal").and_then(Value::as_str) {
-        let status = obj
-            .get("turning_status")
-            .and_then(Value::as_str)
-            .unwrap_or("observed");
-        let pending = status == "pending"
-            || s.contains("尚无")
+        let declines_turn = s.contains("尚无")
             || s.contains("尚未")
             || s.contains("未确认")
             || s.contains("不足证据");
-        if !pending && (s.contains("转") || s.contains("拐") || s.contains("反转")) {
+        if !declines_turn && (s.contains("转") || s.contains("拐") || s.contains("反转")) {
             let dates = date_tokens(s);
             if dates.len() < 2
                 || dates.iter().any(|date| !timeline_dates.contains(date))
