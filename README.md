@@ -1,8 +1,8 @@
 # 股选优
 
-**股选优**是一款面向 A 股研究的跨平台工作台，将智能选股、个股观察、严格样本外回测、新闻与本地 RAG 证据、研究 Agent 集成在同一套工作流中。用户可以从市场与行业范围筛选候选标的，查看行情和量化诊断，将当前条件带入回测，再由 Agent 组织工具调用、证据和研究结论。
+**股选优**是一款面向 A 股研究的跨平台工作台，将智能选股、个股观察、严格样本外回测、新闻与本地 RAG 证据、个股情绪和研究 Agent 集成在同一套工作流中。用户可以从市场与行业范围筛选候选标的，查看行情和量化诊断，将当前条件带入回测，在消息页核对公告、讨论和情绪证据，再由 Agent 组织工具调用和研究结论。
 
-项目使用 **Tauri 2 + Rust + React/TypeScript**，Windows 桌面端与 Android 端共享界面和 Rust 核心能力。当前稳定版本为 **v0.6.2**：Agent 无模型时可回退本地工具，新闻工具统一读取 ResearchStore 证据，消息中心交互与视觉基线得到补强，并完善了 Windows/Android 发布资产门禁。
+项目使用 **Tauri 2 + Rust + React/TypeScript**，Windows 桌面端与 Android 端共享界面和 Rust 核心能力。当前稳定版本为 **[v0.6.2](https://github.com/tutict/gp-assistant/releases/tag/v0.6.2)**：消息页在同一工作区切换「消息」和「情绪」。情绪快照只冻结本地已入库的消息和行情；阶段结论和追问必须引用这份快照。未配置模型时，消息问答可以回退到本地证据，但不会生成情绪结论。
 
 > 股选优只提供研究、筛选和策略验证工具，不构成投资建议，不承诺任何收益。市场有风险，投资需谨慎。
 
@@ -12,8 +12,8 @@
 
 请前往 [股选优 v0.6.2](https://github.com/tutict/gp-assistant/releases/tag/v0.6.2) 下载当前稳定版，或在 [GitHub Releases](https://github.com/tutict/gp-assistant/releases) 查看全部版本：
 
-- **Windows 10/11 x64**：下载名称以 `_windows_x64_setup.exe` 结尾的安装程序。
-- **Android 7.0 及以上**：下载名称以 `_android_aarch64_release_signed.apk` 结尾的安装包。
+- **Windows 10/11 x64**：`guxuanyou_0.6.2_windows_x64_setup.exe`
+- **Android 7.0 及以上**：`guxuanyou_0.6.2_android_aarch64_release_signed.apk`
 
 Android 安装时如果系统提示“未知来源应用”，请只为当前文件来源临时授权。升级安装必须使用相同签名的 APK；正式发布包会保留一致的应用签名。
 
@@ -27,7 +27,8 @@ Android 安装时如果系统提示“未知来源应用”，请只为当前文
 | K 线与指标 | 支持日 K、周 K、月 K，显示均线、MACD、KDJ、成交量、十字定位、缩放和手机横向全屏 |
 | 研究摘要 | 首屏提炼资金背离、趋势效率、波动状态和流动性风险，原始指标保留在专业明细中 |
 | 回测 | 支持条件候选池或自选池回测、等权组合、调仓、成本扣减和严格滚动样本外验证 |
-| 新闻与证据 | 聚合个股消息、上下游关系和本地 RAG 证据，区分来源、时间与正负面线索 |
+| 新闻与证据 | 聚合个股消息、政策与媒体来源、上下游关系和本地 RAG 证据，区分来源、时间与正负面线索 |
+| 个股情绪 | 与消息共用股票和页面。按近 30 天冻结快照查看阶段、消息、量价和行业证据；追问只引用该快照，缺失覆盖会明确标注 |
 | 研究 Agent | 调用筛选、观察、回测和消息工具，以聊天方式组织证据并解释结果；运行记录可通过复盘抽屉查看事件时间线、工具调用和最终结果 |
 | 模型与界面设置 | 支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、兼容网关和本地模型服务；主题、界面密度和字体缩放可持久化保存 |
 | 数据维护 | 查看股票池与缓存状态，联网更新数据并在收盘后检查刷新；报价快照不完整时会继续补取 |
@@ -69,7 +70,7 @@ Walk-forward 回测把每个调仓日至下一调仓日视为独立样本外区�
 
 ### adaptive_swing_v1 发布验证
 
-> **v0.6.2 状态：数据未就绪、尚未验证。** 当前可用数据不包含覆盖回测区间的全市场点时（PIT）历史因子、上市、ST 与可交易状态，因此本版本不宣称 adaptive 严格发布门槛已经通过。严格回测语义保持不变：缺少 `factor_snapshots` 等必要证据时会在历史行情预取前明确失败，不使用当前数据回填；普通 `candidate_snapshot` 回测仍可正常使用。完整 PIT 数据采集作为后续独立工作，不阻塞 v0.6.2 依据 `scripts/release-check.ps1` 完成常规发布检查。
+> **v0.6.2 状态：常规发布检查已通过，adaptive 严格门槛尚未验证。** 当前可用数据不包含覆盖回测区间的全市场点时（PIT）历史因子、上市、ST 与可交易状态，因此本版本不宣称 adaptive 严格发布门槛已经通过。严格回测语义保持不变：缺少 `factor_snapshots` 等必要证据时会在历史行情预取前明确失败，不使用当前数据回填；普通 `candidate_snapshot` 回测仍可正常使用。完整 PIT 数据采集作为后续独立工作。
 
 发布验证前必须准备覆盖回测区间的全市场日线，以及带报告期和实际可见日期的历史因子快照；只有当前单期财务快照时，不能形成至少 60 个严格样本外折次的有效证据。
 
@@ -113,7 +114,7 @@ node scripts/validate-adaptive-release.mjs
 4. 使用“测试连接”验证当前协议、地址、鉴权和模型是否能够完成真实推理。
 5. 按需在高级选项中设置协议、自定义 User-Agent、温度、超时和 JSON 模式，然后保存。
 
-专家和研报模式只会使用应用内显式保存并传入的模型连接，不会从环境变量自动调用外部服务。新闻 RAG 等兼容路径可以使用环境变量提供默认配置：
+专家、研报和个股情绪结论只会使用应用内显式保存并传入的模型连接，不会从环境变量自动调用外部服务。情绪快照本身不调用模型。新闻 RAG 等兼容路径可以使用环境变量提供默认配置：
 
 ```text
 OPENAI_API_KEY
@@ -135,14 +136,14 @@ flowchart LR
     Runtime --> Core[gp-core 筛选与回测核心]
     Runtime --> Cache[本地缓存与 SQLite]
     Runtime --> Data[行情、财务与消息数据源]
-    Runtime --> LLM[OpenAI 兼容模型服务]
+    Runtime --> LLM[已配置的模型服务]
 ```
 
 - `desktop/frontend/`：React/TypeScript 界面，Windows 与 Android 共用。
 - `desktop/src-tauri/`：Tauri 壳、Rust commands、网络与本地存储适配。
 - `native/gp-core/`：筛选、评分、趋势、关系图和回测核心库。
 - `app/prompts/`：Agent 约束和移动端技能说明。
-- `docs/`：Agent、RAG、移动端与迁移审计技术文档。
+- `docs/`：Agent、RAG、个股情绪、移动端与迁移审计技术文档。
 - `scripts/`：开发、发布检查、桌面资源准备和 Android 构建脚本。
 
 项目当前不依赖 Python/FastAPI 运行时，主要运行链路已统一到 Tauri + Rust。
