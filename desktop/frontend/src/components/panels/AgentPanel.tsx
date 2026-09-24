@@ -741,7 +741,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
                 </button>
               ))}
             </div>
-            <p className="agent-mode-note">{activeMode.hint}{messages.length ? ` 下一条将使用${activeMode.label}。` : ""}</p>
+            <p className="agent-mode-note">{activeMode.hint}。{messages.length ? `下一条将使用${activeMode.label}。` : ""}</p>
           </div>
           <p className="workspace-boundary">仅供研究，不构成投资建议。</p>
           <div className="agent-composer-footer">

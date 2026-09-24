@@ -264,7 +264,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
           setStrategyMode(e.target.value);
           if (e.target.value !== "adaptive_swing_v1") setAdaptiveScreenSpec(undefined);
         }}><option value="candidate_snapshot">候选快照</option><option value="walk_forward">滚动验证</option><option value="adaptive_swing_v1">自适应波段</option></select></div>
-        <div className="form-row inline"><label htmlFor="btCostBps">单次成本（基点，1 基点 = 0.01%）</label><input id="btCostBps" type="number" min="0" max="500" value={costBps} disabled={loading} onChange={(e) => setCostBps(Number(e.target.value) || 0)} /></div>
+        <div className="form-row inline"><label htmlFor="btCostBps">单次成本</label><input id="btCostBps" type="number" min="0" max="500" value={costBps} disabled={loading} onChange={(e) => setCostBps(Number(e.target.value) || 0)} /></div>
       </div>
 
       </details>

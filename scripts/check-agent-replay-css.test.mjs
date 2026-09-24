@@ -29,7 +29,10 @@ test("agent replay styles cover the actual drawer and replay controls", () => {
   assert.match(drawer, /position:\s*absolute\s*;/);
   assert.match(drawer, /inset:\s*0\s+0\s+0\s+auto\s*;/);
   assert.match(drawer, /width:\s*clamp\(440px,\s*44vw,\s*640px\)\s*;/);
-  assert.match(drawer, /grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)\s*;/);
+  assert.match(drawer, /display:\s*flex\s*;/);
+  assert.match(drawer, /flex-direction:\s*column\s*;/);
+  assert.match(drawer, /overflow:\s*hidden\s*;/);
+  assert.match(pages, /\.agent-run-list\s*,\s*\.agent-run-detail\s*\{[^}]*flex:\s*1\s+1\s+auto[^}]*min-height:\s*0[^}]*overflow-y:\s*auto/s);
   assert.match(pages, /\.agent-run-drawer-header\s*\{/);
   assert.match(replay, /\.agent-run-drawer-back\s*,\s*\.agent-run-drawer-close\s*\{/);
   assert.match(pages, /\.agent-run-list\s*,\s*\.agent-run-detail\s*\{/);

@@ -573,7 +573,6 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
           highlightedId={highlightAnswerId} sectionRef={answersRef} />
         </div>
         <form className="research-composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
-          {!activeLlmConfig && <p className="research-composer-setup">未配置模型，将只用已导入资料回答</p>}
           {evidenceNotice && <div className="research-evidence-notice" role="status">{evidenceNotice}</div>}
           <div><label className="research-composer-label" htmlFor={questionInputId}>
             <span>研究问题</span>{activeLlmConfig && <small>模型回答会强制引用证据</small>}
@@ -600,7 +599,10 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
               </button>
             </div>
           </div>
-          <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>
+          <div className="research-composer-meta">
+            <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>
+            {!activeLlmConfig && <p className="research-composer-setup">未配置模型，将只用已导入资料回答</p>}
+          </div>
         </form>
       </main>
 

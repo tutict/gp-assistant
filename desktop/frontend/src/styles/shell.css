@@ -165,7 +165,7 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
-  box-shadow: 0 24px 60px color-mix(in srgb, var(--contrast-dark) 38%, transparent);
+  box-shadow: 0 24px 60px var(--elev-float);
 }
 
 .shortcut-help > header {

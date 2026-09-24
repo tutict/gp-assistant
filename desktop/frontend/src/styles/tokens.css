@@ -55,6 +55,9 @@
   --chart-fullscreen: #05070a;
   --chart-benchmark: #6ca8b2;
   --focus-ring: rgba(216, 61, 53, 0.34);
+  --elev-highlight: rgb(255 255 255 / 9%);
+  --elev-shade: rgb(0 0 0 / 26%);
+  --elev-float: rgb(0 0 0 / 30%);
   --link: #ffb4ae;
   --fs-display: 20px;
   --fs-headline: 20px;
@@ -183,6 +186,9 @@
   --chart-fullscreen: #eef2f6;
   --chart-benchmark: #26758a;
   --focus-ring: rgba(216, 61, 53, 0.24);
+  --elev-highlight: rgb(255 255 255 / 80%);
+  --elev-shade: rgb(21 31 42 / 10%);
+  --elev-float: rgb(21 31 42 / 14%);
   --link: #c6322c;
   color-scheme: light;
 }

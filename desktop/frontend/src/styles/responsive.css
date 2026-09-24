@@ -502,9 +502,13 @@
   .backtest-source-switch {
     flex: 1 1 auto;
     min-width: 0;
+    min-height: var(--touch-dense);
   }
-  .backtest-context-controls .source-toggle,
-.backtest-run-button {
+  .backtest-context-controls .source-toggle {
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+  .backtest-run-button {
     min-height: var(--touch-dense);
   }
   .backtest-controls {
@@ -702,11 +706,13 @@
     padding: 8px 7px;
   }
   .agent-message,
-.agent-message.user {
-    width: 100%;
+.agent-message.user,
+.agent-message.assistant {
+    width: fit-content;
+    max-width: min(720px, 100%);
   }
   .agent-message.user {
-    width: min(88%, 620px);
+    max-width: min(88%, 520px);
   }
   .agent-composer-card {
     position: sticky;

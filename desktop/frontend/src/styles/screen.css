@@ -17,7 +17,7 @@
 .stock-comparison-table .watchlist-action { min-width: 64px; }
 .stock-comparison-table .stock-details-toggle { min-width: 80px; }
 .stock-row .watchlist-action.saved { background: var(--accent-soft); color: var(--text); }
-.stock-details { white-space: normal; text-align: left; padding: var(--space-4); background: var(--surface-2); font-family: var(--font-sans); }
+.stock-details { white-space: normal; text-align: left; padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); font-family: var(--font-sans); }
 .stock-details p, .stock-details li { max-width: 76ch; font-size: var(--fs-body); }
 .stock-details ul { padding-left: 20px; }
 .stock-detail-row td { padding: 0; }

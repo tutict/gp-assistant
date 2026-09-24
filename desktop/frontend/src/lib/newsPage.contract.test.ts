@@ -4,6 +4,7 @@ const nodeFs = "node:fs";
 const { existsSync, readFileSync } = await import(nodeFs);
 
 const researchCss = readFileSync(new URL("../styles/research.css", import.meta.url), "utf8");
+const sentimentCss = readFileSync(new URL("../styles/sentiment.css", import.meta.url), "utf8");
 const newsPanel = readFileSync(
   new URL("../components/panels/NewsRagPanel.tsx", import.meta.url),
   "utf8",
@@ -82,6 +83,22 @@ describe("news page CSS contract", () => {
     expect(sourceTierToneRules()).toEqual([]);
     expect(researchCss).not.toContain("var(--score)");
     expect(researchCss).toContain(".research-badge {");
+  });
+
+  it("fills the embedded message workspace instead of reserving an empty header row", () => {
+    const workspace = ruleBody(sentimentCss, ".sentiment-panel.is-sources .research-workspace");
+    expect(workspace).toContain("display: flex");
+    expect(workspace).toContain("flex-direction: column");
+    expect(workspace).toContain("min-height: 0");
+    expect(workspace).not.toContain("grid-template-rows");
+    const columns = ruleBody(sentimentCss, ".sentiment-panel.is-sources .research-columns");
+    expect(columns).toContain("grid-template-rows: minmax(0, 1fr)");
+    expect(columns).toContain("flex: 1 1 auto");
+    expect(sentimentCss).toContain(".sentiment-header-actions { margin-left: auto; flex: 0 1 auto; min-width: 0; justify-content: flex-end; }");
+    expect(sentimentCss).not.toContain("flex: 1 1 220px");
+    const toggle = ruleBody(sentimentCss, ".sentiment-header .llm-settings-toggle");
+    expect(toggle).toContain("width: auto");
+    expect(toggle).toContain("grid-template-columns: none");
   });
 });
 
