@@ -1,0 +1,92 @@
+{
+  "version": "agent-gepa-eval-v1",
+  "profiles": {
+    "hot_money_early_v1": {
+      "mode": "expert",
+      "tool_result": {
+        "reply": "本地工具已完成固定合成行情取证。",
+        "action": "observe_stock",
+        "data": {
+          "fixture": "gepa-synthetic-market-v1",
+          "as_of": "2025-06-30",
+          "market_state": "震荡",
+          "breadth_ratio": 0.43,
+          "volume_ratio": 0.91,
+          "theme": "高端制造",
+          "relative_strength": "中性",
+          "liquidity": "普通"
+        },
+        "evidence_summary": [
+          { "title": "冻结市场样本", "source": "GEPA 合成夹具", "level": "primary", "summary": "合成行情：市场震荡、宽度 43%、成交比 0.91；主题为高端制造。仅用于提示词评测。" },
+          { "title": "冻结消息样本", "source": "GEPA 合成夹具", "level": "primary", "summary": "无已验证新增催化；未经核验的传闻不作为事实。仅用于提示词评测。" }
+        ]
+      },
+      "train": [
+        { "id": "expert-mainline", "question": "怎样判断当前题材是否形成主线？", "rubric": [{ "id": "market", "any_of": ["市场环境", "指数环境"] }, { "id": "leadership", "any_of": ["主线", "领先"] }, { "id": "invalidation", "any_of": ["失效条件", "证伪"] }] },
+        { "id": "expert-expansion", "question": "题材正在扩散，如何分辨扩散与跟风？", "rubric": [{ "id": "breadth", "any_of": ["扩散", "板块共振"] }, { "id": "volume", "any_of": ["成交", "量能"] }, { "id": "invalidation", "any_of": ["失效条件", "证伪"] }] },
+        { "id": "expert-growth", "question": "收入增长很快，短周期还需要核验什么？", "rubric": [{ "id": "regime", "any_of": ["市场环境", "风险偏好"] }, { "id": "strength", "any_of": ["相对强度", "领先性"] }, { "id": "liquidity", "any_of": ["流动性", "成交"] }] },
+        { "id": "expert-capital", "question": "管理层连续并购和融资，应怎样判断市场反馈？", "rubric": [{ "id": "announcement", "any_of": ["公告", "公开消息"] }, { "id": "feedback", "any_of": ["市场反馈", "成交反馈"] }, { "id": "invalidation", "any_of": ["证伪", "失效条件"] }] },
+        { "id": "expert-regime", "question": "市场宽度偏弱时，如何判断行情环境是否支持题材？", "rubric": [{ "id": "breadth", "any_of": ["市场宽度", "宽度"] }, { "id": "regime", "any_of": ["市场环境", "指数环境"] }, { "id": "risk", "any_of": ["风险提示", "不确定性"] }] },
+        { "id": "expert-leader", "question": "如何区分板块领先股和短暂脉冲？", "rubric": [{ "id": "leadership", "any_of": ["领先", "相对强度"] }, { "id": "volume", "any_of": ["成交", "量能"] }, { "id": "invalidation", "any_of": ["失效条件", "证伪"] }] },
+        { "id": "expert-liquidity", "question": "成交偏弱时研究题材要关注哪些流动性风险？", "rubric": [{ "id": "liquidity", "any_of": ["流动性", "成交"] }, { "id": "evidence", "any_of": ["证据", "核验"] }, { "id": "risk", "any_of": ["风险提示", "不确定性"] }] },
+        { "id": "expert-cycle", "question": "如何识别情绪周期从扩散转向分歧？", "rubric": [{ "id": "cycle", "any_of": ["情绪周期", "周期"] }, { "id": "divergence", "any_of": ["分歧", "扩散"] }, { "id": "invalidation", "any_of": ["失效条件", "风险提示"] }] }
+      ],
+      "validation": [
+        { "id": "expert-source-conflict", "question": "不同来源对催化描述不一致时怎么办？", "rubric": [{ "id": "source", "any_of": ["来源", "一手"] }, { "id": "crosscheck", "any_of": ["交叉核验", "核验"] }, { "id": "uncertainty", "any_of": ["不确定性", "不能确认"] }] },
+        { "id": "expert-false-breakout", "question": "题材冲高回落后怎样复盘是否失效？", "rubric": [{ "id": "price", "any_of": ["冲高回落", "市场反馈"] }, { "id": "breadth", "any_of": ["扩散", "宽度"] }, { "id": "invalidation", "any_of": ["失效条件", "证伪"] }] },
+        { "id": "expert-catalyst", "question": "尚未核实的政策传闻可以如何纳入研究？", "rubric": [{ "id": "source", "any_of": ["公开来源", "来源"] }, { "id": "verify", "any_of": ["核验", "公告"] }, { "id": "uncertainty", "any_of": ["不确定性", "不能确认"] }] },
+        { "id": "expert-insufficient", "question": "工具没有给出足够行情证据时应如何回答？", "rubric": [{ "id": "missing", "any_of": ["缺少", "不足"] }, { "id": "avoid", "any_of": ["不推断", "不作结论"] }, { "id": "next", "any_of": ["补充", "下一步"] }] }
+      ],
+      "holdout": [
+        { "id": "expert-rotation", "question": "板块轮动加快时怎样避免把轮动误判为主线？", "rubric": [{ "id": "rotation", "any_of": ["轮动", "持续性"] }, { "id": "breadth", "any_of": ["扩散", "宽度"] }, { "id": "invalidation", "any_of": ["失效条件", "证伪"] }] },
+        { "id": "expert-event-risk", "question": "重要事件前后如何组织风险与证据？", "rubric": [{ "id": "event", "any_of": ["事件", "公告"] }, { "id": "evidence", "any_of": ["证据", "来源"] }, { "id": "risk", "any_of": ["风险提示", "不确定性"] }] },
+        { "id": "expert-narrow-breadth", "question": "指数稳定但上涨家数下降，如何解释？", "rubric": [{ "id": "breadth", "any_of": ["上涨家数", "市场宽度"] }, { "id": "regime", "any_of": ["指数环境", "市场环境"] }, { "id": "uncertainty", "any_of": ["分化", "不确定性"] }] },
+        { "id": "expert-stale-data", "question": "行情快照时间较旧时，哪些结论需要暂缓？", "rubric": [{ "id": "freshness", "any_of": ["更新时间", "时效"] }, { "id": "avoid", "any_of": ["暂缓", "不推断"] }, { "id": "next", "any_of": ["刷新", "补充"] }] }
+      ]
+    },
+    "value_compounder_v1": {
+      "mode": "research",
+      "tool_result": {
+        "reply": "本地工具已完成固定合成公司数据取证。",
+        "action": "research_query",
+        "data": {
+          "fixture": "gepa-synthetic-company-v1",
+          "as_of": "2025-06-30",
+          "company": "示例公司甲（合成数据）",
+          "revenue_growth": 0.12,
+          "operating_cash_flow": 85000000,
+          "capex": 42000000,
+          "receivables_growth": 0.19,
+          "largest_customer_share": 0.31,
+          "net_debt_to_ebitda": 1.2
+        },
+        "evidence_summary": [
+          { "title": "冻结财务样本", "source": "GEPA 合成夹具", "level": "primary", "summary": "合成财务数据：收入增长 12%，经营现金流 8500 万，资本开支 4200 万，应收增速 19%。不对应真实公司。" },
+          { "title": "冻结经营样本", "source": "GEPA 合成夹具", "level": "primary", "summary": "最大客户占比 31%，净债务/EBITDA 为 1.2；所有指标仅用于提示词评测。" }
+        ]
+      },
+      "train": [
+        { "id": "research-quality-growth", "question": "公司收入增长较快，长期质量要核验哪些证据？", "rubric": [{ "id": "owner-earnings", "any_of": ["所有者收益", "经营现金流"] }, { "id": "capital-intensity", "any_of": ["资本强度", "资本开支"] }, { "id": "management", "any_of": ["管理质量", "资本配置"] }] },
+        { "id": "research-capital-allocation", "question": "连续并购和融资是否代表好的资本配置？", "rubric": [{ "id": "allocation", "any_of": ["资本配置", "再投资回报"] }, { "id": "incentives", "any_of": ["激励机制", "管理层"] }, { "id": "reverse", "any_of": ["反向思考", "证伪"] }] },
+        { "id": "research-cash-flow", "question": "经营现金流与利润不匹配时如何核验盈利质量？", "rubric": [{ "id": "cash", "any_of": ["经营现金流", "现金流"] }, { "id": "receivables", "any_of": ["应收", "营运资本"] }, { "id": "capex", "any_of": ["资本开支", "资本强度"] }] },
+        { "id": "research-moat", "question": "怎样区分真实护城河和短期竞争优势？", "rubric": [{ "id": "moat", "any_of": ["护城河", "竞争优势"] }, { "id": "pricing", "any_of": ["定价权", "客户粘性"] }, { "id": "evidence", "any_of": ["客户验证", "证据"] }] },
+        { "id": "research-growth-quality", "question": "收入增长能否转化为可持续的股东回报？", "rubric": [{ "id": "growth", "any_of": ["收入增长", "增长质量"] }, { "id": "cash", "any_of": ["现金流", "所有者收益"] }, { "id": "customer", "any_of": ["客户验证", "客户集中度"] }] },
+        { "id": "research-debt", "question": "公司有净负债，怎样判断债务风险和偿付能力？", "rubric": [{ "id": "debt", "any_of": ["债务", "净负债"] }, { "id": "coverage", "any_of": ["偿付能力", "利息覆盖"] }, { "id": "cash", "any_of": ["经营现金流", "现金流"] }] },
+        { "id": "research-valuation", "question": "估值结论依赖哪些假设，应如何建立安全边际？", "rubric": [{ "id": "valuation", "any_of": ["估值", "估值假设"] }, { "id": "margin", "any_of": ["安全边际", "反向估值"] }, { "id": "uncertainty", "any_of": ["不确定性", "敏感性"] }] },
+        { "id": "research-governance", "question": "如何评估管理层治理与信息披露质量？", "rubric": [{ "id": "governance", "any_of": ["治理", "管理层"] }, { "id": "disclosure", "any_of": ["信息披露", "公告"] }, { "id": "evidence", "any_of": ["一手资料", "核验"] }] }
+      ],
+      "validation": [
+        { "id": "research-customer-concentration", "question": "最大客户占比较高时要检查什么风险？", "rubric": [{ "id": "concentration", "any_of": ["客户集中度", "最大客户"] }, { "id": "retention", "any_of": ["客户粘性", "续约"] }, { "id": "cash", "any_of": ["回款", "现金流"] }] },
+        { "id": "research-dilution", "question": "公司频繁融资，如何衡量对长期股东的稀释？", "rubric": [{ "id": "dilution", "any_of": ["稀释", "股本"] }, { "id": "allocation", "any_of": ["资本配置", "融资用途"] }, { "id": "return", "any_of": ["再投资回报", "每股价值"] }] },
+        { "id": "research-acquisition", "question": "并购后如何验证商誉和协同效应？", "rubric": [{ "id": "goodwill", "any_of": ["商誉", "减值"] }, { "id": "synergy", "any_of": ["协同效应", "整合"] }, { "id": "return", "any_of": ["投入资本回报", "再投资回报"] }] },
+        { "id": "research-insufficient", "question": "财报缺少关键字段时应如何给出研究结论？", "rubric": [{ "id": "missing", "any_of": ["缺少", "不足"] }, { "id": "avoid", "any_of": ["不推断", "不下结论"] }, { "id": "next", "any_of": ["补充", "核验"] }] }
+      ],
+      "holdout": [
+        { "id": "research-supplier", "question": "供应商集中可能影响哪些经营韧性？", "rubric": [{ "id": "supplier", "any_of": ["供应商集中", "单一来源"] }, { "id": "resilience", "any_of": ["供应链韧性", "替代能力"] }, { "id": "evidence", "any_of": ["核验", "证据"] }] },
+        { "id": "research-stale", "question": "财务数据发布时间较旧时怎样避免过度推断？", "rubric": [{ "id": "freshness", "any_of": ["报告期", "发布时间"] }, { "id": "avoid", "any_of": ["不推断", "暂缓"] }, { "id": "next", "any_of": ["更新", "补充"] }] },
+        { "id": "research-missing", "question": "缺少现金流明细时能否断言利润可持续？", "rubric": [{ "id": "missing", "any_of": ["缺少", "不足"] }, { "id": "cash", "any_of": ["现金流", "回款"] }, { "id": "avoid", "any_of": ["不能断言", "不下结论"] }] },
+        { "id": "research-cyclical", "question": "周期性利润处于高位时如何判断常态盈利？", "rubric": [{ "id": "cycle", "any_of": ["周期", "常态化"] }, { "id": "normalization", "any_of": ["正常化", "跨周期"] }, { "id": "margin", "any_of": ["安全边际", "敏感性"] }] }
+      ]
+    }
+  }
+}

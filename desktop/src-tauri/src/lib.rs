@@ -7,6 +7,7 @@ use tauri_plugin_shell::ShellExt;
 
 mod agent_harness;
 mod agent_ledger;
+mod gepa_lab;
 mod prompt_upgrade;
 mod news_rag;
 mod rag_pack;
@@ -121,6 +122,11 @@ pub fn run() {
             rig_runtime::api_agent_cancel,
             rig_runtime::api_agent_prompt_overlays,
             rig_runtime::api_agent_prompt_overlay_revert,
+            gepa_lab::api_agent_gepa_status,
+            gepa_lab::api_agent_gepa_start,
+            gepa_lab::api_agent_gepa_cancel,
+            gepa_lab::api_agent_gepa_report,
+            gepa_lab::api_agent_gepa_apply,
             rig_runtime::api_agent_run_list,
             rig_runtime::api_agent_run_metrics,
             rig_runtime::api_agent_run_get,
@@ -171,6 +177,7 @@ fn setup_desktop(app: &mut tauri::App) -> tauri::Result<()> {
         .build()?;
 
     research::schedule_research_maintenance(app.handle().clone());
+    gepa_lab::maybe_start_headless_from_env(app.handle().clone());
 
     Ok(())
 }

@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use futures::StreamExt;
-use rig_agent::{completion::Prompt, AgentBuilder, ModelHandle};
+use rig_agent::ModelHandle;
 use rig_core::{
     client::{Capabilities, Capable, CompletionClient, DebugExt, Nothing, Provider},
     completion::Message,
@@ -1627,47 +1627,6 @@ fn extract_stock_code(message: &str) -> Option<String> {
 }
 
 
-pub(crate) async fn draft_method_card(llm: &Value, request: &Value) -> Result<String, String> {
-    let config = normalize_provider_config(llm)?;
-    let model = build_model_with_payload(&config, llm)
-        .map_err(|error| agent_harness::redact_persisted_error(&error.to_string(), Some(llm)))?;
-    let preamble = "你只改写研究方法卡正文，不调用工具，不提供买卖、仓位或收益承诺。只返回 JSON 对象，字段 prompt_markdown 是完整方法卡。必须保留用户给出的必需词，不得加入禁止词，正文不超过 4000 字。";
-    let agent = AgentBuilder::from_model_handle(model)
-        .name("prompt-upgrade")
-        .preamble(preamble)
-        .default_max_turns(1)
-        .max_tokens(2_500)
-        .temperature(0.1)
-        .build();
-    let question = serde_json::to_string(request)
-        .map_err(|error| format!("failed to encode prompt upgrade request: {error}"))?;
-    let timeout = std::time::Duration::from_secs(config.timeout_seconds.min(60).max(1));
-    let result = tokio::time::timeout(timeout, agent.prompt(question))
-        .await
-        .map_err(|_| "prompt upgrade timed out".to_string())?
-        .map_err(|error| agent_harness::redact_persisted_error(&error.to_string(), Some(llm)))?;
-    Ok(extract_method_card(&result))
-}
-
-fn extract_method_card(raw: &str) -> String {
-    let trimmed = raw.trim();
-    let without_prefix = trimmed
-        .strip_prefix("```json")
-        .or_else(|| trimmed.strip_prefix("```"))
-        .unwrap_or(trimmed)
-        .trim();
-    let stripped = without_prefix
-        .strip_suffix("```")
-        .unwrap_or(without_prefix)
-        .trim();
-    if let Ok(value) = serde_json::from_str::<Value>(stripped) {
-        if let Some(card) = value.get("prompt_markdown").and_then(Value::as_str) {
-            return card.trim().to_string();
-        }
-    }
-    stripped.to_string()
-}
-
 fn bounded_model_context(baseline: &Value, context: &Value) -> String {
     let value = json!({
         "tool_result": bounded_json(baseline, MAX_MODEL_REQUEST_BYTES / 4),
@@ -2474,17 +2433,6 @@ pub(crate) async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> R
                 .and_then(|result| result);
                 if let Err(error) = completion {
                     eprintln!("agent run ledger completion failed: {error}");
-                } else if let Some(profile_id) = crate::prompt_upgrade::rejected_profile(&response) {
-                    if let Some(llm) = ledger_llm.clone() {
-                        let upgrade_app = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            if let Err(error) =
-                                upgrade_rejected_prompt(upgrade_app, llm, profile_id).await
-                            {
-                                eprintln!("agent prompt upgrade failed: {error}");
-                            }
-                        });
-                    }
                 }
             }
             Ok(response)
@@ -2515,28 +2463,6 @@ pub(crate) async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> R
             Err(error)
         }
     }
-}
-
-pub(crate) async fn upgrade_rejected_prompt(app: tauri::AppHandle, llm: Value, profile_id: String) -> Result<(), String> {
-    let claim_app = app.clone();
-    let claim_profile = profile_id.clone();
-    let claim = crate::runtime::run_io_bound("prompt_upgrade_claim", move || {
-        crate::prompt_upgrade::claim_with_app(&claim_app, &claim_profile)
-    })
-    .await?
-    .map_err(|error| error)?;
-    let Some(claim) = claim else {
-        return Ok(());
-    };
-    let request = crate::prompt_upgrade::draft_request(&claim);
-    let body = crate::rig_runtime::draft_method_card(&llm, &request).await?;
-    let activate_app = app.clone();
-    crate::runtime::run_io_bound("prompt_upgrade_activate", move || {
-        crate::prompt_upgrade::activate_with_app(&activate_app, &profile_id, &body)
-    })
-    .await?
-    .map_err(|error| error)?;
-    Ok(())
 }
 
 #[tauri::command]

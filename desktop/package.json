@@ -6,12 +6,13 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
-    "build:windows": "npm run prepare:windows && tauri build --config src-tauri/tauri.skip-beforebuild.json",
+    "build:windows": "npm run prepare:windows && tauri build --features gepa-lab --config src-tauri/tauri.skip-beforebuild.json",
     "android:init": "tauri android init --ci --skip-targets-install",
     "prepare:android": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/prepare-tauri-android-assets.ps1",
-    "build:android": "tauri android build --apk --target aarch64 --ci",
+    "build:android": "tauri android build --apk --target aarch64 --ci --features gepa-lab",
     "prepare:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/prepare-tauri-android-assets.ps1 -SkipAndroidProjectUpdates",
-    "prepare:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/prepare-rag-model.ps1 && npm run prepare:desktop"
+    "prepare:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/prepare-rag-model.ps1 && npm run prepare:desktop",
+    "dev:gepa": "tauri dev --features gepa-lab"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.5"
