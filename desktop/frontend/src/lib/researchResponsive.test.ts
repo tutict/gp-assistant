@@ -36,7 +36,7 @@ describe("mobile UI density contract", () => {
       "--fs-data: 13px",
       "--fs-label: 12px",
       "--fs-caption: 12px",
-      "--touch-comfort: 44px",
+      "--touch-secondary: 44px",
       "--touch-dense: 32px",
       "--nav-height: 60px",
     ]) {
@@ -44,12 +44,34 @@ describe("mobile UI density contract", () => {
     }
   });
 
+  it("defines Android semantic touch targets and safe-area tokens", () => {
+    expect(tokensCss).toContain("--touch-primary: 48px");
+    expect(tokensCss).toContain("--touch-secondary: 44px");
+    expect(tokensCss).toContain("--touch-dense: 32px");
+    expect(tokensCss).toContain("--safe-top: env(safe-area-inset-top, 0px)");
+    expect(tokensCss).toContain("--safe-right: env(safe-area-inset-right, 0px)");
+    expect(tokensCss).toContain("--safe-left: env(safe-area-inset-left, 0px)");
+    expect(tokensCss).toMatch(/Noto Sans CJK SC/);
+    expect(tokensCss).toMatch(/HarmonyOS Sans/);
+    expect(tokensCss).toMatch(/Roboto/);
+  });
+
+  it("keeps primary mobile controls at 48px while reserving 44px for secondary controls", () => {
+    expect(responsiveCss).toMatch(
+      /\.app :is\(\.run-btn, \.save-btn, \.action-btn, \.panel-tab, input, select, textarea\)[^{]*\{[^}]*min-height:\s*var\(--touch-primary\)/s,
+    );
+    expect(responsiveCss).toMatch(
+      /\.app :is\(\.icon-button, \.stock-row-action, \.clear-btn, \.mobile-nav-toggle, \.mobile-nav-close\)[^{]*\{[^}]*min-height:\s*var\(--touch-secondary\)/s,
+    );
+    expect(responsiveCss).toMatch(/\.chip[^}]*min-height:\s*var\(--touch-dense\)/s);
+  });
+
   it("keeps mobile hit areas independent of density", () => {
-    expect(responsiveCss).toContain("min-height: 44px");
-    expect(responsiveCss).toContain("min-width: 44px");
+    expect(responsiveCss).toContain("min-height: var(--touch-secondary)");
+    expect(responsiveCss).toContain("min-width: var(--touch-secondary)");
     const compact = tokensCss.match(/:root\[data-density="compact"\]\s*\{([^}]*)\}/)?.[1] || "";
     expect(compact).not.toContain("--fs-");
-    expect(tokensCss).toContain("--control-height: 44px");
+    expect(tokensCss).toContain("--control-height: var(--touch-primary)");
   });
 
   it("uses a labeled mobile stock list and semantic desktop table", () => {

@@ -185,7 +185,7 @@
 }
 @media (max-width: 768px) {
   .sentiment-panel.is-sources, .sentiment-panel.is-sentiment { height: calc(100dvh - var(--header-height) - var(--bottom-nav-height) - var(--safe-bottom)); }
-  .sentiment-tabs button, .sentiment-scrubber .btn { min-height: 44px; }
+  .sentiment-tabs button, .sentiment-scrubber .btn { min-height: var(--touch-primary); }
   .sentiment-followup-form.is-docked { position: fixed; z-index: 5; left: 8px; right: 8px; bottom: calc(var(--bottom-nav-height) + var(--safe-bottom) + 8px); display: flex; gap: var(--space-2); padding: var(--space-2); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); }
   .sentiment-view-analysis:not([hidden]):has(.is-docked) { padding-bottom: 132px; }
   :root[data-composer-keyboard="open"] .sentiment-followup-form.is-docked { bottom: 8px; }

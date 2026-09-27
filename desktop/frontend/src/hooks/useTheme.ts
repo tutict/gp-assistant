@@ -1,6 +1,7 @@
 // Theme management hook
 
 import { useCallback, useEffect, useState } from "react";
+import { syncAndroidSystemBars } from "../lib/androidSystemBars";
 
 const THEME_KEY = "stock-optimizer-theme";
 
@@ -23,6 +24,7 @@ export function useTheme(): {
   const applyTheme = useCallback((t: Theme) => {
     document.documentElement.dataset.theme = t;
     localStorage.setItem(THEME_KEY, t);
+    syncAndroidSystemBars(t);
   }, []);
 
   useEffect(() => {

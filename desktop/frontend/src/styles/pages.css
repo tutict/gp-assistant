@@ -9,7 +9,7 @@
   padding: 10px 12px;
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(255,255,255,0.018), transparent),
+    linear-gradient(180deg, var(--surface-glint-subtle), transparent),
     color-mix(in srgb, var(--surface) 90%, transparent);
   border: 1px solid var(--line-soft);
 }
@@ -40,7 +40,7 @@
   gap: 10px;
   align-items: end;
   background:
-    linear-gradient(180deg, rgba(255,255,255,0.014), transparent),
+    linear-gradient(180deg, var(--surface-glint-faint), transparent),
     color-mix(in srgb, var(--surface) 88%, transparent);
 }
 
@@ -589,7 +589,7 @@
   font-size: 0.76rem;
 }
 .checklist span { border: 1px solid var(--line-soft); }
-.pack-state.current { color: var(--success); background: rgba(46,204,113,0.12); }
+.pack-state.current { color: var(--success); background: var(--fall-soft); }
 .pack-state.archived { color: var(--text-secondary); }
 .upstream-pack-actions { justify-content: flex-end; }
 .agent-result-card .backtest-result,
@@ -677,15 +677,15 @@
 }
 .observe-result .state-pill.positive {
   color: var(--rise);
-  background: rgba(231, 76, 60, 0.12);
+  background: var(--rise-soft);
 }
 .observe-result .state-pill.negative {
   color: var(--fall);
-  background: rgba(46, 204, 113, 0.12);
+  background: var(--fall-soft);
 }
 .observe-result .state-pill.warning {
   color: var(--warning);
-  background: rgba(243, 156, 18, 0.14);
+  background: var(--warning-soft);
 }
 .observe-result .state-pill.neutral {
   border: 1px solid var(--line-soft);

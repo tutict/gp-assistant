@@ -81,8 +81,21 @@
   /* Density affects spacing, never the minimum mobile hit area. */
   .app :is(button, select, textarea, input:not([type="checkbox"]):not([type="radio"]), summary, a.nav-link),
 .sheet-backdrop :is(button, select, textarea, input:not([type="checkbox"]):not([type="radio"]), summary) {
-    min-height: 44px;
-    min-width: 44px;
+    min-height: var(--touch-secondary);
+    min-width: var(--touch-secondary);
+  }
+  .app :is(.run-btn, .save-btn, .action-btn, .panel-tab, input, select, textarea),
+.sheet-backdrop :is(.run-btn, .save-btn, .action-btn, .panel-tab, input, select, textarea) {
+    min-height: var(--touch-primary);
+  }
+  .app :is(.icon-button, .stock-row-action, .clear-btn, .mobile-nav-toggle, .mobile-nav-close),
+.sheet-backdrop :is(.icon-button, .stock-row-action, .clear-btn, .mobile-nav-toggle, .mobile-nav-close) {
+    min-height: var(--touch-secondary);
+    min-width: var(--touch-secondary);
+  }
+  .app :is(.chip, .toggle-chip, .score-chip, .screen-status-cell),
+.sheet-backdrop :is(.chip, .toggle-chip, .score-chip, .screen-status-cell) {
+    min-height: var(--touch-dense);
   }
   .app :is(.kline-period-tabs, .kline-nav) {
     width: 100%;
@@ -92,7 +105,7 @@
     align-items: stretch;
   }
   :root {
-    --header-height: 48px;
+    --header-height: calc(48px + var(--safe-top));
     --bottom-nav-height: var(--nav-height);
   }
   html {
@@ -108,7 +121,7 @@
   }
   .app-header {
     min-height: var(--header-height);
-    padding: 0 8px;
+    padding: var(--safe-top) max(8px, var(--safe-right)) 0 max(8px, var(--safe-left));
   }
   .header-search,
 .header-status,
@@ -192,13 +205,21 @@
   .workbench {
     width: 100%;
     min-width: 0;
-    padding: 7px 7px calc(var(--bottom-nav-height) + var(--safe-bottom) + 12px);
+    padding: 7px max(7px, var(--safe-right)) calc(var(--bottom-nav-height) + var(--safe-bottom) + 12px) max(7px, var(--safe-left));
   }
   .panel-tabs {
     gap: 2px;
     padding: 2px;
+    width: 100%;
+    max-width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    overscroll-behavior-inline: contain;
     scroll-snap-type: x proximity;
   }
+  .panel-tabs::-webkit-scrollbar { display: none; }
   .panel-tab {
     min-width: max-content;
     min-height: var(--touch-comfort);
@@ -206,6 +227,7 @@
     padding-inline: 14px;
     font-size: var(--fs-data);
     scroll-snap-align: start;
+    white-space: nowrap;
   }
   .screen-panel-tabs .panel-tab {
     min-width: calc((100vw - 34px) / 3.2);
@@ -616,7 +638,7 @@
     inset: var(--header-height) 0 calc(var(--bottom-nav-height) + var(--safe-bottom));
     display: block;
     border: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--scrim-medium);
   }
   .agent-workspace.rail-collapsed .agent-rail-scrim {
     display: none;
@@ -911,7 +933,7 @@
   }
   .workbench {
     grid-column: 2;
-    padding: 8px 10px 18px;
+    padding: 8px max(10px, var(--safe-right)) 18px max(10px, var(--safe-left));
   }
   .app[data-active-view="agent"] .workbench {
     height: calc(100dvh - var(--header-height));
@@ -979,4 +1001,107 @@
   .capital-seat-list > li,
 .observe-detail-disclosure .observe-text-metric-grid { grid-template-columns: 1fr; }
   .capital-seat-list > li { gap: var(--space-2); }
+}
+
+/* Android touch-target normalization: primary actions are 48px; secondary controls are 44px. */
+@media (max-width: 768px) {
+  .app :is(button, select, textarea, input:not([type="checkbox"]):not([type="radio"]), summary, a.nav-link),
+  .sheet-backdrop :is(button, select, textarea, input:not([type="checkbox"]):not([type="radio"]), summary) {
+    min-height: var(--touch-primary);
+  }
+  .app :is(.icon-button, .stock-row-action, .clear-btn, .mobile-nav-toggle, .mobile-nav-close),
+  .sheet-backdrop :is(.icon-button, .stock-row-action, .clear-btn, .mobile-nav-toggle, .mobile-nav-close) {
+    min-height: var(--touch-secondary);
+    min-width: var(--touch-secondary);
+  }
+  .theme-toggle,
+  .watchlist-remove,
+  .screen-mobile-refresh-btn,
+  .research-icon-button,
+  .research-inbox .research-mobile-close,
+  .research-evidence.has-selection .research-evidence-close {
+    min-width: var(--touch-secondary);
+    min-height: var(--touch-secondary);
+  }
+  .nav-link,
+  .panel-tab,
+  .screen-panel-tabs .panel-tab,
+  .screen-panel-container > .screen-panel-tabs .panel-tab,
+  .screen-panel-desktop-toolbar .screen-panel-tabs .panel-tab,
+  .screen-panel-desktop-toolbar > .run-btn,
+  .run-btn,
+  .save-btn,
+  .action-btn,
+  .llm-add-btn,
+  .llm-preset-btn,
+  .llm-settings-toggle,
+  .criteria-field-grid .form-row input,
+  .criteria-field-grid .form-row select,
+  .adaptive-advanced > summary,
+  .criteria-num-field input,
+  .form-row input,
+  .form-row select,
+  .form-row textarea,
+  .stock-code-input input,
+  .screen-panel-run-card .run-btn,
+  .screen-panel-controls > .run-btn,
+  .observe-run-btn,
+  .backtest-context-controls .source-toggle,
+  .backtest-run-button,
+  .agent-input,
+  .send-btn,
+  .agent-mode-tabs button,
+  .backtest-volatility select,
+  .kline-nav button,
+  .kline-period-tabs button,
+  .research-actions button,
+  .research-empty-actions button,
+  .research-workspace .research-composer textarea,
+  .research-workspace .research-composer-send,
+  .sentiment-tabs button,
+  .sentiment-scrubber .btn,
+  .sentiment-header-actions .llm-settings-toggle,
+  .sentiment-toolbar input,
+  .stock-mobile-list .row-button-group button,
+  html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-period-tabs button,
+  html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-nav button {
+    min-height: var(--touch-primary);
+  }
+  .llm-endpoint-mode button,
+  .research-actions button,
+  .research-icon-button,
+  .sentiment-scrubber .btn {
+    min-width: var(--touch-secondary);
+  }
+  .llm-endpoint-mode button {
+    min-height: var(--touch-secondary);
+  }
+  .app[data-active-view="observe"] .panel-controls .stock-code-input,
+  .app[data-active-view="observe"] .panel-controls input {
+    min-height: var(--touch-primary);
+  }
+  :root[data-composer-keyboard="open"] .app:is([data-active-view="news"], [data-active-view="agent"]) {
+    top: calc(var(--composer-viewport-offset, 0px) + var(--safe-top));
+  }
+}
+
+@media (max-width: 768px) {
+  .agent-thread-toolbar {
+    padding-left: calc(3 * var(--touch-secondary) + 24px);
+  }
+  .agent-thread-toolbar > strong {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .agent-mobile-menu,
+  .agent-mobile-new,
+  .agent-mobile-history {
+    width: var(--touch-secondary);
+    min-width: var(--touch-secondary);
+    min-height: var(--touch-secondary);
+    height: var(--touch-secondary);
+  }
 }

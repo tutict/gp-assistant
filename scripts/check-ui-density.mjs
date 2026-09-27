@@ -189,7 +189,8 @@ for (const token of [
   "--fs-data: 13px",
   "--fs-label: 12px",
   "--fs-caption: 12px",
-  "--touch-comfort: 44px",
+  "--touch-primary: 48px",
+  "--touch-secondary: 44px",
   "--touch-dense: 32px",
   "--nav-height: 60px",
 ]) {

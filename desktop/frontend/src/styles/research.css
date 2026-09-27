@@ -1066,7 +1066,7 @@
 
   .research-empty-primary {
     color: var(--button-text);
-    background: var(--accent);
+    background: var(--accent-action);
   }
 
   .research-empty-primary:hover {
@@ -1388,7 +1388,7 @@
       display: block;
       width: 100%;
       border: 0;
-      background: rgb(0 0 0 / 58%);
+      background: var(--scrim-strong);
     }
 
     .research-stream {
@@ -2359,7 +2359,7 @@
     inset: 0;
     width: 100%;
     border: 0;
-    background: rgb(0 0 0 / 60%);
+    background: var(--scrim-deep);
     cursor: default;
   }
 
@@ -2587,3 +2587,45 @@
 }
 
 .research-inbox-empty-hint { margin: 8px 12px 0; color: var(--text-secondary); font-size: var(--fs-caption); line-height: 1.45; }
+
+@media (max-width: 768px) {
+  /* Large system fonts must reflow research controls instead of clipping the right edge. */
+  .research-topbar {
+    flex-wrap: wrap;
+    align-items: center;
+    row-gap: var(--space-1);
+    overflow: visible;
+  }
+  .research-context {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .research-context h1 {
+    max-width: min(62vw, 280px);
+  }
+  .research-actions {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+  }
+  .research-actions::-webkit-scrollbar { display: none; }
+  .research-actions button {
+    flex: 0 0 auto;
+    min-width: var(--touch-primary);
+    min-height: var(--touch-primary);
+    padding-inline: var(--space-3);
+    border: 1px solid var(--line);
+  }
+  .sentiment-toolbar {
+    flex-wrap: wrap;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+  }
+  .sentiment-toolbar::-webkit-scrollbar { display: none; }
+}

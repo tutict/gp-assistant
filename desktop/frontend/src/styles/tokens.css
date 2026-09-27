@@ -20,6 +20,20 @@
   --accent-muted: #a92924;
   --accent-action: #7f211c;
   --accent-soft: rgba(216, 61, 53, 0.14);
+  --accent-text: #ff8a80;
+  --danger-soft: rgba(231, 76, 60, 0.08);
+  --danger-border: rgba(231, 76, 60, 0.3);
+  --rise-soft: rgba(231, 76, 60, 0.12);
+  --fall-soft: rgba(46, 204, 113, 0.12);
+  --warning-soft: rgba(243, 156, 18, 0.14);
+  --surface-glint: rgba(255, 255, 255, 0.02);
+  --surface-glint-subtle: rgba(255, 255, 255, 0.018);
+  --surface-glint-faint: rgba(255, 255, 255, 0.014);
+  --scrim: rgb(0 0 0 / 56%);
+  --scrim-medium: rgb(0 0 0 / 50%);
+  --scrim-strong: rgb(0 0 0 / 58%);
+  --scrim-deep: rgb(0 0 0 / 60%);
+  --button-disabled-text: rgba(255, 247, 245, 0.82);
   --button-text: #ffffff;
   --success: #35b779;
   --warning: #e7a33d;
@@ -68,9 +82,11 @@
   --fs-caption: 12px;
   --stock-row-height: 56px;
   --control-height: 40px;
-  --touch-comfort: 44px;
+  --touch-primary: 48px;
+  --touch-secondary: 44px;
+  --touch-comfort: var(--touch-secondary);
   --touch-dense: 32px;
-  --touch-height: var(--touch-comfort);
+  --touch-height: var(--touch-secondary);
   --nav-height: 60px;
   --header-height: 56px;
   --sidebar-width: 208px;
@@ -95,12 +111,16 @@
   --z-overlay: 40;
   --z-drawer: 45;
   --z-modal: 50;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
   color-scheme: dark;
 }
 
 @media (max-width: 768px) {
   :root {
+    --font-sans: "Noto Sans SC", "Noto Sans CJK SC", "HarmonyOS Sans", "Roboto", "Segoe UI", system-ui, sans-serif;
     --fs-display: 20px;
     --fs-headline: 18px;
     --fs-title: 18px;
@@ -133,10 +153,9 @@
 
 @media (max-width: 768px) {
   :root, :root[data-density="compact"] {
-    --control-height: 44px;
-    --touch-comfort: 44px;
-    --touch-dense: 44px;
-    --touch-height: 44px;
+    --control-height: var(--touch-primary);
+    --touch-comfort: var(--touch-secondary);
+    --touch-height: var(--touch-secondary);
   }
 }
 
@@ -157,6 +176,20 @@
   --accent-muted: #a92924;
   --accent-action: #7f211c;
   --accent-soft: rgba(216, 61, 53, 0.1);
+  --accent-text: #9f2420;
+  --danger-soft: rgba(231, 76, 60, 0.08);
+  --danger-border: rgba(231, 76, 60, 0.3);
+  --rise-soft: rgba(231, 76, 60, 0.12);
+  --fall-soft: rgba(46, 204, 113, 0.12);
+  --warning-soft: rgba(243, 156, 18, 0.14);
+  --surface-glint: rgba(255, 255, 255, 0.02);
+  --surface-glint-subtle: rgba(255, 255, 255, 0.018);
+  --surface-glint-faint: rgba(255, 255, 255, 0.014);
+  --scrim: rgb(0 0 0 / 56%);
+  --scrim-medium: rgb(0 0 0 / 50%);
+  --scrim-strong: rgb(0 0 0 / 58%);
+  --scrim-deep: rgb(0 0 0 / 60%);
+  --button-disabled-text: rgba(255, 247, 245, 0.82);
   --button-text: #ffffff;
   --success: #168653;
   --warning: #a9660f;

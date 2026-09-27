@@ -267,8 +267,8 @@
   color: var(--text-secondary);
 }
 .result-error {
-  padding: 14px; border-radius: 8px; background: rgba(231,76,60,0.08);
-  border: 1px solid rgba(231,76,60,0.3); color: var(--error);
+  padding: 14px; border-radius: 8px; background: var(--danger-soft);
+  border: 1px solid var(--danger-border); color: var(--error);
 }
 .result-error strong { display: block; margin-bottom: 4px; }
 .result-empty {
@@ -281,7 +281,7 @@
   border: 1px solid var(--line-soft);
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(255,255,255,0.02), transparent),
+    linear-gradient(180deg, var(--surface-glint), transparent),
     color-mix(in srgb, var(--surface) 64%, transparent);
 }
 .result-empty span {
@@ -468,8 +468,8 @@
   font-weight: 600; font-size: 0.82rem;
   padding: 2px 8px; border-radius: 3px;
 }
-.finding-item.positive .finding-direction { background: rgba(231,76,60,0.12); color: var(--rise); }
-.finding-item.negative .finding-direction { background: rgba(46,204,113,0.12); color: var(--fall); }
+.finding-item.positive .finding-direction { background: var(--rise-soft); color: var(--rise); }
+.finding-item.negative .finding-direction { background: var(--fall-soft); color: var(--fall); }
 
 .news-groups { display: flex; flex-direction: column; gap: 12px; }
 .news-group { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
@@ -480,8 +480,8 @@
 .news-sentiment {
   font-size: var(--fs-caption); padding: 1px 6px; border-radius: 3px; font-weight: 600;
 }
-.news-sentiment.positive { background: rgba(231,76,60,0.12); color: var(--rise); }
-.news-sentiment.negative { background: rgba(46,204,113,0.12); color: var(--fall); }
+.news-sentiment.positive { background: var(--rise-soft); color: var(--rise); }
+.news-sentiment.negative { background: var(--fall-soft); color: var(--fall); }
 .news-sentiment.neutral { background: var(--surface-2); color: var(--text-secondary); }
 
 .news-title { flex: 1; }
@@ -765,7 +765,7 @@
   opacity: 0.78;
   cursor: not-allowed;
   background: var(--surface-3);
-  color: rgba(255, 247, 245, 0.82);
+  color: var(--button-disabled-text);
   box-shadow: none;
 }
 .agent-chat-stage > .llm-settings-panel {
@@ -1255,7 +1255,7 @@
   height: 100%;
   padding: 0;
   border: 0;
-  background: rgb(0 0 0 / 56%);
+  background: var(--scrim);
   cursor: default;
 }
 
@@ -1424,7 +1424,7 @@
   .sidebar.open { left: 0; }
   .mobile-nav-toggle { display: flex; }
   .mobile-nav-overlay {
-    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 48;
+    display: none; position: fixed; inset: 0; background: var(--scrim-medium); z-index: 48;
   }
   .mobile-nav-overlay.visible { display: block; }
   .workbench { grid-column: 1; padding: 12px; gap: 12px; }

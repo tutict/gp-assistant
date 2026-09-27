@@ -271,26 +271,9 @@ function Set-AndroidColorResource {
         $colorsXml = $colorsXml -replace "</resources>", "$colorLine`r`n</resources>"
     }
 
-    $tempColorsPath = "$colorsPath.$([guid]::NewGuid().ToString('N')).tmp"
-    $backupColorsPath = "$colorsPath.$([guid]::NewGuid().ToString('N')).bak"
     $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
-    try {
-        $normalizedColorsXml = $colorsXml.TrimEnd("`r", "`n") + "`r`n"
-        [System.IO.File]::WriteAllText($tempColorsPath, $normalizedColorsXml, $utf8WithoutBom)
-        if (Test-Path -LiteralPath $colorsPath) {
-            [System.IO.File]::Replace($tempColorsPath, $colorsPath, $backupColorsPath)
-        } else {
-            [System.IO.File]::Move($tempColorsPath, $colorsPath)
-        }
-    } finally {
-        if (Test-Path -LiteralPath $tempColorsPath) {
-            Remove-Item -LiteralPath $tempColorsPath -Force
-        }
-        if (Test-Path -LiteralPath $backupColorsPath) {
-            Remove-Item -LiteralPath $backupColorsPath -Force
-        }
-    }
-}
+    $normalizedColorsXml = $colorsXml.TrimEnd("`r", "`n") + "`r`n"
+    [System.IO.File]::WriteAllText($colorsPath, $normalizedColorsXml, $utf8WithoutBom)}
 
 function Resolve-AndroidThemeParent {
     $themesPath = Join-Path (Join-Path $AndroidResDir "values") "themes.xml"
@@ -317,15 +300,18 @@ function Write-AndroidStartupTheme {
     New-Item -ItemType Directory -Path $ValuesDir -Force | Out-Null
 
     $themeItems = @(
-        "        <item name=`"android:windowNoTitle`">true</item>",
-        "        <item name=`"android:windowActionBar`">false</item>",
-        "        <item name=`"android:windowBackground`">@color/gp_boot_background</item>",
-        "        <item name=`"android:colorBackground`">@color/gp_boot_background</item>",
-        "        <item name=`"android:forceDarkAllowed`">false</item>",
-        "        <item name=`"android:statusBarColor`">@color/gp_boot_background</item>",
-        "        <item name=`"android:navigationBarColor`">@color/gp_boot_background</item>",
-        "        <item name=`"android:windowLightStatusBar`">false</item>",
-        "        <item name=`"android:windowLightNavigationBar`">false</item>"
+        '        <item name="android:windowNoTitle">true</item>',
+        '        <item name="android:windowActionBar">false</item>',
+        '        <item name="android:windowBackground">@color/gp_boot_background</item>',
+        '        <item name="android:colorBackground">@color/gp_boot_background</item>',
+        '        <item name="android:forceDarkAllowed">false</item>',
+        '        <item name="android:windowDrawsSystemBarBackgrounds">true</item>',
+        '        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>',
+        '        <item name="android:statusBarColor">@android:color/transparent</item>',
+        '        <item name="android:navigationBarColor">@android:color/transparent</item>',
+        '        <item name="android:navigationBarDividerColor">@android:color/transparent</item>',
+        '        <item name="android:windowLightStatusBar">false</item>',
+        '        <item name="android:windowLightNavigationBar">false</item>'
     )
 
     if ($UseAndroid12Splash) {
@@ -395,38 +381,78 @@ function Update-AndroidSafeAreaInsets {
     }
 
     $mainActivity = @(
-        "package com.tutict.stockoptimizer",
-        "",
-        "import android.os.Bundle",
-        "import android.view.View",
-        "import androidx.activity.enableEdgeToEdge",
-        "import androidx.core.view.ViewCompat",
-        "import androidx.core.view.WindowInsetsCompat",
-        "",
-        "class MainActivity : TauriActivity() {",
-        "  override fun onCreate(savedInstanceState: Bundle?) {",
-        "    enableEdgeToEdge()",
-        "    super.onCreate(savedInstanceState)",
-        "    applyTopSystemBarInset()",
-        "  }",
-        "",
-        "  private fun applyTopSystemBarInset() {",
-        "    val contentView = findViewById<View>(android.R.id.content) ?: return",
-        "    ViewCompat.setOnApplyWindowInsetsListener(contentView) { view, insets ->",
-        "      val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())",
-        "      val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())",
-        "      val topInset = maxOf(systemBars.top, cutout.top)",
-        "      view.setPadding(view.paddingLeft, topInset, view.paddingRight, view.paddingBottom)",
-        "      insets",
-        "    }",
-        "    ViewCompat.requestApplyInsets(contentView)",
-        "  }",
-        "}",
-        ""
-    ) -join "`r`n"
+        'package com.tutict.stockoptimizer',
+        '',
+        'import android.graphics.Color',
+        'import android.os.Bundle',
+        'import android.webkit.WebView',
+        'import androidx.activity.enableEdgeToEdge',
+        'import androidx.core.view.ViewCompat',
+        'import androidx.core.view.WindowCompat',
+        'import androidx.core.view.WindowInsetsCompat',
+        'import androidx.core.view.WindowInsetsControllerCompat',
+        '',
+        'class MainActivity : TauriActivity() {',
+        '  override fun onCreate(savedInstanceState: Bundle?) {',
+        '    enableEdgeToEdge()',
+        '    super.onCreate(savedInstanceState)',
+        '    configureEdgeToEdgeWindow()',
+        '  }',
+        '',
+        '  override fun onWebViewCreate(webView: WebView) {',
+        '    super.onWebViewCreate(webView)',
+        '    webView.addJavascriptInterface(AndroidSystemBarsBridge(this), "AndroidSystemBars")',
+        '    ViewCompat.setOnApplyWindowInsetsListener(webView) { _, insets ->',
+        '      syncSafeArea(webView, insets)',
+        '      insets',
+        '    }',
+        '    ViewCompat.requestApplyInsets(webView)',
+        '    webView.postDelayed({ ViewCompat.requestApplyInsets(webView) }, 300L)',
+        '  }',
+        '',
+        '  private fun syncSafeArea(webView: WebView, insets: WindowInsetsCompat) {',
+        '    val statusBars = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.statusBars())',
+        '    val navigationBars = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.navigationBars())',
+        '    val cutout = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.displayCutout())',
+        '    val density = resources.displayMetrics.density',
+        '    val top = maxOf(statusBars.top, cutout.top) / density',
+        '    val right = maxOf(navigationBars.right, cutout.right) / density',
+        '    val bottom = maxOf(navigationBars.bottom, cutout.bottom) / density',
+        '    val left = maxOf(navigationBars.left, cutout.left) / density',
+        '    val script = "(function(){var s=document.documentElement.style;s.setProperty(\"--safe-top\",\"" + top + "px\");s.setProperty(\"--safe-right\",\"" + right + "px\");s.setProperty(\"--safe-bottom\",\"" + bottom + "px\");s.setProperty(\"--safe-left\",\"" + left + "px\")})()"',
+        '    webView.post { webView.evaluateJavascript(script, null) }',
+        '  }',
+
+        '  private fun configureEdgeToEdgeWindow() {',
+        '    WindowCompat.setDecorFitsSystemWindows(window, false)',
+        '    window.statusBarColor = Color.TRANSPARENT',
+        '    window.navigationBarColor = Color.TRANSPARENT',
+        '    val controller = WindowInsetsControllerCompat(window, window.decorView)',
+        '    controller.isAppearanceLightStatusBars = false',
+        '    controller.isAppearanceLightNavigationBars = false',
+        '  }',
+        '}',
+        '',
+        'class AndroidSystemBarsBridge(private val activity: MainActivity) {',
+        '  @android.webkit.JavascriptInterface',
+        '  fun setTheme(theme: String) {',
+        '    val light = when (theme) { "light" -> true; "dark" -> false; else -> return }',
+        '    activity.runOnUiThread {',
+        '      val color = if (light) Color.rgb(244, 246, 248) else Color.rgb(13, 16, 20)',
+        '      activity.window.statusBarColor = color',
+        '      activity.window.navigationBarColor = color',
+        '      val controller = WindowInsetsControllerCompat(activity.window, activity.window.decorView)',
+        '      controller.isAppearanceLightStatusBars = light',
+        '      controller.isAppearanceLightNavigationBars = light',
+        '    }',
+        '  }',
+        '}',
+        ''
+    ) -join [Environment]::NewLine
 
     Set-Content -LiteralPath $AndroidMainActivity -Value $mainActivity -Encoding UTF8
 }
+
 function Update-AndroidStartupTheme {
     if (-not (Test-Path -LiteralPath $AndroidResDir)) {
         return

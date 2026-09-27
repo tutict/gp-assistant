@@ -213,6 +213,14 @@ export default function App({ onMounted }: AppProps) {
   }, []);
 
   useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      document.querySelector<HTMLElement>(".workbench")?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [view]);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => {
       for (const loadPanel of adjacentPanelLoaders[view]) void loadPanel();
     }, 240);
