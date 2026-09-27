@@ -1,12 +1,13 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     sync::Mutex,
 };
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
 use crate::{agent_harness, agent_ledger};
@@ -14,9 +15,6 @@ use crate::{agent_harness, agent_ledger};
 pub(crate) const BASE_PROMPT_VERSION: &str = "rig-agent-runtime-v1";
 const MAX_METHOD_CARD_CHARS: usize = 4_000;
 const MAX_SYSTEM_PROMPT_CHARS: usize = 12_000;
-const REJECTION_THRESHOLD: usize = 5;
-const MAX_SAMPLE_QUESTION_CHARS: usize = 500;
-const MAX_SAMPLE_ERROR_CHARS: usize = 300;
 
 const HOT_MONEY_PROMPT: &str = include_str!("../../../app/prompts/hot_money_early_v1.md");
 const VALUE_COMPOUNDER_PROMPT: &str = include_str!("../../../app/prompts/value_compounder_v1.md");
@@ -32,23 +30,11 @@ pub(crate) struct ResolvedPrompt {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct DraftSample {
-    pub question: String,
-    pub error: String,
+pub(crate) struct ResolvedMethodCard {
+    pub body: String,
+    pub version: String,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct UpgradeClaim {
-    pub profile_id: String,
-    #[allow(dead_code)]
-    pub mode: String,
-    #[allow(dead_code)]
-    pub prompt_version: String,
-    pub current_body: String,
-    pub required_terms: Vec<String>,
-    pub forbidden_terms: Vec<String>,
-    pub samples: Vec<DraftSample>,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PromptOverlayStatus {
@@ -89,19 +75,21 @@ struct ProfileContract {
     forbidden_terms: Vec<String>,
 }
 
-pub(crate) fn rejected_profile(response: &Value) -> Option<String> {
-    let harness = response.get("harness")?;
-    if harness.get("model_outcome").and_then(Value::as_str) != Some("policy_rejected") {
-        return None;
-    }
-    let profile_id = harness.get("profile_id").and_then(Value::as_str)?;
-    matches!(
-        profile_id,
-        "hot_money_early_v1" | "value_compounder_v1"
-    )
-    .then(|| profile_id.to_string())
+fn method_card_digest(body: &str) -> String {
+    Sha256::digest(body.trim().as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
+pub(crate) fn builtin_method_card_version(profile_id: &str) -> Result<String, String> {
+    let contract = profile_contract(profile_id)?;
+    let body = builtin_body(contract.mode);
+    Ok(format!(
+        "{BASE_PROMPT_VERSION}+{profile_id}+sha256-{}",
+        method_card_digest(body)
+    ))
+}
 pub(crate) fn resolve_prompt(mode: &str, app: Option<&AppHandle>) -> ResolvedPrompt {
     if !is_upgradeable_mode(mode) {
         return compose(mode, builtin_body(mode), BASE_PROMPT_VERSION);
@@ -117,25 +105,36 @@ pub(crate) fn resolve_prompt(mode: &str, app: Option<&AppHandle>) -> ResolvedPro
     compose(mode, builtin_body(mode), BASE_PROMPT_VERSION)
 }
 
-pub(crate) fn claim_with_app(
-    app: &AppHandle,
+pub(crate) fn resolve_method_card(
     profile_id: &str,
-) -> Result<Option<UpgradeClaim>, String> {
-    let _guard = OVERLAY_LOCK
-        .lock()
-        .map_err(|_| "prompt overlay lock is poisoned".to_string())?;
-    claim_at(&ledger_path(app)?, &overlay_path(app)?, profile_id)
+    app: Option<&AppHandle>,
+) -> Result<ResolvedMethodCard, String> {
+    let contract = profile_contract(profile_id)?;
+    let active = app.and_then(|app| read_active_prompt(app, profile_id));
+    let active = active.filter(|prompt| evaluate_candidate(profile_id, &prompt.body).is_ok());
+    Ok(ResolvedMethodCard {
+        body: active
+            .as_ref()
+            .map(|prompt| prompt.body.clone())
+            .unwrap_or_else(|| builtin_body(contract.mode).to_string()),
+        version: active
+            .map(|prompt| prompt.version)
+            .map(Ok)
+            .unwrap_or_else(|| builtin_method_card_version(profile_id))?,
+    })
 }
 
-pub(crate) fn activate_with_app(
+
+pub(crate) fn activate_gepa_with_app(
     app: &AppHandle,
     profile_id: &str,
+    expected_base_version: &str,
     body: &str,
-) -> Result<bool, String> {
+) -> Result<String, String> {
     let _guard = OVERLAY_LOCK
         .lock()
         .map_err(|_| "prompt overlay lock is poisoned".to_string())?;
-    activate_at(&overlay_path(app)?, profile_id, body)
+    activate_gepa_at(&overlay_path(app)?, profile_id, expected_base_version, body)
 }
 
 pub(crate) fn status_with_app(app: &AppHandle) -> Result<Vec<PromptOverlayStatus>, String> {
@@ -150,19 +149,6 @@ pub(crate) fn revert_with_app(app: &AppHandle, profile_id: &str) -> Result<(), S
         .lock()
         .map_err(|_| "prompt overlay lock is poisoned".to_string())?;
     revert_at(&ledger_path(app)?, &overlay_path(app)?, profile_id)
-}
-
-pub(crate) fn draft_request(claim: &UpgradeClaim) -> Value {
-    json!({
-        "profile_id": claim.profile_id,
-        "required_terms": claim.required_terms,
-        "forbidden_terms": claim.forbidden_terms,
-        "current_method_card": claim.current_body,
-        "rejections": claim.samples.iter().map(|sample| json!({
-            "question": sample.question,
-            "error": sample.error,
-        })).collect::<Vec<_>>(),
-    })
 }
 
 pub(crate) fn evaluate_candidate(profile_id: &str, body: &str) -> Result<(), String> {
@@ -197,81 +183,26 @@ pub(crate) fn evaluate_candidate(profile_id: &str, body: &str) -> Result<(), Str
     }
     Ok(())
 }
-fn claim_at(
-    ledger_path: &Path,
+
+fn activate_gepa_at(
     overlay_path: &Path,
     profile_id: &str,
-) -> Result<Option<UpgradeClaim>, String> {
-    let contract = profile_contract(profile_id)?;
-    let mut store = load_store(overlay_path);
-    let mut claim = None;
-    {
-        let profile = store.profiles.entry(profile_id.to_string()).or_default();
-        let current_version = profile
-            .active
-            .as_ref()
-            .filter(|active| evaluate_candidate(profile_id, &active.body).is_ok())
-            .map(|active| active.version.clone())
-            .unwrap_or_else(|| BASE_PROMPT_VERSION.to_string());
-        if profile.consumed_prompt_version != current_version {
-            profile.consumed_run_ids.clear();
-            profile.consumed_prompt_version = current_version.clone();
-        }
-        let current_body = profile
-            .active
-            .as_ref()
-            .filter(|active| {
-                active.version == current_version
-                    && evaluate_candidate(profile_id, &active.body).is_ok()
-            })
-            .map(|active| active.body.clone())
-            .unwrap_or_else(|| builtin_body(contract.mode).to_string());
-        let ledger = agent_ledger::AgentRunStore::open(ledger_path)?;
-        let rejections = ledger.list_policy_rejections(profile_id, &current_version)?;
-        let consumed: BTreeSet<&str> = profile.consumed_run_ids.iter().map(String::as_str).collect();
-        let eligible: Vec<_> = rejections
-            .into_iter()
-            .filter(|sample| !consumed.contains(sample.run_id.as_str()))
-            .collect();
-        if eligible.len() >= REJECTION_THRESHOLD {
-            let samples = eligible
-                .iter()
-                .take(REJECTION_THRESHOLD)
-                .map(|sample| DraftSample {
-                    question: sanitize_sample(&sample.question, MAX_SAMPLE_QUESTION_CHARS),
-                    error: sanitize_sample(&sample.error, MAX_SAMPLE_ERROR_CHARS),
-                })
-                .collect::<Vec<_>>();
-            profile
-                .consumed_run_ids
-                .extend(eligible.iter().map(|sample| sample.run_id.clone()));
-            profile.consumed_run_ids.sort();
-            profile.consumed_run_ids.dedup();
-            if profile.consumed_run_ids.len() > 4_000 {
-                let extra = profile.consumed_run_ids.len() - 4_000;
-                profile.consumed_run_ids.drain(0..extra);
-            }
-            claim = Some(UpgradeClaim {
-                profile_id: profile_id.to_string(),
-                mode: contract.mode.to_string(),
-                prompt_version: current_version,
-                current_body,
-                required_terms: contract.required_terms.clone(),
-                forbidden_terms: contract.forbidden_terms.clone(),
-                samples,
-            });
-        }
-    }
-    save_store(overlay_path, &store)?;
-    Ok(claim)
-}
-
-fn activate_at(overlay_path: &Path, profile_id: &str, body: &str) -> Result<bool, String> {
-    if evaluate_candidate(profile_id, body).is_err() {
-        return Ok(false);
-    }
+    expected_base_version: &str,
+    body: &str,
+) -> Result<String, String> {
+    profile_contract(profile_id)?;
+    evaluate_candidate(profile_id, body)?;
     let mut store = load_store(overlay_path);
     let profile = store.profiles.entry(profile_id.to_string()).or_default();
+    let current_version = profile
+        .active
+        .as_ref()
+        .filter(|active| evaluate_candidate(profile_id, &active.body).is_ok())
+        .map(|active| active.version.clone())
+        .unwrap_or(builtin_method_card_version(profile_id)?);
+    if current_version != expected_base_version {
+        return Err("active prompt version changed; rerun GEPA before applying".to_string());
+    }
     let n = profile.next_n.max(1);
     let version = format!("{BASE_PROMPT_VERSION}+{profile_id}+{n}");
     profile.active = Some(ActivePrompt {
@@ -280,10 +211,10 @@ fn activate_at(overlay_path: &Path, profile_id: &str, body: &str) -> Result<bool
         body: body.trim().to_string(),
     });
     profile.next_n = n.saturating_add(1);
-    profile.consumed_prompt_version = version;
+    profile.consumed_prompt_version = version.clone();
     profile.consumed_run_ids.clear();
     save_store(overlay_path, &store)?;
-    Ok(true)
+    Ok(version)
 }
 
 fn status_at(overlay_path: &Path) -> Result<Vec<PromptOverlayStatus>, String> {
@@ -301,7 +232,7 @@ fn status_at(overlay_path: &Path) -> Result<Vec<PromptOverlayStatus>, String> {
                 label: profile_label(profile_id).to_string(),
                 prompt_version: active
                     .map(|item| item.version.clone())
-                    .unwrap_or_else(|| BASE_PROMPT_VERSION.to_string()),
+                    .unwrap_or_else(|| builtin_method_card_version(profile_id).unwrap_or_else(|_| BASE_PROMPT_VERSION.to_string())),
                 builtin: active.is_none(),
             }
         })
@@ -409,43 +340,6 @@ fn string_list(value: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn sanitize_sample(value: &str, max_chars: usize) -> String {
-    let redacted = agent_harness::redact_persisted_question(value, None);
-    redact_secret_tokens(&redacted)
-        .chars()
-        .take(max_chars)
-        .collect()
-}
-
-fn redact_secret_tokens(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    let mut rest = value;
-    while !rest.is_empty() {
-        let lower = rest.to_ascii_lowercase();
-        let index = ["sk-", "api_key", "api-key", "bearer"]
-            .iter()
-            .filter_map(|marker| lower.find(marker))
-            .min();
-        let Some(index) = index else {
-            output.push_str(rest);
-            break;
-        };
-        output.push_str(&rest[..index]);
-        let tail = &rest[index..];
-        let mut end = tail.find(char::is_whitespace).unwrap_or(tail.len());
-        if tail[..end].to_ascii_lowercase().starts_with("bearer") {
-            let after = &tail[end..];
-            let whitespace = after
-                .find(|character: char| !character.is_whitespace())
-                .unwrap_or(after.len());
-            let next = &after[whitespace..];
-            end += whitespace + next.find(char::is_whitespace).unwrap_or(next.len());
-        }
-        output.push_str("[redacted]");
-        rest = &tail[end..];
-    }
-    output
-}
 
 fn overlay_path(app: &AppHandle) -> Result<PathBuf, String> {
     let mut path = app
@@ -501,7 +395,6 @@ fn save_store(path: &Path, store: &OverlayStore) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     struct TempDir(PathBuf);
@@ -529,136 +422,10 @@ mod tests {
         }
     }
 
-    fn rejection(outcome: &str, profile_id: &str, prompt_version: &str, warning: &str) -> Value {
-        json!({
-            "reply": "本地工具结果",
-            "warnings": [warning],
-            "harness": {
-                "prompt_version": prompt_version,
-                "policy_version": "agent-policy-v1",
-                "profile_id": profile_id,
-                "model_used": false,
-                "model_outcome": outcome,
-                "api_format": "openai_chat"
-            }
-        })
-    }
-
-    fn seed(
-        ledger: &Path,
-        count: usize,
-        outcome: &str,
-        profile_id: &str,
-        prompt_version: &str,
-        warning: &str,
-    ) {
-        static IDS: AtomicU64 = AtomicU64::new(1);
-        let store = agent_ledger::AgentRunStore::open(ledger).expect("ledger");
-        let mode = if profile_id == "value_compounder_v1" {
-            "research"
-        } else {
-            "expert"
-        };
-        for index in 0..count {
-            let id = IDS.fetch_add(1, Ordering::Relaxed);
-            let run_id = format!("run-{id}");
-            let started = 1_000 + id as i64;
-            store
-                .start_run(
-                    &json!({
-                        "run_id": run_id,
-                        "conversation_id": "conversation",
-                        "message": format!("问题 {index} https://secret.example/v1?api_key=hidden sk-live-secret"),
-                        "mode": mode,
-                    }),
-                    started,
-                )
-                .expect("start");
-            store
-                .complete_run(
-                    &run_id,
-                    &[],
-                    &rejection(outcome, profile_id, prompt_version, warning),
-                    started + 10,
-                )
-                .expect("complete");
-        }
-    }
-
     #[test]
     fn builtin_method_cards_pass_the_contract() {
         evaluate_candidate("hot_money_early_v1", HOT_MONEY_PROMPT).expect("expert card");
         evaluate_candidate("value_compounder_v1", VALUE_COMPOUNDER_PROMPT).expect("research card");
-    }
-
-    #[test]
-    fn four_rejections_do_not_claim_and_request_failures_do_not_count() {
-        let dir = TempDir::new();
-        let ledger = dir.path().join("agent-runs.sqlite");
-        let overlay = dir.path().join("prompt-overlays.json");
-        seed(
-            &ledger,
-            4,
-            "policy_rejected",
-            "hot_money_early_v1",
-            BASE_PROMPT_VERSION,
-            "模型输出未通过安全校验",
-        );
-        seed(
-            &ledger,
-            5,
-            "request_failed",
-            "hot_money_early_v1",
-            BASE_PROMPT_VERSION,
-            "模型执行失败",
-        );
-        assert!(claim_at(&ledger, &overlay, "hot_money_early_v1")
-            .unwrap()
-            .is_none());
-    }
-
-    #[test]
-    fn five_rejections_claim_once_and_five_new_rejections_are_required_after_failure() {
-        let dir = TempDir::new();
-        let ledger = dir.path().join("agent-runs.sqlite");
-        let overlay = dir.path().join("prompt-overlays.json");
-        seed(
-            &ledger,
-            5,
-            "policy_rejected",
-            "hot_money_early_v1",
-            BASE_PROMPT_VERSION,
-            "模型输出未通过安全校验",
-        );
-        let first = claim_at(&ledger, &overlay, "hot_money_early_v1")
-            .unwrap()
-            .expect("first claim");
-        assert_eq!(first.samples.len(), 5);
-        assert!(claim_at(&ledger, &overlay, "hot_money_early_v1")
-            .unwrap()
-            .is_none());
-        seed(
-            &ledger,
-            4,
-            "policy_rejected",
-            "hot_money_early_v1",
-            BASE_PROMPT_VERSION,
-            "再次拒绝",
-        );
-        assert!(claim_at(&ledger, &overlay, "hot_money_early_v1")
-            .unwrap()
-            .is_none());
-        seed(
-            &ledger,
-            1,
-            "policy_rejected",
-            "hot_money_early_v1",
-            BASE_PROMPT_VERSION,
-            "第五次新拒绝",
-        );
-        assert!(claim_at(&ledger, &overlay, "hot_money_early_v1")
-            .unwrap()
-            .is_some());
     }
 
     #[test]
@@ -667,7 +434,6 @@ mod tests {
         let overlay = dir.path().join("prompt-overlays.json");
         let missing = HOT_MONEY_PROMPT.replace("市场环境", "环境");
         assert!(evaluate_candidate("hot_money_early_v1", &missing).is_err());
-        assert!(!activate_at(&overlay, "hot_money_early_v1", &missing).unwrap());
         let crossed = format!("{HOT_MONEY_PROMPT}\n巴菲特");
         assert!(evaluate_candidate("hot_money_early_v1", &crossed).is_err());
         let trading = format!("{HOT_MONEY_PROMPT}\n建议买入");
@@ -678,11 +444,46 @@ mod tests {
     }
 
     #[test]
+    fn gepa_activation_requires_the_unchanged_base_version() {
+        let dir = TempDir::new();
+        let overlay = dir.path().join("prompt-overlays.json");
+        let candidate = format!("{HOT_MONEY_PROMPT}\n\n补充：只描述已核验事实。 ");
+        activate_gepa_at(&overlay, "hot_money_early_v1", &builtin_method_card_version("hot_money_early_v1").unwrap(), &candidate)
+            .expect("first explicit activation");
+
+        let store_after_first = load_store(&overlay);
+        let active = store_after_first
+            .profiles
+            .get("hot_money_early_v1")
+            .and_then(|profile| profile.active.as_ref())
+            .expect("activated candidate");
+        let first_version = active.version.clone();
+        let first_body = active.body.clone();
+        let second_candidate = format!("{HOT_MONEY_PROMPT}\n\n补充：进一步标记不确定性。 ");
+
+        assert!(activate_gepa_at(
+            &overlay,
+            "hot_money_early_v1",
+            &builtin_method_card_version("hot_money_early_v1").unwrap(),
+            &second_candidate
+        )
+        .is_err());
+        let store_after_stale_attempt = load_store(&overlay);
+        let active_after_stale_attempt = store_after_stale_attempt
+            .profiles
+            .get("hot_money_early_v1")
+            .and_then(|profile| profile.active.as_ref())
+            .expect("first candidate remains active");
+        assert_eq!(active_after_stale_attempt.version, first_version);
+        assert_eq!(active_after_stale_attempt.body, first_body);
+    }
+
+    #[test]
     fn accepted_card_changes_prompt_until_overlay_is_removed_or_corrupt() {
         let dir = TempDir::new();
         let overlay = dir.path().join("prompt-overlays.json");
         let body = format!("{HOT_MONEY_PROMPT}\n\n补充：只根据已有证据描述不确定性。");
-        assert!(activate_at(&overlay, "hot_money_early_v1", &body).unwrap());
+        assert!(activate_gepa_at(&overlay, "hot_money_early_v1", &builtin_method_card_version("hot_money_early_v1").unwrap(), &body).is_ok());
         let resolved = resolve_from_path("expert", &overlay);
         assert_eq!(
             resolved.version,
@@ -703,58 +504,6 @@ mod tests {
             resolve_from_path("quick", &overlay).version,
             BASE_PROMPT_VERSION
         );
-    }
-
-    #[test]
-    fn draft_request_excludes_secrets_urls_and_tool_payloads() {
-        let claim = UpgradeClaim {
-            profile_id: "hot_money_early_v1".to_string(),
-            mode: "expert".to_string(),
-            prompt_version: BASE_PROMPT_VERSION.to_string(),
-            current_body: HOT_MONEY_PROMPT.to_string(),
-            required_terms: vec!["市场环境".to_string()],
-            forbidden_terms: vec!["巴菲特".to_string()],
-            samples: vec![DraftSample {
-                question: sanitize_sample(
-                    "问题 https://secret.example/v1?api_key=hidden sk-live-secret",
-                    500,
-                ),
-                error: sanitize_sample("失败 bearer secret-token", 300),
-            }],
-        };
-        let request = draft_request(&claim).to_string();
-        assert!(!request.contains("https://"));
-        assert!(!request.contains("sk-"));
-        assert!(!request.contains("api_key"));
-        assert!(!request.contains("secret-token"));
-        assert!(!request.contains("events"));
-    }
-
-    #[test]
-    fn revert_consumes_existing_builtin_rejections() {
-        let dir = TempDir::new();
-        let ledger = dir.path().join("agent-runs.sqlite");
-        let overlay = dir.path().join("prompt-overlays.json");
-        seed(
-            &ledger,
-            5,
-            "policy_rejected",
-            "value_compounder_v1",
-            BASE_PROMPT_VERSION,
-            "模型输出未通过安全校验",
-        );
-        assert!(claim_at(&ledger, &overlay, "value_compounder_v1")
-            .unwrap()
-            .is_some());
-        let body = format!("{VALUE_COMPOUNDER_PROMPT}\n\n补充：估值只展示假设。");
-        assert!(activate_at(&overlay, "value_compounder_v1", &body).unwrap());
-        revert_at(&ledger, &overlay, "value_compounder_v1").unwrap();
-        assert!(claim_at(&ledger, &overlay, "value_compounder_v1")
-            .unwrap()
-            .is_none());
-        assert!(status_at(&overlay).unwrap().into_iter().any(|status| {
-            status.profile_id == "value_compounder_v1" && status.builtin
-        }));
     }
 
     fn resolve_from_path(mode: &str, overlay: &Path) -> ResolvedPrompt {

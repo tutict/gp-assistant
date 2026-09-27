@@ -5,6 +5,7 @@ import { buildTauriAgentPayload, getTauriInvoke, getTauriListen, isTauriRuntime 
 import { activeLlmProvider, buildLlmConfig, normalizeAgentResult, normalizeAgentStreamEvent, parseSseBlock } from "../../lib/contracts";
 import { buildAgentStreamPayload, MAX_AGENT_MESSAGE_CHARS } from "../../lib/agent";
 import { deleteAgentConversationRuns } from "../../lib/agentRuns";
+import { GepaLabPanel } from "./GepaLabPanel";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useMobileComposer } from "../../hooks/useMobileComposer";
 import { AgentResultView } from "./AgentResultView";
@@ -636,6 +637,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         </div>
         <div className="agent-thread-toolbar">
           <strong>{activeConversation?.title || "新对话"}</strong>
+          <GepaLabPanel llm={activeLlmConfig} />
           <button
             type="button"
             className="icon-button agent-thread-history"

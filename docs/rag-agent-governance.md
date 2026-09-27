@@ -93,3 +93,12 @@ cargo test --manifest-path desktop\src-tauri\Cargo.toml --lib research::tests::f
 - 为固定检索评测增加历史基线报告，在排序或 embedding 模型升级时比较质量变化。
 - 为 Agent 指标增加按版本的趋势基线和受控导出，继续保持本地优先和脱敏。
 - 在不扩大权限的前提下补充取消、重试、幂等和长期运行清理策略。
+## GEPA 实验治理
+
+- GEPA 通过 Windows 与 Android 正式版中的主动实验面板运行；Python 不进入仓库或运行时。
+- `dsrust-gepa` 固定为 `=0.1.0-alpha.3`，由 `gepa-lab` Cargo feature 隔离；Windows 与 Android 正式打包命令显式启用该 feature；其他平台保持关闭。
+- 优化对象只有 `expert` / `research` profile 的方法卡；系统级安全规则、只读工具、证据目录、模型输出 schema 和安全合并器不属于 GEPA candidate。
+- 训练、验证和 holdout 只来自版本化的 `app/prompts/agent_gepa_eval_cases.json`；不读取历史用户问题，不读取实时行情，不把收益作为 metric。
+- 安全、证据引用和工具事实保留是硬门禁；通过后才计算 rubric 覆盖率。候选必须经过 holdout 对照，并由用户显式应用，不能自动激活。
+- GEPA 报告写入本机 AppData，保存数据集哈希、引擎版本、seed、预算、逐案例分数和脱敏样例；API key、完整 URL 凭据和原始连接配置不得进入报告。
+- 现有策略拒绝仍进入 Agent ledger 和指标，但不再触发“五次拒绝后自动生成并激活”提示词升级。Overlay 应用使用 base prompt version compare-and-swap，版本变化时拒绝陈旧候选。

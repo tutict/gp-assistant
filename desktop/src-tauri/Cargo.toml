@@ -16,6 +16,9 @@ path = "src/main.rs"
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+gepa-lab = ["dep:dsrust-gepa"]
+
 [dependencies]
 anyhow = "1"
 base64 = "0.23"
@@ -41,6 +44,7 @@ tokio = { version = "1", features = ["macros", "net", "sync", "time"] }
 webpki-roots = "1.0.6"
 rig-core = { version = "0.42.0", default-features = false, features = ["reqwest", "rustls"] }
 rig-agent = { version = "0.42.0", default-features = false }
+dsrust-gepa = { version = "=0.1.0-alpha.3", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 fastembed = { version = "5.17.3", default-features = false, features = ["ort-download-binaries-rustls-tls"] }

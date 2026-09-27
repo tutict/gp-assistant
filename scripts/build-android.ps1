@@ -661,7 +661,7 @@ try {
         return
     }
 
-    $BuildArgs = @("exec", "tauri", "android", "build", "--")
+    $BuildArgs = @("exec", "--", "tauri", "android", "build", "--features", "gepa-lab")
     if ($Debug) {
         $BuildArgs += "--debug"
     }

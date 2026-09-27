@@ -1046,6 +1046,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dsrust-gepa"
+version = "0.1.0-alpha.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d91493a217b09239994259742ec2b00a1bf59c3b82c8d396083f1d56b77c6558"
+dependencies = [
+ "pyrng",
+ "serde_json",
+]
+
+[[package]]
 name = "dtoa"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3510,6 +3520,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pyrng"
+version = "0.1.0-alpha.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94b85c406fb82ba25a92e439c150762012e19e999dc6dc7a8c676cd99c9774fc"
+dependencies = [
+ "sha2 0.11.0",
+]
+
+[[package]]
 name = "quick-xml"
 version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4292,6 +4311,7 @@ version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
 dependencies = [
+ "indexmap 2.14.2",
  "itoa",
  "memchr",
  "serde",
@@ -4635,6 +4655,7 @@ dependencies = [
  "anyhow",
  "base64 0.23.1",
  "bytes",
+ "dsrust-gepa",
  "encoding_rs",
  "fastembed",
  "futures",

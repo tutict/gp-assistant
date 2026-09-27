@@ -88,7 +88,9 @@ if (-not $SkipRust) {
     Invoke-Checked "Tauri Rust format check" $cargo @("fmt", "--manifest-path", "desktop/src-tauri/Cargo.toml", "--", "--check")
     Invoke-Checked "Rust gp-core tests" $cargo @("test", "--locked", "--manifest-path", "native/gp-core/Cargo.toml")
     Invoke-Checked "Tauri Rust tests" $cargo @("test", "--locked", "--manifest-path", "desktop/src-tauri/Cargo.toml")
+    Invoke-Checked "Tauri GEPA Rust tests" $cargo @("test", "--locked", "--features", "gepa-lab", "--manifest-path", "desktop/src-tauri/Cargo.toml")
     Invoke-Checked "Tauri cargo check" $cargo @("check", "--locked", "--manifest-path", "desktop/src-tauri/Cargo.toml")
+    Invoke-Checked "Tauri GEPA cargo check" $cargo @("check", "--locked", "--features", "gepa-lab", "--manifest-path", "desktop/src-tauri/Cargo.toml")
 }
 
 if (-not $SkipAndroidPreflight) {
