@@ -19,7 +19,9 @@ const renderers = new Set<ReactTestRenderer>();
 
 const baseProps = {
   activeConversationId: "conversation-1",
+  gepaEnabled: false,
   onClose: vi.fn(),
+  onOpenGepa: vi.fn(),
   onToggleWatchlist: vi.fn(),
   watchlist: [],
 };
@@ -207,6 +209,7 @@ beforeEach(() => {
   agentRunMocks.listAgentRuns.mockReset();
   agentRunMocks.revertPromptOverlay.mockReset();
   baseProps.onClose.mockReset();
+  baseProps.onOpenGepa.mockReset();
   baseProps.onToggleWatchlist.mockReset();
 });
 
@@ -222,6 +225,20 @@ afterEach(async () => {
 });
 
 describe("AgentRunDrawer list", () => {
+  it("opens GEPA from the run history header when enabled", async () => {
+    const onOpenGepa = vi.fn();
+    const renderer = await renderDrawer({
+      open: true,
+      ...({ gepaEnabled: true, onOpenGepa } as Partial<React.ComponentProps<typeof AgentRunDrawer>>),
+    });
+
+    const trigger = buttonWithText(renderer, "GEPA 实验");
+    await act(async () => {
+      trigger.props.onClick();
+    });
+
+    expect(onOpenGepa).toHaveBeenCalledTimes(1);
+  });
   it("renders scope-specific quality metrics without leaking the other scope", async () => {
     const quality = (sampleSize: number): AgentRunMetrics => ({
       schemaVersion: 1,

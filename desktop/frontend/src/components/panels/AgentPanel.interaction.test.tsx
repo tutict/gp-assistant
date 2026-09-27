@@ -15,6 +15,21 @@ const drawerMock = vi.hoisted(() => ({
   failure: false,
   props: undefined as AgentRunDrawerProps | undefined,
 }));
+type GepaPanelMockProps = {
+  llm?: unknown;
+  open: boolean;
+  onClose: () => void;
+  onAvailabilityChange: (enabled: boolean) => void;
+};
+
+type GepaHistoryControls = {
+  gepaEnabled: boolean;
+  onOpenGepa: () => void;
+};
+
+const gepaPanelMock = vi.hoisted(() => ({
+  props: undefined as GepaPanelMockProps | undefined,
+}));
 
 vi.mock("../../lib/tauri", () => tauriMocks);
 
@@ -27,6 +42,12 @@ vi.mock("./AgentRunDrawer", () => ({
         {drawerMock.failure && <div role="alert">ledger replay failed</div>}
       </div>
     );
+  },
+}));
+vi.mock("./GepaLabPanel", () => ({
+  GepaLabPanel: (props: GepaPanelMockProps) => {
+    gepaPanelMock.props = props;
+    return <div className="gepa-lab-panel-mock" data-open={String(props.open)} />;
   },
 }));
 
@@ -164,6 +185,7 @@ beforeEach(() => {
   streamHandler = undefined;
   drawerMock.failure = false;
   drawerMock.props = undefined;
+  gepaPanelMock.props = undefined;
   unlistenMock.mockReset();
   invokeMock.mockReset();
   onLlmSettingsChange.mockReset();
@@ -305,10 +327,35 @@ describe("AgentPanel run replay interactions", () => {
     expect(drawerMock.props?.onClose).toBeTypeOf("function");
     expect(drawerMock.props?.onToggleWatchlist).toBeTypeOf("function");
     const stage = renderer.root.find((node) => hasClass(node, "agent-chat-stage"));
-    const finalChild = stage.children.at(-1) as ReactTestInstance;
-    expect(finalChild.findAll((node) => hasClass(node, "agent-run-drawer-mock"))).toHaveLength(1);
+    expect(stage.findAll((node) => hasClass(node, "agent-run-drawer-mock"))).toHaveLength(1);
   });
 
+  it("opens GEPA from run history and closes the history drawer first", async () => {
+    seedConversations([conversation("conversation-1", "Current conversation")]);
+    const renderer = await renderPanel();
+    const initialGepaProps = gepaPanelMock.props;
+
+    expect(initialGepaProps?.onAvailabilityChange).toBeTypeOf("function");
+    await act(async () => {
+      initialGepaProps!.onAvailabilityChange(true);
+    });
+
+    const trigger = { focus: vi.fn() } as unknown as HTMLElement;
+    await act(async () => {
+      buttonWithClass(renderer, "agent-thread-history").props.onClick({ currentTarget: trigger });
+    });
+    const drawerProps = drawerMock.props as (AgentRunDrawerProps & GepaHistoryControls) | undefined;
+    expect(drawerProps).toMatchObject({ open: true, gepaEnabled: true });
+
+    await act(async () => {
+      drawerProps?.onOpenGepa();
+    });
+
+    expect(drawerMock.props?.open).toBe(false);
+    expect(gepaPanelMock.props?.open).toBe(true);
+    expect(gepaPanelMock.props?.llm).toBeDefined();
+    expect(renderer.root.findAll((node) => hasClass(node, "agent-run-drawer-mock"))).toHaveLength(0);
+  });
   it("opens the exact run from an assistant message", async () => {
     seedConversations([conversation("conversation-1", "Replay", [
       { role: "assistant", content: "completed", timestamp: 1, runId: "run-message-1" },

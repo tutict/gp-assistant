@@ -1,4 +1,4 @@
-import { FlaskConical, Play, Square, X } from "lucide-react";
+import { Play, Square, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { LlmClientConfig } from "../../types";
 import { applyGepaRun, cancelGepaRun, gepaLabAvailable, getGepaReport, getGepaStatus, listenGepaEvents, startGepaRun, type GepaEvent, type GepaRunReport } from "../../lib/gepaLab";
@@ -9,10 +9,15 @@ const PROFILES = [
 ] as const;
 const BUDGETS = [30, 60, 120] as const;
 
-type Props = { llm?: LlmClientConfig; onApplied?: () => void };
+export interface GepaLabPanelProps {
+  llm?: LlmClientConfig;
+  open: boolean;
+  onClose: () => void;
+  onAvailabilityChange: (enabled: boolean) => void;
+  onApplied?: () => void;
+}
 
-export function GepaLabPanel({ llm, onApplied }: Props) {
-  const [open, setOpen] = useState(false);
+export function GepaLabPanel({ llm, open, onClose, onAvailabilityChange, onApplied }: GepaLabPanelProps) {
   const [enabled, setEnabled] = useState(false);
   const [profileId, setProfileId] = useState<(typeof PROFILES)[number]["id"]>(PROFILES[0].id);
   const [budget, setBudget] = useState<number>(60);
@@ -27,9 +32,24 @@ export function GepaLabPanel({ llm, onApplied }: Props) {
   const profileLabel = useMemo(() => PROFILES.find((item) => item.id === profileId)?.label || profileId, [profileId]);
 
   useEffect(() => {
-    if (!gepaLabAvailable()) return;
-    void getGepaStatus().then((result) => setEnabled(result.enabled === true)).catch(() => setEnabled(false));
-  }, []);
+    if (!gepaLabAvailable()) {
+      setEnabled(false);
+      onAvailabilityChange(false);
+      return;
+    }
+    let disposed = false;
+    void getGepaStatus().then((result) => {
+      if (disposed) return;
+      const available = result.enabled === true;
+      setEnabled(available);
+      onAvailabilityChange(available);
+    }).catch(() => {
+      if (disposed) return;
+      setEnabled(false);
+      onAvailabilityChange(false);
+    });
+    return () => { disposed = true; };
+  }, [onAvailabilityChange]);
 
   useEffect(() => {
     if (!runId) return;
@@ -64,7 +84,7 @@ export function GepaLabPanel({ llm, onApplied }: Props) {
     return () => { disposed = true; stop(); };
   }, [runId]);
 
-  if (!gepaLabAvailable() || !enabled) return null;
+  if (!gepaLabAvailable() || !enabled || !open) return null;
 
   async function start() {
     if (!llm) return;
@@ -89,15 +109,12 @@ export function GepaLabPanel({ llm, onApplied }: Props) {
 
   return (
     <>
-      <button type="button" className="agent-gepa-trigger" onClick={() => setOpen(true)} title="GEPA 提示词实验">
-        <FlaskConical size={16} aria-hidden="true" /> GEPA 实验
-      </button>
       {open && (
-        <div className="agent-gepa-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
+        <div className="agent-gepa-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
           <section className="agent-gepa-panel" role="dialog" aria-modal="true" aria-label="GEPA 提示词实验">
             <header className="agent-gepa-header">
               <div><span className="agent-gepa-kicker">PROMPT LAB</span><h2>GEPA 自进化实验</h2></div>
-              <button type="button" className="icon-button" onClick={() => setOpen(false)} aria-label="关闭 GEPA 实验"><X size={17} /></button>
+              <button type="button" className="icon-button" onClick={onClose} aria-label="关闭 GEPA 实验"><X size={17} /></button>
             </header>
             <p className="agent-gepa-description">只改写当前研究方法卡；固定安全规则、工具权限和证据校验不会进入优化对象。结果先评测，再由你手动应用。</p>
             <div className="agent-gepa-controls">

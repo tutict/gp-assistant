@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowLeft, CircleCheck, CircleHelp, CircleX, History, LoaderCircle, X } from "lucide-react";
+import { ArrowLeft, CircleCheck, CircleHelp, CircleX, FlaskConical, History, LoaderCircle, X } from "lucide-react";
 import {
   getAgentRun,
   getAgentRunMetrics,
@@ -23,10 +23,12 @@ export interface AgentRunDrawerProps {
   finishedRunId?: string;
   finishedRunConversationId?: string;
   ledgerRevision?: number;
+  gepaEnabled: boolean;
   returnFocusElement?: HTMLElement | null;
   watchlist: WatchlistItem[];
   onToggleWatchlist: (item: StockRowView) => void;
   onClose: () => void;
+  onOpenGepa: () => void;
 }
 
 export interface AgentRunTimelineItem {
@@ -239,10 +241,12 @@ export function AgentRunDrawer({
   finishedRunId,
   finishedRunConversationId,
   ledgerRevision = 0,
+  gepaEnabled,
   returnFocusElement,
   watchlist,
   onToggleWatchlist,
   onClose,
+  onOpenGepa,
 }: AgentRunDrawerProps) {
   const [view, setView] = useState<DrawerView>("list");
   const [scope, setScope] = useState<RunScope>("current");
@@ -608,6 +612,17 @@ export function AgentRunDrawer({
             label="返回运行列表"
             onClick={returnToList}
           />
+        )}
+        {gepaEnabled && (
+          <button
+            type="button"
+            className="agent-gepa-trigger"
+            aria-label="GEPA 提示词实验"
+            title="GEPA 提示词实验"
+            onClick={onOpenGepa}
+          >
+            <FlaskConical size={16} aria-hidden="true" /> GEPA 实验
+          </button>
         )}
         <div ref={closeControlRef} className="agent-run-drawer-close-control">
           <IconButton

@@ -114,6 +114,8 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const [runningConversationIds, setRunningConversationIds] = useState<string[]>([]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [replayOpen, setReplayOpen] = useState(false);
+  const [gepaEnabled, setGepaEnabled] = useState(false);
+  const [gepaOpen, setGepaOpen] = useState(false);
   const [replayRunId, setReplayRunId] = useState<string>();
   const [finishedRunId, setFinishedRunId] = useState<string>();
   const [finishedRunConversationId, setFinishedRunConversationId] = useState<string>();
@@ -384,6 +386,12 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
 
   const closeRunReplay = useCallback(() => setReplayOpen(false), []);
 
+  const openGepaFromHistory = useCallback(() => {
+    closeRunReplay();
+    setGepaOpen(true);
+  }, [closeRunReplay]);
+  const closeGepa = useCallback(() => setGepaOpen(false), []);
+
   const cancelActiveRun = useCallback(() => {
     const conversationId = activeConversation?.id;
     if (!conversationId) return;
@@ -637,7 +645,6 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         </div>
         <div className="agent-thread-toolbar">
           <strong>{activeConversation?.title || "新对话"}</strong>
-          <GepaLabPanel llm={activeLlmConfig} />
           <button
             type="button"
             className="icon-button agent-thread-history"
@@ -765,10 +772,18 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           finishedRunId={finishedRunId}
           finishedRunConversationId={finishedRunConversationId}
           ledgerRevision={ledgerRevision}
+          gepaEnabled={gepaEnabled}
+          onOpenGepa={openGepaFromHistory}
           returnFocusElement={replayTriggerRef.current}
           watchlist={watchlist}
           onToggleWatchlist={toggleWatchlist}
           onClose={closeRunReplay}
+        />
+        <GepaLabPanel
+          llm={activeLlmConfig}
+          open={gepaOpen}
+          onClose={closeGepa}
+          onAvailabilityChange={setGepaEnabled}
         />
       </section>
     </div>
