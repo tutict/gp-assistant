@@ -2,7 +2,10 @@
 
 use bytes::Bytes;
 use futures::StreamExt;
-use rig_agent::ModelHandle;
+use rig_agent::{
+    agent::hook::{AgentHook, HookContext, ToolResultAction, ToolResultEvent},
+    ModelHandle,
+};
 use rig_core::{
     client::{Capabilities, Capable, CompletionClient, DebugExt, Nothing, Provider},
     completion::Message,
@@ -11,7 +14,7 @@ use rig_core::{
         Response, StreamingResponse,
     },
     providers::openai::completion::{GenericCompletionModel, OpenAICompatibleProvider},
-    streaming::{StreamedAssistantContent, StreamedUserContent},
+    streaming::StreamedAssistantContent,
     tool::{PortableDynamicTool, ToolExecutionError, ToolOutput},
 };
 use serde_json::{json, Map, Value};
@@ -40,6 +43,75 @@ const MAX_MODEL_OUTPUT_CHARS: usize = 16 * 1024;
 const MAX_MODEL_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 const MAX_MODEL_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_RUN_SECONDS: u64 = 180;
+
+/// Captures the structured tool disposition at the dispatch boundary. Rig's
+/// streamed `ToolResult` contains model-facing content but not the canonical
+/// `ToolResult` disposition, so the event sink must observe the hook event
+/// instead of inferring status from rendered error text.
+#[derive(Clone)]
+struct ToolLifecycleObserver {
+    run_id: String,
+    events: Arc<Mutex<Vec<Value>>>,
+}
+
+impl ToolLifecycleObserver {
+    fn new(run_id: String) -> Self {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        Self {
+            run_id,
+            events,
+        }
+    }
+
+    fn drain_into<F>(&self, sink: &mut F)
+    where
+        F: FnMut(Value),
+    {
+        let pending = self
+            .events
+            .lock()
+            .map(|mut events| std::mem::take(&mut *events))
+            .unwrap_or_default();
+        for event in pending {
+            sink(event);
+        }
+    }
+}
+
+impl AgentHook for ToolLifecycleObserver {
+    async fn on_tool_result(
+        &self,
+        _ctx: &HookContext,
+        event: ToolResultEvent<'_>,
+    ) -> ToolResultAction {
+        let output = json!({
+            "content": event.presentation.as_content(),
+        });
+        let lifecycle_event = tool_result_event(
+            &self.run_id,
+            event.tool_name,
+            event.internal_call_id,
+            canonical_tool_status(event.raw_result.status_name()),
+            output,
+        );
+        if let Ok(mut events) = self.events.lock() {
+            events.push(lifecycle_event);
+        }
+        ToolResultAction::Keep
+    }
+}
+
+/// Maps Rig's canonical tool disposition to the compatibility statuses used by
+/// the event ledger and replay contracts.
+fn canonical_tool_status(status: &str) -> &'static str {
+    match status {
+        "success" => "ok",
+        "error" => "error",
+        "denied" => "denied",
+        "skipped" => "skipped",
+        _ => "unknown",
+    }
+}
 
 /// Cooperative cancellation state shared by the Tauri cancel command and an active run.
 /// Network/tool futures are dropped at their next await boundary after this flag is raised.
@@ -1281,6 +1353,7 @@ where
         Arc::clone(&cancellation),
         remote_safe_only,
     );
+    let tool_lifecycle_observer = ToolLifecycleObserver::new(run_id.clone());
     sink(status_event(&run_id, "tools", "执行本地工具", 12));
     sink(status_event(&run_id, "understand", "理解任务", 18));
     sink(status_event(&run_id, "intent", "选择 Rig 工具", 24));
@@ -1381,6 +1454,7 @@ where
                 );
             }
             let builder = rig_agent::AgentBuilder::from_model_handle(model)
+                .add_hook(tool_lifecycle_observer.clone())
                 .name("gp-assistant")
                 .preamble(&system_prompt)
                 .context(&bounded_context)
@@ -1449,23 +1523,11 @@ where
                         } => {
                             // The start event is emitted from the complete model tool-call item.
                         }
-                        rig_agent::agent::MultiTurnStreamItem::StreamUserItem(
-                            StreamedUserContent::ToolResult {
-                                tool_result,
-                                internal_call_id,
-                            },
-                        ) => {
-                            sink(tool_result_event(
-                                &run_id,
-                                &tool_result.name,
-                                &internal_call_id,
-                                infer_tool_result_status(&tool_result.content),
-                                json!({"content": tool_result.content}),
-                            ));
-                        }
                         _ => {}
                     }
+                    tool_lifecycle_observer.drain_into(&mut sink);
                 }
+                tool_lifecycle_observer.drain_into(&mut sink);
                 output
                     .ok_or_else(|| "Rig model stream did not produce a final response".to_string())
             };
@@ -1992,22 +2054,6 @@ pub(crate) fn tool_result_event(
     })
 }
 
-fn infer_tool_result_status<T: serde::Serialize>(content: &T) -> &'static str {
-    let text = serde_json::to_string(content)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if text.contains("tool execution")
-        || text.contains("tool provider failed")
-        || text.contains("timed out")
-        || text.contains("invalid arguments")
-        || text.contains("no tool named")
-    {
-        "error"
-    } else {
-        "ok"
-    }
-}
-
 fn tool_label(tool: &str) -> &'static str {
     match tool {
         "stock_screen" => "运行本地选股",
@@ -2172,6 +2218,24 @@ mod tests {
             RunMode::Deterministic
         ));
         assert!(matches!(run_mode("hot_money_early_v1"), RunMode::Model));
+    }
+
+    #[test]
+    fn tool_status_uses_structured_dispatch_disposition() {
+        assert_eq!(canonical_tool_status("success"), "ok");
+        assert_eq!(canonical_tool_status("error"), "error");
+        assert_eq!(canonical_tool_status("denied"), "denied");
+        assert_eq!(canonical_tool_status("skipped"), "skipped");
+        assert_eq!(canonical_tool_status("unexpected"), "unknown");
+
+        let event = tool_result_event(
+            "run-1",
+            "observe",
+            "call-1",
+            "error",
+            json!({"message": "tool completed successfully"}),
+        );
+        assert_eq!(event["payload"]["status"], "error");
     }
 
     #[test]

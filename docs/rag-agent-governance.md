@@ -30,6 +30,7 @@
 - `rig-core` 与 `rig-agent` 是桌面必选依赖，默认桌面和 Android 构建都使用同一 Rig runtime；`quick / deterministic_v1` 仍跳过 provider。
 - Rig 模型请求必须复用应用的 endpoint 校验、超时、请求/响应大小限制、代理、取消和脱敏策略；Rig 不能自行持有凭据或绕过审计。OpenAI-compatible `full_url` 使用 Rig provider extension 覆盖 completion path；Responses/Anthropic 的自定义 full URL fail closed 并回退本地结果。
 - Rig 工具只接收现有 dispatcher 的回调。授权、参数校验、超时、取消、脱敏和事件账本仍由原执行链负责，第一阶段不注册写操作或无限工具循环。
+- 工具轨迹状态由 Rig AgentHook::on_tool_result 的结构化 ToolResult::status_name() 产生，再映射为兼容事件状态；不得根据工具返回文本猜测成功或失败。
 - Rig 证据上下文只包装 `ResearchStore` 的结果，保留 `document_id`、`chunk_id`、来源名称/层级、公开 URL、发布时间、引用编号和检索分数；SQLite FTS5、向量 embedding、RRF 融合、来源排序与 `[C#]` 门禁不迁移。
 - 跨请求对话历史只接受 payload 中最近 12 条、每条最多 2000 字符的显式历史，并在进入 Rig 前脱敏；runtime 不保留进程全局 conversation memory。
 - 快速模式为 `deterministic_v1`，不调用模型；专家模式为 `hot_money_early_v1`；研报模式为 `value_compounder_v1`。
