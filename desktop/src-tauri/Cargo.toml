@@ -17,6 +17,7 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [features]
+eval-replay = []
 gepa-lab = ["dep:dsrust-gepa"]
 
 [dependencies]
@@ -48,3 +49,8 @@ dsrust-gepa = { version = "=0.1.0-alpha.3", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 fastembed = { version = "5.17.3", default-features = false, features = ["ort-download-binaries-rustls-tls"] }
+
+[[bin]]
+name = "rag_replay"
+path = "src/bin/rag_replay.rs"
+required-features = ["eval-replay"]

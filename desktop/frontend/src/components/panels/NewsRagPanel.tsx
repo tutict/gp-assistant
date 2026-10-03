@@ -958,11 +958,15 @@ function KnowledgeDrawer(props: {
   close: () => void;
 }) {
   const [url, setUrl] = useState("");
+  const [allowRemoteExport, setAllowRemoteExport] = useState(false);
   const inputFile = async (file: File, endpoint: string) => props.management(async () => {
     validateResearchFile(file, endpoint);
     return postJson(endpoint, {
       bytes_base64: await fileToBase64(file),
       stock_codes: props.code ? [props.code] : [],
+      ...(endpoint === "/api/research/import-pdf"
+        ? { remote_export_allowed: allowRemoteExport }
+        : {}),
     });
   });
   const operationNotice = props.result == null ? null : researchOperationNotice(props.result);
@@ -992,9 +996,15 @@ function KnowledgeDrawer(props: {
           <input value={url} onChange={(event) => setUrl(event.target.value)}
             placeholder="https://" />
         </label>
+        <label className="knowledge-export-consent">
+          <input type="checkbox" checked={allowRemoteExport}
+            onChange={(event) => setAllowRemoteExport(event.target.checked)} />
+          <span>允许把这份资料发送给远程回答模型（默认关闭）</span>
+        </label>
         <button type="button" disabled={props.busy || !url.trim()}
           onClick={() => void props.management(() => postJson("/api/research/import-url", {
             url: url.trim(), stock_codes: props.code ? [props.code] : [],
+            remote_export_allowed: allowRemoteExport,
           }))}><Download size={15} />导入 URL</button>
         <label className="knowledge-file-button"><FileText size={16} />
           <span>导入文本型 PDF</span>

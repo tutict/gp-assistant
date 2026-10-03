@@ -1718,7 +1718,7 @@ async function assertNewsPageState(page, device, scenarioName) {
 
   if (device.mobile) {
     const touchTargets = await page.locator(
-      ".research-mobile-inbox-button, .research-actions button",
+      ".research-mobile-inbox-button, .research-actions button, .sentiment-header-tools button",
     ).evaluateAll((elements) => elements.map((element) => {
       const box = element.getBoundingClientRect();
       return {

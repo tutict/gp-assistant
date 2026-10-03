@@ -6,13 +6,13 @@
 
 ### RAG
 
-- 研究数据库 schema 为 `2`，由 `desktop/src-tauri/src/research.rs` 统一维护。
+- 研究数据库 schema 为 `3`，由 `desktop/src-tauri/src/research.rs` 统一维护。
 - 文档先规范化再分块；内容哈希不变时保留已读状态和向量，已被回答引用的内容变更会生成 revision。
 - 检索默认使用 BM25；Windows 在当前模型可用时使用 512 维归一化向量，并以 RRF（`k=60`）融合。
 - 来源层级固定为 `filing`、`financial_snapshot`、`news`、`research_report`、`community`。社区证据不能单独支撑事实结论。
 - 单次回答最多 8 条引用，每篇文档最多 2 个分块；模型回答必须引用检索结果中的有效编号。
 - URL/PDF 导入、资料包导入和保留策略的大小、页数、文档数与正文限制必须在后端再次校验，前端限制不能替代后端限制。
-- 固定检索评测版本为 `research-retrieval-eval-v1`，夹具位于 `app/prompts/research_retrieval_eval_cases.json`，覆盖来源优先级、股票过滤先于候选截断、社区证据门禁、每文档引用上限、Top K 上限和混合 RRF。
+- 固定检索评测版本为 `research-retrieval-eval-v4`，夹具位于 `app/prompts/research_retrieval_eval_cases.json`，覆盖来源优先级、股票过滤先于候选截断、社区证据门禁、每文档引用上限、Top K 上限和混合 RRF。
 
 索引状态至少要能区分以下情况：
 
@@ -102,3 +102,43 @@ cargo test --manifest-path desktop\src-tauri\Cargo.toml --lib research::tests::f
 - 安全、证据引用和工具事实保留是硬门禁；通过后才计算 rubric 覆盖率。候选必须经过 holdout 对照，并由用户显式应用，不能自动激活。
 - GEPA 报告写入本机 AppData，保存数据集哈希、引擎版本、seed、预算、逐案例分数和脱敏样例；API key、完整 URL 凭据和原始连接配置不得进入报告。
 - 现有策略拒绝仍进入 Agent ledger 和指标，但不再触发“五次拒绝后自动生成并激活”提示词升级。Overlay 应用使用 base prompt version compare-and-swap，版本变化时拒绝陈旧候选。
+
+## RAG and Agent evaluation upgrade (2026-10-01)
+
+### Frozen evaluation assets
+
+- `app/prompts/research_retrieval_eval_cases.json` is the deterministic retrieval fixture (`research-retrieval-eval-v4`). It records corpus, chunking, embedding, index, split and generator lineage, plus required/forbidden evidence IDs and answer-fact-to-evidence mappings.
+- The v4 fixture contains 40 synthetic component cases, balanced 5-per-category across fact queries, multi-evidence synthesis, temporal validity, source-tier conflict, community-only evidence, no-evidence refusal, private-evidence handling, and Agent trace contracts. It is not a human-reviewed release set; human calibration remains a separate pending asset.
+- `evals/deepeval/frozen_public_results.jsonl` is the only payload allowed to leave the repository for the DeepEval judge. `frozen_manifest.json` pins its SHA-256. The runner rejects every other path or modified payload.
+- Deterministic replay produces 40 local rows; the frozen public payload contains 35 rows and excludes five private-evidence cases.
+- The application database is schema `3`; portable sync packs remain format `gp-research-pack-v2` with SQLite `user_version=2`.
+
+### Evidence privacy
+
+Documents have `remote_export_allowed`. Public sources default to exportable; URL/PDF user imports default to local-only. Legacy schema-2 databases are migrated so existing user imports become local-only and public records remain exportable. Retrieval applies this filter before lexical/vector candidate truncation and RRF fusion when `remote_safe_only` is requested.
+
+A remote research answer and a remote Rig Agent run always use `remote_safe_only=true`. If no export-safe citation remains, the system returns local evidence mode or a local fallback; there is no request-level bypass. The evidence inspector shows whether a citation is local-only or allowed for remote answering.
+
+### GEPA and replay integration
+
+正式版 GEPA 保留为产品内的提示词方法卡优化能力。GEPA 的 validation、holdout 和候选应用仍通过现有 `gepa-lab` feature 执行，但每个候选案例现在复用 `rig_runtime::execute_with_event_sink` 的共享 Agent 执行路径。
+
+GEPA 不再维护独立的模型回答执行链。候选方法卡通过 `method_card` 注入共享系统提示；工具、证据和模型输出由同一套 Agent runtime 产生。GEPA 报告保存脱敏后的只读工具轨迹，包括工具名、规范化参数、参数哈希、顺序、状态、side-effect 分类和证据文档 ID。
+
+候选应用前必须通过：
+
+- 固定证据引用和事实硬门；
+- 工具轨迹只读、成功、无重复调用硬门；
+- validation 和 holdout 对照；
+- prompt base-version compare-and-swap。
+
+DeepEval、model-backed replay 和人工 calibration 仍只在 `evals/` 与受信 CI 中运行，不进入正式 GEPA UI 或产品运行时。
+## DeepEval policy
+
+DeepEval is evaluation-only and pinned to `4.2.6`; it is not part of the Tauri or Android runtime. The judge is fixed to DeepSeek `deepseek-flash` at temperature `0`; the runner uses DeepEval's built-in `DeepSeekModel`, which requests Chat Completions JSON mode (`json_object`). The endpoint is configurable through the ignored local `.env` for an official DeepSeek API or compatible relay. The runner exposes separate deterministic, retrieval, generation, and full tracks. `ContextualPrecision`, `ContextualRecall`, `ContextualRelevancy`, `Faithfulness`, `AnswerRelevancy`, and `GEval` are reported separately. Deterministic evidence and trace assertions run first.
+
+Deterministic replay is not eligible for generation-quality scoring because it returns a local fallback answer. Model-backed replay uses separate `RAG_EVAL_AGENT_*` configuration and is rejected if it falls back to the judge configuration or if a public case is not genuinely model-generated.
+
+All DeepEval metrics start as exploratory. `judge_policy.json` marks unstable metrics as `flaky`, and `strict_metrics` is empty until at least 50 human-labeled examples per metric, two independent annotators, adjudication, and Cohen's kappa >= 0.80 are recorded. Only calibrated metrics may become strict gates.
+
+The PR workflow always runs deterministic gates. The cloud judge job runs only from trusted `workflow_dispatch` or a push to `main`, never from untrusted fork pull requests; the protected `rag-eval-judge` environment holds the judge secret.

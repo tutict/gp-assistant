@@ -1,0 +1,34 @@
+{
+  "dataset_version": "research-retrieval-eval-v4",
+  "corpus_version": "research-corpus-v2",
+  "chunking_version": "chars-520-overlap-80-v1",
+  "embedding_model": "BAAI/bge-small-zh-v1.5-int8",
+  "index_version": "sqlite-fts5-rrf60-v1",
+  "prompt_version": "research-answer-v1",
+  "judge_model": "deepseek-flash",
+  "judge_temperature": 0,
+  "strict_metrics": [],
+  "flaky_metrics": [
+    "contextual_precision",
+    "contextual_recall",
+    "contextual_relevancy",
+    "faithfulness",
+    "answer_relevancy",
+    "acceptable_answer"
+  ],
+  "thresholds": {
+    "contextual_precision": 0.8,
+    "contextual_recall": 0.8,
+    "contextual_relevancy": 0.8,
+    "faithfulness": 0.8,
+    "answer_relevancy": 0.75,
+    "acceptable_answer": 0.8
+  },
+  "minimum_aggregate_pass_rate": 0.8,
+  "calibration": {
+    "minimum_examples_per_metric": 50,
+    "annotators": 2,
+    "minimum_cohen_kappa": 0.8
+  },
+  "deepeval_evaluation_anchor_metric": "acceptable_answer"
+}

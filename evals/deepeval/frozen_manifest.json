@@ -1,0 +1,8 @@
+{
+  "research-retrieval-eval-v4": {
+    "path": "frozen_public_results.jsonl",
+    "sha256": "7ffa25d407df5327e0b270b6f4ac76b03122fda3bc76f22d200f61a291f7d89b",
+    "case_count": 35,
+    "excluded_private_case_count": 5
+  }
+}

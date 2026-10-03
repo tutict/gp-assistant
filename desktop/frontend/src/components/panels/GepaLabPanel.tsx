@@ -128,7 +128,8 @@ export function GepaLabPanel({ llm, open, onClose, onAvailabilityChange, onAppli
             {error && <p className="agent-gepa-error" role="alert">{error}</p>}
             {report && <div className="agent-gepa-report">
               <div className="agent-gepa-score-grid"><div><span>基线验证</span><strong>{formatScore(report.baseline_validation_score)}</strong></div><div><span>基线 holdout</span><strong>{formatScore(report.baseline_holdout_score)}</strong></div><div><span>候选验证</span><strong>{formatScore(report.candidate_validation_score)}</strong></div><div><span>候选 holdout</span><strong>{formatScore(report.candidate_holdout_score)}</strong></div></div>
-              <p className="agent-gepa-meta">{report.status} · {report.engine_version} · 数据集 {report.dataset_sha256.slice(0, 12)}…</p>
+              <p className="agent-gepa-meta">{report.status} · {report.engine_version} · {report.replay_profile || "shared replay"} · 数据集 {report.dataset_sha256.slice(0, 12)}…</p>
+              <p className="agent-gepa-meta">共享 Agent replay：候选验证 {trajectoryCount(report.candidate_validation)} 步只读工具轨迹；轨迹硬门失败会阻止候选应用。</p>
               <div className="agent-gepa-samples"><strong>候选验证样例</strong>{(report.candidate_validation || []).map((item) => <div key={item.id}><span>{item.id}</span><b>{formatScore(item.score)}</b>{item.feedback?.[0] && <small>{item.feedback[0]}</small>}</div>)}</div><div className="agent-gepa-samples"><strong>候选 holdout 样例</strong>{(report.candidate_holdout || []).map((item) => <div key={item.id}><span>{item.id}</span><b>{formatScore(item.score)}</b>{item.feedback?.[0] && <small>{item.feedback[0]}</small>}</div>)}</div>
               <button type="button" className="action-btn" disabled={report.status !== "completed" || !report.candidate_body} onClick={() => void apply()}>应用候选到本机 overlay</button>
             </div>}
@@ -141,3 +142,6 @@ export function GepaLabPanel({ llm, open, onClose, onAvailabilityChange, onAppli
 }
 
 function formatScore(value?: number | null): string { return typeof value === "number" ? `${Math.round(value * 100)}%` : "--"; }
+function trajectoryCount(items?: GepaRunReport["candidate_validation"]): number {
+  return (items || []).reduce((total, item) => total + (item.trajectory?.length || 0), 0);
+}

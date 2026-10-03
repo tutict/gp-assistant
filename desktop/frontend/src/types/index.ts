@@ -571,6 +571,7 @@ export interface ResearchCitation {
   lexical_score: number;
   vector_score?: number | null;
   retrieval_score: number;
+  remote_export_allowed?: boolean;
 }
 
 export interface ResearchAnswer {

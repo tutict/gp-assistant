@@ -1,0 +1,79 @@
+name: RAG and Agent Evaluation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic:
+    name: Deterministic RAG and Agent gates
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Build frontend bundle required by Rust tests
+        run: npm ci --prefix desktop/frontend; npm --prefix desktop/frontend run build:app
+      - name: Run fixed Rust retrieval and privacy gates
+        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib research::tests::fixed_retrieval_eval_suite_enforces_governance_invariants -- --exact
+      - name: Run Rust privacy and Agent trace gates
+        run: |
+          cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib research::tests::schema_v2_migration_keeps_user_imports_private_and_public_docs_exportable -- --exact
+          cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib rig_runtime::tests::remote_agent_evidence_fallback_drops_unapproved_document_text -- --exact
+      - name: Compile eval-replay feature and run replay regression
+        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --features eval-replay --lib eval_replay::tests::actual_agent_routing_does_not_use_expected_tools_as_an_execution_plan -- --exact
+      - name: Compile gepa-lab feature and run shared replay gates
+        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --features gepa-lab --lib gepa_lab::tests::gepa_replay_payload_uses_shared_runtime_and_keeps_rubric_out_of_agent_input -- --exact
+      - name: Run desktop UI regression gate
+        run: npm --prefix desktop/frontend run test:desktop
+      - name: Run frontend unit tests
+        run: npm --prefix desktop/frontend run test:unit
+      - name: Validate 40-case frozen golden fixture
+        run: python -m unittest discover -s evals/deepeval -p test_golden_fixture.py -v
+      - name: Run frozen evaluation preflight
+        run: python evals/deepeval/runner.py --mode deterministic --track deterministic --output evals/deepeval/deterministic-report.json
+
+  judge:
+    name: Fixed DeepEval judge (trusted only)
+    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: windows-latest
+    environment: rag-eval-judge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install evaluation environment
+        run: python -m pip install --upgrade pip; python -m pip install -e evals/deepeval
+      - name: Run trusted model-backed replay
+        env:
+          RAG_EVAL_AGENT_BASE_URL: ${{ vars.RAG_EVAL_AGENT_BASE_URL }}
+          RAG_EVAL_AGENT_API_KEY: ${{ secrets.RAG_EVAL_AGENT_API_KEY }}
+          RAG_EVAL_AGENT_MODEL: ${{ vars.RAG_EVAL_AGENT_MODEL }}
+          RAG_EVAL_AGENT_API_FORMAT: ${{ vars.RAG_EVAL_AGENT_API_FORMAT }}
+          RAG_EVAL_AGENT_TEMPERATURE: '0'
+          RAG_EVAL_AGENT_PROMPT_VERSION: ${{ vars.RAG_EVAL_AGENT_PROMPT_VERSION }}
+        run: |
+          cargo run --manifest-path desktop/src-tauri/Cargo.toml --features eval-replay --bin rag_replay -- app/prompts/research_retrieval_eval_cases.json evals/deepeval/model_replay.jsonl --profile model-backed
+          python evals/deepeval/promote_replay.py --input evals/deepeval/model_replay.jsonl --output evals/deepeval/generated_model_results.jsonl --manifest evals/deepeval/generated_model_manifest.json --require-model
+      - name: Run three fixed DeepEval repetitions
+        env:
+          DEEPEVAL_JUDGE_API_KEY: ${{ secrets.DEEPEVAL_JUDGE_API_KEY }}
+          DEEPEVAL_JUDGE_BASE_URL: ${{ vars.DEEPEVAL_JUDGE_BASE_URL }}
+        run: python evals/deepeval/runner.py --results evals/deepeval/generated_model_results.jsonl --mode report --track full --repetitions 3 --output evals/deepeval/deepeval-report.json
+      - name: Upload redacted evaluation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: rag-deepeval-report
+          path: evals/deepeval/deepeval-report.json

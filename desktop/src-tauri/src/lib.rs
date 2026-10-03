@@ -26,6 +26,8 @@ mod screening;
 mod llm;
 mod watchlist;
 mod core_api;
+#[cfg(any(test, feature = "eval-replay"))]
+pub mod eval_replay;
 
 #[tauri::command]
 fn api_health() -> Result<Value, String> {

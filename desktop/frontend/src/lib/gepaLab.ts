@@ -8,6 +8,7 @@ export interface GepaRunReport {
   base_prompt_version: string;
   candidate_prompt_version?: string | null;
   eval_suite_version: string;
+  replay_profile?: string;
   dataset_sha256: string;
   engine_version: string;
   seed: number;
@@ -16,12 +17,28 @@ export interface GepaRunReport {
   baseline_holdout_score?: number | null;
   candidate_validation_score?: number | null;
   candidate_holdout_score?: number | null;
-  baseline_holdout?: Array<{ id: string; score: number; hard_failure?: string | null; feedback?: string[]; response?: unknown }>;
-  baseline_validation?: Array<{ id: string; score: number; hard_failure?: string | null; feedback?: string[]; response?: unknown }>;
-  candidate_validation?: Array<{ id: string; score: number; hard_failure?: string | null; feedback?: string[]; response?: unknown }>;
-  candidate_holdout?: Array<{ id: string; score: number; hard_failure?: string | null; feedback?: string[]; response?: unknown }>;
+  baseline_holdout?: Array<GepaCaseSummary>;
+  baseline_validation?: Array<GepaCaseSummary>;
+  candidate_validation?: Array<GepaCaseSummary>;
+  candidate_holdout?: Array<GepaCaseSummary>;
   candidate_body?: string | null;
   error?: string | null;
+}
+
+export interface GepaCaseSummary {
+  id: string;
+  score: number;
+  hard_failure?: string | null;
+  feedback?: string[];
+  response?: unknown;
+  trajectory?: Array<{
+    tool_name?: string;
+    normalized_arguments?: unknown;
+    sequence_index?: number;
+    status?: string;
+    side_effect_class?: string;
+    evidence_document_ids?: string[];
+  }>;
 }
 
 export interface GepaEvent {

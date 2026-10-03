@@ -125,6 +125,10 @@ pub(crate) async fn import_url(app: &tauri::AppHandle, payload: &Value) -> Resul
             "url": url.as_str(),
             "stock_codes": payload.get("stock_codes").cloned().unwrap_or_else(|| json!([])),
             "user_imported": true,
+            "remote_export_allowed": payload
+                .get("remote_export_allowed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             "pinned": true,
             "metadata": {"import_kind": "url"}
         })];
@@ -240,6 +244,10 @@ fn extract_pdf_documents(
             "url": source_url,
             "stock_codes": payload.get("stock_codes").cloned().unwrap_or_else(|| json!([])),
             "user_imported": true,
+            "remote_export_allowed": payload
+                .get("remote_export_allowed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             "pinned": true,
             "metadata": {"import_kind": "pdf", "pdf_hash": pdf_hash}
         }));
