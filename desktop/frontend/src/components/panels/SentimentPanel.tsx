@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, ExternalLink, Menu, Play, RefreshCw, Send, X } from "lucide-react";
-import type { LlmSettings, WatchlistItem } from "../../types";
+import type { LlmSettings, ScreenCriteria, WatchlistItem } from "../../types";
+import { buildSentimentParameterProposal, type SentimentParameterProposal } from "../../lib/evolutionPolicy";
 import type { SentimentEvidence, SentimentSnapshot, SentimentTimelinePoint } from "../../types/sentiment";
 import { normalizeStockCode } from "../../lib/format";
 import { buildLlmConfig } from "../../lib/contracts";
@@ -35,6 +36,8 @@ interface Props {
   initialView?: WorkspaceView;
   onAskAgent?: (prompt: string) => void;
   onGoToScreen?: () => void;
+  criteria?: ScreenCriteria;
+  onApplyScreenCriteria?: (criteria: ScreenCriteria) => void;
 }
 interface ResearchHeaderTools {
   refreshing: boolean;
@@ -196,6 +199,7 @@ function StockWorkspace({ code, props, state, onSelect }: { code: string; props:
   const [mobileWatchlistOpen, setMobileWatchlistOpen] = useState(false);
   const [showNewEvidence, setShowNewEvidence] = useState(false);
   const [expandedPools, setExpandedPools] = useState<Record<string, boolean>>({});
+  const [parameterProposal, setParameterProposal] = useState<SentimentParameterProposal>();
   const composer = useMobileComposer(question);
   const analysis = state.analysis;
   const fresh = state.snapshot;
@@ -232,6 +236,16 @@ function StockWorkspace({ code, props, state, onSelect }: { code: string; props:
     {state.stageError && <p className="sentiment-error" role="alert">{state.stageError}</p>}
   </>;
   const failedGates = Object.entries(timelineSnapshot?.quality_gates ?? {}).filter((entry): entry is [keyof typeof gateLabels, boolean] => entry[1] === false && entry[0] in gateLabels);
+  const createParameterProposal = () => {
+    if (!analysis) return;
+    setParameterProposal(buildSentimentParameterProposal({
+      stage: analysis.stage,
+      currentCriteria: props.criteria || {},
+      evidenceIds: analysis.evidence_ids,
+      evidenceSummary: analysis.summary,
+      backtest: { period: "待回测", baseline: { returned: 0, maxDrawdown: null, concentration: null }, candidate: { returned: 0, maxDrawdown: null, concentration: null } },
+    }));
+  };
   const askAgent = () => {
     if (!analysis || !props.onAskAgent) return;
     const name = timelineSnapshot?.stock_name || stock?.name || code;
@@ -251,7 +265,16 @@ function StockWorkspace({ code, props, state, onSelect }: { code: string; props:
           <p>{timelineSnapshot?.industry || stock?.industry || "行业待补充"} · {timelineSnapshot ? `数据截至 ${sentimentTime(timelineSnapshot.cutoff)}` : "输入代码后读取已有数据"}</p>
         </div>
         <button type="button" className="btn sentiment-analyze" disabled={!code || !llm || state.loading || busy || state.asking} onClick={() => void state.start(llm)}><Play size={15} />{!llm ? "先配置模型" : busy ? "分析进行中" : analysis ? "重新分析" : "开始分析"}</button>
+         {analysis && <button type="button" className="btn sentiment-parameter-proposal" disabled={busy || state.asking} onClick={createParameterProposal}>按当前情绪优化选股</button>}
       </div>
+      {parameterProposal && <section className="sentiment-parameter-proposal-card" aria-label="情绪选股参数建议">
+        <header><h3>情绪选股参数建议</h3><button type="button" className="btn" onClick={() => setParameterProposal(undefined)}>关闭</button></header>
+        <p>模板：{parameterProposal.templateId} · 阶段：{parameterProposal.stage}</p>
+        <p>{parameterProposal.evidenceSummary || "暂无摘要"}</p>
+        {parameterProposal.changes.length ? <ul>{parameterProposal.changes.map((change) => <li key={String(change.field)}><strong>{String(change.field)}</strong>：{String(change.before ?? "未设置")} → {String(change.after ?? "未设置")}<small>{change.reason}</small></li>)}</ul> : <p>当前证据不足以提出参数调整。系统不会自动放宽风险约束。</p>}
+        <p className="sentiment-quality-note">当前仅生成建议，尚未完成回测，也不会自动修改筛选条件。确认前需要运行固定历史窗口回测。</p>
+        <div><button type="button" className="btn" disabled>运行回测后应用</button><button type="button" className="btn" disabled={!parameterProposal.canSaveStrategy}>保存为情绪策略</button></div>
+      </section>}
       {timelineSnapshot && <section className="sentiment-quality" aria-label="数据覆盖">
         <h3>数据覆盖</h3>
         <p>事实 {timelineSnapshot.coverage.facts} · 讨论 {timelineSnapshot.coverage.discussions} · 行情 {timelineSnapshot.coverage.price_days} 天 · 历史 {timelineSnapshot.coverage.history_days} 天 · 行业 {timelineSnapshot.coverage.industry_covered}/{timelineSnapshot.coverage.industry_members} 家</p>

@@ -12,6 +12,9 @@ import { AgentResultView } from "./AgentResultView";
 import { AgentRunDrawer } from "./AgentRunDrawer";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
 import { IconButton } from "../ui/IconButton";
+import { createEvolutionReview, type EvolutionReview } from "../../lib/evolution";
+import { EvolutionProfilePanel } from "./EvolutionProfilePanel";
+import { EvolutionReviewCard } from "./EvolutionReviewCard";
 
 interface AgentPanelProps {
   llmSettings: LlmSettings | null;
@@ -116,6 +119,9 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const [replayOpen, setReplayOpen] = useState(false);
   const [gepaEnabled, setGepaEnabled] = useState(false);
   const [gepaOpen, setGepaOpen] = useState(false);
+  const [evolutionReview, setEvolutionReview] = useState<EvolutionReview>();
+  const [evolutionReviewLoading, setEvolutionReviewLoading] = useState(false);
+  const [evolutionProfileOpen, setEvolutionProfileOpen] = useState(false);
   const [replayRunId, setReplayRunId] = useState<string>();
   const [finishedRunId, setFinishedRunId] = useState<string>();
   const [finishedRunConversationId, setFinishedRunConversationId] = useState<string>();
@@ -350,6 +356,30 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
       })
       .finally(() => setRetryingLedgerDeletions(false));
   }, [failedLedgerDeletionIds, retryingLedgerDeletions]);
+
+  const openEvolutionReview = useCallback(async (message: ChatMessage, messageIndex: number) => {
+    if (!activeConversation || !message.runId || !message.result) return;
+    setEvolutionReviewLoading(true);
+    try {
+      const previous = activeConversation.messages[messageIndex - 1];
+      const data = message.result.data || {};
+      const citations = Array.isArray(data.citations)
+        ? data.citations.map((citation) => asRecord(citation).document_id || asRecord(citation).citation_id).filter((value): value is string => typeof value === "string")
+        : [];
+      setEvolutionReview(await createEvolutionReview({
+        run_id: message.runId,
+        conversation_id: activeConversation.id,
+        question: previous?.role === "user" ? previous.content : "",
+        answer: message.result.reply || message.content,
+        evidence_ids: citations,
+        tool_calls: message.result.tool_calls || [],
+      }));
+    } catch (cause) {
+      setEvolutionReview({ review_id: `local-error-${Date.now()}`, run_id: message.runId, conversation_id: activeConversation.id, status: "error", review_mode: "deterministic", research_goal: "复盘失败", evidence_and_process: { evidence_ids: [], tool_calls: [] }, conclusion_quality: { answer: cause instanceof Error ? cause.message : String(cause), has_answer: true }, blind_spot_candidates: [], rule_candidates: [] });
+    } finally {
+      setEvolutionReviewLoading(false);
+    }
+  }, [activeConversation]);
 
   const changeMode = useCallback((mode: AgentMode) => {
     if (!activeConversation) return;
@@ -655,6 +685,9 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             <History size={17} aria-hidden="true" />
             <span>运行记录</span>
           </button>
+           <button type="button" className="icon-button agent-thread-profile" onClick={() => setEvolutionProfileOpen(true)} aria-label="我的研究画像">
+             <span>研究画像</span>
+           </button>
         </div>
         <div
           className={`agent-thread ${messages.length === 0 ? "empty" : ""}`}
@@ -674,13 +707,10 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
                 <span>{msg.role === "user" ? "你" : "Agent"}</span>
                 <time>{new Date(msg.timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>
                 {msg.role === "assistant" && msg.runId && (
-                  <IconButton
-                    className="agent-message-replay"
-                    onClick={(event) => openRunReplay(msg.runId!, event.currentTarget)}
-                    label="运行记录"
-                    title="运行记录"
-                    icon={<FileSearch size={15} aria-hidden="true" />}
-                  />
+                  <>
+                    <IconButton className="agent-message-replay" onClick={(event) => openRunReplay(msg.runId!, event.currentTarget)} label="运行记录" title="运行记录" icon={<FileSearch size={15} aria-hidden="true" />} />
+                    <IconButton className="agent-message-review" onClick={() => void openEvolutionReview(msg, i)} label="复盘本次研究" title="复盘本次研究" icon={<History size={15} aria-hidden="true" />} />
+                  </>
                 )}
               </div>
               <div className="agent-message-body">
@@ -785,6 +815,9 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           onClose={closeGepa}
           onAvailabilityChange={setGepaEnabled}
         />
+        <EvolutionProfilePanel open={evolutionProfileOpen} onClose={() => setEvolutionProfileOpen(false)} />
+        {evolutionReviewLoading && <div className="evolution-review-loading" role="status">正在生成研究复盘…</div>}
+        {evolutionReview && <EvolutionReviewCard review={evolutionReview} onClose={() => setEvolutionReview(undefined)} />}
       </section>
     </div>
   );

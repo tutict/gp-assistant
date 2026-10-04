@@ -122,6 +122,9 @@ export const TAURI_GET_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/research/threads": async ({ invoke }) => invoke("api_research_threads"),
   "/api/research/index-status": async ({ invoke }) => invoke("api_research_index_status"),
   "/api/agent/prompt-overlays": async ({ invoke }) => invoke("api_agent_prompt_overlays"),
+  "/api/evolution/settings": async ({ invoke }) => invoke("api_evolution_settings"),
+  "/api/evolution/profile": async ({ invoke }) => invoke("api_evolution_profile"),
+  "/api/sentiment/strategies": async ({ invoke }) => invoke("api_sentiment_strategies"),
   "/api/agent/gepa/status": async ({ invoke }) => invoke("api_agent_gepa_status"),
   "/api/agent/runs": async ({ invoke, parsed }) => invoke("api_agent_run_list", {
     payload: {
@@ -309,6 +312,12 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
     payload: { run_id: String(asRecord(payload).run_id || "").trim() },
   }),
   "/api/agent/prompt-overlays/revert": async ({ invoke, payload }) => invoke("api_agent_prompt_overlay_revert", { payload }),
+  "/api/evolution/settings": async ({ invoke, payload }) => invoke("api_evolution_settings", { payload }),
+  "/api/evolution/profile/reset": async ({ invoke }) => invoke("api_evolution_profile_reset"),
+  "/api/evolution/review": async ({ invoke, payload }) => invoke("api_evolution_review", { payload }),
+  "/api/evolution/rules/confirm": async ({ invoke, payload }) => invoke("api_evolution_confirm_rule", { payload }),
+  "/api/evolution/rules/delete": async ({ invoke, payload }) => invoke("api_evolution_delete_rule", { payload }),
+  "/api/sentiment/strategies": async ({ invoke, payload }) => invoke("api_sentiment_strategy_save", { payload }),
   "/api/agent/gepa/start": async ({ invoke, payload }) => invoke("api_agent_gepa_start", { payload }),
   "/api/agent/gepa/cancel": async ({ invoke, payload }) => invoke("api_agent_gepa_cancel", { payload }),
   "/api/agent/gepa/report": async ({ invoke, payload }) => invoke("api_agent_gepa_report", { payload }),

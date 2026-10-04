@@ -5387,3 +5387,33 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 
 .knowledge-export-consent { display: flex; align-items: flex-start; gap: 8px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 .knowledge-export-consent input { margin-top: 3px; accent-color: var(--accent); }
+
+
+/* Self-evolution: local research coach and profile governance */
+.evolution-modal-backdrop { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 20px; background: var(--scrim); }
+.evolution-modal { width: min(680px, 100%); max-height: min(820px, calc(100vh - 40px)); overflow: auto; padding: 22px; border: 1px solid var(--line-subtle); border-radius: 18px; background: var(--surface); box-shadow: 0 24px 70px rgba(18, 14, 13, .25); }
+.evolution-modal header, .evolution-modal footer, .sentiment-parameter-proposal-card header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.evolution-modal header h2 { margin: 5px 0 0; font-size: 22px; }
+.evolution-kicker { color: var(--accent); font-size: 12px; font-weight: 750; letter-spacing: .14em; }
+.evolution-note, .evolution-modal small, .evolution-modal p { color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
+.evolution-modal section { margin-top: 15px; padding: 13px; border: 1px solid var(--line-subtle); border-radius: 10px; background: var(--surface-raised); }
+.evolution-modal section h3 { margin: 0 0 7px; font-size: 13px; color: var(--text-primary); }
+.evolution-switch { display: flex; align-items: center; gap: 8px; margin: 14px 0; color: var(--text-primary); font-size: 13px; }
+.evolution-rule-list { display: grid; gap: 9px; max-height: 300px; overflow: auto; }
+.evolution-rule, .evolution-candidate { padding: 11px; border: 1px solid var(--line-subtle); border-radius: 9px; background: var(--surface-raised); }
+.evolution-rule p, .evolution-candidate p { margin: 0 0 7px; color: var(--text-primary); }
+.evolution-rule button, .evolution-candidate button { margin-top: 8px; border: 1px solid var(--line-subtle); border-radius: 7px; background: transparent; color: var(--text-secondary); padding: 5px 9px; cursor: pointer; }
+.evolution-rule button:hover, .evolution-candidate button:hover { border-color: var(--accent); color: var(--text-primary); }
+.evolution-error { color: var(--error) !important; }
+.evolution-review-loading { position: fixed; right: 20px; bottom: 20px; z-index: 71; padding: 10px 14px; border: 1px solid var(--line-subtle); border-radius: 9px; background: var(--surface); color: var(--text-secondary); font-size: 12px; box-shadow: var(--shadow-sm); }
+.sentiment-parameter-proposal { margin-left: 8px; }
+.sentiment-parameter-proposal-card { margin: 0 0 var(--space-3); padding: var(--space-3); border: 1px solid var(--line); border-left: 2px solid var(--accent); background: var(--surface-2); }
+.sentiment-parameter-proposal-card h3 { margin: 0; font-size: var(--fs-caption); }
+.sentiment-parameter-proposal-card ul { padding-left: var(--space-5); color: var(--text-secondary); font-size: var(--fs-data); line-height: 1.8; }
+.sentiment-parameter-proposal-card li small { display: block; color: var(--text-secondary); }
+@media (max-width: 640px) { .evolution-modal { padding: 17px; } .sentiment-parameter-proposal { margin: 8px 0 0; } }
+
+.agent-message-review, .agent-thread-profile { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line-subtle); border-radius: 7px; background: transparent; color: var(--text-secondary); padding: 4px 7px; cursor: pointer; font: inherit; font-size: 12px; }
+.agent-message-review:hover, .agent-message-review:focus-visible, .agent-thread-profile:hover, .agent-thread-profile:focus-visible { border-color: var(--accent); color: var(--text-primary); }
+.danger-btn { border: 1px solid var(--danger-border); border-radius: 8px; background: var(--danger-soft); color: var(--danger); padding: 7px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+.danger-btn:hover, .danger-btn:focus-visible { border-color: var(--danger); color: var(--text-primary); }

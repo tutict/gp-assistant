@@ -1,0 +1,13 @@
+import { useEffect, useState } from "react";
+import { deleteEvolutionRule, getEvolutionProfile, getEvolutionSettings, resetEvolutionProfile, updateEvolutionSettings, type EvolutionProfile } from "../../lib/evolution";
+
+export function EvolutionProfilePanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [profile, setProfile] = useState<EvolutionProfile>();
+  const [error, setError] = useState<string>();
+  useEffect(() => { if (!open) return; void Promise.all([getEvolutionProfile(), getEvolutionSettings()]).then(([value]) => setProfile(value)).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause))); }, [open]);
+  if (!open) return null;
+  const settings = profile?.settings;
+  const toggle = async (enabled: boolean) => { try { const next = await updateEvolutionSettings({ enabled, coach_mode: enabled }); setProfile((previous) => previous ? { ...previous, settings: next } : previous); } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); } };
+  const reset = async () => { try { setProfile(await resetEvolutionProfile()); } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); } };
+  return <div className="evolution-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="evolution-modal" role="dialog" aria-modal="true" aria-label="我的研究画像"><header><div><span className="evolution-kicker">PERSONAL PROFILE</span><h2>我的研究画像</h2></div><button type="button" onClick={onClose} aria-label="关闭画像">×</button></header><p className="evolution-note">默认本地优先，不保存完整原始对话。个人画像不会自动发送给远程 Agent，也不会修改全局 GEPA。</p><label className="evolution-switch"><input type="checkbox" checked={settings?.enabled === true} onChange={(event) => void toggle(event.target.checked)} /> 开启研究教练</label><p>画像版本：{profile?.profile_version ?? "--"}</p><div className="evolution-rule-list">{profile?.rules.length ? profile.rules.map((rule) => <article className="evolution-rule" key={rule.rule_id}><p>{rule.statement}</p><small>来源复盘：{rule.source_review_id} · 证据：{rule.evidence_refs.join(", ") || "无"}</small><button type="button" onClick={() => void deleteEvolutionRule(rule.rule_id).then(setProfile).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))}>删除</button></article>) : <p>还没有确认的研究规则。</p>}</div>{error && <p className="evolution-error" role="alert">{error}</p>}<footer><button type="button" className="danger-btn" onClick={() => void reset()}>清空画像</button><button type="button" className="action-btn" onClick={onClose}>完成</button></footer></section></div>;
+}

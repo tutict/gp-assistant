@@ -7,6 +7,7 @@ use tauri_plugin_shell::ShellExt;
 
 mod agent_harness;
 mod agent_ledger;
+mod evolution;
 mod gepa_lab;
 mod prompt_upgrade;
 mod news_rag;
@@ -133,6 +134,14 @@ pub fn run() {
             rig_runtime::api_agent_run_metrics,
             rig_runtime::api_agent_run_get,
             rig_runtime::api_agent_run_delete_conversation,
+            evolution::api_evolution_settings,
+            evolution::api_evolution_profile,
+            evolution::api_evolution_profile_reset,
+            evolution::api_evolution_review,
+            evolution::api_evolution_confirm_rule,
+            evolution::api_evolution_delete_rule,
+            evolution::api_sentiment_strategy_save,
+            evolution::api_sentiment_strategies,
             llm::api_llm_models,
             llm::api_llm_test,
             market::core_validate_data_source,
