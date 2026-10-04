@@ -29,6 +29,7 @@ export interface AgentRunDrawerProps {
   onToggleWatchlist: (item: StockRowView) => void;
   onClose: () => void;
   onOpenGepa: () => void;
+  onReviewRun?: (detail: AgentRunDetail) => void;
 }
 
 export interface AgentRunTimelineItem {
@@ -247,6 +248,7 @@ export function AgentRunDrawer({
   onToggleWatchlist,
   onClose,
   onOpenGepa,
+  onReviewRun = () => undefined,
 }: AgentRunDrawerProps) {
   const [view, setView] = useState<DrawerView>("list");
   const [scope, setScope] = useState<RunScope>("current");
@@ -675,6 +677,7 @@ export function AgentRunDrawer({
           watchlist={watchlist}
           onRetry={retryDetail}
           onToggleWatchlist={onToggleWatchlist}
+           onReviewRun={onReviewRun}
         />
       )}
     </aside>
@@ -789,6 +792,7 @@ function RunDetail({
   watchlist,
   onRetry,
   onToggleWatchlist,
+  onReviewRun,
 }: {
   detail?: AgentRunDetail;
   error?: string;
@@ -796,6 +800,7 @@ function RunDetail({
   watchlist: WatchlistItem[];
   onRetry: () => void;
   onToggleWatchlist: (item: StockRowView) => void;
+  onReviewRun?: (detail: AgentRunDetail) => void;
 }) {
   if (state === "loading" || state === "idle") {
     return <p className="agent-run-state" role="status">正在加载运行详情</p>;
@@ -833,6 +838,9 @@ function RunDetail({
           <div><dt>耗时</dt><dd>{formatDuration(detail)}</dd></div>
         </dl>
       </section>
+      <div className="agent-run-detail-actions">
+        <button type="button" className="agent-run-review" onClick={() => onReviewRun?.(detail)} disabled={!detail.result || detail.resultUnavailable || !onReviewRun}>复盘该运行</button>
+      </div>
       <section className="agent-run-timeline" aria-label="执行时间线">
         <h3>执行时间线</h3>
         {timeline.length ? (

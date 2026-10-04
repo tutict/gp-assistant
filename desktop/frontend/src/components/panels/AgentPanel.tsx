@@ -4,7 +4,7 @@ import type { AgentResult, AgentStreamEvent, LlmSettings, StockRowView, Watchlis
 import { buildTauriAgentPayload, getTauriInvoke, getTauriListen, isTauriRuntime } from "../../lib/tauri";
 import { activeLlmProvider, buildLlmConfig, normalizeAgentResult, normalizeAgentStreamEvent, parseSseBlock } from "../../lib/contracts";
 import { buildAgentStreamPayload, MAX_AGENT_MESSAGE_CHARS } from "../../lib/agent";
-import { deleteAgentConversationRuns } from "../../lib/agentRuns";
+import { deleteAgentConversationRuns, type AgentRunDetail } from "../../lib/agentRuns";
 import { GepaLabPanel } from "./GepaLabPanel";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useMobileComposer } from "../../hooks/useMobileComposer";
@@ -380,6 +380,20 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
       setEvolutionReviewLoading(false);
     }
   }, [activeConversation]);
+
+  const openEvolutionReviewDetail = useCallback(async (detail: AgentRunDetail) => {
+    if (!detail.result) return;
+    setEvolutionReviewLoading(true);
+    try {
+      const data = detail.result.data || {};
+      const citations = Array.isArray(data.citations)
+        ? data.citations.map((citation) => asRecord(citation).document_id || asRecord(citation).citation_id).filter((value): value is string => typeof value === "string")
+        : [];
+      setEvolutionReview(await createEvolutionReview({ run_id: detail.runId, conversation_id: detail.conversationId, question: detail.question, answer: detail.result.reply || "", evidence_ids: citations, tool_calls: detail.result.tool_calls || [] }));
+    } catch (cause) {
+      setEvolutionReview({ review_id: `local-error-${Date.now()}`, run_id: detail.runId, conversation_id: detail.conversationId, status: "error", review_mode: "deterministic", research_goal: "复盘失败", evidence_and_process: { evidence_ids: [], tool_calls: [] }, conclusion_quality: { answer: cause instanceof Error ? cause.message : String(cause), has_answer: true }, blind_spot_candidates: [], rule_candidates: [] });
+    } finally { setEvolutionReviewLoading(false); }
+  }, []);
 
   const changeMode = useCallback((mode: AgentMode) => {
     if (!activeConversation) return;
@@ -804,6 +818,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           ledgerRevision={ledgerRevision}
           gepaEnabled={gepaEnabled}
           onOpenGepa={openGepaFromHistory}
+           onReviewRun={openEvolutionReviewDetail}
           returnFocusElement={replayTriggerRef.current}
           watchlist={watchlist}
           onToggleWatchlist={toggleWatchlist}

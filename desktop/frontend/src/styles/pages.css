@@ -5419,3 +5419,7 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 .danger-btn:hover, .danger-btn:focus-visible { border-color: var(--danger); color: var(--text-primary); }
 
 .sentiment-strategy-name { width: 100%; min-height: 34px; margin: 8px 0; border: 1px solid var(--line-subtle); border-radius: 8px; background: var(--surface-raised); color: var(--text-primary); padding: 0 10px; font: inherit; font-size: var(--fs-data); }
+
+.agent-run-detail-actions { display: flex; justify-content: flex-end; margin: 12px 0; }
+.agent-run-review { border: 1px solid var(--line-subtle); border-radius: 8px; background: var(--surface-raised); color: var(--text-secondary); padding: 7px 11px; cursor: pointer; font: inherit; font-size: 12px; }
+.agent-run-review:hover, .agent-run-review:focus-visible { border-color: var(--accent); color: var(--text-primary); }
