@@ -2,9 +2,11 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react
 import { Activity, ExternalLink, Menu, Play, RefreshCw, Send, X } from "lucide-react";
 import type { LlmSettings, ScreenCriteria, WatchlistItem } from "../../types";
 import { buildSentimentParameterProposal, type SentimentParameterProposal } from "../../lib/evolutionPolicy";
+import { saveSentimentStrategy } from "../../lib/evolution";
 import type { SentimentEvidence, SentimentSnapshot, SentimentTimelinePoint } from "../../types/sentiment";
 import { normalizeStockCode } from "../../lib/format";
-import { buildLlmConfig } from "../../lib/contracts";
+import { buildLlmConfig, requireBacktestResult } from "../../lib/contracts";
+import { postJson } from "../../lib/tauri";
 import { useSentiment } from "../../hooks/useSentiment";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useMobileComposer } from "../../hooks/useMobileComposer";
@@ -200,6 +202,10 @@ function StockWorkspace({ code, props, state, onSelect }: { code: string; props:
   const [showNewEvidence, setShowNewEvidence] = useState(false);
   const [expandedPools, setExpandedPools] = useState<Record<string, boolean>>({});
   const [parameterProposal, setParameterProposal] = useState<SentimentParameterProposal>();
+  const [parameterBacktestLoading, setParameterBacktestLoading] = useState(false);
+  const [parameterBacktestError, setParameterBacktestError] = useState<string>();
+  const [strategyName, setStrategyName] = useState("");
+  const [strategySaving, setStrategySaving] = useState(false);
   const composer = useMobileComposer(question);
   const analysis = state.analysis;
   const fresh = state.snapshot;
@@ -246,6 +252,48 @@ function StockWorkspace({ code, props, state, onSelect }: { code: string; props:
       backtest: { period: "待回测", baseline: { returned: 0, maxDrawdown: null, concentration: null }, candidate: { returned: 0, maxDrawdown: null, concentration: null } },
     }));
   };
+  const candidateCriteriaForProposal = () => {
+    const candidate = { ...(props.criteria || {}) };
+    for (const change of parameterProposal?.changes || []) {
+      if (change.field === "score_profile" && typeof change.after === "string") candidate.score_profile = change.after;
+      else if (typeof change.after === "number") (candidate as Record<string, unknown>)[change.field] = change.after;
+    }
+    return candidate;
+  };
+  const runParameterBacktest = async () => {
+    if (!parameterProposal || !props.criteria) return;
+    setParameterBacktestLoading(true); setParameterBacktestError(undefined);
+    const baselineCriteria = { ...props.criteria };
+    const candidateCriteria = candidateCriteriaForProposal();
+    const buildPayload = (criteria: typeof baselineCriteria) => ({ source: "criteria", criteria, strategy_mode: "sentiment_parameter_v1", stock_codes: [], start_date: "20260701", end_date: "20260930", top_n: Math.max(1, Math.min(100, Number(criteria.limit || 10))), rebalance_frequency: "monthly", transaction_cost_bps: 10, benchmark: "candidate_equal_weight" });
+    try {
+      const [baselineRaw, candidateRaw] = await Promise.all([
+        postJson<unknown>("/api/backtest", buildPayload(baselineCriteria), { timeoutMs: 90_000 }),
+        postJson<unknown>("/api/backtest", buildPayload(candidateCriteria), { timeoutMs: 90_000 }),
+      ]);
+      const baseline = requireBacktestResult(baselineRaw); const candidate = requireBacktestResult(candidateRaw);
+      const backtest = { period: "20260701—20260930", baseline: { returned: baseline.metrics.num_stocks, maxDrawdown: baseline.metrics.max_drawdown ?? null, concentration: null }, candidate: { returned: candidate.metrics.num_stocks, maxDrawdown: candidate.metrics.max_drawdown ?? null, concentration: null } };
+      setParameterProposal((previous) => previous ? buildSentimentParameterProposal({ stage: previous.stage, currentCriteria: props.criteria || {}, evidenceIds: previous.evidenceIds, evidenceSummary: previous.evidenceSummary, backtest }) : previous);
+    } catch (cause) { setParameterBacktestError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setParameterBacktestLoading(false); }
+  };
+
+  const applyParameterProposal = () => {
+    if (!parameterProposal?.canSaveStrategy || !props.onApplyScreenCriteria) return;
+    props.onApplyScreenCriteria(candidateCriteriaForProposal());
+    props.onGoToScreen?.();
+    setParameterProposal(undefined);
+  };
+  const saveParameterStrategy = async () => {
+    if (!parameterProposal?.canSaveStrategy) return;
+    setStrategySaving(true); setParameterBacktestError(undefined);
+    try {
+      await saveSentimentStrategy({ strategy_id: `sentiment-${Date.now()}`, name: strategyName.trim() || `情绪${parameterProposal.stage}策略`, stage: parameterProposal.stage, evidence_ids: parameterProposal.evidenceIds, changes: parameterProposal.changes.map((change) => ({ ...change, relative_change: change.relativeChange })), backtest: { ...parameterProposal.backtest, passed: true }, source_analysis_id: analysis?.analysis_id });
+      setStrategyName("");
+    } catch (cause) { setParameterBacktestError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setStrategySaving(false); }
+  };
+
   const askAgent = () => {
     if (!analysis || !props.onAskAgent) return;
     const name = timelineSnapshot?.stock_name || stock?.name || code;
@@ -273,7 +321,11 @@ function StockWorkspace({ code, props, state, onSelect }: { code: string; props:
         <p>{parameterProposal.evidenceSummary || "暂无摘要"}</p>
         {parameterProposal.changes.length ? <ul>{parameterProposal.changes.map((change) => <li key={String(change.field)}><strong>{String(change.field)}</strong>：{String(change.before ?? "未设置")} → {String(change.after ?? "未设置")}<small>{change.reason}</small></li>)}</ul> : <p>当前证据不足以提出参数调整。系统不会自动放宽风险约束。</p>}
         <p className="sentiment-quality-note">当前仅生成建议，尚未完成回测，也不会自动修改筛选条件。确认前需要运行固定历史窗口回测。</p>
-        <div><button type="button" className="btn" disabled>运行回测后应用</button><button type="button" className="btn" disabled={!parameterProposal.canSaveStrategy}>保存为情绪策略</button></div>
+         {parameterBacktestError && <p className="evolution-error" role="alert">{parameterBacktestError}</p>}
+         <p className="sentiment-quality-note">{parameterProposal.backtest.period === "待回测" ? "当前仅生成建议，尚未完成回测。" : `已完成固定窗口回测：${parameterProposal.backtest.period}。`}确认前不会自动修改筛选条件。</p>
+         {parameterProposal.canSaveStrategy && <input className="sentiment-strategy-name" value={strategyName} onChange={(event) => setStrategyName(event.target.value)} placeholder="策略名称（可选）" aria-label="策略名称" />}
+         {parameterBacktestError && <p className="evolution-error" role="alert">{parameterBacktestError}</p>}
+         <div><button type="button" className="btn" disabled={parameterBacktestLoading || !props.criteria || !parameterProposal.changes.length} onClick={() => void runParameterBacktest()}>{parameterBacktestLoading ? "回测中…" : parameterProposal.backtest.period === "待回测" ? "运行固定窗口回测" : "重新回测"}</button><button type="button" className="btn" disabled={!parameterProposal.canSaveStrategy || !props.onApplyScreenCriteria} onClick={applyParameterProposal}>确认本次应用</button><button type="button" className="btn" disabled={!parameterProposal.canSaveStrategy || strategySaving} onClick={() => void saveParameterStrategy()}>{strategySaving ? "保存中…" : "保存为情绪策略"}</button></div>
       </section>}
       {timelineSnapshot && <section className="sentiment-quality" aria-label="数据覆盖">
         <h3>数据覆盖</h3>

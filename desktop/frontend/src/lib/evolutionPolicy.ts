@@ -27,6 +27,6 @@ export function buildSentimentParameterProposal(input: SentimentProposalInput): 
   const changes = proposalChanges(input).map((change) => ({ ...change, relativeChange: Math.max(-0.2, Math.min(0.2, change.relativeChange)) }));
   const candidateDrawdown = input.backtest.candidate.maxDrawdown;
   const baselineDrawdown = input.backtest.baseline.maxDrawdown;
-  const backtestIsNonRegressive = candidateDrawdown == null || baselineDrawdown == null || candidateDrawdown <= baselineDrawdown;
+  const backtestIsNonRegressive = candidateDrawdown != null && baselineDrawdown != null && Math.abs(candidateDrawdown) <= Math.abs(baselineDrawdown);
   return { templateId: input.stage === "证据不足" ? "insufficient-evidence-v1" : `sentiment-${input.stage}-v1`, stage: input.stage, marketRegime: input.marketRegime ?? null, changes, protectedFields: [...PROTECTED_FIELDS], evidenceIds: [...input.evidenceIds], evidenceSummary: input.evidenceSummary, backtest: input.backtest, requiresConfirmation: true, canSaveStrategy: input.stage !== "证据不足" && input.evidenceIds.length > 0 && backtestIsNonRegressive };
 }
