@@ -6,7 +6,7 @@ import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { getJson, isMobileTauriRuntime } from "./lib/tauri";
 import { createPersistentWatchlistSetter, loadLocalWatchlistSnapshot, loadPersistentWatchlist } from "./lib/watchlistStore";
-import { sanitizePersistedLlmSettings } from "./lib/contracts";
+import { buildScreenCriteria, sanitizePersistedLlmSettings } from "./lib/contracts";
 import { refreshResearchWatchlist } from "./lib/researchRefresh";
 import { createSettingsRegistry } from "./lib/settingsRegistry";
 import { DEFAULT_FILTER_CRITERIA, sanitizeFilterCriteria } from "./lib/screenCriteria";
@@ -16,7 +16,7 @@ import { FilterBar, type FilterCriteria } from "./components/FilterBar";
 import { ScreenPanel } from "./components/panels/ScreenPanel";
 import { WatchlistPanel } from "./components/panels/WatchlistPanel";
 import { PanelFeedback } from "./components/ui/PanelFeedback";
-import type { AdaptiveScreenRequest, DataStatus, WatchlistItem, LlmSettings } from "./types";
+import type { AdaptiveScreenRequest, DataStatus, ScreenCriteria, WatchlistItem, LlmSettings } from "./types";
 import {
   consumeBacktestRouteRequest,
   nextBacktestRouteRequest,
@@ -255,6 +255,20 @@ export default function App({ onMounted }: AppProps) {
     setNewsRequest((prev) => ({ code, requestId: (prev?.requestId ?? 0) + 1, view: "sources" }));
     navigate("news");
   }, [navigate]);
+  const applyEvolutionCriteria = useCallback((next: ScreenCriteria) => {
+    setCriteria((previous) => ({
+      ...previous,
+      minRoe: next.min_roe == null ? previous.minRoe : String(next.min_roe * 100),
+      maxPe: next.max_pe == null ? previous.maxPe : String(next.max_pe),
+      maxPb: next.max_pb == null ? previous.maxPb : String(next.max_pb),
+      minMcap: next.min_market_cap_billion == null ? previous.minMcap : String(next.min_market_cap_billion),
+      industry: next.industry ?? previous.industry,
+      marketScope: next.market_scope ?? previous.marketScope,
+      resultLimit: next.limit ?? previous.resultLimit,
+      scoreProfile: next.score_profile ?? previous.scoreProfile,
+    }));
+  }, []);
+
   const handoffToAgent = useCallback((prompt: string) => {
     setAgentDraftRequest((prev) => ({ prompt, requestId: (prev?.requestId ?? 0) + 1 }));
     navigate("agent");
@@ -403,6 +417,8 @@ export default function App({ onMounted }: AppProps) {
                 initialView={newsRequest?.view}
                 onAskAgent={handoffToAgent}
                 onGoToScreen={() => navigate("screen")}
+                 criteria={buildScreenCriteria(criteria)}
+                 onApplyScreenCriteria={applyEvolutionCriteria}
               />
             </Suspense>
           )}

@@ -12,7 +12,7 @@ import { AgentResultView } from "./AgentResultView";
 import { AgentRunDrawer } from "./AgentRunDrawer";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
 import { IconButton } from "../ui/IconButton";
-import { createEvolutionReview, type EvolutionReview } from "../../lib/evolution";
+import { createEvolutionReview, extractEvolutionEvidenceIds, type EvolutionReview } from "../../lib/evolution";
 import { EvolutionProfilePanel } from "./EvolutionProfilePanel";
 import { EvolutionReviewCard } from "./EvolutionReviewCard";
 
@@ -362,10 +362,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     setEvolutionReviewLoading(true);
     try {
       const previous = activeConversation.messages[messageIndex - 1];
-      const data = message.result.data || {};
-      const citations = Array.isArray(data.citations)
-        ? data.citations.map((citation) => asRecord(citation).document_id || asRecord(citation).citation_id).filter((value): value is string => typeof value === "string")
-        : [];
+      const citations = extractEvolutionEvidenceIds(message.result);
       setEvolutionReview(await createEvolutionReview({
         run_id: message.runId,
         conversation_id: activeConversation.id,
@@ -385,10 +382,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     if (!detail.result) return;
     setEvolutionReviewLoading(true);
     try {
-      const data = detail.result.data || {};
-      const citations = Array.isArray(data.citations)
-        ? data.citations.map((citation) => asRecord(citation).document_id || asRecord(citation).citation_id).filter((value): value is string => typeof value === "string")
-        : [];
+      const citations = extractEvolutionEvidenceIds(detail.result);
       setEvolutionReview(await createEvolutionReview({ run_id: detail.runId, conversation_id: detail.conversationId, question: detail.question, answer: detail.result.reply || "", evidence_ids: citations, tool_calls: detail.result.tool_calls || [] }));
     } catch (cause) {
       setEvolutionReview({ review_id: `local-error-${Date.now()}`, run_id: detail.runId, conversation_id: detail.conversationId, status: "error", review_mode: "deterministic", research_goal: "复盘失败", evidence_and_process: { evidence_ids: [], tool_calls: [] }, conclusion_quality: { answer: cause instanceof Error ? cause.message : String(cause), has_answer: true }, blind_spot_candidates: [], rule_candidates: [] });
@@ -832,7 +826,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         />
         <EvolutionProfilePanel open={evolutionProfileOpen} onClose={() => setEvolutionProfileOpen(false)} />
         {evolutionReviewLoading && <div className="evolution-review-loading" role="status">正在生成研究复盘…</div>}
-        {evolutionReview && <EvolutionReviewCard review={evolutionReview} onClose={() => setEvolutionReview(undefined)} />}
+        {evolutionReview && <EvolutionReviewCard review={evolutionReview} llm={activeLlmConfig} onClose={() => setEvolutionReview(undefined)} />}
       </section>
     </div>
   );

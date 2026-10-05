@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react
 import { Activity, ExternalLink, Menu, Play, RefreshCw, Send, X } from "lucide-react";
 import type { LlmSettings, ScreenCriteria, WatchlistItem } from "../../types";
 import { buildSentimentParameterProposal, type SentimentParameterProposal } from "../../lib/evolutionPolicy";
-import { saveSentimentStrategy } from "../../lib/evolution";
+import { getSentimentStrategies, getSentimentStrategyVersions, rollbackSentimentStrategy, saveSentimentStrategy, setSentimentStrategyStatus, type SentimentStrategy, type SentimentStrategyVersion } from "../../lib/evolution";
 import type { SentimentEvidence, SentimentSnapshot, SentimentTimelinePoint } from "../../types/sentiment";
 import { normalizeStockCode } from "../../lib/format";
 import { buildLlmConfig, requireBacktestResult } from "../../lib/contracts";
@@ -59,6 +59,11 @@ const metricLabels: Record<string, string> = {
 const gateLabels = { messages: "消息样本不足", price: "行情样本不足", industry: "行业样本不足", historical_heat: "历史热度样本不足" };
 const referenceLabels: Record<string, string> = { M1: "消息指标", M2: "量价指标", M3: "行业指标" };
 
+function strategyIdFromName(name: string, stage: string): string {
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "default";
+  return `sentiment-${stage}-${slug}`;
+}
+
 export function sentimentTime(value: number) {
   return new Date(value < 1e12 ? value * 1000 : value).toLocaleString("zh-CN", { hour12: false });
 }
@@ -108,6 +113,7 @@ export function SentimentPanel(props: Props) {
   const openView = (next: WorkspaceView) => {
     setView(next);
     setMountedViews((current) => current[next] ? current : { ...current, [next]: true });
+    if (next === "sentiment" && state.run?.status !== "running") state.retry();
   };
   const commitInput = (value: string) => {
     const trimmed = value.trim();
@@ -182,12 +188,12 @@ export function SentimentPanel(props: Props) {
     </div>
     <div id="sentiment-panel-analysis" role="tabpanel" aria-labelledby="sentiment-tab-sentiment" className="sentiment-view sentiment-view-analysis" hidden={view !== "sentiment"}>
       {view === "sentiment" && <p className="workspace-boundary">仅供研究，不构成投资建议。</p>}
-      {mountedViews.sentiment && <StockWorkspace key={code} code={code} props={props} state={state} onSelect={selectCode} />}
+      {mountedViews.sentiment && <StockWorkspace key={code} code={code} view={view} props={props} state={state} onSelect={selectCode} />}
     </div>
   </section>;
 }
 
-function StockWorkspace({ code, props, state, onSelect }: { code: string; props: Props; state: ReturnType<typeof useSentiment>; onSelect: (code: string) => void }) {
+function StockWorkspace({ code, view, props, state, onSelect }: { code: string; view: WorkspaceView; props: Props; state: ReturnType<typeof useSentiment>; onSelect: (code: string) => void }) {
   const watchlist = props.watchlist || [];
   const stock = watchlist.find((item) => normalizeStockCode(item.code) === code);
   const llm = useMemo(() => buildLlmConfig(props.llmSettings), [props.llmSettings]);
@@ -206,6 +212,9 @@ function StockWorkspace({ code, props, state, onSelect }: { code: string; props:
   const [parameterBacktestError, setParameterBacktestError] = useState<string>();
   const [strategyName, setStrategyName] = useState("");
   const [strategySaving, setStrategySaving] = useState(false);
+  const [strategies, setStrategies] = useState<SentimentStrategy[]>([]);
+  const [strategyHistory, setStrategyHistory] = useState<Record<string, SentimentStrategyVersion[]>>({});
+  useEffect(() => { void getSentimentStrategies().then((result) => setStrategies(result.items)).catch(() => undefined); }, []);
   const composer = useMobileComposer(question);
   const analysis = state.analysis;
   const fresh = state.snapshot;
@@ -221,6 +230,7 @@ function StockWorkspace({ code, props, state, onSelect }: { code: string; props:
   const discussions = timelineSnapshot?.evidence.filter((item) => item.pool === "discussion" && onDate(item.published_at)) || [];
   useEffect(() => { setShowNewEvidence(false); setEvidenceId(null); }, [analysis?.analysis_id]);
   useEffect(() => { if (!mobile) setMobileWatchlistOpen(false); }, [mobile]);
+  useEffect(() => { if (view === "sentiment") void getSentimentStrategies().then((result) => setStrategies(result.items)).catch(() => undefined); }, [view]);
   const openEvidence = (id: string, source: "analysis" | "timeline") => {
     setMobileWatchlistOpen(false);
     setEvidenceSource(source);
@@ -288,10 +298,31 @@ function StockWorkspace({ code, props, state, onSelect }: { code: string; props:
     if (!parameterProposal?.canSaveStrategy) return;
     setStrategySaving(true); setParameterBacktestError(undefined);
     try {
-      await saveSentimentStrategy({ strategy_id: `sentiment-${Date.now()}`, name: strategyName.trim() || `情绪${parameterProposal.stage}策略`, stage: parameterProposal.stage, evidence_ids: parameterProposal.evidenceIds, changes: parameterProposal.changes.map((change) => ({ ...change, relative_change: change.relativeChange })), backtest: { ...parameterProposal.backtest, passed: true }, source_analysis_id: analysis?.analysis_id });
+      const name = strategyName.trim() || `情绪${parameterProposal.stage}策略`;
+      await saveSentimentStrategy({ strategy_id: strategyIdFromName(name, parameterProposal.stage), name, stage: parameterProposal.stage, evidence_ids: parameterProposal.evidenceIds, changes: parameterProposal.changes.map((change) => ({ ...change, relative_change: change.relativeChange })), criteria: candidateCriteriaForProposal(), backtest: { ...parameterProposal.backtest, passed: true }, source_analysis_id: analysis?.analysis_id });
       setStrategyName("");
+      setStrategies((await getSentimentStrategies()).items);
     } catch (cause) { setParameterBacktestError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setStrategySaving(false); }
+  };
+
+  const loadStrategy = (strategy: SentimentStrategy) => {
+    const criteria = strategy.payload.criteria;
+    if (strategy.status !== "active" || !criteria || !props.onApplyScreenCriteria) return;
+    props.onApplyScreenCriteria(criteria as ScreenCriteria);
+    props.onGoToScreen?.();
+  };
+  const toggleStrategy = async (strategy: SentimentStrategy) => {
+    try { const result = await setSentimentStrategyStatus(strategy.strategy_id, strategy.status === "active" ? "disabled" : "active"); setStrategies(result.items); }
+    catch (cause) { setParameterBacktestError(cause instanceof Error ? cause.message : String(cause)); }
+  };
+  const showStrategyHistory = async (strategy: SentimentStrategy) => {
+    try { const result = await getSentimentStrategyVersions(strategy.strategy_id); setStrategyHistory((previous) => ({ ...previous, [strategy.strategy_id]: result.items })); }
+    catch (cause) { setParameterBacktestError(cause instanceof Error ? cause.message : String(cause)); }
+  };
+  const rollbackStrategy = async (strategy: SentimentStrategy, version: number) => {
+    try { const result = await rollbackSentimentStrategy(strategy.strategy_id, version); setStrategies(result.items); const current = result.items.find((item) => item.strategy_id === strategy.strategy_id); if (current) loadStrategy(current); await showStrategyHistory(current || strategy); }
+    catch (cause) { setParameterBacktestError(cause instanceof Error ? cause.message : String(cause)); }
   };
 
   const askAgent = () => {
@@ -324,9 +355,9 @@ function StockWorkspace({ code, props, state, onSelect }: { code: string; props:
          {parameterBacktestError && <p className="evolution-error" role="alert">{parameterBacktestError}</p>}
          <p className="sentiment-quality-note">{parameterProposal.backtest.period === "待回测" ? "当前仅生成建议，尚未完成回测。" : `已完成固定窗口回测：${parameterProposal.backtest.period}。`}确认前不会自动修改筛选条件。</p>
          {parameterProposal.canSaveStrategy && <input className="sentiment-strategy-name" value={strategyName} onChange={(event) => setStrategyName(event.target.value)} placeholder="策略名称（可选）" aria-label="策略名称" />}
-         {parameterBacktestError && <p className="evolution-error" role="alert">{parameterBacktestError}</p>}
          <div><button type="button" className="btn" disabled={parameterBacktestLoading || !props.criteria || !parameterProposal.changes.length} onClick={() => void runParameterBacktest()}>{parameterBacktestLoading ? "回测中…" : parameterProposal.backtest.period === "待回测" ? "运行固定窗口回测" : "重新回测"}</button><button type="button" className="btn" disabled={!parameterProposal.canSaveStrategy || !props.onApplyScreenCriteria} onClick={applyParameterProposal}>确认本次应用</button><button type="button" className="btn" disabled={!parameterProposal.canSaveStrategy || strategySaving} onClick={() => void saveParameterStrategy()}>{strategySaving ? "保存中…" : "保存为情绪策略"}</button></div>
       </section>}
+      <SentimentStrategyPanel strategies={strategies} history={strategyHistory} onLoad={loadStrategy} onToggle={toggleStrategy} onHistory={showStrategyHistory} onRollback={rollbackStrategy} />
       {timelineSnapshot && <section className="sentiment-quality" aria-label="数据覆盖">
         <h3>数据覆盖</h3>
         <p>事实 {timelineSnapshot.coverage.facts} · 讨论 {timelineSnapshot.coverage.discussions} · 行情 {timelineSnapshot.coverage.price_days} 天 · 历史 {timelineSnapshot.coverage.history_days} 天 · 行业 {timelineSnapshot.coverage.industry_covered}/{timelineSnapshot.coverage.industry_members} 家</p>
@@ -404,6 +435,36 @@ function StockWorkspace({ code, props, state, onSelect }: { code: string; props:
     </div>
     <EvidenceDrawer id={evidenceId} snapshot={evidenceSnapshot} fallback={evidenceSnapshot === frozen ? fresh : frozen} onClose={() => setEvidenceId(null)} inline={wide} />
   </div>;
+}
+
+function SentimentStrategyPanel({
+  strategies,
+  history,
+  onLoad,
+  onToggle,
+  onHistory,
+  onRollback,
+}: {
+  strategies: SentimentStrategy[];
+  history: Record<string, SentimentStrategyVersion[]>;
+  onLoad: (strategy: SentimentStrategy) => void;
+  onToggle: (strategy: SentimentStrategy) => void;
+  onHistory: (strategy: SentimentStrategy) => void;
+  onRollback: (strategy: SentimentStrategy, version: number) => void;
+}) {
+  if (!strategies.length) return null;
+  return <section className="sentiment-strategy-list" aria-label="情绪策略列表">
+    <header><h3>已保存情绪策略</h3><small>策略不会自动切换</small></header>
+    {strategies.map((strategy) => <article key={strategy.strategy_id} className="sentiment-strategy-item">
+      <div><strong>{strategy.name}</strong><span>{strategy.stage} · v{strategy.version} · {strategy.status === "active" ? "启用" : "停用"}</span></div>
+      <div className="sentiment-strategy-actions">
+        <button type="button" className="btn" disabled={strategy.status !== "active"} onClick={() => onLoad(strategy)}>{strategy.status === "active" ? "加载" : "已停用"}</button>
+        <button type="button" className="btn" onClick={() => onToggle(strategy)}>{strategy.status === "active" ? "停用" : "启用"}</button>
+        <button type="button" className="btn" onClick={() => onHistory(strategy)}>版本历史</button>
+      </div>
+      {history[strategy.strategy_id]?.map((version) => <div className="sentiment-strategy-version" key={version.version}><span>v{version.version} · {new Date(version.created_at).toLocaleString("zh-CN")}</span><button type="button" className="btn" disabled={version.version === strategy.version} onClick={() => onRollback(strategy, version.version)}>回滚</button></div>)}
+    </article>)}
+  </section>;
 }
 
 function EvidenceRow({ item, onOpen }: { item: SentimentEvidence; onOpen: (id: string) => void }) {

@@ -5423,3 +5423,17 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 .agent-run-detail-actions { display: flex; justify-content: flex-end; margin: 12px 0; }
 .agent-run-review { border: 1px solid var(--line-subtle); border-radius: 8px; background: var(--surface-raised); color: var(--text-secondary); padding: 7px 11px; cursor: pointer; font: inherit; font-size: 12px; }
 .agent-run-review:hover, .agent-run-review:focus-visible { border-color: var(--accent); color: var(--text-primary); }
+
+.sentiment-strategy-list { margin: 0 0 var(--space-3); padding: var(--space-3); border: 1px solid var(--line); background: var(--surface-2); }
+.sentiment-strategy-list > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sentiment-strategy-list h3 { margin: 0; font-size: var(--fs-caption); }
+.sentiment-strategy-list small, .sentiment-strategy-item span { color: var(--text-secondary); font-size: var(--fs-caption); }
+.sentiment-strategy-item { margin-top: 10px; padding: 10px; border: 1px solid var(--line-subtle); border-radius: 9px; background: var(--surface-raised); }
+.sentiment-strategy-item > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sentiment-strategy-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+.sentiment-strategy-version { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--line-subtle); }
+.evolution-rule textarea { width: 100%; min-height: 70px; border: 1px solid var(--line-subtle); border-radius: 8px; background: var(--surface-raised); color: var(--text-primary); padding: 8px; font: inherit; font-size: var(--fs-data); }
+.evolution-rule-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.evolution-suppressed { margin-top: 14px; padding: 12px; border: 1px solid var(--line-subtle); border-radius: 9px; background: var(--surface-raised); }
+.evolution-suppressed h3 { margin: 0 0 8px; font-size: var(--fs-caption); }
+.evolution-suppressed > div { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; color: var(--text-secondary); font-size: var(--fs-data); }

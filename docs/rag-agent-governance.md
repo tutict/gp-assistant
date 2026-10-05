@@ -104,6 +104,7 @@ cargo test --manifest-path desktop\src-tauri\Cargo.toml --lib research::tests::f
 - GEPA 报告写入本机 AppData，保存数据集哈希、引擎版本、seed、预算、逐案例分数和脱敏样例；API key、完整 URL 凭据和原始连接配置不得进入报告。
 - 现有策略拒绝仍进入 Agent ledger 和指标，但不再触发“五次拒绝后自动生成并激活”提示词升级。Overlay 应用使用 base prompt version compare-and-swap，版本变化时拒绝陈旧候选。
 - 自进化第一阶段只保存本地个人研究画像、证据化复盘和用户确认规则；个人画像默认不进入任何远程模型请求，也不修改全局 GEPA overlay。情绪参数建议必须经过白名单、证据和回测门禁。
+- 情绪策略保存为版本化本地记录，支持启用/停用、加载、历史版本和回滚；研究复盘支持显式触发、规则编辑与按建议类型抑制。模型增强复盘仅允许 direct localhost endpoint，拒绝代理和公共 provider。
 
 ## RAG and Agent evaluation upgrade (2026-10-01)
 
