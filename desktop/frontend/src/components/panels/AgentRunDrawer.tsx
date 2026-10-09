@@ -259,6 +259,7 @@ export function AgentRunDrawer({
   const [detailState, setDetailState] = useState<RequestState>("idle");
   const [detailError, setDetailError] = useState<string>();
   const [overlays, setOverlays] = useState<PromptOverlayStatus[]>([]);
+  const [overlayError, setOverlayError] = useState(false);
   const drawerRef = useRef<HTMLElement | null>(null);
   const closeControlRef = useRef<HTMLDivElement | null>(null);
   const listRequestTokenRef = useRef(0);
@@ -383,15 +384,16 @@ export function AgentRunDrawer({
   useEffect(() => {
     if (!open) {
       setOverlays([]);
+      setOverlayError(false);
       return;
     }
     const controller = new AbortController();
     void getPromptOverlays(controller.signal)
       .then((loaded) => {
-        if (!controller.signal.aborted) setOverlays(loaded);
+        if (!controller.signal.aborted) { setOverlays(loaded); setOverlayError(false); }
       })
       .catch(() => {
-        if (!controller.signal.aborted) setOverlays([]);
+        if (!controller.signal.aborted) { setOverlays([]); setOverlayError(true); }
       });
     return () => controller.abort();
   }, [open, ledgerRevision]);
@@ -633,6 +635,7 @@ export function AgentRunDrawer({
           />
         </div>
       </header>
+      {overlayError && <p className="agent-mode-note" role="status">提示词版本读取失败，当前运行会使用内置提示词。</p>}
       {overlays.length > 0 && (
         <div className="agent-prompt-overlays" aria-label="本机提示词版本">
           {overlays.map((overlay) => (

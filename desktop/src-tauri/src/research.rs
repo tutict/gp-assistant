@@ -19,7 +19,11 @@ use std::{
 };
 use tauri::{Emitter, Manager};
 
-pub(crate) const RESEARCH_SCHEMA_VERSION: i64 = 2;
+#[path = "research_recovery.rs"]
+mod recovery;
+
+pub(crate) const RESEARCH_SCHEMA_VERSION: i64 = 3;
+const RESEARCH_PACK_VERSION: i64 = 2;
 const DEFAULT_CHUNK_CHARS: usize = 520;
 const DEFAULT_CHUNK_OVERLAP: usize = 80;
 const MAX_CITATIONS: usize = 8;
@@ -66,6 +70,9 @@ pub(crate) struct ResearchCitation {
     pub lexical_score: f64,
     pub vector_score: Option<f64>,
     pub retrieval_score: f64,
+    /// Historical evidence absent or changed in the active document generation.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unavailable: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -99,6 +106,10 @@ pub(crate) struct KnowledgeDocumentStatus {
     pub updated_at_epoch_ms: i64,
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 pub(crate) struct ResearchStore {
     path: PathBuf,
 }
@@ -111,13 +122,28 @@ impl ResearchStore {
                 .map_err(|error| format!("failed to create research directory: {error}"))?;
         }
         let existed = path.exists();
+        if existed {
+            recovery::validate_header(&path)?;
+        }
         let registry = INITIALIZED_DATABASES.get_or_init(|| Mutex::new(HashSet::new()));
         let mut initialized = registry
             .lock()
             .map_err(|_| "research database initialization lock is poisoned".to_string())?;
         if !existed || !initialized.contains(&path) {
+            if existed {
+                recovery::validate_database(&path)?;
+            }
             let connection = Connection::open(&path)
                 .map_err(|error| format!("failed to open research database: {error}"))?;
+            let version: i64 = connection
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .map_err(|e| e.to_string())?;
+            crate::durability::backup_before_migration(
+                &connection,
+                &path,
+                version,
+                RESEARCH_SCHEMA_VERSION,
+            )?;
             initialize_schema(&connection)?;
             initialized.insert(path.clone());
         }
@@ -762,6 +788,7 @@ impl ResearchStore {
                 lexical_score,
                 vector_score,
                 retrieval_score,
+                unavailable: false,
             });
             if citations.len() >= top_k {
                 break;
@@ -1309,6 +1336,12 @@ impl ResearchStore {
             )
             .map_err(|error| format!("failed to store research answer: {error}"))?;
         for (ordinal, citation) in citations.iter().enumerate() {
+            if citation.unavailable {
+                return Err(
+                    "unavailable historical evidence cannot be saved as an active citation"
+                        .to_string(),
+                );
+            }
             transaction
                 .execute(
                     "INSERT INTO research_answer_citations (
@@ -1547,7 +1580,7 @@ impl ResearchStore {
                  WHERE ac.answer_id = ?1 ORDER BY ac.ordinal",
             )
             .map_err(|error| format!("failed to prepare stored citations: {error}"))?;
-        let citations = statement
+        let mut citations = statement
             .query_map(params![answer_id], |row| {
                 let content: String = row.get(4)?;
                 Ok(ResearchCitation {
@@ -1564,11 +1597,43 @@ impl ResearchStore {
                     lexical_score: row.get(10)?,
                     vector_score: row.get(11)?,
                     retrieval_score: row.get(12)?,
+                    unavailable: false,
                 })
             })
             .map_err(|error| format!("failed to query stored citations: {error}"))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("failed to read stored citations: {error}"))?;
+        let mut snapshots = connection.prepare(
+            "SELECT payload_json FROM research_unavailable_citations WHERE answer_id=?1 ORDER BY ordinal"
+        ).map_err(|error| error.to_string())?;
+        let payloads = snapshots
+            .query_map([answer_id], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?;
+        for payload in payloads {
+            let mut citation: ResearchCitation =
+                serde_json::from_str(&payload.map_err(|error| error.to_string())?)
+                    .map_err(|error| format!("invalid historical citation snapshot: {error}"))?;
+            citation.unavailable = true;
+            citations.push(citation);
+        }
+        let mut ordinals = connection.prepare(
+            "SELECT citation_id,ordinal FROM research_answer_citations WHERE answer_id=?1
+             UNION ALL SELECT citation_id,ordinal FROM research_unavailable_citations WHERE answer_id=?1"
+        ).map_err(|error| error.to_string())?;
+        let order = ordinals
+            .query_map([answer_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|error| error.to_string())?
+            .collect::<Result<HashMap<_, _>, _>>()
+            .map_err(|error| error.to_string())?;
+        citations.sort_by_key(|citation| {
+            order
+                .get(&citation.citation_id)
+                .copied()
+                .unwrap_or(i64::MAX)
+        });
+        // Citation labels preserve answer identity; unavailable snapshots never join active chunks.
         Ok(citations)
     }
 
@@ -1623,8 +1688,9 @@ impl ResearchStore {
     }
 
     fn connection(&self) -> Result<Connection, String> {
-        let connection = Connection::open(&self.path)
-            .map_err(|error| format!("failed to open research database: {error}"))?;
+        let connection =
+            Connection::open_with_flags(&self.path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
+                .map_err(|error| format!("failed to open research database: {error}"))?;
         configure_connection(&connection)?;
         Ok(connection)
     }
@@ -1642,7 +1708,6 @@ fn open_app_store(app: &tauri::AppHandle) -> Result<ResearchStore, String> {
     let research_dir = app_data.join("research");
     fs::create_dir_all(&research_dir)
         .map_err(|error| format!("failed to create research directory: {error}"))?;
-    recover_research_files(&research_dir)?;
     let store = ResearchStore::open(research_dir.join("research.sqlite"))?;
     migrate_legacy_sources(&store, &app_data)?;
     Ok(store)
@@ -1652,7 +1717,7 @@ pub(crate) fn with_app_store<T>(
     app: &tauri::AppHandle,
     operation: impl FnOnce(&ResearchStore) -> Result<T, String>,
 ) -> Result<T, String> {
-    with_shared_app_database(|| {
+    with_recovered_app_database(app, || {
         let store = open_app_store(app)?;
         operation(&store)
     })
@@ -1662,7 +1727,7 @@ pub(crate) fn with_app_store_snapshot<T>(
     app: &tauri::AppHandle,
     operation: impl FnOnce(&ResearchStore) -> Result<T, String>,
 ) -> Result<(u64, T), String> {
-    with_shared_app_database(|| {
+    with_recovered_app_database(app, || {
         let generation = APP_RESEARCH_DATABASE_GENERATION.load(AtomicOrdering::Acquire);
         let store = open_app_store(app)?;
         operation(&store).map(|result| (generation, result))
@@ -1674,7 +1739,7 @@ pub(crate) fn with_app_store_at_generation<T>(
     expected_generation: u64,
     operation: impl FnOnce(&ResearchStore) -> Result<T, String>,
 ) -> Result<T, String> {
-    with_shared_app_database(|| {
+    with_recovered_app_database(app, || {
         ensure_app_database_generation(expected_generation)?;
         let store = open_app_store(app)?;
         operation(&store)
@@ -1690,34 +1755,39 @@ fn ensure_app_database_generation(expected_generation: u64) -> Result<(), String
     Ok(())
 }
 
-fn recover_research_files(research_dir: &Path) -> Result<(), String> {
-    let database = research_dir.join("research.sqlite");
-    let rollback = research_dir.join("research.sqlite.rollback");
-    let replaced = research_dir.join("research.sqlite.replaced");
-    let importing = research_dir.join("research.sqlite.importing");
-    if !database.exists() {
-        let recovery = if rollback.exists() {
-            Some(rollback)
-        } else if replaced.exists() {
-            Some(replaced)
-        } else if importing.exists() {
-            Some(importing.clone())
-        } else {
-            None
-        };
-        if let Some(recovery) = recovery {
-            fs::rename(&recovery, &database).map_err(|error| {
-                format!(
-                    "failed to recover research database from {}: {error}",
-                    recovery.display()
-                )
-            })?;
+fn with_recovered_app_database<T>(
+    app: &tauri::AppHandle,
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("failed to resolve app data directory: {error}"))?
+        .join("research");
+    let mut operation = Some(operation);
+    loop {
+        // Check AND execute under one shared guard: a failed delivery cannot slip between them.
+        let result = with_shared_app_database(|| {
+            if recovery::needs_recovery(&directory)? {
+                return Ok(None);
+            }
+            operation
+                .take()
+                .expect("research operation runs exactly once")()
+            .map(Some)
+        })?;
+        if let Some(value) = result {
+            return Ok(value);
         }
+        with_exclusive_app_database(|| {
+            recover_research_files(&directory)?;
+            open_app_store(app).map(|_| ())
+        })?;
     }
-    if database.exists() && importing.exists() {
-        remove_sqlite_files(&importing)?;
-    }
-    Ok(())
+}
+
+fn recover_research_files(research_dir: &Path) -> Result<(), String> {
+    recovery::recover(research_dir)
 }
 
 pub(crate) fn ingest_news_cache(app: &tauri::AppHandle) -> Result<Value, String> {
@@ -1804,65 +1874,34 @@ fn import_app_pack_unlocked(app: &tauri::AppHandle, payload: &Value) -> Result<V
             epoch_millis(),
             unique_suffix()
         ));
-        fs::write(&path, bytes)
-            .map_err(|error| format!("failed to stage incoming research pack: {error}"))?;
+        crate::durability::atomic_write(&path, &bytes)?;
         temporary_source = Some(path.clone());
         path
     } else {
         return Err("path or bytes_base64 is required".to_string());
     };
 
-    let documents = read_portable_pack(&source_path)?;
-    if documents.is_empty() {
-        return Err("research pack does not contain any documents".to_string());
-    }
-    let database_path = research_dir.join("research.sqlite");
-    let staging_path = research_dir.join("research.sqlite.importing");
-    let rollback_path = research_dir.join("research.sqlite.rollback");
-    remove_sqlite_files(&staging_path)?;
-    {
-        let staging = ResearchStore::open(&staging_path)?;
-        staging.ingest_documents(&documents)?;
-        preserve_local_research_state(&database_path, &staging)?;
-        staging
-            .connection()?
-            .execute(
-                "INSERT INTO research_metadata (key, value) VALUES ('legacy_v1_import_complete', 'true')
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                [],
-            )
-            .map_err(|error| format!("failed to mark staged migration complete: {error}"))?;
-        staging.rebuild_fts()?;
-        staging
-            .connection()?
-            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
-            .map_err(|error| format!("failed to finalize staged research database: {error}"))?;
-    }
-    remove_sqlite_sidecars(&staging_path)?;
-
-    if database_path.exists() {
-        {
-            let connection = Connection::open(&database_path)
-                .map_err(|error| format!("failed to open current research database: {error}"))?;
-            let _ = connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-        }
-        remove_sqlite_sidecars(&database_path)?;
-        remove_sqlite_files(&rollback_path)?;
-        fs::rename(&database_path, &rollback_path)
-            .map_err(|error| format!("failed to preserve rollback database: {error}"))?;
-    }
-    if let Err(error) = fs::rename(&staging_path, &database_path) {
-        if rollback_path.exists() && !database_path.exists() {
-            let _ = fs::rename(&rollback_path, &database_path);
-        }
-        return Err(format!(
-            "failed to atomically activate research pack: {error}"
-        ));
-    }
-    invalidate_vector_cache(&database_path);
+    let result = read_portable_pack(&source_path)
+        .and_then(|documents| import_research_documents(&research_dir, &documents));
     if let Some(path) = temporary_source {
         let _ = fs::remove_file(path);
     }
+    result
+}
+
+fn import_research_documents(research_dir: &Path, documents: &[Value]) -> Result<Value, String> {
+    if documents.is_empty() {
+        return Err("research pack does not contain any documents".to_string());
+    }
+    recovery::deliver(research_dir, |staging_path| {
+        let staging = ResearchStore::open(staging_path)?;
+        staging.ingest_documents(documents)?;
+        preserve_local_research_state(&research_dir.join("research.sqlite"), &staging)?;
+        staging.connection()?.execute(
+            "INSERT OR REPLACE INTO research_metadata(key,value) VALUES('legacy_v1_import_complete','true')", []
+        ).map_err(|error| error.to_string())?;
+        staging.rebuild_fts().map(|_| ())
+    })?;
     Ok(json!({
         "schema_version": 2,
         "format": "gp-research-pack-v2",
@@ -1870,7 +1909,7 @@ fn import_app_pack_unlocked(app: &tauri::AppHandle, payload: &Value) -> Result<V
         "imported": true,
         "fts_rebuilt": true,
         "vectors_rebuild_required": cfg!(target_os = "windows"),
-        "rollback_available": rollback_path.exists()
+        "rollback_available": true
     }))
 }
 
@@ -1878,51 +1917,80 @@ fn preserve_local_research_state(
     previous_path: &Path,
     staging: &ResearchStore,
 ) -> Result<(), String> {
-    if !previous_path.exists() {
-        return Ok(());
-    }
-    {
-        let previous = Connection::open(previous_path)
-            .map_err(|error| format!("failed to open previous research database: {error}"))?;
-        initialize_schema(&previous)?;
-    }
-    let destination = staging.connection()?;
+    // The source must exist: a missing authoritative DB is not an empty history.
+    recovery::validate_database(previous_path)?;
+    let previous = ResearchStore::open(previous_path)?;
+    let source = previous.connection()?;
+    let mut destination = staging.connection()?;
     destination
         .execute(
             "ATTACH DATABASE ?1 AS previous_research",
-            params![previous_path.display().to_string()],
+            params![previous_path.to_string_lossy()],
         )
         .map_err(|error| format!("failed to attach previous research database: {error}"))?;
-    let result = destination
-        .execute_batch(
-            "INSERT OR IGNORE INTO research_threads
-                     SELECT id, title, stock_code, created_at_epoch_ms, updated_at_epoch_ms
-                     FROM previous_research.research_threads;
-                 INSERT OR IGNORE INTO research_answers
-                     SELECT id, thread_id, question, answer, mode, created_at_epoch_ms
-                     FROM previous_research.research_answers
-                     WHERE thread_id IN (SELECT id FROM research_threads);
-                 INSERT OR IGNORE INTO research_answer_citations (
-                     answer_id, citation_id, document_id, chunk_id, ordinal,
-                     lexical_score, vector_score, retrieval_score
-                 )
-                     SELECT previous.answer_id, previous.citation_id, previous.document_id,
-                            previous.chunk_id, previous.ordinal, previous.lexical_score,
-                            previous.vector_score, previous.retrieval_score
-                     FROM previous_research.research_answer_citations previous
-                     WHERE previous.answer_id IN (SELECT id FROM research_answers)
-                       AND EXISTS (SELECT 1 FROM chunks WHERE id = previous.chunk_id);
-                 UPDATE research_messages
-                 SET unread = COALESCE((
-                     SELECT previous.unread FROM previous_research.research_messages previous
-                     WHERE previous.id = research_messages.id
-                 ), unread);
-                 UPDATE documents SET cited_count = (
-                     SELECT COUNT(*) FROM research_answer_citations citations
-                     WHERE citations.document_id = documents.id
-                 );",
-        )
-        .map_err(|error| format!("failed to preserve local research state: {error}"));
+    let result = (|| {
+        let transaction = destination
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        transaction.execute_batch(
+            "DELETE FROM research_unavailable_citations;
+             DELETE FROM research_answer_citations;
+             DELETE FROM research_answers;
+             DELETE FROM research_threads;
+             INSERT INTO research_threads
+                 SELECT id,title,stock_code,created_at_epoch_ms,updated_at_epoch_ms FROM previous_research.research_threads;
+             INSERT INTO research_answers
+                 SELECT id,thread_id,question,answer,mode,created_at_epoch_ms FROM previous_research.research_answers;
+             INSERT INTO research_answer_citations
+                 (answer_id,citation_id,document_id,chunk_id,ordinal,lexical_score,vector_score,retrieval_score)
+                 SELECT ac.answer_id,ac.citation_id,ac.document_id,ac.chunk_id,ac.ordinal,ac.lexical_score,ac.vector_score,ac.retrieval_score
+                 FROM previous_research.research_answer_citations ac
+                 JOIN previous_research.chunks old ON old.id=ac.chunk_id AND old.document_id=ac.document_id
+                 JOIN previous_research.documents od ON od.id=old.document_id
+                 JOIN chunks fresh ON fresh.id=old.id AND fresh.document_id=old.document_id
+                 JOIN documents fd ON fd.id=fresh.document_id
+                 WHERE fresh.content_hash=old.content_hash AND fresh.content=old.content
+                   AND fd.content_hash=od.content_hash AND fd.content=od.content
+                   AND fresh.title=old.title AND fresh.source_tier=old.source_tier
+                   AND fresh.source_name=old.source_name AND fresh.url IS old.url
+                   AND fresh.published_at IS old.published_at AND fresh.page_number IS old.page_number;
+             UPDATE research_messages SET unread=COALESCE((
+                 SELECT old.unread FROM previous_research.research_messages old
+                 WHERE old.id=research_messages.id AND old.document_id=research_messages.document_id
+             ),1);
+             UPDATE documents SET cited_count=(SELECT COUNT(*) FROM research_answer_citations ac WHERE ac.document_id=documents.id);
+             INSERT OR REPLACE INTO research_metadata(key,value)
+                 SELECT key,value FROM previous_research.research_metadata
+                 WHERE key IN ('legacy_v1_import_complete','legacy_v1_archive_complete');"
+        ).map_err(|error| format!("failed to replace local research state: {error}"))?;
+        let mut answers = source
+            .prepare("SELECT id FROM research_answers")
+            .map_err(|error| error.to_string())?;
+        let ids = answers
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?;
+        for id in ids {
+            let id = id.map_err(|error| error.to_string())?;
+            for (ordinal, mut citation) in previous
+                .answer_citations(&source, &id)?
+                .into_iter()
+                .enumerate()
+            {
+                let retained: bool = transaction.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM research_answer_citations WHERE answer_id=?1 AND citation_id=?2)",
+                    params![id, citation.citation_id], |row| row.get(0)
+                ).map_err(|error| error.to_string())?;
+                if !retained {
+                    citation.unavailable = true;
+                    transaction.execute(
+                        "INSERT INTO research_unavailable_citations(answer_id,citation_id,ordinal,payload_json) VALUES(?1,?2,?3,?4)",
+                        params![id, citation.citation_id, ordinal as i64, serde_json::to_string(&citation).map_err(|error| error.to_string())?]
+                    ).map_err(|error| error.to_string())?;
+                }
+            }
+        }
+        transaction.commit().map_err(|error| error.to_string())
+    })();
     let detach = destination.execute_batch("DETACH DATABASE previous_research;");
     result?;
     detach.map_err(|error| format!("failed to detach previous research database: {error}"))
@@ -1942,35 +2010,27 @@ fn rollback_app_pack_unlocked(app: &tauri::AppHandle) -> Result<Value, String> {
         .app_data_dir()
         .map_err(|error| format!("failed to resolve app data directory: {error}"))?;
     let research_dir = app_data.join("research");
-    recover_research_files(&research_dir)?;
-    let database_path = research_dir.join("research.sqlite");
-    let rollback_path = research_dir.join("research.sqlite.rollback");
-    if !rollback_path.exists() {
-        return Err("no research database rollback is available".to_string());
-    }
-    let replaced_path = research_dir.join("research.sqlite.replaced");
-    if database_path.exists() {
-        {
-            let connection = Connection::open(&database_path)
-                .map_err(|error| format!("failed to open current research database: {error}"))?;
-            let _ = connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-        }
-        remove_sqlite_sidecars(&database_path)?;
-        remove_sqlite_files(&replaced_path)?;
-        fs::rename(&database_path, &replaced_path)
-            .map_err(|error| format!("failed to preserve replaced database: {error}"))?;
-    }
-    if let Err(error) = fs::rename(&rollback_path, &database_path) {
-        if replaced_path.exists() && !database_path.exists() {
-            let _ = fs::rename(&replaced_path, &database_path);
-        }
-        return Err(format!("failed to restore research rollback: {error}"));
-    }
-    invalidate_vector_cache(&database_path);
-    Ok(json!({
-        "rolled_back": true,
-        "replaced_database": replaced_path.display().to_string()
-    }))
+    rollback_research_documents(&research_dir)
+}
+
+fn rollback_research_documents(research_dir: &Path) -> Result<Value, String> {
+    recover_research_files(research_dir)?;
+    let rollback_path = recovery::rollback_source(research_dir)?;
+    recovery::validate_database(&rollback_path)?;
+    recovery::deliver(research_dir, |staging_path| {
+        let old =
+            Connection::open_with_flags(&rollback_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(|error| error.to_string())?;
+        crate::durability::snapshot_sqlite(&old, staging_path)?;
+        drop(old);
+        let staging = ResearchStore::open(staging_path)?;
+        // Discard every old user row before copying CURRENT authority, including deletions.
+        preserve_local_research_state(&research_dir.join("research.sqlite"), &staging)?;
+        staging.rebuild_fts().map(|_| ())
+    })?;
+    Ok(
+        json!({"rolled_back":true, "replaced_database":recovery::rollback_source(research_dir)?.display().to_string()}),
+    )
 }
 
 fn remove_sqlite_files(path: &Path) -> Result<(), String> {
@@ -2310,9 +2370,9 @@ fn read_portable_pack(path: &Path) -> Result<Vec<Value>, String> {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(|error| format!("failed to read pack schema version: {error}"))?;
-    if version != RESEARCH_SCHEMA_VERSION {
+    if version != RESEARCH_PACK_VERSION {
         return Err(format!(
-            "unsupported research pack schema {version}; expected {RESEARCH_SCHEMA_VERSION}"
+            "unsupported research pack schema {version}; expected {RESEARCH_PACK_VERSION}"
         ));
     }
     let format = connection
@@ -2919,7 +2979,6 @@ fn decode_f32_blob(bytes: &[u8]) -> Result<Vec<f32>, String> {
 }
 
 fn initialize_schema(connection: &Connection) -> Result<(), String> {
-    configure_connection(connection)?;
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(|error| format!("failed to read research schema version: {error}"))?;
@@ -2928,10 +2987,14 @@ fn initialize_schema(connection: &Connection) -> Result<(), String> {
             "research database schema {version} is newer than supported version {RESEARCH_SCHEMA_VERSION}"
         ));
     }
+    configure_connection(connection)?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|e| format!("failed to begin research migration: {e}"))?;
+    let connection: &Connection = &transaction;
     connection
         .execute_batch(
-            "BEGIN IMMEDIATE;
-             CREATE TABLE IF NOT EXISTS research_metadata (
+            "CREATE TABLE IF NOT EXISTS research_metadata (
                  key TEXT PRIMARY KEY,
                  value TEXT NOT NULL
              );
@@ -3026,8 +3089,14 @@ fn initialize_schema(connection: &Connection) -> Result<(), String> {
                  retrieval_score REAL NOT NULL DEFAULT 0,
                  PRIMARY KEY(answer_id, citation_id)
              );
-             PRAGMA user_version = 2;
-             COMMIT;",
+             CREATE TABLE IF NOT EXISTS research_unavailable_citations (
+                 answer_id TEXT NOT NULL REFERENCES research_answers(id) ON DELETE CASCADE,
+                 citation_id TEXT NOT NULL,
+                 ordinal INTEGER NOT NULL,
+                 payload_json TEXT NOT NULL,
+                 PRIMARY KEY(answer_id, citation_id)
+             );
+             ",
         )
         .map_err(|error| format!("failed to initialize research schema: {error}"))?;
     ensure_column(
@@ -3048,6 +3117,12 @@ fn initialize_schema(connection: &Connection) -> Result<(), String> {
         "retrieval_score",
         "REAL NOT NULL DEFAULT 0",
     )?;
+    transaction
+        .pragma_update(None, "user_version", RESEARCH_SCHEMA_VERSION)
+        .map_err(|e| e.to_string())?;
+    transaction
+        .commit()
+        .map_err(|e| format!("failed to commit research migration: {e}"))?;
     Ok(())
 }
 
@@ -3077,14 +3152,15 @@ fn ensure_column(
 }
 
 fn configure_connection(connection: &Connection) -> Result<(), String> {
-    connection
-        .execute_batch(
-            "PRAGMA foreign_keys = ON;
-             PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;
-             PRAGMA busy_timeout = 5000;",
-        )
-        .map_err(|error| format!("failed to configure research database: {error}"))
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+    if !(0..=RESEARCH_SCHEMA_VERSION).contains(&version) {
+        return Err(format!(
+            "research database schema {version} is unsupported; original preserved"
+        ));
+    }
+    crate::durability::configure_user_connection(connection)
 }
 
 fn string_field(value: &Value, key: &str) -> Option<String> {
@@ -3779,7 +3855,10 @@ mod tests {
                 .unwrap_or_default()
                 > 0.0
         );
-        assert_eq!(store.index_status().unwrap()["schema_version"], 2);
+        assert_eq!(
+            store.index_status().unwrap()["schema_version"],
+            RESEARCH_SCHEMA_VERSION
+        );
         drop(store);
         let _ = std::fs::remove_file(path);
     }
@@ -4628,6 +4707,138 @@ mod tests {
     }
 
     #[test]
+    fn state_copy_replaces_stale_threads_and_keeps_latest_answers_and_unread() {
+        let old_path = temporary_database_path("d3-stale");
+        let current_path = temporary_database_path("d3-current");
+        let old = ResearchStore::open(&old_path).unwrap();
+        let current = ResearchStore::open(&current_path).unwrap();
+        let doc = json!({"document_id":"d3-doc", "title":"Evidence", "content":"shared evidence", "source_tier":"news"});
+        old.ingest_documents(&[doc.clone()]).unwrap();
+        current.ingest_documents(&[doc]).unwrap();
+        let deleted = old
+            .create_thread(&json!({"title":"Deleted later"}))
+            .unwrap();
+        let fresh = current
+            .create_thread(&json!({"title":"Created after import"}))
+            .unwrap();
+        let fresh_id = fresh["id"].as_str().unwrap();
+        current
+            .save_answer(
+                fresh_id,
+                "new question",
+                &json!({"answer":"latest answer", "citations":[]}),
+            )
+            .unwrap();
+        current
+            .connection()
+            .unwrap()
+            .execute("UPDATE research_messages SET unread=0", [])
+            .unwrap();
+        preserve_local_research_state(&current_path, &old).unwrap();
+        assert!(
+            old.thread(deleted["id"].as_str().unwrap()).is_err(),
+            "deleted threads must not return"
+        );
+        assert_eq!(
+            old.thread(fresh_id).unwrap()["answers"][0]["answer"],
+            "latest answer"
+        );
+        assert_eq!(old.overview(&json!({})).unwrap()["unread_count"], 0);
+        remove_sqlite_files(&old_path).unwrap();
+        remove_sqlite_files(&current_path).unwrap();
+    }
+
+    #[test]
+    fn state_copy_does_not_rebind_reused_chunk_ids() {
+        let old_path = temporary_database_path("d3-citation-old");
+        let new_path = temporary_database_path("d3-citation-new");
+        let old = ResearchStore::open(&old_path).unwrap();
+        let new = ResearchStore::open(&new_path).unwrap();
+        old.ingest_documents(&[json!({"document_id":"same-id", "title":"Evidence", "content":"original evidence", "source_tier":"news"})]).unwrap();
+        new.ingest_documents(&[json!({"document_id":"same-id", "title":"Evidence", "content":"different evidence", "source_tier":"news"})]).unwrap();
+        let thread = old.create_thread(&json!({"title":"History"})).unwrap();
+        let id = thread["id"].as_str().unwrap();
+        let response = old.query(&json!({"query":"original evidence"})).unwrap();
+        assert!(!response["citations"].as_array().unwrap().is_empty());
+        old.save_answer(id, "question", &response).unwrap();
+        preserve_local_research_state(&old_path, &new).unwrap();
+        let history = new.thread(id).unwrap();
+        assert_eq!(
+            history["answers"][0]["citations"][0]["excerpt"],
+            response["citations"][0]["excerpt"]
+        );
+        assert_eq!(history["answers"][0]["citations"][0]["unavailable"], true);
+        remove_sqlite_files(&old_path).unwrap();
+        remove_sqlite_files(&new_path).unwrap();
+    }
+
+    #[test]
+    fn state_copy_defaults_absent_historical_messages_to_unread() {
+        let old_path = temporary_database_path("d3-stale-unread");
+        let current_path = temporary_database_path("d3-empty-current");
+        let old = ResearchStore::open(&old_path).unwrap();
+        ResearchStore::open(&current_path).unwrap();
+        old.ingest_documents(&[json!({"document_id":"old-only", "content":"old evidence"})])
+            .unwrap();
+        old.connection()
+            .unwrap()
+            .execute("UPDATE research_messages SET unread=0", [])
+            .unwrap();
+        preserve_local_research_state(&current_path, &old).unwrap();
+        assert_eq!(old.overview(&json!({})).unwrap()["unread_count"], 1);
+        remove_sqlite_files(&old_path).unwrap();
+        remove_sqlite_files(&current_path).unwrap();
+    }
+
+    #[test]
+    fn unavailable_citation_cannot_be_saved_as_an_active_reference() {
+        let path = temporary_database_path("d3-save-unavailable");
+        let store = ResearchStore::open(&path).unwrap();
+        store.ingest_documents(&[json!({"document_id":"evidence", "title":"Evidence", "content":"research evidence"})]).unwrap();
+        let id = store.create_thread(&json!({"title":"History"})).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let mut response = store.query(&json!({"query":"research evidence"})).unwrap();
+        assert!(!response["citations"].as_array().unwrap().is_empty());
+        response["citations"][0]["unavailable"] = json!(true);
+        assert!(store
+            .save_answer(&id, "question", &response)
+            .unwrap_err()
+            .contains("unavailable"));
+        assert!(store.thread(&id).unwrap()["answers"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        remove_sqlite_files(&path).unwrap();
+    }
+
+    #[test]
+    fn recovery_never_promotes_an_uncommitted_orphan_staging_database() {
+        let root = temporary_database_path("d3-orphan");
+        fs::create_dir_all(&root).unwrap();
+        ResearchStore::open(root.join("research.sqlite.importing")).unwrap();
+        assert!(recover_research_files(&root).is_err());
+        assert!(!root.join("research.sqlite").exists());
+        assert!(root.join("research.sqlite.importing").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn corrupt_or_empty_existing_main_is_never_initialized() {
+        for contents in [b"not sqlite".as_slice(), b"".as_slice()] {
+            let root = temporary_database_path("d3-corrupt");
+            fs::create_dir_all(&root).unwrap();
+            let main = root.join("research.sqlite");
+            fs::write(&main, contents).unwrap();
+            assert!(recover_research_files(&root).is_err());
+            assert!(ResearchStore::open(&main).is_err());
+            assert_eq!(fs::read(&main).unwrap(), contents);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
     fn rejects_unknown_or_missing_model_citations() {
         let citations = vec![
             json!({"citation_id": "C1", "source_tier": "filing"}),
@@ -4718,7 +4929,8 @@ mod tests {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) static RESEARCH_EMBEDDING_JOB_GATE: ResearchEmbeddingJobGate = ResearchEmbeddingJobGate::new();
+pub(crate) static RESEARCH_EMBEDDING_JOB_GATE: ResearchEmbeddingJobGate =
+    ResearchEmbeddingJobGate::new();
 
 #[cfg(target_os = "windows")]
 pub(crate) struct ResearchEmbeddingJobGate {
@@ -4761,7 +4973,10 @@ impl ResearchEmbeddingJobGate {
 }
 
 #[tauri::command]
-pub(crate) async fn api_research_overview(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_research_overview(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     crate::runtime::run_io_bound("api_research_overview", move || {
         crate::research::with_app_store(&app, |store| {
             let mut overview = store.overview(&payload)?;
@@ -4789,7 +5004,10 @@ pub(crate) async fn api_research_overview(app: tauri::AppHandle, payload: Value)
 }
 
 #[tauri::command]
-pub(crate) async fn api_research_messages(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_research_messages(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     crate::runtime::run_io_bound("api_research_messages", move || {
         crate::research::with_app_store(&app, |store| store.messages(&payload))
     })
@@ -4797,7 +5015,10 @@ pub(crate) async fn api_research_messages(app: tauri::AppHandle, payload: Value)
 }
 
 #[tauri::command]
-pub(crate) async fn api_research_mark_read(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_research_mark_read(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     crate::runtime::run_io_bound("api_research_mark_read", move || {
         crate::research::with_app_store(&app, |store| store.mark_read(&payload))
     })
@@ -4805,7 +5026,10 @@ pub(crate) async fn api_research_mark_read(app: tauri::AppHandle, payload: Value
 }
 
 #[tauri::command]
-pub(crate) async fn api_research_query(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_research_query(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     let retrieval_app = app.clone();
     let retrieval_payload = payload.clone();
     let (database_generation, mut response) =
@@ -4914,7 +5138,10 @@ pub(crate) async fn api_research_query(app: tauri::AppHandle, payload: Value) ->
 }
 
 #[tauri::command]
-pub(crate) async fn api_research_refresh(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_research_refresh(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     let news = crate::runtime::with_heavy_network_permit(
         "api_research_refresh",
         crate::news_rag::api_news_rag_impl(app.clone(), payload),
@@ -5041,7 +5268,9 @@ pub(crate) async fn api_research_rebuild_index(app: tauri::AppHandle) -> Result<
 }
 
 #[tauri::command]
-pub(crate) async fn api_research_rebuild_embeddings(app: tauri::AppHandle) -> Result<Value, String> {
+pub(crate) async fn api_research_rebuild_embeddings(
+    app: tauri::AppHandle,
+) -> Result<Value, String> {
     #[cfg(target_os = "windows")]
     {
         crate::runtime::run_cpu_bound("api_research_rebuild_embeddings", move || {
@@ -5099,11 +5328,12 @@ pub(crate) fn schedule_research_embeddings(app: tauri::AppHandle) {
         loop {
             RESEARCH_EMBEDDING_JOB_GATE.begin_cycle();
             let worker_app = app.clone();
-            let result = crate::runtime::run_cpu_bound("background_research_embeddings", move || {
-                rebuild_research_embeddings(&worker_app)
-            })
-            .await
-            .and_then(|result| result);
+            let result =
+                crate::runtime::run_cpu_bound("background_research_embeddings", move || {
+                    rebuild_research_embeddings(&worker_app)
+                })
+                .await
+                .and_then(|result| result);
             let event = match result {
                 Ok(status) => json!({"ok": true, "status": status}),
                 Err(error) => json!({"ok": false, "error": error}),
@@ -5120,7 +5350,10 @@ pub(crate) fn schedule_research_embeddings(app: tauri::AppHandle) {
 pub(crate) fn schedule_research_embeddings(_app: tauri::AppHandle) {}
 
 #[tauri::command]
-pub(crate) async fn api_research_pack_export(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_research_pack_export(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     crate::runtime::run_io_bound("api_research_pack_export", move || {
         crate::research::export_app_pack(&app, &payload)
     })
@@ -5128,7 +5361,10 @@ pub(crate) async fn api_research_pack_export(app: tauri::AppHandle, payload: Val
 }
 
 #[tauri::command]
-pub(crate) async fn api_research_pack_import(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_research_pack_import(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     let worker_app = app.clone();
     let result = crate::runtime::run_io_bound("api_research_pack_import", move || {
         crate::research::import_app_pack(&worker_app, &payload)
@@ -5177,4 +5413,71 @@ pub(crate) fn schedule_research_maintenance(app: tauri::AppHandle) {
             tokio::time::sleep(Duration::from_secs(6 * 60 * 60)).await;
         }
     });
+}
+
+#[cfg(test)]
+mod schema_reliability_tests {
+    use super::*;
+    #[test]
+    fn future_schema_is_rejected_without_changing_database_bytes() {
+        let path = std::env::temp_dir().join(format!(
+            "{}-future.sqlite",
+            crate::agent_ledger::next_run_id()
+        ));
+        drop(ResearchStore::open(&path).unwrap());
+        let c = Connection::open(&path).unwrap();
+        c.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA user_version=99; CREATE TABLE future(value TEXT); INSERT INTO future VALUES('preserve');").unwrap();
+        drop(c);
+        let before = fs::read(&path).unwrap();
+        INITIALIZED_DATABASES
+            .get()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .remove(&path); // simulate a new process
+        assert!(ResearchStore::open(&path).is_err());
+        assert!(
+            fs::read(&path).unwrap() == before,
+            "reject newer schema before changing journal mode"
+        );
+        fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod local_schema_migration_tests {
+    use super::*;
+    #[test]
+    fn local_citation_extension_is_versioned_separately_from_portable_v2() {
+        let root = std::env::temp_dir().join(crate::agent_ledger::next_run_id());
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("research.sqlite");
+        drop(ResearchStore::open(&path).unwrap());
+        let old = Connection::open(&path).unwrap();
+        old.execute_batch("DROP TABLE research_unavailable_citations; PRAGMA user_version=2;")
+            .unwrap();
+        drop(old);
+        INITIALIZED_DATABASES
+            .get()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .remove(&path);
+        let store = ResearchStore::open(&path).unwrap();
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            3
+        );
+        assert!(fs::read_dir(&root).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("before-v3")));
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
 }

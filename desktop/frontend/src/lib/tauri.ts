@@ -1,3 +1,5 @@
+import { invokeNativeJob, isNativeJobCommand } from "./nativeJobs";
+import { formatLocalDataError } from "./localData";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen as tauriListen } from "@tauri-apps/api/event";
 import {
@@ -47,6 +49,7 @@ export interface MarketRefreshLogEntry {
 }
 
 export interface MarketRefreshOptions {
+  signal?: AbortSignal;
   mode?: string;
   max_bytes?: number;
   daily_days?: number;
@@ -69,8 +72,9 @@ const MOBILE_TENCENT_MAX_CANDIDATES = 15000;
 const MOBILE_TENCENT_BATCHES_PER_STEP = 12;
 const OBSERVE_FULL_HISTORY_LIMIT = 10000;
 const OBSERVE_HISTORY_LIMIT = OBSERVE_FULL_HISTORY_LIMIT;
-const BUNDLED_FINANCIAL_SNAPSHOT_URL = new URL("mobile-financial-snapshot.json", window.location.href).toString();
-const BUNDLED_INDUSTRY_SNAPSHOT_URL = new URL("mobile-industry-snapshot.json", window.location.href).toString();
+const FRONTEND_BASE_URL = typeof window === "undefined" ? "http://localhost/" : window.location.href;
+const BUNDLED_FINANCIAL_SNAPSHOT_URL = new URL("mobile-financial-snapshot.json", FRONTEND_BASE_URL).toString();
+const BUNDLED_INDUSTRY_SNAPSHOT_URL = new URL("mobile-industry-snapshot.json", FRONTEND_BASE_URL).toString();
 const DEDUCTED_FINANCIAL_FIELDS = [
   "deducted_net_profit_billion",
   "deducted_net_profit_margin",
@@ -181,12 +185,17 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
       const code = normalizeStockCode(decodeURIComponent(path.slice("/api/observe/".length)));
       const payload: Record<string, unknown> = withAndroidNetworkOptions({
         code,
+        data_policy: parsed.searchParams.get("data_policy") ?? "cache_only",
+        ...(parsed.searchParams.has("request_id") ? { request_id: parsed.searchParams.get("request_id") } : {}),
+        ...(parsed.searchParams.has("job_id") ? { job_id: parsed.searchParams.get("job_id") } : {}),
         start_date: normalizeDateParam(parsed.searchParams.get("start_date"), "19900101"),
         end_date: normalizeDateParam(parsed.searchParams.get("end_date"), currentSystemDateCompact()),
         series_limit: clampInt(parsed.searchParams.get("series_limit"), 20, OBSERVE_FULL_HISTORY_LIMIT, OBSERVE_FULL_HISTORY_LIMIT),
         include_order_book: parsed.searchParams.get("include_order_book") === "true",
         include_chip_distribution: parsed.searchParams.get("include_chip_distribution") !== "false",
       });
+      // No prefetch, hydration or network timer on local reads.
+      if (payload.data_policy !== "refresh") return invokeLocalData(invoke, "api_observe", payload);
       const mobileRuntime = isMobileTauriRuntime();
       let history: Record<string, unknown>[] | null = null;
       if (mobileRuntime) {
@@ -197,7 +206,7 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
       history = await fetchObserveDailyHistoryForTauriStable(payload, OBSERVE_PREFETCH_TIMEOUT_MS).catch(() => null);
       if (Array.isArray(history) && history.length) payload.history = history;
 
-      const observeInvoke = invoke("api_observe", { payload });
+      const observeInvoke = invokeLocalData(invoke, "api_observe", payload);
       if (!mobileRuntime) {
         const observeResult = await observeInvoke;
         return hydrateObserveTrendFromHistory(observeResult as ObserveResult, code, history);
@@ -247,9 +256,14 @@ async function withFinancialSnapshotPayload(payload: unknown): Promise<unknown> 
   return financialSnapshot ? { ...base, financial_snapshot: financialSnapshot } : payload;
 }
 
+async function invokeLocalData(invoke: InvokeFn, command: string, payload: unknown): Promise<unknown> {
+  try { return await invoke(command, { payload }); }
+  catch (error) { throw new Error(formatLocalDataError(error), { cause: error }); }
+}
 async function invokeWithFinancialSnapshot(invoke: InvokeFn, command: string, payload: unknown): Promise<unknown> {
-  const nextPayload = await withFinancialSnapshotPayload(payload);
-  return invoke(command, { payload: nextPayload });
+  const base = { data_policy: "cache_only", ...asRecord(payload) };
+  const nextPayload = base.data_policy === "refresh" ? await withFinancialSnapshotPayload(base) : base;
+  return invokeLocalData(invoke, command, nextPayload);
 }
 
 export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
@@ -264,7 +278,7 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/sector-screen": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_sector_screen", payload),
   "/api/custom-screen": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_custom_screen", payload),
   "/api/graph-screen": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_graph_screen", payload),
-  "/api/trend": async ({ invoke, payload }) => invoke("api_trend_analyze", { payload }),
+  "/api/trend": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_trend_analyze", payload),
   "/api/trend-screen": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_trend_screen", payload),
   "/api/backtest": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_backtest", payload),
   "/api/news-rag": async ({ invoke, payload }) => isMobileTauriRuntime()
@@ -351,9 +365,15 @@ function tauriRouteHandler(method: string, path: string): TauriRouteHandler | nu
   return null;
 }
 
-async function requestTauriJson(method: string, url: string, payload?: unknown): Promise<{ handled: boolean; data?: unknown }> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return { handled: false };
+async function requestTauriJson(method: string, url: string, payload?: unknown, signal?: AbortSignal | null): Promise<{ handled: boolean; data?: unknown }> {
+  const rawInvoke = getTauriInvoke();
+  if (!rawInvoke) return { handled: false };
+  const invoke: InvokeFn = <T,>(command: string, args?: Record<string, unknown>): Promise<T> => {
+    if (!isNativeJobCommand(command)) return rawInvoke<T>(command, args);
+    const deadline = createTimeoutSignal(command === "api_market_refresh" ? MOBILE_MARKET_REFRESH_INVOKE_TIMEOUT_MS : undefined);
+    const combined = combineAbortSignals(signal, deadline.signal);
+    return invokeNativeJob<T>(rawInvoke, command, args, { signal: combined }).finally(() => { deadline.cancel(); releaseAbortSignal(combined); });
+  };
   const parsed = new URL(url, window.location.href);
   const normalizedMethod = String(method || "GET").toUpperCase();
   const handler = tauriRouteHandler(normalizedMethod, parsed.pathname);
@@ -406,6 +426,10 @@ async function tauriAutoRefreshUniverse(invoke: InvokeFn, payload: Record<string
 
 export async function refreshTauriMarketData(invoke: InvokeFn, options: MarketRefreshOptions = {}): Promise<Record<string, unknown>> {
   const logs = createMarketRefreshLogger(options.onLog);
+  const lifecycle = new AbortController();
+  const visibilityChanged = () => { if (typeof document !== "undefined" && document.visibilityState === "hidden") lifecycle.abort(); };
+  if (typeof document !== "undefined") document.addEventListener?.("visibilitychange", visibilityChanged);
+  visibilityChanged();
   const unlisten = await listenMarketRefreshLogs(logs).catch((error) => {
     logs(`无法监听 Rust 刷新日志：${(error as Error).message}`, "warn");
     return undefined;
@@ -422,6 +446,7 @@ export async function refreshTauriMarketData(invoke: InvokeFn, options: MarketRe
     let financialSnapshotSent = false;
 
     for (let loop = 0; loop < maxLoops; loop += 1) {
+      if (lifecycle.signal.aborted || options.signal?.aborted) throw createRequestAbortError("行情刷新已暂停；已提交的缓存保留。", "AbortError");
       logs(`请求行情刷新批次窗口：从第 ${batchStart + 1} 批开始，每轮 ${batchCount} 批。`, "info");
       const payload = withAndroidNetworkOptions({
         ...defaultCachePolicy(),
@@ -433,12 +458,11 @@ export async function refreshTauriMarketData(invoke: InvokeFn, options: MarketRe
         use_previous_close: shouldUsePreviousCloseForMobileRefresh(),
       });
       if (payload.financial_snapshot) financialSnapshotSent = true;
-      const refreshPromise = invoke<Record<string, unknown>>("api_market_refresh", { payload });
-      const data = await withTimeout(
-        refreshPromise,
-        MOBILE_MARKET_REFRESH_INVOKE_TIMEOUT_MS,
-        `Tauri/Rust 行情批次 ${batchStart + 1} 超过 ${Math.round(MOBILE_MARKET_REFRESH_INVOKE_TIMEOUT_MS / 1000)} 秒未返回，已中止等待。`,
-      );
+      const deadline = createTimeoutSignal(MOBILE_MARKET_REFRESH_INVOKE_TIMEOUT_MS);
+      const signal = combineAbortSignals(deadline.signal, lifecycle.signal, options.signal);
+      let data: Record<string, unknown>;
+      try { data = await invokeNativeJob<Record<string, unknown>>(invoke, "api_market_refresh", { payload }, { signal }); }
+      finally { deadline.cancel(); releaseAbortSignal(signal); }
       lastData = data;
       aggregate = mergeMarketRefreshResult(aggregate, data);
       logMarketRefreshBatchResult(logs, data, aggregate);
@@ -477,6 +501,7 @@ export async function refreshTauriMarketData(invoke: InvokeFn, options: MarketRe
       notes: uniqueNotes([...(Array.isArray(result.notes) ? result.notes as string[] : []), ...notes, ...validationNotes(validation)]),
     };
   } finally {
+    if (typeof document !== "undefined") document.removeEventListener?.("visibilitychange", visibilityChanged);
     unlisten?.();
   }
 }
@@ -535,6 +560,7 @@ function createMarketRefreshLogger(onLog?: (entry: MarketRefreshLogEntry) => voi
 function sanitizeMarketRefreshOptions(options: MarketRefreshOptions): Record<string, unknown> {
   const payload: Record<string, unknown> = { ...options };
   delete payload.onLog;
+  delete payload.signal;
   if (!payload.max_candidates) payload.max_candidates = MOBILE_TENCENT_MAX_CANDIDATES;
   if (!payload.batch_count) payload.batch_count = MOBILE_TENCENT_BATCHES_PER_STEP;
   if (!payload.max_failed_batches) payload.max_failed_batches = 3;
@@ -1001,18 +1027,23 @@ export function createTimeoutSignal(timeoutMs?: number, message?: string): { sig
   return { signal: controller.signal, cancel: () => window.clearTimeout(timer) };
 }
 
+const abortCleanups = new WeakMap<AbortSignal, () => void>();
+function releaseAbortSignal(signal: AbortSignal | null | undefined): void {
+  if (signal) { abortCleanups.get(signal)?.(); abortCleanups.delete(signal); }
+}
 export function combineAbortSignals(...signals: (AbortSignal | null | undefined)[]): AbortSignal | null {
-  const activeSignals = signals.filter(Boolean) as AbortSignal[];
-  if (!activeSignals.length || typeof AbortController === "undefined") return activeSignals[0] || null;
-  if (activeSignals.length === 1) return activeSignals[0];
+  const sources = signals.filter(Boolean) as AbortSignal[];
+  if (!sources.length || typeof AbortController === "undefined") return sources[0] || null;
   const controller = new AbortController();
-  const abort = (event: { target: AbortSignal }) => {
-    if (!controller.signal.aborted) controller.abort(abortReason(event.target));
-  };
-  activeSignals.forEach((signal) => {
-    if (signal.aborted) abort({ target: signal });
-    else signal.addEventListener("abort", () => abort({ target: signal }), { once: true });
-  });
+  const removers: Array<() => void> = [];
+  const dispose = () => { removers.splice(0).forEach(remove => remove()); };
+  abortCleanups.set(controller.signal, dispose);
+  for (const source of sources) {
+    const abort = () => { controller.abort(abortReason(source)); dispose(); };
+    if (source.aborted) { abort(); break; }
+    source.addEventListener("abort", abort, { once: true });
+    removers.push(() => source.removeEventListener("abort", abort));
+  }
   return controller.signal;
 }
 
@@ -1036,10 +1067,12 @@ export function createRequestAbortError(message: string, name = "AbortError"): E
 function withAbortSignal<T>(promise: Promise<T>, signal: AbortSignal | null): Promise<T> {
   if (!signal) return promise;
   if (signal.aborted) return Promise.reject(abortReason(signal));
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => signal.addEventListener("abort", () => reject(abortReason(signal)), { once: true })),
-  ]);
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener("abort", abort);
+    const abort = () => { cleanup(); reject(abortReason(signal)); };
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+  });
 }
 
 export async function requestJson<T = unknown>(method: string, url: string, payload?: unknown, headers: Record<string, string> = {}, options: RequestOptions = {}): Promise<T> {
@@ -1061,7 +1094,8 @@ export async function requestJson<T = unknown>(method: string, url: string, payl
     }
   }
   try {
-    const tauriResult = await withAbortSignal(requestTauriJson(method, url, payload), signal);
+    if (signal?.aborted) throw abortReason(signal);
+    const tauriResult = await withAbortSignal(requestTauriJson(method, url, payload, signal), signal);
     if (tauriResult.handled) return tauriResult.data as T;
     const request: RequestInit = { method, headers: method === "POST" ? { "Content-Type": "application/json", ...headers } : headers };
     if (signal) request.signal = signal;
@@ -1072,6 +1106,7 @@ export async function requestJson<T = unknown>(method: string, url: string, payl
   } finally {
     removeNativeAgentAbortListener?.();
     timeoutSignal.cancel();
+    releaseAbortSignal(signal);
   }
 }
 

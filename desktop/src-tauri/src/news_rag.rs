@@ -1786,16 +1786,7 @@ fn write_news_cache_items(path: &Path, items: &[Value]) -> Result<(), String> {
         json!({"schema_version": 1, "updated_at_epoch_ms": epoch_millis(), "items": items});
     let bytes =
         serde_json::to_vec(&payload).map_err(|error| format!("序列化消息缓存失败：{error}"))?;
-    let tmp_path = root.join(format!(
-        "{NEWS_CACHE_FILE}.tmp-{}-{}",
-        epoch_millis(),
-        NEWS_CACHE_TMP_COUNTER.fetch_add(1, AtomicOrdering::Relaxed)
-    ));
-    fs::write(&tmp_path, &bytes).map_err(|error| format!("写入消息缓存临时文件失败：{error}"))?;
-    if path.exists() {
-        fs::remove_file(path).map_err(|error| format!("替换旧消息缓存失败：{error}"))?;
-    }
-    fs::rename(&tmp_path, path).map_err(|error| format!("提交消息缓存失败：{error}"))
+    crate::durability::atomic_write_json(&path, &bytes)
 }
 
 fn news_cache_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {

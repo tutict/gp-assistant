@@ -1,3 +1,10 @@
+import { sessionCredential } from "./llmCredentialSession";
+// Kept here to honor the scoped change: these augment the existing public contracts.
+declare module "../types" {
+  interface LlmProviderSettings { credential_ref?: string; has_key?: boolean; }
+  interface LlmClientConfig { credential_ref?: string; }
+}
+
 import type { FilterCriteria } from "../components/FilterBar";
 import type {
   AgentResult,
@@ -419,18 +426,30 @@ export function sanitizePersistedLlmSettings(settings: LlmSettings | null | unde
     active_provider_id: source.active_provider_id,
     providers: source.providers?.map((provider) => {
       const sanitizedProvider = { ...provider };
-      if (!sanitizedProvider.remember_key) delete sanitizedProvider.api_key;
+      if (sanitizedProvider.remember_key && sanitizedProvider.api_key) {
+        throw new Error("Credential migration required before persistence.");
+      }
+      delete sanitizedProvider.api_key;
+      // Session presence must not claim a persisted credential exists after restart.
+      if (!sanitizedProvider.credential_ref) sanitizedProvider.has_key = false;
       return sanitizedProvider;
     }),
   };
   return sanitized.providers?.length ? sanitized : null;
 }
 
+/** Shared by catalog/test and all LLM request builders. Stored keys never cross into JS. */
+export function llmProviderAuth(provider: import("../types").LlmProviderSettings | undefined): Pick<LlmClientConfig, "api_key" | "credential_ref"> {
+  if (provider?.credential_ref) return { credential_ref: provider.credential_ref };
+  const key = provider?.api_key || sessionCredential(provider?.id);
+  return key ? { api_key: key } : {};
+}
+
 export function buildLlmConfig(settings: LlmSettings | null | undefined): LlmClientConfig | undefined {
   const active = activeLlmProvider(settings);
-  if (!active?.model?.trim() || (!active.api_key?.trim() && !active.base_url?.trim())) return undefined;
-  const config: LlmClientConfig = {};
-  if (active.api_key) config.api_key = active.api_key;
+  const auth = llmProviderAuth(active);
+  if (!active?.model?.trim() || (!auth.api_key && !auth.credential_ref && !active.base_url?.trim())) return undefined;
+  const config: LlmClientConfig = { ...auth };
   if (active.base_url) config.base_url = active.base_url.replace(/\/+$/, "");
   if (active.model) config.model = active.model;
   config.api_format = normalizeLlmApiFormat(active.api_format);
@@ -475,6 +494,7 @@ export function normalizeLlmSettings(settings: LlmSettings | null | undefined): 
       name: legacy.model || "自定义",
       provider: "custom",
       api_key: legacy.api_key,
+      credential_ref: legacy.credential_ref,
       base_url: legacy.base_url,
       model: legacy.model,
       api_format: normalizeLlmApiFormat(legacy.api_format, legacy.provider),

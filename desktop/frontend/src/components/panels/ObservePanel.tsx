@@ -1,3 +1,4 @@
+import { formatLocalDataError, localDataSummary } from "../../lib/localData";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { CapitalEvidenceItem, CapitalEvidenceResult, CapitalEvidenceSection, FinancialIndicatorItem, FinancialIndicatorSection, ObserveResult, StockItem, TrendIndicatorPoint, TrendIndicatorSignal, WatchlistItem } from "../../types";
 import { computeKdj, toDailyBars } from "../../lib/kline";
@@ -12,6 +13,7 @@ import { RawJson } from "../RawJson";
 import { StockCodeInput } from "../StockCodeInput";
 import { TrendCharts } from "../observe/ObserveCharts";
 import { PanelFeedback } from "../ui/PanelFeedback";
+import { LocalFirstRunControl } from "../LocalFirstRunControl";
 import {
   currentSystemDateInputValue,
   formatNumber,
@@ -105,6 +107,7 @@ export function ObservePanel({
     setError(null);
     try {
       const query = new URLSearchParams({
+        data_policy: "cache_only",
         start_date: OBSERVE_FULL_HISTORY_START.replace(/-/g, ""),
         end_date: currentSystemDateInputValue().replace(/-/g, ""),
         series_limit: OBSERVE_FULL_HISTORY_LIMIT,
@@ -116,7 +119,7 @@ export function ObservePanel({
       setResult(data);
     } catch (err) {
       if (version !== observeVersionRef.current) return;
-      setError((err as Error).message);
+      setError(formatLocalDataError(err));
     } finally {
       if (version === observeVersionRef.current) setLoading(false);
     }
@@ -146,13 +149,14 @@ export function ObservePanel({
             resolveBareCode={!mobileRuntime}
           />
         </div>
-        <button type="button" className="run-btn observe-run-btn" onClick={() => runObserve()} disabled={loading}>{loading ? "观察中..." : "开始观察"}</button>
+        <LocalFirstRunControl action="观察" loading={loading} onRun={() => void runObserve()} loadingLabel="观察中..." cacheRunLabel="开始观察" buttonClassName="run-btn observe-run-btn" />
       </div>
 
       <div className="panel-result observe-panel-result">
+        {result && !loading && !error && localDataSummary(result) && <p className="workspace-boundary" role="status">{localDataSummary(result)}</p>}
         {error && !loading && <PanelFeedback kind="error" title="观察失败" description={error} action={<button type="button" className="action-btn" onClick={() => runObserve()} disabled={loading}>重试</button>} />}
         {loading && <PanelFeedback kind="loading" description="正在加载行情、财务和趋势数据..." />}
-        {result && !loading && <ObserveResultView result={result} inWatchlist={observedInWatchlist} onToggleWatchlist={toggleObservedWatchlist} onOpenNews={onOpenNews} onAskAgent={onAskAgent} />}
+        {result && !loading && !error && <ObserveResultView result={result} inWatchlist={observedInWatchlist} onToggleWatchlist={toggleObservedWatchlist} onOpenNews={onOpenNews} onAskAgent={onAskAgent} />}
         {!result && !loading && !error && <PanelFeedback kind="empty" description="输入股票代码后开始观察。" />}
       </div>
     </div>

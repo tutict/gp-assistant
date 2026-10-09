@@ -1105,3 +1105,7 @@
     height: var(--touch-secondary);
   }
 }
+
+/* Make transient storage/credential errors consume space without covering the composer. */
+.app[data-active-view="agent"] .workbench { display: flex; flex-direction: column; }
+.app[data-active-view="agent"] .panels { flex: 1; min-height: 0; height: auto; }

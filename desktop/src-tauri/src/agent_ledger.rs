@@ -65,12 +65,21 @@ impl AgentRunStore {
             fs::create_dir_all(parent)
                 .map_err(|error| format!("failed to create agent ledger directory: {error}"))?;
         }
+        if path.exists() {
+            crate::durability::validate_sqlite_header(path)?;
+        }
         let mut connection = Connection::open(path)
             .map_err(|error| format!("failed to open agent ledger: {error}"))?;
         connection
             .busy_timeout(Duration::from_secs(5))
             .map_err(|error| format!("failed to configure agent ledger: {error}"))?;
         ensure_supported_agent_ledger_schema(agent_ledger_schema_version(&connection)?)?;
+        crate::durability::backup_before_migration(
+            &connection,
+            path,
+            agent_ledger_schema_version(&connection)?,
+            AGENT_LEDGER_SCHEMA_VERSION,
+        )?;
         initialize_schema(&connection)?;
         migrate_agent_ledger(&mut connection)?;
         reconcile_interrupted_runs_once(&connection);
@@ -447,9 +456,7 @@ impl AgentRunStore {
         }
         Ok(samples)
     }
-
 }
-
 
 fn rejection_warning(result: &Value) -> String {
     let warnings = result
@@ -497,10 +504,11 @@ struct StoredAgentRun {
 }
 
 fn initialize_schema(connection: &Connection) -> Result<(), String> {
+    crate::durability::configure_user_connection(connection)?;
     connection
         .execute_batch(
             "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;
+             PRAGMA synchronous = FULL;
              CREATE TABLE IF NOT EXISTS agent_runs (
                  run_id TEXT PRIMARY KEY,
                  conversation_id TEXT,

@@ -558,6 +558,7 @@ export interface ResearchMessage {
 }
 
 export interface ResearchCitation {
+  unavailable?: boolean;
   citation_id: string;
   document_id: string;
   chunk_id: string;

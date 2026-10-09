@@ -4,6 +4,8 @@ import type { SettingDescriptor } from "../../lib/settingsRegistry";
 import { LlmSettingsPanel } from "../panels/LlmSettingsPanel";
 import { IconButton } from "../ui/IconButton";
 import { Sheet } from "../ui/Sheet";
+import { BackupPanel } from "./BackupPanel";
+import { ReliabilityPanel } from "./ReliabilityPanel";
 
 interface SettingsSheetProps {
   open: boolean;
@@ -97,6 +99,8 @@ export function SettingsSheet({ open, onClose, settings, llmSettings, onLlmSetti
             <SettingControl setting={setting} />
           </section>
         ))}
+        <section className="settings-item"><ReliabilityPanel onGepaPreferenceChange={() => window.dispatchEvent?.(new Event("gp:reliability-settings"))} /></section>
+        <section className="settings-item"><BackupPanel /></section>
         {onLlmSettingsChange ? (
           <section className="settings-item">
             <LlmSettingsPanel

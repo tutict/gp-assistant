@@ -17,6 +17,7 @@ import { PanelFeedback } from "../ui/PanelFeedback";
 import { useMobileComposer } from "../../hooks/useMobileComposer";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { Sheet } from "../ui/Sheet";
+import { useWorkspaceState, useWorkspaceStore, useWorkspaceCredentialsReady, WorkspaceSaveStatus } from "../../hooks/useWorkspace";
 
 type LlmSettingsUpdater = LlmSettings | null | ((previous: LlmSettings | null) => LlmSettings | null);
 interface NewsRagPanelProps {
@@ -42,13 +43,15 @@ const MAX_PDF_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_RESEARCH_PACK_BYTES = 64 * 1024 * 1024;
 
 export function NewsRagPanel(props: NewsRagPanelProps) {
+  const workspace = useWorkspaceStore();
+  const credentialsReady = useWorkspaceCredentialsReady();
   const mobile = useMediaQuery("(max-width: 768px)");
   const nativeMobile = isMobileTauriRuntime();
   const compactEvidence = useMediaQuery("(max-width: 1180px)");
   const questionInputId = useId();
   const watchlist = props.watchlist || [];
   const controlled = props.onCodeChange !== undefined;
-  const [uncontrolledCode, setUncontrolledCode] = useState(() => normalizeStockCode(props.initialCode || watchlist[0]?.code || ""));
+  const [uncontrolledCode, setUncontrolledCode] = useWorkspaceState("news.stock", normalizeStockCode(props.initialCode || watchlist[0]?.code || ""));
   const code = controlled ? normalizeStockCode(props.code || "") : uncontrolledCode;
   const codeRef = useRef(code);
   const [overview, setOverview] = useState<ResearchOverview | null>(null);
@@ -56,12 +59,12 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const overviewRef = useRef<ResearchOverview | null>(null);
   const messagesRef = useRef<ResearchMessage[]>([]);
   const [threads, setThreads] = useState<ResearchThread[]>([]);
-  const [threadId, setThreadId] = useState("");
+  const [threadId, setThreadId] = useWorkspaceState("news.thread", "");
   const threadIdRef = useRef("");
   const deletedThreadIdsRef = useRef(new Set<string>());
   const workspaceGenerationRef = useRef(0);
   const [answers, setAnswers] = useState<ResearchAnswer[]>([]);
-  const [question, setQuestion] = useState("");
+  const [question, setQuestion] = useWorkspaceState("news.question", "");
   const [citationStack, setCitationStack] = useState<ResearchCitation[]>([]);
   const [citationPointer, setCitationPointer] = useState(-1);
   const [loading, setLoading] = useState(true);
@@ -127,6 +130,8 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     if (!quiet) setLoading(true);
     setError("");
     try {
+      await workspace.initialize();
+      if (generation !== workspaceGenerationRef.current) return;
       const messageQuery = code
         ? `?stock_code=${encodeURIComponent(code)}&limit=120`
         : "?limit=120";
@@ -145,7 +150,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       setMessages(messagesRef.current);
       setThreads(nextThreads);
       const preferred = nextThreads.find((item) =>
-        item.id === threadIdRef.current && (item.stock_code || "") === code)
+        item.id === workspace.get("news.thread", threadIdRef.current) && (item.stock_code || "") === code)
         || nextThreads.find((item) => item.stock_code === code)
         || (!code ? nextThreads.find((item) => !item.stock_code) : undefined);
       if (preferred) {
@@ -162,7 +167,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     } finally {
       if (!quiet && generation === workspaceGenerationRef.current) setLoading(false);
     }
-  }, [code, loadThread]);
+  }, [code, loadThread, setThreadId, workspace]);
 
   useEffect(() => {
     void loadWorkspace();
@@ -379,7 +384,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
 
   const ask = useCallback(async () => {
     const text = question.trim();
-    if (!text || asking || deletingThreadId) return;
+    if (!text || asking || deletingThreadId || !credentialsReady) return;
     const generation = workspaceGenerationRef.current;
     const requestedCode = code;
     setAsking(true);
@@ -398,7 +403,8 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       const answer: ResearchAnswer = { ...result, question: text, citations: result.citations || [] };
       const answerKey = answer.id || `${answer.question}-${answers.length}`;
       setAnswers((current) => [...current, answer]);
-      setQuestion("");
+      setQuestion(current => current === question ? "" : current);
+      void workspace.flush();
       setHighlightAnswerId(answerKey);
       if (answer.citations[0]) pushCitationSelection(answer.citations[0]);
       if (mobile) setInboxOpen(false);
@@ -413,7 +419,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     } finally {
       if (generation === workspaceGenerationRef.current) setAsking(false);
     }
-  }, [activeLlmConfig, answers.length, asking, code, createThread, deletingThreadId, mobile, pushCitationSelection, question, threadId, threads]);
+  }, [activeLlmConfig, answers.length, asking, code, createThread, deletingThreadId, mobile, pushCitationSelection, question, threadId, threads, credentialsReady, setQuestion, workspace]);
 
   useEffect(() => {
     if (!highlightAnswerId) return;
@@ -458,15 +464,11 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     });
   }, [openKnowledge, props.embedded, props.onHeaderToolsChange, refresh, refreshing, vectorReady]);
 
-  if (loading && !overview) {
-    return <div className="research-loading">
-      <PanelFeedback kind="loading" description="正在打开研究消息中心…" />
-    </div>;
-  }
   const unreadVisibleIds = visibleMessages.filter((message) => message.unread).map((message) => message.id);
   const lastUpdated = formatResearchUpdatedAt(overview);
 
   return <section className="research-workspace" aria-label="研究消息中心">
+    {loading && !overview && <PanelFeedback kind="loading" description="正在打开研究消息中心，可继续编辑草稿…" />}
     {!props.embedded && <header className="research-topbar">
       <div className="research-context">
         <button type="button" className="research-icon-button research-mobile-inbox-button"
@@ -505,6 +507,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         setThread={(thread) => {
           selectCode(thread.stock_code || "");
           setThreadId(thread.id);
+          void workspace.flush();
           setLoading(true);
           void loadThread(thread.id).finally(() => setLoading(false));
           setInboxOpen(false);
@@ -593,12 +596,13 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
               <button className="research-composer-send" type="submit"
                 aria-label="提交问题；仅供研究，不构成投资建议。"
                 title="提交问题；仅供研究，不构成投资建议。"
-                disabled={!question.trim() || asking || Boolean(deletingThreadId)}>
+                disabled={!credentialsReady || !question.trim() || asking || Boolean(deletingThreadId)}>
                 {asking || deletingThreadId
                   ? <RefreshCw size={18} className="is-spinning" /> : <Send size={18} />}
               </button>
             </div>
           </div>
+          <WorkspaceSaveStatus />
           <div className="research-composer-meta">
             <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>
             {!activeLlmConfig && <p className="research-composer-setup">未配置模型，将只用已导入资料回答</p>}
@@ -614,7 +618,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       </ResearchSurfaceSheet>
     </div>
 
-    {knowledgeOpen && <KnowledgeDrawer panelProps={props} code={code} mobile={nativeMobile}
+    {knowledgeOpen && <KnowledgeDrawer panelProps={credentialsReady ? props : { ...props, onLlmSettingsChange: undefined }} code={code} mobile={nativeMobile}
       status={indexStatus} management={management} busy={managementBusy}
       result={managementResult} close={() => setKnowledgeOpen(false)} />}
   </section>;
@@ -907,13 +911,14 @@ function EvidencePanel(props: {
   </aside>;
 }
 
-function EvidenceInspector({ citation: item }: { citation: ResearchCitation }) {
+export function EvidenceInspector({ citation: item }: { citation: ResearchCitation }) {
   const externalUrl = safeExternalUrl(item.url);
   return <div className="research-evidence-card">
     <div className="research-citation-ledger"><span>{item.citation_id}</span>
       <div><strong>{sourceTierLabel(item.source_tier)}</strong><small>{item.source_name}</small></div>
     </div>
     <h2>{item.title}</h2>
+    {item.unavailable && <p role="status" className="research-community-warning">原证据不可用：以下为回答时保存的历史摘录，未绑定到当前资料。</p>}
     <div className="research-evidence-meta">
       <span>{item.published_at ? formatDateTime(item.published_at) : "日期未提供"}</span>
       {item.page_number != null && <span>第 {item.page_number} 页</span>}

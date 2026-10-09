@@ -35,3 +35,10 @@ describe("refreshResearchWatchlist", () => {
     expect(result.failed).toEqual([{ code: "000001.SZ", error: "offline source" }]);
   });
 });
+
+it("stops scheduling refreshes after lifecycle cancellation", async () => {
+  const controller = new AbortController();
+  const request = vi.fn(async () => { controller.abort(); return {}; });
+  await refreshResearchWatchlist([{code:"600000.SH"},{code:"000001.SZ"}], request, controller.signal);
+  expect(request).toHaveBeenCalledTimes(1);
+});

@@ -1,5 +1,16 @@
+mod credentials;
+mod diagnostics;
+mod durability;
+mod jobs;
+mod user_backup;
+mod workspace;
 use serde_json::{json, Value};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
+
+static CLOSE_HANDLER_READY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static CLOSE_SAVED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static STARTUP_WARNINGS: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
 
 #[cfg(not(mobile))]
 use tauri::{webview::PageLoadEvent, WebviewUrl, WebviewWindowBuilder};
@@ -7,9 +18,13 @@ use tauri_plugin_shell::ShellExt;
 
 mod agent_harness;
 mod agent_ledger;
+mod core_api;
 mod gepa_lab;
-mod prompt_upgrade;
+mod llm;
+mod market;
 mod news_rag;
+mod observe;
+mod prompt_upgrade;
 mod rag_pack;
 mod research;
 #[cfg(target_os = "windows")]
@@ -17,19 +32,32 @@ mod research_embeddings;
 mod research_import;
 mod rig_runtime;
 mod runtime;
+mod screening;
 mod sentiment;
 mod sentiment_agent;
 mod sentiment_data;
-mod market;
-mod observe;
-mod screening;
-mod llm;
 mod watchlist;
-mod core_api;
+
+#[tauri::command]
+fn api_app_close_handler_ready(ready: bool) {
+    CLOSE_HANDLER_READY.store(ready, std::sync::atomic::Ordering::SeqCst);
+}
+#[tauri::command]
+fn api_app_confirm_close(app: AppHandle, saved: bool) {
+    CLOSE_SAVED.store(saved, std::sync::atomic::Ordering::SeqCst);
+    CLOSE_HANDLER_READY.store(false, std::sync::atomic::Ordering::SeqCst);
+    app.exit(0);
+}
 
 #[tauri::command]
 fn api_health() -> Result<Value, String> {
-    Ok(json!({"status": "ok", "runtime": "tauri"}))
+    let warnings = STARTUP_WARNINGS
+        .lock()
+        .map_err(|_| "startup status unavailable")?
+        .clone();
+    Ok(
+        json!({"status": if warnings.is_empty() { "ok" } else { "degraded" }, "runtime": "tauri", "warnings": warnings}),
+    )
 }
 
 #[tauri::command]
@@ -47,8 +75,31 @@ fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(not(mobile))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
+    #[cfg(not(mobile))]
+    let builder = builder.on_window_event(|window, event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            if window.label() == "main"
+                && CLOSE_HANDLER_READY.load(std::sync::atomic::Ordering::SeqCst)
+            {
+                api.prevent_close();
+                let _ = tauri::Emitter::emit(window.app_handle(), "client-close-requested", ());
+            }
+        }
+    });
+    let builder = builder
+        .plugin(credentials::init())
         .invoke_handler(tauri::generate_handler![
+            api_app_close_handler_ready,
+            api_app_confirm_close,
             core_api::core_screen,
             core_api::core_screen_with_data,
             core_api::core_graph_screen,
@@ -81,6 +132,8 @@ pub fn run() {
             market::api_stock_get,
             market::api_minutes,
             market::api_order_book,
+            watchlist::api_watchlist_snapshot,
+            watchlist::api_watchlist_mutate,
             watchlist::api_watchlist_list,
             watchlist::api_watchlist_replace,
             watchlist::api_watchlist_add,
@@ -131,6 +184,22 @@ pub fn run() {
             rig_runtime::api_agent_run_metrics,
             rig_runtime::api_agent_run_get,
             rig_runtime::api_agent_run_delete_conversation,
+            jobs::api_job_run,
+            jobs::api_job_status,
+            jobs::api_job_cancel,
+            workspace::api_workspace_load,
+            workspace::api_workspace_commit,
+            diagnostics::api_diagnostics_status,
+            diagnostics::api_diagnostics_preview,
+            diagnostics::api_diagnostics_set_gepa,
+            user_backup::api_user_backup_export,
+            user_backup::api_user_backup_preview,
+            user_backup::api_user_backup_stage,
+            user_backup::api_user_backup_restore_empty,
+            user_backup::api_user_backup_merge_agent,
+            credentials::api_credential_put,
+            credentials::api_credential_status,
+            credentials::api_credential_delete,
             llm::api_llm_models,
             llm::api_llm_test,
             market::core_validate_data_source,
@@ -152,23 +221,36 @@ pub fn run() {
 
     #[cfg(mobile)]
     let builder = builder.setup(|app| {
+        setup_reliability(app.handle());
         research::schedule_research_maintenance(app.handle().clone());
         Ok(())
     });
 
     builder
-        .run(tauri::generate_context!())
-        .expect("error while running 股选优");
+        .build(tauri::generate_context!())
+        .expect("error while building 股选优")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit)
+                && CLOSE_SAVED.load(std::sync::atomic::Ordering::SeqCst)
+                && !jobs::has_active_work(app)
+            {
+                let _ = diagnostics::mark_clean_shutdown();
+            }
+        });
 }
 
 #[cfg(not(mobile))]
 fn setup_desktop(app: &mut tauri::App) -> tauri::Result<()> {
+    setup_reliability(app.handle());
     WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("股选优")
         .inner_size(1280.0, 860.0)
         .min_inner_size(960.0, 680.0)
         .visible(false)
         .on_page_load(|window, payload| {
+            if matches!(payload.event(), PageLoadEvent::Started) {
+                CLOSE_HANDLER_READY.store(false, std::sync::atomic::Ordering::SeqCst);
+            }
             if matches!(payload.event(), PageLoadEvent::Finished) {
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -180,6 +262,26 @@ fn setup_desktop(app: &mut tauri::App) -> tauri::Result<()> {
     gepa_lab::maybe_start_headless_from_env(app.handle().clone());
 
     Ok(())
+}
+
+fn setup_reliability(app: &tauri::AppHandle) {
+    // A damaged optional store must not turn the entire local workbench into a blank window.
+    let diagnostics_ok = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .is_some_and(|root| diagnostics::init(&root).is_ok());
+    if !diagnostics_ok {
+        if let Ok(mut warnings) = STARTUP_WARNINGS.lock() {
+            warnings.push("diagnostics_storage_unavailable");
+        }
+    }
+    if jobs::init(app).is_err() {
+        if let Ok(mut warnings) = STARTUP_WARNINGS.lock() {
+            warnings.push("jobs_storage_unavailable");
+        }
+        let _ = diagnostics::record(diagnostics::OperationalEvent::StorageCheckFailed);
+    }
 }
 
 #[cfg(test)]

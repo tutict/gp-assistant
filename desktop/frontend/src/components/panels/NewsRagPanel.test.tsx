@@ -1,5 +1,10 @@
+import type { ReactElement } from "react";
+import { WorkspaceProvider, WorkspaceCredentialsReady } from "../../hooks/useWorkspace";
+import { workspaceTestHarness } from "../../test/workspace";
+let workspaceTest = workspaceTestHarness();
+function create(element: ReactElement, options?: Parameters<typeof createRenderer>[1]) { return createRenderer(<WorkspaceProvider store={workspaceTest.store}>{element}</WorkspaceProvider>, options); }
 import { renderToStaticMarkup } from "react-dom/server";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act, create as createRenderer, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ResearchMessage } from "../../types";
 
@@ -16,6 +21,7 @@ vi.mock("../../lib/tauri", () => ({
 const { getJson, postJson } = tauriMocks;
 
 import {
+  EvidenceInspector,
   NewsRagPanel,
   NewsRagView,
   formatResearchUpdatedAt,
@@ -64,6 +70,7 @@ function deferred<T>() {
 
 describe("NewsRagPanel", () => {
   beforeEach(() => {
+    workspaceTest = workspaceTestHarness();
     tauriMocks.mobile = false;
     getJson.mockImplementation((path: string) => {
       if (path.startsWith("/api/research/overview")) {
@@ -96,7 +103,43 @@ describe("NewsRagPanel", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    workspaceTest.store.dispose();
     vi.unstubAllGlobals();
+  });
+
+  it("restores unsent question and thread while offline without submitting", async () => {
+    workspaceTest.store.dispose();
+    workspaceTest = workspaceTestHarness(undefined, { "news.question": "unsent question", "news.thread": "offline-thread" });
+    getJson.mockRejectedValue(new Error("offline"));
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<NewsRagPanel />); });
+    expect(renderer.root.findByType("textarea").props.value).toBe("unsent question");
+    expect(workspaceTest.store.get("news.thread", "")).toBe("offline-thread");
+    expect(postJson).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+  });
+
+  it("does not overwrite question typed during asynchronous restore", async () => {
+    const loading = deferred<import("../../lib/workspaceStore").WorkspaceSnapshot>();
+    workspaceTest.transport.load = () => loading.promise;
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<NewsRagPanel />); });
+    await act(async () => renderer.root.findByType("textarea").props.onChange({ target: { value: "typed now" } }));
+    await act(async () => loading.resolve({ schemaVersion: 1, revision: 0, values: { "news.question": "older" } }));
+    expect(renderer.root.findByType("textarea").props.value).toBe("typed now");
+    expect(postJson).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+  });
+
+  it("blocks model submission but not drafting during credential initialization", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<WorkspaceCredentialsReady.Provider value={false}><NewsRagPanel /></WorkspaceCredentialsReady.Provider>); });
+    await act(async () => renderer.root.findByType("textarea").props.onChange({ target: { value: "local only" } }));
+    const send = renderer.root.find(node => node.type === "button" && node.props.className === "research-composer-send");
+    expect(send.props.disabled).toBe(true);
+    expect(renderer.root.findByType("textarea").props.disabled).not.toBe(true);
+    expect(postJson).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
   });
 
   it("formats the overview refresh timestamp for the desktop update label", () => {
@@ -960,4 +1003,9 @@ describe("NewsRagPanel", () => {
     await act(async () => { renderer.unmount(); });
   });
 
+});
+
+it("labels historical citations whose original evidence is unavailable", () => {
+  const citation = {citation_id:"C1",document_id:"d1",chunk_id:"c1",title:"历史证据",excerpt:"旧内容",source_tier:"filing" as const,source_name:"公告",lexical_score:1,retrieval_score:1,unavailable:true};
+  expect(renderToStaticMarkup(<EvidenceInspector citation={citation} />)).toContain("原证据不可用");
 });

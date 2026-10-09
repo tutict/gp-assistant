@@ -9,7 +9,7 @@ import type {
   LlmProviderSettings,
   LlmSettings,
 } from "../../types";
-import { activeLlmProvider, normalizeLlmSettings } from "../../lib/contracts";
+import { activeLlmProvider, normalizeLlmSettings, llmProviderAuth } from "../../lib/contracts";
 import { postJson } from "../../lib/tauri";
 
 const PROVIDER_KINDS = [
@@ -79,7 +79,7 @@ const PROVIDER_PRESETS = [
 
 interface LlmSettingsPanelProps {
   settings: LlmSettings | null;
-  onChange: (settings: LlmSettings | null) => void;
+  onChange: (settings: LlmSettings | null) => void | Promise<void>;
   presentation?: "inline" | "dialog";
   statusMode?: "full" | "inline";
   openRequest?: number;
@@ -115,7 +115,7 @@ function normalizeBaseUrl(url: string): string {
 function maskKey(value?: string): string {
   if (!value) return "未配置";
   if (value.length <= 10) return "已配置";
-  return `${value.slice(0, 5)}...${value.slice(-4)}`;
+  return "已配置（仅本次会话）";
 }
 
 function providerKindLabel(provider?: string): string {
@@ -161,6 +161,9 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline", 
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
   const [modelCatalogs, setModelCatalogs] = useState<Record<string, ProviderModelCatalog>>({});
   const [connectionStates, setConnectionStates] = useState<Record<string, ProviderConnectionState>>({});
+  const [credentialDrafts, setCredentialDrafts] = useState<Record<string, string>>({});
+  const [credentialError, setCredentialError] = useState("");
+  const [savingCredential, setSavingCredential] = useState(false);
   const [visibleApiKeys, setVisibleApiKeys] = useState<Record<string, boolean>>({});
   const [modelMenuProviderId, setModelMenuProviderId] = useState<string | null>(null);
   const modelRequestTokens = useRef<Record<string, number>>({});
@@ -236,8 +239,12 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline", 
         ? "success"
         : "neutral";
 
-  const commit = useCallback((next: LlmSettings) => {
-    onChange(next);
+  const commit = useCallback(async (next: LlmSettings | null) => {
+    try { await onChange(next); setCredentialError(""); return true; }
+    catch {
+      setCredentialError("安全保存或删除密钥失败，请查看连接设置提示并重试；密钥不会明文保存。");
+      return false;
+    }
   }, [onChange]);
 
   const showStatus = useCallback((text: string, state = "success") => {
@@ -328,7 +335,7 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline", 
       const result = await postJson<LlmModelListResult>("/api/llm/models", {
         provider: provider.provider || "openai-compatible",
         base_url: baseUrl,
-        api_key: provider.api_key || "",
+        ...llmProviderAuth(provider),
         api_format: provider.api_format || "openai_chat",
         endpoint_mode: provider.endpoint_mode || "base_url",
         custom_user_agent: provider.custom_user_agent || "",
@@ -388,7 +395,7 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline", 
     try {
       const result = await postJson<LlmConnectionTestResult>("/api/llm/test", {
         base_url: provider.base_url.trim(),
-        api_key: provider.api_key || "",
+        ...llmProviderAuth(provider),
         model: provider.model.trim(),
         api_format: provider.api_format || "openai_chat",
         endpoint_mode: provider.endpoint_mode || "base_url",
@@ -452,19 +459,21 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline", 
     showStatus("已新建");
   }, [commit, providers, showStatus]);
 
-  const removeProvider = useCallback((id?: string) => {
+  const removeProvider = useCallback(async (id?: string) => {
     if (!id || providers.length <= 1) return;
     invalidateProviderModels(id);
     invalidateProviderConnection(id);
     const nextProviders = providers.filter((provider) => provider.id !== id);
     const activeProviderId = normalized.active_provider_id === id ? nextProviders[0]?.id : normalized.active_provider_id;
-    commit({ active_provider_id: activeProviderId, providers: nextProviders });
+    if (!await commit({ active_provider_id: activeProviderId, providers: nextProviders })) return;
+    setCredentialDrafts(current => { const next = { ...current }; delete next[id]; return next; });
     if (editingProviderId === id) setEditingProviderId(activeProviderId || null);
     showStatus("已删除", "neutral");
   }, [commit, editingProviderId, invalidateProviderConnection, invalidateProviderModels, normalized.active_provider_id, providers, showStatus]);
 
-  const clearAll = useCallback(() => {
-    onChange(null);
+  const clearAll = useCallback(async () => {
+    if (!await commit(null)) return;
+    setCredentialDrafts({});
     setEditingProviderId(null);
     setModelCatalogs({});
     setConnectionStates({});
@@ -473,16 +482,25 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline", 
     modelRequestTokens.current = {};
     connectionRequestTokens.current = {};
     showStatus("已清空", "neutral");
-  }, [onChange, showStatus]);
+  }, [commit, showStatus]);
 
-  const save = useCallback(() => {
-    commit(normalized);
+  const save = useCallback(async () => {
+    setSavingCredential(true);
+    const next = { ...normalized, providers: normalized.providers?.map(provider => (
+      Object.hasOwn(credentialDrafts, provider.id || "")
+        ? { ...provider, api_key: credentialDrafts[provider.id || ""] } : provider
+    )) };
+    const saved = await commit(next);
+    setSavingCredential(false);
+    if (!saved) return;
+    setCredentialDrafts({});
     showStatus("已保存");
     closePanel();
-  }, [closePanel, commit, normalized, showStatus]);
+  }, [closePanel, commit, credentialDrafts, normalized, showStatus]);
 
   return (
     <div className={`llm-settings-panel ${open ? "open" : ""} ${isDialog ? "dialog" : ""}`}>
+      {credentialError && <p role="alert">{credentialError}</p>}
       <div className="llm-settings-header">
         <button
           type="button"
@@ -757,9 +775,9 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline", 
                       <input
                         id="llmApiKey"
                         type={visibleApiKeys[editingProvider.id || ""] ? "text" : "password"}
-                        value={editingProvider.api_key || ""}
-                        onChange={(event) => updateProvider(editingProvider.id, { api_key: event.target.value })}
-                        placeholder={maskKey(editingProvider.api_key)}
+                        value={credentialDrafts[editingProvider.id || ""] ?? ""}
+                        onChange={(event) => setCredentialDrafts(current => ({ ...current, [editingProvider.id || ""]: event.target.value }))}
+                        placeholder={editingProvider.credential_ref ? "已保存在系统安全存储（输入以替换）" : editingProvider.has_key ? "已配置（仅本次会话）" : maskKey(editingProvider.api_key)}
                         autoComplete="off"
                       />
                       <button
@@ -784,8 +802,16 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline", 
                       checked={editingProvider.remember_key ?? false}
                       onChange={(event) => updateProvider(editingProvider.id, { remember_key: event.target.checked })}
                     />
-                    记住 API 密钥
+                    记住 API 密钥（系统安全存储）
                   </label>
+                  <p role="note">密钥输入后点击保存。关闭记住会删除系统密钥；已存密钥不可回显，之后需重新输入。</p>
+                  <button type="button" className="clear-btn" disabled={savingCredential} onClick={async () => {
+                    const id = editingProvider.id;
+                    if (!await commit({ ...normalized, providers: providers.map(provider => provider.id === id
+                      ? { ...provider, api_key: "", credential_ref: undefined, has_key: false } : provider) })) return;
+                    setCredentialDrafts(current => { const next = { ...current }; delete next[id || ""]; return next; });
+                    invalidateProviderModels(id); invalidateProviderConnection(id);
+                  }}>清除密钥</button>
 
                   <details className="llm-advanced-settings">
                     <summary>
@@ -870,7 +896,7 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline", 
           </div>
 
           <div className="form-actions">
-            <button type="button" className="save-btn" onClick={save}>保存</button>
+            <button type="button" className="save-btn" disabled={savingCredential} onClick={save}>保存</button>
             <button type="button" className="clear-btn" onClick={clearAll}>清空</button>
           </div>
         </div>

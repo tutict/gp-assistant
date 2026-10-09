@@ -1,5 +1,6 @@
 import { ChartNoAxesCombined, ChevronRight, Newspaper, Trash2, X } from "lucide-react";
-import { useCallback, useId, useState } from "react";
+import { useCallback, useId, useState, useSyncExternalStore } from "react";
+import { getWatchlistPersistenceSnapshot, retryWatchlistPersistence, subscribeWatchlistPersistence } from "../../lib/watchlistStore";
 import type { WatchlistItem } from "../../types";
 import { IconButton } from "../ui/IconButton";
 import { PanelFeedback } from "../ui/PanelFeedback";
@@ -20,9 +21,25 @@ function defaultWatchlistExpanded(): boolean {
 export function WatchlistPanel({ items, onChange, onObserve, onNews, onBacktest }: WatchlistPanelProps) {
   const [expanded, setExpanded] = useState(defaultWatchlistExpanded);
   const bodyId = useId();
+  const persistence = useSyncExternalStore(subscribeWatchlistPersistence, getWatchlistPersistenceSnapshot, getWatchlistPersistenceSnapshot);
+  const [removed, setRemoved] = useState<Array<{ item: WatchlistItem; index: number }>>([]);
   const remove = useCallback((code: string) => {
+    const index = items.findIndex((item) => item.code === code);
+    if (index < 0) return;
+    const item = items[index];
+    setRemoved((previous) => [...previous.filter((entry) => entry.item.code !== code), { item, index }]);
     onChange(items.filter((item) => item.code !== code));
   }, [items, onChange]);
+
+  const undo = (entry: { item: WatchlistItem; index: number }) => {
+    // Restore only this item; never roll the whole list back over later edits.
+    if (!items.some((item) => item.code === entry.item.code)) {
+      const next = [...items];
+      next.splice(Math.min(entry.index, next.length), 0, entry.item);
+      onChange(next);
+    }
+    setRemoved((previous) => previous.filter((item) => item.item.code !== entry.item.code));
+  };
 
   const clear = useCallback(() => {
     if (confirm("确认清空自选股列表？")) {
@@ -70,6 +87,29 @@ export function WatchlistPanel({ items, onChange, onObserve, onNews, onBacktest 
           </div>
         )}
       </header>
+
+      <div className="watchlist-header watchlist-count" role="status" aria-live="polite" aria-atomic="true">
+        <span>
+          {persistence.status === "saving" ? "保存中…" : persistence.status === "error" ? "未保存，待保存操作已保留。" : persistence.storage === "local" ? "已保存到浏览器（非桌面数据库）" : "已保存"}
+        </span>
+        {persistence.status === "error" && (
+          <button type="button" className="watchlist-backtest" aria-label="重试保存自选股" title={persistence.error || undefined} onClick={() => { void retryWatchlistPersistence(); }}>
+            重试保存
+          </button>
+        )}
+      </div>
+      {removed.length > 0 && (
+        <ul className="watchlist-items" aria-label="最近移除的自选股">
+          {removed.map((entry) => (
+            <li className="watchlist-item" key={entry.item.code}>
+              <span>{entry.item.name || entry.item.code} 已移除</span>
+              <button type="button" className="watchlist-backtest" aria-label={`撤销移除 ${entry.item.name || entry.item.code}`} onClick={() => undo(entry)}>
+                撤销
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <div
         id={bodyId}

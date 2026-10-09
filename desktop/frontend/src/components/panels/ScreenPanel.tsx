@@ -1,3 +1,4 @@
+import { formatLocalDataError, localDataSummary, localDataUnavailable } from "../../lib/localData";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AdaptiveScreenRequest,
@@ -9,6 +10,7 @@ import type {
 } from "../../types";
 import type { FilterCriteria } from "../FilterBar";
 import { CriteriaFields } from "../CriteriaFields";
+import { LocalFirstRunControl } from "../LocalFirstRunControl";
 import { getTauriListen, postJson } from "../../lib/tauri";
 import {
   buildAdaptiveScreenRequest,
@@ -209,7 +211,7 @@ export function ScreenPanel({
         payload = buildTrendScreenRequest(requestCriteria, requestTrendStart, requestTrendEnd);
       }
 
-      const data = await postJson(endpoint, payload);
+      const data = await postJson(endpoint, { ...(payload as Record<string, unknown>), data_policy: "cache_only" });
       if (requestVersion !== requestVersions.current[requestMode]) return;
       updateRun(requestMode, (current) => ({
         ...current,
@@ -225,7 +227,7 @@ export function ScreenPanel({
       updateRun(requestMode, (current) => ({
         ...current,
         loading: false,
-        error: (err as Error).message,
+        error: formatLocalDataError(err),
         progress: null,
       }));
     } finally {
@@ -275,7 +277,7 @@ export function ScreenPanel({
     criteria.requireInstitutionBuyRatio && "机构买入占比高于卖出", `最多 ${criteria.resultLimit} 只`,
   ].filter(Boolean).join(" · ");
   const controlsClassName = `panel-controls screen-panel-controls ${mode === "customScreen" ? "custom-screen-controls" : mode === "sectorScreen" || mode === "boardScreen" ? "grouped-screen-controls" : ""}`;
-  const dataUnavailable = marketDataUnavailable(marketStatus);
+  const dataUnavailable = localDataUnavailable(marketStatus);
   const emptyDescription = dataUnavailable
     ? "行情还没准备好。先点上方「刷新」，完成后再运行筛选。顶部若显示待检查或待同步，就是还不能筛选。"
     : mode === "customScreen"
@@ -308,9 +310,7 @@ export function ScreenPanel({
   );
 
   const runButton = (
-    <button type="button" className="run-btn" onClick={() => void run()} disabled={loading}>
-      {loading ? "运行中..." : "运行筛选"}
-    </button>
+    <LocalFirstRunControl action="筛选" loading={loading} onRun={() => void run()} loadingLabel="筛选中..." />
   );
 
   const modeTabs = (
@@ -375,6 +375,7 @@ export function ScreenPanel({
       </Sheet>
 
       <div className="panel-result screen-panel-result">
+        {result != null && !loading && !error && localDataSummary(result) && <p className="workspace-boundary" role="status">{localDataSummary(result)}</p>}
         {error && <PanelFeedback kind="error" title="查询失败" description={dataUnavailable ? `${error} 若顶部仍是待检查或待同步，先点「刷新」再重试。` : error} action={<button type="button" className="action-btn" onClick={() => void run()}>重试</button>} />}
         {loading && !error && (
           <PanelFeedback
@@ -384,7 +385,7 @@ export function ScreenPanel({
               : "正在分析候选股票..."}
           />
         )}
-        {result != null && !loading && (
+        {result != null && !loading && !error && (
           <ScreenResultView
             key={mode}
             result={result}
@@ -404,15 +405,6 @@ export function ScreenPanel({
   );
 }
 
-
-
-function marketDataUnavailable(status: DataStatus | null | undefined): boolean {
-  if (status === undefined) return false;
-  if (status === null) return true;
-  const count = Number(status.universe_count);
-  if (!Number.isFinite(count) || count <= 0) return true;
-  return status.policy?.mode === "empty";
-}
 
 function compactGroupMeta(meta: string) {
   const total = meta.match(/总数\s*([\d,]+)/)?.[1];

@@ -1,5 +1,10 @@
+import type { ReactElement } from "react";
+import { WorkspaceProvider } from "../../hooks/useWorkspace";
+import { workspaceTestHarness } from "../../test/workspace";
+let workspaceTest = workspaceTestHarness();
+function create(element: ReactElement, options?: Parameters<typeof createRenderer>[1]) { return createRenderer(<WorkspaceProvider store={workspaceTest.store}>{element}</WorkspaceProvider>, options); }
 import { renderToStaticMarkup } from "react-dom/server";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act, create as createRenderer, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const tauriMocks = vi.hoisted(() => ({
@@ -21,6 +26,7 @@ const renderers = new Set<ReactTestRenderer>();
 
 function stubTestGlobals() {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("document", { visibilityState: "visible" });
   vi.stubGlobal("window", { location: { href: "http://localhost/" } });
 }
 
@@ -29,11 +35,13 @@ beforeAll(async () => {
   try {
     ({ AgentPanel, sanitizeAgentConversations } = await import("./AgentPanel"));
   } finally {
+    workspaceTest.store.dispose();
     vi.unstubAllGlobals();
   }
 });
 
 beforeEach(() => {
+  workspaceTest = workspaceTestHarness({ getItem: key => typeof localStorage === "undefined" ? null : localStorage.getItem(key) });
   stubTestGlobals();
   tauriMocks.getTauriInvoke.mockReset();
   tauriMocks.getTauriListen.mockReset();
@@ -49,6 +57,7 @@ afterEach(async () => {
     });
   } finally {
     renderers.clear();
+    workspaceTest.store.dispose();
     vi.unstubAllGlobals();
   }
 });
@@ -265,7 +274,8 @@ describe("AgentPanel send run ID", () => {
     expect(streamHandler).toBeTypeOf("function");
     expect(unlisten).toHaveBeenCalledTimes(1);
 
-    const persisted = JSON.parse(storage.get("stock-optimizer-agent-conversations") || "null");
+    await act(async () => workspaceTest.store.flush());
+    const persisted = workspaceTest.snapshot().values["agent.conversations"] as Array<{ messages: Array<{ role: string; runId?: string }> }>;
     const assistantMessage = persisted[0].messages.find((message: { role: string }) => message.role === "assistant");
     expect(assistantMessage).toMatchObject({ role: "assistant", runId: "run-send" });
     expect(assistantMessage).not.toHaveProperty("result");

@@ -52,7 +52,7 @@ const fullUniverseCriteria: FilterCriteria = {
 };
 
 describe("LLM settings persistence", () => {
-  it("drops API keys unless remember_key is enabled", () => {
+  it("never persists API keys and refuses unmigrated remembered keys", () => {
     const sanitized = sanitizePersistedLlmSettings({ api_key: "sk-test", model: "gpt", remember_key: false } as LlmSettings);
     expect(sanitized).toMatchObject({
       active_provider_id: "legacy",
@@ -67,19 +67,14 @@ describe("LLM settings persistence", () => {
       }],
     });
     expect(sanitized?.providers?.[0]).not.toHaveProperty("api_key");
-    expect(sanitizePersistedLlmSettings({
-      active_provider_id: "a",
-      providers: [
-        { id: "a", api_key: "sk-drop", model: "gpt", remember_key: false },
-        { id: "b", api_key: "sk-keep", model: "deepseek", remember_key: true },
-      ],
-    })).toMatchObject({
-      active_provider_id: "a",
-      providers: [
-        { id: "a", model: "gpt", provider: "custom", remember_key: false },
-        { id: "b", api_key: "sk-keep", model: "deepseek", provider: "custom", remember_key: true },
-      ],
-    });
+    expect(() => sanitizePersistedLlmSettings({
+      providers: [{ id: "b", api_key: "sk-keep", remember_key: true }],
+    })).toThrow(/migration/i);
+    const remembered = sanitizePersistedLlmSettings({ providers: [{
+      id: "b", credential_ref: "gp-assistant.llm.b", has_key: true, remember_key: true,
+    }] });
+    expect(remembered?.providers?.[0]).toMatchObject({ credential_ref: "gp-assistant.llm.b", has_key: true });
+    expect(JSON.stringify(remembered)).not.toContain("api_key");
   });
 
   it("starts from a generic compatible provider instead of a fixed vendor", () => {
@@ -156,10 +151,7 @@ describe("LLM settings persistence", () => {
       ],
     };
 
-    expect(sanitizePersistedLlmSettings(settings)).toMatchObject({
-      active_provider_id: "glm",
-      providers: [{ id: "glm", provider: "zhipu", api_key: "zhipu-key" }],
-    });
+    expect(() => sanitizePersistedLlmSettings(settings)).toThrow(/migration/i);
     expect(buildLlmConfig(settings)).toEqual({
       api_key: "zhipu-key",
       base_url: "https://open.bigmodel.cn/api/paas/v4",
@@ -650,4 +642,13 @@ describe("agent and upstream utilities", () => {
 
     vi.unstubAllGlobals();
   });
+});
+
+it("uses native references for every provider protocol, including default endpoints", () => {
+  for (const api_format of ["openai_chat", "openai_responses", "anthropic_messages"] as const) {
+    const config = buildLlmConfig({ providers: [{ id: "ref", model: "model", api_format,
+      credential_ref: "gp-assistant.llm.ref", has_key: true, remember_key: true }] });
+    expect(config).toMatchObject({ credential_ref: "gp-assistant.llm.ref", api_format });
+    expect(config).not.toHaveProperty("api_key");
+  }
 });

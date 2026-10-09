@@ -177,3 +177,29 @@ describe("LlmSettingsPanel provider configuration", () => {
     )).toHaveLength(0);
   });
 });
+
+describe("stored credential UX", () => {
+  beforeEach(() => { vi.stubGlobal("window", {setTimeout: vi.fn(), requestAnimationFrame: (f: () => void) => f()}); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); });
+  afterEach(() => { postJsonMock.mockReset(); vi.unstubAllGlobals(); });
+  it("never fills a stored key and sends only its reference for connection tests", async () => {
+    const renderer = await renderOpenPanel({providers: [{id: "stored", base_url: "https://gateway.example/v1", model: "m",
+      remember_key: true, has_key: true, credential_ref: "gp-assistant.llm.stored"}]});
+    const input = renderer.root.find(node => node.props.id === "llmApiKey");
+    expect(input.props.value).toBe("");
+    expect(input.props.placeholder).toMatch(/系统安全存储/);
+    postJsonMock.mockResolvedValue({ok: true});
+    await act(async () => { await renderer.root.find(node => node.type === "button" && node.children.includes("测试连接")).props.onClick(); });
+    expect(postJsonMock.mock.calls[0][1]).toHaveProperty("credential_ref", "gp-assistant.llm.stored");
+    expect(postJsonMock.mock.calls[0][1]).not.toHaveProperty("api_key");
+    await act(async () => renderer.unmount());
+  });
+  it("has an explicit clear-key action and warns that disabling remember requires re-entry", async () => {
+    const renderer = await renderOpenPanel({providers: [{id: "stored", model: "m", remember_key: true,
+      has_key: true, credential_ref: "gp-assistant.llm.stored"}]});
+    expect(JSON.stringify(renderer.toJSON())).toContain("重新输入");
+    const clear = renderer.root.find(node => node.type === "button" && node.children.includes("清除密钥"));
+    await act(async () => { await clear.props.onClick(); });
+    expect(renderer.root.find(node => node.props.id === "llmApiKey").props.value).toBe("");
+    await act(async () => renderer.unmount());
+  });
+});

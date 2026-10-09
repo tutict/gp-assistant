@@ -33,20 +33,52 @@ fn field<'a>(v: &'a Value, key: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("缺少有效的 {key}"))
 }
 fn code(v: &Value) -> Result<String, String> {
-    crate::market::normalize_stock_code(field(v, "stock_code")?).ok_or_else(|| "股票代码无效".into())
+    crate::market::normalize_stock_code(field(v, "stock_code")?)
+        .ok_or_else(|| "股票代码无效".into())
 }
 
 fn open(path: &Path) -> Result<Connection, String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let connection = Connection::open(path).map_err(|e| e.to_string())?;
-    connection
-        .busy_timeout(std::time::Duration::from_secs(5))
+    if path.exists() {
+        crate::durability::validate_sqlite_header(path)?;
+    }
+    let mut connection = Connection::open(path).map_err(|e| e.to_string())?;
+    let version: i64 = connection
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
-    connection.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS analyses(id TEXT PRIMARY KEY,stock_code TEXT NOT NULL,generation TEXT NOT NULL,created_at INTEGER NOT NULL,result_json TEXT NOT NULL); CREATE INDEX IF NOT EXISTS sentiment_stock_time ON analyses(stock_code,created_at DESC); CREATE TABLE IF NOT EXISTS followups(id TEXT PRIMARY KEY,analysis_id TEXT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,question TEXT NOT NULL,result_json TEXT NOT NULL,created_at INTEGER NOT NULL);").map_err(|e|e.to_string())?;
+    if !(0..=1).contains(&version) {
+        return Err(format!(
+            "Unsupported sentiment database version {version}; original preserved"
+        ));
+    }
+    if version == 0 {
+        let existing: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='analyses')",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if existing {
+            crate::durability::snapshot_sqlite(
+                &connection,
+                &path.with_extension(format!("before-v1-{}.sqlite", id())),
+            )?;
+        }
+    }
+    crate::durability::configure_user_connection(&connection)?;
+    if version == 0 {
+        let tx = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS analyses(id TEXT PRIMARY KEY,stock_code TEXT NOT NULL,generation TEXT NOT NULL,created_at INTEGER NOT NULL,result_json TEXT NOT NULL); CREATE INDEX IF NOT EXISTS sentiment_stock_time ON analyses(stock_code,created_at DESC); CREATE TABLE IF NOT EXISTS followups(id TEXT PRIMARY KEY,analysis_id TEXT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,question TEXT NOT NULL,result_json TEXT NOT NULL,created_at INTEGER NOT NULL); PRAGMA user_version=1;").map_err(|e|e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+    }
     Ok(connection)
 }
+
 fn connection(app: &AppHandle) -> Result<Connection, String> {
     open(
         &app.path()
@@ -366,6 +398,24 @@ mod tests {
                 .unwrap();
             assert_eq!(serde_json::from_str::<Value>(&stored).unwrap(), result);
         }
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn refuses_future_sentiment_database_without_rewriting_schema() {
+        let path = std::env::temp_dir().join(format!("sentiment-future-{}.sqlite", id()));
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch("PRAGMA user_version=99; CREATE TABLE future(value TEXT); INSERT INTO future VALUES('keep');").unwrap();
+        drop(db);
+        let result = open(&path);
+        assert!(result.is_err(), "future schema must be rejected");
+        let reader = Connection::open(&path).unwrap();
+        assert_eq!(
+            reader
+                .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            99
+        );
+        drop(reader);
         std::fs::remove_file(path).unwrap();
     }
 }

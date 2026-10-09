@@ -1,4 +1,9 @@
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import type { ReactElement } from "react";
+import { WorkspaceProvider, WorkspaceCredentialsReady } from "../../hooks/useWorkspace";
+import { workspaceTestHarness } from "../../test/workspace";
+let workspaceTest = workspaceTestHarness();
+function create(element: ReactElement, options?: Parameters<typeof createRenderer>[1]) { return createRenderer(<WorkspaceProvider store={workspaceTest.store}>{element}</WorkspaceProvider>, options); }
+import { act, create as createRenderer, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LlmSettings } from "../../types";
 import type { AgentRunDrawerProps } from "./AgentRunDrawer";
@@ -179,6 +184,7 @@ async function beginDeferredSend(renderer: ReactTestRenderer, request: Promise<u
 }
 
 beforeEach(() => {
+  workspaceTest = workspaceTestHarness({ getItem: key => typeof localStorage === "undefined" ? null : localStorage.getItem(key) });
   resetAgentConversationDeletionCoordinatorForTests();
   storage.clear();
   storageHandlers.clear();
@@ -202,6 +208,7 @@ beforeEach(() => {
   tauriMocks.isTauriRuntime.mockReset().mockReturnValue(true);
   tauriMocks.postJson.mockReset().mockResolvedValue({ deleted: 0 });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("document", { visibilityState: "visible" });
   vi.stubGlobal("crypto", { randomUUID: () => "run-generated" });
   vi.stubGlobal("localStorage", localStorageDouble());
   vi.stubGlobal("window", {
@@ -229,6 +236,7 @@ afterEach(async () => {
     });
   } finally {
     renderers.clear();
+    workspaceTest.store.dispose();
     vi.unstubAllGlobals();
   }
 });
@@ -652,7 +660,8 @@ describe("AgentPanel run replay interactions", () => {
     });
 
     expect(nodeText(renderer.root)).not.toContain("Conversation A");
-    expect(JSON.parse(storage.get("stock-optimizer-agent-conversations") || "[]"))
+    await act(async () => workspaceTest.store.flush());
+    expect(workspaceTest.snapshot().values["agent.conversations"])
       .toEqual([expect.objectContaining({ id: "conversation-b" })]);
   });
 
@@ -810,5 +819,46 @@ describe("AgentPanel run replay interactions", () => {
     expect(invokeMock).not.toHaveBeenCalled();
     const quick = renderer.root.find((node) => node.type === "button" && node.children.includes("快速模式"));
     expect(quick.props["aria-pressed"]).toBe(true);
+  });
+});
+
+
+describe("Agent durable drafts", () => {
+  it("restores an unsent first-conversation draft after restart without auto-send", async () => {
+    const first = await renderPanel();
+    await act(async () => first.root.findByType("textarea").props.onChange({ target: { value: "keep my unsent research" } }));
+    await act(async () => workspaceTest.store.flush());
+    const saved = workspaceTest.snapshot().values;
+    await act(async () => { first.unmount(); renderers.delete(first); });
+    workspaceTest.store.dispose(); workspaceTest = workspaceTestHarness(undefined, saved);
+    vi.stubGlobal("crypto", { randomUUID: () => "different-after-restart" });
+    const second = await renderPanel();
+    expect(second.root.findByType("textarea").props.value).toBe("keep my unsent research");
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+  it("restores separate conversation drafts and the active conversation", async () => {
+    seedConversations([conversation("conversation-a", "A"), conversation("conversation-b", "B")]);
+    const first = await renderPanel();
+    await act(async () => first.root.findByType("textarea").props.onChange({ target: { value: "draft A" } }));
+    await act(async () => buttonsWithClass(first, "agent-history-main")[1].props.onClick());
+    await act(async () => first.root.findByType("textarea").props.onChange({ target: { value: "draft B" } }));
+    await act(async () => workspaceTest.store.flush());
+    const saved = workspaceTest.snapshot().values;
+    await act(async () => { first.unmount(); renderers.delete(first); });
+    workspaceTest.store.dispose(); workspaceTest = workspaceTestHarness(undefined, saved);
+    const second = await renderPanel();
+    expect(second.root.findByType("textarea").props.value).toBe("draft B");
+    expect(workspaceTest.store.get("agent.active", "")).toBe("conversation-b");
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+  it("keeps typing usable but blocks sends while credentials initialize", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<WorkspaceCredentialsReady.Provider value={false}><AgentPanel {...baseProps} /></WorkspaceCredentialsReady.Provider>); });
+    renderers.add(renderer);
+    await act(async () => renderer.root.findByType("textarea").props.onChange({ target: { value: "local draft" } }));
+    expect(renderer.root.findByType("textarea").props.disabled).toBe(false);
+    expect(buttonWithClass(renderer, "send-btn").props.disabled).toBe(true);
+    await act(async () => buttonWithClass(renderer, "send-btn").props.onClick());
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 });

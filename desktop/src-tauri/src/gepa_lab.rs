@@ -1,6 +1,13 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+#[cfg(all(
+    feature = "gepa-lab",
+    target_os = "windows",
+    not(mobile),
+    debug_assertions
+))]
+use std::env;
 use std::{
     collections::BTreeMap,
     fs,
@@ -8,9 +15,12 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 use tauri::{AppHandle, Emitter, Manager};
-#[cfg(all(feature = "gepa-lab", target_os = "windows", not(mobile), debug_assertions))]
-use std::env;
-#[cfg(all(feature = "gepa-lab", target_os = "windows", not(mobile), debug_assertions))]
+#[cfg(all(
+    feature = "gepa-lab",
+    target_os = "windows",
+    not(mobile),
+    debug_assertions
+))]
 use tokio::time::{sleep, Duration};
 
 use crate::{agent_harness, prompt_upgrade, rig_runtime};
@@ -108,11 +118,9 @@ fn report_path(app: &AppHandle, run_id: &str) -> Result<PathBuf, String> {
 }
 fn save_report(app: &AppHandle, report: &GepaRunReport) -> Result<(), String> {
     let path = report_path(app, &report.run_id)?;
-    let tmp = path.with_extension("json.tmp");
     let text = serde_json::to_string_pretty(report)
         .map_err(|e| format!("encode GEPA report failed: {e}"))?;
-    fs::write(&tmp, text).map_err(|e| format!("write GEPA report failed: {e}"))?;
-    fs::rename(&tmp, path).map_err(|e| format!("replace GEPA report failed: {e}"))
+    crate::durability::atomic_write_json(&path, text.as_bytes())
 }
 fn load_report(app: &AppHandle, run_id: &str) -> Result<GepaRunReport, String> {
     let text = fs::read_to_string(report_path(app, run_id)?)
@@ -208,7 +216,12 @@ fn numeric_fact_tokens(text: &str) -> Vec<String> {
         }
         let token: String = chars[start..index].iter().collect();
         let citation = start >= 2 && chars[start - 2] == '[' && chars[start - 1] == 'E';
-        if !citation && (token.contains('%') || token.contains('万') || token.contains('.') || token.len() >= 4) {
+        if !citation
+            && (token.contains('%')
+                || token.contains('万')
+                || token.contains('.')
+                || token.len() >= 4)
+        {
             tokens.push(token);
         }
     }
@@ -217,10 +230,17 @@ fn numeric_fact_tokens(text: &str) -> Vec<String> {
 
 fn numeric_token_variants(token: &str) -> Vec<String> {
     let numeric = token.trim_end_matches(['%', '万']);
-    let Ok(value) = numeric.parse::<f64>() else { return vec![token.to_string()] };
+    let Ok(value) = numeric.parse::<f64>() else {
+        return vec![token.to_string()];
+    };
     let mut variants = vec![token.to_string(), numeric.to_string()];
     if token.ends_with('%') {
-        variants.push(format!("{:.6}", value / 100.0).trim_end_matches('0').trim_end_matches('.').to_string());
+        variants.push(
+            format!("{:.6}", value / 100.0)
+                .trim_end_matches('0')
+                .trim_end_matches('.')
+                .to_string(),
+        );
     }
     if token.ends_with('万') {
         variants.push(format!("{:.0}", value * 10_000.0));
@@ -228,11 +248,19 @@ fn numeric_token_variants(token: &str) -> Vec<String> {
     variants
 }
 
-fn validate_frozen_fact_literals(profile: &EvalProfile, model_response: &Value) -> Result<(), String> {
+fn validate_frozen_fact_literals(
+    profile: &EvalProfile,
+    model_response: &Value,
+) -> Result<(), String> {
     let corpus = serde_json::to_string(&profile.tool_result).unwrap_or_default();
     for token in numeric_fact_tokens(&response_text(model_response)) {
-        if !numeric_token_variants(&token).iter().any(|variant| corpus.contains(variant)) {
-            return Err(format!("model output contains unsupported frozen fact literal {token}"));
+        if !numeric_token_variants(&token)
+            .iter()
+            .any(|variant| corpus.contains(variant))
+        {
+            return Err(format!(
+                "model output contains unsupported frozen fact literal {token}"
+            ));
         }
     }
     Ok(())
@@ -316,7 +344,10 @@ fn average(scores: &[CaseSummary]) -> f64 {
     }
 }
 
-#[cfg(all(feature = "gepa-lab", any(target_os = "windows", target_os = "android")))]
+#[cfg(all(
+    feature = "gepa-lab",
+    any(target_os = "windows", target_os = "android")
+))]
 mod engine {
     use super::*;
     use gepa::progress::{Event, Progress};
@@ -325,8 +356,7 @@ mod engine {
         Reflective,
     };
     use rig_agent::{completion::Prompt, AgentBuilder};
-    use std::{
-    future::Future, sync::Arc, time::Duration};
+    use std::{future::Future, sync::Arc, time::Duration};
     #[derive(Clone)]
     struct Trace {
         question: String,
@@ -725,7 +755,12 @@ fn cancelled_report(
 /// Debug-only bridge used by `tmp/run-gepa-codex.mjs`. It is intentionally gated out of
 /// production and mobile builds; the script supplies an OpenAI-compatible local proxy.
 pub(crate) fn maybe_start_headless_from_env(app: AppHandle) {
-    #[cfg(all(feature = "gepa-lab", target_os = "windows", not(mobile), debug_assertions))]
+    #[cfg(all(
+        feature = "gepa-lab",
+        target_os = "windows",
+        not(mobile),
+        debug_assertions
+    ))]
     {
         let Some(config_path) = env::var_os("GP_GEPA_HEADLESS_CONFIG") else {
             return;
@@ -764,7 +799,12 @@ pub(crate) fn maybe_start_headless_from_env(app: AppHandle) {
             std::process::exit(0);
         });
     }
-    #[cfg(not(all(feature = "gepa-lab", target_os = "windows", not(mobile), debug_assertions)))]
+    #[cfg(not(all(
+        feature = "gepa-lab",
+        target_os = "windows",
+        not(mobile),
+        debug_assertions
+    )))]
     let _ = app;
 }
 
@@ -779,18 +819,33 @@ fn write_headless_output(path: &PathBuf, value: &Value) -> Result<(), String> {
 }
 #[tauri::command]
 pub(crate) fn api_agent_gepa_status() -> Result<Value, String> {
+    let compiled = cfg!(all(
+        feature = "gepa-lab",
+        any(target_os = "windows", target_os = "android")
+    ));
+    let enabled = compiled && crate::diagnostics::gepa_allowed();
     Ok(
-        json!({"enabled": cfg!(all(feature = "gepa-lab", any(target_os = "windows", target_os = "android"))), "engine_version": if cfg!(all(feature = "gepa-lab", any(target_os = "windows", target_os = "android"))) { ENGINE_VERSION } else { "disabled" }}),
+        json!({"enabled": enabled, "compiled": compiled, "engine_version": if enabled { ENGINE_VERSION } else { "disabled" }}),
     )
 }
 #[tauri::command]
 pub(crate) fn api_agent_gepa_start(app: AppHandle, payload: Value) -> Result<Value, String> {
-    #[cfg(not(all(feature = "gepa-lab", any(target_os = "windows", target_os = "android"))))]
+    if !crate::diagnostics::gepa_allowed() {
+        let _ = crate::diagnostics::record(crate::diagnostics::OperationalEvent::GepaBlocked);
+        return Err("GEPA 已关闭或处于安全启动模式；请在本地设置中检查开关".into());
+    }
+    #[cfg(not(all(
+        feature = "gepa-lab",
+        any(target_os = "windows", target_os = "android")
+    )))]
     {
         let _ = (app, payload);
         return Err("GEPA 仅在启用功能的 Windows 或 Android 构建中可用".to_string());
     }
-    #[cfg(all(feature = "gepa-lab", any(target_os = "windows", target_os = "android")))]
+    #[cfg(all(
+        feature = "gepa-lab",
+        any(target_os = "windows", target_os = "android")
+    ))]
     {
         let profile_id = payload
             .get("profile_id")
@@ -871,6 +926,14 @@ pub(crate) fn api_agent_gepa_report(app: AppHandle, payload: Value) -> Result<Va
 }
 #[tauri::command]
 pub(crate) fn api_agent_gepa_apply(app: AppHandle, payload: Value) -> Result<Value, String> {
+    if !cfg!(all(
+        feature = "gepa-lab",
+        any(target_os = "windows", target_os = "android")
+    )) || !crate::diagnostics::gepa_allowed()
+    {
+        let _ = crate::diagnostics::record(crate::diagnostics::OperationalEvent::GepaBlocked);
+        return Err("GEPA 已关闭或处于安全启动模式；不能应用实验候选".into());
+    }
     let id = payload
         .get("run_id")
         .and_then(Value::as_str)

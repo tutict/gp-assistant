@@ -14,7 +14,6 @@ use std::{
 use stock_optimizer_core as gp_core;
 use tauri::{Emitter, Manager};
 
-
 pub(crate) const MOBILE_MARKET_DATA_FILE: &str = "mobile-market-data.json";
 
 pub(crate) const MOBILE_MARKET_PATCH_DIR: &str = "mobile-market-data-patches";
@@ -25,14 +24,17 @@ pub(crate) const MOBILE_MARKET_WRITE_RETRY_DELAY_MS: u64 = 50;
 
 pub(crate) const TENCENT_QUOTE_ENDPOINT: &str = "https://qt.gtimg.cn/q=";
 
-pub(crate) const EASTMONEY_KLINE_ENDPOINT: &str = "https://push2his.eastmoney.com/api/qt/stock/kline/get";
+pub(crate) const EASTMONEY_KLINE_ENDPOINT: &str =
+    "https://push2his.eastmoney.com/api/qt/stock/kline/get";
 
-pub(crate) const EASTMONEY_DATACENTER_ENDPOINT: &str = "https://datacenter-web.eastmoney.com/api/data/v1/get";
+pub(crate) const EASTMONEY_DATACENTER_ENDPOINT: &str =
+    "https://datacenter-web.eastmoney.com/api/data/v1/get";
 
 pub(crate) const EASTMONEY_SECURITIES_ENDPOINT: &str =
     "https://datacenter.eastmoney.com/securities/api/data/v1/get";
 
-pub(crate) const TENCENT_DAILY_KLINE_ENDPOINT: &str = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get";
+pub(crate) const TENCENT_DAILY_KLINE_ENDPOINT: &str =
+    "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get";
 
 pub(crate) const TENCENT_BATCH_SIZE: usize = 120;
 
@@ -86,11 +88,13 @@ pub(crate) static REFRESH_SEED_CACHE: OnceLock<Mutex<HashMap<PathBuf, Value>>> =
 pub(crate) static REFRESH_FINANCIAL_SNAPSHOT_CACHE: OnceLock<Mutex<HashMap<PathBuf, Arc<Value>>>> =
     OnceLock::new();
 
-pub(crate) static MOBILE_MARKET_DATA_CACHE: OnceLock<Mutex<HashMap<PathBuf, MobileMarketDataCacheEntry>>> =
-    OnceLock::new();
+pub(crate) static MOBILE_MARKET_DATA_CACHE: OnceLock<
+    Mutex<HashMap<PathBuf, MobileMarketDataCacheEntry>>,
+> = OnceLock::new();
 
-pub(crate) static SCREEN_STOCK_OVERLAY_CACHE: OnceLock<Mutex<HashMap<PathBuf, ScreenStockOverlayCacheEntry>>> =
-    OnceLock::new();
+pub(crate) static SCREEN_STOCK_OVERLAY_CACHE: OnceLock<
+    Mutex<HashMap<PathBuf, ScreenStockOverlayCacheEntry>>,
+> = OnceLock::new();
 
 pub(crate) static MOBILE_MARKET_UPDATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -227,7 +231,10 @@ pub(crate) fn api_market_status(app: tauri::AppHandle) -> Result<Value, String> 
 }
 
 #[tauri::command]
-pub(crate) async fn api_market_refresh(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_market_refresh(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     core_mobile_market_data_refresh_tencent(app, payload).await
 }
 
@@ -377,7 +384,10 @@ pub(crate) fn core_mobile_market_data_read(app: tauri::AppHandle) -> Result<Valu
 }
 
 #[tauri::command]
-pub(crate) fn core_mobile_market_data_write(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) fn core_mobile_market_data_write(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     write_mobile_market_data(&app, payload)
 }
 
@@ -832,7 +842,13 @@ pub(crate) fn decode_utf8_lossy(bytes: Vec<u8>) -> String {
     }
 }
 
-pub(crate) fn payload_usize_field(value: &Value, key: &str, default: usize, min: usize, max: usize) -> usize {
+pub(crate) fn payload_usize_field(
+    value: &Value,
+    key: &str,
+    default: usize,
+    min: usize,
+    max: usize,
+) -> usize {
     let parsed = value.get(key).and_then(|field| {
         field
             .as_u64()
@@ -1146,11 +1162,13 @@ pub(crate) fn refresh_financial_snapshot_cache() -> &'static Mutex<HashMap<PathB
     REFRESH_FINANCIAL_SNAPSHOT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-pub(crate) fn mobile_market_data_cache() -> &'static Mutex<HashMap<PathBuf, MobileMarketDataCacheEntry>> {
+pub(crate) fn mobile_market_data_cache(
+) -> &'static Mutex<HashMap<PathBuf, MobileMarketDataCacheEntry>> {
     MOBILE_MARKET_DATA_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-pub(crate) fn screen_stock_overlay_cache() -> &'static Mutex<HashMap<PathBuf, ScreenStockOverlayCacheEntry>> {
+pub(crate) fn screen_stock_overlay_cache(
+) -> &'static Mutex<HashMap<PathBuf, ScreenStockOverlayCacheEntry>> {
     SCREEN_STOCK_OVERLAY_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -1317,7 +1335,12 @@ pub(crate) struct TencentQuotePayload {
     pub(crate) transport: &'static str,
 }
 
-pub(crate) fn emit_market_refresh_log(app: &tauri::AppHandle, stage: &str, tone: &str, payload: Value) {
+pub(crate) fn emit_market_refresh_log(
+    app: &tauri::AppHandle,
+    stage: &str,
+    tone: &str,
+    payload: Value,
+) {
     let _ = app.emit(
         "market-refresh-log",
         json!({
@@ -1925,7 +1948,10 @@ pub(crate) fn filtered_financial_snapshot_map(
     Value::Object(filtered)
 }
 
-pub(crate) fn merge_financials_object(target: &mut serde_json::Map<String, Value>, value: Option<&Value>) {
+pub(crate) fn merge_financials_object(
+    target: &mut serde_json::Map<String, Value>,
+    value: Option<&Value>,
+) {
     let Some(object) = value.and_then(Value::as_object) else {
         return;
     };
@@ -1934,7 +1960,10 @@ pub(crate) fn merge_financials_object(target: &mut serde_json::Map<String, Value
     }
 }
 
-pub(crate) fn merge_financials_array(target: &mut serde_json::Map<String, Value>, value: Option<&Value>) {
+pub(crate) fn merge_financials_array(
+    target: &mut serde_json::Map<String, Value>,
+    value: Option<&Value>,
+) {
     let Some(items) = value.and_then(Value::as_array) else {
         return;
     };
@@ -2115,11 +2144,17 @@ pub(crate) fn finite_object_number_any(
         .find_map(|field| finite_object_number(object, field))
 }
 
-pub(crate) fn object_string_any(object: &serde_json::Map<String, Value>, fields: &[&str]) -> Option<String> {
+pub(crate) fn object_string_any(
+    object: &serde_json::Map<String, Value>,
+    fields: &[&str],
+) -> Option<String> {
     fields.iter().find_map(|field| object_string(object, field))
 }
 
-pub(crate) fn finite_object_number(object: &serde_json::Map<String, Value>, field: &str) -> Option<f64> {
+pub(crate) fn finite_object_number(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+) -> Option<f64> {
     object
         .get(field)
         .and_then(Value::as_f64)
@@ -2154,7 +2189,7 @@ pub(crate) async fn fetch_tencent_quotes(
         primary_error: Option<String>,
     ) -> Result<TencentQuotePayload, String> {
         let url = url.to_string();
-        let fallback = tokio::task::spawn_blocking(move || powershell_http_get_bytes(&url, timeout_secs))
+        let fallback = crate::runtime::run_transport_bound("market blocking transport", move || powershell_http_get_bytes(&url, timeout_secs))
         .await
         .map_err(|error| format!("Tencent quote PowerShell fallback task failed: {error}"))?
         .map_err(|powershell_error| match (status, primary_error.as_deref()) {
@@ -2350,7 +2385,9 @@ pub(crate) fn parse_tencent_quotes(
     stocks
 }
 
-pub(crate) fn seed_stock_maps(seed: &Value) -> (HashMap<String, serde_json::Map<String, Value>>, Vec<String>) {
+pub(crate) fn seed_stock_maps(
+    seed: &Value,
+) -> (HashMap<String, serde_json::Map<String, Value>>, Vec<String>) {
     let mut stocks = HashMap::new();
     let mut codes = Vec::new();
     if let Some(items) = seed.get("stocks").and_then(Value::as_array) {
@@ -2812,15 +2849,16 @@ pub(crate) async fn http_get_text_with_headers_first(
         let powershell_url = url.to_string();
         let powershell_user_agent = user_agent.to_string();
         let powershell_referer = referer.to_string();
-        let powershell_result = tokio::task::spawn_blocking(move || {
-            powershell_http_get_bytes_with_headers(
-                &powershell_url,
-                timeout_secs,
-                &powershell_user_agent,
-                &powershell_referer,
-            )
-        })
-        .await;
+        let powershell_result =
+            crate::runtime::run_transport_bound("market blocking transport", move || {
+                powershell_http_get_bytes_with_headers(
+                    &powershell_url,
+                    timeout_secs,
+                    &powershell_user_agent,
+                    &powershell_referer,
+                )
+            })
+            .await;
         let powershell_error = match powershell_result {
             Ok(Ok(bytes)) => return Ok(decode_utf8_lossy(bytes)),
             Ok(Err(error)) => error,
@@ -3414,7 +3452,10 @@ pub(crate) fn financial_entry_mut<'a>(
         .expect("financial entry object just initialized")
 }
 
-pub(crate) fn stock_object<'a>(data: &'a Value, code: &str) -> Option<&'a serde_json::Map<String, Value>> {
+pub(crate) fn stock_object<'a>(
+    data: &'a Value,
+    code: &str,
+) -> Option<&'a serde_json::Map<String, Value>> {
     data.get("stocks")?
         .as_array()?
         .iter()
@@ -3786,7 +3827,7 @@ pub(crate) async fn fetch_daily_history_text(
     #[cfg(windows)]
     {
         let fallback_url = url.to_string();
-        let bytes = tokio::task::spawn_blocking(move || {
+        let bytes = crate::runtime::run_transport_bound("market blocking transport", move || {
             powershell_http_get_bytes(&fallback_url, OBSERVE_HISTORY_TIMEOUT_SECS)
         })
         .await
@@ -4137,7 +4178,10 @@ pub(crate) fn read_mobile_market_data_record(
     ))
 }
 
-pub(crate) fn write_mobile_market_data(app: &tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) fn write_mobile_market_data(
+    app: &tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     write_mobile_market_data_record(app, payload, true)
 }
 
@@ -4185,7 +4229,11 @@ pub(crate) fn write_mobile_market_data_record(
     ))
 }
 
-pub(crate) fn retry_with_attempts<T, F>(attempts: usize, delay_ms: u64, mut op: F) -> Result<T, String>
+pub(crate) fn retry_with_attempts<T, F>(
+    attempts: usize,
+    delay_ms: u64,
+    mut op: F,
+) -> Result<T, String>
 where
     F: FnMut(usize) -> Result<T, String>,
 {
@@ -4217,19 +4265,18 @@ pub(crate) fn write_mobile_market_data_with_retry(
     )
 }
 
-pub(crate) fn write_mobile_market_data_once(tmp_path: &Path, path: &Path, bytes: &[u8]) -> Result<(), String> {
-    fs::write(tmp_path, bytes)
-        .map_err(|error| format!("write mobile market cache temp failed: {error}"))?;
-    if path.exists() {
-        fs::remove_file(path)
-            .map_err(|error| format!("replace old mobile market cache failed: {error}"))?;
-    }
-    fs::rename(tmp_path, path)
-        .map_err(|error| format!("commit mobile market cache failed: {error}"))?;
-    Ok(())
+pub(crate) fn write_mobile_market_data_once(
+    _tmp_path: &Path,
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), String> {
+    crate::durability::atomic_write_json(path, bytes)
 }
 
-pub(crate) fn market_quote_coverage(data: &Value, target_date: Option<&str>) -> (usize, usize, f64) {
+pub(crate) fn market_quote_coverage(
+    data: &Value,
+    target_date: Option<&str>,
+) -> (usize, usize, f64) {
     let stocks = data
         .get("stocks")
         .and_then(Value::as_array)
@@ -4508,7 +4555,10 @@ pub(crate) fn market_data_patch_codes(patch: &Value) -> Vec<String> {
     codes
 }
 
-pub(crate) fn persist_market_data_patch_sync(app: &tauri::AppHandle, patch: &Value) -> Result<usize, String> {
+pub(crate) fn persist_market_data_patch_sync(
+    app: &tauri::AppHandle,
+    patch: &Value,
+) -> Result<usize, String> {
     let root = mobile_market_patch_dir(app)?;
     fs::create_dir_all(&root)
         .map_err(|error| format!("create mobile market patch dir failed: {error}"))?;

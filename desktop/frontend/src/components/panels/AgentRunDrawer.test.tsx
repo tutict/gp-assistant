@@ -1150,6 +1150,17 @@ describe("AgentRunDrawer accessibility", () => {
 });
 
 describe("AgentRunDrawer prompt overlay", () => {
+  it("shows a visible warning when the local prompt version cannot be read", async () => {
+    agentRunMocks.listAgentRuns.mockResolvedValue([]);
+    agentRunMocks.getPromptOverlays.mockRejectedValue(new Error("overlay unavailable"));
+    const renderer = await renderDrawer();
+    await act(async () => {
+      renderer.update(<AgentRunDrawer open {...baseProps} />);
+    });
+    await flush();
+    expect(renderedText(renderer)).toContain("提示词版本读取失败");
+  });
+
   it("shows the local prompt version and reverts to the built-in card", async () => {
     agentRunMocks.listAgentRuns.mockResolvedValue([]);
     agentRunMocks.getPromptOverlays.mockResolvedValue([

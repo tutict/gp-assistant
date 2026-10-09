@@ -28,7 +28,7 @@ export function GepaLabPanel({ llm, open, onClose, onAvailabilityChange, onAppli
   const [report, setReport] = useState<GepaRunReport>();
   const [error, setError] = useState<string>();
   const running = status === "running";
-  const canStart = Boolean(enabled && llm?.model && (llm.api_key || llm.base_url) && !running);
+  const canStart = Boolean(enabled && llm?.model && (llm.credential_ref || llm.api_key || llm.base_url) && !running);
   const profileLabel = useMemo(() => PROFILES.find((item) => item.id === profileId)?.label || profileId, [profileId]);
 
   useEffect(() => {
@@ -38,17 +38,17 @@ export function GepaLabPanel({ llm, open, onClose, onAvailabilityChange, onAppli
       return;
     }
     let disposed = false;
-    void getGepaStatus().then((result) => {
-      if (disposed) return;
-      const available = result.enabled === true;
-      setEnabled(available);
-      onAvailabilityChange(available);
-    }).catch(() => {
-      if (disposed) return;
-      setEnabled(false);
-      onAvailabilityChange(false);
-    });
-    return () => { disposed = true; };
+    const refreshAvailability = () => {
+      void getGepaStatus().then(result => {
+        if (disposed) return;
+        const available = result.enabled === true;
+        setEnabled(available); onAvailabilityChange(available);
+      }).catch(() => { if (!disposed) { setEnabled(false); onAvailabilityChange(false); } });
+    };
+    refreshAvailability();
+    const events = typeof window === "undefined" ? undefined : window;
+    events?.addEventListener?.("gp:reliability-settings", refreshAvailability);
+    return () => { disposed = true; events?.removeEventListener?.("gp:reliability-settings", refreshAvailability); };
   }, [onAvailabilityChange]);
 
   useEffect(() => {
@@ -122,7 +122,7 @@ export function GepaLabPanel({ llm, open, onClose, onAvailabilityChange, onAppli
               <label>Metric-call 预算<select value={budget} disabled={running} onChange={(event) => setBudget(Number(event.target.value))}>{BUDGETS.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
             </div>
             <div className="agent-gepa-actions">
-              {!running ? <button type="button" className="action-btn" disabled={!canStart} onClick={() => void start()}><Play size={15} />开始实验</button> : <button type="button" className="action-btn danger" onClick={() => void cancel()}><Square size={15} />取消运行</button>}
+              {!running ? <button type="button" className="action-btn" disabled={!canStart} onClick={() => void start()}><Play size={15} />开始实验</button> : <button type="button" className="action-btn" onClick={() => void cancel()}><Square size={15} />取消运行</button>}
               <span className="agent-gepa-status" role="status">{message || (status === "idle" ? `将优化 ${profileLabel}` : status)}</span>
             </div>
             {error && <p className="agent-gepa-error" role="alert">{error}</p>}

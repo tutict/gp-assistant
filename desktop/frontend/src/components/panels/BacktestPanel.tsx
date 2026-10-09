@@ -1,3 +1,5 @@
+import { useWorkspaceState, useWorkspaceStore } from "../../hooks/useWorkspace";
+import { formatLocalDataError, localDataSummary } from "../../lib/localData";
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { AdaptiveScreenRequest, BacktestResult, EquityPoint, StockItem, VolatilitySnapshot, WatchlistItem } from "../../types";
 import type { FilterCriteria } from "../FilterBar";
@@ -15,6 +17,7 @@ import {
 } from "../../lib/format";
 import { RawJson } from "../RawJson";
 import { PanelFeedback } from "../ui/PanelFeedback";
+import { LocalFirstRunControl } from "../LocalFirstRunControl";
 import type { BacktestRouteRequest, BacktestSource } from "../../lib/viewNavigation";
 import { ALL_INDUSTRY_OPTIONS, isLegacyBroadIndustry } from "../../lib/screenIndustryOptions";
 import { MARKET_SCOPE_OPTIONS, normalizeMarketScope } from "../../lib/screenScopeOptions";
@@ -38,16 +41,19 @@ interface BacktestPanelProps {
 }
 
 export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferredSourceConsumed }: BacktestPanelProps) {
-  const [source, setSource] = useState<BacktestSource>("criteria");
-  const [start, setStart] = useState("2020-01-01");
-  const [end, setEnd] = useState(currentSystemDateInputValue());
-  const [topN, setTopN] = useState(10);
-  const [rebalance, setRebalance] = useState("monthly");
-  const [benchmark, setBenchmark] = useState("candidate_equal_weight");
-  const [strategyMode, setStrategyMode] = useState("candidate_snapshot");
-  const [adaptiveScreenSpec, setAdaptiveScreenSpec] = useState<AdaptiveScreenRequest | undefined>();
-  const [workingCriteria, setWorkingCriteria] = useState<FilterCriteria>(() => ({ ...criteria }));
-  const [costBps, setCostBps] = useState(10);
+  const workspace = useWorkspaceStore();
+  const [source, setSource] = useWorkspaceState<BacktestSource>("app.backtest.source", "criteria");
+  const [start, setStart] = useWorkspaceState("backtest.start", "2020-01-01");
+  const [end, setEnd] = useWorkspaceState("backtest.end", currentSystemDateInputValue());
+  const [topN, setTopN] = useWorkspaceState("backtest.topN", 10);
+  const [rebalance, setRebalance] = useWorkspaceState("backtest.rebalance", "monthly");
+  const [benchmark, setBenchmark] = useWorkspaceState("backtest.benchmark", "candidate_equal_weight");
+  const [strategyMode, setStrategyMode] = useWorkspaceState("backtest.strategyMode", "candidate_snapshot");
+  const [savedAdaptiveSpec, saveAdaptiveSpec] = useWorkspaceState<AdaptiveScreenRequest | null>("backtest.adaptiveSpec", null);
+  const adaptiveScreenSpec = savedAdaptiveSpec ?? undefined;
+  const setAdaptiveScreenSpec = (spec: AdaptiveScreenRequest | undefined) => saveAdaptiveSpec(spec ?? null);
+  const [workingCriteria, setWorkingCriteria] = useWorkspaceState<FilterCriteria>("backtest.criteria", { ...criteria });
+  const [costBps, setCostBps] = useWorkspaceState("backtest.costBps", 10);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +69,12 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     if (!preferredSource) return;
     if (consumedPreferredRequestIdRef.current === preferredSource.requestId) return;
     consumedPreferredRequestIdRef.current = preferredSource.requestId;
+    if (preferredSource.requestId === -1) {
+      setSource(preferredSource.source);
+      if (!workspace.get("backtest.criteria", undefined)) setWorkingCriteria({ ...criteria });
+      onPreferredSourceConsumed?.(preferredSource.requestId);
+      return;
+    }
     const nextAdaptiveScreenSpec = preferredSource.source === "criteria"
       ? preferredSource.adaptiveScreenSpec
       : undefined;
@@ -138,12 +150,12 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
         strategyMode,
         adaptiveScreenSpec,
       });
-      const data = await postJson<unknown>("/api/backtest", payload, { timeoutMs: 90_000 });
+      const data = await postJson<unknown>("/api/backtest", { ...payload, data_policy: "cache_only" }, { timeoutMs: 90_000 });
       const nextResult = requireBacktestResult(data);
       if (requestVersion === requestVersionRef.current) { setResult(nextResult); setResultSignature(parameterSignature); setParamsOpen(false); }
     } catch (err) {
       if (requestVersion === requestVersionRef.current) {
-        setError(err instanceof Error ? err.message : String(err));
+        setError(formatLocalDataError(err));
       }
     } finally {
       requestInFlightRef.current = false;
@@ -193,17 +205,8 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
               自选股
             </button>
           </div>
-          <button
-            type="button"
-            className="backtest-run-button"
-            aria-label={loading ? "运行回测" : runLabel}
-            aria-disabled={loading}
-            disabled={loading}
-            onClick={run}
-          >
-            {runLabel}
-          </button>
-        </div>
+          <LocalFirstRunControl action="回测" loading={loading} onRun={() => void run()} loadingLabel="回测计算中..." cacheRunLabel={result && resultSignature !== parameterSignature ? "重新回测" : "运行回测"} buttonClassName="backtest-run-button" ariaLabel={loading ? "运行回测" : runLabel} />
+          </div>
         <div className="backtest-param-strip">
           <span><b>持有只数</b><strong>{topN}</strong></span>
           <span><b>区间</b><strong>{start}~{end}</strong></span>
@@ -277,6 +280,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
             : error}
         />}
         {loading && !result && !error && <PanelFeedback kind="loading" description="正在计算组合表现..." />}
+        {result && !loading && localDataSummary(result) && <p className="workspace-boundary" role="status">{localDataSummary(result)}</p>}
         {result && !loading && <BacktestResultView result={result} watchlist={watchlist} />}
         {!result && !loading && !error && <PanelFeedback kind="empty" description="选择股票来源并设置参数后运行回测。" />}
       </div>

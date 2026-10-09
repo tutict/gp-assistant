@@ -1,4 +1,15 @@
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import type { ReactElement } from "react";
+import { WorkspaceProvider } from "../../hooks/useWorkspace";
+import { workspaceTestHarness } from "../../test/workspace";
+let workspaceTest = workspaceTestHarness();
+function create(element: ReactElement) {
+  const store = workspaceTest.store;
+  const renderer = createRenderer(<WorkspaceProvider store={store}>{element}</WorkspaceProvider>);
+  const update = renderer.update.bind(renderer);
+  renderer.update = (next) => update(<WorkspaceProvider store={store}>{next}</WorkspaceProvider>);
+  return renderer;
+}
+import { act, create as createRenderer, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FilterCriteria } from "../FilterBar";
 import type { AdaptiveScreenRequest, BacktestResult, WatchlistItem } from "../../types";
@@ -81,6 +92,8 @@ describe("BacktestPanel interactions", () => {
     await act(async () => renderer.unmount());
   });
   beforeEach(() => {
+    workspaceTest = workspaceTestHarness();
+    vi.stubGlobal("document", { visibilityState: "visible" });
     vi.stubGlobal("window", {
       location: { href: "http://localhost/" },
       requestAnimationFrame: (callback: FrameRequestCallback) => {
@@ -91,6 +104,7 @@ describe("BacktestPanel interactions", () => {
   });
 
   afterEach(() => {
+    workspaceTest.store.dispose();
     getJsonMock.mockReset();
     postJsonMock.mockReset();
     vi.unstubAllGlobals();
@@ -531,4 +545,16 @@ describe("BacktestPanel interactions", () => {
     expect(textContent(renderer)).not.toContain("002432.SZ");
     expect(textContent(renderer)).toContain("选择股票来源并设置参数后运行回测");
   });
+});
+
+it("keeps backtests local when data is unavailable so refresh stays in the toolbar", async () => {
+  postJsonMock.mockResolvedValue(result);
+  let renderer!: ReactTestRenderer;
+  await act(async () => { renderer = create(<BacktestPanel criteria={criteria} watchlist={watchlist} />); });
+  const button = renderer.root.findByProps({ className: "backtest-run-button" });
+  expect(button.children).toContain("运行回测");
+  expect(renderer.root.findAll(node => node.type === "select" && node.props["aria-label"] === "回测数据模式")).toHaveLength(0);
+  await act(async () => { await button.props.onClick(); });
+  expect(postJsonMock).toHaveBeenLastCalledWith("/api/backtest", expect.objectContaining({ data_policy: "cache_only" }), expect.anything());
+  await act(async () => renderer.unmount());
 });

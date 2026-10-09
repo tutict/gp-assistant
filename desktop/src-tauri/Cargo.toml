@@ -20,6 +20,10 @@ tauri-build = { version = "2", features = [] }
 gepa-lab = ["dep:dsrust-gepa"]
 
 [dependencies]
+zeroize = "1.8"
+aes-gcm = "0.10"
+argon2 = "0.5"
+rand_core = { version = "0.6", features = ["getrandom"] }
 anyhow = "1"
 base64 = "0.23"
 bytes = "1"
@@ -48,3 +52,8 @@ dsrust-gepa = { version = "=0.1.0-alpha.3", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 fastembed = { version = "5.17.3", default-features = false, features = ["ort-download-binaries-rustls-tls"] }
+
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+tauri-plugin-single-instance = "2"

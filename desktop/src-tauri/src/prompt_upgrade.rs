@@ -35,7 +35,6 @@ pub(crate) struct ResolvedMethodCard {
     pub version: String,
 }
 
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PromptOverlayStatus {
     pub profile_id: String,
@@ -96,21 +95,27 @@ pub(crate) fn resolve_prompt(mode: &str, app: Option<&AppHandle>) -> ResolvedPro
     }
     let profile_id = profile_id_for_mode(mode);
     if let Some(app) = app {
-        if let Some(active) = read_active_prompt(app, profile_id) {
-            if evaluate_candidate(profile_id, &active.body).is_ok() {
+        match read_active_prompt(app, profile_id) {
+            Ok(Some(active)) if evaluate_candidate(profile_id, &active.body).is_ok() => {
                 return compose(mode, &active.body, &active.version);
+            }
+            Ok(_) => {}
+            Err(_) => {
+                return compose(mode, builtin_body(mode), &format!("{BASE_PROMPT_VERSION}+degraded-overlay"));
             }
         }
     }
     compose(mode, builtin_body(mode), BASE_PROMPT_VERSION)
 }
-
 pub(crate) fn resolve_method_card(
     profile_id: &str,
     app: Option<&AppHandle>,
 ) -> Result<ResolvedMethodCard, String> {
     let contract = profile_contract(profile_id)?;
-    let active = app.and_then(|app| read_active_prompt(app, profile_id));
+    let active = match app {
+        Some(app) => read_active_prompt(app, profile_id)?,
+        None => None,
+    };
     let active = active.filter(|prompt| evaluate_candidate(profile_id, &prompt.body).is_ok());
     Ok(ResolvedMethodCard {
         body: active
@@ -123,7 +128,6 @@ pub(crate) fn resolve_method_card(
             .unwrap_or_else(|| builtin_method_card_version(profile_id))?,
     })
 }
-
 
 pub(crate) fn activate_gepa_with_app(
     app: &AppHandle,
@@ -177,9 +181,7 @@ pub(crate) fn evaluate_candidate(profile_id: &str, body: &str) -> Result<(), Str
         }
     }
     if agent_harness::contains_prohibited_instruction_text(&prompt) {
-        return Err(
-            "method card contains a trading, position, or return promise".to_string(),
-        );
+        return Err("method card contains a trading, position, or return promise".to_string());
     }
     Ok(())
 }
@@ -192,7 +194,7 @@ fn activate_gepa_at(
 ) -> Result<String, String> {
     profile_contract(profile_id)?;
     evaluate_candidate(profile_id, body)?;
-    let mut store = load_store(overlay_path);
+    let mut store = load_store(overlay_path)?;
     let profile = store.profiles.entry(profile_id.to_string()).or_default();
     let current_version = profile
         .active
@@ -218,7 +220,7 @@ fn activate_gepa_at(
 }
 
 fn status_at(overlay_path: &Path) -> Result<Vec<PromptOverlayStatus>, String> {
-    let store = load_store(overlay_path);
+    let store = load_store(overlay_path)?;
     Ok(["hot_money_early_v1", "value_compounder_v1"]
         .into_iter()
         .map(|profile_id| {
@@ -230,22 +232,19 @@ fn status_at(overlay_path: &Path) -> Result<Vec<PromptOverlayStatus>, String> {
             PromptOverlayStatus {
                 profile_id: profile_id.to_string(),
                 label: profile_label(profile_id).to_string(),
-                prompt_version: active
-                    .map(|item| item.version.clone())
-                    .unwrap_or_else(|| builtin_method_card_version(profile_id).unwrap_or_else(|_| BASE_PROMPT_VERSION.to_string())),
+                prompt_version: active.map(|item| item.version.clone()).unwrap_or_else(|| {
+                    builtin_method_card_version(profile_id)
+                        .unwrap_or_else(|_| BASE_PROMPT_VERSION.to_string())
+                }),
                 builtin: active.is_none(),
             }
         })
         .collect())
 }
 
-fn revert_at(
-    ledger_path: &Path,
-    overlay_path: &Path,
-    profile_id: &str,
-) -> Result<(), String> {
+fn revert_at(ledger_path: &Path, overlay_path: &Path, profile_id: &str) -> Result<(), String> {
     profile_contract(profile_id)?;
-    let mut store = load_store(overlay_path);
+    let mut store = load_store(overlay_path)?;
     let consumed = agent_ledger::AgentRunStore::open(ledger_path)?
         .list_policy_rejections(profile_id, BASE_PROMPT_VERSION)?
         .into_iter()
@@ -258,13 +257,15 @@ fn revert_at(
     save_store(overlay_path, &store)
 }
 
-fn read_active_prompt(app: &AppHandle, profile_id: &str) -> Option<ActivePrompt> {
-    let path = overlay_path(app).ok()?;
-    let _guard = OVERLAY_LOCK.lock().ok()?;
-    load_store(&path)
+fn read_active_prompt(app: &AppHandle, profile_id: &str) -> Result<Option<ActivePrompt>, String> {
+    let path = overlay_path(app)?;
+    let _guard = OVERLAY_LOCK
+        .lock()
+        .map_err(|_| "prompt overlay lock is poisoned".to_string())?;
+    Ok(load_store(&path)?
         .profiles
         .get(profile_id)
-        .and_then(|profile| profile.active.clone())
+        .and_then(|profile| profile.active.clone()))
 }
 
 fn compose(mode: &str, body: &str, version: &str) -> ResolvedPrompt {
@@ -340,7 +341,6 @@ fn string_list(value: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-
 fn overlay_path(app: &AppHandle) -> Result<PathBuf, String> {
     let mut path = app
         .path()
@@ -361,17 +361,11 @@ fn ledger_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn load_store(path: &Path) -> OverlayStore {
+fn load_store(path: &Path) -> Result<OverlayStore, String> {
     match fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str(&text).unwrap_or_else(|error| {
-            eprintln!("prompt overlay is unreadable and will be ignored: {error}");
-            OverlayStore::default()
-        }),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => OverlayStore::default(),
-        Err(error) => {
-            eprintln!("prompt overlay could not be read and will be ignored: {error}");
-            OverlayStore::default()
-        }
+        Ok(text) => serde_json::from_str(&text).map_err(|_| "Prompt overlay is damaged; original preserved. Restore a verified copy before changing profiles.".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(OverlayStore::default()),
+        Err(_) => Err("Prompt overlay cannot be read; original preserved. Check storage permissions before retrying.".into()),
     }
 }
 
@@ -382,15 +376,7 @@ fn save_store(path: &Path, store: &OverlayStore) -> Result<(), String> {
     }
     let text = serde_json::to_string_pretty(store)
         .map_err(|error| format!("failed to encode prompt overlay: {error}"))?;
-    let temporary = path.with_extension("json.tmp");
-    fs::write(&temporary, &text)
-        .map_err(|error| format!("failed to write prompt overlay: {error}"))?;
-    if fs::rename(&temporary, path).is_err() {
-        fs::write(path, text)
-            .map_err(|error| format!("failed to replace prompt overlay: {error}"))?;
-        let _ = fs::remove_file(temporary);
-    }
-    Ok(())
+    crate::durability::atomic_write_json(path, text.as_bytes())
 }
 #[cfg(test)]
 mod tests {
@@ -440,7 +426,10 @@ mod tests {
         assert!(evaluate_candidate("hot_money_early_v1", &trading).is_err());
         let oversized = format!("{HOT_MONEY_PROMPT}\n{}", "补充".repeat(4_001));
         assert!(evaluate_candidate("hot_money_early_v1", &oversized).is_err());
-        assert!(status_at(&overlay).unwrap().iter().all(|status| status.builtin));
+        assert!(status_at(&overlay)
+            .unwrap()
+            .iter()
+            .all(|status| status.builtin));
     }
 
     #[test]
@@ -448,10 +437,15 @@ mod tests {
         let dir = TempDir::new();
         let overlay = dir.path().join("prompt-overlays.json");
         let candidate = format!("{HOT_MONEY_PROMPT}\n\n补充：只描述已核验事实。 ");
-        activate_gepa_at(&overlay, "hot_money_early_v1", &builtin_method_card_version("hot_money_early_v1").unwrap(), &candidate)
-            .expect("first explicit activation");
+        activate_gepa_at(
+            &overlay,
+            "hot_money_early_v1",
+            &builtin_method_card_version("hot_money_early_v1").unwrap(),
+            &candidate,
+        )
+        .expect("first explicit activation");
 
-        let store_after_first = load_store(&overlay);
+        let store_after_first = load_store(&overlay).unwrap();
         let active = store_after_first
             .profiles
             .get("hot_money_early_v1")
@@ -468,7 +462,7 @@ mod tests {
             &second_candidate
         )
         .is_err());
-        let store_after_stale_attempt = load_store(&overlay);
+        let store_after_stale_attempt = load_store(&overlay).unwrap();
         let active_after_stale_attempt = store_after_stale_attempt
             .profiles
             .get("hot_money_early_v1")
@@ -483,7 +477,13 @@ mod tests {
         let dir = TempDir::new();
         let overlay = dir.path().join("prompt-overlays.json");
         let body = format!("{HOT_MONEY_PROMPT}\n\n补充：只根据已有证据描述不确定性。");
-        assert!(activate_gepa_at(&overlay, "hot_money_early_v1", &builtin_method_card_version("hot_money_early_v1").unwrap(), &body).is_ok());
+        assert!(activate_gepa_at(
+            &overlay,
+            "hot_money_early_v1",
+            &builtin_method_card_version("hot_money_early_v1").unwrap(),
+            &body
+        )
+        .is_ok());
         let resolved = resolve_from_path("expert", &overlay);
         assert_eq!(
             resolved.version,
@@ -493,7 +493,7 @@ mod tests {
         assert!(resolved.text.contains("不提供买卖建议或收益承诺"));
         fs::write(&overlay, "{").unwrap();
         let fallback = resolve_from_path("expert", &overlay);
-        assert_eq!(fallback.version, BASE_PROMPT_VERSION);
+        assert!(fallback.version.contains("degraded-overlay"));
         assert!(!fallback.text.contains("只根据已有证据描述不确定性"));
         let _ = fs::remove_file(&overlay);
         assert_eq!(
@@ -511,7 +511,10 @@ mod tests {
             return compose(mode, builtin_body(mode), BASE_PROMPT_VERSION);
         }
         let profile_id = profile_id_for_mode(mode);
-        let store = load_store(overlay);
+        let store = match load_store(overlay) {
+            Ok(store) => store,
+            Err(_) => return compose(mode, builtin_body(mode), &format!("{BASE_PROMPT_VERSION}+degraded-overlay")),
+        };
         if let Some(active) = store
             .profiles
             .get(profile_id)
@@ -522,5 +525,27 @@ mod tests {
             }
         }
         compose(mode, builtin_body(mode), BASE_PROMPT_VERSION)
+    }
+}
+#[cfg(test)]
+mod persistence_reliability_tests {
+    use super::*;
+    #[test]
+    fn malformed_overlay_cannot_be_overwritten_by_status_or_revert() {
+        let root = std::env::temp_dir().join(crate::agent_ledger::next_run_id());
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("prompt.json");
+        fs::write(&path, b"{invalid").unwrap();
+        assert!(status_at(&path).is_err());
+        assert!(revert_at(&root.join("ledger.sqlite"), &path, "hot_money_early_v1").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"{invalid");
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn io_failure_is_not_treated_as_missing_overlay() {
+        let root = std::env::temp_dir().join(crate::agent_ledger::next_run_id());
+        fs::create_dir_all(&root).unwrap();
+        assert!(status_at(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 }

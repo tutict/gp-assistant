@@ -6,6 +6,7 @@ import { activeLlmProvider, buildLlmConfig, normalizeAgentResult, normalizeAgent
 import { buildAgentStreamPayload, MAX_AGENT_MESSAGE_CHARS } from "../../lib/agent";
 import { deleteAgentConversationRuns } from "../../lib/agentRuns";
 import { GepaLabPanel } from "./GepaLabPanel";
+import { useWorkspaceState, useWorkspaceStore, useWorkspaceStatus, useWorkspaceCredentialsReady, WorkspaceSaveStatus } from "../../hooks/useWorkspace";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useMobileComposer } from "../../hooks/useMobileComposer";
 import { AgentResultView } from "./AgentResultView";
@@ -64,7 +65,6 @@ function agentModeLabel(mode: string | undefined) {
 }
 
 const AGENT_HISTORY_KEY = "stock-optimizer-agent-conversations";
-const AGENT_ACTIVE_KEY = "stock-optimizer-agent-active-conversation";
 const AGENT_RAIL_COLLAPSED_KEY = "stock-optimizer-agent-rail-collapsed";
 const AGENT_FAILED_LEDGER_DELETION_PREFIX = "stock-optimizer-agent-failed-ledger-deletion:";
 const AGENT_MOBILE_DRAWER_QUERY = "(max-width: 768px)";
@@ -100,16 +100,14 @@ function publishConversationDeletion(event: ConversationDeletionEvent) {
 
 export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatchlistChange, draftPrompt, draftRequestId }: AgentPanelProps) {
   const [failedLedgerDeletionIds, ledgerDeletionMarkerIds, syncLedgerDeletionIds] = usePersistentLedgerDeletionIds();
-  const [conversations, setConversations, quotaError] = useLocalStorage<AgentConversation[]>(
-    AGENT_HISTORY_KEY,
-    [createConversation()],
-    sanitizeAgentConversations,
-  );
-  const [activeConversationId, setActiveConversationId] = useLocalStorage<string>(AGENT_ACTIVE_KEY, "");
+  const workspace = useWorkspaceStore();
+  const workspaceStatus = useWorkspaceStatus();
+  const credentialsReady = useWorkspaceCredentialsReady();
+  const initialConversations = useMemo(() => [createConversation()], []);
+  const [conversations, setConversations] = useWorkspaceState<AgentConversation[]>("agent.conversations", initialConversations);
+  const [activeConversationId, setActiveConversationId] = useWorkspaceState("agent.active", "");
   const [railCollapsed, setRailCollapsed] = useLocalStorage<boolean>(AGENT_RAIL_COLLAPSED_KEY, false);
-  const [input, setInput] = useState("");
   const [settingsRequest, setSettingsRequest] = useState(0);
-  const composer = useMobileComposer(input);
   const [conversationSearch, setConversationSearch] = useState("");
   const [runningConversationIds, setRunningConversationIds] = useState<string[]>([]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -129,11 +127,8 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const stickToBottomRef = useRef(true);
   const replayTriggerRef = useRef<HTMLElement | null>(null);
   const activeRunsRef = useRef(new Map<string, { runId: string; controller: AbortController }>());
-  const draftsRef = useRef<Record<string, string>>({});
-  const inputValueRef = useRef(input);
   const pendingDeleteRef = useRef<string | null>(null);
   const appliedDraftRef = useRef(0);
-  inputValueRef.current = input;
   const activeProvider = activeLlmProvider(llmSettings);
   const activeLlmConfig = useMemo(() => buildLlmConfig(llmSettings), [llmSettings]);
 
@@ -142,6 +137,16 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   }, []);
 
   const activeConversation = conversations.find((item) => item.id === activeConversationId) || conversations[0] || null;
+  const [input, setDraft] = useWorkspaceState(`agent.draft:${activeConversation?.id || "compose"}`, "");
+  const setInput = useCallback((value: string) => {
+    if (!workspaceStatus.ready && activeConversation) {
+      setActiveConversationId(activeConversation.id);
+      setConversations(current => current);
+    }
+    setDraft(value);
+  }, [activeConversation, setActiveConversationId, setConversations, setDraft, workspaceStatus.ready]);
+  const composer = useMobileComposer(input);
+
   const activeConversationDeleting = Boolean(
     activeConversation
       && (ledgerDeletionInFlightIds.includes(activeConversation.id)
@@ -185,12 +190,14 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   }, [visibleConversations]);
 
   useEffect(() => {
+    if (!workspaceStatus.ready) return;
+    if (!workspace.get<AgentConversation[]>("agent.conversations", []).length) setConversations(conversations);
     if (!activeConversation && conversations[0]) {
       setActiveConversationId(conversations[0].id);
     } else if (activeConversation && activeConversation.id !== activeConversationId) {
       setActiveConversationId(activeConversation.id);
     }
-  }, [activeConversation, activeConversationId, conversations, setActiveConversationId]);
+  }, [activeConversation, activeConversationId, conversations, setActiveConversationId, setConversations, workspace, workspaceStatus.ready]);
 
   const handleThreadScroll = useCallback(() => {
     const node = threadRef.current;
@@ -237,49 +244,46 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const updateConversation = useCallback((conversationId: string, updater: (conversation: AgentConversation) => AgentConversation) => {
     setConversations((prev) => prev.map((conversation) => (
       conversation.id === conversationId ? updater(conversation) : conversation
-    )));
+    )), !activeRunsRef.current.has(conversationId));
   }, [setConversations]);
 
-  const rememberDraft = (conversationId?: string) => {
-    if (conversationId) draftsRef.current[conversationId] = inputValueRef.current;
-  };
-
   const startNewChat = useCallback(() => {
-    rememberDraft(activeConversation?.id);
     const next = createConversation("quick");
     setConversations((prev) => [next, ...prev].slice(0, MAX_AGENT_CONVERSATIONS));
     setActiveConversationId(next.id);
-    setInput("");
+    workspace.set(`agent.draft:${next.id}`, "");
+    void workspace.flush();
     if (typeof window !== "undefined" && window.matchMedia?.(AGENT_MOBILE_DRAWER_QUERY).matches) {
       setRailCollapsed(true);
     }
-  }, [activeConversation?.id, setActiveConversationId, setConversations, setRailCollapsed]);
+  }, [setActiveConversationId, setConversations, setRailCollapsed, workspace]);
 
   const switchConversation = useCallback((conversationId: string) => {
-    rememberDraft(activeConversation?.id);
     setActiveConversationId(conversationId);
-    setInput(draftsRef.current[conversationId] || "");
+    void workspace.flush();
     pendingDeleteRef.current = null;
     setPendingDeleteId(null);
     if (typeof window !== "undefined" && window.matchMedia?.(AGENT_MOBILE_DRAWER_QUERY).matches) {
       setRailCollapsed(true);
     }
-  }, [activeConversation?.id, setActiveConversationId, setRailCollapsed]);
+  }, [setActiveConversationId, setRailCollapsed, workspace]);
 
   const removeLocalConversation = useCallback((conversationId: string) => {
+    workspace.set(`agent.draft:${conversationId}`, null);
     setConversations((prev) => {
       const remaining = prev.filter((conversation) => conversation.id !== conversationId);
       const next = remaining.length ? remaining : [createConversation()];
       setActiveConversationId((current) => current === conversationId ? next[0].id : current);
       return next;
     });
-  }, [setActiveConversationId, setConversations]);
+  }, [setActiveConversationId, setConversations, workspace]);
 
   useEffect(() => {
+    if (!workspaceStatus.ready) return;
     for (const conversationId of ledgerDeletionMarkerIds) {
       removeLocalConversation(conversationId);
     }
-  }, [ledgerDeletionMarkerIds, removeLocalConversation]);
+  }, [ledgerDeletionMarkerIds, removeLocalConversation, workspaceStatus.ready]);
 
   useEffect(() => {
     const listener = (event: ConversationDeletionEvent) => {
@@ -405,9 +409,9 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     setConversations((prev) => [next, ...prev].slice(0, MAX_AGENT_CONVERSATIONS));
     setActiveConversationId(next.id);
     const prompt = draftPrompt || "";
-    draftsRef.current[next.id] = prompt;
-    setInput(prompt);
-  }, [draftPrompt, draftRequestId, setActiveConversationId, setConversations]);
+    workspace.set(`agent.draft:${next.id}`, prompt);
+    void workspace.flush();
+  }, [draftPrompt, draftRequestId, setActiveConversationId, setConversations, workspace]);
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -415,6 +419,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     const mode = activeConversation?.mode || "quick";
     if (
       !text
+      || !credentialsReady
       || (mode !== "quick" && !activeLlmConfig)
       || activeRunsRef.current.has(conversationId || "")
       || !conversationId
@@ -429,7 +434,6 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     const controller = new AbortController();
     activeRunsRef.current.set(conversationId, { runId, controller });
     setRunningConversationIds(Array.from(activeRunsRef.current.keys()));
-    draftsRef.current[conversationId] = "";
     setInput("");
 
     updateConversation(conversationId, (conversation) => {
@@ -441,6 +445,9 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         updatedAt: now,
       };
     });
+
+    workspace.persist("agent.conversations");
+    void workspace.flush();
 
     const patchAssistant = (patch: Partial<ChatMessage>) => {
       updateConversation(conversationId, (conversation) => ({
@@ -524,9 +531,11 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
       if (activeRunsRef.current.get(conversationId)?.controller === controller) {
         activeRunsRef.current.delete(conversationId);
       }
+      workspace.persist("agent.conversations");
+      void workspace.flush();
       setRunningConversationIds(Array.from(activeRunsRef.current.keys()));
     }
-  }, [activeConversation?.id, activeConversation?.mode, activeLlmConfig, input, messages, updateConversation, watchlist]);
+  }, [activeConversation?.id, activeConversation?.mode, activeLlmConfig, input, messages, updateConversation, watchlist, credentialsReady, setInput, workspace]);
 
   return (
     <div className={`panel-container agent-panel agent-workspace ${railCollapsed ? "rail-collapsed" : ""}`}>
@@ -608,7 +617,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         </div>
 
         <div className="agent-rail-footer agent-rail-model-settings">
-          <LlmSettingsPanel settings={llmSettings} onChange={onLlmSettingsChange} presentation="dialog" openRequest={settingsRequest} />
+          <fieldset disabled={!credentialsReady} style={{ border: 0, margin: 0, padding: 0 }}><LlmSettingsPanel settings={llmSettings} onChange={onLlmSettingsChange} presentation="dialog" openRequest={settingsRequest} /></fieldset>
         </div>
       </aside>
 
@@ -711,11 +720,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
               />
             </div>
           )}
-          {quotaError && (
-            <div className="agent-quota-warning" role="alert">
-              本地存储配额已满，部分对话历史未能保存，刷新后可能丢失。建议删除旧对话后重试。
-            </div>
-          )}
+          <WorkspaceSaveStatus />
 <textarea
             ref={composer.textareaRef}
             className="agent-input"
@@ -758,7 +763,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
               type="button"
               className="send-btn"
               onClick={currentRunning ? cancelActiveRun : send}
-              disabled={!currentRunning && (activeConversationDeleting || !input.trim() || modelRequired)}
+              disabled={!currentRunning && (!credentialsReady || activeConversationDeleting || !input.trim() || modelRequired)}
               aria-label={currentRunning ? "停止" : "发送"}
             >
               {currentRunning ? <Square size={17} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}

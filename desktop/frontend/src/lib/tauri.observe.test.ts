@@ -37,7 +37,7 @@ describe("desktop financial snapshot routes", () => {
       invoke,
       path: "/api/custom-screen",
       parsed: new URL("http://tauri.localhost/api/custom-screen"),
-      payload: { criteria: { industry: "医疗器械" } },
+      payload: { data_policy: "refresh", criteria: { industry: "医疗器械" } },
     };
 
     await expect(TAURI_POST_ROUTES["/api/custom-screen"]?.(request)).rejects.toThrow("行业分类数据加载失败");
@@ -83,7 +83,7 @@ describe("desktop financial snapshot routes", () => {
       invoke,
       path: "/api/custom-screen",
       parsed: new URL("http://tauri.localhost/api/custom-screen"),
-      payload: {
+      payload: { data_policy: "refresh",
         criteria: { industry: "医疗器械" },
         financial_snapshot: {
           stocks: [{ code: "002432.SZ", name: "九安医疗", price: 10 }],
@@ -140,7 +140,7 @@ describe("desktop financial snapshot routes", () => {
     await route?.handler({
       invoke,
       path: "/api/observe/000100.SZ",
-      parsed: new URL("http://tauri.localhost/api/observe/000100.SZ"),
+      parsed: new URL("http://tauri.localhost/api/observe/000100.SZ?data_policy=refresh"),
     });
 
     expect(invokeMock).toHaveBeenCalledWith("api_observe", {
@@ -208,7 +208,7 @@ describe("desktop financial snapshot routes", () => {
       invoke,
       path: "/api/screen",
       parsed: new URL("http://tauri.localhost/api/screen"),
-      payload: { limit: 10 },
+      payload: { data_policy: "refresh", limit: 10 },
     };
 
     await screenRoute?.(screenContext);
@@ -243,7 +243,7 @@ describe("desktop financial snapshot routes", () => {
       invoke,
       path: "/api/trend-screen",
       parsed: new URL("http://tauri.localhost/api/trend-screen"),
-      payload: { limit: 10 },
+      payload: { data_policy: "refresh", limit: 10 },
     });
     const trendScreenCalls = invokeMock.mock.calls.filter(([command]) => command === "api_trend_screen");
     expect(trendScreenCalls[0]?.[1]).toEqual({
@@ -270,7 +270,7 @@ describe("desktop financial snapshot routes", () => {
       invoke,
       path: "/api/backtest",
       parsed: new URL("http://tauri.localhost/api/backtest"),
-      payload: { source: "criteria" },
+      payload: { data_policy: "refresh", source: "criteria" },
     });
     expect(invokeMock).toHaveBeenCalledWith("api_backtest", {
       payload: expect.objectContaining({

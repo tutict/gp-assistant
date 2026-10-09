@@ -1,3 +1,4 @@
+use crate::screening::local_data_policy::{self as local_data, DataPolicy};
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
@@ -5,7 +6,9 @@ use std::{
 };
 use stock_optimizer_core as gp_core;
 
-use crate::market::{EASTMONEY_DATACENTER_ENDPOINT, EASTMONEY_SECURITIES_ENDPOINT, TENCENT_BATCH_TIMEOUT_SECS};
+use crate::market::{
+    EASTMONEY_DATACENTER_ENDPOINT, EASTMONEY_SECURITIES_ENDPOINT, TENCENT_BATCH_TIMEOUT_SECS,
+};
 
 pub(crate) const EASTMONEY_FUND_FLOW_ENDPOINT: &str =
     "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get";
@@ -39,73 +42,138 @@ pub(crate) async fn api_observe(app: tauri::AppHandle, payload: Value) -> Result
     Box::pin(api_observe_inner(app, payload)).await
 }
 
-pub(crate) async fn api_observe_inner(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_observe_inner(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    let policy = DataPolicy::parse(&payload)?;
+    // Crucially: branch before acquiring the heavy-network permit or starting enrichment.
+    if policy == DataPolicy::CacheOnly {
+        return observe_from_local_cache(&app, payload).await;
+    }
     let fallback_payload = payload.clone();
-    let mobile_fast_observe = payload
+    let observe_timeout_secs = if payload
         .get("mobile_fast_observe")
         .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let observe_timeout_secs = if mobile_fast_observe {
+        .unwrap_or(false)
+    {
         OBSERVE_MOBILE_FAST_TOTAL_TIMEOUT_SECS
     } else {
         OBSERVE_TOTAL_TIMEOUT_SECS
     };
-    let observe_network = Box::pin(crate::runtime::with_heavy_network_permit(
+    let network = Box::pin(crate::runtime::with_heavy_network_permit(
         "api_observe_network",
         observe_core_payload_with_cached_history(&app, payload),
     ));
-    let observe_payload =
-        tokio::time::timeout(Duration::from_secs(observe_timeout_secs), observe_network).await;
-
-    match observe_payload {
-        Ok(Ok((core_payload, notes))) => match run_observe_calculation(&core_payload).await {
-            Ok(mut result) => {
-                enrich_observe_stock_quote_fields(&mut result, &core_payload);
-                for note in notes {
-                    append_observe_note(&mut result, note);
-                }
-                Ok(result)
+    match tokio::time::timeout(Duration::from_secs(observe_timeout_secs), network).await {
+        Ok(Ok((core_payload, notes))) => {
+            let metadata = observe_local_metadata(&core_payload, policy)?;
+            let mut result = run_observe_calculation(&core_payload).await?;
+            enrich_observe_stock_quote_fields(&mut result, &core_payload);
+            for note in notes {
+                append_observe_note(&mut result, note);
             }
-            Err(error) => Ok(observe_error_result(
-                &core_payload,
-                &fallback_payload,
-                vec![format!("观察计算失败：{error}")],
-            )),
-        },
-        Ok(Err(error)) => Ok(observe_error_result(
-            &Value::Null,
-            &fallback_payload,
-            vec![format!("观察数据准备失败：{error}")],
-        )),
-        Err(_) => match observe_core_payload_from_cache(&app, fallback_payload.clone()) {
-            Ok(core_payload) => match run_observe_calculation(&core_payload).await {
-                Ok(mut result) => {
-                    enrich_observe_stock_quote_fields(&mut result, &core_payload);
-                    append_observe_note(
-                        &mut result,
-                        format!("观察在线补全超过 {observe_timeout_secs} 秒，已返回本地缓存结果。"),
-                    );
-                    Ok(result)
-                }
-                Err(error) => Ok(observe_error_result(
-                    &core_payload,
-                    &fallback_payload,
-                    vec![
-                        format!("观察在线补全超过 {observe_timeout_secs} 秒，已返回本地缓存结果。"),
-                        format!("观察计算失败：{error}"),
-                    ],
-                )),
-            },
-            Err(error) => Ok(observe_error_result(
-                &Value::Null,
-                &fallback_payload,
-                vec![
-                    format!("观察在线补全超过 {observe_timeout_secs} 秒，且无法读取本地缓存。"),
-                    error,
-                ],
-            )),
-        },
+            local_data::attach_metadata(&mut result, metadata, &fallback_payload);
+            Ok(result)
+        }
+        Ok(Err(error)) => Err(error),
+        Err(_) => {
+            let mut result = observe_from_local_cache(&app, fallback_payload).await?;
+            append_observe_note(
+                &mut result,
+                format!("观察在线补全超过 {observe_timeout_secs} 秒，已返回本地缓存结果。"),
+            );
+            Ok(result)
+        }
     }
+}
+
+async fn observe_from_local_cache(app: &tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let core_payload = observe_core_payload_from_cache(app, payload.clone()).map_err(|error| {
+        local_data::missing_error(
+            "observe",
+            &[json!({"kind":"market_cache", "reason":error.chars().take(240).collect::<String>()})],
+        )
+    })?;
+    let metadata = observe_local_metadata(&core_payload, DataPolicy::CacheOnly)?;
+    let mut result = run_observe_calculation(&core_payload).await?;
+    enrich_observe_stock_quote_fields(&mut result, &core_payload);
+    append_observe_note(
+        &mut result,
+        "仅使用本地已有数据；未刷新报价、财务、资金或历史行情。".to_string(),
+    );
+    local_data::attach_metadata(&mut result, metadata, &payload);
+    Ok(result)
+}
+
+pub(crate) fn observe_local_metadata(core: &Value, policy: DataPolicy) -> Result<Value, String> {
+    let request = &core["request"];
+    let code = request
+        .get("code")
+        .and_then(Value::as_str)
+        .and_then(crate::market::normalize_stock_code)
+        .ok_or_else(|| "观察请求缺少有效股票代码。".to_string())?;
+    let data = &core["data"];
+    let stock = data
+        .get("stocks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|stock| {
+            stock
+                .get("code")
+                .and_then(Value::as_str)
+                .and_then(crate::market::normalize_stock_code)
+                .as_deref()
+                == Some(code.as_str())
+        });
+    let quote = json!({"kind":"quote", "code":code, "sufficient":stock.is_some_and(|s| s.get("price").and_then(Value::as_f64).is_some_and(|p| p.is_finite() && p > 0.0))});
+    let required = if request
+        .get("series_limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(120)
+        > 500
+    {
+        MIN_FULL_OBSERVE_HISTORY_BARS
+    } else {
+        MIN_OBSERVE_HISTORY_BARS
+    };
+    let rows = data
+        .get("histories")
+        .and_then(|h| h.get(&code))
+        .and_then(Value::as_array);
+    let mut history = local_data::history_coverage(
+        rows.into_iter()
+            .flatten()
+            .filter(|r| {
+                r.get("close")
+                    .and_then(Value::as_f64)
+                    .is_some_and(|c| c.is_finite() && c > 0.0)
+            })
+            .filter_map(|r| r.get("date").and_then(Value::as_str)),
+        request
+            .get("start_date")
+            .and_then(Value::as_str)
+            .unwrap_or("19900101"),
+        request
+            .get("end_date")
+            .and_then(Value::as_str)
+            .unwrap_or("20501231"),
+        required,
+    );
+    history["code"] = json!(code);
+    let coverage = vec![quote, history];
+    local_data::require_coverage("observe", &coverage)?;
+    let mut metadata = local_data::metadata(
+        policy,
+        stock
+            .and_then(|s| s.get("quote_time"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        &coverage,
+    );
+    metadata["optional_data"] = json!({"financials":data.get("financials").and_then(|v| v.get(&code)).is_some(), "capital_evidence":data.get("capital_evidence").and_then(|v| v.get(&code)).is_some(), "order_book":"not_refreshed_in_cache_only"});
+    Ok(metadata)
 }
 
 pub(crate) async fn run_observe_calculation(core_payload: &Value) -> Result<Value, String> {
@@ -192,10 +260,11 @@ pub(crate) fn observe_needs_fundamental_supplement(data: &Value, code: &str) -> 
     if missing {
         return true;
     }
-    let updated_at =
-        entry.and_then(|item| crate::market::cache_epoch_ms(item.get("supplement_updated_at_epoch_ms")));
+    let updated_at = entry
+        .and_then(|item| crate::market::cache_epoch_ms(item.get("supplement_updated_at_epoch_ms")));
     updated_at.is_none_or(|updated_at| {
-        crate::market::epoch_millis().saturating_sub(updated_at) > OBSERVE_FUNDAMENTAL_REFRESH_INTERVAL_MS
+        crate::market::epoch_millis().saturating_sub(updated_at)
+            > OBSERVE_FUNDAMENTAL_REFRESH_INTERVAL_MS
     })
 }
 
@@ -224,18 +293,23 @@ pub(crate) async fn fetch_observe_quote_snapshot(
                 .and_then(Value::as_str)
                 .and_then(crate::market::normalize_stock_code)
                 .is_some_and(|parsed| parsed == code);
-            let has_exact_shares = ["total_shares", "circulating_shares"]
-                .iter()
-                .all(|field| crate::market::object_f64(stock, field).is_some_and(|value| value > 0.0));
+            let has_exact_shares = ["total_shares", "circulating_shares"].iter().all(|field| {
+                crate::market::object_f64(stock, field).is_some_and(|value| value > 0.0)
+            });
             code_matches && has_exact_shares
         })
         .ok_or_else(|| format!("Tencent quote did not return exact share data for {code}"))
 }
 
 pub(crate) fn parse_goodwill_to_net_assets(value: &Value) -> Option<f64> {
-    let row = crate::market::eastmoney_result_rows(value).first()?.as_object()?;
-    let parent_equity = crate::market::json_f64(row.get("TOTAL_PARENT_EQUITY")).filter(|value| *value > 0.0)?;
-    let goodwill = crate::market::json_f64(row.get("GOODWILL")).unwrap_or(0.0).max(0.0);
+    let row = crate::market::eastmoney_result_rows(value)
+        .first()?
+        .as_object()?;
+    let parent_equity =
+        crate::market::json_f64(row.get("TOTAL_PARENT_EQUITY")).filter(|value| *value > 0.0)?;
+    let goodwill = crate::market::json_f64(row.get("GOODWILL"))
+        .unwrap_or(0.0)
+        .max(0.0);
     Some(goodwill / parent_equity * 100.0)
 }
 
@@ -249,7 +323,10 @@ pub(crate) fn parse_latest_pledged_share_ratio(value: &Value) -> Option<f64> {
         .and_then(|row| crate::market::json_f64(row.get("PLEDGE_RATIO")))
 }
 
-pub(crate) fn parse_latest_dividend_metrics(value: &Value, price: Option<f64>) -> (Option<f64>, Option<f64>) {
+pub(crate) fn parse_latest_dividend_metrics(
+    value: &Value,
+    price: Option<f64>,
+) -> (Option<f64>, Option<f64>) {
     let rows = crate::market::eastmoney_result_rows(value);
     if rows.is_empty() {
         return (Some(0.0), Some(0.0));
@@ -378,9 +455,10 @@ pub(crate) async fn fetch_observe_fundamental_supplement(
             if let Some(value) = payout_ratio {
                 fields.insert("dividend_payout_ratio".to_string(), json!(value));
             }
-            if let Some(period) =
-                crate::market::eastmoney_metric_period(latest_dividend_row(&value), &["REPORT_DATE"])
-            {
+            if let Some(period) = crate::market::eastmoney_metric_period(
+                latest_dividend_row(&value),
+                &["REPORT_DATE"],
+            ) {
                 fields.insert("dividend_period".to_string(), json!(period));
             }
         }
@@ -464,7 +542,11 @@ pub(crate) fn merge_observe_fundamental_supplement(
     changed
 }
 
-pub(crate) fn merge_observe_financial_snapshot(data: &mut Value, code: &str, snapshot: &Value) -> bool {
+pub(crate) fn merge_observe_financial_snapshot(
+    data: &mut Value,
+    code: &str,
+    snapshot: &Value,
+) -> bool {
     let mut entries = serde_json::Map::new();
     if let Some(existing) = data
         .get("financials")
@@ -539,7 +621,8 @@ pub(crate) async fn observe_core_payload_with_cached_history(
         }
     }
 
-    let payload_financial_points = crate::market::normalize_quarterly_eps(payload.get("financial_eps_points"));
+    let payload_financial_points =
+        crate::market::normalize_quarterly_eps(payload.get("financial_eps_points"));
     if !payload_financial_points.is_empty() {
         let before = crate::market::financial_quarterly_eps_count(&data, &code);
         let provided_count = payload_financial_points.len();
@@ -861,14 +944,18 @@ pub(crate) async fn observe_core_payload_with_cached_history(
 
     if data_changed {
         let persist_data = data.clone();
-        if let Err(error) =
-            crate::market::persist_market_data_updates(app.clone(), persist_data, vec![code.clone()]).await
+        if let Err(error) = crate::market::persist_market_data_updates(
+            app.clone(),
+            persist_data,
+            vec![code.clone()],
+        )
+        .await
         {
             notes.push(format!("观察缓存补丁写入失败：{error}"));
         }
     }
 
-    let mut observe_request = payload.clone();
+    let mut observe_request = local_data::core_payload(payload.clone());
     if let Some(map) = observe_request.as_object_mut() {
         map.remove("history");
         map.remove("financial_eps_points");
@@ -887,7 +974,7 @@ pub(crate) fn observe_core_payload_from_cache(
     payload: Value,
 ) -> Result<Value, String> {
     let data = crate::market::cached_market_data(app)?;
-    let mut observe_request = payload;
+    let mut observe_request = local_data::core_payload(payload);
     if let Some(map) = observe_request.as_object_mut() {
         map.remove("history");
         map.remove("financial_eps_points");
@@ -1055,8 +1142,8 @@ pub(crate) async fn fetch_eastmoney_main_fund_flow(
     code: &str,
     end_date: &str,
 ) -> Result<Value, String> {
-    let normalized =
-        crate::market::normalize_stock_code(code).ok_or_else(|| format!("无效资金流股票代码：{code}"))?;
+    let normalized = crate::market::normalize_stock_code(code)
+        .ok_or_else(|| format!("无效资金流股票代码：{code}"))?;
     let digits = normalized
         .get(..6)
         .ok_or_else(|| format!("无效资金流股票代码：{code}"))?;
@@ -1179,7 +1266,11 @@ pub(crate) fn main_fund_flow_plain_conclusion(net_ratio: f64) -> String {
     }
 }
 
-pub(crate) fn eastmoney_fund_flow_unavailable_item(code: &str, end_date: &str, detail: &str) -> Value {
+pub(crate) fn eastmoney_fund_flow_unavailable_item(
+    code: &str,
+    end_date: &str,
+    detail: &str,
+) -> Value {
     json!({
         "category": "fund_flow_status",
         "source": "东方财富个股资金流",
@@ -1204,8 +1295,8 @@ pub(crate) async fn fetch_eastmoney_guba_sentiment(
     client: &reqwest::Client,
     code: &str,
 ) -> Result<Vec<Value>, String> {
-    let normalized =
-        crate::market::normalize_stock_code(code).ok_or_else(|| format!("无效股吧股票代码：{code}"))?;
+    let normalized = crate::market::normalize_stock_code(code)
+        .ok_or_else(|| format!("无效股吧股票代码：{code}"))?;
     let digits = normalized
         .get(..6)
         .ok_or_else(|| format!("无效股吧股票代码：{code}"))?;
@@ -1253,8 +1344,9 @@ pub(crate) fn parse_eastmoney_guba_items(html: &str, code: &str, list_url: &str)
             continue;
         }
         let summary = guba_post_summary(object, &title);
-        let date = crate::market::object_string_any(object, &["post_publish_time", "post_display_time"])
-            .and_then(|value| normalize_guba_datetime(&value));
+        let date =
+            crate::market::object_string_any(object, &["post_publish_time", "post_display_time"])
+                .and_then(|value| normalize_guba_datetime(&value));
         let post_id = crate::market::object_string_any(object, &["post_id"]).unwrap_or_default();
         let url = if post_id.trim().is_empty() {
             list_url.to_string()
@@ -1294,10 +1386,13 @@ pub(crate) fn guba_post_heat(value: &Value) -> f64 {
     let Some(object) = value.as_object() else {
         return 0.0;
     };
-    let clicks = crate::market::object_number_any_loose(object, &["post_click_count"]).unwrap_or(0.0);
-    let comments = crate::market::object_number_any_loose(object, &["post_comment_count"]).unwrap_or(0.0);
+    let clicks =
+        crate::market::object_number_any_loose(object, &["post_click_count"]).unwrap_or(0.0);
+    let comments =
+        crate::market::object_number_any_loose(object, &["post_comment_count"]).unwrap_or(0.0);
     let likes =
-        crate::market::object_number_any_loose(object, &["post_like_count", "post_forward_count"]).unwrap_or(0.0);
+        crate::market::object_number_any_loose(object, &["post_like_count", "post_forward_count"])
+            .unwrap_or(0.0);
     clicks + comments * 25.0 + likes * 8.0
 }
 
@@ -1312,7 +1407,8 @@ pub(crate) fn guba_post_summary(object: &serde_json::Map<String, Value>, title: 
     if let Some(clicks) = crate::market::object_number_any_loose(object, &["post_click_count"]) {
         parts.push(format!("阅读 {}", crate::market::compact_count(clicks)));
     }
-    if let Some(comments) = crate::market::object_number_any_loose(object, &["post_comment_count"]) {
+    if let Some(comments) = crate::market::object_number_any_loose(object, &["post_comment_count"])
+    {
         parts.push(format!("评论 {}", crate::market::compact_count(comments)));
     }
     if parts.is_empty() {
@@ -1328,13 +1424,15 @@ pub(crate) async fn fetch_eastmoney_institution_lhb(
     start_date: &str,
     end_date: &str,
 ) -> Result<Value, String> {
-    let normalized =
-        crate::market::normalize_stock_code(code).ok_or_else(|| format!("无效龙虎榜股票代码：{code}"))?;
+    let normalized = crate::market::normalize_stock_code(code)
+        .ok_or_else(|| format!("无效龙虎榜股票代码：{code}"))?;
     let digits = normalized
         .get(..6)
         .ok_or_else(|| format!("无效龙虎榜股票代码：{code}"))?;
-    let start = crate::market::normalize_history_date(start_date).unwrap_or_else(|| fallback_lhb_start_date());
-    let end = crate::market::normalize_history_date(end_date).unwrap_or_else(|| crate::market::fallback_today_date());
+    let start = crate::market::normalize_history_date(start_date)
+        .unwrap_or_else(|| fallback_lhb_start_date());
+    let end = crate::market::normalize_history_date(end_date)
+        .unwrap_or_else(|| crate::market::fallback_today_date());
     let filter =
         format!("(TRADE_DATE>='{start}')(TRADE_DATE<='{end}')(SECURITY_CODE=\"{digits}\")");
     let url = reqwest::Url::parse_with_params(
@@ -1384,12 +1482,18 @@ pub(crate) async fn fetch_eastmoney_institution_lhb(
         (Ok(buy), Err(error)) => (
             merge_eastmoney_lhb_seats(buy, Vec::new()),
             "partial",
-            format!("卖方席位明细暂不可用：{}", crate::market::truncate_for_note(&error, 120)),
+            format!(
+                "卖方席位明细暂不可用：{}",
+                crate::market::truncate_for_note(&error, 120)
+            ),
         ),
         (Err(error), Ok(sell)) => (
             merge_eastmoney_lhb_seats(Vec::new(), sell),
             "partial",
-            format!("买方席位明细暂不可用：{}", crate::market::truncate_for_note(&error, 120)),
+            format!(
+                "买方席位明细暂不可用：{}",
+                crate::market::truncate_for_note(&error, 120)
+            ),
         ),
         (Err(buy_error), Err(sell_error)) => (
             Vec::new(),
@@ -1452,10 +1556,10 @@ pub(crate) fn parse_eastmoney_lhb_item(
     let net = crate::market::object_number_any_loose(row, &["NET_BUY_AMT"]).unwrap_or(buy - sell);
     let ratio = crate::market::object_number_any_loose(row, &["RATIO"]);
     let score = institution_lhb_score(net, buy, sell, ratio);
-    let trade_date =
-        crate::market::object_string_any(row, &["TRADE_DATE"]).and_then(|value| crate::market::normalize_history_date(&value));
-    let reason =
-        crate::market::object_string_any(row, &["EXPLANATION"]).unwrap_or_else(|| "龙虎榜机构统计".to_string());
+    let trade_date = crate::market::object_string_any(row, &["TRADE_DATE"])
+        .and_then(|value| crate::market::normalize_history_date(&value));
+    let reason = crate::market::object_string_any(row, &["EXPLANATION"])
+        .unwrap_or_else(|| "龙虎榜机构统计".to_string());
     Ok(json!({
         "category": "institution_lhb",
         "source": "东方财富龙虎榜机构统计",
@@ -1574,14 +1678,27 @@ pub(crate) fn parse_eastmoney_lhb_seat_side(
                 .then(|| crate::market::object_number_any_loose(object, &["SELL"]))
                 .flatten(),
             buy_ratio: buy_side
-                .then(|| crate::market::object_number_any_loose(object, &["TOTAL_BUYRIO", "TOTAL_BUY_RATIO"]))
+                .then(|| {
+                    crate::market::object_number_any_loose(
+                        object,
+                        &["TOTAL_BUYRIO", "TOTAL_BUY_RATIO"],
+                    )
+                })
                 .flatten(),
             sell_ratio: (!buy_side)
-                .then(|| crate::market::object_number_any_loose(object, &["TOTAL_SELLRIO", "TOTAL_SELL_RATIO"]))
+                .then(|| {
+                    crate::market::object_number_any_loose(
+                        object,
+                        &["TOTAL_SELLRIO", "TOTAL_SELL_RATIO"],
+                    )
+                })
                 .flatten(),
             change_rate: crate::market::object_number_any_loose(object, &["CHANGE_RATE"]),
             reason: crate::market::object_string_any(object, &["EXPLANATION"]),
-            three_day_rise_probability: crate::market::object_number_any_loose(object, &["RISE_PROBABILITY_3DAY"]),
+            three_day_rise_probability: crate::market::object_number_any_loose(
+                object,
+                &["RISE_PROBABILITY_3DAY"],
+            ),
             three_day_activity_count: crate::market::object_number_any_loose(
                 object,
                 &["TOTAL_BUYER_SALESTIMES_3DAY", "TOTAL_SELLER_BUYTIMES_3DAY"],
@@ -1904,4 +2021,38 @@ pub(crate) fn fallback_lhb_start_date() -> String {
         .map(|duration| (duration.as_secs() / 86_400) as i64 - 30)
         .unwrap_or(0);
     crate::market::civil_date_from_days(days)
+}
+
+#[cfg(test)]
+mod local_first_observe_tests {
+    use super::*;
+    #[test]
+    fn observe_missing_quote_or_history_is_not_a_result() {
+        let core = json!({"request":{"code":"000001.SZ"},"data":{"stocks":[],"histories":{}}});
+        let error: Value = serde_json::from_str(
+            &observe_local_metadata(&core, DataPolicy::CacheOnly).unwrap_err(),
+        )
+        .unwrap();
+        assert_eq!(error["missing_count"], 2);
+        assert_eq!(
+            error["missing"][1]["required_bars"],
+            MIN_OBSERVE_HISTORY_BARS
+        );
+    }
+    #[test]
+    fn observe_old_cache_has_metadata_and_full_history_requirement_is_preserved() {
+        let mut core = json!({"request":{"code":"000001.SZ","series_limit":120},"data":{"stocks":[{"code":"000001.SZ","price":10.0,"quote_time":"20200103"}],"histories":{"000001.SZ":[{"date":"20200101","close":10.0},{"date":"20200102","close":10.0},{"date":"20200103","close":10.0}]}}});
+        let metadata = observe_local_metadata(&core, DataPolicy::CacheOnly).unwrap();
+        assert_eq!(metadata["history_as_of"], "20200103");
+        assert_eq!(metadata["optional_data"]["financials"], false);
+        core["request"]["series_limit"] = json!(10000);
+        let error: Value = serde_json::from_str(
+            &observe_local_metadata(&core, DataPolicy::CacheOnly).unwrap_err(),
+        )
+        .unwrap();
+        assert_eq!(
+            error["missing"][0]["required_bars"],
+            MIN_FULL_OBSERVE_HISTORY_BARS
+        );
+    }
 }

@@ -486,4 +486,17 @@ describe("ScreenPanel adaptive states", () => {
     expect(textContent(renderer)).toContain(message);
     expect(runButton(renderer).props.disabled).toBe(false);
   });
+  it("keeps screening local when data is unavailable so refresh stays in the toolbar", async () => {
+    postJsonMock.mockResolvedValue({ items: [] });
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<ScreenPanel criteria={criteria} onCriteriaChange={() => undefined} watchlist={[]} onWatchlistChange={() => undefined} marketStatus={null} />);
+    });
+    expect(runButton(renderer).children).toContain("运行筛选");
+    expect(renderer.root.findAll(node => node.type === "select" && node.props["aria-label"] === "筛选数据模式")).toHaveLength(0);
+    await act(async () => { runButton(renderer).props.onClick(); await Promise.resolve(); });
+    expect(postJsonMock).toHaveBeenLastCalledWith("/api/screen", expect.objectContaining({ data_policy: "cache_only" }));
+    await act(async () => renderer.unmount());
+  });
+
 });

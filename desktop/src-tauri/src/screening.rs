@@ -1,3 +1,6 @@
+#[path = "local_data_policy.rs"]
+pub(crate) mod local_data_policy;
+use crate::screening::local_data_policy::{self as local_data, DataPolicy};
 use futures::stream::{self, FuturesUnordered, StreamExt};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
@@ -5,13 +8,111 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    path::{PathBuf},
+    path::PathBuf,
     sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
 use stock_optimizer_core as gp_core;
 use tauri::{Emitter, Manager};
 
+pub(crate) fn local_snapshot(
+    app: &tauri::AppHandle,
+    payload: &Value,
+    operation: &str,
+) -> Result<Arc<gp_core::CoreDataSet>, String> {
+    DataPolicy::parse(payload)?;
+    let data = crate::market::cached_market_data_snapshot(app).map_err(|error| {
+        local_data::missing_error(
+            operation,
+            &[json!({"kind":"market_cache", "reason":error.chars().take(240).collect::<String>()})],
+        )
+    })?;
+    if data.stocks.is_empty() {
+        return Err(local_data::missing_error(
+            operation,
+            &[
+                json!({"kind":"stock_universe", "reason":"No persisted market stocks. Refresh the market universe explicitly."}),
+            ],
+        ));
+    }
+    if !data
+        .stocks
+        .iter()
+        .any(|stock| stock.price.is_finite() && stock.price > 0.0)
+    {
+        return Err(local_data::missing_error(
+            operation,
+            &[
+                json!({"kind":"quotes", "reason":"No usable cached stock prices; refresh market quotes explicitly."}),
+            ],
+        ));
+    }
+    Ok(data)
+}
+
+pub(crate) fn local_history_coverage(
+    data: &gp_core::CoreDataSet,
+    overrides: &HashMap<String, Vec<gp_core::HistoryBar>>,
+    codes: &[String],
+    start: &str,
+    end: &str,
+    required: usize,
+) -> Vec<Value> {
+    codes
+        .iter()
+        .map(|code| {
+            let normalized =
+                crate::market::normalize_stock_code(code).unwrap_or_else(|| code.clone());
+            let rows = overrides
+                .get(code)
+                .or_else(|| data.histories.get(code))
+                .or_else(|| data.histories.get(&normalized));
+            let mut coverage = local_data::history_coverage(
+                rows.into_iter()
+                    .flatten()
+                    .filter(|bar| bar.close.is_finite() && bar.close > 0.0)
+                    .map(|bar| bar.date.as_str()),
+                start,
+                end,
+                required,
+            );
+            coverage["code"] = json!(code);
+            coverage
+        })
+        .collect()
+}
+pub(crate) fn adaptive_local_coverage(
+    data: &gp_core::CoreDataSet,
+    overrides: &HashMap<String, Vec<gp_core::HistoryBar>>,
+    codes: &[String],
+    as_of: Option<&str>,
+) -> Vec<Value> {
+    codes.iter().map(|code| {
+        let normalized = crate::market::normalize_stock_code(code).unwrap_or_else(|| code.clone());
+        let rows = overrides.get(code).or_else(|| data.histories.get(code)).or_else(|| data.histories.get(&normalized)).map(Vec::as_slice).unwrap_or(&[]);
+        let window = adaptive_history_window(rows, as_of);
+        let mut item = local_data::history_coverage(window.iter().filter(|bar| bar.close.is_finite() && bar.close > 0.0).map(|bar| bar.date.as_str()), "19900101", as_of.unwrap_or("20501231"), MIN_ADAPTIVE_SCREEN_HISTORY_BARS);
+        item["code"] = json!(code);
+        item["reason"] = json!("Requires 60 bars in the 120-bar PIT window, including the exact common as-of date.");
+        item
+    }).collect()
+}
+pub(crate) fn local_metadata(
+    data: &gp_core::CoreDataSet,
+    policy: DataPolicy,
+    coverage: &[Value],
+) -> Value {
+    let quote_as_of = data
+        .stocks
+        .iter()
+        .filter_map(|stock| stock.quote_time.as_deref())
+        .filter_map(crate::market::compact_date_key)
+        .min();
+    let mut metadata = local_data::metadata(policy, quote_as_of, coverage);
+    metadata["stock_count"] = json!(data.stocks.len());
+    metadata["factor_snapshot_symbol_count"] = json!(data.factor_snapshots.len());
+    metadata
+}
 
 pub(crate) const ADAPTIVE_SCREEN_DB_FILE: &str = "adaptive-screen.sqlite";
 
@@ -49,6 +150,7 @@ pub(crate) struct PreparedTrendScreen {
     pub(crate) history_override: HashMap<String, Vec<gp_core::HistoryBar>>,
     pub(crate) request: gp_core::TrendScreenRequest,
     pub(crate) notes: Vec<String>,
+    pub(crate) metadata: Value,
 }
 
 pub(crate) struct PreparedAdaptiveScreen {
@@ -60,6 +162,7 @@ pub(crate) struct PreparedAdaptiveScreen {
     pub(crate) recent_exposure: Vec<gp_core::AdaptiveRecentExposure>,
     pub(crate) notes: Vec<String>,
     pub(crate) cache_hit: bool,
+    pub(crate) metadata: Value,
 }
 
 pub(crate) struct AdaptiveHistoryFetchOutcome {
@@ -73,6 +176,7 @@ pub(crate) struct PreparedBacktest {
     pub(crate) history_override: HashMap<String, Vec<gp_core::HistoryBar>>,
     pub(crate) request: gp_core::BacktestRequest,
     pub(crate) notes: Vec<String>,
+    pub(crate) metadata: Value,
 }
 
 #[tauri::command]
@@ -105,7 +209,11 @@ pub(crate) async fn adaptive_screen_with_timeout<T>(
     })?
 }
 
-pub(crate) async fn api_adaptive_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_adaptive_screen(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    let transport = payload.clone();
     let started_at = Instant::now();
     let prepared = prepare_adaptive_screen(&app, payload).await?;
     let PreparedAdaptiveScreen {
@@ -116,6 +224,7 @@ pub(crate) async fn api_adaptive_screen(app: tauri::AppHandle, payload: Value) -
         request,
         recent_exposure,
         notes,
+        metadata,
         cache_hit,
     } = prepared;
     emit_adaptive_screen_progress(
@@ -188,15 +297,20 @@ pub(crate) async fn api_adaptive_screen(app: tauri::AppHandle, payload: Value) -
         .filter(|value| !value.trim().is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| {
-            crate::market::local_yyyymmdd_from_epoch_ms(crate::market::epoch_millis()).unwrap_or_else(|| "19700101".to_string())
+            crate::market::local_yyyymmdd_from_epoch_ms(crate::market::epoch_millis())
+                .unwrap_or_else(|| "19700101".to_string())
         });
     let exposure_write_date = exposure_date.clone();
-    let exposure_write = crate::runtime::run_io_bound("adaptive_screen_exposure_write", move || {
-        adaptive_exposure_record_sync(&exposure_app, &exposure_result, &exposure_write_date)
-    })
-    .await?;
+    let exposure_write =
+        crate::runtime::run_io_bound("adaptive_screen_exposure_write", move || {
+            adaptive_exposure_record_sync(&exposure_app, &exposure_result, &exposure_write_date)
+        })
+        .await?;
     if let Err(error) = exposure_write {
-        crate::market::append_result_notes(&mut result, vec![format!("近期曝光记录写入失败：{error}")]);
+        crate::market::append_result_notes(
+            &mut result,
+            vec![format!("近期曝光记录写入失败：{error}")],
+        );
     }
     emit_adaptive_screen_progress(&app, request.run_id.as_deref(), "complete", 100, "选股完成");
     let run_app = app.clone();
@@ -218,11 +332,18 @@ pub(crate) async fn api_adaptive_screen(app: tauri::AppHandle, payload: Value) -
         })
         .await;
     });
+    local_data::attach_metadata(&mut result, metadata, &transport);
     Ok(result)
 }
 
-pub(crate) async fn api_legacy_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let data = crate::market::cached_market_data_snapshot(&app)?;
+pub(crate) async fn api_legacy_screen(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    let policy = DataPolicy::parse(&payload)?;
+    let transport = payload.clone();
+    let data = local_snapshot(&app, &payload, "api_legacy_screen")?;
+    let metadata = local_metadata(data.as_ref(), policy, &[]);
     let stock_override = screen_stock_override(&app, &data, &payload)?;
     let criteria = legacy_screen_criteria_from_payload(payload)?;
     let mut result = crate::runtime::run_cpu_bound("api_legacy_screen", move || {
@@ -255,6 +376,7 @@ pub(crate) async fn api_legacy_screen(app: tauri::AppHandle, payload: Value) -> 
                 .to_string(),
         ],
     );
+    local_data::attach_metadata(&mut result, metadata, &transport);
     Ok(result)
 }
 
@@ -278,14 +400,14 @@ pub(crate) fn legacy_screen_criteria_from_payload(
         object.remove("internal_algorithm");
         object.insert("limit".to_string(), json!(legacy_limit));
     }
-    serde_json::from_value::<gp_core::ScreenCriteria>(crate::market::strip_core_side_payload_fields(payload))
+    serde_json::from_value::<gp_core::ScreenCriteria>(local_data::core_payload(payload))
         .map_err(|error| format!("invalid legacy screen request: {error}"))
 }
 
 pub(crate) fn adaptive_screen_request_from_payload(
     payload: Value,
 ) -> Result<gp_core::AdaptiveScreenRequest, String> {
-    let payload = crate::market::strip_core_side_payload_fields(payload);
+    let payload = local_data::core_payload(payload);
     if payload.get("criteria").is_some() {
         serde_json::from_value(payload)
             .map_err(|error| format!("invalid adaptive screen request: {error}"))
@@ -301,7 +423,11 @@ pub(crate) fn adaptive_screen_request_from_payload(
 
 pub(crate) fn adaptive_required_history_codes(candidates: &[String]) -> Vec<String> {
     let mut required_codes = candidates.to_vec();
-    required_codes.extend(crate::market::adaptive_benchmark_codes().into_iter().map(str::to_string));
+    required_codes.extend(
+        crate::market::adaptive_benchmark_codes()
+            .into_iter()
+            .map(str::to_string),
+    );
     crate::market::dedupe_stock_codes(&mut required_codes);
     required_codes
 }
@@ -353,14 +479,19 @@ pub(crate) fn adaptive_screen_progress_payload(
 }
 
 #[tauri::command]
-pub(crate) async fn api_sector_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let data = crate::market::cached_market_data_snapshot(&app)?;
+pub(crate) async fn api_sector_screen(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    let policy = DataPolicy::parse(&payload)?;
+    let transport = payload.clone();
+    let data = local_snapshot(&app, &payload, "api_sector_screen")?;
+    let metadata = local_metadata(data.as_ref(), policy, &[]);
     let stock_override = screen_stock_override(&app, &data, &payload)?;
-    let request = serde_json::from_value::<gp_core::SectorScreenRequest>(
-        crate::market::strip_core_side_payload_fields(payload),
-    )
-    .map_err(|error| format!("invalid sector screen request: {error}"))?;
-    crate::runtime::run_cpu_bound("api_sector_screen", move || {
+    let request =
+        serde_json::from_value::<gp_core::SectorScreenRequest>(local_data::core_payload(payload))
+            .map_err(|error| format!("invalid sector screen request: {error}"))?;
+    let mut result = crate::runtime::run_cpu_bound("api_sector_screen", move || {
         let result = match stock_override.as_deref() {
             Some(stocks) => gp_core::sector_screen_stocks(stocks, &request),
             None => gp_core::sector_screen_with_data(data.as_ref(), &request)
@@ -368,28 +499,50 @@ pub(crate) async fn api_sector_screen(app: tauri::AppHandle, payload: Value) -> 
         };
         serde_json::to_value(result).map_err(|error| error.to_string())
     })
-    .await?
+    .await??;
+    local_data::attach_metadata(&mut result, metadata, &transport);
+    Ok(result)
 }
 
 #[tauri::command]
-pub(crate) async fn api_custom_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_custom_screen(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     run_graph_screen_command("api_custom_screen", app, payload).await
 }
 
 #[tauri::command]
-pub(crate) async fn api_graph_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_graph_screen(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     run_graph_screen_command("api_graph_screen", app, payload).await
 }
 
 #[tauri::command]
-pub(crate) async fn api_trend_analyze(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let data = crate::market::cached_market_data_snapshot(&app)?;
+pub(crate) async fn api_trend_analyze(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    let policy = DataPolicy::parse(&payload)?;
+    let transport = payload.clone();
+    let data = local_snapshot(&app, &payload, "api_trend_analyze")?;
     let stock_override = screen_stock_override(&app, &data, &payload)?;
-    let request = serde_json::from_value::<gp_core::TrendIndicatorRequest>(
-        crate::market::strip_core_side_payload_fields(payload),
-    )
-    .map_err(|error| format!("invalid trend request: {error}"))?;
-    crate::runtime::run_cpu_bound("api_trend_analyze", move || {
+    let request =
+        serde_json::from_value::<gp_core::TrendIndicatorRequest>(local_data::core_payload(payload))
+            .map_err(|error| format!("invalid trend request: {error}"))?;
+    let coverage = local_history_coverage(
+        data.as_ref(),
+        &HashMap::new(),
+        &[request.code.clone()],
+        &request.start_date,
+        &request.end_date,
+        1,
+    );
+    local_data::require_coverage("trend", &coverage)?;
+    let metadata = local_metadata(data.as_ref(), policy, &coverage);
+    let mut result = crate::runtime::run_cpu_bound("api_trend_analyze", move || {
         let source = match stock_override.as_deref() {
             Some(stocks) => gp_core::StaticDataSource::with_stocks(data.as_ref(), stocks),
             None => gp_core::StaticDataSource::new(data.as_ref()),
@@ -398,15 +551,24 @@ pub(crate) async fn api_trend_analyze(app: tauri::AppHandle, payload: Value) -> 
             gp_core::trend_with_source(&source, &request).map_err(|error| error.to_string())?;
         serde_json::to_value(result).map_err(|error| error.to_string())
     })
-    .await?
+    .await??;
+    local_data::attach_metadata(&mut result, metadata, &transport);
+    Ok(result)
 }
 
 #[tauri::command]
-pub(crate) async fn api_trend_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_trend_screen(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     api_trend_screen_inner(app, payload).await
 }
 
-pub(crate) async fn api_trend_screen_inner(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_trend_screen_inner(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    let transport = payload.clone();
     let prepared = tokio::time::timeout(
         Duration::from_secs(TREND_SCREEN_HISTORY_TIMEOUT_SECS),
         prepare_trend_screen(&app, payload),
@@ -419,6 +581,7 @@ pub(crate) async fn api_trend_screen_inner(app: tauri::AppHandle, payload: Value
         history_override,
         request,
         notes,
+        metadata,
     } = prepared;
     let mut result = crate::runtime::run_cpu_bound("api_trend_screen", move || {
         let history_override = (!history_override.is_empty()).then_some(&history_override);
@@ -433,6 +596,7 @@ pub(crate) async fn api_trend_screen_inner(app: tauri::AppHandle, payload: Value
     })
     .await??;
     crate::market::append_result_notes(&mut result, notes);
+    local_data::attach_metadata(&mut result, metadata, &transport);
     Ok(result)
 }
 
@@ -450,6 +614,7 @@ pub(crate) fn backtest_history_timeout_secs(payload: &Value) -> u64 {
 
 #[tauri::command]
 pub(crate) async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let transport = payload.clone();
     let history_timeout_secs = backtest_history_timeout_secs(&payload);
     let prepared = tokio::time::timeout(
         Duration::from_secs(history_timeout_secs),
@@ -467,6 +632,7 @@ pub(crate) async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Resul
         history_override,
         request,
         notes,
+        metadata,
     } = prepared;
     let adaptive_backtest = request
         .strategy_mode
@@ -576,10 +742,14 @@ pub(crate) async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Resul
         })
         .await?;
         if let Err(error) = gate_write {
-            crate::market::append_result_notes(&mut result, vec![format!("发布门槛报告写入失败：{error}")]);
+            crate::market::append_result_notes(
+                &mut result,
+                vec![format!("发布门槛报告写入失败：{error}")],
+            );
         }
     }
     crate::market::append_result_notes(&mut result, notes);
+    local_data::attach_metadata(&mut result, metadata, &transport);
     Ok(result)
 }
 
@@ -607,7 +777,8 @@ pub(crate) fn adaptive_backtest_fold_max_industry_count(
     )?;
     let mut counts = HashMap::<String, usize>::new();
     for code in &fold.selected_symbols {
-        let normalized = crate::market::normalize_stock_code(code).unwrap_or_else(|| code.to_ascii_uppercase());
+        let normalized =
+            crate::market::normalize_stock_code(code).unwrap_or_else(|| code.to_ascii_uppercase());
         let industry = data
             .factor_snapshots
             .get(code)
@@ -672,7 +843,9 @@ pub(crate) fn adaptive_release_implementation_fingerprint() -> &'static str {
         .as_str()
 }
 
-pub(crate) fn adaptive_release_criteria_is_full_universe(criteria: &gp_core::ScreenCriteria) -> bool {
+pub(crate) fn adaptive_release_criteria_is_full_universe(
+    criteria: &gp_core::ScreenCriteria,
+) -> bool {
     criteria.min_roe.is_none()
         && criteria.max_pe.is_none()
         && criteria.max_pb.is_none()
@@ -691,7 +864,9 @@ pub(crate) fn adaptive_release_criteria_is_full_universe(criteria: &gp_core::Scr
         && !criteria.include_st
 }
 
-pub(crate) fn adaptive_release_screen_request_qualified(request: &gp_core::AdaptiveScreenRequest) -> bool {
+pub(crate) fn adaptive_release_screen_request_qualified(
+    request: &gp_core::AdaptiveScreenRequest,
+) -> bool {
     request.mode.trim().eq_ignore_ascii_case("auto")
         && request.horizon.trim().eq_ignore_ascii_case("swing_10_30d")
         && request.primary_limit == 10
@@ -771,7 +946,10 @@ pub(crate) fn adaptive_release_validation_force_cold_start(payload: &Value) -> b
         == Some(true)
 }
 
-pub(crate) fn adaptive_release_force_cold_start_code(missing: &mut Vec<String>, required_codes: &[String]) {
+pub(crate) fn adaptive_release_force_cold_start_code(
+    missing: &mut Vec<String>,
+    required_codes: &[String],
+) {
     if let Some(code) = required_codes.first() {
         if !missing.contains(code) {
             missing.push(code.clone());
@@ -865,7 +1043,8 @@ pub(crate) async fn prepare_adaptive_screen(
     payload: Value,
 ) -> Result<PreparedAdaptiveScreen, String> {
     let force_cold_start = adaptive_release_validation_force_cold_start(&payload);
-    let data = crate::market::cached_market_data_snapshot(app)?;
+    let policy = DataPolicy::parse(&payload)?;
+    let data = local_snapshot(app, &payload, "adaptive_screen")?;
     let stock_override = screen_stock_override(app, &data, &payload)?;
     let mut request = adaptive_screen_request_from_payload(payload)?;
     emit_adaptive_screen_progress(
@@ -910,12 +1089,33 @@ pub(crate) async fn prepare_adaptive_screen(
                 .unwrap_or(data.stocks.as_slice());
             adaptive_quote_target_date(universe, &candidates)
         })
-        .or_else(|| crate::market::expected_market_quote_date_from_epoch_ms(crate::market::epoch_millis()));
-    let mut missing = adaptive_missing_history_codes(
-        data.as_ref(),
-        &required_codes,
-        target_history_date.as_deref(),
-    );
+        .or_else(|| {
+            crate::market::expected_market_quote_date_from_epoch_ms(crate::market::epoch_millis())
+        });
+    // Age alone is not a miss. Choose a common cached PIT date unless explicitly requested.
+    if policy == DataPolicy::CacheOnly {
+        let as_of = request
+            .as_of_date
+            .clone()
+            .or_else(|| latest_adaptive_data_date(data.as_ref(), &HashMap::new(), &required_codes));
+        let coverage = adaptive_local_coverage(
+            data.as_ref(),
+            &HashMap::new(),
+            &required_codes,
+            as_of.as_deref(),
+        );
+        local_data::require_coverage("adaptive_screen", &coverage)?;
+        request.as_of_date = as_of;
+    }
+    let mut missing = if policy == DataPolicy::CacheOnly {
+        Vec::new()
+    } else {
+        adaptive_missing_history_codes(
+            data.as_ref(),
+            &required_codes,
+            target_history_date.as_deref(),
+        )
+    };
     if force_cold_start {
         adaptive_release_force_cold_start_code(&mut missing, &required_codes);
     }
@@ -934,36 +1134,42 @@ pub(crate) async fn prepare_adaptive_screen(
         let history_start_date = adaptive_history_start_date();
         let progress_app = app.clone();
         let progress_run_id = request.run_id.clone();
-        let fetch_outcome =
-            crate::runtime::with_heavy_network_permit("adaptive_screen_history_fetch", async move {
-                let outcome =
-                    collect_adaptive_history_results(
-                        fetch_codes,
-                        history_start_date,
-                        Duration::from_secs(ADAPTIVE_SCREEN_HISTORY_PREFETCH_TIMEOUT_SECS),
-                        ADAPTIVE_SCREEN_HISTORY_CONCURRENCY,
-                        |code, start_date| {
-                            let code = code.to_string();
-                            let start_date = start_date.to_string();
-                            async move {
-                                crate::market::fetch_observe_daily_history(&code, &start_date, "20501231").await
-                            }
-                        },
-                        move |completed, total| {
-                            let message = format!("补齐120日行情 {completed}/{total}");
-                            emit_adaptive_screen_progress(
-                                &progress_app,
-                                progress_run_id.as_deref(),
-                                "history_fetch",
-                                adaptive_history_progress_percent(completed, total),
-                                &message,
-                            );
-                        },
-                    )
-                    .await;
+        let fetch_outcome = crate::runtime::with_heavy_network_permit(
+            "adaptive_screen_history_fetch",
+            async move {
+                let outcome = collect_adaptive_history_results(
+                    fetch_codes,
+                    history_start_date,
+                    Duration::from_secs(ADAPTIVE_SCREEN_HISTORY_PREFETCH_TIMEOUT_SECS),
+                    ADAPTIVE_SCREEN_HISTORY_CONCURRENCY,
+                    |code, start_date| {
+                        let code = code.to_string();
+                        let start_date = start_date.to_string();
+                        async move {
+                            crate::market::fetch_observe_daily_history(
+                                &code,
+                                &start_date,
+                                "20501231",
+                            )
+                            .await
+                        }
+                    },
+                    move |completed, total| {
+                        let message = format!("补齐120日行情 {completed}/{total}");
+                        emit_adaptive_screen_progress(
+                            &progress_app,
+                            progress_run_id.as_deref(),
+                            "history_fetch",
+                            adaptive_history_progress_percent(completed, total),
+                            &message,
+                        );
+                    },
+                )
+                .await;
                 Ok(outcome)
-            })
-            .await?;
+            },
+        )
+        .await?;
         let AdaptiveHistoryFetchOutcome {
             results: fetches,
             timed_out,
@@ -1017,9 +1223,19 @@ pub(crate) async fn prepare_adaptive_screen(
             failed
         ));
     }
-    request.as_of_date =
-        latest_adaptive_data_date(data.as_ref(), &history_override, &required_codes)
-            .or(target_history_date);
+    if policy == DataPolicy::Refresh {
+        request.as_of_date =
+            latest_adaptive_data_date(data.as_ref(), &history_override, &required_codes)
+                .or(target_history_date);
+    }
+    let coverage = adaptive_local_coverage(
+        data.as_ref(),
+        &history_override,
+        &required_codes,
+        request.as_of_date.as_deref(),
+    );
+    local_data::require_coverage("adaptive_screen", &coverage)?;
+    let metadata = local_metadata(data.as_ref(), policy, &coverage);
     emit_adaptive_screen_progress(
         app,
         request.run_id.as_deref(),
@@ -1034,10 +1250,11 @@ pub(crate) async fn prepare_adaptive_screen(
 
     let exposure_app = app.clone();
     let exposure_date = request.as_of_date.clone();
-    let recent_exposure = crate::runtime::run_io_bound("adaptive_screen_exposure_read", move || {
-        adaptive_exposure_recent_sync(&exposure_app, exposure_date.as_deref())
-    })
-    .await??;
+    let recent_exposure =
+        crate::runtime::run_io_bound("adaptive_screen_exposure_read", move || {
+            adaptive_exposure_recent_sync(&exposure_app, exposure_date.as_deref())
+        })
+        .await??;
     Ok(PreparedAdaptiveScreen {
         data,
         stock_override,
@@ -1047,13 +1264,16 @@ pub(crate) async fn prepare_adaptive_screen(
         recent_exposure,
         notes,
         cache_hit,
+        metadata,
     })
 }
 
 pub(crate) fn adaptive_history_start_date() -> String {
     const LOOKBACK_MILLIS: u128 = 220 * 24 * 60 * 60 * 1_000;
-    crate::market::local_yyyymmdd_from_epoch_ms(crate::market::epoch_millis().saturating_sub(LOOKBACK_MILLIS))
-        .unwrap_or_else(|| "20200101".to_string())
+    crate::market::local_yyyymmdd_from_epoch_ms(
+        crate::market::epoch_millis().saturating_sub(LOOKBACK_MILLIS),
+    )
+    .unwrap_or_else(|| "20200101".to_string())
 }
 
 pub(crate) fn adaptive_history_window(
@@ -1071,7 +1291,8 @@ pub(crate) fn adaptive_history_window(
         .iter()
         .filter(|bar| {
             target.as_ref().is_none_or(|target| {
-                crate::market::compact_date_key(&bar.date).is_some_and(|date| date.as_str() <= target.as_str())
+                crate::market::compact_date_key(&bar.date)
+                    .is_some_and(|date| date.as_str() <= target.as_str())
             })
         })
         .rev()
@@ -1081,7 +1302,12 @@ pub(crate) fn adaptive_history_window(
         .into_iter()
         .rev()
         .collect::<Vec<_>>();
-    if target.is_some() && window.last().and_then(|bar| crate::market::compact_date_key(&bar.date)) != target {
+    if target.is_some()
+        && window
+            .last()
+            .and_then(|bar| crate::market::compact_date_key(&bar.date))
+            != target
+    {
         return Vec::new();
     }
     window
@@ -1196,23 +1422,24 @@ pub(crate) async fn prepare_trend_screen(
     app: &tauri::AppHandle,
     payload: Value,
 ) -> Result<PreparedTrendScreen, String> {
-    let data = crate::market::cached_market_data_snapshot(app)?;
+    let policy = DataPolicy::parse(&payload)?;
+    let data = local_snapshot(app, &payload, "trend_screen")?;
     let stock_override = screen_stock_override(app, &data, &payload)?;
-    let request = serde_json::from_value::<gp_core::TrendScreenRequest>(
-        crate::market::strip_core_side_payload_fields(payload),
-    )
-    .map_err(|error| format!("invalid trend screen request: {error}"))?;
+    let request =
+        serde_json::from_value::<gp_core::TrendScreenRequest>(local_data::core_payload(payload))
+            .map_err(|error| format!("invalid trend screen request: {error}"))?;
     let criteria = request.criteria.clone();
     let candidate_data = Arc::clone(&data);
     let candidate_stocks = stock_override.clone();
-    let candidate_result = crate::runtime::run_cpu_bound("api_trend_screen_candidates", move || {
-        let universe = candidate_stocks
-            .as_deref()
-            .map(Vec::as_slice)
-            .unwrap_or(candidate_data.stocks.as_slice());
-        gp_core::screen_stocks(universe, &criteria)
-    })
-    .await?;
+    let candidate_result =
+        crate::runtime::run_cpu_bound("api_trend_screen_candidates", move || {
+            let universe = candidate_stocks
+                .as_deref()
+                .map(Vec::as_slice)
+                .unwrap_or(candidate_data.stocks.as_slice());
+            gp_core::screen_stocks(universe, &criteria)
+        })
+        .await?;
     let candidates = trend_history_prefetch_codes_from_result(&candidate_result, request.limit);
     let missing = candidates
         .iter()
@@ -1228,8 +1455,20 @@ pub(crate) async fn prepare_trend_screen(
         .take(TREND_SCREEN_HISTORY_PREFETCH_LIMIT)
         .cloned()
         .collect::<Vec<_>>();
+    let coverage = local_history_coverage(
+        data.as_ref(),
+        &HashMap::new(),
+        &candidates,
+        &request.start_date,
+        &request.end_date,
+        MIN_TREND_SCREEN_HISTORY_BARS,
+    );
+    if policy == DataPolicy::CacheOnly {
+        local_data::require_coverage("trend_screen", &coverage)?;
+    }
+    let metadata = local_metadata(data.as_ref(), policy, &coverage);
     let mut notes = Vec::new();
-    if missing.is_empty() {
+    if policy == DataPolicy::CacheOnly || missing.is_empty() {
         notes.push(format!(
             "Trend screen reused cached OHLCV history for {} candidates.",
             candidates.len()
@@ -1237,6 +1476,7 @@ pub(crate) async fn prepare_trend_screen(
         return Ok(PreparedTrendScreen {
             data,
             stock_override,
+            metadata,
             history_override: HashMap::new(),
             request,
             notes,
@@ -1253,8 +1493,12 @@ pub(crate) async fn prepare_trend_screen(
                     let start_date = start_date.clone();
                     let end_date = end_date.clone();
                     async move {
-                        let result =
-                            crate::market::fetch_observe_daily_history(&code, &start_date, &end_date).await;
+                        let result = crate::market::fetch_observe_daily_history(
+                            &code,
+                            &start_date,
+                            &end_date,
+                        )
+                        .await;
                         (code, result)
                     }
                 })
@@ -1286,7 +1530,9 @@ pub(crate) async fn prepare_trend_screen(
     }
     if !history_patch.is_empty() {
         let patch = json!({ "histories": history_patch });
-        if let Err(error) = crate::market::persist_market_data_patch_updates(app.clone(), patch).await {
+        if let Err(error) =
+            crate::market::persist_market_data_patch_updates(app.clone(), patch).await
+        {
             notes.push(format!(
                 "Trend screen fetched OHLCV for {fetched} candidates, but cache patch write failed: {error}"
             ));
@@ -1297,10 +1543,21 @@ pub(crate) async fn prepare_trend_screen(
         candidates.len(),
         missing.len()
     ));
+    let coverage = local_history_coverage(
+        data.as_ref(),
+        &history_override,
+        &candidates,
+        &request.start_date,
+        &request.end_date,
+        MIN_TREND_SCREEN_HISTORY_BARS,
+    );
+    local_data::require_coverage("trend_screen", &coverage)?;
+    let metadata = local_metadata(data.as_ref(), policy, &coverage);
     Ok(PreparedTrendScreen {
         data,
         stock_override,
         history_override,
+        metadata,
         request,
         notes,
     })
@@ -1310,10 +1567,11 @@ pub(crate) async fn prepare_backtest(
     app: &tauri::AppHandle,
     payload: Value,
 ) -> Result<PreparedBacktest, String> {
-    let data = crate::market::cached_market_data_snapshot(app)?;
+    let policy = DataPolicy::parse(&payload)?;
+    let data = local_snapshot(app, &payload, "backtest")?;
     let stock_override = screen_stock_override(app, &data, &payload)?;
     let request =
-        serde_json::from_value::<gp_core::BacktestRequest>(crate::market::strip_core_side_payload_fields(payload))
+        serde_json::from_value::<gp_core::BacktestRequest>(local_data::core_payload(payload))
             .map_err(|error| format!("invalid backtest request: {error}"))?;
     let adaptive_backtest = request
         .strategy_mode
@@ -1326,9 +1584,33 @@ pub(crate) async fn prepare_backtest(
         .trim()
         .eq_ignore_ascii_case("walk_forward")
     {
+        // Keep the strict core's PIT/factor-snapshot validation before any history work.
+        let requirement_data = Arc::clone(&data);
+        let requirement_stocks = stock_override.clone();
+        let requirement_request = request.clone();
+        let codes =
+            crate::runtime::run_cpu_bound("strict_backtest_local_requirements", move || {
+                backtest_history_requirements(
+                    requirement_data.as_ref(),
+                    requirement_stocks.as_deref().map(Vec::as_slice),
+                    &requirement_request,
+                )
+            })
+            .await??;
+        let coverage = local_history_coverage(
+            data.as_ref(),
+            &HashMap::new(),
+            &codes,
+            &request.start_date,
+            &request.end_date,
+            MIN_BACKTEST_HISTORY_BARS,
+        );
+        local_data::require_coverage("backtest", &coverage)?;
+        let metadata = local_metadata(data.as_ref(), policy, &coverage);
         return Ok(PreparedBacktest {
             data,
             stock_override,
+            metadata,
             history_override: HashMap::new(),
             request,
             notes: Vec::new(),
@@ -1361,7 +1643,11 @@ pub(crate) async fn prepare_backtest(
         .await?
     };
     if adaptive_backtest {
-        candidates.extend(crate::market::adaptive_benchmark_codes().into_iter().map(str::to_string));
+        candidates.extend(
+            crate::market::adaptive_benchmark_codes()
+                .into_iter()
+                .map(str::to_string),
+        );
         crate::market::dedupe_stock_codes(&mut candidates);
     }
     let history_start_date = if adaptive_backtest {
@@ -1387,8 +1673,20 @@ pub(crate) async fn prepare_backtest(
         })
         .cloned()
         .collect::<Vec<_>>();
+    let coverage = local_history_coverage(
+        data.as_ref(),
+        &HashMap::new(),
+        &candidates,
+        &history_start_date,
+        &request.end_date,
+        minimum_bars,
+    );
+    if policy == DataPolicy::CacheOnly {
+        local_data::require_coverage("backtest", &coverage)?;
+    }
+    let metadata = local_metadata(data.as_ref(), policy, &coverage);
     let mut notes = Vec::new();
-    if missing.is_empty() {
+    if policy == DataPolicy::CacheOnly || missing.is_empty() {
         notes.push(format!(
             "已复用 {} 只入选股票的本地日线缓存。",
             candidates.len()
@@ -1396,6 +1694,7 @@ pub(crate) async fn prepare_backtest(
         return Ok(PreparedBacktest {
             data,
             stock_override,
+            metadata,
             history_override: HashMap::new(),
             request,
             notes,
@@ -1405,22 +1704,28 @@ pub(crate) async fn prepare_backtest(
     let start_date = history_start_date;
     let end_date = request.end_date.clone();
     let fetch_missing = missing.clone();
-    let fetches = crate::runtime::with_heavy_network_permit("api_backtest_history_fetch", async move {
-        let results = stream::iter(fetch_missing)
-            .map(|code| {
-                let start_date = start_date.clone();
-                let end_date = end_date.clone();
-                async move {
-                    let result = crate::market::fetch_observe_daily_history(&code, &start_date, &end_date).await;
-                    (code, result)
-                }
-            })
-            .buffer_unordered(BACKTEST_HISTORY_CONCURRENCY)
-            .collect::<Vec<_>>()
-            .await;
-        Ok(results)
-    })
-    .await?;
+    let fetches =
+        crate::runtime::with_heavy_network_permit("api_backtest_history_fetch", async move {
+            let results = stream::iter(fetch_missing)
+                .map(|code| {
+                    let start_date = start_date.clone();
+                    let end_date = end_date.clone();
+                    async move {
+                        let result = crate::market::fetch_observe_daily_history(
+                            &code,
+                            &start_date,
+                            &end_date,
+                        )
+                        .await;
+                        (code, result)
+                    }
+                })
+                .buffer_unordered(BACKTEST_HISTORY_CONCURRENCY)
+                .collect::<Vec<_>>()
+                .await;
+            Ok(results)
+        })
+        .await?;
 
     let mut history_override = HashMap::new();
     let mut history_patch = serde_json::Map::new();
@@ -1465,7 +1770,9 @@ pub(crate) async fn prepare_backtest(
     }
     if !history_patch.is_empty() {
         let patch = json!({ "histories": history_patch });
-        if let Err(error) = crate::market::persist_market_data_patch_updates(app.clone(), patch).await {
+        if let Err(error) =
+            crate::market::persist_market_data_patch_updates(app.clone(), patch).await
+        {
             notes.push(format!(
                 "Backtest fetched daily history for {fetched} stocks, but cache patch write failed: {error}"
             ));
@@ -1477,10 +1784,25 @@ pub(crate) async fn prepare_backtest(
         candidates.len(),
         missing.len()
     ));
+    let coverage = local_history_coverage(
+        data.as_ref(),
+        &history_override,
+        &candidates,
+        if adaptive_backtest {
+            "19900101"
+        } else {
+            &request.start_date
+        },
+        &request.end_date,
+        minimum_bars,
+    );
+    local_data::require_coverage("backtest", &coverage)?;
+    let metadata = local_metadata(data.as_ref(), policy, &coverage);
     Ok(PreparedBacktest {
         data,
         stock_override,
         history_override,
+        metadata,
         request,
         notes,
     })
@@ -1535,7 +1857,9 @@ pub(crate) fn trend_history_prefetch_codes_from_result(
     )
 }
 
-pub(crate) fn normalize_trend_prefetch_codes<'a>(codes: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+pub(crate) fn normalize_trend_prefetch_codes<'a>(
+    codes: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut normalized = Vec::new();
     for code in codes {
@@ -1569,7 +1893,10 @@ pub(crate) fn trend_history_prefetch_codes(candidate_result: &Value, limit: usiz
     )
 }
 
-pub(crate) fn screen_financial_snapshot(app: &tauri::AppHandle, payload: &Value) -> Option<Arc<Value>> {
+pub(crate) fn screen_financial_snapshot(
+    app: &tauri::AppHandle,
+    payload: &Value,
+) -> Option<Arc<Value>> {
     if let Some(snapshot) = payload
         .get("financial_snapshot")
         .filter(|snapshot| crate::market::financial_snapshot_payload_present(snapshot))
@@ -1637,13 +1964,15 @@ pub(crate) async fn run_graph_screen_command(
     app: tauri::AppHandle,
     payload: Value,
 ) -> Result<Value, String> {
-    let data = crate::market::cached_market_data_snapshot(&app)?;
+    let policy = DataPolicy::parse(&payload)?;
+    let transport = payload.clone();
+    let data = local_snapshot(&app, &payload, "run_graph_screen_command")?;
+    let metadata = local_metadata(data.as_ref(), policy, &[]);
     let stock_override = screen_stock_override(&app, &data, &payload)?;
-    let request = serde_json::from_value::<gp_core::GraphScreenRequest>(
-        crate::market::strip_core_side_payload_fields(payload),
-    )
-    .map_err(|error| format!("invalid graph screen request: {error}"))?;
-    crate::runtime::run_cpu_bound(label, move || {
+    let request =
+        serde_json::from_value::<gp_core::GraphScreenRequest>(local_data::core_payload(payload))
+            .map_err(|error| format!("invalid graph screen request: {error}"))?;
+    let mut result = crate::runtime::run_cpu_bound(label, move || {
         let source = match stock_override.as_deref() {
             Some(stocks) => gp_core::StaticDataSource::with_stocks(data.as_ref(), stocks),
             None => gp_core::StaticDataSource::new(data.as_ref()),
@@ -1652,10 +1981,15 @@ pub(crate) async fn run_graph_screen_command(
             .map_err(|error| error.to_string())?;
         serde_json::to_value(result).map_err(|error| error.to_string())
     })
-    .await?
+    .await??;
+    local_data::attach_metadata(&mut result, metadata, &transport);
+    Ok(result)
 }
 
-pub(crate) fn merge_screen_financial_snapshot_into_data(data: &mut Value, financial_snapshot: &Value) {
+pub(crate) fn merge_screen_financial_snapshot_into_data(
+    data: &mut Value,
+    financial_snapshot: &Value,
+) {
     if !crate::market::financial_snapshot_payload_present(financial_snapshot) {
         return;
     }
@@ -1666,7 +2000,12 @@ pub(crate) fn merge_screen_financial_snapshot_into_data(data: &mut Value, financ
     let enriched_stocks = crate::market::enriched_stock_maps(&seed_stocks, financial_snapshot);
     let mut stocks = Vec::with_capacity(seed_codes.len());
     let mut seen = HashSet::new();
-    crate::market::append_preserved_seed_stocks(&seed_codes, &enriched_stocks, &mut stocks, &mut seen);
+    crate::market::append_preserved_seed_stocks(
+        &seed_codes,
+        &enriched_stocks,
+        &mut stocks,
+        &mut seen,
+    );
     if let Some(object) = data.as_object_mut() {
         object.insert("stocks".to_string(), Value::Array(stocks));
     }
@@ -1878,8 +2217,8 @@ pub(crate) fn adaptive_release_operational_evidence_rows(
     conn: &Connection,
 ) -> Result<(Option<usize>, Option<u64>, Option<u64>), String> {
     initialize_adaptive_exposure_db(conn)?;
-    let keep_after =
-        (crate::market::epoch_millis().min(i64::MAX as u128) as i64).saturating_sub(30 * 24 * 60 * 60 * 1_000);
+    let keep_after = (crate::market::epoch_millis().min(i64::MAX as u128) as i64)
+        .saturating_sub(30 * 24 * 60 * 60 * 1_000);
     let recent_json = {
         let mut statement = conn
             .prepare(
@@ -2022,7 +2361,9 @@ pub(crate) fn adaptive_release_gate_context_rows(
         .transpose()
 }
 
-pub(crate) fn adaptive_release_gate_recompute_operational_rows(conn: &Connection) -> Result<(), String> {
+pub(crate) fn adaptive_release_gate_recompute_operational_rows(
+    conn: &Connection,
+) -> Result<(), String> {
     let Some((mut input, qualification)) = adaptive_release_gate_context_rows(conn)? else {
         return Ok(());
     };
@@ -2236,4 +2577,42 @@ pub(crate) fn adaptive_exposure_record_rows(
     transaction
         .commit()
         .map_err(|error| format!("commit adaptive exposure failed: {error}"))
+}
+
+#[cfg(test)]
+mod local_first_tests {
+    use super::*;
+    #[test]
+    fn cached_adaptive_coverage_keeps_old_data_and_exact_pit_boundary() {
+        let mut data = gp_core::CoreDataSet::default();
+        let rows = (1..=3).flat_map(|month| (1..=28).map(move |day| format!("2020{month:02}{day:02}"))).take(60).map(|date| {
+            serde_json::from_value::<gp_core::HistoryBar>(json!({"date":date,"open":10.0,"high":11.0,"low":9.0,"close":10.0,"volume":100.0})).unwrap()
+        }).collect::<Vec<_>>();
+        data.histories.insert("000001.SZ".into(), rows);
+        let codes = vec!["000001.SZ".into()];
+        let old = adaptive_local_coverage(&data, &HashMap::new(), &codes, Some("20200304"));
+        assert!(local_data::require_coverage("adaptive_screen", &old).is_ok());
+        let gap = adaptive_local_coverage(&data, &HashMap::new(), &codes, Some("20200305"));
+        assert!(local_data::require_coverage("adaptive_screen", &gap).is_err());
+        let future = adaptive_local_coverage(&data, &HashMap::new(), &codes, Some("20200228"));
+        assert!(local_data::require_coverage("adaptive_screen", &future).is_err());
+    }
+    #[test]
+    fn missing_required_history_is_detailed_and_never_succeeds() {
+        let coverage = local_history_coverage(
+            &gp_core::CoreDataSet::default(),
+            &HashMap::new(),
+            &["000001.SZ".into()],
+            "20200101",
+            "20201231",
+            45,
+        );
+        let error: Value = serde_json::from_str(
+            &local_data::require_coverage("trend_screen", &coverage).unwrap_err(),
+        )
+        .unwrap();
+        assert_eq!(error["missing"][0]["code"], "000001.SZ");
+        assert_eq!(error["missing"][0]["available_bars"], 0);
+        assert_eq!(error["missing"][0]["required_bars"], 45);
+    }
 }

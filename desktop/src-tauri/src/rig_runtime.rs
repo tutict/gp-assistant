@@ -324,7 +324,7 @@ pub(crate) enum ProviderKind {
     OpenAiCompatible,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub(crate) struct ProviderConfig {
     pub(crate) kind: ProviderKind,
     pub(crate) api_format: String,
@@ -334,6 +334,16 @@ pub(crate) struct ProviderConfig {
     pub(crate) endpoint_mode: String,
     pub(crate) timeout_seconds: u64,
     pub(crate) custom_user_agent: Option<String>,
+}
+
+impl std::fmt::Debug for ProviderConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProviderConfig")
+            .field("kind", &self.kind)
+            .field("api_format", &self.api_format)
+            .field("has_key", &self.api_key.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -406,10 +416,8 @@ pub(crate) fn normalize_provider_config(value: &Value) -> Result<ProviderConfig,
     }
     let base_url = config_string(object, "base_url")
         .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-    if config_string(object, "api_key")
-        .as_deref()
-        .is_some_and(|key| key.len() > MAX_API_KEY_BYTES || key.contains(['\r', '\n']))
-    {
+    let resolved_key = crate::credentials::resolve_api_key(value)?;
+    if resolved_key.len() > MAX_API_KEY_BYTES || resolved_key.contains(['\r', '\n']) {
         return Err("Rig API key is invalid or exceeds 8192 bytes".to_string());
     }
     let provider = config_string(object, "provider")
@@ -439,7 +447,7 @@ pub(crate) fn normalize_provider_config(value: &Value) -> Result<ProviderConfig,
         api_format,
         base_url: base_url.trim_end_matches('/').to_string(),
         model,
-        api_key: config_string(object, "api_key"),
+        api_key: (!resolved_key.is_empty()).then_some(resolved_key),
         endpoint_mode: if config_string(object, "endpoint_mode").as_deref() == Some("full_url") {
             "full_url".to_string()
         } else {
@@ -1228,7 +1236,14 @@ where
     };
     match run_mode(mode) {
         RunMode::Deterministic => {
-            let response = add_runtime_harness(base_response, mode, "not_requested", None, None, prompt_upgrade::BASE_PROMPT_VERSION);
+            let response = add_runtime_harness(
+                base_response,
+                mode,
+                "not_requested",
+                None,
+                None,
+                prompt_upgrade::BASE_PROMPT_VERSION,
+            );
             sink(status_event(&run_id, "validate", "校验证据与风险边界", 94));
             emit_compatibility_events(&run_id, &response, &mut sink);
             Ok(RigAgentOutcome { response })
@@ -1626,7 +1641,6 @@ fn extract_stock_code(message: &str) -> Option<String> {
     None
 }
 
-
 fn bounded_model_context(baseline: &Value, context: &Value) -> String {
     let value = json!({
         "tool_result": bounded_json(baseline, MAX_MODEL_REQUEST_BYTES / 4),
@@ -1689,6 +1703,10 @@ where
 }
 
 fn safe_runtime_error(error: &str, llm: Option<&Value>) -> String {
+    // A stored key is deliberately absent from llm; never echo provider details in this case.
+    if llm.and_then(|v| v.get("credential_ref")).is_some() {
+        return "模型请求失败（供应商详情已隐藏）。".into();
+    }
     agent_harness::redact_persisted_error(error, llm)
 }
 
@@ -1726,6 +1744,9 @@ fn add_runtime_harness(
             .unwrap_or_default();
         if let Some(warning) = warning {
             warnings.push(Value::String(warning));
+        }
+        if prompt_version.contains("degraded-overlay") {
+            warnings.push(Value::String("提示词配置读取失败，已使用内置提示词。".to_string()));
         }
         object.insert("warnings".to_string(), Value::Array(warnings));
         object.insert(
@@ -2331,6 +2352,23 @@ mod tests {
     }
 
     #[test]
+    fn degraded_prompt_version_is_visible_in_result_warnings() {
+        let result = add_runtime_harness(
+            json!({"warnings": []}),
+            "expert",
+            "not_configured",
+            None,
+            None,
+            "rig-agent-runtime-v1+degraded-overlay",
+        );
+        assert!(result["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning == "提示词配置读取失败，已使用内置提示词。"));
+    }
+
+    #[test]
     fn timeout_is_recorded_as_a_governed_request_failure() {
         assert_eq!(governed_model_outcome("timeout"), "request_failed");
         assert_eq!(governed_model_outcome("request_failed"), "request_failed");
@@ -2349,7 +2387,10 @@ mod tests {
 }
 
 #[tauri::command]
-pub(crate) async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_agent_stream(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     let mut payload = payload;
     let fields = payload
         .as_object_mut()
@@ -2392,17 +2433,22 @@ pub(crate) async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> R
     let event_app = app.clone();
     let execution = match crate::market::cached_market_data(&app) {
         Ok(data) => {
-            crate::rig_runtime::execute_with_app_and_event_sink(app.clone(), payload, data, move |event| {
-                // The terminal `result` event carries the whole response, which `complete_run`
-                // already stores in `result_json`. Capturing it too would double every row and
-                // every detail payload. The webview still receives it for the live stream.
-                if event.get("type").and_then(Value::as_str) != Some("result") {
-                    if let Ok(mut captured) = sink_events.lock() {
-                        captured.push(event.clone());
+            crate::rig_runtime::execute_with_app_and_event_sink(
+                app.clone(),
+                payload,
+                data,
+                move |event| {
+                    // The terminal `result` event carries the whole response, which `complete_run`
+                    // already stores in `result_json`. Capturing it too would double every row and
+                    // every detail payload. The webview still receives it for the live stream.
+                    if event.get("type").and_then(Value::as_str) != Some("result") {
+                        if let Ok(mut captured) = sink_events.lock() {
+                            captured.push(event.clone());
+                        }
                     }
-                }
-                let _ = event_app.emit("agent-stream-event", event);
-            })
+                    let _ = event_app.emit("agent-stream-event", event);
+                },
+            )
             .await
         }
         Err(error) => Err(error),
@@ -2415,8 +2461,10 @@ pub(crate) async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> R
             let response = outcome.response;
             if ledger_started {
                 let ledger_app = app.clone();
-                let ledger_events =
-                    crate::agent_harness::redact_persisted_events(&captured_events, ledger_llm.as_ref());
+                let ledger_events = crate::agent_harness::redact_persisted_events(
+                    &captured_events,
+                    ledger_llm.as_ref(),
+                );
                 let ledger_response =
                     crate::agent_harness::redact_persisted_response(&response, ledger_llm.as_ref());
                 let completion = crate::runtime::run_io_bound("agent_run_complete", move || {
@@ -2440,8 +2488,10 @@ pub(crate) async fn api_agent_stream(app: tauri::AppHandle, payload: Value) -> R
         Err(error) => {
             if ledger_started {
                 let ledger_app = app.clone();
-                let ledger_events =
-                    crate::agent_harness::redact_persisted_events(&captured_events, ledger_llm.as_ref());
+                let ledger_events = crate::agent_harness::redact_persisted_events(
+                    &captured_events,
+                    ledger_llm.as_ref(),
+                );
                 let ledger_error =
                     crate::agent_harness::redact_persisted_error(&error, ledger_llm.as_ref());
                 let failure_recording = crate::runtime::run_io_bound("agent_run_fail", move || {
@@ -2479,7 +2529,10 @@ pub(crate) fn api_agent_prompt_overlays(app: tauri::AppHandle) -> Result<Value, 
 }
 
 #[tauri::command]
-pub(crate) fn api_agent_prompt_overlay_revert(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) fn api_agent_prompt_overlay_revert(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     let profile_id = payload
         .get("profile_id")
         .and_then(Value::as_str)
@@ -2513,7 +2566,10 @@ pub(crate) fn api_agent_cancel(payload: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub(crate) async fn api_agent_run_list(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_agent_run_list(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     let limit = payload
         .get("limit")
         .and_then(Value::as_u64)
@@ -2544,7 +2600,10 @@ pub(crate) async fn api_agent_run_list(app: tauri::AppHandle, payload: Value) ->
 }
 
 #[tauri::command]
-pub(crate) async fn api_agent_run_metrics(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_agent_run_metrics(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     let limit = payload
         .get("limit")
         .and_then(Value::as_u64)
@@ -2584,7 +2643,10 @@ pub(crate) fn agent_run_detail_response(run: Option<Value>) -> Value {
 }
 
 #[tauri::command]
-pub(crate) async fn api_agent_run_get(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_agent_run_get(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     let run_id = payload
         .get("run_id")
         .and_then(Value::as_str)
@@ -2691,5 +2753,18 @@ mod agent_run_api_tests {
             finalize_research_index_status(pending, json!({"ready": true}))["hybrid_ready"],
             false
         );
+    }
+}
+
+#[cfg(test)]
+mod credential_resolution_tests {
+    use super::*;
+    #[test]
+    fn provider_debug_never_contains_inline_or_resolved_secrets() {
+        let config = normalize_provider_config(
+            &serde_json::json!({"model": "test", "api_key": "synthetic-debug-secret"}),
+        )
+        .unwrap();
+        assert!(!format!("{config:?}").contains("synthetic-debug-secret"));
     }
 }

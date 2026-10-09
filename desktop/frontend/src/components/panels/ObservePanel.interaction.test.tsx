@@ -66,6 +66,7 @@ describe("ObservePanel requests", () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(observeCalls()).toHaveLength(1);
+    expect(String(observeCalls()[0][0])).toContain("data_policy=cache_only");
     expect(String(observeCalls()[0][0])).toContain("/api/observe/600519.SH");
     expect(textContent(renderer)).toContain("贵州茅台");
 
@@ -153,4 +154,17 @@ describe("ObservePanel requests", () => {
     expect(observeCalls()).toHaveLength(0);
     await act(async () => renderer.unmount());
   });
+  it("keeps observation local when data is unavailable so refresh stays in the toolbar", async () => {
+    let renderer!: ReactTestRenderer;
+    const props = { watchlist: [], onWatchlistChange: () => undefined, initialCode: "600519.SH", initialCodeRequestId: 1 };
+    await act(async () => { renderer = create(<ObservePanel {...props} />); });
+    expect(String(observeCalls()[0][0])).toContain("data_policy=cache_only");
+    const button = renderer.root.find(node => node.type === "button" && String(node.props.className).includes("observe-run-btn"));
+    expect(button.children).toContain("开始观察");
+    expect(renderer.root.findAll(node => node.type === "select" && node.props["aria-label"] === "观察数据模式")).toHaveLength(0);
+    await act(async () => { button.props.onClick(); await Promise.resolve(); });
+    expect(String(observeCalls()[1][0])).toContain("data_policy=cache_only");
+    await act(async () => renderer.unmount());
+  });
+
 });

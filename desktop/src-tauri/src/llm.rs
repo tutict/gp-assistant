@@ -1,9 +1,8 @@
+use crate::credentials;
+
 use futures::stream::StreamExt;
 use serde_json::{json, Value};
-use std::{
-    collections::{HashSet},
-    time::{Duration},
-};
+use std::{collections::HashSet, time::Duration};
 
 #[tauri::command]
 pub(crate) async fn api_llm_models(payload: Value) -> Result<Value, String> {
@@ -20,12 +19,10 @@ pub(crate) async fn api_llm_models(payload: Value) -> Result<Value, String> {
         .trim()
         .to_ascii_lowercase();
     let api_format = llm_api_format(&payload);
-    let api_key = payload
-        .get("api_key")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or_default();
-    let timeout_seconds = crate::market::payload_usize_field(&payload, "timeout_seconds", 60, 10, 120);
+    let resolved_key = credentials::resolve_api_key(&payload)?;
+    let api_key = resolved_key.as_str();
+    let timeout_seconds =
+        crate::market::payload_usize_field(&payload, "timeout_seconds", 60, 10, 120);
     let user_agent = payload
         .get("custom_user_agent")
         .and_then(Value::as_str)
@@ -54,10 +51,10 @@ pub(crate) async fn api_llm_models(payload: Value) -> Result<Value, String> {
         request = request.bearer_auth(api_key);
     }
 
-    let response = request
-        .send()
-        .await
-        .map_err(|error| format!("连接供应商失败：{error}"))?;
+    let response = request.send().await.map_err(|error| {
+        let _ = error;
+        "连接供应商失败（详情已隐藏）。".to_string()
+    })?;
     let status = response.status();
     if response
         .content_length()
@@ -103,11 +100,8 @@ pub(crate) async fn api_llm_test(payload: Value) -> Result<Value, String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "请先填写默认模型。".to_string())?;
-    let api_key = payload
-        .get("api_key")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or_default();
+    let resolved_key = credentials::resolve_api_key(&payload)?;
+    let api_key = resolved_key.as_str();
     let api_format = llm_api_format(&payload);
     let full_url = payload.get("endpoint_mode").and_then(Value::as_str) == Some("full_url");
     let endpoint = llm_inference_endpoint(base_url, api_format, full_url)?;
@@ -120,7 +114,8 @@ pub(crate) async fn api_llm_test(payload: Value) -> Result<Value, String> {
     if custom_user_agent.len() > 256 || custom_user_agent.contains(['\r', '\n']) {
         return Err("自定义 User-Agent 格式不正确。".to_string());
     }
-    let timeout_seconds = crate::market::payload_usize_field(&payload, "timeout_seconds", 30, 5, 120);
+    let timeout_seconds =
+        crate::market::payload_usize_field(&payload, "timeout_seconds", 30, 5, 120);
     let client = crate::market::build_http_client_with_proxy(
         custom_user_agent,
         Duration::from_secs(timeout_seconds as u64),
@@ -160,10 +155,10 @@ pub(crate) async fn api_llm_test(payload: Value) -> Result<Value, String> {
     }
 
     let started_at = crate::market::epoch_millis();
-    let response = request
-        .send()
-        .await
-        .map_err(|error| format!("连接供应商失败：{error}"))?;
+    let response = request.send().await.map_err(|error| {
+        let _ = error;
+        "连接供应商失败（详情已隐藏）。".to_string()
+    })?;
     let status = response.status();
     if response
         .content_length()
@@ -175,7 +170,8 @@ pub(crate) async fn api_llm_test(payload: Value) -> Result<Value, String> {
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|error| format!("读取供应商测试响应失败：{error}"))?;
-        if response_body.len().saturating_add(chunk.len()) > crate::market::LLM_MODEL_LIST_MAX_BYTES {
+        if response_body.len().saturating_add(chunk.len()) > crate::market::LLM_MODEL_LIST_MAX_BYTES
+        {
             return Err("供应商测试响应过大，已停止读取。".to_string());
         }
         response_body.extend_from_slice(&chunk);
@@ -311,14 +307,19 @@ pub(crate) fn llm_connection_http_error(status: u16, body: &[u8], api_key: &str)
                 .or_else(|| value.get("message").and_then(Value::as_str))
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .map(|value| redact_llm_error_detail(&crate::market::truncate_for_note(value, 180), api_key))
+                .map(|value| {
+                    crate::market::truncate_for_note(&redact_llm_error_detail(value, api_key), 180)
+                })
         });
     detail
         .map(|message| format!("供应商返回 HTTP {status}：{message}"))
         .unwrap_or_else(|| format!("供应商返回 HTTP {status}，连接测试失败。"))
 }
 
-pub(crate) fn llm_models_endpoint(base_url: &str, api_format: &str) -> Result<reqwest::Url, String> {
+pub(crate) fn llm_models_endpoint(
+    base_url: &str,
+    api_format: &str,
+) -> Result<reqwest::Url, String> {
     let mut url = reqwest::Url::parse(base_url.trim())
         .map_err(|_| "供应商接口地址格式不正确。".to_string())?;
     if !matches!(url.scheme(), "http" | "https") {
@@ -402,7 +403,10 @@ pub(crate) fn llm_models_uses_anthropic_auth(base_url: &str, api_format: &str) -
             .is_some_and(|url| is_official_deepseek_anthropic_base_url(&url, api_format))
 }
 
-pub(crate) fn is_official_deepseek_anthropic_base_url(url: &reqwest::Url, api_format: &str) -> bool {
+pub(crate) fn is_official_deepseek_anthropic_base_url(
+    url: &reqwest::Url,
+    api_format: &str,
+) -> bool {
     api_format == "anthropic_messages"
         && url
             .host_str()
@@ -500,7 +504,9 @@ pub(crate) fn llm_models_http_error(status: u16, body: &[u8], api_key: &str) -> 
                 .or_else(|| value.get("message").and_then(Value::as_str))
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .map(|value| redact_llm_error_detail(&crate::market::truncate_for_note(value, 180), api_key))
+                .map(|value| {
+                    crate::market::truncate_for_note(&redact_llm_error_detail(value, api_key), 180)
+                })
         });
     detail
         .map(|message| format!("供应商返回 HTTP {status}：{message}"))
@@ -509,8 +515,22 @@ pub(crate) fn llm_models_http_error(status: u16, body: &[u8], api_key: &str) -> 
 
 pub(crate) fn redact_llm_error_detail(detail: &str, api_key: &str) -> String {
     let api_key = api_key.trim();
-    if api_key.len() < 4 {
+    if api_key.is_empty() {
         return detail.to_string();
     }
     detail.replace(api_key, "[已隐藏密钥]")
+}
+
+#[cfg(test)]
+mod credential_redaction_tests {
+    use super::*;
+    #[test]
+    fn redacts_short_and_long_resolved_keys_before_truncating_errors() {
+        assert!(!redact_llm_error_detail("upstream echoed ab", "ab").contains("ab"));
+        let key = "synthetic-key".repeat(30);
+        let body =
+            serde_json::to_vec(&json!({"error": {"message": format!("echo {key}")}})).unwrap();
+        assert!(!llm_models_http_error(500, &body, &key).contains("synthetic-key"));
+        assert!(!llm_connection_http_error(500, &body, &key).contains("synthetic-key"));
+    }
 }

@@ -784,3 +784,9 @@
 .watchlist-header h3 {
   color: var(--text);
 }
+
+/* Reliability notices belong in the workbench, never in implicit shell grid cells. */
+.workbench-notices:empty { display: none; }
+.workbench-notices:not(:empty) { margin-bottom: var(--space-2); min-width: 0; }
+.workspace-save-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; padding-block: 4px; color: var(--text-secondary); font-size: var(--fs-caption); overflow-wrap: anywhere; }
+.workspace-save-status button { min-height: 44px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius-xs); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
