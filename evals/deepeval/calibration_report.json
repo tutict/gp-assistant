@@ -1,0 +1,23 @@
+{
+  "schema_version": "rag-eval-calibration-v1",
+  "dataset_version": "research-retrieval-eval-v4",
+  "status": "pending_human_annotation",
+  "minimum_examples_per_metric": 50,
+  "required_total_cases": 60,
+  "annotators": 2,
+  "minimum_cohen_kappa": 0.8,
+  "strict_metrics": [],
+  "flaky_metrics": [
+    "contextual_precision",
+    "contextual_recall",
+    "contextual_relevancy",
+    "faithfulness",
+    "answer_relevancy",
+    "acceptable_answer"
+  ],
+  "metrics": {},
+  "notes": [
+    "No human labels are asserted by this file. Populate only from two independent annotations plus adjudication.",
+    "Deterministic document/evidence/tool assertions remain the release hard gate."
+  ]
+}

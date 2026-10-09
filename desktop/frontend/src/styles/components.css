@@ -2127,3 +2127,6 @@
     animation: none;
   }
 }
+
+.action-btn.danger { border-color: var(--danger-border); background: var(--danger-soft); color: var(--danger); }
+.action-btn.danger:hover { border-color: var(--danger); color: var(--text-primary); }

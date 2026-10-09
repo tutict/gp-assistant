@@ -19,6 +19,7 @@ use tauri_plugin_shell::ShellExt;
 mod agent_harness;
 mod agent_ledger;
 mod core_api;
+mod evolution;
 mod gepa_lab;
 mod llm;
 mod market;
@@ -37,7 +38,6 @@ mod sentiment;
 mod sentiment_agent;
 mod sentiment_data;
 mod watchlist;
-
 #[tauri::command]
 fn api_app_close_handler_ready(ready: bool) {
     CLOSE_HANDLER_READY.store(ready, std::sync::atomic::Ordering::SeqCst);
@@ -48,6 +48,8 @@ fn api_app_confirm_close(app: AppHandle, saved: bool) {
     CLOSE_HANDLER_READY.store(false, std::sync::atomic::Ordering::SeqCst);
     app.exit(0);
 }
+#[cfg(any(test, feature = "eval-replay"))]
+pub mod eval_replay;
 
 #[tauri::command]
 fn api_health() -> Result<Value, String> {
@@ -200,6 +202,22 @@ pub fn run() {
             credentials::api_credential_put,
             credentials::api_credential_status,
             credentials::api_credential_delete,
+            evolution::api_evolution_settings,
+            evolution::api_evolution_profile,
+            evolution::api_evolution_profile_reset,
+            evolution::api_evolution_review,
+            evolution::api_evolution_review_enhance,
+            evolution::api_evolution_confirm_rule,
+            evolution::api_evolution_edit_rule,
+            evolution::api_evolution_rule_status,
+            evolution::api_evolution_delete_rule,
+            evolution::api_evolution_suppress_kind,
+            evolution::api_evolution_unsuppress_kind,
+            evolution::api_sentiment_strategy_save,
+            evolution::api_sentiment_strategies,
+            evolution::api_sentiment_strategy_versions,
+            evolution::api_sentiment_strategy_status,
+            evolution::api_sentiment_strategy_rollback,
             llm::api_llm_models,
             llm::api_llm_test,
             market::core_validate_data_source,

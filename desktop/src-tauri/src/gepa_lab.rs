@@ -63,6 +63,8 @@ struct CaseSummary {
     hard_failure: Option<String>,
     feedback: Vec<String>,
     response: Value,
+    #[serde(default)]
+    trajectory: Vec<Value>,
 }
 #[derive(Debug)]
 struct CaseEvaluation {
@@ -79,6 +81,8 @@ struct GepaRunReport {
     base_prompt_version: String,
     candidate_prompt_version: Option<String>,
     eval_suite_version: String,
+    #[serde(default = "default_replay_profile")]
+    replay_profile: String,
     dataset_sha256: String,
     engine_version: String,
     seed: u64,
@@ -92,7 +96,13 @@ struct GepaRunReport {
     candidate_validation: Vec<CaseSummary>,
     candidate_holdout: Vec<CaseSummary>,
     candidate_body: Option<String>,
+    #[serde(default)]
+    apply_gate: Value,
     error: Option<String>,
+}
+
+fn default_replay_profile() -> String {
+    "legacy_gepa_runtime".to_string()
 }
 
 static REPORT_ROOT: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
@@ -187,8 +197,119 @@ fn dataset_sha256() -> String {
     hex_digest(h.finalize().as_slice())
 }
 
+fn build_gepa_replay_payload(
+    profile: &EvalProfile,
+    case: &EvalCase,
+    method_card: &str,
+    llm: &Value,
+    run_id: &str,
+) -> Value {
+    let citations = profile.tool_result["evidence_summary"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .map(|(index, item)| {
+            let citation_id = format!("E{}", index + 1);
+            json!({
+                "citation_id": citation_id,
+                "document_id": format!("{}-synthetic-{}", profile.profile_id, index + 1),
+                "chunk_id": format!("{}-synthetic-{}:0", profile.profile_id, index + 1),
+                "title": item.get("title"),
+                "excerpt": item.get("summary").and_then(Value::as_str).unwrap_or_default(),
+                "source_tier": "research_report",
+                "source_name": item.get("source").and_then(Value::as_str).unwrap_or("GEPA synthetic fixture"),
+                "published_at": profile.tool_result["data"]["as_of"],
+                "remote_export_allowed": true,
+            })
+        })
+        .collect::<Vec<_>>();
+    let answer = citations
+        .iter()
+        .map(|citation| {
+            format!(
+                "[{}] {}",
+                citation["citation_id"].as_str().unwrap_or("E"),
+                citation["excerpt"].as_str().unwrap_or_default()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    json!({
+        "run_id": run_id,
+        "mode": profile.mode,
+        "message": case.question,
+        "context": {},
+        "research_evidence": {
+            "mode": "evidence_only",
+            "query": case.question,
+            "answer": answer,
+            "citations": citations,
+            "community_only": false,
+            "fact_supported": true,
+            "remote_safe_only": true,
+        },
+        "method_card": method_card,
+        "llm": llm,
+    })
+}
+
+fn replay_tool_trajectory(events: &[Value]) -> Vec<Value> {
+    events
+        .iter()
+        .filter(|event| event["type"] == "tool_start")
+        .enumerate()
+        .map(|(index, event)| {
+            let payload = &event["payload"];
+            let call_id = payload["id"].as_str().unwrap_or_default();
+            let tool = payload["tool"].as_str().unwrap_or("unknown");
+            let arguments = payload.get("input").cloned().unwrap_or(Value::Null);
+            let arguments_bytes = serde_json::to_vec(&arguments).unwrap_or_default();
+            let arguments_hash = hex_digest(Sha256::digest(arguments_bytes).as_slice());
+            let result = events.iter().find(|candidate| {
+                candidate["type"] == "tool_result"
+                    && candidate["payload"]["tool_call_id"].as_str() == Some(call_id)
+            });
+            let evidence_document_ids = result
+                .and_then(|event| event["payload"]["output"]["citations"].as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|citation| citation["document_id"].as_str().map(ToOwned::to_owned))
+                .collect::<Vec<_>>();
+            json!({
+                "tool_call_id": call_id,
+                "tool_name": tool,
+                "normalized_arguments": arguments,
+                "arguments_hash": arguments_hash,
+                "sequence_index": index + 1,
+                "status": result.and_then(|event| event["payload"]["status"].as_str()).unwrap_or("missing_result"),
+                "side_effect_class": if matches!(tool, "stock_screen" | "stock_observe" | "trend_screen" | "portfolio_backtest" | "news_evidence" | "watchlist_review") { "read_only" } else { "unknown" },
+                "evidence_document_ids": evidence_document_ids,
+            })
+        })
+        .collect()
+}
+
+fn validate_gepa_trajectory(trajectory: &[Value]) -> Result<(), String> {
+    let mut seen = std::collections::BTreeSet::new();
+    for step in trajectory {
+        let tool = step["tool_name"].as_str().unwrap_or("unknown");
+        if step["side_effect_class"] != "read_only" {
+            return Err(format!("GEPA trajectory contains non-read-only tool {tool}"));
+        }
+        if !matches!(step["status"].as_str(), Some("ok" | "degraded")) {
+            return Err(format!("GEPA trajectory tool {tool} did not complete successfully"));
+        }
+        let key = format!("{tool}:{}", step["arguments_hash"].as_str().unwrap_or_default());
+        if !seen.insert(key) {
+            return Err(format!("GEPA trajectory repeats the same read-only tool call: {tool}"));
+        }
+    }
+    Ok(())
+}
+
 fn response_text(model_response: &Value) -> String {
-    ["reply", "answer_sections", "warnings", "next_actions"]
+    ["reply", "answer_sections"]
         .iter()
         .filter_map(|key| model_response.get(*key))
         .map(Value::to_string)
@@ -292,26 +413,7 @@ fn score_case(profile: &EvalProfile, case: &EvalCase, model_response: &Value) ->
             };
         }
     };
-    let output_text = [
-        model_response
-            .get("reply")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        model_response
-            .get("answer_sections")
-            .map(Value::to_string)
-            .unwrap_or_default(),
-        model_response
-            .get("warnings")
-            .map(Value::to_string)
-            .unwrap_or_default(),
-        model_response
-            .get("next_actions")
-            .map(Value::to_string)
-            .unwrap_or_default(),
-    ]
-    .join(" ");
+    let output_text = response_text(model_response);
     let mut hits = 0usize;
     let mut feedback = Vec::new();
     for criterion in &case.rubric {
@@ -344,10 +446,28 @@ fn average(scores: &[CaseSummary]) -> f64 {
     }
 }
 
-#[cfg(all(
-    feature = "gepa-lab",
-    any(target_os = "windows", target_os = "android")
-))]
+fn compute_apply_gate(
+    baseline_validation: &[CaseSummary],
+    baseline_holdout: &[CaseSummary],
+    candidate_validation: &[CaseSummary],
+    candidate_holdout: &[CaseSummary],
+) -> Value {
+    let validation_non_regression = average(candidate_validation) >= average(baseline_validation);
+    let holdout_non_regression = average(candidate_holdout) >= average(baseline_holdout);
+    let hard_failures = candidate_validation
+        .iter()
+        .chain(candidate_holdout.iter())
+        .filter(|case| case.hard_failure.is_some())
+        .count();
+    json!({
+        "passed": validation_non_regression && holdout_non_regression && hard_failures == 0,
+        "validation_non_regression": validation_non_regression,
+        "holdout_non_regression": holdout_non_regression,
+        "hard_failures": hard_failures,
+    })
+}
+
+#[cfg(all(feature = "gepa-lab", any(target_os = "windows", target_os = "android")))]
 mod engine {
     use super::*;
     use gepa::progress::{Event, Progress};
@@ -356,11 +476,13 @@ mod engine {
         Reflective,
     };
     use rig_agent::{completion::Prompt, AgentBuilder};
+    use stock_optimizer_core::CoreDataSet;
     use std::{future::Future, sync::Arc, time::Duration};
     #[derive(Clone)]
     struct Trace {
         question: String,
         response: Value,
+        trajectory: Vec<Value>,
         feedback: Vec<String>,
         hard_failure: Option<String>,
         score: f64,
@@ -387,22 +509,6 @@ mod engine {
         cancellation: Arc<rig_runtime::RunCancellation>,
     }
     impl Adapter {
-        async fn model_json(&self, prompt: String) -> Result<Value, String> {
-            let config = rig_runtime::normalize_provider_config(&self.llm)?;
-            let model = rig_runtime::build_model_with_payload(&config, &self.llm).map_err(|e| {
-                agent_harness::redact_persisted_error(&e.to_string(), Some(&self.llm))
-            })?;
-            let agent = AgentBuilder::from_model_handle(model).name("gepa-lab").preamble("你是 GEPA 固定评测执行器。只输出 JSON，不输出 Markdown，不提供买卖、仓位、目标价或收益承诺。必须只基于给定工具结果回答。顶层 reply 必须是非空字符串，并在每个事实性结论附近包含合法证据引用，例如 [E1]；answer_sections 如输出必须使用数组，每项为 {title, bullets}，每条事实性 bullet 也必须包含合法 [E#] 引用。").default_max_turns(1).max_tokens(2_500).temperature(0.2).build();
-            let timeout = Duration::from_secs(config.timeout_seconds.min(120).max(1));
-            let raw = tokio::select! { _ = self.cancellation.cancelled() => return Err("GEPA run cancelled".to_string()), result = tokio::time::timeout(timeout, agent.prompt(prompt)) => result.map_err(|_| "GEPA model request timed out".to_string())?.map_err(|e| agent_harness::redact_persisted_error(&e.to_string(), Some(&self.llm)))? };
-            let trimmed = raw
-                .trim()
-                .trim_start_matches("```json")
-                .trim_start_matches("```")
-                .trim_end_matches("```")
-                .trim();
-            serde_json::from_str(trimmed).map_err(|e| format!("GEPA model JSON parse failed: {e}"))
-        }
         async fn evaluate_cases(
             &self,
             cases: &[EvalCase],
@@ -413,25 +519,74 @@ mod engine {
             let mut scores = Vec::new();
             let mut traces = Vec::new();
             for case in cases {
-                let prompt = format!("研究方法卡：\n{body}\n\n固定问题：{}\n\n冻结工具结果：{}\n\n输出 JSON 字段：reply、answer_sections、warnings、next_actions。", case.question, self.profile.tool_result);
-                let (response, error) = match self.model_json(prompt).await {
-                    Ok(v) => (v, None),
-                    Err(e) => (json!({"reply": format!("模型失败：{e}")}), Some(e)),
+                let replay_run_id = format!("{}-{}", self.run_id, case.id);
+                let payload = build_gepa_replay_payload(
+                    &self.profile,
+                    case,
+                    &body,
+                    &self.llm,
+                    &replay_run_id,
+                );
+                let data = match serde_json::to_value(CoreDataSet::default()) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        let message = format!("GEPA replay dataset serialization failed: {error}");
+                        scores.push(0.0);
+                        if capture {
+                            traces.push(Trace {
+                                question: case.question.clone(),
+                                response: Value::Null,
+                                trajectory: Vec::new(),
+                                feedback: vec![message.clone()],
+                                hard_failure: Some(message),
+                                score: 0.0,
+                            });
+                        }
+                        continue;
+                    }
+                };
+                let mut events = Vec::new();
+                let replay = tokio::select! {
+                    _ = self.cancellation.cancelled() => {
+                        rig_runtime::request_cancel(&replay_run_id);
+                        Err("GEPA run cancelled".to_string())
+                    }
+                    result = rig_runtime::execute_with_event_sink(payload, data, |event| events.push(event)) => {
+                        result.map(|outcome| outcome.response)
+                    }
+                };
+                let trajectory = replay_tool_trajectory(&events);
+                let (response, error) = match replay {
+                    Ok(response) if response["harness"]["model_used"] == true => {
+                        match validate_gepa_trajectory(&trajectory) {
+                            Ok(()) => (response, None),
+                            Err(error) => (response, Some(error)),
+                        }
+                    }
+                    Ok(response) => {
+                        let message = response["model_warning"]
+                            .as_str()
+                            .unwrap_or("shared Agent runtime did not produce a model-backed answer")
+                            .to_string();
+                        (response, Some(message))
+                    }
+                    Err(error) => (Value::Null, Some(error)),
                 };
                 let evaluation = error.map_or_else(
                     || score_case(&self.profile, case, &response),
-                    |e| CaseEvaluation {
+                    |error| CaseEvaluation {
                         score: 0.0,
-                        feedback: vec![e.clone()],
-                        hard_failure: Some(e),
-                        merged_response: Value::Null,
+                        feedback: vec![format!("shared replay hard gate failed: {error}")],
+                        hard_failure: Some(error),
+                        merged_response: response.clone(),
                     },
                 );
                 scores.push(evaluation.score);
                 if capture {
                     traces.push(Trace {
                         question: case.question.clone(),
-                        response,
+                        response: evaluation.merged_response,
+                        trajectory,
                         feedback: evaluation.feedback,
                         hard_failure: evaluation.hard_failure,
                         score: evaluation.score,
@@ -658,6 +813,12 @@ mod engine {
             return cancelled_report(&run_id, &profile, &base_version, max_metric_calls);
         }
         let candidate_body = agent_harness::redact_persisted_question(&candidate_body, Some(&llm));
+        let apply_gate = compute_apply_gate(
+            &baseline,
+            &baseline_holdout,
+            &candidate_validation,
+            &candidate_holdout,
+        );
         let report = GepaRunReport {
             run_id: run_id.clone(),
             status: "completed".to_string(),
@@ -665,6 +826,7 @@ mod engine {
             base_prompt_version: base_version,
             candidate_prompt_version: Some(format!("gepa-candidate-{run_id}")),
             eval_suite_version: "agent-gepa-eval-v1".to_string(),
+            replay_profile: "model-backed_v1_shared_runtime".to_string(),
             dataset_sha256: dataset_sha256(),
             engine_version: ENGINE_VERSION.to_string(),
             seed: SEED,
@@ -678,6 +840,7 @@ mod engine {
             candidate_validation,
             candidate_holdout,
             candidate_body: Some(candidate_body),
+            apply_gate,
             error: None,
         };
         report
@@ -717,6 +880,13 @@ mod engine {
                     .map(|item| agent_harness::redact_persisted_question(&item, Some(llm)))
                     .collect(),
                 response: agent_harness::redact_persisted_response(&trace.response, Some(llm)),
+                trajectory: agent_harness::redact_persisted_response(
+                    &Value::Array(trace.trajectory),
+                    Some(llm),
+                )
+                .as_array()
+                .cloned()
+                .unwrap_or_default(),
             })
             .collect()
     }
@@ -735,6 +905,7 @@ fn cancelled_report(
         base_prompt_version: base_version.to_string(),
         candidate_prompt_version: None,
         eval_suite_version: "agent-gepa-eval-v1".to_string(),
+            replay_profile: "model-backed_v1_shared_runtime".to_string(),
         dataset_sha256: dataset_sha256(),
         engine_version: ENGINE_VERSION.to_string(),
         seed: SEED,
@@ -748,6 +919,7 @@ fn cancelled_report(
         candidate_validation: Vec::new(),
         candidate_holdout: Vec::new(),
         candidate_body: None,
+        apply_gate: json!({"passed": false, "reason": "run cancelled"}),
         error: Some("GEPA run cancelled".to_string()),
     }
 }
@@ -952,6 +1124,9 @@ pub(crate) fn api_agent_gepa_apply(app: AppHandle, payload: Value) -> Result<Val
     if report.status != "completed" {
         return Err("only a completed GEPA run can be applied".to_string());
     }
+    if report.apply_gate["passed"] != true {
+        return Err("GEPA candidate failed validation/holdout apply gate".to_string());
+    }
     let body = report
         .candidate_body
         .as_deref()
@@ -973,6 +1148,64 @@ mod tests {
             assert_eq!(profile.validation.len(), 4);
             assert_eq!(profile.holdout.len(), 4);
         }
+    }
+
+    #[test]
+    fn gepa_replay_payload_uses_shared_runtime_and_keeps_rubric_out_of_agent_input() {
+        let suite = parse_suite().expect("GEPA suite");
+        let profile = &suite.profiles["value_compounder_v1"];
+        let case = &profile.train[0];
+        let payload = build_gepa_replay_payload(
+            profile,
+            case,
+            "method-card candidate",
+            &json!({"model": "test-model", "api_key": "test-secret"}),
+            "gepa-test-run",
+        );
+
+        assert_eq!(payload["mode"], profile.mode);
+        assert_eq!(payload["message"], case.question);
+        assert_eq!(payload["method_card"], "method-card candidate");
+        assert_eq!(payload["research_evidence"]["citations"].as_array().unwrap().len(), 2);
+        assert_eq!(payload["research_evidence"]["citations"][0]["remote_export_allowed"], true);
+        assert!(payload.get("rubric").is_none());
+        assert!(!payload.to_string().contains(&case.rubric[0].id));
+    }
+
+    #[test]
+    fn trajectory_gate_rejects_repeated_or_mutating_calls() {
+        let repeated = vec![
+            json!({"tool_name":"news_evidence","arguments_hash":"same","status":"ok","side_effect_class":"read_only"}),
+            json!({"tool_name":"news_evidence","arguments_hash":"same","status":"ok","side_effect_class":"read_only"}),
+        ];
+        assert!(validate_gepa_trajectory(&repeated).is_err());
+        let mutating = vec![
+            json!({"tool_name":"unknown","arguments_hash":"x","status":"ok","side_effect_class":"unknown"}),
+        ];
+        assert!(validate_gepa_trajectory(&mutating).is_err());
+    }
+
+    #[test]
+    fn apply_gate_rejects_holdout_regression_and_hard_failures() {
+        let baseline = CaseSummary {
+            id: "baseline".to_string(),
+            score: 1.0,
+            hard_failure: None,
+            feedback: vec![],
+            response: Value::Null,
+            trajectory: vec![],
+        };
+        let candidate = CaseSummary {
+            id: "candidate".to_string(),
+            score: 0.5,
+            hard_failure: Some("trajectory failed".to_string()),
+            feedback: vec![],
+            response: Value::Null,
+            trajectory: vec![],
+        };
+        let gate = compute_apply_gate(&[baseline.clone()], &[baseline], &[candidate.clone()], &[candidate]);
+        assert_eq!(gate["passed"], false);
+        assert_eq!(gate["hard_failures"], 2);
     }
 
     #[test]
@@ -1018,6 +1251,22 @@ mod tests {
             assert_eq!(evaluation.score, 0.0);
             assert!(evaluation.hard_failure.is_some());
         }
+    }
+
+    #[test]
+    fn rubric_keywords_in_warnings_do_not_count_as_answer_coverage() {
+        let suite = parse_suite().expect("valid fixture");
+        let profile = &suite.profiles["value_compounder_v1"];
+        let case = &profile.train[0];
+        let evaluation = score_case(
+            profile,
+            case,
+            &json!({
+                "reply": "只说明需要继续核验。[E1]",
+                "warnings": ["所有者收益、资本强度、管理质量"],
+            }),
+        );
+        assert_eq!(evaluation.score, 0.0);
     }
 
     #[test]

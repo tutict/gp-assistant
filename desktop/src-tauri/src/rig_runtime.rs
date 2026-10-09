@@ -2,7 +2,10 @@
 
 use bytes::Bytes;
 use futures::StreamExt;
-use rig_agent::ModelHandle;
+use rig_agent::{
+    agent::hook::{AgentHook, HookContext, ToolResultAction, ToolResultEvent},
+    ModelHandle,
+};
 use rig_core::{
     client::{Capabilities, Capable, CompletionClient, DebugExt, Nothing, Provider},
     completion::Message,
@@ -11,7 +14,7 @@ use rig_core::{
         Response, StreamingResponse,
     },
     providers::openai::completion::{GenericCompletionModel, OpenAICompatibleProvider},
-    streaming::{StreamedAssistantContent, StreamedUserContent},
+    streaming::StreamedAssistantContent,
     tool::{PortableDynamicTool, ToolExecutionError, ToolOutput},
 };
 use serde_json::{json, Map, Value};
@@ -40,6 +43,75 @@ const MAX_MODEL_OUTPUT_CHARS: usize = 16 * 1024;
 const MAX_MODEL_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 const MAX_MODEL_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_RUN_SECONDS: u64 = 180;
+
+/// Captures the structured tool disposition at the dispatch boundary. Rig's
+/// streamed `ToolResult` contains model-facing content but not the canonical
+/// `ToolResult` disposition, so the event sink must observe the hook event
+/// instead of inferring status from rendered error text.
+#[derive(Clone)]
+struct ToolLifecycleObserver {
+    run_id: String,
+    events: Arc<Mutex<Vec<Value>>>,
+}
+
+impl ToolLifecycleObserver {
+    fn new(run_id: String) -> Self {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        Self {
+            run_id,
+            events,
+        }
+    }
+
+    fn drain_into<F>(&self, sink: &mut F)
+    where
+        F: FnMut(Value),
+    {
+        let pending = self
+            .events
+            .lock()
+            .map(|mut events| std::mem::take(&mut *events))
+            .unwrap_or_default();
+        for event in pending {
+            sink(event);
+        }
+    }
+}
+
+impl AgentHook for ToolLifecycleObserver {
+    async fn on_tool_result(
+        &self,
+        _ctx: &HookContext,
+        event: ToolResultEvent<'_>,
+    ) -> ToolResultAction {
+        let output = json!({
+            "content": event.presentation.as_content(),
+        });
+        let lifecycle_event = tool_result_event(
+            &self.run_id,
+            event.tool_name,
+            event.internal_call_id,
+            canonical_tool_status(event.raw_result.status_name()),
+            output,
+        );
+        if let Ok(mut events) = self.events.lock() {
+            events.push(lifecycle_event);
+        }
+        ToolResultAction::Keep
+    }
+}
+
+/// Maps Rig's canonical tool disposition to the compatibility statuses used by
+/// the event ledger and replay contracts.
+fn canonical_tool_status(status: &str) -> &'static str {
+    match status {
+        "success" => "ok",
+        "error" => "error",
+        "denied" => "denied",
+        "skipped" => "skipped",
+        _ => "unknown",
+    }
+}
 
 /// Cooperative cancellation state shared by the Tauri cancel command and an active run.
 /// Network/tool futures are dropped at their next await boundary after this flag is raised.
@@ -717,6 +789,7 @@ pub(crate) struct RigToolRegistry {
     context: Value,
     research_evidence: Option<Value>,
     research_app: Option<AppHandle>,
+    remote_safe_only: bool,
 }
 
 impl RigToolRegistry {
@@ -743,6 +816,7 @@ impl RigToolRegistry {
             research_evidence,
             research_app,
             Arc::new(RunCancellation::default()),
+            false,
         )
     }
 
@@ -752,6 +826,7 @@ impl RigToolRegistry {
         research_evidence: Option<Value>,
         research_app: Option<AppHandle>,
         cancellation: Arc<RunCancellation>,
+        remote_safe_only: bool,
     ) -> Self {
         let definitions = [
             (
@@ -786,6 +861,7 @@ impl RigToolRegistry {
                 let context = context.clone();
                 let research_evidence = research_evidence.clone();
                 let research_app = research_app.clone();
+                let remote_safe_only = remote_safe_only;
                 let cancellation = Arc::clone(&cancellation);
                 let tool_name = name.to_string();
                 PortableDynamicTool::new(name, description, tool_schema(name), move |arguments| {
@@ -793,6 +869,7 @@ impl RigToolRegistry {
                     let context = context.clone();
                     let research_evidence = research_evidence.clone();
                     let research_app = research_app.clone();
+                    let remote_safe_only = remote_safe_only;
                     let cancellation = Arc::clone(&cancellation);
                     let tool_name = tool_name.clone();
                     Box::pin(async move {
@@ -811,6 +888,7 @@ impl RigToolRegistry {
                                     context,
                                     research_evidence,
                                     research_app,
+                                    remote_safe_only,
                                     arguments,
                                 ),
                             ) => result
@@ -828,6 +906,7 @@ impl RigToolRegistry {
             context,
             research_evidence,
             research_app,
+            remote_safe_only,
         }
     }
 
@@ -850,6 +929,7 @@ impl RigToolRegistry {
             self.context.clone(),
             self.research_evidence.clone(),
             self.research_app.clone(),
+            self.remote_safe_only,
             arguments,
         )
         .await
@@ -954,6 +1034,7 @@ async fn dispatch_tool(
     context: Value,
     research_evidence: Option<Value>,
     research_app: Option<AppHandle>,
+    remote_safe_only: bool,
     arguments: Value,
 ) -> Result<Value, String> {
     validate_tool_arguments(name, &arguments)?;
@@ -997,6 +1078,7 @@ async fn dispatch_tool(
                     research_evidence.as_ref(),
                     research_app.as_ref(),
                     context.get("stock_code").and_then(Value::as_str),
+                    remote_safe_only,
                 )
             }
             "watchlist_review" => {
@@ -1031,9 +1113,10 @@ fn research_evidence_for_query(
     evidence: Option<&Value>,
     app: Option<&AppHandle>,
     stock_code: Option<&str>,
+    remote_safe_only: bool,
 ) -> Result<Value, String> {
     if let Some(app) = app {
-        let mut request = json!({"query": query, "top_k": 8});
+        let mut request = json!({"query": query, "top_k": 8, "remote_safe_only": remote_safe_only});
         if let Some(stock_code) = stock_code.filter(|value| !value.trim().is_empty()) {
             request["stock_code"] = Value::String(stock_code.trim().to_string());
         }
@@ -1044,16 +1127,68 @@ fn research_evidence_for_query(
         return Ok(result);
     }
     if let Some(evidence) = evidence {
-        let mut evidence = evidence.clone();
-        if let Some(object) = evidence.as_object_mut() {
-            object.insert("research_store".to_string(), Value::Bool(true));
-        }
-        return Ok(evidence);
+        return Ok(if remote_safe_only {
+            remote_safe_evidence_snapshot(evidence)
+        } else {
+            let mut local = evidence.clone();
+            if let Some(object) = local.as_object_mut() {
+                object.insert("research_store".to_string(), Value::Bool(true));
+            }
+            local
+        });
     }
     Err(format!(
         "ResearchStore is unavailable for news evidence query: {}",
         limit_text(query, 80)
     ))
+}
+
+
+fn remote_safe_evidence_snapshot(evidence: &Value) -> Value {
+    let citations = evidence
+        .get("citations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|citation| {
+            citation
+                .get("remote_export_allowed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let community_only = !citations.is_empty()
+        && citations
+            .iter()
+            .all(|citation| citation.get("source_tier").and_then(Value::as_str) == Some("community"));
+    let answer = if citations.is_empty() {
+        "没有可发送给远程模型的已授权证据。".to_string()
+    } else if community_only {
+        "当前只命中社区信息，不能单独作为事实结论；请补充公告、财务快照或可信新闻核验。"
+            .to_string()
+    } else {
+        citations
+            .iter()
+            .map(|citation| {
+                let id = citation.get("citation_id").and_then(Value::as_str).unwrap_or("C");
+                let excerpt = citation.get("excerpt").and_then(Value::as_str).unwrap_or("");
+                format!("[{id}] {excerpt}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    json!({
+        "mode": "evidence_only",
+        "query": evidence.get("query").and_then(Value::as_str).unwrap_or(""),
+        "answer": answer,
+        "citations": citations,
+        "community_only": community_only,
+        "fact_supported": !citations.is_empty() && !community_only,
+        "retrieval_mode": evidence.get("retrieval_mode").and_then(Value::as_str).unwrap_or("bm25"),
+        "remote_safe_only": true,
+        "research_store": true
+    })
 }
 
 fn validate_tool_arguments(name: &str, arguments: &Value) -> Result<(), String> {
@@ -1145,7 +1280,7 @@ pub(crate) struct RigAgentOutcome {
     pub(crate) response: Value,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "eval-replay", feature = "gepa-lab"))]
 pub(crate) async fn execute_with_event_sink<F>(
     payload: Value,
     data: Value,
@@ -1217,13 +1352,16 @@ where
         .cloned()
         .unwrap_or_else(|| json!({}));
     let prompt_app = research_app.clone();
+    let remote_safe_only = matches!(run_mode(mode), RunMode::Model) && payload.get("llm").is_some();
     let registry = RigToolRegistry::new_with_research_and_cancel(
         data.clone(),
         context.clone(),
         payload.get("research_evidence").cloned(),
         research_app,
         Arc::clone(&cancellation),
+        remote_safe_only,
     );
+    let tool_lifecycle_observer = ToolLifecycleObserver::new(run_id.clone());
     sink(status_event(&run_id, "tools", "执行本地工具", 12));
     sink(status_event(&run_id, "understand", "理解任务", 18));
     sink(status_event(&run_id, "intent", "选择 Rig 工具", 24));
@@ -1251,7 +1389,10 @@ where
         RunMode::Model => {
             sink(status_event(&run_id, "model", "Rig 模型综合", 70));
             let resolved_prompt = prompt_upgrade::resolve_prompt(mode, prompt_app.as_ref());
-            let system_prompt = resolved_prompt.text;
+            let system_prompt = compose_system_prompt(
+                &resolved_prompt.text,
+                payload.get("method_card").and_then(Value::as_str),
+            );
             let prompt_version = resolved_prompt.version;
             let llm_value = payload.get("llm");
             let config = match llm_value {
@@ -1328,6 +1469,7 @@ where
                 );
             }
             let builder = rig_agent::AgentBuilder::from_model_handle(model)
+                .add_hook(tool_lifecycle_observer.clone())
                 .name("gp-assistant")
                 .preamble(&system_prompt)
                 .context(&bounded_context)
@@ -1396,22 +1538,11 @@ where
                         } => {
                             // The start event is emitted from the complete model tool-call item.
                         }
-                        rig_agent::agent::MultiTurnStreamItem::StreamUserItem(
-                            StreamedUserContent::ToolResult {
-                                tool_result,
-                                internal_call_id,
-                            },
-                        ) => {
-                            sink(tool_result_event(
-                                &run_id,
-                                &tool_result.name,
-                                &internal_call_id,
-                                json!({"content": tool_result.content}),
-                            ));
-                        }
                         _ => {}
                     }
+                    tool_lifecycle_observer.drain_into(&mut sink);
                 }
+                tool_lifecycle_observer.drain_into(&mut sink);
                 output
                     .ok_or_else(|| "Rig model stream did not produce a final response".to_string())
             };
@@ -1522,108 +1653,110 @@ async fn run_deterministic_baseline(
     message: &str,
 ) -> Result<Value, String> {
     let lower = message.to_ascii_lowercase();
-    let (tool, arguments, action, reply) = if lower.contains("自选") || lower.contains("watchlist")
-    {
-        (
-            "watchlist_review",
-            json!({}),
-            "watchlist_action",
-            "已读取本地自选股观察池。",
-        )
-    } else if lower.contains("新闻")
-        || lower.contains("资讯")
-        || lower.contains("公告")
-        || lower.contains("news")
-    {
-        (
-            "news_evidence",
-            json!({"query": limit_text(message, 256)}),
-            "news_rag",
-            "已整理本地可用的资讯线索与风险边界。",
-        )
+    let ordered_observe_news =
+        (lower.contains("先") && (lower.contains("再") || lower.contains("然后")))
+            || (lower.contains("first")
+                && (lower.contains("then") || lower.contains("next")))
+            || (lower.contains("observe") && lower.contains("news") && lower.contains("then"));
+    let explicit_observe_then_news = extract_stock_code(message).is_some()
+        && ordered_observe_news
+        && (lower.contains("新闻")
+            || lower.contains("公告")
+            || lower.contains("资讯")
+            || lower.contains("news"));
+
+    if explicit_observe_then_news {
+        let code = extract_stock_code(message).expect("guarded by stock-code check");
+        let observe_args = json!({"code": format_stock_code_for_tool(&code)});
+        let news_args = json!({"query": limit_text(message, 256)});
+        let mut calls = Vec::new();
+        let mut summaries = Vec::new();
+        let mut warnings = vec!["仅供选股研究，不构成投资建议。".to_string()];
+        let mut outputs = Vec::new();
+
+        for (tool, arguments, label) in [
+            ("stock_observe", observe_args, "已先核验股票身份与本地快照。"),
+            ("news_evidence", news_args, "已根据核验后的股票任务整理资讯证据。"),
+        ] {
+            match registry.dispatch(tool, arguments.clone()).await {
+                Ok(output) => {
+                    let summary = tool_result_summary(&output);
+                    summaries.push(summary.clone());
+                    outputs.push(output);
+                    calls.push(json!({
+                        "id": format!("tool_{tool}"),
+                        "tool": tool,
+                        "label": tool_label(tool),
+                        "status": "ok",
+                        "input": arguments,
+                        "output_summary": summary,
+                        "warnings": []
+                    }));
+                }
+                Err(error) => {
+                    let warning = format!("{label}本地工具失败：{}", limit_text(&error, 240));
+                    warnings.push(warning.clone());
+                    calls.push(json!({
+                        "id": format!("tool_{tool}"),
+                        "tool": tool,
+                        "label": tool_label(tool),
+                        "status": "degraded",
+                        "input": arguments,
+                        "output_summary": warning,
+                        "warnings": [warning]
+                    }));
+                }
+            }
+        }
+        return Ok(json!({
+            "reply": "已按股票核验→资讯证据的顺序完成本地取证。",
+            "action": "news_rag",
+            "tool_calls": calls,
+            "evidence_summary": summaries.iter().enumerate().map(|(index, summary)| json!({
+                "title": if index == 0 { "股票核验" } else { "资讯证据" },
+                "source": "本地 Rig 只读工具",
+                "level": "primary",
+                "summary": summary
+            })).collect::<Vec<_>>(),
+            "answer_sections": [{"title": "结论概览", "bullets": ["已按股票核验→资讯证据的顺序完成本地取证。", "仅供选股研究，不构成投资建议。"]}],
+            "warnings": warnings,
+            "next_actions": [],
+            "data": {"observe": outputs.first().cloned().unwrap_or(Value::Null), "news": outputs.get(1).cloned().unwrap_or(Value::Null)}
+        }));
+    }
+
+    let (tool, arguments, action, reply) = if lower.contains("自选") || lower.contains("watchlist") {
+        ("watchlist_review", json!({}), "watchlist_action", "已读取本地自选股观察池。")
+    } else if lower.contains("新闻") || lower.contains("资讯") || lower.contains("公告") || lower.contains("news") {
+        ("news_evidence", json!({"query": limit_text(message, 256)}), "news_rag", "已整理本地可用的资讯线索与风险边界。")
     } else if lower.contains("回测") || lower.contains("组合") || lower.contains("backtest") {
-        (
-            "portfolio_backtest",
-            json!({"request": {
-                "start_date": "20200101",
-                "end_date": "20991231",
-                "stock_codes": [],
-                "top_n": 10,
-                "initial_cash": 1000000.0,
-                "transaction_cost_bps": 10.0,
-                "benchmark": "candidate_equal_weight",
-                "rebalance_frequency": "monthly",
-                "strategy_mode": "walk_forward",
-                "source": "criteria"
-            }}),
-            "backtest",
-            "已基于本地数据完成组合观察/回测。",
-        )
+        ("portfolio_backtest", json!({"request": {"start_date": "20200101", "end_date": "20991231", "stock_codes": [], "top_n": 10, "initial_cash": 1000000.0, "transaction_cost_bps": 10.0, "benchmark": "candidate_equal_weight", "rebalance_frequency": "monthly", "strategy_mode": "walk_forward", "source": "criteria"}}), "backtest", "已基于本地数据完成组合观察/回测。")
     } else if lower.contains("趋势") || lower.contains("trend") {
-        (
-            "trend_screen",
-            json!({"limit": 20}),
-            "trend_screen",
-            "已完成本地趋势筛选。",
-        )
+        ("trend_screen", json!({"limit": 20}), "trend_screen", "已完成本地趋势筛选。")
     } else if let Some(code) = extract_stock_code(message) {
-        (
-            "stock_observe",
-            json!({"code": code}),
-            "observe_stock",
-            "已生成本地个股速览。",
-        )
+        ("stock_observe", json!({"code": format_stock_code_for_tool(&code)}), "observe_stock", "已生成本地个股速览。")
     } else {
-        (
-            "stock_screen",
-            json!({"limit": 20}),
-            "screen",
-            "已完成本地选股筛选。",
-        )
+        ("stock_screen", json!({"limit": 20}), "screen", "已完成本地选股筛选。")
     };
     let (output, tool_warning) = match registry.dispatch(tool, arguments.clone()).await {
         Ok(output) => (output, None),
-        Err(error) => (
-            json!({"tool_error": "local read-only tool failed"}),
-            Some(format!(
-                "本地工具执行失败，已返回受限结果：{}",
-                limit_text(&error, 240)
-            )),
-        ),
+        Err(error) => (json!({"tool_error": "local read-only tool failed"}), Some(format!("本地工具执行失败，已返回受限结果：{}", limit_text(&error, 240)))),
     };
-    if output.get("action").is_some() && output.get("reply").is_some() {
-        return Ok(output);
-    }
-    let summary = tool_warning
-        .clone()
-        .unwrap_or_else(|| tool_result_summary(&output));
+    if output.get("action").is_some() && output.get("reply").is_some() { return Ok(output); }
+    let summary = tool_warning.clone().unwrap_or_else(|| tool_result_summary(&output));
     let mut warnings = vec!["仅供选股研究，不构成投资建议。".to_string()];
-    if let Some(tool_warning) = tool_warning {
-        warnings.push(tool_warning);
-    }
+    if let Some(warning) = tool_warning { warnings.push(warning); }
     Ok(json!({
-        "reply": reply,
-        "action": action,
-        "tool_calls": [{
-            "id": format!("tool_{tool}"),
-            "tool": tool,
-            "label": tool_label(tool),
-            "status": if output.get("tool_error").is_some() { "degraded" } else { "ok" },
-            "input": arguments,
-            "output_summary": summary,
-            "warnings": []
-        }],
-        "evidence_summary": [{
-            "title": tool_label(tool),
-            "source": "本地 Rig 只读工具",
-            "level": "primary",
-            "summary": summary
-        }],
-        "answer_sections": [{"title": "结论概览", "bullets": [reply, "仅供选股研究，不构成投资建议。"]}],
-        "warnings": warnings,
-        "next_actions": [],
-        "data": output
+        "reply": reply, "action": action,
+        "tool_calls": [{"id": format!("tool_{tool}"), "tool": tool, "label": tool_label(tool), "status": if output.get("tool_error").is_some() { "degraded" } else { "ok" }, "input": arguments, "output_summary": summary, "warnings": []}],
+        "evidence_summary": [{"title": tool_label(tool), "source": "本地 Rig 只读工具", "level": "primary", "summary": summary}],
+        "answer_sections": [{"title": "结论概览", "bullets": [reply, "仅供选股研究，不构成投资建议."]}],
+        "warnings": warnings, "next_actions": [], "data": output
     }))
+}
+
+fn format_stock_code_for_tool(code: &str) -> String {
+    if code.starts_with("6") { format!("{code}.SH") } else { format!("{code}.SZ") }
 }
 
 fn extract_stock_code(message: &str) -> Option<String> {
@@ -1795,7 +1928,7 @@ where
             id,
             call.get("input").cloned().unwrap_or(Value::Null),
         ));
-        sink(tool_result_event(run_id, tool, id, call.clone()));
+        sink(tool_result_event(run_id, tool, id, "ok", call.clone()));
     }
     if let Some(items) = response
         .get("evidence_summary")
@@ -1894,6 +2027,15 @@ pub(crate) fn run_mode(value: &str) -> RunMode {
     }
 }
 
+fn compose_system_prompt(base: &str, method_card: Option<&str>) -> String {
+    let Some(card) = method_card.map(str::trim).filter(|value| !value.is_empty()) else {
+        return base.to_string();
+    };
+    format!(
+        "{base}\n\n当前 GEPA 研究方法卡（必须服从前述安全、证据和工具约束）：\n{card}"
+    )
+}
+
 fn normalize_mode(value: &str) -> Result<&str, String> {
     match value.trim() {
         "quick" | "deterministic_v1" => Ok(value.trim()),
@@ -1917,6 +2059,7 @@ pub(crate) fn tool_result_event(
     run_id: &str,
     tool: &str,
     tool_call_id: &str,
+    status: &str,
     output: Value,
 ) -> Value {
     serde_json::json!({
@@ -1925,7 +2068,7 @@ pub(crate) fn tool_result_event(
         "payload": {
             "tool": tool,
             "tool_call_id": tool_call_id,
-            "status": "ok",
+            "status": status,
             "output": bounded_json(&output, MAX_TOOL_OUTPUT_BYTES),
             "output_summary": Some(tool_result_summary(&output)),
         }
@@ -1970,6 +2113,25 @@ fn config_string(object: &Map<String, Value>, key: &str) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn remote_agent_evidence_fallback_drops_unapproved_document_text() {
+        let evidence = json!({
+            "query": "orders",
+            "answer": "PRIVATE TEXT MUST NOT SURVIVE",
+            "citations": [
+                {"citation_id":"C1","document_id":"private","excerpt":"PRIVATE TEXT MUST NOT SURVIVE","source_tier":"research_report","remote_export_allowed":false},
+                {"citation_id":"C2","document_id":"public","excerpt":"Public filing excerpt","source_tier":"filing","remote_export_allowed":true}
+            ]
+        });
+
+        let safe = remote_safe_evidence_snapshot(&evidence);
+
+        assert_eq!(safe["citations"].as_array().unwrap().len(), 1);
+        assert_eq!(safe["citations"][0]["document_id"], "public");
+        assert!(!safe.to_string().contains("PRIVATE TEXT MUST NOT SURVIVE"));
+        assert_eq!(safe["remote_safe_only"], true);
+    }
 
     #[test]
     fn provider_request_body_limit_fails_closed() {
@@ -2080,13 +2242,31 @@ mod tests {
     }
 
     #[test]
+    fn tool_status_uses_structured_dispatch_disposition() {
+        assert_eq!(canonical_tool_status("success"), "ok");
+        assert_eq!(canonical_tool_status("error"), "error");
+        assert_eq!(canonical_tool_status("denied"), "denied");
+        assert_eq!(canonical_tool_status("skipped"), "skipped");
+        assert_eq!(canonical_tool_status("unexpected"), "unknown");
+
+        let event = tool_result_event(
+            "run-1",
+            "observe",
+            "call-1",
+            "error",
+            json!({"message": "tool completed successfully"}),
+        );
+        assert_eq!(event["payload"]["status"], "error");
+    }
+
+    #[test]
     fn compatibility_events_keep_existing_types_and_run_id() {
         let status = status_event("run-1", "model", "模型综合", 86);
         assert_eq!(status["type"], "status");
         assert_eq!(status["run_id"], "run-1");
         assert_eq!(status["stage"], "model");
 
-        let tool = tool_result_event("run-1", "observe", "call-1", json!({"ok": true}));
+        let tool = tool_result_event("run-1", "observe", "call-1", "ok", json!({"ok": true}));
         assert_eq!(tool["type"], "tool_result");
         assert_eq!(tool["payload"]["tool"], "observe");
         assert_eq!(tool["payload"]["tool_call_id"], "call-1");
@@ -2145,6 +2325,15 @@ mod tests {
         assert!(events
             .iter()
             .any(|event| event["type"] == "status" && event["stage"] == "complete"));
+    }
+
+    #[test]
+    fn compose_system_prompt_appends_gepa_method_card_without_replacing_safety_prompt() {
+        let composed = compose_system_prompt("base safety rules", Some("candidate method card"));
+        assert!(composed.starts_with("base safety rules"));
+        assert!(composed.contains("candidate method card"));
+        assert!(composed.contains("必须服从前述安全、证据和工具约束"));
+        assert_eq!(compose_system_prompt("base", None), "base");
     }
 
     #[test]

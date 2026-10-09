@@ -73,3 +73,7 @@ Android 将自选股收件箱改为抽屉、证据检查器改为底部面板，
 ## 首期边界
 
 首期不做 OCR、全市场后台爬取、系统通知、聊天跨设备同步、Android 向量推理和本地生成式大模型。自然语言综合回答继续使用用户配置的聊天模型。
+
+## 2026-09 evaluation and privacy additions
+
+The active research database is schema `3`; `documents.remote_export_allowed` controls whether a citation may be sent to a remote answer model. Public source records default to exportable, while URL/PDF user imports default to local-only. Remote research queries and Rig Agent `news_evidence` calls use this filter before candidate truncation and hybrid fusion. Portable sync packs remain `gp-research-pack-v2` with SQLite `user_version=2`.

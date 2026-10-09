@@ -33,8 +33,8 @@
     "ui:backtest": "npm run build:app && node ../../scripts/ui-screenshot.mjs --serve --backtest-page-only --output ./test-baselines --stable-report"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.11.1",
-    "lucide-react": "^1.47.0",
+    "@tauri-apps/api": "^2.12.1",
+    "lucide-react": "^1.51.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
@@ -46,7 +46,7 @@
     "playwright": "^1.63.0",
     "react-test-renderer": "^19.3.0",
     "typescript": "7.0.2",
-    "vite": "^8.3.0",
-    "vitest": "^5.0.1"
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3"
   }
 }

@@ -69,3 +69,11 @@ desktop/src-tauri/keys/
 /docs/superpowers/
 /rag2-*.png
 /rag2-*.jpg
+# Generated trusted model-backed evaluation payloads
+evals/deepeval/generated_model_results.jsonl
+evals/deepeval/generated_model_manifest.json
+evals/deepeval/.deepeval/
+evals/deepeval/*.egg-info/
+evals/deepeval/*report*.json
+!evals/deepeval/calibration_report.json
+evals/deepeval/*replay*.jsonl

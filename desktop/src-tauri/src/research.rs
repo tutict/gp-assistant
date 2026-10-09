@@ -23,7 +23,8 @@ use tauri::{Emitter, Manager};
 mod recovery;
 
 pub(crate) const RESEARCH_SCHEMA_VERSION: i64 = 3;
-const RESEARCH_PACK_VERSION: i64 = 2;
+const RESEARCH_PACK_SCHEMA_VERSION: i64 = 2;
+const RESEARCH_PACK_FORMAT: &str = "gp-research-pack-v2";
 const DEFAULT_CHUNK_CHARS: usize = 520;
 const DEFAULT_CHUNK_OVERLAP: usize = 80;
 const MAX_CITATIONS: usize = 8;
@@ -73,6 +74,8 @@ pub(crate) struct ResearchCitation {
     /// Historical evidence absent or changed in the active document generation.
     #[serde(default, skip_serializing_if = "is_false")]
     pub unavailable: bool,
+    #[serde(default)]
+    pub remote_export_allowed: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -181,6 +184,11 @@ impl ResearchStore {
                 .unwrap_or_else(|| source_tier.clone());
             let published_at = string_field(document, "published_at");
             let url = string_field(document, "url");
+            let user_imported = bool_field(document, "user_imported");
+            let remote_export_allowed = document
+                .get("remote_export_allowed")
+                .and_then(Value::as_bool)
+                .unwrap_or(!user_imported);
             let stock_codes = normalized_string_array(document.get("stock_codes"));
             let entities = normalized_string_array(document.get("entities"));
             let relation_types = normalized_string_array(document.get("relation_types"));
@@ -263,8 +271,8 @@ impl ResearchStore {
                     "INSERT INTO documents (
                         id, title, content, source_tier, source_name, url, published_at,
                         imported_at_epoch_ms, updated_at_epoch_ms, content_hash, user_imported,
-                        pinned, cited_count, metadata_json
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, ?11, 0, ?12)
+                        remote_export_allowed, pinned, cited_count, metadata_json
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, ?11, ?12, 0, ?13)
                     ON CONFLICT(id) DO UPDATE SET
                         title=excluded.title, content=excluded.content,
                         source_tier=excluded.source_tier, source_name=excluded.source_name,
@@ -272,6 +280,7 @@ impl ResearchStore {
                         updated_at_epoch_ms=excluded.updated_at_epoch_ms,
                         content_hash=excluded.content_hash,
                         user_imported=MAX(documents.user_imported, excluded.user_imported),
+                        remote_export_allowed=CASE WHEN excluded.user_imported = 1 THEN excluded.remote_export_allowed WHEN documents.user_imported = 1 THEN documents.remote_export_allowed ELSE excluded.remote_export_allowed END,
                         pinned=MAX(documents.pinned, excluded.pinned),
                         metadata_json=excluded.metadata_json",
                     params![
@@ -284,7 +293,8 @@ impl ResearchStore {
                         published_at,
                         imported_at,
                         content_hash,
-                        bool_field(document, "user_imported"),
+                        user_imported,
+                        remote_export_allowed,
                         bool_field(document, "pinned"),
                         metadata_json
                     ],
@@ -421,7 +431,7 @@ impl ResearchStore {
         transaction
             .commit()
             .map_err(|error| format!("failed to commit research import: {error}"))?;
-        if chunk_count > 0 || retention["removed_chunks"].as_u64().unwrap_or(0) > 0 {
+        if !documents.is_empty() || retention["removed_chunks"].as_u64().unwrap_or(0) > 0 {
             invalidate_vector_cache(&self.path);
         }
         Ok(json!({
@@ -542,8 +552,8 @@ impl ResearchStore {
             .map(|value| value.len())
             .unwrap_or(0);
         Ok(json!({
-            "schema_version": 2,
-            "format": "gp-research-pack-v2",
+            "schema_version": RESEARCH_PACK_SCHEMA_VERSION,
+            "format": RESEARCH_PACK_FORMAT,
             "path": destination.display().to_string(),
             "document_count": documents.len(),
             "bytes": bytes,
@@ -557,8 +567,8 @@ impl ResearchStore {
         let documents = read_portable_pack(path)?;
         let result = self.ingest_documents(&documents)?;
         Ok(json!({
-            "schema_version": 2,
-            "format": "gp-research-pack-v2",
+            "schema_version": RESEARCH_PACK_SCHEMA_VERSION,
+            "format": RESEARCH_PACK_FORMAT,
             "document_count": documents.len(),
             "imported": result,
             "fts_rebuilt": true,
@@ -571,8 +581,8 @@ impl ResearchStore {
         let mut statement = connection
             .prepare(
                 "SELECT d.id, d.title, d.content, d.source_tier, d.source_name,
-                        d.url, d.published_at, d.user_imported, d.pinned, d.metadata_json,
-                        c.page_number, c.stock_codes_json, c.entities_json,
+                        d.url, d.published_at, d.user_imported, d.remote_export_allowed,
+                        d.pinned, d.metadata_json, c.page_number, c.stock_codes_json, c.entities_json,
                         c.relation_types_json, c.sentiment
                  FROM documents d
                  LEFT JOIN chunks c ON c.id = (
@@ -595,12 +605,13 @@ impl ResearchStore {
                     row.get::<_, Option<String>>(6)?,
                     row.get::<_, i64>(7)?,
                     row.get::<_, i64>(8)?,
-                    row.get::<_, String>(9)?,
-                    row.get::<_, Option<u32>>(10)?,
-                    row.get::<_, Option<String>>(11)?,
+                    row.get::<_, i64>(9)?,
+                    row.get::<_, String>(10)?,
+                    row.get::<_, Option<u32>>(11)?,
                     row.get::<_, Option<String>>(12)?,
                     row.get::<_, Option<String>>(13)?,
                     row.get::<_, Option<String>>(14)?,
+                    row.get::<_, Option<String>>(15)?,
                 ))
             })
             .map_err(|error| format!("failed to query portable documents: {error}"))?
@@ -618,6 +629,7 @@ impl ResearchStore {
                     url,
                     published_at,
                     user_imported,
+                    remote_export_allowed,
                     pinned,
                     metadata_json,
                     page_number,
@@ -635,6 +647,7 @@ impl ResearchStore {
                         "url": url,
                         "published_at": published_at,
                         "user_imported": user_imported != 0,
+                        "remote_export_allowed": remote_export_allowed != 0,
                         "pinned": pinned != 0,
                         "metadata": serde_json::from_str::<Value>(&metadata_json).unwrap_or_else(|_| json!({})),
                         "page_number": page_number,
@@ -668,16 +681,23 @@ impl ResearchStore {
             .and_then(Value::as_u64)
             .unwrap_or(MAX_CITATIONS as u64)
             .clamp(1, MAX_CITATIONS as u64) as usize;
+        let remote_safe_only = request
+            .get("remote_safe_only")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let connection = self.connection()?;
         let match_query = build_fts_match_query(&query);
         let mut statement = connection
             .prepare(
-                "SELECT id, document_id, title, content, page_number,
-                        source_tier, source_name, published_at, url,
+                "SELECT chunks.id, chunks.document_id, chunks.title, chunks.content, chunks.page_number,
+                        chunks.source_tier, chunks.source_name, chunks.published_at, chunks.url,
+                        documents.remote_export_allowed,
                         -bm25(chunks_fts, 0.0, 3.0, 2.0, 1.0) AS lexical_score
                  FROM chunks_fts
                  JOIN chunks ON chunks.id = chunks_fts.chunk_id
+                 JOIN documents ON documents.id = chunks.document_id
                  WHERE chunks_fts MATCH ?1
+                   AND (?3 = 0 OR documents.remote_export_allowed = 1)
                    AND (
                      ?2 IS NULL OR EXISTS (
                        SELECT 1 FROM json_each(chunks.stock_codes_json)
@@ -689,7 +709,7 @@ impl ResearchStore {
             )
             .map_err(|error| format!("failed to prepare research query: {error}"))?;
         let rows = statement
-            .query_map(params![match_query, stock_code], |row| {
+            .query_map(params![match_query, stock_code, remote_safe_only as i64], |row| {
                 Ok((
                     Candidate {
                         chunk_id: row.get(0)?,
@@ -701,8 +721,9 @@ impl ResearchStore {
                         source_name: row.get(6)?,
                         published_at: row.get(7)?,
                         url: row.get(8)?,
+                        remote_export_allowed: row.get::<_, i64>(9)? != 0,
                     },
-                    row.get::<_, f64>(9)?,
+                    row.get::<_, f64>(10)?,
                 ))
             })
             .map_err(|error| format!("failed to execute research query: {error}"))?;
@@ -727,7 +748,7 @@ impl ResearchStore {
             })
             .collect::<HashMap<_, _>>();
         let vector_candidates = query_vector
-            .map(|vector| self.vector_candidates(&connection, vector, stock_code.as_deref()))
+            .map(|vector| self.vector_candidates(&connection, vector, stock_code.as_deref(), remote_safe_only))
             .transpose()?
             .unwrap_or_default();
         let vector_ranking = vector_candidates
@@ -789,6 +810,7 @@ impl ResearchStore {
                 vector_score,
                 retrieval_score,
                 unavailable: false,
+                remote_export_allowed: candidate.remote_export_allowed,
             });
             if citations.len() >= top_k {
                 break;
@@ -819,7 +841,8 @@ impl ResearchStore {
             "citations": citations,
             "community_only": community_only,
             "fact_supported": !community_only && !citations.is_empty(),
-            "retrieval_mode": if used_vector { "hybrid_rrf" } else { "bm25" }
+            "retrieval_mode": if used_vector { "hybrid_rrf" } else { "bm25" },
+            "remote_safe_only": remote_safe_only
         }))
     }
 
@@ -909,6 +932,7 @@ impl ResearchStore {
         connection: &Connection,
         query_vector: &[f32],
         stock_code: Option<&str>,
+        remote_safe_only: bool,
     ) -> Result<Vec<(Candidate, f64)>, String> {
         if query_vector.len() != 512 {
             return Err(format!(
@@ -920,7 +944,8 @@ impl ResearchStore {
         let mut scored = vectors
             .iter()
             .filter(|row| {
-                stock_code
+                (!remote_safe_only || row.remote_export_allowed)
+                    && stock_code
                     .map(|expected| {
                         row.stock_codes
                             .iter()
@@ -1574,9 +1599,10 @@ impl ResearchStore {
             .prepare(
                 "SELECT ac.citation_id, c.document_id, c.id, c.title, c.content,
                         c.source_tier, c.source_name, c.published_at, c.url, c.page_number,
-                        ac.lexical_score, ac.vector_score, ac.retrieval_score
+                        ac.lexical_score, ac.vector_score, ac.retrieval_score, d.remote_export_allowed
                  FROM research_answer_citations ac
                  JOIN chunks c ON c.id = ac.chunk_id
+                 JOIN documents d ON d.id = c.document_id
                  WHERE ac.answer_id = ?1 ORDER BY ac.ordinal",
             )
             .map_err(|error| format!("failed to prepare stored citations: {error}"))?;
@@ -1598,6 +1624,7 @@ impl ResearchStore {
                     vector_score: row.get(11)?,
                     retrieval_score: row.get(12)?,
                     unavailable: false,
+                    remote_export_allowed: row.get::<_, i64>(13)? != 0,
                 })
             })
             .map_err(|error| format!("failed to query stored citations: {error}"))?
@@ -1903,8 +1930,8 @@ fn import_research_documents(research_dir: &Path, documents: &[Value]) -> Result
         staging.rebuild_fts().map(|_| ())
     })?;
     Ok(json!({
-        "schema_version": 2,
-        "format": "gp-research-pack-v2",
+        "schema_version": RESEARCH_PACK_SCHEMA_VERSION,
+        "format": RESEARCH_PACK_FORMAT,
         "document_count": documents.len(),
         "imported": true,
         "fts_rebuilt": true,
@@ -2370,9 +2397,9 @@ fn read_portable_pack(path: &Path) -> Result<Vec<Value>, String> {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(|error| format!("failed to read pack schema version: {error}"))?;
-    if version != RESEARCH_PACK_VERSION {
+    if version != RESEARCH_PACK_SCHEMA_VERSION {
         return Err(format!(
-            "unsupported research pack schema {version}; expected {RESEARCH_PACK_VERSION}"
+            "unsupported research pack schema {version}; expected {RESEARCH_PACK_SCHEMA_VERSION}"
         ));
     }
     let format = connection
@@ -2559,6 +2586,7 @@ struct CachedVector {
     chunk_id: String,
     stock_codes: Vec<String>,
     vector: Vec<f32>,
+    remote_export_allowed: bool,
 }
 
 #[derive(Clone)]
@@ -2604,6 +2632,7 @@ struct Candidate {
     source_name: String,
     published_at: Option<String>,
     url: Option<String>,
+    remote_export_allowed: bool,
 }
 
 fn load_vector_cache(
@@ -2630,8 +2659,10 @@ fn load_vector_cache(
     }
     let mut statement = connection
         .prepare(
-            "SELECT e.chunk_id, c.stock_codes_json, e.vector, e.dimensions
-             FROM embeddings e JOIN chunks c ON c.id = e.chunk_id",
+            "SELECT e.chunk_id, c.stock_codes_json, e.vector, e.dimensions,
+                    d.remote_export_allowed
+             FROM embeddings e JOIN chunks c ON c.id = e.chunk_id
+             JOIN documents d ON d.id = c.document_id",
         )
         .map_err(|error| format!("failed to prepare embedding cache: {error}"))?;
     let rows = statement
@@ -2640,13 +2671,14 @@ fn load_vector_cache(
             let stock_codes_json: String = row.get(1)?;
             let blob: Vec<u8> = row.get(2)?;
             let dimensions: i64 = row.get(3)?;
-            Ok((chunk_id, stock_codes_json, blob, dimensions))
+            let remote_export_allowed: i64 = row.get(4)?;
+            Ok((chunk_id, stock_codes_json, blob, dimensions, remote_export_allowed))
         })
         .map_err(|error| format!("failed to query embedding cache: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("failed to read embedding cache: {error}"))?;
     let mut decoded = Vec::with_capacity(rows.len());
-    for (chunk_id, stock_codes_json, blob, dimensions) in rows {
+    for (chunk_id, stock_codes_json, blob, dimensions, remote_export_allowed) in rows {
         let vector = decode_f32_blob(&blob)?;
         if vector.len() != dimensions.max(0) as usize || vector.len() != 512 {
             continue;
@@ -2655,6 +2687,7 @@ fn load_vector_cache(
             chunk_id,
             stock_codes: serde_json::from_str(&stock_codes_json).unwrap_or_default(),
             vector,
+            remote_export_allowed: remote_export_allowed != 0,
         });
     }
     let rows = Arc::new(decoded);
@@ -2683,9 +2716,11 @@ fn invalidate_vector_cache(path: &Path) {
 fn load_candidate(connection: &Connection, chunk_id: &str) -> Result<Candidate, String> {
     connection
         .query_row(
-            "SELECT id, document_id, title, content, page_number,
-                    source_tier, source_name, published_at, url
-             FROM chunks WHERE id = ?1",
+            "SELECT c.id, c.document_id, c.title, c.content, c.page_number,
+                    c.source_tier, c.source_name, c.published_at, c.url,
+                    d.remote_export_allowed
+             FROM chunks c JOIN documents d ON d.id = c.document_id
+             WHERE c.id = ?1",
             params![chunk_id],
             |row| {
                 Ok(Candidate {
@@ -2698,6 +2733,7 @@ fn load_candidate(connection: &Connection, chunk_id: &str) -> Result<Candidate, 
                     source_name: row.get(6)?,
                     published_at: row.get(7)?,
                     url: row.get(8)?,
+                    remote_export_allowed: row.get::<_, i64>(9)? != 0,
                 })
             },
         )
@@ -3010,6 +3046,7 @@ fn initialize_schema(connection: &Connection) -> Result<(), String> {
                  updated_at_epoch_ms INTEGER NOT NULL,
                  content_hash TEXT NOT NULL,
                  user_imported INTEGER NOT NULL DEFAULT 0,
+                 remote_export_allowed INTEGER NOT NULL DEFAULT 1,
                  pinned INTEGER NOT NULL DEFAULT 0,
                  cited_count INTEGER NOT NULL DEFAULT 0,
                  metadata_json TEXT NOT NULL DEFAULT '{}'
@@ -3096,9 +3133,22 @@ fn initialize_schema(connection: &Connection) -> Result<(), String> {
                  payload_json TEXT NOT NULL,
                  PRIMARY KEY(answer_id, citation_id)
              );
+             PRAGMA user_version = 3;
              ",
         )
         .map_err(|error| format!("failed to initialize research schema: {error}"))?;
+    let remote_permission_column_added = ensure_column(
+        connection,
+        "documents",
+        "remote_export_allowed",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    if remote_permission_column_added {
+        connection.execute(
+            "UPDATE documents SET remote_export_allowed = CASE WHEN user_imported = 1 THEN 0 ELSE 1 END",
+            [],
+        ).map_err(|error| format!("failed to apply remote evidence migration default: {error}"))?;
+    }
     ensure_column(
         connection,
         "research_answer_citations",
@@ -3131,7 +3181,7 @@ fn ensure_column(
     table: &str,
     column: &str,
     definition: &str,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let mut statement = connection
         .prepare(&format!("PRAGMA table_info({table})"))
         .map_err(|error| format!("failed to inspect {table}: {error}"))?;
@@ -3148,7 +3198,7 @@ fn ensure_column(
             ))
             .map_err(|error| format!("failed to add {table}.{column}: {error}"))?;
     }
-    Ok(())
+    Ok(!exists)
 }
 
 fn configure_connection(connection: &Connection) -> Result<(), String> {
@@ -3617,7 +3667,10 @@ mod tests {
             "../../../app/prompts/research_retrieval_eval_cases.json"
         ))
         .expect("retrieval evaluation fixture should be valid JSON");
-        assert_eq!(fixture["version"], "research-retrieval-eval-v1");
+        assert_eq!(fixture["version"], "research-retrieval-eval-v4");
+        assert_eq!(fixture["cases"].as_array().map(Vec::len), Some(40));
+        assert_eq!(fixture["dataset"]["split"], "frozen-golden");
+        assert_eq!(fixture["dataset"]["generator"], "agent-authored-synthetic-unreviewed");
 
         for case in fixture["cases"]
             .as_array()
@@ -3669,19 +3722,66 @@ mod tests {
             let citations = response["citations"]
                 .as_array()
                 .expect("retrieval response should contain citations");
+            let mut local_request = case["request"].clone();
+            local_request["remote_safe_only"] = Value::Bool(false);
+            let local_response = store
+                .query_with_vector(&local_request, query_vector.as_deref())
+                .unwrap_or_else(|error| panic!("{case_id}: local query should succeed: {error}"));
+            let local_citations = local_response["citations"]
+                .as_array()
+                .expect("local retrieval response should contain citations");
             let expected = &case["expect"];
+            let expected_remote_export_allowed = case
+                .get("privacy_policy")
+                .and_then(|policy| policy.get("expected_remote_export_allowed"))
+                .and_then(Value::as_bool);
+            // A local-only private document is asserted against the local
+            // projection; the remote projection is checked separately below.
+            let assertion_citations = if expected_remote_export_allowed == Some(false) {
+                local_citations
+            } else {
+                citations
+            };
 
             if let Some(value) = expected.get("citation_count").and_then(Value::as_u64) {
                 assert_eq!(citations.len(), value as usize, "{case_id}: citation count");
             }
             if let Some(value) = expected.get("first_document_id").and_then(Value::as_str) {
                 assert_eq!(
-                    citations
+                    assertion_citations
                         .first()
                         .and_then(|citation| citation["document_id"].as_str()),
                     Some(value),
                     "{case_id}: first document"
                 );
+            }
+            for required in expected
+                .get("required_document_ids")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                assert!(
+                    assertion_citations.iter().any(|citation| citation["document_id"] == required),
+                    "{case_id}: required document {required} should be cited"
+                );
+            }
+            for forbidden in expected
+                .get("forbidden_document_ids")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                assert!(
+                    !assertion_citations.iter().any(|citation| citation["document_id"] == forbidden),
+                    "{case_id}: forbidden document {forbidden} must not be cited"
+                );
+            }
+            if let Some(value) = expected.get("remote_safe_only").and_then(Value::as_bool) {
+                assert_eq!(response["remote_safe_only"], value, "{case_id}: remote policy");
+                assert!(citations.iter().all(|citation| citation["remote_export_allowed"] == true));
             }
             for field in ["community_only", "fact_supported", "retrieval_mode"] {
                 if let Some(value) = expected.get(field) {
@@ -3702,7 +3802,7 @@ mod tests {
                     .get("document_citation_max")
                     .and_then(Value::as_u64),
             ) {
-                let count = citations
+                let count = assertion_citations
                     .iter()
                     .filter(|citation| citation["document_id"] == document_id)
                     .count();
@@ -3716,7 +3816,7 @@ mod tests {
                 .and_then(Value::as_str)
             {
                 assert!(
-                    citations.iter().any(|citation| {
+                    assertion_citations.iter().any(|citation| {
                         citation["document_id"] == document_id
                             && citation["vector_score"].is_number()
                     }),
@@ -3855,10 +3955,7 @@ mod tests {
                 .unwrap_or_default()
                 > 0.0
         );
-        assert_eq!(
-            store.index_status().unwrap()["schema_version"],
-            RESEARCH_SCHEMA_VERSION
-        );
+        assert_eq!(store.index_status().unwrap()["schema_version"], 3);
         drop(store);
         let _ = std::fs::remove_file(path);
     }
@@ -4926,6 +5023,117 @@ mod tests {
             let _ = fs::remove_file(path);
         }
     }
+    #[test]
+    fn schema_v2_migration_keeps_user_imports_private_and_public_docs_exportable() {
+        let path = temporary_database_path("schema-v2-privacy-migration");
+        let connection = Connection::open(&path).expect("legacy database should open");
+        connection.execute_batch(
+            "CREATE TABLE documents (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL,
+                source_tier TEXT NOT NULL, source_name TEXT NOT NULL, url TEXT,
+                published_at TEXT, imported_at_epoch_ms INTEGER NOT NULL,
+                updated_at_epoch_ms INTEGER NOT NULL, content_hash TEXT NOT NULL,
+                user_imported INTEGER NOT NULL DEFAULT 0, pinned INTEGER NOT NULL DEFAULT 0,
+                cited_count INTEGER NOT NULL DEFAULT 0, metadata_json TEXT NOT NULL DEFAULT '{}'
+             );
+             INSERT INTO documents VALUES
+                ('legacy-public','Public','public','filing','source',NULL,NULL,1,1,'a',0,0,0,'{}'),
+                ('legacy-private','Private','private','research_report','user',NULL,NULL,1,1,'b',1,1,0,'{}');
+             PRAGMA user_version=2;"
+        ).unwrap();
+        drop(connection);
+
+        let _store = ResearchStore::open(&path).expect("legacy schema should migrate");
+        let connection = Connection::open(&path).unwrap();
+        let public_permission: i64 = connection.query_row(
+            "SELECT remote_export_allowed FROM documents WHERE id='legacy-public'", [], |row| row.get(0)
+        ).unwrap();
+        let private_permission: i64 = connection.query_row(
+            "SELECT remote_export_allowed FROM documents WHERE id='legacy-private'", [], |row| row.get(0)
+        ).unwrap();
+        let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+        assert_eq!(public_permission, 1);
+        assert_eq!(private_permission, 0);
+        assert_eq!(version, 3);
+        drop(connection);
+        let _ = remove_sqlite_files(&path);
+    }
+
+    #[test]
+    fn remote_safe_queries_exclude_local_imports_by_default() {
+        let path = temporary_database_path("remote-safe-policy");
+        let store = ResearchStore::open(&path).expect("research store should open");
+        store
+            .ingest_documents(&[
+                json!({
+                    "document_id": "public-policy",
+                    "title": "Public policy",
+                    "content": "remote policy signal",
+                    "source_tier": "policy_official",
+                    "source_name": "Public source",
+                    "stock_codes": ["000001.SZ"]
+                }),
+                json!({
+                    "document_id": "local-research",
+                    "title": "Private research",
+                    "content": "remote policy signal",
+                    "source_tier": "research_report",
+                    "source_name": "User import",
+                    "user_imported": true,
+                    "stock_codes": ["000001.SZ"]
+                }),
+            ])
+            .expect("documents should ingest");
+
+        let local = store
+            .query(&json!({
+                "query": "remote policy signal",
+                "stock_code": "000001.SZ",
+                "top_k": 8
+            }))
+            .expect("local query should succeed");
+        assert_eq!(local["citations"].as_array().unwrap().len(), 2);
+
+        let remote_safe = store
+            .query(&json!({
+                "query": "remote policy signal",
+                "stock_code": "000001.SZ",
+                "remote_safe_only": true,
+                "top_k": 8
+            }))
+            .expect("remote-safe query should succeed");
+        let citations = remote_safe["citations"].as_array().unwrap();
+        assert_eq!(citations.len(), 1);
+        assert_eq!(citations[0]["document_id"], "public-policy");
+        assert_eq!(citations[0]["remote_export_allowed"], true);
+
+        store
+            .ingest_documents(&[json!({
+                "document_id": "local-research",
+                "title": "Private research",
+                "content": "remote policy signal",
+                "source_tier": "research_report",
+                "source_name": "User import",
+                "user_imported": true,
+                "remote_export_allowed": true,
+                "stock_codes": ["000001.SZ"]
+            })])
+            .expect("explicit per-document consent should update the imported record");
+        let consented = store
+            .query(&json!({
+                "query": "remote policy signal",
+                "stock_code": "000001.SZ",
+                "remote_safe_only": true,
+                "top_k": 8
+            }))
+            .expect("consented query should succeed");
+        assert_eq!(consented["citations"].as_array().unwrap().len(), 2);
+        assert!(consented["citations"].as_array().unwrap().iter().any(|item| item["document_id"] == "local-research"));
+
+        let _ = remove_sqlite_files(&path);
+    }
+
+
 }
 
 #[cfg(target_os = "windows")]
@@ -5031,7 +5239,11 @@ pub(crate) async fn api_research_query(
     payload: Value,
 ) -> Result<Value, String> {
     let retrieval_app = app.clone();
-    let retrieval_payload = payload.clone();
+    let mut retrieval_payload = payload.clone();
+    let remote_model_requested = payload.get("llm").is_some();
+    if remote_model_requested {
+        retrieval_payload["remote_safe_only"] = Value::Bool(true);
+    }
     let (database_generation, mut response) =
         crate::runtime::run_cpu_bound("api_research_query", move || {
             crate::research::with_app_store_snapshot(&retrieval_app, |store| {
@@ -5074,6 +5286,13 @@ pub(crate) async fn api_research_query(
         })
         .await??;
 
+    if remote_model_requested {
+        response["remote_evidence_policy"] = json!({
+            "remote_safe_only": true,
+            "private_evidence_egress_allowed": false,
+            "warning": "用户导入材料默认不会发送给远程模型"
+        });
+    }
     let citations = response
         .get("citations")
         .and_then(Value::as_array)

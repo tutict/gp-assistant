@@ -17,6 +17,7 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [features]
+eval-replay = []
 gepa-lab = ["dep:dsrust-gepa"]
 
 [dependencies]
@@ -57,3 +58,8 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Secur
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 tauri-plugin-single-instance = "2"
+
+[[bin]]
+name = "rag_replay"
+path = "src/bin/rag_replay.rs"
+required-features = ["eval-replay"]

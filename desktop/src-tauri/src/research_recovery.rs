@@ -65,12 +65,24 @@ pub(super) fn validate_database(path: &Path) -> Result<(), String> {
     validate_header(path)?; // SQLite considers a zero-byte file a valid empty DB; we must not.
     durability::validate_sqlite(path)?;
     let connection = read_only(path)?;
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(|e| e.to_string())?;
     let count: i64 = connection.query_row(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN
          ('research_metadata','documents','chunks','research_threads','research_answers','research_messages','research_answer_citations')",
         [], |row| row.get(0)
     ).map_err(|e| e.to_string())?;
-    if count != 7 {
+    let legacy_v2_documents_only = version == 2
+        && connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='documents'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|e| e.to_string())?
+            == 1;
+    if count != 7 && !legacy_v2_documents_only {
         return Err("unrecognized research schema; original preserved".into());
     }
     let foreign_key_error = connection
