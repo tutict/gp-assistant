@@ -4,7 +4,7 @@ RAG 2.0 由 Tauri/Rust 统一维护新闻、公告、财务快照、研报、社
 
 ## 数据库
 
-默认数据库为 Tauri AppData 下的 `research/research.sqlite`，`PRAGMA user_version=2`。核心表包括：
+默认数据库为 Tauri AppData 下的 `research/research.sqlite`，`PRAGMA user_version=3`（本地用户库；对外同步包仍为 v2）。核心表包括：
 
 - `documents`、`chunks`、`chunks_fts` 和 `embeddings`；
 - `research_messages` 及应用内未读状态；

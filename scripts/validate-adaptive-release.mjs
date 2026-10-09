@@ -80,6 +80,7 @@ const criteria = (limit) => ({
 });
 
 const screenPayload = (runId, force = true) => ({
+  data_policy: `refresh`,
   criteria: criteria(80),
   mode: `auto`,
   horizon: `swing_10_30d`,
@@ -90,6 +91,7 @@ const screenPayload = (runId, force = true) => ({
 });
 
 const backtestPayload = {
+  data_policy: `refresh`,
   internal_release_validation: true,
   source: `criteria`,
   criteria: criteria(100),

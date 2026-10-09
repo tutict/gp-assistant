@@ -5,7 +5,12 @@ param(
     [switch] $SkipNode,
     [switch] $SkipPrepare,
     [switch] $SkipPackageBuild,
-    [switch] $AllowUnsignedAndroid
+    [switch] $AllowUnsignedAndroid,
+    [switch] $SkipReliability,
+    [switch] $EvaluateBaseline,
+    [string] $BaselinePath,
+    [string] $CandidatePath,
+    [string] $ExemptionsPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -56,6 +61,36 @@ function Invoke-Checked {
     }
 }
 
+# Measurement gates never synthesize missing device data or silently ignore supplied paths.
+if (-not $EvaluateBaseline -and ($BaselinePath -or $CandidatePath -or $ExemptionsPath)) {
+    Write-Error 'BaselinePath/CandidatePath/ExemptionsPath require -EvaluateBaseline.'
+    exit 2
+}
+if ($EvaluateBaseline) {
+    if (-not $BaselinePath -or -not $CandidatePath) {
+        Write-Error 'requires_user: -EvaluateBaseline requires -BaselinePath and -CandidatePath with actual device readings.'
+        exit 2
+    }
+    $node = Resolve-CommandPath 'node' 'Install Node.js and retry.'
+    $baselineArgs = @((Join-Path $Root 'scripts/reliability-benchmark.mjs'), '--baseline', $BaselinePath, '--candidate', $CandidatePath)
+    if ($ExemptionsPath) { $baselineArgs += @('--exemptions', $ExemptionsPath) }
+    Invoke-Checked 'Measured reliability performance gate' $node $baselineArgs
+} else {
+    Write-Step 'Performance NOT EVALUATED (requires_user): actual same-device baselines and -EvaluateBaseline are required for performance sign-off.'
+}
+
+if ($SkipReliability) {
+    Write-Step 'SKIPPED local reliability suites by explicit request; not a reliability sign-off.'
+} else {
+    $node = Resolve-CommandPath 'node' 'Install Node.js and retry.'
+    Invoke-Checked 'Reliability deterministic benchmark/gate fixtures' $node @('--test', (Join-Path $Root 'scripts/reliability-benchmark.test.mjs'))
+    if (-not $SkipRust) {
+        Invoke-Checked 'Reliability native privacy, quota, lifecycle and feature fixtures' 'powershell.exe' @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $Root 'scripts/reliability-native.test.ps1'), '-Offline')
+    } else {
+        Write-Step 'SKIPPED native reliability suites (-SkipRust).'
+    }
+    if ($SkipNode) { Write-Step 'SKIPPED frontend reliability suites (-SkipNode).' }
+}
 if (-not $SkipNode) {
     $npm = Resolve-CommandPath "npm.cmd" "Install Node.js/npm and retry."
     $frontendDir = Join-Path $Root "desktop/frontend"
@@ -71,6 +106,9 @@ if (-not $SkipNode) {
     Invoke-Checked "Frontend CSS architecture guard" $npm @("run", "test:architecture") $frontendDir
     Invoke-Checked "Frontend theme parity contract tests" $npm @("run", "test:theme-parity-contract") $frontendDir
     Invoke-Checked "Frontend theme parity guard" $npm @("run", "test:theme-parity") $frontendDir
+    if (-not $SkipReliability) {
+        Invoke-Checked "Frontend reliability controls and credential-reference fixtures" $npm @("run", "test:unit", "--", "src/components/settings/ReliabilityPanel.test.tsx", "src/components/panels/GepaLabPanel.test.tsx", "src/components/settings/BackupPanel.test.tsx") $frontendDir
+    }
     Invoke-Checked "Frontend unit tests" $npm @("run", "test:unit") $frontendDir
     Invoke-Checked "Frontend React/TypeScript build" $npm @("run", "build") $frontendDir
     Invoke-Checked "Frontend UI contrast audit (fail mode)" $npm @("run", "test:contrast:built") $frontendDir
@@ -129,4 +167,4 @@ if (-not $SkipPackageBuild) {
 }
 
 Write-Host ""
-Write-Step "Release checks completed for the Tauri/Rust runtime."
+Write-Step "Requested release checks completed for the Tauri/Rust runtime. Skipped suites and unevaluated device performance remain unverified."

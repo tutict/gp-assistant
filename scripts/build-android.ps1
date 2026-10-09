@@ -1,5 +1,6 @@
 param(
     [switch] $InitOnly,
+    [switch] $CredentialGenerationTest,
     [switch] $PreflightOnly,
     [switch] $Debug,
     [switch] $Aab,
@@ -616,6 +617,86 @@ function Use-WindowsNpmCommandInAndroidBuildTask {
         Write-Host "Configured generated Android build task to use npm.cmd on Windows."
     }
 }
+# Canonical credential sources are outside gen/: tauri android init may replace gen/ at any time.
+function Install-AndroidCredentialResources {
+    $source = Join-Path $Root "desktop\src-tauri\android\credentials"
+    $manifestPath = Join-Path $AndroidProjectDir "app\src\main\AndroidManifest.xml"
+    if (-not (Test-Path -LiteralPath $manifestPath)) { throw "Android manifest missing; run android init first." }
+    $copies = @{
+        "CredentialPlugin.kt" = "app\src\main\java\com\gpassistant\credentials\CredentialPlugin.kt"
+        "CredentialVaultTest.kt" = "app\src\androidTest\java\com\gpassistant\credentials\CredentialVaultTest.kt"
+        "credential_backup_rules.xml" = "app\src\main\res\xml\credential_backup_rules.xml"
+        "credential_data_extraction_rules.xml" = "app\src\main\res\xml\credential_data_extraction_rules.xml"
+    }
+    foreach ($name in $copies.Keys) {
+        $targetPath = Join-Path $AndroidProjectDir $copies[$name]
+        Assert-AndroidProjectChildPath $targetPath
+        New-Item -ItemType Directory -Path (Split-Path -Parent $targetPath) -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $source $name) -Destination $targetPath -Force
+    }
+    Assert-AndroidProjectChildPath $manifestPath
+    $manifest = [System.Xml.XmlDocument]::new()
+    $manifest.PreserveWhitespace = $true
+    $manifest.Load($manifestPath)
+    $appNode = $manifest.SelectSingleNode("/manifest/application")
+    if (-not $appNode) { throw "Android application manifest element missing." }
+    $androidNs = "http://schemas.android.com/apk/res/android"
+    $appNode.SetAttribute("allowBackup", $androidNs, "false") | Out-Null
+    $appNode.SetAttribute("fullBackupContent", $androidNs, "@xml/credential_backup_rules") | Out-Null
+    $appNode.SetAttribute("dataExtractionRules", $androidNs, "@xml/credential_data_extraction_rules") | Out-Null
+    $settings = [System.Xml.XmlWriterSettings]::new()
+    $settings.Encoding = [System.Text.UTF8Encoding]::new($false)
+    $writer = [System.Xml.XmlWriter]::Create($manifestPath, $settings)
+    try { $manifest.Save($writer) } finally { $writer.Dispose() }
+    # Registration uses a class name string; retain only this tiny plugin in release shrinking.
+    $rules = Join-Path $AndroidProjectDir "app\proguard-rules.pro"
+    Assert-AndroidProjectChildPath $rules
+    $keep = "-keep class com.gpassistant.credentials.** { *; }"
+    $existing = if (Test-Path -LiteralPath $rules) { [System.IO.File]::ReadAllText($rules) } else { "" }
+    if (-not $existing.Contains($keep)) { [System.IO.File]::WriteAllText($rules, $existing + "`n" + $keep + "`n", [System.Text.UTF8Encoding]::new($false)) }
+    $gradlePath = Join-Path $AndroidProjectDir "app\build.gradle.kts"
+    Assert-AndroidProjectChildPath $gradlePath
+    if (Test-Path -LiteralPath $gradlePath) {
+        $gradle = [System.IO.File]::ReadAllText($gradlePath)
+        if ($gradle -notmatch 'testInstrumentationRunner') {
+            $gradle = $gradle -replace 'defaultConfig\s*\{', 'defaultConfig { testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"'
+        } else {
+            $gradle = $gradle -replace 'testInstrumentationRunner\s*=\s*"[^"]+"', 'testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"'
+        }
+        foreach ($dependency in @('androidTestImplementation("androidx.test:runner:1.5.0")', 'androidTestImplementation("androidx.test.ext:junit:1.1.4")')) {
+            if (-not $gradle.Contains($dependency)) { $gradle += "`ndependencies { $dependency }`n" }
+        }
+        [System.IO.File]::WriteAllText($gradlePath, $gradle, [System.Text.UTF8Encoding]::new($false))
+    }
+}
+
+function Test-AndroidCredentialResources {
+    # Host-only test: scratch generated project, no device, keys, or existing generated checkout.
+    $script:AndroidProjectDir = Join-Path ([System.IO.Path]::GetTempPath()) ("gp-credential-generation-" + [guid]::NewGuid())
+    $main = Join-Path $AndroidProjectDir "app\src\main"
+    New-Item -ItemType Directory -Path $main -Force | Out-Null
+    $manifestPath = Join-Path $main "AndroidManifest.xml"
+    [System.IO.File]::WriteAllText($manifestPath, '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><uses-permission android:name="android.permission.INTERNET"/><application android:allowBackup="true"/></manifest>')
+    [System.IO.File]::WriteAllText((Join-Path $AndroidProjectDir "app\build.gradle.kts"), "android {`n defaultConfig {`n }`n}")
+    Install-AndroidCredentialResources
+    $first = [System.IO.File]::ReadAllText($manifestPath)
+    Install-AndroidCredentialResources
+    if ($first -ne [System.IO.File]::ReadAllText($manifestPath)) { throw "Credential resource generation is not idempotent." }
+    [xml]$manifest = $first
+    $ns = "http://schemas.android.com/apk/res/android"
+    if ($manifest.manifest.application.GetAttribute("allowBackup", $ns) -ne "false") { throw "Backup must be disabled." }
+    if ($manifest.SelectNodes("/manifest/uses-permission").Count -ne 1) { throw "Credential generation added permissions." }
+    foreach ($name in @("credential_backup_rules.xml", "credential_data_extraction_rules.xml")) {
+        [xml]$rules = Get-Content -LiteralPath (Join-Path $main "res\xml\$name") -Raw
+        if ($rules.SelectNodes("//exclude").Count -lt 5) { throw "Backup exclusions missing." }
+    }
+    $pluginPath = Join-Path $main "java\com\gpassistant\credentials\CredentialPlugin.kt"
+    if ((Get-FileHash -LiteralPath $pluginPath).Hash -ne (Get-FileHash -LiteralPath (Join-Path $Root "desktop\src-tauri\android\credentials\CredentialPlugin.kt")).Hash) { throw "Plugin source copy differs." }
+    Write-Host "Credential generation tests passed (idempotent, backup exclusions, no extra permissions): $AndroidProjectDir"
+}
+
+if ($CredentialGenerationTest) { Test-AndroidCredentialResources; return }
+
 Initialize-AndroidEnvironment
 
 Assert-EnvPath "ANDROID_HOME" "Install Android SDK and set ANDROID_HOME to the SDK directory."
@@ -650,6 +731,7 @@ Invoke-Checked "Prepare Tauri Android frontend assets" "powershell.exe" @(
 Push-Location $DesktopDir
 try {
     Update-AndroidProjectForLanImport
+    Install-AndroidCredentialResources
     Use-WindowsNpmCommandInAndroidBuildTask
     Use-LocalGradleDistribution
     Clear-TauriAndroidPluginCache
