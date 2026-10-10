@@ -25,6 +25,14 @@ beforeEach(() => {
 });
 afterEach(async () => { if (renderer) await act(async () => renderer.unmount()); vi.unstubAllGlobals(); });
 describe('ReliabilityPanel', () => {
+  it('groups the experiment switch separately from the local diagnostics workflow', async () => {
+    await mount();
+    const text = JSON.stringify(renderer.toJSON());
+    expect(text).toContain('实验设置');
+    expect(text).toContain('诊断导出');
+    expect(text.indexOf('实验设置')).toBeLessThan(text.indexOf('诊断导出'));
+  });
+
   it('does not preview, upload or download until the user asks; exports precisely the confirmed preview', async () => {
     await mount(); expect(ipc.invoke.mock.calls.map(c=>c[0])).toEqual(['api_diagnostics_status']);
     expect(find('导出已预览诊断').props.disabled).toBe(true); expect(click).not.toHaveBeenCalled();

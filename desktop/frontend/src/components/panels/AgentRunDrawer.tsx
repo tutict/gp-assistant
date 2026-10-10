@@ -145,6 +145,13 @@ export function buildAgentRunTimeline(events: AgentStreamEvent[] | undefined): A
   });
 }
 
+function runModeLabel(mode: string): string {
+  if (mode === "quick") return "快速模式";
+  if (mode === "expert") return "专家模式";
+  if (mode === "research") return "研报模式";
+  return "未知模式";
+}
+
 function statusLabel(status: AgentRunStatus) {
   if (status === "running") return "运行中";
   if (status === "completed") return "已完成";
@@ -262,6 +269,7 @@ export function AgentRunDrawer({
   const [detailError, setDetailError] = useState<string>();
   const [overlays, setOverlays] = useState<PromptOverlayStatus[]>([]);
   const [overlayError, setOverlayError] = useState(false);
+  const [overlayRetry, setOverlayRetry] = useState(0);
   const drawerRef = useRef<HTMLElement | null>(null);
   const closeControlRef = useRef<HTMLDivElement | null>(null);
   const listRequestTokenRef = useRef(0);
@@ -398,7 +406,7 @@ export function AgentRunDrawer({
         if (!controller.signal.aborted) { setOverlays([]); setOverlayError(true); }
       });
     return () => controller.abort();
-  }, [open, ledgerRevision]);
+  }, [open, ledgerRevision, overlayRetry]);
 
   useEffect(() => {
     if (!open) {
@@ -637,28 +645,43 @@ export function AgentRunDrawer({
           />
         </div>
       </header>
-      {overlayError && <p className="agent-mode-note" role="status">提示词版本读取失败，当前运行会使用内置提示词。</p>}
-      {overlays.length > 0 && (
-        <div className="agent-prompt-overlays" aria-label="本机提示词版本">
-          {overlays.map((overlay) => (
-            <div key={overlay.profileId} className="agent-prompt-overlay">
-              <span>{overlay.label}提示词：{overlay.builtin ? "内置" : "本机"} {overlay.promptVersion}</span>
-              {!overlay.builtin && (
-                <button
-                  type="button"
-                  className="agent-run-retry"
-                  onClick={() => {
-                    void revertPromptOverlay(overlay.profileId)
-                      .then(setOverlays)
-                      .catch(() => undefined);
-                  }}
-                >
-                  退回内置
-                </button>
-              )}
-            </div>
-          ))}
+      {overlayError && (
+        <div className="agent-prompt-overlay-error" role="alert">
+          <span>提示词版本读取失败；本次运行会使用内置提示词。</span>
+          <button type="button" className="agent-run-retry" onClick={() => setOverlayRetry((value) => value + 1)}>重试</button>
         </div>
+      )}
+      {overlays.length > 0 && (
+        <details className="agent-prompt-overlays">
+          <summary>
+            <strong>提示词版本</strong>
+            <span>{overlays.some((overlay) => !overlay.builtin) ? `${overlays.filter((overlay) => !overlay.builtin).length} 个已自定义` : "全部使用内置版本"}</span>
+          </summary>
+          <div className="agent-prompt-overlays-list" aria-label="本机提示词版本">
+            {overlays.map((overlay) => (
+              <div key={overlay.profileId} className="agent-prompt-overlay">
+                <div className="agent-prompt-overlay-copy">
+                  <strong>{overlay.label}</strong>
+                  <span>{overlay.builtin ? "内置版本" : "本机自定义"}</span>
+                  <code title={overlay.promptVersion}>{overlay.promptVersion}</code>
+                </div>
+                {!overlay.builtin && (
+                  <button
+                    type="button"
+                    className="agent-run-retry"
+                    onClick={() => {
+                      void revertPromptOverlay(overlay.profileId)
+                        .then(setOverlays)
+                        .catch(() => undefined);
+                    }}
+                  >
+                    退回内置
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </details>
       )}
       {view === "list" ? (
         <RunList
@@ -834,7 +857,7 @@ function RunDetail({
       <section className="agent-run-overview" aria-label="运行概览">
         <h3>{detail.question || "未命名问题"}</h3>
         <dl>
-          <div><dt>模式</dt><dd>{detail.mode}</dd></div>
+          <div><dt>模式</dt><dd>{runModeLabel(detail.mode)}</dd></div>
           <div><dt>状态</dt><dd><StatusIndicator className="agent-run-overview-status" status={detail.status} /></dd></div>
           <div><dt>开始时间</dt><dd>{formatTimestamp(detail.startedAtEpochMs)}</dd></div>
           <div><dt>结束时间</dt><dd>{formatTimestamp(detail.completedAtEpochMs)}</dd></div>

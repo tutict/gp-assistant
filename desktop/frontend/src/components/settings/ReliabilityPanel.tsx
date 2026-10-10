@@ -84,10 +84,12 @@ export function ReliabilityPanel({ onGepaPreferenceChange }: { onGepaPreferenceC
     }
   }
   return (
-    <section className="settings-item-copy" style={{ minWidth:0, overflowWrap:'anywhere' }} aria-labelledby={headingId} aria-busy={busy}>
+    <section className="settings-item-copy reliability-panel" aria-labelledby={headingId} aria-busy={busy}>
       <h3 id={headingId}>本地诊断与安全控制</h3>
       <p>只保留本次运行的固定操作类别与计数，最多 64 条；不记录问题、股票代码、网址、路径、密钥或业务内容。没有自动上传。</p>
-      <div>
+      <section className="reliability-task-group" aria-labelledby={`${headingId}-settings`}>
+        <h4 id={`${headingId}-settings`}>实验设置</h4>
+        <div className="reliability-switch-row">
         <label>GEPA 实验（默认关闭） </label>
         <button type="button" className="settings-toggle" role="switch" aria-label="启用 GEPA 实验"
           aria-checked={settings?.gepa_requested_enabled ?? false} disabled={busy || !settings || !settings.gepa_compiled}
@@ -96,22 +98,33 @@ export function ReliabilityPanel({ onGepaPreferenceChange }: { onGepaPreferenceC
             setSettings(parseSettings(await invoke('api_diagnostics_set_gepa',{payload:{enabled:!settings.gepa_requested_enabled}})));
             onGepaPreferenceChange?.();
           })}><span aria-hidden="true" /></button>
-      </div>
-      <p>{settings?.safe_start ? '安全启动：本次 GEPA 已禁用，保存的偏好不变。' : settings?.gepa_effective_enabled ? 'GEPA 当前已启用。' : 'GEPA 当前未启用。'}完整性检查始终保留。</p>
-      {settings && !settings.gepa_compiled ? <p>此构建未包含 GEPA 实验功能。</p> : null}
-      <p>安全启动：以 --safe-start 启动，或启动前设置 GP_ASSISTANT_SAFE_START=1。仅限制 GEPA，不是远程控制。</p>
-      <button type="button" className="clear-btn" aria-label="预览本地诊断" disabled={busy || !settings}
-        onClick={() => run(async () => { const next=parsePreview(await invoke('api_diagnostics_preview')); setPreview(next); setSettings(next.settings); })}>预览本地诊断</button>
-      {preview ? <>
-        <p>{preview.previous_exit === 'unclean' ? '上次未正常退出：不等于已验证崩溃，也可能是强制停止或断电。' : preview.previous_exit === 'clean' ? '上次已记录正常退出。' : '尚无上次退出记录。'}</p>
-        <pre aria-label="诊断导出预览" style={{ whiteSpace:'pre-wrap', overflowWrap:'anywhere', maxHeight:'16rem', overflowY:'auto' }}>{JSON.stringify(preview,null,2)}</pre>
-      </> : null}
-      <label>
-        <input type="checkbox" aria-label="确认诊断导出" checked={confirmed} disabled={!preview || busy}
-          onChange={event => setConfirmed(event.currentTarget.checked)} />
-        我已检查上述内容，并确认仅导出到本机。
-      </label>
-      <button type="button" className="save-btn" aria-label="导出已预览诊断" disabled={!preview || !confirmed || busy} onClick={download}>导出已预览诊断</button>
+        </div>
+        <p>{settings?.safe_start ? '安全启动：本次 GEPA 已禁用，保存的偏好不变。' : settings?.gepa_effective_enabled ? 'GEPA 当前已启用。' : 'GEPA 当前未启用。'}完整性检查始终保留。</p>
+        {settings && !settings.gepa_compiled ? <p>此构建未包含 GEPA 实验功能。</p> : null}
+        <details className="reliability-safety-disclosure">
+          <summary>安全启动说明</summary>
+          <p>以 --safe-start 启动，或在启动前设置 GP_ASSISTANT_SAFE_START=1。安全启动仅限制 GEPA，不是远程控制。</p>
+        </details>
+      </section>
+      <section className="reliability-task-group" aria-labelledby={`${headingId}-diagnostics`}>
+        <h4 id={`${headingId}-diagnostics`}>诊断导出</h4>
+        <p>先预览并检查内容，再确认导出到本机。</p>
+        <button type="button" className="clear-btn" aria-label="预览本地诊断" disabled={busy || !settings}
+          onClick={() => run(async () => { const next=parsePreview(await invoke('api_diagnostics_preview')); setPreview(next); setSettings(next.settings); })}>预览本地诊断</button>
+        {preview ? <>
+          <p>{preview.previous_exit === 'unclean' ? '上次未正常退出：不等于已验证崩溃，也可能是强制停止或断电。' : preview.previous_exit === 'clean' ? '上次已记录正常退出。' : '尚无上次退出记录。'}</p>
+          <pre className="reliability-preview" aria-label="诊断导出预览">{JSON.stringify(preview,null,2)}</pre>
+        </> : null}
+        <label>
+          <input type="checkbox" aria-label="确认诊断导出" checked={confirmed} disabled={!preview || busy}
+            onChange={event => setConfirmed(event.currentTarget.checked)} />
+          我已检查预览内容，并确认仅导出到本机。
+        </label>
+        <p className="reliability-action-hint" role="status">
+          {!preview ? '先预览本地诊断，确认内容后再导出。' : confirmed ? '已确认预览内容，可以导出到本机。' : '预览已就绪，请勾选确认后导出。'}
+        </p>
+        <button type="button" className="save-btn" aria-label="导出已预览诊断" disabled={!preview || !confirmed || busy} onClick={download}>导出已预览诊断</button>
+      </section>
       {busy ? <p role="status">正在处理本地操作…</p> : null}
       {message ? <p role="status">{message}</p> : null}
     </section>

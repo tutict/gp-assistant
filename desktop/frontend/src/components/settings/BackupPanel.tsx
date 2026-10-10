@@ -54,14 +54,22 @@ export function BackupPanel() {
     <section className="settings-item-copy" style={{ overflowWrap: "anywhere" }} aria-labelledby={headingId} aria-busy={busy}>
       <h3 id={headingId}>加密用户备份</h3>
       <p id={helpId}>
-        手动备份自选股、代理记录、研究及情绪 SQLite 数据；独立于研究同步包。
-        排除设置文件和凭据字段。请保管口令，遗失后无法解密。
+        手动导出本机数据，设置和凭据不会导出。请保管口令，遗失后无法解密。
       </p>
-      <p>
-        支持解密预览、隔离暂存，以及可恢复缺失的自选股 v1/v2 / 代理 v2 库，或带有“尚未使用”标记的全新自选股库。普通空库、已使用库和损坏库不回填；仅代理记录支持保留当前值的合并。
-        暂存文件为经过过滤的数据表，不是可直接替换的数据库；当前数据与删除记录始终保留；研究、情绪和客户端状态目前只能暂存。
-        暂存目录含解密后的私人数据，请勿共享。
+      <p className="backup-policy-summary">
+        研究、情绪和客户端状态目前仅可隔离暂存，不能恢复到应用。当前数据与删除记录始终保留。
       </p>
+      <details className="backup-policy-disclosure">
+        <summary>查看备份范围与恢复规则</summary>
+        <div>
+          <p>备份包含自选股、代理记录、研究及情绪 SQLite 数据，独立于研究同步包；凭据字段会过滤。</p>
+          <p>可恢复缺失的受支持自选股 / 代理库，或标记为“尚未使用”的全新自选股库。普通空库、已使用库和损坏库不回填；仅代理记录支持保留当前值的合并。</p>
+          <p>隔离暂存的是过滤后的数据表，不是可直接替换的数据库。暂存目录包含解密后的私人数据，请勿共享。</p>
+        </div>
+      </details>
+      <section className="backup-task-group" aria-labelledby={`${headingId}-export`}>
+      <h4 id={`${headingId}-export`}>导出备份</h4>
+      <p>输入备份口令后，可下载加密的 .gpbackup 文件。</p>
       <label>
         备份口令（至少 12 个 UTF-8 字节；每次操作后清空）
         <input
@@ -84,6 +92,11 @@ export function BackupPanel() {
         })}>
         导出加密备份
       </button>
+      {!hasPassword && <p className="backup-step-hint">填写至少 12 个 UTF-8 字节的口令后即可导出。</p>}
+      </section>
+      <section className="backup-task-group" aria-labelledby={`${headingId}-restore`}>
+      <h4 id={`${headingId}-restore`}>从备份恢复</h4>
+      <p>先选择文件并解密预览；预览不会写入数据。</p>
       <label>
         选择加密备份（.gpbackup，最大 64 MiB）
         <input type="file" aria-label="选择加密备份" accept=".gpbackup" disabled={busy}
@@ -99,6 +112,7 @@ export function BackupPanel() {
         })}>
         解密并预览
       </button>
+      {!preview && <p className="backup-step-hint">选择备份文件、输入口令后，先查看可恢复范围。</p>}
       {preview ? (
         <div>
           <h4>{preview.imported ? "恢复结果" : "恢复预览 · 仅数据集"}</h4>
@@ -123,8 +137,9 @@ export function BackupPanel() {
         <input type="checkbox" aria-label="确认仅隔离暂存" checked={confirmed}
           disabled={busy || !preview || preview.staged}
           onChange={(event) => setConfirmed(event.currentTarget.checked)} />
-        我理解：只将解密数据暂存到隔离目录，不替换当前数据库，也不恢复已删除记录。
+        我确认：仅暂存到隔离目录，不覆盖当前数据，也不恢复已删除记录。
       </label>
+      <p className="backup-step-hint">暂存仅保存到隔离目录，不会修改应用中的数据。</p>
       <button type="button" className="save-btn" aria-label="暂存恢复数据"
         disabled={busy || !preview || preview.staged || !blob || !hasPassword || !confirmed}
         onClick={() => run(async () => {
@@ -135,7 +150,7 @@ export function BackupPanel() {
           }
           setMessage(`已隔离暂存，尚未恢复到应用。恢复目录：user-backup-recovery/${result.recovery_id}。需要存储模块提供安全合并。`);
         })}>
-        暂存恢复数据
+        暂存到隔离目录
       </button>
       <label>
         <input type="checkbox" aria-label="确认恢复缺失库" checked={restoreConfirmed}
@@ -173,6 +188,7 @@ export function BackupPanel() {
         安全合并代理记录
       </button>
       <p>每份备份的每个库只允许一次恢复尝试；回执会阻止重复导入和删除后复活。中断或失败回执需人工检查。</p>
+      </section>
       {preview?.stores.some((store) => store.restore_status.includes("receipt") && store.restore_status !== "imported") ? (
         <p role="status">部分库存在恢复回执或待确认状态。请保留备份与回执，不要删除回执来强制重复导入。</p>
       ) : null}

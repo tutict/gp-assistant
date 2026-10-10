@@ -708,6 +708,15 @@
     grid-template-columns: minmax(76px, 0.5fr) minmax(0, 1fr);
     gap: 8px;
   }
+  .agent-run-timeline-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+  }
+  .agent-run-timeline-item span {
+    max-width: none;
+    text-align: left;
+    overflow-wrap: break-word;
+  }
   .agent-mobile-actions {
     position: absolute;
     z-index: 3;
@@ -754,7 +763,16 @@
     height: var(--touch-height);
   }
   .agent-empty-state {
-    padding: 12px;
+    padding: 0 0 8px;
+  }
+  .agent-examples {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .agent-examples button {
+    min-height: 48px;
+  }
+  .agent-composer-card:has(.agent-input:focus) > .agent-empty-state {
+    display: none;
   }
   .agent-mode-tabs {
     max-width: 100%;

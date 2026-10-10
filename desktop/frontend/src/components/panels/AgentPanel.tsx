@@ -711,14 +711,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           ref={threadRef}
           onScroll={handleThreadScroll}
         >
-          {messages.length === 0 ? (
-            <AgentEmptyState
-              mode={activeMode.id}
-              activeModel={activeLlmConfig?.model}
-              onExample={setInput}
-              onConfigureModel={() => setSettingsRequest((value) => value + 1)}
-            />
-          ) : messages.map((msg, i) => (
+          {messages.map((msg, i) => (
             <article key={`${msg.timestamp}-${i}`} className={`agent-message ${msg.role} ${msg.error ? "error" : ""}`}>
               <div className="agent-message-meta">
                 <span>{msg.role === "user" ? "你" : "Agent"}</span>
@@ -741,23 +734,33 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         </div>
 
         <div className="agent-composer-card">
-          {conversationDeleteStorageError && (
-            <div className="agent-quota-warning" role="alert">{conversationDeleteStorageError}</div>
+          {messages.length === 0 && !input.trim() && (
+            <AgentEmptyState
+              mode={activeMode.id}
+              activeModel={activeLlmConfig?.model}
+              onExample={setInput}
+              onConfigureModel={() => setSettingsRequest((value) => value + 1)}
+            />
           )}
-          {failedLedgerDeletionIds.length > 0 && (
-            <div className="agent-quota-warning agent-cleanup-warning" role="alert">
-              <span>{failedLedgerDeletionIds.length} 个已删除对话的运行记录仍待清理。</span>
-              <IconButton
-                className="agent-cleanup-retry"
-                onClick={retryFailedLedgerDeletions}
-                disabled={retryingLedgerDeletions || ledgerDeletionInFlightIds.length > 0}
-                label="重试清理运行记录"
-                icon={retryingLedgerDeletions
-                  ? <LoaderCircle size={15} className="spin" aria-hidden="true" />
-                  : <RefreshCw size={15} aria-hidden="true" />}
-              />
-            </div>
-          )}
+          <div className="agent-composer-alerts">
+            {conversationDeleteStorageError && (
+              <div className="agent-quota-warning" role="alert">{conversationDeleteStorageError}</div>
+            )}
+            {failedLedgerDeletionIds.length > 0 && (
+              <div className="agent-quota-warning agent-cleanup-warning" role="alert">
+                <span>{failedLedgerDeletionIds.length} 个已删除对话的运行记录仍待清理。</span>
+                <IconButton
+                  className="agent-cleanup-retry"
+                  onClick={retryFailedLedgerDeletions}
+                  disabled={retryingLedgerDeletions || ledgerDeletionInFlightIds.length > 0}
+                  label="重试清理运行记录"
+                  icon={retryingLedgerDeletions
+                    ? <LoaderCircle size={15} className="spin" aria-hidden="true" />
+                    : <RefreshCw size={15} aria-hidden="true" />}
+                />
+              </div>
+            )}
+          </div>
           <WorkspaceSaveStatus />
 <textarea
             ref={composer.textareaRef}
@@ -851,7 +854,10 @@ function AgentEmptyState({
   const needsModel = mode !== "quick" && !activeModel;
   return (
     <div className="agent-empty-state">
-      <h2>开始对话</h2>
+      <div className="agent-empty-copy">
+        <h2>开始对话</h2>
+        <p>选一个问题示例，只会填入草稿，不会自动发送。</p>
+      </div>
       <div className="agent-examples">
         {AGENT_EXAMPLES[mode].map((example) => (
           <button
@@ -860,7 +866,7 @@ function AgentEmptyState({
             disabled={needsModel}
             onClick={() => { if (!needsModel) onExample(example); }}
           >
-            {needsModel ? `${example}（需要模型）` : example}
+            {example}
           </button>
         ))}
       </div>

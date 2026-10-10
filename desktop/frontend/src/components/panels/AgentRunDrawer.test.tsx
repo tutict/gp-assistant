@@ -922,6 +922,14 @@ describe("AgentRunDrawer detail", () => {
     expect(output.indexOf("agent-run-persisted-error")).toBeLessThan(output.indexOf("agent-run-result"));
   });
 
+  it("shows the localized mode name in run details", async () => {
+    agentRunMocks.getAgentRun.mockResolvedValue(detail("localized-mode", { mode: "quick" }));
+    const renderer = await renderDrawer({ open: true, initialRunId: "localized-mode" });
+    await flush();
+    expect(renderedText(renderer)).toContain("快速模式");
+    expect(renderedText(renderer)).not.toContain("quick");
+  });
+
   it("renders an unavailable result status without hiding the rest of the detail", async () => {
     agentRunMocks.getAgentRun.mockResolvedValue(detail("unavailable", {
       error: "persisted detail remains visible",
@@ -1150,6 +1158,23 @@ describe("AgentRunDrawer accessibility", () => {
 });
 
 describe("AgentRunDrawer prompt overlay", () => {
+  it("keeps full prompt hashes behind a compact disclosure", async () => {
+    agentRunMocks.listAgentRuns.mockResolvedValue([]);
+    const digest = "a".repeat(64);
+    agentRunMocks.getPromptOverlays.mockResolvedValue([
+      { profileId: "hot_money_early_v1", label: "专家模式", promptVersion: `rig-agent-runtime-v1+sha256-${digest}`, builtin: false },
+      { profileId: "value_compounder_v1", label: "研报模式", promptVersion: "rig-agent-runtime-v1", builtin: true },
+    ]);
+    const renderer = await renderDrawer();
+    await act(async () => renderer.update(<AgentRunDrawer open {...baseProps} />));
+    await flush();
+    const disclosure = renderer.root.findByProps({ className: "agent-prompt-overlays" });
+    expect(disclosure.props.open).not.toBe(true);
+    expect(nodeText(disclosure.findByType("summary"))).toContain("提示词版本");
+    expect(nodeText(disclosure.findByType("summary"))).not.toContain(digest);
+    expect(nodeText(classNodes(renderer, "agent-prompt-overlay-copy")[0])).toContain(digest);
+  });
+
   it("shows a visible warning when the local prompt version cannot be read", async () => {
     agentRunMocks.listAgentRuns.mockResolvedValue([]);
     agentRunMocks.getPromptOverlays.mockRejectedValue(new Error("overlay unavailable"));
@@ -1159,6 +1184,9 @@ describe("AgentRunDrawer prompt overlay", () => {
     });
     await flush();
     expect(renderedText(renderer)).toContain("提示词版本读取失败");
+    const retry = renderer.root.find(node => node.type === "button" && node.children.includes("重试"));
+    await act(async () => retry.props.onClick());
+    expect(agentRunMocks.getPromptOverlays).toHaveBeenCalledTimes(2);
   });
 
   it("shows the local prompt version and reverts to the built-in card", async () => {

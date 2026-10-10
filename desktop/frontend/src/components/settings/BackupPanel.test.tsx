@@ -20,6 +20,17 @@ beforeEach(() => {
 });
 afterEach(async () => { if (renderer) await act(async () => renderer.unmount()); vi.unstubAllGlobals(); });
 describe("BackupPanel", () => {
+  it("separates backup and restore tasks while keeping detailed recovery rules on demand", async () => {
+    await mount();
+    const text = JSON.stringify(renderer.toJSON());
+    expect(text).toContain("导出备份");
+    expect(text).toContain("从备份恢复");
+    expect(text).toContain("研究、情绪和客户端状态目前仅可隔离暂存，不能恢复到应用");
+    const details = renderer.root.findByProps({ className: "backup-policy-disclosure" });
+    expect(details.props.open).not.toBe(true);
+    expect(details.findByType("summary").props.children).toBe("查看备份范围与恢复规则");
+  });
+
   it("offers transactional recovery for an explicitly pristine initialized database", async () => {
     api.previewUserBackup.mockResolvedValueOnce({ ...preview, stores: [{ ...preview.stores[0], restore_to_empty: true, restore_status: "eligible_pristine_watchlist_v2" }] });
     await mount(); await selectFile(); await enterPassword();

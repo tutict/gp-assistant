@@ -242,6 +242,18 @@ afterEach(async () => {
 });
 
 describe("AgentPanel run replay interactions", () => {
+  it("places starter questions beside the composer and fills a draft without sending", async () => {
+    const renderer = await renderPanel();
+    const composer = renderer.root.findByProps({ className: "agent-composer-card" });
+    const emptyState = renderer.root.find(node => node.type === "div" && hasClass(node, "agent-empty-state"));
+    expect(emptyState.parent?.parent).toBe(composer);
+    expect(nodeText(emptyState)).toContain("只会填入草稿，不会自动发送");
+    const example = renderer.root.find(node => node.type === "button" && node.children.includes("帮我筛选今天值得看的趋势股"));
+    await act(async () => example.props.onClick());
+    expect(renderer.root.findByType("textarea").props.value).toBe("帮我筛选今天值得看的趋势股");
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it.each(["quick", "expert", "research"] as const)(
     "runs the local backend path and shows its risk boundary in %s mode without a model",
     async (mode) => {
@@ -266,7 +278,8 @@ describe("AgentPanel run replay interactions", () => {
     const send = buttonWithClass(renderer, "send-btn");
     if (mode !== "quick") {
       expect(send.props.disabled).toBe(true);
-      expect(nodeText(renderer.root)).toContain("需要模型");
+      expect(renderer.root.findAll((node) => node.type === "button" && Boolean(node.parent && hasClass(node.parent, "agent-examples"))).every((button) => button.props.disabled)).toBe(true);
+      expect(nodeText(renderer.root)).not.toContain("需要模型");
       await act(async () => {
         await send.props.onClick();
       });

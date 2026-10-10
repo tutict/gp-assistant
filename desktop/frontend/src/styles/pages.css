@@ -3014,13 +3014,14 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
   overflow-y: auto;
 }
 
-.agent-thread.empty {
-  display: grid;
-  place-items: center;
-}
-
 .agent-empty-state {
-  width: min(420px, 100%);
+  display: grid;
+  grid-area: starter;
+  width: 100%;
+  min-width: 0;
+  gap: 6px;
+  padding: 0 2px 8px;
+  border-bottom: 1px solid var(--line-soft);
 }
 
 .agent-message {
@@ -5144,6 +5145,9 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 .agent-composer-card {
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
+    "starter starter"
+    "warning warning"
+    "save save"
     "input input"
     "tools footer"
     "note note"
@@ -5154,6 +5158,15 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
   grid-area: tools;
   justify-self: start;
 }
+.agent-composer-card > .agent-empty-state { grid-area: starter; }
+.agent-composer-card > .agent-composer-alerts { grid-area: warning; }
+.agent-composer-card > .workspace-save-status { grid-area: save; }
+.agent-composer-alerts { display: grid; gap: 6px; min-width: 0; }
+.agent-composer-alerts:empty { display: none; }
+.agent-composer-card .agent-input { grid-area: input; }
+.agent-composer-card .agent-composer-footer { grid-area: footer; }
+.agent-empty-copy { display: grid; gap: 3px; }
+.agent-empty-state > .agent-empty-copy p { max-width: none; margin: 0; color: var(--text-secondary); font-size: var(--fs-caption); line-height: 1.4; }
 .agent-composer-footer {
   align-self: center;
 }
@@ -5171,19 +5184,31 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 }
 .agent-examples {
   display: grid;
-  gap: 8px;
-  width: min(520px, 100%);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  gap: 6px;
+  width: 100%;
 }
 .agent-examples button {
-  min-height: 44px;
-  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--touch-comfort);
+  padding: 7px 10px;
   text-align: left;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
+  font: inherit;
+  font-size: var(--fs-caption);
+  line-height: 1.4;
+  overflow-wrap: break-word;
   cursor: pointer;
 }
+.agent-examples button:hover:not(:disabled),
+.agent-examples button:focus-visible { border-color: var(--accent); background: var(--surface-2); }
+.agent-examples button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.agent-examples button:disabled { color: var(--text-tertiary); cursor: not-allowed; }
 .agent-next-actions {
   display: block;
   margin: 0;
