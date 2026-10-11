@@ -5,6 +5,7 @@ default-run = "stock-optimizer-desktop"
 description = "Desktop shell for 鑲￠€変紭"
 authors = ["鑲￠€変紭"]
 edition = "2021"
+rust-version = "1.99"
 
 [lib]
 name = "stock_optimizer_desktop_lib"
@@ -15,7 +16,7 @@ name = "stock-optimizer-desktop"
 path = "src/main.rs"
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.6.3", features = [] }
 
 [features]
 eval-replay = []
@@ -53,7 +54,7 @@ rig-agent = { version = "0.42.0", default-features = false }
 dsrust-gepa = { version = "=0.1.0-alpha.3", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-fastembed = { version = "5.17.3", default-features = false, features = ["ort-download-binaries-rustls-tls"] }
+fastembed = { version = "5.17.4", default-features = false, features = ["ort-download-binaries-rustls-tls"] }
 
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
 

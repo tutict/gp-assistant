@@ -2,6 +2,7 @@
 name = "stock-optimizer-core"
 version = "0.6.2"
 edition = "2021"
+rust-version = "1.99"
 description = "Embeddable A-share screening core for 鑲￠€変紭"
 
 [lib]
