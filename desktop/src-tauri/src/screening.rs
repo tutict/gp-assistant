@@ -1094,10 +1094,11 @@ pub(crate) async fn prepare_adaptive_screen(
         });
     // Age alone is not a miss. Choose a common cached PIT date unless explicitly requested.
     if policy == DataPolicy::CacheOnly {
-        let as_of = request
-            .as_of_date
-            .clone()
-            .or_else(|| latest_adaptive_data_date(data.as_ref(), &HashMap::new(), &required_codes));
+        let as_of = adaptive_screen_as_of_date(
+            request.as_of_date.clone(),
+            target_history_date.clone(),
+            latest_adaptive_data_date(data.as_ref(), &HashMap::new(), &required_codes),
+        );
         let coverage = adaptive_local_coverage(
             data.as_ref(),
             &HashMap::new(),
@@ -1224,9 +1225,11 @@ pub(crate) async fn prepare_adaptive_screen(
         ));
     }
     if policy == DataPolicy::Refresh {
-        request.as_of_date =
-            latest_adaptive_data_date(data.as_ref(), &history_override, &required_codes)
-                .or(target_history_date);
+        request.as_of_date = adaptive_screen_as_of_date(
+            request.as_of_date.clone(),
+            target_history_date,
+            latest_adaptive_data_date(data.as_ref(), &history_override, &required_codes),
+        );
     }
     let coverage = adaptive_local_coverage(
         data.as_ref(),
@@ -1375,6 +1378,14 @@ pub(crate) fn latest_adaptive_data_date(
                 })
         })
         .min()
+}
+
+pub(crate) fn adaptive_screen_as_of_date(
+    explicit: Option<String>,
+    quote_target: Option<String>,
+    history_latest: Option<String>,
+) -> Option<String> {
+    explicit.or(quote_target).or(history_latest)
 }
 
 pub(crate) fn adaptive_quote_target_date(

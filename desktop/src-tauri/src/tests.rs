@@ -884,6 +884,26 @@ fn market_refresh_history_warmup_keeps_non_diversified_trend_candidates() {
 }
 
 #[test]
+fn adaptive_screen_uses_quote_date_for_market_breadth_when_history_is_older() {
+    assert_eq!(
+        adaptive_screen_as_of_date(
+            None,
+            Some("20261009".to_string()),
+            Some("20260930".to_string()),
+        ),
+        Some("20261009".to_string()),
+    );
+    assert_eq!(
+        adaptive_screen_as_of_date(
+            Some("20260729".to_string()),
+            Some("20261009".to_string()),
+            Some("20260930".to_string()),
+        ),
+        Some("20260729".to_string()),
+    );
+}
+
+#[test]
 fn agent_harness_builds_an_expert_prompt_from_history_and_tool_evidence() {
     let preview = agent_harness::prompt_preview(
         &json!({

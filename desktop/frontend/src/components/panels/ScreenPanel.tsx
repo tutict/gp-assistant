@@ -73,6 +73,22 @@ const FULL_UNIVERSE_CRITERIA: FilterCriteria = {
   scoreProfile: "balanced",
 };
 
+const SCREEN_RUN_REFRESH_OPTIONS = {
+  mode: "full",
+  batch_start: 0,
+  batch_count: 32,
+  max_candidates: 15000,
+  prefetch_history_limit: 80,
+  validate_after_write: true,
+};
+
+function shouldPrepareResearchDataForRetry(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("本地数据不足")
+    || message.includes("市场状态数据不足")
+    || message.includes("历史数据不足");
+}
+
 type ScreenRunState = {
   result: unknown | null;
   error: string | null;
@@ -210,7 +226,19 @@ export function ScreenPanel({
         payload = buildTrendScreenRequest(requestCriteria, requestTrendStart, requestTrendEnd);
       }
 
-      const data = await postJson(endpoint, { ...(payload as Record<string, unknown>), data_policy: "cache_only" });
+      const requestPayload = { ...(payload as Record<string, unknown>), data_policy: "cache_only" };
+      let data: unknown;
+      try {
+        data = await postJson(endpoint, requestPayload);
+      } catch (firstError) {
+        const canRetryWithPreparedData = (requestMode === "screen" || requestMode === "trendScreen")
+          && shouldPrepareResearchDataForRetry(firstError);
+        if (!canRetryWithPreparedData) throw firstError;
+        if (requestMode === "screen") {
+          await postJson("/api/data-sources/refresh-universe", SCREEN_RUN_REFRESH_OPTIONS);
+        }
+        data = await postJson(endpoint, { ...(payload as Record<string, unknown>), data_policy: "refresh" });
+      }
       if (requestVersion !== requestVersions.current[requestMode]) return;
       updateRun(requestMode, (current) => ({
         ...current,

@@ -476,6 +476,10 @@ describe("ScreenPanel adaptive states", () => {
     "市场状态/历史数据不足：候选日线覆盖率低于 60%",
   ])("renders request and data-insufficient errors: %s", async (message) => {
     postJsonMock.mockRejectedValueOnce(new Error(message));
+    if (message.includes("历史数据不足")) {
+      postJsonMock.mockResolvedValueOnce({ refreshed: true });
+      postJsonMock.mockRejectedValueOnce(new Error(message));
+    }
     const renderer = await renderPanel();
 
     await act(async () => {
@@ -486,6 +490,40 @@ describe("ScreenPanel adaptive states", () => {
     expect(textContent(renderer)).toContain(message);
     expect(runButton(renderer).props.disabled).toBe(false);
   });
+  it("prepares market data before retrying intelligent screening", async () => {
+    postJsonMock
+      .mockRejectedValueOnce(new Error("市场状态数据不足：自动模式的全市场上涨家数覆盖率不足60%"))
+      .mockResolvedValueOnce({ refreshed: true })
+      .mockResolvedValueOnce({ total: 1, returned: 1, items: [], groups: [] });
+    const renderer = await renderPanel();
+
+    await act(async () => {
+      await runButton(renderer).props.onClick();
+    });
+
+    expect(postJsonMock.mock.calls[0][0]).toBe("/api/screen");
+    expect(postJsonMock.mock.calls[0][1]).toEqual(expect.objectContaining({ data_policy: "cache_only" }));
+    expect(postJsonMock.mock.calls[1][0]).toBe("/api/data-sources/refresh-universe");
+    expect(postJsonMock.mock.calls[2][0]).toBe("/api/screen");
+    expect(postJsonMock.mock.calls[2][1]).toEqual(expect.objectContaining({ data_policy: "refresh" }));
+  });
+
+  it("lets trend screening refill missing history on the run action", async () => {
+    postJsonMock
+      .mockRejectedValueOnce(new Error("本地数据不足（8 项）：日线 1/45"))
+      .mockResolvedValueOnce({ total: 0, returned: 0, items: [], groups: [] });
+    const renderer = await renderPanel();
+    const trendTab = renderer.root.find((node) => node.type === "button" && node.children.includes("趋势选股"));
+
+    await act(async () => { trendTab.props.onClick(); });
+    await act(async () => { await runButton(renderer).props.onClick(); });
+
+    expect(postJsonMock.mock.calls[0][0]).toBe("/api/trend-screen");
+    expect(postJsonMock.mock.calls[0][1]).toEqual(expect.objectContaining({ data_policy: "cache_only" }));
+    expect(postJsonMock.mock.calls[1][0]).toBe("/api/trend-screen");
+    expect(postJsonMock.mock.calls[1][1]).toEqual(expect.objectContaining({ data_policy: "refresh" }));
+  });
+
   it("keeps screening local when data is unavailable so refresh stays in the toolbar", async () => {
     postJsonMock.mockResolvedValue({ items: [] });
     let renderer!: ReactTestRenderer;
