@@ -3,7 +3,7 @@ import { useTheme } from "./hooks/useTheme";
 import { useDensity } from "./hooks/useDensity";
 import { useFontScale } from "./hooks/useFontScale";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
-import { useWorkspaceState, useWorkspaceStore, useWorkspaceStatus, WorkspaceSaveStatus, WorkspaceCredentialsReady } from "./hooks/useWorkspace";
+import { useWorkspaceState, useWorkspaceStore, useWorkspaceStatus, WorkspaceCredentialsReady } from "./hooks/useWorkspace";
 import { WorkspaceErrorBoundary } from "./components/ui/ErrorBoundary";
 import { getJson, isMobileTauriRuntime } from "./lib/tauri";
 import { createPersistentWatchlistSetter, loadLocalWatchlistSnapshot, loadPersistentWatchlist } from "./lib/watchlistStore";
@@ -369,7 +369,6 @@ export default function App({ onMounted }: AppProps) {
 
       <main className="workbench">
         <div className="workbench-notices">
-      {view !== "agent" && view !== "news" && <WorkspaceSaveStatus />}
       {!credentialsReady && <p role="status">密钥正在初始化，可继续本地编辑；模型提交与设置保存暂不可用。</p>}
       {credentialError && <PanelFeedback kind="error" title="密钥保存状态" description={credentialError} action={credentialMigrationPending ? <button type="button" onClick={() => void retryCredentialMigration()}>重试安全迁移</button> : undefined} />}
         </div>
