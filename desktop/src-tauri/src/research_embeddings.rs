@@ -12,6 +12,7 @@ use std::{
 
 pub(crate) const MODEL_ID: &str = "BAAI/bge-small-zh-v1.5";
 pub(crate) const MODEL_DIMENSIONS: usize = 512;
+const EMBEDDING_INTRA_THREADS: usize = 1;
 
 const MODEL_FILES: [(&str, &str); 5] = [
     (
@@ -108,7 +109,7 @@ fn initialize_runtime(model_dir: &Path) -> Result<EmbeddingRuntime, String> {
         user_model,
         InitOptionsUserDefined::new()
             .with_max_length(512)
-            .with_intra_threads(2),
+            .with_intra_threads(EMBEDDING_INTRA_THREADS),
     )
     .map_err(|error| format!("failed to initialize local embedding model: {error}"))?;
     Ok(EmbeddingRuntime {

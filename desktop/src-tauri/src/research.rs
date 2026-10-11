@@ -5442,19 +5442,30 @@ pub(crate) async fn api_research_thread_delete(
 
 #[tauri::command]
 pub(crate) async fn api_research_index_status(app: tauri::AppHandle) -> Result<Value, String> {
-    crate::runtime::run_io_bound("api_research_index_status", move || {
-        crate::research::with_app_store(&app, |store| {
+    let status_app = app.clone();
+    let status = crate::runtime::run_io_bound("api_research_index_status", move || {
+        crate::research::with_app_store(&status_app, |store| {
             let mut status = store.index_status()?;
             status["documents"] = store.document_statuses()?["items"].clone();
             #[cfg(target_os = "windows")]
-            let vector_status =
-                crate::research_embeddings::model_status(&research_embedding_model_dir(&app));
+            let vector_status = crate::research_embeddings::model_status(
+                &research_embedding_model_dir(&status_app),
+            );
             #[cfg(not(target_os = "windows"))]
             let vector_status = status["vector"].clone();
             Ok(finalize_research_index_status(status, vector_status))
         })
     })
-    .await?
+    .await??;
+    #[cfg(target_os = "windows")]
+    if status
+        .get("embedding_pending_count")
+        .and_then(Value::as_i64)
+        .is_some_and(|count| count > 0)
+    {
+        schedule_research_embeddings(app);
+    }
+    Ok(status)
 }
 
 pub(crate) fn finalize_research_index_status(mut status: Value, vector_status: Value) -> Value {
@@ -5615,7 +5626,10 @@ pub(crate) fn research_embedding_model_dir(app: &tauri::AppHandle) -> PathBuf {
 }
 
 pub(crate) fn schedule_research_maintenance(app: tauri::AppHandle) {
-    schedule_research_embeddings(app.clone());
+    // Keep the ONNX embedding runtime lazy. Loading it during every desktop
+    // startup adds hundreds of megabytes before the user opens research; the
+    // import, refresh, index-status, and explicit rebuild paths schedule it
+    // when vector retrieval is actually needed.
     tauri::async_runtime::spawn(async move {
         loop {
             let worker_app = app.clone();
