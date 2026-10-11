@@ -51,12 +51,11 @@ const TABS: { key: ScreenMode; label: string }[] = [
   { key: "trendScreen", label: "趋势选股" },
 ];
 
-const MODE_NOTES: Record<ScreenMode, string> = {
+const MODE_NOTES: Partial<Record<ScreenMode, string>> = {
   screen: "按当前市场状态从全市场挑出综合评分较高的股票",
   sectorScreen: "按概念把候选股票分组查看",
   boardScreen: "按行业板块分组查看",
   customScreen: "用你设置的财务和市值条件筛选",
-  trendScreen: "在指定日期区间里看趋势强度",
 };
 
 const FULL_UNIVERSE_CRITERIA: FilterCriteria = {
@@ -333,7 +332,7 @@ export function ScreenPanel({
       ))}
     </div>
   );
-  const modeNote = <p className="screen-mode-note">{MODE_NOTES[mode]}</p>;
+  const modeNote = MODE_NOTES[mode] ? <p className="screen-mode-note">{MODE_NOTES[mode]}</p> : null;
 
   return (
     <div className={`panel-container screen-panel-container ${result != null ? "has-result" : ""}`}>

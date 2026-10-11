@@ -54,7 +54,7 @@ pub(crate) const TENCENT_BATCH_TIMEOUT_SECS: u64 = 8;
 /// local-only research actions. Keeping this small makes a full quote refresh
 /// useful without turning it into an unbounded history crawl.
 pub(crate) const MARKET_REFRESH_HISTORY_PREFETCH_LIMIT: usize = 80;
-pub(crate) const MARKET_REFRESH_HISTORY_PREFETCH_CONCURRENCY: usize = 12;
+pub(crate) const MARKET_REFRESH_HISTORY_PREFETCH_CONCURRENCY: usize = 24;
 pub(crate) const MARKET_REFRESH_HISTORY_LOOKBACK_DAYS: u128 = 500;
 pub(crate) const MARKET_REFRESH_HISTORY_MIN_BARS: usize = 60;
 
@@ -2849,6 +2849,14 @@ pub(crate) fn market_refresh_history_codes(stocks: &[Value], limit: usize) -> Ve
         .unwrap_or_default();
     let mut codes =
         gp_core::adaptive_candidate_codes(&typed, &gp_core::ScreenCriteria::default(), limit);
+    let mut trend_criteria = gp_core::ScreenCriteria::default();
+    trend_criteria.limit = limit.clamp(1, 100);
+    codes.extend(
+        gp_core::screen_stocks(&typed, &trend_criteria)
+            .items
+            .into_iter()
+            .map(|item| item.stock.code),
+    );
     if codes.len() < limit {
         let mut fallback = typed
             .into_iter()
@@ -2859,7 +2867,7 @@ pub(crate) fn market_refresh_history_codes(stocks: &[Value], limit: usize) -> Ve
         codes.extend(fallback);
     }
     dedupe_stock_codes(&mut codes);
-    codes.truncate(limit);
+    codes.truncate(limit.saturating_mul(2).max(limit));
     codes.extend(adaptive_benchmark_codes().into_iter().map(str::to_string));
     dedupe_stock_codes(&mut codes);
     codes

@@ -844,11 +844,43 @@ fn market_refresh_history_warmup_targets_default_candidates_and_benchmarks() {
         })
         .collect::<Vec<_>>();
     let codes = market_refresh_history_codes(&stocks, 4);
-    assert!(codes.len() <= 7);
+    assert!(codes.len() <= 11);
     assert!(codes.iter().any(|code| code == "000001.SH"));
     assert!(codes.iter().any(|code| code == "399001.SZ"));
     assert!(codes.iter().any(|code| code == "399006.SZ"));
     assert!(codes.iter().any(|code| code.ends_with(".SZ")));
+}
+
+#[test]
+fn market_refresh_history_warmup_keeps_non_diversified_trend_candidates() {
+    let stocks = (0..12)
+        .map(|index| {
+            json!({
+                "code": format!("{:06}.SZ", index + 1),
+                "name": format!("半导体样本{index}"),
+                "industry": "半导体",
+                "price": 10.0 + index as f64,
+                "roe": 0.08 + index as f64 / 100.0,
+                "pe": 10.0 + index as f64,
+                "pb": 1.2,
+                "market_cap_billion": 20.0 + index as f64,
+                "is_st": false
+            })
+        })
+        .collect::<Vec<_>>();
+    let typed = serde_json::from_value::<Vec<gp_core::StockItem>>(json!(stocks.clone()))
+        .expect("fixture stocks should parse");
+    let mut criteria = gp_core::ScreenCriteria::default();
+    criteria.limit = 4;
+    let trend_codes = gp_core::screen_stocks(&typed, &criteria)
+        .items
+        .into_iter()
+        .map(|item| item.stock.code)
+        .collect::<HashSet<_>>();
+    let warmup_codes = market_refresh_history_codes(&stocks, 4)
+        .into_iter()
+        .collect::<HashSet<_>>();
+    assert!(trend_codes.is_subset(&warmup_codes));
 }
 
 #[test]

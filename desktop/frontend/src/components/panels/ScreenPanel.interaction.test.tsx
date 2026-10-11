@@ -385,7 +385,7 @@ describe("ScreenPanel adaptive states", () => {
     await act(async () => { boardTab.props.onClick(); });
     expect(textContent(renderer)).toContain("按行业板块分组查看");
     await act(async () => { trendTab.props.onClick(); });
-    expect(textContent(renderer)).toContain("在指定日期区间里看趋势强度");
+    expect(textContent(renderer)).not.toContain("在指定日期区间里看趋势强度");
   });
 
   it("requests ten stocks per concept group while retaining the five-stock group threshold", async () => {
