@@ -904,6 +904,28 @@ fn adaptive_screen_uses_quote_date_for_market_breadth_when_history_is_older() {
 }
 
 #[test]
+fn trend_refresh_accepts_partial_history_and_leaves_short_ipo_candidates_to_core() {
+    assert!(trend_screen_refresh_has_usable_history(&[
+        json!({"code":"600000.SH", "sufficient": true}),
+        json!({"code":"920181.BJ", "sufficient": false}),
+    ]));
+    assert!(!trend_screen_refresh_has_usable_history(&[
+        json!({"code":"920181.BJ", "sufficient": false}),
+        json!({"code":"920012.BJ", "sufficient": false}),
+    ]));
+}
+
+#[test]
+fn daily_history_prefers_the_longer_source_result() {
+    let short = vec![json!({"date":"20261001", "close":10.0})];
+    let long = vec![
+        json!({"date":"20260930", "close":9.0}),
+        json!({"date":"20261001", "close":10.0}),
+    ];
+    assert_eq!(choose_longer_history(Some(short), Some(long.clone())), Some(long));
+}
+
+#[test]
 fn agent_harness_builds_an_expert_prompt_from_history_and_tool_evidence() {
     let preview = agent_harness::prompt_preview(
         &json!({

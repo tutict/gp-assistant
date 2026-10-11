@@ -81,6 +81,12 @@ pub(crate) fn local_history_coverage(
         })
         .collect()
 }
+
+pub(crate) fn trend_screen_refresh_has_usable_history(coverage: &[Value]) -> bool {
+    coverage
+        .iter()
+        .any(|item| item.get("sufficient").and_then(Value::as_bool) == Some(true))
+}
 pub(crate) fn adaptive_local_coverage(
     data: &gp_core::CoreDataSet,
     overrides: &HashMap<String, Vec<gp_core::HistoryBar>>,
@@ -1562,7 +1568,11 @@ pub(crate) async fn prepare_trend_screen(
         &request.end_date,
         MIN_TREND_SCREEN_HISTORY_BARS,
     );
-    local_data::require_coverage("trend_screen", &coverage)?;
+    if policy == DataPolicy::CacheOnly {
+        local_data::require_coverage("trend_screen", &coverage)?;
+    } else if !trend_screen_refresh_has_usable_history(&coverage) {
+        local_data::require_coverage("trend_screen", &coverage)?;
+    }
     let metadata = local_metadata(data.as_ref(), policy, &coverage);
     Ok(PreparedTrendScreen {
         data,

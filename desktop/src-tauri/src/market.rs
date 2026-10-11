@@ -3937,17 +3937,49 @@ pub(crate) async fn fetch_observe_daily_history(
     let timeout = Duration::from_secs(OBSERVE_HISTORY_TIMEOUT_SECS);
     let client = build_tencent_http_client("Mozilla/5.0 GuXuanYou/0.3 observe history", timeout)?;
     let mut errors = Vec::new();
-    match fetch_tencent_daily_history(&client, code, start_date, end_date).await {
-        Ok(rows) if !rows.is_empty() => return Ok(rows),
-        Ok(_) => errors.push("腾讯日线返回空数据".to_string()),
-        Err(error) => errors.push(format!("腾讯日线：{error}")),
+    let tencent_rows = match fetch_tencent_daily_history(&client, code, start_date, end_date).await
+    {
+        Ok(rows) if !rows.is_empty() => Some(rows),
+        Ok(_) => {
+            errors.push("腾讯日线返回空数据".to_string());
+            None
+        }
+        Err(error) => {
+            errors.push(format!("腾讯日线：{error}"));
+            None
+        }
+    };
+    if tencent_rows.as_ref().is_some_and(|rows| rows.len() >= 60) {
+        return Ok(tencent_rows.expect("checked above"));
     }
-    match fetch_eastmoney_daily_history(&client, code, start_date, end_date).await {
-        Ok(rows) if !rows.is_empty() => return Ok(rows),
-        Ok(_) => errors.push("东方财富日线返回空数据".to_string()),
-        Err(error) => errors.push(format!("东方财富日线：{error}")),
+    let eastmoney_rows =
+        match fetch_eastmoney_daily_history(&client, code, start_date, end_date).await {
+            Ok(rows) if !rows.is_empty() => Some(rows),
+            Ok(_) => {
+                errors.push("东方财富日线返回空数据".to_string());
+                None
+            }
+            Err(error) => {
+                errors.push(format!("东方财富日线：{error}"));
+                None
+            }
+        };
+    choose_longer_history(tencent_rows, eastmoney_rows).ok_or_else(|| errors.join("\u{ff1b}"))
+}
+
+pub(crate) fn choose_longer_history(
+    primary: Option<Vec<Value>>,
+    secondary: Option<Vec<Value>>,
+) -> Option<Vec<Value>> {
+    match (primary, secondary) {
+        (Some(primary), Some(secondary)) => Some(if secondary.len() > primary.len() {
+            secondary
+        } else {
+            primary
+        }),
+        (Some(rows), None) | (None, Some(rows)) => Some(rows),
+        (None, None) => None,
     }
-    Err(errors.join("\u{ff1b}"))
 }
 
 pub(crate) async fn fetch_daily_history_text(
