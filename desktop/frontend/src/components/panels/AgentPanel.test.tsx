@@ -159,9 +159,9 @@ describe("AgentPanel empty state", () => {
     expect(html).toContain('role="group"');
     expect(html).toContain('maxLength="8000"');
     expect(html).toContain('aria-pressed="true"');
-    expect(html).toContain("还不能做模型研究，可以先配置模型，或只用本地行情和财务核对。");
-    expect(html).toContain("游资早期框架：环境、主线、情绪周期与失效条件");
-    expect(html).toContain("价值复利框架：企业质量、资本配置与估值");
+    expect(html).toContain("模型未配置；快速模式用本地数据。");
+    expect(html).toContain("环境 · 主线 · 情绪");
+    expect(html).toContain("质量 · 配置 · 估值");
     expect(html).toContain('aria-label="运行记录"');
     expect(html).toContain('class="icon-button agent-thread-history"');
     expect(html).toContain('class="icon-button agent-mobile-history"');
@@ -179,7 +179,7 @@ describe("AgentPanel empty state", () => {
       />,
     );
 
-    expect(html).not.toContain("还不能做模型研究，可以先配置模型，或只用本地行情和财务核对。");
+    expect(html).not.toContain("模型未配置；快速模式用本地数据。");
   });
 });
 

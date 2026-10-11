@@ -247,7 +247,7 @@ describe("AgentPanel run replay interactions", () => {
     const composer = renderer.root.findByProps({ className: "agent-composer-card" });
     const emptyState = renderer.root.find(node => node.type === "div" && hasClass(node, "agent-empty-state"));
     expect(emptyState.parent?.parent).toBe(composer);
-    expect(nodeText(emptyState)).toContain("只会填入草稿，不会自动发送");
+    expect(nodeText(emptyState)).toContain("示例仅填入，不会发送");
     const example = renderer.root.find(node => node.type === "button" && node.children.includes("帮我筛选今天值得看的趋势股"));
     await act(async () => example.props.onClick());
     expect(renderer.root.findByType("textarea").props.value).toBe("帮我筛选今天值得看的趋势股");
@@ -268,7 +268,7 @@ describe("AgentPanel run replay interactions", () => {
       },
     });
     const renderer = await renderPanel(null);
-    expect(nodeText(renderer.root)).toContain("还不能做模型研究，可以先配置模型，或只用本地行情和财务核对。");
+    expect(nodeText(renderer.root)).toContain("模型未配置；快速模式用本地数据。");
     expect(nodeText(renderer.root)).toContain("配置模型");
     const textarea = renderer.root.findByType("textarea");
 

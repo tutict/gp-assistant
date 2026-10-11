@@ -23,12 +23,14 @@ describe("BackupPanel", () => {
   it("separates backup and restore tasks while keeping detailed recovery rules on demand", async () => {
     await mount();
     const text = JSON.stringify(renderer.toJSON());
-    expect(text).toContain("导出备份");
-    expect(text).toContain("从备份恢复");
-    expect(text).toContain("研究、情绪和客户端状态目前仅可隔离暂存，不能恢复到应用");
+    expect(text).toContain("导出");
+    expect(text).toContain("恢复");
+    expect(text).toContain("研究等数据暂不可恢复；不会覆盖现有数据或恢复删除项。");
+    expect(text).not.toContain("输入备份口令后，可下载加密的 .gpbackup 文件");
+    expect(text).not.toContain("填写至少 12 个 UTF-8 字节的口令后即可导出");
     const details = renderer.root.findByProps({ className: "backup-policy-disclosure" });
     expect(details.props.open).not.toBe(true);
-    expect(details.findByType("summary").props.children).toBe("查看备份范围与恢复规则");
+    expect(details.findByType("summary").props.children).toBe("恢复范围");
   });
 
   it("offers transactional recovery for an explicitly pristine initialized database", async () => {

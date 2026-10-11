@@ -52,9 +52,9 @@ interface AgentConversation {
 }
 
 const AGENT_MODES = [
-  { id: "quick", label: "快速模式", hint: "直接执行选股、观察和新闻查询" },
-  { id: "expert", label: "专家模式", hint: "游资早期框架：环境、主线、情绪周期与失效条件" },
-  { id: "research", label: "研报模式", hint: "价值复利框架：企业质量、资本配置与估值" },
+  { id: "quick", label: "快速模式", hint: "选股 · 观察 · 消息" },
+  { id: "expert", label: "专家模式", hint: "环境 · 主线 · 情绪" },
+  { id: "research", label: "研报模式", hint: "质量 · 配置 · 估值" },
 ] as const;
 
 type AgentMode = typeof AGENT_MODES[number]["id"];
@@ -776,7 +776,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
                 send();
               }
             }}
-            placeholder={composer.mobile ? "输入研究问题…" : `给研究助手发送消息，当前为 ${activeMode.label}`}
+            placeholder="输入研究问题…"
             rows={3}
             disabled={currentRunning || activeConversationDeleting}
           />
@@ -856,7 +856,7 @@ function AgentEmptyState({
     <div className="agent-empty-state">
       <div className="agent-empty-copy">
         <h2>开始对话</h2>
-        <p>选一个问题示例，只会填入草稿，不会自动发送。</p>
+        <p>示例仅填入，不会发送。</p>
       </div>
       <div className="agent-examples">
         {AGENT_EXAMPLES[mode].map((example) => (
@@ -872,7 +872,7 @@ function AgentEmptyState({
       </div>
       {!activeModel && (
         <div className="agent-model-gate">
-          <p role="status">还不能做模型研究，可以先配置模型，或只用本地行情和财务核对。</p>
+          <p role="status">模型未配置；快速模式用本地数据。</p>
           <button type="button" className="action-btn" onClick={onConfigureModel}>配置模型</button>
         </div>
       )}

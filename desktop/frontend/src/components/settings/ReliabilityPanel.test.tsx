@@ -30,6 +30,8 @@ describe('ReliabilityPanel', () => {
     const text = JSON.stringify(renderer.toJSON());
     expect(text).toContain('实验设置');
     expect(text).toContain('诊断导出');
+    expect(text).toContain('仅本机记录运行计数，不含问题、股票代码或密钥；不上传。');
+    expect(text).not.toContain('只保留本次运行的固定操作类别与计数，最多 64 条');
     expect(text.indexOf('实验设置')).toBeLessThan(text.indexOf('诊断导出'));
   });
 
@@ -55,8 +57,8 @@ describe('ReliabilityPanel', () => {
   it('safe start shows the stored preference but clearly reports the effective override', async () => {
     ipc.invoke.mockResolvedValueOnce({...settings,gepa_requested_enabled:true,safe_start:true});
     await mount(); expect(find('启用 GEPA 实验').props['aria-checked']).toBe(true);
-    expect(JSON.stringify(renderer.toJSON())).toContain('安全启动：本次 GEPA 已禁用');
-    expect(JSON.stringify(renderer.toJSON())).toContain('完整性检查始终保留');
+    expect(JSON.stringify(renderer.toJSON())).toContain('安全启动暂关 GEPA；偏好未改。');
+    expect(JSON.stringify(renderer.toJSON())).toContain('完整性检查继续');
   });
   it('rejects extra fields, unknown events, excessive quota and unsafe error strings without exporting', async () => {
     await mount();

@@ -85,8 +85,8 @@ export function ReliabilityPanel({ onGepaPreferenceChange }: { onGepaPreferenceC
   }
   return (
     <section className="settings-item-copy reliability-panel" aria-labelledby={headingId} aria-busy={busy}>
-      <h3 id={headingId}>本地诊断与安全控制</h3>
-      <p>只保留本次运行的固定操作类别与计数，最多 64 条；不记录问题、股票代码、网址、路径、密钥或业务内容。没有自动上传。</p>
+      <h3 id={headingId}>本地诊断</h3>
+      <p>仅本机记录运行计数，不含问题、股票代码或密钥；不上传。</p>
       <section className="reliability-task-group" aria-labelledby={`${headingId}-settings`}>
         <h4 id={`${headingId}-settings`}>实验设置</h4>
         <div className="reliability-switch-row">
@@ -99,16 +99,15 @@ export function ReliabilityPanel({ onGepaPreferenceChange }: { onGepaPreferenceC
             onGepaPreferenceChange?.();
           })}><span aria-hidden="true" /></button>
         </div>
-        <p>{settings?.safe_start ? '安全启动：本次 GEPA 已禁用，保存的偏好不变。' : settings?.gepa_effective_enabled ? 'GEPA 当前已启用。' : 'GEPA 当前未启用。'}完整性检查始终保留。</p>
-        {settings && !settings.gepa_compiled ? <p>此构建未包含 GEPA 实验功能。</p> : null}
+        <p>{settings?.safe_start ? '安全启动暂关 GEPA；偏好未改。完整性检查继续。' : settings?.gepa_effective_enabled ? 'GEPA 已启用。' : 'GEPA 未启用。'}</p>
+        {settings && !settings.gepa_compiled ? <p>此版本不含 GEPA。</p> : null}
         <details className="reliability-safety-disclosure">
-          <summary>安全启动说明</summary>
-          <p>以 --safe-start 启动，或在启动前设置 GP_ASSISTANT_SAFE_START=1。安全启动仅限制 GEPA，不是远程控制。</p>
+          <summary>安全启动</summary>
+          <p>启动参数 --safe-start 或环境变量 GP_ASSISTANT_SAFE_START=1。仅关闭 GEPA，不影响完整性检查。</p>
         </details>
       </section>
       <section className="reliability-task-group" aria-labelledby={`${headingId}-diagnostics`}>
         <h4 id={`${headingId}-diagnostics`}>诊断导出</h4>
-        <p>先预览并检查内容，再确认导出到本机。</p>
         <button type="button" className="clear-btn" aria-label="预览本地诊断" disabled={busy || !settings}
           onClick={() => run(async () => { const next=parsePreview(await invoke('api_diagnostics_preview')); setPreview(next); setSettings(next.settings); })}>预览本地诊断</button>
         {preview ? <>
@@ -118,11 +117,8 @@ export function ReliabilityPanel({ onGepaPreferenceChange }: { onGepaPreferenceC
         <label>
           <input type="checkbox" aria-label="确认诊断导出" checked={confirmed} disabled={!preview || busy}
             onChange={event => setConfirmed(event.currentTarget.checked)} />
-          我已检查预览内容，并确认仅导出到本机。
+          确认导出此预览到本机。
         </label>
-        <p className="reliability-action-hint" role="status">
-          {!preview ? '先预览本地诊断，确认内容后再导出。' : confirmed ? '已确认预览内容，可以导出到本机。' : '预览已就绪，请勾选确认后导出。'}
-        </p>
         <button type="button" className="save-btn" aria-label="导出已预览诊断" disabled={!preview || !confirmed || busy} onClick={download}>导出已预览诊断</button>
       </section>
       {busy ? <p role="status">正在处理本地操作…</p> : null}
