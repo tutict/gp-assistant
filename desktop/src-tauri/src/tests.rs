@@ -827,6 +827,31 @@ fn market_refresh_preserves_cached_adaptive_benchmark_histories() {
 }
 
 #[test]
+fn market_refresh_history_warmup_targets_default_candidates_and_benchmarks() {
+    let stocks = (0..6)
+        .map(|index| {
+            json!({
+                "code": format!("{:06}.SZ", index + 1),
+                "name": format!("样本{index}"),
+                "industry": "测试行业",
+                "price": 10.0 + index as f64,
+                "roe": 0.12,
+                "pe": 10.0,
+                "pb": 1.2,
+                "market_cap_billion": 20.0,
+                "is_st": false
+            })
+        })
+        .collect::<Vec<_>>();
+    let codes = market_refresh_history_codes(&stocks, 4);
+    assert!(codes.len() <= 7);
+    assert!(codes.iter().any(|code| code == "000001.SH"));
+    assert!(codes.iter().any(|code| code == "399001.SZ"));
+    assert!(codes.iter().any(|code| code == "399006.SZ"));
+    assert!(codes.iter().any(|code| code.ends_with(".SZ")));
+}
+
+#[test]
 fn agent_harness_builds_an_expert_prompt_from_history_and_tool_evidence() {
     let preview = agent_harness::prompt_preview(
         &json!({

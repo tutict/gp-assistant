@@ -59,6 +59,7 @@ export interface MarketRefreshOptions {
   max_candidates?: number;
   max_failed_batches?: number;
   max_refresh_loops?: number;
+  prefetch_history_limit?: number;
   validate_after_write?: boolean;
   onLog?: (entry: MarketRefreshLogEntry) => void;
 }
@@ -70,6 +71,7 @@ const MOBILE_NEWS_RAG_TIMEOUT_MS = 45000;
 const MOBILE_MARKET_REFRESH_INVOKE_TIMEOUT_MS = 60000;
 const MOBILE_TENCENT_MAX_CANDIDATES = 15000;
 const MOBILE_TENCENT_BATCHES_PER_STEP = 12;
+const MARKET_REFRESH_HISTORY_PREFETCH_LIMIT = 80;
 const OBSERVE_FULL_HISTORY_LIMIT = 10000;
 const OBSERVE_HISTORY_LIMIT = OBSERVE_FULL_HISTORY_LIMIT;
 const FRONTEND_BASE_URL = typeof window === "undefined" ? "http://localhost/" : window.location.href;
@@ -470,6 +472,12 @@ export async function refreshTauriMarketData(invoke: InvokeFn, options: MarketRe
         ...baseOptions,
         batch_start: batchStart,
         batch_count: batchCount,
+        prefetch_history_limit: clampInt(
+          Number(baseOptions.prefetch_history_limit),
+          0,
+          MARKET_REFRESH_HISTORY_PREFETCH_LIMIT,
+          MARKET_REFRESH_HISTORY_PREFETCH_LIMIT,
+        ),
         financial_snapshot: !financialSnapshotSent ? financialSnapshotPayload(financialSnapshot) : null,
         scan_candidates: true,
         use_previous_close: shouldUsePreviousCloseForMobileRefresh(),

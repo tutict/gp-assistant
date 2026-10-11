@@ -38,6 +38,7 @@ const CACHE_POLICY = {
   max_bytes: 209715200,
   daily_days: 500,
   minute_days: 3,
+  prefetch_history_limit: 80,
 };
 
 function marketFreshnessTone(status: DataStatus | null): "fresh" | "warning" | "neutral" {

@@ -50,6 +50,14 @@ pub(crate) const TENCENT_REQUEST_TIMEOUT_SECS: u64 = 6;
 
 pub(crate) const TENCENT_BATCH_TIMEOUT_SECS: u64 = 8;
 
+/// The market refresh owns the first bounded history warm-up used by the
+/// local-only research actions. Keeping this small makes a full quote refresh
+/// useful without turning it into an unbounded history crawl.
+pub(crate) const MARKET_REFRESH_HISTORY_PREFETCH_LIMIT: usize = 80;
+pub(crate) const MARKET_REFRESH_HISTORY_PREFETCH_CONCURRENCY: usize = 12;
+pub(crate) const MARKET_REFRESH_HISTORY_LOOKBACK_DAYS: u128 = 500;
+pub(crate) const MARKET_REFRESH_HISTORY_MIN_BARS: usize = 60;
+
 pub(crate) const TENCENT_NETWORK_PROBE_TIMEOUT_SECS: u64 = 4;
 
 pub(crate) const OBSERVE_FUNDAMENTAL_PREFERRED_TIMEOUT_SECS: u64 = 3;
@@ -921,6 +929,12 @@ pub(crate) async fn core_mobile_market_data_refresh_tencent_inner(
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok())
         .filter(|value| *value > 0);
+    let history_prefetch_limit = payload
+        .get("prefetch_history_limit")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0)
+        .min(MARKET_REFRESH_HISTORY_PREFETCH_LIMIT);
     emit_market_refresh_log(
         &app,
         "command_received",
@@ -931,6 +945,7 @@ pub(crate) async fn core_mobile_market_data_refresh_tencent_inner(
             "max_candidates": max_candidates,
             "batch_start": batch_start,
             "batch_count": batch_count,
+            "prefetch_history_limit": history_prefetch_limit,
         }),
     );
     let refresh = refresh_tencent_market_data(
@@ -943,6 +958,7 @@ pub(crate) async fn core_mobile_market_data_refresh_tencent_inner(
         batch_start,
         batch_count,
         financial_snapshot,
+        history_prefetch_limit,
         Some(&payload),
     )
     .await?;
@@ -958,6 +974,8 @@ pub(crate) async fn core_mobile_market_data_refresh_tencent_inner(
             "next_batch_start": refresh.next_batch_start,
             "total_batches": refresh.total_batches,
             "done": refresh.done,
+            "history_prefetched": refresh.history_prefetched,
+            "history_failed": refresh.history_failed,
         }),
     );
     let cache = write_mobile_market_data_record(&app, refresh.dataset, false)?;
@@ -980,6 +998,12 @@ pub(crate) async fn core_mobile_market_data_refresh_tencent_inner(
             refresh.error_samples.join(" | ")
         ));
     }
+    if refresh.history_prefetched > 0 || refresh.history_failed > 0 {
+        notes.push(format!(
+            "Research history warm-up finished: {} symbols ready, {} failed",
+            refresh.history_prefetched, refresh.history_failed
+        ));
+    }
     Ok(json!({
         "refreshed": true,
         "source": "tencent",
@@ -998,6 +1022,8 @@ pub(crate) async fn core_mobile_market_data_refresh_tencent_inner(
         "done": refresh.done,
         "processed_codes": refresh.processed_codes,
         "total_candidates": refresh.total_candidates,
+        "history_prefetched": refresh.history_prefetched,
+        "history_failed": refresh.history_failed,
         "status": cache,
         "notes": notes
     }))
@@ -1125,6 +1151,8 @@ pub(crate) fn core_mobile_market_data_ingest_tencent_quotes(
             "next_batch_start": refresh.next_batch_start,
             "total_batches": refresh.total_batches,
             "done": refresh.done,
+            "history_prefetched": refresh.history_prefetched,
+            "history_failed": refresh.history_failed,
         }),
     );
     let cache = write_mobile_market_data_record(&app, refresh.dataset, false)?;
@@ -1146,6 +1174,8 @@ pub(crate) fn core_mobile_market_data_ingest_tencent_quotes(
         "done": refresh.done,
         "processed_codes": refresh.processed_codes,
         "total_candidates": refresh.total_candidates,
+        "history_prefetched": refresh.history_prefetched,
+        "history_failed": refresh.history_failed,
         "status": cache,
         "notes": [format!(
             "Tencent WebView quote ingest finished: fetched {} of {} candidates, preserved {} local rows",
@@ -1326,6 +1356,8 @@ pub(crate) struct TencentRefreshResult {
     pub(crate) done: bool,
     pub(crate) processed_codes: usize,
     pub(crate) total_candidates: usize,
+    pub(crate) history_prefetched: usize,
+    pub(crate) history_failed: usize,
 }
 
 pub(crate) struct TencentQuotePayload {
@@ -1362,6 +1394,7 @@ pub(crate) async fn refresh_tencent_market_data(
     batch_start: usize,
     batch_count: Option<usize>,
     financial_snapshot: Value,
+    history_prefetch_limit: usize,
     network_payload: Option<&Value>,
 ) -> Result<TencentRefreshResult, String> {
     let (seed_stocks, seed_codes) = seed_stock_maps(&seed);
@@ -1571,6 +1604,17 @@ pub(crate) async fn refresh_tencent_market_data(
         })
         .collect();
 
+    let (history_patch, history_prefetched, history_failed) =
+        if history_prefetch_limit > 0 && (batch_end >= total_batches || stopped_early) {
+            prefetch_market_refresh_histories(&seed, &stocks, history_prefetch_limit).await
+        } else {
+            (serde_json::Map::new(), 0, 0)
+        };
+    let mut histories = filter_seed_histories(&seed, &valid_codes);
+    if let Some(items) = histories.as_object_mut() {
+        items.extend(history_patch);
+    }
+
     let dataset = json!({
         "source": "tencent",
         "generated_at": epoch_millis().to_string(),
@@ -1586,7 +1630,7 @@ pub(crate) async fn refresh_tencent_market_data(
         ],
         "stocks": stocks,
         "relations": filter_seed_relations(&seed, &valid_codes),
-        "histories": filter_seed_histories(&seed, &valid_codes),
+        "histories": histories,
         "financials": filtered_financial_snapshot_map(&seed, &financial_snapshot, &valid_codes)
     });
 
@@ -1607,6 +1651,8 @@ pub(crate) async fn refresh_tencent_market_data(
         done,
         processed_codes: requested_codes.len(),
         total_candidates: candidate_codes.len(),
+        history_prefetched,
+        history_failed,
         dataset,
     })
 }
@@ -1797,6 +1843,8 @@ pub(crate) fn ingest_tencent_market_data(
         done: batch_end >= total_batches,
         processed_codes: requested_codes.len(),
         total_candidates: candidate_codes.len(),
+        history_prefetched: 0,
+        history_failed: 0,
         dataset,
     })
 }
@@ -2779,6 +2827,90 @@ pub(crate) fn filter_seed_histories(seed: &Value, valid_codes: &HashSet<String>)
         }
     }
     Value::Object(histories)
+}
+
+pub(crate) fn market_refresh_history_start_date() -> String {
+    local_yyyymmdd_from_epoch_ms(
+        epoch_millis().saturating_sub(
+            MARKET_REFRESH_HISTORY_LOOKBACK_DAYS.saturating_mul(24 * 60 * 60 * 1_000),
+        ),
+    )
+    .unwrap_or_else(|| "20200101".to_string())
+}
+
+pub(crate) fn market_refresh_history_codes(stocks: &[Value], limit: usize) -> Vec<String> {
+    if limit == 0 {
+        return adaptive_benchmark_codes()
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+    }
+    let typed = serde_json::from_value::<Vec<gp_core::StockItem>>(Value::Array(stocks.to_vec()))
+        .unwrap_or_default();
+    let mut codes =
+        gp_core::adaptive_candidate_codes(&typed, &gp_core::ScreenCriteria::default(), limit);
+    if codes.len() < limit {
+        let mut fallback = typed
+            .into_iter()
+            .filter(|stock| stock.price.is_finite() && stock.price > 0.0)
+            .map(|stock| stock.code)
+            .collect::<Vec<_>>();
+        fallback.sort();
+        codes.extend(fallback);
+    }
+    dedupe_stock_codes(&mut codes);
+    codes.truncate(limit);
+    codes.extend(adaptive_benchmark_codes().into_iter().map(str::to_string));
+    dedupe_stock_codes(&mut codes);
+    codes
+}
+
+pub(crate) async fn prefetch_market_refresh_histories(
+    seed: &Value,
+    stocks: &[Value],
+    limit: usize,
+) -> (serde_json::Map<String, Value>, usize, usize) {
+    let start_date = market_refresh_history_start_date();
+    let end_date = "20501231";
+    let fetch_codes = market_refresh_history_codes(stocks, limit)
+        .into_iter()
+        .filter(|code| {
+            !history_cache_has_bars(
+                seed,
+                code,
+                &start_date,
+                end_date,
+                MARKET_REFRESH_HISTORY_MIN_BARS,
+            )
+        })
+        .collect::<Vec<_>>();
+    if fetch_codes.is_empty() {
+        return (serde_json::Map::new(), 0, 0);
+    }
+
+    let results = stream::iter(fetch_codes)
+        .map(|code| {
+            let start_date = start_date.clone();
+            async move {
+                let result = fetch_observe_daily_history(&code, &start_date, end_date).await;
+                (code, result)
+            }
+        })
+        .buffer_unordered(MARKET_REFRESH_HISTORY_PREFETCH_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+    let mut patch = serde_json::Map::new();
+    let mut failed = 0usize;
+    for (code, result) in results {
+        match result {
+            Ok(rows) if rows.len() >= MARKET_REFRESH_HISTORY_MIN_BARS => {
+                patch.insert(code, Value::Array(rows));
+            }
+            _ => failed += 1,
+        }
+    }
+    let fetched = patch.len();
+    (patch, fetched, failed)
 }
 
 pub(crate) fn typed_history_cache_has_bars(

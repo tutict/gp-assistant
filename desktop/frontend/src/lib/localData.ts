@@ -31,10 +31,10 @@ export function formatLocalDataError(error: unknown): string {
       const details = (Array.isArray(parsed.missing) ? parsed.missing : []).slice(0, 5).map((item: Record<string, unknown>) =>
         [item.code, item.kind, item.required_bars != null ? "日线 " + (item.available_bars ?? 0) + "/" + item.required_bars : item.reason, item.start_date && item.end_date ? item.start_date + "–" + item.end_date : ""].filter(Boolean).join(" · ")
       ).join("；");
-      return "本地数据不足（" + (parsed.missing_count ?? 0) + " 项）：" + details + "。请显式联网刷新数据后重试；不会自动联网或切换算法。";
+      return "本地数据不足（" + (parsed.missing_count ?? 0) + " 项）：" + details + "。请先点击顶部「刷新」补齐行情，再重试。";
     }
     if (parsed.code === "REFRESH_REQUIRED") return "冷启动发布验证必须显式使用联网刷新模式（data_policy=refresh）。";
-    if (parsed.code === "INVALID_DATA_POLICY") return "数据模式无效：仅支持本地缓存或显式联网刷新。";
+    if (parsed.code === "INVALID_DATA_POLICY") return "数据模式无效：请先点击顶部「刷新」准备行情。";
   } catch { /* Preserve non-JSON errors. */ }
   return text;
 }
