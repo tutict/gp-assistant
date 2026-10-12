@@ -209,6 +209,46 @@ function Run-CargoCheck {
     }
 }
 
+function Ensure-TauriCli {
+    param([string]$NpmPath)
+
+    $tauriCommand = Join-Path $DesktopRoot 'node_modules\.bin\tauri.cmd'
+    if (Test-Path -LiteralPath $tauriCommand) {
+        Write-Info 'Local Tauri CLI is installed.'
+        return
+    }
+
+    $lockFile = Join-Path $DesktopRoot 'package-lock.json'
+    if (-not (Test-Path -LiteralPath $lockFile)) {
+        throw "Local Tauri CLI is missing and no package-lock.json was found at $lockFile."
+    }
+
+    Write-Warn 'Local Tauri CLI is missing; installing locked desktop dependencies (including devDependencies).'
+    $exitCode = Invoke-LoggedCommand -FilePath $NpmPath -Arguments @('ci', '--include=dev')
+    if ($exitCode -ne 0) {
+        throw "npm ci --include=dev failed with exit code $exitCode."
+    }
+    if (-not (Test-Path -LiteralPath $tauriCommand)) {
+        throw 'npm ci completed, but desktop/node_modules/.bin/tauri.cmd is still missing. Check the npm install output above.'
+    }
+    Write-Info 'Local Tauri CLI is ready.'
+}
+
+function Assert-DesktopBinaryNotRunning {
+    $binaryPath = [System.IO.Path]::GetFullPath((Join-Path $DesktopRoot 'src-tauri\target\debug\stock-optimizer-desktop.exe'))
+    $runningProcesses = @(Get-Process -Name 'stock-optimizer-desktop' -ErrorAction SilentlyContinue)
+    $matchingProcesses = @($runningProcesses | Where-Object {
+        $_.Path -and [System.StringComparer]::OrdinalIgnoreCase.Equals(
+            [System.IO.Path]::GetFullPath($_.Path),
+            $binaryPath
+        )
+    })
+    if ($matchingProcesses.Count -gt 0) {
+        $processIds = ($matchingProcesses | ForEach-Object { $_.Id }) -join ', '
+        throw "Desktop app is already running from this workspace (PID $processIds). Close that window before starting Tauri dev so Cargo can replace the executable."
+    }
+}
+
 try {
     Set-Location -LiteralPath $DesktopRoot
     Initialize-SessionLogging
@@ -223,6 +263,8 @@ try {
     Write-Info "npm version: $(Invoke-TextCommand -FilePath $npm -Arguments @('--version'))"
     Write-Info "cargo version: $(Invoke-TextCommand -FilePath $cargo -Arguments @('--version'))"
     Write-Info "rustc version: $(Invoke-TextCommand -FilePath $rustc -Arguments @('--version'))"
+
+    Ensure-TauriCli -NpmPath $npm
 
     if ($PreflightOnly -or $RunPreflight) {
         if (-not $SkipPrepare) {
@@ -242,6 +284,8 @@ try {
         Write-LogLine ''
         Write-Step 'Preflight completed; tauri dev was not started.'
     } else {
+        Assert-DesktopBinaryNotRunning
+
         $devArgs = @('run', 'dev', '--')
         if ($VerboseTauri) {
             $devArgs += '--verbose'
