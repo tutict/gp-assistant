@@ -13,7 +13,7 @@ vi.mock("../../lib/tauri", () => ({
   getTauriListen: getTauriListenMock,
 }));
 
-import { ScreenPanel, resetScreenRefreshForTests } from "./ScreenPanel";
+import { ScreenPanel, resetScreenRefreshForTests, screenRefreshTradingDay } from "./ScreenPanel";
 import { CriteriaFields } from "../CriteriaFields";
 
 const criteria: FilterCriteria = {
@@ -94,6 +94,10 @@ async function renderPanel(
 describe("ScreenPanel adaptive states", () => {
   beforeEach(() => {
     resetScreenRefreshForTests();
+  });
+  it("uses the latest trading date for the once-per-day refresh key", () => {
+    expect(screenRefreshTradingDay(null, new Date(2026, 9, 11, 18, 0))).toBe("20261009");
+    expect(screenRefreshTradingDay({ current_trade_date: "20261008" }, new Date(2026, 9, 11, 18, 0))).toBe("20261008");
   });
   it("tells the user to refresh before screening when market data is unavailable", async () => {
     const renderer = await renderPanel();

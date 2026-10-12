@@ -22,7 +22,7 @@ import {
   normalizeScreenRows,
   normalizeSectorGroups,
 } from "../../lib/contracts";
-import { currentSystemDateCompact, currentSystemDateInputValue, defaultTrendStartDateInputValue } from "../../lib/format";
+import { currentSystemDateInputValue, defaultTrendStartDateInputValue, expectedMarketQuoteDateCompact } from "../../lib/format";
 import { StockList, displayStockScore } from "../StockList";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { Sheet } from "../ui/Sheet";
@@ -85,8 +85,18 @@ const SCREEN_RUN_REFRESH_OPTIONS = {
 let screenRefreshDay = "";
 let screenRefreshPromise: Promise<unknown> | null = null;
 
-function refreshScreenMarketDataOncePerDay(): Promise<unknown> {
-  const day = currentSystemDateCompact();
+export function screenRefreshTradingDay(status?: DataStatus | null, now = new Date()): string {
+  const fromStatus = String(status?.current_trade_date ?? "").replace(/\D/g, "").slice(0, 8);
+  if (/^\d{8}$/.test(fromStatus)) return fromStatus;
+  const expected = expectedMarketQuoteDateCompact(now);
+  const date = new Date(`${expected.slice(0, 4)}-${expected.slice(4, 6)}-${expected.slice(6, 8)}T12:00:00`);
+  if (date.getDay() === 6) date.setDate(date.getDate() - 1);
+  else if (date.getDay() === 0) date.setDate(date.getDate() - 2);
+  return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("");
+}
+
+function refreshScreenMarketDataOncePerDay(status?: DataStatus | null): Promise<unknown> {
+  const day = screenRefreshTradingDay(status);
   if (screenRefreshDay === day && screenRefreshPromise) return screenRefreshPromise;
   screenRefreshDay = day;
   screenRefreshPromise = postJson("/api/data-sources/refresh-universe", SCREEN_RUN_REFRESH_OPTIONS).catch((error) => {
@@ -258,7 +268,7 @@ export function ScreenPanel({
           && shouldPrepareResearchDataForRetry(firstError);
         if (!canRetryWithPreparedData) throw firstError;
         if (requestMode === "screen") {
-          await refreshScreenMarketDataOncePerDay();
+          await refreshScreenMarketDataOncePerDay(marketStatus);
         }
         data = await postJson(endpoint, { ...(payload as Record<string, unknown>), data_policy: "refresh" });
       }
@@ -286,7 +296,7 @@ export function ScreenPanel({
         activeRunIdRef.current = null;
       }
     }
-  }, [criteria, mode, trendEnd, trendStart, updateRun]);
+  }, [criteria, marketStatus, mode, trendEnd, trendStart, updateRun]);
 
   const applyDraftAndRun = () => {
     if (mode === "customScreen") {
