@@ -94,42 +94,6 @@
     50% { color: var(--accent); opacity: 0.35; }
   }
 
-  .research-refresh-progress {
-    height: 2px;
-    margin: -8px 0 8px;
-    overflow: hidden;
-    background: var(--accent);
-  }
-
-  .research-refresh-progress::after {
-    display: block;
-    width: 38%;
-    height: 100%;
-    content: "";
-    background: var(--accent-strong);
-    animation: research-progress 1.1s ease-in-out infinite;
-  }
-
-  @keyframes research-progress {
-    from { transform: translateX(-100%); }
-    to { transform: translateX(360%); }
-  }
-
-  .research-skeleton-list { display: grid; gap: 0; }
-  .research-skeleton-row {
-    display: grid;
-    grid-template-columns: 20px minmax(0, 1fr);
-    gap: var(--space-2);
-    min-height: 78px;
-    padding: var(--space-3) var(--space-4);
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .research-skeleton-row > span:last-child { display: grid; gap: var(--space-1); }
-  .research-skeleton-row .skeleton { display: block; height: 12px; border-radius: var(--radius-xs); }
-  .research-skeleton-row .skeleton:first-child { width: 34%; }
-  .research-skeleton-row .skeleton:nth-child(2) { width: 76%; }
-  .research-skeleton-row .skeleton:nth-child(3) { width: 56%; }
-
   .research-evidence-notice {
     grid-column: 1 / -1;
     color: var(--accent);

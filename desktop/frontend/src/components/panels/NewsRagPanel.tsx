@@ -485,7 +485,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       <div className="research-actions">
         <span>{lastUpdated ? `上次更新 ${lastUpdated} · 每 15 分钟自动更新` : "每 15 分钟自动更新"}</span>
         <button type="button" onClick={() => void refresh()} disabled={refreshing}>
-          <RefreshCw size={15} className={refreshing ? "is-spinning" : ""} />
+          <RefreshCw size={15} />
           <span>{refreshing ? "更新中" : "立即更新"}</span>
         </button>
         <button type="button" onClick={openKnowledge}
@@ -546,7 +546,6 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         </details>
 
         <section className="research-event-section">
-          {refreshing && <div className="research-refresh-progress" aria-label="消息更新中" />}
           <div className="research-section-heading"><div><span>事件流</span>
             <small>按来源等级与时间整理</small></div><div className="research-heading-actions">
               {readNotice && <small className={readNoticePulse ? "is-flashing" : ""}>{readNotice}</small>}
@@ -555,7 +554,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
               <span>{visibleMessages.length} 条</span>
             </div>
           </div>
-          {loading && overview ? <ResearchSkeletonList /> : !visibleMessages.length ? <ResearchEmptyState
+          {!visibleMessages.length ? <ResearchEmptyState
             refreshing={refreshing}
             onRefresh={() => void refresh()}
             onKnowledge={openKnowledge}
@@ -713,7 +712,7 @@ function ResearchEmptyState(props: {
       ) : (
         <button type="button" className="research-empty-primary"
           disabled={props.refreshing} onClick={props.onRefresh}>
-          <RefreshCw size={15} className={props.refreshing ? "is-spinning" : ""} />
+          <RefreshCw size={15} />
           <span>{props.refreshing ? "更新中" : "立即更新"}</span>
         </button>
       )}
@@ -1139,15 +1138,6 @@ function sourceTierLabel(value?: string): string {
   };
   const key = value ? String(value) : "news";
   return labels[key] || "新闻";
-}
-
-function ResearchSkeletonList() {
-  return <div className="research-skeleton-list" aria-label="正在切换研究消息">
-    {[0, 1, 2].map((index) => <div className="research-skeleton-row" key={index}>
-      <span className="research-dot neutral skeleton" />
-      <span><span className="skeleton" /><span className="skeleton" /><span className="skeleton" /></span>
-    </div>)}
-  </div>;
 }
 
 function scopeTypeLabel(value?: string): string {
