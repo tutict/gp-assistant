@@ -33,6 +33,10 @@ pub(crate) const OBSERVE_LHB_SEAT_REQUEST_TIMEOUT_SECS: u64 = 3;
 
 pub(crate) const OBSERVE_GUBA_MAX_POSTS: usize = 10;
 
+pub(crate) const OBSERVE_MARKET_ACTIVE_BROKERAGE_LIMIT: usize = 20;
+
+pub(crate) const OBSERVE_MARKET_ACTIVE_BROKERAGE_PAGE_SIZE: usize = 500;
+
 pub(crate) const MIN_OBSERVE_HISTORY_BARS: usize = 3;
 
 pub(crate) const MIN_FULL_OBSERVE_HISTORY_BARS: usize = 750;
@@ -70,6 +74,7 @@ pub(crate) async fn api_observe_inner(
             let metadata = observe_local_metadata(&core_payload, policy)?;
             let mut result = run_observe_calculation(&core_payload).await?;
             enrich_observe_stock_quote_fields(&mut result, &core_payload);
+            attach_observe_market_intelligence(&mut result, &core_payload);
             for note in notes {
                 append_observe_note(&mut result, note);
             }
@@ -98,6 +103,7 @@ async fn observe_from_local_cache(app: &tauri::AppHandle, payload: Value) -> Res
     let metadata = observe_local_metadata(&core_payload, DataPolicy::CacheOnly)?;
     let mut result = run_observe_calculation(&core_payload).await?;
     enrich_observe_stock_quote_fields(&mut result, &core_payload);
+    attach_observe_market_intelligence(&mut result, &core_payload);
     append_observe_note(
         &mut result,
         "仅使用本地已有数据；未刷新报价、财务、资金或历史行情。".to_string(),
@@ -231,6 +237,32 @@ pub(crate) fn enrich_observe_stock_quote_fields(result: &mut Value, core_payload
     }
 }
 
+pub(crate) fn attach_observe_market_intelligence(result: &mut Value, core_payload: &Value) {
+    let Some(code) = result
+        .get("stock")
+        .and_then(|stock| stock.get("code"))
+        .and_then(Value::as_str)
+        .and_then(crate::market::normalize_stock_code)
+    else {
+        return;
+    };
+    let Some(evidence) = core_payload
+        .get("data")
+        .and_then(|data| data.get("capital_evidence"))
+        .and_then(|items| items.get(&code))
+    else {
+        return;
+    };
+    let Some(result) = result.as_object_mut() else {
+        return;
+    };
+    for field in ["market_active_brokerages", "institutional_holdings"] {
+        if let Some(value) = evidence.get(field) {
+            result.insert(field.to_string(), value.clone());
+        }
+    }
+}
+
 pub(crate) fn observe_needs_exact_share_refresh(data: &Value, code: &str) -> bool {
     crate::market::stock_object(data, code).is_none_or(|stock| {
         ["total_shares", "circulating_shares"]
@@ -239,12 +271,22 @@ pub(crate) fn observe_needs_exact_share_refresh(data: &Value, code: &str) -> boo
     })
 }
 
-pub(crate) fn observe_needs_fundamental_supplement(data: &Value, code: &str) -> bool {
+pub(crate) fn observe_needs_fundamental_supplement_at(
+    data: &Value,
+    code: &str,
+    as_of_date: &str,
+) -> bool {
     let entry = data
         .get("financials")
         .and_then(Value::as_object)
         .and_then(|financials| financials.get(code))
         .and_then(Value::as_object);
+    let stale_report = entry
+        .and_then(|item| crate::market::object_string(item, "period"))
+        .is_some_and(|period| financial_report_period_is_stale(&period, as_of_date));
+    if stale_report {
+        return true;
+    }
     let missing = [
         "goodwill_to_net_assets",
         "pledged_share_ratio",
@@ -266,6 +308,106 @@ pub(crate) fn observe_needs_fundamental_supplement(data: &Value, code: &str) -> 
         crate::market::epoch_millis().saturating_sub(updated_at)
             > OBSERVE_FUNDAMENTAL_REFRESH_INTERVAL_MS
     })
+}
+
+pub(crate) fn financial_report_period_is_stale(period: &str, as_of_date: &str) -> bool {
+    let Some(actual) = financial_period_rank(period) else {
+        return false;
+    };
+    let Some(date) = crate::market::compact_date_key(as_of_date) else {
+        return false;
+    };
+    let year = date.get(..4).and_then(|value| value.parse::<i32>().ok());
+    let month = date.get(4..6).and_then(|value| value.parse::<u32>().ok());
+    let (Some(year), Some(month)) = (year, month) else {
+        return false;
+    };
+    let (expected_year, expected_quarter) = if month >= 11 {
+        (year, 3)
+    } else if month >= 9 {
+        (year, 2)
+    } else if month >= 5 {
+        (year, 1)
+    } else {
+        (year - 1, 3)
+    };
+    actual < expected_year * 4 + expected_quarter
+}
+
+fn financial_period_rank(period: &str) -> Option<i32> {
+    let normalized = crate::market::financial_period_from_text(period)?;
+    let (year, quarter) = normalized.split_once('Q')?;
+    Some(year.parse::<i32>().ok()? * 4 + quarter.parse::<i32>().ok()?)
+}
+
+pub(crate) fn parse_latest_observe_financial_snapshot(
+    value: &Value,
+    code: &str,
+) -> Result<serde_json::Map<String, Value>, String> {
+    let normalized_code = crate::market::normalize_stock_code(code)
+        .ok_or_else(|| format!("无效财报股票代码：{code}"))?;
+    let digits = normalized_code.get(..6).unwrap_or(&normalized_code);
+    let row = crate::market::eastmoney_result_rows(value)
+        .iter()
+        .filter_map(Value::as_object)
+        .filter(|row| {
+            crate::market::object_string_any(row, &["SECUCODE"])
+                .and_then(|value| crate::market::normalize_stock_code(&value))
+                .as_deref()
+                .is_some_and(|row_code| row_code == normalized_code)
+                || crate::market::object_string_any(row, &["SECURITY_CODE"])
+                    .is_some_and(|row_code| row_code == digits)
+        })
+        .max_by_key(|row| {
+            crate::market::object_string_any(row, &["REPORT_DATE"]).unwrap_or_default()
+        })
+        .ok_or_else(|| "东方财富财报接口未返回报告期数据".to_string())?;
+    let period =
+        crate::market::eastmoney_metric_period(Some(row), &["REPORT_DATE_NAME", "REPORT_DATE"])
+            .ok_or_else(|| "东方财富财报记录缺少报告期".to_string())?;
+    let mut fields = serde_json::Map::new();
+    fields.insert("period".to_string(), json!(period));
+    fields.insert("source".to_string(), json!("东方财富最新定期报告"));
+    let mut put_number = |target: &str, source: &str, scale: f64| {
+        if let Some(number) = crate::market::object_number_any_loose(row, &[source]) {
+            fields.insert(target.to_string(), json!(number * scale));
+        }
+    };
+    for (target, source, scale) in [
+        ("latest_eps", "EPSJB", 1.0),
+        ("latest_bps", "BPS", 1.0),
+        ("operating_revenue_billion", "TOTALOPERATEREVE", 1e-8),
+        ("operating_revenue_yoy", "TOTALOPERATEREVETZ", 1.0),
+        ("parent_net_profit_billion", "PARENTNETPROFIT", 1e-8),
+        ("parent_net_profit_yoy", "PARENTNETPROFITTZ", 1.0),
+        ("deducted_net_profit_billion", "KCFJCXSYJLR", 1e-8),
+        ("deducted_net_profit_growth_rate", "KCFJCXSYJLRTZ", 1.0),
+        ("gross_margin", "XSMLL", 1.0),
+        ("net_margin", "XSJLL", 1.0),
+        ("roe", "ROEJQ", 1.0),
+        ("asset_liability_ratio", "ZCFZL", 1.0),
+    ] {
+        put_number(target, source, scale);
+    }
+    if let (Some(deducted), Some(revenue)) = (
+        fields
+            .get("deducted_net_profit_billion")
+            .and_then(Value::as_f64),
+        fields
+            .get("operating_revenue_billion")
+            .and_then(Value::as_f64),
+    ) {
+        if revenue.abs() > f64::EPSILON {
+            fields.insert(
+                "deducted_net_profit_margin".to_string(),
+                json!(deducted / revenue * 100.0),
+            );
+        }
+    }
+    if let Some(notice_date) = crate::market::object_string_any(row, &["NOTICE_DATE"]) {
+        fields.insert("report_notice_date".to_string(), json!(notice_date));
+    }
+    Ok(fields)
 }
 
 pub(crate) async fn fetch_observe_quote_snapshot(
@@ -388,7 +530,10 @@ pub(crate) async fn fetch_observe_fundamental_supplement(
     let dividend_url = format!(
         "{EASTMONEY_DATACENTER_ENDPOINT}?reportName=RPT_SHAREBONUS_DET&columns=SECUCODE,SECURITY_CODE,REPORT_DATE,PRETAX_BONUS_RMB,BASIC_EPS,DIVIDENT_RATIO,EX_DIVIDEND_DATE&sortColumns=REPORT_DATE&sortTypes=-1&filter=(SECURITY_CODE%3D%22{digits}%22)&pageNumber=1&pageSize=5&source=WEB&client=WEB"
     );
-    let (balance, pledge, dividend) = futures::join!(
+    let financial_url = format!(
+        "{EASTMONEY_SECURITIES_ENDPOINT}?reportName=RPT_F10_FINANCE_MAINFINADATA&columns=SECUCODE,REPORT_DATE,REPORT_TYPE,REPORT_DATE_NAME,NOTICE_DATE,EPSJB,EPSKCJB,EPSXS,BPS,TOTALOPERATEREVE,TOTALOPERATEREVETZ,PARENTNETPROFIT,PARENTNETPROFITTZ,KCFJCXSYJLR,KCFJCXSYJLRTZ,XSMLL,XSJLL,ROEJQ,ZCFZL&filter=(SECUCODE%3D%22{code}%22)&pageNumber=1&pageSize=20&sortTypes=-1&sortColumns=REPORT_DATE&source=HSF10&client=PC"
+    );
+    let (balance, pledge, dividend, financial_snapshot) = futures::join!(
         crate::market::fetch_eastmoney_public_json_with_direct_retry(
             &client,
             &direct_client,
@@ -410,10 +555,33 @@ pub(crate) async fn fetch_observe_fundamental_supplement(
             "Eastmoney dividend history",
             true,
         ),
+        crate::market::fetch_eastmoney_public_json_with_direct_retry(
+            &client,
+            &direct_client,
+            &financial_url,
+            "Eastmoney latest financial report",
+            false,
+        ),
     );
 
     let mut fields = serde_json::Map::new();
     let mut notes = Vec::new();
+    match financial_snapshot {
+        Ok(value) => match parse_latest_observe_financial_snapshot(&value, code) {
+            Ok(snapshot_fields) => {
+                notes.push(format!(
+                    "最新基本面已从东方财富定期报告更新至 {}。",
+                    snapshot_fields
+                        .get("period")
+                        .and_then(Value::as_str)
+                        .unwrap_or("最新报告期")
+                ));
+                fields.extend(snapshot_fields);
+            }
+            Err(error) => notes.push(error),
+        },
+        Err(error) => notes.push(error),
+    }
     match balance {
         Ok(value) => {
             if let Some(ratio) = parse_goodwill_to_net_assets(&value) {
@@ -520,24 +688,61 @@ pub(crate) fn merge_observe_fundamental_supplement(
     code: &str,
     fields: serde_json::Map<String, Value>,
 ) -> bool {
-    let entry = crate::market::financial_entry_mut(data, code);
     let mut changed = false;
-    for (field, value) in fields {
-        let valid_number = crate::market::json_f64(Some(&value)).is_some();
-        let valid_period = field.ends_with("_period")
-            && value.as_str().is_some_and(|value| !value.trim().is_empty());
-        if (valid_number || valid_period) && entry.get(&field) != Some(&value) {
-            entry.insert(field, value);
-            changed = true;
+    {
+        let entry = crate::market::financial_entry_mut(data, code);
+        for (field, value) in &fields {
+            let valid_number = crate::market::json_f64(Some(&value)).is_some();
+            let valid_period = (field == "period" || field.ends_with("_period"))
+                && value.as_str().is_some_and(|value| !value.trim().is_empty());
+            let valid_text = matches!(field.as_str(), "source" | "report_notice_date")
+                && value.as_str().is_some_and(|value| !value.trim().is_empty());
+            if (valid_number || valid_period || valid_text) && entry.get(field) != Some(value) {
+                entry.insert(field.clone(), value.clone());
+                changed = true;
+            }
+        }
+        if !entry.is_empty() {
+            let updated_at = json!(crate::market::epoch_millis().to_string());
+            if entry.get("supplement_updated_at_epoch_ms") != Some(&updated_at) {
+                entry.insert("supplement_updated_at_epoch_ms".to_string(), updated_at);
+                changed = true;
+            }
+            crate::market::append_financial_source(entry, "东方财富财报/质押/分红公开数据");
         }
     }
-    if !entry.is_empty() {
-        let updated_at = json!(crate::market::epoch_millis().to_string());
-        if entry.get("supplement_updated_at_epoch_ms") != Some(&updated_at) {
-            entry.insert("supplement_updated_at_epoch_ms".to_string(), updated_at);
-            changed = true;
+
+    if let Some(stock) = data
+        .get_mut("stocks")
+        .and_then(Value::as_array_mut)
+        .and_then(|stocks| {
+            stocks.iter_mut().find(|stock| {
+                stock
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .and_then(crate::market::normalize_stock_code)
+                    .as_deref()
+                    == Some(code)
+            })
+        })
+        .and_then(Value::as_object_mut)
+    {
+        for field in [
+            "latest_eps",
+            "latest_bps",
+            "deducted_net_profit_billion",
+            "deducted_net_profit_margin",
+            "deducted_net_profit_growth_rate",
+            "period",
+        ] {
+            let Some(value) = fields.get(field) else {
+                continue;
+            };
+            if stock.get(field) != Some(value) {
+                stock.insert(field.to_string(), value.clone());
+                changed = true;
+            }
         }
-        crate::market::append_financial_source(entry, "东方财富财报/质押/分红公开数据");
     }
     changed
 }
@@ -547,6 +752,48 @@ pub(crate) fn merge_observe_financial_snapshot(
     code: &str,
     snapshot: &Value,
 ) -> bool {
+    let current_period = data
+        .get("financials")
+        .and_then(Value::as_object)
+        .and_then(|financials| financials.get(code))
+        .and_then(|entry| entry.get("period"))
+        .and_then(Value::as_str);
+    let incoming_period = snapshot
+        .get("financials")
+        .and_then(Value::as_object)
+        .and_then(|financials| financials.get(code))
+        .and_then(|entry| entry.get("period"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            snapshot
+                .get("stocks")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find(|stock| {
+                    stock
+                        .get("code")
+                        .and_then(Value::as_str)
+                        .and_then(crate::market::normalize_stock_code)
+                        .as_deref()
+                        == Some(code)
+                })
+                .and_then(|stock| stock.get("period"))
+                .and_then(Value::as_str)
+        });
+    if current_period
+        .zip(incoming_period)
+        .and_then(|(current, incoming)| {
+            Some((
+                financial_period_rank(current)?,
+                financial_period_rank(incoming)?,
+            ))
+        })
+        .is_some_and(|(current, incoming)| incoming < current)
+    {
+        return false;
+    }
+
     let mut entries = serde_json::Map::new();
     if let Some(existing) = data
         .get("financials")
@@ -704,7 +951,8 @@ pub(crate) async fn observe_core_payload_with_cached_history(
     let stock_price = quote_seed_stock
         .as_ref()
         .and_then(|stock| crate::market::object_f64(stock, "price"));
-    let need_fundamental_supplement = observe_needs_fundamental_supplement(&data, &code);
+    let need_fundamental_supplement =
+        observe_needs_fundamental_supplement_at(&data, &code, &end_date);
 
     // Capital evidence, online EPS, and daily history are independent network groups — fetch them
     // concurrently, then merge each result into `data` sequentially below.
@@ -813,10 +1061,16 @@ pub(crate) async fn observe_core_payload_with_cached_history(
 
     // Merge capital evidence.
     match capital_outcome {
-        Ok((items, capital_notes)) => {
+        Ok((items, capital_notes, active_board, institutional_holdings)) => {
             if !items.is_empty() {
                 data_changed |= merge_capital_evidence_items(&mut data, &code, items, &end_date);
             }
+            data_changed |= store_observe_market_intelligence(
+                &mut data,
+                &code,
+                active_board,
+                institutional_holdings,
+            );
             notes.extend(capital_notes);
             if mobile_fast_observe {
                 notes.push(
@@ -848,6 +1102,12 @@ pub(crate) async fn observe_core_payload_with_cached_history(
                     ),
                 ],
                 &end_date,
+            );
+            data_changed |= store_observe_market_intelligence(
+                &mut data,
+                &code,
+                unavailable_market_active_brokerages(&end_date, "全市场每日活跃营业部查询超时。"),
+                unavailable_institutional_holdings(&end_date, "机构持仓查询超时。"),
             );
             notes.push(format!(
                 "综合资金证据联网补全超过 {capital_fetch_timeout} 秒，已写入超时状态证据。"
@@ -1044,7 +1304,7 @@ pub(crate) async fn fetch_observe_capital_evidence_items(
     start_date: &str,
     end_date: &str,
     network_payload: Option<&Value>,
-) -> (Vec<Value>, Vec<String>) {
+) -> (Vec<Value>, Vec<String>, Value, Value) {
     let mut notes = Vec::new();
     let mut items = Vec::new();
     let timeout = Duration::from_secs(OBSERVE_CAPITAL_REQUEST_TIMEOUT_SECS);
@@ -1058,16 +1318,72 @@ pub(crate) async fn fetch_observe_capital_evidence_items(
             return (
                 Vec::new(),
                 vec![format!("综合资金证据 HTTP 客户端创建失败：{error}")],
+                unavailable_market_active_brokerages(end_date, &error),
+                unavailable_institutional_holdings(end_date, &error),
             );
         }
     };
+    let direct_client = match crate::market::build_direct_http_client(
+        "Mozilla/5.0 GuXuanYou/0.3 capital evidence",
+        timeout,
+    ) {
+        Ok(client) => client,
+        Err(error) => {
+            notes.push(format!("公开榜单直连客户端创建失败：{error}"));
+            client.clone()
+        }
+    };
 
-    // The three evidence sources are independent, so keep their network latency concurrent.
-    let (fund_flow_fetch, guba_fetch, lhb_fetch) = futures::join!(
+    // The individual stock and market-wide evidence sources are independent; fetch them concurrently.
+    let (fund_flow_fetch, guba_fetch, lhb_fetch, active_fetch, holdings_fetch) = futures::join!(
         fetch_eastmoney_main_fund_flow(&client, code, end_date),
         fetch_eastmoney_guba_sentiment(&client, code),
         fetch_eastmoney_institution_lhb(&client, code, start_date, end_date),
+        fetch_eastmoney_market_active_brokerage_board(&client, &direct_client, end_date),
+        fetch_eastmoney_institutional_holdings(&client, &direct_client, code, end_date),
     );
+    let (active_board, active_notes) = match active_fetch {
+        Ok(board) => {
+            notes.push(format!(
+                "全市场每日活跃营业部已更新：{}，{} 家营业部。",
+                board
+                    .get("trade_date")
+                    .and_then(Value::as_str)
+                    .unwrap_or("日期暂缺"),
+                board
+                    .get("total_departments")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            ));
+            (board, Vec::new())
+        }
+        Err(error) => (
+            unavailable_market_active_brokerages(end_date, &error),
+            vec![format!(
+                "全市场活跃营业部查询失败：{}",
+                crate::market::truncate_for_note(&error, 180)
+            )],
+        ),
+    };
+    let (holdings, holdings_notes) = match holdings_fetch {
+        Ok(holdings) => {
+            let label = holdings
+                .get("report_period")
+                .and_then(Value::as_str)
+                .unwrap_or("报告期暂缺");
+            notes.push(format!("机构持仓已按最新披露报告更新：{label}。"));
+            (holdings, Vec::new())
+        }
+        Err(error) => (
+            unavailable_institutional_holdings(end_date, &error),
+            vec![format!(
+                "机构持仓查询失败：{}",
+                crate::market::truncate_for_note(&error, 180)
+            )],
+        ),
+    };
+    notes.extend(active_notes);
+    notes.extend(holdings_notes);
     match fund_flow_fetch {
         Ok(item) => {
             let date = item.get("date").and_then(Value::as_str).unwrap_or(end_date);
@@ -1134,7 +1450,7 @@ pub(crate) async fn fetch_observe_capital_evidence_items(
         }
     }
 
-    (items, notes)
+    (items, notes, active_board, holdings)
 }
 
 pub(crate) async fn fetch_eastmoney_main_fund_flow(
@@ -1438,7 +1754,7 @@ pub(crate) async fn fetch_eastmoney_institution_lhb(
     let url = reqwest::Url::parse_with_params(
         "https://datacenter-web.eastmoney.com/api/data/v1/get",
         &[
-            ("sortColumns", "NET_BUY_AMT,TRADE_DATE,SECURITY_CODE"),
+            ("sortColumns", "TRADE_DATE,NET_BUY_AMT,SECURITY_CODE"),
             ("sortTypes", "-1,-1,1"),
             ("pageSize", "50"),
             ("pageNumber", "1"),
@@ -1530,6 +1846,23 @@ pub(crate) fn parse_eastmoney_lhb_item(
         .cloned()
         .unwrap_or_default();
     let digits = code.get(..6).unwrap_or(code);
+    let start =
+        crate::market::normalize_history_date(start_date).unwrap_or_else(|| start_date.to_string());
+    let end =
+        crate::market::normalize_history_date(end_date).unwrap_or_else(|| end_date.to_string());
+    let latest_date = rows
+        .iter()
+        .filter_map(Value::as_object)
+        .filter(|object| {
+            crate::market::object_string_any(object, &["SECURITY_CODE"]).as_deref() == Some(digits)
+        })
+        .filter_map(|object| crate::market::object_string_any(object, &["TRADE_DATE"]))
+        .filter_map(|date| crate::market::normalize_history_date(&date))
+        .filter(|date| date >= &start && date <= &end)
+        .max();
+    let Some(latest_date) = latest_date else {
+        return Ok(eastmoney_lhb_no_hit_item(code, start_date, end_date));
+    };
     let mut best: Option<&Value> = None;
     let mut best_abs = -1.0;
     for row in &rows {
@@ -1538,6 +1871,11 @@ pub(crate) fn parse_eastmoney_lhb_item(
         };
         let row_code = crate::market::object_string_any(object, &["SECURITY_CODE"]);
         if row_code.as_deref() != Some(digits) {
+            continue;
+        }
+        let row_date = crate::market::object_string_any(object, &["TRADE_DATE"])
+            .and_then(|date| crate::market::normalize_history_date(&date));
+        if row_date.as_deref() != Some(latest_date.as_str()) {
             continue;
         }
         let net = crate::market::object_number_any_loose(object, &["NET_BUY_AMT"])
@@ -1832,14 +2170,13 @@ pub(crate) fn eastmoney_lhb_unavailable_item(
 }
 
 pub(crate) fn eastmoney_lhb_no_hit_item(code: &str, start_date: &str, end_date: &str) -> Value {
-    let days = crate::market::window_days(start_date, end_date);
     json!({
         "category": "institution_lhb_status",
         "source": "东方财富龙虎榜机构统计",
-        "title": format!("近 {days} 日未上龙虎榜机构席位"),
-        "date": end_date,
+        "title": "查询期间没有公开龙虎榜记录",
+        "date": crate::market::normalize_history_date(end_date),
         "metrics": {
-            "状态": format!("近 {days} 日未上榜"),
+            "状态": "查询期间未上榜",
             "查询窗口": format!("{start_date} - {end_date}"),
             "已尝试信源": "东方财富龙虎榜机构买卖每日统计",
             "股票": code,
@@ -1849,7 +2186,300 @@ pub(crate) fn eastmoney_lhb_no_hit_item(code: &str, start_date: &str, end_date: 
         "confidence": "中",
         "url": "https://data.eastmoney.com/stock/jgmmtj.html",
         "score": Value::Null,
-        "note": "没有龙虎榜机构专用席位记录，不代表机构没有买卖；只说明查询窗口内未公开上榜。",
+        "note": "没有个股公开龙虎榜记录，因此无对应席位买卖明细；不代表机构没有交易或持仓。",
+    })
+}
+
+pub(crate) fn parse_eastmoney_market_active_brokerage_board(
+    value: &Value,
+    checked_on: &str,
+) -> Result<Value, String> {
+    let rows = crate::market::eastmoney_result_rows(value);
+    let latest_date = rows
+        .iter()
+        .filter_map(Value::as_object)
+        .filter_map(|row| crate::market::object_string_any(row, &["ONLIST_DATE"]))
+        .filter_map(|date| crate::market::normalize_history_date(&date))
+        .max()
+        .ok_or_else(|| "每日活跃营业部接口未返回交易日".to_string())?;
+    let mut departments = rows
+        .iter()
+        .filter_map(Value::as_object)
+        .filter(|row| {
+            crate::market::object_string_any(row, &["ONLIST_DATE"])
+                .and_then(|date| crate::market::normalize_history_date(&date))
+                .as_deref()
+                == Some(latest_date.as_str())
+        })
+        .filter_map(|row| {
+            let name = crate::market::object_string_any(row, &["OPERATEDEPT_NAME"])?;
+            let buy_appearances =
+                crate::market::object_number_any_loose(row, &["BUYER_APPEAR_NUM"])
+                    .unwrap_or(0.0)
+                    .max(0.0);
+            let sell_appearances =
+                crate::market::object_number_any_loose(row, &["SELLER_APPEAR_NUM"])
+                    .unwrap_or(0.0)
+                    .max(0.0);
+            let buy_amount =
+                crate::market::object_number_any_loose(row, &["TOTAL_BUYAMT"]).unwrap_or(0.0);
+            let sell_amount =
+                crate::market::object_number_any_loose(row, &["TOTAL_SELLAMT"]).unwrap_or(0.0);
+            let stock_count = crate::market::object_string_any(row, &["BUY_STOCK"])
+                .map(|codes| {
+                    codes
+                        .split_whitespace()
+                        .filter(|code| !code.is_empty())
+                        .count()
+                })
+                .unwrap_or(0);
+            Some(json!({
+                "code": crate::market::object_string_any(row, &["OPERATEDEPT_CODE"]),
+                "name": name,
+                "buy_appearances": buy_appearances as usize,
+                "sell_appearances": sell_appearances as usize,
+                "total_appearances": (buy_appearances + sell_appearances) as usize,
+                "buy_amount": buy_amount,
+                "sell_amount": sell_amount,
+                "net_amount": crate::market::object_number_any_loose(row, &["TOTAL_NETAMT"])
+                    .unwrap_or(buy_amount - sell_amount),
+                "stock_count": stock_count,
+            }))
+        })
+        .collect::<Vec<_>>();
+    departments.sort_by(|left, right| {
+        let left_appearances = left["total_appearances"].as_u64().unwrap_or(0);
+        let right_appearances = right["total_appearances"].as_u64().unwrap_or(0);
+        right_appearances
+            .cmp(&left_appearances)
+            .then_with(|| {
+                let left_amount = left["buy_amount"].as_f64().unwrap_or(0.0)
+                    + left["sell_amount"].as_f64().unwrap_or(0.0);
+                let right_amount = right["buy_amount"].as_f64().unwrap_or(0.0)
+                    + right["sell_amount"].as_f64().unwrap_or(0.0);
+                right_amount.total_cmp(&left_amount)
+            })
+            .then_with(|| left["name"].as_str().cmp(&right["name"].as_str()))
+    });
+    let total_departments = departments.len();
+    departments.truncate(OBSERVE_MARKET_ACTIVE_BROKERAGE_LIMIT);
+    for (index, item) in departments.iter_mut().enumerate() {
+        item["rank"] = json!(index + 1);
+    }
+    Ok(json!({
+        "status": "available",
+        "source": "东方财富每日活跃营业部",
+        "trade_date": latest_date,
+        "checked_on": crate::market::normalize_history_date(checked_on).unwrap_or_else(|| checked_on.to_string()),
+        "total_departments": total_departments,
+        "items": departments,
+        "note": "按该交易日龙虎榜公开席位统计活跃度；不代表营业部全部交易。"
+    }))
+}
+
+pub(crate) fn parse_eastmoney_institutional_holdings(
+    value: &Value,
+    code: &str,
+    checked_on: &str,
+) -> Result<Value, String> {
+    let normalized_code = crate::market::normalize_stock_code(code)
+        .ok_or_else(|| format!("无效机构持仓股票代码：{code}"))?;
+    let digits = normalized_code.get(..6).unwrap_or(&normalized_code);
+    let matching_rows = crate::market::eastmoney_result_rows(value)
+        .iter()
+        .filter_map(Value::as_object)
+        .filter(|row| {
+            crate::market::object_string_any(row, &["SECURITY_CODE"])
+                .is_some_and(|row_code| row_code == digits)
+                || crate::market::object_string_any(row, &["SECUCODE"])
+                    .and_then(|row_code| crate::market::normalize_stock_code(&row_code))
+                    .as_deref()
+                    == Some(normalized_code.as_str())
+        })
+        .collect::<Vec<_>>();
+    let report_date = matching_rows
+        .iter()
+        .filter_map(|row| crate::market::object_string_any(row, &["END_DATE"]))
+        .filter_map(|date| crate::market::normalize_history_date(&date))
+        .max();
+    let Some(report_date) = report_date else {
+        return Ok(json!({
+            "status": "no_institutional_holders",
+            "source": "东方财富前十大流通股东",
+            "checked_on": crate::market::normalize_history_date(checked_on).unwrap_or_else(|| checked_on.to_string()),
+            "items": [],
+            "note": "当前接口没有返回该股票的公开前十大流通股东记录。"
+        }));
+    };
+    let report_rows = matching_rows
+        .into_iter()
+        .filter(|row| {
+            crate::market::object_string_any(row, &["END_DATE"])
+                .and_then(|date| crate::market::normalize_history_date(&date))
+                .as_deref()
+                == Some(report_date.as_str())
+        })
+        .collect::<Vec<_>>();
+    let report_period = report_rows
+        .first()
+        .and_then(|row| crate::market::object_string_any(row, &["REPORT_DATE_NAME"]))
+        .unwrap_or_else(|| report_date.clone());
+    let disclosed_at = report_rows
+        .iter()
+        .find_map(|row| crate::market::object_string_any(row, &["NOTICE_DATE", "UPDATE_DATE"]))
+        .and_then(|date| crate::market::normalize_history_date(&date));
+    let mut items = report_rows
+        .into_iter()
+        .filter(|row| is_public_institutional_holder(row))
+        .filter_map(|row| {
+            let name = crate::market::object_string_any(row, &["HOLDER_NAME"])?;
+            Some(json!({
+                "rank": crate::market::object_number_any_loose(row, &["HOLDER_RANK"]).unwrap_or(0.0) as usize,
+                "name": name,
+                "type": crate::market::object_string_any(row, &["HOLDER_TYPE", "HOLDER_NEWTYPE"]).unwrap_or_else(|| "机构".to_string()),
+                "shares": crate::market::object_number_any_loose(row, &["HOLD_NUM"]).unwrap_or(0.0),
+                "ratio": crate::market::object_number_any_loose(row, &["FREE_HOLDNUM_RATIO", "HOLD_RATIO", "HOLD_NUM_RATIO"]).unwrap_or(0.0),
+                "change": crate::market::object_string_any(row, &["HOLDER_STATEE", "HOLD_CHANGE", "HOLD_NUM_CHANGE"]).unwrap_or_else(|| "变动暂缺".to_string()),
+                "change_ratio": crate::market::object_number_any_loose(row, &["CHANGE_RATIO"]),
+            }))
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|left, right| {
+        left["rank"]
+            .as_u64()
+            .unwrap_or(u64::MAX)
+            .cmp(&right["rank"].as_u64().unwrap_or(u64::MAX))
+    });
+    let status = if items.is_empty() {
+        "no_institutional_holders"
+    } else {
+        "available"
+    };
+    Ok(json!({
+        "status": status,
+        "source": "东方财富前十大流通股东",
+        "checked_on": crate::market::normalize_history_date(checked_on).unwrap_or_else(|| checked_on.to_string()),
+        "report_period": report_period,
+        "report_date": report_date,
+        "disclosed_at": disclosed_at,
+        "items": items,
+        "note": "仅展示前十大流通股东中的机构类别；持仓时点为报告期末，披露日期为公告日期，不代表当前实时持仓。"
+    }))
+}
+
+pub(crate) fn is_public_institutional_holder(row: &serde_json::Map<String, Value>) -> bool {
+    let holder_type = crate::market::object_string_any(row, &["HOLDER_TYPE", "HOLDER_NEWTYPE"])
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let name = crate::market::object_string_any(row, &["HOLDER_NAME"]).unwrap_or_default();
+    [
+        "基金",
+        "QFII",
+        "社保",
+        "保险",
+        "券商",
+        "证券公司",
+        "信托",
+        "银行",
+        "年金",
+        "养老金",
+        "资产管理",
+        "资管",
+        "境外机构",
+        "机构",
+    ]
+    .iter()
+    .any(|keyword| holder_type.contains(keyword) || name.to_ascii_uppercase().contains(keyword))
+        || name == "香港中央结算有限公司"
+}
+
+pub(crate) async fn fetch_eastmoney_market_active_brokerage_board(
+    client: &reqwest::Client,
+    direct_client: &reqwest::Client,
+    checked_on: &str,
+) -> Result<Value, String> {
+    let url = reqwest::Url::parse_with_params(
+        EASTMONEY_DATACENTER_ENDPOINT,
+        &[
+            ("reportName", "RPT_OPERATEDEPT_ACTIVE"),
+            ("columns", "ALL"),
+            ("sortColumns", "ONLIST_DATE,TOTAL_NETAMT"),
+            ("sortTypes", "-1,-1"),
+            (
+                "pageSize",
+                &OBSERVE_MARKET_ACTIVE_BROKERAGE_PAGE_SIZE.to_string(),
+            ),
+            ("pageNumber", "1"),
+            ("source", "WEB"),
+            ("client", "WEB"),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    let daily = crate::market::fetch_eastmoney_public_json_with_direct_retry(
+        client,
+        direct_client,
+        url.as_str(),
+        "Eastmoney daily active brokerages",
+        true,
+    )
+    .await?;
+    parse_eastmoney_market_active_brokerage_board(&daily, checked_on)
+}
+
+pub(crate) async fn fetch_eastmoney_institutional_holdings(
+    client: &reqwest::Client,
+    direct_client: &reqwest::Client,
+    code: &str,
+    checked_on: &str,
+) -> Result<Value, String> {
+    let normalized = crate::market::normalize_stock_code(code)
+        .ok_or_else(|| format!("无效机构持仓股票代码：{code}"))?;
+    let digits = normalized.get(..6).unwrap_or(&normalized);
+    let filter = format!(r#"(SECURITY_CODE="{digits}")"#);
+    let url = reqwest::Url::parse_with_params(
+        EASTMONEY_DATACENTER_ENDPOINT,
+        &[
+            ("reportName", "RPT_F10_EH_FREEHOLDERS"),
+            ("columns", "ALL"),
+            ("sortColumns", "END_DATE,HOLDER_RANK"),
+            ("sortTypes", "-1,1"),
+            ("pageSize", "100"),
+            ("pageNumber", "1"),
+            ("source", "WEB"),
+            ("client", "WEB"),
+            ("filter", filter.as_str()),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    let value = crate::market::fetch_eastmoney_public_json_with_direct_retry(
+        client,
+        direct_client,
+        url.as_str(),
+        "Eastmoney institutional free-float holders",
+        true,
+    )
+    .await?;
+    parse_eastmoney_institutional_holdings(&value, &normalized, checked_on)
+}
+
+fn unavailable_market_active_brokerages(checked_on: &str, detail: &str) -> Value {
+    json!({
+        "status": "unavailable",
+        "source": "东方财富每日活跃营业部",
+        "checked_on": crate::market::normalize_history_date(checked_on).unwrap_or_else(|| checked_on.to_string()),
+        "total_departments": 0,
+        "items": [],
+        "note": crate::market::truncate_for_note(detail, 240),
+    })
+}
+
+fn unavailable_institutional_holdings(checked_on: &str, detail: &str) -> Value {
+    json!({
+        "status": "unavailable",
+        "source": "东方财富前十大流通股东",
+        "checked_on": crate::market::normalize_history_date(checked_on).unwrap_or_else(|| checked_on.to_string()),
+        "items": [],
+        "note": crate::market::truncate_for_note(detail, 240),
     })
 }
 
@@ -1920,24 +2550,67 @@ pub(crate) fn merge_capital_evidence_items(
         }
         merged_items.push(item);
     }
-    evidence_object.insert(
-        code.to_string(),
-        json!({
-            "stock_code": code,
-            "generated_at": crate::market::epoch_millis().to_string(),
-            "composite_score": Value::Null,
-            "confidence": "中",
-            "model_used": false,
-            "as_of_trade_date": crate::market::normalize_history_date(end_date),
-            "freshness": "refreshed",
-            "contributions": {},
-            "summary": "已尝试接入东方财富当日主力资金、股吧情绪与龙虎榜机构统计，最终分数由 Rust 规则合成。",
-            "sections": [],
-            "items": merged_items,
-            "notes": ["主力资金为东方财富个股资金流口径；股吧仅作社区情绪线索；龙虎榜机构统计为公开机构专用席位口径。"],
-        }),
-    );
+    let mut next = json!({
+        "stock_code": code,
+        "generated_at": crate::market::epoch_millis().to_string(),
+        "composite_score": Value::Null,
+        "confidence": "中",
+        "model_used": false,
+        "as_of_trade_date": crate::market::normalize_history_date(end_date),
+        "freshness": "refreshed",
+        "contributions": {},
+        "summary": "已尝试接入东方财富当日主力资金、股吧情绪与龙虎榜机构统计，最终分数由 Rust 规则合成。",
+        "sections": [],
+        "items": merged_items,
+        "notes": ["主力资金为东方财富个股资金流口径；股吧仅作社区情绪线索；龙虎榜机构统计为公开机构专用席位口径。"],
+    });
+    if let Some(existing) = existing.as_object() {
+        for field in ["market_active_brokerages", "institutional_holdings"] {
+            if let Some(value) = existing.get(field) {
+                next[field] = value.clone();
+            }
+        }
+    }
+    evidence_object.insert(code.to_string(), next);
     true
+}
+
+pub(crate) fn store_observe_market_intelligence(
+    data: &mut Value,
+    code: &str,
+    market_active_brokerages: Value,
+    institutional_holdings: Value,
+) -> bool {
+    if !data.is_object() {
+        *data = json!({});
+    }
+    let object = data.as_object_mut().expect("data object just initialized");
+    let evidence_map = object
+        .entry("capital_evidence".to_string())
+        .or_insert_with(|| json!({}));
+    if !evidence_map.is_object() {
+        *evidence_map = json!({});
+    }
+    let entry = evidence_map.as_object_mut().and_then(|items| {
+        items
+            .entry(code.to_string())
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+    });
+    let Some(entry) = entry else {
+        return false;
+    };
+    let mut changed = false;
+    for (field, value) in [
+        ("market_active_brokerages", market_active_brokerages),
+        ("institutional_holdings", institutional_holdings),
+    ] {
+        if entry.get(field) != Some(&value) {
+            entry.insert(field.to_string(), value);
+            changed = true;
+        }
+    }
+    changed
 }
 
 pub(crate) fn is_local_fund_flow_proxy_value(item: &Value) -> bool {

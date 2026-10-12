@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { metricOrMissing } from "../../lib/format";
-import { buildFundamentalSnapshotData } from "../../lib/fundamentalSnapshot";
+import { buildFundamentalSnapshotData, isFinancialPeriodStale } from "../../lib/fundamentalSnapshot";
 
 describe("metricOrMissing", () => {
   it("keeps available indicator values", () => {
@@ -16,6 +16,12 @@ describe("metricOrMissing", () => {
 });
 
 describe("buildFundamentalSnapshotData", () => {
+  it("marks a Q1 snapshot stale after the half-year report deadline", () => {
+    expect(isFinancialPeriodStale("2026Q1", "2026-10-12")).toBe(true);
+    expect(isFinancialPeriodStale("2026中报", "2026-10-12")).toBe(false);
+    expect(isFinancialPeriodStale("2026Q1", "2026-07-15")).toBe(false);
+  });
+
   it("puts EPS, total shares and circulating shares in the primary strip", () => {
     const snapshot = buildFundamentalSnapshotData(
       {

@@ -8,6 +8,7 @@ describe("local-first action state", () => {
   });
   it("suggests refresh only for structured local-data misses", () => {
     expect(shouldSuggestLocalRefresh(JSON.stringify({ code: "LOCAL_DATA_MISSING" }))).toBe(true);
+    expect(shouldSuggestLocalRefresh(new Error("本地数据不足", { cause: JSON.stringify({ code: "LOCAL_DATA_MISSING" }) }))).toBe(true);
     expect(shouldSuggestLocalRefresh(new Error("网络请求失败"))).toBe(false);
     expect(shouldSuggestLocalRefresh("invalid data policy")).toBe(false);
   });

@@ -1,5 +1,5 @@
-use super::{llm::*, market::*, observe::*, research::*, screening::*};
 use super::*;
+use super::{llm::*, market::*, observe::*, research::*, screening::*};
 use rusqlite::{params, Connection};
 use std::{
     collections::{HashMap, HashSet},
@@ -8,7 +8,6 @@ use std::{
     time::Duration,
 };
 use stock_optimizer_core as gp_core;
-
 
 #[test]
 fn adaptive_screen_request_accepts_nested_and_legacy_contracts() {
@@ -922,7 +921,10 @@ fn daily_history_prefers_the_longer_source_result() {
         json!({"date":"20260930", "close":9.0}),
         json!({"date":"20261001", "close":10.0}),
     ];
-    assert_eq!(choose_longer_history(Some(short), Some(long.clone())), Some(long));
+    assert_eq!(
+        choose_longer_history(Some(short), Some(long.clone())),
+        Some(long)
+    );
 }
 
 #[test]
@@ -2431,6 +2433,42 @@ fn observe_financial_snapshot_merges_detailed_fundamental_metrics() {
 }
 
 #[test]
+fn observe_financial_snapshot_does_not_replace_a_newer_report_with_bundled_cache() {
+    let mut data = json!({
+        "financials": {
+            "688372.SH": {
+                "period": "2026中报",
+                "latest_eps": 1.01,
+                "operating_revenue_billion": 10.7185978642
+            }
+        }
+    });
+    let stale_snapshot = json!({
+        "financials": {
+            "688372.SH": {
+                "period": "2026Q1",
+                "latest_eps": 0.4754,
+                "operating_revenue_billion": 4.8997562472
+            }
+        }
+    });
+
+    assert!(!merge_observe_financial_snapshot(
+        &mut data,
+        "688372.SH",
+        &stale_snapshot
+    ));
+    assert_eq!(
+        data["financials"]["688372.SH"]["period"].as_str(),
+        Some("2026中报")
+    );
+    assert_eq!(
+        data["financials"]["688372.SH"]["latest_eps"].as_f64(),
+        Some(1.01)
+    );
+}
+
+#[test]
 fn eastmoney_fundamental_parsers_calculate_specialized_metrics() {
     let balance = json!({
         "result": {"data": [{
@@ -2574,13 +2612,21 @@ fn observe_fundamental_supplement_records_freshness_and_refreshes_stale_values()
     .expect("supplement fields")
     .clone();
 
-    assert!(observe_needs_fundamental_supplement(&data, "000100.SZ"));
+    assert!(observe_needs_fundamental_supplement_at(
+        &data,
+        "000100.SZ",
+        "2026-10-12"
+    ));
     assert!(merge_observe_fundamental_supplement(
         &mut data,
         "000100.SZ",
         fields
     ));
-    assert!(!observe_needs_fundamental_supplement(&data, "000100.SZ"));
+    assert!(!observe_needs_fundamental_supplement_at(
+        &data,
+        "000100.SZ",
+        "2026-10-12"
+    ));
     assert_eq!(
         data["financials"]["000100.SZ"]["goodwill_period"].as_str(),
         Some("2026一季报")
@@ -2599,7 +2645,109 @@ fn observe_fundamental_supplement_records_freshness_and_refreshes_stale_values()
     .is_some());
 
     data["financials"]["000100.SZ"]["supplement_updated_at_epoch_ms"] = json!("1");
-    assert!(observe_needs_fundamental_supplement(&data, "000100.SZ"));
+    assert!(observe_needs_fundamental_supplement_at(
+        &data,
+        "000100.SZ",
+        "2026-10-12"
+    ));
+}
+
+#[test]
+fn eastmoney_latest_financial_snapshot_maps_the_latest_published_report() {
+    let raw = json!({
+        "result": { "data": [
+            {
+                "SECUCODE": "688372.SH", "REPORT_DATE": "2026-06-30 00:00:00",
+                "REPORT_DATE_NAME": "2026中报", "NOTICE_DATE": "2026-08-29 00:00:00",
+                "EPSJB": 1.01, "BPS": 25.152938005446,
+                "TOTALOPERATEREVE": 1071859786.42, "TOTALOPERATEREVETZ": 68.995718380253,
+                "PARENTNETPROFIT": 159311093.39, "PARENTNETPROFITTZ": 57.611429309995,
+                "KCFJCXSYJLR": 145751927.16, "KCFJCXSYJLRTZ": 171.33152614654,
+                "XSMLL": 33.590206029, "XSJLL": 14.8630534897,
+                "ROEJQ": 4.41, "ZCFZL": 55.1854719758
+            },
+            {
+                "SECUCODE": "600519.SH", "SECURITY_CODE": "600519",
+                "REPORT_DATE": "2027-03-31 00:00:00", "REPORT_DATE_NAME": "2027一季报",
+                "EPSJB": 99.0
+            },
+            {
+                "SECUCODE": "688372.SH", "REPORT_DATE": "2026-03-31 00:00:00",
+                "REPORT_DATE_NAME": "2026一季报", "EPSJB": 0.4754,
+                "BPS": 24.926206301057, "TOTALOPERATEREVE": 489975624.72
+            }
+        ]}
+    });
+
+    let fields =
+        parse_latest_observe_financial_snapshot(&raw, "688372.SH").expect("latest financial row");
+
+    assert_eq!(
+        fields.get("period").and_then(Value::as_str),
+        Some("2026中报")
+    );
+    assert_eq!(fields.get("latest_eps").and_then(Value::as_f64), Some(1.01));
+    assert_eq!(
+        fields.get("latest_bps").and_then(Value::as_f64),
+        Some(25.152938005446)
+    );
+    assert_eq!(
+        fields
+            .get("operating_revenue_billion")
+            .and_then(Value::as_f64),
+        Some(10.7185978642)
+    );
+    assert_eq!(
+        fields
+            .get("deducted_net_profit_billion")
+            .and_then(Value::as_f64),
+        Some(1.4575192716)
+    );
+
+    let mut cache = json!({
+        "financials": { "688372.SH": { "period": "2026Q1", "latest_eps": 0.4754 } },
+        "stocks": [{ "code": "688372.SH", "period": "2026Q1", "latest_eps": 0.4754 }]
+    });
+    assert!(merge_observe_fundamental_supplement(
+        &mut cache,
+        "688372.SH",
+        fields
+    ));
+    assert_eq!(
+        cache["financials"]["688372.SH"]["period"].as_str(),
+        Some("2026中报")
+    );
+    assert_eq!(
+        cache["financials"]["688372.SH"]["latest_eps"].as_f64(),
+        Some(1.01)
+    );
+    assert_eq!(cache["stocks"][0]["period"].as_str(), Some("2026中报"));
+    assert_eq!(
+        cache["stocks"][0]["deducted_net_profit_billion"].as_f64(),
+        Some(1.4575192716)
+    );
+}
+
+#[test]
+fn fundamental_snapshot_period_staleness_tracks_report_publication_cutoffs() {
+    assert!(financial_report_period_is_stale("2026Q1", "2026-10-12"));
+    assert!(!financial_report_period_is_stale("2026中报", "2026-10-12"));
+    assert!(!financial_report_period_is_stale("2026Q1", "2026-07-15"));
+
+    let fresh = crate::market::epoch_millis().to_string();
+    let cached = json!({
+        "financials": { "688372.SH": {
+            "period": "2026Q1", "goodwill_to_net_assets": 0.0,
+            "pledged_share_ratio": 0.0, "dividend_yield": 0.0,
+            "dividend_payout_ratio": 0.0,
+            "supplement_updated_at_epoch_ms": fresh
+        }}
+    });
+    assert!(observe_needs_fundamental_supplement_at(
+        &cached,
+        "688372.SH",
+        "2026-10-12"
+    ));
 }
 
 #[test]
@@ -2701,6 +2849,97 @@ fn eastmoney_lhb_parser_extracts_matching_stock() {
     assert_eq!(
         metrics.get("机构买卖比").and_then(Value::as_str),
         Some("0.538")
+    );
+}
+
+#[test]
+fn eastmoney_lhb_uses_the_latest_report_date_not_the_largest_historical_amount() {
+    let raw = r#"{"result":{"data":[
+        {"SECURITY_CODE":"688372","TRADE_DATE":"2024-03-29 00:00:00","BUY_AMT":71992500,"SELL_AMT":105705000,"NET_BUY_AMT":-33712500},
+        {"SECURITY_CODE":"688372","TRADE_DATE":"2026-10-09 00:00:00","BUY_AMT":3000000,"SELL_AMT":2000000,"NET_BUY_AMT":1000000}
+    ]}}"#;
+
+    let item = parse_eastmoney_lhb_item(raw, "688372.SH", "19900101", "20261012")
+        .expect("latest public LHB row");
+
+    assert_eq!(item.get("date").and_then(Value::as_str), Some("2026-10-09"));
+    assert_eq!(item["metrics"]["机构净买额"].as_str(), Some("100.00 万"));
+}
+
+#[test]
+fn eastmoney_market_active_brokerage_parser_selects_latest_day_and_sorts_by_activity() {
+    let rows = json!({
+        "result": { "count": 3, "data": [
+            {"ONLIST_DATE":"2026-10-09","OPERATEDEPT_CODE":"A","OPERATEDEPT_NAME":"活跃席位A","BUYER_APPEAR_NUM":2,"SELLER_APPEAR_NUM":2,"TOTAL_BUYAMT":50000000.0,"TOTAL_SELLAMT":10000000.0,"TOTAL_NETAMT":40000000.0,"BUY_STOCK":"600001.SH 600002.SH","SECURITY_NAME_ABBR":"甲 乙"},
+            {"ONLIST_DATE":"2026-10-09","OPERATEDEPT_CODE":"B","OPERATEDEPT_NAME":"活跃席位B","BUYER_APPEAR_NUM":4,"SELLER_APPEAR_NUM":3,"TOTAL_BUYAMT":80000000.0,"TOTAL_SELLAMT":30000000.0,"TOTAL_NETAMT":50000000.0,"BUY_STOCK":"600001.SH","SECURITY_NAME_ABBR":"甲"},
+            {"ONLIST_DATE":"2026-10-08","OPERATEDEPT_CODE":"C","OPERATEDEPT_NAME":"旧日期席位","BUYER_APPEAR_NUM":20,"SELLER_APPEAR_NUM":20,"TOTAL_BUYAMT":100000000.0,"TOTAL_SELLAMT":100000000.0,"TOTAL_NETAMT":0.0}
+        ]}
+    });
+
+    let board = parse_eastmoney_market_active_brokerage_board(&rows, "2026-10-12")
+        .expect("daily active brokerages");
+
+    assert_eq!(board["trade_date"].as_str(), Some("2026-10-09"));
+    assert_eq!(board["total_departments"].as_u64(), Some(2));
+    assert_eq!(board["items"][0]["name"].as_str(), Some("活跃席位B"));
+    assert_eq!(board["items"][0]["total_appearances"].as_u64(), Some(7));
+}
+
+#[test]
+fn eastmoney_institutional_holdings_keep_report_and_disclosure_dates() {
+    let rows = json!({
+        "result": { "data": [
+            {"SECURITY_CODE":"688372","END_DATE":"2026-06-30","REPORT_DATE_NAME":"2026中报","NOTICE_DATE":"2026-08-29","HOLDER_RANK":3,"HOLDER_NAME":"某公募基金","HOLDER_TYPE":"证券投资基金","HOLD_NUM":4022078,"FREE_HOLDNUM_RATIO":2.3928,"HOLDER_STATEE":"加仓","CHANGE_RATIO":74.59},
+            {"SECURITY_CODE":"688372","END_DATE":"2026-06-30","REPORT_DATE_NAME":"2026中报","NOTICE_DATE":"2026-08-29","HOLDER_RANK":4,"HOLDER_NAME":"某外资机构","HOLDER_TYPE":"QFII","HOLD_NUM":3500311,"FREE_HOLDNUM_RATIO":2.0824,"HOLDER_STATEE":"加仓","CHANGE_RATIO":129.8},
+            {"SECURITY_CODE":"688372","END_DATE":"2026-06-30","REPORT_DATE_NAME":"2026中报","NOTICE_DATE":"2026-08-29","HOLDER_RANK":5,"HOLDER_NAME":"个人股东","HOLDER_TYPE":"个人","HOLD_NUM":1200000,"FREE_HOLDNUM_RATIO":0.72},
+            {"SECURITY_CODE":"688372","END_DATE":"2025-12-31","REPORT_DATE_NAME":"2025年报","NOTICE_DATE":"2026-04-22","HOLDER_RANK":3,"HOLDER_NAME":"旧期基金","HOLDER_TYPE":"证券投资基金","HOLD_NUM":1000000,"FREE_HOLDNUM_RATIO":0.5}
+        ]}
+    });
+
+    let holdings = parse_eastmoney_institutional_holdings(&rows, "688372.SH", "2026-10-12")
+        .expect("institutional holdings snapshot");
+
+    assert_eq!(holdings["report_period"].as_str(), Some("2026中报"));
+    assert_eq!(holdings["report_date"].as_str(), Some("2026-06-30"));
+    assert_eq!(holdings["disclosed_at"].as_str(), Some("2026-08-29"));
+    assert_eq!(holdings["items"].as_array().unwrap().len(), 2);
+    assert_eq!(holdings["items"][0]["name"].as_str(), Some("某公募基金"));
+}
+
+#[test]
+fn capital_refresh_preserves_the_split_public_market_intelligence_fields() {
+    let mut data = json!({"capital_evidence": {"688372.SH": {
+        "market_active_brokerages": {"checked_on": "2026-10-12", "trade_date": "2026-10-12"},
+        "institutional_holdings": {"checked_on": "2026-10-12", "report_period": "2026中报"}
+    }}});
+    assert!(merge_capital_evidence_items(
+        &mut data,
+        "688372.SH",
+        vec![json!({"category":"fund_flow", "date":"2026-10-12"})],
+        "20261012"
+    ));
+    assert_eq!(
+        data["capital_evidence"]["688372.SH"]["market_active_brokerages"]["trade_date"].as_str(),
+        Some("2026-10-12")
+    );
+    assert_eq!(
+        data["capital_evidence"]["688372.SH"]["institutional_holdings"]["report_period"].as_str(),
+        Some("2026中报")
+    );
+
+    assert!(store_observe_market_intelligence(
+        &mut data,
+        "688372.SH",
+        json!({"status":"available", "checked_on":"2026-10-13", "trade_date":"2026-10-12"}),
+        json!({"status":"available", "checked_on":"2026-10-13", "report_period":"2026中报"})
+    ));
+    assert_eq!(
+        data["capital_evidence"]["688372.SH"]["market_active_brokerages"]["checked_on"].as_str(),
+        Some("2026-10-13")
+    );
+    assert_eq!(
+        data["capital_evidence"]["688372.SH"]["institutional_holdings"]["report_period"].as_str(),
+        Some("2026中报")
     );
 }
 

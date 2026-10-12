@@ -226,6 +226,30 @@ const mockObserveResult = {
 };
 const mockObserveResultCompleteCapital = {
   ...mockObserveResult,
+  market_active_brokerages: {
+    status: "available",
+    source: "东方财富每日活跃营业部",
+    trade_date: "2026-10-12",
+    checked_on: "2026-10-13",
+    total_departments: 3,
+    items: [
+      { rank: 1, code: "broker-demo-1", name: "国泰海通上海江苏路营业部", buy_appearances: 6, sell_appearances: 3, total_appearances: 9, buy_amount: 168000000, sell_amount: 42000000, net_amount: 126000000, stock_count: 5 },
+      { rank: 2, code: "broker-demo-2", name: "中信证券上海溧阳路营业部", buy_appearances: 4, sell_appearances: 3, total_appearances: 7, buy_amount: 98000000, sell_amount: 55000000, net_amount: 43000000, stock_count: 4 },
+      { rank: 3, code: "broker-demo-3", name: "华鑫证券上海分公司", buy_appearances: 3, sell_appearances: 3, total_appearances: 6, buy_amount: 62000000, sell_amount: 71000000, net_amount: -9000000, stock_count: 3 },
+    ],
+  },
+  institutional_holdings: {
+    status: "available",
+    source: "东方财富前十大流通股东",
+    checked_on: "2026-10-13",
+    report_period: "2026中报",
+    report_date: "2026-06-30",
+    disclosed_at: "2026-08-29",
+    items: [
+      { rank: 2, name: "某公募基金", type: "证券投资基金", shares: 4022078, ratio: 2.39, change: "加仓", change_ratio: 74.59 },
+      { rank: 4, name: "某社保组合", type: "全国社保基金", shares: 2058430, ratio: 1.22, change: "新进", change_ratio: null },
+    ],
+  },
   capital_evidence: {
     ...mockObserveResult.capital_evidence,
     items: [
@@ -294,6 +318,21 @@ const mockObserveResultCompleteCapital = {
 };
 const mockObserveResultUnavailableCapital = {
   ...mockObserveResult,
+  market_active_brokerages: {
+    status: "unavailable",
+    source: "东方财富每日活跃营业部",
+    checked_on: "2026-10-13",
+    total_departments: 0,
+    items: [],
+    note: "市场营业部榜单接口暂不可用。",
+  },
+  institutional_holdings: {
+    status: "unavailable",
+    source: "东方财富前十大流通股东",
+    checked_on: "2026-10-13",
+    items: [],
+    note: "机构持仓接口暂不可用。",
+  },
   capital_evidence: {
     stock_code: "600519.SH",
     composite_score: 52,

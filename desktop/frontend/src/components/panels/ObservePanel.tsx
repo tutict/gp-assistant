@@ -1,10 +1,10 @@
-import { formatLocalDataError, localDataSummary } from "../../lib/localData";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import type { CapitalEvidenceItem, CapitalEvidenceResult, CapitalEvidenceSection, FinancialIndicatorItem, FinancialIndicatorSection, ObserveResult, StockItem, TrendIndicatorPoint, TrendIndicatorSignal, WatchlistItem } from "../../types";
+import { formatLocalDataError, localDataSummary, shouldSuggestLocalRefresh } from "../../lib/localData";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
+import type { CapitalEvidenceItem, CapitalEvidenceResult, CapitalEvidenceSection, FinancialIndicatorItem, FinancialIndicatorSection, InstitutionalHoldingsSnapshot, MarketActiveBrokerageBoard, ObserveResult, StockItem, TrendIndicatorPoint, TrendIndicatorSignal, WatchlistItem } from "../../types";
 import { computeKdj, toDailyBars } from "../../lib/kline";
 import { calculateObserveQuant } from "../../lib/observeQuant";
 import type { ObserveQuantConclusion } from "../../lib/observeQuant";
-import { buildFundamentalSnapshotData } from "../../lib/fundamentalSnapshot";
+import { buildFundamentalSnapshotData, isFinancialPeriodStale } from "../../lib/fundamentalSnapshot";
 import { buildMainFundFlowView, isLocalFundFlowProxy } from "../../lib/mainFundFlow";
 import { buildSeatBehaviorViews } from "../../lib/seatBehavior";
 import { getJson } from "../../lib/tauri";
@@ -39,6 +39,30 @@ export function observeAgentPrompt(name: string, code: string): string {
   return `请研究 ${label}（${code}）。结合行情、财务和趋势，说明现在值得继续观察还是需要回避，并指出主要依据。`;
 }
 
+function needsCapitalDetailRefresh(result: ObserveResult): boolean {
+  const items = result.capital_evidence?.items;
+  if (!Array.isArray(items)) return false;
+  const institution = items.find((item) => item.category === "institution_lhb");
+  if (!institution) return false;
+  return institution.seat_detail_status !== "complete";
+}
+
+function needsFinancialSnapshotRefresh(result: ObserveResult): boolean {
+  return isFinancialPeriodStale(result.financial_indicators?.period, currentSystemDateInputValue());
+}
+
+export function needsPublicMarketDataRefresh(result: ObserveResult): boolean {
+  const checkedOn = currentSystemDateInputValue();
+  const active = result.market_active_brokerages;
+  const holdings = result.institutional_holdings;
+  return !active
+    || active.checked_on !== checkedOn
+    || active.status !== "available"
+    || !holdings
+    || holdings.checked_on !== checkedOn
+    || holdings.status === "unavailable";
+}
+
 const OBSERVE_FULL_HISTORY_START = "1990-01-01";
 const OBSERVE_FULL_HISTORY_LIMIT = "10000";
 
@@ -53,6 +77,7 @@ export function ObservePanel({
 }: ObservePanelProps) {
   const [code, setCode] = useState(initialCode || "");
   const [loading, setLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState("正在加载行情、财务和趋势数据...");
   const [result, setResult] = useState<ObserveResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const observeVersionRef = useRef(0);
@@ -61,6 +86,7 @@ export function ObservePanel({
     observeVersionRef.current += 1;
     setCode(value);
     setLoading(false);
+    setLoadingMessage("正在加载行情、财务和趋势数据...");
     setError(null);
     const nextCode = normalizeStockCode(value);
     setResult((current) => {
@@ -104,22 +130,63 @@ export function ObservePanel({
     }
     if (explicit) setCode(normalizedCode);
     setLoading(true);
+    setLoadingMessage("正在加载行情、财务和趋势数据...");
     setError(null);
+    let refreshAttempted = false;
     try {
-      const query = new URLSearchParams({
-        data_policy: "cache_only",
-        start_date: OBSERVE_FULL_HISTORY_START.replace(/-/g, ""),
-        end_date: currentSystemDateInputValue().replace(/-/g, ""),
-        series_limit: OBSERVE_FULL_HISTORY_LIMIT,
-        include_order_book: "false",
-        include_chip_distribution: "true",
-      });
-      const data = await getJson<ObserveResult>(`/api/observe/${encodeURIComponent(normalizedCode)}?${query}`);
+      const request = (dataPolicy: "cache_only" | "refresh") => {
+        const query = new URLSearchParams({
+          data_policy: dataPolicy,
+          start_date: OBSERVE_FULL_HISTORY_START.replace(/-/g, ""),
+          end_date: currentSystemDateInputValue().replace(/-/g, ""),
+          series_limit: OBSERVE_FULL_HISTORY_LIMIT,
+          include_order_book: "false",
+          include_chip_distribution: "true",
+        });
+        return getJson<ObserveResult>(`/api/observe/${encodeURIComponent(normalizedCode)}?${query}`);
+      };
+      let data: ObserveResult;
+      try {
+        data = await request("cache_only");
+      } catch (localError) {
+        if (!shouldSuggestLocalRefresh(localError)) throw localError;
+        refreshAttempted = true;
+        setLoadingMessage("正在补齐行情历史...");
+        data = await request("refresh");
+      }
+      const financialSnapshotStale = needsFinancialSnapshotRefresh(data);
+      const capitalDetailsIncomplete = needsCapitalDetailRefresh(data);
+      const publicMarketDataStale = needsPublicMarketDataRefresh(data);
+      if (!refreshAttempted && (financialSnapshotStale || capitalDetailsIncomplete || publicMarketDataStale)) {
+        refreshAttempted = true;
+        setLoadingMessage(financialSnapshotStale
+          ? "正在更新最新财报快照..."
+          : publicMarketDataStale
+            ? "正在更新市场营业部与机构持仓..."
+            : "正在补齐龙虎榜席位明细...");
+        try {
+          data = await request("refresh");
+        } catch (detailError) {
+          if (version !== observeVersionRef.current) return;
+          setResult({
+            ...data,
+            notes: [
+              ...(data.notes || []),
+              `${financialSnapshotStale ? "最新财报快照" : publicMarketDataStale ? "全市场营业部/机构持仓" : "龙虎榜席位明细"}暂未补齐：${formatLocalDataError(detailError)}`,
+            ],
+          });
+          setError(null);
+          return;
+        }
+      }
       if (version !== observeVersionRef.current) return;
       setResult(data);
     } catch (err) {
       if (version !== observeVersionRef.current) return;
-      setError(formatLocalDataError(err));
+      const formatted = formatLocalDataError(err);
+      setError(refreshAttempted && shouldSuggestLocalRefresh(err)
+        ? formatted.replace(/。请先点击顶部「刷新」补齐行情，再重试。?$/, "。自动补齐失败，请稍后重试。")
+        : formatted);
     } finally {
       if (version === observeVersionRef.current) setLoading(false);
     }
@@ -137,7 +204,6 @@ export function ObservePanel({
 
   return (
     <div className="panel-container observe-panel-container">
-      <p className="workspace-boundary">仅供研究，不构成投资建议。</p>
       <div className="panel-controls observe-panel-controls">
         <div className="form-row inline stock-code-row observe-code-row">
           <label htmlFor="observeCode">股票代码</label>
@@ -153,18 +219,18 @@ export function ObservePanel({
       </div>
 
       <div className="panel-result observe-panel-result">
-        {result && !loading && !error && localDataSummary(result) && <p className="workspace-boundary" role="status">{localDataSummary(result)}</p>}
         {error && !loading && <PanelFeedback kind="error" title="观察失败" description={error} action={<button type="button" className="action-btn" onClick={() => runObserve()} disabled={loading}>重试</button>} />}
-        {loading && <PanelFeedback kind="loading" description="正在加载行情、财务和趋势数据..." />}
-        {result && !loading && !error && <ObserveResultView result={result} inWatchlist={observedInWatchlist} onToggleWatchlist={toggleObservedWatchlist} onOpenNews={onOpenNews} onAskAgent={onAskAgent} />}
+        {loading && <PanelFeedback kind="loading" description={loadingMessage} />}
+        {result && !loading && !error && <ObserveResultView result={result} expandProfessionalDetails={!mobileRuntime} inWatchlist={observedInWatchlist} onToggleWatchlist={toggleObservedWatchlist} onOpenNews={onOpenNews} onAskAgent={onAskAgent} />}
         {!result && !loading && !error && <PanelFeedback kind="empty" description="输入股票代码后开始观察。" />}
       </div>
     </div>
   );
 }
 
-export function ObserveResultView({ result, inWatchlist = false, onToggleWatchlist, onOpenNews, onAskAgent }: {
+export function ObserveResultView({ result, expandProfessionalDetails = false, inWatchlist = false, onToggleWatchlist, onOpenNews, onAskAgent }: {
   result: ObserveResult;
+  expandProfessionalDetails?: boolean;
   inWatchlist?: boolean;
   onToggleWatchlist?: () => void;
   onOpenNews?: (code: string) => void;
@@ -177,6 +243,7 @@ export function ObserveResultView({ result, inWatchlist = false, onToggleWatchli
   const series = trend?.series || [];
   const financial = result.financial_indicators;
   const capital = result.capital_evidence;
+  const dataSummary = localDataSummary(result);
 
   return (
     <div className="observe-result">
@@ -198,8 +265,18 @@ export function ObserveResultView({ result, inWatchlist = false, onToggleWatchli
             )}
           </div>
         </header>
+        {dataSummary && <p className="observe-overview-data-summary" role="status">{dataSummary}</p>}
       </section>
-      <ObserveTextMetrics stock={stock} signal={signal} series={series} capital={capital} financialItems={financial?.items || []}>
+      <ObserveTextMetrics
+        stock={stock}
+        signal={signal}
+        series={series}
+        capital={capital}
+        marketActiveBrokerages={result.market_active_brokerages}
+        institutionalHoldings={result.institutional_holdings}
+        financialItems={financial?.items || []}
+        expandProfessionalDetails={expandProfessionalDetails}
+      >
         <section className="signal-card observe-chart-card">
           <header><div><h3>行情图表</h3><p>K 线、均线与技术指标</p></div></header>
           {series.length > 1 ? <TrendCharts series={series} /> : <PanelFeedback kind="empty" description="行情数据不足，暂时无法绘制图表。其他已取得的指标仍可查看。" />}
@@ -251,16 +328,23 @@ function ObserveTextMetrics({
   signal,
   series,
   capital,
+  marketActiveBrokerages,
+  institutionalHoldings,
   financialItems,
+  expandProfessionalDetails,
   children,
 }: {
   stock: StockItem;
   signal?: TrendIndicatorSignal | null;
   series: TrendIndicatorPoint[];
   capital?: CapitalEvidenceResult | null;
+  marketActiveBrokerages?: MarketActiveBrokerageBoard | null;
+  institutionalHoldings?: InstitutionalHoldingsSnapshot | null;
   financialItems: FinancialIndicatorItem[];
+  expandProfessionalDetails: boolean;
   children?: ReactNode;
 }) {
+  const [professionalDetailsOpen, setProfessionalDetailsOpen] = useState(expandProfessionalDetails);
   const latest = series.length ? series[series.length - 1] : null;
   const previous = series.length > 1 ? series[series.length - 2] : null;
   const kdj = kdjFromSignal(signal) || latestKdjFromSeries(series);
@@ -407,9 +491,14 @@ function ObserveTextMetrics({
 
       {children}
       <CapitalQuantPanel capital={capital} />
+      <PublicMarketIntelligencePanel activeBrokerages={marketActiveBrokerages} holdings={institutionalHoldings} />
 
-      <details className="observe-detail-disclosure">
-        <summary><span>专业指标明细</span><small>需要时展开</small></summary>
+      <details
+        className="observe-detail-disclosure"
+        open={professionalDetailsOpen}
+        onToggle={(event: SyntheticEvent<HTMLDetailsElement>) => setProfessionalDetailsOpen(event.currentTarget.open)}
+      >
+        <summary><span>专业指标明细</span><small>{expandProfessionalDetails ? "默认展开" : "需要时展开"}</small></summary>
         <ObserveSpecialQuant conclusions={specialQuant.conclusions} />
         <div className="observe-text-metric-sections">
           {detailSections.filter((section) => section.items.length).map((section) => (
@@ -493,7 +582,7 @@ function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null
     <section className="observe-capital-quant" aria-label="主力资金与龙虎榜公开席位">
       <header>
         <h4>资金量化证据</h4>
-        <small>真实资金流 · 机构/营业部 · 本地估算</small>
+        <small>主力资金 · 个股龙虎榜</small>
       </header>
       <article className={"capital-main-flow " + mainFlow.tone + (mainFlow.available ? "" : " unavailable")}>
         <header>
@@ -523,30 +612,6 @@ function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null
         </details>
       </article>
       <div className="capital-quant-lanes">
-        <article className="observe-fact capital-quant-lane institution">
-          <header>
-            <h5>龙虎榜机构席位</h5>
-            <small>{institution ? `${institution.date || "窗口内"} · ${institution.confidence || "高"}置信` : "当前无公开记录"}</small>
-          </header>
-          {institution ? (
-            <>
-              <CapitalQuantMetrics metrics={institutionMetrics} />
-              {institutionMeta && (
-                <details className="capital-quant-more">
-                  <summary>更多席位数据</summary>
-                  <p>{institutionMeta}</p>
-                </details>
-              )}
-              <p className="capital-quant-note">仅代表龙虎榜公开机构席位，不等同于全部机构持仓。</p>
-            </>
-          ) : (
-            <>
-              <p className="capital-quant-empty">{institutionStatus?.title || "查询窗口内没有可展示的龙虎榜机构席位记录。"}</p>
-              <p className="capital-quant-note">未上榜不代表机构没有买卖，只表示当前没有公开席位证据。</p>
-            </>
-          )}
-        </article>
-
         {proxy && (
           <article className="observe-fact capital-quant-lane proxy">
             <header>
@@ -564,46 +629,148 @@ function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null
           </article>
         )}
       </div>
-      {institution && (
-        <article className="capital-seat-behavior">
+      <article className="capital-seat-behavior">
           <header>
             <div>
-              <h5>机构与活跃营业部</h5>
-              <small>{institution.date || "窗口内"} · 龙虎榜公开席位 · 行为画像为推断</small>
+              <h5>个股最近一次公开龙虎榜</h5>
+              <small>{institution?.date || institutionStatus?.date || "最近查询窗口"} · 龙虎榜公开数据</small>
             </div>
-            <span>{seatBehaviors.length ? seatBehaviors.length + " 席" : "明细暂缺"}</span>
+            <span>{institution ? `${seatBehaviors.length || "汇总"} 席` : institutionStatus ? "暂无上榜" : "数据暂缺"}</span>
           </header>
-          {seatBehaviors.length ? (
-            <ul className="capital-seat-list">
-              {seatBehaviors.map((seat) => (
-                <li key={seat.key} className={seat.tone}>
-                  <div className="capital-seat-name">
-                    <strong>{seat.name}</strong>
-                    <span>{seat.typeLabel}</span>
-                  </div>
-                  <div className="capital-seat-flow">
-                    <strong>{seat.directionLabel}</strong>
-                    <span>{seat.amountLabel}</span>
-                  </div>
-                  <div className="capital-seat-tactic">
-                    <strong>常见形态：{seat.tactic}</strong>
-                    <p>{seat.explanation}</p>
-                    {seat.stats && <small>{seat.stats}</small>}
-                  </div>
-                </li>
-              ))}
-            </ul>
+          {institution ? (
+            <>
+              <CapitalQuantMetrics metrics={institutionMetrics} />
+              {institutionMeta && <p className="capital-quant-note">{institutionMeta}</p>}
+              <p className="capital-quant-note">仅为该股票最近一次上榜时披露的机构席位汇总。</p>
+              {seatBehaviors.length ? (
+                <ul className="capital-seat-list">
+                  {seatBehaviors.map((seat) => (
+                    <li key={seat.key} className={seat.tone}>
+                      <div className="capital-seat-name">
+                        <strong>{seat.name}</strong>
+                        <span>{seat.typeLabel}</span>
+                      </div>
+                      <div className="capital-seat-flow">
+                        <strong>{seat.directionLabel}</strong>
+                        <span>{seat.amountLabel}</span>
+                      </div>
+                      <div className="capital-seat-tactic">
+                        <strong>席位形态推断：{seat.tactic}</strong>
+                        <p>{seat.explanation}</p>
+                        {seat.stats && <small>{seat.stats}</small>}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="capital-quant-empty">该次上榜的营业部买卖明细暂缺。</p>
+              )}
+              {institution.seat_detail_status !== "complete" && institution.seat_detail_note && (
+                <p className="capital-quant-note">{institution.seat_detail_note}</p>
+              )}
+              <p className="capital-seat-disclaimer">公开席位不代表全部机构持仓；营业部名称也不能确认具体账户控制人或交易程序。</p>
+            </>
           ) : (
-            <p className="capital-quant-empty">本次未取得公开营业部买卖明细，机构汇总数据仍可单独参考。</p>
+            <p className="capital-quant-empty">{institutionStatus?.title || "查询窗口内没有可展示的龙虎榜记录。"}</p>
           )}
-          {institution.seat_detail_status !== "complete" && institution.seat_detail_note && (
-            <p className="capital-quant-note">{institution.seat_detail_note}</p>
-          )}
-          <p className="capital-seat-disclaimer">营业部名称只代表公开交易通道，不能确认具体游资、账户实际控制人或是否使用量化程序。</p>
-        </article>
-      )}
+      </article>
     </section>
   );
+}
+
+function PublicMarketIntelligencePanel({
+  activeBrokerages,
+  holdings,
+}: {
+  activeBrokerages?: MarketActiveBrokerageBoard | null;
+  holdings?: InstitutionalHoldingsSnapshot | null;
+}) {
+  return (
+    <section className="public-market-intelligence" aria-label="龙虎榜和机构持仓公开信息">
+      <article className="public-market-intelligence-block">
+        <header>
+          <div>
+            <h4>全市场每日活跃营业部</h4>
+            <small>{activeBrokerages?.trade_date || "日期暂缺"} · 东方财富公开龙虎榜统计</small>
+          </div>
+          <span>{activeBrokerages?.status === "available" ? `前 ${activeBrokerages.items.length} 席` : "数据暂缺"}</span>
+        </header>
+        {activeBrokerages?.status === "available" && activeBrokerages.items.length ? (
+          <>
+            <div className="public-market-table-wrap">
+              <table className="public-market-table" aria-label="全市场每日活跃营业部榜单">
+                <thead><tr><th>排名 / 营业部</th><th>买 / 卖次数</th><th>买入金额</th><th>卖出金额</th><th>净买入</th></tr></thead>
+                <tbody>
+                  {activeBrokerages.items.map((item) => (
+                    <tr key={`${item.rank}-${item.code || item.name}`}>
+                      <td><strong>{item.rank}. {item.name}</strong><small>{item.stock_count} 只股票</small></td>
+                      <td>{item.buy_appearances} / {item.sell_appearances}</td>
+                      <td>{formatMarketAmount(item.buy_amount)}</td>
+                      <td>{formatMarketAmount(item.sell_amount)}</td>
+                      <td className={item.net_amount >= 0 ? "positive" : "negative"}>{formatMarketAmount(item.net_amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="capital-quant-note">按营业部当日买卖出现次数排序；统计范围仅限公开龙虎榜席位。</p>
+          </>
+        ) : (
+          <p className="capital-quant-empty">
+            {activeBrokerages?.note || "尚无全市场营业部榜单数据。"}
+          </p>
+        )}
+      </article>
+
+      <article className="public-market-intelligence-block">
+        <header>
+          <div>
+            <h4>机构持仓</h4>
+            <small>
+              {holdings?.report_period || "报告期暂缺"}
+              {holdings?.report_date ? ` · 截至 ${holdings.report_date}` : ""}
+              {holdings?.disclosed_at ? ` · 披露 ${holdings.disclosed_at}` : ""}
+            </small>
+          </div>
+          <span>{holdings?.status === "available" ? `${holdings.items.length} 家` : "数据暂缺"}</span>
+        </header>
+        {holdings?.status === "available" && holdings.items.length ? (
+          <>
+            <div className="public-market-table-wrap">
+              <table className="public-market-table" aria-label="报告期机构持仓">
+                <thead><tr><th>股东排名 / 名称</th><th>类别</th><th>持股比例</th><th>持仓变化</th></tr></thead>
+                <tbody>
+                  {holdings.items.map((item) => (
+                    <tr key={`${item.rank}-${item.name}`}>
+                      <td><strong>{item.rank}. {item.name}</strong></td>
+                      <td>{item.type || "机构"}</td>
+                      <td>{formatNumber(item.ratio)}%</td>
+                      <td>{item.change}{item.change_ratio != null ? `（${formatSignedPercent(item.change_ratio)}）` : ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="capital-quant-note">持仓为报告期末的前十大流通股东披露，不代表当前实时持仓。</p>
+          </>
+        ) : (
+          <p className="capital-quant-empty">
+            {holdings?.status === "no_institutional_holders"
+              ? "本报告期前十大流通股东中暂无识别到机构类别。"
+              : holdings?.note || "尚无机构持仓披露数据。"}
+          </p>
+        )}
+      </article>
+    </section>
+  );
+}
+
+function formatMarketAmount(amount: number): string {
+  const absolute = Math.abs(amount);
+  const formatted = absolute >= 100_000_000
+    ? `${formatNumber(absolute / 100_000_000)} 亿`
+    : `${formatNumber(absolute / 10_000)} 万`;
+  return amount < 0 ? `-${formatted}` : formatted;
 }
 
 type CapitalQuantMetric = {

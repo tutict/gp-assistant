@@ -16,12 +16,24 @@ export function localDataUnavailable(status: DataStatus | null | undefined): boo
 }
 
 export function shouldSuggestLocalRefresh(error: unknown): boolean {
-  const text = error instanceof Error ? error.message : String(error);
-  try {
-    return JSON.parse(text)?.code === "LOCAL_DATA_MISSING";
-  } catch {
-    return false;
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current != null; depth += 1) {
+    if (typeof current === "object" && seen.has(current)) return false;
+    if (typeof current === "object" && current !== null) seen.add(current);
+    const text = current instanceof Error ? current.message : String(current);
+    try {
+      if (JSON.parse(text)?.code === "LOCAL_DATA_MISSING") return true;
+    } catch {
+      // Try the nested cause below. Tauri wraps native errors with a formatted Error.
+    }
+    current = current instanceof Error
+      ? current.cause
+      : (typeof current === "object" && current !== null && "cause" in current
+        ? (current as { cause?: unknown }).cause
+        : undefined);
   }
+  return false;
 }
 export function formatLocalDataError(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);

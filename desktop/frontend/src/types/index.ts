@@ -335,12 +335,58 @@ export interface CapitalEvidenceResult {
   notes?: string[];
 }
 
+export interface MarketActiveBrokerage {
+  rank: number;
+  code?: string | null;
+  name: string;
+  buy_appearances: number;
+  sell_appearances: number;
+  total_appearances: number;
+  buy_amount: number;
+  sell_amount: number;
+  net_amount: number;
+  stock_count: number;
+}
+
+export interface MarketActiveBrokerageBoard {
+  status: "available" | "unavailable";
+  source: string;
+  trade_date?: string | null;
+  checked_on: string;
+  total_departments: number;
+  items: MarketActiveBrokerage[];
+  note?: string | null;
+}
+
+export interface InstitutionalHolding {
+  rank: number;
+  name: string;
+  type: string;
+  shares: number;
+  ratio: number;
+  change: string;
+  change_ratio?: number | null;
+}
+
+export interface InstitutionalHoldingsSnapshot {
+  status: "available" | "no_institutional_holders" | "unavailable";
+  source: string;
+  checked_on: string;
+  report_period?: string | null;
+  report_date?: string | null;
+  disclosed_at?: string | null;
+  items: InstitutionalHolding[];
+  note?: string | null;
+}
+
 export interface ObserveResult {
   source: string;
   stock: StockItem;
   financial_indicators?: FinancialIndicatorSection | null;
   trend?: TrendIndicatorResult | null;
   capital_evidence?: CapitalEvidenceResult | null;
+  market_active_brokerages?: MarketActiveBrokerageBoard | null;
+  institutional_holdings?: InstitutionalHoldingsSnapshot | null;
   order_book?: Record<string, unknown> | null;
   notes?: string[];
 }

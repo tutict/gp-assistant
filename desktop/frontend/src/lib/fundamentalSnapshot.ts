@@ -16,6 +16,34 @@ export interface FundamentalSnapshotData {
   details: FundamentalSnapshotMetric[];
 }
 
+export function isFinancialPeriodStale(period: string | null | undefined, asOfDate: string): boolean {
+  const actual = parseFinancialPeriod(period);
+  const date = asOfDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!actual || !date) return false;
+  const year = Number(date[1]);
+  const month = Number(date[2]);
+  const expected = month >= 11
+    ? [year, 3]
+    : month >= 9
+      ? [year, 2]
+      : month >= 5
+        ? [year, 1]
+        : [year - 1, 3];
+  return actual[0] * 4 + actual[1] < expected[0] * 4 + expected[1];
+}
+
+function parseFinancialPeriod(period: string | null | undefined): [number, number] | null {
+  const value = String(period || "").trim().toUpperCase();
+  const match = value.match(/(20\d{2})\s*(?:年\s*)?(?:Q([1-4])|([一二三四])季|中报|半年报|年报)/);
+  if (!match) return null;
+  const quarter = match[2]
+    ? Number(match[2])
+    : match[3]
+      ? "一二三四".indexOf(match[3]) + 1
+      : value.includes("年报") ? 4 : 2;
+  return [Number(match[1]), quarter];
+}
+
 export function buildFundamentalSnapshotData(
   stock: StockItem,
   financial?: FinancialIndicatorSection | null,

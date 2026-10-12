@@ -90,7 +90,7 @@ export default function App({ onMounted }: AppProps) {
     };
   });
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [mobileRuntime, setMobileRuntime] = useState(false);
+  const [mobileRuntime, setMobileRuntime] = useState(() => isMobileTauriRuntime());
   const [observeRequest, setObserveRequest] = useState<StockRouteRequest | null>(null);
   const [newsRequest, setNewsRequest] = useState<NewsRouteRequest | null>(null);
   const [agentDraftRequest, setAgentDraftRequest] = useState<AgentDraftRequest | null>(null);
