@@ -85,6 +85,7 @@ const DEDUCTED_FINANCIAL_FIELDS = [
 
 let financialSnapshotPromise: Promise<Record<string, unknown> | null> | null = null;
 let industrySnapshotPromise: Promise<Record<string, unknown> | null> | null = null;
+let marketRefreshInFlight: Promise<Record<string, unknown>> | null = null;
 
 function hasTauriRuntime(): boolean {
   if (typeof window === "undefined") return false;
@@ -443,7 +444,15 @@ async function tauriAutoRefreshUniverse(invoke: InvokeFn, payload: Record<string
   };
 }
 
-export async function refreshTauriMarketData(invoke: InvokeFn, options: MarketRefreshOptions = {}): Promise<Record<string, unknown>> {
+export function refreshTauriMarketData(invoke: InvokeFn, options: MarketRefreshOptions = {}): Promise<Record<string, unknown>> {
+  if (marketRefreshInFlight) return marketRefreshInFlight;
+  marketRefreshInFlight = refreshTauriMarketDataInternal(invoke, options).finally(() => {
+    marketRefreshInFlight = null;
+  });
+  return marketRefreshInFlight;
+}
+
+async function refreshTauriMarketDataInternal(invoke: InvokeFn, options: MarketRefreshOptions = {}): Promise<Record<string, unknown>> {
   const logs = createMarketRefreshLogger(options.onLog);
   const lifecycle = new AbortController();
   const visibilityChanged = () => { if (typeof document !== "undefined" && document.visibilityState === "hidden") lifecycle.abort(); };

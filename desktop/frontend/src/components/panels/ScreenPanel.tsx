@@ -22,7 +22,7 @@ import {
   normalizeScreenRows,
   normalizeSectorGroups,
 } from "../../lib/contracts";
-import { currentSystemDateInputValue, defaultTrendStartDateInputValue } from "../../lib/format";
+import { currentSystemDateCompact, currentSystemDateInputValue, defaultTrendStartDateInputValue } from "../../lib/format";
 import { StockList, displayStockScore } from "../StockList";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { Sheet } from "../ui/Sheet";
@@ -81,6 +81,26 @@ const SCREEN_RUN_REFRESH_OPTIONS = {
   prefetch_history_limit: 80,
   validate_after_write: true,
 };
+
+let screenRefreshDay = "";
+let screenRefreshPromise: Promise<unknown> | null = null;
+
+function refreshScreenMarketDataOncePerDay(): Promise<unknown> {
+  const day = currentSystemDateCompact();
+  if (screenRefreshDay === day && screenRefreshPromise) return screenRefreshPromise;
+  screenRefreshDay = day;
+  screenRefreshPromise = postJson("/api/data-sources/refresh-universe", SCREEN_RUN_REFRESH_OPTIONS).catch((error) => {
+    screenRefreshDay = "";
+    screenRefreshPromise = null;
+    throw error;
+  });
+  return screenRefreshPromise;
+}
+
+export function resetScreenRefreshForTests(): void {
+  screenRefreshDay = "";
+  screenRefreshPromise = null;
+}
 
 function shouldPrepareResearchDataForRetry(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -151,6 +171,7 @@ export function ScreenPanel({
     customScreen: 0,
     trendScreen: 0,
   });
+  const runInFlightRef = useRef(false);
 
   const updateRun = useCallback((
     target: ScreenMode,
@@ -187,6 +208,8 @@ export function ScreenPanel({
   }, [updateRun]);
 
   const run = useCallback(async (override?: ScreenRunOverride) => {
+    if (runInFlightRef.current) return;
+    runInFlightRef.current = true;
     const requestMode = override?.mode ?? mode;
     const requestCriteria = criteriaForMode(requestMode, override?.criteria ?? criteria);
     const requestTrendStart = override?.trendStart ?? trendStart;
@@ -235,7 +258,7 @@ export function ScreenPanel({
           && shouldPrepareResearchDataForRetry(firstError);
         if (!canRetryWithPreparedData) throw firstError;
         if (requestMode === "screen") {
-          await postJson("/api/data-sources/refresh-universe", SCREEN_RUN_REFRESH_OPTIONS);
+          await refreshScreenMarketDataOncePerDay();
         }
         data = await postJson(endpoint, { ...(payload as Record<string, unknown>), data_policy: "refresh" });
       }
@@ -258,6 +281,7 @@ export function ScreenPanel({
         progress: null,
       }));
     } finally {
+      runInFlightRef.current = false;
       if (requestVersion === requestVersions.current[requestMode] && requestMode === "screen") {
         activeRunIdRef.current = null;
       }

@@ -13,7 +13,7 @@ vi.mock("../../lib/tauri", () => ({
   getTauriListen: getTauriListenMock,
 }));
 
-import { ScreenPanel } from "./ScreenPanel";
+import { ScreenPanel, resetScreenRefreshForTests } from "./ScreenPanel";
 import { CriteriaFields } from "../CriteriaFields";
 
 const criteria: FilterCriteria = {
@@ -92,6 +92,9 @@ async function renderPanel(
 }
 
 describe("ScreenPanel adaptive states", () => {
+  beforeEach(() => {
+    resetScreenRefreshForTests();
+  });
   it("tells the user to refresh before screening when market data is unavailable", async () => {
     const renderer = await renderPanel();
     expect(textContent(renderer)).toContain("点击运行查看当前模式的全市场筛选结果");
@@ -345,6 +348,26 @@ describe("ScreenPanel adaptive states", () => {
     });
     expect(textContent(renderer)).toContain("暂无匹配股票");
     expect(textContent(renderer)).toContain("用你设置的财务和市值条件筛选");
+  });
+
+  it("ignores a second run click while the current screening request is active", async () => {
+    let resolveRequest: (value: unknown) => void = () => undefined;
+    postJsonMock.mockReturnValue(new Promise((resolve) => {
+      resolveRequest = resolve;
+    }));
+    const renderer = await renderPanel();
+
+    await act(async () => {
+      runButton(renderer).props.onClick();
+      runButton(renderer).props.onClick();
+      await Promise.resolve();
+    });
+    expect(postJsonMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveRequest({ total: 0, returned: 0, items: [], groups: [] });
+      await Promise.resolve();
+    });
   });
 
   it("restores each mode result and shows its fixed description", async () => {

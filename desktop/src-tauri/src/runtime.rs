@@ -42,7 +42,7 @@ use tokio::sync::{Semaphore, SemaphorePermit};
 
 const CPU_BOUND_PERMITS: usize = if cfg!(target_os = "android") { 2 } else { 4 };
 const IO_BOUND_PERMITS: usize = if cfg!(target_os = "android") { 1 } else { 2 };
-const HEAVY_NETWORK_PERMITS: usize = if cfg!(target_os = "android") { 2 } else { 4 };
+const HEAVY_NETWORK_PERMITS: usize = if cfg!(target_os = "android") { 2 } else { 8 };
 const MARKET_REFRESH_PERMITS: usize = 1;
 
 static CPU_BOUND_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
