@@ -40,6 +40,11 @@ describe("refresh toolbar CSS contract", () => {
     expect(ruleBody(pages, ".refresh-log-toggle")).not.toContain("var(--accent)");
   });
 
+  it("uses a red progress fill for desktop refresh and keeps logs available on demand", () => {
+    expect(ruleBody(pages, ".refresh-progress-red .refresh-progress-fill")).toContain("var(--error)");
+    expect(ruleBody(pages, ".refresh-log-toggle:disabled")).toContain("cursor: not-allowed");
+  });
+
   it("uses a single-line flex toolbar with an auto-pushing status summary", () => {
     expect(ruleBody(pages, ".screen-toolbar-card.screen-toolbar-compact")).toMatch(/display\s*:\s*flex/);
     expect(ruleBody(pages, ".screen-toolbar-status")).toMatch(/margin-right\s*:\s*auto/);

@@ -80,7 +80,7 @@ describe("FilterBar", () => {
     expect(JSON.stringify(renderer.toJSON())).not.toContain("已同步");
   });
 
-  it("pauses automatic log collapse while the desktop log shell is hovered", async () => {
+  it("keeps logs collapsed after refresh and opens them on demand", async () => {
     postJsonMock.mockResolvedValue({
       status: { universe_count: 5432, quote_trade_date: "20260814", current_trade_date: "20260814", stale: false },
       refreshed: true,
@@ -98,30 +98,42 @@ describe("FilterBar", () => {
     });
 
     let shell = renderer.root.findByProps({ id: "refresh-log-panel" });
-    expect(shell.props.className).toContain("open");
+    expect(shell.props.className).toContain("collapsed");
 
     await act(async () => {
-      shell.props.onMouseEnter();
-    });
-
-    await act(async () => {
-      for (const [timerId, callback] of [...timers]) {
-        timers.delete(timerId);
-        callback();
-      }
+      renderer.root.findByProps({ className: "refresh-log-toggle" }).props.onClick();
     });
     shell = renderer.root.findByProps({ id: "refresh-log-panel" });
     expect(shell.props.className).toContain("open");
+  });
+
+  it("shows a red progress bar instead of opening logs during refresh", async () => {
+    let finishRefresh: (value: unknown) => void = () => undefined;
+    postJsonMock.mockReturnValue(new Promise((resolve) => {
+      finishRefresh = resolve;
+    }));
+
+    let renderer!: ReactTestRenderer;
+    let refreshPromise: Promise<void> | undefined;
+    await act(async () => {
+      renderer = create(<FilterBar status={{ universe_count: 5231 }} />);
+    });
+    await act(async () => {
+      refreshPromise = renderer.root.findByProps({ className: "screen-toolbar-refresh-btn" }).props.onClick();
+      await Promise.resolve();
+    });
+
+    const progress = renderer.root.findByProps({ role: "progressbar" });
+    expect(progress.props["aria-label"]).toBe("正在刷新股票池");
+    expect(renderer.root.findByProps({ className: "refresh-log-toggle" }).props.disabled).toBe(true);
+    expect(renderer.root.findAllByProps({ id: "refresh-log-panel" })).toHaveLength(0);
 
     await act(async () => {
-      shell.props.onMouseLeave();
+      finishRefresh({ refreshed: true, notes: ["刷新完成"] });
+      await refreshPromise;
     });
-    const collapseTimer = Math.max(...timers.keys());
-    await act(async () => {
-      timers.get(collapseTimer)?.();
-      timers.delete(collapseTimer);
-    });
-
+    expect(renderer.root.findAllByProps({ role: "progressbar" })).toHaveLength(0);
+    expect(renderer.root.findByProps({ className: "refresh-log-toggle" }).props.disabled).toBe(false);
     expect(renderer.root.findByProps({ id: "refresh-log-panel" }).props.className).toContain("collapsed");
   });
 

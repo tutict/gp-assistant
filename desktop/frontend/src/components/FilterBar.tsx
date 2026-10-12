@@ -138,7 +138,7 @@ export function FilterBar({ status, onStatusChange }: FilterBarProps) {
 
   const updateProgressFromRefresh = useCallback((entry: RefreshLogEntry) => {
     appendLog(entry.message, entry.tone);
-    const match = entry.message.match(/(\d+)[-/](\d+|\?)/);
+    const match = entry.message.match(/(\d+)\s*\/\s*(\d+|\?)/);
     if (!match) return;
 
     const done = Number(match[1]);
@@ -170,7 +170,7 @@ export function FilterBar({ status, onStatusChange }: FilterBarProps) {
   const refreshUniverse = useCallback(async () => {
     cancelRefreshLogCollapse();
     setRefreshing(true);
-    setRefreshLogOpen(!mobileLayout);
+    setRefreshLogOpen(false);
     setRefreshLog([]);
     setProgress({ label: mobileLayout ? "准备移动端股票池全量刷新..." : "准备股票池刷新...", value: 6 });
 
@@ -203,7 +203,7 @@ export function FilterBar({ status, onStatusChange }: FilterBarProps) {
 
       autoRefreshStartedRef.current = true;
       cancelRefreshLogCollapse();
-      setRefreshLogOpen(!mobileLayout);
+      setRefreshLogOpen(false);
       setProgress({ label: "正在后台同步上一开盘日行情...", value: 6 });
       appendLog("检测到行情缓存日期过期或当日报价覆盖不完整，已在后台触发自动刷新。", "info");
 
@@ -295,12 +295,18 @@ export function FilterBar({ status, onStatusChange }: FilterBarProps) {
 
   const progressAndLog = mobileLayout ? null : (
     <>
-      {progress && (
-        <div className="refresh-progress">
-          <div className="refresh-progress-bar">
+      {refreshing && progress && (
+        <div className="refresh-progress refresh-progress-red">
+          <div
+            className="refresh-progress-bar"
+            role="progressbar"
+            aria-label="正在刷新股票池"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(progress.value)}
+          >
             <div className="refresh-progress-fill" style={{ width: `${progress.value}%` }} />
           </div>
-          <span className="refresh-progress-label">{progress.label}</span>
         </div>
       )}
 
@@ -406,22 +412,21 @@ export function FilterBar({ status, onStatusChange }: FilterBarProps) {
                 </summary>
                 {maintenanceContent}
               </details>
-              {refreshLog.length > 0 && (
-                <button
-                  type="button"
-                  className="refresh-log-toggle"
-                  aria-expanded={refreshLogOpen}
-                  aria-controls="refresh-log-panel"
-                  onClick={() => {
-                    cancelRefreshLogCollapse();
-                    setRefreshLogOpen((expanded) => !expanded);
-                  }}
-                >
-                  <ChevronRight className="refresh-log-toggle-icon" size={14} aria-hidden="true" />
-                  <span>日志</span>
-                  <span className="refresh-log-badge">{refreshLog.length}</span>
-                </button>
-              )}
+              <button
+                type="button"
+                className="refresh-log-toggle"
+                disabled={refreshLog.length === 0}
+                aria-expanded={refreshLogOpen}
+                aria-controls="refresh-log-panel"
+                onClick={() => {
+                  cancelRefreshLogCollapse();
+                  setRefreshLogOpen((expanded) => !expanded);
+                }}
+              >
+                <ChevronRight className="refresh-log-toggle-icon" size={14} aria-hidden="true" />
+                <span>日志</span>
+                <span className="refresh-log-badge">{refreshLog.length}</span>
+              </button>
             </div>
           </div>
           {progressAndLog}
