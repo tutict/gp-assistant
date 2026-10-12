@@ -323,6 +323,14 @@
     min-height: 420px;
   }
 
+  .research-loading-status {
+    min-height: 32px;
+    margin: 0;
+    padding: 10px 14px;
+    color: var(--text-secondary);
+    font-size: var(--fs-caption);
+  }
+
   .research-columns {
     display: grid;
     grid-template-columns: clamp(196px, 15vw, 216px) minmax(0, 1fr);

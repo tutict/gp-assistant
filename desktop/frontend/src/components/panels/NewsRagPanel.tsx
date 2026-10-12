@@ -468,7 +468,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const lastUpdated = formatResearchUpdatedAt(overview);
 
   return <section className="research-workspace" aria-label="研究消息中心">
-    {loading && !overview && <PanelFeedback kind="loading" description="正在打开研究消息中心，可继续编辑草稿…" />}
+    {loading && !overview && <p className="research-loading-status" role="status">正在打开研究消息中心，可继续编辑草稿…</p>}
     {!props.embedded && <header className="research-topbar">
       <div className="research-context">
         <button type="button" className="research-icon-button research-mobile-inbox-button"
