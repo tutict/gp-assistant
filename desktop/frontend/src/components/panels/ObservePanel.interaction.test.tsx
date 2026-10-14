@@ -234,26 +234,29 @@ describe("ObservePanel requests", () => {
     await act(async () => renderer.unmount());
   });
 
-  it("refreshes incomplete public seat details after a local observation succeeds", async () => {
+  it("does not refresh or show hidden individual LHB seat details", async () => {
     const cached = {
       stock: { code: "600519.SH", name: "贵州茅台" },
       capital_evidence: {
         items: [{ category: "institution_lhb", title: "东方财富龙虎榜机构席位", seats: [], seat_detail_status: "partial" }],
       },
+      market_active_brokerages: {
+        status: "available",
+        source: "东方财富每日活跃营业部",
+        checked_on: currentSystemDateInputValue(),
+        trade_date: currentSystemDateInputValue(),
+        total_departments: 0,
+        items: [],
+      },
+      institutional_holdings: {
+        status: "no_institutional_holders",
+        source: "东方财富前十大流通股东",
+        checked_on: currentSystemDateInputValue(),
+        items: [],
+      },
       notes: [],
     };
-    const refreshed = {
-      ...cached,
-      capital_evidence: {
-        items: [{
-          category: "institution_lhb",
-          title: "东方财富龙虎榜机构席位",
-          seats: [{ name: "机构专用", direction: "buy", buy_amount: 10, sell_amount: 0, net_amount: 10 }],
-          seat_detail_status: "complete",
-        }],
-      },
-    };
-    getJsonMock.mockResolvedValueOnce(cached).mockResolvedValueOnce(refreshed);
+    getJsonMock.mockResolvedValueOnce(cached);
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(
@@ -267,10 +270,10 @@ describe("ObservePanel requests", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(observeCalls()).toHaveLength(2);
+    expect(observeCalls()).toHaveLength(1);
     expect(String(observeCalls()[0][0])).toContain("data_policy=cache_only");
-    expect(String(observeCalls()[1][0])).toContain("data_policy=refresh");
-    expect(textContent(renderer)).toContain("机构专用");
+    expect(textContent(renderer)).not.toContain("个股最近一次公开龙虎榜");
+    expect(textContent(renderer)).not.toContain("机构专用");
     await act(async () => renderer.unmount());
   });
 
@@ -342,7 +345,7 @@ describe("ObservePanel requests", () => {
     await act(async () => renderer.unmount());
   });
 
-  it("renders latest stock LHB, market active brokerages, and disclosed institutional holdings separately", async () => {
+  it("renders market active brokerages and disclosed institutional holdings", async () => {
     getJsonMock.mockResolvedValueOnce({
       stock: { code: "688372.SH", name: "伟测科技" },
       capital_evidence: {
@@ -388,8 +391,7 @@ describe("ObservePanel requests", () => {
 
     const rendered = textContent(renderer);
     expect(observeCalls()).toHaveLength(1);
-    expect(rendered).toContain("个股最近一次公开龙虎榜");
-    expect(rendered).toContain("2026-10-09");
+    expect(rendered).not.toContain("个股最近一次公开龙虎榜");
     expect(rendered).toContain("全市场每日活跃营业部");
     expect(rendered).toContain("活跃营业部甲");
     expect(rendered).toContain("机构持仓");

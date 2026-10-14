@@ -6,7 +6,6 @@ import { calculateObserveQuant } from "../../lib/observeQuant";
 import type { ObserveQuantConclusion } from "../../lib/observeQuant";
 import { buildFundamentalSnapshotData, isFinancialPeriodStale } from "../../lib/fundamentalSnapshot";
 import { buildMainFundFlowView, isLocalFundFlowProxy } from "../../lib/mainFundFlow";
-import { buildSeatBehaviorViews } from "../../lib/seatBehavior";
 import { getJson } from "../../lib/tauri";
 import { CollapsibleNotes } from "../CollapsibleNotes";
 import { RawJson } from "../RawJson";
@@ -37,14 +36,6 @@ interface ObservePanelProps {
 export function observeAgentPrompt(name: string, code: string): string {
   const label = name.trim() || code;
   return `请研究 ${label}（${code}）。结合行情、财务和趋势，说明现在值得继续观察还是需要回避，并指出主要依据。`;
-}
-
-function needsCapitalDetailRefresh(result: ObserveResult): boolean {
-  const items = result.capital_evidence?.items;
-  if (!Array.isArray(items)) return false;
-  const institution = items.find((item) => item.category === "institution_lhb");
-  if (!institution) return false;
-  return institution.seat_detail_status !== "complete";
 }
 
 function needsFinancialSnapshotRefresh(result: ObserveResult): boolean {
@@ -155,15 +146,12 @@ export function ObservePanel({
         data = await request("refresh");
       }
       const financialSnapshotStale = needsFinancialSnapshotRefresh(data);
-      const capitalDetailsIncomplete = needsCapitalDetailRefresh(data);
       const publicMarketDataStale = needsPublicMarketDataRefresh(data);
-      if (!refreshAttempted && (financialSnapshotStale || capitalDetailsIncomplete || publicMarketDataStale)) {
+      if (!refreshAttempted && (financialSnapshotStale || publicMarketDataStale)) {
         refreshAttempted = true;
         setLoadingMessage(financialSnapshotStale
           ? "正在更新最新财报快照..."
-          : publicMarketDataStale
-            ? "正在更新市场营业部与机构持仓..."
-            : "正在补齐龙虎榜席位明细...");
+          : "正在更新市场营业部与机构持仓...");
         try {
           data = await request("refresh");
         } catch (detailError) {
@@ -172,7 +160,7 @@ export function ObservePanel({
             ...data,
             notes: [
               ...(data.notes || []),
-              `${financialSnapshotStale ? "最新财报快照" : publicMarketDataStale ? "全市场营业部/机构持仓" : "龙虎榜席位明细"}暂未补齐：${formatLocalDataError(detailError)}`,
+              `${financialSnapshotStale ? "最新财报快照" : "全市场营业部/机构持仓"}暂未补齐：${formatLocalDataError(detailError)}`,
             ],
           });
           setError(null);
@@ -435,7 +423,6 @@ function ObserveTextMetrics({
         ["资金综合分", metricOrMissing(formatNumber(capital?.composite_score))],
         ["证据置信度", capital?.confidence || "暂无"],
         ["资金流", capitalSummary.fundFlow === "--" ? "暂无" : capitalSummary.fundFlow],
-        ["机构席位", capitalSummary.institution === "--" ? "暂无" : capitalSummary.institution],
         ["消息情绪", capitalSummary.news === "--" ? "暂无" : capitalSummary.news],
         ["技术资金", capitalSummary.technical === "--" ? "暂无" : capitalSummary.technical],
       ]),
@@ -538,27 +525,8 @@ function ObserveSpecialQuant({ conclusions }: { conclusions: ObserveQuantConclus
 
 function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null }) {
   const items = capital?.items || [];
-  const institution = items.find((item) => item.category === "institution_lhb");
-  const institutionStatus = items.find((item) => item.category === "institution_lhb_status");
   const proxy = items.find((item) => item.category === "fund_flow" && isLocalFundFlowProxy(item));
   const mainFlow = buildMainFundFlowView(capital);
-  const seatBehaviors = buildSeatBehaviorViews(institution);
-
-  const institutionTone = capitalSentimentTone(institution?.sentiment);
-  const institutionMetrics: CapitalQuantMetric[] = institution ? [
-    { label: "机构买入", value: capitalMetricValue(institution, "机构买入额"), tone: "positive" },
-    { label: "机构卖出", value: capitalMetricValue(institution, "机构卖出额"), tone: "negative" },
-    { label: "机构净买", value: capitalMetricValue(institution, "机构净买额"), tone: institutionTone },
-    { label: "净买占成交", value: capitalMetricValue(institution, "净买额占成交额比"), tone: institutionTone },
-  ] : [];
-  const institutionMeta = institution ? [
-    capitalMetricPart("机构买卖比", capitalMetricValue(institution, "机构买卖比")),
-    capitalMetricPair(
-      "买方/卖方机构",
-      capitalMetricValue(institution, "买方机构数"),
-      capitalMetricValue(institution, "卖方机构数"),
-    ),
-  ].filter(Boolean).join(" · ") : "";
 
   const proxyScore = numeric(proxy?.score);
   const proxyTone: MetricAnalysisTone = Number.isFinite(proxyScore)
@@ -579,10 +547,10 @@ function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null
   ].filter(Boolean).join(" · ") : "";
 
   return (
-    <section className="observe-capital-quant" aria-label="主力资金与龙虎榜公开席位">
+    <section className="observe-capital-quant" aria-label="主力资金与量价代理">
       <header>
         <h4>资金量化证据</h4>
-        <small>主力资金 · 个股龙虎榜</small>
+        <small>主力资金 · 量价代理</small>
       </header>
       <article className={"capital-main-flow " + mainFlow.tone + (mainFlow.available ? "" : " unavailable")}>
         <header>
@@ -629,51 +597,6 @@ function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null
           </article>
         )}
       </div>
-      <article className="capital-seat-behavior">
-          <header>
-            <div>
-              <h5>个股最近一次公开龙虎榜</h5>
-              <small>{institution?.date || institutionStatus?.date || "最近查询窗口"} · 龙虎榜公开数据</small>
-            </div>
-            <span>{institution ? `${seatBehaviors.length || "汇总"} 席` : institutionStatus ? "暂无上榜" : "数据暂缺"}</span>
-          </header>
-          {institution ? (
-            <>
-              <CapitalQuantMetrics metrics={institutionMetrics} />
-              {institutionMeta && <p className="capital-quant-note">{institutionMeta}</p>}
-              <p className="capital-quant-note">仅为该股票最近一次上榜时披露的机构席位汇总。</p>
-              {seatBehaviors.length ? (
-                <ul className="capital-seat-list">
-                  {seatBehaviors.map((seat) => (
-                    <li key={seat.key} className={seat.tone}>
-                      <div className="capital-seat-name">
-                        <strong>{seat.name}</strong>
-                        <span>{seat.typeLabel}</span>
-                      </div>
-                      <div className="capital-seat-flow">
-                        <strong>{seat.directionLabel}</strong>
-                        <span>{seat.amountLabel}</span>
-                      </div>
-                      <div className="capital-seat-tactic">
-                        <strong>席位形态推断：{seat.tactic}</strong>
-                        <p>{seat.explanation}</p>
-                        {seat.stats && <small>{seat.stats}</small>}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="capital-quant-empty">该次上榜的营业部买卖明细暂缺。</p>
-              )}
-              {institution.seat_detail_status !== "complete" && institution.seat_detail_note && (
-                <p className="capital-quant-note">{institution.seat_detail_note}</p>
-              )}
-              <p className="capital-seat-disclaimer">公开席位不代表全部机构持仓；营业部名称也不能确认具体账户控制人或交易程序。</p>
-            </>
-          ) : (
-            <p className="capital-quant-empty">{institutionStatus?.title || "查询窗口内没有可展示的龙虎榜记录。"}</p>
-          )}
-      </article>
     </section>
   );
 }
@@ -803,10 +726,6 @@ function capitalMetricPart(label: string, value: string): string {
   return value === "暂无" ? "" : `${label} ${value}`;
 }
 
-function capitalMetricPair(label: string, left: string, right: string): string {
-  return left === "暂无" && right === "暂无" ? "" : `${label} ${left}/${right}`;
-}
-
 function isMissingMetricText(value: string): boolean {
   const text = String(value || "").trim();
   return !text || text === "暂无" || text === "--" || text === "—" || text === "-";
@@ -817,12 +736,6 @@ function proxyDirectionFromScore(score: number): string {
   if (score >= 60) return "偏流入";
   if (score <= 40) return "偏流出";
   return "中性";
-}
-
-function capitalSentimentTone(sentiment?: string): MetricAnalysisTone {
-  if (sentiment === "positive") return "positive";
-  if (sentiment === "negative") return "negative";
-  return "neutral";
 }
 
 type MetricAnalysisTone = "positive" | "warning" | "negative" | "neutral";
@@ -993,7 +906,7 @@ function buildMetricAnalysis({
     "扣非净利同比",
     "扣非增长",
   ]) || formatStockProfitGrowth(stock);
-  const capitalText = capital ? `资金综合分 ${formatNumber(capitalScore)}，证据置信度 ${capital.confidence || "--"}；资金流 ${capitalSummary.fundFlow}，机构席位 ${capitalSummary.institution}。` : "资金证据暂缺，不能把缺失数据解读为流入或流出。";
+  const capitalText = capital ? `资金综合分 ${formatNumber(capitalScore)}，证据置信度 ${capital.confidence || "--"}；资金流 ${capitalSummary.fundFlow}。` : "资金证据暂缺，不能把缺失数据解读为流入或流出。";
   items.push({
     title: "财务资金",
     tone: capitalScore >= 60 ? "positive" : capitalScore <= 30 ? "warning" : "neutral",
@@ -1034,7 +947,6 @@ function summarizeCapitalEvidence(capital?: CapitalEvidenceResult | null): Recor
   const sections = capital?.sections || [];
   return {
     fundFlow: evidenceSectionSummary(sections, ["fund_flow", "资金流"]),
-    institution: evidenceSectionSummary(sections, ["institution_lhb", "institution", "机构"]),
     news: evidenceSectionSummary(sections, ["news_sentiment", "message_sentiment", "消息"]),
     technical: evidenceSectionSummary(sections, ["technical_behavior", "technical", "技术"]),
   };
