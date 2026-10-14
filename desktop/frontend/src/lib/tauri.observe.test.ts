@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-describe("desktop financial snapshot routes", () => {
+describe("desktop financial snapshot and backtest routes", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetModules();
@@ -275,9 +275,7 @@ describe("desktop financial snapshot routes", () => {
     expect(invokeMock).toHaveBeenCalledWith("api_backtest", {
       payload: expect.objectContaining({
         source: "criteria",
-        financial_snapshot: expect.objectContaining({
-          industries: { "002432.SZ": "医疗器械" },
-        }),
+        data_policy: "refresh",
       }),
     });
 

@@ -1590,7 +1590,10 @@ pub(crate) async fn prepare_backtest(
 ) -> Result<PreparedBacktest, String> {
     let policy = DataPolicy::parse(&payload)?;
     let data = local_snapshot(app, &payload, "backtest")?;
-    let stock_override = screen_stock_override(app, &data, &payload)?;
+    // Backtests use the persisted market snapshot and their own history preparation path.
+    // Screen-only financial snapshot overlays would make candidate selection depend on the
+    // custom-screen transport instead of the backtest data set.
+    let stock_override = None;
     let request =
         serde_json::from_value::<gp_core::BacktestRequest>(local_data::core_payload(payload))
             .map_err(|error| format!("invalid backtest request: {error}"))?;

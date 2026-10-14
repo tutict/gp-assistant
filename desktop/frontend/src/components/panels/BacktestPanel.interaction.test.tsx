@@ -68,12 +68,33 @@ function runButton(renderer: ReactTestRenderer) {
 }
 
 describe("BacktestPanel interactions", () => {
+  it("groups backtest parameters by stock scope, date range, and portfolio settings", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<BacktestPanel criteria={criteria} watchlist={watchlist} />); });
+
+    expect(renderer.root.findAllByProps({ className: "backtest-parameter-disclosure" })).toHaveLength(0);
+    expect(renderer.root.findByProps({ className: "backtest-parameter-panel" }).findByType("h3").children).toContain("回测参数");
+    const groups = renderer.root.findByProps({ className: "backtest-parameter-groups" });
+    expect(groups.findAllByProps({ className: "criteria-field-group backtest-field-group" })).toHaveLength(3);
+    expect(textContent(renderer)).toContain("仅供研究，不构成投资建议。");
+    expect(groups.findByProps({ className: "backtest-parameter-boundary workspace-boundary" })).toBeTruthy();
+    expect(textContent(renderer)).toContain("股票范围");
+    expect(textContent(renderer)).toContain("回测区间");
+    expect(textContent(renderer)).toContain("组合设置");
+    for (const id of ["btIndustry", "btMarketScope", "btStart", "btEnd", "btTopN", "btRebalance", "btBenchmark", "btStrategyMode", "btCostBps"]) {
+      expect(renderer.root.findAll((node) => node.type === "label" && node.props.htmlFor === id)).toHaveLength(1);
+    }
+
+    await act(async () => renderer.unmount());
+  });
+
   it("keeps completed results visible and marks edited parameters stale", async () => {
     postJsonMock.mockResolvedValue(result);
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(<BacktestPanel criteria={criteria} watchlist={watchlist} />); });
     await act(async () => { await runButton(renderer).props.onClick(); });
-    expect(renderer.root.findByProps({className:"backtest-parameter-disclosure"}).props.open).toBe(false);
+    expect(renderer.root.findAllByProps({ className: "backtest-parameter-disclosure" })).toHaveLength(0);
+    expect(renderer.root.findByProps({ className: "backtest-parameter-groups" })).toBeTruthy();
     await act(async () => renderer.root.findByProps({id:"btCostBps"}).props.onChange({target:{value:"25"}}));
     expect(textContent(renderer)).toContain("参数已修改，结果待更新");
     expect(textContent(renderer)).toContain("重新回测");
@@ -547,7 +568,7 @@ describe("BacktestPanel interactions", () => {
   });
 });
 
-it("keeps backtests local when data is unavailable so refresh stays in the toolbar", async () => {
+it("runs backtests through their own history preparation path", async () => {
   postJsonMock.mockResolvedValue(result);
   let renderer!: ReactTestRenderer;
   await act(async () => { renderer = create(<BacktestPanel criteria={criteria} watchlist={watchlist} />); });
@@ -555,6 +576,6 @@ it("keeps backtests local when data is unavailable so refresh stays in the toolb
   expect(button.children).toContain("运行回测");
   expect(renderer.root.findAll(node => node.type === "select" && node.props["aria-label"] === "回测数据模式")).toHaveLength(0);
   await act(async () => { await button.props.onClick(); });
-  expect(postJsonMock).toHaveBeenLastCalledWith("/api/backtest", expect.objectContaining({ data_policy: "cache_only" }), expect.anything());
+  expect(postJsonMock).toHaveBeenLastCalledWith("/api/backtest", expect.objectContaining({ data_policy: "refresh" }), expect.anything());
   await act(async () => renderer.unmount());
 });

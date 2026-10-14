@@ -21,11 +21,24 @@ describe("local-first IPC", () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(result).toEqual({ data_metadata: { source: "local_cache" } });
   });
-  it.each(["screen", "sector-screen", "custom-screen", "graph-screen", "trend", "trend-screen", "backtest"])("%s defaults to cache_only without fetching bundled data", async name => {
+  it.each(["screen", "sector-screen", "custom-screen", "graph-screen", "trend", "trend-screen"])("%s defaults to cache_only without fetching bundled data", async name => {
     const { invoke, fetch } = setup(); const { TAURI_POST_ROUTES } = await import("./tauri");
     const path = "/api/" + name;
     await TAURI_POST_ROUTES[path]({ invoke, path, parsed: new URL("http://tauri.localhost" + path), payload: { request_id: "r", job_id: "j" } });
     expect(invoke).toHaveBeenCalledWith(expect.any(String), { payload: { data_policy: "cache_only", request_id: "r", job_id: "j" } });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("keeps backtest data preparation independent from screen snapshot hydration", async () => {
+    const { invoke, fetch } = setup(); const { TAURI_POST_ROUTES } = await import("./tauri");
+    await TAURI_POST_ROUTES["/api/backtest"]({
+      invoke,
+      path: "/api/backtest",
+      parsed: new URL("http://tauri.localhost/api/backtest"),
+      payload: { data_policy: "refresh", request_id: "r", job_id: "j" },
+    });
+    expect(invoke).toHaveBeenCalledWith("api_backtest", {
+      payload: { data_policy: "refresh", request_id: "r", job_id: "j" },
+    });
     expect(fetch).not.toHaveBeenCalled();
   });
   it("preserves explicit refresh and cold-start flags", async () => {

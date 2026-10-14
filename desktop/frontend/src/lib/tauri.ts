@@ -273,6 +273,11 @@ async function invokeWithFinancialSnapshot(invoke: InvokeFn, command: string, pa
   return invokeLocalData(invoke, command, nextPayload);
 }
 
+async function invokeBacktest(invoke: InvokeFn, payload: unknown): Promise<unknown> {
+  const base = { data_policy: "refresh", ...asRecord(payload) };
+  return invokeLocalData(invoke, "api_backtest", base);
+}
+
 export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/sentiment/snapshot": async ({ invoke, payload }) => invoke("api_sentiment_snapshot", { payload }),
   "/api/sentiment/start": async ({ invoke, payload }) => invoke("api_sentiment_start", { payload: withAndroidNetworkOptions(asRecord(payload)) }),
@@ -287,7 +292,7 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/graph-screen": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_graph_screen", payload),
   "/api/trend": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_trend_analyze", payload),
   "/api/trend-screen": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_trend_screen", payload),
-  "/api/backtest": async ({ invoke, payload }) => invokeWithFinancialSnapshot(invoke, "api_backtest", payload),
+  "/api/backtest": async ({ invoke, payload }) => invokeBacktest(invoke, payload),
   "/api/news-rag": async ({ invoke, payload }) => isMobileTauriRuntime()
     ? withTimeout(analyzeMobileStockNews(invoke, asRecord(payload)), MOBILE_NEWS_RAG_TIMEOUT_MS, `移动端消息分析超过 ${Math.round(MOBILE_NEWS_RAG_TIMEOUT_MS / 1000)} 秒未返回，已中止等待。`)
     : invoke("api_news_rag", { payload }),

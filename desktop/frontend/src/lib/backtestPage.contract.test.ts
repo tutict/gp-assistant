@@ -87,8 +87,8 @@ describe("backtest page CSS contract", () => {
 
   it("keeps small light-theme labels on the accessible secondary text token", () => {
     for (const selector of [
-      ".backtest-param-strip",
-      ".backtest-param-strip b",
+      ".backtest-field-group > header > span",
+      ".backtest-field-note",
       '.backtest-result > [role="tabpanel"] > .metric-strip .metric > span',
       ".equity-chart .chart-labels span:nth-child(2)",
       ".volatility-symbol-control > span",

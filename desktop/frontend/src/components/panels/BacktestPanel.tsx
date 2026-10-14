@@ -12,8 +12,6 @@ import {
   formatPercent,
   formatSignedPercent,
   normalizeStockCode,
-  shortBenchmarkLabel,
-  shortRebalanceLabel,
 } from "../../lib/format";
 import { RawJson } from "../RawJson";
 import { PanelFeedback } from "../ui/PanelFeedback";
@@ -57,7 +55,6 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [paramsOpen, setParamsOpen] = useState(true);
   const [resultSignature, setResultSignature] = useState("");
   const requestInFlightRef = useRef(false);
   const requestVersionRef = useRef(0);
@@ -80,7 +77,6 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
       : undefined;
     requestVersionRef.current += 1;
     setSource(preferredSource.source);
-    setParamsOpen(true);
     setAdaptiveScreenSpec(nextAdaptiveScreenSpec);
     setWorkingCriteria(
       preferredSource.source === "criteria"
@@ -106,7 +102,6 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     if (nextSource === source) return;
     requestVersionRef.current += 1;
     setSource(nextSource);
-    setParamsOpen(true);
     if (nextSource === "watchlist") {
       if (adaptiveScreenSpec) setWorkingCriteria({ ...criteria });
       setAdaptiveScreenSpec(undefined);
@@ -150,9 +145,9 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
         strategyMode,
         adaptiveScreenSpec,
       });
-      const data = await postJson<unknown>("/api/backtest", { ...payload, data_policy: "cache_only" }, { timeoutMs: 90_000 });
+      const data = await postJson<unknown>("/api/backtest", { ...payload, data_policy: "refresh" }, { timeoutMs: 90_000 });
       const nextResult = requireBacktestResult(data);
-      if (requestVersion === requestVersionRef.current) { setResult(nextResult); setResultSignature(parameterSignature); setParamsOpen(false); }
+      if (requestVersion === requestVersionRef.current) { setResult(nextResult); setResultSignature(parameterSignature); }
     } catch (err) {
       if (requestVersion === requestVersionRef.current) {
         setError(formatLocalDataError(err));
@@ -176,6 +171,11 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     : ALL_INDUSTRY_OPTIONS;
   const canEditCriteria = source === "criteria" && !adaptiveScreenSpec;
   const runLabel = loading ? "回测计算中..." : result && resultSignature !== parameterSignature ? "重新回测" : "运行回测";
+  const strategyDescription = strategyMode === "walk_forward"
+    ? "使用历史快照做滚动验证。"
+    : strategyMode === "adaptive_swing_v1"
+      ? "按每个区间重新筛选候选股。"
+      : "评估当前候选名单的组合表现。";
 
   return (
     <div className="panel-container">
@@ -206,71 +206,113 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
             </button>
           </div>
           <LocalFirstRunControl action="回测" loading={loading} onRun={() => void run()} loadingLabel="回测计算中..." cacheRunLabel={result && resultSignature !== parameterSignature ? "重新回测" : "运行回测"} buttonClassName="backtest-run-button" ariaLabel={loading ? "运行回测" : runLabel} />
-          </div>
-        <div className="backtest-param-strip">
-          <span><b>持有只数</b><strong>{topN}</strong></span>
-          <span><b>区间</b><strong>{start}~{end}</strong></span>
-          <span><b>调仓频率</b><strong>{shortRebalanceLabel(rebalance)}</strong></span>
-          <span><b>单次成本</b><strong>{formatNumber(costBps)} 基点</strong></span>
-          <span><b>基准</b><strong>{shortBenchmarkLabel(benchmark)}</strong></span>
-          <span><b>方式</b><strong>{backtestStrategyLabel(strategyMode)}</strong></span>
         </div>
       </div>
 
       {result && resultSignature !== parameterSignature && <p className="backtest-stale-notice" role="status">参数已修改，结果待更新</p>}
-      <p className="workspace-boundary">仅供研究，不构成投资建议。</p>
-      <details className="backtest-parameter-disclosure" open={paramsOpen} onToggle={event => setParamsOpen(event.currentTarget.open)}>
-      <summary>回测参数</summary>
-      <p className="backtest-parameter-note">候选快照是当前名单的组合表现，滚动验证需要历史快照，自适应波段会按区间重新选股。</p>
-      <div className="panel-controls backtest-controls">
-        {canEditCriteria && <>
-          <div className="form-row inline">
-            <label htmlFor="btIndustry">行业（本页）</label>
-            <select id="btIndustry" value={selectedIndustry} disabled={loading}
-              onChange={(event) => updateWorkingCriteria({ industry: event.target.value })}>
-              {industryOptions.map((industry) => (
-                <option key={industry || "all-industries"} value={industry}>
-                  {isLegacyBroadIndustry(industry) ? `${industry}（大类）` : industry || "全部行业"}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="form-row inline">
-            <label htmlFor="btMarketScope">股票池范围（本页）</label>
-            <select id="btMarketScope" value={normalizeMarketScope(effectiveFilterCriteria.marketScope)} disabled={loading}
-              onChange={(event) => updateWorkingCriteria({ marketScope: event.target.value })}>
-              {MARKET_SCOPE_OPTIONS.map((option) => (
-                <option key={option.value || "all-scopes"} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </div>
-        </>}
-        <div className="form-row inline"><label htmlFor="btStart">开始</label><input id="btStart" type="date" value={start} disabled={loading} onChange={(e) => setStart(e.target.value)} /></div>
-        <div className="form-row inline"><label htmlFor="btEnd">结束</label><input id="btEnd" type="date" value={end} disabled={loading} onChange={(e) => setEnd(e.target.value)} /></div>
-        <div className="form-row inline"><label htmlFor="btTopN">持有只数</label><input id="btTopN" type="number" min="1" max="100" value={topN} disabled={loading} onChange={(e) => setTopN(Number(e.target.value) || 10)} /></div>
-        <div className="form-row inline">
-          <label htmlFor="btRebalance">调仓频率</label>
-          <select id="btRebalance" value={rebalance} disabled={loading} onChange={(e) => setRebalance(e.target.value)}>
-            <option value="none">买入持有</option>
-            <option value="monthly">月度调仓</option>
-            <option value="quarterly">季度调仓</option>
-          </select>
-        </div>
-        <div className="form-row inline">
-          <label htmlFor="btBenchmark">基准</label>
-          <select id="btBenchmark" value={benchmark} disabled={loading} onChange={(e) => setBenchmark(e.target.value)}>
-            <option value="candidate_equal_weight">候选池等权</option>
-            <option value="none">无</option>
-          </select>
-        </div>
-        <div className="form-row inline"><label htmlFor="btStrategyMode">模式</label><select id="btStrategyMode" value={strategyMode} disabled={loading} onChange={(e) => {
-          setStrategyMode(e.target.value);
-          if (e.target.value !== "adaptive_swing_v1") setAdaptiveScreenSpec(undefined);
-        }}><option value="candidate_snapshot">候选快照</option><option value="walk_forward">滚动验证</option><option value="adaptive_swing_v1">自适应波段</option></select></div>
-        <div className="form-row inline"><label htmlFor="btCostBps">单次成本</label><input id="btCostBps" type="number" min="0" max="500" value={costBps} disabled={loading} onChange={(e) => setCostBps(Number(e.target.value) || 0)} /></div>
-      </div>
+      <section className="backtest-parameter-panel" aria-labelledby="backtest-parameters-title">
+        <h3 id="backtest-parameters-title">回测参数</h3>
+        <div className="backtest-parameter-groups">
+          <section className="criteria-field-group backtest-field-group">
+            <header>
+              <strong>股票范围</strong>
+              <span>行业与市场</span>
+            </header>
+            {canEditCriteria ? (
+              <div className="backtest-field-grid backtest-scope-fields">
+                <div className="form-row">
+                  <label htmlFor="btIndustry">行业（本页）</label>
+                  <select id="btIndustry" value={selectedIndustry} disabled={loading}
+                    onChange={(event) => updateWorkingCriteria({ industry: event.target.value })}>
+                    {industryOptions.map((industry) => (
+                      <option key={industry || "all-industries"} value={industry}>
+                        {isLegacyBroadIndustry(industry) ? `${industry}（大类）` : industry || "全部行业"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-row">
+                  <label htmlFor="btMarketScope">股票池范围（本页）</label>
+                  <select id="btMarketScope" value={normalizeMarketScope(effectiveFilterCriteria.marketScope)} disabled={loading}
+                    onChange={(event) => updateWorkingCriteria({ marketScope: event.target.value })}>
+                    {MARKET_SCOPE_OPTIONS.map((option) => (
+                      <option key={option.value || "all-scopes"} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            ) : (
+              <p className="backtest-field-summary">
+                {source === "watchlist" ? `当前使用 ${watchlist.length} 只自选股` : "股票范围由自适应波段方案确定"}
+              </p>
+            )}
+          </section>
 
-      </details>
+          <section className="criteria-field-group backtest-field-group">
+            <header>
+              <strong>回测区间</strong>
+              <span>历史日期</span>
+            </header>
+            <div className="backtest-field-grid backtest-date-fields">
+              <div className="form-row">
+                <label htmlFor="btStart">开始日期</label>
+                <input id="btStart" type="date" value={start} disabled={loading} onChange={(e) => setStart(e.target.value)} />
+              </div>
+              <div className="form-row">
+                <label htmlFor="btEnd">结束日期</label>
+                <input id="btEnd" type="date" value={end} disabled={loading} onChange={(e) => setEnd(e.target.value)} />
+              </div>
+            </div>
+          </section>
+
+          <section className="criteria-field-group backtest-field-group">
+            <header>
+              <strong>组合设置</strong>
+              <span>持有、调仓与基准</span>
+            </header>
+            <div className="backtest-field-grid backtest-portfolio-fields">
+              <div className="form-row">
+                <label htmlFor="btTopN">持有只数</label>
+                <input id="btTopN" type="number" min="1" max="100" value={topN} disabled={loading} onChange={(e) => setTopN(Number(e.target.value) || 10)} />
+              </div>
+              <div className="form-row">
+                <label htmlFor="btRebalance">调仓频率</label>
+                <select id="btRebalance" value={rebalance} disabled={loading} onChange={(e) => setRebalance(e.target.value)}>
+                  <option value="none">买入持有</option>
+                  <option value="monthly">月度调仓</option>
+                  <option value="quarterly">季度调仓</option>
+                </select>
+              </div>
+              <div className="form-row">
+                <label htmlFor="btBenchmark">基准</label>
+                <select id="btBenchmark" value={benchmark} disabled={loading} onChange={(e) => setBenchmark(e.target.value)}>
+                  <option value="candidate_equal_weight">候选池等权</option>
+                  <option value="none">无</option>
+                </select>
+              </div>
+              <div className="form-row">
+                <label htmlFor="btStrategyMode">回测方式</label>
+                <select id="btStrategyMode" value={strategyMode} disabled={loading} onChange={(e) => {
+                  setStrategyMode(e.target.value);
+                  if (e.target.value !== "adaptive_swing_v1") setAdaptiveScreenSpec(undefined);
+                }}>
+                  <option value="candidate_snapshot">候选快照</option>
+                  <option value="walk_forward">滚动验证</option>
+                  <option value="adaptive_swing_v1">自适应波段</option>
+                </select>
+              </div>
+              <div className="form-row">
+                <label htmlFor="btCostBps">单次成本（基点）</label>
+                <input id="btCostBps" type="number" min="0" max="500" value={costBps} disabled={loading} onChange={(e) => setCostBps(Number(e.target.value) || 0)} />
+              </div>
+            </div>
+            <p className="backtest-field-note" role="status">{strategyDescription}</p>
+          </section>
+          <p className="backtest-parameter-boundary workspace-boundary">
+            仅供研究，不构成投资建议。
+          </p>
+        </div>
+      </section>
       <div className="panel-result">
         {error && <PanelFeedback
           kind="error"

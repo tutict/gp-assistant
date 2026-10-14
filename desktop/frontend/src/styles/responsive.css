@@ -50,9 +50,6 @@
   .screen-toolbar-card {
     grid-template-columns: 1fr;
   }
-  .backtest-controls {
-    grid-template-columns: repeat(4, minmax(104px, 1fr));
-  }
   .observe-text-metric-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -244,8 +241,7 @@
     width: 108px;
     flex: 0 0 108px;
   }
-  .panel-controls,
-.backtest-controls {
+  .panel-controls {
     margin-top: 6px;
     padding: 8px;
   }
@@ -514,13 +510,6 @@
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-2);
   }
-  .backtest-param-strip {
-    grid-column: 1;
-    width: 100%;
-    justify-content: flex-start;
-    gap: var(--space-1) var(--space-3);
-    font-size: var(--fs-caption);
-  }
   .backtest-source-switch {
     flex: 1 1 auto;
     min-width: 0;
@@ -532,9 +521,6 @@
   }
   .backtest-run-button {
     min-height: var(--touch-dense);
-  }
-  .backtest-controls {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .backtest-result > .metric-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -905,9 +891,6 @@
   .observe-text-metric-item {
     padding-inline: 7px;
   }
-  .backtest-controls {
-    grid-template-columns: 1fr 1fr;
-  }
 }
 @media (orientation: landscape) and (max-height: 560px) and (max-width: 980px) {
   :root {
@@ -1016,9 +999,7 @@
   .capital-quant-lane { padding: var(--space-3) 0 var(--space-4); border-top: 1px solid var(--line-soft); border-left: 0; }
   .capital-quant-lane:first-child { border-top: 0; }
   .capital-main-flow .capital-quant-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .capital-seat-list > li,
-.observe-detail-disclosure .observe-text-metric-grid { grid-template-columns: 1fr; }
-  .capital-seat-list > li { gap: var(--space-2); }
+  .observe-detail-disclosure .observe-text-metric-grid { grid-template-columns: 1fr; }
 }
 
 /* Android touch-target normalization: primary actions are 48px; secondary controls are 44px. */

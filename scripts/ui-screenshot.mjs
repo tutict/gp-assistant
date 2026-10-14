@@ -1610,6 +1610,13 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
     try {
       await installHarnessState(page);
       await page.goto(deviceUrl(device, "#sectionBacktest"), { waitUntil: "networkidle" });
+      await page.locator(".backtest-parameter-groups").waitFor({ state: "visible" });
+      const parameterDirectory = resolve(outputRoot, "backtest-page", device.name);
+      mkdirSync(parameterDirectory, { recursive: true });
+      const parameterPath = resolve(parameterDirectory, "backtest-parameters.png");
+      await page.locator(".backtest-parameter-groups").screenshot({ path: parameterPath });
+      const parameterRelativePath = `backtest-page/${device.name}/backtest-parameters.png`;
+      const parameterBaseline = checkScreenshotBaseline(parameterPath, parameterRelativePath);
       await page.getByLabel("运行回测").click();
       await page.locator(".backtest-result").waitFor({ state: "visible" });
       await page.getByRole("tab", { name: "结果概览", exact: true }).click();
@@ -1644,9 +1651,10 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
       }
       reports.push({
         device: device.name,
+        parameters: parameterRelativePath,
         page: backtestRelativePath,
         volatility: volatilityRelativePath,
-        baselines: { page: backtestBaseline, volatility: volatilityBaseline },
+        baselines: { parameters: parameterBaseline, page: backtestBaseline, volatility: volatilityBaseline },
         selector: ".backtest-volatility",
         diagnostics,
         runtimeColors,

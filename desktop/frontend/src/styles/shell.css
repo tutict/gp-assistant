@@ -413,7 +413,6 @@
 }
 
 .panel-controls,
-.backtest-controls,
 .research-context-bar,
 .data-source-bar {
   min-width: 0;
@@ -423,8 +422,7 @@
   box-shadow: none;
 }
 
-.panel-controls,
-.backtest-controls {
+.panel-controls {
   width: 100%;
   max-width: 1200px;
   display: flex;
@@ -432,6 +430,11 @@
   gap: var(--space-3);
   margin-top: var(--space-3);
   padding: var(--space-3);
+}
+
+.backtest-controls {
+  width: 100%;
+  max-width: 1200px;
 }
 
 .form-row {

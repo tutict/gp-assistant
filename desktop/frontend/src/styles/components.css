@@ -352,72 +352,10 @@
   font-size: 0.92rem;
   white-space: nowrap;
 }
-.backtest-param-strip {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  min-width: 0;
-  font-size: 0.78rem;
-  color: var(--text-secondary);
-}
-.backtest-param-strip span {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
-  white-space: nowrap;
-}
-.backtest-param-strip strong {
-  color: var(--text);
-  margin-left: 0;
-  font-size: 0.86rem;
-  font-variant-numeric: tabular-nums;
-}
-.backtest-controls .form-row.inline {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: stretch;
-  gap: 5px;
-  min-width: 0;
-  flex: none;
-}
-.backtest-controls .form-row label {
-  max-width: none;
-  min-height: 15px;
-  line-height: 1.15;
-  text-align: left;
-  white-space: nowrap;
-  color: var(--text-secondary);
-  font-size: var(--fs-caption);
-  font-weight: 700;
-}
-.backtest-controls input,
-.backtest-controls select {
-  width: 100%;
-  height: 36px;
-  min-width: 0;
-  padding: 6px 10px;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--surface-2) 88%, var(--bg));
-  font-variant-numeric: tabular-nums;
-}
-.backtest-controls input[type="number"] {
-  width: 100%;
-}
 @media (max-width: 1180px) {
   .backtest-context {
     grid-template-columns: auto minmax(0, 1fr);
   }
-
-  .backtest-param-strip {
-    grid-column: 1 / -1;
-    justify-content: flex-start;
-  }
-
-  .backtest-controls {
-    grid-template-columns: repeat(3, minmax(130px, 1fr));
-  }
-
 }
 
 @media (max-width: 640px) {
@@ -435,13 +373,6 @@
     flex: 1 1 0;
   }
 
-  .backtest-param-strip {
-    gap: 7px 10px;
-  }
-
-  .backtest-controls {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 .backtest-summary {
