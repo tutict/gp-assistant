@@ -209,7 +209,6 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
         </div>
       </div>
 
-      {result && resultSignature !== parameterSignature && <p className="backtest-stale-notice" role="status">参数已修改，结果待更新</p>}
       <section className="backtest-parameter-panel" aria-labelledby="backtest-parameters-title">
         <h3 id="backtest-parameters-title">回测参数</h3>
         <div className="backtest-parameter-groups">

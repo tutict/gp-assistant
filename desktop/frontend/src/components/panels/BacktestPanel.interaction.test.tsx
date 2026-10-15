@@ -96,7 +96,7 @@ describe("BacktestPanel interactions", () => {
     expect(renderer.root.findAllByProps({ className: "backtest-parameter-disclosure" })).toHaveLength(0);
     expect(renderer.root.findByProps({ className: "backtest-parameter-groups" })).toBeTruthy();
     await act(async () => renderer.root.findByProps({id:"btCostBps"}).props.onChange({target:{value:"25"}}));
-    expect(textContent(renderer)).toContain("参数已修改，结果待更新");
+    expect(textContent(renderer)).not.toContain("参数已修改，结果待更新");
     expect(textContent(renderer)).toContain("重新回测");
     expect(textContent(renderer)).toContain("基点");
     expect(textContent(renderer)).toContain("候选快照");

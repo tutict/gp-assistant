@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, ExternalLink, Menu, Play, RefreshCw, Send, X } from "lucide-react";
+import { Activity, Database, ExternalLink, Menu, Play, RefreshCw, Search, Send, X } from "lucide-react";
 import type { LlmSettings, ScreenCriteria, WatchlistItem } from "../../types";
 import { buildSentimentParameterProposal, type SentimentParameterProposal } from "../../lib/evolutionPolicy";
 import { getSentimentStrategies, getSentimentStrategyVersions, rollbackSentimentStrategy, saveSentimentStrategy, setSentimentStrategyStatus, type SentimentStrategy, type SentimentStrategyVersion } from "../../lib/evolution";
@@ -165,7 +165,10 @@ export function SentimentPanel(props: Props) {
       <form className="sentiment-toolbar" onSubmit={(event) => { event.preventDefault(); commitInput(input); }}>
         <label htmlFor="sentiment-stock">股票</label>
         <StockCodeInput id="sentiment-stock" value={input} onChange={(value) => { setInput(value); setInputError(""); }} onCommit={commitInput} placeholder="代码或名称" inputAriaLabel="股票代码或名称" />
-        <button className="btn" type="submit">查看</button>
+        <button className="sentiment-icon-action" type="submit" aria-label="查看股票消息" title="查看股票消息">
+          <Search size={16} aria-hidden="true" />
+          <span className="visually-hidden">查看</span>
+        </button>
         <span className="sentiment-window">近 30 天</span>
       </form>
       <div className="sentiment-header-actions">
@@ -173,11 +176,15 @@ export function SentimentPanel(props: Props) {
           <button type="button" className="research-icon-button research-mobile-inbox-button" aria-label="打开自选股收件箱" title="自选股收件箱" onClick={researchTools.onOpenInbox}>
             <Menu size={18} aria-hidden="true" />
           </button>
-          <span className="sentiment-retrieval">{researchTools.vectorReady ? "关键词 + 语义检索" : "关键词检索"}</span>
-          <button type="button" className="btn" onClick={researchTools.onRefresh} disabled={researchTools.refreshing}>
-            {researchTools.refreshing ? "更新中" : "立即更新"}
+          <span className="sentiment-retrieval" title={researchTools.vectorReady ? "关键词 + 语义检索" : "关键词检索"}>{researchTools.vectorReady ? "关键词 + 语义检索" : "关键词检索"}</span>
+          <button type="button" className="sentiment-icon-action" onClick={researchTools.onRefresh} disabled={researchTools.refreshing} aria-label={researchTools.refreshing ? "消息更新中" : "立即更新消息"} title={researchTools.refreshing ? "消息更新中" : "立即更新消息"}>
+            <RefreshCw size={16} aria-hidden="true" className={researchTools.refreshing ? "sentiment-icon-spin" : undefined} />
+            <span className="visually-hidden">{researchTools.refreshing ? "更新中" : "立即更新"}</span>
           </button>
-          <button type="button" className="btn" onClick={researchTools.onOpenKnowledge}>资料</button>
+          <button type="button" className="sentiment-icon-action" onClick={researchTools.onOpenKnowledge} aria-label="打开资料管理" title="资料管理">
+            <Database size={16} aria-hidden="true" />
+            <span className="visually-hidden">资料</span>
+          </button>
         </div>}
         <LlmSettingsPanel settings={props.llmSettings || null} onChange={props.onLlmSettingsChange || (() => undefined)} presentation="dialog" statusMode="inline" />
       </div>

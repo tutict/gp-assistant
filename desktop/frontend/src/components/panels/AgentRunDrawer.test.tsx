@@ -12,6 +12,16 @@ const agentRunMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../lib/agentRuns", () => agentRunMocks);
+vi.mock("../../lib/evolution", () => ({
+  deleteEvolutionRule: vi.fn(),
+  editEvolutionRule: vi.fn(),
+  getEvolutionProfile: vi.fn().mockResolvedValue({ settings: { enabled: false, coach_mode: false, local_only: true, review_trigger: "explicit", retain_raw_conversation: false, profile_version: 1 }, profile_version: 1, rules: [], suppressed_kinds: [] }),
+  resetEvolutionProfile: vi.fn(),
+  setEvolutionRuleStatus: vi.fn(),
+  suppressEvolutionKind: vi.fn(),
+  unsuppressEvolutionKind: vi.fn(),
+  updateEvolutionSettings: vi.fn(),
+}));
 
 let AgentRunDrawer: typeof import("./AgentRunDrawer").AgentRunDrawer;
 let buildAgentRunTimeline: typeof import("./AgentRunDrawer").buildAgentRunTimeline;
@@ -225,6 +235,14 @@ afterEach(async () => {
 });
 
 describe("AgentRunDrawer list", () => {
+  it("opens on the selected review tab", async () => {
+    const renderer = await renderDrawer({ open: true, initialTab: "profile" });
+    expect(renderedText(renderer)).toContain("研究画像");
+    const selectedTab = renderer.root.findAllByProps({ role: "tab", "aria-selected": true })[0];
+    expect(selectedTab.children).toContain("研究画像");
+    expect(agentRunMocks.listAgentRuns).not.toHaveBeenCalled();
+    expect(agentRunMocks.getAgentRunMetrics).not.toHaveBeenCalled();
+  });
   it("opens GEPA from the run history header when enabled", async () => {
     const onOpenGepa = vi.fn();
     const renderer = await renderDrawer({

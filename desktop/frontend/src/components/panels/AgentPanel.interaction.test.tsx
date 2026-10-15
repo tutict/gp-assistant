@@ -242,15 +242,21 @@ afterEach(async () => {
 });
 
 describe("AgentPanel run replay interactions", () => {
-  it("places starter questions beside the composer and fills a draft without sending", async () => {
+  it("places starter questions in the chat canvas and fills a draft without sending", async () => {
     const renderer = await renderPanel();
-    const composer = renderer.root.findByProps({ className: "agent-composer-card" });
+    const thread = renderer.root.find((node) => hasClass(node, "agent-thread"));
     const emptyState = renderer.root.find(node => node.type === "div" && hasClass(node, "agent-empty-state"));
-    expect(emptyState.parent?.parent).toBe(composer);
-    expect(nodeText(emptyState)).toContain("示例仅填入，不会发送");
+    const emptyLayout = renderer.root.find(node => node.type === "div" && hasClass(node, "agent-empty-layout"));
+    expect(emptyState.parent?.parent).toBe(emptyLayout);
+    expect(emptyLayout.parent).toBe(thread);
+    const composer = renderer.root.find(node => node.type === "div" && hasClass(node, "agent-composer-card"));
+    expect(composer.parent).toBe(emptyLayout);
+    expect(nodeText(emptyState)).toContain("有什么可以帮忙？");
+    expect(nodeText(emptyState)).not.toContain("示例仅填入");
     const example = renderer.root.find(node => node.type === "button" && node.children.includes("帮我筛选今天值得看的趋势股"));
     await act(async () => example.props.onClick());
     expect(renderer.root.findByType("textarea").props.value).toBe("帮我筛选今天值得看的趋势股");
+    expect(renderer.root.find(node => node.type === "div" && hasClass(node, "agent-composer-card")).parent).toBe(emptyLayout);
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
@@ -330,9 +336,9 @@ describe("AgentPanel run replay interactions", () => {
 
     const desktopHistory = buttonWithClass(renderer, "agent-thread-history");
     const mobileHistory = buttonWithClass(renderer, "agent-mobile-history");
-    expect(desktopHistory.props).toMatchObject({ "aria-label": "运行记录", title: "运行记录" });
-    expect(nodeText(desktopHistory)).toBe("运行记录");
-    expect(mobileHistory.props).toMatchObject({ "aria-label": "运行记录", title: "运行记录" });
+    expect(desktopHistory.props).toMatchObject({ "aria-label": "复盘", title: "复盘" });
+    expect(nodeText(desktopHistory)).toBe("复盘");
+    expect(mobileHistory.props).toMatchObject({ "aria-label": "复盘", title: "复盘" });
     await act(async () => {
       desktopHistory.props.onClick({ currentTarget: trigger });
     });
@@ -341,6 +347,7 @@ describe("AgentPanel run replay interactions", () => {
       open: true,
       activeConversationId: "conversation-1",
       initialRunId: undefined,
+      initialTab: "runs",
       returnFocusElement: trigger,
       watchlist,
     });
@@ -377,6 +384,21 @@ describe("AgentPanel run replay interactions", () => {
     expect(gepaPanelMock.props?.llm).toBeDefined();
     expect(renderer.root.findAll((node) => hasClass(node, "agent-run-drawer-mock"))).toHaveLength(0);
   });
+
+  it("uses one unified review entry for run history and research profile", async () => {
+    seedConversations([conversation("conversation-1", "Current conversation")]);
+    const renderer = await renderPanel();
+    const profileButtons = renderer.root.findAll((node) => hasClass(node, "agent-thread-profile"));
+    const review = buttonWithClass(renderer, "agent-thread-history");
+    await act(async () => review.props.onClick({ currentTarget: { focus: vi.fn() } }));
+
+    expect(profileButtons).toHaveLength(0);
+    expect(drawerMock.props).toMatchObject({
+      open: true,
+      initialTab: "runs",
+      activeConversationId: "conversation-1",
+    });
+  });
   it("opens the exact run from an assistant message", async () => {
     seedConversations([conversation("conversation-1", "Replay", [
       { role: "assistant", content: "completed", timestamp: 1, runId: "run-message-1" },
@@ -398,6 +420,7 @@ describe("AgentPanel run replay interactions", () => {
       open: true,
       activeConversationId: "conversation-1",
       initialRunId: "run-message-1",
+      initialTab: "runs",
       returnFocusElement: trigger,
     });
   });

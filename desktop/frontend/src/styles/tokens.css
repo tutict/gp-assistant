@@ -48,10 +48,10 @@
   --contrast-dark: #000000;
   --splash-bg: #120e0d;
   --splash-text: #fff4ef;
-  --agent-workspace-bg: #101114;
-  --agent-rail-bg: #17191d;
-  --agent-stage-bg: #121316;
-  --agent-composer-bg: #202124;
+  --agent-workspace-bg: #111214;
+  --agent-rail-bg: #191a1c;
+  --agent-stage-bg: #111214;
+  --agent-composer-bg: #25262a;
   --agent-send-start: #ef4444;
   --agent-send-end: #b91c1c;
   --agent-send-hover-start: #f87171;

@@ -722,6 +722,12 @@
   .agent-thread {
     padding: 8px 7px;
   }
+  .agent-thread.empty {
+    padding: 12px 10px;
+  }
+  .agent-empty-layout {
+    gap: 12px;
+  }
   .agent-message,
 .agent-message.user,
 .agent-message.assistant {
@@ -736,9 +742,15 @@
     z-index: 4;
     bottom: 0;
     margin: 0 6px 6px;
-    padding: 6px 6px 5px 8px;
+    padding: 5px 5px 4px 8px;
     border-radius: var(--radius-md);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.22);
+    box-shadow: none;
+  }
+  .agent-thread.empty .agent-composer-card {
+    position: static;
+    bottom: auto;
+    width: 100%;
+    margin: 0;
   }
   .agent-input {
     min-height: 46px;
@@ -749,16 +761,23 @@
     height: var(--touch-height);
   }
   .agent-empty-state {
-    padding: 0 0 8px;
+    padding: 0 0 4px;
   }
-  .agent-examples {
-    grid-template-columns: minmax(0, 1fr);
+  .agent-empty-state .agent-examples {
+    gap: 6px;
+    margin-top: 8px;
   }
-  .agent-examples button {
-    min-height: 48px;
+  .agent-empty-state .agent-examples button {
+    min-height: var(--touch-primary);
+    padding-inline: 12px;
   }
-  .agent-composer-card:has(.agent-input:focus) > .agent-empty-state {
-    display: none;
+  .agent-empty-state .agent-model-gate {
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .agent-empty-state .agent-model-gate p {
+    width: 100%;
+    text-align: center;
   }
   .agent-mode-tabs {
     max-width: 100%;

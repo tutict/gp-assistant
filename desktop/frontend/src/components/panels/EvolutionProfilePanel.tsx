@@ -12,7 +12,12 @@ import {
   type EvolutionRule,
 } from "../../lib/evolution";
 
-export function EvolutionProfilePanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+interface EvolutionProfileContentProps {
+  onClose?: () => void;
+  embedded?: boolean;
+}
+
+export function EvolutionProfileContent({ onClose, embedded = false }: EvolutionProfileContentProps) {
   const [profile, setProfile] = useState<EvolutionProfile>();
   const [editing, setEditing] = useState<string>();
   const [editText, setEditText] = useState("");
@@ -26,8 +31,7 @@ export function EvolutionProfilePanel({ open, onClose }: { open: boolean; onClos
     return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => { if (!open) return undefined; return reload(); }, [open, reload]);
-  if (!open) return null;
+  useEffect(() => reload(), [reload]);
 
   const settings = profile?.settings;
   const toggle = async (enabled: boolean) => {
@@ -52,9 +56,10 @@ export function EvolutionProfilePanel({ open, onClose }: { open: boolean; onClos
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
 
-  return <div className="evolution-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="evolution-modal" role="dialog" aria-modal="true" aria-label="我的研究画像">
-      <header><div><span className="evolution-kicker">PERSONAL PROFILE</span><h2>我的研究画像</h2></div><button type="button" onClick={onClose} aria-label="关闭画像">×</button></header>
+  return <div className={embedded ? "evolution-profile-content embedded" : "evolution-modal-backdrop"} role={embedded ? undefined : "presentation"} onMouseDown={embedded ? undefined : (event) => { if (event.target === event.currentTarget) onClose?.(); }}>
+    <section className={embedded ? "evolution-profile-section" : "evolution-modal"} role={embedded ? undefined : "dialog"} aria-modal={embedded ? undefined : true} aria-label={embedded ? undefined : "我的研究画像"}>
+      {!embedded && <header><div><span className="evolution-kicker">PERSONAL PROFILE</span><h2>我的研究画像</h2></div><button type="button" onClick={onClose} aria-label="关闭画像">×</button></header>}
+      {embedded && <div className="evolution-profile-intro"><span className="evolution-kicker">PERSONAL PROFILE</span><h2>研究画像</h2></div>}
       <p className="evolution-note">默认本地优先，不保存完整原始对话。个人画像不会发送给远程 Agent，也不会修改全局 GEPA。</p>
       <label className="evolution-switch"><input type="checkbox" checked={settings?.enabled === true} onChange={(event) => void toggle(event.target.checked)} /> 开启研究教练</label>
       <p>画像版本：{profile?.profile_version ?? "--"}</p>
@@ -73,7 +78,12 @@ export function EvolutionProfilePanel({ open, onClose }: { open: boolean; onClos
       </div>
       {!!profile?.suppressed_kinds?.length && <section className="evolution-suppressed"><h3>已禁用的建议类型</h3>{profile.suppressed_kinds.map((kind) => <div key={kind}><span>{kind}</span><button type="button" onClick={() => void unsuppressEvolutionKind(kind).then(setProfile).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))}>恢复建议</button></div>)}</section>}
       {error && <p className="evolution-error" role="alert">{error}</p>}
-      <footer><button type="button" className="danger-btn" onClick={() => void reset()}>清空画像</button><button type="button" className="action-btn" onClick={onClose}>完成</button></footer>
+      <footer><button type="button" className="danger-btn" onClick={() => void reset()}>清空画像</button>{onClose && <button type="button" className="action-btn" onClick={onClose}>完成</button>}</footer>
     </section>
   </div>;
+}
+
+export function EvolutionProfilePanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+  if (!open) return null;
+  return <EvolutionProfileContent onClose={onClose} />;
 }

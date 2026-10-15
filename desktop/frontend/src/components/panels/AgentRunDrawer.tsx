@@ -15,11 +15,13 @@ import {
 import type { AgentStreamEvent, StockRowView, WatchlistItem } from "../../types";
 import { IconButton } from "../ui/IconButton";
 import { AGENT_RESULT_UNAVAILABLE_TEXT, AgentResultView } from "./AgentResultView";
+import { EvolutionProfileContent } from "./EvolutionProfilePanel";
 
 export interface AgentRunDrawerProps {
   open: boolean;
   activeConversationId?: string;
   initialRunId?: string;
+  initialTab?: "runs" | "profile";
   finishedRunId?: string;
   finishedRunConversationId?: string;
   ledgerRevision?: number;
@@ -246,6 +248,7 @@ export function AgentRunDrawer({
   open,
   activeConversationId,
   initialRunId,
+  initialTab,
   finishedRunId,
   finishedRunConversationId,
   ledgerRevision = 0,
@@ -257,6 +260,7 @@ export function AgentRunDrawer({
   onOpenGepa,
   onReviewRun = () => undefined,
 }: AgentRunDrawerProps) {
+  const [reviewTab, setReviewTab] = useState<"runs" | "profile">(initialTab || "runs");
   const [view, setView] = useState<DrawerView>("list");
   const [scope, setScope] = useState<RunScope>("current");
   const [runs, setRuns] = useState<AgentRunSummary[]>([]);
@@ -392,7 +396,7 @@ export function AgentRunDrawer({
   }, [cancelDetailRequest, syncTerminalDetail]);
 
   useEffect(() => {
-    if (!open) {
+    if (!open || reviewTab !== "runs") {
       setOverlays([]);
       setOverlayError(false);
       return;
@@ -406,7 +410,7 @@ export function AgentRunDrawer({
         if (!controller.signal.aborted) { setOverlays([]); setOverlayError(true); }
       });
     return () => controller.abort();
-  }, [open, ledgerRevision, overlayRetry]);
+  }, [open, reviewTab, ledgerRevision, overlayRetry]);
 
   useEffect(() => {
     if (!open) {
@@ -434,6 +438,8 @@ export function AgentRunDrawer({
     previousInitialRunIdRef.current = initialRunId;
 
     if (!isOpening && !changedInitialRun) return;
+    const nextTab = initialRunId ? "runs" : (initialTab || "runs");
+    setReviewTab(nextTab);
     if (initialRunId) {
       cancelListRequest();
       detailIntentRef.current = true;
@@ -449,8 +455,8 @@ export function AgentRunDrawer({
     setScope("current");
     if (!isOpening) transitionFocusTargetRef.current = "list";
     observedCurrentConversationRef.current = activeConversationId;
-    loadList("current", activeConversationId);
-  }, [activeConversationId, cancelDetailRequest, cancelListRequest, initialRunId, loadDetail, loadList, open]);
+    if (nextTab === "runs") loadList("current", activeConversationId);
+  }, [activeConversationId, cancelDetailRequest, cancelListRequest, initialRunId, initialTab, loadDetail, loadList, open]);
 
   useEffect(() => () => {
     cancelListRequest();
@@ -458,15 +464,16 @@ export function AgentRunDrawer({
   }, [cancelDetailRequest, cancelListRequest]);
 
   useEffect(() => {
-    if (!open || view !== "list" || scope !== "current" || detailIntentRef.current) return;
+    if (!open || reviewTab !== "runs" || view !== "list" || scope !== "current" || detailIntentRef.current) return;
     if (observedCurrentConversationRef.current === activeConversationId) return;
     observedCurrentConversationRef.current = activeConversationId;
     loadList("current", activeConversationId);
-  }, [activeConversationId, loadList, open, scope, view]);
+  }, [activeConversationId, loadList, open, reviewTab, scope, view]);
 
   useEffect(() => {
     if (
       !open
+      || reviewTab !== "runs"
       || view !== "detail"
       || !selectedRunId
       || detailRequestRunIdRef.current !== selectedRunId
@@ -476,11 +483,12 @@ export function AgentRunDrawer({
     ) return;
     completionRefreshRunsRef.current.add(selectedRunId);
     loadDetail(selectedRunId);
-  }, [detail?.status, detailState, finishedRunId, loadDetail, open, selectedRunId, view]);
+  }, [detail?.status, detailState, finishedRunId, loadDetail, open, reviewTab, selectedRunId, view]);
 
   useEffect(() => {
     if (
       !open
+      || reviewTab !== "runs"
       || view !== "list"
       || !finishedRunId
       || (listState !== "ready" && listState !== "empty")
@@ -494,7 +502,7 @@ export function AgentRunDrawer({
     completionListRefreshesRef.current.add(refreshKey);
     listCacheRef.current.delete(cacheKey);
     loadList(scope, activeConversationId);
-  }, [activeConversationId, finishedRunConversationId, finishedRunId, listState, loadList, open, runs, scope, view]);
+  }, [activeConversationId, finishedRunConversationId, finishedRunId, listState, loadList, open, reviewTab, runs, scope, view]);
 
   useEffect(() => {
     if (observedLedgerRevisionRef.current === ledgerRevision) return;
@@ -502,13 +510,13 @@ export function AgentRunDrawer({
     listCacheRef.current.clear();
     completionRefreshRunsRef.current.clear();
     completionListRefreshesRef.current.clear();
-    if (!open) return;
+    if (!open || reviewTab !== "runs") return;
     if (view === "detail" && selectedRunId) {
       loadDetail(selectedRunId);
       return;
     }
     loadList(scope, activeConversationId);
-  }, [activeConversationId, ledgerRevision, loadDetail, loadList, open, scope, selectedRunId, view]);
+  }, [activeConversationId, ledgerRevision, loadDetail, loadList, open, reviewTab, scope, selectedRunId, view]);
 
   useEffect(() => {
     if (open) {
@@ -534,6 +542,11 @@ export function AgentRunDrawer({
   const selectScope = (nextScope: RunScope) => {
     setScope(nextScope);
     loadList(nextScope, activeConversationId);
+  };
+
+  const selectReviewTab = (nextTab: "runs" | "profile") => {
+    setReviewTab(nextTab);
+    if (nextTab === "runs" && listState === "idle") loadList(scope, activeConversationId);
   };
 
   const selectRun = (runId: string) => {
@@ -609,15 +622,19 @@ export function AgentRunDrawer({
       className="agent-run-drawer"
       role="dialog"
       aria-modal={true}
-      aria-label="运行记录"
+      aria-label="复盘"
       onKeyDown={handleKeyDown}
     >
       <header className="agent-run-drawer-header">
         <div className="agent-run-drawer-title">
           <History size={18} aria-hidden="true" />
-          <h2>运行记录</h2>
+          <h2>复盘</h2>
         </div>
-        {view === "detail" && (
+        <div className="agent-review-tabs" role="tablist" aria-label="复盘模块">
+          <button id="agent-review-runs-tab" type="button" role="tab" aria-controls="agent-review-runs" tabIndex={reviewTab === "runs" ? 0 : -1} aria-selected={reviewTab === "runs"} onClick={() => selectReviewTab("runs")}>运行记录</button>
+          <button id="agent-review-profile-tab" type="button" role="tab" aria-controls="agent-review-profile" tabIndex={reviewTab === "profile" ? 0 : -1} aria-selected={reviewTab === "profile"} onClick={() => selectReviewTab("profile")}>研究画像</button>
+        </div>
+        {reviewTab === "runs" && view === "detail" && (
           <IconButton
             className="agent-run-drawer-back"
             icon={<ArrowLeft size={18} />}
@@ -625,7 +642,7 @@ export function AgentRunDrawer({
             onClick={returnToList}
           />
         )}
-        {gepaEnabled && (
+        {reviewTab === "runs" && gepaEnabled && (
           <button
             type="button"
             className="agent-gepa-trigger"
@@ -640,18 +657,18 @@ export function AgentRunDrawer({
           <IconButton
             className="agent-run-drawer-close"
             icon={<X size={18} />}
-            label="关闭运行记录"
+            label="关闭复盘"
             onClick={onClose}
           />
         </div>
       </header>
-      {overlayError && (
+      {reviewTab === "runs" && overlayError && (
         <div className="agent-prompt-overlay-error" role="alert">
           <span>提示词版本读取失败；本次运行会使用内置提示词。</span>
           <button type="button" className="agent-run-retry" onClick={() => setOverlayRetry((value) => value + 1)}>重试</button>
         </div>
       )}
-      {overlays.length > 0 && (
+      {reviewTab === "runs" && overlays.length > 0 && (
         <details className="agent-prompt-overlays">
           <summary>
             <strong>提示词版本</strong>
@@ -683,7 +700,7 @@ export function AgentRunDrawer({
           </div>
         </details>
       )}
-      {view === "list" ? (
+      {reviewTab === "profile" ? <div id="agent-review-profile" role="tabpanel" aria-labelledby="agent-review-profile-tab"><EvolutionProfileContent embedded /></div> : <div id="agent-review-runs" role="tabpanel" aria-labelledby="agent-review-runs-tab" className="agent-review-run-panel">{view === "list" ? (
         <RunList
           activeConversationId={activeConversationId}
           error={listError}
@@ -705,7 +722,7 @@ export function AgentRunDrawer({
           onToggleWatchlist={onToggleWatchlist}
            onReviewRun={onReviewRun}
         />
-      )}
+      )}</div>}
     </aside>
   );
 }

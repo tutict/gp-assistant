@@ -93,12 +93,12 @@ describe("mobile UI density contract", () => {
     expect(responsiveCss).toMatch(/\.screen-panel-container > \.screen-panel-tabs\s*\{[^}]*display:\s*flex[^}]*overflow-x:\s*auto/);
   });
 
-  it("keeps agent conversation history as frameless list rows", () => {
+  it("keeps agent conversation history as compact frameless rows", () => {
     expect(componentsCss).toMatch(
-      /\.agent-history-item\s*\{[^}]*border:\s*0[^}]*border-bottom:\s*1px solid var\(--line-soft\)[^}]*border-radius:\s*0/,
+      /\.agent-history-item\s*\{[^}]*min-height:\s*40px[^}]*border:\s*0[^}]*border-radius:\s*999px/,
     );
     expect(componentsCss).toMatch(
-      /\.agent-history-item\.active\s*\{[^}]*box-shadow:\s*inset 2px 0 var\(--agent-accent\)/,
+      /\.agent-history-item\.active\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--agent-accent-soft\) 24%, transparent\)/,
     );
     expect(componentsCss).toMatch(
       /\.agent-history-main\s*\{[^}]*-webkit-tap-highlight-color:\s*transparent/,

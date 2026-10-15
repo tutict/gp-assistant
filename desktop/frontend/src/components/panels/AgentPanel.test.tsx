@@ -155,14 +155,16 @@ describe("AgentPanel empty state", () => {
   it("renders a compact mode selector and local fallback hint", () => {
     const html = renderToStaticMarkup(<AgentPanel {...baseProps} llmSettings={null} />);
 
-    expect(html).toContain("<h2>开始对话</h2>");
+    expect(html).toContain("<h2>有什么可以帮忙？</h2>");
+    expect(html).not.toContain("示例仅填入，不会发送");
+    expect(html).not.toContain("已保存到本机");
     expect(html).toContain('role="group"');
     expect(html).toContain('maxLength="8000"');
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain("模型未配置；快速模式用本地数据。");
     expect(html).toContain("环境 · 主线 · 情绪");
     expect(html).toContain("质量 · 配置 · 估值");
-    expect(html).toContain('aria-label="运行记录"');
+    expect(html).toContain('aria-label="复盘"');
     expect(html).toContain('class="icon-button agent-thread-history"');
     expect(html).toContain('class="icon-button agent-mobile-history"');
     expect(html).not.toContain("快速模式能力");

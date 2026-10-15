@@ -14,7 +14,6 @@ import { AgentRunDrawer } from "./AgentRunDrawer";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
 import { IconButton } from "../ui/IconButton";
 import { createEvolutionReview, extractEvolutionEvidenceIds, type EvolutionReview } from "../../lib/evolution";
-import { EvolutionProfilePanel } from "./EvolutionProfilePanel";
 import { EvolutionReviewCard } from "./EvolutionReviewCard";
 
 interface AgentPanelProps {
@@ -119,7 +118,6 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const [gepaOpen, setGepaOpen] = useState(false);
   const [evolutionReview, setEvolutionReview] = useState<EvolutionReview>();
   const [evolutionReviewLoading, setEvolutionReviewLoading] = useState(false);
-  const [evolutionProfileOpen, setEvolutionProfileOpen] = useState(false);
   const [replayRunId, setReplayRunId] = useState<string>();
   const [finishedRunId, setFinishedRunId] = useState<string>();
   const [finishedRunConversationId, setFinishedRunConversationId] = useState<string>();
@@ -575,42 +573,111 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     }
   }, [activeConversation?.id, activeConversation?.mode, activeLlmConfig, input, messages, updateConversation, watchlist, credentialsReady, setInput, workspace]);
 
+  const composerCard = (
+    <div className="agent-composer-card">
+      <div className="agent-composer-alerts">
+        {conversationDeleteStorageError && (
+          <div className="agent-quota-warning" role="alert">{conversationDeleteStorageError}</div>
+        )}
+        {failedLedgerDeletionIds.length > 0 && (
+          <div className="agent-quota-warning agent-cleanup-warning" role="alert">
+            <span>{failedLedgerDeletionIds.length} 个已删除对话的运行记录仍待清理。</span>
+            <IconButton
+              className="agent-cleanup-retry"
+              onClick={retryFailedLedgerDeletions}
+              disabled={retryingLedgerDeletions || ledgerDeletionInFlightIds.length > 0}
+              label="重试清理运行记录"
+              icon={retryingLedgerDeletions
+                ? <LoaderCircle size={15} className="spin" aria-hidden="true" />
+                : <RefreshCw size={15} aria-hidden="true" />}
+            />
+          </div>
+        )}
+      </div>
+      {workspaceStatus.state === "error" && <WorkspaceSaveStatus />}
+      <textarea
+        ref={composer.textareaRef}
+        className="agent-input"
+        value={input}
+        maxLength={MAX_AGENT_MESSAGE_CHARS}
+        onChange={(event) => setInput(event.target.value)}
+        onFocus={composer.onFocus}
+        onBlur={composer.onBlur}
+        onCompositionStart={composer.onCompositionStart}
+        onCompositionEnd={composer.onCompositionEnd}
+        onKeyDown={(event) => {
+          if (!composer.mobile && !composer.isComposing(event) && event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            send();
+          }
+        }}
+        placeholder="输入研究问题…"
+        rows={3}
+        disabled={currentRunning || activeConversationDeleting}
+      />
+      <div className="agent-composer-tools">
+        <div className="agent-mode-tabs" role="group" aria-label="对话模式">
+          {AGENT_MODES.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={item.id === activeMode.id ? "active" : ""}
+              aria-pressed={item.id === activeMode.id}
+              aria-label={`${item.label}：${item.hint}`}
+              title={item.hint}
+              onClick={() => changeMode(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="workspace-boundary">仅供研究，不构成投资建议。</p>
+      <div className="agent-composer-footer">
+        <button
+          type="button"
+          className="send-btn"
+          onClick={currentRunning ? cancelActiveRun : send}
+          disabled={!currentRunning && (!credentialsReady || activeConversationDeleting || !input.trim() || modelRequired)}
+          aria-label={currentRunning ? "停止" : "发送"}
+        >
+          {currentRunning ? <Square size={17} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div className={`panel-container agent-panel agent-workspace ${railCollapsed ? "rail-collapsed" : ""}`}>
       <aside className="agent-rail" aria-label="Agent 会话历史">
-        <IconButton
-          className="agent-rail-toggle"
-          onClick={() => setRailCollapsed((collapsed) => !collapsed)}
-          label={railCollapsed ? "展开会话历史" : "折叠会话历史"}
-          icon={railCollapsed ? <PanelLeftOpen size={18} aria-hidden="true" /> : <PanelLeftClose size={18} aria-hidden="true" />}
-        />
+        <div className="agent-rail-header">
+          <div className="agent-rail-brand">
+            <span className="agent-logo-mark">股</span>
+            <div><strong>股选优</strong></div>
+          </div>
+          <IconButton
+            className="agent-rail-toggle"
+            onClick={() => setRailCollapsed((collapsed) => !collapsed)}
+            label={railCollapsed ? "展开会话历史" : "折叠会话历史"}
+            icon={railCollapsed ? <PanelLeftOpen size={18} aria-hidden="true" /> : <PanelLeftClose size={18} aria-hidden="true" />}
+          />
+        </div>
 
         <label className="agent-rail-search">
           <Search size={15} aria-hidden="true" />
           <input
+            aria-label="搜索对话内容"
             value={conversationSearch}
             onChange={(event) => setConversationSearch(event.target.value)}
-            placeholder="搜索对话内容..."
+            placeholder="搜索对话"
           />
         </label>
-
-        <div className="agent-rail-brand">
-          <span className="agent-logo-mark">股</span>
-          <div>
-            <strong>股选优 Agent</strong>
-            <em>{activeProvider?.name || "本地策略助手"}</em>
-          </div>
-        </div>
 
         <button type="button" className="agent-new-chat" onClick={startNewChat}>
           <Plus size={16} aria-hidden="true" /><strong className="agent-new-chat-label">新建对话</strong>
         </button>
 
         <div className="agent-rail-section">
-          <div className="agent-rail-section-head">
-            <span className="agent-rail-label">对话历史</span>
-            <strong>{visibleConversations.length}</strong>
-          </div>
           <div className="agent-history-list">
             {groupedConversations.length ? groupedConversations.map((group) => (
               <div key={group.label} className="agent-history-group">
@@ -620,10 +687,14 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
                     key={conversation.id}
                     className={`agent-history-item ${conversation.id === activeConversation?.id ? "active" : ""}`}
                   >
-                    <button type="button" className="agent-history-main" onClick={() => switchConversation(conversation.id)}>
+                    <button
+                      type="button"
+                      className="agent-history-main"
+                      aria-label={`${conversation.title || "新对话"}，${formatConversationTime(conversation.updatedAt)}，${agentModeLabel(conversation.mode)}，${conversation.messages.length ? `${conversation.messages.length} 条消息` : "未开始"}`}
+                      title={`${conversation.title || "新对话"} · ${agentModeLabel(conversation.mode)} · ${formatConversationTime(conversation.updatedAt)}`}
+                      onClick={() => switchConversation(conversation.id)}
+                    >
                       <span>{conversation.title || "新对话"}</span>
-                      <em>{formatConversationTime(conversation.updatedAt)} · {agentModeLabel(conversation.mode)}</em>
-                      <b>{conversation.messages.length ? `${conversation.messages.length} 条` : "未开始"}</b>
                     </button>
                     <button
                       type="button"
@@ -685,8 +756,8 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           <IconButton
             className="agent-mobile-history"
             onClick={(event) => openRunHistory(event.currentTarget)}
-            label="运行记录"
-            title="运行记录"
+            label="复盘"
+            title="复盘"
             icon={<History size={18} aria-hidden="true" />}
           />
         </div>
@@ -696,22 +767,31 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             type="button"
             className="icon-button agent-thread-history"
             onClick={(event) => openRunHistory(event.currentTarget)}
-            aria-label="运行记录"
-            title="运行记录"
+            aria-label="复盘"
+            title="复盘"
           >
             <History size={17} aria-hidden="true" />
-            <span>运行记录</span>
+            <span>复盘</span>
           </button>
-           <button type="button" className="icon-button agent-thread-profile" onClick={() => setEvolutionProfileOpen(true)} aria-label="我的研究画像">
-             <span>研究画像</span>
-           </button>
         </div>
         <div
           className={`agent-thread ${messages.length === 0 ? "empty" : ""}`}
           ref={threadRef}
           onScroll={handleThreadScroll}
         >
-          {messages.map((msg, i) => (
+          {messages.length === 0 ? (
+            <div className="agent-empty-layout">
+              {!input.trim() && (
+                <AgentEmptyState
+                  mode={activeMode.id}
+                  activeModel={activeLlmConfig?.model}
+                  onExample={setInput}
+                  onConfigureModel={() => setSettingsRequest((value) => value + 1)}
+                />
+              )}
+              {composerCard}
+            </div>
+          ) : messages.map((msg, i) => (
             <article key={`${msg.timestamp}-${i}`} className={`agent-message ${msg.role} ${msg.error ? "error" : ""}`}>
               <div className="agent-message-meta">
                 <span>{msg.role === "user" ? "你" : "Agent"}</span>
@@ -732,89 +812,12 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
             </article>
           ))}
         </div>
-
-        <div className="agent-composer-card">
-          {messages.length === 0 && !input.trim() && (
-            <AgentEmptyState
-              mode={activeMode.id}
-              activeModel={activeLlmConfig?.model}
-              onExample={setInput}
-              onConfigureModel={() => setSettingsRequest((value) => value + 1)}
-            />
-          )}
-          <div className="agent-composer-alerts">
-            {conversationDeleteStorageError && (
-              <div className="agent-quota-warning" role="alert">{conversationDeleteStorageError}</div>
-            )}
-            {failedLedgerDeletionIds.length > 0 && (
-              <div className="agent-quota-warning agent-cleanup-warning" role="alert">
-                <span>{failedLedgerDeletionIds.length} 个已删除对话的运行记录仍待清理。</span>
-                <IconButton
-                  className="agent-cleanup-retry"
-                  onClick={retryFailedLedgerDeletions}
-                  disabled={retryingLedgerDeletions || ledgerDeletionInFlightIds.length > 0}
-                  label="重试清理运行记录"
-                  icon={retryingLedgerDeletions
-                    ? <LoaderCircle size={15} className="spin" aria-hidden="true" />
-                    : <RefreshCw size={15} aria-hidden="true" />}
-                />
-              </div>
-            )}
-          </div>
-          <WorkspaceSaveStatus />
-<textarea
-            ref={composer.textareaRef}
-            className="agent-input"
-            value={input}
-            maxLength={MAX_AGENT_MESSAGE_CHARS}
-            onChange={(e) => setInput(e.target.value)}
-            onFocus={composer.onFocus} onBlur={composer.onBlur}
-            onCompositionStart={composer.onCompositionStart} onCompositionEnd={composer.onCompositionEnd}
-            onKeyDown={(e) => {
-              if (!composer.mobile && !composer.isComposing(e) && e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            placeholder="输入研究问题…"
-            rows={3}
-            disabled={currentRunning || activeConversationDeleting}
-          />
-          <div className="agent-composer-tools">
-            <div className="agent-mode-tabs" role="group" aria-label="对话模式">
-              {AGENT_MODES.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={item.id === activeMode.id ? "active" : ""}
-                  aria-pressed={item.id === activeMode.id}
-                  aria-label={`${item.label}：${item.hint}`}
-                  title={item.hint}
-                  onClick={() => changeMode(item.id)}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-            <p className="agent-mode-note">{activeMode.hint}。{messages.length ? `下一条将使用${activeMode.label}。` : ""}</p>
-          </div>
-          <p className="workspace-boundary">仅供研究，不构成投资建议。</p>
-          <div className="agent-composer-footer">
-            <button
-              type="button"
-              className="send-btn"
-              onClick={currentRunning ? cancelActiveRun : send}
-              disabled={!currentRunning && (!credentialsReady || activeConversationDeleting || !input.trim() || modelRequired)}
-              aria-label={currentRunning ? "停止" : "发送"}
-            >
-              {currentRunning ? <Square size={17} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
-            </button>
-          </div>
-        </div>
+        {messages.length > 0 && composerCard}
         <AgentRunDrawer
           open={replayOpen}
           activeConversationId={activeConversation?.id}
           initialRunId={replayRunId}
+          initialTab="runs"
           finishedRunId={finishedRunId}
           finishedRunConversationId={finishedRunConversationId}
           ledgerRevision={ledgerRevision}
@@ -832,7 +835,6 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           onClose={closeGepa}
           onAvailabilityChange={setGepaEnabled}
         />
-        <EvolutionProfilePanel open={evolutionProfileOpen} onClose={() => setEvolutionProfileOpen(false)} />
         {evolutionReviewLoading && <div className="evolution-review-loading" role="status">正在生成研究复盘…</div>}
         {evolutionReview && <EvolutionReviewCard review={evolutionReview} llm={activeLlmConfig} onClose={() => setEvolutionReview(undefined)} />}
       </section>
@@ -855,8 +857,7 @@ function AgentEmptyState({
   return (
     <div className="agent-empty-state">
       <div className="agent-empty-copy">
-        <h2>开始对话</h2>
-        <p>示例仅填入，不会发送。</p>
+        <h2>有什么可以帮忙？</h2>
       </div>
       <div className="agent-examples">
         {AGENT_EXAMPLES[mode].map((example) => (

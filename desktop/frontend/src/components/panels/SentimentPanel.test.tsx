@@ -4,14 +4,32 @@ import type { SentimentAnalysis, SentimentRun, SentimentSnapshot } from "../../t
 import { SentimentPanel } from "./SentimentPanel";
 
 const { postJson } = vi.hoisted(() => ({ postJson: vi.fn() }));
+const headerActions = vi.hoisted(() => ({ onRefresh: vi.fn(), onOpenKnowledge: vi.fn() }));
 vi.mock("../../lib/tauri", () => ({ postJson }));
 vi.mock("./LlmSettingsPanel", () => ({ LlmSettingsPanel: () => null }));
 vi.mock("./NewsRagPanel", () => ({
-  NewsRagPanel: (props: { code?: string; onCodeChange?: (code: string) => void }) => (
+  NewsRagPanel: (props: {
+    code?: string;
+    onCodeChange?: (code: string) => void;
+    onHeaderToolsChange?: (tools: {
+      refreshing: boolean;
+      vectorReady: boolean;
+      onRefresh: () => void;
+      onOpenKnowledge: () => void;
+      onOpenInbox: () => void;
+    }) => void;
+  }) => (
     <div>
       <span>消息资料子视图</span>
       <span>{props.code}</span>
       <button type="button" onClick={() => props.onCodeChange?.("000001.SZ")}>消息内换股票</button>
+      <button type="button" onClick={() => props.onHeaderToolsChange?.({
+        refreshing: false,
+        vectorReady: true,
+        onRefresh: headerActions.onRefresh,
+        onOpenKnowledge: headerActions.onOpenKnowledge,
+        onOpenInbox: () => undefined,
+      })}>显示顶栏工具</button>
     </div>
   ),
 }));
@@ -162,4 +180,27 @@ it("shares one stock across news and sentiment and only prefills agent", async (
   expect(onAskAgent).toHaveBeenCalledTimes(1);
   expect(onAskAgent.mock.calls[0][0]).toContain("000001.SZ");
   expect(onAskAgent.mock.calls[0][0]).toContain("证据不足");
+});
+
+it("uses accessible icon actions for stock lookup, refresh, and knowledge management", async () => {
+  headerActions.onRefresh.mockReset();
+  headerActions.onOpenKnowledge.mockReset();
+  await act(async () => {
+    renderer = create(<SentimentPanel initialCode="600000.SH" llmSettings={null} />);
+  });
+  await click("显示顶栏工具");
+
+  const lookup = renderer!.root.findByProps({ "aria-label": "查看股票消息" });
+  const refresh = renderer!.root.findByProps({ "aria-label": "立即更新消息" });
+  const knowledge = renderer!.root.findByProps({ "aria-label": "打开资料管理" });
+  expect(lookup.props.className).toBe("sentiment-icon-action");
+  expect(refresh.props.className).toBe("sentiment-icon-action");
+  expect(knowledge.props.className).toBe("sentiment-icon-action");
+  expect(lookup.findAllByType("svg")).toHaveLength(1);
+  expect(refresh.findAllByType("svg")).toHaveLength(1);
+  expect(knowledge.findAllByType("svg")).toHaveLength(1);
+  await act(async () => refresh.props.onClick());
+  await act(async () => knowledge.props.onClick());
+  expect(headerActions.onRefresh).toHaveBeenCalledTimes(1);
+  expect(headerActions.onOpenKnowledge).toHaveBeenCalledTimes(1);
 });

@@ -426,20 +426,6 @@
 .app[data-active-view="agent"] .panels {
   min-height: 0;
 }
-.agent-rail-toggle span {
-  position: absolute;
-  width: 13px;
-  height: 9px;
-  border: 1px solid currentColor;
-  border-radius: 2px;
-}
-.agent-rail-toggle span + span {
-  width: 1px;
-  height: 9px;
-  border: 0;
-  border-left: 1px solid currentColor;
-  transform: translateX(-4px);
-}
 .agent-rail-toggle:hover {
   color: var(--text);
   background: color-mix(in srgb, var(--surface) 74%, transparent);
@@ -472,9 +458,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.agent-rail-brand em,
-.agent-rail-footer span,
-.agent-rail-label {
+.agent-rail-footer span {
   color: var(--text-secondary);
   font-size: var(--fs-caption);
   font-style: normal;
@@ -489,32 +473,12 @@
   background: color-mix(in srgb, var(--surface) 66%, var(--agent-accent) 14%);
   transform: translateY(-1px);
 }
-.agent-new-chat span {
-  width: 18px;
-  height: 18px;
-  display: inline-grid;
-  place-items: center;
-  border-radius: 999px;
-  border: 1px solid currentColor;
-  line-height: 1;
-}
 .agent-rail-section {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   overflow-y: auto;
-}
-.agent-rail-section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.agent-rail-section-head strong {
-  color: var(--text-secondary);
-  font-size: var(--fs-caption);
-  font-weight: 700;
 }
 .agent-history-list {
   min-height: 0;
@@ -525,30 +489,25 @@
 }
 .agent-history-item {
   width: 100%;
-  min-height: 54px;
+  min-height: 40px;
   position: relative;
   border: 0;
-  border-bottom: 1px solid var(--line-soft);
-  border-radius: 0;
+  border-radius: 999px;
   background: transparent;
 }
 .agent-history-main {
   width: 100%;
-  min-height: 53px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas:
-    "title remove"
-    "meta meta";
+  min-height: 40px;
+  display: flex;
   align-items: center;
-  gap: 4px 8px;
-  padding: 7px 38px 7px 10px;
+  gap: 8px;
+  padding: 0 38px 0 10px;
   border: 0;
-  border-radius: 3px;
+  border-radius: 999px;
   background: transparent;
   color: var(--text);
   text-align: left;
-  font-size: 0.82rem;
+  font-size: var(--fs-label);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
@@ -567,26 +526,11 @@
   background: color-mix(in srgb, var(--surface-2) 42%, transparent);
 }
 .agent-history-main span {
-  grid-area: title;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 700;
-}
-.agent-history-main em,
-.agent-history-main b {
-  color: var(--text-secondary);
-  font-size: var(--fs-caption);
-  font-style: normal;
-  font-weight: 650;
-}
-.agent-history-main em {
-  grid-area: meta;
-}
-.agent-history-main b {
-  grid-area: meta;
-  justify-self: end;
+  font-weight: 560;
 }
 .agent-history-item:hover .agent-history-remove,
 .agent-history-item:focus-within .agent-history-remove {
