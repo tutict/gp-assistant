@@ -234,7 +234,7 @@ function Ensure-TauriCli {
     Write-Info 'Local Tauri CLI is ready.'
 }
 
-function Assert-DesktopBinaryNotRunning {
+function Stop-ExistingDesktopBinary {
     $binaryPath = [System.IO.Path]::GetFullPath((Join-Path $DesktopRoot 'src-tauri\target\debug\stock-optimizer-desktop.exe'))
     $runningProcesses = @(Get-Process -Name 'stock-optimizer-desktop' -ErrorAction SilentlyContinue)
     $matchingProcesses = @($runningProcesses | Where-Object {
@@ -243,10 +243,36 @@ function Assert-DesktopBinaryNotRunning {
             $binaryPath
         )
     })
-    if ($matchingProcesses.Count -gt 0) {
-        $processIds = ($matchingProcesses | ForEach-Object { $_.Id }) -join ', '
-        throw "Desktop app is already running from this workspace (PID $processIds). Close that window before starting Tauri dev so Cargo can replace the executable."
+    if ($matchingProcesses.Count -eq 0) {
+        return
     }
+
+    $processIds = ($matchingProcesses | ForEach-Object { $_.Id }) -join ', '
+    Write-Warn "Found an existing desktop process from this workspace (PID $processIds); stopping it before restart."
+    foreach ($process in $matchingProcesses) {
+        try {
+            Stop-Process -Id $process.Id -Force -ErrorAction Stop
+        } catch {
+            throw "Failed to stop existing desktop process PID $($process.Id): $($_.Exception.Message)"
+        }
+    }
+
+    $deadline = (Get-Date).AddSeconds(5)
+    do {
+        Start-Sleep -Milliseconds 200
+        $remaining = @(Get-Process -Name 'stock-optimizer-desktop' -ErrorAction SilentlyContinue | Where-Object {
+            $_.Path -and [System.StringComparer]::OrdinalIgnoreCase.Equals(
+                [System.IO.Path]::GetFullPath($_.Path),
+                $binaryPath
+            )
+        })
+    } while ($remaining.Count -gt 0 -and (Get-Date) -lt $deadline)
+
+    if ($remaining.Count -gt 0) {
+        $remainingIds = ($remaining | ForEach-Object { $_.Id }) -join ', '
+        throw "Existing desktop process did not exit after stop request (PID $remainingIds)."
+    }
+    Write-Info "Existing desktop process stopped; continuing with a clean Tauri restart."
 }
 
 try {
@@ -284,7 +310,7 @@ try {
         Write-LogLine ''
         Write-Step 'Preflight completed; tauri dev was not started.'
     } else {
-        Assert-DesktopBinaryNotRunning
+        Stop-ExistingDesktopBinary
 
         $devArgs = @('run', 'dev', '--')
         if ($VerboseTauri) {
