@@ -1,7 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { buildMainFundFlowView } from "./mainFundFlow";
+import { buildMainFundFlowView, hasMainFundFlowBreakdown } from "./mainFundFlow";
 
 describe("buildMainFundFlowView", () => {
+  it("detects cached real-flow records that still lack the new breakdown", () => {
+    const base = {
+      category: "fund_flow" as const,
+      source: "东方财富个股资金流",
+      metrics: {
+        主力净流入额: "1200 万",
+        主力净占比: "4.6%",
+      },
+    };
+    expect(hasMainFundFlowBreakdown({ stock_code: "000001.SZ", items: [base] })).toBe(false);
+    expect(hasMainFundFlowBreakdown({ stock_code: "000001.SZ", items: [{
+      ...base,
+      metrics: {
+        ...base.metrics,
+        超大单净流入额: "800 万",
+        大单净流入额: "400 万",
+        中小单净流入额: "-1200 万",
+      },
+    }] })).toBe(true);
+  });
+
   it("turns real outflow metrics into a plain-language conclusion", () => {
     const view = buildMainFundFlowView({
       stock_code: "600519.SH",
@@ -16,6 +37,9 @@ describe("buildMainFundFlowView", () => {
           主力净流入额原值: "-854126672.00",
           主力净占比: "-11.66%",
           主力介入度: "高（11.66%）",
+          超大单净流入额: "-1.61 亿",
+          大单净流入额: "8192.89 万",
+          中小单净流入额: "7927.31 万",
         },
         confidence: "中",
       }],
@@ -25,6 +49,9 @@ describe("buildMainFundFlowView", () => {
     expect(view.netAmount).toBe("-8.54 亿");
     expect(view.netRatio).toBe("-11.66%");
     expect(view.involvement).toBe("高（11.66%）");
+    expect(view.superLargeAmount).toBe("-1.61 亿");
+    expect(view.largeAmount).toBe("8192.89 万");
+    expect(view.smallMediumAmount).toBe("7927.31 万");
     expect(view.tone).toBe("negative");
     expect(view.conclusion).toContain("每 100 元成交中");
     expect(view.conclusion).toContain("主力净卖出");

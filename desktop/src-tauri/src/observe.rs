@@ -1507,7 +1507,7 @@ pub(crate) fn parse_eastmoney_main_fund_flow_item(
     let latest = rows
         .iter()
         .filter_map(Value::as_str)
-        .filter_map(parse_eastmoney_main_fund_flow_row)
+        .filter_map(parse_eastmoney_main_fund_flow_detail)
         .filter(|row| {
             requested_end
                 .as_deref()
@@ -1516,7 +1516,21 @@ pub(crate) fn parse_eastmoney_main_fund_flow_item(
         })
         .max_by(|left, right| left.0.cmp(&right.0))
         .ok_or_else(|| format!("资金流接口在 {end_date} 之前没有可用交易日数据"))?;
-    let (trade_date, net_amount, net_ratio) = latest;
+    let (
+        trade_date,
+        net_amount,
+        net_ratio,
+        small_amount,
+        medium_amount,
+        large_amount,
+        super_large_amount,
+        small_ratio,
+        medium_ratio,
+        large_ratio,
+        super_large_ratio,
+    ) = latest;
+    let small_medium_amount = small_amount + medium_amount;
+    let small_medium_ratio = small_ratio + medium_ratio;
     let involvement = crate::market::main_fund_involvement(net_ratio);
     let score = main_fund_flow_score(net_ratio);
     let conclusion = main_fund_flow_plain_conclusion(net_ratio);
@@ -1530,6 +1544,12 @@ pub(crate) fn parse_eastmoney_main_fund_flow_item(
             "主力净流入额原值": format!("{net_amount:.2}"),
             "主力净占比": format!("{net_ratio:.2}%"),
             "主力介入度": format!("{}（{:.2}%）", involvement, net_ratio.abs()),
+            "超大单净流入额": crate::market::format_amount_wan(super_large_amount),
+            "超大单净占比": format!("{super_large_ratio:.2}%"),
+            "大单净流入额": crate::market::format_amount_wan(large_amount),
+            "大单净占比": format!("{large_ratio:.2}%"),
+            "中小单净流入额": crate::market::format_amount_wan(small_medium_amount),
+            "中小单净占比": format!("{small_medium_ratio:.2}%"),
             "介入度口径": "按主力净占比绝对值分档：低 <3%，中 3%-8%，高 >=8%",
             "通俗结论": conclusion,
             "证据类型": "外部个股资金流",
@@ -1544,14 +1564,41 @@ pub(crate) fn parse_eastmoney_main_fund_flow_item(
 }
 
 pub(crate) fn parse_eastmoney_main_fund_flow_row(raw: &str) -> Option<(String, f64, f64)> {
+    let detail = parse_eastmoney_main_fund_flow_detail(raw)?;
+    Some((detail.0, detail.1, detail.2))
+}
+
+pub(crate) fn parse_eastmoney_main_fund_flow_detail(
+    raw: &str,
+) -> Option<(
+    String,
+    f64,
+    f64,
+    f64,
+    f64,
+    f64,
+    f64,
+    f64,
+    f64,
+    f64,
+    f64,
+)> {
     let parts = raw.split(',').collect::<Vec<_>>();
-    if parts.len() < 7 {
+    if parts.len() < 11 {
         return None;
     }
     Some((
         crate::market::normalize_history_date(parts.first().copied()?)?,
         crate::market::parse_f64_str(parts.get(1).copied()?)?,
         crate::market::parse_f64_str(parts.get(6).copied()?)?,
+        crate::market::parse_f64_str(parts.get(2).copied()?)?,
+        crate::market::parse_f64_str(parts.get(3).copied()?)?,
+        crate::market::parse_f64_str(parts.get(4).copied()?)?,
+        crate::market::parse_f64_str(parts.get(5).copied()?)?,
+        crate::market::parse_f64_str(parts.get(7).copied()?)?,
+        crate::market::parse_f64_str(parts.get(8).copied()?)?,
+        crate::market::parse_f64_str(parts.get(9).copied()?)?,
+        crate::market::parse_f64_str(parts.get(10).copied()?)?,
     ))
 }
 

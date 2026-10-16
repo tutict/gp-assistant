@@ -9,9 +9,27 @@ export interface MainFundFlowView {
   netAmount: string;
   netRatio: string;
   involvement: string;
+  superLargeAmount: string;
+  largeAmount: string;
+  smallMediumAmount: string;
   conclusion: string;
   tone: MainFundFlowTone;
   status: string;
+}
+
+export function hasMainFundFlowBreakdown(
+  capital?: CapitalEvidenceResult | null,
+): boolean {
+  const item = (capital?.items || []).find((candidate) => (
+    candidate.category === "fund_flow"
+    && !isLocalFundFlowProxy(candidate)
+    && hasAnyMetric(candidate, [...AMOUNT_KEYS, ...RATIO_KEYS])
+  ));
+  return Boolean(item && [
+    ["超大单净流入额", "super_large_inflow"],
+    ["大单净流入额", "large_inflow"],
+    ["中小单净流入额", "small_medium_inflow"],
+  ].every((keys) => hasAnyMetric(item, keys)));
 }
 
 const AMOUNT_KEYS = ["主力净流入额", "主力净流入", "main_net_inflow", "main_inflow"];
@@ -38,6 +56,9 @@ export function buildMainFundFlowView(
       netAmount: "暂缺",
       netRatio: "暂缺",
       involvement: "暂缺",
+      superLargeAmount: "暂缺",
+      largeAmount: "暂缺",
+      smallMediumAmount: "暂缺",
       conclusion: "当前没有拿到真实的当天主力资金数据，暂时不能判断主力是在买还是在卖。下方量价代理只能反映成交行为，不能替代主力净流入。",
       tone: "neutral",
       status: metricText(statusItem, ["状态"]) || "等待真实资金流数据",
@@ -70,6 +91,9 @@ export function buildMainFundFlowView(
     netAmount: formatAmountMetric(amountMetric?.value),
     netRatio: formatRatioMetric(ratioMetric?.value),
     involvement: metricText(item, INVOLVEMENT_KEYS) || involvementLabel(ratioValue),
+    superLargeAmount: metricText(item, ["超大单净流入额", "super_large_inflow"]) || "暂缺",
+    largeAmount: metricText(item, ["大单净流入额", "large_inflow"]) || "暂缺",
+    smallMediumAmount: metricText(item, ["中小单净流入额", "small_medium_inflow"]) || "暂缺",
     conclusion: directionsConflict
       ? "净流入额和净占比方向不一致，数据可能仍在刷新，先不要据此判断主力方向。"
       : buildPlainConclusion(ratioValue, amountValue, providedConclusion),

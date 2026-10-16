@@ -5,7 +5,7 @@ import { computeKdj, toDailyBars } from "../../lib/kline";
 import { calculateObserveQuant } from "../../lib/observeQuant";
 import type { ObserveQuantConclusion } from "../../lib/observeQuant";
 import { buildFundamentalSnapshotData, isFinancialPeriodStale } from "../../lib/fundamentalSnapshot";
-import { buildMainFundFlowView, isLocalFundFlowProxy } from "../../lib/mainFundFlow";
+import { buildMainFundFlowView, hasMainFundFlowBreakdown, isLocalFundFlowProxy } from "../../lib/mainFundFlow";
 import { getJson } from "../../lib/tauri";
 import { CollapsibleNotes } from "../CollapsibleNotes";
 import { RawJson } from "../RawJson";
@@ -52,6 +52,10 @@ export function needsPublicMarketDataRefresh(result: ObserveResult): boolean {
     || !holdings
     || holdings.checked_on !== checkedOn
     || holdings.status === "unavailable";
+}
+
+export function needsMainFundFlowRefresh(result: ObserveResult): boolean {
+  return !hasMainFundFlowBreakdown(result.capital_evidence);
 }
 
 const OBSERVE_FULL_HISTORY_START = "1990-01-01";
@@ -147,11 +151,14 @@ export function ObservePanel({
       }
       const financialSnapshotStale = needsFinancialSnapshotRefresh(data);
       const publicMarketDataStale = needsPublicMarketDataRefresh(data);
-      if (!refreshAttempted && (financialSnapshotStale || publicMarketDataStale)) {
+      const mainFundFlowStale = needsMainFundFlowRefresh(data);
+      if (!refreshAttempted && (financialSnapshotStale || publicMarketDataStale || mainFundFlowStale)) {
         refreshAttempted = true;
         setLoadingMessage(financialSnapshotStale
           ? "正在更新最新财报快照..."
-          : "正在更新市场营业部与机构持仓...");
+          : mainFundFlowStale
+            ? "正在更新最新主力资金分项..."
+            : "正在更新市场营业部与机构持仓...");
         try {
           data = await request("refresh");
         } catch (detailError) {
@@ -160,7 +167,11 @@ export function ObservePanel({
             ...data,
             notes: [
               ...(data.notes || []),
-              `${financialSnapshotStale ? "最新财报快照" : "全市场营业部/机构持仓"}暂未补齐：${formatLocalDataError(detailError)}`,
+              `${financialSnapshotStale
+                ? "最新财报快照"
+                : mainFundFlowStale
+                  ? "最新主力资金分项"
+                  : "全市场营业部/机构持仓"}暂未补齐：${formatLocalDataError(detailError)}`,
             ],
           });
           setError(null);
@@ -565,6 +576,9 @@ function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null
             { label: "主力净流入额", value: mainFlow.netAmount, tone: mainFlow.tone },
             { label: "主力净占比", value: mainFlow.netRatio, tone: mainFlow.tone },
             { label: "主力介入度", value: mainFlow.involvement },
+            { label: "超大单净流入", value: mainFlow.superLargeAmount },
+            { label: "大单净流入", value: mainFlow.largeAmount },
+            { label: "中小单净流入", value: mainFlow.smallMediumAmount },
           ]} />
         ) : (
           <p className="capital-main-flow-missing">

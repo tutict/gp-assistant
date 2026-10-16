@@ -35,6 +35,20 @@ describe("ObservePanel requests", () => {
     getJsonMock.mockImplementation((url: string) => {
       const target = String(url);
       const publicData = {
+        capital_evidence: {
+          stock_code: "600519.SH",
+          items: [{
+            category: "fund_flow",
+            source: "东方财富个股资金流",
+            metrics: {
+              主力净流入额: "1200 万",
+              主力净占比: "4.6%",
+              超大单净流入额: "800 万",
+              大单净流入额: "400 万",
+              中小单净流入额: "-1200 万",
+            },
+          }],
+        },
         market_active_brokerages: {
           status: "available" as const,
           source: "东方财富每日活跃营业部",
@@ -238,7 +252,21 @@ describe("ObservePanel requests", () => {
     const cached = {
       stock: { code: "600519.SH", name: "贵州茅台" },
       capital_evidence: {
-        items: [{ category: "institution_lhb", title: "东方财富龙虎榜机构席位", seats: [], seat_detail_status: "partial" }],
+        stock_code: "600519.SH",
+        items: [
+          {
+            category: "fund_flow",
+            source: "东方财富个股资金流",
+            metrics: {
+              主力净流入额: "1200 万",
+              主力净占比: "4.6%",
+              超大单净流入额: "800 万",
+              大单净流入额: "400 万",
+              中小单净流入额: "-1200 万",
+            },
+          },
+          { category: "institution_lhb", title: "东方财富龙虎榜机构席位", seats: [], seat_detail_status: "partial" },
+        ],
       },
       market_active_brokerages: {
         status: "available",
@@ -349,13 +377,27 @@ describe("ObservePanel requests", () => {
     getJsonMock.mockResolvedValueOnce({
       stock: { code: "688372.SH", name: "伟测科技" },
       capital_evidence: {
-        items: [{
-          category: "institution_lhb",
-          date: "2026-10-09",
-          metrics: { "机构买入额": "300万元", "机构卖出额": "200万元", "机构净买额": "100万元" },
-          seats: [{ name: "机构专用", direction: "buy", buy_amount: 3_000_000, sell_amount: 0, net_amount: 3_000_000 }],
-          seat_detail_status: "complete",
-        }],
+        stock_code: "688372.SH",
+        items: [
+          {
+            category: "fund_flow",
+            source: "东方财富个股资金流",
+            metrics: {
+              主力净流入额: "1200 万",
+              主力净占比: "4.6%",
+              超大单净流入额: "800 万",
+              大单净流入额: "400 万",
+              中小单净流入额: "-1200 万",
+            },
+          },
+          {
+            category: "institution_lhb",
+            date: "2026-10-09",
+            metrics: { "机构买入额": "300万元", "机构卖出额": "200万元", "机构净买额": "100万元" },
+            seats: [{ name: "机构专用", direction: "buy", buy_amount: 3_000_000, sell_amount: 0, net_amount: 3_000_000 }],
+            seat_detail_status: "complete",
+          },
+        ],
       },
       market_active_brokerages: {
         status: "available",

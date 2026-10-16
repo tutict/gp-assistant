@@ -3025,6 +3025,18 @@ fn eastmoney_main_fund_flow_parser_uses_latest_requested_trade_date() {
         metrics.get("主力介入度").and_then(Value::as_str),
         Some("低（1.32%）")
     );
+    assert_eq!(
+        metrics.get("超大单净流入额").and_then(Value::as_str),
+        Some("-1.61 亿")
+    );
+    assert_eq!(
+        metrics.get("大单净流入额").and_then(Value::as_str),
+        Some("8192.89 万")
+    );
+    assert_eq!(
+        metrics.get("中小单净流入额").and_then(Value::as_str),
+        Some("7927.31 万")
+    );
     assert!(metrics
         .get("通俗结论")
         .and_then(Value::as_str)

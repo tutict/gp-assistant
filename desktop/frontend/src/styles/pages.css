@@ -2449,6 +2449,14 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
   margin: 0;
 }
 
+.backtest-industry-hint {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: var(--fs-caption);
+  line-height: 1.35;
+}
+
 .backtest-field-note { margin-top: var(--space-2); }
 
 .backtest-parameter-boundary {
@@ -4848,7 +4856,7 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 }
 
 .capital-main-flow .capital-quant-metrics {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   margin-top: var(--space-3);
 }
 
