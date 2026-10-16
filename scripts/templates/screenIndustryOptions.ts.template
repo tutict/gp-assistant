@@ -45,3 +45,10 @@ const LEGACY_BROAD_INDUSTRY_SET = new Set<string>(LEGACY_BROAD_INDUSTRY_OPTIONS)
 export function isLegacyBroadIndustry(value: string): boolean {
   return LEGACY_BROAD_INDUSTRY_SET.has(value);
 }
+
+export function industryFilterHint(value: string): string {
+  const industry = value.trim();
+  if (!industry) return "行业分组门槛：至少 5 只股票";
+  if (isLegacyBroadIndustry(industry)) return "大类筛选；不合并原始行业，小样本分组按至少 5 只处理";
+  return "细分行业严格筛选，不与其他行业合并";
+}

@@ -37,6 +37,7 @@ import {
   clampInt,
   currentSystemDateCompact,
   currentSystemDateInputValue,
+  normalizeBacktestDateRange,
   normalizeDateParam,
   normalizeStockCode,
   parseCodes,
@@ -183,6 +184,7 @@ export function buildBacktestRequest(args: {
   adaptiveScreenSpec?: AdaptiveScreenRequest;
 }): Record<string, unknown> {
   const adaptiveScreenSpec = args.source === "criteria" ? args.adaptiveScreenSpec : undefined;
+  const dateRange = normalizeBacktestDateRange(args.startDate, args.endDate);
   return {
     source: args.source,
     criteria: adaptiveScreenSpec?.criteria
@@ -196,8 +198,8 @@ export function buildBacktestRequest(args: {
       : args.strategyMode || "candidate_snapshot",
     ...(adaptiveScreenSpec ? { adaptive_screen_spec: adaptiveScreenSpec } : {}),
     stock_codes: args.source === "watchlist" ? args.watchlist.map((item) => item.code).filter(Boolean).slice(0, 100) : [],
-    start_date: normalizeDateParam(args.startDate, "20200101"),
-    end_date: normalizeDateParam(args.endDate, currentSystemDateCompact()),
+    start_date: normalizeDateParam(dateRange.startDate, "20200101"),
+    end_date: normalizeDateParam(dateRange.endDate, currentSystemDateCompact()),
     top_n: clampInt(args.topN, 1, 100, 10),
     rebalance_frequency: args.rebalanceFrequency || "monthly",
     transaction_cost_bps: clampFloat(args.transactionCostBps, 0, 500, 10),

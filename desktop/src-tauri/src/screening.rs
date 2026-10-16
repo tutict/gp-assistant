@@ -1597,6 +1597,8 @@ pub(crate) async fn prepare_backtest(
     let request =
         serde_json::from_value::<gp_core::BacktestRequest>(local_data::core_payload(payload))
             .map_err(|error| format!("invalid backtest request: {error}"))?;
+    gp_core::validate_backtest_date_range(&request)
+        .map_err(|error| format!("invalid backtest date range: {error}"))?;
     let adaptive_backtest = request
         .strategy_mode
         .trim()

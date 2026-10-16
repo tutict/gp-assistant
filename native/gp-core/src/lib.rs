@@ -1620,7 +1620,7 @@ fn default_per_sector_limit() -> usize {
 }
 
 fn default_min_sector_candidates() -> usize {
-    1
+    5
 }
 
 fn default_sector_group_by() -> String {
@@ -1856,6 +1856,16 @@ pub fn sector_screen_stocks(
         by_sector.entry(sector).or_default().push(item.clone());
     }
 
+    let omitted_small_sector_count = by_sector
+        .values()
+        .filter(|items| items.len() < min_sector_candidates)
+        .count();
+    let omitted_small_stock_count = by_sector
+        .values()
+        .filter(|items| items.len() < min_sector_candidates)
+        .map(Vec::len)
+        .sum::<usize>();
+
     let mut groups: Vec<SectorScreenGroup> = by_sector
         .into_iter()
         .filter(|(_, items)| items.len() >= min_sector_candidates)
@@ -1907,6 +1917,11 @@ pub fn sector_screen_stocks(
             "{}{}",
             "\u{5df2}\u{9650}\u{5b9a}\u{884c}\u{4e1a}\u{ff1a}",
             request.criteria.industry.as_deref().unwrap_or_default()
+        ));
+    }
+    if omitted_small_sector_count > 0 {
+        notes.push(format!(
+            "已隐藏 {omitted_small_sector_count} 个样本不足的行业分组（共 {omitted_small_stock_count} 只股票）；分组门槛为 {min_sector_candidates} 只。"
         ));
     }
     if board_mode {
@@ -1981,6 +1996,7 @@ fn resolve_backtest_data_requirements(
     source: &impl MarketDataSource,
     request: &BacktestRequest,
 ) -> CoreResult<BacktestDataRequirements> {
+    validate_backtest_date_range(request)?;
     let mut universe = source.stocks()?.to_vec();
     let strategy_mode = normalize_backtest_strategy_mode(&request.strategy_mode);
     let dynamic_mode = strategy_mode != "candidate_snapshot";
@@ -2030,6 +2046,18 @@ fn resolve_backtest_data_requirements(
         symbols,
         history_symbols,
     })
+}
+
+pub fn validate_backtest_date_range(request: &BacktestRequest) -> CoreResult<()> {
+    let start = parse_date(&request.start_date)?;
+    let end = parse_date(&request.end_date)?;
+    if start > end {
+        return Err(CoreError::new(format!(
+            "回测开始日期不能晚于结束日期：{} > {}",
+            request.start_date, request.end_date
+        )));
+    }
+    Ok(())
 }
 
 pub fn backtest_required_history_symbols(

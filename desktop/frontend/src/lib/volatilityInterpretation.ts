@@ -39,40 +39,25 @@ export function buildVolatilityInterpretation(snapshot: VolatilitySnapshot): Vol
   if (returnedCount === 0) {
     return {
       returnedCount,
-      summary: "有效数据还不够，现在无法判断价格位置和波动状态。",
-      evidence: ["这只股票缺少足够的有效历史日线，请先查看上方每个指标为什么不可用。"],
-      adjustments: ["先补齐历史日线，再比较策略参数；不要根据缺失的数据调整规则。"],
+      summary: "这只股票的历史行情还不完整，现在还看不出它是在高位、低位还是容易大涨大跌。",
+      evidence: ["需要更多历史行情，才能判断价格位置和最近的涨跌幅度。"],
+      adjustments: ["先补齐历史行情，再下结论；数据不全时不要急着改策略。"],
     };
   }
 
-  const summaryParts: string[] = [];
   const evidence: string[] = [];
   const adjustments: string[] = [];
 
   if (representativePosition != null) {
-    const positionSummary = positionLabel(representativePosition, positions);
-    summaryParts.push(`价格${positionSummary}`);
-    evidence.push(`${positions.map((item) => `${item.label} ${formatPercent(item.value)}`).join("、")}；0% 附近代表区间底部，因此${positionSummary}。`);
-  }
-
-  if (rviValue != null) {
-    summaryParts.push(rviLabel(rviValue));
-  }
-
-  if (chaikinValue != null) {
-    summaryParts.push(chaikinLabel(chaikinValue));
+    evidence.push(`参考最近一段时间的高低价范围，${positionLabel(representativePosition, positions)}。`);
   }
 
   if (atrPercent != null) {
-    summaryParts.push(`近期一天的典型波动约占股价 ${formatPercent(atrPercent)}，当前波动${atrLabel(atrPercent)}`);
-    evidence.unshift(`ATR${snapshot.atr?.period ?? 14} 为 ${formatNumber(snapshot.atr?.value)}，可以把它理解为近期一天的典型波动尺度，约占收盘价 ${formatPercent(atrPercent)}。`);
+    evidence.unshift(`最近一天股价通常波动约 ${formatPercent(atrPercent)}，波动幅度${atrLabel(atrPercent)}。`);
     adjustments.push(atrAdjustment(atrPercent));
   }
 
-  const plainMeaning = combinedMeaning(representativePosition, rviValue, chaikinValue);
-  if (plainMeaning) summaryParts.push(plainMeaning);
-
-  const directionEvidence = directionAndRegimeEvidence(snapshot, rviValue, chaikinValue);
+  const directionEvidence = directionAndRegimeEvidence(rviValue, chaikinValue);
   if (directionEvidence) evidence.push(directionEvidence);
 
   const confirmationAdjustment = positionAdjustment(representativePosition, rviValue);
@@ -80,19 +65,17 @@ export function buildVolatilityInterpretation(snapshot: VolatilitySnapshot): Vol
   if (chaikinValue != null) adjustments.push(regimeAdjustment(chaikinValue));
 
   if (adjustments.length === 0) {
-    adjustments.push("样本分层：先按当前可用指标划分波动状态，再比较各层的收益、回撤与误触发率。");
+    adjustments.push("把价格在低位、中间和高位的情况分开看，再比较哪种情况更稳定。");
   }
 
-  if (summaryParts.length === 0) {
-    evidence.push("部分指标已经返回，但关键数值仍然缺失，所以无法判断价格位置、强弱方向或波动变化。");
-    adjustments.unshift("先检查数据是否完整，补齐通道位置、ATR 占比、Chaikin 或 RVI 后再调整策略。");
+  if (representativePosition == null && atrPercent == null && rviValue == null && chaikinValue == null) {
+    evidence.push("目前只拿到少量数据，还不足以判断价格位置、涨跌方向或波动大小。");
+    adjustments.unshift("先补齐历史行情，再调整策略；不要用不完整的数据做决定。");
   }
 
   return {
     returnedCount,
-    summary: summaryParts.length
-      ? `${summaryParts.join("；")}。`
-      : "目前只能看到部分原始数字，还不足以得出可信的结论。",
+    summary: plainSummary(representativePosition, rviValue, chaikinValue, atrPercent),
     evidence,
     adjustments: adjustments.slice(0, 3),
   };
@@ -108,16 +91,15 @@ function positionReadings(snapshot: VolatilitySnapshot): PositionReading[] {
 }
 
 function directionAndRegimeEvidence(
-  snapshot: VolatilitySnapshot,
   rviValue: number | null,
   chaikinValue: number | null,
 ): string | null {
   const parts: string[] = [];
   if (rviValue != null) {
-    parts.push(`RVI${snapshot.rvi?.period ?? 14} 为 ${formatNumber(rviValue)}，${rviLabel(rviValue)}`);
+    parts.push(rviLabel(rviValue));
   }
   if (chaikinValue != null) {
-    parts.push(`Chaikin ${snapshot.chaikin_volatility?.ema_period ?? 10}/${snapshot.chaikin_volatility?.roc_period ?? 10} 为 ${formatPercent(chaikinValue)}，${chaikinLabel(chaikinValue)}`);
+    parts.push(chaikinLabel(chaikinValue));
   }
   return parts.length ? `${parts.join("；")}。` : null;
 }
@@ -134,83 +116,92 @@ function positionLabel(value: number, readings: PositionReading[] = []): string 
   const hasInside = readings.some((item) => item.value >= 0 && item.value <= 100);
   const hasAbove = readings.some((item) => item.value > 100);
   if (value < 0) {
-    return hasBelow && hasInside ? "已经贴近近期价格区间底部，而且部分指标显示价格已落到近期常见范围之外" : "已经跌出近期价格区间的常见范围";
+    return hasBelow && hasInside ? "价格靠近近期低位，而且已经低于部分常见范围" : "价格已经低于近期常见范围";
   }
-  if (value <= 20) return "已经贴近近期价格区间底部";
-  if (value < 40) return "位于近期价格区间的偏低位置";
-  if (value <= 60) return "位于近期价格区间中部";
-  if (value < 80) return "位于近期价格区间的偏高位置";
-  if (value <= 100) return "已经贴近近期价格区间顶部";
-  return hasAbove && hasInside ? "已经贴近近期价格区间顶部，而且部分指标显示价格已超出近期常见范围" : "已经突破近期价格区间的常见范围";
+  if (value <= 20) return "价格靠近近期低位";
+  if (value < 40) return "价格偏低";
+  if (value <= 60) return "价格处在近期高低价的中间";
+  if (value < 80) return "价格偏高";
+  if (value <= 100) return "价格靠近近期高位";
+  return hasAbove && hasInside ? "价格靠近近期高位，而且已经高于部分常见范围" : "价格已经高于近期常见范围";
 }
 
 function rviLabel(value: number): string {
-  if (value >= 60) return "最近上涨方向的波动明显更多，价格表现偏强";
-  if (value > 52) return "最近上涨方向的波动略多";
-  if (value >= 48) return "最近上涨和下跌方向的波动大致均衡";
-  if (value > 40) return "最近下跌方向的波动略多";
-  return "最近下跌方向的波动明显更多，价格表现偏弱";
+  if (value >= 60) return "最近上涨更占优势，走势偏强";
+  if (value > 52) return "最近上涨略占优势";
+  if (value >= 48) return "最近涨跌大致相当";
+  if (value > 40) return "最近下跌略占优势";
+  return "最近下跌更占优势，走势偏弱";
 }
 
 function chaikinLabel(value: number): string {
-  if (value >= 10) return "每天的高低价差明显变大，波动正在升温";
-  if (value >= 3) return "每天的高低价差变大，波动正在升温";
-  if (value > -3) return "每天的高低价差与前期接近，波动变化不大";
-  if (value > -10) return "每天的高低价差变小，波动有所降温";
-  return "每天的高低价差明显变小，波动正在降温";
+  if (value >= 10) return "每天的涨跌幅度明显变大，行情更容易大起大落";
+  if (value >= 3) return "每天的涨跌幅度变大，行情开始变得活跃";
+  if (value > -3) return "每天的涨跌幅度和前期差不多，行情比较平稳";
+  if (value > -10) return "每天的涨跌幅度变小，行情正在变平静";
+  return "每天的涨跌幅度明显变小，行情明显变平静";
 }
 
-function combinedMeaning(position: number | null, rvi: number | null, chaikin: number | null): string | null {
+function plainSummary(
+  position: number | null,
+  rvi: number | null,
+  chaikin: number | null,
+  atrPercent: number | null,
+): string {
   if (position != null && position <= 20 && rvi != null && rvi < 48) {
     return chaikin != null && chaikin <= -3
-      ? "整体更像弱势中的降温整理，不代表已经止跌"
-      : "整体仍偏弱，低位本身不代表已经止跌";
+      ? "价格在近期低位，最近下跌更明显，行情正在变平静，但还不能说明已经止跌。"
+      : "价格在近期低位，最近下跌更明显，暂时还不能说明已经止跌。";
   }
   if (position != null && position >= 80 && rvi != null && rvi > 52) {
     return chaikin != null && chaikin >= 3
-      ? "整体更像强势中的加速波动，但是否能延续仍需用后续样本验证"
-      : "整体偏强，但接近区间顶部不等于一定会继续上涨";
+      ? "价格在近期高位，最近上涨更明显，但行情也更容易大起大落。"
+      : "价格在近期高位，最近上涨更明显，但不代表一定会继续上涨。";
   }
-  if (chaikin != null && chaikin <= -3) return "当前波动正在降温，策略信号可能会减少";
-  if (chaikin != null && chaikin >= 3) return "当前波动正在升温，策略的收益和回撤都可能被放大";
-  return null;
+  const parts: string[] = [];
+  if (position != null) parts.push(positionLabel(position));
+  if (rvi != null) parts.push(rviLabel(rvi));
+  if (chaikin != null) parts.push(chaikinLabel(chaikin));
+  if (atrPercent != null) parts.push(`最近一天通常波动约 ${formatPercent(atrPercent)}，幅度${atrLabel(atrPercent)}`);
+  if (!parts.length) return "目前只能看到少量数字，还不足以判断这只股票最近的状态。";
+  return `${parts.join("，")}。`;
 }
 
 function atrAdjustment(value: number): string {
   if (value >= 3) {
-    return "先统一风险：不要给所有股票使用同一个固定比例；按 ATR 分组，分别测试风险上限、退出距离和滑点。";
+    return "最近波动较大，先把每次承担的风险调小，并单独检查退出位置，避免一次大波动造成过大损失。";
   }
   if (value < 1.5) {
-    return "先检查退出条件：把固定比例和更小的 ATR 倍数分别回测，看看哪一种在低波动样本里更稳定。";
+    return "最近波动较小，可以分别测试更近和更远的退出位置，避免把正常的小波动误判成失败。";
   }
-  return "风险参数：用 ATR 倍数替代固定比例，再比较不同波动水平下的回撤差异。";
+  return "把最近的波动大小放进风险和退出设置里，再比较哪种设置更稳定。";
 }
 
 function positionAdjustment(position: number | null, rvi: number | null): string | null {
   if (position == null) return null;
   if (position <= 20 && rvi != null && rvi < 48) {
-    return "不要把低位直接当成反转：给均值回归规则加上“重新回到正常区间”或“方向强弱指标（RVI）回到中线 50”条件，再比较误触发次数。";
+    return "价格在低位时，先等它重新回到正常范围再判断是否转强，别因为价格低就当成要反弹。";
   }
   if (position <= 20) {
-    return "低位信号需要确认：对比“碰到底部”与“重新回到正常区间”两种条件，看哪一种更稳定。";
+    return "价格在低位时，等它重新回到正常范围再判断，减少过早判断。";
   }
   if (position >= 80 && rvi != null && rvi > 52) {
-    return "如果研究突破策略：对比“碰到顶部”与“收盘越过顶部且 RVI 高于 50”，看哪一种在新样本里更可靠。";
+    return "价格接近高位时，等它真正突破并站稳再判断，避免刚碰到高位就追进去。";
   }
   if (position >= 80) {
-    return "价格靠近顶部但方向不一致时，单独统计突破规则失败的次数，不要和强势突破样本混在一起。";
+    return "价格接近高位时，把突破成功和失败分开记录，不要混在一起看。";
   }
-  return "把价格在中部、底部和顶部的样本分开回测，避免所有位置共用同一个触发条件。";
+  return "把价格在低位、中间和高位的情况分开统计，避免一套条件套所有情况。";
 }
 
 function regimeAdjustment(value: number): string {
   if (value >= 3) {
-    return "把波动变大的日子单独统计，分别看突破和均值回归的收益、回撤和换手。";
+    return "把波动变大的日子单独看，比较这时上涨和回落哪一种更容易出现。";
   }
   if (value <= -3) {
-    return "把波动变小的日子单独统计，比较突破策略在平静期和活跃期的失败次数，再调整确认条件。";
+    return "把行情变平静的日子单独看，确认策略是不是因为信号变少而失效。";
   }
-  return "把当前波动平稳的日子作为基准组，再和波动变大、变小的日子分别对照。";
+  return "把现在这种平稳行情作为基准，再和剧烈波动的行情比较。";
 }
 
 function finiteNumber(value: number | null | undefined): number | null {

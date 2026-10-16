@@ -1,4 +1,4 @@
-import { useWorkspaceState, useWorkspaceStore } from "../../hooks/useWorkspace";
+import { useWorkspaceState, useWorkspaceStatus, useWorkspaceStore } from "../../hooks/useWorkspace";
 import { formatLocalDataError, localDataSummary } from "../../lib/localData";
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { AdaptiveScreenRequest, BacktestResult, EquityPoint, StockItem, VolatilitySnapshot, WatchlistItem } from "../../types";
@@ -11,13 +11,14 @@ import {
   formatNumber,
   formatPercent,
   formatSignedPercent,
+  normalizeBacktestDateRange,
   normalizeStockCode,
 } from "../../lib/format";
 import { RawJson } from "../RawJson";
 import { PanelFeedback } from "../ui/PanelFeedback";
 import { LocalFirstRunControl } from "../LocalFirstRunControl";
 import type { BacktestRouteRequest, BacktestSource } from "../../lib/viewNavigation";
-import { ALL_INDUSTRY_OPTIONS, isLegacyBroadIndustry } from "../../lib/screenIndustryOptions";
+import { ALL_INDUSTRY_OPTIONS, industryFilterHint, isLegacyBroadIndustry } from "../../lib/screenIndustryOptions";
 import { MARKET_SCOPE_OPTIONS, normalizeMarketScope } from "../../lib/screenScopeOptions";
 import {
   buildVolatilityInterpretation,
@@ -40,6 +41,7 @@ interface BacktestPanelProps {
 
 export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferredSourceConsumed }: BacktestPanelProps) {
   const workspace = useWorkspaceStore();
+  const workspaceStatus = useWorkspaceStatus();
   const [source, setSource] = useWorkspaceState<BacktestSource>("app.backtest.source", "criteria");
   const [start, setStart] = useWorkspaceState("backtest.start", "2020-01-01");
   const [end, setEnd] = useWorkspaceState("backtest.end", currentSystemDateInputValue());
@@ -59,8 +61,21 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
   const requestInFlightRef = useRef(false);
   const requestVersionRef = useRef(0);
   const consumedPreferredRequestIdRef = useRef<number | null>(null);
+  const dateRangeHydratedRef = useRef(false);
   const watchlistSignature = watchlist.map((item) => item.code.toUpperCase()).join("|");
   const previousWatchlistSignatureRef = useRef(watchlistSignature);
+  const today = currentSystemDateInputValue();
+  const normalizedDateRange = useMemo(
+    () => normalizeBacktestDateRange(start, end, today),
+    [end, start, today],
+  );
+
+  useEffect(() => {
+    if (!workspaceStatus.ready || dateRangeHydratedRef.current) return;
+    dateRangeHydratedRef.current = true;
+    if (start !== normalizedDateRange.startDate) setStart(normalizedDateRange.startDate);
+    if (end !== normalizedDateRange.endDate) setEnd(normalizedDateRange.endDate);
+  }, [end, normalizedDateRange.endDate, normalizedDateRange.startDate, setEnd, setStart, start, workspaceStatus.ready]);
 
   useEffect(() => {
     if (!preferredSource) return;
@@ -116,7 +131,19 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     setWorkingCriteria((current) => ({ ...current, ...patch }));
   };
 
-  const parameterSignature = JSON.stringify({ source, start, end, topN, rebalance, benchmark, strategyMode, costBps, criteria: effectiveFilterCriteria, adaptiveScreenSpec, symbols: source === "watchlist" ? watchlistSignature : "" });
+  const parameterSignature = JSON.stringify({
+    source,
+    start: normalizedDateRange.startDate,
+    end: normalizedDateRange.endDate,
+    topN,
+    rebalance,
+    benchmark,
+    strategyMode,
+    costBps,
+    criteria: effectiveFilterCriteria,
+    adaptiveScreenSpec,
+    symbols: source === "watchlist" ? watchlistSignature : "",
+  });
 
   const run = async () => {
     if (requestInFlightRef.current) return;
@@ -132,12 +159,15 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     setError(null);
     setResult(null);
     try {
+      const requestDateRange = normalizeBacktestDateRange(start, end, today);
+      if (start !== requestDateRange.startDate) setStart(requestDateRange.startDate);
+      if (end !== requestDateRange.endDate) setEnd(requestDateRange.endDate);
       const payload = buildBacktestRequest({
         source,
         criteria: effectiveFilterCriteria,
         watchlist,
-        startDate: start,
-        endDate: end,
+        startDate: requestDateRange.startDate,
+        endDate: requestDateRange.endDate,
         topN,
         rebalanceFrequency: rebalance,
         transactionCostBps: costBps,
@@ -229,6 +259,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
                       </option>
                     ))}
                   </select>
+                  <small className="backtest-industry-hint">{industryFilterHint(selectedIndustry)}</small>
                 </div>
                 <div className="form-row">
                   <label htmlFor="btMarketScope">股票池范围（本页）</label>
@@ -255,11 +286,11 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
             <div className="backtest-field-grid backtest-date-fields">
               <div className="form-row">
                 <label htmlFor="btStart">开始日期</label>
-                <input id="btStart" type="date" value={start} disabled={loading} onChange={(e) => setStart(e.target.value)} />
+                <input id="btStart" type="date" max={today} value={start} disabled={loading} onChange={(e) => setStart(e.target.value)} />
               </div>
               <div className="form-row">
                 <label htmlFor="btEnd">结束日期</label>
-                <input id="btEnd" type="date" value={end} disabled={loading} onChange={(e) => setEnd(e.target.value)} />
+                <input id="btEnd" type="date" max={today} value={end} disabled={loading} onChange={(e) => setEnd(e.target.value)} />
               </div>
             </div>
           </section>
@@ -669,7 +700,7 @@ const VolatilityDiagnostics = memo(function VolatilityDiagnostics({
       <section className="volatility-interpretation" aria-label={`${symbolLabel} 波动率结论`}>
         <header>
           <strong>一句话看懂</strong>
-          <span>已返回 {interpretation.returnedCount}/6 项指标</span>
+          <span>已检查 {interpretation.returnedCount}/6 项数据</span>
         </header>
         <p className="volatility-interpretation-summary">{interpretation.summary}</p>
         <div className="volatility-interpretation-grid">
@@ -678,7 +709,7 @@ const VolatilityDiagnostics = memo(function VolatilityDiagnostics({
             <ul>{interpretation.evidence.map((item) => <li key={item}>{item}</li>)}</ul>
           </div>
           <div>
-            <h4>策略可以怎么改</h4>
+            <h4>可以怎么调整</h4>
             <ul>{interpretation.adjustments.map((item) => <li key={item}>{item}</li>)}</ul>
           </div>
         </div>

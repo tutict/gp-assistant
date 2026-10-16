@@ -1179,6 +1179,26 @@ fn backtest_uses_mock_history() {
 }
 
 #[test]
+fn backtest_rejects_reversed_date_range_before_history_lookup() {
+    let error = backtest_with_mock(&BacktestRequest {
+        criteria: ScreenCriteria::default(),
+        source: default_backtest_source(),
+        strategy_mode: "candidate_snapshot".to_string(),
+        stock_codes: Vec::new(),
+        start_date: "20270101".to_string(),
+        end_date: "20261112".to_string(),
+        top_n: 3,
+        initial_cash: 1_000.0,
+        rebalance_frequency: default_rebalance_frequency(),
+        transaction_cost_bps: default_transaction_cost_bps(),
+        benchmark: default_backtest_benchmark(),
+    })
+    .expect_err("reversed backtest range must fail before requesting history");
+
+    assert!(error.to_string().contains("回测开始日期不能晚于结束日期"));
+}
+
+#[test]
 fn trend_indicator_runs_with_mock_history() {
     let result = trend_with_mock(&TrendIndicatorRequest {
         code: "300750.SZ".to_string(),
@@ -1326,6 +1346,7 @@ fn sector_screen_expands_concept_group_display_limits_with_a_five_stock_threshol
         })
         .collect::<Vec<_>>();
     stocks.extend((12..18).map(|index| make_stock(index, format!("食品样本{index}"), "食品饮料")));
+    stocks.push(make_stock(18, "银行样本18".to_string(), "银行"));
     let result = sector_screen_stocks(
         &stocks,
         &SectorScreenRequest {
@@ -1352,6 +1373,15 @@ fn sector_screen_expands_concept_group_display_limits_with_a_five_stock_threshol
         .expect("consumer group");
     assert_eq!(consumer.total, 6);
     assert_eq!(consumer.returned, 6);
+    assert!(result
+        .notes
+        .iter()
+        .any(|note| note.contains("样本不足") && note.contains("5")));
+}
+
+#[test]
+fn sector_screen_defaults_to_a_five_stock_threshold_for_concept_groups() {
+    assert_eq!(SectorScreenRequest::default().min_sector_candidates, 5);
 }
 
 #[test]

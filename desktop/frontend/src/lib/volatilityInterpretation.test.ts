@@ -19,14 +19,14 @@ describe("buildVolatilityInterpretation", () => {
     const result = buildVolatilityInterpretation(weakContractingSnapshot);
 
     expect(result.returnedCount).toBe(6);
-    expect(result.summary).toContain("贴近近期价格区间底部");
-    expect(result.summary).toContain("最近下跌方向的波动明显更多");
-    expect(result.summary).toContain("每天的高低价差明显变小");
-    expect(result.summary).toContain("当前波动偏大");
-    expect(result.summary).toContain("不代表已经止跌");
-    expect(result.evidence.join(" ")).toContain("布林 %B -6.82%");
-    expect(result.adjustments.join(" ")).toContain("RVI）回到中线 50");
-    expect(result.adjustments.join(" ")).toContain("误触发次数");
+    expect(result.summary).toContain("价格在近期低位");
+    expect(result.summary).toContain("最近下跌更明显");
+    expect(result.summary).toContain("行情正在变平静");
+    expect(result.summary).toContain("还不能说明已经止跌");
+    expect(result.evidence.join(" ")).toContain("最近一天股价通常波动约 4.82%");
+    expect(result.adjustments.join(" ")).toContain("重新回到正常范围");
+    expect(result.adjustments.join(" ")).toContain("价格低就当成要反弹");
+    expect(`${result.summary} ${result.evidence.join(" ")} ${result.adjustments.join(" ")}`).not.toMatch(/ATR|RVI|Chaikin|%B|EMA/);
   });
 
   it("recognizes upper-channel expansion and upward directional volatility", () => {
@@ -40,20 +40,19 @@ describe("buildVolatilityInterpretation", () => {
       rvi: { period: 14, value: 61.2 },
     });
 
-    expect(result.summary).toContain("贴近近期价格区间顶部");
-    expect(result.summary).toContain("最近上涨方向的波动明显更多");
-    expect(result.summary).toContain("每天的高低价差明显变大");
-    expect(result.summary).toContain("是否能延续仍需用后续样本验证");
-    expect(result.adjustments.join(" ")).toContain("收盘越过顶部");
+    expect(result.summary).toContain("价格在近期高位");
+    expect(result.summary).toContain("最近上涨更明显");
+    expect(result.summary).toContain("更容易大起大落");
+    expect(result.adjustments.join(" ")).toContain("真正突破并站稳");
   });
 
   it("degrades to a data preparation conclusion when every indicator is unavailable", () => {
     const result = buildVolatilityInterpretation({ symbol: "000553.SZ", date: "2026-07-17" });
 
     expect(result.returnedCount).toBe(0);
-    expect(result.summary).toContain("有效数据还不够");
+    expect(result.summary).toContain("历史行情还不完整");
     expect(result.adjustments).toEqual([
-      "先补齐历史日线，再比较策略参数；不要根据缺失的数据调整规则。",
+      "先补齐历史行情，再下结论；数据不全时不要急着改策略。",
     ]);
   });
 
@@ -62,22 +61,22 @@ describe("buildVolatilityInterpretation", () => {
       symbol: "000553.SZ",
       date: "2026-07-17",
       rvi: { period: 14, value: 60 },
-    }).summary).toContain("最近上涨方向的波动明显更多");
+    }).summary).toContain("最近上涨更占优势");
     expect(buildVolatilityInterpretation({
       symbol: "000553.SZ",
       date: "2026-07-17",
       rvi: { period: 14, value: 40 },
-    }).summary).toContain("最近下跌方向的波动明显更多");
+    }).summary).toContain("最近下跌更占优势");
     expect(buildVolatilityInterpretation({
       symbol: "000553.SZ",
       date: "2026-07-17",
       chaikin_volatility: { ema_period: 10, roc_period: 10, value: 10 },
-    }).summary).toContain("每天的高低价差明显变大");
+    }).summary).toContain("每天的涨跌幅度明显变大");
     expect(buildVolatilityInterpretation({
       symbol: "000553.SZ",
       date: "2026-07-17",
       chaikin_volatility: { ema_period: 10, roc_period: 10, value: -10 },
-    }).summary).toContain("每天的高低价差明显变小");
+    }).summary).toContain("每天的涨跌幅度明显变小");
   });
 
   it("does not emit an empty summary for partially populated indicator objects", () => {
@@ -94,7 +93,7 @@ describe("buildVolatilityInterpretation", () => {
     });
 
     expect(result.returnedCount).toBe(1);
-    expect(result.summary).toContain("还不足以得出可信的结论");
-    expect(result.adjustments[0]).toContain("先检查数据是否完整");
+    expect(result.summary).toContain("少量数字");
+    expect(result.adjustments[0]).toContain("补齐历史行情");
   });
 });

@@ -114,10 +114,10 @@ describe("BacktestResultView volatility diagnostics", () => {
     expect(html).toContain("12.50%");
     expect(html).toContain("一句话看懂");
     expect(html).toContain("为什么这么说");
-    expect(html).toContain("策略可以怎么改");
+    expect(html).toContain("可以怎么调整");
     expect(html).toContain("这些判断怎么算的");
     expect(html).toContain("48–52（含端点）为方向均衡");
-    expect(html).toContain("最近上涨方向的波动明显更多");
+    expect(html).toContain("最近上涨更占优势");
     expect(html).toContain('<ul class="symbol-strip"');
     expect(html).toContain('<li class="symbol-chip"');
     expect(html).not.toContain("日内波幅扩张");
@@ -128,7 +128,7 @@ describe("BacktestResultView volatility diagnostics", () => {
 
     expect(html).toContain("波动率快照");
     expect(html).toContain("区间末收盘价无效");
-    expect(html).toContain("有效数据还不够");
+    expect(html).toContain("历史行情还不完整");
     expect(html).not.toContain("历史数据不足");
   });
 

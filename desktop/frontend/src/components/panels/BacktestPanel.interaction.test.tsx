@@ -13,6 +13,7 @@ import { act, create as createRenderer, type ReactTestRenderer } from "react-tes
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FilterCriteria } from "../FilterBar";
 import type { AdaptiveScreenRequest, BacktestResult, WatchlistItem } from "../../types";
+import { currentSystemDateInputValue } from "../../lib/format";
 
 const { getJsonMock, postJsonMock } = vi.hoisted(() => ({ getJsonMock: vi.fn(), postJsonMock: vi.fn() }));
 
@@ -68,6 +69,21 @@ function runButton(renderer: ReactTestRenderer) {
 }
 
 describe("BacktestPanel interactions", () => {
+  it("repairs persisted future and reversed dates before a request is made", async () => {
+    workspaceTest.store.dispose();
+    workspaceTest = workspaceTestHarness(undefined, {
+      "backtest.start": "2027-01-01",
+      "backtest.end": "2026-11-12",
+    });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<BacktestPanel criteria={criteria} watchlist={watchlist} />); });
+
+    expect(renderer.root.findByProps({ id: "btStart" }).props.value).toBe("2020-01-01");
+    expect(renderer.root.findByProps({ id: "btEnd" }).props.value).toBe(currentSystemDateInputValue());
+    expect(renderer.root.findByProps({ id: "btEnd" }).props.max).toBe(currentSystemDateInputValue());
+    await act(async () => renderer.unmount());
+  });
+
   it("groups backtest parameters by stock scope, date range, and portfolio settings", async () => {
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(<BacktestPanel criteria={criteria} watchlist={watchlist} />); });
@@ -172,6 +188,18 @@ describe("BacktestPanel interactions", () => {
     });
 
     expect(textContent(renderer)).toContain("影视院线 / 北交所");
+    expect(textContent(renderer)).toContain("细分行业");
+  });
+
+  it("labels broad industry filters without changing their exact filter semantics", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<BacktestPanel criteria={{ ...criteria, industry: "银行" }} watchlist={watchlist} />);
+    });
+
+    expect(textContent(renderer)).toContain("大类");
+    expect(textContent(renderer)).toContain("不合并");
+    expect(textContent(renderer)).toContain("5");
   });
 
   it("shows the effective adaptive scope instead of persisted custom filters", async () => {

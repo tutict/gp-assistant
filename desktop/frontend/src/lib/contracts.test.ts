@@ -360,6 +360,20 @@ describe("contract payload builders", () => {
       benchmark: "candidate_equal_weight",
     })).toMatchObject({ strategy_mode: "candidate_snapshot" });
     expect(buildBacktestRequest({
+      source: "watchlist",
+      criteria,
+      watchlist: [{ code: "300750.SZ" }],
+      startDate: "2027-01-01",
+      endDate: "2026-11-12",
+      topN: 10,
+      rebalanceFrequency: "monthly",
+      transactionCostBps: 10,
+      benchmark: "candidate_equal_weight",
+    })).toMatchObject({
+      start_date: "20200101",
+      end_date: expect.stringMatching(/^20\d{6}$/),
+    });
+    expect(buildBacktestRequest({
       source: "criteria",
       criteria,
       watchlist: [],

@@ -3,6 +3,7 @@ import {
   defaultTrendStartDateInputValue,
   formatRatioPercent,
   hasMarketSuffix,
+  normalizeBacktestDateRange,
   trendScreenStartDateInputValue,
 } from "./format";
 
@@ -36,5 +37,21 @@ describe("trend screen date window", () => {
   it("expands short windows while preserving longer requested ranges", () => {
     expect(trendScreenStartDateInputValue("2026-06-25", "2026-07-09")).toBe("2026-03-05");
     expect(trendScreenStartDateInputValue("2020-01-01", "2026-07-09")).toBe("2020-01-01");
+  });
+});
+
+describe("backtest date range", () => {
+  it("repairs persisted future and reversed dates against the current day", () => {
+    expect(normalizeBacktestDateRange("2027-01-01", "2026-11-12", "2026-10-16")).toEqual({
+      startDate: "2020-01-01",
+      endDate: "2026-10-16",
+    });
+  });
+
+  it("keeps a valid historical range unchanged", () => {
+    expect(normalizeBacktestDateRange("2026-01-05", "2026-06-27", "2026-10-16")).toEqual({
+      startDate: "2026-01-05",
+      endDate: "2026-06-27",
+    });
   });
 });

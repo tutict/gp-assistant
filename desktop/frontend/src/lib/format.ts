@@ -215,6 +215,45 @@ export function normalizeDateParam(value: unknown, fallback = ""): string {
   return s;
 }
 
+export interface BacktestDateRange {
+  startDate: string;
+  endDate: string;
+}
+
+/** Repair persisted backtest dates before they reach the history fetch layer. */
+export function normalizeBacktestDateRange(
+  startValue: unknown,
+  endValue: unknown,
+  todayValue = currentSystemDateInputValue(),
+): BacktestDateRange {
+  const canonicalDate = (value: unknown): string | null => {
+    const raw = String(value ?? "").trim();
+    const match = raw.match(/^(\d{4})[-/]?(\d{2})[-/]?(\d{2})$/);
+    if (match) {
+      const year = Number(match[1]);
+      const month = Number(match[2]);
+      const day = Number(match[3]);
+      const date = new Date(0);
+      date.setUTCFullYear(year, month - 1, day);
+      date.setUTCHours(0, 0, 0, 0);
+      if (date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day) {
+        return `${match[1]}-${match[2]}-${match[3]}`;
+      }
+    }
+    const parsed = parseDateInputValue(value);
+    return parsed ? formatDateInputValue(parsed) : null;
+  };
+  const today = canonicalDate(todayValue) || formatDateInputValue(new Date());
+  const requestedEnd = canonicalDate(endValue) || today;
+  const endDate = requestedEnd <= today ? requestedEnd : today;
+  const requestedStart = canonicalDate(startValue) || "2020-01-01";
+  const defaultStart = "2020-01-01";
+  const startDate = requestedStart <= endDate
+    ? requestedStart
+    : defaultStart <= endDate ? defaultStart : endDate;
+  return { startDate, endDate };
+}
+
 export function parseDateInputValue(value: unknown): Date | null {
   const s = String(value ?? "").trim();
   if (!s) return null;
