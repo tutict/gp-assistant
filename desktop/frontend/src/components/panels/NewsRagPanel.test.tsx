@@ -176,9 +176,14 @@ describe("NewsRagPanel", () => {
       typeof node.props.className === "string" &&
       node.props.className.includes("research-event"),
     );
+    expect(textOf(event)).toContain("公司公告");
+    expect(textOf(event)).toContain("公司发布年度业绩预告");
+    expect(textOf(event)).not.toContain("净利润预计同比增长。");
     await act(async () => {
       await event.props.onClick();
     });
+    expect(textOf(renderer.root.findByProps({ className: "research-event-detail" })))
+      .toContain("净利润预计同比增长。");
     expect(postJson).toHaveBeenCalledWith("/api/research/mark-read", {
       message_ids: ["message-1"],
     });
@@ -376,9 +381,17 @@ describe("NewsRagPanel", () => {
       renderer = create(<NewsRagPanel llmSettings={null}
         watchlist={[{ code: "600000.SH", name: "浦发银行" }]} initialCode="600000.SH" />);
     });
-    expect(textOf(renderer.toJSON())).toContain("官方政策");
-    expect(textOf(renderer.toJSON())).toContain("行业 · 电池");
+    const policyEvent = renderer.root.find((node) => node.type === "button"
+      && typeof node.props.className === "string"
+      && node.props.className.includes("research-event"));
+    expect(textOf(policyEvent)).not.toContain("官方政策");
+    expect(textOf(policyEvent)).not.toContain("行业 · 电池");
     expect(textOf(renderer.toJSON())).toContain("公司公告");
+    await act(async () => { await policyEvent.props.onClick(); });
+    const details = renderer.root.findByProps({ className: "research-event-detail" });
+    expect(textOf(details)).toContain("官方政策");
+    expect(textOf(details)).toContain("行业");
+    expect(textOf(details)).toContain("电池");
     await act(async () => { renderer.unmount(); });
   });
 
@@ -456,20 +469,18 @@ describe("NewsRagPanel", () => {
     await act(async () => { renderer.unmount(); });
   });
 
-  it("renders the daily brief as a collapsed native disclosure", async () => {
+  it("keeps the daily brief collapsed behind one native disclosure on every viewport", async () => {
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(<NewsRagPanel llmSettings={null} />);
     });
 
     const brief = renderer.root.find((node) => node.type === "details"
-      && node.props.className === "research-daily-brief research-daily-brief-mobile");
-    const desktopBrief = renderer.root.find((node) => node.type === "section"
-      && node.props.className === "research-daily-brief research-daily-brief-desktop");
+      && node.props.className === "research-daily-brief");
     expect(brief.props.open).toBeUndefined();
     expect(textOf(brief.findByType("summary"))).toContain("今日摘要");
     expect(textOf(brief.findByType("summary"))).toContain("利好");
-    expect(textOf(desktopBrief)).toContain("今日摘要");
+    expect(renderer.root.findAll((node) => node.props.className === "research-daily-brief")).toHaveLength(1);
     await act(async () => { renderer.unmount(); });
   });
 

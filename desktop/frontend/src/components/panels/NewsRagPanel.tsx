@@ -523,20 +523,13 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
 
       <main className="research-stream">
         <div className="research-stream-body">
-        <section className="research-daily-brief research-daily-brief-desktop">
-          <ResearchBriefExpanded summary={summary}
-            date={new Date().toLocaleDateString("zh-CN")}
-            positive={grouped.positive.length} negative={grouped.negative.length}
-            uncertain={grouped.uncertain.length} documents={overview?.document_count || 0} />
-        </section>
-        <details className="research-daily-brief research-daily-brief-mobile">
+        <details className="research-daily-brief">
           <summary className="research-brief-summary">
             <span className="research-brief-lead"><span className="research-dot neutral" />
               <strong>今日摘要</strong></span>
             <ResearchBriefCounts positive={grouped.positive.length}
               negative={grouped.negative.length} uncertain={grouped.uncertain.length}
               documents={overview?.document_count || 0} inline />
-            <span className="research-brief-preview">{summary}</span>
             <ChevronRight className="research-brief-chevron" size={16} aria-hidden="true" />
           </summary>
           <ResearchBriefExpanded summary={summary}
@@ -546,8 +539,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         </details>
 
         <section className="research-event-section">
-          <div className="research-section-heading"><div><span>事件流</span>
-            <small>按来源等级与时间整理</small></div><div className="research-heading-actions">
+          <div className="research-section-heading"><div><span>消息</span></div><div className="research-heading-actions">
               {readNotice && <small className={readNoticePulse ? "is-flashing" : ""}>{readNotice}</small>}
               {unreadVisibleIds.length > 0 && <button type="button" className="research-ghost-button"
                 onClick={() => void markReadBatch(unreadVisibleIds, true)}>全部已读</button>}
@@ -653,28 +645,21 @@ function EventGroup(props: {
           }}>
           <span className={`research-dot research-event-dot-desktop ${sentimentDotTone(message.sentiment)}`} />
           <span className="research-event-content">
+            <strong>{message.title}</strong>
             <span className="research-event-meta">
               <span className={`research-dot research-event-dot-mobile ${sentimentDotTone(message.sentiment)}`} />
-              <span className="research-badge">{sourceTierLabel(message.source_tier)}</span>
               <span className="research-source-name">{message.source_name}</span>
-              {message.scope_type && <span className="research-scope-tag">
-                {scopeTypeLabel(message.scope_type)}{message.scope_tags?.length ? ` · ${message.scope_tags.join("、")}` : ""}
-              </span>}
               <time>{formatDateTime(message.published_at)}</time>
               {message.unread && <span className="research-unread-label">未读</span>}
             </span>
-            <strong>{message.title}</strong>
-            <span className="research-event-summary">{message.summary}</span>
           </span>
         </button>
         {selected && <div className="research-event-detail">
           <p>{message.summary}</p>
           <div className="research-event-detail-meta">
             <span className="research-badge">{sourceTierLabel(message.source_tier)}</span>
-            <span className="research-badge">{message.source_name}</span>
             {message.scope_type && <span className="research-badge">{scopeTypeLabel(message.scope_type)}</span>}
             {message.scope_tags?.map((tag) => <span className="research-badge" key={tag}>{tag}</span>)}
-            <time>{formatDateTime(message.published_at)}</time>
           </div>
           {message.citations?.length ? <div className="research-event-detail-evidence">
             <span>已关联 {message.citations.length} 条证据</span>
@@ -758,7 +743,7 @@ function ResearchBriefExpanded(props: {
     </div>;
   }
   return <div className="research-brief-expanded">
-    <div className="research-brief-rule"><span>今日摘要</span><time>{props.date}</time></div>
+    <div className="research-brief-rule"><time>{props.date}</time></div>
     <p>{props.summary}</p>
     <ResearchBriefCounts positive={props.positive} negative={props.negative}
       uncertain={props.uncertain} documents={props.documents} />

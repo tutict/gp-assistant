@@ -63,15 +63,15 @@ describe("Android light theme contract", () => {
   it("keeps the Android news summary, metadata, and composer compact", () => {
     const mobile = cssBlock(researchCss, "@media (max-width: 768px)");
     const brief = cssBlock(mobile, ".research-daily-brief");
-    const sourceBadge = cssBlock(mobile, ".research-event-meta .research-badge");
+    const sourceName = cssBlock(mobile, ".research-event-meta .research-source-name");
     const composerRow = cssBlock(mobile, ".research-composer-row");
     const composerSend = cssBlock(mobile, ".research-composer-send");
 
     expect(brief).toContain("margin-top: var(--space-2)");
     expect(mobile).toContain(".research-brief-expanded");
-    expect(sourceBadge).toContain("background: var(--surface-2)");
-    expect(sourceBadge).toContain("color: var(--text-secondary)");
-    expect(sourceBadge).not.toContain("--rise");
+    expect(sourceName).toContain("display: inline");
+    expect(sourceName).toContain("color: var(--text-secondary)");
+    expect(mobile).toContain(".research-event-meta .research-scope-tag");
     expect(composerRow).toContain("grid-template-columns: minmax(0, 1fr) var(--touch-comfort)");
     expect(composerSend).toContain("width: var(--touch-comfort)");
     expect(mobile).toMatch(/\.research-composer-label[\s\S]*?display:\s*none/);

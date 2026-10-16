@@ -204,3 +204,16 @@ it("uses accessible icon actions for stock lookup, refresh, and knowledge manage
   expect(headerActions.onRefresh).toHaveBeenCalledTimes(1);
   expect(headerActions.onOpenKnowledge).toHaveBeenCalledTimes(1);
 });
+
+it("connects the stock search action to its input and keeps its visible label compact", async () => {
+  await act(async () => {
+    renderer = create(<SentimentPanel initialCode="600000.SH" llmSettings={null} />);
+  });
+
+  const toolbar = renderer!.root.findByProps({ className: "sentiment-toolbar" });
+  const label = toolbar.find((node) => node.type === "label" && node.props.htmlFor === "sentiment-stock");
+  const search = toolbar.find((node) => node.type === "button" && node.props["aria-label"] === "查看股票消息");
+  expect(label.props.className).toContain("visually-hidden");
+  expect(toolbar.findAllByProps({ className: "stock-code-input" })).toHaveLength(1);
+  expect(search.parent).toBe(toolbar);
+});

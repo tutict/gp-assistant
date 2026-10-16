@@ -1802,22 +1802,15 @@ async function assertNewsPageState(page, device, scenarioName) {
   }
 
   if (scenarioName === "data") {
-    const expandedBrief = device.mobile
-      ? ".research-daily-brief-mobile"
-      : ".research-daily-brief-desktop";
-    const summaryCounts = await page.locator(
-      `${expandedBrief} .research-brief-expanded .research-stat > strong`,
+    const brief = page.locator(".research-daily-brief");
+    if (await brief.getAttribute("open") !== null) {
+      throw new Error(`${device.name}/${scenarioName} daily brief should start collapsed`);
+    }
+    const summaryCounts = await brief.locator(
+      ".research-brief-inline-counts .research-stat > strong",
     ).allTextContents();
     if (summaryCounts.length !== 4 || summaryCounts.slice(0, 3).some((value) => Number(value) === 0)) {
       throw new Error(`${device.name}/${scenarioName} fixture is no longer counted as today: ${JSON.stringify(summaryCounts)}`);
-    }
-    if (device.mobile) {
-      const inlineCounts = await page.locator(
-        ".research-brief-inline-counts .research-stat > strong",
-      ).allTextContents();
-      if (inlineCounts.join(",") !== summaryCounts.join(",")) {
-        throw new Error(`${device.name}/${scenarioName} collapsed summary counts drifted: ${JSON.stringify(inlineCounts)}`);
-      }
     }
     checks.summaryCounts = summaryCounts;
   }
@@ -1942,7 +1935,7 @@ async function captureNewsPageBaselines(browser, targetRoot) {
       await openNewsResearchWorkspace(page);
       await disableResearchMotion(page);
       await page.locator(".research-brief-summary").click();
-      await page.locator(".research-daily-brief-mobile[open] .research-brief-expanded")
+      await page.locator(".research-daily-brief[open] .research-brief-expanded")
         .waitFor({ state: "visible" });
       const directory = resolve(targetRoot, "news", "brief-expanded", device.name);
       mkdirSync(directory, { recursive: true });
@@ -2493,7 +2486,7 @@ async function runScreenshotHarness() {
   }
 }
 
-export { installHarnessState, startBuiltAppServer, installAgentReplayState, mockResearchOverviewData, mockResearchMessagesData, mockResearchThreads, mockResearchThreadDetail };
+export { installHarnessState, startBuiltAppServer, installAgentReplayState, mockObserveResult, mockResearchOverviewData, mockResearchOverviewEmpty, mockResearchMessagesData, mockResearchMessagesEmpty, mockResearchThreads, mockResearchThreadDetail };
 
 const isDirect = process.argv[1]
   && resolve(process.argv[1]) === fileURLToPath(import.meta.url);

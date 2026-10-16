@@ -68,8 +68,40 @@
 .sentiment-panel .btn { display: inline-flex; gap: var(--space-2); align-items: center; justify-content: center; white-space: nowrap; color: var(--text); background: var(--surface-2); border: 1px solid var(--control-line); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); min-height: var(--control-height); }
 .sentiment-panel .sentiment-analyze { background: var(--accent-action); color: var(--button-text); border: 1px solid var(--accent-muted); padding: var(--space-2) var(--space-4); min-height: var(--control-height); border-radius: var(--radius-sm); }
 .sentiment-panel .sentiment-analyze:disabled { background: var(--surface-3); color: var(--text-secondary); border-style: solid; border-color: var(--control-line); }
-.sentiment-toolbar { flex: 0 1 auto; flex-wrap: nowrap; min-width: 0; padding: 0; border: 0; background: transparent; font-size: var(--fs-data); }
-.sentiment-toolbar input { width: 160px; min-width: 0; }
+.sentiment-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  flex: 0 1 330px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 5px 2px 12px;
+  border: 1px solid var(--control-line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: var(--fs-data);
+}
+.sentiment-toolbar .stock-code-input { width: 100%; min-width: 0; }
+.sentiment-toolbar .stock-code-input input {
+  width: 100%;
+  min-height: var(--touch-dense);
+  padding-inline: 2px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.sentiment-toolbar .sentiment-icon-action {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.sentiment-toolbar .sentiment-icon-action:hover:not(:disabled) {
+  border: 0;
+  background: var(--surface-3);
+  box-shadow: none;
+}
 .sentiment-toolbar > label { color: var(--text-secondary); font-size: var(--fs-caption); }
 .sentiment-panel input, .sentiment-panel textarea, .sentiment-panel select { background: var(--surface); color: var(--text); border: 1px solid var(--control-line); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); min-height: var(--control-height); }
 .sentiment-panel input::placeholder, .sentiment-panel textarea::placeholder { color: var(--text-secondary); }
@@ -192,6 +224,7 @@
 }
 @media (max-width: 768px) {
   .sentiment-panel.is-sources, .sentiment-panel.is-sentiment { height: calc(100dvh - var(--header-height) - var(--bottom-nav-height) - var(--safe-bottom)); }
+  .sentiment-panel.is-sources .research-columns { grid-template-columns: minmax(0, 1fr); }
   .sentiment-tabs button, .sentiment-scrubber .btn { min-height: var(--touch-primary); }
   .sentiment-followup-form.is-docked { position: fixed; z-index: 5; left: 8px; right: 8px; bottom: calc(var(--bottom-nav-height) + var(--safe-bottom) + 8px); display: flex; gap: var(--space-2); padding: var(--space-2); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); }
   .sentiment-view-analysis:not([hidden]):has(.is-docked) { padding-bottom: 132px; }
@@ -200,7 +233,7 @@
   .sentiment-header {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas: "title tabs" "actions actions" "toolbar toolbar";
+    grid-template-areas: "title tabs" "toolbar toolbar" "actions actions";
     align-items: center;
     padding: var(--space-2) var(--space-3);
     gap: var(--space-2) var(--space-3);
@@ -211,8 +244,8 @@
   .sentiment-header-actions {
     display: grid;
     grid-area: actions;
-    width: 100%;
-    grid-template-columns: var(--touch-primary) minmax(0, 1fr) var(--touch-primary) var(--touch-primary) 88px;
+    width: fit-content;
+    grid-template-columns: repeat(3, var(--touch-primary)) 88px;
     align-items: center;
     flex: initial;
     min-width: 0;
@@ -221,7 +254,7 @@
   }
   .sentiment-header-tools { display: contents; }
   .sentiment-header-tools > .research-mobile-inbox-button { width: var(--touch-primary); min-width: var(--touch-primary); height: var(--touch-primary); }
-  .sentiment-retrieval { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .sentiment-retrieval { display: none; }
   .sentiment-header .llm-settings-panel,
   .sentiment-header .llm-settings-toggle { width: 88px; min-width: 0; max-width: 88px; }
   .sentiment-header .llm-settings-panel { flex: 0 0 88px; }
@@ -231,8 +264,8 @@
   .sentiment-header-actions .llm-settings-toggle { display: flex; min-width: 44px; min-height: 44px; width: 88px; max-width: 88px; padding: 0 var(--space-1); }
   .sentiment-header-actions .llm-settings-toggle > :is(strong, em, b, .llm-provider-mark) { display: none; }
   .sentiment-icon-action { width: var(--touch-primary); min-width: var(--touch-primary); height: var(--touch-primary); }
-  .sentiment-toolbar { padding: var(--space-2) var(--space-3); gap: var(--space-2); }
-  .sentiment-toolbar input { flex: 1; width: 110px; }
+  .sentiment-toolbar { width: 100%; flex: initial; padding: 2px 5px 2px 12px; gap: 2px; }
+  .sentiment-toolbar input { flex: 1; width: 100%; }
   .sentiment-window { width: auto; margin-left: auto; }
   .sentiment-layout { display: flex; flex-direction: column; }
   .sentiment-panel .sentiment-mobile-watchlist-trigger { display: flex; justify-content: flex-start; width: calc(100% - 24px); margin: var(--space-2) 12px 0; min-height: 44px; }
@@ -302,7 +335,7 @@
 .sentiment-view:not([hidden]) { flex: 1; min-height: 0; overflow: auto; }
 .sentiment-view-sources:not([hidden]) { display: flex; flex-direction: column; overflow: hidden; }
 .sentiment-toolbar { position: relative; z-index: 2; }
-.sentiment-toolbar .stock-code-input { width: 168px; min-width: 0; }
+.sentiment-toolbar .stock-code-input { width: 100%; min-width: 0; }
 .sentiment-line-chart { position: relative; margin-top: var(--space-3); }
 .sentiment-line-svg, .sentiment-spark { width: 100%; height: 180px; display: block; }
 .sentiment-spark { height: 88px; }

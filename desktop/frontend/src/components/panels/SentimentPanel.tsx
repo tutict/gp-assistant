@@ -163,7 +163,7 @@ export function SentimentPanel(props: Props) {
         <button type="button" id="sentiment-tab-sentiment" role="tab" aria-selected={view === "sentiment"} aria-controls="sentiment-panel-analysis" tabIndex={view === "sentiment" ? 0 : -1} onClick={() => openView("sentiment")}>情绪</button>
       </div>
       <form className="sentiment-toolbar" onSubmit={(event) => { event.preventDefault(); commitInput(input); }}>
-        <label htmlFor="sentiment-stock">股票</label>
+        <label className="visually-hidden" htmlFor="sentiment-stock">股票</label>
         <StockCodeInput id="sentiment-stock" value={input} onChange={(value) => { setInput(value); setInputError(""); }} onCommit={commitInput} placeholder="代码或名称" inputAriaLabel="股票代码或名称" />
         <button className="sentiment-icon-action" type="submit" aria-label="查看股票消息" title="查看股票消息">
           <Search size={16} aria-hidden="true" />
@@ -176,7 +176,7 @@ export function SentimentPanel(props: Props) {
           <button type="button" className="research-icon-button research-mobile-inbox-button" aria-label="打开自选股收件箱" title="自选股收件箱" onClick={researchTools.onOpenInbox}>
             <Menu size={18} aria-hidden="true" />
           </button>
-          <span className="sentiment-retrieval" title={researchTools.vectorReady ? "关键词 + 语义检索" : "关键词检索"}>{researchTools.vectorReady ? "关键词 + 语义检索" : "关键词检索"}</span>
+          <span className="sentiment-retrieval visually-hidden" title={researchTools.vectorReady ? "关键词 + 语义检索" : "关键词检索"}>{researchTools.vectorReady ? "关键词 + 语义检索" : "关键词检索"}</span>
           <button type="button" className="sentiment-icon-action" onClick={researchTools.onRefresh} disabled={researchTools.refreshing} aria-label={researchTools.refreshing ? "消息更新中" : "立即更新消息"} title={researchTools.refreshing ? "消息更新中" : "立即更新消息"}>
             <RefreshCw size={16} aria-hidden="true" className={researchTools.refreshing ? "sentiment-icon-spin" : undefined} />
             <span className="visually-hidden">{researchTools.refreshing ? "更新中" : "立即更新"}</span>
