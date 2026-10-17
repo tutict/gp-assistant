@@ -43,6 +43,13 @@ jobs:
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --features eval-replay --lib eval_replay::tests::actual_agent_routing_does_not_use_expected_tools_as_an_execution_plan -- --exact
       - name: Compile gepa-lab feature and run shared replay gates
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --features gepa-lab --lib gepa_lab::tests::gepa_replay_payload_uses_shared_runtime_and_keeps_rubric_out_of_agent_input -- --exact
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\ms-playwright
+          key: playwright-chromium-${{ hashFiles('desktop/frontend/package-lock.json') }}
+      - name: Install Playwright Chromium
+        run: npm --prefix desktop/frontend exec -- playwright install chromium
       - name: Run desktop UI regression gate
         run: npm --prefix desktop/frontend run test:desktop
       - name: Run frontend unit tests
@@ -67,11 +74,18 @@ jobs:
       - name: Prepare verified RAG embedding model
         shell: pwsh
         run: ./scripts/prepare-rag-model.ps1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/frontend/package-lock.json
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
       - name: Install evaluation environment
         run: python -m pip install --upgrade pip; python -m pip install -e evals/deepeval
+      - name: Build frontend bundle required by Rust replay
+        run: npm ci --prefix desktop/frontend; npm --prefix desktop/frontend run build:app
       - name: Generate trusted model-backed replay
         env:
           RAG_EVAL_AGENT_BASE_URL: ${{ vars.RAG_EVAL_AGENT_BASE_URL }}
