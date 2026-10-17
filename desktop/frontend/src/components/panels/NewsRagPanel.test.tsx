@@ -665,6 +665,55 @@ describe("NewsRagPanel", () => {
     await act(async () => { renderer.unmount(); });
   });
 
+  it("clears the prior stock evidence while the newly selected inbox is loading", async () => {
+    const pendingMessages = deferred<{ items: ResearchMessage[] }>();
+    const messageB: ResearchMessage = {
+      ...message,
+      id: "message-b-loading",
+      stock_code: "000001.SZ",
+      title: "平安银行新股票消息",
+    };
+    getJson.mockImplementation((path: string) => {
+      if (path.startsWith("/api/research/overview")) {
+        return Promise.resolve({
+          schema_version: 2,
+          document_count: 1,
+          chunk_count: 1,
+          unread_count: 1,
+          messages: [message],
+          retrieval: { vector: { ready: false } },
+        });
+      }
+      if (path.includes("stock_code=000001.SZ")) return pendingMessages.promise;
+      if (path.startsWith("/api/research/messages")) return Promise.resolve({ items: [message] });
+      if (path === "/api/research/threads") return Promise.resolve({ items: [] });
+      return Promise.resolve({});
+    });
+
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<NewsRagPanel llmSettings={null} watchlist={[
+        { code: "600000.SH", name: "浦发银行" },
+        { code: "000001.SZ", name: "平安银行" },
+      ]} initialCode="600000.SH" />);
+    });
+    expect(textOf(renderer.toJSON())).toContain("公司发布年度业绩预告");
+
+    const targetStock = renderer.root.find((node) => node.type === "button"
+      && typeof node.props.className === "string"
+      && node.props.className.includes("research-stock-row")
+      && textOf(node).includes("000001.SZ"));
+    await act(async () => { targetStock.props.onClick(); });
+
+    const loadingMarkup = textOf(renderer.toJSON());
+    expect(loadingMarkup).toContain("正在打开研究消息中心");
+    expect(loadingMarkup).not.toContain("公司发布年度业绩预告");
+    expect(renderer.root.findAllByProps({ className: "research-empty" })).toHaveLength(0);
+    await act(async () => { pendingMessages.resolve({ items: [messageB] }); });
+    expect(textOf(renderer.toJSON())).toContain("平安银行新股票消息");
+    await act(async () => { renderer.unmount(); });
+  });
+
   it("does not let an old manual refresh reclaim the workspace after switching stocks", async () => {
     const pendingRefresh = deferred<Record<string, never>>();
     const messageB: ResearchMessage = {

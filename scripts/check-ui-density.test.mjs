@@ -45,10 +45,12 @@ test("rejects desktop layout declarations placed under the wrong selectors", () 
 
 test("rejects desktop constraints that only exist in a mobile media block", () => {
   const original = readFileSync(shellPath, "utf8");
-  const controlsRule = /\.panel-controls,\s*\.backtest-controls\s*\{[\s\S]*?\n\}/;
+  const panelControlsRule = /\.panel-controls\s*\{[\s\S]*?\n\}/;
+  const backtestControlsRule = /\.backtest-controls\s*\{[\s\S]*?\n\}/;
   const proseRule = /\.notes p,\s*\.evidence-list p,\s*\.agent-final-reply\s*\{[\s\S]*?\n\}/;
   const misplaced = original
-    .replace(controlsRule, (rule) => `@media (max-width: 768px) {\n${rule}\n}`)
+    .replace(panelControlsRule, (rule) => `@media (max-width: 768px) {\n${rule}\n}`)
+    .replace(backtestControlsRule, (rule) => `@media (max-width: 768px) {\n${rule}\n}`)
     .replace(proseRule, (rule) => `@media (max-width: 768px) {\n${rule}\n}`);
   const result = runGuard(misplaced);
   assert.ok(result, "the density guard must reject mobile-only desktop constraints");

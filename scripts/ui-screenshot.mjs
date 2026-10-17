@@ -1408,7 +1408,7 @@ async function runAgentReplayChecks(browser) {
       await historyTrigger.click();
       await currentRequest;
 
-      const dialog = page.getByRole("dialog", { name: "运行记录" });
+      const dialog = page.getByRole("dialog", { name: "复盘" });
       await dialog.waitFor({ state: "visible" });
       const runRow = dialog.locator(".agent-run-select");
       await runRow.waitFor({ state: "visible" });
@@ -2074,7 +2074,7 @@ async function captureNewsPageBaselines(browser, targetRoot) {
       },
     },
     {
-      name: "skeleton-loading",
+      name: "stock-switch-loading",
       open: async (page) => {
         await page.route("**/api/research/messages?*", async (route) => {
           await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
@@ -2084,7 +2084,7 @@ async function captureNewsPageBaselines(browser, targetRoot) {
           const button = document.querySelector(".research-stock-row:not(.active)");
           button?.click();
         });
-        await page.locator(".research-skeleton-list").waitFor({ state: "visible" });
+        await page.locator(".research-loading-status").waitFor({ state: "visible" });
       },
     },
   ];
@@ -2112,7 +2112,7 @@ async function captureNewsPageBaselines(browser, targetRoot) {
       await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
       await openNewsResearchWorkspace(page);
       await disableResearchMotion(page);
-      if (device.mobile && ["delete-confirmation", "skeleton-loading"].includes(state.name)) {
+      if (device.mobile && ["delete-confirmation", "stock-switch-loading"].includes(state.name)) {
         await page.locator(".research-mobile-inbox-button").click();
         await page.locator(".research-inbox.mobile-open").waitFor({ state: "visible" });
       }

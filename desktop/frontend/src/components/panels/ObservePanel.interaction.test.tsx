@@ -206,16 +206,88 @@ describe("ObservePanel requests", () => {
     expect(observeCalls()).toHaveLength(0);
     await act(async () => renderer.unmount());
   });
-  it("keeps observation local when data is unavailable so refresh stays in the toolbar", async () => {
+  it("keeps observation local when no external fund-flow record is cached", async () => {
+    const today = currentSystemDateInputValue();
+    getJsonMock.mockResolvedValue({
+      stock: { code: "600519.SH", name: "贵州茅台" },
+      capital_evidence: { stock_code: "600519.SH", items: [] },
+      market_active_brokerages: {
+        status: "available",
+        source: "东方财富每日活跃营业部",
+        checked_on: today,
+        trade_date: today,
+        total_departments: 0,
+        items: [],
+      },
+      institutional_holdings: {
+        status: "no_institutional_holders",
+        source: "东方财富前十大流通股东",
+        checked_on: today,
+        report_period: "2026中报",
+        report_date: "2026-06-30",
+        disclosed_at: "2026-08-29",
+        items: [],
+      },
+      notes: [],
+    });
     let renderer!: ReactTestRenderer;
     const props = { watchlist: [], onWatchlistChange: () => undefined, initialCode: "600519.SH", initialCodeRequestId: 1 };
     await act(async () => { renderer = create(<ObservePanel {...props} />); });
+    expect(observeCalls()).toHaveLength(1);
     expect(String(observeCalls()[0][0])).toContain("data_policy=cache_only");
     const button = renderer.root.find(node => node.type === "button" && String(node.props.className).includes("observe-run-btn"));
     expect(button.children).toContain("开始观察");
     expect(renderer.root.findAll(node => node.type === "select" && node.props["aria-label"] === "观察数据模式")).toHaveLength(0);
     await act(async () => { button.props.onClick(); await Promise.resolve(); });
     expect(String(observeCalls()[1][0])).toContain("data_policy=cache_only");
+    await act(async () => renderer.unmount());
+  });
+
+  it("refreshes a cached summary missing flow breakdown and preserves it if refresh fails", async () => {
+    const today = currentSystemDateInputValue();
+    const cached = {
+      stock: { code: "600519.SH", name: "贵州茅台" },
+      capital_evidence: {
+        stock_code: "600519.SH",
+        items: [{
+          category: "fund_flow",
+          source: "东方财富个股资金流",
+          metrics: { 主力净流入额: "1200 万", 主力净占比: "4.6%" },
+        }],
+      },
+      market_active_brokerages: {
+        status: "available",
+        source: "东方财富每日活跃营业部",
+        checked_on: today,
+        trade_date: today,
+        total_departments: 0,
+        items: [],
+      },
+      institutional_holdings: {
+        status: "no_institutional_holders",
+        source: "东方财富前十大流通股东",
+        checked_on: today,
+        report_period: "2026中报",
+        report_date: "2026-06-30",
+        disclosed_at: "2026-08-29",
+        items: [],
+      },
+      notes: [],
+    };
+    getJsonMock.mockImplementation((url: string) => (
+      String(url).includes("data_policy=refresh")
+        ? Promise.reject(new Error("network unavailable"))
+        : Promise.resolve(cached)
+    ));
+
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<ObservePanel watchlist={[]} onWatchlistChange={() => undefined} initialCode="600519.SH" initialCodeRequestId={1} />); });
+
+    expect(observeCalls()).toHaveLength(2);
+    expect(String(observeCalls()[0][0])).toContain("data_policy=cache_only");
+    expect(String(observeCalls()[1][0])).toContain("data_policy=refresh");
+    expect(textContent(renderer)).toContain("主力净流入额");
+    expect(textContent(renderer)).toContain("最新主力资金分项暂未补齐：network unavailable");
     await act(async () => renderer.unmount());
   });
 

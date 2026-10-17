@@ -20,11 +20,7 @@ export interface MainFundFlowView {
 export function hasMainFundFlowBreakdown(
   capital?: CapitalEvidenceResult | null,
 ): boolean {
-  const item = (capital?.items || []).find((candidate) => (
-    candidate.category === "fund_flow"
-    && !isLocalFundFlowProxy(candidate)
-    && hasAnyMetric(candidate, [...AMOUNT_KEYS, ...RATIO_KEYS])
-  ));
+  const item = findMainFundFlowItem(capital);
   return Boolean(item && [
     ["超大单净流入额", "super_large_inflow"],
     ["大单净流入额", "large_inflow"],
@@ -37,15 +33,21 @@ const RAW_AMOUNT_KEYS = ["主力净流入额原值", ...AMOUNT_KEYS];
 const RATIO_KEYS = ["主力净占比", "主力净流入占比", "main_net_ratio", "main_inflow_ratio"];
 const INVOLVEMENT_KEYS = ["主力介入度", "main_involvement", "main_participation"];
 
-export function buildMainFundFlowView(
+function findMainFundFlowItem(
   capital?: CapitalEvidenceResult | null,
-): MainFundFlowView {
-  const items = capital?.items || [];
-  const item = items.find((candidate) => (
+): CapitalEvidenceItem | undefined {
+  return (capital?.items || []).find((candidate) => (
     candidate.category === "fund_flow"
     && !isLocalFundFlowProxy(candidate)
     && hasAnyMetric(candidate, [...AMOUNT_KEYS, ...RATIO_KEYS])
   ));
+}
+
+export function buildMainFundFlowView(
+  capital?: CapitalEvidenceResult | null,
+): MainFundFlowView {
+  const items = capital?.items || [];
+  const item = findMainFundFlowItem(capital);
   const statusItem = items.find((candidate) => candidate.category === "fund_flow_status");
 
   if (!item) {

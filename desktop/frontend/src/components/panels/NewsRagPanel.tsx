@@ -102,10 +102,21 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     workspaceGenerationRef.current += 1;
     setAsking(false);
     setRefreshing(false);
+    setOverview(null);
+    overviewRef.current = null;
+    setMessages([]);
+    messagesRef.current = [];
+    setThreadId("");
+    threadIdRef.current = "";
+    setAnswers([]);
+    closeEvent();
+    setCitationStack([]);
+    setCitationPointer(-1);
+    setError("");
     setLoading(true);
     if (controlled) props.onCodeChange?.(normalized);
     else setUncontrolledCode(normalized);
-  }, [controlled, props.onCodeChange]);
+  }, [closeEvent, controlled, props.onCodeChange, setThreadId, setUncontrolledCode]);
   useEffect(() => {
     if (controlled) return;
     const next = normalizeStockCode(props.initialCode);
@@ -546,7 +557,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
               <span>{visibleMessages.length} 条</span>
             </div>
           </div>
-          {!visibleMessages.length ? <ResearchEmptyState
+          {loading ? null : !visibleMessages.length ? <ResearchEmptyState
             refreshing={refreshing}
             onRefresh={() => void refresh()}
             onKnowledge={openKnowledge}

@@ -238,6 +238,9 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
           <LocalFirstRunControl action="回测" loading={loading} onRun={() => void run()} loadingLabel="回测计算中..." cacheRunLabel={result && resultSignature !== parameterSignature ? "重新回测" : "运行回测"} buttonClassName="backtest-run-button" ariaLabel={loading ? "运行回测" : runLabel} />
         </div>
       </div>
+      {result && resultSignature !== parameterSignature && (
+        <p className="backtest-stale-notice" role="status">参数已修改，结果待更新</p>
+      )}
 
       <section className="backtest-parameter-panel" aria-labelledby="backtest-parameters-title">
         <h3 id="backtest-parameters-title">回测参数</h3>

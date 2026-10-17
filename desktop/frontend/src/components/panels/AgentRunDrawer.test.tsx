@@ -1054,6 +1054,40 @@ describe("buildAgentRunTimeline", () => {
 });
 
 describe("AgentRunDrawer accessibility", () => {
+  it("moves between review tabs with arrow keys and focuses the selected tab", async () => {
+    const runsFocus = vi.fn();
+    const profileFocus = vi.fn();
+    const renderer = await renderDrawer({ open: true, activeConversationId: undefined }, {
+      createNodeMock: (element) => {
+        const props = element.props as { id?: unknown };
+        if (element.type !== "button") return null;
+        if (props.id === "agent-review-runs-tab") return { focus: runsFocus };
+        if (props.id === "agent-review-profile-tab") return { focus: profileFocus };
+        return null;
+      },
+    });
+    const runsTab = renderer.root.findByProps({ id: "agent-review-runs-tab" });
+    const profileTab = renderer.root.findByProps({ id: "agent-review-profile-tab" });
+    const preventDefault = vi.fn();
+
+    await act(async () => {
+      runsTab.props.onKeyDown({ key: "ArrowRight", preventDefault });
+    });
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(profileTab.props["aria-selected"]).toBe(true);
+    expect(profileTab.props.tabIndex).toBe(0);
+    expect(profileFocus).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      profileTab.props.onKeyDown({ key: "ArrowLeft", preventDefault });
+    });
+
+    expect(runsTab.props["aria-selected"]).toBe(true);
+    expect(runsTab.props.tabIndex).toBe(0);
+    expect(runsFocus).toHaveBeenCalledTimes(1);
+  });
+
   it("exposes dialog metadata and closes on Escape", async () => {
     const renderer = await renderDrawer({ open: true, activeConversationId: undefined });
     const dialog = renderer.root.findByProps({ role: "dialog" });

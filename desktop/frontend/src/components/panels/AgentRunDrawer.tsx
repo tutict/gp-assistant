@@ -276,6 +276,8 @@ export function AgentRunDrawer({
   const [overlayRetry, setOverlayRetry] = useState(0);
   const drawerRef = useRef<HTMLElement | null>(null);
   const closeControlRef = useRef<HTMLDivElement | null>(null);
+  const runsReviewTabRef = useRef<HTMLButtonElement | null>(null);
+  const profileReviewTabRef = useRef<HTMLButtonElement | null>(null);
   const listRequestTokenRef = useRef(0);
   const detailRequestTokenRef = useRef(0);
   const listAbortControllerRef = useRef<AbortController | undefined>(undefined);
@@ -549,6 +551,25 @@ export function AgentRunDrawer({
     if (nextTab === "runs" && listState === "idle") loadList(scope, activeConversationId);
   };
 
+  const handleReviewTabKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    currentTab: "runs" | "profile",
+  ) => {
+    const nextTab = event.key === "ArrowRight"
+      ? currentTab === "runs" ? "profile" : "runs"
+      : event.key === "ArrowLeft"
+        ? currentTab === "runs" ? "profile" : "runs"
+        : event.key === "Home"
+          ? "runs"
+          : event.key === "End"
+            ? "profile"
+            : undefined;
+    if (!nextTab) return;
+    event.preventDefault();
+    selectReviewTab(nextTab);
+    (nextTab === "runs" ? runsReviewTabRef : profileReviewTabRef).current?.focus();
+  };
+
   const selectRun = (runId: string) => {
     cancelListRequest();
     detailIntentRef.current = true;
@@ -631,8 +652,8 @@ export function AgentRunDrawer({
           <h2>复盘</h2>
         </div>
         <div className="agent-review-tabs" role="tablist" aria-label="复盘模块">
-          <button id="agent-review-runs-tab" type="button" role="tab" aria-controls="agent-review-runs" tabIndex={reviewTab === "runs" ? 0 : -1} aria-selected={reviewTab === "runs"} onClick={() => selectReviewTab("runs")}>运行记录</button>
-          <button id="agent-review-profile-tab" type="button" role="tab" aria-controls="agent-review-profile" tabIndex={reviewTab === "profile" ? 0 : -1} aria-selected={reviewTab === "profile"} onClick={() => selectReviewTab("profile")}>研究画像</button>
+          <button ref={runsReviewTabRef} id="agent-review-runs-tab" type="button" role="tab" aria-controls="agent-review-runs" tabIndex={reviewTab === "runs" ? 0 : -1} aria-selected={reviewTab === "runs"} onClick={() => selectReviewTab("runs")} onKeyDown={(event) => handleReviewTabKeyDown(event, "runs")}>运行记录</button>
+          <button ref={profileReviewTabRef} id="agent-review-profile-tab" type="button" role="tab" aria-controls="agent-review-profile" tabIndex={reviewTab === "profile" ? 0 : -1} aria-selected={reviewTab === "profile"} onClick={() => selectReviewTab("profile")} onKeyDown={(event) => handleReviewTabKeyDown(event, "profile")}>研究画像</button>
         </div>
         {reviewTab === "runs" && view === "detail" && (
           <IconButton

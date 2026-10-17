@@ -131,7 +131,7 @@ describe("news page screenshot contract", () => {
       'name: "event-expanded"',
       'name: "evidence-history"',
       'name: "delete-confirmation"',
-      'name: "skeleton-loading"',
+      'name: "stock-switch-loading"',
       "news-page-report.json",
     ]) {
       expect(screenshotHarness).toContain(marker);
@@ -140,7 +140,7 @@ describe("news page screenshot contract", () => {
 
   it("commits the desktop news baseline matrix for both themes", () => {
     const devices = ["desktop-1440-dark", "desktop-1440-light", "desktop-1920-dark", "desktop-1920-light", "desktop-2560-dark", "desktop-2560-light"];
-    const states = ["empty", "data", "event-expanded", "evidence-history", "delete-confirmation", "skeleton-loading"];
+    const states = ["empty", "data", "event-expanded", "evidence-history", "delete-confirmation", "stock-switch-loading"];
     for (const state of states) {
       for (const device of devices) {
         const file = state === "empty" || state === "data" ? "news.png" : `${state}.png`;

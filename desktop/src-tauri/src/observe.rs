@@ -1511,12 +1511,12 @@ pub(crate) fn parse_eastmoney_main_fund_flow_item(
         .filter(|row| {
             requested_end
                 .as_deref()
-                .map(|end| row.0.as_str() <= end)
+                .map(|end| row.trade_date.as_str() <= end)
                 .unwrap_or(true)
         })
-        .max_by(|left, right| left.0.cmp(&right.0))
+        .max_by(|left, right| left.trade_date.cmp(&right.trade_date))
         .ok_or_else(|| format!("资金流接口在 {end_date} 之前没有可用交易日数据"))?;
-    let (
+    let EastmoneyMainFundFlowRow {
         trade_date,
         net_amount,
         net_ratio,
@@ -1528,7 +1528,7 @@ pub(crate) fn parse_eastmoney_main_fund_flow_item(
         medium_ratio,
         large_ratio,
         super_large_ratio,
-    ) = latest;
+    } = latest;
     let small_medium_amount = small_amount + medium_amount;
     let small_medium_ratio = small_ratio + medium_ratio;
     let involvement = crate::market::main_fund_involvement(net_ratio);
@@ -1563,43 +1563,38 @@ pub(crate) fn parse_eastmoney_main_fund_flow_item(
     }))
 }
 
-pub(crate) fn parse_eastmoney_main_fund_flow_row(raw: &str) -> Option<(String, f64, f64)> {
-    let detail = parse_eastmoney_main_fund_flow_detail(raw)?;
-    Some((detail.0, detail.1, detail.2))
+struct EastmoneyMainFundFlowRow {
+    trade_date: String,
+    net_amount: f64,
+    net_ratio: f64,
+    small_amount: f64,
+    medium_amount: f64,
+    large_amount: f64,
+    super_large_amount: f64,
+    small_ratio: f64,
+    medium_ratio: f64,
+    large_ratio: f64,
+    super_large_ratio: f64,
 }
 
-pub(crate) fn parse_eastmoney_main_fund_flow_detail(
-    raw: &str,
-) -> Option<(
-    String,
-    f64,
-    f64,
-    f64,
-    f64,
-    f64,
-    f64,
-    f64,
-    f64,
-    f64,
-    f64,
-)> {
+fn parse_eastmoney_main_fund_flow_detail(raw: &str) -> Option<EastmoneyMainFundFlowRow> {
     let parts = raw.split(',').collect::<Vec<_>>();
     if parts.len() < 11 {
         return None;
     }
-    Some((
-        crate::market::normalize_history_date(parts.first().copied()?)?,
-        crate::market::parse_f64_str(parts.get(1).copied()?)?,
-        crate::market::parse_f64_str(parts.get(6).copied()?)?,
-        crate::market::parse_f64_str(parts.get(2).copied()?)?,
-        crate::market::parse_f64_str(parts.get(3).copied()?)?,
-        crate::market::parse_f64_str(parts.get(4).copied()?)?,
-        crate::market::parse_f64_str(parts.get(5).copied()?)?,
-        crate::market::parse_f64_str(parts.get(7).copied()?)?,
-        crate::market::parse_f64_str(parts.get(8).copied()?)?,
-        crate::market::parse_f64_str(parts.get(9).copied()?)?,
-        crate::market::parse_f64_str(parts.get(10).copied()?)?,
-    ))
+    Some(EastmoneyMainFundFlowRow {
+        trade_date: crate::market::normalize_history_date(parts.first().copied()?)?,
+        net_amount: crate::market::parse_f64_str(parts.get(1).copied()?)?,
+        net_ratio: crate::market::parse_f64_str(parts.get(6).copied()?)?,
+        small_amount: crate::market::parse_f64_str(parts.get(2).copied()?)?,
+        medium_amount: crate::market::parse_f64_str(parts.get(3).copied()?)?,
+        large_amount: crate::market::parse_f64_str(parts.get(4).copied()?)?,
+        super_large_amount: crate::market::parse_f64_str(parts.get(5).copied()?)?,
+        small_ratio: crate::market::parse_f64_str(parts.get(7).copied()?)?,
+        medium_ratio: crate::market::parse_f64_str(parts.get(8).copied()?)?,
+        large_ratio: crate::market::parse_f64_str(parts.get(9).copied()?)?,
+        super_large_ratio: crate::market::parse_f64_str(parts.get(10).copied()?)?,
+    })
 }
 
 pub(crate) fn main_fund_flow_score(net_ratio: f64) -> f64 {

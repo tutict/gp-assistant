@@ -178,7 +178,7 @@ function AgentEvidenceAndNotes({ result, showRaw }: { result: AgentResult; showR
           ))}
         </div>
       )}
-      {allEvidence.length > evidence.length && <p className="agent-mode-note">仅显示前 {MAX_AGENT_EVIDENCE_ITEMS} 条证据，更早的引用可能没有对应卡片。</p>}
+      {allEvidence.length > evidence.length && <p className="agent-evidence-limit-note">仅显示前 {MAX_AGENT_EVIDENCE_ITEMS} 条证据，更早的引用可能没有对应卡片。</p>}
       {warnings.length > 0 && (
         <div className="agent-warning-list">
           {warnings.map((warning, index) => <p key={index}>{warning}</p>)}

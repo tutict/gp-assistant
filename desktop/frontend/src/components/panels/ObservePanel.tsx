@@ -55,7 +55,8 @@ export function needsPublicMarketDataRefresh(result: ObserveResult): boolean {
 }
 
 export function needsMainFundFlowRefresh(result: ObserveResult): boolean {
-  return !hasMainFundFlowBreakdown(result.capital_evidence);
+  const flow = buildMainFundFlowView(result.capital_evidence);
+  return flow.available && !hasMainFundFlowBreakdown(result.capital_evidence);
 }
 
 const OBSERVE_FULL_HISTORY_START = "1990-01-01";
