@@ -111,6 +111,7 @@ describe("news page screenshot contract", () => {
     expect(frontendPackage).toContain("--check-news-page");
     expect(screenshotHarness).toContain("comparePngFiles");
     expect(screenshotHarness).toContain("Screenshot baseline is missing");
+    expect(screenshotHarness).toContain('process.env.UI_BASELINE_MAX_DIFF_RATIO || "0.001"');
     for (const device of [
       "desktop-1440-dark",
       "desktop-1440-light",

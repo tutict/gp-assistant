@@ -44,7 +44,10 @@ const baselineRoot = resolve(option(
   fileURLToPath(new URL("../desktop/frontend/test-baselines/", import.meta.url)),
 ));
 const baselinePixelThreshold = Number(option("--baseline-pixel-threshold", "8"));
-const baselineMaxDiffRatio = Number(option("--baseline-max-diff-ratio", "0.001"));
+const baselineMaxDiffRatio = Number(option(
+  "--baseline-max-diff-ratio",
+  process.env.UI_BASELINE_MAX_DIFF_RATIO || "0.001",
+));
 const defaultOutput = fileURLToPath(
   new URL("../artifacts/ui-shots/" + date + "/", import.meta.url),
 );

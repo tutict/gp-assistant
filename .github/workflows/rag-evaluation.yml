@@ -51,6 +51,9 @@ jobs:
       - name: Install Playwright Chromium
         run: npm --prefix desktop/frontend exec -- playwright install chromium
       - name: Run desktop UI regression gate
+        env:
+          # Hosted Windows font rasterization differs slightly from the local baseline host.
+          UI_BASELINE_MAX_DIFF_RATIO: '0.02'
         run: npm --prefix desktop/frontend run test:desktop
       - name: Run frontend unit tests
         run: npm --prefix desktop/frontend run test:unit
@@ -66,27 +69,63 @@ jobs:
     environment: rag-eval-judge
     steps:
       - uses: actions/checkout@v4
+      - name: Check trusted evaluation configuration
+        id: trusted-config
+        shell: pwsh
+        env:
+          RAG_EVAL_AGENT_BASE_URL: ${{ vars.RAG_EVAL_AGENT_BASE_URL }}
+          RAG_EVAL_AGENT_API_KEY: ${{ secrets.RAG_EVAL_AGENT_API_KEY }}
+          RAG_EVAL_AGENT_MODEL: ${{ vars.RAG_EVAL_AGENT_MODEL }}
+          DEEPEVAL_JUDGE_API_KEY: ${{ secrets.DEEPEVAL_JUDGE_API_KEY }}
+          DEEPEVAL_JUDGE_BASE_URL: ${{ vars.DEEPEVAL_JUDGE_BASE_URL }}
+        run: |
+          $required = @(
+            'RAG_EVAL_AGENT_BASE_URL',
+            'RAG_EVAL_AGENT_API_KEY',
+            'RAG_EVAL_AGENT_MODEL',
+            'DEEPEVAL_JUDGE_API_KEY',
+            'DEEPEVAL_JUDGE_BASE_URL'
+          )
+          $missing = @($required | Where-Object {
+            [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_))
+          })
+          if ($missing.Count -gt 0) {
+            "ready=false" >> $env:GITHUB_OUTPUT
+            $summary = "Model-backed replay and DeepEval were skipped. Configure these variables/secrets in the `rag-eval-judge` environment: $($missing -join ', ')."
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary
+            Write-Warning $summary
+          } else {
+            "ready=true" >> $env:GITHUB_OUTPUT
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value 'Trusted model-backed replay and DeepEval are configured and will run.'
+          }
       - name: Cache RAG embedding model
         uses: actions/cache@v4
+        if: steps.trusted-config.outputs.ready == 'true'
         with:
           path: models/bge-small-zh-v1.5-int8
           key: rag-model-bge-small-zh-v1.5-int8-${{ hashFiles('scripts/prepare-rag-model.ps1') }}
       - name: Prepare verified RAG embedding model
+        if: steps.trusted-config.outputs.ready == 'true'
         shell: pwsh
         run: ./scripts/prepare-rag-model.ps1
       - uses: actions/setup-node@v4
+        if: steps.trusted-config.outputs.ready == 'true'
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: desktop/frontend/package-lock.json
       - uses: actions/setup-python@v5
+        if: steps.trusted-config.outputs.ready == 'true'
         with:
           python-version: '3.13'
       - name: Install evaluation environment
+        if: steps.trusted-config.outputs.ready == 'true'
         run: python -m pip install --upgrade pip; python -m pip install -e evals/deepeval
       - name: Build frontend bundle required by Rust replay
+        if: steps.trusted-config.outputs.ready == 'true'
         run: npm ci --prefix desktop/frontend; npm --prefix desktop/frontend run build:app
       - name: Generate trusted model-backed replay
+        if: steps.trusted-config.outputs.ready == 'true'
         env:
           RAG_EVAL_AGENT_BASE_URL: ${{ vars.RAG_EVAL_AGENT_BASE_URL }}
           RAG_EVAL_AGENT_API_KEY: ${{ secrets.RAG_EVAL_AGENT_API_KEY }}
@@ -97,14 +136,17 @@ jobs:
         run: |
           cargo run --manifest-path desktop/src-tauri/Cargo.toml --features eval-replay --bin rag_replay -- app/prompts/research_retrieval_eval_cases.json evals/deepeval/model_replay.jsonl --profile model-backed
       - name: Promote trusted model-backed replay
+        if: steps.trusted-config.outputs.ready == 'true'
         run: |
           python evals/deepeval/promote_replay.py --input evals/deepeval/model_replay.jsonl --output evals/deepeval/generated_model_results.jsonl --manifest evals/deepeval/generated_model_manifest.json --require-model
       - name: Run three fixed DeepEval repetitions
+        if: steps.trusted-config.outputs.ready == 'true'
         env:
           DEEPEVAL_JUDGE_API_KEY: ${{ secrets.DEEPEVAL_JUDGE_API_KEY }}
           DEEPEVAL_JUDGE_BASE_URL: ${{ vars.DEEPEVAL_JUDGE_BASE_URL }}
         run: python evals/deepeval/runner.py --results evals/deepeval/generated_model_results.jsonl --mode report --track full --repetitions 3 --output evals/deepeval/deepeval-report.json
       - name: Upload redacted evaluation report
+        if: steps.trusted-config.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: rag-deepeval-report

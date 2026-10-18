@@ -144,4 +144,4 @@ Deterministic replay is not eligible for generation-quality scoring because it r
 
 All DeepEval metrics start as exploratory. `judge_policy.json` marks unstable metrics as `flaky`, and `strict_metrics` is empty until at least 50 human-labeled examples per metric, two independent annotators, adjudication, and Cohen's kappa >= 0.80 are recorded. Only calibrated metrics may become strict gates.
 
-The PR workflow always runs deterministic gates. The cloud judge job runs only from trusted `workflow_dispatch` or a push to `main`, never from untrusted fork pull requests; the protected `rag-eval-judge` environment holds the judge secret.
+The PR workflow always runs deterministic gates. The cloud judge job runs only from trusted `workflow_dispatch` or a push to `main`, never from untrusted fork pull requests. It runs only when the protected `rag-eval-judge` environment has the model-backed agent and DeepEval judge settings configured; otherwise the workflow records which setting names are missing and skips that optional model-backed job. The environment holds the corresponding secrets.
