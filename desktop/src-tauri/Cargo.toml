@@ -30,6 +30,7 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 anyhow = "1"
 base64 = "0.23"
 bytes = "1"
+calamine = "0.36.1"
 stock-optimizer-core = { path = "../../native/gp-core" }
 encoding_rs = "0.8"
 futures = "0.3"

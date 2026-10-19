@@ -1,5 +1,5 @@
 use super::*;
-use super::{llm::*, market::*, observe::*, research::*, screening::*};
+use super::{hk_market::*, llm::*, market::*, observe::*, research::*, screening::*};
 use rusqlite::{params, Connection};
 use std::{
     collections::{HashMap, HashSet},
@@ -8,6 +8,221 @@ use std::{
     time::Duration,
 };
 use stock_optimizer_core as gp_core;
+
+#[test]
+fn hong_kong_stock_codes_normalize_without_changing_mainland_codes() {
+    assert_eq!(normalize_stock_code("00700.HK").as_deref(), Some("00700.HK"));
+    assert_eq!(normalize_stock_code("HK00700").as_deref(), Some("00700.HK"));
+    assert_eq!(normalize_stock_code("700"), None);
+    assert_eq!(normalize_stock_code("123456.HK"), None);
+    assert_eq!(tencent_symbol("00700.HK").as_deref(), Some("hk00700"));
+    assert_eq!(normalize_stock_code("600000.SH").as_deref(), Some("600000.SH"));
+    assert_eq!(normalize_stock_code("000001.SZ").as_deref(), Some("000001.SZ"));
+    assert_eq!(normalize_stock_code("920001.BJ").as_deref(), Some("920001.BJ"));
+}
+
+#[test]
+fn hkex_security_master_workbook_keeps_only_hkd_equity_securities() {
+    let securities = crate::hk_market::parse_hkex_security_master(include_bytes!(
+        "../testdata/hkex-securities-sample.xlsx"
+    ))
+    .expect("valid HKEX security workbook should parse");
+
+    assert_eq!(securities.len(), 3);
+    assert_eq!(securities[0].code, "00011");
+    assert_eq!(securities[0].name, "Hang Seng Bank Limited");
+    assert_eq!(securities[1].code, "00700");
+    assert_eq!(securities[1].name, "Tencent Holdings Limited");
+    assert_eq!(securities[1].currency, "HKD");
+    assert_eq!(securities[1].board_lot, Some(100));
+    assert_eq!(securities[2].code, "01099");
+    assert_eq!(securities[2].name, "CSPC Pharmaceutical Group Limited");
+}
+
+#[test]
+fn hkex_security_master_rejects_invalid_workbook_bytes() {
+    assert!(crate::hk_market::parse_hkex_security_master(b"not an xlsx workbook").is_err());
+}
+
+#[test]
+fn hk_market_cache_uses_a_separate_file_and_preserves_cn_cache_bytes() {
+    let root = std::env::temp_dir().join(format!(
+        "gp-assistant-hk-cache-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("temporary cache directory should be created");
+    let cn_path = root.join("mobile-market-data.json");
+    std::fs::write(&cn_path, b"cn cache sentinel").expect("CN cache should be writable");
+    let hk_path = crate::hk_market::hk_market_cache_path(&root);
+    let cache = crate::hk_market::HkMarketCache {
+        schema_version: 1,
+        securities: vec![crate::hk_market::HkSecurity {
+            code: "00700".to_string(),
+            name: "Tencent Holdings Limited".to_string(),
+            currency: "HKD".to_string(),
+            board_lot: Some(100),
+            security_type: "Equity / Equity Securities (Main Board)".to_string(),
+        }],
+        securities_source: "HKEX".to_string(),
+        securities_updated_at: Some("2026-10-19T00:00:00Z".to_string()),
+        securities_last_attempt_at: None,
+        securities_last_error: None,
+        quotes: HashMap::new(),
+        histories: HashMap::new(),
+        quote_errors: HashMap::new(),
+        history_errors: HashMap::new(),
+    };
+
+    crate::hk_market::write_hk_market_cache(&hk_path, &cache)
+        .expect("HK cache should be written");
+
+    assert_eq!(hk_path.file_name().and_then(|name| name.to_str()), Some("hk-market-data.json"));
+    assert_eq!(crate::hk_market::read_hk_market_cache(&hk_path).unwrap(), cache);
+    assert_eq!(std::fs::read(&cn_path).unwrap(), b"cn cache sentinel");
+    std::fs::remove_dir_all(root).expect("temporary cache directory should be removed");
+}
+
+#[test]
+fn invalid_hkex_update_does_not_replace_the_last_valid_cache() {
+    let root = std::env::temp_dir().join(format!(
+        "gp-assistant-hk-cache-invalid-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("temporary cache directory should be created");
+    let path = crate::hk_market::hk_market_cache_path(&root);
+    let cache = crate::hk_market::HkMarketCache {
+        schema_version: 1,
+        securities: vec![crate::hk_market::HkSecurity {
+            code: "00700".to_string(),
+            name: "Tencent Holdings Limited".to_string(),
+            currency: "HKD".to_string(),
+            board_lot: Some(100),
+            security_type: "Equity / Equity Securities (Main Board)".to_string(),
+        }],
+        securities_source: "HKEX".to_string(),
+        securities_updated_at: Some("previous".to_string()),
+        securities_last_attempt_at: None,
+        securities_last_error: None,
+        quotes: HashMap::new(),
+        histories: HashMap::new(),
+        quote_errors: HashMap::new(),
+        history_errors: HashMap::new(),
+    };
+    crate::hk_market::write_hk_market_cache(&path, &cache).unwrap();
+
+    assert!(crate::hk_market::update_hkex_security_cache(&path, b"invalid workbook", "new").is_err());
+    assert_eq!(crate::hk_market::read_hk_market_cache(&path).unwrap(), cache);
+    crate::hk_market::record_hkex_refresh_error(&path, "attempt", "HKEX unavailable").unwrap();
+    let recorded = crate::hk_market::read_hk_market_cache(&path).unwrap();
+    assert_eq!(recorded.securities, cache.securities);
+    assert_eq!(recorded.securities_last_attempt_at.as_deref(), Some("attempt"));
+    assert_eq!(recorded.securities_last_error.as_deref(), Some("HKEX unavailable"));
+    std::fs::remove_dir_all(root).expect("temporary cache directory should be removed");
+}
+
+#[test]
+fn tencent_hk_quote_keeps_hkd_and_share_units_without_a_share_multipliers() {
+    let quote = crate::hk_market::parse_tencent_hk_quote(
+        include_str!("../testdata/tencent-hk-quote.txt"),
+        "00700.HK",
+    )
+    .expect("Tencent HK quote fixture should parse");
+    assert_eq!(quote.code, "00700");
+    assert_eq!(quote.currency, "HKD");
+    assert_eq!(quote.price, 417.8);
+    assert_eq!(quote.volume_shares, Some(18_752_869));
+    assert_eq!(quote.turnover_hkd, Some(7_901_198_756.124));
+    assert_eq!(quote.quote_time.as_deref(), Some("2026/10/16 16:08:22"));
+}
+
+#[test]
+fn tencent_hk_history_maps_daily_ohlc_and_share_volume() {
+    let history = crate::hk_market::parse_tencent_hk_history(
+        include_str!("../testdata/tencent-hk-kline.json"),
+        "00700.HK",
+    )
+    .expect("Tencent HK history fixture should parse");
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].date, "2026-10-15");
+    assert_eq!(history[0].open, 415.0);
+    assert_eq!(history[0].high, 422.6);
+    assert_eq!(history[0].low, 414.0);
+    assert_eq!(history[0].close, 417.8);
+    assert_eq!(history[0].volume_shares, Some(20_676_017));
+}
+
+#[test]
+fn tencent_hk_parsers_reject_incomplete_payloads() {
+    assert!(crate::hk_market::parse_tencent_hk_quote("v_hk00700=\"\";", "00700.HK").is_err());
+    assert!(crate::hk_market::parse_tencent_hk_history("{}", "00700.HK").is_err());
+}
+
+#[test]
+fn hk_observation_merge_keeps_history_when_quote_refresh_fails() {
+    let mut cache = hk_test_cache();
+    cache.histories.insert("00700".to_string(), HkHistoryRecord {
+        bars: vec![HkDailyBar { date: "2026-10-16".to_string(), open: 424.0, high: 428.8, low: 415.8, close: 417.8, volume_shares: Some(18_752_869) }],
+        source: "Tencent Finance".to_string(),
+        fetched_at: "old-history".to_string(),
+        last_error: None,
+    });
+    let result = crate::hk_market::merge_hk_observation_update(
+        &mut cache,
+        "00700.HK",
+        Err("quote offline".to_string()),
+        Ok(vec![HkDailyBar { date: "2026-10-17".to_string(), open: 418.0, high: 420.0, low: 416.0, close: 419.0, volume_shares: Some(100) }]),
+        "new-fetch",
+    );
+    assert!(!result.quote_updated);
+    assert!(result.history_updated);
+    assert_eq!(cache.histories["00700"].fetched_at, "new-fetch");
+    assert_eq!(cache.quote_errors.get("00700").map(String::as_str), Some("quote offline"));
+}
+
+#[test]
+fn hk_observation_merge_keeps_quote_when_history_refresh_fails() {
+    let mut cache = hk_test_cache();
+    let result = crate::hk_market::merge_hk_observation_update(
+        &mut cache,
+        "00700.HK",
+        Ok(HkQuote { code: "00700".to_string(), name: "Tencent".to_string(), price: 419.0, change_pct: None, volume_shares: Some(100), turnover_hkd: Some(1000.0), currency: "HKD".to_string(), quote_time: Some("2026/10/17 16:00:00".to_string()), source: "Tencent Finance".to_string(), fetched_at: None, last_error: None }),
+        Err("history offline".to_string()),
+        "new-fetch",
+    );
+    assert!(result.quote_updated);
+    assert!(!result.history_updated);
+    assert_eq!(cache.quotes["00700"].fetched_at.as_deref(), Some("new-fetch"));
+    assert!(cache.histories.get("00700").is_none());
+}
+
+#[test]
+fn hk_observation_merge_reports_both_failures_without_creating_data() {
+    let mut cache = hk_test_cache();
+    let result = crate::hk_market::merge_hk_observation_update(
+        &mut cache,
+        "00700.HK",
+        Err("quote offline".to_string()),
+        Err("history offline".to_string()),
+        "new-fetch",
+    );
+    assert!(!result.quote_updated);
+    assert!(!result.history_updated);
+    assert_eq!(result.notes.len(), 2);
+    assert!(cache.quotes.is_empty());
+    assert!(cache.histories.is_empty());
+}
+
+fn hk_test_cache() -> HkMarketCache {
+    HkMarketCache { schema_version: 1, securities: vec![], securities_source: "HKEX".to_string(), securities_updated_at: None, securities_last_attempt_at: None, securities_last_error: None, quotes: HashMap::new(), histories: HashMap::new(), quote_errors: HashMap::new(), history_errors: HashMap::new() }
+}
 
 #[test]
 fn adaptive_screen_request_accepts_nested_and_legacy_contracts() {

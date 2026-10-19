@@ -3,6 +3,7 @@ import {
   defaultTrendStartDateInputValue,
   formatRatioPercent,
   hasMarketSuffix,
+  normalizeStockCode,
   normalizeBacktestDateRange,
   trendScreenStartDateInputValue,
 } from "./format";
@@ -26,6 +27,28 @@ describe("hasMarketSuffix", () => {
 
   it("keeps bare digits incomplete so market confirmation can still show", () => {
     expect(hasMarketSuffix("000100")).toBe(false);
+  });
+
+  it("accepts explicitly identified Hong Kong stock codes", () => {
+    expect(hasMarketSuffix("00700.HK")).toBe(true);
+    expect(hasMarketSuffix("HK00700")).toBe(true);
+  });
+});
+
+describe("normalizeStockCode", () => {
+  it("normalizes Hong Kong codes and pads a bare code only in HK context", () => {
+    expect(normalizeStockCode("00700.HK")).toBe("00700.HK");
+    expect(normalizeStockCode("HK00700")).toBe("00700.HK");
+    expect(normalizeStockCode("700", "HK")).toBe("00700.HK");
+    expect(normalizeStockCode("700")).toBe("");
+  });
+
+  it("keeps mainland normalization intact and rejects invalid HK codes", () => {
+    expect(normalizeStockCode("600000.SH")).toBe("600000.SH");
+    expect(normalizeStockCode("000001.SZ")).toBe("000001.SZ");
+    expect(normalizeStockCode("920001.BJ")).toBe("920001.BJ");
+    expect(normalizeStockCode("123456.HK")).toBe("");
+    expect(normalizeStockCode("1234567.HK")).toBe("");
   });
 });
 

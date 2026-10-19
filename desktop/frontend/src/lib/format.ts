@@ -144,11 +144,22 @@ export function normalizeStockCode(value: unknown, market?: string): string {
   const raw = sanitizeStockCodeInput(value);
   if (!raw) return "";
 
+  const hkSuffixed = raw.match(/^(\d{1,5})\.HK$/);
+  if (hkSuffixed) return `${hkSuffixed[1].padStart(5, "0")}.HK`;
+
   const suffixed = raw.match(/^(\d{6})\.(SH|SZ|BJ)$/);
   if (suffixed) return `${suffixed[1]}.${suffixed[2]}`;
 
+  const hkPrefixed = raw.match(/^HK(\d{1,5})$/);
+  if (hkPrefixed) return `${hkPrefixed[1].padStart(5, "0")}.HK`;
+
   const prefixed = raw.match(/^(SH|SZ|BJ)(\d{6})$/);
   if (prefixed) return `${prefixed[2]}.${prefixed[1]}`;
+
+  if (raw.endsWith(".HK") || raw.startsWith("HK")) return "";
+  if (market?.toUpperCase() === "HK") {
+    return /^\d{1,5}$/.test(raw) ? `${raw.padStart(5, "0")}.HK` : "";
+  }
 
   const digits = stockCodeDigits(raw);
   if (digits.length !== 6) return "";
@@ -171,6 +182,10 @@ export function sanitizeStockLookupInput(value: unknown): string {
 
 export function stockCodeDigits(value: unknown): string {
   const raw = sanitizeStockCodeInput(value);
+  const hkSuffixed = raw.match(/^(\d{1,5})\.HK$/);
+  if (hkSuffixed) return hkSuffixed[1];
+  const hkPrefixed = raw.match(/^HK(\d{1,5})$/);
+  if (hkPrefixed) return hkPrefixed[1];
   const prefixed = raw.match(/^(SH|SZ|BJ)(\d{6})$/);
   if (prefixed) return prefixed[2];
   const match = raw.match(/\d{6}/);
@@ -179,7 +194,10 @@ export function stockCodeDigits(value: unknown): string {
 
 export function hasMarketSuffix(value: unknown): boolean {
   const raw = sanitizeStockCodeInput(value);
-  return /^(\d{6})\.(SH|SZ|BJ)$/.test(raw) || /^(SH|SZ|BJ)(\d{6})$/.test(raw);
+  return /^(\d{6})\.(SH|SZ|BJ)$/.test(raw)
+    || /^(SH|SZ|BJ)(\d{6})$/.test(raw)
+    || /^\d{5}\.HK$/.test(raw)
+    || /^HK\d{5}$/.test(raw);
 }
 
 export function inferMarketFromDigits(digits: string): string {

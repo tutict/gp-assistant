@@ -115,6 +115,10 @@ export const TAURI_GET_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/strategies": async ({ invoke }) => invoke("api_strategies"),
   "/api/data-sources": async ({ invoke }) => invoke("api_data_sources"),
   "/api/data-sources/status": async ({ invoke }) => invoke("api_market_status"),
+  "/api/hk/market-status": async ({ invoke }) => invoke("api_hk_market_status"),
+  "/api/hk/stock-search": async ({ invoke, parsed }) => invoke("api_hk_stock_search", {
+    payload: { query: parsed.searchParams.get("q") || "", limit: Number(parsed.searchParams.get("limit") || 20) },
+  }),
   "/api/rag-pack/status": async ({ invoke }) => invoke("api_rag_pack_status"),
   "/api/research/overview": async ({ invoke, parsed }) => invoke("api_research_overview", {
     payload: { stock_code: parsed.searchParams.get("stock_code") || "" },
@@ -231,6 +235,15 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
       );
     },
   },
+  {
+    prefix: "/api/hk/observe/",
+    handler: async ({ invoke, path, parsed }) => invoke("api_hk_observe", {
+      payload: {
+        code: decodeURIComponent(path.slice("/api/hk/observe/".length)),
+        data_policy: parsed.searchParams.get("data_policy") || "cache_only",
+      },
+    }),
+  },
 ];
 
 async function withFinancialSnapshotPayload(payload: unknown): Promise<unknown> {
@@ -316,6 +329,7 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/upstream-rag/transfer/start": async ({ invoke, payload }) => invoke("api_upstream_rag_transfer_start", { payload }),
   "/api/data-sources/auto-refresh-universe": async ({ invoke, payload }) => tauriAutoRefreshUniverse(invoke, asRecord(payload)),
   "/api/data-sources/refresh-universe": async ({ invoke, payload }) => refreshTauriMarketData(invoke, asRecord(payload)),
+  "/api/hk/refresh": async ({ invoke }) => invoke("api_hk_market_refresh"),
   "/api/data-sources/prune-cache": async ({ invoke }) => {
     const result = await invoke("api_market_clear_cache");
     return result;

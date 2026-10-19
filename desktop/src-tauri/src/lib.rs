@@ -21,6 +21,7 @@ mod agent_ledger;
 mod core_api;
 mod evolution;
 mod gepa_lab;
+mod hk_market;
 mod llm;
 mod market;
 mod news_rag;
@@ -122,6 +123,10 @@ pub fn run() {
             market::api_market_refresh,
             market::api_market_ingest_tencent_quotes,
             market::api_market_clear_cache,
+            hk_market::api_hk_market_status,
+            hk_market::api_hk_market_refresh,
+            hk_market::api_hk_stock_search,
+            hk_market::api_hk_observe,
             screening::api_screen,
             screening::api_sector_screen,
             screening::api_custom_screen,

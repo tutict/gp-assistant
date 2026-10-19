@@ -29,6 +29,17 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("watchlist persistence", () => {
+  it("keeps canonical Hong Kong codes alongside mainland codes in local storage", async () => {
+    localStorage.setItem(key, JSON.stringify([
+      a,
+      { code: "00700.HK", name: "Tencent", added_at: "2026-01-03" },
+      { code: "HK00700", name: "Duplicate", added_at: "2026-01-04" },
+    ]));
+    const store = await import("./watchlistStore");
+
+    expect(store.loadLocalWatchlistSnapshot().map((item) => item.code)).toEqual(["000001.SZ", "00700.HK"]);
+  });
+
   it("does not dispatch a second write before the first backend acknowledgement", async () => {
     const first = deferred<unknown>();
     native.invoke.mockImplementation(async (command: string) => command === "api_watchlist_list" ? [] : snapshot([]));

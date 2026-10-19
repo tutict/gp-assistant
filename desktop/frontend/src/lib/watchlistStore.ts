@@ -1,4 +1,5 @@
 import type { WatchlistItem } from "../types";
+import { normalizeStockCode } from "./format";
 import { getTauriInvoke, isTauriRuntime } from "./tauri";
 
 const WATCHLIST_KEY = "stock-optimizer-watchlist";
@@ -46,9 +47,15 @@ function normalizeWatchlist(values: WatchlistItem[], previous: WatchlistItem[] =
   const result: WatchlistItem[] = [];
   for (const item of values) {
     let code = String(item?.code || "").trim().toUpperCase();
+    const suffixedHk = /^(\d{1,5})\.HK$/.exec(code);
+    if (suffixedHk) code = `${suffixedHk[1].padStart(5, "0")}.HK`;
+    const prefixedHk = /^HK(\d{1,5})$/.exec(code);
+    if (prefixedHk) code = `${prefixedHk[1].padStart(5, "0")}.HK`;
     const prefixed = /^(SH|SZ|BJ)(\d{6})$/.exec(code);
     if (prefixed) code = `${prefixed[2]}.${prefixed[1]}`;
-    if (!/^\d{6}\.(SH|SZ|BJ)$/.test(code)) {
+    if (/\.HK$/.test(code) && !/^\d{5}\.HK$/.test(code)) continue;
+    if (/^HK/.test(code)) continue;
+    if (!/^\d{6}\.(SH|SZ|BJ)$/.test(code) && !/^\d{5}\.HK$/.test(code)) {
       const digits = code.replace(/\D/g, "").slice(0, 6);
       if (digits.length === 6) code = `${digits}.${/^[659]/.test(digits) ? "SH" : /^[48]/.test(digits) ? "BJ" : "SZ"}`;
     }
@@ -59,6 +66,13 @@ function normalizeWatchlist(values: WatchlistItem[], previous: WatchlistItem[] =
       screenCriteriaSummary: item.screenCriteriaSummary ?? undefined });
   }
   return result;
+}
+
+export function filterWatchlistByMarket(values: WatchlistItem[], market: "cn" | "hk"): WatchlistItem[] {
+  return values.filter((item) => {
+    const code = normalizeStockCode(item.code);
+    return market === "hk" ? code.endsWith(".HK") : Boolean(code) && !code.endsWith(".HK");
+  });
 }
 
 export function loadLocalWatchlistSnapshot(): WatchlistItem[] {

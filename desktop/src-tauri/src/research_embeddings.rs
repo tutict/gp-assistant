@@ -21,7 +21,7 @@ const MODEL_FILES: [(&str, &str); 5] = [
     ),
     (
         "model_quantized.onnx",
-        "b9837c19ce154ff0726d398ee77abbc03a7faf0476c6f93016c84e531be7ebb5",
+        "15b717c382bcb518ba457b93ea6850ede7f4f1cd8937454aa06972366cd19bcc",
     ),
     (
         "special_tokens_map.json",

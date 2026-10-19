@@ -25,6 +25,48 @@ export interface StockItem {
   [key: string]: unknown;
 }
 
+export interface HkSecurity {
+  code: string;
+  name: string;
+  currency: string;
+  board_lot?: number;
+  security_type: string;
+}
+
+export interface HkQuote {
+  code: string;
+  name: string;
+  price: number;
+  change_pct?: number;
+  volume_shares?: number;
+  turnover_hkd?: number;
+  currency: string;
+  quote_time?: string;
+  source: string;
+}
+
+export interface HkDailyBar {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume_shares?: number;
+}
+
+export interface HkObserveResult {
+  market: "hk";
+  security: HkSecurity;
+  quote?: HkQuote | null;
+  history: HkDailyBar[];
+  quote_updated_at?: string | null;
+  history_updated_at?: string | null;
+  quote_error?: string | null;
+  history_error?: string | null;
+  notes: string[];
+  stale: boolean;
+}
+
 export interface ScreenCriteria {
   min_roe?: number;
   max_pe?: number;

@@ -61,7 +61,7 @@ describe("header settings contract", () => {
       setFontScale: () => undefined,
     });
     expect(settings.map((setting) => setting.key)).toEqual(["density", "theme", "fontScale", "market"]);
-    expect(settings.find((setting) => setting.key === "market")?.disabled).toBe(true);
+    expect(settings.find((setting) => setting.key === "market")?.disabled).toBeUndefined();
   });
 
   it("defines the mobile bottom sheet and the requested screenshot matrix", () => {

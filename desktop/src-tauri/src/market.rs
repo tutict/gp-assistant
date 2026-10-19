@@ -2517,13 +2517,13 @@ pub(crate) fn dedupe_stock_codes(codes: &mut Vec<String>) {
 
 pub(crate) fn tencent_symbol(code: &str) -> Option<String> {
     let normalized = normalize_stock_code(code)?;
-    let digits = &normalized[..6];
-    if normalized.ends_with(".SH") {
-        Some(format!("sh{digits}"))
-    } else if normalized.ends_with(".BJ") {
-        Some(format!("bj{digits}"))
-    } else {
-        Some(format!("sz{digits}"))
+    let (digits, market) = normalized.split_once('.')?;
+    match market {
+        "HK" => Some(format!("hk{digits}")),
+        "SH" => Some(format!("sh{digits}")),
+        "BJ" => Some(format!("bj{digits}")),
+        "SZ" => Some(format!("sz{digits}")),
+        _ => None,
     }
 }
 
@@ -2541,10 +2541,18 @@ pub(crate) fn normalize_stock_code(value: &str) -> Option<String> {
     if let Some(digits) = raw.strip_prefix("BJ").filter(|digits| valid_digits(digits)) {
         return Some(format!("{digits}.BJ"));
     }
+    if let Some(digits) = raw.strip_prefix("HK").filter(|digits| valid_hk_digits(digits)) {
+        return Some(format!("{digits}.HK"));
+    }
     if let Some((digits, market)) = raw.split_once('.') {
-        if valid_digits(digits) && matches!(market, "SH" | "SZ" | "BJ") {
+        if (market == "HK" && valid_hk_digits(digits))
+            || (valid_digits(digits) && matches!(market, "SH" | "SZ" | "BJ"))
+        {
             return Some(format!("{digits}.{market}"));
         }
+    }
+    if raw.ends_with(".HK") || raw.starts_with("HK") {
+        return None;
     }
     let digits: String = raw
         .chars()
@@ -2559,6 +2567,10 @@ pub(crate) fn normalize_stock_code(value: &str) -> Option<String> {
 
 pub(crate) fn valid_digits(value: &str) -> bool {
     value.len() == 6 && value.chars().all(|ch| ch.is_ascii_digit())
+}
+
+pub(crate) fn valid_hk_digits(value: &str) -> bool {
+    value.len() == 5 && value.chars().all(|ch| ch.is_ascii_digit())
 }
 
 pub(crate) fn infer_market(digits: &str) -> &'static str {

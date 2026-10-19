@@ -6,7 +6,7 @@ import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useWorkspaceState, useWorkspaceStore, useWorkspaceStatus, WorkspaceCredentialsReady } from "./hooks/useWorkspace";
 import { WorkspaceErrorBoundary } from "./components/ui/ErrorBoundary";
 import { getJson, isMobileTauriRuntime } from "./lib/tauri";
-import { createPersistentWatchlistSetter, loadLocalWatchlistSnapshot, loadPersistentWatchlist } from "./lib/watchlistStore";
+import { createPersistentWatchlistSetter, filterWatchlistByMarket, loadLocalWatchlistSnapshot, loadPersistentWatchlist } from "./lib/watchlistStore";
 import { useLlmCredentials } from "./hooks/useLlmCredentials";
 import { buildScreenCriteria } from "./lib/contracts";
 import { refreshResearchWatchlist } from "./lib/researchRefresh";
@@ -17,6 +17,9 @@ import { Sidebar } from "./components/Sidebar";
 import { FilterBar, type FilterCriteria } from "./components/FilterBar";
 import { ScreenPanel } from "./components/panels/ScreenPanel";
 import { WatchlistPanel } from "./components/panels/WatchlistPanel";
+import { HkMarketPanel } from "./components/panels/HkMarketPanel";
+import { HkObservePanel } from "./components/panels/HkObservePanel";
+import { HkUnavailablePanel } from "./components/panels/HkUnavailablePanel";
 import { PanelFeedback } from "./components/ui/PanelFeedback";
 import type { AdaptiveScreenRequest, DataStatus, ScreenCriteria, WatchlistItem } from "./types";
 import {
@@ -80,6 +83,7 @@ export default function App({ onMounted }: AppProps) {
   const [backtestDefaultApplied, setBacktestDefaultApplied] = useState(false);
   const [view, setView] = useWorkspaceState<ViewKey>("app.view", viewFromHash(window.location.hash));
   const [selectedStock, setSelectedStock] = useWorkspaceState("app.stock", "");
+  const [market, setMarket] = useWorkspaceState<"cn" | "hk">("app.market", "cn");
   const [backtestSource, setBacktestSource] = useWorkspaceState<"criteria" | "watchlist">("app.backtest.source", "criteria");
   const [visitedResearch, setVisitedResearch] = useState<Record<ResearchView, boolean>>(() => {
     const initial = viewFromHash(window.location.hash);
@@ -112,6 +116,7 @@ export default function App({ onMounted }: AppProps) {
   }, [credentialsReady, saveLlmSettings]);
 
   const setWatchlist = useCallback(createPersistentWatchlistSetter(setWatchlistState), []);
+  const visibleWatchlist = useMemo(() => filterWatchlistByMarket(watchlist, market), [market, watchlist]);
 
   useEffect(() => {
     void loadPersistentWatchlist(watchlistLocalSnapshot, setWatchlistState);
@@ -247,6 +252,16 @@ export default function App({ onMounted }: AppProps) {
     navigate("observe");
   }, [navigate, setSelectedStock]);
 
+  const changeMarket = useCallback((next: "cn" | "hk") => {
+    if (next === market) return;
+    setMarket(next);
+    setSelectedStock("");
+    setObserveRequest(null);
+    setNewsRequest(null);
+    setBacktestRouteRequest(null);
+    setMarketStatus(null);
+  }, [market, setMarket, setSelectedStock]);
+
   const runCurrentCriteriaBacktest = useCallback((screenSpec?: AdaptiveScreenRequest, criteriaSnapshot?: FilterCriteria) => {
     setBacktestSource("criteria");
     setBacktestRouteRequest((previous) => nextBacktestRouteRequest(
@@ -322,7 +337,9 @@ export default function App({ onMounted }: AppProps) {
     setTheme,
     fontScale,
     setFontScale,
-  }), [density, fontScale, setDensity, setFontScale, setTheme, theme]);
+    market,
+    setMarket: changeMarket,
+  }), [changeMarket, density, fontScale, market, setDensity, setFontScale, setTheme, theme]);
 
   const closeOverlays = useCallback(() => {
     setShortcutHelpOpen(false);
@@ -373,61 +390,44 @@ export default function App({ onMounted }: AppProps) {
       {credentialError && <PanelFeedback kind="error" title="密钥保存状态" description={credentialError} action={credentialMigrationPending ? <button type="button" onClick={() => void retryCredentialMigration()}>重试安全迁移</button> : undefined} />}
         </div>
         {view === "screen" && (
-          <FilterBar
-            status={marketStatus}
-            onStatusChange={setMarketStatus}
-          />
+          market === "hk" ? null : <FilterBar status={marketStatus} onStatusChange={setMarketStatus} />
         )}
 
         <div className="panels">
           {visitedResearch.screen && (
             <div className="persistent-panel" hidden={view !== "screen"}>
-              <WorkspaceErrorBoundary label="选股"><ScreenPanel
-                criteria={criteria}
-                onCriteriaChange={setCriteria}
-                watchlist={watchlist}
-                onWatchlistChange={setWatchlist}
-                onObserveStock={observeStock}
-                onNewsStock={openNewsForStock}
-                onRunBacktest={runCurrentCriteriaBacktest}
-                mobileRuntime={mobileRuntime}
-                marketStatus={marketStatus}
-              /></WorkspaceErrorBoundary>
+              {market === "hk" ? <HkMarketPanel onObserveStock={observeStock} /> : <WorkspaceErrorBoundary label="选股"><ScreenPanel
+                criteria={criteria} onCriteriaChange={setCriteria} watchlist={visibleWatchlist} onWatchlistChange={setWatchlist}
+                onObserveStock={observeStock} onNewsStock={openNewsForStock} onRunBacktest={runCurrentCriteriaBacktest} mobileRuntime={mobileRuntime} marketStatus={marketStatus}
+              /></WorkspaceErrorBoundary>}
             </div>
           )}
           {visitedResearch.observe && (
             <Suspense fallback={view === "observe" ? <PanelFeedback kind="loading" description="正在加载工作区..." /> : null}>
               <div className="persistent-panel" hidden={view !== "observe"}>
-                <WorkspaceErrorBoundary label="观察"><ObservePanel
-                  watchlist={watchlist}
-                  onWatchlistChange={setWatchlist}
-                  initialCode={observeRequest?.code || selectedStock}
-                  initialCodeRequestId={observeRequest?.requestId ?? 0}
-                  mobileRuntime={mobileRuntime}
-                  onOpenNews={openNewsForStock}
-                  onAskAgent={handoffToAgent}
-                /></WorkspaceErrorBoundary>
+                {market === "hk" ? <HkObservePanel code={observeRequest?.code || selectedStock} watchlist={visibleWatchlist} onWatchlistChange={(items) => setWatchlist([...items, ...watchlist.filter((item) => !visibleWatchlist.some((visible) => visible.code === item.code))])} /> : <WorkspaceErrorBoundary label="观察"><ObservePanel
+                  watchlist={visibleWatchlist} onWatchlistChange={setWatchlist} initialCode={observeRequest?.code || selectedStock} initialCodeRequestId={observeRequest?.requestId ?? 0}
+                  mobileRuntime={mobileRuntime} onOpenNews={openNewsForStock} onAskAgent={handoffToAgent}
+                /></WorkspaceErrorBoundary>}
               </div>
             </Suspense>
           )}
           {visitedResearch.backtest && (
             <Suspense fallback={view === "backtest" ? <PanelFeedback kind="loading" description="正在加载工作区..." /> : null}>
               <div className="persistent-panel" hidden={view !== "backtest"}>
-                <WorkspaceErrorBoundary label="回测"><BacktestPanel
-                  criteria={criteria}
-                  watchlist={watchlist}
-                  preferredSource={backtestRouteRequest ?? (workspaceStatus.ready && !backtestDefaultApplied ? { source: backtestSource, requestId: -1 } : null)}
-                  onPreferredSourceConsumed={handleBacktestRouteConsumed}
-                /></WorkspaceErrorBoundary>
+                {market === "hk" ? <HkUnavailablePanel feature="港股回测" /> : <WorkspaceErrorBoundary label="回测"><BacktestPanel
+                  criteria={criteria} watchlist={visibleWatchlist} preferredSource={backtestRouteRequest ?? (workspaceStatus.ready && !backtestDefaultApplied ? { source: backtestSource, requestId: -1 } : null)} onPreferredSourceConsumed={handleBacktestRouteConsumed}
+                /></WorkspaceErrorBoundary>}
               </div>
             </Suspense>
           )}
-          {view === "news" && (
+          {view === "news" && market === "hk" && <HkUnavailablePanel feature="港股消息研究" />}
+          {view === "news" && market === "cn" && (
             <Suspense fallback={<PanelFeedback kind="loading" description="正在加载工作区..." />}>
               <WorkspaceErrorBoundary label="消息研究"><NewsRagPanel
                 llmSettings={llmSettings}
                 onLlmSettingsChange={setLlmSettings}
-                watchlist={watchlist}
+                watchlist={visibleWatchlist}
                 initialCode={newsRequest?.code || selectedStock}
                 initialCodeRequestId={newsRequest?.requestId ?? 0}
                 initialView={newsRequest?.view}
@@ -438,12 +438,13 @@ export default function App({ onMounted }: AppProps) {
               /></WorkspaceErrorBoundary>
             </Suspense>
           )}
-          {view === "agent" && (
+          {view === "agent" && market === "hk" && <HkUnavailablePanel feature="港股研究 Agent" />}
+          {view === "agent" && market === "cn" && (
             <Suspense fallback={<PanelFeedback kind="loading" description="正在加载工作区..." />}>
               <WorkspaceErrorBoundary label="智能体"><AgentPanel
                 llmSettings={llmSettings}
                 onLlmSettingsChange={setLlmSettings}
-                watchlist={watchlist}
+                watchlist={visibleWatchlist}
                 onWatchlistChange={setWatchlist}
                 draftPrompt={agentDraftRequest?.prompt || ""}
                 draftRequestId={agentDraftRequest?.requestId ?? 0}
@@ -452,9 +453,10 @@ export default function App({ onMounted }: AppProps) {
           )}
         </div>
 
-        {view !== "agent" && view !== "news" && (
+        {market === "hk" && view === "screen" && <WorkspaceErrorBoundary label="港股自选"><WatchlistPanel items={visibleWatchlist} onChange={(items) => setWatchlist([...items, ...watchlist.filter((item) => !visibleWatchlist.some((visible) => visible.code === item.code))])} onObserve={observeStock} /></WorkspaceErrorBoundary>}
+        {market === "cn" && view !== "agent" && view !== "news" && (
           <WorkspaceErrorBoundary label="自选股"><WatchlistPanel
-            items={watchlist}
+            items={visibleWatchlist}
             onChange={setWatchlist}
             onObserve={observeStock}
             onNews={openNewsForStock}

@@ -29,6 +29,8 @@ interface SettingsRegistryState {
   setTheme: (theme: Theme) => void;
   fontScale: FontScale;
   setFontScale: (fontScale: FontScale) => void;
+  market?: "cn" | "hk";
+  setMarket?: (market: "cn" | "hk") => void;
 }
 
 export function createSettingsRegistry({
@@ -38,6 +40,8 @@ export function createSettingsRegistry({
   setTheme,
   fontScale,
   setFontScale,
+  market = "cn",
+  setMarket = () => undefined,
 }: SettingsRegistryState): SettingDescriptor[] {
   return [
     {
@@ -85,11 +89,14 @@ export function createSettingsRegistry({
       title: "股票市场",
       description: "A 股 · 港股等市场数据切换",
       type: "select",
-      options: [{ value: "cn", label: "A 股" }],
-      get: () => "cn",
-      set: () => undefined,
-      disabled: true,
-      badge: "即将上线",
+      options: [
+        { value: "cn", label: "A 股" },
+        { value: "hk", label: "港股" },
+      ],
+      get: () => market,
+      set: (value) => {
+        if (value === "cn" || value === "hk") setMarket(value);
+      },
     },
   ];
 }
