@@ -31,15 +31,18 @@ export interface CoverageSummary {
 
 export type CapabilityStatus = "available" | "limited" | "unavailable";
 
-export type CapabilityId =
-  | "security_directory"
-  | "observe"
-  | "financial_snapshot"
-  | "screening"
-  | "backtest"
-  | "news_research"
-  | "sentiment"
-  | "research_agent";
+export const CAPABILITY_IDS = {
+  security_directory: true,
+  observe: true,
+  financial_snapshot: true,
+  screening: true,
+  backtest: true,
+  news_research: true,
+  sentiment: true,
+  research_agent: true,
+} as const;
+
+export type CapabilityId = keyof typeof CAPABILITY_IDS;
 
 export interface MarketCapability {
   market: MarketId;
@@ -58,16 +61,7 @@ function isMarketId(value: unknown): value is MarketId {
 }
 
 function isCapabilityId(value: unknown): value is CapabilityId {
-  return (
-    value === "security_directory" ||
-    value === "observe" ||
-    value === "financial_snapshot" ||
-    value === "screening" ||
-    value === "backtest" ||
-    value === "news_research" ||
-    value === "sentiment" ||
-    value === "research_agent"
-  );
+  return typeof value === "string" && Object.hasOwn(CAPABILITY_IDS, value);
 }
 
 function isCapabilityStatus(value: unknown): value is CapabilityStatus {

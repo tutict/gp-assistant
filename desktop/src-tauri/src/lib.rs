@@ -25,6 +25,7 @@ mod hk_market;
 mod llm;
 mod market;
 mod market_domain;
+mod market_capabilities;
 mod news_rag;
 mod observe;
 mod prompt_upgrade;
@@ -120,6 +121,7 @@ pub fn run() {
             api_health,
             screening::api_strategies,
             market::api_market_status,
+            market_capabilities::api_market_capabilities,
             market::api_data_sources,
             market::api_market_refresh,
             market::api_market_ingest_tencent_quotes,

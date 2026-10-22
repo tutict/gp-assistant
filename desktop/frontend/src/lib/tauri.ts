@@ -19,6 +19,7 @@ import {
 import { fetchObserveDailyHistoryRows } from "./observeHistory";
 import { hydrateObserveTrendFromHistory } from "./observeTrend";
 import { normalizeMobileFinancialSnapshotDetails } from "./mobileFinancialSnapshot";
+import { parseMarketCapabilities } from "./marketCapabilities";
 import type { ObserveResult } from "../types";
 
 declare global {
@@ -115,6 +116,18 @@ export const TAURI_GET_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/strategies": async ({ invoke }) => invoke("api_strategies"),
   "/api/data-sources": async ({ invoke }) => invoke("api_data_sources"),
   "/api/data-sources/status": async ({ invoke }) => invoke("api_market_status"),
+  "/api/market/capabilities": async ({ invoke, parsed }) => {
+    const market = parsed.searchParams.get("market");
+    if (market !== "cn" && market !== "hk") {
+      throw new Error("unsupported market; expected one of: cn, hk");
+    }
+    const response = await invoke<unknown>("api_market_capabilities", { market });
+    const capabilities = parseMarketCapabilities(response, market);
+    if (!capabilities) {
+      throw new Error("native market capability registry returned an invalid response");
+    }
+    return capabilities;
+  },
   "/api/hk/market-status": async ({ invoke }) => invoke("api_hk_market_status"),
   "/api/hk/stock-search": async ({ invoke, parsed }) => invoke("api_hk_stock_search", {
     payload: { query: parsed.searchParams.get("q") || "", limit: Number(parsed.searchParams.get("limit") || 20) },
