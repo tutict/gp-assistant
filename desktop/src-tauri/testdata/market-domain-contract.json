@@ -1,0 +1,20 @@
+{
+  "market": "hk",
+  "security": { "market": "hk", "code": "00700", "kind": "ordinary_share" },
+  "money": { "amount": 12.5, "currency": "HKD" },
+  "quantity": { "amount": 100, "unit": "share" },
+  "capability": {
+    "market": "hk",
+    "id": "observe",
+    "status": "limited",
+    "reason": "daily history is missing",
+    "coverage": {
+      "requested_count": 2,
+      "available_count": 1,
+      "missing_count": 1,
+      "start_date": "2026-10-16",
+      "end_date": "2026-10-17",
+      "missing_fields": ["daily_history"]
+    }
+  }
+}

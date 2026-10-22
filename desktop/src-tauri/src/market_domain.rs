@@ -202,11 +202,41 @@ pub(crate) struct CoverageSummary {
     pub(crate) missing_fields: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CapabilityId {
+    SecurityDirectory,
+    Observe,
+    FinancialSnapshot,
+    Screening,
+    Backtest,
+    NewsResearch,
+    Sentiment,
+    ResearchAgent,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CapabilityStatus {
+    Available,
+    Limited,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct MarketCapability {
+    pub(crate) market: MarketId,
+    pub(crate) id: CapabilityId,
+    pub(crate) status: CapabilityStatus,
+    pub(crate) reason: Option<String>,
+    pub(crate) coverage: Option<CoverageSummary>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        CoverageSummary, CurrencyCode, MarketId, Money, ObservationMetadata, Quantity, SecurityId,
-        SecurityKind,
+        CapabilityId, CapabilityStatus, CoverageSummary, CurrencyCode, MarketCapability, MarketId,
+        Money, ObservationMetadata, Quantity, SecurityId, SecurityKind,
     };
 
     #[test]
@@ -330,5 +360,48 @@ mod tests {
         assert!(
             SecurityId::new(MarketId::Cn, "６０００００", SecurityKind::OrdinaryShare).is_err()
         );
+    }
+
+    #[test]
+    fn market_contract_serialization_matches_shared_fixture() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/market-domain-contract.json")).unwrap();
+
+        let mut sample = serialize_market_contract_sample();
+        assert_eq!(
+            sample["quantity"]["amount"].as_f64(),
+            fixture["quantity"]["amount"].as_f64(),
+            "JSON integer and float spellings represent the same quantity value"
+        );
+        sample["quantity"]["amount"] = fixture["quantity"]["amount"].clone();
+        assert_eq!(sample, fixture);
+    }
+
+    fn serialize_market_contract_sample() -> serde_json::Value {
+        let security = SecurityId::new(MarketId::Hk, "00700", SecurityKind::OrdinaryShare).unwrap();
+        let money = Money::new(12.5, CurrencyCode::new("HKD").unwrap()).unwrap();
+        let quantity = Quantity::new(100.0, "share").unwrap();
+        let capability = MarketCapability {
+            market: MarketId::Hk,
+            id: CapabilityId::Observe,
+            status: CapabilityStatus::Limited,
+            reason: Some("daily history is missing".to_owned()),
+            coverage: Some(CoverageSummary {
+                requested_count: 2,
+                available_count: 1,
+                missing_count: 1,
+                start_date: Some("2026-10-16".to_owned()),
+                end_date: Some("2026-10-17".to_owned()),
+                missing_fields: vec!["daily_history".to_owned()],
+            }),
+        };
+
+        serde_json::json!({
+            "market": "hk",
+            "security": security,
+            "money": money,
+            "quantity": quantity,
+            "capability": capability,
+        })
     }
 }

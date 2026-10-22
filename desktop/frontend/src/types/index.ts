@@ -986,3 +986,17 @@ export type PanelKey =
   | "upstreamImport"
   | "agent"
   | "observe";
+
+export { isMarketCapability, parseSecurityId } from "../lib/marketDomain";
+export type {
+  CapabilityId,
+  CapabilityStatus,
+  CoverageSummary,
+  CurrencyCode,
+  MarketCapability,
+  MarketId,
+  Money,
+  Quantity,
+  SecurityId,
+  SecurityKind,
+} from "../lib/marketDomain";
