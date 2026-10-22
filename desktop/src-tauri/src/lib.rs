@@ -24,6 +24,7 @@ mod gepa_lab;
 mod hk_market;
 mod llm;
 mod market;
+mod market_domain;
 mod news_rag;
 mod observe;
 mod prompt_upgrade;
