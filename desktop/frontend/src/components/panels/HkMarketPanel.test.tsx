@@ -48,4 +48,15 @@ describe("HkMarketPanel stability", () => {
     expect(text).toContain("Tencent");
     expect(text).toContain("HKEX unavailable");
   });
+  it("displays the security-master currency without converting CNY to HKD", async () => {
+    getJsonMock.mockResolvedValue({
+      items: [{ code: "00012", name: "Dual Counter", currency: "CNY", board_lot: 100, security_type: "Equity" }],
+      source: "HKEX",
+      updated_at: "2026-10-22T00:00:00Z",
+    });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<HkMarketPanel onObserveStock={vi.fn()} />); });
+    const rowText = renderer.root.findByProps({ className: "hk-security-row" }).findByType("span").children.join("");
+    expect(rowText).toBe("00012.HK · CNY · 每手 100 股");
+  });
 });

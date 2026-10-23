@@ -58,6 +58,7 @@ export interface HkObserveResult {
   market: "hk";
   security: HkSecurity;
   quote?: HkQuote | null;
+  quote_capability: import("../lib/marketDomain").MarketCapability;
   history: HkDailyBar[];
   quote_updated_at?: string | null;
   history_updated_at?: string | null;

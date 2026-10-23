@@ -13,6 +13,13 @@ const staleResult = {
   history: [{ date: "2026-10-18", open: 418, high: 420, low: 416, close: 419, volume_shares: 100 }],
   quote_updated_at: "2026-10-19T12:00:00Z",
   history_updated_at: "2026-10-18T16:00:00Z",
+  quote_capability: {
+    market: "hk",
+    id: "observe",
+    status: "available",
+    reason: null,
+    coverage: null,
+  },
   quote_error: "报价服务暂时不可用",
   history_error: null,
   notes: ["报价：报价服务暂时不可用"],
@@ -29,8 +36,29 @@ describe("HkObservePanel stability", () => {
     const text = JSON.stringify(renderer.toJSON());
     expect(text).toContain("报价更新时间");
     expect(text).toContain("日 K 更新时间");
+    expect(renderer.root.findByProps({ "aria-label": "港股报价能力" }).children.join("")).toBe("报价能力：可用");
     expect(text).toContain("报价服务暂时不可用");
     expect(renderer.root.findByProps({ children: "刷新行情" })).toBeTruthy();
+  });
+
+  it("shows an unavailable quote capability for an unsupported security currency", async () => {
+    getJsonMock.mockResolvedValue({
+      ...staleResult,
+      security: { ...staleResult.security, currency: "CNY" },
+      quote: null,
+      quote_capability: {
+        market: "hk", id: "observe", status: "unavailable",
+        reason: "Tencent HK quote adapter does not support CNY",
+        coverage: { requested_count: 1, available_count: 0, missing_count: 1, start_date: null, end_date: null, missing_fields: ["quote"] },
+      },
+    });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<HkObservePanel code="00012.HK" watchlist={[]} onWatchlistChange={vi.fn()} />); });
+    const capability = renderer.root.findByProps({ "aria-label": "港股报价能力" });
+    expect(capability.children.join("")).toContain("报价能力：不可用");
+    expect(capability.children.join("")).toContain("Tencent HK quote adapter does not support CNY");
+    const quoteGrid = renderer.root.findByProps({ className: "hk-quote-grid" });
+    expect(quoteGrid.findAllByType("strong")[0].children.join("")).toBe("CNY --");
   });
 
   it("refreshes only after the user presses the refresh button", async () => {

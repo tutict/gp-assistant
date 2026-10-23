@@ -1,3 +1,4 @@
+use crate::market_domain::{CapabilityId, CapabilityStatus, CoverageSummary, CurrencyCode, MarketCapability, MarketId};
 use calamine::{open_workbook_from_rs, Data, Reader, Xlsx};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -17,6 +18,7 @@ const TENCENT_HK_DAILY_KLINE_ENDPOINT: &str =
     "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get";
 const HKEX_MAX_WORKBOOK_BYTES: usize = 16 * 1024 * 1024;
 const HK_REQUEST_TIMEOUT_SECS: u64 = 8;
+const TENCENT_HK_SUPPORTED_QUOTE_CURRENCIES: [&str; 1] = ["HKD"];
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub(crate) struct HkSecurity {
@@ -157,50 +159,129 @@ pub(crate) fn merge_hk_observation_update(
     result
 }
 
-pub(crate) fn parse_tencent_hk_quote(text: &str, code: &str) -> Result<HkQuote, String> {
+fn normalize_hk_currency(value: &str) -> Option<String> {
+    let currency = if value.trim().eq_ignore_ascii_case("RMB") {
+        "CNY"
+    } else {
+        value.trim()
+    };
+    CurrencyCode::new(currency)
+        .ok()
+        .map(|currency| currency.as_str().to_owned())
+}
+
+fn tencent_hk_quote_supports_currency(currency: &CurrencyCode) -> bool {
+    TENCENT_HK_SUPPORTED_QUOTE_CURRENCIES.contains(&currency.as_str())
+}
+
+fn quote_capability_for_security(
+    security: &HkSecurity,
+    quote_currency: Option<&str>,
+    quote_error: Option<&str>,
+) -> MarketCapability {
+    let expected_currency = normalize_hk_currency(&security.currency);
+    let received_currency = quote_currency.and_then(normalize_hk_currency);
+    let (status, reason, quote_available) = match expected_currency.as_deref() {
+        None => (
+            CapabilityStatus::Unavailable,
+            Some(format!(
+                "security master has an invalid trading currency: {}",
+                security.currency
+            )),
+            false,
+        ),
+        Some(expected) if !TENCENT_HK_SUPPORTED_QUOTE_CURRENCIES.contains(&expected) => (
+            CapabilityStatus::Unavailable,
+            Some(format!(
+                "Tencent HK quote adapter does not support {expected}"
+            )),
+            false,
+        ),
+        Some(expected)
+            if received_currency
+                .as_deref()
+                .is_some_and(|value| value != expected) =>
+        {
+            (
+                CapabilityStatus::Unavailable,
+                Some(format!(
+                    "cached quote currency {} does not match security-master currency {expected}",
+                    received_currency.as_deref().unwrap_or_default()
+                )),
+                false,
+            )
+        }
+        Some(_) if received_currency.is_some() => (CapabilityStatus::Available, None, true),
+        Some(_)
+            if quote_error.is_some_and(|error| error.to_ascii_lowercase().contains("currency")) =>
+        {
+            (
+                CapabilityStatus::Unavailable,
+                quote_error.map(str::to_owned),
+                false,
+            )
+        }
+        Some(_) => (
+            CapabilityStatus::Limited,
+            Some(
+                quote_error
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| "no cached Tencent quote is available".to_owned()),
+            ),
+            false,
+        ),
+    };
+    MarketCapability {
+        market: MarketId::Hk,
+        id: CapabilityId::Observe,
+        status,
+        reason,
+        coverage: Some(CoverageSummary {
+            requested_count: 1,
+            available_count: if quote_available { 1 } else { 0 },
+            missing_count: if quote_available { 0 } else { 1 },
+            start_date: None,
+            end_date: None,
+            missing_fields: if quote_available {
+                Vec::new()
+            } else {
+                vec!["quote".to_owned()]
+            },
+        }),
+    }
+}
+
+pub(crate) fn parse_tencent_hk_quote(
+    text: &str,
+    code: &str,
+    expected_currency: &CurrencyCode,
+) -> Result<HkQuote, String> {
     let code = canonical_hk_code(code).ok_or_else(|| format!("invalid HK stock code: {code}"))?;
     let symbol = format!("hk{code}");
-    let line = text
-        .split(';')
-        .find(|line| line.trim_start().starts_with(&format!("v_{symbol}=")))
+    let line = text.split(';').find(|line| line.trim_start().starts_with(&format!("v_{symbol}=")))
         .ok_or_else(|| format!("Tencent returned no quote for {code}"))?;
-    let fields = line
-        .split_once('=')
+    let fields = line.split_once('=')
         .and_then(|(_, value)| value.trim().strip_prefix('"')?.strip_suffix('"'))
-        .unwrap_or_default()
-        .split('~')
-        .collect::<Vec<_>>();
-    if fields.len() < 55 {
-        return Err(format!("Tencent HK quote payload is incomplete for {code}"));
-    }
+        .unwrap_or_default().split('~').collect::<Vec<_>>();
+    if fields.len() < 76 { return Err(format!("Tencent HK quote payload is incomplete for {code}")); }
     let name = fields[1].trim();
     let price = parse_f64(fields.get(3).copied()).filter(|value| *value > 0.0)
         .ok_or_else(|| format!("Tencent HK quote has no valid price for {code}"))?;
     let quote_time = fields.get(30).map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
-    let currency = fields
-        .iter()
-        .find(|value| value.trim().eq_ignore_ascii_case("HKD"))
-        .map(|value| value.trim().to_ascii_uppercase())
-        .unwrap_or_default();
-    if name.is_empty() || currency != "HKD" {
-        return Err(format!("Tencent HK quote has invalid name or currency for {code}"));
+    if name.is_empty() { return Err(format!("Tencent HK quote has no valid name for {code}")); }
+    let currency = fields.get(75).and_then(|value| normalize_hk_currency(value))
+        .ok_or_else(|| format!("Tencent HK quote has no valid currency for {code}"))?;
+    if currency != expected_currency.as_str() {
+        return Err(format!("Tencent HK quote currency mismatch for {code}: expected {}, received {currency}", expected_currency.as_str()));
     }
-
     Ok(HkQuote {
-        code,
-        name: name.to_string(),
-        price,
+        code, name: name.to_string(), price,
         change_pct: parse_f64(fields.get(33).copied()).map(|value| value / 100.0),
         volume_shares: parse_f64(fields.get(6).copied()).and_then(number_to_u64),
         turnover_hkd: parse_f64(fields.get(37).copied()).filter(|value| *value >= 0.0),
-        currency,
-        quote_time,
-        source: "Tencent Finance".to_string(),
-        fetched_at: None,
-        last_error: None,
+        currency, quote_time, source: "Tencent Finance".to_string(), fetched_at: None, last_error: None,
     })
 }
-
 pub(crate) fn parse_tencent_hk_history(text: &str, code: &str) -> Result<Vec<HkDailyBar>, String> {
     let code = canonical_hk_code(code).ok_or_else(|| format!("invalid HK stock code: {code}"))?;
     let symbol = format!("hk{code}");
@@ -235,14 +316,21 @@ pub(crate) fn parse_tencent_hk_history(text: &str, code: &str) -> Result<Vec<HkD
     Ok(bars)
 }
 
-pub(crate) async fn fetch_tencent_hk_quote(client: &reqwest::Client, code: &str) -> Result<HkQuote, String> {
+pub(crate) async fn fetch_tencent_hk_quote(
+    client: &reqwest::Client,
+    code: &str,
+    expected_currency: &CurrencyCode,
+) -> Result<HkQuote, String> {
+    if !tencent_hk_quote_supports_currency(expected_currency) {
+        return Err(format!("Tencent HK quote adapter does not support {} for {code}", expected_currency.as_str()));
+    }
     let canonical = canonical_hk_code(code).ok_or_else(|| format!("invalid HK stock code: {code}"))?;
     let url = format!("{TENCENT_HK_QUOTE_ENDPOINT}hk{canonical}");
     let text = client.get(url).timeout(std::time::Duration::from_secs(HK_REQUEST_TIMEOUT_SECS))
         .send().await.map_err(|error| format!("Tencent HK quote request failed: {error}"))?
         .error_for_status().map_err(|error| format!("Tencent HK quote HTTP error: {error}"))?
         .text().await.map_err(|error| format!("read Tencent HK quote failed: {error}"))?;
-    parse_tencent_hk_quote(&text, &canonical)
+    parse_tencent_hk_quote(&text, &canonical, expected_currency)
 }
 
 pub(crate) async fn fetch_tencent_hk_history(client: &reqwest::Client, code: &str, start: &str, end: &str) -> Result<Vec<HkDailyBar>, String> {
@@ -358,7 +446,7 @@ fn parse_hkex_security_rows(rows: &[Vec<String>]) -> Result<Vec<HkSecurity>, Str
             .unwrap_or_default();
         let currency = row
             .get(columns.currency)
-            .map(|value| value.trim().to_ascii_uppercase())
+            .and_then(|value| normalize_hk_currency(value))
             .unwrap_or_default();
 
         if code.is_empty()
@@ -367,7 +455,7 @@ fn parse_hkex_security_rows(rows: &[Vec<String>]) -> Result<Vec<HkSecurity>, Str
             || !subcategory
                 .to_ascii_lowercase()
                 .starts_with("equity securities (")
-            || currency != "HKD"
+            || currency.is_empty()
             || !seen_codes.insert(code.clone())
         {
             continue;
@@ -386,7 +474,7 @@ fn parse_hkex_security_rows(rows: &[Vec<String>]) -> Result<Vec<HkSecurity>, Str
     }
 
     if securities.is_empty() {
-        return Err("HKEX securities workbook contains no supported HKD equity securities".to_string());
+        return Err("HKEX securities workbook contains no supported ordinary shares".to_string());
     }
     securities.sort_by(|left, right| left.code.cmp(&right.code));
     Ok(securities)
@@ -613,6 +701,7 @@ pub(crate) async fn api_hk_observe(app: AppHandle, payload: serde_json::Value) -
     let security = cache.securities.iter().find(|item| item.code == code).cloned()
         .ok_or_else(|| format!("港股证券列表中没有找到 {code}。"))?;
     let mut notes = Vec::new();
+    let expected_currency = CurrencyCode::new(&security.currency)?;
     if policy == "refresh" || !cache.quotes.contains_key(&code) || !cache.histories.contains_key(&code) {
         let timeout = std::time::Duration::from_secs(HK_REQUEST_TIMEOUT_SECS);
         let client = crate::market::build_tencent_http_client("Mozilla/5.0 GuXuanYou HK observe", timeout)?;
@@ -620,7 +709,7 @@ pub(crate) async fn api_hk_observe(app: AppHandle, payload: serde_json::Value) -
         let result = merge_hk_observation_update(
             &mut cache,
             &code,
-            fetch_tencent_hk_quote(&client, &code).await,
+            fetch_tencent_hk_quote(&client, &code, &expected_currency).await,
             fetch_tencent_hk_history(&client, &code, "2020-01-01", "2050-12-31").await,
             &fetched_at,
         );
@@ -629,8 +718,10 @@ pub(crate) async fn api_hk_observe(app: AppHandle, payload: serde_json::Value) -
             write_hk_market_cache(&path, &cache)?;
         }
     }
-    let quote = cache.quotes.get(&code).cloned();
+    let cached_quote = cache.quotes.get(&code).cloned();
+    let quote = cached_quote.clone().filter(|value| value.currency == security.currency);
     let history = cache.histories.get(&code).cloned();
+    let quote_capability = quote_capability_for_security(&security, cached_quote.as_ref().map(|value| value.currency.as_str()), cache.quote_errors.get(&code).map(String::as_str));
     if let Some(error) = cache.quote_errors.get(&code) {
         if !notes.iter().any(|note| note.contains(error)) { notes.push(format!("报价：{error}")); }
     }
@@ -642,6 +733,7 @@ pub(crate) async fn api_hk_observe(app: AppHandle, payload: serde_json::Value) -
         "market": "hk",
         "security": security,
         "quote": quote,
+        "quote_capability": quote_capability,
         "history": history.as_ref().map(|record| record.bars.clone()).unwrap_or_default(),
         "quote_updated_at": cache.quotes.get(&code).and_then(|value| value.fetched_at.clone()),
         "history_updated_at": history.as_ref().map(|record| record.fetched_at.clone()),
@@ -650,4 +742,122 @@ pub(crate) async fn api_hk_observe(app: AppHandle, payload: serde_json::Value) -
         "notes": notes,
         "stale": stale,
     }))
+}
+
+#[cfg(test)]
+mod currency_contract_tests {
+    use super::{parse_hkex_security_rows, parse_tencent_hk_quote};
+    use crate::market_domain::CurrencyCode;
+
+    #[test]
+    fn hkex_directory_keeps_ordinary_shares_in_each_listed_currency() {
+        let rows = vec![
+            vec![
+                "Stock Code".into(),
+                "Name of Securities".into(),
+                "Category".into(),
+                "Subcategory".into(),
+                "Board Lot".into(),
+                "Trading Currency".into(),
+            ],
+            vec![
+                "00011".into(),
+                "Bank".into(),
+                "Equity".into(),
+                "Equity Securities (Main Board)".into(),
+                "100".into(),
+                "HKD".into(),
+            ],
+            vec![
+                "00012".into(),
+                "Dual Counter".into(),
+                "Equity".into(),
+                "Equity Securities (Main Board)".into(),
+                "100".into(),
+                "RMB".into(),
+            ],
+            vec![
+                "03188".into(),
+                "ETF".into(),
+                "Equity".into(),
+                "Exchange Traded Funds".into(),
+                "100".into(),
+                "HKD".into(),
+            ],
+        ];
+
+        let securities = parse_hkex_security_rows(&rows).unwrap();
+
+        assert_eq!(
+            securities
+                .iter()
+                .map(|item| (item.code.as_str(), item.currency.as_str()))
+                .collect::<Vec<_>>(),
+            [("00011", "HKD"), ("00012", "CNY")]
+        );
+    }
+
+    #[test]
+    fn hk_quote_currency_must_match_security_master() {
+        let cny = CurrencyCode::new("CNY").unwrap();
+        let quote = parse_tencent_hk_quote(
+            include_str!("../testdata/tencent-hk-quote.txt"),
+            "00700.HK",
+            &cny,
+        );
+
+        assert!(quote.unwrap_err().contains("currency"));
+    }
+
+    #[test]
+    fn hk_quote_keeps_the_currency_matching_the_security_master() {
+        let hkd = CurrencyCode::new("HKD").unwrap();
+        let quote = parse_tencent_hk_quote(
+            include_str!("../testdata/tencent-hk-quote.txt"),
+            "00700.HK",
+            &hkd,
+        )
+        .unwrap();
+
+        assert_eq!(quote.code, "00700");
+        assert_eq!(quote.currency, "HKD");
+    }
+
+    #[test]
+    fn quote_capability_is_unavailable_for_an_unsupported_listing_currency() {
+        let security = super::HkSecurity {
+            code: "00012".to_owned(),
+            name: "Dual Counter".to_owned(),
+            currency: "CNY".to_owned(),
+            board_lot: Some(100),
+            security_type: "Equity".to_owned(),
+        };
+
+        let capability = super::quote_capability_for_security(&security, None, None);
+
+        assert_eq!(
+            capability.status,
+            crate::market_domain::CapabilityStatus::Unavailable
+        );
+        assert!(capability.reason.as_deref().unwrap().contains("CNY"));
+    }
+
+    #[test]
+    fn quote_capability_is_available_when_the_provider_matches_the_listing_currency() {
+        let security = super::HkSecurity {
+            code: "00700".to_owned(),
+            name: "Tencent".to_owned(),
+            currency: "HKD".to_owned(),
+            board_lot: Some(100),
+            security_type: "Equity".to_owned(),
+        };
+
+        let capability = super::quote_capability_for_security(&security, Some("HKD"), None);
+
+        assert_eq!(
+            capability.status,
+            crate::market_domain::CapabilityStatus::Available
+        );
+        assert_eq!(capability.coverage.as_ref().unwrap().available_count, 1);
+    }
 }

@@ -22,13 +22,13 @@ fn hong_kong_stock_codes_normalize_without_changing_mainland_codes() {
 }
 
 #[test]
-fn hkex_security_master_workbook_keeps_only_hkd_equity_securities() {
+fn hkex_security_master_workbook_keeps_listed_equity_securities() {
     let securities = crate::hk_market::parse_hkex_security_master(include_bytes!(
         "../testdata/hkex-securities-sample.xlsx"
     ))
     .expect("valid HKEX security workbook should parse");
 
-    assert_eq!(securities.len(), 3);
+    assert_eq!(securities.len(), 4);
     assert_eq!(securities[0].code, "00011");
     assert_eq!(securities[0].name, "Hang Seng Bank Limited");
     assert_eq!(securities[1].code, "00700");
@@ -37,6 +37,8 @@ fn hkex_security_master_workbook_keeps_only_hkd_equity_securities() {
     assert_eq!(securities[1].board_lot, Some(100));
     assert_eq!(securities[2].code, "01099");
     assert_eq!(securities[2].name, "CSPC Pharmaceutical Group Limited");
+    assert_eq!(securities[3].code, "80000");
+    assert_eq!(securities[3].currency, "CNY");
 }
 
 #[test]
@@ -133,6 +135,7 @@ fn tencent_hk_quote_keeps_hkd_and_share_units_without_a_share_multipliers() {
     let quote = crate::hk_market::parse_tencent_hk_quote(
         include_str!("../testdata/tencent-hk-quote.txt"),
         "00700.HK",
+        &crate::market_domain::CurrencyCode::new("HKD").unwrap(),
     )
     .expect("Tencent HK quote fixture should parse");
     assert_eq!(quote.code, "00700");
@@ -161,7 +164,7 @@ fn tencent_hk_history_maps_daily_ohlc_and_share_volume() {
 
 #[test]
 fn tencent_hk_parsers_reject_incomplete_payloads() {
-    assert!(crate::hk_market::parse_tencent_hk_quote("v_hk00700=\"\";", "00700.HK").is_err());
+    assert!(crate::hk_market::parse_tencent_hk_quote("v_hk00700=\"\";", "00700.HK", &crate::market_domain::CurrencyCode::new("HKD").unwrap()).is_err());
     assert!(crate::hk_market::parse_tencent_hk_history("{}", "00700.HK").is_err());
 }
 
