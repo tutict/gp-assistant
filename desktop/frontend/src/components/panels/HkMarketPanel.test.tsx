@@ -48,6 +48,32 @@ describe("HkMarketPanel stability", () => {
     expect(text).toContain("Tencent");
     expect(text).toContain("HKEX unavailable");
   });
+
+  it("preserves the filtered cache and source metadata when refresh succeeds but the follow-up cache read fails", async () => {
+    const cachedItem = { code: "00700", name: "Tencent", currency: "HKD", board_lot: 100, security_type: "Equity" };
+    getJsonMock
+      .mockResolvedValueOnce({ items: [cachedItem], source: "HKEX cache", updated_at: "cached-at" })
+      .mockResolvedValueOnce({ items: [cachedItem], source: "HKEX cache", updated_at: "cached-at" })
+      .mockRejectedValueOnce(new Error("directory cache read failed"));
+    postJsonMock.mockResolvedValue({ security_count: 1 });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<HkMarketPanel onObserveStock={vi.fn()} />); });
+    await act(async () => {
+      renderer.root.findByProps({ id: "hk-stock-search" }).props.onChange({ currentTarget: { value: "腾讯" } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(renderer.root.findByProps({ className: "hk-security-row" })).toBeTruthy();
+    await act(async () => { renderer.root.findByProps({ children: "更新目录" }).props.onClick(); await Promise.resolve(); });
+
+    const text = JSON.stringify(renderer.toJSON());
+    expect(renderer.root.findByProps({ id: "hk-stock-search" }).props.value).toBe("腾讯");
+    expect(renderer.root.findByProps({ className: "hk-security-row" })).toBeTruthy();
+    expect(text).toContain("cached-at");
+    expect(text).toContain("HKEX cache");
+    expect(text).toContain("directory cache read failed");
+    expect(text).not.toContain("港股目录读取失败");
+  });
+
   it("displays the security-master currency without converting CNY to HKD", async () => {
     getJsonMock.mockResolvedValue({
       items: [{ code: "00012", name: "Dual Counter", currency: "CNY", board_lot: 100, security_type: "Equity" }],

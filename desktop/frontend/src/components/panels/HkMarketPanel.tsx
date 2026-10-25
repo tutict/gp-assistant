@@ -14,6 +14,16 @@ export function HkMarketPanel({ onObserveStock }: HkMarketPanelProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const preserveCacheAfterReadFailure = (reason: unknown) => {
+    const message = reason instanceof Error ? reason.message : String(reason);
+    if (items.length) {
+      setError(null);
+      setMeta((previous) => ({ ...previous, last_error: message }));
+    } else {
+      setError(message);
+    }
+  };
+
   const search = async (nextQuery = query) => {
     setLoading(true);
     setError(null);
@@ -22,7 +32,7 @@ export function HkMarketPanel({ onObserveStock }: HkMarketPanelProps) {
       setItems(response.items || []);
       setMeta(response);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      preserveCacheAfterReadFailure(reason);
     } finally { setLoading(false); }
   };
 
@@ -33,9 +43,7 @@ export function HkMarketPanel({ onObserveStock }: HkMarketPanelProps) {
     setError(null);
     try { await postJson("/api/hk/refresh"); await search(); }
     catch (reason) {
-      const message = reason instanceof Error ? reason.message : String(reason);
-      if (items.length) setMeta((previous) => ({ ...previous, last_error: message }));
-      else setError(message);
+      preserveCacheAfterReadFailure(reason);
     }
     finally { setRefreshing(false); }
   };
