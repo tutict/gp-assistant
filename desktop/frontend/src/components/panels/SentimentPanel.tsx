@@ -346,12 +346,14 @@ function StockWorkspace({ code, view, props, state, onSelect }: { code: string; 
     </Sheet>
     <div className="sentiment-main">
       <div className="sentiment-stock-heading">
-        <div>
+        <div className="sentiment-stock-identity">
           <h3>{timelineSnapshot?.stock_name || stock?.name || code || "选择一只股票"} {code && <span>{code}</span>}</h3>
           <p>{timelineSnapshot?.industry || stock?.industry || "行业待补充"} · {timelineSnapshot ? `数据截至 ${sentimentTime(timelineSnapshot.cutoff)}` : "输入代码后读取已有数据"}</p>
         </div>
-        <button type="button" className="btn sentiment-analyze" disabled={!code || !llm || state.loading || busy || state.asking} onClick={() => void state.start(llm)}><Play size={15} />{!llm ? "先配置模型" : busy ? "分析进行中" : analysis ? "重新分析" : "开始分析"}</button>
-         {analysis && <button type="button" className="btn sentiment-parameter-proposal" disabled={busy || state.asking} onClick={createParameterProposal}>按当前情绪优化选股</button>}
+        <div className="sentiment-stock-actions">
+          <button type="button" className="btn sentiment-analyze" disabled={!code || !llm || state.loading || busy || state.asking} onClick={() => void state.start(llm)}><Play size={15} />{!llm ? "先配置模型" : busy ? "分析进行中" : analysis ? "重新分析" : "开始分析"}</button>
+          {analysis && <button type="button" className="btn sentiment-parameter-proposal" disabled={busy || state.asking} onClick={createParameterProposal}>按当前情绪优化选股</button>}
+        </div>
       </div>
       {parameterProposal && <section className="sentiment-parameter-proposal-card" aria-label="情绪选股参数建议">
         <header><h3>情绪选股参数建议</h3><button type="button" className="btn" onClick={() => setParameterProposal(undefined)}>关闭</button></header>

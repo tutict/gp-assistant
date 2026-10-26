@@ -119,6 +119,9 @@
 .sentiment-watchlist-note { padding-top: var(--space-4); }
 .sentiment-main { grid-column: 2; width: 100%; padding: var(--space-4) var(--space-5); min-width: 0; }
 .sentiment-stock-heading { justify-content: space-between; flex-wrap: wrap; padding-bottom: var(--space-3); }
+.sentiment-stock-identity { flex: 1 1 280px; min-width: 0; }
+.sentiment-stock-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
+.sentiment-stock-actions .sentiment-parameter-proposal { margin: 0; }
 .sentiment-stock-heading h3 { font-size: var(--fs-title); }
 .sentiment-stock-heading h3 span { font-family: var(--font-mono); font-size: var(--fs-data); margin-left: var(--space-2); color: var(--text-secondary); font-weight: normal; }
 .sentiment-notice, .sentiment-error { background: var(--surface-2); padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-sm); }
@@ -238,6 +241,10 @@
     padding: var(--space-2) var(--space-3);
     gap: var(--space-2) var(--space-3);
   }
+  .sentiment-panel.is-sentiment > .sentiment-header {
+    padding-block: var(--space-1);
+    row-gap: var(--space-1);
+  }
   .sentiment-title { grid-area: title; }
   .sentiment-tabs { grid-area: tabs; justify-self: end; }
   .sentiment-header > div:first-child > p { display: none; }
@@ -272,10 +279,14 @@
   .sentiment-mobile-watchlist-trigger > small { margin-left: auto; }
   .sentiment-mobile-watchlist-trigger :is(span, small) { font-size: var(--fs-caption); color: var(--text-secondary); }
   .sentiment-main { width: 100%; padding: var(--space-3); }
-  .sentiment-stock-heading { align-items: center; }
-  .sentiment-stock-heading > div { flex: 1; min-width: 0; }
+  .sentiment-stock-heading { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: var(--space-2); }
+  .sentiment-stock-identity { width: 100%; min-width: 0; }
   .sentiment-stock-heading h3 span { display: block; margin: 0; }
   .sentiment-stock-heading p { font-size: var(--fs-caption); }
+  .sentiment-stock-actions { display: grid; grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr); width: 100%; gap: var(--space-2); }
+  .sentiment-stock-actions > .btn { width: 100%; min-width: 0; min-height: var(--touch-primary); padding-inline: var(--space-2); }
+  .sentiment-stock-actions:has(.sentiment-analyze:only-child) { grid-template-columns: minmax(0, 1fr); }
+  .sentiment-stock-actions .sentiment-parameter-proposal { margin: 0; }
   .sentiment-quality { padding: var(--space-2); }
   .sentiment-quality > p { font-size: var(--fs-caption); }
   .sentiment-conclusion { padding: var(--space-3); }
@@ -291,6 +302,9 @@
   .sentiment-progress { flex-wrap: wrap; }
   .sentiment-history button { max-width: 100%; white-space: normal; text-align: left; }
   :root[data-composer-keyboard="open"] .sentiment-panel { max-height: calc(var(--composer-viewport-height) - var(--header-height)); overflow-y: auto; }
+}
+@media (max-width: 380px) {
+  .sentiment-stock-actions { grid-template-columns: minmax(0, 1fr); }
 }
 
 .sentiment-snapshot-switch { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-2) 0 var(--space-3); }
