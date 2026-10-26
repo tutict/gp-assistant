@@ -727,6 +727,14 @@
   }
   .agent-empty-layout {
     gap: 12px;
+    min-height: 100%;
+    grid-template-rows: minmax(0, 1fr) auto;
+    align-content: stretch;
+    margin: 0 auto;
+  }
+  .agent-thread.empty .agent-empty-state {
+    grid-row: 1;
+    align-self: center;
   }
   .agent-message,
 .agent-message.user,
@@ -749,6 +757,7 @@
   .agent-thread.empty .agent-composer-card {
     position: static;
     bottom: auto;
+    grid-row: 2;
     width: 100%;
     margin: 0;
   }

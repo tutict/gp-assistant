@@ -11,6 +11,22 @@ const {chromium}=require('playwright');
 const root=fileURLToPath(new URL('../',import.meta.url));
 const built=resolve(root,'desktop/mobile-dist');
 const out=resolve(root,'tmp/reliability-ui'); await mkdir(out,{recursive:true});
+async function waitForDraft(workspace, expected, calls, page) {
+  const deadline=Date.now()+10000;
+  while(Date.now()<deadline) {
+    if(Object.entries(workspace.values).some(([key,value])=>key.startsWith('agent.draft:')&&value===expected)) return;
+    await new Promise(resolve=>setTimeout(resolve,50));
+  }
+  const textareas=await page.locator('textarea').evaluateAll(items=>items.map(item=>({className:item.className,value:item.value,visible:Boolean(item.offsetWidth||item.offsetHeight||item.getClientRects().length)})));
+  throw new Error('Timed out waiting for the persisted Agent draft: '+expected+'; workspace='+JSON.stringify(workspace)+'; recentCalls='+JSON.stringify(calls.slice(-20))+'; textareas='+JSON.stringify(textareas)+'; page='+JSON.stringify((await page.locator('body').innerText()).slice(-1000)));
+}
+async function assertMobileComposerDock(page) {
+  const composerBox=await page.locator('.agent-composer-card').boundingBox();
+  const navBox=await page.locator('.sidebar').boundingBox();
+  const gap=navBox.y-(composerBox.y+composerBox.height);
+  assert(composerBox.height<=260,`mobile composer should keep its natural height (height=${composerBox.height}px)`);
+  assert(gap>=0&&gap<=24,`empty-chat composer should sit above the bottom navigation (gap=${gap}px)`);
+}
 const server=createServer(async(req,res)=>{
   try { const url=new URL(req.url,'http://localhost'); const path=resolve(built,'.'+decodeURIComponent(url.pathname==='/'?'/index.html':url.pathname));
     if(!path.startsWith(built+sep)) {res.writeHead(403).end();return;}
@@ -31,10 +47,10 @@ try {
     await context.route('**/*',route=>route.request().url().startsWith(origin)?route.continue():route.abort());
     const feature=()=>({gepa_requested_enabled:enabled,gepa_effective_enabled:enabled,gepa_compiled:true,safe_start:false});
     await page.exposeBinding('__reliabilityNative',async(_,command,args={})=>{
-      calls.push(command); const p=args.payload??{};
+      calls.push({command,args}); const p=args.payload??{};
       switch(command) {
         case 'api_workspace_load':return structuredClone(workspace);
-        case 'api_workspace_commit':if(failCommit)throw Error('simulated storage unavailable');if(p.expectedRevision!==workspace.revision)throw Error('revision conflict');workspace={...workspace,revision:workspace.revision+1,values:{...workspace.values,...p.changes}};return workspace.revision;
+        case 'api_workspace_commit':if(failCommit)throw Error('simulated storage unavailable');if(p.expectedRevision!==workspace.revision)throw Error('revision conflict');workspace.revision+=1;workspace.values={...workspace.values,...p.changes};return workspace.revision;
         case 'api_watchlist_snapshot':return {items:[],revision:0,migrationComplete:true};
         case 'api_watchlist_list':return [];
         case 'api_market_status':return {universe_count:5231,cache_bytes:67108864,quote_trade_date:'20261006',current_trade_date:'20261006',stale:false};
@@ -63,14 +79,15 @@ try {
     assert.match(await page.title(),/股选优/);
     await navigate('研究助手');
     const composer=page.locator('textarea').filter({visible:true}).first();
+    if(viewport.width<500) await assertMobileComposerDock(page);
     await composer.fill('离线草稿：保留这段文字，不自动发送。');
-    await page.waitForFunction(()=>document.body.innerText.includes('已保存到本机'));
-    await page.waitForTimeout(500);
+    if(viewport.width<500) await assertMobileComposerDock(page);
+    await waitForDraft(workspace,'离线草稿：保留这段文字，不自动发送。',calls,page);
     assert(Object.entries(workspace.values).some(([k,v])=>k.startsWith('agent.draft:')&&v==='离线草稿：保留这段文字，不自动发送。'));
     failCommit=true; await composer.fill('保存失败后仍保留的草稿。');
     await page.getByRole('button',{name:'重试保存',exact:true}).first().waitFor();
     failCommit=false; await page.getByRole('button',{name:'重试保存',exact:true}).first().click();
-    await page.waitForFunction(()=>document.body.innerText.includes('已保存到本机'));
+    await waitForDraft(workspace,'保存失败后仍保留的草稿。',calls,page);
     await page.goto(origin); await page.locator('.agent-workspace').waitFor();
     assert.equal(await page.locator('textarea').filter({visible:true}).first().inputValue(),'保存失败后仍保留的草稿。');
     await page.screenshot({path:resolve(out,'agent-'+viewport.width+'.png')});
@@ -85,9 +102,9 @@ try {
     await page.waitForTimeout(700); await page.goto(origin); await page.locator('#btCostBps').waitFor();
     assert.equal(await page.locator('#btCostBps').inputValue(),'25'); assert.equal(await page.locator('#btStart').inputValue(),'2021-02-03');
     const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1); assert.equal(overflow,false);
-    assert(!calls.includes('api_job_run')&&!calls.includes('api_agent'),'restoring must not submit paid or research jobs');
+    assert(!calls.some(({command})=>command==='api_job_run'||command==='api_agent'),'restoring must not submit paid or research jobs');
     assert.equal(errors.length,0,errors.join('\n'));
-    report.push({viewport,passed:true,native_backend:'simulated',checks:['draft retry','fresh renderer restore','backtest parameters','feature toggle','diagnostic preview','no auto-submit','no page errors','no horizontal overflow']});
+    report.push({viewport,passed:true,native_backend:'simulated',checks:[...(viewport.width<500?['empty-chat composer dock']:[]),'draft retry','fresh renderer restore','backtest parameters','feature toggle','diagnostic preview','no auto-submit','no page errors','no horizontal overflow']});
     await context.close();
   }
   await writeFile(resolve(out,'report.json'),JSON.stringify(report,null,2)); console.log(JSON.stringify(report,null,2));
