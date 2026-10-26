@@ -10,10 +10,7 @@ use std::{
     env, fs,
     net::IpAddr,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicU64, Ordering as AtomicOrdering},
-        Mutex, OnceLock,
-    },
+    sync::{Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::Manager;
@@ -31,7 +28,8 @@ const NEWS_TIMEOUT_SECS: u64 = 8;
 const NEWS_ANDROID_TIMEOUT_SECS: u64 = 5;
 const NEWS_MAX_CACHE_ITEMS: usize = 2_000;
 static NEWS_CACHE_WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-static NEWS_CACHE_TMP_COUNTER: AtomicU64 = AtomicU64::new(1);
+#[cfg(test)]
+static NEWS_CACHE_TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 pub(crate) async fn api_news_rag_impl(
     app: tauri::AppHandle,
@@ -1756,14 +1754,165 @@ fn news_item(mut item: Value) -> Value {
     item
 }
 
-fn read_news_cache_items(path: &Path) -> Vec<Value> {
-    if !path.exists() {
-        return Vec::new();
+fn read_news_cache_items(path: &Path) -> Result<Vec<Value>, String> {
+    let app_data = news_cache_app_data_dir(path)?;
+    let database_path = crate::external_data::store_path(&app_data);
+    if database_path.exists() {
+        let mut store = crate::external_data::DataStore::open(&database_path)?;
+        if path.exists() {
+            let report = import_news_cache(&mut store, path)?;
+            if !report.promoted {
+                return read_news_cache_legacy(path);
+            }
+        }
+        if store
+            .latest_promoted_legacy_import(
+                crate::external_data::DataDomain::News,
+                crate::external_data::Market::Global,
+                &path.to_string_lossy(),
+            )?
+            .is_some()
+        {
+            return store
+                .read_domain_records(
+                    crate::external_data::DataDomain::News,
+                    crate::external_data::Market::Global,
+                )
+                .map(|records| records.into_iter().map(|record| record.payload).collect());
+        }
+        let records = store.read_domain_records(
+            crate::external_data::DataDomain::News,
+            crate::external_data::Market::Global,
+        )?;
+        if !records.is_empty() {
+            return Ok(records.into_iter().map(|record| record.payload).collect());
+        }
+    } else if path.exists() {
+        let mut store = crate::external_data::DataStore::open(&database_path)?;
+        if import_news_cache(&mut store, path)?.promoted {
+            return store
+                .read_domain_records(
+                    crate::external_data::DataDomain::News,
+                    crate::external_data::Market::Global,
+                )
+                .map(|records| records.into_iter().map(|record| record.payload).collect());
+        }
     }
-    read_json_file(path)
-        .ok()
-        .and_then(|value| value.get("items").and_then(Value::as_array).cloned())
-        .unwrap_or_default()
+    read_news_cache_legacy(path)
+}
+
+fn read_news_cache_legacy(path: &Path) -> Result<Vec<Value>, String> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let value = read_json_file(path)?;
+    Ok(value
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default())
+}
+
+fn import_news_cache(
+    store: &mut crate::external_data::DataStore,
+    path: &Path,
+) -> Result<crate::external_data::LegacyImportReport, String> {
+    crate::external_data::import_legacy_json(
+        store,
+        path,
+        crate::external_data::DataDomain::News,
+        crate::external_data::Market::Global,
+        |value, _, _| {
+            Ok(news_items_to_external_records(
+                value
+                    .get("items")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+            ))
+        },
+    )
+}
+
+fn news_items_to_external_records(items: Vec<Value>) -> Vec<crate::external_data::StoredRecord> {
+    use crate::external_data::{DataDomain, Market, StoredRecord};
+    items
+        .into_iter()
+        .map(news_item)
+        .map(|item| {
+            let id = item
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| news_key(&item));
+            let canonical_url_hash = canonical_news_url_hash(&item);
+            let source = item
+                .get("source")
+                .and_then(Value::as_str)
+                .filter(|source| !source.trim().is_empty())
+                .unwrap_or("unknown_source")
+                .to_string();
+            let source_tier = item
+                .get("source_tier")
+                .and_then(Value::as_str)
+                .unwrap_or(SOURCE_TIER_NEWS)
+                .to_string();
+            let fetched_at = item
+                .get("fetched_at_epoch_ms")
+                .and_then(Value::as_u64)
+                .map(|time| time.to_string())
+                .unwrap_or_else(|| epoch_millis().to_string());
+            let published_at = item
+                .get("published_at")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            StoredRecord::new(
+                DataDomain::News,
+                Market::Global,
+                canonical_url_hash
+                    .as_ref()
+                    .map(|hash| format!("url:{hash}"))
+                    .unwrap_or_else(|| format!("item:{id}")),
+                "item",
+                source,
+                source_tier,
+                fetched_at,
+                published_at.as_deref(),
+                None,
+                "unverified",
+                canonical_url_hash
+                    .map(|hash| vec![format!("canonical_url_sha256:{hash}")])
+                    .unwrap_or_default(),
+                item,
+            )
+        })
+        .collect()
+}
+
+fn canonical_news_url_hash(item: &Value) -> Option<String> {
+    let raw = item.get("url")?.as_str()?.trim();
+    let mut url = reqwest::Url::parse(raw).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    url.set_fragment(None);
+    let mut query = url
+        .query_pairs()
+        .filter(|(key, _)| !key.to_ascii_lowercase().starts_with("utm_"))
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect::<Vec<_>>();
+    query.sort();
+    if query.is_empty() {
+        url.set_query(None);
+    } else {
+        url.query_pairs_mut().clear().extend_pairs(query);
+    }
+    Some(
+        Sha256::digest(url.as_str().as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    )
 }
 
 fn merge_into_news_cache(path: &Path, fetched: Vec<Value>) -> Result<Vec<Value>, String> {
@@ -1771,13 +1920,29 @@ fn merge_into_news_cache(path: &Path, fetched: Vec<Value>) -> Result<Vec<Value>,
     let _guard = cache_lock
         .lock()
         .map_err(|_| "消息缓存写入锁已损坏".to_string())?;
-    let cached = read_news_cache_items(path);
+    let cached = read_news_cache_items(path)?;
     let merged = merge_news_items(cached, fetched);
     write_news_cache_items(path, &merged)?;
     Ok(merged)
 }
 
 fn write_news_cache_items(path: &Path, items: &[Value]) -> Result<(), String> {
+    let app_data = news_cache_app_data_dir(path)?;
+    let database_path = crate::external_data::store_path(&app_data);
+    let mut store = crate::external_data::DataStore::open(&database_path)?;
+    if path.exists() && !import_news_cache(&mut store, path)?.promoted {
+        return write_news_cache_legacy(path, items);
+    }
+    let records = news_items_to_external_records(items.to_vec());
+    store.replace_domain_batch(
+        crate::external_data::DataDomain::News,
+        crate::external_data::Market::Global,
+        &records,
+    )?;
+    Ok(())
+}
+
+fn write_news_cache_legacy(path: &Path, items: &[Value]) -> Result<(), String> {
     let root = path
         .parent()
         .ok_or_else(|| "news cache path has no parent".to_string())?;
@@ -1786,7 +1951,24 @@ fn write_news_cache_items(path: &Path, items: &[Value]) -> Result<(), String> {
         json!({"schema_version": 1, "updated_at_epoch_ms": epoch_millis(), "items": items});
     let bytes =
         serde_json::to_vec(&payload).map_err(|error| format!("序列化消息缓存失败：{error}"))?;
-    crate::durability::atomic_write_json(&path, &bytes)
+    crate::durability::atomic_write_json(path, &bytes)
+}
+
+fn news_cache_app_data_dir(path: &Path) -> Result<PathBuf, String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "news cache path has no parent".to_string())?;
+    if parent.file_name().and_then(|name| name.to_str()) == Some("news") {
+        return parent
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| "news cache path has no app data ancestor".to_string());
+    }
+    let file_stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| "news cache path has no file stem".to_string())?;
+    Ok(parent.join(file_stem))
 }
 
 fn news_cache_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -3189,6 +3371,7 @@ fn redact_secret(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::Ordering as AtomicOrdering;
 
     #[test]
     fn research_llm_protocol_adapter_keeps_prompt_roles_and_response_text() {
@@ -3217,11 +3400,13 @@ mod tests {
 
     #[test]
     fn concurrent_news_cache_merges_preserve_both_refreshes() {
-        let path = std::env::temp_dir().join(format!(
+        let test_root = std::env::temp_dir().join(format!(
             "gp-news-cache-test-{}-{}.json",
             epoch_millis(),
             NEWS_CACHE_TMP_COUNTER.fetch_add(1, AtomicOrdering::Relaxed)
         ));
+        fs::create_dir_all(&test_root).unwrap();
+        let path = test_root.join("news-cache.json");
         let first_path = path.clone();
         let second_path = path.clone();
         let first = std::thread::spawn(move || {
@@ -3242,6 +3427,7 @@ mod tests {
         second.join().unwrap();
 
         let ids = read_news_cache_items(&path)
+            .unwrap()
             .into_iter()
             .filter_map(|item| item["id"].as_str().map(str::to_string))
             .collect::<HashSet<_>>();
@@ -3249,7 +3435,69 @@ mod tests {
             ids,
             HashSet::from(["first".to_string(), "second".to_string()])
         );
-        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(test_root);
+    }
+
+    #[test]
+    fn legacy_news_cache_promotes_and_keeps_its_read_only_copy() {
+        let app_data = std::env::temp_dir().join(format!(
+            "gp-news-migration-test-{}-{}",
+            std::process::id(),
+            NEWS_CACHE_TMP_COUNTER.fetch_add(1, AtomicOrdering::Relaxed)
+        ));
+        let news_dir = app_data.join("news");
+        fs::create_dir_all(&news_dir).unwrap();
+        let path = news_dir.join(NEWS_CACHE_FILE);
+        let legacy = json!({
+            "schema_version": 1,
+            "updated_at_epoch_ms": 1,
+            "items": [{"id":"legacy-1","title":"Legacy","source":"fixture","published_at":"2026-10-19"}]
+        });
+        let legacy_bytes = serde_json::to_vec(&legacy).unwrap();
+        fs::write(&path, &legacy_bytes).unwrap();
+
+        let imported = read_news_cache_items(&path).unwrap();
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0]["id"], "legacy-1");
+        write_news_cache_items(
+            &path,
+            &[json!({"id":"legacy-1","title":"Updated","source":"fixture","published_at":"2026-10-19"})],
+        )
+        .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), legacy_bytes);
+        let reloaded = read_news_cache_items(&path).unwrap();
+        assert_eq!(reloaded[0]["title"], "Updated");
+
+        let _ = fs::remove_dir_all(app_data);
+    }
+
+    #[test]
+    fn news_external_record_identity_uses_canonical_url_hash_when_available() {
+        let first = json!({
+            "id":"source-id-1", "source":"Fixture", "source_tier":"news_media",
+            "url":"https://EXAMPLE.test/story?id=7&utm_source=feed#top",
+            "published_at":"2026-10-20", "title":"Headline"
+        });
+        let second = json!({
+            "id":"source-id-2", "source":"Fixture", "source_tier":"news_media",
+            "url":"https://example.test/story?utm_medium=social&id=7",
+            "published_at":"2026-10-20", "title":"Updated headline"
+        });
+        let first_record = news_items_to_external_records(vec![first]).remove(0);
+        let second_record = news_items_to_external_records(vec![second]).remove(0);
+        assert_eq!(first_record.entity_key, second_record.entity_key);
+        assert!(first_record.entity_key.starts_with("url:"));
+        assert_eq!(
+            first_record.metadata.observed_at.as_deref(),
+            Some("2026-10-20")
+        );
+        assert_eq!(first_record.metadata.disclosed_at, None);
+        assert_eq!(first_record.payload["published_at"], "2026-10-20");
+        assert!(first_record
+            .metadata
+            .quality_flags
+            .iter()
+            .any(|flag| flag.starts_with("canonical_url_sha256:")));
     }
 
     #[test]

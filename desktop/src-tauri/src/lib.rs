@@ -1,6 +1,7 @@
 mod credentials;
 mod diagnostics;
 mod durability;
+mod external_data;
 mod jobs;
 mod user_backup;
 mod workspace;
@@ -119,6 +120,13 @@ pub fn run() {
             core_api::core_agent_with_data,
             core_api::core_mobile_stock_skill,
             api_health,
+            external_data::api_data_status,
+            external_data::api_data_refresh,
+            external_data::api_data_cleanup_preview,
+            external_data::api_data_cleanup,
+            external_data::api_data_resume_explicit,
+            external_data::api_data_refresh_status,
+            hk_market::api_explicit_hk_refresh,
             screening::api_strategies,
             market::api_market_status,
             market_capabilities::api_market_capabilities,
@@ -130,6 +138,8 @@ pub fn run() {
             hk_market::api_hk_market_refresh,
             hk_market::api_hk_stock_search,
             hk_market::api_hk_observe,
+            hk_market::api_hk_financial_status,
+            hk_market::api_hk_financial_refresh,
             screening::api_screen,
             screening::api_sector_screen,
             screening::api_custom_screen,

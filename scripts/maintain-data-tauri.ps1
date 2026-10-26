@@ -39,29 +39,25 @@ function Measure-TreeBytes {
     return [int64]((Get-ChildItem -LiteralPath $Path -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum)
 }
 
-function Remove-IfExists {
-    param([string]$Path)
-    if (-not (Test-Path -LiteralPath $Path)) { return $false }
-    Remove-Item -LiteralPath $Path -Recurse -Force
-    return $true
-}
-
 $root = Resolve-AppDataDir $AppDataDir
 $marketPath = Join-Path $root 'market\mobile-market-data.json'
 $newsPath = Join-Path $root 'news\news-cache.json'
+$externalDataDirectory = Join-Path $root 'external-data'
+$externalDataPath = Join-Path $externalDataDirectory 'external-data.sqlite'
 $ragPath = Join-Path $root 'rag\rag-pack.json'
 $upstreamDesktopPath = Join-Path $root 'upstream_rag_desktop'
 $upstreamMobilePath = Join-Path $root 'upstream_rag_mobile'
 
 if ($Action -eq 'prune') {
     $removed = @()
-    foreach ($path in @($marketPath, $newsPath, $ragPath, $upstreamDesktopPath)) {
-        if (Remove-IfExists $path) { $removed += $path }
-    }
 }
 
 $market = Get-FileInfoJson $marketPath
 $news = Get-FileInfoJson $newsPath
+$externalData = Get-FileInfoJson $externalDataPath
+$externalDataWal = Get-FileInfoJson ($externalDataPath + '-wal')
+$externalDataShm = Get-FileInfoJson ($externalDataPath + '-shm')
+$externalDataBytes = [int64]$externalData.bytes + [int64]$externalDataWal.bytes + [int64]$externalDataShm.bytes
 $rag = Get-FileInfoJson $ragPath
 $result = @{
     runtime = 'tauri-appdata'
@@ -71,14 +67,24 @@ $result = @{
     caches = @{
         market = $market
         news = $news
+        external_data = @{
+            database = $externalData
+            wal = $externalDataWal
+            shared_memory = $externalDataShm
+            bytes = $externalDataBytes
+            warning_threshold_bytes = [int64]200 * 1024 * 1024
+            capacity_warning = $externalDataBytes -ge ([int64]200 * 1024 * 1024)
+            cleanup = 'managed by the app after preview and explicit confirmation; excluded from this script prune action'
+        }
         rag_pack = $rag
         upstream_rag_desktop = @{ exists = (Test-Path -LiteralPath $upstreamDesktopPath); path = $upstreamDesktopPath; bytes = Measure-TreeBytes $upstreamDesktopPath }
         upstream_rag_mobile = @{ exists = (Test-Path -LiteralPath $upstreamMobilePath); path = $upstreamMobilePath; bytes = Measure-TreeBytes $upstreamMobilePath }
     }
-    cache_bytes = [int64]$market.bytes + [int64]$news.bytes + [int64]$rag.bytes + (Measure-TreeBytes $upstreamDesktopPath) + (Measure-TreeBytes $upstreamMobilePath)
+    cache_bytes = [int64]$market.bytes + [int64]$news.bytes + $externalDataBytes + [int64]$rag.bytes + (Measure-TreeBytes $upstreamDesktopPath) + (Measure-TreeBytes $upstreamMobilePath)
     notes = @(
-        'This script inspects and prunes the Tauri app-data caches without the retired service stack.',
-        'Run .\start-tauri-dev.bat and use the app data-maintenance panel for online Tencent refresh, which requires Tauri AppHandle progress events.'
+        'This script inspects the Tauri app-data caches without the retired service stack.',
+        'Prune is inspection-only so legacy recovery files are preserved; use the app preview and confirmation flow to clean selected external data domains.',
+        'The external-data database is rebuildable provider cache and is excluded from encrypted user backups.'
     )
 }
 if ($Action -eq 'prune') { $result.removed = $removed }

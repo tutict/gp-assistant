@@ -183,7 +183,7 @@ impl serde::Serialize for Quantity {
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ObservationMetadata {
     pub(crate) source_id: String,
-    pub(crate) fetched_at: String,
+    pub(crate) fetched_at: Option<String>,
     pub(crate) observed_at: Option<String>,
     pub(crate) disclosed_at: Option<String>,
     pub(crate) report_period: Option<String>,
@@ -276,7 +276,7 @@ mod tests {
 
         let metadata = ObservationMetadata {
             source_id: "hkex".to_owned(),
-            fetched_at: "2026-10-22T00:00:00Z".to_owned(),
+            fetched_at: Some("2026-10-22T00:00:00Z".to_owned()),
             observed_at: None,
             disclosed_at: None,
             report_period: None,

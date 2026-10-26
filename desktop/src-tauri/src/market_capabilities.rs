@@ -8,6 +8,7 @@ use tauri::AppHandle;
 pub(crate) struct CapabilityEvidence {
     pub(crate) id: CapabilityId,
     pub(crate) adapter_registered: bool,
+    pub(crate) release_gate_open: bool,
     pub(crate) coverage_complete: bool,
     pub(crate) usable_records: u64,
     pub(crate) expected_records: Option<u64>,
@@ -74,6 +75,22 @@ pub(crate) fn capabilities_for_market(
                 };
             }
 
+            if !item.release_gate_open {
+                return MarketCapability {
+                    market,
+                    id,
+                    status: if item.usable_records > 0 {
+                        CapabilityStatus::Limited
+                    } else {
+                        CapabilityStatus::Unavailable
+                    },
+                    reason: Some(item.reason.clone().unwrap_or_else(|| {
+                        "provider, freshness, or classification evidence has not met the release gate".to_owned()
+                    })),
+                    coverage: item.coverage.clone(),
+                };
+            }
+
             let count_matches = item
                 .expected_records
                 .map(|expected| expected > 0 && expected == item.usable_records)
@@ -105,6 +122,7 @@ pub(crate) fn capabilities_for_market(
 fn evidence(
     id: CapabilityId,
     adapter_registered: bool,
+    release_gate_open: bool,
     coverage_complete: bool,
     usable_records: u64,
     expected_records: Option<u64>,
@@ -114,6 +132,7 @@ fn evidence(
     CapabilityEvidence {
         id,
         adapter_registered,
+        release_gate_open,
         coverage_complete,
         usable_records,
         expected_records,
@@ -133,15 +152,16 @@ fn bool_value(value: &Value, key: &str) -> bool {
 fn cn_evidence(app: &AppHandle) -> Result<Vec<CapabilityEvidence>, String> {
     let status = crate::market::market_data_status(app)?;
     let universe_count = count_value(&status, "universe_count");
+    let quote_requested = count_value(&status, "quote_requested");
+    let quote_observed = count_value(&status, "quote_observed");
     let directory_ready = universe_count > 0;
-    let observe_ready = directory_ready && !bool_value(&status, "stale");
-    let coverage = Some(CoverageSummary {
+    let directory_coverage = Some(CoverageSummary {
         requested_count: universe_count,
         available_count: universe_count,
         missing_count: 0,
         start_date: None,
         end_date: None,
-        missing_fields: Vec::new(),
+        missing_fields: vec!["security_universe_completeness".to_owned()],
     });
 
     Ok(vec![
@@ -149,34 +169,103 @@ fn cn_evidence(app: &AppHandle) -> Result<Vec<CapabilityEvidence>, String> {
             CapabilityId::SecurityDirectory,
             true,
             directory_ready,
+            false,
             universe_count,
             Some(universe_count),
-            coverage.clone(),
-            (!directory_ready).then_some("CN security directory cache is empty"),
+            directory_coverage,
+            Some("CN directory cache is readable, but complete market-universe coverage is not reported"),
         ),
         evidence(
             CapabilityId::Observe,
-            true,
-            observe_ready,
-            universe_count,
-            Some(universe_count),
-            coverage,
-            (!observe_ready).then_some("CN quote/history cache is stale or incomplete"),
+            directory_ready,
+            directory_ready,
+            false,
+            quote_observed,
+            Some(quote_requested),
+            Some(CoverageSummary {
+                requested_count: quote_requested,
+                available_count: quote_observed,
+                missing_count: quote_requested.saturating_sub(quote_observed),
+                start_date: None,
+                end_date: None,
+                missing_fields: vec!["per_security_history_coverage".to_owned()],
+            }),
+            Some("market-wide quote freshness does not report per-security observation history coverage"),
         ),
         evidence(
             CapabilityId::FinancialSnapshot,
             true,
             true,
-            1,
-            None,
-            None,
-            Some("CN financial snapshot follows the existing refresh contract"),
+            false,
+            0,
+            Some(universe_count),
+            Some(CoverageSummary {
+                requested_count: universe_count,
+                available_count: 0,
+                missing_count: universe_count,
+                start_date: None,
+                end_date: None,
+                missing_fields: vec!["point_in_time_financials".to_owned()],
+            }),
+            Some("CN point-in-time financial coverage is not reported to the capability registry"),
         ),
-        evidence(CapabilityId::Screening, true, true, 1, None, None, None),
-        evidence(CapabilityId::Backtest, true, true, 1, None, None, None),
-        evidence(CapabilityId::NewsResearch, true, true, 1, None, None, None),
-        evidence(CapabilityId::Sentiment, true, true, 1, None, None, None),
-        evidence(CapabilityId::ResearchAgent, true, true, 1, None, None, None),
+        evidence(
+            CapabilityId::Screening,
+            directory_ready,
+            directory_ready,
+            false,
+            quote_observed,
+            Some(quote_requested),
+            Some(CoverageSummary {
+                requested_count: quote_requested,
+                available_count: quote_observed,
+                missing_count: quote_requested.saturating_sub(quote_observed),
+                start_date: None,
+                end_date: None,
+                missing_fields: vec!["screening_field_coverage".to_owned()],
+            }),
+            Some("screening field coverage is not reported for the current quote snapshot"),
+        ),
+        evidence(
+            CapabilityId::Backtest,
+            true,
+            true,
+            false,
+            0,
+            None,
+            None,
+            Some("point-in-time history and corporate-action coverage is not reported"),
+        ),
+        evidence(
+            CapabilityId::NewsResearch,
+            true,
+            true,
+            false,
+            0,
+            None,
+            None,
+            Some("news source coverage and reuse rights are not registered"),
+        ),
+        evidence(
+            CapabilityId::Sentiment,
+            true,
+            true,
+            false,
+            0,
+            None,
+            None,
+            Some("sentiment evidence coverage is not registered"),
+        ),
+        evidence(
+            CapabilityId::ResearchAgent,
+            true,
+            true,
+            false,
+            0,
+            None,
+            None,
+            Some("market-scoped agent tool evidence is not registered"),
+        ),
     ])
 }
 
@@ -188,14 +277,30 @@ fn hk_evidence(app: &AppHandle) -> Result<Vec<CapabilityEvidence>, String> {
         && !cache.securities_source.trim().is_empty()
         && cache.securities_updated_at.is_some()
         && cache.securities_last_error.is_none();
+    let verified_ordinary_count = cache
+        .securities
+        .iter()
+        .filter(|security| {
+            security.classification_status
+                == crate::hk_market::HkClassificationStatus::VerifiedOrdinaryShare
+        })
+        .count() as u64;
     let observe_count = cache
         .securities
         .iter()
         .filter(|security| {
+            if security.classification_status
+                != crate::hk_market::HkClassificationStatus::VerifiedOrdinaryShare
+            {
+                return false;
+            }
             let has_quote = cache
                 .quotes
                 .get(&security.code)
-                .map(|quote| quote.last_error.is_none())
+                .map(|quote| {
+                    quote.last_error.is_none()
+                        && security.cached_quote_matches_security_master(quote)
+                })
                 .unwrap_or(false);
             let has_history = cache
                 .histories
@@ -208,10 +313,6 @@ fn hk_evidence(app: &AppHandle) -> Result<Vec<CapabilityEvidence>, String> {
                 && !cache.history_errors.contains_key(&security.code)
         })
         .count() as u64;
-    let observe_ready = expected > 0
-        && observe_count == expected
-        && cache.quote_errors.is_empty()
-        && cache.history_errors.is_empty();
     let fx_ready = cache
         .fx_rate
         .as_ref()
@@ -222,6 +323,11 @@ fn hk_evidence(app: &AppHandle) -> Result<Vec<CapabilityEvidence>, String> {
             .securities
             .iter()
             .filter(|security| {
+                if security.classification_status
+                    != crate::hk_market::HkClassificationStatus::VerifiedOrdinaryShare
+                {
+                    return false;
+                }
                 let verified_snapshot = cache
                     .financials
                     .get(&security.code)
@@ -245,10 +351,7 @@ fn hk_evidence(app: &AppHandle) -> Result<Vec<CapabilityEvidence>, String> {
     } else {
         0
     };
-    let financial_ready = expected > 0
-        && financial_count == expected
-        && cache.financial_errors.is_empty()
-        && cache.disclosure_errors.is_empty();
+    let financial_expected = verified_ordinary_count;
     let coverage = |available: u64| CoverageSummary {
         requested_count: expected,
         available_count: available,
@@ -257,38 +360,55 @@ fn hk_evidence(app: &AppHandle) -> Result<Vec<CapabilityEvidence>, String> {
         end_date: None,
         missing_fields: Vec::new(),
     };
+    let directory_reason = if directory_ready {
+        "HKEX directory cache is readable; live refresh remains disabled pending written automated-access permission"
+    } else if expected > 0 {
+        "HKEX directory cache is stale or its previous refresh failed; live refresh remains disabled pending permission review"
+    } else {
+        "HKEX directory cache is empty; live refresh remains disabled pending written automated-access permission"
+    };
 
     Ok(vec![
         evidence(
             CapabilityId::SecurityDirectory,
             true,
-            directory_ready,
-            if directory_ready { expected } else { 0 },
+            false,
+            false,
+            expected,
             Some(expected),
-            Some(coverage(if directory_ready { expected } else { 0 })),
-            (!directory_ready).then_some("HKEX security directory cache is empty or stale"),
+            Some(coverage(expected)),
+            Some(directory_reason),
         ),
         evidence(
             CapabilityId::Observe,
             true,
-            observe_ready,
+            false,
+            false,
             observe_count,
             Some(expected),
             Some(coverage(observe_count)),
-            (!observe_ready).then_some("HK quote/history coverage is incomplete"),
+            Some("ordinary-share classification is unverified and Tencent quote/history usage terms are unresolved"),
         ),
         evidence(
             CapabilityId::FinancialSnapshot,
             true,
-            financial_ready,
+            false,
+            false,
             financial_count,
-            Some(expected),
-            Some(coverage(financial_count)),
-            (!financial_ready)
-                .then_some("HK verified financial, FX, or disclosure coverage is incomplete"),
+            Some(financial_expected),
+            Some(CoverageSummary {
+                requested_count: financial_expected,
+                available_count: financial_count,
+                missing_count: financial_expected.saturating_sub(financial_count),
+                start_date: None,
+                end_date: None,
+                missing_fields: vec!["provider_readiness".to_owned()],
+            }),
+            Some("Eastmoney and HKEXnews refreshes are disabled pending usage-term review; only ECB-attributed FX refresh is enabled"),
         ),
         evidence(
             CapabilityId::Screening,
+            false,
             false,
             false,
             0,
@@ -300,6 +420,7 @@ fn hk_evidence(app: &AppHandle) -> Result<Vec<CapabilityEvidence>, String> {
             CapabilityId::Backtest,
             false,
             false,
+            false,
             0,
             None,
             None,
@@ -307,6 +428,7 @@ fn hk_evidence(app: &AppHandle) -> Result<Vec<CapabilityEvidence>, String> {
         ),
         evidence(
             CapabilityId::NewsResearch,
+            false,
             false,
             false,
             0,
@@ -318,6 +440,7 @@ fn hk_evidence(app: &AppHandle) -> Result<Vec<CapabilityEvidence>, String> {
             CapabilityId::Sentiment,
             false,
             false,
+            false,
             0,
             None,
             None,
@@ -325,6 +448,7 @@ fn hk_evidence(app: &AppHandle) -> Result<Vec<CapabilityEvidence>, String> {
         ),
         evidence(
             CapabilityId::ResearchAgent,
+            false,
             false,
             false,
             0,
@@ -384,6 +508,7 @@ mod tests {
             &[CapabilityEvidence {
                 id: CapabilityId::Observe,
                 adapter_registered: true,
+                release_gate_open: true,
                 coverage_complete: false,
                 usable_records: 1,
                 expected_records: Some(2),
@@ -415,6 +540,7 @@ mod tests {
             &[CapabilityEvidence {
                 id: CapabilityId::FinancialSnapshot,
                 adapter_registered: true,
+                release_gate_open: true,
                 coverage_complete: false,
                 usable_records: 1,
                 expected_records: None,
@@ -437,6 +563,7 @@ mod tests {
             &[CapabilityEvidence {
                 id: CapabilityId::NewsResearch,
                 adapter_registered: true,
+                release_gate_open: true,
                 coverage_complete: true,
                 usable_records: 0,
                 expected_records: None,
@@ -459,6 +586,7 @@ mod tests {
             &[CapabilityEvidence {
                 id: CapabilityId::Observe,
                 adapter_registered: true,
+                release_gate_open: true,
                 coverage_complete: true,
                 usable_records: 1,
                 expected_records: Some(2),
@@ -472,6 +600,33 @@ mod tests {
             .unwrap();
 
         assert_eq!(observe.status, CapabilityStatus::Limited);
+    }
+
+    #[test]
+    fn cached_records_never_open_a_closed_provider_release_gate() {
+        let result = capabilities_for_market(
+            MarketId::Hk,
+            &[CapabilityEvidence {
+                id: CapabilityId::Observe,
+                adapter_registered: true,
+                release_gate_open: false,
+                coverage_complete: true,
+                usable_records: 1,
+                expected_records: Some(1),
+                coverage: None,
+                reason: Some("provider terms are unresolved".to_owned()),
+            }],
+        );
+        let observe = result
+            .iter()
+            .find(|item| item.id == CapabilityId::Observe)
+            .unwrap();
+
+        assert_eq!(observe.status, CapabilityStatus::Limited);
+        assert_eq!(
+            observe.reason.as_deref(),
+            Some("provider terms are unresolved")
+        );
     }
 
     #[test]
