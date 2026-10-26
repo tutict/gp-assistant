@@ -6,7 +6,6 @@ import { FilterBar } from "./FilterBar";
 
 vi.mock("../lib/tauri", () => ({
   getTauriInvoke: vi.fn(() => null),
-  isMarketStatusStale: vi.fn(() => false),
   postJson: vi.fn(),
   refreshTauriMarketData: vi.fn(),
 }));
@@ -78,6 +77,57 @@ describe("FilterBar", () => {
     expect(status.props.className).toContain("warning");
     expect(status.findByType("strong").children.join("")).toBe("行情待更新");
     expect(JSON.stringify(renderer.toJSON())).not.toContain("已同步");
+  });
+
+  it("does not refresh a stale stock pool until the user presses refresh", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<FilterBar status={{ universe_count: 5231, stale: true }} />);
+      await Promise.resolve();
+    });
+
+    expect(postJsonMock).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ className: "screen-toolbar-refresh-btn" })).toBeTruthy();
+  });
+
+  it("requires a matching cleanup preview before confirming external data removal", async () => {
+    postJsonMock
+      .mockResolvedValueOnce({
+        preview_token: "preview-1",
+        record_count: 3,
+        payload_bytes: 128,
+        domains: [{ domain: "quote", record_count: 3, payload_bytes: 128 }],
+      })
+      .mockResolvedValueOnce({ removed_records: 3, status: { record_count: 0 } });
+
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<FilterBar status={{ external_data: { available: true, record_count: 3, database_bytes: 128 } }} />);
+    });
+    await act(async () => {
+      renderer.root.findByProps({ "aria-label": "股票池维护设置" }).props.onClick({ preventDefault: vi.fn() });
+    });
+
+    const cleanupButton = () => renderer.root.findAllByProps({ className: "action-btn screen-refresh-clear-btn" })[0];
+    await act(async () => {
+      cleanupButton().props.onClick();
+      await Promise.resolve();
+    });
+    expect(postJsonMock).toHaveBeenNthCalledWith(1, "/api/data/cleanup/preview", {
+      domains: ["quote", "daily_history"],
+      cutoff: undefined,
+    });
+    expect(renderer.root.findAll((node) => node.type === "button" && node.children.join("") === "确认清理")).toHaveLength(1);
+
+    await act(async () => {
+      renderer.root.findAll((node) => node.type === "button" && node.children.join("") === "确认清理")[0].props.onClick();
+      await Promise.resolve();
+    });
+    expect(postJsonMock).toHaveBeenNthCalledWith(2, "/api/data/cleanup", {
+      domains: ["quote", "daily_history"],
+      cutoff: undefined,
+      preview_token: "preview-1",
+    });
   });
 
   it("keeps logs collapsed after refresh and opens them on demand", async () => {

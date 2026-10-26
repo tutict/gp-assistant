@@ -5,11 +5,10 @@ import { useFontScale } from "./hooks/useFontScale";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useWorkspaceState, useWorkspaceStore, useWorkspaceStatus, WorkspaceCredentialsReady } from "./hooks/useWorkspace";
 import { WorkspaceErrorBoundary } from "./components/ui/ErrorBoundary";
-import { getJson, isMobileTauriRuntime } from "./lib/tauri";
+import { getJson, isMobileTauriRuntime, isTauriRuntime, postJson } from "./lib/tauri";
 import { createPersistentWatchlistSetter, filterWatchlistByMarket, loadLocalWatchlistSnapshot, loadPersistentWatchlist } from "./lib/watchlistStore";
 import { useLlmCredentials } from "./hooks/useLlmCredentials";
 import { buildScreenCriteria } from "./lib/contracts";
-import { refreshResearchWatchlist } from "./lib/researchRefresh";
 import { createSettingsRegistry } from "./lib/settingsRegistry";
 import { DEFAULT_FILTER_CRITERIA } from "./lib/screenCriteria";
 import { Header } from "./components/Header";
@@ -22,6 +21,8 @@ import { HkObservePanel } from "./components/panels/HkObservePanel";
 import { HkUnavailablePanel } from "./components/panels/HkUnavailablePanel";
 import { PanelFeedback } from "./components/ui/PanelFeedback";
 import type { AdaptiveScreenRequest, DataStatus, ScreenCriteria, WatchlistItem } from "./types";
+import type { CapabilityId, MarketCapability, MarketId } from "./lib/marketDomain";
+import { marketTransition, shouldApplyMarketCapabilities } from "./lib/marketCapabilities";
 import {
   consumeBacktestRouteRequest,
   nextBacktestRouteRequest,
@@ -52,7 +53,6 @@ function isResearchView(view: ViewKey): view is ResearchView {
 type StockRouteRequest = { code: string; requestId: number };
 type NewsRouteRequest = StockRouteRequest & { view?: "sources" | "sentiment" };
 type AgentDraftRequest = { prompt: string; requestId: number };
-const RESEARCH_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 
 const loadObservePanel = () => import("./components/panels/ObservePanel");
 const loadBacktestPanel = () => import("./components/panels/BacktestPanel");
@@ -83,7 +83,9 @@ export default function App({ onMounted }: AppProps) {
   const [backtestDefaultApplied, setBacktestDefaultApplied] = useState(false);
   const [view, setView] = useWorkspaceState<ViewKey>("app.view", viewFromHash(window.location.hash));
   const [selectedStock, setSelectedStock] = useWorkspaceState("app.stock", "");
-  const [market, setMarket] = useWorkspaceState<"cn" | "hk">("app.market", "cn");
+  const [market, setMarket] = useWorkspaceState<MarketId>("app.market", "cn");
+  const marketRef = useRef(market);
+  marketRef.current = market;
   const [backtestSource, setBacktestSource] = useWorkspaceState<"criteria" | "watchlist">("app.backtest.source", "criteria");
   const [visitedResearch, setVisitedResearch] = useState<Record<ResearchView, boolean>>(() => {
     const initial = viewFromHash(window.location.hash);
@@ -103,12 +105,14 @@ export default function App({ onMounted }: AppProps) {
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [marketStatus, setMarketStatus] = useState<DataStatus | null>(null);
+  const [marketCapabilities, setMarketCapabilities] = useState<MarketCapability[] | null>(null);
+  const [marketCapabilityError, setMarketCapabilityError] = useState<string | null>(null);
+  const marketCapabilitiesRequestIdRef = useRef(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Persistent state
   const [watchlistLocalSnapshot] = useState<WatchlistItem[]>(() => loadLocalWatchlistSnapshot());
   const [watchlist, setWatchlistState] = useState<WatchlistItem[]>(watchlistLocalSnapshot);
-  const researchRefreshStateRef = useRef<{ lastRun: number; running: boolean; signature: string; controller?: AbortController }>({ lastRun: 0, running: false, signature: "" });
   const { llmSettings, setLlmSettings: saveLlmSettings, credentialsReady, credentialError, credentialMigrationPending, retryCredentialMigration } = useLlmCredentials();
   const setLlmSettings = useCallback<typeof saveLlmSettings>(async (value) => {
     if (!credentialsReady) throw new Error("密钥存储仍在初始化，请稍后再试。");
@@ -124,46 +128,23 @@ export default function App({ onMounted }: AppProps) {
 
   useEffect(() => {
     let disposed = false;
-    const signature = watchlist.map((item) => item.code.trim().toUpperCase()).sort().join("|");
-    if (researchRefreshStateRef.current.signature !== signature) {
-      researchRefreshStateRef.current.signature = signature;
-      researchRefreshStateRef.current.lastRun = 0;
-    }
-    const maybeRefresh = async () => {
-      const state = researchRefreshStateRef.current;
-      if (disposed || state.running || !watchlist.length
-        || document.visibilityState !== "visible" || !navigator.onLine) return;
-      const now = Date.now();
-      if (now - state.lastRun < RESEARCH_REFRESH_INTERVAL_MS) return;
-      state.running = true;
-      state.lastRun = now;
-      const controller = new AbortController();
-      state.controller = controller;
-      try {
-        const result = await refreshResearchWatchlist(watchlist, undefined, controller.signal);
-        if (result.failed.length) {
-          console.warn("background research refresh partially failed", result.failed);
-        }
-      } finally {
-        state.running = false;
-      }
+    let resuming = false;
+    const resumeExplicitRuns = () => {
+      if (!isTauriRuntime() || disposed || resuming || document.visibilityState !== "visible" || !navigator.onLine) return;
+      resuming = true;
+      void postJson("/api/data/resume-explicit", {})
+        .catch((error) => console.warn("explicit external data recovery failed", error))
+        .finally(() => { resuming = false; });
     };
-    const handleForeground = () => {
-      if (document.visibilityState !== "visible") { researchRefreshStateRef.current.controller?.abort(); return; }
-      void maybeRefresh();
-    };
-    const timer = window.setInterval(handleForeground, 60 * 1000);
-    document.addEventListener("visibilitychange", handleForeground);
-    window.addEventListener("online", handleForeground);
-    void maybeRefresh();
+    document.addEventListener("visibilitychange", resumeExplicitRuns);
+    window.addEventListener("online", resumeExplicitRuns);
+    resumeExplicitRuns();
     return () => {
       disposed = true;
-      researchRefreshStateRef.current.controller?.abort();
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", handleForeground);
-      window.removeEventListener("online", handleForeground);
+      document.removeEventListener("visibilitychange", resumeExplicitRuns);
+      window.removeEventListener("online", resumeExplicitRuns);
     };
-  }, [watchlist]);
+  }, []);
 
   // Filter criteria state
   const [criteria, setCriteria] = useWorkspaceState("app.criteria", DEFAULT_FILTER_CRITERIA);
@@ -179,17 +160,34 @@ export default function App({ onMounted }: AppProps) {
 
   useEffect(() => {
     let cancelled = false;
+    if (market === "hk") {
+      setMarketStatus(null);
+      return () => { cancelled = true; };
+    }
     void getJson<DataStatus>("/api/data-sources/status")
-      .then((status) => {
-        if (!cancelled) setMarketStatus(status);
-      })
-      .catch(() => {
-        if (!cancelled) setMarketStatus(null);
-      });
+      .then((status) => { if (!cancelled) setMarketStatus(status); })
+      .catch(() => { if (!cancelled) setMarketStatus(null); });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [market]);
+
+  useEffect(() => {
+    const requestId = ++marketCapabilitiesRequestIdRef.current;
+    let cancelled = false;
+    setMarketCapabilities(null);
+    setMarketCapabilityError(null);
+    void getJson<MarketCapability[]>(`/api/market/capabilities?market=${market}`)
+      .then((capabilities) => {
+        if (cancelled || !shouldApplyMarketCapabilities(market, marketRef.current, requestId, marketCapabilitiesRequestIdRef.current)) return;
+        setMarketCapabilities(capabilities);
+      })
+      .catch((error) => {
+        if (cancelled || !shouldApplyMarketCapabilities(market, marketRef.current, requestId, marketCapabilitiesRequestIdRef.current)) return;
+        setMarketCapabilityError(error instanceof Error ? error.message : String(error));
+      });
+    return () => { cancelled = true; };
+  }, [market]);
 
   // Hash routing
   useEffect(() => {
@@ -252,15 +250,26 @@ export default function App({ onMounted }: AppProps) {
     navigate("observe");
   }, [navigate, setSelectedStock]);
 
-  const changeMarket = useCallback((next: "cn" | "hk") => {
-    if (next === market) return;
-    setMarket(next);
-    setSelectedStock("");
-    setObserveRequest(null);
-    setNewsRequest(null);
-    setBacktestRouteRequest(null);
+  const changeMarket = useCallback((next: MarketId) => {
+    const transition = marketTransition(market, next);
+    if (!transition) return;
+    marketRef.current = transition.market;
+    if (transition.clearCapabilities) {
+      marketCapabilitiesRequestIdRef.current += 1;
+      setMarketCapabilities(null);
+      setMarketCapabilityError(null);
+    }
+    setMarket(transition.market);
+    if (transition.clearSelection) setSelectedStock("");
+    if (transition.clearObserveRequest) setObserveRequest(null);
+    if (transition.clearNewsRequest) setNewsRequest(null);
+    if (transition.clearBacktestRequest) setBacktestRouteRequest(null);
     setMarketStatus(null);
   }, [market, setMarket, setSelectedStock]);
+
+  const marketCapability = useCallback((id: CapabilityId) =>
+    marketCapabilities?.find((item) => item.id === id) || null,
+  [marketCapabilities]);
 
   const runCurrentCriteriaBacktest = useCallback((screenSpec?: AdaptiveScreenRequest, criteriaSnapshot?: FilterCriteria) => {
     setBacktestSource("criteria");
@@ -396,7 +405,10 @@ export default function App({ onMounted }: AppProps) {
         <div className="panels">
           {visitedResearch.screen && (
             <div className="persistent-panel" hidden={view !== "screen"}>
-              {market === "hk" ? <HkMarketPanel onObserveStock={observeStock} /> : <WorkspaceErrorBoundary label="选股"><ScreenPanel
+              {market === "hk" ? <div className="hk-market-workspace">
+                <HkMarketPanel onObserveStock={observeStock} capability={marketCapability("security_directory")} capabilityError={marketCapabilityError} />
+                <HkUnavailablePanel feature="港股筛选" capability={marketCapability("screening")} loading={marketCapabilities === null && !marketCapabilityError} error={marketCapabilityError} onSwitchMarket={() => changeMarket("cn")} />
+              </div> : <WorkspaceErrorBoundary label="选股"><ScreenPanel
                 criteria={criteria} onCriteriaChange={setCriteria} watchlist={visibleWatchlist} onWatchlistChange={setWatchlist}
                 onObserveStock={observeStock} onNewsStock={openNewsForStock} onRunBacktest={runCurrentCriteriaBacktest} mobileRuntime={mobileRuntime} marketStatus={marketStatus}
               /></WorkspaceErrorBoundary>}
@@ -405,9 +417,12 @@ export default function App({ onMounted }: AppProps) {
           {visitedResearch.observe && (
             <Suspense fallback={view === "observe" ? <PanelFeedback kind="loading" description="正在加载工作区..." /> : null}>
               <div className="persistent-panel" hidden={view !== "observe"}>
-                {market === "hk" ? <HkObservePanel code={observeRequest?.code || selectedStock} watchlist={visibleWatchlist} onWatchlistChange={(items) => setWatchlist([...items, ...watchlist.filter((item) => !visibleWatchlist.some((visible) => visible.code === item.code))])} /> : <WorkspaceErrorBoundary label="观察"><ObservePanel
+                {market === "hk" ? marketCapabilities === null || marketCapability("observe")?.status === "unavailable"
+                  ? <HkUnavailablePanel feature="港股普通股观察" capability={marketCapability("observe")} additionalCapabilities={[marketCapability("financial_snapshot")].filter((item): item is MarketCapability => Boolean(item))} loading={marketCapabilities === null && !marketCapabilityError} error={marketCapabilityError} onSwitchMarket={() => changeMarket("cn")} />
+                  : <HkObservePanel code={observeRequest?.code || selectedStock} watchlist={visibleWatchlist} onWatchlistChange={(items) => setWatchlist([...items, ...watchlist.filter((item) => !visibleWatchlist.some((visible) => visible.code === item.code))])} /> : <WorkspaceErrorBoundary label="观察"><ObservePanel
                   watchlist={visibleWatchlist} onWatchlistChange={setWatchlist} initialCode={observeRequest?.code || selectedStock} initialCodeRequestId={observeRequest?.requestId ?? 0}
                   mobileRuntime={mobileRuntime} onOpenNews={openNewsForStock} onAskAgent={handoffToAgent}
+                  capability={marketCapability("observe") || undefined}
                 /></WorkspaceErrorBoundary>}
               </div>
             </Suspense>
@@ -415,13 +430,13 @@ export default function App({ onMounted }: AppProps) {
           {visitedResearch.backtest && (
             <Suspense fallback={view === "backtest" ? <PanelFeedback kind="loading" description="正在加载工作区..." /> : null}>
               <div className="persistent-panel" hidden={view !== "backtest"}>
-                {market === "hk" ? <HkUnavailablePanel feature="港股回测" /> : <WorkspaceErrorBoundary label="回测"><BacktestPanel
+                {market === "hk" ? <HkUnavailablePanel feature="港股回测" capability={marketCapability("backtest")} loading={marketCapabilities === null && !marketCapabilityError} error={marketCapabilityError} onSwitchMarket={() => changeMarket("cn")} /> : <WorkspaceErrorBoundary label="回测"><BacktestPanel
                   criteria={criteria} watchlist={visibleWatchlist} preferredSource={backtestRouteRequest ?? (workspaceStatus.ready && !backtestDefaultApplied ? { source: backtestSource, requestId: -1 } : null)} onPreferredSourceConsumed={handleBacktestRouteConsumed}
                 /></WorkspaceErrorBoundary>}
               </div>
             </Suspense>
           )}
-          {view === "news" && market === "hk" && <HkUnavailablePanel feature="港股消息研究" />}
+          {view === "news" && market === "hk" && <HkUnavailablePanel feature="港股新闻、RAG 与情绪研究" capability={marketCapability("news_research")} additionalCapabilities={[marketCapability("sentiment")].filter((item): item is MarketCapability => Boolean(item))} loading={marketCapabilities === null && !marketCapabilityError} error={marketCapabilityError} onSwitchMarket={() => changeMarket("cn")} />}
           {view === "news" && market === "cn" && (
             <Suspense fallback={<PanelFeedback kind="loading" description="正在加载工作区..." />}>
               <WorkspaceErrorBoundary label="消息研究"><NewsRagPanel
@@ -438,7 +453,7 @@ export default function App({ onMounted }: AppProps) {
               /></WorkspaceErrorBoundary>
             </Suspense>
           )}
-          {view === "agent" && market === "hk" && <HkUnavailablePanel feature="港股研究 Agent" />}
+          {view === "agent" && market === "hk" && <HkUnavailablePanel feature="港股研究 Agent" capability={marketCapability("research_agent")} loading={marketCapabilities === null && !marketCapabilityError} error={marketCapabilityError} onSwitchMarket={() => changeMarket("cn")} />}
           {view === "agent" && market === "cn" && (
             <Suspense fallback={<PanelFeedback kind="loading" description="正在加载工作区..." />}>
               <WorkspaceErrorBoundary label="智能体"><AgentPanel

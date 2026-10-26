@@ -7,6 +7,36 @@ import {
 
 export const MARKET_CAPABILITY_IDS = Object.keys(CAPABILITY_ID_SET) as (keyof typeof CAPABILITY_ID_SET)[];
 
+export interface MarketTransition {
+  market: MarketId;
+  clearSelection: true;
+  clearObserveRequest: true;
+  clearNewsRequest: true;
+  clearBacktestRequest: true;
+  clearCapabilities: true;
+}
+
+export function marketTransition(current: MarketId, next: MarketId): MarketTransition | null {
+  if (current === next) return null;
+  return {
+    market: next,
+    clearSelection: true,
+    clearObserveRequest: true,
+    clearNewsRequest: true,
+    clearBacktestRequest: true,
+    clearCapabilities: true,
+  };
+}
+
+export function shouldApplyMarketCapabilities(
+  responseMarket: MarketId,
+  currentMarket: MarketId,
+  responseRequestId: number,
+  currentRequestId: number,
+): boolean {
+  return responseMarket === currentMarket && responseRequestId === currentRequestId;
+}
+
 export function parseMarketCapabilities(
   value: unknown,
   expectedMarket?: MarketId,

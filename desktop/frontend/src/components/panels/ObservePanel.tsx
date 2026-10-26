@@ -4,6 +4,7 @@ import type { CapitalEvidenceItem, CapitalEvidenceResult, CapitalEvidenceSection
 import { computeKdj, toDailyBars } from "../../lib/kline";
 import { calculateObserveQuant } from "../../lib/observeQuant";
 import type { ObserveQuantConclusion } from "../../lib/observeQuant";
+import { parseSecurityId, type MarketCapability, type ObservationMetadata } from "../../lib/marketDomain";
 import { buildFundamentalSnapshotData, isFinancialPeriodStale } from "../../lib/fundamentalSnapshot";
 import { buildMainFundFlowView, hasMainFundFlowBreakdown, isLocalFundFlowProxy } from "../../lib/mainFundFlow";
 import { getJson } from "../../lib/tauri";
@@ -12,6 +13,7 @@ import { RawJson } from "../RawJson";
 import { StockCodeInput } from "../StockCodeInput";
 import { TrendCharts } from "../observe/ObserveCharts";
 import { PanelFeedback } from "../ui/PanelFeedback";
+import { ObservationPanelFrame } from "./ObservationPanelFrame";
 import { LocalFirstRunControl } from "../LocalFirstRunControl";
 import {
   currentSystemDateInputValue,
@@ -31,6 +33,7 @@ interface ObservePanelProps {
   mobileRuntime?: boolean;
   onOpenNews?: (code: string) => void;
   onAskAgent?: (prompt: string) => void;
+  capability?: MarketCapability;
 }
 
 export function observeAgentPrompt(name: string, code: string): string {
@@ -70,6 +73,7 @@ export function ObservePanel({
   mobileRuntime = false,
   onOpenNews,
   onAskAgent,
+  capability,
 }: ObservePanelProps) {
   const [code, setCode] = useState(initialCode || "");
   const [loading, setLoading] = useState(false);
@@ -221,20 +225,21 @@ export function ObservePanel({
       <div className="panel-result observe-panel-result">
         {error && !loading && <PanelFeedback kind="error" title="观察失败" description={error} action={<button type="button" className="action-btn" onClick={() => runObserve()} disabled={loading}>重试</button>} />}
         {loading && <PanelFeedback kind="loading" description={loadingMessage} />}
-        {result && !loading && !error && <ObserveResultView result={result} expandProfessionalDetails={!mobileRuntime} inWatchlist={observedInWatchlist} onToggleWatchlist={toggleObservedWatchlist} onOpenNews={onOpenNews} onAskAgent={onAskAgent} />}
+        {result && !loading && !error && <ObserveResultView result={result} expandProfessionalDetails={!mobileRuntime} inWatchlist={observedInWatchlist} onToggleWatchlist={toggleObservedWatchlist} onOpenNews={onOpenNews} onAskAgent={onAskAgent} capability={capability} />}
         {!result && !loading && !error && <PanelFeedback kind="empty" description="输入股票代码后开始观察。" />}
       </div>
     </div>
   );
 }
 
-export function ObserveResultView({ result, expandProfessionalDetails = false, inWatchlist = false, onToggleWatchlist, onOpenNews, onAskAgent }: {
+export function ObserveResultView({ result, expandProfessionalDetails = false, inWatchlist = false, onToggleWatchlist, onOpenNews, onAskAgent, capability }: {
   result: ObserveResult;
   expandProfessionalDetails?: boolean;
   inWatchlist?: boolean;
   onToggleWatchlist?: () => void;
   onOpenNews?: (code: string) => void;
   onAskAgent?: (prompt: string) => void;
+  capability?: MarketCapability;
 }) {
   const stock = result.stock || { code: "", name: "" };
   const linkedCode = normalizeStockCode(stock.code) || stock.code;
@@ -244,29 +249,38 @@ export function ObserveResultView({ result, expandProfessionalDetails = false, i
   const financial = result.financial_indicators;
   const capital = result.capital_evidence;
   const dataSummary = localDataSummary(result);
+  const identity = parseSecurityId("cn", stock.code.replace(/\.(?:SH|SZ)$/i, ""), "ordinary_share");
+  if (!identity) {
+    return <PanelFeedback kind="error" title="证券身份无效" description="观察结果缺少规范的 A 股代码，无法创建证券身份。" />;
+  }
+  const provenance = observationProvenance(result);
+  const frameCapability = capability || {
+    market: "cn" as const,
+    id: "observe" as const,
+    status: "limited" as const,
+    reason: "此响应未包含市场能力注册表快照。",
+    coverage: observationCoverage(result),
+  };
 
   return (
     <div className="observe-result">
-      <section className="observe-overview">
-        <header className="observe-overview-header">
-          <div><h3>{stock.name || stock.code}</h3><p>{stock.code} {stock.industry || ""} · {formatObserveTime(stock.quote_time || signal?.date || series.at(-1)?.date)}</p></div>
-          <div className="observe-overview-actions">
-            {signal?.status && <span className={`state-pill ${signalStatusTone(signal.status)}`}>{signalStatusLabel(signal.status)}</span>}
-            {onToggleWatchlist && (
-              <button type="button" className={`stock-row-action watchlist-action ${inWatchlist ? "saved" : ""}`} onClick={onToggleWatchlist}>
-                {inWatchlist ? "已收藏" : "收藏"}
-              </button>
-            )}
-            {linkedCode && onOpenNews && (
-              <button type="button" className="stock-row-action" onClick={() => onOpenNews(linkedCode)}>消息</button>
-            )}
-            {linkedCode && onAskAgent && (
-              <button type="button" className="stock-row-action" onClick={() => onAskAgent(observeAgentPrompt(stock.name || "", linkedCode))}>交给 Agent</button>
-            )}
-          </div>
-        </header>
-        {dataSummary && <p className="observe-overview-data-summary" role="status">{dataSummary}</p>}
-      </section>
+      <ObservationPanelFrame
+        market="cn"
+        title={stock.name || stock.code}
+        security={identity}
+        provenance={provenance}
+        capability={frameCapability}
+        issues={[...(result.notes || []), ...(dataSummary ? [dataSummary] : [])]}
+        actions={<div className="observe-overview-actions">
+          {signal?.status && <span className={`state-pill ${signalStatusTone(signal.status)}`}>{signalStatusLabel(signal.status)}</span>}
+          {onToggleWatchlist && <button type="button" className={`stock-row-action watchlist-action ${inWatchlist ? "saved" : ""}`} onClick={onToggleWatchlist}>{inWatchlist ? "已收藏" : "收藏"}</button>}
+          {linkedCode && onOpenNews && <button type="button" className="stock-row-action" onClick={() => onOpenNews(linkedCode)}>消息</button>}
+          {linkedCode && onAskAgent && <button type="button" className="stock-row-action" onClick={() => onAskAgent(observeAgentPrompt(stock.name || "", linkedCode))}>交给 Agent</button>}
+        </div>}
+      >
+        <p className="observe-overview-data-summary" role="status">
+          {[`${stock.code} ${stock.industry || ""} · ${formatObserveTime(stock.quote_time || signal?.date || series.at(-1)?.date)}`, dataSummary].filter(Boolean).join(" · ")}
+        </p>
       <ObserveTextMetrics
         stock={stock}
         signal={signal}
@@ -286,8 +300,43 @@ export function ObserveResultView({ result, expandProfessionalDetails = false, i
 
       <CollapsibleNotes notes={[...(result.notes || []), ...(signal?.notes || [])]} />
       <RawJson result={result} />
+      </ObservationPanelFrame>
     </div>
   );
+}
+
+function observationProvenance(result: ObserveResult): ObservationMetadata[] {
+  if (result.observation_metadata?.length) return result.observation_metadata;
+  const metadata = result.data_metadata;
+  if (!metadata) return [];
+  const sourceId = result.source || "A-share provider";
+  const base = {
+    source_id: sourceId,
+    fetched_at: null,
+    disclosed_at: null,
+    report_period: null,
+    verification_status: "unverified",
+    quality_flags: [`data_policy:${metadata.data_policy}`, "fetch_time_not_reported"],
+    missing_reason: null,
+  };
+  return [
+    ...(metadata.quote_as_of ? [{ ...base, observed_at: metadata.quote_as_of }] : []),
+    ...(metadata.history_as_of ? [{ ...base, observed_at: metadata.history_as_of }] : []),
+  ];
+}
+
+function observationCoverage(result: ObserveResult): MarketCapability["coverage"] {
+  const evidence = result.data_metadata?.coverage;
+  if (!evidence?.length) return null;
+  const available = evidence.filter((item) => item.sufficient === true).length;
+  return {
+    requested_count: evidence.length,
+    available_count: available,
+    missing_count: evidence.length - available,
+    start_date: evidence.map((item) => item.start_date).find((date): date is string => Boolean(date)) || null,
+    end_date: evidence.map((item) => item.end_date).find((date): date is string => Boolean(date)) || null,
+    missing_fields: evidence.filter((item) => item.sufficient !== true).map((item) => item.kind || item.code || "unknown"),
+  };
 }
 
 function FundamentalSnapshot({ stock, financial }: { stock: StockItem; financial?: FinancialIndicatorSection | null }) {

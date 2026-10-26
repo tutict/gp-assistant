@@ -15,13 +15,13 @@ describe("HkMarketPanel stability", () => {
     getJsonMock.mockResolvedValue({ items: [], source: "HKEX" });
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(<HkMarketPanel onObserveStock={vi.fn()} />); });
-    expect(JSON.stringify(renderer.toJSON())).toContain("请先点击「更新目录」");
+    expect(JSON.stringify(renderer.toJSON())).toContain("当前没有目录缓存；HKEX 自动访问授权完成后才能更新目录。");
     expect(postJsonMock).not.toHaveBeenCalled();
   });
 
   it("refreshes the directory only after the user clicks update", async () => {
     getJsonMock.mockResolvedValueOnce({ items: [], source: "HKEX" }).mockResolvedValueOnce({
-      items: [{ code: "00700", name: "Tencent", currency: "HKD", board_lot: 100, security_type: "Equity" }],
+      items: [{ code: "00700", name: "Tencent", currency: "HKD", board_lot: 100, security_type: "Equity", classification_status: "verified_ordinary_share" }],
       source: "HKEX",
       updated_at: "2026-10-19T12:00:00Z",
     });
@@ -36,7 +36,7 @@ describe("HkMarketPanel stability", () => {
 
   it("keeps an existing directory visible when an explicit refresh fails", async () => {
     getJsonMock.mockResolvedValue({
-      items: [{ code: "00700", name: "Tencent", currency: "HKD", board_lot: 100, security_type: "Equity" }],
+      items: [{ code: "00700", name: "Tencent", currency: "HKD", board_lot: 100, security_type: "Equity", classification_status: "unverified" }],
       source: "HKEX",
       updated_at: "old-directory",
     });
@@ -47,6 +47,7 @@ describe("HkMarketPanel stability", () => {
     const text = JSON.stringify(renderer.toJSON());
     expect(text).toContain("Tencent");
     expect(text).toContain("HKEX unavailable");
+    expect(text).toContain("分类未核验，暂不可观察");
   });
 
   it("preserves the filtered cache and source metadata when refresh succeeds but the follow-up cache read fails", async () => {
@@ -76,13 +77,30 @@ describe("HkMarketPanel stability", () => {
 
   it("displays the security-master currency without converting CNY to HKD", async () => {
     getJsonMock.mockResolvedValue({
-      items: [{ code: "00012", name: "Dual Counter", currency: "CNY", board_lot: 100, security_type: "Equity" }],
+      items: [{ code: "00012", name: "Dual Counter", currency: "CNY", board_lot: 100, security_type: "Equity", classification_status: "unverified" }],
       source: "HKEX",
       updated_at: "2026-10-22T00:00:00Z",
     });
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(<HkMarketPanel onObserveStock={vi.fn()} />); });
-    const rowText = renderer.root.findByProps({ className: "hk-security-row" }).findByType("span").children.join("");
-    expect(rowText).toBe("00012.HK · CNY · 每手 100 股");
+
+    const rowText = renderer.root
+      .findByProps({ className: "hk-security-row" })
+      .findByType("span").children.join("");
+    expect(rowText).toContain("00012.HK · CNY · 每手 100 股");
+    expect(rowText).toContain("分类未核验，暂不可观察");
+    expect(renderer.root.findByProps({ className: "hk-security-row" }).props.disabled).toBe(true);
+  });
+
+  it("does not enter observation for a directory entry without verified ordinary-share classification", async () => {
+    getJsonMock.mockResolvedValue({
+      items: [{ code: "00700", name: "Tencent", currency: "HKD", board_lot: 100, security_type: "Equity", classification_status: "unverified" }],
+      source: "HKEX",
+    });
+    const onObserveStock = vi.fn();
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<HkMarketPanel onObserveStock={onObserveStock} />); });
+    expect(renderer.root.findByProps({ className: "hk-security-row" }).props.disabled).toBe(true);
+    expect(onObserveStock).not.toHaveBeenCalled();
   });
 });

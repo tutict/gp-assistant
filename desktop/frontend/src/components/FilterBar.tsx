@@ -1,6 +1,6 @@
 import { ChevronRight, RefreshCw, Settings, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getTauriInvoke, isMarketStatusStale, postJson, refreshTauriMarketData } from "../lib/tauri";
+import { getTauriInvoke, postJson, refreshTauriMarketData } from "../lib/tauri";
 import { formatBytes, formatMarketRefreshDate } from "../lib/format";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { DataStatus } from "../types";
@@ -59,13 +59,20 @@ export function FilterBar({ status, onStatusChange }: FilterBarProps) {
   const refreshLogTimerRef = useRef<number | null>(null);
   const refreshLogAutoCollapsePendingRef = useRef(false);
   const refreshLogInteractionPausedRef = useRef(false);
-  const autoRefreshStartedRef = useRef(false);
   const maintenanceRef = useRef<HTMLDetailsElement>(null);
   const [progress, setProgress] = useState<{ label: string; value: number } | null>(null);
   const [batchCount, setBatchCount] = useState(mobileLayout ? 12 : 32);
   const [maxCandidates, setMaxCandidates] = useState(15000);
   const [fullRebuild, setFullRebuild] = useState(true);
   const [maintenanceOpen, setMaintenanceOpen] = useState(false);
+  const [cleanupDomains, setCleanupDomains] = useState<string[]>(["quote", "daily_history"]);
+  const [cleanupCutoff, setCleanupCutoff] = useState("");
+  const [cleanupPreview, setCleanupPreview] = useState<{
+    preview_token: string;
+    record_count: number;
+    payload_bytes: number;
+    domains: Array<{ domain: string; record_count: number; payload_bytes: number }>;
+  } | null>(null);
 
   useEffect(() => {
     setBatchCount(mobileLayout ? 12 : 32);
@@ -158,15 +165,6 @@ export function FilterBar({ status, onStatusChange }: FilterBarProps) {
     validate_after_write: true,
   }), [batchCount, fullRebuild, maxCandidates]);
 
-  const autoRefreshOptions = useMemo(() => ({
-    ...CACHE_POLICY,
-    mode: "light",
-    batch_start: 0,
-    batch_count: mobileLayout ? 12 : 32,
-    max_candidates: 15000,
-    validate_after_write: true,
-  }), [mobileLayout]);
-
   const refreshUniverse = useCallback(async () => {
     cancelRefreshLogCollapse();
     setRefreshing(true);
@@ -194,74 +192,60 @@ export function FilterBar({ status, onStatusChange }: FilterBarProps) {
     }
   }, [appendLog, cancelRefreshLogCollapse, commitStatus, mobileLayout, refreshOptions, scheduleRefreshLogCollapse, updateProgressFromRefresh]);
 
-  useEffect(() => {
-    if (autoRefreshStartedRef.current || refreshing) return;
-    let cancelled = false;
+  const previewCleanup = useCallback(async () => {
+    cancelRefreshLogCollapse();
+    setCleanupPreview(null);
+    setRefreshLogOpen(true);
+    setProgress({ label: "正在计算外部数据清理范围...", value: 30 });
 
-    const autoRefreshIfNeeded = async () => {
-      if (cancelled || !status || !isMarketStatusStale(status)) return;
+    try {
+      const data = await postJson<NonNullable<typeof cleanupPreview>>(
+        "/api/data/cleanup/preview",
+        { domains: cleanupDomains, cutoff: cleanupCutoff || undefined },
+      );
+      setCleanupPreview(data);
+      setProgress({ label: "清理预览已就绪", value: 100 });
+      appendLog(`预览范围包含 ${data.record_count} 条记录，约 ${formatBytes(data.payload_bytes)}。确认后才会删除。`, "info");
+      scheduleRefreshLogCollapse();
+    } catch (err) {
+      appendLog(`清理预览失败：${(err as Error).message}`, "error");
+      setProgress({ label: "清理预览失败", value: 100 });
+      scheduleRefreshLogCollapse();
+    } finally {
+      window.setTimeout(() => setProgress(null), 900);
+    }
+  }, [appendLog, cancelRefreshLogCollapse, cleanupCutoff, cleanupDomains, scheduleRefreshLogCollapse]);
 
-      autoRefreshStartedRef.current = true;
-      cancelRefreshLogCollapse();
-      setRefreshLogOpen(false);
-      setProgress({ label: "正在后台同步上一开盘日行情...", value: 6 });
-      appendLog("检测到行情缓存日期过期或当日报价覆盖不完整，已在后台触发自动刷新。", "info");
-
-      try {
-        const invoke = getTauriInvoke();
-        if (!invoke) {
-          setProgress({ label: "自动刷新已跳过", value: 100 });
-          appendLog("当前网页环境不执行启动自动刷新，避免阻塞筛选运行。", "info");
-          scheduleRefreshLogCollapse();
-          return;
-        }
-        const data = await postJson<{ status?: DataStatus; notes?: string[]; refreshed?: boolean; background_refresh?: boolean }>("/api/data-sources/auto-refresh-universe", autoRefreshOptions);
-        const nextStatus = (data.status || data) as DataStatus;
-        commitStatus(nextStatus);
-        setProgress({ label: data.background_refresh ? "后台刷新已启动" : "上一开盘日行情已同步", value: 100 });
-        appendLog((Array.isArray(data.notes) ? data.notes.join(" ") : "") || (data.background_refresh ? "后台自动刷新已启动，筛选可继续运行。" : "上一开盘日行情已同步。"), "success");
-        scheduleRefreshLogCollapse();
-      } catch (err) {
-        appendLog(`自动刷新失败：${(err as Error).message}`, "error");
-        setProgress({ label: "自动刷新失败", value: 100 });
-        scheduleRefreshLogCollapse();
-      } finally {
-        if (!cancelled) {
-          window.setTimeout(() => setProgress(null), 1400);
-        }
-      }
-    };
-
-    void autoRefreshIfNeeded();
-    return () => {
-      cancelled = true;
-    };
-  }, [appendLog, autoRefreshOptions, cancelRefreshLogCollapse, commitStatus, mobileLayout, refreshing, scheduleRefreshLogCollapse, status, updateProgressFromRefresh]);
-
-  const pruneCache = useCallback(async () => {
+  const confirmCleanup = useCallback(async () => {
+    if (!cleanupPreview || refreshing) return;
     cancelRefreshLogCollapse();
     setRefreshing(true);
     setRefreshLogOpen(true);
-    setProgress({ label: "清理可丢弃缓存...", value: 30 });
-
+    setProgress({ label: "正在清理已确认的外部数据...", value: 35 });
     try {
-      const data = await postJson<{ status?: DataStatus; removed_files?: number; removed_bytes?: number; notes?: string[] }>(
-        "/api/data-sources/prune-cache",
-        { ...CACHE_POLICY, mode: "clear" },
+      const data = await postJson<{ removed_records: number; status: DataStatus["external_data"] }>(
+        "/api/data/cleanup",
+        {
+          domains: cleanupDomains,
+          cutoff: cleanupCutoff || undefined,
+          preview_token: cleanupPreview.preview_token,
+        },
       );
-      commitStatus(data.status || null);
+      commitStatus({ ...(status || {}), external_data: data.status });
+      setCleanupPreview(null);
       setProgress({ label: "清理完成", value: 100 });
-      appendLog(`已删除 ${data.removed_files || 0} 个文件，释放 ${formatBytes(data.removed_bytes)}。`, "success");
+      appendLog(`已清理 ${data.removed_records} 条外部数据记录。`, "success");
       scheduleRefreshLogCollapse();
     } catch (err) {
-      appendLog(`清理失败：${(err as Error).message}`, "error");
+      setCleanupPreview(null);
+      appendLog(`清理失败，请重新预览：${(err as Error).message}`, "error");
       setProgress({ label: "清理失败", value: 100 });
       scheduleRefreshLogCollapse();
     } finally {
       setRefreshing(false);
       window.setTimeout(() => setProgress(null), 900);
     }
-  }, [appendLog, cancelRefreshLogCollapse, commitStatus, scheduleRefreshLogCollapse]);
+  }, [appendLog, cancelRefreshLogCollapse, cleanupCutoff, cleanupDomains, cleanupPreview, commitStatus, refreshing, scheduleRefreshLogCollapse, status]);
   const refreshDateSource = status?.quote_trade_date ?? status?.quote_generated_at ?? status?.generated_at ?? status?.universe_updated_at;
   const refreshDateText = formatMarketRefreshDate(refreshDateSource, mobileLayout);
   const mobileUniverseCount = Number(status?.universe_count);
@@ -271,8 +255,61 @@ export function FilterBar({ status, onStatusChange }: FilterBarProps) {
   const mobileCacheText = status?.cache_bytes !== undefined ? `缓存 ${formatBytes(status.cache_bytes)}` : "缓存 --";
   const mobileRefreshSummary = `${mobileUniverseText} · ${refreshDateText} · ${mobileCacheText}`;
   const desktopStatusTone = marketFreshnessTone(status);
+  const externalDataStatus = status?.external_data;
+  const migrationDegraded = externalDataStatus?.migrations?.some((migration) => migration.state === "migration_degraded") === true;
+  const externalSourceRows = (externalDataStatus?.sources ?? []).slice(0, 8).map((source) => ({
+    source: String(source.source_id || "unknown"),
+    domain: String(source.domain || "unknown"),
+    lastSuccess: typeof source.last_success_at === "string" ? source.last_success_at : "尚无成功记录",
+    error: typeof source.last_error_category === "string" ? source.last_error_category : "",
+  }));
+  const externalMigrationRows = (externalDataStatus?.migrations ?? []).filter((migration) => migration.state !== "validated");
+  const cleanupDomainOptions = [
+    ["security_master", "证券目录"],
+    ["quote", "行情"],
+    ["daily_history", "日 K"],
+    ["financial_snapshot", "财务快照"],
+    ["fx_rate", "汇率"],
+    ["disclosure", "披露元数据"],
+    ["news", "新闻公告"],
+  ] as const;
   const maintenanceContent = (
     <div className="screen-refresh-maintenance-panel">
+      <div className="external-data-maintenance-status" role="status">
+        <strong>
+          外部数据：{externalDataStatus?.available ? `${externalDataStatus.record_count ?? 0} 条 · ${formatBytes(externalDataStatus.database_bytes ?? 0)}` : "尚未初始化"}
+        </strong>
+        {(externalDataStatus?.capacity_warning || migrationDegraded || (externalDataStatus?.needs_user_retry ?? 0) > 0) && (
+          <span className="external-data-maintenance-warning">
+            {externalDataStatus?.capacity_warning ? "已达到 200 MB 容量提示线。" : ""}
+            {migrationDegraded ? "部分旧缓存迁移待修复。" : ""}
+            {(externalDataStatus?.needs_user_retry ?? 0) > 0 ? `${externalDataStatus?.needs_user_retry} 项刷新需要重试。` : ""}
+          </span>
+        )}
+        {(externalDataStatus?.pending_foreground_retries ?? 0) > 0 && (
+          <span>网络恢复并回到前台时，将尝试恢复 {externalDataStatus?.pending_foreground_retries} 项显式刷新。</span>
+        )}
+      </div>
+      {externalSourceRows.length > 0 && (
+        <div className="external-data-source-list" aria-label="数据来源状态">
+          {externalSourceRows.map((source) => (
+            <div className="external-data-source-row" key={`${source.domain}:${source.source}`}>
+              <strong>{source.domain} · {source.source}</strong>
+              <span>{source.error ? `最近错误 ${source.error}` : `最近成功 ${source.lastSuccess}`}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {externalMigrationRows.length > 0 && (
+        <div className="external-data-source-list" aria-label="缓存迁移状态">
+          {externalMigrationRows.map((migration) => (
+            <div className="external-data-source-row" key={`${String(migration.market)}:${String(migration.domain)}`}>
+              <strong>{String(migration.market)} · {String(migration.domain)}</strong>
+              <span>{String(migration.state)}</span>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="refresh-options">
         <label className="refresh-option refresh-option-boolean">
           <input type="checkbox" checked={fullRebuild} onChange={(event) => setFullRebuild(event.target.checked)} disabled={refreshing} />
@@ -287,9 +324,45 @@ export function FilterBar({ status, onStatusChange }: FilterBarProps) {
           <input type="number" min="1000" max="50000" step="1000" value={maxCandidates} onChange={(event) => setMaxCandidates(Number(event.target.value) || 15000)} disabled={refreshing} />
         </label>
       </div>
-      <button type="button" className="action-btn screen-refresh-clear-btn" onClick={pruneCache} disabled={refreshing}>
-        <Trash2 size={15} aria-hidden="true" /><span>清理缓存</span>
-      </button>
+      <div className="refresh-cleanup-options" aria-label="选择清理的数据域">
+        {cleanupDomainOptions.map(([domain, label]) => (
+          <label className="refresh-option refresh-option-boolean" key={domain}>
+            <input
+              type="checkbox"
+              checked={cleanupDomains.includes(domain)}
+              disabled={refreshing}
+              onChange={(event) => {
+                setCleanupDomains((current) => event.target.checked
+                  ? [...current, domain]
+                  : current.filter((item) => item !== domain));
+                setCleanupPreview(null);
+              }}
+            />
+            <span className="refresh-option-label">{label}</span>
+          </label>
+        ))}
+      </div>
+      <label className="refresh-option refresh-cleanup-cutoff">
+        <span className="refresh-option-label">仅清理此日期前的数据</span>
+        <input type="date" value={cleanupCutoff} disabled={refreshing} onChange={(event) => {
+          setCleanupCutoff(event.target.value);
+          setCleanupPreview(null);
+        }} />
+      </label>
+      <div className="refresh-cleanup-actions">
+        <button type="button" className="action-btn screen-refresh-clear-btn" onClick={() => void previewCleanup()} disabled={refreshing || cleanupDomains.length === 0}>
+          <Trash2 size={15} aria-hidden="true" /><span>{cleanupPreview ? "重新预览" : "预览清理"}</span>
+        </button>
+        {cleanupPreview && (
+          <div className="refresh-cleanup-preview" role="status">
+            <strong>{cleanupPreview.record_count} 条记录 · {formatBytes(cleanupPreview.payload_bytes)}</strong>
+            <span>{cleanupPreview.domains.map((item) => `${item.domain}: ${item.record_count}`).join(" · ")}</span>
+            <button type="button" className="action-btn screen-refresh-clear-btn" onClick={() => void confirmCleanup()} disabled={refreshing}>
+              确认清理
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 

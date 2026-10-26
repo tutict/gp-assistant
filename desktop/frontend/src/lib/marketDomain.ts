@@ -8,6 +8,17 @@ export interface SecurityId {
   kind: SecurityKind;
 }
 
+export interface ObservationMetadata {
+  source_id: string;
+  fetched_at: string | null;
+  observed_at: string | null;
+  disclosed_at: string | null;
+  report_period: string | null;
+  verification_status: string;
+  quality_flags: string[];
+  missing_reason: string | null;
+}
+
 export type CurrencyCode = string;
 
 export interface Money {

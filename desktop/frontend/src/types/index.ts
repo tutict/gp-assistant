@@ -31,6 +31,7 @@ export interface HkSecurity {
   currency: string;
   board_lot?: number;
   security_type: string;
+  classification_status: "unverified" | "verified_ordinary_share";
 }
 
 export interface HkQuote {
@@ -43,6 +44,14 @@ export interface HkQuote {
   currency: string;
   quote_time?: string;
   source: string;
+  fetched_at?: string | null;
+  last_error?: string | null;
+  pe?: number | null;
+  pb?: number | null;
+  dividend_yield_percent?: number | null;
+  market_cap_hkd?: number | null;
+  total_shares?: number | null;
+  circulating_shares?: number | null;
 }
 
 export interface HkDailyBar {
@@ -60,12 +69,92 @@ export interface HkObserveResult {
   quote?: HkQuote | null;
   quote_capability: import("../lib/marketDomain").MarketCapability;
   history: HkDailyBar[];
+  financial?: HkFinancialSnapshot | null;
+  fx_rate?: HkFxRate | null;
+  official_disclosure?: HkDisclosureMetadata | null;
+  candidate_updated_at?: string | null;
+  fx_updated_at?: string | null;
+  official_checked_at?: string | null;
+  financial_notes?: string[];
+  financial_field_errors?: Record<string, string>;
+  financial_stale?: boolean;
   quote_updated_at?: string | null;
+  history_source?: string | null;
   history_updated_at?: string | null;
+  provider_readiness_error?: string | null;
   quote_error?: string | null;
   history_error?: string | null;
+  refresh_error?: string | null;
   notes: string[];
   stale: boolean;
+}
+
+export interface HkFinancialMetric {
+  value?: number | null;
+  currency: string;
+  unit: string;
+  source: string;
+  reason?: string | null;
+}
+
+export interface HkFinancialSnapshot {
+  code: string;
+  currency: string;
+  raw_report_period: string;
+  normalized_period: string;
+  report_date?: string | null;
+  disclosed_at?: string | null;
+  candidate_source: string;
+  candidate_fetched_at: string;
+  official_source_url?: string | null;
+  official_source_name?: string | null;
+  verification_status: string;
+  verification_conflicts?: string[];
+  official_values?: Record<string, HkFinancialMetric>;
+  field_errors?: Record<string, string>;
+  revenue?: HkFinancialMetric | null;
+  net_profit?: HkFinancialMetric | null;
+  eps?: HkFinancialMetric | null;
+  roe?: HkFinancialMetric | null;
+  pe?: HkFinancialMetric | null;
+  pb?: HkFinancialMetric | null;
+  dividend_yield?: HkFinancialMetric | null;
+  market_cap?: HkFinancialMetric | null;
+  total_shares?: HkFinancialMetric | null;
+  circulating_shares?: HkFinancialMetric | null;
+}
+
+export interface HkFxRate {
+  pair: "HKD/CNY";
+  rate: number;
+  source: string;
+  fetched_at: string;
+  observed_at: string;
+  last_error?: string | null;
+}
+
+export interface HkDisclosureMetadata {
+  source_url?: string | null;
+  source_name: string;
+  report_period?: string | null;
+  disclosed_at?: string | null;
+  checked_at: string;
+  status: string;
+  error?: string | null;
+}
+
+export interface HkFinancialResult {
+  market: "hk";
+  code: string;
+  snapshot?: HkFinancialSnapshot | null;
+  fx_rate?: HkFxRate | null;
+  official_disclosure?: HkDisclosureMetadata | null;
+  candidate_updated_at?: string | null;
+  fx_updated_at?: string | null;
+  official_checked_at?: string | null;
+  notes: string[];
+  stale: boolean;
+  field_errors: Record<string, string>;
 }
 
 export interface ScreenCriteria {
@@ -432,6 +521,28 @@ export interface ObserveResult {
   institutional_holdings?: InstitutionalHoldingsSnapshot | null;
   order_book?: Record<string, unknown> | null;
   notes?: string[];
+  data_metadata?: ObserveDataMetadata;
+  observation_metadata?: import("../lib/marketDomain").ObservationMetadata[];
+}
+
+export interface ObserveDataMetadata {
+  data_policy: "cache_only" | "refresh" | string;
+  source?: string;
+  quote_as_of?: string | null;
+  history_as_of?: string | null;
+  coverage_count?: number;
+  coverage?: Array<{
+    kind?: string;
+    sufficient?: boolean;
+    start_date?: string;
+    end_date?: string;
+    first_date?: string | null;
+    as_of?: string | null;
+    required_bars?: number;
+    available_bars?: number;
+    code?: string;
+  }>;
+  freshness_note?: string;
 }
 
 export interface BacktestMetrics {
@@ -886,6 +997,20 @@ export interface DataStatus {
   stale?: boolean;
   policy?: Record<string, unknown>;
   notes?: string[];
+  external_data?: {
+    available?: boolean;
+    schema_version?: number;
+    database_path?: string;
+    database_bytes?: number;
+    warning_threshold_bytes?: number;
+    capacity_warning?: boolean;
+    record_count?: number;
+    sources?: Array<Record<string, unknown>>;
+    migrations?: Array<Record<string, unknown>>;
+    pending_foreground_retries?: number;
+    needs_user_retry?: number;
+    automatic_cleanup?: boolean;
+  };
 }
 
 export interface WatchlistItem {
