@@ -106,6 +106,9 @@ pub(crate) static SCREEN_STOCK_OVERLAY_CACHE: OnceLock<
 
 pub(crate) static MOBILE_MARKET_UPDATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+static MOBILE_MARKET_READ_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static LEGACY_MARKET_MIGRATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
 pub(crate) static HTTP_CLIENT_CACHE: OnceLock<Mutex<HashMap<HttpClientCacheKey, reqwest::Client>>> =
     OnceLock::new();
 
@@ -120,9 +123,45 @@ pub(crate) struct HttpClientCacheKey {
 pub(crate) struct MobileMarketDataCacheEntry {
     pub(crate) bytes: u64,
     pub(crate) modified_at_epoch_ms: Option<u128>,
+    store_version: Option<ExternalMarketDataCacheVersion>,
     pub(crate) data: Arc<Value>,
     pub(crate) typed: Arc<gp_core::CoreDataSet>,
     pub(crate) summary: Value,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MarketDataFileVersion {
+    bytes: u64,
+    modified_at_epoch_ms: u128,
+    modified_at_epoch_ns: u128,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ExternalMarketDataCacheVersion {
+    database: MarketDataFileVersion,
+    wal: Option<MarketDataFileVersion>,
+    shm: Option<MarketDataFileVersion>,
+    legacy: Option<MarketDataFileVersion>,
+    legacy_checksum_sha256: Option<String>,
+}
+
+impl ExternalMarketDataCacheVersion {
+    fn same_files(&self, other: &Self) -> bool {
+        self.database == other.database
+            && self.wal == other.wal
+            && self.shm == other.shm
+            && self.legacy == other.legacy
+    }
+
+    fn external_bytes(&self) -> u64 {
+        self.database.bytes
+            + self.wal.as_ref().map(|file| file.bytes).unwrap_or(0)
+            + self.shm.as_ref().map(|file| file.bytes).unwrap_or(0)
+    }
+
+    fn legacy_modified_at_epoch_ms(&self) -> Option<u128> {
+        self.legacy.as_ref().map(|file| file.modified_at_epoch_ms)
+    }
 }
 
 #[derive(Clone)]
@@ -234,10 +273,14 @@ pub(crate) fn eastmoney_metric_period(
 }
 
 #[tauri::command]
-pub(crate) fn api_market_status(app: tauri::AppHandle) -> Result<Value, String> {
-    let mut status = market_data_status(&app)?;
-    status["external_data"] = crate::external_data::status_for_app(&app)?;
-    Ok(status)
+pub(crate) async fn api_market_status(app: tauri::AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut status = market_data_status(&app)?;
+        status["external_data"] = crate::external_data::status_for_app(&app)?;
+        Ok(status)
+    })
+    .await
+    .map_err(|error| format!("market status worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -1392,6 +1435,14 @@ pub(crate) fn screen_stock_overlay_cache(
 
 pub(crate) fn mobile_market_update_lock() -> &'static Mutex<()> {
     MOBILE_MARKET_UPDATE_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn mobile_market_read_lock() -> &'static Mutex<()> {
+    MOBILE_MARKET_READ_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn legacy_market_migration_lock() -> &'static Mutex<()> {
+    LEGACY_MARKET_MIGRATION_LOCK.get_or_init(|| Mutex::new(()))
 }
 
 pub(crate) fn cache_context_path(app: &tauri::AppHandle) -> Option<PathBuf> {
@@ -4396,6 +4447,9 @@ pub(crate) fn strip_core_side_payload_fields(mut payload: Value) -> Value {
 }
 
 pub(crate) fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String> {
+    let _update_guard = mobile_market_update_lock()
+        .lock()
+        .map_err(|_| "mobile market update lock is poisoned".to_string())?;
     let cache = read_mobile_market_data_record(app, false)?;
     let exists = cache
         .get("exists")
@@ -4495,12 +4549,28 @@ pub(crate) fn external_market_domains() -> [(crate::external_data::DataDomain, c
     ]
 }
 
+type ExternalMarketRecordSet = HashMap<
+    (
+        crate::external_data::DataDomain,
+        crate::external_data::Market,
+    ),
+    Vec<crate::external_data::StoredRecord>,
+>;
+
 fn external_market_records(
     data: &Value,
     source_id: &str,
-) -> Result<HashMap<(crate::external_data::DataDomain, crate::external_data::Market), Vec<crate::external_data::StoredRecord>>, String> {
-    use crate::external_data::{DataDomain, Market, StoredRecord};
+) -> Result<ExternalMarketRecordSet, String> {
     let (typed, _) = parse_mobile_market_data_snapshot(data, "external market dataset")?;
+    external_market_records_from_typed(data, &typed, source_id)
+}
+
+fn external_market_records_from_typed(
+    data: &Value,
+    typed: &gp_core::CoreDataSet,
+    source_id: &str,
+) -> Result<ExternalMarketRecordSet, String> {
+    use crate::external_data::{DataDomain, Market, StoredRecord};
     let mut grouped: HashMap<_, Vec<StoredRecord>> = HashMap::new();
     let fetched_at = data
         .get("updated_at_epoch_ms")
@@ -4646,23 +4716,66 @@ pub(crate) fn project_market_store(store: &crate::external_data::DataStore) -> R
     Ok(Some(data))
 }
 
+struct LegacyMarketMigration {
+    promoted: HashSet<(
+        crate::external_data::DataDomain,
+        crate::external_data::Market,
+    )>,
+    source_json: Option<Result<Value, String>>,
+    source_checksum_sha256: String,
+    normalized: bool,
+}
+
+fn import_legacy_market_source(
+    store: &mut crate::external_data::DataStore,
+    path: &Path,
+) -> Result<LegacyMarketMigration, String> {
+    let _migration_guard = legacy_market_migration_lock()
+        .lock()
+        .map_err(|_| "legacy market migration lock is poisoned".to_string())?;
+    let domains = external_market_domains();
+    let batch: crate::external_data::LegacyJsonImportBatch =
+        crate::external_data::import_legacy_json_domains(store, path, &domains, |value, _, _| {
+            let data = value
+                .get("data")
+                .filter(|value| value.is_object())
+                .cloned()
+                .unwrap_or_else(|| value.clone());
+            let (typed, _) = parse_mobile_market_data_snapshot(&data, "legacy mobile market data")?;
+            external_market_records_from_typed(&data, &typed, MOBILE_MARKET_DATA_FILE)
+        })?;
+    let promoted = batch
+        .reports
+        .iter()
+        .filter(|report| report.promoted)
+        .filter_map(|report| {
+            domains
+                .iter()
+                .find(|(domain, market)| {
+                    domain.as_str() == report.domain && market.as_str() == report.market
+                })
+                .copied()
+        })
+        .collect();
+    Ok(LegacyMarketMigration {
+        promoted,
+        source_json: batch.source_json,
+        source_checksum_sha256: batch.source_checksum_sha256,
+        normalized: batch.normalized,
+    })
+}
+
 pub(crate) fn import_legacy_market_domains(
     store: &mut crate::external_data::DataStore,
     path: &Path,
-) -> Result<HashSet<(crate::external_data::DataDomain, crate::external_data::Market)>, String> {
-    let mut promoted = HashSet::new();
-    for (domain, market) in external_market_domains() {
-        let report = crate::external_data::import_legacy_json(store, path, domain, market, move |value, _, _| {
-            let data = value.get("data").filter(|value| value.is_object()).cloned().unwrap_or(value);
-            let _ = parse_mobile_market_data_snapshot(&data, "legacy mobile market data")?;
-            let mut records = external_market_records(&data, MOBILE_MARKET_DATA_FILE)?;
-            Ok(records.remove(&(domain, market)).unwrap_or_default())
-        })?;
-        if report.promoted {
-            promoted.insert((domain, market));
-        }
-    }
-    Ok(promoted)
+) -> Result<
+    HashSet<(
+        crate::external_data::DataDomain,
+        crate::external_data::Market,
+    )>,
+    String,
+> {
+    Ok(import_legacy_market_source(store, path)?.promoted)
 }
 
 fn all_market_domains_promoted(
@@ -4827,38 +4940,96 @@ pub(crate) fn read_mobile_market_data_record(
     app: &tauri::AppHandle,
     include_data: bool,
 ) -> Result<Value, String> {
+    let _read_guard = mobile_market_read_lock()
+        .lock()
+        .map_err(|_| "mobile market read lock is poisoned".to_string())?;
     let path = mobile_market_data_path(app)?;
     let external_path = crate::external_data::store_path(
-        path.parent().ok_or_else(|| "mobile market cache path has no parent".to_string())?
-            .parent().ok_or_else(|| "mobile market cache path has no app data ancestor".to_string())?,
+        path.parent()
+            .ok_or_else(|| "mobile market cache path has no parent".to_string())?
+            .parent()
+            .ok_or_else(|| "mobile market cache path has no app data ancestor".to_string())?,
     );
     if external_path.exists() || path.exists() {
+        if external_path.exists() {
+            if let Some((version, entry)) =
+                cached_external_market_data_entry_for_files(&path, &external_path, &path)
+            {
+                return Ok(market_cache_record(
+                    &path,
+                    version.external_bytes(),
+                    version.legacy_modified_at_epoch_ms(),
+                    entry.summary,
+                    entry.data.as_ref(),
+                    include_data,
+                    "external market store loaded from memory",
+                ));
+            }
+        }
         let mut store = crate::external_data::DataStore::open(&external_path)?;
         if path.exists() {
-            let promoted = import_legacy_market_domains(&mut store, &path)?;
+            let migration = import_legacy_market_source(&mut store, &path)?;
+            let promoted = migration.promoted;
+            let source_checksum_sha256 = migration.source_checksum_sha256;
             let mut active_domains = promoted;
             for domain in external_market_domains() {
                 if store.domain_has_successful_source(domain.0, domain.1)? {
                     active_domains.insert(domain);
                 }
             }
-            let legacy_wrapper = read_json_file(&path)?;
-            let legacy = legacy_wrapper
-                .get("data")
-                .filter(|value| value.is_object())
-                .cloned()
-                .unwrap_or(legacy_wrapper);
-            let _ = parse_mobile_market_data_snapshot(&legacy, "legacy mobile market data projection")?;
-            if let Some(data) = project_market_store_with_legacy(&store, Some(&legacy), &active_domains)? {
-                let (typed, summary) = parse_mobile_market_data_snapshot(&data, "mixed external and legacy market projection")?;
-                let external_bytes = store.store_bytes()?;
-                remember_mobile_market_data_cache(&path, external_bytes, file_modified_millis(&path), &data, typed, &summary);
+            let legacy_wrapper = migration.source_json.transpose()?;
+            let legacy = legacy_wrapper.map(|legacy_wrapper| {
+                legacy_wrapper
+                    .get("data")
+                    .filter(|value| value.is_object())
+                    .cloned()
+                    .unwrap_or(legacy_wrapper)
+            });
+            if !migration.normalized {
+                if let Some(legacy) = legacy.as_ref() {
+                    let _ = parse_mobile_market_data_snapshot(
+                        legacy,
+                        "legacy mobile market data projection",
+                    )?;
+                }
+            }
+            if let Some(data) =
+                project_market_store_with_legacy(&store, legacy.as_ref(), &active_domains)?
+            {
+                let (typed, summary) = parse_mobile_market_data_snapshot(
+                    &data,
+                    "mixed external and legacy market projection",
+                )?;
+                let store_bytes = store.store_bytes()?;
+                drop(store);
+                let version = external_market_data_cache_version(
+                    &external_path,
+                    &path,
+                    Some(&source_checksum_sha256),
+                );
+                let external_bytes = version
+                    .as_ref()
+                    .map(ExternalMarketDataCacheVersion::external_bytes)
+                    .unwrap_or(store_bytes);
+                if let Some(version) = version {
+                    remember_external_market_data_cache(&path, version, &data, typed, &summary);
+                } else {
+                    forget_mobile_market_data_cache(&path);
+                }
                 let notes = if all_market_domains_promoted(&active_domains) {
                     "external market store loaded"
                 } else {
                     "validated external domains loaded; unvalidated domains remain on legacy cache"
                 };
-                return Ok(market_cache_record(&path, external_bytes, file_modified_millis(&path), summary, &data, include_data, notes));
+                return Ok(market_cache_record(
+                    &path,
+                    external_bytes,
+                    file_modified_millis(&path),
+                    summary,
+                    &data,
+                    include_data,
+                    notes,
+                ));
             }
             forget_mobile_market_data_cache(&path);
             return Ok(json!({
@@ -4868,10 +5039,29 @@ pub(crate) fn read_mobile_market_data_record(
                 "notes": ["external market cache is empty; preserved legacy files are recovery copies only"]
             }));
         } else if let Some(data) = project_market_store(&store)? {
-            let (typed, summary) = parse_mobile_market_data_snapshot(&data, "external market store")?;
-            let external_bytes = store.store_bytes()?;
-            remember_mobile_market_data_cache(&path, external_bytes, None, &data, typed, &summary);
-            return Ok(market_cache_record(&path, external_bytes, None, summary, &data, include_data, "external market store loaded"));
+            let (typed, summary) =
+                parse_mobile_market_data_snapshot(&data, "external market store")?;
+            let store_bytes = store.store_bytes()?;
+            drop(store);
+            let version = external_market_data_cache_version(&external_path, &path, None);
+            let external_bytes = version
+                .as_ref()
+                .map(ExternalMarketDataCacheVersion::external_bytes)
+                .unwrap_or(store_bytes);
+            if let Some(version) = version {
+                remember_external_market_data_cache(&path, version, &data, typed, &summary);
+            } else {
+                forget_mobile_market_data_cache(&path);
+            }
+            return Ok(market_cache_record(
+                &path,
+                external_bytes,
+                None,
+                summary,
+                &data,
+                include_data,
+                "external market store loaded",
+            ));
         } else {
             forget_mobile_market_data_cache(&path);
             return Ok(json!({
@@ -5173,11 +5363,52 @@ pub(crate) fn cached_mobile_market_data_entry(
 ) -> Option<MobileMarketDataCacheEntry> {
     let slot = mobile_market_data_cache().lock().ok()?;
     let entry = slot.get(path)?;
-    if entry.bytes == bytes && entry.modified_at_epoch_ms == modified_at_epoch_ms {
+    if entry.store_version.is_none()
+        && entry.bytes == bytes
+        && entry.modified_at_epoch_ms == modified_at_epoch_ms
+    {
         Some(entry.clone())
     } else {
         None
     }
+}
+
+#[cfg(test)]
+fn cached_external_market_data_entry(
+    path: &Path,
+    version: &ExternalMarketDataCacheVersion,
+) -> Option<MobileMarketDataCacheEntry> {
+    let slot = mobile_market_data_cache().lock().ok()?;
+    let entry = slot.get(path)?;
+    (entry.store_version.as_ref() == Some(version)).then(|| entry.clone())
+}
+
+fn cached_external_market_data_entry_for_files(
+    cache_path: &Path,
+    external_path: &Path,
+    legacy_path: &Path,
+) -> Option<(ExternalMarketDataCacheVersion, MobileMarketDataCacheEntry)> {
+    let file_versions = external_market_data_file_versions(external_path, legacy_path)?;
+    let entry = {
+        let slot = mobile_market_data_cache().lock().ok()?;
+        let entry = slot.get(cache_path)?;
+        let cached_version = entry.store_version.as_ref()?;
+        if !cached_version.same_files(&file_versions) {
+            return None;
+        }
+        entry.clone()
+    };
+
+    let mut current_version = file_versions;
+    if current_version.legacy.is_some() {
+        current_version.legacy_checksum_sha256 = Some(sha256_file(legacy_path).ok()?);
+        let after_hash = external_market_data_file_versions(external_path, legacy_path)?;
+        if !current_version.same_files(&after_hash) {
+            return None;
+        }
+    }
+    let cached_version = entry.store_version.as_ref()?;
+    (cached_version == &current_version).then_some((current_version, entry))
 }
 
 pub(crate) fn market_data_patch_for_codes(data: &Value, codes: &[String]) -> Value {
@@ -5469,6 +5700,29 @@ pub(crate) fn remember_mobile_market_data_cache(
             MobileMarketDataCacheEntry {
                 bytes,
                 modified_at_epoch_ms,
+                store_version: None,
+                data: Arc::new(data.clone()),
+                typed,
+                summary: summary.clone(),
+            },
+        );
+    }
+}
+
+fn remember_external_market_data_cache(
+    path: &Path,
+    version: ExternalMarketDataCacheVersion,
+    data: &Value,
+    typed: Arc<gp_core::CoreDataSet>,
+    summary: &Value,
+) {
+    if let Ok(mut slot) = mobile_market_data_cache().lock() {
+        slot.insert(
+            path.to_path_buf(),
+            MobileMarketDataCacheEntry {
+                bytes: version.external_bytes(),
+                modified_at_epoch_ms: version.legacy_modified_at_epoch_ms(),
+                store_version: Some(version),
                 data: Arc::new(data.clone()),
                 typed,
                 summary: summary.clone(),
@@ -5512,6 +5766,77 @@ pub(crate) fn file_modified_millis(path: &Path) -> Option<u128> {
         .map(|duration| duration.as_millis())
 }
 
+fn market_data_file_version(path: &Path) -> Result<Option<MarketDataFileVersion>, std::io::Error> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let modified = metadata
+        .modified()?
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    Ok(Some(MarketDataFileVersion {
+        bytes: metadata.len(),
+        modified_at_epoch_ms: modified.as_millis(),
+        modified_at_epoch_ns: modified.as_nanos(),
+    }))
+}
+
+fn external_market_data_cache_version(
+    external_path: &Path,
+    legacy_path: &Path,
+    known_legacy_checksum_sha256: Option<&str>,
+) -> Option<ExternalMarketDataCacheVersion> {
+    let mut version = external_market_data_file_versions(external_path, legacy_path)?;
+    if version.legacy.is_some() {
+        version.legacy_checksum_sha256 = Some(match known_legacy_checksum_sha256 {
+            Some(checksum) => checksum.to_owned(),
+            None => sha256_file(legacy_path).ok()?,
+        });
+    }
+    Some(version)
+}
+
+fn external_market_data_file_versions(
+    external_path: &Path,
+    legacy_path: &Path,
+) -> Option<ExternalMarketDataCacheVersion> {
+    let database = market_data_file_version(external_path).ok()??;
+    let wal_path = PathBuf::from(format!("{}-wal", external_path.to_string_lossy()));
+    let shm_path = PathBuf::from(format!("{}-shm", external_path.to_string_lossy()));
+    let wal = market_data_file_version(&wal_path).ok()?;
+    let shm = market_data_file_version(&shm_path).ok()?;
+    let legacy = market_data_file_version(legacy_path).ok()?;
+    Some(ExternalMarketDataCacheVersion {
+        database,
+        wal,
+        shm,
+        legacy,
+        legacy_checksum_sha256: None,
+    })
+}
+
+fn sha256_file(path: &Path) -> Result<String, std::io::Error> {
+    use std::io::Read;
+
+    let mut file = fs::File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok(digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
 pub(crate) fn read_json_file(path: &Path) -> Result<Value, String> {
     let bytes =
         fs::read(path).map_err(|error| format!("读取 JSON 失败：{}：{error}", path.display()))?;
@@ -5552,4 +5877,89 @@ pub(crate) fn sanitize_path_part(value: &str) -> String {
         part.push_str("unknown");
     }
     part
+}
+
+#[cfg(test)]
+mod external_market_cache_tests {
+    use super::*;
+
+    #[test]
+    fn cache_version_tracks_sqlite_and_legacy_source_changes() {
+        let root = std::env::temp_dir().join(format!(
+            "gp-assistant-market-cache-version-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let legacy_path = root.join(MOBILE_MARKET_DATA_FILE);
+        let database_path = root.join("external-data.sqlite");
+        fs::write(&legacy_path, b"legacy-cache-v1").unwrap();
+        {
+            let connection = rusqlite::Connection::open(&database_path).unwrap();
+            connection
+                .execute_batch("CREATE TABLE version_fixture (value TEXT NOT NULL);")
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO version_fixture(value) VALUES (?1)",
+                    ["sqlite-v1"],
+                )
+                .unwrap();
+        }
+        let data = json!({"stocks": [], "relations": []});
+        let (typed, summary) = parse_mobile_market_data_snapshot(&data, "test market data")
+            .expect("empty market snapshot should parse");
+
+        let initial = external_market_data_cache_version(&database_path, &legacy_path, None)
+            .expect("external store should have a cache version");
+        remember_external_market_data_cache(
+            &legacy_path,
+            initial.clone(),
+            &data,
+            typed.clone(),
+            &summary,
+        );
+        assert!(cached_external_market_data_entry(&legacy_path, &initial).is_some());
+
+        {
+            let connection = rusqlite::Connection::open(&database_path).unwrap();
+            connection
+                .execute(
+                    "UPDATE version_fixture SET value=?1",
+                    rusqlite::params!["sqlite-v2-".repeat(1_000)],
+                )
+                .unwrap();
+        }
+        let changed_database =
+            external_market_data_cache_version(&database_path, &legacy_path, None)
+                .expect("updated external store should have a cache version");
+        assert_ne!(changed_database, initial);
+        assert!(cached_external_market_data_entry(&legacy_path, &changed_database).is_none());
+        remember_external_market_data_cache(
+            &legacy_path,
+            changed_database.clone(),
+            &data,
+            typed,
+            &summary,
+        );
+
+        let original_modified = fs::metadata(&legacy_path).unwrap().modified().unwrap();
+        fs::write(&legacy_path, b"legacy-cache-v2").unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&legacy_path)
+            .unwrap()
+            .set_modified(original_modified)
+            .unwrap();
+        let changed_legacy = external_market_data_cache_version(&database_path, &legacy_path, None)
+            .expect("updated legacy cache should have a cache version");
+        assert_ne!(changed_legacy, changed_database);
+        assert!(cached_external_market_data_entry(&legacy_path, &changed_legacy).is_none());
+
+        forget_mobile_market_data_cache(&legacy_path);
+        fs::remove_dir_all(root).unwrap();
+    }
 }

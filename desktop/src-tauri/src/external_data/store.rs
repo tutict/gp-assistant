@@ -874,21 +874,75 @@ impl DataStore {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT entity_key FROM records WHERE domain=?1 AND market=?2
-                 GROUP BY entity_key ORDER BY entity_key",
+                "SELECT entity_key, record_key, schema_version, source_id, source_tier,
+                        fetched_at, observed_at, disclosed_at, verification_status,
+                        quality_json, payload_json, payload_hash
+                 FROM records WHERE domain=?1 AND market=?2
+                 ORDER BY entity_key, record_key, source_id",
             )
-            .map_err(|error| format!("prepare external domain entity read: {error}"))?;
-        let entities = statement
+            .map_err(|error| format!("prepare external domain read: {error}"))?;
+        let rows = statement
             .query_map(params![domain.as_str(), market.as_str()], |row| {
-                row.get::<_, String>(0)
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u32>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, String>(10)?,
+                    row.get::<_, String>(11)?,
+                ))
             })
-            .map_err(|error| format!("query external domain entities: {error}"))?
+            .map_err(|error| format!("query external domain records: {error}"))?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("read external domain entities: {error}"))?;
-        entities.iter().try_fold(Vec::new(), |mut all, entity| {
-            all.extend(self.read_records(domain, market, entity)?);
-            Ok(all)
-        })
+            .map_err(|error| format!("read external domain records: {error}"))?;
+
+        rows.into_iter()
+            .map(
+                |(
+                    entity_key,
+                    record_key,
+                    schema_version,
+                    source_id,
+                    source_tier,
+                    fetched_at,
+                    observed_at,
+                    disclosed_at,
+                    verification_status,
+                    quality_json,
+                    payload_json,
+                    payload_hash,
+                )| {
+                    let quality_flags = serde_json::from_str(&quality_json)
+                        .map_err(|error| format!("decode external data quality flags: {error}"))?;
+                    let payload = serde_json::from_str(&payload_json)
+                        .map_err(|error| format!("decode external data payload: {error}"))?;
+                    Ok(StoredRecord {
+                        domain,
+                        market,
+                        entity_key,
+                        record_key,
+                        metadata: RecordMetadata {
+                            schema_version,
+                            source_id,
+                            source_tier,
+                            fetched_at,
+                            observed_at,
+                            disclosed_at,
+                            verification_status,
+                            quality_flags,
+                            payload_hash: Some(payload_hash),
+                        },
+                        payload,
+                    })
+                },
+            )
+            .collect()
     }
 
     pub(crate) fn record_legacy_import(

@@ -2,7 +2,7 @@ use super::{DataDomain, DataStore, Market, StoredRecord};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct LegacyImportReport {
@@ -17,6 +17,130 @@ pub(crate) struct LegacyImportReport {
     pub error: Option<String>,
 }
 
+pub(crate) struct LegacyJsonImportBatch {
+    pub reports: Vec<LegacyImportReport>,
+    pub source_checksum_sha256: String,
+    pub source_json: Option<Result<Value, String>>,
+    pub normalized: bool,
+}
+
+pub(crate) fn import_legacy_json_domains<F>(
+    store: &mut DataStore,
+    source_path: &Path,
+    domains: &[(DataDomain, Market)],
+    normalize: F,
+) -> Result<LegacyJsonImportBatch, String>
+where
+    F: FnOnce(
+        &Value,
+        &str,
+        &str,
+    ) -> Result<HashMap<(DataDomain, Market), Vec<StoredRecord>>, String>,
+{
+    let source_bytes = std::fs::read(source_path)
+        .map_err(|error| format!("read legacy cache {}: {error}", source_path.display()))?;
+    let checksum = sha256_hex(&source_bytes);
+    let source_path_text = source_path.to_string_lossy().into_owned();
+    let mut reports = Vec::with_capacity(domains.len());
+    let mut pending = Vec::new();
+    for &(domain, market) in domains {
+        if let Some(existing) =
+            store.legacy_import_status(domain, market, &source_path_text, &checksum)?
+        {
+            if existing.promoted && existing.validation_state == "validated" {
+                reports.push(existing.into());
+                continue;
+            }
+        }
+        if let Some(promoted) =
+            store.latest_promoted_legacy_import(domain, market, &source_path_text)?
+        {
+            // After parity promotion the legacy file is a read-only recovery copy. A later
+            // external replacement must not silently resurrect data that the user cleared.
+            reports.push(promoted.into());
+            continue;
+        }
+        pending.push((domain, market));
+    }
+
+    if pending.is_empty() {
+        return Ok(LegacyJsonImportBatch {
+            reports,
+            source_checksum_sha256: checksum,
+            source_json: None,
+            normalized: false,
+        });
+    }
+
+    let source_json = serde_json::from_slice(&source_bytes)
+        .map_err(|error| format!("legacy JSON is malformed: {error}"));
+    let parsed = match source_json.as_ref() {
+        Ok(value) => value,
+        Err(error) => {
+            for (domain, market) in pending {
+                reports.push(record_failure(
+                    store,
+                    domain,
+                    market,
+                    &source_path_text,
+                    &checksum,
+                    0,
+                    error,
+                )?);
+            }
+            return Ok(LegacyJsonImportBatch {
+                reports,
+                source_checksum_sha256: checksum,
+                source_json: Some(source_json),
+                normalized: false,
+            });
+        }
+    };
+    let mut normalized_records = match normalize(parsed, &source_path_text, &checksum) {
+        Ok(records) => records,
+        Err(error) => {
+            let message = format!("legacy normalization failed: {error}");
+            for (domain, market) in pending {
+                reports.push(record_failure(
+                    store,
+                    domain,
+                    market,
+                    &source_path_text,
+                    &checksum,
+                    0,
+                    &message,
+                )?);
+            }
+            return Ok(LegacyJsonImportBatch {
+                reports,
+                source_checksum_sha256: checksum,
+                source_json: Some(source_json),
+                normalized: false,
+            });
+        }
+    };
+
+    for (domain, market) in pending {
+        let records = normalized_records
+            .remove(&(domain, market))
+            .unwrap_or_default();
+        reports.push(import_legacy_records(
+            store,
+            domain,
+            market,
+            &source_path_text,
+            &checksum,
+            &records,
+        )?);
+    }
+    Ok(LegacyJsonImportBatch {
+        reports,
+        source_checksum_sha256: checksum,
+        source_json: Some(source_json),
+        normalized: true,
+    })
+}
+
 /// Import one legacy JSON domain without modifying its source. `normalize` must pass each
 /// item through that domain's existing typed parser before returning records.
 pub(crate) fn import_legacy_json<F>(
@@ -29,53 +153,30 @@ pub(crate) fn import_legacy_json<F>(
 where
     F: FnOnce(Value, &str, &str) -> Result<Vec<StoredRecord>, String>,
 {
-    let source_bytes = std::fs::read(source_path)
-        .map_err(|error| format!("read legacy cache {}: {error}", source_path.display()))?;
-    let checksum = sha256_hex(&source_bytes);
-    let source_path_text = source_path.to_string_lossy().into_owned();
-    if let Some(existing) =
-        store.legacy_import_status(domain, market, &source_path_text, &checksum)?
-    {
-        if existing.promoted && existing.validation_state == "validated" {
-            return Ok(existing.into());
-        }
-    }
-    if let Some(promoted) =
-        store.latest_promoted_legacy_import(domain, market, &source_path_text)?
-    {
-        // After parity promotion the legacy file is a read-only recovery copy. A later
-        // external replacement must not silently resurrect data that the user cleared.
-        return Ok(promoted.into());
-    }
+    let batch = import_legacy_json_domains(
+        store,
+        source_path,
+        &[(domain, market)],
+        |value, source_path, checksum| {
+            normalize(value.clone(), source_path, checksum)
+                .map(|records| HashMap::from([((domain, market), records)]))
+        },
+    )?;
+    batch
+        .reports
+        .into_iter()
+        .next()
+        .ok_or_else(|| "legacy import returned no domain report".to_string())
+}
 
-    let json: Value = match serde_json::from_slice(&source_bytes) {
-        Ok(json) => json,
-        Err(error) => {
-            return record_failure(
-                store,
-                domain,
-                market,
-                &source_path_text,
-                &checksum,
-                0,
-                &format!("legacy JSON is malformed: {error}"),
-            )
-        }
-    };
-    let records = match normalize(json, &source_path_text, &checksum) {
-        Ok(records) => records,
-        Err(error) => {
-            return record_failure(
-                store,
-                domain,
-                market,
-                &source_path_text,
-                &checksum,
-                0,
-                &format!("legacy normalization failed: {error}"),
-            )
-        }
-    };
+fn import_legacy_records(
+    store: &mut DataStore,
+    domain: DataDomain,
+    market: Market,
+    source_path: &str,
+    checksum: &str,
+    records: &[StoredRecord],
+) -> Result<LegacyImportReport, String> {
     if records
         .iter()
         .any(|record| record.domain != domain || record.market != market)
@@ -84,8 +185,8 @@ where
             store,
             domain,
             market,
-            &source_path_text,
-            &checksum,
+            source_path,
+            checksum,
             records.len(),
             "normalized legacy record escaped its domain or market",
         );
@@ -97,8 +198,8 @@ where
             store,
             domain,
             market,
-            &source_path_text,
-            &checksum,
+            source_path,
+            checksum,
             records.len(),
             "legacy cache contains duplicate canonical records",
         );
@@ -110,8 +211,8 @@ where
                 store,
                 domain,
                 market,
-                &source_path_text,
-                &checksum,
+                source_path,
+                checksum,
                 records.len(),
                 &format!("legacy import write failed: {error}"),
             )
@@ -148,8 +249,8 @@ where
             store,
             domain,
             market,
-            &source_path_text,
-            &checksum,
+            source_path,
+            checksum,
             records.len(),
             "legacy and external store projections differ",
         );
@@ -158,8 +259,8 @@ where
     store.record_legacy_import(
         domain,
         market,
-        &source_path_text,
-        &checksum,
+        source_path,
+        checksum,
         records.len(),
         imported_count,
         "validated",
@@ -169,8 +270,8 @@ where
     Ok(LegacyImportReport {
         domain: domain.as_str().to_string(),
         market: market.as_str().to_string(),
-        source_path: source_path_text,
-        checksum_sha256: checksum,
+        source_path: source_path.to_string(),
+        checksum_sha256: checksum.to_string(),
         parsed_count: records.len(),
         imported_count,
         validation_state: "validated".into(),
@@ -269,6 +370,7 @@ impl From<super::store::LegacyImportStatus> for LegacyImportReport {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::cell::Cell;
     use std::{
         fs,
         path::PathBuf,
@@ -472,5 +574,68 @@ mod tests {
         .unwrap();
         assert!(!report.promoted);
         assert_eq!(report.validation_state, "migration_degraded");
+    }
+
+    #[test]
+    fn batch_import_normalizes_seven_domains_once_and_skips_normalization_after_promotion() {
+        let fixture = Fixture::new();
+        let source = fixture.0.join("mobile-market-data.json");
+        let source_json = json!({"generated_at_epoch_ms": 1, "stocks": []});
+        fs::write(&source, serde_json::to_vec(&source_json).unwrap()).unwrap();
+        let mut store = DataStore::open(fixture.db()).unwrap();
+        let domains = [
+            (DataDomain::SecurityMaster, Market::China),
+            (DataDomain::Quote, Market::China),
+            (DataDomain::DailyHistory, Market::China),
+            (DataDomain::FinancialSnapshot, Market::China),
+            (DataDomain::Relations, Market::China),
+            (DataDomain::FactorSnapshot, Market::China),
+            (DataDomain::CapitalEvidence, Market::China),
+        ];
+        let normalize_calls = Cell::new(0);
+
+        let imported =
+            import_legacy_json_domains(&mut store, &source, &domains, |value, _, checksum| {
+                normalize_calls.set(normalize_calls.get() + 1);
+                assert_eq!(value, &source_json);
+                Ok(domains
+                    .iter()
+                    .map(|(domain, market)| {
+                        let record = StoredRecord::new(
+                            *domain,
+                            *market,
+                            format!("{}-entity", domain.as_str()),
+                            "legacy",
+                            "legacy-test",
+                            "legacy",
+                            "now",
+                            None,
+                            None,
+                            "unverified",
+                            vec![],
+                            json!({"checksum": checksum}),
+                        );
+                        ((*domain, *market), vec![record])
+                    })
+                    .collect())
+            })
+            .unwrap();
+
+        assert_eq!(normalize_calls.get(), 1);
+        assert_eq!(imported.reports.len(), domains.len());
+        assert!(imported.reports.iter().all(|report| report.promoted));
+        assert!(imported.normalized);
+        assert_eq!(imported.source_json.unwrap().unwrap(), source_json);
+
+        fs::write(&source, b"corrupt recovery copy is no longer authoritative").unwrap();
+
+        let repeated = import_legacy_json_domains(&mut store, &source, &domains, |_, _, _| {
+            panic!("already-promoted domains must not be normalized again")
+        })
+        .unwrap();
+        assert_eq!(repeated.reports.len(), domains.len());
+        assert!(repeated.reports.iter().all(|report| report.promoted));
+        assert!(repeated.source_json.is_none());
+        assert!(!repeated.normalized);
     }
 }

@@ -3,7 +3,9 @@ pub(crate) mod provider;
 mod refresh;
 mod store;
 
-pub(crate) use migration::{import_legacy_json, LegacyImportReport};
+pub(crate) use migration::{
+    import_legacy_json, import_legacy_json_domains, LegacyImportReport, LegacyJsonImportBatch,
+};
 pub(crate) use refresh::shared_refresh_coordinator;
 pub(crate) use refresh::{execute_with_retry, RetryPolicy};
 pub(crate) use store::{DataStore, RefreshRunState, RefreshRunStatus};

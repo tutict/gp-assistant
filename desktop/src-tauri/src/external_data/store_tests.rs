@@ -72,6 +72,81 @@ fn fresh_store_reopens_and_reads_its_records() {
 }
 
 #[test]
+fn domain_read_returns_all_records_for_only_the_requested_market_and_domain() {
+    let fixture = TempStore::new("domain-read");
+    let mut store = DataStore::open(fixture.db()).unwrap();
+    store
+        .upsert_batch(&[
+            StoredRecord::new(
+                DataDomain::Quote,
+                Market::HongKong,
+                "00700.HK",
+                "quote",
+                "tencent",
+                "public",
+                "2026-10-20T00:00:00Z",
+                None,
+                None,
+                "unverified",
+                vec![],
+                json!({"price": 417.8}),
+            ),
+            StoredRecord::new(
+                DataDomain::Quote,
+                Market::HongKong,
+                "00005.HK",
+                "quote",
+                "tencent",
+                "public",
+                "2026-10-20T00:00:00Z",
+                None,
+                None,
+                "unverified",
+                vec![],
+                json!({"price": 90.0}),
+            ),
+            StoredRecord::new(
+                DataDomain::Quote,
+                Market::China,
+                "600000.SH",
+                "quote",
+                "tencent",
+                "public",
+                "2026-10-20T00:00:00Z",
+                None,
+                None,
+                "unverified",
+                vec![],
+                json!({"price": 10.0}),
+            ),
+            StoredRecord::new(
+                DataDomain::DailyHistory,
+                Market::HongKong,
+                "00700.HK",
+                "history",
+                "tencent",
+                "public",
+                "2026-10-20T00:00:00Z",
+                None,
+                None,
+                "unverified",
+                vec![],
+                json!([]),
+            ),
+        ])
+        .unwrap();
+
+    let records = store
+        .read_domain_records(DataDomain::Quote, Market::HongKong)
+        .unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].entity_key, "00005.HK");
+    assert_eq!(records[0].payload["price"], 90.0);
+    assert_eq!(records[1].entity_key, "00700.HK");
+    assert_eq!(records[1].payload["price"], 417.8);
+}
+
+#[test]
 fn repeated_upsert_is_idempotent_and_preserves_source_candidates() {
     let fixture = TempStore::new("candidates");
     let mut store = DataStore::open(fixture.db()).unwrap();

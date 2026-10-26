@@ -470,14 +470,18 @@ pub(crate) fn collect_market_capability_evidence(
 }
 
 #[tauri::command]
-pub(crate) fn api_market_capabilities(
+pub(crate) async fn api_market_capabilities(
     app: AppHandle,
     market: String,
 ) -> Result<Vec<MarketCapability>, String> {
     let market = parse_market(&market)
         .ok_or_else(|| "unsupported market; expected one of: cn, hk".to_owned())?;
-    let evidence = collect_market_capability_evidence(&app, market)?;
-    Ok(capabilities_for_market(market, &evidence))
+    tauri::async_runtime::spawn_blocking(move || {
+        let evidence = collect_market_capability_evidence(&app, market)?;
+        Ok(capabilities_for_market(market, &evidence))
+    })
+    .await
+    .map_err(|error| format!("market capability worker failed: {error}"))?
 }
 
 fn parse_market(value: &str) -> Option<MarketId> {
