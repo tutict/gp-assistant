@@ -6,9 +6,12 @@ interface Props {
   cacheRunLabel?: string;
   buttonClassName?: string;
   ariaLabel?: string;
+  disabled?: boolean;
+  ariaDescribedBy?: string;
 }
 
-export function LocalFirstRunControl({ action, loading, onRun, loadingLabel, cacheRunLabel, buttonClassName = "run-btn", ariaLabel }: Props) {
+export function LocalFirstRunControl({ action, loading, onRun, loadingLabel, cacheRunLabel, buttonClassName = "run-btn", ariaLabel, ariaDescribedBy, disabled = false }: Props) {
   const label = loading ? loadingLabel || `${action}中...` : cacheRunLabel || `运行${action}`;
-  return <button type="button" className={buttonClassName} onClick={onRun} disabled={loading} aria-disabled={loading} aria-label={ariaLabel}>{label}</button>;
+  const unavailable = loading || disabled;
+  return <button type="button" className={buttonClassName} onClick={onRun} disabled={unavailable} aria-disabled={unavailable} aria-label={ariaLabel} aria-describedby={ariaDescribedBy}>{label}</button>;
 }

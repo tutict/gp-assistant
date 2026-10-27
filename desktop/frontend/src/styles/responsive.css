@@ -64,6 +64,11 @@
   }
 }
 @media (max-width: 768px) {
+  .hk-market-panel .panel-heading { align-items: center; gap: var(--space-2); }
+  .hk-market-panel .panel-heading > div { min-width: 0; }
+  .hk-market-panel .panel-heading h2 { white-space: nowrap; }
+  .hk-market-panel .hk-directory-refresh { width: auto; min-width: 88px; flex: 0 0 auto; padding-inline: var(--space-2); }
+  .hk-market-panel > .panel-feedback-empty { min-height: 76px; padding: var(--space-3) 0; border: 0; border-radius: 0; background: transparent; }
   .stock-mobile-list .row-button-group { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stock-mobile-list .row-button-group button { min-width: var(--touch-height); width: 100%; padding-inline: 6px; }
   :root[data-composer-keyboard="open"] { --bottom-nav-height: 0px; --safe-bottom: 0px; }

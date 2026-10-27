@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { MarketCapability, MarketId, SecurityId, ObservationMetadata } from "../../lib/marketDomain";
+import { MarketCapabilityStatus } from "../ui/MarketCapabilityStatus";
 
 export interface ObservationPanelFrameProps {
   market: MarketId;
@@ -51,15 +52,21 @@ export function ObservationPanelFrame({
 
       <section className="observation-panel-frame__evidence" aria-label="来源与能力状态">
         {sources.length ? <ul className="observation-panel-frame__sources" aria-label="数据来源">{sources}</ul> : <p className="data-provenance">本次响应未提供逐来源时间信息。</p>}
-        <div className={`observation-panel-frame__capability status-${capability.status}`} role="status" aria-label="观察能力状态">
-          <strong>观察能力：{capabilityStatusLabel(capability.status)}</strong>
-          {capability.reason ? <span>{capability.reason}</span> : null}
-          {capability.coverage ? <span>
+        <MarketCapabilityStatus
+          className="observation-panel-frame__capability"
+          label="观察能力"
+          capability={capability}
+          unavailableLabel="不可用"
+          separator="："
+          showCoverage={false}
+          plain
+          ariaLabel="观察能力状态"
+        />
+        {capability.coverage ? <p className="observation-panel-frame__coverage">
             覆盖 {capability.coverage.available_count}/{capability.coverage.requested_count}，缺失 {capability.coverage.missing_count}
             {capability.coverage.start_date || capability.coverage.end_date ? ` · ${capability.coverage.start_date || "起始未知"} 至 ${capability.coverage.end_date || "结束未知"}` : ""}
             {capability.coverage.missing_fields.length ? ` · 缺失字段：${capability.coverage.missing_fields.join("、")}` : ""}
-          </span> : null}
-        </div>
+        </p> : null}
         {uniqueIssues.length ? <ul className="observation-panel-frame__issues" aria-label="数据问题">{uniqueIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul> : null}
       </section>
 
@@ -70,14 +77,6 @@ export function ObservationPanelFrame({
 
 function marketLabel(market: MarketId): string {
   return market === "hk" ? "港股" : "A股";
-}
-
-function capabilityStatusLabel(status: MarketCapability["status"]): string {
-  switch (status) {
-    case "available": return "可用";
-    case "limited": return "部分可用";
-    case "unavailable": return "不可用";
-  }
 }
 
 function verificationLabel(status: string): string {

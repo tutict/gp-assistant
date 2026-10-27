@@ -42,6 +42,7 @@ export function workspaceValue(key: string, value: unknown): unknown {
   if (key.startsWith("agent.draft:") && key.length > 12) result = value === null ? null : text(value, 32000);
   else switch (key) {
     case "app.view": if (!["screen", "observe", "backtest", "news", "agent"].includes(String(value))) throw new Error("Invalid workspace view"); result = value; break;
+    case "app.market": if (value !== "cn" && value !== "hk") throw new Error("Invalid workspace market"); result = value; break;
     case "app.stock": case "news.stock": result = text(value, 32); break;
     case "agent.active": case "news.thread": result = text(value, 256); break;
     case "news.question": result = text(value, 32000); break;

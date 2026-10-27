@@ -2779,8 +2779,9 @@ pub(crate) fn api_hk_stock_search(
         })
         .take(limit)
         .collect::<Vec<_>>();
+    let refresh_readiness = ensure_hk_provider_ready("hkex");
     Ok(
-        serde_json::json!({ "market": "hk", "items": items, "source": cache.securities_source, "updated_at": cache.securities_updated_at, "last_attempt_at": cache.securities_last_attempt_at, "last_error": cache.securities_last_error }),
+        serde_json::json!({ "market": "hk", "items": items, "source": cache.securities_source, "updated_at": cache.securities_updated_at, "last_attempt_at": cache.securities_last_attempt_at, "last_error": cache.securities_last_error, "refresh_enabled": refresh_readiness.is_ok(), "refresh_reason": refresh_readiness.err() }),
     )
 }
 
@@ -3204,6 +3205,7 @@ mod currency_contract_tests {
                 .unwrap_err()
                 .contains("disabled"));
         }
+        assert!(super::ensure_hk_provider_ready("hkex").is_err());
         assert!(super::ensure_hk_provider_ready("frankfurter_ecb").is_ok());
     }
 

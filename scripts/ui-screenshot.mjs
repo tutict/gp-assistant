@@ -31,6 +31,7 @@ const checkSearchOverlay = process.argv.includes('--check-search-overlay');
 const checkNewsPage = process.argv.includes("--check-news-page");
 const checkNewsInteractions = process.argv.includes("--check-news-interactions");
 const checkBacktestPage = process.argv.includes("--check-backtest-page");
+const checkHkDirectory = process.argv.includes("--check-hk-directory");
 const headerSettingsOnly = process.argv.includes("--header-settings-only");
 const observeSummaryOnly = process.argv.includes("--observe-summary-only");
 const newsPageOnly = process.argv.includes("--news-page-only");
@@ -2289,6 +2290,154 @@ async function runNewsInteractionChecks(browser) {
   console.log("News interaction checks passed: expand/escape/all-read/ctrl-enter/delete/citation-history");
 }
 
+async function runHkDirectoryChecks(browser) {
+  const directoryCapabilities = (market) => [
+    {
+      market, id: "security_directory", status: "unavailable",
+      reason: "HKEX directory cache is empty; live directory refresh remains disabled pending written automated-access permission",
+      coverage: { requested_count: 0, available_count: 0, missing_count: 0, start_date: null, end_date: null, missing_fields: [] },
+    },
+    ...[
+      ["observe", "observation adapter or required market data is not registered"],
+      ["financial_snapshot", "financial snapshot adapter or required data is not registered"],
+      ["screening", "strategy adapter or required data is not registered"],
+      ["backtest", "strategy adapter or required data is not registered"],
+      ["news_research", "strategy adapter or required data is not registered"],
+      ["sentiment", "strategy adapter or required data is not registered"],
+      ["research_agent", "strategy adapter or required data is not registered"],
+    ].map(([id, reason]) => ({ market, id, status: "unavailable", reason, coverage: null })),
+  ];
+  const reports = [];
+  for (const device of [devices.find((item) => item.name === "phone-390"), devices.find((item) => item.name === "desktop-1440")]) {
+    const context = await browser.newContext({
+      viewport: { width: device.width, height: device.height },
+      screen: { width: device.width, height: device.height },
+      deviceScaleFactor: device.dpr,
+      hasTouch: device.mobile,
+      isMobile: device.mobile,
+      colorScheme: "dark",
+    });
+    try {
+      const page = await context.newPage();
+      const consoleIssues = [];
+      page.on("console", (message) => {
+        if (message.type() === "error") consoleIssues.push(message.text());
+      });
+      page.on("pageerror", (error) => consoleIssues.push(error.message));
+      await page.addInitScript(() => {
+        localStorage.setItem("stock-optimizer-workspace-v1", JSON.stringify({
+          schemaVersion: 1,
+          revision: 0,
+          values: { "app.view": "screen" },
+        }));
+        localStorage.setItem("stock-optimizer-watchlist", "[]");
+      });
+      await page.route("**/api/**", async (route) => {
+        const url = new URL(route.request().url());
+        let body = {};
+        if (url.pathname === "/api/market/capabilities") {
+          body = directoryCapabilities(url.searchParams.get("market") || "hk");
+        } else if (url.pathname === "/api/hk/stock-search") {
+          const query = (url.searchParams.get("q") || "").trim();
+          body = {
+            market: "hk",
+            items: query ? [{
+              code: "00700", name: "腾讯控股", currency: "HKD", board_lot: 100,
+              security_type: "Equity", classification_status: "unverified",
+            }] : [],
+            source: query ? "HKEX local cache" : "",
+            updated_at: null,
+            last_attempt_at: null,
+            last_error: null,
+            refresh_enabled: false,
+            refresh_reason: "HKEX security-directory refresh is disabled until written permission for automated access is documented",
+          };
+        }
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+      });
+
+      await page.goto(deviceUrl(device, "#sectionScreen"), { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "设置" }).click();
+      const settings = page.getByRole("dialog", { name: "设置" });
+      await settings.getByLabel("股票市场").selectOption("hk");
+      await page.getByRole("button", { name: "关闭设置" }).click();
+      await page.locator(".hk-market-panel").waitFor({ state: "visible" });
+      await page.getByText("已保存到浏览器", { exact: false }).waitFor({ state: "visible" });
+      if (await page.getByText("本地保存失败", { exact: false }).count()) throw new Error(`${device.name} failed to persist the selected market`);
+      await page.getByText("HKEX 自动访问授权和使用审核完成前，目录在线更新暂不可用。", { exact: true }).waitFor({ state: "visible" });
+      const refreshButton = page.getByRole("button", { name: "更新港股证券目录" });
+      if (!await refreshButton.isDisabled()) throw new Error(`${device.name} exposed refresh while the provider gate is closed`);
+      const refreshStyle = await refreshButton.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const surface = document.createElement("span");
+        surface.style.backgroundColor = getComputedStyle(document.documentElement).getPropertyValue("--surface-2");
+        document.body.append(surface);
+        const expectedDisabledSurface = getComputedStyle(surface).backgroundColor;
+        surface.remove();
+        return {
+          backgroundColor: style.backgroundColor,
+          expectedDisabledSurface,
+          color: style.color,
+          cursor: style.cursor,
+        };
+      });
+      if (refreshStyle.cursor !== "not-allowed" || refreshStyle.backgroundColor !== refreshStyle.expectedDisabledSurface) {
+        throw new Error(`${device.name} disabled directory refresh still looks active: ${JSON.stringify(refreshStyle)}`);
+      }
+      const headingMetrics = await page.locator(".hk-market-panel h2").evaluate((element) => ({
+        height: element.getBoundingClientRect().height,
+        lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
+      }));
+      const refreshBox = await refreshButton.boundingBox();
+      if (headingMetrics.height > headingMetrics.lineHeight * 1.5 || !refreshBox || refreshBox.width > 180) {
+        throw new Error(`${device.name} directory header lost its single-row layout: ${JSON.stringify({ headingMetrics, refreshBox })}`);
+      }
+
+      const labelBox = await page.locator('label[for="hk-stock-search"]').boundingBox();
+      const labelMetrics = await page.locator('label[for="hk-stock-search"]').evaluate((element) => ({
+        height: element.getBoundingClientRect().height,
+        lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
+      }));
+      if (!labelBox || labelMetrics.height > labelMetrics.lineHeight * 1.5) {
+        throw new Error(`${device.name} market-search label wrapped: ${JSON.stringify({ labelBox, labelMetrics })}`);
+      }
+      mkdirSync(dirname(resolve(outputRoot, "hk-directory", device.name, "empty.png")), { recursive: true });
+      await page.screenshot({ path: resolve(outputRoot, "hk-directory", device.name, "empty.png") });
+
+      await page.locator("#hk-stock-search").fill("腾讯");
+      await page.locator("#hk-stock-search").blur();
+      const row = page.locator(".hk-security-row.stock-row");
+      await row.waitFor({ state: "visible" });
+      if (!await row.locator(".hk-security-select").isDisabled()) {
+        throw new Error(`${device.name} let an unverified listing start observation`);
+      }
+      const rowMetrics = await row.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { className: element.className, padding: style.padding, display: style.display };
+      });
+      if (!rowMetrics.className.split(/\s+/).includes("stock-row")) {
+        throw new Error(`${device.name} security row no longer reuses the shared stock-row style`);
+      }
+      const viewport = await page.evaluate(() => ({
+        innerWidth: window.innerWidth,
+        documentWidth: document.documentElement.scrollWidth,
+      }));
+      if (viewport.documentWidth > viewport.innerWidth + 1) {
+        throw new Error(`${device.name} directory page overflows horizontally: ${JSON.stringify(viewport)}`);
+      }
+      await page.screenshot({ path: resolve(outputRoot, "hk-directory", device.name, "populated.png") });
+      const diagnostics = await pageDiagnostics(page, "港股证券目录");
+      assertPageDiagnostics(diagnostics, device.name);
+      if (consoleIssues.length) throw new Error(`${device.name} logged browser errors: ${consoleIssues.join(" | ")}`);
+      reports.push({ device: device.name, headingMetrics, refreshBox, refreshStyle, labelBox, labelMetrics, rowMetrics, viewport, refreshDisabled: true });
+    } finally {
+      await context.close();
+    }
+  }
+  writeFileSync(resolve(outputRoot, "hk-directory", "report.json"), JSON.stringify({ baseUrl, reports }, null, 2) + "\n");
+  console.log("HK directory desktop/phone checks passed: " + JSON.stringify(reports));
+}
+
 async function runScreenshotHarness() {
   let localServer = null;
   if (serveBuild) {
@@ -2299,7 +2448,9 @@ async function runScreenshotHarness() {
 
   const browser = await chromium.launch();
   try {
-  if (checkOnly || checkSearchOverlay) {
+  if (checkHkDirectory) {
+    await runHkDirectoryChecks(browser);
+  } else if (checkOnly || checkSearchOverlay) {
     const device = devices.find((item) => item.name === "desktop-1440");
     const context = await browser.newContext({
       viewport: { width: device.width, height: device.height },

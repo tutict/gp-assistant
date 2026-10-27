@@ -63,6 +63,31 @@ export interface MarketCapability {
   coverage: CoverageSummary | null;
 }
 
+export function marketCapabilityStatusLabel(
+  status: CapabilityStatus,
+  unavailableLabel = "不可用",
+): string {
+  switch (status) {
+    case "available": return "可用";
+    case "limited": return "部分可用";
+    case "unavailable": return unavailableLabel;
+  }
+}
+
+export function marketCapabilityLabel(id: CapabilityId): string {
+  const labels: Record<CapabilityId, string> = {
+    security_directory: "证券目录",
+    observe: "证券观察",
+    financial_snapshot: "财务快照",
+    screening: "筛选",
+    backtest: "回测",
+    news_research: "新闻与 RAG",
+    sentiment: "情绪",
+    research_agent: "研究 Agent",
+  };
+  return labels[id];
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

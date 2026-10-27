@@ -361,11 +361,11 @@ fn hk_evidence(app: &AppHandle) -> Result<Vec<CapabilityEvidence>, String> {
         missing_fields: Vec::new(),
     };
     let directory_reason = if directory_ready {
-        "HKEX directory cache is readable; live refresh remains disabled pending written automated-access permission"
+        "HKEX directory cache is readable; live directory refresh remains disabled pending written automated-access permission"
     } else if expected > 0 {
-        "HKEX directory cache is stale or its previous refresh failed; live refresh remains disabled pending permission review"
+        "HKEX directory cache is stale or its previous refresh failed; live directory refresh remains disabled pending permission review"
     } else {
-        "HKEX directory cache is empty; live refresh remains disabled pending written automated-access permission"
+        "HKEX directory cache is empty; live directory refresh remains disabled pending written automated-access permission"
     };
 
     Ok(vec![

@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { isMarketCapability, parseSecurityId } from "./marketDomain";
+import { isMarketCapability, marketCapabilityLabel, marketCapabilityStatusLabel, parseSecurityId } from "./marketDomain";
 import fixture from "../../../src-tauri/testdata/market-domain-contract.json";
 
 describe("market domain wire contract", () => {
+  it("uses one market capability label vocabulary across panels", () => {
+    expect(marketCapabilityLabel("security_directory")).toBe("证券目录");
+    expect(marketCapabilityLabel("backtest")).toBe("回测");
+    expect(marketCapabilityStatusLabel("unavailable")).toBe("不可用");
+    expect(marketCapabilityStatusLabel("unavailable", "未开放")).toBe("未开放");
+    expect(marketCapabilityStatusLabel("limited")).toBe("部分可用");
+  });
+
   it("accepts the Rust market-domain fixture", () => {
     expect(fixture.market).toBe("hk");
     expect(fixture.security).toEqual({

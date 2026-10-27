@@ -406,7 +406,7 @@ export default function App({ onMounted }: AppProps) {
           {visitedResearch.screen && (
             <div className="persistent-panel" hidden={view !== "screen"}>
               {market === "hk" ? <div className="hk-market-workspace">
-                <HkMarketPanel onObserveStock={observeStock} capability={marketCapability("security_directory")} capabilityError={marketCapabilityError} />
+                <HkMarketPanel onObserveStock={observeStock} capability={marketCapability("security_directory")} capabilityLoading={marketCapabilities === null && !marketCapabilityError} capabilityError={marketCapabilityError} />
                 <HkUnavailablePanel feature="港股筛选" capability={marketCapability("screening")} loading={marketCapabilities === null && !marketCapabilityError} error={marketCapabilityError} onSwitchMarket={() => changeMarket("cn")} />
               </div> : <WorkspaceErrorBoundary label="选股"><ScreenPanel
                 criteria={criteria} onCriteriaChange={setCriteria} watchlist={visibleWatchlist} onWatchlistChange={setWatchlist}
