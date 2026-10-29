@@ -42,7 +42,7 @@ Android 安装时如果系统提示“未知来源应用”，请只为当前文
 - **桌面与移动同源**：前端唯一源码位于 `desktop/frontend/`，桌面端和 Android 端使用相同业务组件。
 - **本地优先**：自选、缓存和研究数据优先保存在本机；密钥与签名配置不应提交到仓库。
 
-A 股核心股票池、日线和分钟线能力以通达信与腾讯行情链路为主。港股与 A 股使用独立证券身份、缓存和能力证据；当前 HKEX `Equity` 类别不足以证明普通股，旧目录行仍可搜索，未核验的报价/日 K 缓存不进入观察结果。HKEX、Tencent、Eastmoney HK 与 HKEXnews 实时/自动请求因使用授权条件未确认而 fail closed；解析器、fixture 和本地缓存继续可用。提供方、授权范围、字段/币种/单位、更新时间、来源覆盖和核验质量均纳入 [港股数据源就绪记录](docs/hk-market-provider-readiness.md)，只有满足证据门槛的能力才开放。HKD/CNY 使用 Frankfurter 固定的 ECB 数据源，界面标记“European Central Bank (via Frankfurter)”及每日观测日期；该汇率是日频参考交叉汇率，不是盘中报价。筛选、回测、新闻/RAG、情绪和研究 Agent 仍是港股完整能力目标，当前能力注册表未启用的模块继续显示未开放状态。
+A 股核心股票池、日线和分钟线目前仍由通达信与腾讯等旧技术链路提供；这说明代码中存在采集器，不代表相关来源已获准用于公开应用。A 股与港股使用独立证券身份、缓存和能力证据；当前 HKEX `Equity` 类别不足以证明普通股，未核验的报价/日 K 缓存不进入观察结果。A 股与港股候选来源的 API 覆盖、账户要求和公开应用授权缺口记录在[数据源评估表](docs/market-provider-evaluation-2026-10-27.md)与[港股数据源就绪记录](docs/hk-market-provider-readiness.md)；只有满足证据门槛的能力才开放。HKEX、Tencent、Eastmoney HK 与 HKEXnews 实时/自动请求因使用授权条件未确认而 fail closed；解析器、fixture 和本地缓存继续可用。HKD/CNY 使用 Frankfurter 固定的 ECB 数据源，界面标记“European Central Bank (via Frankfurter)”及每日观测日期；该汇率是日频参考交叉汇率，不是盘中报价。筛选、回测、新闻/RAG、情绪和研究 Agent 仍是港股完整能力目标，当前能力注册表未启用的模块继续显示未开放状态。
 
 ### 港股财务快照
 
