@@ -1115,7 +1115,9 @@ export type PanelKey =
 
 export { isMarketCapability, parseSecurityId } from "../lib/marketDomain";
 export type {
+  CapabilityFreshness,
   CapabilityId,
+  CapabilitySourceEvidence,
   CapabilityStatus,
   CoverageSummary,
   CurrencyCode,

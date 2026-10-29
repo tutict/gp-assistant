@@ -36,6 +36,32 @@ describe("market domain wire contract", () => {
     });
   });
 
+  it("accepts old capability responses and validates additive source evidence", () => {
+    const legacy = { ...fixture.capability } as Record<string, unknown>;
+    delete legacy.sources;
+    expect(isMarketCapability(legacy)).toBe(true);
+
+    const capability = {
+      ...fixture.capability,
+      sources: [{
+        source_id: "tencent",
+        domain: "quote",
+        market: "hk",
+        fetched_at: "2026-10-27T08:00:00Z",
+        observed_at: "2026-10-27",
+        disclosed_at: null,
+        report_period: null,
+        freshness: "fresh",
+        verification_status: "unverified",
+        quality_flags: ["provider_rights_unverified"],
+        coverage: null,
+      }],
+    };
+    expect(isMarketCapability(capability)).toBe(true);
+    expect(isMarketCapability({ ...capability, sources: [{ ...capability.sources[0], freshness: "probably-fresh" }] })).toBe(false);
+    expect(isMarketCapability({ ...capability, sources: [{ ...capability.sources[0], market: "cn" }] })).toBe(false);
+  });
+
   it("rejects malformed capability values", () => {
     expect(
       isMarketCapability({

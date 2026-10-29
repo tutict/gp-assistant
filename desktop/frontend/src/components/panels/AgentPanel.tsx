@@ -15,6 +15,8 @@ import { LlmSettingsPanel } from "./LlmSettingsPanel";
 import { IconButton } from "../ui/IconButton";
 import { createEvolutionReview, extractEvolutionEvidenceIds, type EvolutionReview } from "../../lib/evolution";
 import { EvolutionReviewCard } from "./EvolutionReviewCard";
+import type { MarketCapability } from "../../lib/marketDomain";
+import { MarketCapabilityPopover } from "../ui/MarketCapabilityPopover";
 
 interface AgentPanelProps {
   llmSettings: LlmSettings | null;
@@ -23,6 +25,8 @@ interface AgentPanelProps {
   onWatchlistChange: (items: WatchlistItem[]) => void;
   draftPrompt?: string;
   draftRequestId?: number;
+  marketCapabilities?: MarketCapability[] | null;
+  marketCapabilityError?: string | null;
 }
 
 interface ChatMessage {
@@ -100,7 +104,7 @@ function publishConversationDeletion(event: ConversationDeletionEvent) {
   for (const listener of conversationDeletionListeners) listener(event);
 }
 
-export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatchlistChange, draftPrompt, draftRequestId }: AgentPanelProps) {
+export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatchlistChange, draftPrompt, draftRequestId, marketCapabilities, marketCapabilityError }: AgentPanelProps) {
   const [failedLedgerDeletionIds, ledgerDeletionMarkerIds, syncLedgerDeletionIds] = usePersistentLedgerDeletionIds();
   const workspace = useWorkspaceStore();
   const workspaceStatus = useWorkspaceStatus();
@@ -763,6 +767,14 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         </div>
         <div className="agent-thread-toolbar">
           <strong>{activeConversation?.title || "新对话"}</strong>
+          {marketCapabilities !== undefined ? <MarketCapabilityPopover
+            market="cn"
+            label="A 股数据状态"
+            capabilities={marketCapabilities}
+            capabilityIds={["research_agent"]}
+            loading={!marketCapabilities && !marketCapabilityError}
+            error={marketCapabilityError}
+          /> : null}
           <button
             type="button"
             className="icon-button agent-thread-history"

@@ -1,11 +1,26 @@
 import {
   CAPABILITY_IDS as CAPABILITY_ID_SET,
   isMarketCapability,
+  type CapabilityId,
   type MarketCapability,
   type MarketId,
 } from "./marketDomain";
 
 export const MARKET_CAPABILITY_IDS = Object.keys(CAPABILITY_ID_SET) as (keyof typeof CAPABILITY_ID_SET)[];
+
+export type MarketResearchView = "screen" | "observe" | "backtest" | "news" | "agent";
+
+const MARKET_CAPABILITY_IDS_BY_VIEW: Record<MarketResearchView, CapabilityId[]> = {
+  screen: ["security_directory", "screening"],
+  observe: ["observe", "financial_snapshot"],
+  backtest: ["backtest"],
+  news: ["news_research", "sentiment"],
+  agent: ["research_agent"],
+};
+
+export function marketCapabilityIdsForView(view: MarketResearchView): CapabilityId[] {
+  return [...MARKET_CAPABILITY_IDS_BY_VIEW[view]];
+}
 
 export interface MarketTransition {
   market: MarketId;

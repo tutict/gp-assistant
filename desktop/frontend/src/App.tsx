@@ -5,6 +5,7 @@ import { useFontScale } from "./hooks/useFontScale";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useWorkspaceState, useWorkspaceStore, useWorkspaceStatus, WorkspaceCredentialsReady } from "./hooks/useWorkspace";
 import { WorkspaceErrorBoundary } from "./components/ui/ErrorBoundary";
+import { MarketCapabilityStatus } from "./components/ui/MarketCapabilityStatus";
 import { getJson, isMobileTauriRuntime, isTauriRuntime, postJson } from "./lib/tauri";
 import { createPersistentWatchlistSetter, filterWatchlistByMarket, loadLocalWatchlistSnapshot, loadPersistentWatchlist } from "./lib/watchlistStore";
 import { useLlmCredentials } from "./hooks/useLlmCredentials";
@@ -21,8 +22,8 @@ import { HkObservePanel } from "./components/panels/HkObservePanel";
 import { HkUnavailablePanel } from "./components/panels/HkUnavailablePanel";
 import { PanelFeedback } from "./components/ui/PanelFeedback";
 import type { AdaptiveScreenRequest, DataStatus, ScreenCriteria, WatchlistItem } from "./types";
-import type { CapabilityId, MarketCapability, MarketId } from "./lib/marketDomain";
-import { marketTransition, shouldApplyMarketCapabilities } from "./lib/marketCapabilities";
+import { marketCapabilityLabel, type CapabilityId, type MarketCapability, type MarketId } from "./lib/marketDomain";
+import { marketCapabilityIdsForView, marketTransition, shouldApplyMarketCapabilities } from "./lib/marketCapabilities";
 import {
   consumeBacktestRouteRequest,
   nextBacktestRouteRequest,
@@ -187,7 +188,7 @@ export default function App({ onMounted }: AppProps) {
         setMarketCapabilityError(error instanceof Error ? error.message : String(error));
       });
     return () => { cancelled = true; };
-  }, [market]);
+  }, [market, marketStatus?.quote_generated_at, marketStatus?.universe_updated_at]);
 
   // Hash routing
   useEffect(() => {
@@ -397,6 +398,16 @@ export default function App({ onMounted }: AppProps) {
         <div className="workbench-notices">
       {!credentialsReady && <p role="status">密钥正在初始化，可继续本地编辑；模型提交与设置保存暂不可用。</p>}
       {credentialError && <PanelFeedback kind="error" title="密钥保存状态" description={credentialError} action={credentialMigrationPending ? <button type="button" onClick={() => void retryCredentialMigration()}>重试安全迁移</button> : undefined} />}
+      {market === "cn" && view !== "news" && view !== "agent" && marketCapabilityIdsForView(view).map((id) => (
+        <MarketCapabilityStatus
+          key={id}
+          label={`A 股${marketCapabilityLabel(id)}`}
+          capability={marketCapability(id)}
+          loading={marketCapabilities === null && !marketCapabilityError}
+          error={marketCapabilityError}
+          plain
+        />
+      ))}
         </div>
         {view === "screen" && (
           market === "hk" ? null : <FilterBar status={marketStatus} onStatusChange={setMarketStatus} />
@@ -442,6 +453,8 @@ export default function App({ onMounted }: AppProps) {
               <WorkspaceErrorBoundary label="消息研究"><NewsRagPanel
                 llmSettings={llmSettings}
                 onLlmSettingsChange={setLlmSettings}
+                marketCapabilities={marketCapabilities}
+                marketCapabilityError={marketCapabilityError}
                 watchlist={visibleWatchlist}
                 initialCode={newsRequest?.code || selectedStock}
                 initialCodeRequestId={newsRequest?.requestId ?? 0}
@@ -459,6 +472,8 @@ export default function App({ onMounted }: AppProps) {
               <WorkspaceErrorBoundary label="智能体"><AgentPanel
                 llmSettings={llmSettings}
                 onLlmSettingsChange={setLlmSettings}
+                marketCapabilities={marketCapabilities}
+                marketCapabilityError={marketCapabilityError}
                 watchlist={visibleWatchlist}
                 onWatchlistChange={setWatchlist}
                 draftPrompt={agentDraftRequest?.prompt || ""}

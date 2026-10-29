@@ -5880,11 +5880,20 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 .market-capability-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .65rem; padding: .55rem .7rem; border: 1px solid var(--border-subtle); border-radius: .55rem; font-size: .78rem; }
 .market-capability-status strong { color: var(--text); }
 .market-capability-status p { margin: 0; color: var(--text-muted); overflow-wrap: anywhere; }
+.market-capability-sources { flex-basis: 100%; display: grid; gap: .25rem; margin: .25rem 0 0; padding: 0; list-style: none; color: var(--text-muted); font-size: .72rem; }
+.market-capability-sources li { display: flex; flex-wrap: wrap; gap: .2rem .55rem; overflow-wrap: anywhere; }
 .market-capability-status.status-available { border-color: var(--status-positive-border, var(--border-subtle)); }
 .market-capability-status.status-limited { border-color: var(--status-warning-border, var(--border-subtle)); }
 .market-capability-status.status-unavailable { border-color: var(--status-negative-border, var(--border-subtle)); }
 .market-capability-status-plain { display: block; border: 0; border-radius: 0; padding: 0; background: transparent; }
 .market-capability-status-plain p { margin-top: .2rem; }
+.market-capability-popover { position: relative; flex: 0 0 auto; color: var(--text-secondary); font-size: var(--fs-caption); }
+.market-capability-popover > summary { display: inline-flex; align-items: center; gap: 6px; min-height: var(--touch-dense); padding: 0 9px; border: 1px solid var(--line); border-radius: var(--radius-xs); background: var(--surface); cursor: pointer; list-style: none; white-space: nowrap; }
+.market-capability-popover > summary::-webkit-details-marker { display: none; }
+.market-capability-popover > summary::after { content: "⌄"; color: var(--text-tertiary); }
+.market-capability-popover__summary-state { color: var(--text); font-weight: 700; }
+.market-capability-popover__content { position: absolute; z-index: 90; top: calc(100% + 8px); right: 0; display: grid; gap: 10px; width: min(420px, calc(100vw - 24px)); max-height: min(70vh, 560px); overflow: auto; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); color: var(--text); box-shadow: 0 16px 44px var(--elev-float); }
+.market-capability-popover__content .market-capability-status-plain { min-width: 0; }
 .observation-panel-frame__capability { align-items: baseline; }
 .observation-panel-frame__coverage { margin: 0; color: var(--text-muted); font-size: .78rem; overflow-wrap: anywhere; }
 .observation-panel-frame__issues { display: grid; gap: .2rem; margin: 0; padding-left: 1.2rem; color: var(--text-muted); font-size: .76rem; overflow-wrap: anywhere; }

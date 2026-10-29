@@ -40,6 +40,22 @@ export interface CoverageSummary {
   missing_fields: string[];
 }
 
+export type CapabilityFreshness = "fresh" | "stale" | "unknown";
+
+export interface CapabilitySourceEvidence {
+  source_id: string;
+  domain: string;
+  market: MarketId;
+  fetched_at: string | null;
+  observed_at: string | null;
+  disclosed_at: string | null;
+  report_period: string | null;
+  freshness: CapabilityFreshness;
+  verification_status: string;
+  quality_flags: string[];
+  coverage: CoverageSummary | null;
+}
+
 export type CapabilityStatus = "available" | "limited" | "unavailable";
 
 export const CAPABILITY_IDS = {
@@ -61,6 +77,8 @@ export interface MarketCapability {
   status: CapabilityStatus;
   reason: string | null;
   coverage: CoverageSummary | null;
+  /** Optional for compatibility with older native capability responses. */
+  sources?: CapabilitySourceEvidence[];
 }
 
 export function marketCapabilityStatusLabel(
@@ -104,6 +122,10 @@ function isCapabilityStatus(value: unknown): value is CapabilityStatus {
   return value === "available" || value === "limited" || value === "unavailable";
 }
 
+function isCapabilityFreshness(value: unknown): value is CapabilityFreshness {
+  return value === "fresh" || value === "stale" || value === "unknown";
+}
+
 function isOptionalString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
 }
@@ -125,6 +147,24 @@ function isCoverageSummary(value: unknown): value is CoverageSummary {
   );
 }
 
+function isCapabilitySourceEvidence(value: unknown): value is CapabilitySourceEvidence {
+  return (
+    isRecord(value) &&
+    typeof value.source_id === "string" && value.source_id.trim().length > 0 &&
+    typeof value.domain === "string" && value.domain.trim().length > 0 &&
+    isMarketId(value.market) &&
+    isOptionalString(value.fetched_at) &&
+    isOptionalString(value.observed_at) &&
+    isOptionalString(value.disclosed_at) &&
+    isOptionalString(value.report_period) &&
+    isCapabilityFreshness(value.freshness) &&
+    typeof value.verification_status === "string" &&
+    Array.isArray(value.quality_flags) &&
+    value.quality_flags.every((flag) => typeof flag === "string") &&
+    (value.coverage === null || isCoverageSummary(value.coverage))
+  );
+}
+
 export function isMarketCapability(value: unknown): value is MarketCapability {
   return (
     isRecord(value) &&
@@ -132,7 +172,11 @@ export function isMarketCapability(value: unknown): value is MarketCapability {
     isCapabilityId(value.id) &&
     isCapabilityStatus(value.status) &&
     isOptionalString(value.reason) &&
-    (value.coverage === null || isCoverageSummary(value.coverage))
+    (value.coverage === null || isCoverageSummary(value.coverage)) &&
+    (!Object.hasOwn(value, "sources") || (
+      Array.isArray(value.sources) &&
+      value.sources.every((source) => isCapabilitySourceEvidence(source) && source.market === value.market)
+    ))
   );
 }
 

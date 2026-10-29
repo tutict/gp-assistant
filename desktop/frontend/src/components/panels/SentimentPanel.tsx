@@ -25,6 +25,8 @@ import {
 import { StockCodeInput } from "../StockCodeInput";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
 import { Sheet } from "../ui/Sheet";
+import type { MarketCapability } from "../../lib/marketDomain";
+import { MarketCapabilityPopover } from "../ui/MarketCapabilityPopover";
 
 const NewsRagPanel = lazy(async () => ({ default: (await import("./NewsRagPanel")).NewsRagPanel }));
 type SettingsUpdater = LlmSettings | null | ((previous: LlmSettings | null) => LlmSettings | null);
@@ -38,6 +40,8 @@ interface Props {
   initialView?: WorkspaceView;
   onAskAgent?: (prompt: string) => void;
   onGoToScreen?: () => void;
+  marketCapabilities?: MarketCapability[] | null;
+  marketCapabilityError?: string | null;
   criteria?: ScreenCriteria;
   onApplyScreenCriteria?: (criteria: ScreenCriteria) => void;
 }
@@ -186,6 +190,14 @@ export function SentimentPanel(props: Props) {
             <span className="visually-hidden">资料</span>
           </button>
         </div>}
+        {props.marketCapabilities !== undefined ? <MarketCapabilityPopover
+          market="cn"
+          label="A 股数据状态"
+          capabilities={props.marketCapabilities}
+          capabilityIds={["news_research", "sentiment"]}
+          loading={!props.marketCapabilities && !props.marketCapabilityError}
+          error={props.marketCapabilityError}
+        /> : null}
         <LlmSettingsPanel settings={props.llmSettings || null} onChange={props.onLlmSettingsChange || (() => undefined)} presentation="dialog" statusMode="inline" />
       </div>
     </header>

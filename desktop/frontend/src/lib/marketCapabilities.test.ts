@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MARKET_CAPABILITY_IDS,
+  marketCapabilityIdsForView,
   marketTransition,
   parseMarketCapabilities,
   shouldApplyMarketCapabilities,
@@ -37,6 +38,14 @@ describe("market capability contract", () => {
       "sentiment",
       "research_agent",
     ]);
+  });
+
+  it("selects the A-share readiness evidence for each research view", () => {
+    expect(marketCapabilityIdsForView("screen")).toEqual(["security_directory", "screening"]);
+    expect(marketCapabilityIdsForView("observe")).toEqual(["observe", "financial_snapshot"]);
+    expect(marketCapabilityIdsForView("backtest")).toEqual(["backtest"]);
+    expect(marketCapabilityIdsForView("news")).toEqual(["news_research", "sentiment"]);
+    expect(marketCapabilityIdsForView("agent")).toEqual(["research_agent"]);
   });
 
   it("accepts only a complete, ordered registry for one market", () => {
