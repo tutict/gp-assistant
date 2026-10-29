@@ -204,6 +204,29 @@ pub(crate) struct CoverageSummary {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub(crate) enum CapabilityFreshness {
+    Fresh,
+    Stale,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CapabilitySourceEvidence {
+    pub(crate) source_id: String,
+    pub(crate) domain: String,
+    pub(crate) market: MarketId,
+    pub(crate) fetched_at: Option<String>,
+    pub(crate) observed_at: Option<String>,
+    pub(crate) disclosed_at: Option<String>,
+    pub(crate) report_period: Option<String>,
+    pub(crate) freshness: CapabilityFreshness,
+    pub(crate) verification_status: String,
+    pub(crate) quality_flags: Vec<String>,
+    pub(crate) coverage: Option<CoverageSummary>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum CapabilityId {
     SecurityDirectory,
     Observe,
@@ -230,13 +253,16 @@ pub(crate) struct MarketCapability {
     pub(crate) status: CapabilityStatus,
     pub(crate) reason: Option<String>,
     pub(crate) coverage: Option<CoverageSummary>,
+    #[serde(default)]
+    pub(crate) sources: Vec<CapabilitySourceEvidence>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CapabilityId, CapabilityStatus, CoverageSummary, CurrencyCode, MarketCapability, MarketId,
-        Money, ObservationMetadata, Quantity, SecurityId, SecurityKind,
+        CapabilityFreshness, CapabilityId, CapabilitySourceEvidence, CapabilityStatus,
+        CoverageSummary, CurrencyCode, MarketCapability, MarketId, Money, ObservationMetadata,
+        Quantity, SecurityId, SecurityKind,
     };
 
     #[test]
@@ -394,6 +420,19 @@ mod tests {
                 end_date: Some("2026-10-17".to_owned()),
                 missing_fields: vec!["daily_history".to_owned()],
             }),
+            sources: vec![CapabilitySourceEvidence {
+                source_id: "tencent".to_owned(),
+                domain: "daily_history".to_owned(),
+                market: MarketId::Hk,
+                fetched_at: Some("2026-10-17T10:00:00Z".to_owned()),
+                observed_at: Some("2026-10-17".to_owned()),
+                disclosed_at: None,
+                report_period: None,
+                freshness: CapabilityFreshness::Fresh,
+                verification_status: "unverified".to_owned(),
+                quality_flags: Vec::new(),
+                coverage: None,
+            }],
         };
 
         serde_json::json!({

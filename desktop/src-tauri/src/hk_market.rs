@@ -1140,6 +1140,7 @@ fn quote_capability_for_security(
                 vec!["quote".to_owned()]
             },
         }),
+        sources: Vec::new(),
     }
 }
 
