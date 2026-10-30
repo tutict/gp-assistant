@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "financial-snapshot-units.ps1")
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $FrontendDir = Join-Path $Root "desktop\frontend"
@@ -881,6 +882,9 @@ function Export-MobileFinancialSnapshot {
                 $existingSnapshot = Get-Content -LiteralPath $snapshotPath -Raw -Encoding UTF8 | ConvertFrom-Json
                 $existingFinancialCount = @($existingSnapshot.financials.psobject.Properties).Count
                 if ($existingFinancialCount -gt 0) {
+                    $normalizedSnapshot = ConvertTo-MobileFinancialUnitContract $existingSnapshot
+                    $normalizedJson = $normalizedSnapshot | ConvertTo-Json -Depth 20 -Compress
+                    [System.IO.File]::WriteAllText($snapshotPath, $normalizedJson, [System.Text.UTF8Encoding]::new($false))
                     Write-Host "Reused bundled financial snapshot with $existingFinancialCount entries at $snapshotPath"
                     return
                 }
@@ -892,7 +896,9 @@ function Export-MobileFinancialSnapshot {
     }
 
     $snapshot = [pscustomobject][ordered]@{
-        schema_version = "mobile-financial-snapshot/v3"
+        schema_version = "mobile-financial-snapshot/v4"
+        metric_contract_version = 2
+        metric_units = Get-MobileFinancialRateUnits
         generated_at = (Get-Date).ToUniversalTime().ToString("o")
         source = $source
         stock_count = 0

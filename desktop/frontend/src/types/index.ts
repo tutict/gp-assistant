@@ -175,6 +175,14 @@ export interface ScreenCriteria {
   score_profile?: "balanced" | "quality" | "trend" | "rotation" | string;
 }
 
+export interface ScoringMetadata {
+  metric_contract_version?: number;
+  scoring_revision?: string;
+  parameter_set_id?: string;
+  implementation_fingerprint?: string;
+  algorithm_version?: string;
+}
+
 export interface ScreenedStock {
   stock: StockItem;
   score: number;
@@ -191,6 +199,7 @@ export interface ScreenedStock {
   suitable_periods?: string[];
   concept?: string | null;
   theme_category?: string | null;
+  industry_sample_count?: number | null;
 }
 
 export interface ScreenResultGroup {
@@ -202,7 +211,7 @@ export interface ScreenResultGroup {
   items: ScreenedStock[];
 }
 
-export interface ScreenResult {
+export interface ScreenResult extends ScoringMetadata {
   total: number;
   returned: number;
   items: ScreenedStock[];
@@ -219,7 +228,8 @@ export interface ScreenResult {
 
 export type AdaptiveScreenMode = "auto" | "range" | "trend" | "defensive";
 
-export interface AdaptiveScreenRequest {
+export interface AdaptiveScreenRequest extends ScoringMetadata {
+  dataset_id?: string;
   criteria: ScreenCriteria;
   mode: AdaptiveScreenMode;
   horizon: "swing_10_30d";
@@ -546,6 +556,7 @@ export interface ObserveDataMetadata {
 }
 
 export interface BacktestMetrics {
+  annualized_turnover?: number;
   total_return: number;
   annualized_return?: number | null;
   max_drawdown?: number | null;
@@ -650,7 +661,8 @@ export interface VolatilitySnapshot {
   unavailable?: IndicatorUnavailable[];
 }
 
-export interface BacktestResult {
+export interface BacktestResult extends ScoringMetadata {
+  pit_evaluation_report?: unknown;
   metrics: BacktestMetrics;
   equity_curve: EquityPoint[];
   benchmark_curve?: EquityPoint[];
@@ -1090,6 +1102,7 @@ export interface StockRowView {
   riskScore?: number;
   balancedScore?: number;
   factorScores?: Record<string, number>;
+  industrySampleCount?: number;
   scoreBreakdown?: ScoreContribution[];
   reasonTags?: string[];
   riskTags?: string[];

@@ -31,8 +31,7 @@ export function formatPercent(value: unknown): string {
 export function formatRatioPercent(value: unknown): string {
   const n = parseLooseNumber(value);
   if (n === null) return "--";
-  const percent = Math.abs(n) <= 1 ? n * 100 : n;
-  return percent.toFixed(2) + "%";
+  return (n * 100).toFixed(2) + "%";
 }
 
 export function formatSignedPercent(value: unknown): string {

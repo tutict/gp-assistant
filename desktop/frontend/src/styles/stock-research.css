@@ -1,0 +1,20 @@
+.stock-research-panel { width: 100%; min-width: 0; display: grid; gap: 12px; color: var(--text); }
+.stock-research-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.stock-research-description { margin: 0; color: var(--text-secondary); font-size: var(--fs-caption); line-height: 1.6; }
+.stock-research-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 0; }
+.stock-research-facts dt { color: var(--text-secondary); font-size: var(--fs-caption); }
+.stock-research-facts dd { margin: 4px 0 0; font-size: var(--fs-body); overflow-wrap: anywhere; }
+.stock-research-datasets { display: grid; gap: 10px; }
+.stock-research-datasets > div { display: grid; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.stock-research-datasets span { color: var(--text-secondary); font-size: var(--fs-caption); }
+.stock-research-runs { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.stock-research-runs li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.stock-research-report { display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid var(--line); min-width: 0; }
+.stock-research-report h4, .stock-research-report p { margin: 0; }
+.stock-research-table { overflow-x: auto; }
+.stock-research-table table { width: 100%; border-collapse: collapse; font-size: var(--fs-caption); }
+.stock-research-table th, .stock-research-table td { text-align: left; padding: 8px 4px; border-bottom: 1px solid var(--line); }
+.stock-research-table th:last-child, .stock-research-table td:last-child { white-space: nowrap; }
+.stock-research-path { display: block; margin-top: 8px; overflow-wrap: anywhere; color: var(--text-secondary); }
+.stock-research-settings { width: 100%; min-width: 0; }
+.stock-research-settings > summary { cursor: pointer; font-weight: 600; padding: 8px 0; }

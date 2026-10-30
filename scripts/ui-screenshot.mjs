@@ -128,10 +128,37 @@ export async function openNewsResearchWorkspace(page) {
   await workspace.waitFor({ state: "visible" });
 }
 
+async function openNewsQuestions(page) {
+  const evidence = page.locator(".research-evidence-surface");
+  if (await evidence.isVisible()) {
+    await evidence.getByRole("button", { name: /返回研究问答|返回消息/ }).click();
+  }
+  const questions = page.locator(".research-question-surface");
+  if (!(await questions.isVisible())) {
+    await page.getByRole("button", { name: "打开研究问答", exact: true }).click();
+  }
+  await questions.waitFor({ state: "visible" });
+  await questions.getByRole("textbox", { name: "研究问题", exact: true }).waitFor({ state: "visible" });
+}
+
+async function selectNewsCitation(page, index) {
+  await openNewsQuestions(page);
+  await page.locator(".research-question-surface .research-inline-citation").nth(index).click();
+  await page.locator(".research-evidence-surface").waitFor({ state: "visible" });
+}
+
+async function openNewsStockDrawer(page) {
+  const inbox = page.locator(".research-inbox");
+  if (!(await inbox.isVisible())) {
+    await page.getByRole("button", { name: "打开股票列表", exact: true }).click();
+  }
+  await inbox.waitFor({ state: "visible" });
+}
+
 const mockStocks = [
-  { code: "600519.SH", name: "贵州茅台", industry: "食品饮料", price: 1428.6, change_pct: 0.018, pe: 22.4, pb: 7.3, roe: 31.2 },
-  { code: "000858.SZ", name: "五粮液", industry: "食品饮料", price: 128.4, change_pct: -0.006, pe: 18.7, pb: 4.6, roe: 24.1 },
-  { code: "300750.SZ", name: "宁德时代", industry: "电力设备", price: 286.1, change_pct: 0.012, pe: 19.8, pb: 4.1, roe: 22.7 },
+  { code: "600519.SH", name: "贵州茅台", industry: "食品饮料", price: 1428.6, change_pct: 0.018, pe: 22.4, pb: 7.3, roe: 0.312 },
+  { code: "000858.SZ", name: "五粮液", industry: "食品饮料", price: 128.4, change_pct: -0.006, pe: 18.7, pb: 4.6, roe: 0.241 },
+  { code: "300750.SZ", name: "宁德时代", industry: "电力设备", price: 286.1, change_pct: 0.012, pe: 19.8, pb: 4.1, roe: 0.227 },
 ];
 const mockBacktestSymbols = [
   ...mockStocks,
@@ -1732,14 +1759,17 @@ async function captureObserveSummaryBaselines(browser, targetRoot) {
 }
 
 async function assertNewsPageState(page, device, scenarioName) {
-  const riskBoundary = page.locator(".research-risk-boundary");
+  const questionsOpen = await page.locator(".research-question-surface").isVisible();
+  const evidenceOpen = await page.locator(".research-evidence-surface").isVisible();
+  const activeSurface = questionsOpen ? page.locator(".research-question-surface") : page.locator(".research-stream");
+  const riskBoundary = activeSurface.locator(".research-risk-boundary");
   let riskText = "";
   await riskBoundary.waitFor({ state: "visible" });
   riskText = (await riskBoundary.innerText()).trim();
   if (riskText !== "仅供研究，不构成投资建议。") {
     throw new Error(`${device.name}/${scenarioName} does not show the full research risk boundary`);
   }
-  if (device.mobile) {
+  if (device.mobile && questionsOpen) {
     const send = page.locator(".research-composer-send");
     const title = await send.getAttribute("title");
     const ariaLabel = await send.getAttribute("aria-label");
@@ -1749,27 +1779,34 @@ async function assertNewsPageState(page, device, scenarioName) {
     }
   }
 
-  const composerBox = await page.locator(".research-composer").boundingBox();
-  if (!composerBox || (device.mobile && composerBox.height > 180)) {
-    throw new Error(`${device.name}/${scenarioName} composer exceeds the 180px mobile limit: ${JSON.stringify(composerBox)}`);
-  }
-
-  const composerVisible = await page.locator(".research-composer").evaluate((element) => {
-    const r=element.getBoundingClientRect();
-    const nav=document.querySelector(".sidebar");
-    const bottom=innerWidth<=768 && nav ? nav.getBoundingClientRect().top : innerHeight;
-    return r.top>=0 && r.bottom<=bottom+1;
-  });
-  if (!composerVisible) throw new Error(device.name + "/" + scenarioName + " composer is obscured by viewport/navigation");
   const checks = {
-    composerVisible,
     riskBoundary: riskText,
-    composerHeight: Math.round(composerBox.height * 10) / 10,
+    questionsOpen,
+    evidenceOpen,
   };
+  if (questionsOpen) {
+    const composer = page.locator(".research-question-surface .research-composer");
+    const composerBox = await composer.boundingBox();
+    if (!composerBox || (device.mobile && composerBox.height > 180)) {
+      throw new Error(`${device.name}/${scenarioName} composer exceeds the 180px mobile limit: ${JSON.stringify(composerBox)}`);
+    }
+    const composerVisible = await composer.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      return box.top >= 0 && box.bottom <= innerHeight + 1;
+    });
+    if (!composerVisible) throw new Error(`${device.name}/${scenarioName} composer is obscured by the viewport`);
+    checks.composerVisible = composerVisible;
+    checks.composerHeight = Math.round(composerBox.height * 10) / 10;
+  } else if (!evidenceOpen) {
+    if (await page.locator(".research-composer, .research-evidence").count() !== 0) {
+      throw new Error(`${device.name}/${scenarioName} default reading view mounts a question composer or empty evidence inspector`);
+    }
+    checks.defaultReading = true;
+  }
 
   if (device.mobile) {
     const touchTargets = await page.locator(
-      ".research-mobile-inbox-button, .research-actions button, .sentiment-header-tools button",
+      ".research-mobile-stock-button:visible, .research-actions button:visible, .sentiment-header-actions button:visible",
     ).evaluateAll((elements) => elements.map((element) => {
       const box = element.getBoundingClientRect();
       return {
@@ -1780,7 +1817,7 @@ async function assertNewsPageState(page, device, scenarioName) {
     }));
     const undersized = touchTargets.filter((target) => target.width < 43.5 || target.height < 43.5);
     if (touchTargets.length < 3 || undersized.length) {
-      throw new Error(`${device.name}/${scenarioName} has undersized topbar touch targets: ${JSON.stringify(undersized)}`);
+      throw new Error(`${device.name}/${scenarioName} expects at least three visible topbar controls of 44px: ${JSON.stringify({ count: touchTargets.length, undersized })}`);
     }
     checks.touchTargets = touchTargets;
 
@@ -1794,29 +1831,18 @@ async function assertNewsPageState(page, device, scenarioName) {
     }
   }
 
-  if (!device.mobile && scenarioName === "empty") {
-    const evidenceOverflow = await page.locator(".research-evidence").evaluate((element) => ({
-      clientHeight: element.clientHeight,
-      scrollHeight: element.scrollHeight,
-    }));
-    if (evidenceOverflow.scrollHeight > evidenceOverflow.clientHeight + 1) {
-      throw new Error(`${device.name}/${scenarioName} evidence empty state scrolls: ${JSON.stringify(evidenceOverflow)}`);
-    }
-    checks.evidenceOverflow = evidenceOverflow;
-  }
-
   if (scenarioName === "data") {
     const brief = page.locator(".research-daily-brief");
     if (await brief.getAttribute("open") !== null) {
       throw new Error(`${device.name}/${scenarioName} daily brief should start collapsed`);
     }
-    const summaryCounts = await brief.locator(
-      ".research-brief-inline-counts .research-stat > strong",
-    ).allTextContents();
-    if (summaryCounts.length !== 4 || summaryCounts.slice(0, 3).some((value) => Number(value) === 0)) {
-      throw new Error(`${device.name}/${scenarioName} fixture is no longer counted as today: ${JSON.stringify(summaryCounts)}`);
+    const summaryCount = (await brief.locator(".research-brief-summary > strong").innerText()).trim();
+    const detailCounts = await brief.locator(".research-brief-expanded .research-stat > strong").allTextContents();
+    if (summaryCount !== "今日新增 5 条" || detailCounts.join(",") !== "2,2,1") {
+      throw new Error(`${device.name}/${scenarioName} fixture is no longer counted as today: ${JSON.stringify({ summaryCount, detailCounts })}`);
     }
-    checks.summaryCounts = summaryCounts;
+    checks.summaryCount = summaryCount;
+    checks.detailCounts = detailCounts;
   }
 
   return checks;
@@ -1833,7 +1859,6 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         detail: { answers: [] },
         indexStatus: {},
       },
-      selectCitation: false,
     },
     {
       name: "data",
@@ -1844,7 +1869,6 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         detail: mockResearchThreadDetail,
         indexStatus: { schema_version: 1, document_count: 18, chunk_count: 52 },
       },
-      selectCitation: true,
     },
   ];
   const reports = [];
@@ -1877,14 +1901,6 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         await disableResearchMotion(page);
         await page.mouse.move(device.width / 2, Math.min(180, device.height / 3));
         await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
-
-        if (scenario.selectCitation && !device.mobile) {
-          const citation = page.locator(".research-inline-citation").first();
-          await citation.waitFor({ state: "visible" });
-          await citation.click();
-          await page.waitForTimeout(160);
-          await page.locator(".research-stream-body").evaluate((element) => element.scrollTo(0, 0));
-        }
 
         const checks = await assertNewsPageState(page, device, scenario.name);
 
@@ -1964,18 +1980,14 @@ async function captureNewsPageBaselines(browser, targetRoot) {
       name: "phone-inbox-open",
       file: "inbox-open.png",
       open: async (page) => {
-        await page.locator(".research-mobile-inbox-button").click();
-        await page.locator(".research-inbox.mobile-open").waitFor({ state: "visible" });
+        await openNewsStockDrawer(page);
       },
     },
     {
       name: "phone-evidence-open",
       file: "evidence-open.png",
       open: async (page) => {
-        const citation = page.locator(".research-inline-citation").first();
-        await citation.waitFor({ state: "visible" });
-        await citation.click();
-        await page.locator(".research-evidence.has-selection").waitFor({ state: "visible" });
+        await selectNewsCitation(page, 0);
       },
     },
   ];
@@ -2014,7 +2026,6 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         await disableResearchMotion(page);
         await page.mouse.move(device.width / 2, Math.min(180, device.height / 3));
         await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
-        await page.locator(".research-inline-citation").first().waitFor({ state: "visible" });
         await overlay.open(page);
         await page.waitForTimeout(160);
         const checks = await assertNewsPageState(page, device, "data");
@@ -2055,23 +2066,18 @@ async function captureNewsPageBaselines(browser, targetRoot) {
     {
       name: "evidence-history",
       open: async (page) => {
-        const citations = page.locator(".research-inline-citation");
-        await citations.nth(0).click();
-        // On mobile the evidence inspector is an intentional modal sheet that
-        // covers the answer; dispatch the second citation's click handler
-        // directly so this state still exercises citation-history rendering.
-        const mobile = await page.evaluate(() => window.matchMedia("(max-width: 768px)").matches);
-        if (mobile) {
-          await citations.nth(1).evaluate((element) => element.click());
-        } else {
-          await citations.nth(1).click();
-        }
+        await selectNewsCitation(page, 0);
+        await selectNewsCitation(page, 1);
         await page.getByRole("button", { name: "上一条证据" }).waitFor({ state: "visible" });
+        if (await page.getByRole("button", { name: "上一条证据" }).isDisabled()) {
+          throw new Error("visible citation return flow did not retain history");
+        }
       },
     },
     {
       name: "delete-confirmation",
       open: async (page) => {
+        await openNewsQuestions(page);
         const deleteButton = page.getByRole("button", { name: /删除研究会话/ }).first();
         await deleteButton.click();
         await page.getByText("确认删除？").waitFor({ state: "visible" });
@@ -2084,10 +2090,8 @@ async function captureNewsPageBaselines(browser, targetRoot) {
           await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
           await route.fulfill({ json: { items: mockResearchMessagesData } });
         });
-        await page.evaluate(() => {
-          const button = document.querySelector(".research-stock-row:not(.active)");
-          button?.click();
-        });
+        await openNewsStockDrawer(page);
+        await page.locator(".research-stock-row").filter({ hasText: "000858.SZ" }).click();
         await page.locator(".research-loading-status").waitFor({ state: "visible" });
       },
     },
@@ -2116,10 +2120,6 @@ async function captureNewsPageBaselines(browser, targetRoot) {
       await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
       await openNewsResearchWorkspace(page);
       await disableResearchMotion(page);
-      if (device.mobile && ["delete-confirmation", "stock-switch-loading"].includes(state.name)) {
-        await page.locator(".research-mobile-inbox-button").click();
-        await page.locator(".research-inbox.mobile-open").waitFor({ state: "visible" });
-      }
       await state.open(page);
       await page.waitForTimeout(160);
       const directory = resolve(targetRoot, "news", state.name, device.name);
@@ -2235,6 +2235,7 @@ async function runNewsInteractionChecks(browser) {
   });
   await page.goto(deviceUrl(device, "#sectionNewsRag"), { waitUntil: "networkidle" });
   await openNewsResearchWorkspace(page);
+  await assertNewsPageState(page, device, "data");
 
   const firstEvent = page.locator(".research-event").first();
   await firstEvent.click();
@@ -2257,26 +2258,28 @@ async function runNewsInteractionChecks(browser) {
 
   const allRead = page.getByRole("button", { name: "全部已读", exact: true });
   await allRead.click();
-  await page.getByText("已全部标为已读").waitFor({ state: "visible" });
-  if (await page.locator(".research-event .research-pill").count() !== 0
-    || !markReadRequests.some((payload) => Array.isArray(payload.message_ids)
-      && payload.message_ids.length >= 2)) {
+  await page.waitForFunction(() => document.querySelectorAll(".research-event.unread").length === 0);
+  if (!markReadRequests.some((payload) => payload.stock_code === "600519.SH"
+    || (Array.isArray(payload.message_ids) && payload.message_ids.length >= 2))) {
     throw new Error("all-read did not clear visible unread messages");
   }
 
+  await openNewsQuestions(page);
   const textarea = page.locator(".research-composer textarea");
   await textarea.fill("验证快捷提交");
   await textarea.press("Control+Enter");
-  await page.getByText("研究回答").waitFor({ state: "visible" });
+  await page.locator(".research-answer").filter({ hasText: "研究回答" }).last().waitFor({ state: "attached" });
+  await openNewsQuestions(page);
+  await page.locator(".research-answer").filter({ hasText: "研究回答" }).last().waitFor({ state: "visible" });
 
-  const citations = page.locator(".research-inline-citation");
-  await citations.nth(0).click();
-  await citations.nth(1).click();
+  await selectNewsCitation(page, 0);
+  await selectNewsCitation(page, 1);
   const previous = page.getByRole("button", { name: "上一条证据" });
   if (await previous.isDisabled()) throw new Error("citation history did not retain the previous citation");
   await previous.click();
   await page.locator(".research-evidence-card h2").filter({ hasText: "三季报预告上修" }).waitFor({ state: "visible" });
 
+  await openNewsQuestions(page);
   const deleteButton = page.getByRole("button", { name: /删除研究会话/ }).first();
   await deleteButton.click();
   await page.getByText("确认删除？").waitFor({ state: "visible" });

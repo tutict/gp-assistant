@@ -29,7 +29,7 @@ fn adaptive_stock(index: usize) -> StockItem {
         market_cap_billion: Some(80.0 + index as f64 * 10.0),
         dividend_yield: Some(0.02),
         deducted_net_profit_billion: Some(2.0),
-        deducted_net_profit_growth_rate: Some(0.08),
+        deducted_net_profit_growth_rate: Some(8.0),
         change_pct: Some(if index % 2 == 0 { 0.01 } else { -0.01 }),
         amount: Some(600_000_000.0),
         turnover_rate: Some(0.025),
@@ -97,7 +97,7 @@ fn adaptive_exploration_fills_the_requested_ten_slots_with_fallback_candidates()
         stock.market_cap_billion = Some(5.0);
         stock.dividend_yield = Some(0.0);
         stock.deducted_net_profit_billion = Some(-2.0);
-        stock.deducted_net_profit_growth_rate = Some(-0.20);
+        stock.deducted_net_profit_growth_rate = Some(-20.0);
     }
     let request = AdaptiveScreenRequest {
         primary_limit: 10,
@@ -147,6 +147,130 @@ fn adaptive_fixture(
         })
         .collect::<HashMap<_, _>>();
     (stocks, histories, benchmarks)
+}
+
+#[test]
+fn adaptive_auto_ignores_benchmark_history_before_the_120_bar_window() {
+    let (stocks, histories, _) = adaptive_fixture(0.0);
+    let tail = (0..120)
+        .map(|i| HistoryBar {
+            date: format!("2026-{i:03}"),
+            open: Some(100.0),
+            high: Some(101.0),
+            low: Some(99.0),
+            close: 100.0,
+            volume: Some(1_000_000.0),
+            capital: None,
+        })
+        .collect::<Vec<_>>();
+    let benchmarks = ["000001.SH", "399001.SZ", "399006.SZ"]
+        .into_iter()
+        .map(|code| (code.to_string(), tail.clone()))
+        .collect::<HashMap<_, _>>();
+    let request = AdaptiveScreenRequest {
+        primary_limit: 3,
+        exploration_limit: 0,
+        ..Default::default()
+    };
+    let expected_features =
+        adaptive_scoring_features(&stocks, &histories, &benchmarks, &request).unwrap();
+    let expected = adaptive_screen_stocks(&stocks, &histories, &benchmarks, &[], &request).unwrap();
+    assert_eq!(expected.market_regime.detected, "range");
+    for old_range in [0.01, 10.0] {
+        let mut long = benchmarks.clone();
+        for bars in long.values_mut() {
+            let older = (0..240)
+                .map(|i| HistoryBar {
+                    date: format!("2025-{i:03}"),
+                    open: Some(100.0),
+                    high: Some(100.0 + old_range),
+                    low: Some(100.0 - old_range),
+                    close: 100.0,
+                    volume: Some(1_000_000.0),
+                    capital: None,
+                })
+                .collect::<Vec<_>>();
+            *bars = older.into_iter().chain(tail.clone()).collect();
+        }
+        let features = adaptive_scoring_features(&stocks, &histories, &long, &request).unwrap();
+        assert_eq!(
+            features.market_regime.detected, expected_features.market_regime.detected,
+            "old range {old_range}"
+        );
+        assert_eq!(
+            serde_json::to_value(&features.market_regime).unwrap(),
+            serde_json::to_value(&expected_features.market_regime).unwrap()
+        );
+        let actual = adaptive_screen_stocks(&stocks, &histories, &long, &[], &request).unwrap();
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(&expected).unwrap()
+        );
+    }
+}
+
+#[test]
+fn ordinary_small_pools_apply_neutral_and_shrunken_industry_ranks() {
+    let low = custom_test_stock("000001.SZ", "low", "bank", 100.0, 30.0, 0.05);
+    let high = custom_test_stock("000002.SZ", "high", "bank", 100.0, 8.0, 0.20);
+    let unrelated = custom_test_stock("000003.SZ", "other", "consumer", 100.0, 20.0, 0.10);
+    for profile in ["quality", "balanced"] {
+        let criteria = ScreenCriteria {
+            score_profile: profile.into(),
+            ..Default::default()
+        };
+        let singleton = screen_stocks(&[low.clone()], &criteria);
+        assert_eq!(
+            singleton.items[0].factor_scores.get("industry_quality_pct"),
+            Some(&0.5)
+        );
+        assert_eq!(
+            singleton.items[0]
+                .factor_scores
+                .get("industry_valuation_pct"),
+            Some(&0.5)
+        );
+        let pair = screen_stocks(&[low.clone(), high.clone()], &criteria);
+        let expanded = screen_stocks(&[low.clone(), high.clone(), unrelated.clone()], &criteria);
+        for item in &pair.items {
+            let counterpart = expanded
+                .items
+                .iter()
+                .find(|row| row.stock.code == item.stock.code)
+                .unwrap();
+            for key in ["industry_quality_pct", "industry_valuation_pct"] {
+                let percentile = item.factor_scores[key];
+                let expected = if item.stock.code == low.code {
+                    0.5 - 0.5 / 7.0
+                } else {
+                    0.5 + 0.5 / 7.0
+                };
+                assert!(
+                    (percentile - expected).abs() < 1e-6,
+                    "{profile}/{key}: {percentile}"
+                );
+                assert_eq!(percentile, counterpart.factor_scores[key]);
+            }
+            assert_eq!(item.score, counterpart.score);
+            assert!(
+                (item
+                    .score_breakdown
+                    .iter()
+                    .filter_map(|entry| entry.contribution)
+                    .sum::<f64>()
+                    - item.score)
+                    .abs()
+                    < 1e-9
+            );
+        }
+        let other = expanded
+            .items
+            .iter()
+            .find(|item| item.stock.code == unrelated.code)
+            .unwrap();
+        assert_eq!(other.factor_scores["industry_quality_pct"], 0.5);
+        assert_eq!(other.factor_scores["industry_valuation_pct"], 0.5);
+    }
 }
 
 #[test]
@@ -386,6 +510,9 @@ fn adaptive_backtest_contract_keeps_requested_mode_and_prefetches_the_point_in_t
     let symbols = backtest_selected_symbols(
         &stocks,
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria::default(),
             source: "criteria".to_string(),
             strategy_mode: "adaptive_swing_v1:auto".to_string(),
@@ -470,6 +597,9 @@ fn adaptive_rebalance_propagates_market_data_errors_instead_of_silently_clearing
     let error = adaptive_walk_forward_active_indices(
         &stocks,
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria::default(),
             source: "criteria".to_string(),
             strategy_mode: "adaptive_swing_v1:auto".to_string(),
@@ -592,6 +722,9 @@ fn adaptive_walk_forward_signals_on_the_prior_session_and_trades_on_the_next_ses
     let simulation = simulate_walk_forward_portfolio_with_snapshots(
         &stocks,
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria::default(),
             source: "criteria".to_string(),
             strategy_mode: "adaptive_swing_v1:range".to_string(),
@@ -633,6 +766,9 @@ fn adaptive_walk_forward_signals_on_the_prior_session_and_trades_on_the_next_ses
         .map(|history| price_on_date(history, signal_date))
         .collect::<Vec<_>>();
     let auto_request = BacktestRequest {
+        algorithm_version: None,
+        parameter_set_id: None,
+        scoring_parameters: None,
         criteria: ScreenCriteria::default(),
         source: "criteria".to_string(),
         strategy_mode: "adaptive_swing_v1:auto".to_string(),
@@ -1007,7 +1143,7 @@ fn screens_by_pe_and_roe() {
     assert!(result.items.iter().all(|item| item
         .stock
         .roe
-        .and_then(as_percent)
+        .and_then(ratio_percentage_points)
         .map(|roe| roe >= 10.0)
         .unwrap_or(false)));
     assert!(result
@@ -1021,13 +1157,13 @@ fn screens_by_pe_and_roe() {
 }
 
 #[test]
-fn roe_filter_accepts_ratio_and_percent_thresholds() {
+fn roe_filter_uses_documented_ratio_thresholds() {
     let universe = vec![
         custom_test_stock("000001.SZ", "high-roe", "bank", 100.0, 10.0, 0.15),
         custom_test_stock("000002.SZ", "low-roe", "bank", 100.0, 10.0, 0.08),
     ];
 
-    for minimum in [0.10, 10.0] {
+    for minimum in [0.10] {
         let result = screen_stocks(
             &universe,
             &ScreenCriteria {
@@ -1038,6 +1174,415 @@ fn roe_filter_accepts_ratio_and_percent_thresholds() {
         assert_eq!(result.returned, 1);
         assert_eq!(result.items[0].stock.code, "000001.SZ");
     }
+    assert_eq!(
+        screen_stocks(
+            &universe,
+            &ScreenCriteria {
+                min_roe: Some(10.0),
+                ..ScreenCriteria::default()
+            }
+        )
+        .returned,
+        0
+    );
+}
+
+#[test]
+fn explicit_wire_rates_preserve_small_growth_and_large_roe() {
+    let mut stock = adaptive_stock(0);
+    stock.roe = Some(1.2);
+    stock.deducted_net_profit_growth_rate = Some(0.804352);
+    stock.deducted_net_profit_margin = Some(0.4);
+    assert_eq!(format_percent(1.2), "120%");
+    assert!(matches_stock(
+        &stock,
+        &ScreenCriteria {
+            min_roe: Some(1.0),
+            min_deducted_net_profit_growth_rate: Some(1.0),
+            ..ScreenCriteria::default()
+        }
+    )
+    .is_none());
+    assert!(matches_stock(
+        &stock,
+        &ScreenCriteria {
+            min_deducted_net_profit_margin: Some(0.5),
+            ..ScreenCriteria::default()
+        }
+    )
+    .is_none());
+    stock.roe = Some(0.1);
+    let positive = fundamental_score(&stock);
+    stock.deducted_net_profit_growth_rate = Some(-0.804352);
+    let negative = fundamental_score(&stock);
+    assert!(
+        (positive - negative).abs() < 0.15,
+        "tiny pp growth must not become 80% growth"
+    );
+    assert_eq!(heuristic_criteria("ROE 12%").min_roe, Some(0.12));
+    assert_eq!(heuristic_criteria("ROE 1.2").min_roe, Some(1.2));
+}
+
+#[test]
+fn adaptive_identical_industry_candidates_have_equal_public_scores() {
+    let stocks = (0..3)
+        .map(|index| {
+            let mut stock = adaptive_stock(0);
+            stock.code = format!("{:06}.SZ", index + 1);
+            stock.industry = "银行".to_string();
+            stock
+        })
+        .collect::<Vec<_>>();
+    let histories = stocks
+        .iter()
+        .map(|stock| (stock.code.clone(), adaptive_history(10.0, 0.002, 90)))
+        .collect();
+    let request = AdaptiveScreenRequest {
+        mode: "range".into(),
+        primary_limit: 3,
+        exploration_limit: 0,
+        ..Default::default()
+    };
+    let result =
+        adaptive_screen_stocks(&stocks, &histories, &HashMap::new(), &[], &request).unwrap();
+    assert!(
+        result
+            .items
+            .windows(2)
+            .all(|pair| pair[0].score == pair[1].score),
+        "scores {:?}",
+        result.items.iter().map(|r| r.score).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn adaptive_features_export_raw_returns_counts_and_parameterized_metadata() {
+    let (stocks, histories, benchmarks) = adaptive_fixture(0.0);
+    let request = AdaptiveScreenRequest {
+        primary_limit: 3,
+        mode: "range".into(),
+        ..Default::default()
+    };
+    let features = adaptive_scoring_features(&stocks, &histories, &benchmarks, &request).unwrap();
+    assert_eq!(features.candidates.len(), 18);
+    for row in &features.candidates {
+        assert_eq!(row.industry_sample_count, 3);
+        assert_eq!(row.factors.len(), 9);
+        assert!(row
+            .factors
+            .values()
+            .all(|v| v.is_finite() && (0.0..=1.0).contains(v)));
+        let bars = &histories[&row.stock.code];
+        assert!(
+            (row.raw_return_20 - (bars.last().unwrap().close / bars[bars.len() - 21].close - 1.0))
+                .abs()
+                < 1e-12
+        );
+    }
+    let fixed = fixed_scoring_parameters();
+    let ordinary = adaptive_screen_stocks(&stocks, &histories, &benchmarks, &[], &request).unwrap();
+    let supplied = adaptive_screen_stocks_with_parameters(
+        &stocks,
+        &histories,
+        &benchmarks,
+        &[],
+        &request,
+        &fixed,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&ordinary).unwrap(),
+        serde_json::to_value(&supplied).unwrap()
+    );
+    assert_eq!(ordinary.metric_contract_version, 2);
+    assert_eq!(ordinary.parameter_set_id, "fixed-v1");
+    assert_eq!(ordinary.scoring_revision, SCORING_REVISION);
+    assert_eq!(
+        ordinary.implementation_fingerprint,
+        scoring_implementation_fingerprint()
+    );
+    let by_code = features
+        .candidates
+        .iter()
+        .map(|row| (&row.stock.code, row))
+        .collect::<HashMap<_, _>>();
+    for row in &supplied.items {
+        assert_eq!(row.industry_sample_count, Some(3));
+        assert!(
+            (row.score
+                - adaptive_score_factor_vector(&by_code[&row.stock.code].factors, "range", &fixed)
+                    .unwrap())
+            .abs()
+                < 1e-6
+        );
+        assert!(
+            (row.score_breakdown
+                .iter()
+                .filter_map(|c| c.contribution)
+                .sum::<f64>()
+                - row.score)
+                .abs()
+                < 1e-9
+        );
+    }
+    let mut v2 = fixed.clone();
+    v2.algorithm_version = "adaptive_swing_v2".into();
+    v2.parameter_set_id = "test-v2".into();
+    v2.modes
+        .get_mut("range")
+        .unwrap()
+        .weights
+        .insert("quality".into(), 0.29);
+    v2.modes
+        .get_mut("range")
+        .unwrap()
+        .weights
+        .insert("range_setup".into(), 0.17);
+    let changed = adaptive_screen_stocks_with_parameters(
+        &stocks,
+        &histories,
+        &benchmarks,
+        &[],
+        &request,
+        &v2,
+    )
+    .unwrap();
+    assert_eq!(changed.algorithm_version, "adaptive_swing_v2");
+    assert_eq!(changed.parameter_set_id, "test-v2");
+    assert!(changed.items.iter().any(|r| ordinary
+        .items
+        .iter()
+        .any(|o| o.stock.code == r.stock.code && o.score != r.score)));
+}
+
+#[test]
+fn adaptive_ranks_raw_returns_beyond_clip_and_is_invariant_to_input_order() {
+    let stocks = (0..3)
+        .map(|i| {
+            let mut stock = adaptive_stock(0);
+            stock.code = format!("{:06}.SZ", i + 1);
+            stock
+        })
+        .collect::<Vec<_>>();
+    let histories = stocks
+        .iter()
+        .enumerate()
+        .map(|(i, stock)| {
+            let bars = (0..90)
+                .map(|day| {
+                    let close = 10.0 * (1.01 + i as f64 * 0.005).powi(day);
+                    HistoryBar {
+                        close,
+                        open: Some(close),
+                        high: Some(close * 1.01),
+                        low: Some(close * 0.99),
+                        volume: Some(1_000_000.0),
+                        date: format!("2026-{day:03}"),
+                        capital: None,
+                    }
+                })
+                .collect::<Vec<_>>();
+            (stock.code.clone(), bars)
+        })
+        .collect();
+    let request = AdaptiveScreenRequest {
+        primary_limit: 3,
+        mode: "range".into(),
+        ..Default::default()
+    };
+    let first = adaptive_scoring_features(&stocks, &histories, &HashMap::new(), &request).unwrap();
+    let mut reversed = stocks.clone();
+    reversed.reverse();
+    let second =
+        adaptive_scoring_features(&reversed, &histories, &HashMap::new(), &request).unwrap();
+    let to_map = |set: AdaptiveFeatureSet| {
+        set.candidates
+            .into_iter()
+            .map(|r| (r.stock.code, r.factors))
+            .collect::<BTreeMap<_, _>>()
+    };
+    let one = to_map(first.clone());
+    assert_eq!(one, to_map(second));
+    assert!(first.candidates.iter().all(|r| r.raw_return_20 > 0.10));
+    assert!(one["000003.SZ"]["relative_strength"] > one["000002.SZ"]["relative_strength"]);
+    assert!(one["000002.SZ"]["relative_strength"] > one["000001.SZ"]["relative_strength"]);
+}
+
+#[test]
+fn calibrated_walk_forward_routes_frozen_weights_with_point_in_time_signals() {
+    let base = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+    let signal = base + chrono::Duration::days(89);
+    let mut a = adaptive_stock(0);
+    a.roe = Some(0.10);
+    a.volume_ratio = Some(2.0);
+    let mut b = a.clone();
+    b.code = "000002.SZ".into();
+    b.roe = Some(0.13);
+    b.volume_ratio = Some(3.01);
+    let stocks = vec![a, b];
+    let bars = adaptive_history(10.0, 0.002, 90)
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut bar)| {
+            bar.date = (base + chrono::Duration::days(i as i64))
+                .format("%Y-%m-%d")
+                .to_string();
+            bar
+        })
+        .collect::<Vec<_>>();
+    let histories = stocks
+        .iter()
+        .map(|stock| BacktestHistory {
+            code: stock.code.clone(),
+            prices: bars
+                .iter()
+                .map(|bar| (parse_date(&bar.date).unwrap(), bar.close))
+                .collect(),
+            bars: bars.clone(),
+        })
+        .collect::<Vec<_>>();
+    let index = stocks
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.code.clone(), i))
+        .collect::<HashMap<_, _>>();
+    let prices = vec![Some(bars.last().unwrap().close); 2];
+    let snapshots = stocks
+        .iter()
+        .map(|stock| {
+            (
+                stock.code.clone(),
+                BTreeMap::from([(
+                    base,
+                    StockFactorSnapshot {
+                        date: base.format("%Y-%m-%d").to_string(),
+                        available_date: Some(base.format("%Y-%m-%d").to_string()),
+                        name: Some(stock.name.clone()),
+                        industry: Some(stock.industry.clone()),
+                        is_st: Some(false),
+                        is_listed: Some(true),
+                        is_tradable: Some(true),
+                        pe: stock.pe,
+                        pb: stock.pb,
+                        roe: stock.roe,
+                        market_cap_billion: stock.market_cap_billion,
+                        dividend_yield: stock.dividend_yield,
+                        deducted_net_profit_billion: stock.deducted_net_profit_billion,
+                        deducted_net_profit_growth_rate: stock.deducted_net_profit_growth_rate,
+                        amount: stock.amount,
+                        turnover_rate: stock.turnover_rate,
+                        volume_ratio: stock.volume_ratio,
+                        ..Default::default()
+                    },
+                )]),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let request = BacktestRequest {
+        strategy_mode: "adaptive_swing_v1:range".into(),
+        top_n: 1,
+        ..Default::default()
+    };
+    let fixed = adaptive_walk_forward_active_indices(
+        &stocks,
+        &request,
+        &histories,
+        &HashMap::new(),
+        &snapshots,
+        &index,
+        &prices,
+        signal,
+    )
+    .unwrap();
+    let mut parameters = fixed_scoring_parameters();
+    parameters.algorithm_version = "adaptive_swing_v2".into();
+    parameters.parameter_set_id = "pit-test-v2".into();
+    parameters
+        .modes
+        .get_mut("range")
+        .unwrap()
+        .weights
+        .insert("quality".into(), 0.29);
+    parameters
+        .modes
+        .get_mut("range")
+        .unwrap()
+        .weights
+        .insert("range_setup".into(), 0.17);
+    let v2request = BacktestRequest {
+        strategy_mode: "adaptive_swing_v2:range".into(),
+        algorithm_version: Some("adaptive_swing_v2".into()),
+        parameter_set_id: Some(parameters.parameter_set_id.clone()),
+        scoring_parameters: Some(parameters.clone()),
+        top_n: 1,
+        ..Default::default()
+    };
+    let calibrated = adaptive_walk_forward_active_indices(
+        &stocks,
+        &v2request,
+        &histories,
+        &HashMap::new(),
+        &snapshots,
+        &index,
+        &prices,
+        signal,
+    )
+    .unwrap();
+    assert_ne!(
+        calibrated.selected_indices, fixed.selected_indices,
+        "calibrated weights must change this boundary selection"
+    );
+    let mut visible = point_in_time_universe(&stocks, &snapshots, &index, &prices, signal);
+    for stock in &mut visible {
+        stock.change_pct = Some(bars.last().unwrap().close / bars[bars.len() - 2].close - 1.0);
+        stock.quote_time = Some(signal.format("%Y-%m-%d").to_string());
+    }
+    let visible_histories = stocks
+        .iter()
+        .map(|s| (s.code.clone(), bars.clone()))
+        .collect();
+    let expected = adaptive_screen_stocks_with_parameters(
+        &visible,
+        &visible_histories,
+        &HashMap::new(),
+        &[],
+        &AdaptiveScreenRequest {
+            mode: "range".into(),
+            primary_limit: 1,
+            exploration_limit: 0,
+            as_of_date: Some(signal.format("%Y%m%d").to_string()),
+            ..Default::default()
+        },
+        &parameters,
+    )
+    .unwrap();
+    assert_eq!(
+        calibrated.selected_indices,
+        vec![index[&expected.items[0].stock.code]]
+    );
+    let mut future = histories.clone();
+    for history in &mut future {
+        let mut bar = bars.last().unwrap().clone();
+        bar.date = (signal + chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        bar.close *= 10.0;
+        bar.high = Some(bar.close);
+        bar.low = Some(bar.close);
+        history.bars.push(bar);
+    }
+    let unchanged = adaptive_walk_forward_active_indices(
+        &stocks,
+        &v2request,
+        &future,
+        &HashMap::new(),
+        &snapshots,
+        &index,
+        &prices,
+        signal,
+    )
+    .unwrap();
+    assert_eq!(unchanged.selected_indices, calibrated.selected_indices);
 }
 
 #[test]
@@ -1156,6 +1701,9 @@ fn pit_factor_snapshot(date: &str, pe: Option<f64>) -> StockFactorSnapshot {
 #[test]
 fn backtest_uses_mock_history() {
     let result = backtest_with_mock(&BacktestRequest {
+        algorithm_version: None,
+        parameter_set_id: None,
+        scoring_parameters: None,
         criteria: ScreenCriteria {
             max_pe: Some(10.0),
             ..ScreenCriteria::default()
@@ -1181,6 +1729,9 @@ fn backtest_uses_mock_history() {
 #[test]
 fn backtest_rejects_reversed_date_range_before_history_lookup() {
     let error = backtest_with_mock(&BacktestRequest {
+        algorithm_version: None,
+        parameter_set_id: None,
+        scoring_parameters: None,
         criteria: ScreenCriteria::default(),
         source: default_backtest_source(),
         strategy_mode: "candidate_snapshot".to_string(),
@@ -2419,7 +2970,7 @@ fn quality_profile_uses_quality_ranking_without_hot_sector_promotion() {
         market_cap_billion: Some(300.0),
         dividend_yield: Some(0.03),
         deducted_net_profit_billion: Some(20.0),
-        deducted_net_profit_growth_rate: Some(0.15),
+        deducted_net_profit_growth_rate: Some(15.0),
         ..StockItem::default()
     };
     let mut chip = bank.clone();
@@ -2431,7 +2982,7 @@ fn quality_profile_uses_quality_ranking_without_hot_sector_promotion() {
     chip.roe = Some(0.03);
     chip.dividend_yield = None;
     chip.deducted_net_profit_billion = Some(-1.0);
-    chip.deducted_net_profit_growth_rate = Some(-0.20);
+    chip.deducted_net_profit_growth_rate = Some(-20.0);
 
     let result = screen_stocks(
         &[chip, bank],
@@ -2494,6 +3045,9 @@ fn backtests_with_native_history() {
     let result = backtest_with_data(
         &sample_data_set(),
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria {
                 max_pe: Some(10.0),
                 ..ScreenCriteria::default()
@@ -2533,6 +3087,9 @@ fn candidate_snapshot_rejects_selected_stocks_without_history() {
     let error = backtest_with_data(
         &data,
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria {
                 max_pe: Some(10.0),
                 ..ScreenCriteria::default()
@@ -2559,6 +3116,9 @@ fn backtests_watchlist_codes_in_saved_order() {
     let result = backtest_with_data(
         &sample_data_set(),
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria::default(),
             source: "watchlist".to_string(),
             strategy_mode: "candidate_snapshot".to_string(),
@@ -2583,6 +3143,9 @@ fn strict_backtest_history_requirements_reject_missing_factor_snapshots_before_f
     let data = sample_data_set();
     let source = StaticDataSource::new(&data);
     let request = BacktestRequest {
+        algorithm_version: None,
+        parameter_set_id: None,
+        scoring_parameters: None,
         criteria: ScreenCriteria::default(),
         source: "criteria".to_string(),
         strategy_mode: "adaptive_swing_v1:auto".to_string(),
@@ -2608,6 +3171,9 @@ fn walk_forward_requires_point_in_time_factor_snapshots() {
     let error = backtest_with_data(
         &sample_data_set(),
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria {
                 max_pe: Some(10.0),
                 ..ScreenCriteria::default()
@@ -2647,6 +3213,9 @@ fn walk_forward_rejects_partial_factor_snapshot_coverage() {
     let error = backtest_with_data(
         &data,
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria::default(),
             source: default_backtest_source(),
             strategy_mode: "walk_forward".to_string(),
@@ -2682,6 +3251,9 @@ fn walk_forward_rejects_partial_history_coverage() {
     let error = backtest_with_data(
         &data,
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria::default(),
             source: default_backtest_source(),
             strategy_mode: "walk_forward".to_string(),
@@ -2706,6 +3278,9 @@ fn walk_forward_watchlist_requires_point_in_time_status() {
     let error = backtest_with_data(
         &sample_data_set(),
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria::default(),
             source: "watchlist".to_string(),
             strategy_mode: "walk_forward".to_string(),
@@ -2735,6 +3310,9 @@ fn walk_forward_watchlist_respects_historical_st_status() {
     let result = backtest_with_data(
         &data,
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria {
                 include_st: false,
                 ..ScreenCriteria::default()
@@ -2775,6 +3353,9 @@ fn walk_forward_without_history_fails_instead_of_skipping_pit_validation() {
     let error = backtest_with_data(
         &data,
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria::default(),
             source: default_backtest_source(),
             strategy_mode: "walk_forward".to_string(),
@@ -2989,6 +3570,9 @@ fn walk_forward_uses_point_in_time_factor_snapshots() {
     let result = backtest_with_data(
         &data,
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria {
                 max_pe: Some(10.0),
                 ..ScreenCriteria::default()
@@ -3037,6 +3621,9 @@ fn walk_forward_rejects_snapshot_without_public_availability_date() {
     let error = backtest_with_data(
         &data,
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria::default(),
             source: default_backtest_source(),
             strategy_mode: "walk_forward".to_string(),
@@ -3075,6 +3662,9 @@ fn walk_forward_does_not_fill_missing_snapshot_fields_from_current_data() {
     let result = backtest_with_data(
         &data,
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria {
                 max_pe: Some(10.0),
                 ..ScreenCriteria::default()
@@ -3166,6 +3756,9 @@ fn walk_forward_moves_to_cash_when_no_stock_matches_at_rebalance() {
     let result = backtest_with_data(
         &data,
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria {
                 max_pe: Some(10.0),
                 ..ScreenCriteria::default()
@@ -3267,6 +3860,9 @@ fn walk_forward_does_not_trade_a_suspended_holding_at_a_stale_price() {
     let result = backtest_with_data(
         &data,
         &BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria: ScreenCriteria {
                 max_pe: Some(10.0),
                 ..ScreenCriteria::default()

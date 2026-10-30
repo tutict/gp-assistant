@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  BookOpen, ChevronLeft, ChevronRight, Database, Download, ExternalLink, FileText, Inbox, Menu,
+  BookOpen, ChevronLeft, ChevronRight, Database, Download, ExternalLink, FileText, Menu,
   MessageSquareText, Plus, RefreshCw, RotateCcw, Search, Send, Upload, X, Trash2,
 } from "lucide-react";
+import { createPortal } from "react-dom";
 import type {
   LlmSettings, NewsRagResult, ResearchAnswer, ResearchCitation,
   ResearchIndexStatus, ResearchMessage, ResearchOverview, ResearchQueryResult,
@@ -17,6 +18,9 @@ import { PanelFeedback } from "../ui/PanelFeedback";
 import { useMobileComposer } from "../../hooks/useMobileComposer";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { Sheet } from "../ui/Sheet";
+import { ResearchMore } from "./ResearchMore";
+import { StockCodeInput } from "../StockCodeInput";
+import { sentimentCivilDate } from "../../lib/sentimentView";
 import { useWorkspaceState, useWorkspaceStore, useWorkspaceCredentialsReady, WorkspaceSaveStatus } from "../../hooks/useWorkspace";
 
 type LlmSettingsUpdater = LlmSettings | null | ((previous: LlmSettings | null) => LlmSettings | null);
@@ -30,6 +34,7 @@ interface NewsRagPanelProps {
   onCodeChange?: (code: string) => void;
   onGoToScreen?: () => void;
   embedded?: boolean;
+  active?: boolean;
   onHeaderToolsChange?: (tools: {
     refreshing: boolean;
     vectorReady: boolean;
@@ -39,6 +44,8 @@ interface NewsRagPanelProps {
   }) => void;
 }
 interface ThreadDetail { answers?: ResearchAnswer[]; }
+interface QuestionFailure { title: string; message: string; threadId?: string; }
+const EMPTY_WATCHLIST: WatchlistItem[] = [];
 const MAX_PDF_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_RESEARCH_PACK_BYTES = 64 * 1024 * 1024;
 
@@ -47,9 +54,9 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const credentialsReady = useWorkspaceCredentialsReady();
   const mobile = useMediaQuery("(max-width: 768px)");
   const nativeMobile = isMobileTauriRuntime();
-  const compactEvidence = useMediaQuery("(max-width: 1180px)");
+  const active = props.active !== false;
   const questionInputId = useId();
-  const watchlist = props.watchlist || [];
+  const watchlist = props.watchlist || EMPTY_WATCHLIST;
   const controlled = props.onCodeChange !== undefined;
   const [uncontrolledCode, setUncontrolledCode] = useWorkspaceState("news.stock", normalizeStockCode(props.initialCode || watchlist[0]?.code || ""));
   const code = controlled ? normalizeStockCode(props.code || "") : uncontrolledCode;
@@ -61,17 +68,29 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const [threads, setThreads] = useState<ResearchThread[]>([]);
   const [threadId, setThreadId] = useWorkspaceState("news.thread", "");
   const threadIdRef = useRef("");
+  const threadLoadRequestRef = useRef(0);
   const deletedThreadIdsRef = useRef(new Set<string>());
   const workspaceGenerationRef = useRef(0);
   const [answers, setAnswers] = useState<ResearchAnswer[]>([]);
   const [question, setQuestion] = useWorkspaceState("news.question", "");
   const [citationStack, setCitationStack] = useState<ResearchCitation[]>([]);
   const [citationPointer, setCitationPointer] = useState(-1);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [asking, setAsking] = useState(false);
   const [error, setError] = useState("");
+  const [questionError, setQuestionError] = useState<QuestionFailure | null>(null);
   const [inboxOpen, setInboxOpen] = useState(false);
+  const [questionsOpen, setQuestionsOpen] = useState(false);
+  const [dataStatusOpen, setDataStatusOpen] = useState(false);
+  const [modelOpenRequest, setModelOpenRequest] = useState(0);
+  const modelReturnFocusRef = useRef<HTMLElement | null>(null);
+  const [search, setSearch] = useState(code);
+  const questionSurfaceRef = useRef<HTMLDivElement>(null);
+  const questionPositionRef = useRef({ scroll: 0, start: 0, end: 0 });
+  const citationOriginRef = useRef<HTMLElement | null>(null);
+  const evidenceSurfaceRef = useRef<HTMLDivElement>(null);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [indexStatus, setIndexStatus] = useState<ResearchIndexStatus | null>(null);
   const [managementBusy, setManagementBusy] = useState(false);
@@ -80,7 +99,6 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const [deleteCandidateId, setDeleteCandidateId] = useState<string | null>(null);
   const [readNotice, setReadNotice] = useState("");
   const [readNoticePulse, setReadNoticePulse] = useState(false);
-  const [evidenceNotice, setEvidenceNotice] = useState("");
   const [highlightAnswerId, setHighlightAnswerId] = useState<string | null>(null);
   const composer = useMobileComposer(question);
   const questionInputRef = composer.textareaRef;
@@ -88,13 +106,11 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const eventRefs = useRef(new Map<string, HTMLButtonElement>());
   const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const evidenceNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { selectedId, toggle: toggleEvent, close: closeEvent } = useEventSelection();
-  const citation = citationPointer >= 0 ? citationStack[citationPointer] || null : null;
+  const citation = evidenceOpen && citationPointer >= 0 ? citationStack[citationPointer] || null : null;
   const activeLlmConfig = useMemo(() => buildLlmConfig(props.llmSettings), [props.llmSettings]);
 
   useEffect(() => { threadIdRef.current = threadId; }, [threadId]);
-  useEffect(() => { codeRef.current = code; }, [code]);
   const selectCode = useCallback((nextCode: string) => {
     const normalized = normalizeStockCode(nextCode);
     if (normalized === codeRef.current) return;
@@ -112,11 +128,14 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     closeEvent();
     setCitationStack([]);
     setCitationPointer(-1);
+    setEvidenceOpen(false);
     setError("");
+    setQuestionError(null);
     setLoading(true);
     if (controlled) props.onCodeChange?.(normalized);
     else setUncontrolledCode(normalized);
   }, [closeEvent, controlled, props.onCodeChange, setThreadId, setUncontrolledCode]);
+  useEffect(() => { if (codeRef.current !== code) selectCode(code); setSearch(code); }, [code, selectCode]);
   useEffect(() => {
     if (controlled) return;
     const next = normalizeStockCode(props.initialCode);
@@ -128,12 +147,26 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     generation = workspaceGenerationRef.current,
   ) => {
     if (!id) {
-      if (generation === workspaceGenerationRef.current) setAnswers([]);
+      if (generation === workspaceGenerationRef.current && !threadIdRef.current) setAnswers([]);
       return;
     }
-    const detail = await postJson<ThreadDetail>("/api/research/threads/detail", { thread_id: id });
-    if (generation !== workspaceGenerationRef.current) return;
-    setAnswers(detail.answers || []);
+    if (generation !== workspaceGenerationRef.current || threadIdRef.current !== id) return;
+    const request = ++threadLoadRequestRef.current;
+    const ownsRequest = () => generation === workspaceGenerationRef.current
+      && threadIdRef.current === id && threadLoadRequestRef.current === request;
+    setQuestionError((current) => current?.threadId === id ? null : current);
+    try {
+      const detail = await postJson<ThreadDetail>("/api/research/threads/detail", { thread_id: id });
+      if (!ownsRequest()) return;
+      setAnswers(detail.answers || []);
+      setQuestionError((current) => current?.threadId === id ? null : current);
+    } catch (nextError) {
+      if (ownsRequest()) {
+        setQuestionError((current) => current && current.threadId !== id ? current : {
+          title: "会话加载失败", message: (nextError as Error).message, threadId: id,
+        });
+      }
+    }
   }, []);
 
   const loadWorkspace = useCallback(async (quiet = false) => {
@@ -165,9 +198,11 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         || nextThreads.find((item) => item.stock_code === code)
         || (!code ? nextThreads.find((item) => !item.stock_code) : undefined);
       if (preferred) {
+        threadIdRef.current = preferred.id;
         setThreadId(preferred.id);
         await loadThread(preferred.id, generation);
       } else {
+        threadIdRef.current = "";
         setThreadId("");
         setAnswers([]);
       }
@@ -226,13 +261,10 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     : "询问当前知识库…";
   const composerPlaceholder = mobile ? "询问公告、财务或消息…" : `${questionPlaceholder} · Ctrl+Enter 发送`;
   const summary = useMemo(() => {
-    if (!todayMessages.length) {
-      return code ? `${code} 暂无新增证据。可立即更新，或导入公告、研报后再核查。`
-        : "当前知识库暂无新增证据。请选择自选股或导入资料。";
-    }
+    if (!todayMessages.length) return "今日暂无新增消息，可阅读已有资料。";
     const direction = grouped.positive.length > grouped.negative.length ? "利好线索较多"
       : grouped.negative.length > grouped.positive.length ? "风险线索较多" : "多空线索接近";
-    return `今日共整理 ${todayMessages.length} 条事件，${direction}；其中 ${grouped.uncertain.length} 条仍需公告或财务数据交叉核验。`;
+    return `${direction}，仍需结合公告和财务资料核查。`;
   }, [code, grouped, todayMessages.length]);
 
   const markReadBatch = useCallback(async (ids: string[], notice = false) => {
@@ -290,22 +322,42 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     }
   }, []);
 
+  const rememberQuestions = useCallback(() => {
+    const input = questionInputRef.current;
+    if (!input || !questionSurfaceRef.current) return;
+    questionPositionRef.current = { scroll: questionSurfaceRef.current?.scrollTop || 0, start: input?.selectionStart || 0, end: input?.selectionEnd || 0 };
+  }, [questionInputRef]);
+  const closeQuestions = useCallback(() => { rememberQuestions(); setQuestionsOpen(false); }, [rememberQuestions]);
   const pushCitationSelection = useCallback((next: ResearchCitation) => {
     setInboxOpen(false);
+    if (!citation) {
+      citationOriginRef.current = document.activeElement as HTMLElement | null;
+      if (questionsOpen) rememberQuestions();
+    }
     const result = pushCitation(citationStack, citationPointer, next);
     setCitationStack(result.stack);
     setCitationPointer(result.pointer);
-    if (mobile && citationPointer < 0) {
-      setEvidenceNotice("证据已在下方展开");
-      if (evidenceNoticeTimerRef.current) clearTimeout(evidenceNoticeTimerRef.current);
-      evidenceNoticeTimerRef.current = setTimeout(() => setEvidenceNotice(""), 2200);
-    }
-  }, [citationPointer, citationStack, mobile]);
+    setEvidenceOpen(true);
+  }, [citation, citationPointer, citationStack, questionsOpen, rememberQuestions]);
 
   const closeCitation = useCallback(() => {
-    setCitationStack([]);
-    setCitationPointer(-1);
+    setEvidenceOpen(false);
+    queueMicrotask(() => citationOriginRef.current?.focus?.());
   }, []);
+  useEffect(() => {
+    if (!active) return;
+    if (citation) evidenceSurfaceRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    else if (questionsOpen) {
+      const position = questionPositionRef.current;
+      if (questionSurfaceRef.current) questionSurfaceRef.current.scrollTop = position.scroll;
+      questionInputRef.current?.setSelectionRange?.(position.start, position.end);
+      const surface = questionSurfaceRef.current;
+      const input = questionInputRef.current;
+      return () => {
+        if (surface && input) questionPositionRef.current = { scroll: surface.scrollTop || 0, start: input.selectionStart || 0, end: input.selectionEnd || 0 };
+      };
+    }
+  }, [active, citation, questionsOpen, questionInputRef]);
 
   const selectEvent = useCallback((message: ResearchMessage) => {
     const wasSelected = selectedId === message.id;
@@ -325,24 +377,19 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (citation) {
-        event.preventDefault();
-        closeCitation();
-        return;
-      }
+      if (citation || questionsOpen || inboxOpen || knowledgeOpen || event.defaultPrevented) return;
       if (selectedId) closeEvent();
     };
     window.addEventListener?.("keydown", handleEscape);
     return () => {
       window.removeEventListener?.("keydown", handleEscape);
     };
-  }, [citation, closeCitation, closeEvent, selectedId]);
+  }, [citation, questionsOpen, inboxOpen, knowledgeOpen, closeEvent, selectedId]);
 
   useEffect(() => {
     return () => {
       if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current);
       if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
-      if (evidenceNoticeTimerRef.current) clearTimeout(evidenceNoticeTimerRef.current);
     };
   }, []);
 
@@ -355,6 +402,9 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       stock_code: requestedCode || null,
     });
     if (generation !== workspaceGenerationRef.current) return null;
+    threadIdRef.current = thread.id;
+    threadLoadRequestRef.current += 1;
+    setQuestionError(null);
     setThreads((current) => [thread, ...current]);
     setThreadId(thread.id);
     setAnswers([]);
@@ -363,6 +413,15 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     queueMicrotask(() => questionInputRef.current?.focus());
     return thread.id;
   }, [code, closeEvent]);
+
+  const createQuestionThread = useCallback(async () => {
+    const generation = workspaceGenerationRef.current;
+    setQuestionError(null);
+    try { await createThread(generation); }
+    catch (nextError) {
+      if (generation === workspaceGenerationRef.current) setQuestionError({ title: "新建会话失败", message: (nextError as Error).message });
+    }
+  }, [createThread]);
 
   const deleteThread = useCallback(async (thread: ResearchThread) => {
     if (asking || deletingThreadId) return;
@@ -375,7 +434,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     setDeleteCandidateId(null);
     const generation = workspaceGenerationRef.current;
     setDeletingThreadId(thread.id);
-    setError("");
+    setQuestionError(null);
     try {
       await postJson("/api/research/threads/delete", { thread_id: thread.id });
       deletedThreadIdsRef.current.add(thread.id);
@@ -387,7 +446,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       }
       if (generation === workspaceGenerationRef.current) await loadWorkspace(true);
     } catch (nextError) {
-      if (generation === workspaceGenerationRef.current) setError((nextError as Error).message);
+      if (generation === workspaceGenerationRef.current) setQuestionError({ title: "删除会话失败", message: (nextError as Error).message });
     } finally {
       setDeletingThreadId(null);
     }
@@ -399,13 +458,15 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     const generation = workspaceGenerationRef.current;
     const requestedCode = code;
     setAsking(true);
-    setError("");
+    setQuestionError(null);
+    let failureTitle = "新建会话失败";
     try {
       const selectedThread = threads.find((thread) => thread.id === threadId);
       const activeThread = selectedThread && (selectedThread.stock_code || "") === requestedCode
         ? selectedThread.id
         : await createThread(generation, requestedCode);
       if (!activeThread || generation !== workspaceGenerationRef.current) return;
+      failureTitle = "提问失败";
       const result = await postJson<ResearchQueryResult>("/api/research/query", {
         query: text, stock_code: requestedCode || null, thread_id: activeThread, top_k: 8,
         llm: activeLlmConfig,
@@ -419,6 +480,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       setHighlightAnswerId(answerKey);
       if (answer.citations[0]) pushCitationSelection(answer.citations[0]);
       if (mobile) setInboxOpen(false);
+      failureTitle = "会话列表更新失败";
       const nextThreads = await getJson<{ items?: ResearchThread[] }>("/api/research/threads");
       if (generation === workspaceGenerationRef.current) {
         setThreads((nextThreads.items || []).filter(
@@ -426,7 +488,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         ));
       }
     } catch (nextError) {
-      if (generation === workspaceGenerationRef.current) setError((nextError as Error).message);
+      if (generation === workspaceGenerationRef.current) setQuestionError({ title: failureTitle, message: (nextError as Error).message });
     } finally {
       if (generation === workspaceGenerationRef.current) setAsking(false);
     }
@@ -464,16 +526,18 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       .catch((nextError) => setManagementResult({ error: (nextError as Error).message }));
   }, []);
   const vectorReady = overview?.retrieval?.vector?.ready === true;
+  const onHeaderRefresh = useCallback(() => { void refresh(); }, [refresh]);
+  const onHeaderInbox = useCallback(() => { closeCitation(); setInboxOpen(true); }, [closeCitation]);
   useEffect(() => {
     if (!props.embedded || !props.onHeaderToolsChange) return;
     props.onHeaderToolsChange({
       refreshing,
       vectorReady,
-      onRefresh: () => { void refresh(); },
+      onRefresh: onHeaderRefresh,
       onOpenKnowledge: openKnowledge,
-      onOpenInbox: () => { closeCitation(); setInboxOpen(true); },
+      onOpenInbox: onHeaderInbox,
     });
-  }, [openKnowledge, props.embedded, props.onHeaderToolsChange, refresh, refreshing, vectorReady]);
+  }, [onHeaderInbox, onHeaderRefresh, openKnowledge, props.embedded, props.onHeaderToolsChange, refreshing, vectorReady]);
 
   const unreadVisibleIds = visibleMessages.filter((message) => message.unread).map((message) => message.id);
   const lastUpdated = formatResearchUpdatedAt(overview);
@@ -481,28 +545,16 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   return <section className="research-workspace" aria-label="研究消息中心">
     {loading && !overview && <p className="research-loading-status" role="status">正在打开研究消息中心，可继续编辑草稿…</p>}
     {!props.embedded && <header className="research-topbar">
-      <div className="research-context">
-        <button type="button" className="research-icon-button research-mobile-inbox-button"
-          aria-label="打开自选股收件箱" title="自选股收件箱" onClick={() => { closeCitation(); setInboxOpen(true); }}>
-          <Menu size={18} />
-        </button>
-        <div><span className="research-eyebrow">研究消息中心</span><h1>
-          {stock?.name || code || "全部自选股"}{code && <small>{code}</small>}
-        </h1></div>
-        <span className={`research-mode ${vectorReady ? "ready" : "lexical"}`}><Search size={13} />
-          {vectorReady ? "关键词 + 语义检索" : "关键词检索"}
-        </span>
-      </div>
+      <form className="sentiment-toolbar" onSubmit={(event) => { event.preventDefault(); const next = normalizeStockCode(search); if (/^\d{6}\.(SH|SZ|BJ)$/.test(next)) selectCode(next); else setError("请输入六位股票代码，或从搜索结果中选择股票。"); }}>
+        <StockCodeInput id={`${questionInputId}-stock`} value={search} onChange={setSearch} onCommit={selectCode} placeholder="代码或名称" inputAriaLabel="股票代码或名称" />
+        <button type="submit" className="sentiment-icon-action" aria-label="查看股票消息"><Search size={16} /></button>
+      </form>
       <div className="research-actions">
-        <span>{lastUpdated ? `上次更新 ${lastUpdated} · 每 15 分钟自动更新` : "每 15 分钟自动更新"}</span>
-        <button type="button" onClick={() => void refresh()} disabled={refreshing}>
-          <RefreshCw size={15} />
-          <span>{refreshing ? "更新中" : "立即更新"}</span>
-        </button>
-        <button type="button" onClick={openKnowledge}
-          aria-label={nativeMobile ? "资料包同步" : "知识库管理"}>
-          <Database size={15} /><span>{nativeMobile ? "资料包同步" : "知识库管理"}</span>
-        </button>
+        <button type="button" className="research-mobile-stock-button" aria-label="打开股票列表" onClick={() => setInboxOpen(true)}><Menu size={16} /><span>股票</span></button>
+        <button type="button" onClick={() => void refresh()} disabled={refreshing}><RefreshCw size={15} /><span>{refreshing ? "更新中" : "更新"}</span></button>
+        <ResearchMore onKnowledge={openKnowledge} onModel={() => { modelReturnFocusRef.current = document.activeElement as HTMLElement | null; setModelOpenRequest((value) => value + 1); }} onStatus={() => setDataStatusOpen(true)} modelDisabled={!credentialsReady} />
+        <div className="research-model-dialog-host"><LlmSettingsPanel settings={props.llmSettings || null}
+          onChange={credentialsReady ? props.onLlmSettingsChange || (() => undefined) : () => undefined} presentation="dialog" statusMode="inline" openRequest={modelOpenRequest} returnFocusRef={modelReturnFocusRef} /></div>
       </div>
     </header>}
 
@@ -511,57 +563,40 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     </div>}
 
     <div className="research-columns">
-      <ResearchSurfaceSheet active={mobile} open={inboxOpen} close={()=>setInboxOpen(false)} label="自选股收件箱">
+      <ResearchSurfaceSheet active={mobile} open={active && inboxOpen} close={()=>setInboxOpen(false)} label="自选股收件箱">
       <InboxPanel code={code} setCode={(next) => { selectCode(next); setInboxOpen(false); }}
         watchlist={watchlist} unreadByStock={overview?.unread_by_stock || {}}
-        threads={threads} threadId={threadId}
-        setThread={(thread) => {
-          selectCode(thread.stock_code || "");
-          setThreadId(thread.id);
-          void workspace.flush();
-          setLoading(true);
-          void loadThread(thread.id).finally(() => setLoading(false));
-          setInboxOpen(false);
-        }}
-        unread={overview?.unread_count || 0} open={inboxOpen} close={() => setInboxOpen(false)}
-        createThread={() => void createThread()}
-        deleteThread={(thread) => void deleteThread(thread)}
-        markReadStock={(stockCode) => void markReadStock(stockCode)}
-        deletingThreadId={deletingThreadId}
-        deleteCandidateId={deleteCandidateId}
-        asking={asking} />
+        unread={overview?.unread_count || 0} open={inboxOpen} close={() => setInboxOpen(false)} />
       </ResearchSurfaceSheet>
 
       <main className="research-stream">
         <div className="research-stream-body">
-        <details className="research-daily-brief">
-          <summary className="research-brief-summary">
-            <span className="research-brief-lead"><span className="research-dot neutral" />
-              <strong>今日摘要</strong></span>
-            <ResearchBriefCounts positive={grouped.positive.length}
-              negative={grouped.negative.length} uncertain={grouped.uncertain.length}
-              documents={overview?.document_count || 0} inline />
-            <ChevronRight className="research-brief-chevron" size={16} aria-hidden="true" />
-          </summary>
-          <ResearchBriefExpanded summary={summary}
-            date={new Date().toLocaleDateString("zh-CN")}
-            positive={grouped.positive.length} negative={grouped.negative.length}
-            uncertain={grouped.uncertain.length} documents={overview?.document_count || 0} />
-        </details>
+        <div className="research-reading-heading">
+          <h1>{stock?.name || (code ? "股票消息" : "全部消息")}{code && <small>{code}</small>}</h1>
+          <button type="button" className="research-ghost-button" aria-label="打开研究问答" aria-expanded={questionsOpen}
+            onClick={() => { setInboxOpen(false); setQuestionsOpen(true); }}><MessageSquareText size={16} aria-hidden="true" />研究问答</button>
+        </div>
+        {visibleMessages.length > 0 && <details className="research-daily-brief">
+          <summary className="research-brief-summary"><span>{summary}</span><strong>今日新增 {todayMessages.length} 条</strong><ChevronRight className="research-brief-chevron" size={16} aria-hidden="true" /></summary>
+          <div className="research-brief-expanded"><ResearchBriefCounts positive={grouped.positive.length} negative={grouped.negative.length} uncertain={grouped.uncertain.length} />
+            <p>{lastUpdated ? `上次更新 ${lastUpdated}` : "尚未记录更新时间"} · 每 15 分钟自动更新</p>
+          </div>
+        </details>}
 
         <section className="research-event-section">
           <div className="research-section-heading"><div><span>消息</span></div><div className="research-heading-actions">
               {readNotice && <small className={readNoticePulse ? "is-flashing" : ""}>{readNotice}</small>}
-              {unreadVisibleIds.length > 0 && <button type="button" className="research-ghost-button"
-                onClick={() => void markReadBatch(unreadVisibleIds, true)}>全部已读</button>}
+              {(unreadVisibleIds.length > 0 || (code && (overview?.unread_by_stock?.[code] || 0) > 0)) && <button type="button" className="research-ghost-button"
+                onClick={() => code ? void markReadStock(code) : void markReadBatch(unreadVisibleIds, true)}>全部已读</button>}
               <span>{visibleMessages.length} 条</span>
             </div>
           </div>
           {loading ? null : !visibleMessages.length ? <ResearchEmptyState
             refreshing={refreshing}
             onRefresh={() => void refresh()}
-            onKnowledge={openKnowledge}
-            needsWatchlist={watchlist.length === 0}
+            code={code}
+            needsWatchlist={!code && watchlist.length === 0}
+            onPickStock={() => mobile ? setInboxOpen(true) : selectCode(watchlist[0]?.code || "")}
             onGoToScreen={props.onGoToScreen}
           /> : <div className="research-event-list">
             {eventGroups.map((group) => <EventGroup key={group.key}
@@ -574,11 +609,21 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
           </div>}
         </section>
 
-        <Answers answers={answers} pushCitation={pushCitationSelection}
-          highlightedId={highlightAnswerId} sectionRef={answersRef} />
+        <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>
         </div>
+      </main>
+
+      <Sheet open={active && (questionsOpen || Boolean(citation))} onClose={citation ? closeCitation : closeQuestions}
+        label={citation ? "引用证据检查器" : "研究问答"} className="research-surface-sheet" backdropClassName="research-surface-backdrop">
+        {questionsOpen && <div className="research-question-surface" hidden={Boolean(citation)} ref={questionSurfaceRef}>
+          <div className="research-detail-heading"><h2>研究问答</h2><button type="button" className="research-icon-button" aria-label="关闭研究问答" onClick={closeQuestions}><X size={18} /></button></div>
+          <ResearchThreads threads={threads.filter((item) => (item.stock_code || "") === code)} threadId={threadId} asking={asking} deletingThreadId={deletingThreadId} deleteCandidateId={deleteCandidateId}
+            createThread={() => void createQuestionThread()} deleteThread={(thread) => void deleteThread(thread)}
+            setThread={(thread) => { const generation = ++workspaceGenerationRef.current; setQuestionError(null); setAsking(false); setThreadId(thread.id); threadIdRef.current = thread.id; setAnswers([]); void workspace.flush(); void loadThread(thread.id, generation); }} />
+          {questionError && <PanelFeedback kind="error" title={questionError.title} description={questionError.message}
+            action={questionError.threadId ? <button type="button" className="research-ghost-button" onClick={() => void loadThread(questionError.threadId!, workspaceGenerationRef.current)}>重试加载会话</button> : undefined} />}
+          <Answers answers={answers} pushCitation={pushCitationSelection} highlightedId={highlightAnswerId} sectionRef={answersRef} />
         <form className="research-composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
-          {evidenceNotice && <div className="research-evidence-notice" role="status">{evidenceNotice}</div>}
           <div><label className="research-composer-label" htmlFor={questionInputId}>
             <span>研究问题</span>{activeLlmConfig && <small>模型回答会强制引用证据</small>}
           </label>
@@ -610,20 +655,28 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
             {!activeLlmConfig && <p className="research-composer-setup">未配置模型，将只用已导入资料回答</p>}
           </div>
         </form>
-      </main>
 
-      <ResearchSurfaceSheet active={compactEvidence} open={Boolean(citation)} close={closeCitation} label="引用证据检查器">
-      <EvidencePanel citation={citation} citationIndex={citationPointer}
-        citationCount={citationStack.length} onPrevious={() => setCitationPointer((value) => Math.max(0, value - 1))}
-        onNext={() => setCitationPointer((value) => Math.min(citationStack.length - 1, value + 1))}
-        close={closeCitation} />
-      </ResearchSurfaceSheet>
+        </div>}
+        {citation && <div className="research-evidence-surface" ref={evidenceSurfaceRef}>
+          <button type="button" className="research-ghost-button research-evidence-back" aria-label={questionsOpen ? "返回研究问答" : "返回消息"} onClick={closeCitation}><ChevronLeft size={16} />{questionsOpen ? "返回研究问答" : "返回消息"}</button>
+          <EvidencePanel citation={citation} citationIndex={citationPointer}
+            citationCount={citationStack.length} onPrevious={() => setCitationPointer((value) => Math.max(0, value - 1))}
+            onNext={() => setCitationPointer((value) => Math.min(citationStack.length - 1, value + 1))} close={closeCitation} />
+        </div>}
+      </Sheet>
     </div>
 
-    {knowledgeOpen && <KnowledgeDrawer panelProps={credentialsReady ? props : { ...props, onLlmSettingsChange: undefined }} code={code} mobile={nativeMobile}
+    <Sheet open={active && dataStatusOpen} onClose={() => setDataStatusOpen(false)} label="研究数据状态" className="research-surface-sheet" backdropClassName="research-surface-backdrop">
+      <div className="research-detail-heading"><h2>数据状态</h2><button type="button" className="research-icon-button" aria-label="关闭数据状态" onClick={() => setDataStatusOpen(false)}><X size={18} /></button></div>
+      <p>{vectorReady ? "关键词 + 语义检索" : "关键词检索"}</p><p>{lastUpdated ? `上次更新 ${lastUpdated}` : "尚未记录更新时间"}</p>
+    </Sheet>
+    {knowledgeOpen && <ResearchPortal><KnowledgeDrawer code={code} mobile={nativeMobile}
       status={indexStatus} management={management} busy={managementBusy}
-      result={managementResult} close={() => setKnowledgeOpen(false)} />}
+      result={managementResult} close={() => setKnowledgeOpen(false)} /></ResearchPortal>}
   </section>;
+}
+function ResearchPortal({ children }: { children: ReactNode }) {
+  return document.body ? createPortal(children, document.body) : children;
 }
 function ResearchSurfaceSheet({active,open,close,label,children}: {active:boolean;open:boolean;close:()=>void;label:string;children:ReactNode}) {
   if (!active) return children;
@@ -654,11 +707,11 @@ function EventGroup(props: {
               props.selectEvent(message);
             }
           }}>
-          <span className={`research-dot research-event-dot-desktop ${sentimentDotTone(message.sentiment)}`} />
+          <span className={`research-dot research-event-dot-desktop ${message.unread ? "unread" : "neutral"}`} aria-label={message.unread ? "未读" : undefined} />
           <span className="research-event-content">
             <strong>{message.title}</strong>
+            <span className="research-event-summary">{message.summary}</span>
             <span className="research-event-meta">
-              <span className={`research-dot research-event-dot-mobile ${sentimentDotTone(message.sentiment)}`} />
               <span className="research-source-name">{message.source_name}</span>
               <time>{formatDateTime(message.published_at)}</time>
               {message.unread && <span className="research-unread-label">未读</span>}
@@ -675,7 +728,7 @@ function EventGroup(props: {
           {message.citations?.length ? <div className="research-event-detail-evidence">
             <span>已关联 {message.citations.length} 条证据</span>
             <div className="research-event-citation-links">
-              {message.citations.slice(0, 3).map((item) => <button type="button"
+              {message.citations.map((item) => <button type="button"
                 key={item.citation_id} onClick={() => props.pushCitation(item)}>
                 查看 {item.citation_id}
               </button>)}
@@ -687,36 +740,13 @@ function EventGroup(props: {
   </section>;
 }
 
-function ResearchEmptyState(props: {
-  refreshing: boolean;
-  onRefresh: () => void;
-  onKnowledge: () => void;
-  needsWatchlist?: boolean;
-  onGoToScreen?: () => void;
-}) {
-  return <div className="research-empty">
-    <BookOpen size={28} />
-    <strong>还没有可研究的消息</strong>
-    <p>{props.needsWatchlist
-      ? "消息按自选股整理。先去选股，在结果里点「收藏」，再回来更新。"
-      : "选择一只自选股并立即更新，或从知识库管理导入公告与研报。"}</p>
-    <div className="research-empty-actions">
-      {props.needsWatchlist ? (
-        <button type="button" className="research-empty-primary" onClick={props.onGoToScreen}>
-          <span>去选股收藏</span>
-        </button>
-      ) : (
-        <button type="button" className="research-empty-primary"
-          disabled={props.refreshing} onClick={props.onRefresh}>
-          <RefreshCw size={15} />
-          <span>{props.refreshing ? "更新中" : "立即更新"}</span>
-        </button>
-      )}
-      <button type="button" className="research-empty-ghost" onClick={props.onKnowledge}>
-        <Database size={15} />
-        <span>知识库管理</span>
-      </button>
-    </div>
+function ResearchEmptyState(props: { refreshing: boolean; onRefresh: () => void; code: string; needsWatchlist?: boolean; onGoToScreen?: () => void; onPickStock: () => void; }) {
+  return <div className="research-empty"><BookOpen size={28} /><strong>{props.code ? "当前股票暂无消息" : "暂无消息"}</strong>
+    <p>{props.code ? "更新后查看这只股票的最新消息。" : props.needsWatchlist ? "先去选股收藏，或搜索股票代码。" : "选择股票后更新消息。"}</p>
+    <div className="research-empty-actions"><button type="button" className="research-empty-primary" disabled={props.refreshing}
+      onClick={props.code ? props.onRefresh : props.needsWatchlist ? props.onGoToScreen : props.onPickStock}>
+      {props.code && <RefreshCw size={15} />}<span>{props.code ? props.refreshing ? "更新中" : "更新" : props.needsWatchlist ? "去选股收藏" : "选择股票"}</span>
+    </button></div>
   </div>;
 }
 
@@ -724,76 +754,40 @@ function ResearchBriefCounts(props: {
   positive: number;
   negative: number;
   uncertain: number;
-  documents: number;
   inline?: boolean;
 }) {
   const hasBriefStats = props.positive > 0 || props.negative > 0
-    || props.uncertain > 0 || props.documents > 0;
+    || props.uncertain > 0;
   if (!hasBriefStats) return null;
   return <span className={`research-brief-counts${props.inline ? " research-brief-inline-counts" : ""}`}>
     <span className="research-stat positive"><span>利好</span><strong>{props.positive}</strong></span>
     <span className="research-stat negative"><span>利空</span><strong>{props.negative}</strong></span>
     <span className="research-stat"><span>待核查</span><strong>{props.uncertain}</strong></span>
-    <span className="research-stat"><span>文档</span><strong>{props.documents}</strong></span>
   </span>;
 }
-
-function ResearchBriefExpanded(props: {
-  summary: string;
-  date: string;
-  positive: number;
-  negative: number;
-  uncertain: number;
-  documents: number;
-}) {
-  const hasBriefStats = props.positive > 0 || props.negative > 0
-    || props.uncertain > 0 || props.documents > 0;
-  if (!hasBriefStats) {
-    return <div className="research-brief-expanded research-brief-zero">
-      今日暂无可用事件或文档。
-    </div>;
-  }
-  return <div className="research-brief-expanded">
-    <div className="research-brief-rule"><time>{props.date}</time></div>
-    <p>{props.summary}</p>
-    <ResearchBriefCounts positive={props.positive} negative={props.negative}
-      uncertain={props.uncertain} documents={props.documents} />
-  </div>;
-}
-
 
 function InboxPanel(props: {
   code: string;
   setCode: (value: string) => void;
   watchlist: WatchlistItem[];
   unreadByStock: Record<string, number>;
-  threads: ResearchThread[];
-  threadId: string;
-  setThread: (thread: ResearchThread) => void;
   unread: number;
   open: boolean;
   close: () => void;
-  createThread: () => void;
-  deleteThread: (thread: ResearchThread) => void;
-  markReadStock: (stockCode: string) => void;
-  deletingThreadId: string | null;
-  deleteCandidateId: string | null;
-  asking: boolean;
 }) {
   return <aside className={`research-inbox${props.open ? " mobile-open" : ""}`}>
     <span className="research-sheet-handle" aria-hidden="true" />
     <div className="research-pane-heading">
-      <div><span>自选股收件箱</span><strong>{props.unread} 条未读</strong></div>
+      <div><strong>自选股票</strong></div>
       <button className="research-icon-button research-mobile-close" type="button"
         aria-label="关闭收件箱" title="关闭" onClick={props.close}><X size={17} /></button>
     </div>
     <button type="button" className={`research-stock-row${!props.code ? " active" : ""}`}
       onClick={() => props.setCode("")}>
-      <span className="research-stock-monogram"><Inbox size={16} /></span>
-      <span><strong>全部消息</strong><small>跨股票研究流</small></span>
+      <span><strong>全部消息</strong></span>
       {props.unread > 0 && <b>{props.unread}</b>}
     </button>
-    {props.watchlist.length === 0 && <p className="research-inbox-empty-hint">还没有自选股。到选股结果里点「收藏」。</p>}
+    {props.watchlist.length === 0 && <p className="research-inbox-empty-hint">暂无自选股票。</p>}
     {props.watchlist.map((item) => {
       const stockCode = normalizeStockCode(item.code);
       const unread = props.unreadByStock[stockCode] || 0;
@@ -801,23 +795,28 @@ function InboxPanel(props: {
       <button type="button"
         className={`research-stock-row${props.code === stockCode ? " active" : ""}`}
         onClick={() => props.setCode(stockCode)}>
-        <span className="research-stock-monogram">{(item.name || stockCode).slice(0, 1)}</span>
         <span><strong>{item.name || stockCode}</strong><small>{stockCode}</small></span>
         {unread > 0 && <b>{unread}</b>}
       </button>
-      {unread > 0 && <button type="button" className="research-stock-mark-read"
-        aria-label={`标记 ${stockCode} 全部已读`} onClick={() => props.markReadStock(stockCode)}>标记已读</button>}
       </div>;
     })}
-    <div className="research-inbox-section">
+
+  </aside>;
+}
+
+function ResearchThreads(props: {
+  threads: ResearchThread[]; threadId: string; setThread: (thread: ResearchThread) => void; createThread: () => void;
+  deleteThread: (thread: ResearchThread) => void; deletingThreadId: string | null; deleteCandidateId: string | null; asking: boolean;
+}) {
+  return     <div className="research-inbox-section">
       <div className="research-pane-heading compact"><span>研究会话</span>
         <button className="research-icon-button" type="button" aria-label="新建研究会话"
-          title="新建会话" onClick={props.createThread}><Plus size={16} /></button>
+          title="新建会话" disabled={props.asking || Boolean(props.deletingThreadId)} onClick={props.createThread}><Plus size={16} /></button>
       </div>
       {props.threads.slice(0, 20).map((thread) => <div key={thread.id}
         className={`research-thread-row${thread.id === props.threadId ? " active" : ""}`}>
         <button type="button" className="research-thread-main"
-          onClick={() => props.setThread(thread)}>
+          disabled={Boolean(props.deletingThreadId)} onClick={() => props.setThread(thread)}>
           <MessageSquareText size={15} aria-hidden="true" />
           <span><strong>{thread.title}</strong><small>{formatEpoch(thread.updated_at_epoch_ms)}</small></span>
         </button>
@@ -828,8 +827,7 @@ function InboxPanel(props: {
           {props.deleteCandidateId === thread.id ? "确认删除？" : <Trash2 size={14} aria-hidden="true" />}
         </button>
       </div>)}
-    </div>
-  </aside>;
+    </div>;
 }
 
 function Answers(props: {
@@ -948,7 +946,6 @@ function CitationRichText(props: {
   })}</>;
 }
 function KnowledgeDrawer(props: {
-  panelProps: NewsRagPanelProps;
   code: string;
   mobile: boolean;
   status: ResearchIndexStatus | null;
@@ -971,12 +968,10 @@ function KnowledgeDrawer(props: {
   });
   const operationNotice = props.result == null ? null : researchOperationNotice(props.result);
 
-  return <div className="knowledge-drawer-layer">
-    <button type="button" className="knowledge-drawer-overlay"
-       aria-label="关闭知识库管理" onClick={props.close} />
+  return <Sheet open onClose={props.close} label="知识库管理" className="research-surface-sheet" backdropClassName="research-surface-backdrop">
     <aside className="knowledge-drawer">
       <header><div><span>{props.mobile ? "资料包同步" : "知识库管理"}</span>
-        <h2>{props.mobile ? "导入与回滚" : "资料、索引与模型"}</h2></div>
+        <h2>{props.mobile ? "导入与回滚" : "资料与索引"}</h2></div>
         <button type="button" className="research-icon-button" aria-label="关闭知识库管理"
           title="关闭" onClick={props.close}><X size={18} /></button>
       </header>
@@ -1066,12 +1061,6 @@ function KnowledgeDrawer(props: {
         </label>
       </section>
 
-      {props.panelProps.onLlmSettingsChange && <section className="knowledge-model-settings">
-        <h3>回答模型</h3>
-        <LlmSettingsPanel settings={props.panelProps.llmSettings || null}
-          onChange={props.panelProps.onLlmSettingsChange} />
-      </section>}
-
       {props.busy && <div className="knowledge-operation">
         <RefreshCw size={15} className="is-spinning" />正在处理…
       </div>}
@@ -1084,7 +1073,7 @@ function KnowledgeDrawer(props: {
         {props.result != null && <pre>{JSON.stringify(props.result, null, 2)}</pre>}
       </details>
     </aside>
-  </div>;
+  </Sheet>;
 }
 
 export function researchOperationNotice(result: unknown): {
@@ -1147,21 +1136,31 @@ function sentimentClass(value: string): string {
 }
 
 function groupMessages(messages: ResearchMessage[]) {
-  return [
-    { key: "positive", label: "利好线索", messages: messages.filter((item) => ["positive", "bullish", "利好"].includes(item.sentiment)) },
-    { key: "negative", label: "利空与风险", messages: messages.filter((item) => ["negative", "bearish", "利空"].includes(item.sentiment)) },
-    { key: "uncertain", label: "待核查", messages: messages.filter((item) => !["positive", "bullish", "利好", "negative", "bearish", "利空"].includes(item.sentiment)) },
-  ];
+  const sorted = messages.map((message, index) => ({ message, index, timestamp: publishTimestamp(message.published_at) }))
+    .sort((left, right) => {
+      if (left.timestamp === null) return right.timestamp === null ? left.index - right.index : 1;
+      if (right.timestamp === null) return -1;
+      return right.timestamp - left.timestamp || left.index - right.index;
+    });
+  const groups = new Map<string, { key: string; label: string; messages: ResearchMessage[] }>();
+  for (const { message, timestamp } of sorted) {
+    const date = timestamp === null ? null : sentimentCivilDate(timestamp);
+    const key = date || "unknown";
+    if (!groups.has(key)) groups.set(key, { key, label: date || "日期未提供", messages: [] });
+    groups.get(key)!.messages.push(message);
+  }
+  return [...groups.values()];
 }
-
+function publishTimestamp(value?: string | null): number | null {
+  if (!value) return null;
+  // The research cache uses China civil time for timestamps without an offset.
+  const normalized = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(value) ? `${value.replace(" ", "T")}+08:00` : value;
+  const timestamp = Date.parse(normalized);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
 function isToday(value?: string | null): boolean {
-  if (!value) return false;
-  const date = new Date(value);
-  const today = new Date();
-  return !Number.isNaN(date.getTime())
-    && date.getFullYear() === today.getFullYear()
-    && date.getMonth() === today.getMonth()
-    && date.getDate() === today.getDate();
+  const timestamp = publishTimestamp(value);
+  return timestamp !== null && sentimentCivilDate(timestamp) === sentimentCivilDate(Date.now());
 }
 
 function safeExternalUrl(value?: string | null): string | null {
@@ -1178,13 +1177,6 @@ function formatEpoch(value?: number): string {
   return value ? new Date(value).toLocaleDateString("zh-CN", {
     month: "2-digit", day: "2-digit",
   }) : "刚刚";
-}
-
-function sentimentDotTone(value: string): "positive" | "negative" | "warning" | "neutral" {
-  if (["positive", "bullish", "利好"].includes(value)) return "positive";
-  if (["negative", "bearish", "利空"].includes(value)) return "negative";
-  if (["warning", "uncertain", "待核查"].includes(value)) return "warning";
-  return "neutral";
 }
 
 export function formatResearchUpdatedAt(overview: ResearchOverview | null): string {

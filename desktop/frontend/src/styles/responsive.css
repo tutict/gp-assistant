@@ -57,7 +57,7 @@
     grid-template-columns: 238px minmax(0, 1fr);
   }
   .agent-workspace.rail-collapsed {
-    grid-template-columns: 54px minmax(0, 1fr);
+    grid-template-columns: calc(var(--touch-primary) + var(--space-2) * 2) minmax(0, 1fr);
   }
   .agent-thread {
     padding-inline: 24px;

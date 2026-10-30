@@ -12,6 +12,7 @@ export interface ObservationPanelFrameProps {
   actions: ReactNode;
   children: ReactNode;
   className?: string;
+  showDiagnostics?: boolean;
 }
 
 export function ObservationPanelFrame({
@@ -24,6 +25,7 @@ export function ObservationPanelFrame({
   actions,
   children,
   className,
+  showDiagnostics = true,
 }: ObservationPanelFrameProps) {
   const sources = provenance.map((item, index) => (
     <li className="observation-panel-frame__source" key={`${item.source_id}-${item.observed_at || "unknown"}-${index}`}>
@@ -45,12 +47,12 @@ export function ObservationPanelFrame({
         <div>
           <span className="eyebrow">{marketLabel(market)}观察</span>
           <h2>{title}（{security.code}）</h2>
-          <p className="observation-panel-frame__identity">证券身份：{security.market} · {security.kind} · {security.code}</p>
+          {showDiagnostics ? <p className="observation-panel-frame__identity">证券身份：{security.market} · {security.kind} · {security.code}</p> : null}
         </div>
         <div className="observation-panel-frame__actions">{actions}</div>
       </header>
 
-      <section className="observation-panel-frame__evidence" aria-label="来源与能力状态">
+      {showDiagnostics ? <section className="observation-panel-frame__evidence" aria-label="来源与能力状态">
         {sources.length ? <ul className="observation-panel-frame__sources" aria-label="数据来源">{sources}</ul> : <p className="data-provenance">本次响应未提供逐来源时间信息。</p>}
         <MarketCapabilityStatus
           className="observation-panel-frame__capability"
@@ -68,7 +70,7 @@ export function ObservationPanelFrame({
             {capability.coverage.missing_fields.length ? ` · 缺失字段：${capability.coverage.missing_fields.join("、")}` : ""}
         </p> : null}
         {uniqueIssues.length ? <ul className="observation-panel-frame__issues" aria-label="数据问题">{uniqueIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul> : null}
-      </section>
+      </section> : null}
 
       <div className="observation-panel-frame__body">{children}</div>
     </section>

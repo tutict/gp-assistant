@@ -4,7 +4,6 @@ use crate::screening::local_data_policy::{self as local_data, DataPolicy};
 use futures::stream::{self, FuturesUnordered, StreamExt};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -187,6 +186,13 @@ pub(crate) struct PreparedBacktest {
 
 #[tauri::command]
 pub(crate) async fn api_screen(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    if !legacy_screen_requested(&payload) {
+        if let Some(result) =
+            crate::stock_research_runtime::screen_if_selected(app.clone(), payload.clone()).await?
+        {
+            return Ok(result);
+        }
+    }
     if legacy_screen_requested(&payload) {
         return api_legacy_screen(app, payload).await;
     }
@@ -620,6 +626,11 @@ pub(crate) fn backtest_history_timeout_secs(payload: &Value) -> u64 {
 
 #[tauri::command]
 pub(crate) async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    if let Some(result) =
+        crate::stock_research_runtime::backtest_if_selected(app.clone(), payload.clone()).await?
+    {
+        return Ok(result);
+    }
     let transport = payload.clone();
     let history_timeout_secs = backtest_history_timeout_secs(&payload);
     let prepared = tokio::time::timeout(
@@ -836,15 +847,39 @@ pub(crate) fn adaptive_release_implementation_fingerprint() -> &'static str {
     static FINGERPRINT: OnceLock<String> = OnceLock::new();
     FINGERPRINT
         .get_or_init(|| {
-            let mut hasher = Sha256::new();
-            hasher.update(b"adaptive_swing_v1-release-contract-v2");
-            hasher.update(include_bytes!(
-                "../../../native/gp-core/src/adaptive_screen.rs"
-            ));
-            hasher.update(include_bytes!("../../../native/gp-core/src/lib.rs"));
-            hasher.update(include_bytes!("lib.rs"));
-            let digest = hasher.finalize();
-            digest.iter().map(|byte| format!("{byte:02x}")).collect()
+            gp_core::source_text_fingerprint(
+                b"adaptive-release-contract-v4-lf\0",
+                &[
+                    (
+                        "core_fingerprint",
+                        gp_core::scoring_implementation_fingerprint().as_bytes(),
+                    ),
+                    (
+                        "research_fingerprint",
+                        gp_research::research_implementation_fingerprint().as_bytes(),
+                    ),
+                    (
+                        "adaptive_screen.rs",
+                        include_bytes!("../../../native/gp-core/src/adaptive_screen.rs").as_slice(),
+                    ),
+                    (
+                        "core/lib.rs",
+                        include_bytes!("../../../native/gp-core/src/lib.rs").as_slice(),
+                    ),
+                    ("lib.rs", include_bytes!("lib.rs").as_slice()),
+                    ("screening.rs", include_bytes!("screening.rs").as_slice()),
+                    (
+                        "metric_units.rs",
+                        include_bytes!("metric_units.rs").as_slice(),
+                    ),
+                    (
+                        "stock_research_runtime.rs",
+                        include_bytes!("stock_research_runtime.rs").as_slice(),
+                    ),
+                    ("Cargo.toml", include_bytes!("../Cargo.toml").as_slice()),
+                    ("Cargo.lock", include_bytes!("../Cargo.lock").as_slice()),
+                ],
+            )
         })
         .as_str()
 }
@@ -1922,25 +1957,27 @@ pub(crate) fn trend_history_prefetch_codes(candidate_result: &Value, limit: usiz
 pub(crate) fn screen_financial_snapshot(
     app: &tauri::AppHandle,
     payload: &Value,
-) -> Option<Arc<Value>> {
+) -> Result<Option<Arc<Value>>, String> {
     if let Some(snapshot) = payload
         .get("financial_snapshot")
         .filter(|snapshot| crate::market::financial_snapshot_payload_present(snapshot))
     {
-        let snapshot = Arc::new(snapshot.clone());
+        let snapshot = Arc::new(crate::metric_units::normalize_financial_snapshot(snapshot)?);
         if let Some(path) = crate::market::cache_context_path(app) {
             if let Ok(mut slot) = crate::market::refresh_financial_snapshot_cache().lock() {
                 slot.insert(path, Arc::clone(&snapshot));
             }
         }
-        return Some(snapshot);
+        return Ok(Some(snapshot));
     }
-    let path = crate::market::cache_context_path(app)?;
-    crate::market::refresh_financial_snapshot_cache()
+    let Some(path) = crate::market::cache_context_path(app) else {
+        return Ok(None);
+    };
+    Ok(crate::market::refresh_financial_snapshot_cache()
         .lock()
-        .ok()?
+        .map_err(|_| "财务缓存暂不可读".to_string())?
         .get(&path)
-        .cloned()
+        .cloned())
 }
 
 pub(crate) fn screen_stock_override(
@@ -1948,7 +1985,7 @@ pub(crate) fn screen_stock_override(
     data: &Arc<gp_core::CoreDataSet>,
     payload: &Value,
 ) -> Result<Option<Arc<Vec<gp_core::StockItem>>>, String> {
-    let Some(financial_snapshot) = screen_financial_snapshot(app, payload) else {
+    let Some(financial_snapshot) = screen_financial_snapshot(app, payload)? else {
         return Ok(None);
     };
     let path = crate::market::mobile_market_data_path(app)?;

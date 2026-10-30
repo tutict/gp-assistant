@@ -1,4 +1,4 @@
-import { formatLocalDataError, localDataSummary, shouldSuggestLocalRefresh } from "../../lib/localData";
+import { formatLocalDataError, shouldSuggestLocalRefresh } from "../../lib/localData";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
 import type { CapitalEvidenceItem, CapitalEvidenceResult, CapitalEvidenceSection, FinancialIndicatorItem, FinancialIndicatorSection, InstitutionalHoldingsSnapshot, MarketActiveBrokerageBoard, ObserveResult, StockItem, TrendIndicatorPoint, TrendIndicatorSignal, WatchlistItem } from "../../types";
 import { computeKdj, toDailyBars } from "../../lib/kline";
@@ -18,6 +18,7 @@ import { LocalFirstRunControl } from "../LocalFirstRunControl";
 import {
   currentSystemDateInputValue,
   formatNumber,
+  formatPercent,
   formatPrice,
   formatRatioPercent,
   metricOrMissing,
@@ -248,7 +249,6 @@ export function ObserveResultView({ result, expandProfessionalDetails = false, i
   const series = trend?.series || [];
   const financial = result.financial_indicators;
   const capital = result.capital_evidence;
-  const dataSummary = localDataSummary(result);
   const identity = parseSecurityId("cn", stock.code.replace(/\.(?:SH|SZ)$/i, ""), "ordinary_share");
   if (!identity) {
     return <PanelFeedback kind="error" title="证券身份无效" description="观察结果缺少规范的 A 股代码，无法创建证券身份。" />;
@@ -270,7 +270,8 @@ export function ObserveResultView({ result, expandProfessionalDetails = false, i
         security={identity}
         provenance={provenance}
         capability={frameCapability}
-        issues={[...(result.notes || []), ...(dataSummary ? [dataSummary] : [])]}
+        issues={result.notes || []}
+        showDiagnostics={false}
         actions={<div className="observe-overview-actions">
           {signal?.status && <span className={`state-pill ${signalStatusTone(signal.status)}`}>{signalStatusLabel(signal.status)}</span>}
           {onToggleWatchlist && <button type="button" className={`stock-row-action watchlist-action ${inWatchlist ? "saved" : ""}`} onClick={onToggleWatchlist}>{inWatchlist ? "已收藏" : "收藏"}</button>}
@@ -279,7 +280,7 @@ export function ObserveResultView({ result, expandProfessionalDetails = false, i
         </div>}
       >
         <p className="observe-overview-data-summary" role="status">
-          {[`${stock.code} ${stock.industry || ""} · ${formatObserveTime(stock.quote_time || signal?.date || series.at(-1)?.date)}`, dataSummary].filter(Boolean).join(" · ")}
+          {`${stock.code} ${stock.industry || ""} · ${formatObserveTime(stock.quote_time || signal?.date || series.at(-1)?.date)}`}
         </p>
       <ObserveTextMetrics
         stock={stock}
@@ -1004,8 +1005,8 @@ function formatStockEps(stock: StockItem): string {
 }
 
 function formatStockProfitGrowth(stock: StockItem): string {
-  const value = formatRatioPercent(stock.deducted_net_profit_growth_rate);
-  return value === "--" ? "" : value;
+  const value = formatPercent(stock.deducted_net_profit_growth_rate);
+  return value === "—" ? "" : value;
 }
 function summarizeCapitalEvidence(capital?: CapitalEvidenceResult | null): Record<string, string> {
   const sections = capital?.sections || [];

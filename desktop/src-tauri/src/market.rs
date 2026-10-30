@@ -2261,7 +2261,7 @@ pub(crate) fn merge_financials_array(
         let Some(raw_code) = object.get("code").and_then(Value::as_str) else {
             continue;
         };
-        merge_financial_entry(target, raw_code, item);
+        merge_financial_entry(target, raw_code, object.get("financial").unwrap_or(item));
     }
 }
 
@@ -5657,7 +5657,8 @@ pub(crate) fn parse_mobile_market_data_snapshot(
     data: &Value,
     label: &str,
 ) -> Result<(Arc<gp_core::CoreDataSet>, Value), String> {
-    let typed = serde_json::from_value::<gp_core::CoreDataSet>(data.clone())
+    let normalized = crate::metric_units::normalize_stock_dataset(data)?;
+    let typed = serde_json::from_value::<gp_core::CoreDataSet>(normalized)
         .map_err(|error| format!("{label} parse failed: {error}"))?;
     let summary = gp_core::validate_data_set(&typed)
         .map_err(|error| format!("{label} validation failed: {error}"))?;

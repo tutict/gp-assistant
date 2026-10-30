@@ -1015,6 +1015,7 @@ fn adaptive_backtest_requirements_fail_before_history_fetch_without_point_in_tim
         rebalance_frequency: "monthly".to_string(),
         transaction_cost_bps: 10.0,
         benchmark: "candidate_equal_weight".to_string(),
+        ..gp_core::BacktestRequest::default()
     };
 
     let error = backtest_history_requirements(&data, None, &request)
@@ -1045,6 +1046,7 @@ fn candidate_snapshot_watchlist_requirements_keep_saved_codes() {
         rebalance_frequency: "monthly".to_string(),
         transaction_cost_bps: 10.0,
         benchmark: "candidate_equal_weight".to_string(),
+        ..gp_core::BacktestRequest::default()
     };
 
     let symbols = backtest_history_requirements(&data, None, &request)
@@ -1659,6 +1661,7 @@ fn adaptive_release_qualification_requires_auto_full_universe_long_oos_configura
         rebalance_frequency: "monthly".to_string(),
         transaction_cost_bps: 10.0,
         benchmark: "candidate_equal_weight".to_string(),
+        ..gp_core::BacktestRequest::default()
     };
     let qualified = adaptive_release_backtest_qualification(&request, 60);
     assert_eq!(qualified["qualified"], true);
@@ -4552,6 +4555,7 @@ fn backtest_prefetch_matches_core_watchlist_top_n_slots() {
         rebalance_frequency: "monthly".to_string(),
         transaction_cost_bps: 10.0,
         benchmark: "none".to_string(),
+        ..gp_core::BacktestRequest::default()
     };
 
     assert_eq!(

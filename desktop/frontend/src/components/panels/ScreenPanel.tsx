@@ -14,6 +14,7 @@ import { LocalFirstRunControl } from "../LocalFirstRunControl";
 import { getTauriListen, postJson } from "../../lib/tauri";
 import {
   buildAdaptiveScreenRequest,
+  freezeAdaptiveScreenRequest,
   buildCustomScreenRequest,
   buildSectorScreenRequest,
   buildTrendScreenRequest,
@@ -279,7 +280,7 @@ export function ScreenPanel({
         loading: false,
         error: null,
         progress: null,
-        adaptiveRequest: requestMode === "screen" ? adaptiveRequest : current.adaptiveRequest,
+        adaptiveRequest: requestMode === "screen" && adaptiveRequest ? freezeAdaptiveScreenRequest(adaptiveRequest, data) : current.adaptiveRequest,
         criteriaSnapshot: { ...requestCriteria },
       }));
     } catch (err) {
@@ -506,6 +507,7 @@ export const ScreenResultView = memo(function ScreenResultView({
   return (
     <div className="result-list screen-result-list">
       <p className="screen-result-lead">按综合评分选出 {rows.length} 只。分数高只说明更符合当前条件，不是买卖建议。每只股票下面有一条入选原因。</p>
+      {resultRecord.parameter_set_id ? <p className="screen-result-lead">参数版本：{resultRecord.parameter_set_id} · 评分修订：{resultRecord.scoring_revision || "未记录"}</p> : null}
       <div className="metric-strip screen-result-metric-strip">
         <div className="metric"><span>返回数</span><strong>{resultRecord.returned ?? rows.length}</strong></div>
         <div className="metric"><span>总数</span><strong>{resultRecord.total ?? rows.length}</strong></div>
@@ -573,7 +575,8 @@ export const ScreenResultView = memo(function ScreenResultView({
           <button
             type="button"
             onClick={() => onRunBacktest(
-              resultRecord.algorithm_version === "adaptive_swing_v1" ? adaptiveRequest : undefined,
+              (resultRecord.algorithm_version === "adaptive_swing_v1" || resultRecord.algorithm_version === "adaptive_swing_v2") && adaptiveRequest
+                ? freezeAdaptiveScreenRequest(adaptiveRequest, resultRecord) : undefined,
               criteriaSnapshot || FULL_UNIVERSE_CRITERIA,
             )}
           >

@@ -147,6 +147,9 @@ describe("desktop financial snapshot and backtest routes", () => {
       payload: expect.objectContaining({
         code: "000100.SZ",
         financial_snapshot: {
+          schema_version: "mobile-financial-snapshot/v4",
+          metric_contract_version: 2,
+          metric_units: expect.objectContaining({ roe: "percentage_points" }),
           stocks: [],
           financials: {
             "000100.SZ": expect.objectContaining({
@@ -220,6 +223,10 @@ describe("desktop financial snapshot and backtest routes", () => {
         payload: expect.objectContaining({
           limit: 10,
           financial_snapshot: {
+            schema_version: "mobile-financial-snapshot/v4",
+            metric_contract_version: 2,
+            metric_units: expect.objectContaining({ deducted_net_profit_growth_rate: "percentage_points" }),
+            stock_metric_units: expect.objectContaining({ roe: "ratio" }),
             industries: {
               "002432.SZ": "医疗器械",
             },
@@ -250,6 +257,10 @@ describe("desktop financial snapshot and backtest routes", () => {
       payload: expect.objectContaining({
         limit: 10,
         financial_snapshot: {
+          schema_version: "mobile-financial-snapshot/v4",
+          metric_contract_version: 2,
+          metric_units: expect.objectContaining({ deducted_net_profit_growth_rate: "percentage_points" }),
+          stock_metric_units: expect.objectContaining({ roe: "ratio" }),
           industries: {
             "002432.SZ": "医疗器械",
           },

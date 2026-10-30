@@ -75,6 +75,14 @@ const unavailableResult = {
 };
 
 describe("BacktestResultView volatility diagnostics", () => {
+  it("clearly labels synthetic PIT returns with their frozen dataset identity", () => {
+    const html=renderToStaticMarkup(<BacktestResultView result={{...result,parameter_set_id:"fixed-v1",scoring_revision:"unit-rank-fix/v1",
+      pit_evaluation_report:{run_id:"sample-run",dataset_id:"sample-data",data_quality:{passed:true,real_data:false},parameters:{parameter_set_id:"fixed-v1"},metrics:{total_return:0.1}},
+    }} />);
+    expect(html).toContain("合成样例");
+    expect(html).toContain("不提供真实收益证据");
+    expect(html).toContain("sample-data");
+  });
   it("identifies the portfolio curve, renders its benchmark, and scopes the symbol selector", () => {
     const html = renderToStaticMarkup(
       <BacktestResultView

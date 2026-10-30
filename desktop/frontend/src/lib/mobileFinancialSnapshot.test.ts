@@ -2,6 +2,25 @@ import { describe, expect, it } from "vitest";
 import { normalizeMobileFinancialSnapshotDetails } from "./mobileFinancialSnapshot";
 
 describe("normalizeMobileFinancialSnapshotDetails", () => {
+  it("converts explicitly declared ratios into the financial DTO percentage-point contract", () => {
+    const actual = normalizeMobileFinancialSnapshotDetails({
+      roe: 0.0007,
+      operating_revenue_yoy: 0.00804352,
+      dividend_yield: 0.0095,
+    }, { roe: "ratio", operating_revenue_yoy: "ratio", dividend_yield: "ratio" });
+    expect(actual.roe).toBeCloseTo(0.07, 12);
+    expect(actual.operating_revenue_yoy).toBeCloseTo(0.804352, 12);
+    expect(actual.dividend_yield).toBeCloseTo(0.95, 12);
+  });
+
+  it("does not shrink a legitimate ratio greater than one", () => {
+    expect(normalizeMobileFinancialSnapshotDetails({ roe: 1.2 }, { roe: "ratio" }).roe).toBe(120);
+  });
+
+  it("rejects a present percentage field when its explicit unit declaration is missing", () => {
+    expect(() => normalizeMobileFinancialSnapshotDetails({ roe: 0.07 }, {})).toThrow(/单位/);
+  });
+
   it("preserves detailed Android financial metrics and their independent periods", () => {
     expect(normalizeMobileFinancialSnapshotDetails({
       operating_revenue_billion: "434.778212",

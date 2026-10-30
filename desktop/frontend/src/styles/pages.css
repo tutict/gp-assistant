@@ -2434,6 +2434,8 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 
 .backtest-stale-notice { color: var(--warning); font-size: var(--fs-body); }
 .backtest-result-tabs { display: flex; gap: var(--space-2); border-bottom: 1px solid var(--line); margin-bottom: var(--space-4); }
+.backtest-result-tabs-with-status { margin-bottom: 0; }
+.backtest-data-status.workspace-boundary { margin: 0; overflow-wrap: anywhere; }
 .backtest-result-tabs button { min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-secondary); cursor: pointer; }
 .backtest-result-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
 .backtest-result [hidden] { display: none; }
@@ -5563,6 +5565,55 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 .agent-rail-header .agent-rail-toggle {
   position: static;
   flex: 0 0 auto;
+}
+@media (min-width: 769px) {
+  .agent-workspace.rail-collapsed {
+    grid-template-columns: calc(var(--touch-primary) + var(--space-2) * 2) minmax(0, 1fr);
+  }
+  .agent-workspace.rail-collapsed .agent-rail {
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-2);
+  }
+  .agent-workspace.rail-collapsed .agent-rail-brand {
+    display: none;
+  }
+  .agent-workspace.rail-collapsed .agent-rail-header {
+    width: 100%;
+    min-height: var(--touch-primary);
+    justify-content: center;
+    gap: 0;
+  }
+  .agent-workspace.rail-collapsed :is(.agent-rail-toggle, .agent-new-chat) {
+    display: inline-grid;
+    flex: 0 0 auto;
+    width: var(--touch-primary);
+    min-width: var(--touch-primary);
+    height: var(--touch-primary);
+    min-height: var(--touch-primary);
+    place-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-md);
+  }
+  .agent-workspace.rail-collapsed :is(.agent-rail-toggle, .agent-new-chat) svg {
+    width: 20px;
+    height: 20px;
+  }
+  .agent-workspace.rail-collapsed .agent-new-chat {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+  .agent-workspace.rail-collapsed :is(.agent-rail-toggle, .agent-new-chat):hover {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+  .agent-workspace.rail-collapsed :is(.agent-rail-toggle, .agent-new-chat):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 }
 .agent-chat-stage {
   background: var(--agent-stage-bg);

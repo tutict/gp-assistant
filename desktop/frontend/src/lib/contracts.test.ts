@@ -3,6 +3,7 @@ import {
   actionResultKind,
   buildBacktestRequest,
   buildAdaptiveScreenRequest,
+  freezeAdaptiveScreenRequest,
   buildCustomScreenRequest,
   buildNewsRagRequest,
   buildScreenCriteria,
@@ -50,6 +51,47 @@ const fullUniverseCriteria: FilterCriteria = {
   industry: "",
   marketScope: "",
 };
+
+describe("frozen adaptive parameters", () => {
+  it("binds an actual screening result's dataset and parameter identity to its request", () => {
+    const request = buildAdaptiveScreenRequest(fullUniverseCriteria, "auto", "screen-id");
+    const frozen = freezeAdaptiveScreenRequest(request, {
+      algorithm_version: "adaptive_swing_v2", parameter_set_id: "parameter-a", scoring_revision: "unit-rank-fix/v1",
+      implementation_fingerprint: "core-a", metric_contract_version: 2, dataset_id: "dataset-a",
+    });
+    expect(frozen.parameter_set_id).toBe("parameter-a");
+    expect(frozen.dataset_id).toBe("dataset-a");
+    expect(frozen.run_id).toBe("screen-id");
+    expect(() => freezeAdaptiveScreenRequest(request, { algorithm_version: "adaptive_swing_v2" })).toThrow(/参数/);
+  });
+  it("carries the exact validated v2 parameter set from screening into backtest", () => {
+    const spec = {
+      ...buildAdaptiveScreenRequest(fullUniverseCriteria, "auto", "research-screen"),
+      algorithm_version: "adaptive_swing_v2",
+      parameter_set_id: "validated-set-a",
+      scoring_revision: "unit-rank-fix/v1",
+    };
+    const payload = buildBacktestRequest({
+      source: "criteria", criteria: fullUniverseCriteria, watchlist: [],
+      startDate: "2021-10-01", endDate: "2026-09-30", topN: 10,
+      rebalanceFrequency: "monthly", transactionCostBps: 10,
+      benchmark: "candidate_equal_weight", adaptiveScreenSpec: spec,
+    });
+    expect(payload.strategy_mode).toBe("adaptive_swing_v2:auto");
+    expect(payload.parameter_set_id).toBe("validated-set-a");
+    expect(payload.scoring_revision).toBe("unit-rank-fix/v1");
+  });
+
+  it("rejects an explicitly selected v2 strategy without a frozen parameter ID", () => {
+    expect(() => buildBacktestRequest({
+      source: "criteria", criteria: fullUniverseCriteria, watchlist: [],
+      startDate: "2021-10-01", endDate: "2026-09-30", topN: 10,
+      rebalanceFrequency: "monthly", transactionCostBps: 10,
+      benchmark: "candidate_equal_weight",
+      adaptiveScreenSpec: { ...buildAdaptiveScreenRequest(fullUniverseCriteria), algorithm_version: "adaptive_swing_v2" },
+    })).toThrow(/参数/);
+  });
+});
 
 describe("LLM settings persistence", () => {
   it("never persists API keys and refuses unmigrated remembered keys", () => {

@@ -44,6 +44,7 @@ import {
   trendScreenStartDateInputValue,
 } from "./format";
 import { normalizeMarketScope } from "./screenScopeOptions";
+import { METRIC_CONTRACT_VERSION } from "./rateUnits";
 
 export interface ScreenRequestOptions {
   limit?: number;
@@ -100,6 +101,27 @@ export function buildAdaptiveScreenRequest(
     primary_limit: 10,
     exploration_limit: 10,
     run_id: runId,
+    metric_contract_version: METRIC_CONTRACT_VERSION,
+  };
+}
+
+export function freezeAdaptiveScreenRequest(request: AdaptiveScreenRequest, result: unknown): AdaptiveScreenRequest {
+  const response = asRecord(result);
+  if (typeof response.algorithm_version !== "string") return request;
+  const algorithm = response.algorithm_version;
+  if (algorithm !== "adaptive_swing_v1" && algorithm !== "adaptive_swing_v2") throw new Error("未知的选股算法版本");
+  const parameterId = typeof response.parameter_set_id === "string" ? response.parameter_set_id.trim() : "";
+  const fingerprint = typeof response.implementation_fingerprint === "string" ? response.implementation_fingerprint : "";
+  const revision = typeof response.scoring_revision === "string" ? response.scoring_revision : "";
+  if (algorithm === "adaptive_swing_v2" && (!parameterId || !fingerprint || !revision || response.metric_contract_version !== 2)) {
+    throw new Error("校准结果缺少完整的已冻结参数版本");
+  }
+  return {
+    ...request, algorithm_version: algorithm,
+    ...(parameterId ? { parameter_set_id: parameterId } : {}),
+    ...(fingerprint ? { implementation_fingerprint: fingerprint } : {}),
+    ...(revision ? { scoring_revision: revision } : {}),
+    ...(typeof response.dataset_id === "string" ? { dataset_id: response.dataset_id } : {}),
   };
 }
 
@@ -184,8 +206,17 @@ export function buildBacktestRequest(args: {
   adaptiveScreenSpec?: AdaptiveScreenRequest;
 }): Record<string, unknown> {
   const adaptiveScreenSpec = args.source === "criteria" ? args.adaptiveScreenSpec : undefined;
+  const algorithm = adaptiveScreenSpec?.algorithm_version || "adaptive_swing_v1";
+  if (adaptiveScreenSpec && algorithm !== "adaptive_swing_v1" && algorithm !== "adaptive_swing_v2") {
+    throw new Error("无法回测未知的自适应算法版本");
+  }
+  const parameterSetId = adaptiveScreenSpec?.parameter_set_id?.trim();
+  if (adaptiveScreenSpec && algorithm === "adaptive_swing_v2" && !parameterSetId) {
+    throw new Error("校准策略缺少已冻结的参数版本，请重新运行选股");
+  }
   const dateRange = normalizeBacktestDateRange(args.startDate, args.endDate);
   return {
+    metric_contract_version: METRIC_CONTRACT_VERSION,
     source: args.source,
     criteria: adaptiveScreenSpec?.criteria
       || buildScreenCriteria(args.criteria, {
@@ -194,9 +225,14 @@ export function buildBacktestRequest(args: {
         applyDeductedProfitRule: args.source === "criteria",
       }),
     strategy_mode: adaptiveScreenSpec
-      ? "adaptive_swing_v1:" + adaptiveScreenSpec.mode
+      ? algorithm + ":" + adaptiveScreenSpec.mode
       : args.strategyMode || "candidate_snapshot",
     ...(adaptiveScreenSpec ? { adaptive_screen_spec: adaptiveScreenSpec } : {}),
+    ...(adaptiveScreenSpec ? { algorithm_version: algorithm } : {}),
+    ...(parameterSetId ? { parameter_set_id: parameterSetId } : {}),
+    ...(adaptiveScreenSpec?.dataset_id ? { dataset_id: adaptiveScreenSpec.dataset_id } : {}),
+    ...(adaptiveScreenSpec?.implementation_fingerprint ? { implementation_fingerprint: adaptiveScreenSpec.implementation_fingerprint } : {}),
+    ...(adaptiveScreenSpec?.scoring_revision ? { scoring_revision: adaptiveScreenSpec.scoring_revision } : {}),
     stock_codes: args.source === "watchlist" ? args.watchlist.map((item) => item.code).filter(Boolean).slice(0, 100) : [],
     start_date: normalizeDateParam(dateRange.startDate, "20200101"),
     end_date: normalizeDateParam(dateRange.endDate, currentSystemDateCompact()),
@@ -316,6 +352,7 @@ export function requireBacktestResult(value: unknown): BacktestResult {
     "excess_return",
     "total_transaction_cost",
     "total_turnover",
+    "annualized_turnover",
     "rebalance_count",
     "oos_fold_count",
     "evaluated_selection_count",
@@ -596,6 +633,7 @@ export function normalizeStockRow(item: unknown): StockRowView | null {
     riskScore: firstNumber(screened.risk_score),
     balancedScore: firstNumber(screened.balanced_score),
     factorScores: screened.factor_scores || {},
+    industrySampleCount: firstNumber(screened.industry_sample_count),
     scoreBreakdown: Array.isArray(screened.score_breakdown) ? screened.score_breakdown : [],
     reasonTags: Array.isArray(screened.reason_tags) ? screened.reason_tags : [],
     riskTags: Array.isArray(screened.risk_tags) ? screened.risk_tags : [],

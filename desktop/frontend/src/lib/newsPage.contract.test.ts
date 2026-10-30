@@ -53,9 +53,10 @@ describe("news page CSS contract", () => {
     expect(researchCss).toContain(".research-empty-actions button");
     expect(newsPanel).toContain('className="research-empty"');
     expect(newsPanel).toContain('className="research-empty-primary"');
-    expect(newsPanel).toContain('className="research-empty-ghost"');
+    expect(newsPanel).not.toContain('className="research-empty-ghost"');
     expect(newsPanel).toContain("onRefresh");
-    expect(newsPanel).toContain("onKnowledge");
+    expect(newsPanel).toContain("onPickStock");
+    expect(newsPanel).toContain("onGoToScreen");
   });
 
   it("keeps mobile topbar buttons visually lighter than the touch target", () => {
@@ -76,7 +77,7 @@ describe("news page CSS contract", () => {
     const formAt = newsPanel.indexOf('<form className="research-composer"');
     const boundaryAt = newsPanel.indexOf('className="research-risk-boundary"');
     expect(formAt).toBeGreaterThan(-1);
-    expect(boundaryAt).toBeGreaterThan(formAt);
+    expect(boundaryAt).toBeLessThan(formAt); // The reading stream retains its boundary when the question sheet is closed.
   });
 
   it("keeps source badges neutral and tokenized", () => {

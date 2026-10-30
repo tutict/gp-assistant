@@ -5,6 +5,7 @@ import type { AdaptiveScreenRequest, BacktestResult, EquityPoint, StockItem, Vol
 import type { FilterCriteria } from "../FilterBar";
 import { getJson, postJson } from "../../lib/tauri";
 import { buildBacktestRequest, requireBacktestResult } from "../../lib/contracts";
+import { parseResearchReport } from "../../lib/stockResearch";
 import {
   currentSystemDateInputValue,
   formatMoney,
@@ -29,6 +30,7 @@ import {
 export function backtestStrategyLabel(mode: unknown): string {
   if (mode === "walk_forward") return "滚动验证";
   if (mode === "adaptive_swing_v1") return "自适应波段";
+  if (mode === "adaptive_swing_v2") return "校准自适应波段";
   return "候选快照";
 }
 
@@ -355,7 +357,6 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
             : error}
         />}
         {loading && !result && !error && <PanelFeedback kind="loading" description="正在计算组合表现..." />}
-        {result && !loading && localDataSummary(result) && <p className="workspace-boundary" role="status">{localDataSummary(result)}</p>}
         {result && !loading && <BacktestResultView result={result} watchlist={watchlist} />}
         {!result && !loading && !error && <PanelFeedback kind="empty" description="选择股票来源并设置参数后运行回测。" />}
       </div>
@@ -435,11 +436,16 @@ export function BacktestResultView({ result, watchlist = [] }: { result: Backtes
   const metrics = result.metrics || {};
   const equityPointCount = result.equity_curve?.length ?? 0;
   const symbolNames = useBacktestSymbolNames(result, watchlist);
+  const dataSummary = localDataSummary(result);
+  const pitReport = result.pit_evaluation_report ? parseResearchReport(result.pit_evaluation_report) : null;
   return (
     <div className="backtest-result">
-      <div className="backtest-result-tabs" role="tablist" aria-label="回测结果视图">
+      {result.parameter_set_id ? <p className="backtest-stale-notice">参数版本：{result.parameter_set_id} · 评分修订：{result.scoring_revision || "未记录"}</p> : null}
+      {pitReport ? <p className="backtest-stale-notice">{pitReport.realData ? "真实 PIT 数据声明" : "合成样例 · 不提供真实收益证据"} · 数据集：{pitReport.datasetId || "未记录"} · 报告：{pitReport.runId || "未记录"}</p> : null}
+      <div className={`backtest-result-tabs${dataSummary ? " backtest-result-tabs-with-status" : ""}`} role="tablist" aria-label="回测结果视图">
         {[["overview","结果概览"],["volatility","波动率分析"],["validation","验证明细"]].map(([key,label]) => <button type="button" role="tab" key={key} id={`${tabPrefix}-${key}-tab`} aria-selected={resultTab === key} aria-controls={`${tabPrefix}-${key}`} onClick={()=>setResultTab(key)}>{label}</button>)}
       </div>
+      {dataSummary ? <p className="backtest-data-status workspace-boundary" role="status">{dataSummary}</p> : null}
       <div role="tabpanel" id={`${tabPrefix}-overview`} aria-labelledby={`${tabPrefix}-overview-tab`} hidden={resultTab !== "overview"}>
       <div className="metric-strip">
         <div className="metric metric-hero"><span>总收益</span><strong className={(metrics.total_return ?? 0) > 0 ? "positive" : (metrics.total_return ?? 0) < 0 ? "negative" : undefined}>{formatSignedPercent((metrics.total_return ?? 0) * 100)}</strong></div>
@@ -466,7 +472,7 @@ export function BacktestResultView({ result, watchlist = [] }: { result: Backtes
         <div><span>股票数</span><strong>{metrics.num_stocks ?? result.symbols?.length ?? 0}</strong></div>
         <div><span>基准</span><strong>{result.benchmark_symbols?.length || "未启用"}</strong></div>
         <div><span>交易成本</span><strong>{formatMoney(metrics.total_transaction_cost)}</strong></div>
-        <div><span>换手</span><strong>{formatNumber(metrics.total_turnover)}</strong></div>
+        <div><span>{metrics.annualized_turnover === undefined ? "换手" : "年化换手"}</span><strong>{formatNumber(metrics.annualized_turnover ?? metrics.total_turnover)}</strong></div>
         <div><span>调仓次数</span><strong>{metrics.rebalance_count ?? 0}</strong></div>
         <div><span>样本外折数</span><strong>{metrics.oos_fold_count ?? 0}</strong></div>
         <div><span>方式</span><strong>{backtestStrategyLabel(metrics.strategy_mode)}</strong></div>

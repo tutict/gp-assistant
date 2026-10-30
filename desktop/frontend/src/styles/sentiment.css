@@ -371,3 +371,84 @@
 .sentiment-conclusion-actions { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
 
 .sentiment-scrubber-chart { display: grid; gap: var(--space-2); }
+
+/* Shared message/sentiment navigation keeps management progressive. */
+.sentiment-panel > .sentiment-header { position: relative; z-index: var(--z-header); display: grid; grid-template-columns: auto minmax(180px, 380px) auto; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-4); overflow: visible; background: var(--surface); }
+.sentiment-header .sentiment-tabs { grid-area: auto; justify-self: start; }
+.sentiment-header .sentiment-toolbar { grid-area: auto; display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; min-width: 0; order: 0; border-radius: var(--radius-sm); overflow: visible; }
+.sentiment-panel > .sentiment-header .sentiment-header-actions { grid-area: auto; display: flex; width: auto; justify-self: end; align-items: center; gap: var(--space-2); margin-left: auto; }
+.sentiment-header-actions > .sentiment-icon-action, .sentiment-header-actions .research-more-trigger { width: auto; min-width: var(--touch-dense); gap: var(--space-2); padding-inline: var(--space-3); font-size: var(--fs-body); }
+.sentiment-header-actions .research-mobile-stock-button { display: none; }
+.sentiment-panel.is-sources .research-columns { grid-template-columns: 200px minmax(0, 1fr); }
+@media (max-width: 768px) {
+  .sentiment-panel > .sentiment-header { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "tabs actions" "search search"; padding: var(--space-2) var(--space-3); gap: var(--space-2); }
+  .sentiment-header .sentiment-tabs { grid-area: tabs; }
+  .sentiment-panel > .sentiment-header .sentiment-header-actions { grid-area: actions; gap: var(--space-1); }
+  .sentiment-header .sentiment-toolbar { grid-area: search; }
+  .sentiment-header-actions > .sentiment-icon-action, .sentiment-header-actions .research-more-trigger { min-height: var(--touch-primary); padding-inline: var(--space-2); }
+  .sentiment-header-actions .research-mobile-stock-button { display: inline-flex; }
+  .sentiment-panel.is-sources .research-columns { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Conclusion-first reading uses the same scale and Sheet as message research. */
+.sentiment-main, .sentiment-detail-sheet { --research-body: 14px; --research-heading: 16px; --research-section: 24px; font-size: var(--research-body); line-height: 1.6; }
+.sentiment-view-analysis .sentiment-layout { grid-template-columns: 200px minmax(0, 1fr); }
+.sentiment-view-analysis .sentiment-watchlist { top: 0; padding: var(--space-3); background: transparent; }
+.sentiment-view-analysis .sentiment-watchlist-items button[aria-pressed="true"] { border-color: transparent; box-shadow: none; }
+.sentiment-view-analysis .sentiment-watchlist-items button { padding: var(--space-2); }
+.sentiment-view-analysis .sentiment-main { width: 100%; max-width: 960px; margin-inline: auto; padding: var(--space-4) var(--research-section); }
+.sentiment-main :is(h3, h4), .sentiment-detail-sheet :is(h3, h4) { font-size: var(--research-heading); line-height: 1.6; }
+.sentiment-main p, .sentiment-detail-sheet p, .sentiment-detail-sheet blockquote { font-size: var(--research-body); line-height: 1.6; }
+.sentiment-main .sentiment-stock-heading { margin-bottom: var(--space-3); padding: 0; }
+.sentiment-main .sentiment-stock-identity h3 { font-size: var(--research-heading); }
+.sentiment-main :is(.sentiment-conclusion, .sentiment-empty, .sentiment-notice, .sentiment-progress, .sentiment-quality) { padding: 0; border: 0; border-radius: 0; background: transparent; }
+.sentiment-main .sentiment-conclusion { margin: 0 0 var(--research-section); }
+.sentiment-conclusion-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); color: var(--text-secondary); font-size: var(--research-body); }
+.sentiment-main .sentiment-section-heading h3 > strong { margin-left: var(--space-2); font-size: var(--research-heading); color: var(--text); }
+.sentiment-main .sentiment-summary { margin: var(--space-3) 0; max-width: 75ch; font-size: var(--research-body); }
+.sentiment-main .sentiment-verdicts { border: 0; gap: var(--space-3); padding: var(--space-2) 0; }
+.sentiment-main .sentiment-verdicts :is(span, strong) { font-size: var(--research-body); line-height: 1.6; }
+.sentiment-main .sentiment-verdicts > div { gap: var(--space-1); }
+.sentiment-main .sentiment-meta { font-size: var(--research-body); }
+.sentiment-main .sentiment-conclusion > details { margin-top: var(--space-2); border: 0; }
+.sentiment-main summary { width: fit-content; max-width: 100%; padding-block: var(--space-2); font-size: var(--research-body); color: var(--text-secondary); cursor: pointer; }
+.sentiment-main summary:hover { color: var(--text); }
+.sentiment-main .sentiment-key-evidence { margin-bottom: var(--research-section); }
+.sentiment-main .sentiment-key-evidence > h3 { margin-bottom: var(--space-2); }
+.sentiment-main .sentiment-evidence-row { grid-template-columns: 40px minmax(0, 1fr) auto; gap: var(--space-3); padding: var(--space-3) 0; }
+.sentiment-main .sentiment-evidence-row > span:nth-child(2) { gap: var(--space-1); }
+.sentiment-main .sentiment-evidence-row strong, .sentiment-main .sentiment-evidence-row .sentiment-evidence-excerpt { font-size: var(--research-body); line-height: 1.6; }
+.sentiment-evidence-excerpt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--text-secondary); }
+.sentiment-main .sentiment-timeline { padding: 0; margin-bottom: var(--research-section); }
+.sentiment-main .sentiment-line-plot { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
+.sentiment-main .sentiment-chart-controls { gap: var(--space-3); }
+.sentiment-main .sentiment-chart-controls details label { display: block; margin-top: var(--space-2); }
+.sentiment-main .sentiment-detail-group { margin-bottom: var(--research-section); padding: 0; border: 0; }
+.sentiment-main .sentiment-detail-group > summary { font-size: var(--research-heading); color: var(--text); }
+.sentiment-main .sentiment-dimensions { margin: var(--space-2) 0 0; }
+.sentiment-main .sentiment-dimensions article { border: 0; padding: 0 var(--space-3) 0 0; }
+.sentiment-main .sentiment-evidence-list { padding: var(--space-3) 0; border: 0; }
+.sentiment-main .sentiment-history > div { margin-top: var(--space-2); }
+.sentiment-main .sentiment-snapshot-switch { margin: 0 0 var(--space-3); }
+.sentiment-main .sentiment-snapshot-note { margin: 0; }
+.sentiment-main .sentiment-error { margin-bottom: var(--space-3); padding: var(--space-2) 0; border: 0; border-radius: 0; background: transparent; }
+.sentiment-detail-sheet .sentiment-followup-scroll { min-height: 0; flex: 1; overflow: auto; }
+.sentiment-detail-sheet :is(.sentiment-followup-scroll, .sentiment-followup)[hidden] { display: none; }
+.sentiment-detail-sheet .sentiment-followup { padding: 0; }
+.sentiment-detail-sheet .sentiment-followup-form { position: sticky; bottom: 0; display: flex; align-items: flex-end; flex-direction: row; width: 100%; margin-top: var(--research-section); padding: var(--space-3) 0 0; border: 0; border-radius: 0; background: var(--surface); }
+.sentiment-detail-sheet .sentiment-followup-form textarea { width: 100%; min-width: 0; flex: 1; min-height: 64px; max-height: 180px; font-size: var(--research-body); line-height: 1.6; resize: vertical; }
+.sentiment-detail-sheet .sentiment-evidence-detail { padding-top: var(--space-3); }
+.sentiment-detail-sheet .sentiment-evidence-detail blockquote { margin: var(--space-4) 0; white-space: pre-wrap; }
+@media (max-width: 768px) {
+  .sentiment-view-analysis .sentiment-layout { display: block; }
+  .sentiment-view-analysis .sentiment-main { padding: var(--space-3); }
+  .sentiment-main .sentiment-stock-actions { display: flex; width: auto; justify-content: flex-start; }
+  .sentiment-main .sentiment-stock-actions > .btn { width: auto; min-height: var(--touch-primary); }
+  .sentiment-main .sentiment-evidence-row { grid-template-columns: 36px minmax(0, 1fr); gap: var(--space-2); }
+  .sentiment-main .sentiment-evidence-row time { grid-column: 2; }
+  .sentiment-main .sentiment-conclusion-meta { align-items: flex-start; flex-direction: column; gap: var(--space-1); }
+  .sentiment-main .sentiment-reasoning { gap: var(--space-3); }
+  .sentiment-main .sentiment-dimensions { gap: var(--space-3); }
+  .sentiment-detail-sheet .sentiment-followup-form button { min-height: var(--touch-primary); }
+  :root[data-composer-keyboard="open"] .sentiment-detail-sheet { height: var(--composer-viewport-height); max-height: var(--composer-viewport-height); }
+}

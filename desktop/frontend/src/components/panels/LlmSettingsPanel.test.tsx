@@ -9,6 +9,7 @@ vi.mock("../../lib/tauri", () => ({
   postJson: postJsonMock,
 }));
 
+vi.mock("react-dom", () => ({ createPortal: (children: unknown) => children }));
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
 
 const initialSettings: LlmSettings = {
@@ -202,4 +203,23 @@ describe("stored credential UX", () => {
     expect(renderer.root.find(node => node.props.id === "llmApiKey").props.value).toBe("");
     await act(async () => renderer.unmount());
   });
+});
+
+
+it("returns a requested model dialog to its external initiating control", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", { requestAnimationFrame: (callback: () => void) => callback() });
+  vi.stubGlobal("document", { body: { style: { overflow: "" } }, addEventListener: vi.fn(), removeEventListener: vi.fn() });
+  const external = { focus: vi.fn() };
+  const toggle = { focus: vi.fn() };
+  const returnFocusRef = { current: external as unknown as HTMLElement };
+  let renderer!: ReactTestRenderer;
+  await act(async () => { renderer = create(<LlmSettingsPanel settings={null} onChange={vi.fn()} presentation="dialog" openRequest={0} returnFocusRef={returnFocusRef} />, { createNodeMock: node => (node.props as { className?: string }).className === "llm-settings-toggle" ? toggle : null }); });
+  await act(async () => renderer.update(<LlmSettingsPanel settings={null} onChange={vi.fn()} presentation="dialog" openRequest={1} returnFocusRef={returnFocusRef} />));
+  expect(renderer.root.findByProps({ "aria-label": "模型连接配置" })).toBeDefined();
+  await act(async () => renderer.root.findByProps({ "aria-label": "关闭模型配置" }).props.onClick());
+  expect(external.focus).toHaveBeenCalledTimes(1);
+  expect(toggle.focus).not.toHaveBeenCalled();
+  await act(async () => renderer.unmount());
+  vi.unstubAllGlobals();
 });

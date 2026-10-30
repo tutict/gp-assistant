@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import { lazy, Suspense, useState } from "react";
 import type { LlmSettings } from "../../types";
 import type { SettingDescriptor } from "../../lib/settingsRegistry";
 import { LlmSettingsPanel } from "../panels/LlmSettingsPanel";
@@ -6,6 +7,17 @@ import { IconButton } from "../ui/IconButton";
 import { Sheet } from "../ui/Sheet";
 import { BackupPanel } from "./BackupPanel";
 import { ReliabilityPanel } from "./ReliabilityPanel";
+import "../../styles/stock-research.css";
+
+const LazyStockResearchPanel = lazy(() => import("./StockResearchPanel").then((module) => ({ default: module.StockResearchPanel })));
+
+function StockResearchSettings() {
+  const [expanded, setExpanded] = useState(false);
+  return <details className="stock-research-settings" onToggle={(event) => setExpanded(event.currentTarget.open)}>
+    <summary>选股研究与验证</summary>
+    {expanded ? <Suspense fallback={<p role="status">加载研究记录…</p>}><LazyStockResearchPanel /></Suspense> : null}
+  </details>;
+}
 
 interface SettingsSheetProps {
   open: boolean;
@@ -101,6 +113,7 @@ export function SettingsSheet({ open, onClose, settings, llmSettings, onLlmSetti
         ))}
         <section className="settings-item"><ReliabilityPanel onGepaPreferenceChange={() => window.dispatchEvent?.(new Event("gp:reliability-settings"))} /></section>
         <section className="settings-item"><BackupPanel /></section>
+        <section className="settings-item"><StockResearchSettings /></section>
         {onLlmSettingsChange ? (
           <section className="settings-item">
             <LlmSettingsPanel

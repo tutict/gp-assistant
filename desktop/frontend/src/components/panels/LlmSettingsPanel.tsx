@@ -1,6 +1,6 @@
 import { Activity, ArrowLeft, ChevronDown, Download, Eye, EyeOff, LoaderCircle, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import { createPortal } from "react-dom";
 import type {
   LlmConnectionTestResult,
@@ -83,6 +83,7 @@ interface LlmSettingsPanelProps {
   presentation?: "inline" | "dialog";
   statusMode?: "full" | "inline";
   openRequest?: number;
+  returnFocusRef?: RefObject<HTMLElement | null>;
 }
 
 interface ProviderModelCatalog {
@@ -146,7 +147,7 @@ function modelLoadError(error: unknown): string {
   return raw.replace(/^Error:\s*/i, "").trim().slice(0, 220) || "无法拉取模型列表，请检查连接配置。";
 }
 
-export function LlmSettingsPanel({ settings, onChange, presentation = "inline", statusMode = "full", openRequest = 0 }: LlmSettingsPanelProps) {
+export function LlmSettingsPanel({ settings, onChange, presentation = "inline", statusMode = "full", openRequest = 0, returnFocusRef }: LlmSettingsPanelProps) {
   const [open, setOpen] = useState(false);
   const seenOpenRequest = useRef(openRequest);
   useEffect(() => {
@@ -174,8 +175,8 @@ export function LlmSettingsPanel({ settings, onChange, presentation = "inline", 
   const closePanel = useCallback(() => {
     setOpen(false);
     setModelMenuProviderId(null);
-    if (isDialog) window.requestAnimationFrame(() => toggleButtonRef.current?.focus());
-  }, [isDialog]);
+    if (isDialog) window.requestAnimationFrame(() => (returnFocusRef?.current || toggleButtonRef.current)?.focus());
+  }, [isDialog, returnFocusRef]);
 
   useEffect(() => {
     if (!open || !isDialog) return undefined;

@@ -13,6 +13,16 @@ afterAll(() => {
 });
 
 describe("ScreenResultView", () => {
+  it("shows the calibrated parameter identity alongside its actual industry sample count", () => {
+    const markup = renderToStaticMarkup(<ScreenResultView
+      result={{ total: 1, returned: 1, algorithm_version: "adaptive_swing_v2", scoring_revision: "unit-rank-fix/v1", parameter_set_id: "parameter-a", metric_contract_version: 2,
+        items: [{ stock: { code: "000001.SZ", name: "样本", price: 10 }, score: 12, reasons: [], industry_sample_count: 3 }] }}
+      grouped={false} watchlist={[]} onToggleWatchlist={() => undefined} onObserveStock={() => undefined}
+    />);
+    expect(markup).toContain("参数版本");
+    expect(markup).toContain("parameter-a");
+    expect(markup).toContain("行业样本");
+  });
   it("renders regime evidence, override, coverage, and both adaptive lists without rollout status", () => {
     const stock = (code: string, name: string) => ({
       stock: { code, name, industry: "测试行业", price: 10 },

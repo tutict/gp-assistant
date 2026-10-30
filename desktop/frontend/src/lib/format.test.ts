@@ -14,8 +14,10 @@ describe("formatRatioPercent", () => {
     expect(formatRatioPercent(-0.0123)).toBe("-1.23%");
   });
 
-  it("keeps already-percent values readable", () => {
-    expect(formatRatioPercent(12.34)).toBe("12.34%");
+  it("keeps ratio semantics above one rather than guessing percentage points", () => {
+    expect(formatRatioPercent(1.2)).toBe("120.00%");
+    expect(formatRatioPercent(12.34)).toBe("1234.00%");
+    expect(formatRatioPercent(-1.2)).toBe("-120.00%");
   });
 });
 

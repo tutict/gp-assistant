@@ -2,12 +2,18 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use super::industry_rank::{industry_rank_values, is_market_board_label};
+use super::rates::{percentage_points, ratio_percentage_points};
+
+use super::scoring_parameters::{
+    factor_contributions, score_factor_vector_validated, validate_factor_vector,
+};
 use super::{
-    concept_group_for_stock, matches_stock, round6, CoreError, CoreResult, HistoryBar,
-    ScoreContribution, ScreenCriteria, ScreenResultGroup, ScreenedStock, StockItem,
+    concept_group_for_stock, fixed_scoring_parameters, matches_stock, round6,
+    validate_scoring_parameters, CoreError, CoreResult, HistoryBar, ScoreContribution,
+    ScoringParameters, ScreenCriteria, ScreenResultGroup, ScreenedStock, StockItem,
 };
 
-pub const ADAPTIVE_ALGORITHM_VERSION: &str = "adaptive_swing_v1";
 const SCORE_SCALE: f64 = 20.0;
 const MIN_HISTORY_BARS: usize = 60;
 pub const MIN_MARKET_BREADTH_COVERAGE: f64 = 0.60;
@@ -91,6 +97,10 @@ pub struct AdaptiveMarketRegime {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AdaptiveScreenResult {
+    pub metric_contract_version: u32,
+    pub scoring_revision: String,
+    pub parameter_set_id: String,
+    pub implementation_fingerprint: String,
     pub algorithm_version: String,
     pub total: usize,
     pub returned: usize,
@@ -220,29 +230,11 @@ fn diversification_group(stock: &StockItem) -> String {
     }
 }
 
-fn is_market_board_label(value: &str) -> bool {
-    matches!(
-        value.trim(),
-        "\u{6caa}\u{5e02}A\u{80a1}"
-            | "\u{6df1}\u{5e02}A\u{80a1}"
-            | "\u{521b}\u{4e1a}\u{677f}"
-            | "\u{79d1}\u{521b}\u{677f}"
-            | "\u{5317}\u{4ea4}\u{6240}"
-            | "\u{6caa}\u{4e3b}\u{677f}"
-            | "\u{6df1}\u{4e3b}\u{677f}"
-    )
-}
-
-fn as_percent(value: f64) -> f64 {
-    if value.abs() <= 1.0 {
-        value * 100.0
-    } else {
-        value
-    }
-}
-
 fn quality_factor(stock: &StockItem) -> f64 {
-    let roe = stock.roe.map(as_percent).unwrap_or(-100.0);
+    let roe = stock
+        .roe
+        .and_then(ratio_percentage_points)
+        .unwrap_or(-100.0);
     let roe_score = ((roe + 2.0) / 22.0).clamp(0.0, 1.0);
     let profit_score = stock
         .deducted_net_profit_billion
@@ -252,7 +244,7 @@ fn quality_factor(stock: &StockItem) -> f64 {
     let growth_score = stock
         .deducted_net_profit_growth_rate
         .filter(|value| value.is_finite())
-        .map(|value| ((as_percent(value) + 20.0) / 60.0).clamp(0.0, 1.0))
+        .map(|value| ((percentage_points(value).unwrap_or(-20.0) + 20.0) / 60.0).clamp(0.0, 1.0))
         .unwrap_or(0.0);
     (roe_score * 0.65 + profit_score * 0.20 + growth_score * 0.15).clamp(0.0, 1.0)
 }
@@ -297,7 +289,7 @@ fn liquidity_factor(stock: &StockItem) -> f64 {
         .turnover_rate
         .filter(|value| value.is_finite())
         .map(|value| {
-            let pct = as_percent(value);
+            let pct = ratio_percentage_points(value).unwrap_or(f64::INFINITY);
             if (0.5..=6.0).contains(&pct) {
                 1.0
             } else if pct <= 12.0 {
@@ -540,6 +532,7 @@ fn regime_evidence(key: &str, label: &str, value: f64, summary: &str) -> Adaptiv
 }
 
 fn benchmark_stats(bars: &[HistoryBar]) -> Option<BenchmarkStats> {
+    let bars = &bars[bars.len().saturating_sub(120)..];
     if !has_valid_ohlc_tail(bars, MIN_HISTORY_BARS) {
         return None;
     }
@@ -594,7 +587,7 @@ fn market_breadth(universe: &[StockItem], as_of_date: Option<&str>) -> Option<Ma
             })
         })
         .filter_map(|stock| stock.change_pct.filter(|value| value.is_finite()))
-        .map(as_percent)
+        .filter_map(ratio_percentage_points)
         .collect::<Vec<_>>();
     if changes.is_empty() {
         return None;
@@ -885,7 +878,7 @@ fn overheat_factor(stock: &StockItem, distance_ma20: f64) -> f64 {
     let daily = stock
         .change_pct
         .filter(|value| value.is_finite())
-        .map(as_percent)
+        .and_then(ratio_percentage_points)
         .map(|value| ((value - 7.0) / 5.0).clamp(0.0, 1.0))
         .unwrap_or(0.0);
     let volume = stock
@@ -896,7 +889,7 @@ fn overheat_factor(stock: &StockItem, distance_ma20: f64) -> f64 {
     let turnover = stock
         .turnover_rate
         .filter(|value| value.is_finite())
-        .map(as_percent)
+        .and_then(ratio_percentage_points)
         .map(|value| ((value - 6.0) / 12.0).clamp(0.0, 1.0))
         .unwrap_or(0.0);
     let distance = ((distance_ma20 - 0.08) / 0.12).clamp(0.0, 1.0);
@@ -907,7 +900,7 @@ fn stability_factor(stock: &StockItem, risk: f64) -> f64 {
     let dividend = stock
         .dividend_yield
         .filter(|value| value.is_finite())
-        .map(as_percent)
+        .and_then(ratio_percentage_points)
         .map(|value| (value / 5.0).clamp(0.0, 1.0))
         .unwrap_or(0.0);
     let profitability = stock
@@ -917,8 +910,7 @@ fn stability_factor(stock: &StockItem, risk: f64) -> f64 {
         .unwrap_or(0.0);
     let growth = stock
         .deducted_net_profit_growth_rate
-        .filter(|value| value.is_finite())
-        .map(as_percent)
+        .and_then(percentage_points)
         .map(|value| ((value + 10.0) / 30.0).clamp(0.0, 1.0))
         .unwrap_or(0.0);
     (risk * 0.45 + dividend * 0.25 + profitability * 0.20 + growth * 0.10).clamp(0.0, 1.0)
@@ -928,57 +920,9 @@ fn factor(factors: &BTreeMap<String, f64>, key: &str) -> f64 {
     factors.get(key).copied().unwrap_or(0.0).clamp(0.0, 1.0)
 }
 
-fn mode_weights(mode: &str) -> Vec<(&'static str, &'static str, f64)> {
-    match mode {
-        "trend" => vec![
-            ("quality", "质量", 0.18),
-            ("valuation", "估值", 0.10),
-            ("trend", "趋势结构", 0.30),
-            ("relative_strength", "相对强度", 0.18),
-            ("liquidity", "流动性", 0.10),
-            ("risk", "风险控制", 0.14),
-        ],
-        "defensive" => vec![
-            ("quality", "质量", 0.30),
-            ("valuation", "估值", 0.22),
-            ("risk", "低波动与回撤", 0.24),
-            ("liquidity", "流动性", 0.12),
-            ("stability", "分红及盈利稳定性", 0.12),
-        ],
-        "transition" => vec![
-            ("quality", "质量", 0.27),
-            ("valuation", "估值", 0.19),
-            ("range_setup", "区间波段形态", 0.11),
-            ("relative_strength", "行业相对强度", 0.07),
-            ("liquidity", "流动性", 0.11),
-            ("risk", "低波动与回撤", 0.19),
-            ("stability", "分红及盈利稳定性", 0.06),
-        ],
-        _ => vec![
-            ("quality", "质量", 0.24),
-            ("valuation", "估值", 0.16),
-            ("range_setup", "区间波段形态", 0.22),
-            ("relative_strength", "行业相对强度", 0.14),
-            ("liquidity", "流动性", 0.10),
-            ("risk", "下行风险", 0.14),
-        ],
-    }
-}
-
+#[cfg(test)]
 fn weighted_score(factors: &BTreeMap<String, f64>, mode: &str) -> f64 {
-    if mode == "transition" {
-        return (weighted_score(factors, "range") + weighted_score(factors, "defensive")) / 2.0;
-    }
-    let base = mode_weights(mode)
-        .iter()
-        .map(|(key, _, weight)| factor(factors, key) * weight)
-        .sum::<f64>();
-    let maximum_penalty = match mode {
-        "defensive" => 0.06,
-        _ => 0.10,
-    };
-    ((base - factor(factors, "overheat_penalty") * maximum_penalty).max(0.0) * SCORE_SCALE)
-        .clamp(0.0, SCORE_SCALE)
+    score_factor_vector_validated(factors, mode, &fixed_scoring_parameters())
 }
 
 fn build_screened(
@@ -986,45 +930,64 @@ fn build_screened(
     factors: &BTreeMap<String, f64>,
     score: f64,
     mode: &str,
+    parameters: &ScoringParameters,
+    industry_sample_count: usize,
 ) -> ScreenedStock {
-    let mut score_breakdown = mode_weights(mode)
-        .into_iter()
-        .map(|(key, label, weight)| ScoreContribution {
-            key: key.to_string(),
-            label: label.to_string(),
-            value: Some(round6(factor(factors, key) * SCORE_SCALE)),
-            contribution: Some(round6(factor(factors, key) * weight * SCORE_SCALE)),
-            tone: "neutral".to_string(),
+    let contributions = factor_contributions(factors, mode, parameters);
+    let mut score_breakdown = contributions
+        .iter()
+        .map(|(key, contribution)| ScoreContribution {
+            key: key.clone(),
+            label: match key.as_str() {
+                "overheat_penalty" => "追涨过热扣分",
+                "score_floor_adjustment" => "零分下限调整",
+                _ => factor_label(key),
+            }
+            .to_string(),
+            value: factors.get(key).map(|v| round6(v * SCORE_SCALE)),
+            contribution: Some(round6(*contribution)),
+            tone: if *contribution < 0.0 {
+                "negative"
+            } else {
+                "neutral"
+            }
+            .to_string(),
         })
         .collect::<Vec<_>>();
-    let penalty_scale = match mode {
-        "defensive" => 1.2,
-        "transition" => 1.6,
-        _ => 2.0,
-    };
-    let penalty = factor(factors, "overheat_penalty") * penalty_scale;
-    if penalty > 0.0 {
-        score_breakdown.push(ScoreContribution {
-            key: "overheat_penalty".to_string(),
-            label: "追涨过热扣分".to_string(),
-            value: Some(round6(penalty)),
-            contribution: Some(round6(-penalty)),
-            tone: "negative".to_string(),
-        });
-    }
-    let mut reasons = vec![format!("{}模式综合得分 {:.2}", regime_label(mode), score)];
-    let mut strongest = factors
+    // Preserve the exact rounded total after independent contribution rounding.
+    let sum = score_breakdown
         .iter()
-        .filter(|(key, _)| key.as_str() != "overheat_penalty")
+        .filter_map(|entry| entry.contribution)
+        .sum::<f64>();
+    if let Some(last) = score_breakdown.last_mut() {
+        last.contribution = last.contribution.map(|value| value + round6(score) - sum);
+    }
+    let penalty = -contributions
+        .get("overheat_penalty")
+        .copied()
+        .unwrap_or(0.0);
+    let mut strongest = score_breakdown
+        .iter()
+        .filter(|entry| {
+            entry.key != "score_floor_adjustment" && entry.contribution.is_some_and(|v| v > 0.0)
+        })
         .collect::<Vec<_>>();
-    strongest.sort_by(|left, right| right.1.total_cmp(left.1).then_with(|| left.0.cmp(right.0)));
-    reasons.extend(
-        strongest
-            .into_iter()
-            .take(2)
-            .map(|(key, value)| format!("{} {:.1}/20", factor_label(key), value * SCORE_SCALE)),
-    );
+    strongest.sort_by(|left, right| {
+        right
+            .contribution
+            .unwrap()
+            .total_cmp(&left.contribution.unwrap())
+            .then_with(|| left.key.cmp(&right.key))
+    });
+    let highlights = strongest
+        .into_iter()
+        .take(2)
+        .map(|entry| format!("{}贡献 {:.2}分", entry.label, entry.contribution.unwrap()))
+        .collect::<Vec<_>>();
+    let mut reasons = vec![format!("{}模式综合得分 {:.2}", regime_label(mode), score)];
+    reasons.extend(highlights.clone());
     ScreenedStock {
+        industry_sample_count: Some(industry_sample_count),
         stock: stock.clone(),
         score: round6(score),
         reasons,
@@ -1037,7 +1000,12 @@ fn build_screened(
             .map(|(key, value)| (key.clone(), round6(value * SCORE_SCALE)))
             .collect(),
         score_breakdown,
-        score_explanation: format!("adaptive_swing_v1 · {} · 10–30个交易日", regime_label(mode)),
+        score_explanation: format!(
+            "{} · {} · 10–30个交易日 · {}",
+            parameters.algorithm_version,
+            regime_label(mode),
+            highlights.join("；")
+        ),
         reason_tags: vec![regime_label(mode).to_string(), "10–30日波段".to_string()],
         risk_tags: if penalty > 0.5 {
             vec!["短线过热".to_string()]
@@ -1073,18 +1041,30 @@ fn factor_label(key: &str) -> &str {
     }
 }
 
-pub fn adaptive_screen_stocks(
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdaptiveFeatureRow {
+    pub stock: StockItem,
+    pub factors: BTreeMap<String, f64>,
+    pub raw_return_20: f64,
+    pub industry_sample_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdaptiveFeatureSet {
+    pub market_regime: AdaptiveMarketRegime,
+    pub candidates: Vec<AdaptiveFeatureRow>,
+}
+
+pub fn adaptive_scoring_features(
     universe: &[StockItem],
     histories: &HashMap<String, Vec<HistoryBar>>,
     benchmark_histories: &HashMap<String, Vec<HistoryBar>>,
-    recent_exposure: &[AdaptiveRecentExposure],
     request: &AdaptiveScreenRequest,
-) -> CoreResult<AdaptiveScreenResult> {
+) -> CoreResult<AdaptiveFeatureSet> {
     if request.horizon != default_horizon() {
         return Err(CoreError::new("仅支持 swing_10_30d 选股周期"));
     }
     let primary_limit = request.primary_limit.clamp(1, 50);
-    let exploration_limit = request.exploration_limit.min(50);
     let pool_limit = 80;
     let staged = stage_one_candidates(universe, &request.criteria, pool_limit);
     if staged.is_empty() {
@@ -1093,11 +1073,20 @@ pub fn adaptive_screen_stocks(
 
     let mut usable = Vec::new();
     for stock in staged.iter().copied() {
-        let bars = history_for(histories, &stock.code);
+        let bars =
+            history_for(histories, &stock.code).map(|bars| &bars[bars.len().saturating_sub(120)..]);
         let Some(factors) = bars.and_then(|bars| technical_factors(stock, bars)) else {
             continue;
         };
-        usable.push((stock.clone(), factors));
+        let closes = valid_closes(bars.expect("technical factors require history"));
+        let raw_return_20 = closes[closes.len() - 1] / closes[closes.len() - 21] - 1.0;
+        validate_factor_vector(&factors)?;
+        usable.push(AdaptiveFeatureRow {
+            stock: stock.clone(),
+            factors,
+            raw_return_20,
+            industry_sample_count: 0,
+        });
     }
     apply_industry_relative_strength(&mut usable);
     let required = primary_limit.max(((staged.len() as f64) * 0.60).ceil() as usize);
@@ -1117,19 +1106,71 @@ pub fn adaptive_screen_stocks(
         staged.len(),
         usable.len(),
     )?;
+    Ok(AdaptiveFeatureSet {
+        market_regime,
+        candidates: usable,
+    })
+}
+
+pub fn adaptive_screen_stocks(
+    universe: &[StockItem],
+    histories: &HashMap<String, Vec<HistoryBar>>,
+    benchmark_histories: &HashMap<String, Vec<HistoryBar>>,
+    recent_exposure: &[AdaptiveRecentExposure],
+    request: &AdaptiveScreenRequest,
+) -> CoreResult<AdaptiveScreenResult> {
+    adaptive_screen_stocks_with_parameters(
+        universe,
+        histories,
+        benchmark_histories,
+        recent_exposure,
+        request,
+        &fixed_scoring_parameters(),
+    )
+}
+
+pub fn adaptive_screen_stocks_with_parameters(
+    universe: &[StockItem],
+    histories: &HashMap<String, Vec<HistoryBar>>,
+    benchmark_histories: &HashMap<String, Vec<HistoryBar>>,
+    recent_exposure: &[AdaptiveRecentExposure],
+    request: &AdaptiveScreenRequest,
+    parameters: &ScoringParameters,
+) -> CoreResult<AdaptiveScreenResult> {
+    validate_scoring_parameters(parameters)?;
+    let primary_limit = request.primary_limit.clamp(1, 50);
+    let exploration_limit = request.exploration_limit.min(50);
+    let AdaptiveFeatureSet {
+        market_regime,
+        candidates: usable,
+    } = adaptive_scoring_features(universe, histories, benchmark_histories, request)?;
     let effective = market_regime.effective.as_str();
     let mut candidates = usable
         .into_iter()
-        .map(|(stock, factors)| {
-            let score = weighted_score(&factors, effective);
-            let screened = build_screened(&stock, &factors, score, effective);
-            AdaptiveCandidate {
-                stock: stock.clone(),
-                factors,
-                score,
-                screened,
-            }
-        })
+        .map(
+            |AdaptiveFeatureRow {
+                 stock,
+                 factors,
+                 industry_sample_count,
+                 ..
+             }| {
+                let score = score_factor_vector_validated(&factors, effective, parameters);
+                let screened = build_screened(
+                    &stock,
+                    &factors,
+                    score,
+                    effective,
+                    parameters,
+                    industry_sample_count,
+                );
+                AdaptiveCandidate {
+                    stock: stock.clone(),
+                    factors,
+                    score,
+                    screened,
+                }
+            },
+        )
         .collect::<Vec<_>>();
     candidates.sort_by(|left, right| {
         right
@@ -1189,7 +1230,11 @@ pub fn adaptive_screen_stocks(
         },
     ];
     Ok(AdaptiveScreenResult {
-        algorithm_version: ADAPTIVE_ALGORITHM_VERSION.to_string(),
+        algorithm_version: parameters.algorithm_version.clone(),
+        metric_contract_version: parameters.metric_contract_version,
+        scoring_revision: parameters.scoring_revision.clone(),
+        parameter_set_id: parameters.parameter_set_id.clone(),
+        implementation_fingerprint: parameters.implementation_fingerprint.clone(),
         total: candidates.len(),
         returned: primary.len(),
         items: primary,
@@ -1208,30 +1253,19 @@ pub fn adaptive_screen_stocks(
     })
 }
 
-fn apply_industry_relative_strength(usable: &mut [(StockItem, BTreeMap<String, f64>)]) {
-    let mut by_industry = BTreeMap::<String, Vec<(String, f64)>>::new();
-    for (stock, factors) in usable.iter() {
-        by_industry
-            .entry(normalized_industry(stock))
-            .or_default()
-            .push((stock.code.clone(), factor(factors, "relative_strength")));
-    }
-    let mut percentile_by_code = HashMap::new();
-    for values in by_industry.values_mut() {
-        values.sort_by(|left, right| {
-            left.1
-                .total_cmp(&right.1)
-                .then_with(|| left.0.cmp(&right.0))
-        });
-        let denominator = values.len().saturating_sub(1).max(1) as f64;
-        for (rank, (code, _)) in values.iter().enumerate() {
-            percentile_by_code.insert(code.clone(), rank as f64 / denominator);
-        }
-    }
-    for (stock, factors) in usable.iter_mut() {
-        let absolute = factor(factors, "relative_strength");
-        let relative = percentile_by_code.get(&stock.code).copied().unwrap_or(0.0);
-        factors.insert(
+fn apply_industry_relative_strength(usable: &mut [AdaptiveFeatureRow]) {
+    let ranks = industry_rank_values(usable.iter().map(|row| {
+        (
+            row.stock.code.clone(),
+            row.stock.industry.clone(),
+            row.raw_return_20,
+        )
+    }));
+    for row in usable {
+        let absolute = factor(&row.factors, "relative_strength");
+        let (relative, count) = ranks.get(&row.stock.code).copied().unwrap_or((0.5, 0));
+        row.industry_sample_count = count;
+        row.factors.insert(
             "relative_strength".to_string(),
             (absolute * 0.40 + relative * 0.60).clamp(0.0, 1.0),
         );
@@ -1416,6 +1450,68 @@ mod unit_tests {
     use super::*;
 
     #[test]
+    fn adaptive_growth_uses_percentage_points_and_roe_uses_ratio() {
+        let mut stock = StockItem {
+            roe: Some(0.10),
+            deducted_net_profit_growth_rate: Some(0.804352),
+            ..Default::default()
+        };
+        let positive_quality = quality_factor(&stock);
+        let positive_stability = stability_factor(&stock, 0.5);
+        stock.deducted_net_profit_growth_rate = Some(-0.804352);
+        assert!((positive_quality - quality_factor(&stock) - 1.608704 / 60.0 * 0.15).abs() < 1e-12);
+        assert!(
+            (positive_stability - stability_factor(&stock, 0.5) - 1.608704 / 30.0 * 0.10).abs()
+                < 1e-12
+        );
+        stock.roe = Some(1.2);
+        let above_100 = quality_factor(&stock);
+        stock.roe = Some(0.20);
+        assert_eq!(quality_factor(&stock), above_100);
+        stock.roe = Some(0.012);
+        assert!(quality_factor(&stock) < above_100);
+    }
+
+    #[test]
+    fn score_breakdown_matches_transition_average_after_floor_clamp() {
+        let mut factors = BTreeMap::from([
+            ("quality".into(), 0.1),
+            ("valuation".into(), 0.0),
+            ("range_setup".into(), 0.0),
+            ("trend".into(), 0.0),
+            ("relative_strength".into(), 0.0),
+            ("liquidity".into(), 0.0),
+            ("risk".into(), 0.0),
+            ("stability".into(), 0.0),
+            ("overheat_penalty".into(), 1.0),
+        ]);
+        for quality in [0.1, 0.25] {
+            factors.insert("quality".to_string(), quality);
+            for mode in ["range", "trend", "defensive", "transition"] {
+                let score = weighted_score(&factors, mode);
+                let row = build_screened(
+                    &StockItem::default(),
+                    &factors,
+                    score,
+                    mode,
+                    &fixed_scoring_parameters(),
+                    1,
+                );
+                let sum = row
+                    .score_breakdown
+                    .iter()
+                    .filter_map(|c| c.contribution)
+                    .sum::<f64>();
+                assert!(
+                    (sum - row.score).abs() < 1e-9,
+                    "{mode}: sum {sum}, score {}",
+                    row.score
+                );
+            }
+        }
+    }
+
+    #[test]
     fn overheat_thresholds_use_percentage_points_without_early_penalties() {
         let mut stock = StockItem {
             change_pct: Some(0.069),
@@ -1437,7 +1533,7 @@ mod unit_tests {
     fn defensive_stability_preserves_dividend_and_growth_gradients() {
         let stock = StockItem {
             dividend_yield: Some(0.02),
-            deducted_net_profit_growth_rate: Some(0.08),
+            deducted_net_profit_growth_rate: Some(8.0),
             ..StockItem::default()
         };
         assert!((stability_factor(&stock, 0.5) - 0.385).abs() < 1e-9);

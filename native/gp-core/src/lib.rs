@@ -10,10 +10,27 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 mod adaptive_screen;
+mod rates;
+mod scoring_parameters;
+mod source_fingerprint;
+pub use scoring_parameters::{
+    adaptive_score_factor_vector, fixed_scoring_parameters, scoring_implementation_fingerprint,
+    validate_scoring_parameters, ModeParameters, ScoringParameters, METRIC_CONTRACT_VERSION,
+    SCORING_REVISION,
+};
+pub use source_fingerprint::source_text_fingerprint;
+mod industry_rank;
+#[cfg(test)]
+mod scoring_contract_tests;
+use industry_rank::industry_rank_values;
+use rates::{percentage_points, ratio_percentage_points};
+pub use rates::{RateRatio, RateUnit};
 mod volatility;
 pub use adaptive_screen::{
-    adaptive_candidate_codes, adaptive_screen_stocks, AdaptiveMarketRegime, AdaptiveRecentExposure,
-    AdaptiveScreenRequest, AdaptiveScreenResult, MIN_MARKET_BREADTH_COVERAGE,
+    adaptive_candidate_codes, adaptive_scoring_features, adaptive_screen_stocks,
+    adaptive_screen_stocks_with_parameters, AdaptiveFeatureRow, AdaptiveFeatureSet,
+    AdaptiveMarketRegime, AdaptiveRecentExposure, AdaptiveScreenRequest, AdaptiveScreenResult,
+    MIN_MARKET_BREADTH_COVERAGE,
 };
 pub use volatility::{
     AtrSnapshot, BollingerBandsSnapshot, ChaikinVolatilitySnapshot, DonchianChannelSnapshot,
@@ -171,6 +188,8 @@ impl Default for ScreenCriteria {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ScreenedStock {
+    #[serde(default)]
+    pub industry_sample_count: Option<usize>,
     pub stock: StockItem,
     pub score: f64,
     pub reasons: Vec<String>,
@@ -698,6 +717,12 @@ pub struct TrendScreenResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BacktestRequest {
     #[serde(default)]
+    pub algorithm_version: Option<String>,
+    #[serde(default)]
+    pub parameter_set_id: Option<String>,
+    #[serde(default)]
+    pub scoring_parameters: Option<ScoringParameters>,
+    #[serde(default)]
     pub criteria: ScreenCriteria,
     #[serde(default = "default_backtest_source")]
     pub source: String,
@@ -717,6 +742,27 @@ pub struct BacktestRequest {
     pub transaction_cost_bps: f64,
     #[serde(default = "default_backtest_benchmark")]
     pub benchmark: String,
+}
+
+impl Default for BacktestRequest {
+    fn default() -> Self {
+        Self {
+            criteria: ScreenCriteria::default(),
+            source: default_backtest_source(),
+            strategy_mode: default_backtest_strategy_mode(),
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
+            stock_codes: Vec::new(),
+            start_date: String::new(),
+            end_date: String::new(),
+            top_n: default_top_n(),
+            initial_cash: default_initial_cash(),
+            rebalance_frequency: default_rebalance_frequency(),
+            transaction_cost_bps: default_transaction_cost_bps(),
+            benchmark: default_backtest_benchmark(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1971,7 +2017,7 @@ pub fn backtest_with_data(
 }
 
 pub fn backtest_selected_symbols(universe: &[StockItem], request: &BacktestRequest) -> Vec<String> {
-    if normalize_backtest_strategy_mode(&request.strategy_mode) == "adaptive_swing_v1" {
+    if is_adaptive_backtest(request) {
         return universe
             .iter()
             .filter(|stock| matches_stock(stock, &request.criteria).is_some())
@@ -1997,8 +2043,9 @@ fn resolve_backtest_data_requirements(
     request: &BacktestRequest,
 ) -> CoreResult<BacktestDataRequirements> {
     validate_backtest_date_range(request)?;
+    backtest_scoring_parameters(request)?;
     let mut universe = source.stocks()?.to_vec();
-    let strategy_mode = normalize_backtest_strategy_mode(&request.strategy_mode);
+    let strategy_mode = backtest_strategy_mode(request);
     let dynamic_mode = strategy_mode != "candidate_snapshot";
     let source_mode = normalize_backtest_source(&request.source);
     if dynamic_mode && source_mode != "watchlist" {
@@ -2071,7 +2118,8 @@ pub fn backtest_with_source(
     source: &impl MarketDataSource,
     request: &BacktestRequest,
 ) -> CoreResult<BacktestResult> {
-    let strategy_mode = normalize_backtest_strategy_mode(&request.strategy_mode);
+    backtest_scoring_parameters(request)?;
+    let strategy_mode = backtest_strategy_mode(request);
     let dynamic_mode = strategy_mode != "candidate_snapshot";
     let BacktestDataRequirements {
         universe,
@@ -2079,7 +2127,7 @@ pub fn backtest_with_source(
         symbols,
         history_symbols,
     } = resolve_backtest_data_requirements(source, request)?;
-    let history_load_start = if strategy_mode == "adaptive_swing_v1" {
+    let history_load_start = if is_adaptive_backtest(request) {
         "19900101"
     } else {
         &request.start_date
@@ -2135,15 +2183,17 @@ pub fn backtest_with_source(
     let cost_rate = sanitize_transaction_cost_rate(request.transaction_cost_bps);
     let rebalance_frequency = normalize_rebalance_frequency(&request.rebalance_frequency);
     let simulation = match strategy_mode.as_str() {
-        "walk_forward" | "adaptive_swing_v1" => simulate_walk_forward_portfolio(
-            source,
-            &universe,
-            request,
-            &histories,
-            initial_cash,
-            cost_rate,
-            &rebalance_frequency,
-        )?,
+        "walk_forward" | "adaptive_swing_v1" | "adaptive_swing_v2" => {
+            simulate_walk_forward_portfolio(
+                source,
+                &universe,
+                request,
+                &histories,
+                initial_cash,
+                cost_rate,
+                &rebalance_frequency,
+            )?
+        }
         _ => simulate_equal_weight_portfolio(
             &histories,
             initial_cash,
@@ -2559,9 +2609,7 @@ fn simulate_walk_forward_portfolio(
             preview
         )));
     }
-    let benchmark_histories = if normalize_backtest_strategy_mode(&request.strategy_mode)
-        == "adaptive_swing_v1"
-    {
+    let benchmark_histories = if is_adaptive_backtest(request) {
         let histories = ["000001.SH", "399001.SZ", "399006.SZ"]
             .into_iter()
             .filter_map(|code| {
@@ -2608,6 +2656,7 @@ fn simulate_walk_forward_portfolio_with_snapshots(
     rebalance_frequency: &str,
     benchmark_histories: &HashMap<String, Vec<HistoryBar>>,
 ) -> CoreResult<PortfolioSimulation> {
+    backtest_scoring_parameters(request)?;
     let mut cash = initial_cash;
     let mut holdings = vec![0.0; histories.len()];
     let mut last_rebalance_date: Option<NaiveDate> = None;
@@ -2648,9 +2697,7 @@ fn simulate_walk_forward_portfolio_with_snapshots(
                 .iter()
                 .map(|history| price_on_date(history, signal_date))
                 .collect::<Vec<_>>();
-            let active = if normalize_backtest_strategy_mode(&request.strategy_mode)
-                == "adaptive_swing_v1"
-            {
+            let active = if is_adaptive_backtest(request) {
                 adaptive_walk_forward_active_indices(
                     universe,
                     request,
@@ -2954,12 +3001,15 @@ fn adaptive_walk_forward_active_indices(
         run_id: None,
         as_of_date: Some(date.format("%Y%m%d").to_string()),
     };
-    let selected_indices = adaptive_screen_stocks(
+    let parameters = backtest_scoring_parameters(request)?
+        .ok_or_else(|| CoreError::new("adaptive backtest requires adaptive scoring parameters"))?;
+    let selected_indices = adaptive_screen_stocks_with_parameters(
         &visible_universe,
         &point_in_time_histories,
         &point_in_time_benchmarks,
         &[],
         &adaptive_request,
+        &parameters,
     )
     .map_err(|error| {
         CoreError::new(format!(
@@ -3291,13 +3341,79 @@ fn normalize_backtest_benchmark(value: &str) -> String {
 
 fn normalize_backtest_strategy_mode(value: &str) -> String {
     let normalized = value.trim().to_ascii_lowercase();
-    if normalized.starts_with("adaptive_swing_v1") {
+    if normalized.split(':').next() == Some("adaptive_swing_v2") {
+        return "adaptive_swing_v2".to_string();
+    }
+    if normalized.split(':').next() == Some("adaptive_swing_v1") {
         return "adaptive_swing_v1".to_string();
     }
     match normalized.as_str() {
         "candidate_snapshot" | "snapshot" => "candidate_snapshot".to_string(),
         _ => "walk_forward".to_string(),
     }
+}
+
+fn backtest_strategy_mode(request: &BacktestRequest) -> String {
+    request
+        .algorithm_version
+        .clone()
+        .unwrap_or_else(|| normalize_backtest_strategy_mode(&request.strategy_mode))
+}
+
+fn is_adaptive_backtest(request: &BacktestRequest) -> bool {
+    matches!(
+        backtest_strategy_mode(request).as_str(),
+        "adaptive_swing_v1" | "adaptive_swing_v2"
+    )
+}
+
+fn backtest_scoring_parameters(request: &BacktestRequest) -> CoreResult<Option<ScoringParameters>> {
+    let mode = backtest_strategy_mode(request);
+    let declared = normalize_backtest_strategy_mode(&request.strategy_mode);
+    if request.algorithm_version.is_some()
+        && !matches!(mode.as_str(), "adaptive_swing_v1" | "adaptive_swing_v2")
+    {
+        return Err(CoreError::new("unsupported backtest algorithm_version"));
+    }
+    if request.algorithm_version.is_some()
+        && (declared == "candidate_snapshot"
+            || (declared.starts_with("adaptive_swing_") && declared != mode))
+    {
+        return Err(CoreError::new(
+            "algorithm_version conflicts with explicit strategy_mode",
+        ));
+    }
+    if !is_adaptive_backtest(request) {
+        if request.scoring_parameters.is_some() || request.parameter_set_id.is_some() {
+            return Err(CoreError::new(
+                "scoring parameters require an adaptive backtest algorithm",
+            ));
+        }
+        return Ok(None);
+    }
+    let parameters = match &request.scoring_parameters {
+        Some(parameters) => parameters.clone(),
+        None if mode == "adaptive_swing_v1" => fixed_scoring_parameters(),
+        None => {
+            return Err(CoreError::new(
+                "adaptive_swing_v2 requires scoring parameters",
+            ))
+        }
+    };
+    validate_scoring_parameters(&parameters)?;
+    if parameters.algorithm_version != mode {
+        return Err(CoreError::new(
+            "scoring parameters algorithm_version does not match backtest",
+        ));
+    }
+    if request
+        .parameter_set_id
+        .as_ref()
+        .is_some_and(|id| *id != parameters.parameter_set_id)
+    {
+        return Err(CoreError::new("backtest parameter_set_id mismatch"));
+    }
+    Ok(Some(parameters))
 }
 
 fn adaptive_backtest_requested_mode(value: &str) -> String {
@@ -3313,6 +3429,7 @@ fn adaptive_backtest_requested_mode(value: &str) -> String {
 
 fn backtest_strategy_mode_note(value: &str) -> &'static str {
     match value {
+        "adaptive_swing_v2" => "策略模式：adaptive_swing_v2；使用经校验的冻结参数及前一交易日可见数据生成信号，在下一交易日按实际报价调仓。",
         "adaptive_swing_v1" => "策略模式：adaptive_swing_v1；使用前一交易日收盘前可见的财务快照、OHLCV、三宽基指数和市场宽度生成信号，并在下一交易日按实际报价调仓。",
         "walk_forward" => "策略模式：walk_forward，仅使用成交日前一交易日已公开的因子快照和历史上市/ST/可交易状态；成交只使用执行日实际报价。",
         _ => "策略模式：candidate_snapshot，展示当前候选池的历史组合表现，不等同于严格可交易的逐日选股策略。",
@@ -3932,12 +4049,17 @@ fn format_number(value: f64) -> String {
 }
 
 fn format_percent(value: f64) -> String {
-    let percent = as_percent(value).unwrap_or(value);
-    format!("{}%", format_number(percent))
+    match ratio_percentage_points(value) {
+        Some(percent) => format!("{}%", format_number(percent)),
+        None => "—".to_string(),
+    }
 }
 
 fn format_percentage_points(value: f64) -> String {
-    format!("{}%", format_number(value))
+    match percentage_points(value) {
+        Some(percent) => format!("{}%", format_number(percent)),
+        None => "—".to_string(),
+    }
 }
 
 fn indicator_tone(value: Option<f64>) -> &'static str {
@@ -5284,8 +5406,10 @@ fn format_price_text(value: f64) -> String {
 }
 
 fn format_signed_percent_text(value: f64) -> String {
-    let percent = as_percent(value).unwrap_or(value);
-    format!("{percent:+.2}%")
+    match ratio_percentage_points(value) {
+        Some(percent) => format!("{percent:+.2}%"),
+        None => "—".to_string(),
+    }
 }
 fn agent_warnings_for_response(response: &AgentResponse) -> Vec<String> {
     let mut warnings = vec!["仅供选股研究，不构成投资建议。".to_string()];
@@ -5423,6 +5547,9 @@ pub fn run_agent_with_source_and_context(
         let default_end_date = current_system_date_yyyymmdd();
         let use_watchlist = wants_watchlist || !watchlist_codes.is_empty();
         let backtest = BacktestRequest {
+            algorithm_version: None,
+            parameter_set_id: None,
+            scoring_parameters: None,
             criteria,
             source: if use_watchlist {
                 "watchlist".to_string()
@@ -6512,32 +6639,22 @@ pub fn mock_relations() -> Vec<StockRelation> {
         },
     ]
 }
-fn as_percent(value: f64) -> Option<f64> {
-    if !value.is_finite() {
-        return None;
-    }
-    Some(if (-1.0..=1.0).contains(&value) {
-        value * 100.0
-    } else {
-        value
-    })
-}
 
 fn finite_positive(value: Option<f64>) -> Option<f64> {
     value.filter(|value| value.is_finite() && *value > 0.0)
 }
 
-fn meets_min_percent(value: Option<f64>, minimum: f64, inclusive: bool) -> bool {
-    let Some(value) = value.and_then(as_percent) else {
+fn meets_min_rate(value: Option<f64>, minimum: f64, unit: RateUnit, inclusive: bool) -> bool {
+    let Some(value) = value.and_then(|v| RateRatio::from_unit(v, unit).ok()) else {
         return false;
     };
-    let Some(minimum) = as_percent(minimum) else {
+    let Ok(minimum) = RateRatio::from_unit(minimum, unit) else {
         return false;
     };
     if inclusive {
-        value >= minimum
+        value.as_ratio() >= minimum.as_ratio()
     } else {
-        value > minimum
+        value.as_ratio() > minimum.as_ratio()
     }
 }
 
@@ -6568,7 +6685,7 @@ fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Option<Vec<Str
     }
 
     if let Some(min_roe) = criteria.min_roe {
-        if !meets_min_percent(stock.roe, min_roe, true) {
+        if !meets_min_rate(stock.roe, min_roe, RateUnit::Ratio, true) {
             return None;
         }
         reasons.push("roe_ok".to_string());
@@ -6624,14 +6741,24 @@ fn matches_stock(stock: &StockItem, criteria: &ScreenCriteria) -> Option<Vec<Str
     }
 
     if let Some(min_margin) = criteria.min_deducted_net_profit_margin {
-        if !meets_min_percent(stock.deducted_net_profit_margin, min_margin, false) {
+        if !meets_min_rate(
+            stock.deducted_net_profit_margin,
+            min_margin,
+            RateUnit::PercentagePoints,
+            false,
+        ) {
             return None;
         }
         reasons.push("deducted_net_profit_margin_ok".to_string());
     }
 
     if let Some(min_growth) = criteria.min_deducted_net_profit_growth_rate {
-        if !meets_min_percent(stock.deducted_net_profit_growth_rate, min_growth, false) {
+        if !meets_min_rate(
+            stock.deducted_net_profit_growth_rate,
+            min_growth,
+            RateUnit::PercentagePoints,
+            false,
+        ) {
             return None;
         }
         reasons.push("deducted_net_profit_growth_rate_ok".to_string());
@@ -7276,13 +7403,14 @@ fn score_stock(stock: &StockItem, reasons: &[String], score_profile: &str) -> Sc
     let risk_tags = build_risk_tags(stock, cold_penalty, &scoring_factors);
     let suitable_periods = suitable_periods_for_scores(quality_score, trend_score, risk);
     let score_breakdown = profile_score_breakdown(score_profile, &scoring_factors);
-    let score_explanation = explain_score(stock, profile_theme, cold_penalty, &scoring_factors);
+    let score_explanation = explain_score(&score_breakdown);
     let rounded_scores = public_factors
         .into_iter()
         .map(|(key, value)| (key, round6(value)))
         .collect();
 
     ScreenedStock {
+        industry_sample_count: None,
         stock: stock.clone(),
         score: round6(score),
         reasons: all_reasons,
@@ -7301,7 +7429,7 @@ fn score_stock(stock: &StockItem, reasons: &[String], score_profile: &str) -> Sc
     }
 }
 fn fundamental_score(stock: &StockItem) -> f64 {
-    let roe_percent = stock.roe.and_then(as_percent);
+    let roe_percent = stock.roe.and_then(ratio_percentage_points);
     let roe_score = match roe_percent {
         None => 0.5,
         Some(value) if value >= 15.0 => 1.0,
@@ -7309,7 +7437,7 @@ fn fundamental_score(stock: &StockItem) -> f64 {
         Some(value) if value >= 0.0 => 0.42 + value / 8.0 * 0.25,
         Some(_) => 0.2,
     };
-    let dividend = stock.dividend_yield.and_then(as_percent);
+    let dividend = stock.dividend_yield.and_then(ratio_percentage_points);
     let dividend_bonus = dividend
         .map(|value| value.max(0.0).min(6.0) / 6.0 * 0.12)
         .unwrap_or(0.0);
@@ -7323,7 +7451,7 @@ fn fundamental_score(stock: &StockItem) -> f64 {
     }
     if stock
         .deducted_net_profit_growth_rate
-        .and_then(as_percent)
+        .and_then(percentage_points)
         .map(|value| value >= 10.0)
         .unwrap_or(false)
     {
@@ -7376,7 +7504,7 @@ fn size_score(stock: &StockItem) -> f64 {
 
 fn data_quality_score(stock: &StockItem) -> f64 {
     let mut score: f64 = 0.0;
-    if stock.roe.and_then(as_percent).is_some() {
+    if stock.roe.and_then(ratio_percentage_points).is_some() {
         score += 0.30;
     }
     if finite_positive(stock.pe).is_some() {
@@ -7397,14 +7525,14 @@ fn data_quality_score(stock: &StockItem) -> f64 {
     }
     if stock
         .deducted_net_profit_growth_rate
-        .and_then(as_percent)
+        .and_then(percentage_points)
         .is_some()
     {
         score += 0.10;
     }
     if stock
         .dividend_yield
-        .and_then(as_percent)
+        .and_then(ratio_percentage_points)
         .filter(|value| *value >= 0.0)
         .is_some()
     {
@@ -7488,7 +7616,10 @@ fn profile_score(factor_scores: &BTreeMap<String, f64>, score_profile: &str) -> 
 }
 
 fn market_heat_score(stock: &StockItem) -> f64 {
-    let change_pct = stock.change_pct.and_then(as_percent).unwrap_or(0.0);
+    let change_pct = stock
+        .change_pct
+        .and_then(ratio_percentage_points)
+        .unwrap_or(0.0);
     let positive_momentum = if change_pct >= 0.0 {
         (change_pct.min(10.0) / 10.0).clamp(0.0, 1.0)
     } else {
@@ -7501,7 +7632,7 @@ fn market_heat_score(stock: &StockItem) -> f64 {
         .unwrap_or(0.45);
     let turnover = stock
         .turnover_rate
-        .and_then(as_percent)
+        .and_then(ratio_percentage_points)
         .map(|value| (value.max(0.0).min(8.0) / 8.0).clamp(0.0, 1.0))
         .unwrap_or(0.45);
     let amount = stock
@@ -7514,8 +7645,14 @@ fn market_heat_score(stock: &StockItem) -> f64 {
 }
 
 fn overheat_penalty_score(stock: &StockItem) -> f64 {
-    let change_pct = stock.change_pct.and_then(as_percent).unwrap_or(0.0);
-    let turnover = stock.turnover_rate.and_then(as_percent).unwrap_or(0.0);
+    let change_pct = stock
+        .change_pct
+        .and_then(ratio_percentage_points)
+        .unwrap_or(0.0);
+    let turnover = stock
+        .turnover_rate
+        .and_then(ratio_percentage_points)
+        .unwrap_or(0.0);
     let volume_ratio = finite_positive(stock.volume_ratio).unwrap_or(0.0);
     let change_penalty = if change_pct > 7.0 {
         ((change_pct - 7.0) / 5.0).clamp(0.0, 1.0)
@@ -7575,7 +7712,7 @@ fn profile_score_breakdown(
             ("overheat_penalty", "过热惩罚", -0.08),
         ],
     };
-    weights
+    let mut breakdown = weights
         .iter()
         .map(|(key, label, weight)| {
             let value = factor_scores
@@ -7607,7 +7744,12 @@ fn profile_score_breakdown(
                 tone: tone.to_string(),
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    reconcile_score_breakdown(
+        &mut breakdown,
+        profile_score(factor_scores, score_profile) * SCREEN_SCORE_SCALE,
+    );
+    breakdown
 }
 
 fn build_reason_tags(
@@ -7713,61 +7855,50 @@ fn factor_reasons(
     reasons
 }
 
-fn explain_score(
-    stock: &StockItem,
-    theme: Option<&(&'static str, &'static str, f64)>,
-    cold: bool,
-    factor_scores: &BTreeMap<String, f64>,
-) -> String {
-    let mut parts = Vec::new();
-    if let Some((_, label, _)) = theme {
-        parts.push(format!("{}{label}", "\u{4e3b}\u{9898}\u{547d}\u{4e2d}"));
-    } else {
-        parts.push("\u{4e3b}\u{9898}\u{70ed}\u{5ea6}\u{4e00}\u{822c}".to_string());
-    }
-    parts.push(format!(
-        "{}{}",
-        "\u{4f30}\u{503c}",
-        tier_word(factor_scores.get("valuation").copied().unwrap_or(0.0))
-    ));
-    parts.push(format!(
-        "{}{}",
-        "\u{57fa}\u{672c}\u{9762}",
-        tier_word(factor_scores.get("fundamental").copied().unwrap_or(0.0))
-    ));
-    parts.push(format!(
-        "数据完整度{}",
-        tier_word(factor_scores.get("data_quality").copied().unwrap_or(0.0))
-    ));
-    if stock.market_cap_billion.is_none() {
-        parts.push(
-            "\u{5e02}\u{503c}\u{7f3a}\u{5931}\u{6309}\u{4e2d}\u{6027}\u{5904}\u{7406}".to_string(),
-        );
-    } else {
-        parts.push(format!(
-            "{}{}",
-            "\u{5e02}\u{503c}\u{89c4}\u{6a21}",
-            tier_word(factor_scores.get("size").copied().unwrap_or(0.0))
-        ));
-    }
-    if let Some(market_heat) = factor_scores.get("market_heat") {
-        parts.push(format!(
-            "{}{}",
-            "\u{8f6e}\u{52a8}\u{70ed}\u{5ea6}",
-            tier_word(*market_heat)
-        ));
-    }
-    parts.push(if cold { "\u{94f6}\u{884c}/\u{57fa}\u{5efa}\u{7b49}\u{4f4e}\u{70ed}\u{5ea6}\u{65b9}\u{5411}\u{5df2}\u{964d}\u{6743}".to_string() } else { "\u{98ce}\u{9669}\u{60e9}\u{7f5a}\u{4f4e}".to_string() });
-    format!("{}{}", parts.join("\u{ff1b}"), "\u{3002}")
+fn explain_score(breakdown: &[ScoreContribution]) -> String {
+    let mut contributions = breakdown
+        .iter()
+        .filter(|entry| {
+            entry.key != "score_clamp_adjustment"
+                && entry.contribution.is_some_and(|value| value > 0.0)
+        })
+        .collect::<Vec<_>>();
+    contributions.sort_by(|a, b| {
+        b.contribution
+            .unwrap()
+            .total_cmp(&a.contribution.unwrap())
+            .then_with(|| a.key.cmp(&b.key))
+    });
+    let mut parts = contributions
+        .into_iter()
+        .take(3)
+        .map(|entry| format!("{}贡献 {:.2}分", entry.label, entry.contribution.unwrap()))
+        .collect::<Vec<_>>();
+    parts.extend(
+        breakdown
+            .iter()
+            .filter(|entry| entry.contribution.is_some_and(|value| value < 0.0))
+            .map(|entry| format!("{} {:.2}分", entry.label, entry.contribution.unwrap())),
+    );
+    format!("{}。", parts.join("；"))
 }
 
-fn tier_word(value: f64) -> &'static str {
-    if value >= 0.72 {
-        "\u{5f3a}"
-    } else if value >= 0.5 {
-        "\u{4e2d}\u{6027}"
-    } else {
-        "\u{504f}\u{5f31}"
+fn reconcile_score_breakdown(breakdown: &mut Vec<ScoreContribution>, score: f64) {
+    let sum = breakdown
+        .iter()
+        .filter_map(|entry| entry.contribution)
+        .sum::<f64>();
+    let delta = round6(score) - sum;
+    if delta.abs() > 0.00002 {
+        breakdown.push(ScoreContribution {
+            key: "score_clamp_adjustment".to_string(),
+            label: "分数上下限调整".to_string(),
+            value: None,
+            contribution: Some(delta),
+            tone: "neutral".to_string(),
+        });
+    } else if let Some(last) = breakdown.last_mut() {
+        last.contribution = last.contribution.map(|value| value + delta);
     }
 }
 
@@ -7940,10 +8071,6 @@ fn promote_hot_sector_items(
 }
 
 fn apply_industry_relative_scores(screened: &mut [ScreenedStock], score_profile: &str) {
-    if screened.len() < 3 {
-        return;
-    }
-
     let quality_values = industry_percentiles(screened, "fundamental");
     let valuation_values = industry_percentiles(screened, "valuation");
     let profile = normalized_score_profile(score_profile);
@@ -7980,49 +8107,37 @@ fn apply_industry_relative_scores(screened: &mut [ScreenedStock], score_profile:
             "balanced" => item.balanced_score,
             _ => item.score,
         };
+        if matches!(profile, "quality" | "balanced") {
+            let retained = if profile == "quality" { 0.82 } else { 0.88 };
+            for entry in &mut item.score_breakdown {
+                entry.contribution = entry.contribution.map(|value| round6(value * retained));
+            }
+            item.score_breakdown.push(ScoreContribution {
+                key: "industry_relative_score".to_string(),
+                label: "行业内相对评分".to_string(),
+                value: Some(round6(relative_score * SCREEN_SCORE_SCALE)),
+                contribution: Some(round6(
+                    relative_score * SCREEN_SCORE_SCALE * (1.0 - retained),
+                )),
+                tone: "neutral".to_string(),
+            });
+            reconcile_score_breakdown(&mut item.score_breakdown, item.score);
+            item.score_explanation = explain_score(&item.score_breakdown);
+        }
     }
 }
 
 fn industry_percentiles(screened: &[ScreenedStock], factor_key: &str) -> HashMap<String, f64> {
-    let mut by_industry: HashMap<String, Vec<(String, f64)>> = HashMap::new();
-    for item in screened {
-        let industry = if item.stock.industry.trim().is_empty() {
-            "__unknown__"
-        } else {
-            item.stock.industry.trim()
-        };
-        by_industry.entry(industry.to_string()).or_default().push((
+    industry_rank_values(screened.iter().map(|item| {
+        (
             item.stock.code.clone(),
+            item.stock.industry.clone(),
             item.factor_scores.get(factor_key).copied().unwrap_or(0.5),
-        ));
-    }
-
-    let mut result = HashMap::new();
-    for values in by_industry.values_mut() {
-        values.sort_by(|left, right| {
-            left.1
-                .total_cmp(&right.1)
-                .then_with(|| left.0.cmp(&right.0))
-        });
-        let count = values.len();
-        let denom = count.saturating_sub(1).max(1) as f64;
-        let reliability = (count.saturating_sub(1) as f64 / 7.0).clamp(0.0, 1.0);
-        let mut start = 0;
-        while start < count {
-            let mut end = start + 1;
-            while end < count && values[end].1.total_cmp(&values[start].1).is_eq() {
-                end += 1;
-            }
-            let mid_rank = (start + end - 1) as f64 / 2.0;
-            let raw_percentile = if count == 1 { 0.5 } else { mid_rank / denom };
-            let percentile = 0.5 + (raw_percentile - 0.5) * reliability;
-            for (code, _) in &values[start..end] {
-                result.insert(code.clone(), percentile.clamp(0.0, 1.0));
-            }
-            start = end;
-        }
-    }
-    result
+        )
+    }))
+    .into_iter()
+    .map(|(code, (rank, _))| (code, rank))
+    .collect()
 }
 
 fn diversify_by_industry(screened: &[ScreenedStock], limit: usize) -> Vec<ScreenedStock> {
@@ -8244,9 +8359,9 @@ fn sort_value(item: &ScreenedStock, sort_by: &str) -> Option<f64> {
         "price" => Some(item.stock.price),
         "pe" => item.stock.pe,
         "pb" => item.stock.pb,
-        "roe" => item.stock.roe.and_then(as_percent),
+        "roe" => item.stock.roe.and_then(ratio_percentage_points),
         "market_cap" | "market_cap_billion" => item.stock.market_cap_billion,
-        "change_pct" | "pct" => item.stock.change_pct.and_then(as_percent),
+        "change_pct" | "pct" => item.stock.change_pct.and_then(ratio_percentage_points),
         _ => Some(item.score),
     };
     value.filter(|value| value.is_finite())
@@ -9283,7 +9398,7 @@ fn pattern_layer_score(signal: &TrendIndicatorSignal, bars: &[TrendIndicatorPoin
 
 fn quality_layer_score(stock: &StockItem) -> f64 {
     let mut score: f64 = 45.0;
-    if let Some(roe) = stock.roe.and_then(as_percent) {
+    if let Some(roe) = stock.roe.and_then(ratio_percentage_points) {
         score += if roe >= 15.0 {
             18.0
         } else if roe >= 8.0 {
@@ -9303,7 +9418,10 @@ fn quality_layer_score(stock: &StockItem) -> f64 {
     } else {
         score -= 8.0;
     }
-    if let Some(growth) = stock.deducted_net_profit_growth_rate.and_then(as_percent) {
+    if let Some(growth) = stock
+        .deducted_net_profit_growth_rate
+        .and_then(percentage_points)
+    {
         score += if growth >= 20.0 {
             10.0
         } else if growth >= 10.0 {
@@ -9314,7 +9432,7 @@ fn quality_layer_score(stock: &StockItem) -> f64 {
             -10.0
         };
     }
-    if let Some(margin) = stock.deducted_net_profit_margin.and_then(as_percent) {
+    if let Some(margin) = stock.deducted_net_profit_margin.and_then(percentage_points) {
         score += if margin >= 15.0 {
             6.0
         } else if margin >= 8.0 {
@@ -9950,7 +10068,7 @@ fn extract_percent_after(message: &str, labels: &[&str]) -> Option<f64> {
         if let Ok(regex) = Regex::new(&pattern) {
             if let Some(match_result) = regex.captures(message) {
                 let value: f64 = match_result.get(1)?.as_str().parse().ok()?;
-                return Some(if match_result.get(2).is_some() || value > 1.0 {
+                return Some(if match_result.get(2).is_some() {
                     value / 100.0
                 } else {
                     value

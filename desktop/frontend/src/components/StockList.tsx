@@ -48,7 +48,7 @@ const StockEntry = memo(function StockEntry({item, mobile, saved, expanded, deta
   const tone = Number.isFinite(item.change_pct) ? Number(item.change_pct)>0 ? "rise" : Number(item.change_pct)<0 ? "fall" : "neutral" : "neutral";
   const change = typeof item.change_pct === "number" ? formatSignedPercent(item.change_pct * 100) : "—";
   const reason = firstSelectionReason(item);
-  const identity = <div className="stock-title"><strong>{item.name || item.code}</strong><span>{item.code} {item.industry}</span>{reason ? <small className="stock-selection-reason">入选：{reason}</small> : null}{Boolean(item.riskTags?.length) && <small className="stock-risk-summary">关注：{item.riskTags!.join("、")}</small>}</div>;
+  const identity = <div className="stock-title"><strong>{item.name || item.code}</strong><span>{item.code} {item.industry}</span>{reason ? <small className="stock-selection-reason">入选：{reason}</small> : null}{item.industrySampleCount !== undefined ? <small className="stock-selection-reason">行业样本：{item.industrySampleCount === 0 ? "未核验，使用中性分位" : item.industrySampleCount}</small> : null}{Boolean(item.riskTags?.length) && <small className="stock-risk-summary">关注：{item.riskTags!.join("、")}</small>}</div>;
   const actions = <div className="row-button-group">
     <button type="button" className={`stock-row-action watchlist-action ${saved ? "saved" : ""}`} aria-pressed={saved} onClick={() => onToggleWatchlist(item)}>{saved ? "已收藏" : "收藏"}</button>
     {onObserveStock && <button type="button" className="stock-row-action observe-action" onClick={()=>onObserveStock(item.code)}>观察</button>}

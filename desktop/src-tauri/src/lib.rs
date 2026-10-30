@@ -25,6 +25,7 @@ mod gepa_lab;
 mod hk_market;
 mod llm;
 mod market;
+mod metric_units;
 mod market_domain;
 mod market_capabilities;
 mod news_rag;
@@ -38,6 +39,7 @@ mod research_import;
 mod rig_runtime;
 mod runtime;
 mod screening;
+mod stock_research_runtime;
 mod sentiment;
 mod sentiment_agent;
 mod sentiment_data;
@@ -128,6 +130,8 @@ pub fn run() {
             external_data::api_data_refresh_status,
             hk_market::api_explicit_hk_refresh,
             screening::api_strategies,
+            stock_research_runtime::api_stock_research_status,
+            stock_research_runtime::api_stock_research_report,
             market::api_market_status,
             market_capabilities::api_market_capabilities,
             market::api_data_sources,

@@ -19,6 +19,8 @@ import {
 import { fetchObserveDailyHistoryRows } from "./observeHistory";
 import { hydrateObserveTrendFromHistory } from "./observeTrend";
 import { normalizeMobileFinancialSnapshotDetails } from "./mobileFinancialSnapshot";
+import { FINANCIAL_RATE_UNITS, STOCK_RATE_UNITS, METRIC_CONTRACT_VERSION, convertRate, financialSnapshotUnits } from "./rateUnits";
+import type { RateUnit } from "./rateUnits";
 import { parseMarketCapabilities } from "./marketCapabilities";
 import { parseSecurityId } from "./marketDomain";
 import type { HkObserveResult, ObserveResult } from "../types";
@@ -113,6 +115,8 @@ export function getTauriListen(): ListenFn | undefined {
 }
 
 export const TAURI_GET_ROUTES: Record<string, TauriRouteHandler> = {
+  "/api/stock-research/status": async ({ invoke }) => invoke("api_stock_research_status"),
+  "/api/stock-research/report": async ({ invoke, parsed }) => invoke("api_stock_research_report", { payload: { run_id: parsed.searchParams.get("run_id") || "" } }),
   "/api/data/status": async ({ invoke }) => invoke("api_data_status"),
   "/health": async ({ invoke }) => invoke("api_health"),
   "/api/strategies": async ({ invoke }) => invoke("api_strategies"),
@@ -294,15 +298,18 @@ async function withFinancialSnapshotPayload(payload: unknown): Promise<unknown> 
   const existingSnapshot = asRecord(base.financial_snapshot);
   const existingPayload = financialSnapshotPayload(existingSnapshot);
   if (existingPayload && (!requestedIndustry || Object.keys(asRecord(existingPayload.industries)).length)) {
-    return payload;
+    return { ...base, financial_snapshot: existingPayload };
   }
-  const snapshot = await loadBundledScreenSnapshot().catch(() => null);
+  const snapshot = await loadBundledScreenSnapshot();
   const existingStocks = Array.isArray(existingSnapshot.stocks) ? existingSnapshot.stocks : [];
   const financialSnapshot = financialSnapshotPayload({
-    stocks: existingStocks,
+    schema_version: "mobile-financial-snapshot/v4",
+    metric_units: FINANCIAL_RATE_UNITS,
+    stock_metric_units: STOCK_RATE_UNITS,
+    stocks: Array.isArray(existingPayload?.stocks) ? existingPayload.stocks : existingStocks,
     financials: {
       ...asRecord(snapshot?.financials),
-      ...asRecord(existingSnapshot.financials),
+      ...asRecord(existingPayload?.financials),
     },
     industries: {
       ...asRecord(snapshot?.industries),
@@ -503,7 +510,7 @@ async function refreshTauriMarketDataInternal(invoke: InvokeFn, options: MarketR
   });
   try {
     logs("开始通过 Tauri/Rust 刷新股票池。", "info");
-    const financialSnapshot = await loadBundledScreenSnapshot().catch(() => null);
+    const financialSnapshot = await loadBundledScreenSnapshot();
     const baseOptions = sanitizeMarketRefreshOptions(options);
     const maxLoops = clampInt(Number(baseOptions.max_refresh_loops || 512), 1, 2048, 512);
     let batchStart = clampInt(baseOptions.batch_start, 0, 100000, 0);
@@ -745,18 +752,20 @@ async function loadBundledFinancialSnapshot(): Promise<Record<string, unknown> |
       const response = await fetch(BUNDLED_FINANCIAL_SNAPSHOT_URL, { cache: "no-store" });
       if (!response.ok) return null;
       const snapshot = asRecord(await response.json());
+      const units = financialSnapshotUnits(snapshot, true);
+      const stockUnits = stockSnapshotInputUnits(snapshot, units);
       const financials: Record<string, unknown> = {};
       const stocks = (Array.isArray(snapshot.stocks) ? snapshot.stocks : [])
-        .map((stock) => normalizeBundledFinancialSnapshotStock(asRecord(stock)))
+        .map((stock) => normalizeBundledFinancialSnapshotStock(asRecord(stock), stockUnits, units))
         .filter(Boolean) as Record<string, unknown>[];
       for (const stock of stocks) {
         const code = String(stock.code || "");
-        const financial = normalizeBundledFinancialSnapshotFinancial(stock);
-        if (code && financial) financials[code] = financial;
+        const financial = asRecord(stock.financial);
+        if (code && Object.keys(financial).length) financials[code] = financial;
       }
       for (const [rawCode, value] of Object.entries(asRecord(snapshot.financials))) {
         const code = normalizeStockCode(rawCode);
-        const financial = normalizeBundledFinancialSnapshotFinancial(asRecord(value));
+        const financial = normalizeBundledFinancialSnapshotFinancial(asRecord(value), units);
         if (code && financial) financials[code] = financial;
       }
       const industries: Record<string, string> = {};
@@ -765,8 +774,14 @@ async function loadBundledFinancialSnapshot(): Promise<Record<string, unknown> |
         const industry = typeof value === "string" ? value.trim() : "";
         if (code && industry && industry !== "-") industries[code] = industry;
       }
-      return { ...snapshot, stocks, financials, industries };
-    } catch {
+      return {
+        ...snapshot, schema_version: "mobile-financial-snapshot/v4",
+        metric_contract_version: METRIC_CONTRACT_VERSION, metric_units: FINANCIAL_RATE_UNITS,
+        stock_metric_units: STOCK_RATE_UNITS,
+        stocks, financials, industries,
+      };
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("单位")) throw error;
       return null;
     }
   })();
@@ -819,11 +834,35 @@ function financialSnapshotPayload(
 ): Record<string, unknown> | null {
   if (!snapshot) return null;
   const includeStocks = options.includeStocks !== false;
-  const stocks = includeStocks && Array.isArray(snapshot.stocks) ? snapshot.stocks : [];
-  const financials = asRecord(snapshot.financials);
+  const sourceStocks = includeStocks && Array.isArray(snapshot.stocks) ? snapshot.stocks : [];
+  const sourceFinancials = asRecord(snapshot.financials);
   const industries = asRecord(snapshot.industries);
-  if (!stocks.length && !Object.keys(financials).length && !Object.keys(industries).length) return null;
-  return includeStocks ? { stocks, financials, industries } : { financials, industries };
+  if (!sourceStocks.length && !Object.keys(sourceFinancials).length && !Object.keys(industries).length) return null;
+  const hasRates = [...sourceStocks, ...Object.values(sourceFinancials)].some((value) => {
+    const row = asRecord(value);
+    const nested = asRecord(row.financial);
+    return Object.keys(FINANCIAL_RATE_UNITS).some((field) => parseLooseNumber(row[field]) !== null || parseLooseNumber(nested[field]) !== null);
+  });
+  const units = hasRates ? financialSnapshotUnits(snapshot) : FINANCIAL_RATE_UNITS;
+  const stockUnits = stockSnapshotInputUnits(snapshot, units);
+  const stocks = sourceStocks.map((stock) => normalizeBundledFinancialSnapshotStock(asRecord(stock), stockUnits, units))
+    .filter((stock): stock is Record<string, unknown> => stock !== null);
+  const financials: Record<string, unknown> = {};
+  for (const stock of stocks) {
+    const financial = asRecord(stock.financial);
+    if (Object.keys(financial).length) financials[String(stock.code)] = financial;
+  }
+  for (const [code, raw] of Object.entries(sourceFinancials)) {
+    const normalized = normalizeBundledFinancialSnapshotFinancial(asRecord(raw), units);
+    if (normalized) financials[code] = normalized;
+  }
+  const metadata = {
+    schema_version: "mobile-financial-snapshot/v4",
+    metric_contract_version: METRIC_CONTRACT_VERSION,
+    metric_units: FINANCIAL_RATE_UNITS,
+    stock_metric_units: STOCK_RATE_UNITS,
+  };
+  return includeStocks ? { ...metadata, stocks, financials, industries } : { ...metadata, financials, industries };
 }
 
 async function loadBundledFinancialSnapshotForCode(rawCode: string): Promise<Record<string, unknown> | null> {
@@ -832,28 +871,60 @@ async function loadBundledFinancialSnapshotForCode(rawCode: string): Promise<Rec
   const snapshot = await loadBundledFinancialSnapshot();
   const financial = asRecord(asRecord(snapshot?.financials)[code]);
   if (!Object.keys(financial).length) return null;
-  return { stocks: [], financials: { [code]: financial } };
+  return {
+    schema_version: "mobile-financial-snapshot/v4", metric_contract_version: METRIC_CONTRACT_VERSION,
+    metric_units: FINANCIAL_RATE_UNITS, stocks: [], financials: { [code]: financial },
+  };
 }
 
-function normalizeBundledFinancialSnapshotStock(stock: Record<string, unknown>): Record<string, unknown> | null {
+function normalizeBundledFinancialSnapshotStock(
+  stock: Record<string, unknown>, units: Readonly<Record<string, RateUnit>>,
+  financialUnits: Readonly<Record<string, RateUnit>>,
+): Record<string, unknown> | null {
   const code = normalizeStockCode(stock.code);
   if (!code) return null;
-  const item: Record<string, unknown> = { code };
+  const item: Record<string, unknown> = { ...stock, code };
+  const nested = asRecord(stock.financial);
+  const financial = Object.keys(nested).length
+    ? normalizeBundledFinancialSnapshotFinancial(nested, financialUnits)
+    : normalizeBundledFinancialSnapshotFinancial(stock, units);
   for (const field of DEDUCTED_FINANCIAL_FIELDS) {
-    const value = parseLooseNumber(stock[field]);
+    const value = parseLooseNumber(financial?.[field]);
     if (value !== null) item[field] = value;
   }
-  const financial = normalizeBundledFinancialSnapshotFinancial(stock);
+  for (const [field, target] of Object.entries(STOCK_RATE_UNITS)) {
+    if (parseLooseNumber(stock[field]) === null) continue;
+    const sourceUnit = units[field];
+    if (!sourceUnit) throw new Error(`股票指标 ${field} 缺少明确单位`);
+    const converted = convertRate(stock[field], sourceUnit, target);
+    if (converted !== null) item[field] = converted;
+  }
   if (financial) item.financial = financial;
   return item;
 }
 
-function normalizeBundledFinancialSnapshotFinancial(source: Record<string, unknown>): Record<string, unknown> | null {
-  const financial: Record<string, unknown> = normalizeMobileFinancialSnapshotDetails(source);
-  for (const field of DEDUCTED_FINANCIAL_FIELDS) {
-    const value = parseLooseNumber(source[field]);
-    if (value !== null) financial[field] = value;
+function stockSnapshotInputUnits(
+  snapshot: Record<string, unknown>, financialUnits: Readonly<Record<string, RateUnit>>,
+): Readonly<Record<string, RateUnit>> {
+  const units: Record<string, RateUnit> = { change_pct: "ratio", turnover_rate: "ratio", ...financialUnits };
+  if (snapshot.stock_metric_units === undefined) return units;
+  const declared = snapshot.stock_metric_units;
+  if (!declared || typeof declared !== "object" || Array.isArray(declared)) throw new Error("股票快照单位声明无效");
+  for (const [field, unit] of Object.entries(declared)) {
+    if ((!Object.hasOwn(STOCK_RATE_UNITS, field) && !Object.hasOwn(FINANCIAL_RATE_UNITS, field)) || (unit !== "ratio" && unit !== "percentage_points")) {
+      throw new Error(`股票指标 ${field} 的单位无效`);
+    }
+    units[field] = unit;
   }
+  return units;
+}
+
+function normalizeBundledFinancialSnapshotFinancial(
+  source: Record<string, unknown>, units: Readonly<Record<string, RateUnit>>,
+): Record<string, unknown> | null {
+  const financial: Record<string, unknown> = normalizeMobileFinancialSnapshotDetails(source, units);
+  const profit = parseLooseNumber(source.deducted_net_profit_billion);
+  if (profit !== null) financial.deducted_net_profit_billion = profit;
   const latestEps = parseLooseNumber(source.latest_eps ?? source.eps);
   if (latestEps !== null) financial.latest_eps = latestEps;
   const latestBps = parseLooseNumber(source.latest_bps ?? source.bps);

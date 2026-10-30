@@ -662,6 +662,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           <IconButton
             className="agent-rail-toggle"
             onClick={() => setRailCollapsed((collapsed) => !collapsed)}
+            aria-expanded={!railCollapsed}
             label={railCollapsed ? "展开会话历史" : "折叠会话历史"}
             icon={railCollapsed ? <PanelLeftOpen size={18} aria-hidden="true" /> : <PanelLeftClose size={18} aria-hidden="true" />}
           />
@@ -677,7 +678,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           />
         </label>
 
-        <button type="button" className="agent-new-chat" onClick={startNewChat}>
+        <button type="button" className="agent-new-chat" aria-label="新建对话" title="新建对话" onClick={startNewChat}>
           <Plus size={16} aria-hidden="true" /><strong className="agent-new-chat-label">新建对话</strong>
         </button>
 
