@@ -9,8 +9,8 @@ description = "Embeddable A-share screening core for 鑲￠€変紭"
 crate-type = ["rlib", "staticlib", "cdylib"]
 
 [dependencies]
-chrono = { version = "0.4", default-features = false, features = ["std", "serde", "clock"] }
-regex = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sha2 = "0.11"
+chrono = { version = "0.4.45", default-features = false, features = ["std", "serde", "clock"] }
+regex = "1.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"

@@ -8,10 +8,10 @@
     "build:app": "tsc -b && vite build --configLoader native",
     "build": "npm run build:app && npm run test:bundle",
     "preview": "vite preview",
-    "test": "npm run audit:color-contract && npm run audit:touch-targets && npm run test:color-contract && npm run test:touch-targets-contract && npm run test:version && npm run test:industry-export && npm run test:density && npm run test:density-contract && npm run test:agent-replay-css && npm run test:unstyled && npm run test:architecture && npm run test:theme-parity-contract && npm run test:theme-parity && vitest run && npm run build:app && npm run test:contrast:built && npm run test:desktop:built",
+    "test": "npm run audit:color-contract && npm run audit:touch-targets && npm run test:color-contract && npm run test:touch-targets-contract && npm run test:version && npm run test:industry-export && npm run test:density && npm run test:density-contract && npm run test:agent-replay-css && npm run test:unstyled && npm run test:architecture && npm run test:theme-parity-contract && npm run test:theme-parity && vitest run --configLoader native --pool threads && npm run build:app && npm run test:contrast:built && npm run test:desktop:built",
     "test:version": "node ../../scripts/check-version-consistency.mjs && node ../../scripts/release-check.test.mjs",
     "test:industry-export": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../scripts/export-mobile-industry-snapshot.test.ps1",
-    "test:unit": "vitest run",
+    "test:unit": "vitest run --configLoader native --pool threads",
     "test:touch-targets-contract": "node --test --test-isolation=none ../../scripts/check-ui-touch-targets.test.mjs",
     "test:color-contract": "node --test --test-isolation=none ../../scripts/check-color-contract.test.mjs",
     "audit:touch-targets": "node ../../scripts/check-ui-touch-targets.mjs",
@@ -33,20 +33,20 @@
     "ui:backtest": "npm run build:app && node ../../scripts/ui-screenshot.mjs --serve --backtest-page-only --output ./test-baselines --stable-report"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.12.3",
-    "lucide-react": "^1.55.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "@tauri-apps/api": "^2.12.4",
+    "lucide-react": "^1.65.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/react-test-renderer": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
-    "playwright": "^1.64.0",
-    "react-test-renderer": "^19.3.0",
+    "playwright": "^1.64.1",
+    "react-test-renderer": "^19.3.1",
     "typescript": "7.0.2",
-    "vite": "^8.3.4",
-    "vitest": "^5.0.3"
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
   }
 }

@@ -1,6 +1,9 @@
 {
   "build": {
-    "beforeDevCommand": "npm run prepare:windows",
+    "beforeDevCommand": {
+      "script": "npm run prepare:windows",
+      "wait": true
+    },
     "beforeBuildCommand": "npm run prepare:windows"
   },
   "bundle": {

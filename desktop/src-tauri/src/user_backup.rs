@@ -2,7 +2,7 @@
 //! Only recognized native schemas support explicit no-replace restore or tombstone-aware merge.
 //! Generic staged SQLite datasets must never be installed as live databases.
 use aes_gcm::{
-    aead::{rand_core::RngCore, Aead, OsRng, Payload},
+    aead::{Aead, Payload},
     Aes256Gcm, KeyInit, Nonce,
 };
 use argon2::{Algorithm, Argon2, Params, Version};
@@ -153,25 +153,21 @@ fn encrypt_archive(archive: &Archive, password: &str) -> Result<String, String> 
         return Err("backup exceeds 64 MiB".into());
     }
     let mut salt = [0u8; 16];
-    OsRng
-        .try_fill_bytes(&mut salt)
-        .map_err(|_| "secure random generator unavailable")?;
+    getrandom::fill(&mut salt).map_err(|_| "secure random generator unavailable")?;
     let mut nonce_bytes = [0u8; 12];
-    OsRng
-        .try_fill_bytes(&mut nonce_bytes)
-        .map_err(|_| "secure random generator unavailable")?;
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    getrandom::fill(&mut nonce_bytes).map_err(|_| "secure random generator unavailable")?;
+    let nonce = Nonce::from(nonce_bytes);
     let mut header = MAGIC.to_vec();
     header.extend_from_slice(&VERSION.to_le_bytes());
     header.extend_from_slice(&salt);
-    header.extend_from_slice(nonce);
+    header.extend_from_slice(&nonce);
     header.extend_from_slice(&((plaintext.len() + 16) as u32).to_le_bytes());
     let key = derive_key(password, &salt)?;
     let cipher =
         Aes256Gcm::new_from_slice(key.as_ref()).map_err(|_| "backup cipher unavailable")?;
     let ciphertext = cipher
         .encrypt(
-            nonce,
+            &nonce,
             Payload {
                 msg: &plaintext,
                 aad: &header,
@@ -207,10 +203,11 @@ fn decrypt_archive(blob: &str, password: &str) -> Result<Archive, String> {
     let key = derive_key(password, &bytes[10..26])?;
     let cipher =
         Aes256Gcm::new_from_slice(key.as_ref()).map_err(|_| "backup cipher unavailable")?;
+    let nonce = Nonce::try_from(&bytes[26..38]).map_err(|_| "invalid backup header")?;
     let plaintext = Zeroizing::new(
         cipher
             .decrypt(
-                Nonce::from_slice(&bytes[26..38]),
+                &nonce,
                 Payload {
                     msg: &bytes[HEADER_BYTES..],
                     aad: &bytes[..HEADER_BYTES],
@@ -549,9 +546,7 @@ fn checked_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
 }
 fn random_id() -> Result<String, String> {
     let mut bytes = [0u8; 16];
-    OsRng
-        .try_fill_bytes(&mut bytes)
-        .map_err(|_| "secure random generator unavailable")?;
+    getrandom::fill(&mut bytes).map_err(|_| "secure random generator unavailable")?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 struct Scratch(PathBuf);
@@ -1371,6 +1366,28 @@ fn merge_agent_backup(root: &Path, blob: &str, password: &str) -> Result<BackupP
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn decrypts_backup_v1_created_with_legacy_crypto_libraries() {
+        // aes-gcm 0.10.3 + argon2 0.5.3, fixed v1 KDF parameters,
+        // salt [0x11; 16], nonce [0x22; 12]. Keep this independent of encrypt_archive.
+        let blob = concat!(
+            "R1BVQkFLAAABABEREREREREREREREREREREiIiIiIiIiIiIiIiK7AAAA",
+            "pHKGyuCiebVeeHHs4rheiSkD+73VHP1g+DmvKQiOy7EA4ltagGmGIq1pJiNFmCzlgeT/",
+            "UnV4JLooH9XxEv+i62Be1cqGZdm2HAL6z8H2cO3Yjn8Bd7tbYkxTRZfj+Grr4UQUKZeR",
+            "Ss3LhOs/au6K84YODS4z8kbQtyobPQY7ddp/7k583CiBwbSQUEzw6gFDoGXX6egpDDnT9o",
+            "DEA9yQh4g2k4ClUBPRXxUHolOpIP6mwB3mB7XBD/7rnw=="
+        );
+        let archive = decrypt_archive(blob, "dependency-upgrade-fixture")
+            .expect("v1 backups exported before the crypto upgrade must remain readable");
+        assert_eq!(archive.version, 1);
+        assert_eq!(archive.created_at_epoch_ms, 1_700_000_000_000);
+        assert_eq!(archive.stores.len(), 1);
+        assert_eq!(archive.stores[0].id, "watchlist");
+        assert_eq!(archive.stores[0].sqlite_base64, "AA==");
+        assert_eq!(archive.stores[0].stats.filtered_fields, 0);
+    }
+
     static SEQ: AtomicU64 = AtomicU64::new(1);
     struct Fixture(PathBuf);
     impl Fixture {

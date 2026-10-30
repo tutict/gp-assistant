@@ -192,10 +192,10 @@ function Write-SystemDiagnostics {
 function Run-PrepareAssets {
     param([string]$NpmPath)
     Write-LogLine ''
-    Write-Step 'Preparing Tauri frontend assets...'
-    $exitCode = Invoke-LoggedCommand -FilePath $NpmPath -Arguments @('run', 'prepare:android')
+    Write-Step 'Preparing Windows RAG model and Tauri frontend assets...'
+    $exitCode = Invoke-LoggedCommand -FilePath $NpmPath -Arguments @('run', 'prepare:windows')
     if ($exitCode -ne 0) {
-        throw "npm run prepare:android failed with exit code $exitCode."
+        throw "npm run prepare:windows failed with exit code $exitCode."
     }
 }
 
@@ -296,7 +296,7 @@ try {
         if (-not $SkipPrepare) {
             Run-PrepareAssets -NpmPath $npm
         } else {
-            Write-Warn 'Skipping prepare:android by -SkipPrepare.'
+            Write-Warn 'Skipping prepare:windows by -SkipPrepare.'
         }
 
         if (-not $SkipCargoCheck) {

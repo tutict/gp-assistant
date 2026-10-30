@@ -16,53 +16,53 @@ name = "stock-optimizer-desktop"
 path = "src/main.rs"
 
 [build-dependencies]
-tauri-build = { version = "2.6.3", features = [] }
+tauri-build = { version = "2.7.4", features = [] }
 
 [features]
 eval-replay = []
 gepa-lab = ["dep:dsrust-gepa"]
 
 [dependencies]
-zeroize = "1.8"
-aes-gcm = "0.10"
-argon2 = "0.5"
-rand_core = { version = "0.6", features = ["getrandom"] }
-anyhow = "1"
-base64 = "0.23"
-bytes = "1"
-calamine = "0.36.1"
-chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
+zeroize = "1.9.1"
+aes-gcm = "0.11.1"
+argon2 = "0.6.0"
+getrandom = "0.4.3"
+anyhow = "1.0.104"
+base64 = "0.23.1"
+bytes = "1.12.1"
+calamine = "0.37.0"
+chrono = { version = "0.4.45", default-features = false, features = ["std", "serde"] }
 stock-optimizer-core = { path = "../../native/gp-core" }
 gp-research = { package = "stock-research", path = "../../native/gp-research" }
-encoding_rs = "0.8"
-futures = "0.3"
+encoding_rs = "0.8.42"
+futures = "0.3.34"
 jieba-rs = "0.11"
-lopdf = "0.45"
+lopdf = "0.46.0"
 percent-encoding = "2.3.2"
 reqwest = { version = "0.13.5", features = ["stream"] }
-rustls = { version = "0.23.45", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
-rusqlite = { version = "0.40", features = ["bundled"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-scraper = "0.27"
-schemars = "1"
-sha2 = "0.11"
-tauri = { version = "2", features = [] }
-tauri-plugin-shell = "2"
-thiserror = "2"
-tokio = { version = "1", features = ["macros", "net", "sync", "time"] }
-webpki-roots = "1.0.6"
-rig-core = { version = "0.42.0", default-features = false, features = ["reqwest", "rustls"] }
-rig-agent = { version = "0.42.0", default-features = false }
+rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+scraper = "0.29.0"
+schemars = "1.2.3"
+sha2 = "0.11.1"
+tauri = { version = "2.12.5", features = [] }
+tauri-plugin-shell = "2.6.0"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["macros", "net", "sync", "time"] }
+webpki-roots = "1.0.11"
+rig-core = { version = "0.45.0", default-features = false, features = ["reqwest", "rustls"] }
+rig-agent = { version = "0.45.0", default-features = false }
 dsrust-gepa = { version = "=0.1.0-alpha.3", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-fastembed = { version = "5.17.4", default-features = false, features = ["ort-download-binaries-rustls-tls"] }
+fastembed = { version = "7.5.0", default-features = false, features = ["ort-download-binaries-rustls-tls"] }
 
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
-tauri-plugin-single-instance = "2"
+tauri-plugin-single-instance = "2.5.5"
 
 [[bin]]
 name = "rag_replay"

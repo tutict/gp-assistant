@@ -2,20 +2,16 @@
 
 use bytes::Bytes;
 use futures::StreamExt;
-use rig_agent::{
-    agent::hook::{AgentHook, HookContext, ToolResultAction, ToolResultEvent},
-    ModelHandle,
-};
+use rig_agent::agent::hook::{AgentHook, HookContext, OutcomeAction, OutcomeEvent};
 use rig_core::{
-    client::{Capabilities, Capable, CompletionClient, DebugExt, Nothing, Provider},
     completion::Message,
     http_client::{
-        sse::BoxedStream, Error as RigHttpError, HttpClientExt, LazyBody, MultipartForm, Request,
+        BoxedStream, Error as RigHttpError, HttpClientExt, LazyBody, MultipartForm, Request,
         Response, StreamingResponse,
     },
-    providers::openai::completion::{GenericCompletionModel, OpenAICompatibleProvider},
-    streaming::StreamedAssistantContent,
-    tool::{PortableDynamicTool, ToolExecutionError, ToolOutput},
+    message::{AssistantContent, ToolName},
+    streaming::{Item, StreamEvent},
+    tool::{DynamicTool, ToolExecutionError, ToolOutput},
 };
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
@@ -44,6 +40,8 @@ const MAX_MODEL_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 const MAX_MODEL_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_RUN_SECONDS: u64 = 180;
 
+type CompletionModel = rig_core::DynModel<rig_core::operation::Completion>;
+
 /// Captures the structured tool disposition at the dispatch boundary. Rig's
 /// streamed `ToolResult` contains model-facing content but not the canonical
 /// `ToolResult` disposition, so the event sink must observe the hook event
@@ -57,10 +55,7 @@ struct ToolLifecycleObserver {
 impl ToolLifecycleObserver {
     fn new(run_id: String) -> Self {
         let events = Arc::new(Mutex::new(Vec::new()));
-        Self {
-            run_id,
-            events,
-        }
+        Self { run_id, events }
     }
 
     fn drain_into<F>(&self, sink: &mut F)
@@ -79,25 +74,26 @@ impl ToolLifecycleObserver {
 }
 
 impl AgentHook for ToolLifecycleObserver {
-    async fn on_tool_result(
-        &self,
-        _ctx: &HookContext,
-        event: ToolResultEvent<'_>,
-    ) -> ToolResultAction {
+    async fn on_outcome(&self, _ctx: &HookContext, event: OutcomeEvent<'_>) -> OutcomeAction {
+        let (Some(result), Some(tool_name), Some(call_id)) =
+            (event.tool_result(), event.tool_name(), event.call_id)
+        else {
+            return OutcomeAction::Proceed;
+        };
         let output = json!({
-            "content": event.presentation.as_content(),
+            "content": result.output().as_content(),
         });
         let lifecycle_event = tool_result_event(
             &self.run_id,
-            event.tool_name,
-            event.internal_call_id,
-            canonical_tool_status(event.raw_result.status_name()),
+            tool_name,
+            &call_id.wire(),
+            canonical_tool_status(result.status_name()),
             output,
         );
         if let Ok(mut events) = self.events.lock() {
             events.push(lifecycle_event);
         }
-        ToolResultAction::Keep
+        OutcomeAction::Proceed
     }
 }
 
@@ -217,10 +213,12 @@ impl BoundedHttpClient {
         U: From<Bytes> + rig_core::wasm_compat::WasmCompatSend + 'static,
     {
         let status = response.status();
+        let headers = response.headers().clone();
         if !status.is_success() {
             let body = bounded_error_body(response).await;
-            return Err(RigHttpError::InvalidStatusCodeWithMessage(
+            return Err(RigHttpError::non_success_with_details(
                 status,
+                headers,
                 limit_text(&body, 512),
             ));
         }
@@ -229,27 +227,58 @@ impl BoundedHttpClient {
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|error| RigHttpError::Instance(Box::new(error)))?;
             if body.len().saturating_add(chunk.len()) > MAX_MODEL_RESPONSE_BYTES {
-                return Err(RigHttpError::InvalidStatusCodeWithMessage(
+                return Err(RigHttpError::non_success_with_details(
                     reqwest::StatusCode::PAYLOAD_TOO_LARGE,
+                    headers,
                     "provider response exceeds 2 MiB".to_string(),
                 ));
             }
             body.extend_from_slice(&chunk);
         }
-        Ok(Response::new(Box::pin(async move {
-            Ok(U::from(Bytes::from(body)))
-        })))
+        let mut response =
+            Response::new(Box::pin(async move { Ok(U::from(Bytes::from(body))) }) as LazyBody<U>);
+        *response.status_mut() = status;
+        *response.headers_mut() = headers;
+        Ok(response)
     }
 }
 
 fn validate_provider_request_body(body: &Bytes) -> Result<(), RigHttpError> {
     if body.len() > MAX_MODEL_REQUEST_BYTES {
-        return Err(RigHttpError::InvalidStatusCodeWithMessage(
+        return Err(RigHttpError::non_success_with_details(
             reqwest::StatusCode::PAYLOAD_TOO_LARGE,
+            Default::default(),
             "provider request exceeds 2 MiB".to_string(),
         ));
     }
     Ok(())
+}
+
+fn provider_multipart_form(body: MultipartForm) -> reqwest::multipart::Form {
+    use rig_core::http_client::multipart::PartContent;
+    let mut form = reqwest::multipart::Form::new();
+    for part in body.into_parts() {
+        let (name, content, filename, content_type) = part.into_pieces();
+        match content {
+            // Match the previous Rig converter: text fields use form.text,
+            // while MIME and filename metadata apply to binary fields.
+            PartContent::Text(text) => form = form.text(name, text),
+            PartContent::Binary(bytes) => {
+                let mut part = if let Some(content_type) = content_type {
+                    reqwest::multipart::Part::stream(bytes.clone())
+                        .mime_str(content_type.as_ref())
+                        .unwrap_or_else(|_| reqwest::multipart::Part::stream(bytes))
+                } else {
+                    reqwest::multipart::Part::stream(bytes)
+                };
+                if let Some(filename) = filename {
+                    part = part.file_name(filename);
+                }
+                form = form.part(name, part);
+            }
+        }
+    }
+    form
 }
 
 impl HttpClientExt for BoundedHttpClient {
@@ -299,7 +328,7 @@ impl HttpClientExt for BoundedHttpClient {
             let request = client
                 .request(parts.method, endpoint)
                 .headers(parts.headers)
-                .multipart(reqwest::multipart::Form::from(body))
+                .multipart(provider_multipart_form(body))
                 .build()
                 .map_err(|error| RigHttpError::Instance(Box::new(error)))?;
             let response = client
@@ -336,12 +365,16 @@ impl HttpClientExt for BoundedHttpClient {
                 .map_err(|error| RigHttpError::Instance(Box::new(error)))?;
             if !response.status().is_success() {
                 let status = response.status();
+                let headers = response.headers().clone();
                 let body = bounded_error_body(response).await;
-                return Err(RigHttpError::InvalidStatusCodeWithMessage(
+                return Err(RigHttpError::non_success_with_details(
                     status,
+                    headers,
                     limit_text(&body, 512),
                 ));
             }
+            let status = response.status();
+            let headers = response.headers().clone();
             let stream = response.bytes_stream();
             let bounded =
                 futures::stream::unfold((stream, 0usize), |(mut stream, seen)| async move {
@@ -350,8 +383,9 @@ impl HttpClientExt for BoundedHttpClient {
                             let next = seen.saturating_add(chunk.len());
                             if next > MAX_MODEL_RESPONSE_BYTES {
                                 Some((
-                                    Err(RigHttpError::InvalidStatusCodeWithMessage(
+                                    Err(RigHttpError::non_success_with_details(
                                         reqwest::StatusCode::PAYLOAD_TOO_LARGE,
+                                        Default::default(),
                                         "provider stream exceeds 2 MiB".to_string(),
                                     )),
                                     (stream, MAX_MODEL_RESPONSE_BYTES),
@@ -366,7 +400,10 @@ impl HttpClientExt for BoundedHttpClient {
                         None => None,
                     }
                 });
-            Ok(Response::new(Box::pin(bounded) as BoxedStream))
+            let mut response = Response::new(Box::pin(bounded) as BoxedStream);
+            *response.status_mut() = status;
+            *response.headers_mut() = headers;
+            Ok(response)
         }
     }
 }
@@ -430,37 +467,6 @@ pub(crate) enum RunMode {
     Model,
 }
 
-#[derive(Clone, Debug, Default)]
-struct FullUrlOpenAiExt {
-    path: String,
-}
-
-impl Provider for FullUrlOpenAiExt {
-    type Builder = rig_core::providers::openai::OpenAICompletionsExtBuilder;
-    const VERIFY_PATH: &'static str = "/models";
-}
-
-impl OpenAICompatibleProvider for FullUrlOpenAiExt {
-    const PROVIDER_NAME: &'static str = "openai-compatible-full-url";
-    const REQUEST_ID_HEADER: Option<&'static str> = Some("x-request-id");
-    type StreamingUsage = rig_core::providers::openai::Usage;
-    type Response = rig_core::providers::openai::CompletionResponse;
-
-    fn completion_path(&self, _model: &str) -> String {
-        self.path.clone()
-    }
-}
-
-impl DebugExt for FullUrlOpenAiExt {}
-
-impl<H> Capabilities<H> for FullUrlOpenAiExt {
-    type Completion = Capable<GenericCompletionModel<Self, H>>;
-    type Embeddings = Nothing;
-    type Transcription = Nothing;
-    type ModelListing = Nothing;
-    type Rerank = Nothing;
-}
-
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RigAgentError {
     #[error("invalid Agent request: {0}")]
@@ -468,7 +474,7 @@ pub(crate) enum RigAgentError {
     #[error("Agent policy rejected request: {0}")]
     PolicyRejected(String),
     #[error("Rig model failed: {0}")]
-    Model(#[from] rig_core::completion::CompletionError),
+    Model(#[from] rig_core::ProviderError),
     #[error("Rig tool failed: {0}")]
     Tool(#[from] ToolExecutionError),
     #[error("Agent run cancelled")]
@@ -603,14 +609,14 @@ pub(crate) fn validate_provider_config(config: &ProviderConfig) -> Result<(), St
 }
 
 #[cfg(test)]
-pub(crate) fn build_model(config: &ProviderConfig) -> Result<ModelHandle, RigAgentError> {
+pub(crate) fn build_model(config: &ProviderConfig) -> Result<CompletionModel, RigAgentError> {
     build_model_with_payload(config, &Value::Null)
 }
 
 pub(crate) fn build_model_with_payload(
     config: &ProviderConfig,
     network_payload: &Value,
-) -> Result<ModelHandle, RigAgentError> {
+) -> Result<CompletionModel, RigAgentError> {
     validate_provider_config(config).map_err(RigAgentError::PolicyRejected)?;
     validate_full_endpoint_kind(config)?;
     let api_key = config.api_key.clone().unwrap_or_default();
@@ -636,55 +642,30 @@ pub(crate) fn build_model_with_payload(
     };
     match config.kind {
         ProviderKind::OpenAiResponses => {
-            let client = rig_core::providers::openai::Client::builder()
-                .api_key(api_key)
-                .base_url(&base_url)
-                .http_client(BoundedHttpClient::new(http_client.clone(), None))
-                .build()
-                .map_err(|error| RigAgentError::InvalidRequest(error.to_string()))?;
-            Ok(ModelHandle::new(
-                client.completion_model(config.model.clone()),
-            ))
+            let client = rig_core::providers::openai::OpenAIConfig::new(api_key)
+                .with_base_url(base_url)
+                .connect(BoundedHttpClient::new(http_client, None));
+            Ok(client.responses(config.model.clone()).into())
         }
         ProviderKind::Anthropic => {
-            let client = rig_core::providers::anthropic::Client::builder()
-                .api_key(api_key)
-                .base_url(&base_url)
-                .http_client(BoundedHttpClient::new(http_client.clone(), None))
-                .build()
-                .map_err(|error| RigAgentError::InvalidRequest(error.to_string()))?;
-            Ok(ModelHandle::new(
-                client.completion_model(config.model.clone()),
-            ))
+            let client = rig_core::providers::anthropic::AnthropicConfig::new(api_key)
+                .with_base_url(base_url)
+                .connect(BoundedHttpClient::new(http_client, None));
+            Ok(client.completion(config.model.clone()).into())
         }
         ProviderKind::OpenAiChat | ProviderKind::OpenAiCompatible => {
-            if config.endpoint_mode == "full_url" {
-                let client = rig_core::providers::openai::CompletionsClient::builder()
-                    .api_key(api_key)
-                    .base_url(&base_url)
-                    .http_client(BoundedHttpClient::new(
-                        http_client,
-                        Some(config.base_url.clone()),
-                    ))
-                    .build()
-                    .map_err(|error| RigAgentError::InvalidRequest(error.to_string()))?;
-                let path = full_endpoint_path(config)?;
-                let client = client.with_ext(FullUrlOpenAiExt { path });
-                Ok(ModelHandle::new(GenericCompletionModel::new(
-                    client,
-                    config.model.clone(),
-                )))
+            // The chat wire builds its standard path; this transport keeps an
+            // arbitrary full endpoint exact, including gateways such as /generate.
+            let fixed_endpoint = if config.endpoint_mode == "full_url" {
+                full_endpoint_path(config)?;
+                Some(config.base_url.clone())
             } else {
-                let client = rig_core::providers::openai::CompletionsClient::builder()
-                    .api_key(api_key)
-                    .base_url(&base_url)
-                    .http_client(http_client)
-                    .build()
-                    .map_err(|error| RigAgentError::InvalidRequest(error.to_string()))?;
-                Ok(ModelHandle::new(
-                    client.completion_model(config.model.clone()),
-                ))
-            }
+                None
+            };
+            let client = rig_core::providers::openai::OpenAIConfig::new(api_key)
+                .with_base_url(base_url)
+                .connect(BoundedHttpClient::new(http_client, fixed_endpoint));
+            Ok(client.chat(config.model.clone()).into())
         }
     }
 }
@@ -784,7 +765,7 @@ fn full_endpoint_path(config: &ProviderConfig) -> Result<String, RigAgentError> 
 }
 
 pub(crate) struct RigToolRegistry {
-    tools: Vec<PortableDynamicTool>,
+    tools: Vec<DynamicTool>,
     data: Value,
     context: Value,
     research_evidence: Option<Value>,
@@ -864,40 +845,45 @@ impl RigToolRegistry {
                 let remote_safe_only = remote_safe_only;
                 let cancellation = Arc::clone(&cancellation);
                 let tool_name = name.to_string();
-                PortableDynamicTool::new(name, description, tool_schema(name), move |arguments| {
-                    let data = data.clone();
-                    let context = context.clone();
-                    let research_evidence = research_evidence.clone();
-                    let research_app = research_app.clone();
-                    let remote_safe_only = remote_safe_only;
-                    let cancellation = Arc::clone(&cancellation);
-                    let tool_name = tool_name.clone();
-                    Box::pin(async move {
-                        if cancellation.is_cancelled() {
-                            return Err(ToolExecutionError::other("Agent run cancelled"));
-                        }
-                        let result = tokio::select! {
-                            _ = cancellation.cancelled() => {
+                DynamicTool::new(
+                    ToolName::new(name).expect("static tool name is nonempty"),
+                    description,
+                    tool_schema(name),
+                    move |arguments| {
+                        let data = data.clone();
+                        let context = context.clone();
+                        let research_evidence = research_evidence.clone();
+                        let research_app = research_app.clone();
+                        let remote_safe_only = remote_safe_only;
+                        let cancellation = Arc::clone(&cancellation);
+                        let tool_name = tool_name.clone();
+                        Box::pin(async move {
+                            if cancellation.is_cancelled() {
                                 return Err(ToolExecutionError::other("Agent run cancelled"));
                             }
-                            result = tokio::time::timeout(
-                                std::time::Duration::from_secs(MAX_TOOL_TIMEOUT_SECONDS),
-                                dispatch_tool(
-                                    &tool_name,
-                                    data,
-                                    context,
-                                    research_evidence,
-                                    research_app,
-                                    remote_safe_only,
-                                    arguments,
-                                ),
-                            ) => result
-                                .map_err(|_| ToolExecutionError::other("Rig tool timed out"))?
-                                .map_err(ToolExecutionError::other)?,
-                        };
-                        Ok(ToolOutput::json(result))
-                    })
-                })
+                            let result = tokio::select! {
+                                _ = cancellation.cancelled() => {
+                                    return Err(ToolExecutionError::other("Agent run cancelled"));
+                                }
+                                result = tokio::time::timeout(
+                                    std::time::Duration::from_secs(MAX_TOOL_TIMEOUT_SECONDS),
+                                    dispatch_tool(
+                                        &tool_name,
+                                        data,
+                                        context,
+                                        research_evidence,
+                                        research_app,
+                                        remote_safe_only,
+                                        arguments,
+                                    ),
+                                ) => result
+                                    .map_err(|_| ToolExecutionError::other("Rig tool timed out"))?
+                                    .map_err(ToolExecutionError::other)?,
+                            };
+                            Ok(ToolOutput::json(result))
+                        })
+                    },
+                )
             })
             .collect();
         Self {
@@ -912,13 +898,10 @@ impl RigToolRegistry {
 
     #[cfg(test)]
     pub(crate) fn definitions(&self) -> Vec<ToolDefinition> {
-        self.tools
-            .iter()
-            .map(PortableDynamicTool::definition)
-            .collect()
+        self.tools.iter().map(DynamicTool::definition).collect()
     }
 
-    pub(crate) fn tools(&self) -> Vec<PortableDynamicTool> {
+    pub(crate) fn tools(&self) -> Vec<DynamicTool> {
         self.tools.clone()
     }
 
@@ -1143,7 +1126,6 @@ fn research_evidence_for_query(
     ))
 }
 
-
 fn remote_safe_evidence_snapshot(evidence: &Value) -> Value {
     let citations = evidence
         .get("citations")
@@ -1159,20 +1141,25 @@ fn remote_safe_evidence_snapshot(evidence: &Value) -> Value {
         .cloned()
         .collect::<Vec<_>>();
     let community_only = !citations.is_empty()
-        && citations
-            .iter()
-            .all(|citation| citation.get("source_tier").and_then(Value::as_str) == Some("community"));
+        && citations.iter().all(|citation| {
+            citation.get("source_tier").and_then(Value::as_str) == Some("community")
+        });
     let answer = if citations.is_empty() {
         "没有可发送给远程模型的已授权证据。".to_string()
     } else if community_only {
-        "当前只命中社区信息，不能单独作为事实结论；请补充公告、财务快照或可信新闻核验。"
-            .to_string()
+        "当前只命中社区信息，不能单独作为事实结论；请补充公告、财务快照或可信新闻核验。".to_string()
     } else {
         citations
             .iter()
             .map(|citation| {
-                let id = citation.get("citation_id").and_then(Value::as_str).unwrap_or("C");
-                let excerpt = citation.get("excerpt").and_then(Value::as_str).unwrap_or("");
+                let id = citation
+                    .get("citation_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("C");
+                let excerpt = citation
+                    .get("excerpt")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 format!("[{id}] {excerpt}")
             })
             .collect::<Vec<_>>()
@@ -1468,7 +1455,7 @@ where
                     &mut sink,
                 );
             }
-            let builder = rig_agent::AgentBuilder::from_model_handle(model)
+            let builder = rig_agent::AgentBuilder::new(model)
                 .add_hook(tool_lifecycle_observer.clone())
                 .name("gp-assistant")
                 .preamble(&system_prompt)
@@ -1485,26 +1472,25 @@ where
                 .output_schema_raw(model_output_schema());
             let mut tools = registry.tools().into_iter();
             let agent = if let Some(first) = tools.next() {
-                let mut configured = builder.portable_dynamic_tool(first);
+                let mut configured = builder.dynamic_tool(first);
                 for tool in tools {
-                    configured = configured.portable_dynamic_tool(tool);
+                    configured = configured.dynamic_tool(tool);
                 }
                 configured.build()
             } else {
                 builder.build()
             };
             let model_run = async {
-                let stream_future = agent
-                    .runner(model_user_message(&message, llm_value))
+                if cancellation.is_cancelled() {
+                    return Err("Agent run cancelled".to_string());
+                }
+                // Rig 0.45's stream is lazy; provider and hook work starts
+                // only when stream.next() is polled inside the cancel select.
+                let mut stream = agent
+                    .prompt(model_user_message(&message, llm_value))
                     .history(history)
                     .max_turns(4)
                     .stream();
-                let mut stream = tokio::select! {
-                    _ = cancellation.cancelled() => {
-                        return Err("Agent run cancelled".to_string());
-                    }
-                    stream = stream_future => stream,
-                };
                 let mut output = None;
                 loop {
                     let item = tokio::select! {
@@ -1518,19 +1504,19 @@ where
                     };
                     match item.map_err(|error| error.to_string())? {
                         rig_agent::agent::MultiTurnStreamItem::FinalResponse(response) => {
-                            output = Some(response.output);
+                            output = Some(response.output());
                         }
                         rig_agent::agent::MultiTurnStreamItem::StreamAssistantItem(
-                            StreamedAssistantContent::ToolCall {
-                                tool_call,
-                                internal_call_id,
-                            },
+                            Item::Event(StreamEvent::End {
+                                content: AssistantContent::ToolCall(tool_call),
+                                ..
+                            }),
                         ) => {
                             sink(tool_start_event(
                                 &run_id,
                                 &tool_call.function.name,
-                                &internal_call_id,
-                                tool_call.function.arguments,
+                                &tool_call.id.wire(),
+                                Value::Object(tool_call.function.arguments),
                             ));
                         }
                         rig_agent::agent::MultiTurnStreamItem::ToolExecutionCommitted {
@@ -1653,11 +1639,10 @@ async fn run_deterministic_baseline(
     message: &str,
 ) -> Result<Value, String> {
     let lower = message.to_ascii_lowercase();
-    let ordered_observe_news =
-        (lower.contains("先") && (lower.contains("再") || lower.contains("然后")))
-            || (lower.contains("first")
-                && (lower.contains("then") || lower.contains("next")))
-            || (lower.contains("observe") && lower.contains("news") && lower.contains("then"));
+    let ordered_observe_news = (lower.contains("先")
+        && (lower.contains("再") || lower.contains("然后")))
+        || (lower.contains("first") && (lower.contains("then") || lower.contains("next")))
+        || (lower.contains("observe") && lower.contains("news") && lower.contains("then"));
     let explicit_observe_then_news = extract_stock_code(message).is_some()
         && ordered_observe_news
         && (lower.contains("新闻")
@@ -1675,8 +1660,16 @@ async fn run_deterministic_baseline(
         let mut outputs = Vec::new();
 
         for (tool, arguments, label) in [
-            ("stock_observe", observe_args, "已先核验股票身份与本地快照。"),
-            ("news_evidence", news_args, "已根据核验后的股票任务整理资讯证据。"),
+            (
+                "stock_observe",
+                observe_args,
+                "已先核验股票身份与本地快照。",
+            ),
+            (
+                "news_evidence",
+                news_args,
+                "已根据核验后的股票任务整理资讯证据。",
+            ),
         ] {
             match registry.dispatch(tool, arguments.clone()).await {
                 Ok(output) => {
@@ -1725,27 +1718,74 @@ async fn run_deterministic_baseline(
         }));
     }
 
-    let (tool, arguments, action, reply) = if lower.contains("自选") || lower.contains("watchlist") {
-        ("watchlist_review", json!({}), "watchlist_action", "已读取本地自选股观察池。")
-    } else if lower.contains("新闻") || lower.contains("资讯") || lower.contains("公告") || lower.contains("news") {
-        ("news_evidence", json!({"query": limit_text(message, 256)}), "news_rag", "已整理本地可用的资讯线索与风险边界。")
+    let (tool, arguments, action, reply) = if lower.contains("自选") || lower.contains("watchlist")
+    {
+        (
+            "watchlist_review",
+            json!({}),
+            "watchlist_action",
+            "已读取本地自选股观察池。",
+        )
+    } else if lower.contains("新闻")
+        || lower.contains("资讯")
+        || lower.contains("公告")
+        || lower.contains("news")
+    {
+        (
+            "news_evidence",
+            json!({"query": limit_text(message, 256)}),
+            "news_rag",
+            "已整理本地可用的资讯线索与风险边界。",
+        )
     } else if lower.contains("回测") || lower.contains("组合") || lower.contains("backtest") {
-        ("portfolio_backtest", json!({"request": {"start_date": "20200101", "end_date": "20991231", "stock_codes": [], "top_n": 10, "initial_cash": 1000000.0, "transaction_cost_bps": 10.0, "benchmark": "candidate_equal_weight", "rebalance_frequency": "monthly", "strategy_mode": "walk_forward", "source": "criteria"}}), "backtest", "已基于本地数据完成组合观察/回测。")
+        (
+            "portfolio_backtest",
+            json!({"request": {"start_date": "20200101", "end_date": "20991231", "stock_codes": [], "top_n": 10, "initial_cash": 1000000.0, "transaction_cost_bps": 10.0, "benchmark": "candidate_equal_weight", "rebalance_frequency": "monthly", "strategy_mode": "walk_forward", "source": "criteria"}}),
+            "backtest",
+            "已基于本地数据完成组合观察/回测。",
+        )
     } else if lower.contains("趋势") || lower.contains("trend") {
-        ("trend_screen", json!({"limit": 20}), "trend_screen", "已完成本地趋势筛选。")
+        (
+            "trend_screen",
+            json!({"limit": 20}),
+            "trend_screen",
+            "已完成本地趋势筛选。",
+        )
     } else if let Some(code) = extract_stock_code(message) {
-        ("stock_observe", json!({"code": format_stock_code_for_tool(&code)}), "observe_stock", "已生成本地个股速览。")
+        (
+            "stock_observe",
+            json!({"code": format_stock_code_for_tool(&code)}),
+            "observe_stock",
+            "已生成本地个股速览。",
+        )
     } else {
-        ("stock_screen", json!({"limit": 20}), "screen", "已完成本地选股筛选。")
+        (
+            "stock_screen",
+            json!({"limit": 20}),
+            "screen",
+            "已完成本地选股筛选。",
+        )
     };
     let (output, tool_warning) = match registry.dispatch(tool, arguments.clone()).await {
         Ok(output) => (output, None),
-        Err(error) => (json!({"tool_error": "local read-only tool failed"}), Some(format!("本地工具执行失败，已返回受限结果：{}", limit_text(&error, 240)))),
+        Err(error) => (
+            json!({"tool_error": "local read-only tool failed"}),
+            Some(format!(
+                "本地工具执行失败，已返回受限结果：{}",
+                limit_text(&error, 240)
+            )),
+        ),
     };
-    if output.get("action").is_some() && output.get("reply").is_some() { return Ok(output); }
-    let summary = tool_warning.clone().unwrap_or_else(|| tool_result_summary(&output));
+    if output.get("action").is_some() && output.get("reply").is_some() {
+        return Ok(output);
+    }
+    let summary = tool_warning
+        .clone()
+        .unwrap_or_else(|| tool_result_summary(&output));
     let mut warnings = vec!["仅供选股研究，不构成投资建议。".to_string()];
-    if let Some(warning) = tool_warning { warnings.push(warning); }
+    if let Some(warning) = tool_warning {
+        warnings.push(warning);
+    }
     Ok(json!({
         "reply": reply, "action": action,
         "tool_calls": [{"id": format!("tool_{tool}"), "tool": tool, "label": tool_label(tool), "status": if output.get("tool_error").is_some() { "degraded" } else { "ok" }, "input": arguments, "output_summary": summary, "warnings": []}],
@@ -1756,7 +1796,11 @@ async fn run_deterministic_baseline(
 }
 
 fn format_stock_code_for_tool(code: &str) -> String {
-    if code.starts_with("6") { format!("{code}.SH") } else { format!("{code}.SZ") }
+    if code.starts_with("6") {
+        format!("{code}.SH")
+    } else {
+        format!("{code}.SZ")
+    }
 }
 
 fn extract_stock_code(message: &str) -> Option<String> {
@@ -1879,7 +1923,9 @@ fn add_runtime_harness(
             warnings.push(Value::String(warning));
         }
         if prompt_version.contains("degraded-overlay") {
-            warnings.push(Value::String("提示词配置读取失败，已使用内置提示词。".to_string()));
+            warnings.push(Value::String(
+                "提示词配置读取失败，已使用内置提示词。".to_string(),
+            ));
         }
         object.insert("warnings".to_string(), Value::Array(warnings));
         object.insert(
@@ -2031,9 +2077,7 @@ fn compose_system_prompt(base: &str, method_card: Option<&str>) -> String {
     let Some(card) = method_card.map(str::trim).filter(|value| !value.is_empty()) else {
         return base.to_string();
     };
-    format!(
-        "{base}\n\n当前 GEPA 研究方法卡（必须服从前述安全、证据和工具约束）：\n{card}"
-    )
+    format!("{base}\n\n当前 GEPA 研究方法卡（必须服从前述安全、证据和工具约束）：\n{card}")
 }
 
 fn normalize_mode(value: &str) -> Result<&str, String> {
@@ -2257,6 +2301,236 @@ mod tests {
             json!({"message": "tool completed successfully"}),
         );
         assert_eq!(event["payload"]["status"], "error");
+    }
+
+    /// A two-turn provider fixture drives both Rig paths through the actual
+    /// reqwest adapter, including arbitrary full endpoint addressing.
+    fn tool_outcome_fixture() -> (String, std::thread::JoinHandle<Vec<(String, Value)>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for turn in 0..2 {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                let mut connection = loop {
+                    match listener.accept() {
+                        Ok((connection, _)) => break connection,
+                        Err(error)
+                            if error.kind() == std::io::ErrorKind::WouldBlock
+                                && std::time::Instant::now() < deadline =>
+                        {
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("provider fixture accept failed: {error}"),
+                    }
+                };
+                connection
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                let mut buffer = [0u8; 4096];
+                let (headers, request) = loop {
+                    let count = connection.read(&mut buffer).unwrap();
+                    assert!(count > 0, "request ended before its body");
+                    bytes.extend_from_slice(&buffer[..count]);
+                    if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&bytes[..end]).into_owned();
+                        let length: usize = headers
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .map(|value| value.trim().parse().unwrap())
+                            })
+                            .unwrap();
+                        if bytes.len() >= end + 4 + length {
+                            let request =
+                                serde_json::from_slice::<Value>(&bytes[end + 4..end + 4 + length])
+                                    .unwrap();
+                            break (headers, request);
+                        }
+                    }
+                };
+                let tool_calls = ["ok", "error", "denied", "skipped"]
+                    .into_iter().enumerate().map(|(index, disposition)| json!({
+                        "index": index, "id": format!("call-{disposition}"), "type": "function",
+                        "function": {"name": "fixture", "arguments": json!({"case": disposition}).to_string()}
+                    })).collect::<Vec<_>>();
+                let (content_type, body) = if request["stream"] == true {
+                    let delta = if turn == 0 {
+                        json!({"role": "assistant", "tool_calls": tool_calls})
+                    } else {
+                        json!({"role": "assistant", "content": "done"})
+                    };
+                    let chunk = json!({"id":"fixture", "object":"chat.completion.chunk", "created":1, "model":"fixture-model",
+                        "choices":[{"index":0,"delta":delta,"finish_reason": if turn == 0 {"tool_calls"} else {"stop"}}]});
+                    (
+                        "text/event-stream",
+                        format!("data: {chunk}\n\ndata: [DONE]\n\n"),
+                    )
+                } else {
+                    let message = if turn == 0 {
+                        json!({"role":"assistant", "content":null, "tool_calls":tool_calls})
+                    } else {
+                        json!({"role":"assistant", "content":"done"})
+                    };
+                    ("application/json", json!({"id":"fixture", "object":"chat.completion", "created":1, "model":"fixture-model",
+                        "choices":[{"index":0,"message":message,"finish_reason":if turn == 0 {"tool_calls"} else {"stop"}}]}).to_string())
+                };
+                requests.push((headers, request));
+                write!(connection, "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+            requests
+        });
+        (format!("http://{address}"), server)
+    }
+
+    #[test]
+    fn canonical_tool_outcomes_keep_ids_content_and_full_endpoint_on_both_drivers() {
+        use rig_agent::agent::hook::{DispatchAction, DispatchEvent};
+        struct SkipFixture;
+        impl AgentHook for SkipFixture {
+            async fn on_dispatch(
+                &self,
+                _: &HookContext,
+                event: DispatchEvent<'_>,
+            ) -> DispatchAction {
+                if event.tool_name() == Some("fixture")
+                    && event
+                        .tool_args()
+                        .and_then(|args| serde_json::from_str::<Value>(args).ok())
+                        .is_some_and(|args| args["case"] == "skipped")
+                {
+                    DispatchAction::skip("policy skipped this call")
+                } else {
+                    DispatchAction::Proceed
+                }
+            }
+        }
+        for streaming in [false, true] {
+            for full_url in [false, true] {
+                let (origin, server) = tool_outcome_fixture();
+                let path = if full_url {
+                    "/custom/generate"
+                } else {
+                    "/v1/chat/completions"
+                };
+                let config = normalize_provider_config(&json!({
+                    "api_format":"openai_chat", "model":"fixture-model", "api_key":"fixture-key",
+                    "base_url": format!("{origin}{}", if full_url {path} else {"/v1"}),
+                    "endpoint_mode": if full_url {"full_url"} else {"base_url"},
+                    "custom_user_agent":"Rig-migration-fixture", "timeout_seconds":5
+                }))
+                .unwrap();
+                let observer = ToolLifecycleObserver::new("fixture-run".to_string());
+                let executed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let tool_executed = Arc::clone(&executed);
+                let tool = DynamicTool::new(
+                    ToolName::new("fixture").unwrap(),
+                    "Disposition fixture",
+                    json!({"type":"object","properties":{"case":{"type":"string"}},"required":["case"]}),
+                    move |args| {
+                        tool_executed.fetch_add(1, Ordering::SeqCst);
+                        Box::pin(async move {
+                            match args["case"].as_str().unwrap() {
+                                "error" => {
+                                    Err(ToolExecutionError::other("tool completed successfully"))
+                                }
+                                "denied" => {
+                                    Err(ToolExecutionError::refused("tool completed successfully"))
+                                }
+                                _ => Ok(ToolOutput::json(json!({"value":"fixture content"}))),
+                            }
+                        })
+                    },
+                );
+                let agent = rig_agent::AgentBuilder::new(build_model(&config).unwrap())
+                    .default_max_turns(2)
+                    .dynamic_tool(tool)
+                    .add_hook(SkipFixture)
+                    .add_hook(observer.clone())
+                    .build();
+                let output = tauri::async_runtime::block_on(async {
+                    if streaming {
+                        let mut stream = agent.prompt("run fixture").stream();
+                        let mut final_output = None;
+                        let mut starts = Vec::new();
+                        while let Some(item) = stream.next().await {
+                            match item.unwrap() {
+                                rig_agent::agent::MultiTurnStreamItem::FinalResponse(response) => {
+                                    final_output = Some(response.output())
+                                }
+                                rig_agent::agent::MultiTurnStreamItem::StreamAssistantItem(
+                                    Item::Event(StreamEvent::End {
+                                        content: AssistantContent::ToolCall(call),
+                                        ..
+                                    }),
+                                ) => starts.push(call.id.to_string()),
+                                _ => {}
+                            }
+                        }
+                        assert_eq!(
+                            starts,
+                            ["call-ok", "call-error", "call-denied", "call-skipped"]
+                        );
+                        final_output.unwrap()
+                    } else {
+                        agent.prompt("run fixture").await.unwrap().output()
+                    }
+                });
+                assert_eq!(output, "done");
+                assert_eq!(
+                    executed.load(Ordering::SeqCst),
+                    3,
+                    "a policy skip must never execute the tool"
+                );
+                let mut events = Vec::new();
+                observer.drain_into(&mut |event| events.push(event));
+                assert_eq!(events.len(), 4);
+                for (event, status) in events.iter().zip(["ok", "error", "denied", "skipped"]) {
+                    assert_eq!(event["run_id"], "fixture-run");
+                    assert_eq!(event["payload"]["tool"], "fixture");
+                    assert_eq!(event["payload"]["tool_call_id"], format!("call-{status}"));
+                    assert_eq!(event["payload"]["status"], status);
+                }
+                assert_eq!(
+                    events[0]["payload"]["output"]["content"][0]["value"]["value"],
+                    "fixture content"
+                );
+                assert!(events[1]["payload"]["output"]
+                    .to_string()
+                    .contains("tool completed successfully"));
+                assert!(events[3]["payload"]["output"]
+                    .to_string()
+                    .contains("policy skipped this call"));
+                let requests = server.join().unwrap();
+                for (headers, request) in &requests {
+                    assert!(
+                        headers.starts_with(&format!("POST {path} HTTP/1.1")),
+                        "{headers}"
+                    );
+                    assert!(headers
+                        .to_ascii_lowercase()
+                        .contains("authorization: bearer fixture-key"));
+                    assert!(headers.contains("Rig-migration-fixture"));
+                    assert_eq!(request["model"], "fixture-model");
+                    assert_eq!(request["stream"].as_bool().unwrap_or(false), streaming);
+                }
+                let results = requests[1].1["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|message| message["role"] == "tool")
+                    .collect::<Vec<_>>();
+                assert_eq!(results.len(), 4);
+                assert_eq!(results[3]["tool_call_id"], "call-skipped");
+                assert!(results[3]["content"]
+                    .to_string()
+                    .contains("policy skipped this call"));
+            }
+        }
     }
 
     #[test]

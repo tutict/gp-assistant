@@ -295,14 +295,23 @@ fn validate_gepa_trajectory(trajectory: &[Value]) -> Result<(), String> {
     for step in trajectory {
         let tool = step["tool_name"].as_str().unwrap_or("unknown");
         if step["side_effect_class"] != "read_only" {
-            return Err(format!("GEPA trajectory contains non-read-only tool {tool}"));
+            return Err(format!(
+                "GEPA trajectory contains non-read-only tool {tool}"
+            ));
         }
         if !matches!(step["status"].as_str(), Some("ok" | "degraded")) {
-            return Err(format!("GEPA trajectory tool {tool} did not complete successfully"));
+            return Err(format!(
+                "GEPA trajectory tool {tool} did not complete successfully"
+            ));
         }
-        let key = format!("{tool}:{}", step["arguments_hash"].as_str().unwrap_or_default());
+        let key = format!(
+            "{tool}:{}",
+            step["arguments_hash"].as_str().unwrap_or_default()
+        );
         if !seen.insert(key) {
-            return Err(format!("GEPA trajectory repeats the same read-only tool call: {tool}"));
+            return Err(format!(
+                "GEPA trajectory repeats the same read-only tool call: {tool}"
+            ));
         }
     }
     Ok(())
@@ -467,7 +476,10 @@ fn compute_apply_gate(
     })
 }
 
-#[cfg(all(feature = "gepa-lab", any(target_os = "windows", target_os = "android")))]
+#[cfg(all(
+    feature = "gepa-lab",
+    any(target_os = "windows", target_os = "android")
+))]
 mod engine {
     use super::*;
     use gepa::progress::{Event, Progress};
@@ -475,9 +487,9 @@ mod engine {
         extract_new_instruction, render_prompt, Candidate, EvalBatch, GepaAdapter, GepaEngine,
         Reflective,
     };
-    use rig_agent::{completion::Prompt, AgentBuilder};
-    use stock_optimizer_core::CoreDataSet;
+    use rig_agent::AgentBuilder;
     use std::{future::Future, sync::Arc, time::Duration};
+    use stock_optimizer_core::CoreDataSet;
     #[derive(Clone)]
     struct Trace {
         question: String,
@@ -681,7 +693,7 @@ mod engine {
                 let model = rig_runtime::build_model_with_payload(&config, &llm).map_err(|e| {
                     agent_harness::redact_persisted_error(&e.to_string(), Some(&llm))
                 })?;
-                let agent = AgentBuilder::from_model_handle(model).name("gepa-reflection").preamble("你是 GEPA 提示词反思器。只返回新的研究方法卡，必须保留安全边界、证据优先和研究模式语义；把新方法卡放在 ``` 区块中，不输出解释。").default_max_turns(1).max_tokens(2_500).temperature(0.2).build();
+                let agent = AgentBuilder::new(model).name("gepa-reflection").preamble("你是 GEPA 提示词反思器。只返回新的研究方法卡，必须保留安全边界、证据优先和研究模式语义；把新方法卡放在 ``` 区块中，不输出解释。").default_max_turns(1).max_tokens(2_500).temperature(0.2).build();
                 emit(
                     &app,
                     &run_id,
@@ -692,13 +704,13 @@ mod engine {
                     _ = cancellation.cancelled() => return Err("GEPA run cancelled".to_string()),
                     result = tokio::time::timeout(
                         Duration::from_secs(config.timeout_seconds.min(120).max(1)),
-                        agent.prompt(prompt),
+                        agent.prompt(prompt).run(),
                     ) => result
                         .map_err(|_| "GEPA reflection timed out".to_string())?
                         .map_err(|e| agent_harness::redact_persisted_error(&e.to_string(), Some(&llm)))?,
                 };
                 let body = agent_harness::redact_persisted_question(
-                    &extract_new_instruction(&raw),
+                    &extract_new_instruction(&raw.output()),
                     Some(&llm),
                 );
                 if body.trim().is_empty() {
@@ -905,7 +917,7 @@ fn cancelled_report(
         base_prompt_version: base_version.to_string(),
         candidate_prompt_version: None,
         eval_suite_version: "agent-gepa-eval-v1".to_string(),
-            replay_profile: "model-backed_v1_shared_runtime".to_string(),
+        replay_profile: "model-backed_v1_shared_runtime".to_string(),
         dataset_sha256: dataset_sha256(),
         engine_version: ENGINE_VERSION.to_string(),
         seed: SEED,
@@ -1166,8 +1178,17 @@ mod tests {
         assert_eq!(payload["mode"], profile.mode);
         assert_eq!(payload["message"], case.question);
         assert_eq!(payload["method_card"], "method-card candidate");
-        assert_eq!(payload["research_evidence"]["citations"].as_array().unwrap().len(), 2);
-        assert_eq!(payload["research_evidence"]["citations"][0]["remote_export_allowed"], true);
+        assert_eq!(
+            payload["research_evidence"]["citations"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            payload["research_evidence"]["citations"][0]["remote_export_allowed"],
+            true
+        );
         assert!(payload.get("rubric").is_none());
         assert!(!payload.to_string().contains(&case.rubric[0].id));
     }
@@ -1203,7 +1224,12 @@ mod tests {
             response: Value::Null,
             trajectory: vec![],
         };
-        let gate = compute_apply_gate(&[baseline.clone()], &[baseline], &[candidate.clone()], &[candidate]);
+        let gate = compute_apply_gate(
+            &[baseline.clone()],
+            &[baseline],
+            &[candidate.clone()],
+            &[candidate],
+        );
         assert_eq!(gate["passed"], false);
         assert_eq!(gate["hard_failures"], 2);
     }

@@ -39,8 +39,8 @@ edition = "2021"
 path = "lib.rs"
 [dependencies]
 serde_json = "1"
-sha2 = "0.11"
-rusqlite = { version = "0.40", features = ["bundled"] }
+sha2 = "0.11.1"
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 "@ | Set-Content -Encoding utf8 (Join-Path $support 'Cargo.toml')
 @"
 #![allow(dead_code)]
