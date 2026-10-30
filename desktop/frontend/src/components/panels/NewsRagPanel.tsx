@@ -23,10 +23,9 @@ import { StockCodeInput } from "../StockCodeInput";
 import { sentimentCivilDate } from "../../lib/sentimentView";
 import { useWorkspaceState, useWorkspaceStore, useWorkspaceCredentialsReady, WorkspaceSaveStatus } from "../../hooks/useWorkspace";
 
-type LlmSettingsUpdater = LlmSettings | null | ((previous: LlmSettings | null) => LlmSettings | null);
 interface NewsRagPanelProps {
   llmSettings?: LlmSettings | null;
-  onLlmSettingsChange?: (value: LlmSettingsUpdater) => void;
+  onLlmSettingsChange?: import("../../lib/llmCredentialStore").LlmSettingsSetter;
   watchlist?: WatchlistItem[];
   initialCode?: string;
   initialCodeRequestId?: number;

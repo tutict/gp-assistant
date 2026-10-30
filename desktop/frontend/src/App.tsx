@@ -117,7 +117,7 @@ export default function App({ onMounted }: AppProps) {
   const { llmSettings, setLlmSettings: saveLlmSettings, credentialsReady, credentialError, credentialMigrationPending, retryCredentialMigration } = useLlmCredentials();
   const setLlmSettings = useCallback<typeof saveLlmSettings>(async (value) => {
     if (!credentialsReady) throw new Error("密钥存储仍在初始化，请稍后再试。");
-    await saveLlmSettings(value);
+    return await saveLlmSettings(value);
   }, [credentialsReady, saveLlmSettings]);
 
   const setWatchlist = useCallback(createPersistentWatchlistSetter(setWatchlistState), []);

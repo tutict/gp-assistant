@@ -24,7 +24,7 @@ interface SettingsSheetProps {
   onClose: () => void;
   settings: readonly SettingDescriptor[];
   llmSettings?: LlmSettings | null;
-  onLlmSettingsChange?: (settings: LlmSettings | null) => void;
+  onLlmSettingsChange?: import("../../lib/llmCredentialStore").LlmSettingsSetter;
 }
 
 function SettingControl({ setting }: { setting: SettingDescriptor }) {

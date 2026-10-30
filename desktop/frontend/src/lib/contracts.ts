@@ -489,7 +489,8 @@ export function buildLlmConfig(settings: LlmSettings | null | undefined): LlmCli
   const auth = llmProviderAuth(active);
   if (!active?.model?.trim() || (!auth.api_key && !auth.credential_ref && !active.base_url?.trim())) return undefined;
   const config: LlmClientConfig = { ...auth };
-  if (active.base_url) config.base_url = active.base_url.replace(/\/+$/, "");
+  if (active.base_url) config.base_url = active.endpoint_mode === "full_url"
+    ? active.base_url.trim() : active.base_url.trim().replace(/\/+$/, "");
   if (active.model) config.model = active.model;
   config.api_format = normalizeLlmApiFormat(active.api_format);
   config.endpoint_mode = normalizeLlmEndpointMode(active.endpoint_mode);
@@ -515,7 +516,7 @@ export function normalizeLlmSettings(settings: LlmSettings | null | undefined): 
       endpoint_mode: normalizeLlmEndpointMode(provider.endpoint_mode),
       custom_user_agent: provider.custom_user_agent?.trim() || "",
     }));
-    const activeProviderId = providers.some((provider) => provider.id === settings.active_provider_id)
+    const activeProviderId = settings.active_provider_id === "" ? "" : providers.some((provider) => provider.id === settings.active_provider_id)
       ? settings.active_provider_id
       : providers[0]?.id;
     return { active_provider_id: activeProviderId, providers };
@@ -548,6 +549,7 @@ export function normalizeLlmSettings(settings: LlmSettings | null | undefined): 
 }
 
 export function activeLlmProvider(settings: LlmSettings | null | undefined) {
+  if (!settings || settings.active_provider_id === "") return undefined;
   const normalized = normalizeLlmSettings(settings);
   return normalized.providers?.find((provider) => provider.id === normalized.active_provider_id)
     || normalized.providers?.[0];

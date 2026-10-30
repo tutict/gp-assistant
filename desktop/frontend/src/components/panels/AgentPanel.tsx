@@ -20,7 +20,7 @@ import { MarketCapabilityPopover } from "../ui/MarketCapabilityPopover";
 
 interface AgentPanelProps {
   llmSettings: LlmSettings | null;
-  onLlmSettingsChange: (settings: LlmSettings | null) => void;
+  onLlmSettingsChange: import("../../lib/llmCredentialStore").LlmSettingsSetter;
   watchlist: WatchlistItem[];
   onWatchlistChange: (items: WatchlistItem[]) => void;
   draftPrompt?: string;

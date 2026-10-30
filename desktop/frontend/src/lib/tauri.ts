@@ -1251,7 +1251,7 @@ export async function requestJson<T = unknown>(method: string, url: string, payl
     if (signal) request.signal = signal;
     if (payload !== undefined) request.body = JSON.stringify(payload);
     const resp = await fetch(url, request);
-    if (!resp.ok) throw new Error(await resp.text() || `HTTP ${resp.status}`);
+    if (!resp.ok) throw Object.assign(new Error(await resp.text() || `HTTP ${resp.status}`), { status: resp.status });
     return (await resp.json()) as T;
   } finally {
     removeNativeAgentAbortListener?.();

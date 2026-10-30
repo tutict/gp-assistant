@@ -12,6 +12,7 @@
     "test:version": "node ../../scripts/check-version-consistency.mjs && node ../../scripts/release-check.test.mjs",
     "test:industry-export": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../scripts/export-mobile-industry-snapshot.test.ps1",
     "test:unit": "vitest run --configLoader native --pool threads",
+    "test:llm-settings": "node ../../scripts/ui-llm-settings-check.mjs",
     "test:touch-targets-contract": "node --test --test-isolation=none ../../scripts/check-ui-touch-targets.test.mjs",
     "test:color-contract": "node --test --test-isolation=none ../../scripts/check-color-contract.test.mjs",
     "audit:touch-targets": "node ../../scripts/check-ui-touch-targets.mjs",

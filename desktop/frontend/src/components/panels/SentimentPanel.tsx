@@ -32,11 +32,10 @@ import { ResearchMore } from "./ResearchMore";
 import { useWorkspaceCredentialsReady } from "../../hooks/useWorkspace";
 
 const NewsRagPanel = lazy(async () => ({ default: (await import("./NewsRagPanel")).NewsRagPanel }));
-type SettingsUpdater = LlmSettings | null | ((previous: LlmSettings | null) => LlmSettings | null);
 type WorkspaceView = "sources" | "sentiment";
 interface Props {
   llmSettings?: LlmSettings | null;
-  onLlmSettingsChange?: (value: SettingsUpdater) => void;
+  onLlmSettingsChange?: import("../../lib/llmCredentialStore").LlmSettingsSetter;
   watchlist?: WatchlistItem[];
   initialCode?: string;
   initialCodeRequestId?: number;

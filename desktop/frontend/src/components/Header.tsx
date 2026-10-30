@@ -24,7 +24,7 @@ interface HeaderProps {
   onToggleTheme: () => void;
   onToggleMobileNav: () => void;
   llmSettings?: LlmSettings | null;
-  onLlmSettingsChange?: (settings: LlmSettings | null) => void;
+  onLlmSettingsChange?: import("../lib/llmCredentialStore").LlmSettingsSetter;
 }
 
 const SHORTCUTS = [

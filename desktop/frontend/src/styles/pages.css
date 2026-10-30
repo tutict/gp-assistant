@@ -3568,17 +3568,6 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
   color: var(--text);
 }
 
-.llm-sheet-back-btn {
-  display: inline-grid;
-  width: 36px;
-  height: 36px;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--text);
-}
-
 .watchlist-panel {
   margin-top: var(--space-4);
   padding: 0;

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createLlmCredentialStore, type CredentialApi, type CredentialStatus } from "./llmCredentialStore";
 import { buildLlmConfig } from "./contracts";
-import { clearSessionCredentials } from "./llmCredentialSession";
+import { clearSessionCredentials, sessionCredential } from "./llmCredentialSession";
 
 const SECRET = "synthetic-legacy-test-key";
 function setup(remember = true, legacy = false) {
@@ -136,4 +136,39 @@ it("does not delete a working credential until replacement metadata is durably s
   expect(next.error).toBeTruthy();
   expect(x.api.delete).not.toHaveBeenCalled();
   expect(x.raw()).toBe(oldBytes);
+});
+
+describe("strict draft commits", () => {
+  it("does not replace an active session key when metadata persistence fails", async () => {
+    const x = setup(false); const original = await x.store.initialize(); const raw = x.raw();
+    x.storage.setItem = () => { throw new Error("quota"); };
+    const result = await x.store.commit({ ...original.settings, providers: original.settings!.providers!.map(p => ({ ...p, api_key: "replacement" })) });
+    expect(result.error).toBeTruthy();
+    expect(result.settings).toEqual(original.settings);
+    expect(x.raw()).toBe(raw);
+    expect(sessionCredential("a")).toBe(SECRET);
+  });
+
+  it("clears removed session keys when OS deletion and rollback persistence both fail", async () => {
+    let raw = JSON.stringify({ active_provider_id: "compatible", providers: [
+      { id: "compatible", model: "m", api_key: "session-secret", remember_key: false },
+      { id: "stored", model: "m", api_key: "os-secret", remember_key: true },
+    ] });
+    let failRollback = false; let writes = 0;
+    const storage = { getItem: () => raw, removeItem: () => undefined, setItem: (_key: string, value: string) => {
+      if (failRollback && ++writes > 1) throw new Error("quota"); raw = value;
+    } };
+    const api: CredentialApi = {
+      put: async credential_ref => ({ credential_ref, has_key: true }),
+      status: async credential_ref => ({ credential_ref, has_key: true }),
+      delete: async () => { throw new Error("delete failed"); },
+    };
+    const store = createLlmCredentialStore(storage, api); await store.initialize();
+    failRollback = true;
+    const result = await store.commit(null);
+    expect(result.error).toBeTruthy();
+    expect(result.settings).toBeNull();
+    expect(raw).toBe("null");
+    expect(sessionCredential("compatible")).toBeUndefined();
+  });
 });

@@ -19,6 +19,10 @@ export const nativeCredentials: CredentialApi = {
 };
 export interface CredentialSnapshot { settings: LlmSettings | null; error: string; migrationPending: boolean; }
 export type LlmSettingsUpdate = LlmSettings | null | ((previous: LlmSettings | null) => LlmSettings | null);
+export type LlmSettingsSetter = (update: LlmSettingsUpdate) => void | CredentialSnapshot | Promise<void | CredentialSnapshot>;
+export class CredentialSaveError extends Error {
+  constructor(readonly snapshot: CredentialSnapshot) { super(snapshot.error); this.name = "CredentialSaveError"; }
+}
 type Storage = Pick<globalThis.Storage, "getItem" | "setItem" | "removeItem">;
 const MIGRATION_ERROR = "密钥迁移失败：本次会话仍可使用；旧的明文记录尚未移除。请重试迁移，成功前不要备份或共享应用数据。";
 const SESSION_ERROR = "安全存储失败：密钥仅保留在本次会话；请重试保存，关闭后需重新输入。";
@@ -35,14 +39,20 @@ export function createLlmCredentialStore(storage: Storage, api: CredentialApi = 
   const checked = (value: CredentialStatus, reference: string, expected: boolean) => {
     if (value.credential_ref !== reference || value.has_key !== expected) throw new Error("Credential verification failed");
   };
-  async function apply(input: LlmSettings | null, migration = false): Promise<CredentialSnapshot> {
+  async function apply(input: LlmSettings | null, migration = false, strict = false): Promise<CredentialSnapshot> {
     let error = "";
     const previous = snapshot.settings;
     const next = input ? normalizeLlmSettings(input) : null;
     const staged: LlmProviderSettings[] = [];
+    const createdReferences: string[] = [];
+    const cleanupCreatedReferences = async () => {
+      for (const reference of createdReferences) {
+        try { await api.delete(reference); } catch { /* Preserve safe diagnostics; never echo native details. */ }
+      }
+    };
     // Preserve the captured legacy secret in session memory *before* any async/native work.
     for (const provider of next?.providers || []) {
-      if (provider.api_key?.trim()) setSessionCredential(provider.id!, provider.api_key.trim());
+      if (!strict && provider.api_key?.trim()) setSessionCredential(provider.id!, provider.api_key.trim());
     }
     for (const source of next?.providers || []) {
       const provider = { ...source };
@@ -58,6 +68,7 @@ export function createLlmCredentialStore(storage: Storage, api: CredentialApi = 
           reference = newReference();
           checked(await api.put(reference, secret), reference, true);
           checked(await api.status(reference), reference, true);
+          createdReferences.push(reference);
           provider.credential_ref = reference; provider.has_key = true;
         } catch {
           // Never persist a new plaintext key. Pending legacy bytes are handled separately below.
@@ -66,6 +77,10 @@ export function createLlmCredentialStore(storage: Storage, api: CredentialApi = 
           error = SESSION_ERROR;
           // Best-effort remove an unverified new slot; never delete an old configured slot here.
           try { if (reference) await api.delete(reference); } catch { /* Never echo native errors/secrets. */ }
+          if (strict) {
+            await cleanupCreatedReferences();
+            return snapshot = { settings: previous, error: "安全保存密钥失败，修改尚未提交，请重试。", migrationPending: false };
+          }
           if (old?.credential_ref) {
             // Preserve the prior verified slot if replacing it failed; draft key remains session-only.
             provider.credential_ref = old.credential_ref; provider.remember_key = true;
@@ -91,6 +106,10 @@ export function createLlmCredentialStore(storage: Storage, api: CredentialApi = 
       storage.setItem(LLM_SETTINGS_KEY, JSON.stringify(sanitizePersistedLlmSettings(next)));
       if (migration) pendingLegacy = undefined;
     } catch {
+      if (strict) {
+        await cleanupCreatedReferences();
+        return snapshot = { settings: previous, error: "连接设置写入失败，修改尚未提交，请重试。", migrationPending: false };
+      }
       error = pendingLegacy ? MIGRATION_ERROR + " 设置写入失败。" : PERSIST_ERROR;
       return snapshot = { settings: next, error, migrationPending: Boolean(pendingLegacy) };
     }
@@ -107,10 +126,27 @@ export function createLlmCredentialStore(storage: Storage, api: CredentialApi = 
             return snapshot = { settings: next, error: DELETE_ERROR, migrationPending: false };
           }
           const survivors = previous?.providers?.filter(p => !p.credential_ref || !deletedRefs.has(p.credential_ref));
-          const retained = survivors?.length ? normalizeLlmSettings({ ...previous, providers: survivors }) : null;
+          const retained = survivors?.length ? normalizeLlmSettings({ ...previous,
+            active_provider_id: strict && !survivors.some(p => p.id === previous?.active_provider_id) ? "" : previous?.active_provider_id,
+            providers: survivors }) : null;
           let deletionError = DELETE_ERROR;
           try { storage.setItem(LLM_SETTINGS_KEY, JSON.stringify(sanitizePersistedLlmSettings(retained))); }
-          catch { deletionError += " " + PERSIST_ERROR; }
+          catch {
+            if (strict) {
+              // The candidate metadata remains durable. Keep its verified slots and report the actual state.
+              for (const old of previous?.providers || []) {
+                if (!staged.some(p => p.id === old.id)) setSessionCredential(old.id!);
+              }
+              for (const provider of staged) {
+                const source = input?.providers?.find(p => p.id === provider.id);
+                if (provider.credential_ref) setSessionCredential(provider.id!);
+                else if (source && Object.hasOwn(source, "api_key")) setSessionCredential(provider.id!, source.api_key?.trim());
+              }
+              return snapshot = { settings: next, error: "配置已写入，但旧系统密钥清理及恢复配置失败，请重新载入后重试。", migrationPending: false };
+            }
+            deletionError += " " + PERSIST_ERROR;
+          }
+          if (strict) await cleanupCreatedReferences();
           return snapshot = { settings: retained, error: deletionError, migrationPending: false };
         }
       }
@@ -119,6 +155,10 @@ export function createLlmCredentialStore(storage: Storage, api: CredentialApi = 
       if (!staged.some(p => p.id === old.id)) setSessionCredential(old.id!);
     }
     for (const provider of staged) {
+      if (strict && !provider.credential_ref) {
+        const source = input?.providers?.find(p => p.id === provider.id);
+        if (source && Object.hasOwn(source, "api_key")) setSessionCredential(provider.id!, source.api_key?.trim());
+      }
       if (provider.credential_ref) setSessionCredential(provider.id!);
       // An explicit clear never leaves the former session key behind.
       if (input?.providers?.some(p => p.id === provider.id && Object.hasOwn(p, "api_key") && !p.api_key?.trim())) setSessionCredential(provider.id!);
@@ -145,15 +185,17 @@ export function createLlmCredentialStore(storage: Storage, api: CredentialApi = 
     })();
     return initialized;
   }
-  function set(update: LlmSettingsUpdate): Promise<CredentialSnapshot> {
+  function enqueue(update: LlmSettingsUpdate, strict: boolean): Promise<CredentialSnapshot> {
     const work = tail.then(async () => {
       await initialize();
       if (pendingLegacy) return snapshot = { ...snapshot, error: MIGRATION_ERROR, migrationPending: true };
-      return apply(typeof update === "function" ? update(snapshot.settings) : update);
+      return apply(typeof update === "function" ? update(snapshot.settings) : update, false, strict);
     });
     tail = work.catch(() => undefined);
     return work;
   }
+  function set(update: LlmSettingsUpdate) { return enqueue(update, false); }
+  function commit(update: LlmSettingsUpdate) { return enqueue(update, true); }
   function retryMigration(): Promise<CredentialSnapshot> {
     const work = tail.then(async () => {
       await initialize();
@@ -162,5 +204,5 @@ export function createLlmCredentialStore(storage: Storage, api: CredentialApi = 
     tail = work.catch(() => undefined);
     return work;
   }
-  return { initialize, set, retryMigration, getSnapshot: () => snapshot };
+  return { initialize, set, commit, retryMigration, getSnapshot: () => snapshot };
 }

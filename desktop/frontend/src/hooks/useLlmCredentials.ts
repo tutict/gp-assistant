@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { createLlmCredentialStore, type CredentialSnapshot, type LlmSettingsUpdate } from "../lib/llmCredentialStore";
+import { CredentialSaveError, createLlmCredentialStore, type CredentialSnapshot, type LlmSettingsUpdate } from "../lib/llmCredentialStore";
 
 let sharedStore: ReturnType<typeof createLlmCredentialStore> | undefined;
 function appStore() { return sharedStore ??= createLlmCredentialStore(window.localStorage); }
@@ -14,9 +14,10 @@ export function useLlmCredentials(store = appStore()) {
     return () => { alive = false; };
   }, [store]);
   const setLlmSettings = useCallback(async (update: LlmSettingsUpdate) => {
-    const next = await store.set(update);
+    const next = await store.commit(update);
     setSnapshot(next);
-    if (next.error) throw new Error(next.error);
+    if (next.error) throw new CredentialSaveError(next);
+    return next;
   }, [store]);
   const retryCredentialMigration = useCallback(async () => {
     const next = await store.retryMigration();

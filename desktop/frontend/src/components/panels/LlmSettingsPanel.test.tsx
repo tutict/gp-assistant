@@ -90,10 +90,14 @@ describe("LlmSettingsPanel provider configuration", () => {
     expect(renderer.root.find((node) => node.props.id === "llmApiKey").props.type).toBe("text");
 
     const save = renderer.root.find((node) => node.type === "button" && node.children.join("") === "保存");
+    expect(save.props.disabled).toBe(true);
+    postJsonMock.mockResolvedValue({ ok: true, elapsed_ms: 1, api_format: "openai_responses" });
+    await act(async () => renderer.root.find(node => node.type === "button" && node.children.includes("测试连接")).props.onClick());
     await act(async () => {
-      save.props.onClick();
+      await save.props.onClick();
     });
-    expect(renderer.root.findAll((node) => node.props.className === "llm-settings-body llm-switcher")).toHaveLength(0);
+    expect(renderer.root.findAll((node) => node.props.className === "llm-settings-body llm-switcher")).toHaveLength(1);
+    expect(save.props.disabled).toBe(true);
   });
 
   it("tests the configured inference protocol instead of only fetching models", async () => {
@@ -120,9 +124,7 @@ describe("LlmSettingsPanel provider configuration", () => {
       }),
       { timeoutMs: 35000 },
     );
-    expect(renderer.root.find((node) =>
-      typeof node.props.className === "string" && node.props.className.includes("llm-connection-state"),
-    ).children.join("")).toContain("42 ms");
+    expect(renderer.root.find(node => node.type === "span" && node.children.join("") === "42 ms")).toBeDefined();
   });
 
   it("keeps model discovery available for Anthropic-compatible relay endpoints", async () => {
@@ -174,8 +176,9 @@ describe("LlmSettingsPanel provider configuration", () => {
       await Promise.resolve();
     });
     expect(renderer.root.findAll((node) =>
-      typeof node.props.className === "string" && node.props.className.includes("llm-connection-state"),
+      node.props.className === "llm-connection-state success",
     )).toHaveLength(0);
+    expect(renderer.root.findByProps({ className: "llm-connection-state idle" })).toBeDefined();
   });
 });
 
@@ -205,6 +208,43 @@ describe("stored credential UX", () => {
   });
 });
 
+describe("explicit API configuration drafts", () => {
+  beforeEach(() => {
+    vi.stubGlobal("window", { setTimeout: vi.fn(), requestAnimationFrame: (callback: () => void) => callback() });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  });
+  afterEach(() => { postJsonMock.mockReset(); vi.unstubAllGlobals(); });
+
+  it("does not save an edited field or activate a selected connection", async () => {
+    const save = vi.fn();
+    const initial: LlmSettings = { ...initialSettings, providers: [
+      ...initialSettings.providers!, { id: "other", name: "备用连接", base_url: "https://other.example/v1", model: "other-model" },
+    ] };
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<LlmSettingsPanel settings={initial} onChange={save} />); });
+    await act(async () => renderer.root.findByProps({ className: "llm-settings-toggle" }).props.onClick());
+    await act(async () => renderer.root.findByProps({ id: "llmProviderName" }).props.onChange({ target: { value: "编辑中的名称" } }));
+    expect(save).not.toHaveBeenCalled();
+    const other = renderer.root.find(node => node.type === "button" && typeof node.props.className === "string"
+      && node.props.className.includes("llm-provider-card") && node.findAll(child => child.type === "strong").some(child => child.children.includes("备用连接")));
+    await act(async () => other.props.onClick());
+    expect(save).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+  });
+
+  it("tests the replacement draft key without using the stored reference", async () => {
+    const renderer = await renderOpenPanel({ active_provider_id: "stored", providers: [{ id: "stored", name: "已存连接",
+      base_url: "https://gateway.example/v1", model: "m", remember_key: true,
+      has_key: true, credential_ref: "gp-assistant.llm.stored" }] });
+    postJsonMock.mockResolvedValue({ ok: true, elapsed_ms: 1 });
+    await act(async () => renderer.root.findByProps({ id: "llmApiKey" }).props.onChange({ target: { value: "replacement-draft" } }));
+    await act(async () => renderer.root.find(node => node.type === "button" && node.children.includes("测试连接")).props.onClick());
+    expect(postJsonMock.mock.calls[0][1]).toHaveProperty("api_key", "replacement-draft");
+    expect(postJsonMock.mock.calls[0][1]).not.toHaveProperty("credential_ref");
+    await act(async () => renderer.unmount());
+  });
+});
+
 
 it("returns a requested model dialog to its external initiating control", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -222,4 +262,37 @@ it("returns a requested model dialog to its external initiating control", async 
   expect(toggle.focus).not.toHaveBeenCalled();
   await act(async () => renderer.unmount());
   vi.unstubAllGlobals();
+});
+
+it("focuses the model dialog and consumes Escape before enclosing settings shortcuts", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", { requestAnimationFrame: (callback: () => void) => callback() });
+  vi.stubGlobal("document", { body: { style: { overflow: "hidden" } }, addEventListener: vi.fn(), removeEventListener: vi.fn() });
+  const firstControl = { focus: vi.fn() };
+  const trigger = { focus: vi.fn() };
+  let renderer!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      renderer = create(<LlmSettingsPanel settings={null} onChange={vi.fn()} presentation="dialog" />, {
+        createNodeMock: (node) => {
+          const props = node.props as { className?: string; role?: string };
+          if (props.className === "llm-settings-toggle") return trigger;
+          if (props.role === "dialog") return { querySelector: () => firstControl };
+          return null;
+        },
+      });
+    });
+    await act(async () => renderer.root.findByProps({ className: "llm-settings-toggle" }).props.onClick());
+    expect(firstControl.focus).toHaveBeenCalledOnce();
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    await act(async () => renderer.root.findByProps({ role: "dialog", "aria-label": "模型连接配置" }).props.onKeyDown({ key: "Escape", preventDefault, stopPropagation }));
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(stopPropagation).toHaveBeenCalledOnce();
+    expect(renderer.root.findAllByProps({ role: "dialog", "aria-label": "模型连接配置" })).toHaveLength(0);
+    expect(trigger.focus).toHaveBeenCalledOnce();
+  } finally {
+    if (renderer) await act(async () => renderer.unmount());
+    vi.unstubAllGlobals();
+  }
 });

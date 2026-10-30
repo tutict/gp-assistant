@@ -800,34 +800,6 @@
   .agent-mode-tabs button {
     min-height: var(--touch-comfort);
   }
-  .llm-settings-body {
-    position: fixed;
-    z-index: var(--z-modal);
-    inset: var(--header-height) 0 calc(var(--bottom-nav-height) + var(--safe-bottom));
-    width: auto;
-    max-width: none;
-    max-height: none;
-    margin: 0;
-    padding: 8px;
-    overflow-y: auto;
-    border: 0;
-    border-radius: 0;
-    background: var(--bg);
-    transform: none;
-    box-shadow: none;
-  }
-  .llm-switcher-grid,
-.llm-editor-row,
-.llm-editor-row.compact {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
-  .llm-provider-list {
-    max-height: none;
-  }
-  .llm-provider-kind-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
   .watchlist-item {
     grid-template-columns: 96px minmax(0, 1fr) auto;
     min-height: var(--touch-comfort);
@@ -978,9 +950,6 @@
     bottom: 0;
   }
   .agent-rail-scrim {
-    inset: var(--header-height) 0 0 var(--sidebar-width);
-  }
-  .llm-settings-body {
     inset: var(--header-height) 0 0 var(--sidebar-width);
   }
   .panel-tab,
