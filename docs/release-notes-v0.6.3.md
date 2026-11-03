@@ -23,7 +23,7 @@ v0.6.3 延续 v0.6.2 的研究工作流，重点补强行情证据展示、筛�
 
 ## 发布产物
 
-- Windows x64 NSIS 安装程序：`desktop/src-tauri/target/release/bundle/nsis/股选优_0.6.3_x64-setup.exe`（33.86 MiB，尚未进行 Authenticode 签名）。
+- Windows x64 NSIS 安装程序：发布附件 `guxuanyou_0.6.3_windows_x64_setup.exe`（本机文件 `desktop/src-tauri/target/release/bundle/nsis/股选优_0.6.3_x64-setup.exe`，33.86 MiB，尚未进行 Authenticode 签名）。
 - Android ARM64 签名安装包：`desktop/src-tauri/gen/android/app/build/outputs/apk/universal/release/guxuanyou_0.6.3_android_aarch64_release_signed.apk`。
 - Android 清单：`applicationId=com.tutict.stockoptimizer`、`versionName=0.6.3`、`versionCode=603`；APK 签名方案 v2/v3 验证通过，证书 SHA-256 为 `9413a80ba4bf90ef051f3528fbf273ac99cd28e16e386f844889b967929fb191`。
 - Android APK SHA-256：`E13A359DC9562EE0C1B2CE6833EB1E554A16576FD90E80869F1B82026BB1FA3A`。

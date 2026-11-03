@@ -12,7 +12,7 @@
 
 请前往 [股选优 v0.6.3 过渡版](https://github.com/tutict/gp-assistant/releases/tag/v0.6.3) 下载当前稳定版，或在 [GitHub Releases](https://github.com/tutict/gp-assistant/releases) 查看全部版本：
 
-- **Windows 10/11 x64**：[股选优_0.6.3_x64-setup.exe](https://github.com/tutict/gp-assistant/releases/download/v0.6.3/股选优_0.6.3_x64-setup.exe)（当前安装包未进行 Authenticode 签名）
+- **Windows 10/11 x64**：[guxuanyou_0.6.3_windows_x64_setup.exe](https://github.com/tutict/gp-assistant/releases/download/v0.6.3/guxuanyou_0.6.3_windows_x64_setup.exe)（当前安装包未进行 Authenticode 签名）
 - **Android 7.0 及以上**：[guxuanyou_0.6.3_android_aarch64_release_signed.apk](https://github.com/tutict/gp-assistant/releases/download/v0.6.3/guxuanyou_0.6.3_android_aarch64_release_signed.apk)（APK 已签名，包名 `com.tutict.stockoptimizer`）
 
 Android 安装时如果系统提示“未知来源应用”，请只为当前文件来源临时授权。升级安装必须使用相同签名的 APK；正式发布包会保留一致的应用签名。
