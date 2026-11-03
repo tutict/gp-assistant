@@ -5876,6 +5876,8 @@ pub(crate) fn sanitize_path_part(value: &str) -> String {
         .collect();
     if part.is_empty() {
         part.push_str("unknown");
+    } else if part.chars().all(|ch| ch == '.') {
+        part = format!("~{}", part.len());
     }
     part
 }
@@ -5883,6 +5885,38 @@ pub(crate) fn sanitize_path_part(value: &str) -> String {
 #[cfg(test)]
 mod external_market_cache_tests {
     use super::*;
+
+    #[test]
+    fn sanitize_path_part_keeps_dot_only_components_inside_cache_root() {
+        let root = std::env::temp_dir().join(format!(
+            "gp-assistant-safe-rag-path-{}-{}",
+            std::process::id(),
+            epoch_millis()
+        ));
+        let cache_root = root.join("upstream-rag");
+        fs::create_dir_all(&cache_root).unwrap();
+        let canonical_cache_root = fs::canonicalize(&cache_root).unwrap();
+
+        for input in [".", "..", "...", "....", "../outside", "..\\outside"] {
+            let component = sanitize_path_part(input);
+            assert!(
+                !matches!(component.as_str(), "." | ".."),
+                "{input:?} must not remain a special path component"
+            );
+            let candidate = cache_root.join(component);
+            fs::create_dir_all(&candidate).unwrap();
+            let canonical_candidate = fs::canonicalize(&candidate).unwrap();
+            assert!(
+                canonical_candidate.starts_with(&canonical_cache_root),
+                "{input:?} escaped the cache root to {}",
+                canonical_candidate.display()
+            );
+        }
+
+        assert_eq!(sanitize_path_part("600000.SH"), "600000.SH");
+        assert_eq!(sanitize_path_part("v1.2.3"), "v1.2.3");
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn cache_version_tracks_sqlite_and_legacy_source_changes() {

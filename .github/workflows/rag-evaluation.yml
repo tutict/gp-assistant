@@ -36,9 +36,12 @@ jobs:
       - name: Run fixed Rust retrieval and privacy gates
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib research::tests::fixed_retrieval_eval_suite_enforces_governance_invariants -- --exact
       - name: Run Rust privacy and Agent trace gates
+        shell: pwsh
         run: |
           cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib research::tests::schema_v2_migration_keeps_user_imports_private_and_public_docs_exportable -- --exact
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib rig_runtime::tests::remote_agent_evidence_fallback_drops_unapproved_document_text -- --exact
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Compile eval-replay feature and run replay regression
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --features eval-replay --lib eval_replay::tests::actual_agent_routing_does_not_use_expected_tools_as_an_execution_plan -- --exact
       - name: Compile gepa-lab feature and run shared replay gates

@@ -494,6 +494,7 @@ export const ScreenResultView = memo(function ScreenResultView({
   criteriaSnapshot?: FilterCriteria;
 }) {
   const resultRecord = result as ScreenResult;
+  const notes = resultRecord.notes || [];
   const groups = useMemo(
     () => grouped ? normalizeSectorGroups(result as SectorScreenResult) : normalizeScreenGroups(result),
     [grouped, result],
@@ -567,7 +568,12 @@ export const ScreenResultView = memo(function ScreenResultView({
         <StockList items={rows} watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} onObserveStock={onObserveStock} onNewsStock={onNewsStock} />
       )}
 
-      {resultRecord.notes?.length ? <div className="notes">{resultRecord.notes.map((note) => <p key={note}>{note}</p>)}</div> : null}
+      {notes.length ? (
+        <details className="notes-block">
+          <summary>数据覆盖提示</summary>
+          <div className="notes">{notes.map((note) => <p key={note}>{note}</p>)}</div>
+        </details>
+      ) : null}
 
       {onRunBacktest && rows.length > 0 && (
         <div className="result-actions screen-result-actions">

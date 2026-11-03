@@ -13,6 +13,26 @@ afterAll(() => {
 });
 
 describe("ScreenResultView", () => {
+  it("keeps history coverage warnings in expandable notes while retaining other screening notes", () => {
+    const markup = renderToStaticMarkup(<ScreenResultView result={{ total: 1, returned: 1,
+      items: [{ stock: { code: "688279.SH", name: "峰岹科技", price: 173.73 }, score: 10.46, reasons: [] }],
+      notes: [
+        "14 只候选的日线落后行情，未使用旧指标参与当前趋势排名。",
+        "605358.SH：日线截至 2026-09-04，落后于 2026-10-30 的行情，需补齐日线后重新计算依据。",
+        "Skipped 2 stocks without usable OHLC history.",
+        "Trend screen OHLCV prefetch: candidates 50, missing 14, fetched 12, failed 2.",
+        "保留的选股说明。",
+      ],
+    }} grouped={false} watchlist={[]} onToggleWatchlist={() => undefined} />);
+    const visibleMarkup = markup.split('<details class="raw-json">')[0];
+    expect(visibleMarkup).toContain("数据覆盖提示");
+    expect(visibleMarkup).toContain('class="notes-block"');
+    expect(visibleMarkup).toContain("605358.SH");
+    expect(visibleMarkup).toContain("14 只候选");
+    expect(visibleMarkup).toContain("Skipped 2");
+    expect(visibleMarkup).toContain("OHLCV prefetch");
+    expect(visibleMarkup).toContain("保留的选股说明");
+  });
   it("shows the calibrated parameter identity alongside its actual industry sample count", () => {
     const markup = renderToStaticMarkup(<ScreenResultView
       result={{ total: 1, returned: 1, algorithm_version: "adaptive_swing_v2", scoring_revision: "unit-rank-fix/v1", parameter_set_id: "parameter-a", metric_contract_version: 2,
