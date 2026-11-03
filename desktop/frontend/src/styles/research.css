@@ -119,10 +119,6 @@
     color: var(--text);
   }
 
-  [data-theme="light"] .research-workspace {
-    --text-tertiary: var(--text-secondary);
-  }
-
   .research-workspace button,
   .research-workspace input,
   .research-workspace textarea {
@@ -2577,7 +2573,7 @@
 .research-stock-row-wrap { display: block; }
 .research-stock-row > span { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
 .research-stock-row strong { color: var(--text); font-size: var(--research-body); }
-.research-stock-row small { display: block; color: var(--text-secondary); font-size: var(--fs-data); font-weight: 400; }
+.research-stock-row small { display: block; color: var(--text-tertiary); font-size: var(--fs-data); font-weight: 400; }
 .research-workspace .research-stream { display: block; height: 100%; overflow: hidden; background: var(--surface); }
 .research-workspace .research-stream-body { max-width: 960px; margin-inline: auto; padding: var(--space-4) var(--space-5); }
 .research-reading-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-3); margin-bottom: var(--space-6); }

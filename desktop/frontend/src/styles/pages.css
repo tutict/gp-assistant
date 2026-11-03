@@ -507,7 +507,7 @@
   padding: 0 var(--space-1);
   border-radius: var(--radius-xs);
   background: var(--surface-3);
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   font-size: var(--fs-caption);
   line-height: 18px;
   text-align: center;
