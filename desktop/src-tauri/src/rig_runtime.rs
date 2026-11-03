@@ -2326,6 +2326,7 @@ mod tests {
                         Err(error) => panic!("provider fixture accept failed: {error}"),
                     }
                 };
+                connection.set_nonblocking(false).unwrap();
                 connection
                     .set_read_timeout(Some(std::time::Duration::from_secs(5)))
                     .unwrap();
