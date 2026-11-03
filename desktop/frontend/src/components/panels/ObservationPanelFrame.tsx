@@ -10,6 +10,7 @@ export interface ObservationPanelFrameProps {
   capability: MarketCapability;
   issues: string[];
   actions: ReactNode;
+  headingMeta?: ReactNode;
   children: ReactNode;
   className?: string;
   showDiagnostics?: boolean;
@@ -23,6 +24,7 @@ export function ObservationPanelFrame({
   capability,
   issues,
   actions,
+  headingMeta,
   children,
   className,
   showDiagnostics = true,
@@ -46,7 +48,8 @@ export function ObservationPanelFrame({
       <header className="panel-heading observation-panel-frame__heading">
         <div>
           <span className="eyebrow">{marketLabel(market)}观察</span>
-          <h2>{title}（{security.code}）</h2>
+          <h2>{title}<span className="observation-panel-frame__symbol">（{security.code}）</span></h2>
+          {headingMeta}
           {showDiagnostics ? <p className="observation-panel-frame__identity">证券身份：{security.market} · {security.kind} · {security.code}</p> : null}
         </div>
         <div className="observation-panel-frame__actions">{actions}</div>

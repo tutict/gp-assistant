@@ -473,6 +473,47 @@ const mockDataStatus = {
   stale: false,
 };
 
+const mockMarketCapabilities = (market = "cn") => [
+  {
+    market, id: "security_directory", status: "limited",
+    reason: market === "cn" ? "A-share cache is readable, but complete exchange-universe coverage and public-app data rights are not evidenced" : "HKEX directory cache is readable; live directory refresh remains disabled pending written automated-access permission",
+    coverage: { requested_count: 5927, available_count: 5927, missing_count: 0, start_date: null, end_date: "2026-08-04", missing_fields: ["provider_rights"] },
+    sources: [{ source_id: "tencent", domain: "security_master", market, fetched_at: "2026-08-04T06:20:00Z", observed_at: "2026-08-04", disclosed_at: null, report_period: null, freshness: "unknown", verification_status: "unverified", quality_flags: ["provider_rights_unverified"], coverage: null }],
+  },
+  {
+    market, id: "observe", status: "limited",
+    reason: market === "cn" ? "A-share observation uses cached quote/history; provider rights and per-security history freshness are not evidenced" : "observation adapter or required market data is not registered",
+    coverage: { requested_count: 5927, available_count: 4719, missing_count: 1208, start_date: "2026-01-01", end_date: "2026-08-04", missing_fields: ["provider_rights", "per_security_freshness_unknown"] },
+    sources: [{ source_id: "legacy_market_cache", domain: "daily_history", market, fetched_at: "2026-08-04T06:20:00Z", observed_at: "2026-08-04", disclosed_at: null, report_period: null, freshness: "unknown", verification_status: "unverified", quality_flags: ["provider_rights_unverified", "external_cache_status_only"], coverage: null }],
+  },
+  ...["financial_snapshot", "screening", "backtest", "news_research", "sentiment", "research_agent"].map((id) => ({
+    market, id, status: "unavailable", reason: "当前能力尚未满足数据覆盖和授权条件", coverage: null, sources: [],
+  })),
+];
+
+const mockEmptySentimentSnapshot = (stockCode) => ({
+  snapshot_id: "ui-harness-empty-sentiment",
+  stock_code: stockCode,
+  stock_name: "",
+  industry: null,
+  window_days: 30,
+  cutoff: 0,
+  generation: "ui-harness-empty",
+  rule_version: "ui-harness-empty",
+  evidence: [],
+  timeline: [],
+  metrics: {},
+  coverage: {
+    facts: 0,
+    discussions: 0,
+    price_days: 0,
+    history_days: 0,
+    industry_members: 0,
+    industry_covered: 0,
+    gaps: ["ui_harness_no_sentiment_data"],
+  },
+});
+
 const mockResearchMessagesEmpty = [];
 const fixedResearchNow = Date.parse("2026-08-16T23:59:00+08:00");
 const mockResearchMessagesData = [
@@ -973,6 +1014,19 @@ async function installHarnessState(page, observeResult = mockObserveResult, rese
     ));
   }, mockStocks);
   await page.route("**/api/data-sources/status", (route) => route.fulfill({ json: mockDataStatus }));
+  await page.route("**/api/market/capabilities*", (route) => {
+    const market = new URL(route.request().url()).searchParams.get("market") || "cn";
+    return route.fulfill({ json: mockMarketCapabilities(market) });
+  });
+  await page.route("**/api/sentiment/snapshot", (route) => {
+    const payload = route.request().postDataJSON();
+    const stockCode = typeof payload?.stock_code === "string" ? payload.stock_code : "";
+    return route.fulfill({ json: mockEmptySentimentSnapshot(stockCode) });
+  });
+  await page.route("**/api/sentiment/latest", (route) => route.fulfill({ json: { analysis: null } }));
+  await page.route("**/api/sentiment/history", (route) => route.fulfill({ json: { items: [] } }));
+  await page.route("**/api/agent/prompt-overlays", (route) => route.fulfill({ json: { profiles: [] } }));
+  await page.route("**/api/agent/metrics*", (route) => route.fulfill({ json: { items: [] } }));
   await page.route("**/api/data-sources/refresh-universe", (route) => route.fulfill({
     json: { status: mockDataStatus, refreshed: true, notes: ["截图 harness 注入的股票池刷新日志。"] },
   }));

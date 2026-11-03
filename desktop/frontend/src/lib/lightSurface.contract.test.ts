@@ -19,7 +19,7 @@ describe("light surface edges", () => {
     expect(sentiment).toMatch(/\.sentiment-empty \{[^}]*border: 1px solid var\(--line\)/);
     expect(sentiment).toMatch(/\.sentiment-notice, \.sentiment-error \{[^}]*border: 1px solid var\(--line\)/);
     expect(sentiment).toMatch(/\.sentiment-progress \{[^}]*border: 1px solid var\(--line\)/);
-    expect(sentiment).toMatch(/\.sentiment-quality \{[^}]*border: 1px solid var\(--line\)[^}]*border-left: 2px solid var\(--control-line\)/);
+    expect(sentiment).toMatch(/\.sentiment-quality \{[^}]*border: 1px solid var\(--line\)[^}]*border-left: 1px solid var\(--control-line\)/);
     expect(pages).toMatch(/\.watchlist-item \{[\s\S]*?border: 1px solid var\(--line\)/);
     expect(pages).toMatch(/\.raw-result \{[\s\S]*?border: 1px solid var\(--line\)/);
     expect(pages).toContain(".checklist span { border: 1px solid var(--line-soft); }");
@@ -34,13 +34,13 @@ describe("light surface edges", () => {
     const shell = read("shell.css");
     const pages = read("pages.css");
     const research = read("research.css");
-    expect(settings).toMatch(/\.settings-sheet \{[\s\S]*?box-shadow: 0 24px 60px var\(--elev-float\)/);
-    expect(shell).toMatch(/\.shortcut-help \{[\s\S]*?box-shadow: 0 24px 60px var\(--elev-float\)/);
-    expect(pages).toMatch(/\.stock-suggest,\s*\.market-confirm \{[\s\S]*?box-shadow: 0 12px 28px var\(--elev-float\)/);
-    expect(pages).toMatch(/\.screen-refresh-maintenance-panel \{[\s\S]*?box-shadow: 0 12px 28px var\(--elev-float\)/);
-    expect(pages).toMatch(/\.equity-chart-tooltip \{[\s\S]*?box-shadow: 0 5px 18px var\(--elev-float\)/);
+    expect(settings).toMatch(/\.settings-sheet \{[\s\S]*?box-shadow: var\(--shadow-sheet\)/);
+    expect(shell).toMatch(/\.shortcut-help \{[\s\S]*?box-shadow: var\(--shadow-sheet\)/);
+    expect(pages).toMatch(/\.stock-suggest,\s*\.market-confirm \{[\s\S]*?box-shadow: var\(--shadow-result\)/);
+    expect(pages).toMatch(/\.screen-refresh-maintenance-panel \{[\s\S]*?box-shadow: var\(--shadow-result\)/);
+    expect(pages).toMatch(/\.equity-chart-tooltip \{[\s\S]*?box-shadow: var\(--shadow-result\)/);
     expect(pages).toMatch(/\.agent-run-drawer \{[\s\S]*?box-shadow: -12px 0 28px var\(--elev-float\)/);
-    expect(research).toMatch(/\.research-error \.panel-feedback \{[\s\S]*?box-shadow: 0 12px 30px var\(--elev-float\)/);
+    expect(research).toMatch(/\.research-error \.panel-feedback \{[\s\S]*?box-shadow: var\(--shadow-result\)/);
     expect(research).toMatch(/\.research-evidence\.has-selection \{[\s\S]*?box-shadow: 0 16px 50px var\(--elev-float\)/);
     expect(research).not.toContain("rgb(21 31 42 / 18%)");
     const settingsRule = settings.slice(settings.indexOf(".settings-sheet {"), settings.indexOf(".settings-sheet {") + 700);

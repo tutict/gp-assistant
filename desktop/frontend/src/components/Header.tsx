@@ -70,6 +70,7 @@ export function Header({
     ?? dataStatus?.quote_generated_at
     ?? dataStatus?.generated_at
     ?? dataStatus?.universe_updated_at;
+  const cacheFreshness = freshnessLabel(dataStatus);
   const helpRef = useRef<HTMLElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
@@ -126,8 +127,11 @@ export function Header({
           <span><em>数据</em><strong>{formatMarketRefreshDate(refreshDate)}</strong></span>
           <span title={dataStatus?.cache_bytes == null ? undefined : "缓存 " + formatBytes(dataStatus.cache_bytes)}>
             <em>缓存</em>
-            <strong className={freshnessLabel(dataStatus) === "待更新" ? "status-warning" : ""}>
-              {freshnessLabel(dataStatus)}
+            <strong
+              className={`header-cache-state${cacheFreshness === "待更新" ? " status-warning" : ""}`}
+              data-state={cacheFreshness === "最新" ? "fresh" : cacheFreshness === "待更新" ? "stale" : "unknown"}
+            >
+              {cacheFreshness}
             </strong>
           </span>
         </div>

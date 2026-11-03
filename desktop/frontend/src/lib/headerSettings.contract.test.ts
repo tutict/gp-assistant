@@ -28,6 +28,11 @@ describe("header settings contract", () => {
     expect(shell).toMatch(/\.settings-trigger,\s*\.shortcut-help-trigger\s*\{[^}]*min-height:\s*36px/s);
   });
 
+  it("keeps the theme icon unboxed while retaining a visible keyboard focus", () => {
+    expect(ruleBody(shell, ".theme-toggle")).toMatch(/border\s*:\s*0/);
+    expect(shell).toMatch(/\.theme-toggle:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--accent-text\)/s);
+  });
+
   it("keeps desktop search in normal flex flow without overlapping status", () => {
     const search = ruleBody(shell, ".header-search");
     expect(search).toMatch(/flex\s*:\s*1 1 320px/);

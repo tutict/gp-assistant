@@ -22,10 +22,13 @@
       html {
         --splash-bg: #0d1014;
         --splash-text: #f4f7fa;
+        --splash-muted: #a9b4bf;
+        --splash-accent: #a92924;
       }
       html[data-theme="light"] {
-        --splash-bg: #f4f6f8;
-        --splash-text: #18212a;
+        --splash-bg: #f6f8fb;
+        --splash-text: #16212b;
+        --splash-muted: #5f6f7d;
       }
       html, body {
         background: var(--splash-bg);
@@ -41,26 +44,34 @@
         place-items: center;
         background: var(--splash-bg);
         color: var(--splash-text);
-        font-family: system-ui, sans-serif;
+        font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
       }
       #bootSplash .splash-logo {
-        width: 48px; height: 48px;
-        border: 3px solid rgba(217, 37, 29, 0.2);
-        border-top-color: #d9251d;
+        width: 48px;
+        height: 48px;
+        border: 3px solid color-mix(in srgb, var(--splash-accent) 20%, transparent);
+        border-top-color: var(--splash-accent);
         border-radius: 50%;
         animation: splashSpin 0.8s linear infinite;
         margin-bottom: 16px;
       }
+      .boot-splash-content {
+        text-align: center;
+      }
       #bootSplash .splash-text {
-        font-size: 0.9rem;
-        opacity: 0.6;
+        color: var(--splash-muted);
+        font-size: 0.875rem;
+        line-height: 1.55;
       }
       @keyframes splashSpin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) {
+        #bootSplash .splash-logo { animation: none; }
+      }
     </style>
   </head>
   <body>
     <div id="bootSplash">
-      <div style="text-align: center;">
+      <div class="boot-splash-content">
         <div class="splash-logo"></div>
         <div class="splash-text">股选优启动中…</div>
       </div>

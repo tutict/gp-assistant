@@ -95,16 +95,16 @@ describe("mobile UI density contract", () => {
 
   it("keeps agent conversation history as compact frameless rows", () => {
     expect(componentsCss).toMatch(
-      /\.agent-history-item\s*\{[^}]*min-height:\s*40px[^}]*border:\s*0[^}]*border-radius:\s*999px/,
+      /\.agent-history-item\s*\{[^}]*min-height:\s*40px[^}]*border:\s*0[^}]*border-radius:\s*var\(--radius-xs\)/,
     );
     expect(componentsCss).toMatch(
-      /\.agent-history-item\.active\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--agent-accent-soft\) 24%, transparent\)/,
+      /\.agent-history-item\.active\s*\{[^}]*background:\s*var\(--accent-soft\)/,
     );
     expect(componentsCss).toMatch(
       /\.agent-history-main\s*\{[^}]*-webkit-tap-highlight-color:\s*transparent/,
     );
     expect(componentsCss).toMatch(
-      /\.agent-history-main:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--accent-strong\)/,
+      /\.agent-history-main:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--accent-text\)/,
     );
   });
 

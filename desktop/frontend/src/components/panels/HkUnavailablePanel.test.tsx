@@ -22,7 +22,7 @@ describe("HkUnavailablePanel", () => {
     expect(text).toContain("港股回测");
     expect(text).toContain("未开放");
     expect(text).toContain("point-in-time daily history and corporate actions are not registered");
-    expect(text).toContain("corporate_actions");
+    expect(text).toContain("daily history、corporate actions");
     await act(async () => { renderer.root.findByProps({ children: "切换到 A 股" }).props.onClick(); });
     expect(onSwitchMarket).toHaveBeenCalledTimes(1);
     expect(text).not.toContain("MVP");

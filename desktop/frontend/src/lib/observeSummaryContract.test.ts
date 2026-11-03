@@ -188,10 +188,10 @@ describe("observe summary layout contract", () => {
     expect(cssRule(pagesCss, ".capital-quant-lanes")).not.toContain("border-top");
   });
 
-  it("keeps mobile observe bands collapsed without platform classes", () => {
+  it("keeps mobile observe bands readable without platform classes", () => {
     expect(responsiveCss).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.observe-decision-grid\s*\{[^}]*grid-template-columns:\s*1fr/);
     expect(responsiveCss).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.observe-special-quant\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
-    expect(responsiveCss).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.observe-key-metrics\s*\{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
+    expect(responsiveCss).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.observe-key-metrics\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
     expect(responsiveCss).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.capital-quant-lanes\s*\{[^}]*grid-template-columns:\s*1fr/);
     expect(responsiveCss).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.capital-main-flow \.capital-quant-metrics\s*\{[^}]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/);
     expect(responsiveCss).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.observe-next-signal\s*\{[^}]*grid-template-columns:\s*1fr/);

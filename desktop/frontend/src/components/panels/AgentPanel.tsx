@@ -15,8 +15,6 @@ import { LlmSettingsPanel } from "./LlmSettingsPanel";
 import { IconButton } from "../ui/IconButton";
 import { createEvolutionReview, extractEvolutionEvidenceIds, type EvolutionReview } from "../../lib/evolution";
 import { EvolutionReviewCard } from "./EvolutionReviewCard";
-import type { MarketCapability } from "../../lib/marketDomain";
-import { MarketCapabilityPopover } from "../ui/MarketCapabilityPopover";
 
 interface AgentPanelProps {
   llmSettings: LlmSettings | null;
@@ -25,8 +23,6 @@ interface AgentPanelProps {
   onWatchlistChange: (items: WatchlistItem[]) => void;
   draftPrompt?: string;
   draftRequestId?: number;
-  marketCapabilities?: MarketCapability[] | null;
-  marketCapabilityError?: string | null;
 }
 
 interface ChatMessage {
@@ -104,7 +100,7 @@ function publishConversationDeletion(event: ConversationDeletionEvent) {
   for (const listener of conversationDeletionListeners) listener(event);
 }
 
-export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatchlistChange, draftPrompt, draftRequestId, marketCapabilities, marketCapabilityError }: AgentPanelProps) {
+export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatchlistChange, draftPrompt, draftRequestId }: AgentPanelProps) {
   const [failedLedgerDeletionIds, ledgerDeletionMarkerIds, syncLedgerDeletionIds] = usePersistentLedgerDeletionIds();
   const workspace = useWorkspaceStore();
   const workspaceStatus = useWorkspaceStatus();
@@ -742,40 +738,32 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
           onClick={() => setRailCollapsed(true)}
           aria-label="关闭对话栏"
         />
-        <div className="agent-mobile-actions" aria-label="Agent 移动端操作">
-          <IconButton
-            className="agent-mobile-menu"
-            onClick={() => setRailCollapsed(false)}
-            label="展开对话栏"
-            icon={<Menu size={18} aria-hidden="true" />}
-          />
-          <IconButton
-            className="agent-mobile-new"
-            onClick={() => {
-              startNewChat();
-              setRailCollapsed(true);
-            }}
-            label="新建对话"
-            icon={<Plus size={18} aria-hidden="true" />}
-          />
-          <IconButton
-            className="agent-mobile-history"
-            onClick={(event) => openRunHistory(event.currentTarget)}
-            label="复盘"
-            title="复盘"
-            icon={<History size={18} aria-hidden="true" />}
-          />
-        </div>
         <div className="agent-thread-toolbar">
+          <div className="agent-mobile-actions" aria-label="Agent 移动端操作">
+            <IconButton
+              className="agent-mobile-menu"
+              onClick={() => setRailCollapsed(false)}
+              label="展开对话栏"
+              icon={<Menu size={18} aria-hidden="true" />}
+            />
+            <IconButton
+              className="agent-mobile-new"
+              onClick={() => {
+                startNewChat();
+                setRailCollapsed(true);
+              }}
+              label="新建对话"
+              icon={<Plus size={18} aria-hidden="true" />}
+            />
+            <IconButton
+              className="agent-mobile-history"
+              onClick={(event) => openRunHistory(event.currentTarget)}
+              label="复盘"
+              title="复盘"
+              icon={<History size={18} aria-hidden="true" />}
+            />
+          </div>
           <strong>{activeConversation?.title || "新对话"}</strong>
-          {marketCapabilities !== undefined ? <MarketCapabilityPopover
-            market="cn"
-            label="A 股数据状态"
-            capabilities={marketCapabilities}
-            capabilityIds={["research_agent"]}
-            loading={!marketCapabilities && !marketCapabilityError}
-            error={marketCapabilityError}
-          /> : null}
           <button
             type="button"
             className="icon-button agent-thread-history"

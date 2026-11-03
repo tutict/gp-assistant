@@ -1,118 +1,400 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-06-18T00:00:00+08:00",
+  "generatedAt": "2026-10-30T16:46:25.740Z",
   "title": "Design System: 股选优",
   "extensions": {
     "colorMeta": {
       "primary": {
         "role": "primary",
-        "displayName": "Exchange Cyan",
-        "canonical": "#48BFD2",
-        "tonalRamp": ["#06262C", "#0B4A54", "#0F7B8A", "#2095A6", "#48BFD2", "#86D8E4", "#BDEEF4", "#E9FAFC"]
+        "displayName": "Research Red",
+        "canonical": "#D83D35",
+        "tonalRamp": [
+          "oklch(15% 0.19320 27.71)",
+          "oklch(25% 0.19320 27.71)",
+          "oklch(35% 0.19320 27.71)",
+          "oklch(45% 0.19320 27.71)",
+          "oklch(55% 0.19320 27.71)",
+          "oklch(65% 0.19320 27.71)",
+          "oklch(80% 0.19320 27.71)",
+          "oklch(95% 0.19320 27.71)"
+        ]
+      },
+      "primary-deep": {
+        "role": "primary",
+        "displayName": "Deep Research Red",
+        "canonical": "#A92924",
+        "tonalRamp": [
+          "oklch(15% 0.16538 27.57)",
+          "oklch(25% 0.16538 27.57)",
+          "oklch(35% 0.16538 27.57)",
+          "oklch(45% 0.16538 27.57)",
+          "oklch(55% 0.16538 27.57)",
+          "oklch(65% 0.16538 27.57)",
+          "oklch(80% 0.16538 27.57)",
+          "oklch(95% 0.16538 27.57)"
+        ]
       },
       "accent": {
         "role": "secondary",
-        "displayName": "Audit Amber",
-        "canonical": "#D97706",
-        "tonalRamp": ["#2A1302", "#5B2A04", "#8B4505", "#B95E05", "#D97706", "#F0A942", "#F7D39A", "#FFF3DD"]
+        "displayName": "Composite Score Gold",
+        "canonical": "#F3C451",
+        "tonalRamp": [
+          "oklch(15% 0.14056 86.44)",
+          "oklch(25% 0.14056 86.44)",
+          "oklch(35% 0.14056 86.44)",
+          "oklch(45% 0.14056 86.44)",
+          "oklch(55% 0.14056 86.44)",
+          "oklch(65% 0.14056 86.44)",
+          "oklch(80% 0.14056 86.44)",
+          "oklch(95% 0.14056 86.44)"
+        ]
       },
       "background-dark": {
         "role": "neutral",
         "displayName": "Graphite Background",
-        "canonical": "#0D1116",
-        "tonalRamp": ["#06080B", "#0D1116", "#151B22", "#1D252D", "#2B3844", "#556675", "#9BAAB7", "#F2F7FA"]
+        "canonical": "#0D1014",
+        "tonalRamp": [
+          "oklch(15% 0.00966 255.65)",
+          "oklch(25% 0.00966 255.65)",
+          "oklch(35% 0.00966 255.65)",
+          "oklch(45% 0.00966 255.65)",
+          "oklch(55% 0.00966 255.65)",
+          "oklch(65% 0.00966 255.65)",
+          "oklch(80% 0.00966 255.65)",
+          "oklch(95% 0.00966 255.65)"
+        ]
+      },
+      "surface-dark": {
+        "role": "neutral",
+        "displayName": "Panel Graphite",
+        "canonical": "#14191F",
+        "tonalRamp": [
+          "oklch(15% 0.01414 253.14)",
+          "oklch(25% 0.01414 253.14)",
+          "oklch(35% 0.01414 253.14)",
+          "oklch(45% 0.01414 253.14)",
+          "oklch(55% 0.01414 253.14)",
+          "oklch(65% 0.01414 253.14)",
+          "oklch(80% 0.01414 253.14)",
+          "oklch(95% 0.01414 253.14)"
+        ]
+      },
+      "surface-raised-dark": {
+        "role": "neutral",
+        "displayName": "Raised Graphite",
+        "canonical": "#222A33",
+        "tonalRamp": [
+          "oklch(15% 0.02011 251.56)",
+          "oklch(25% 0.02011 251.56)",
+          "oklch(35% 0.02011 251.56)",
+          "oklch(45% 0.02011 251.56)",
+          "oklch(55% 0.02011 251.56)",
+          "oklch(65% 0.02011 251.56)",
+          "oklch(80% 0.02011 251.56)",
+          "oklch(95% 0.02011 251.56)"
+        ]
+      },
+      "text-dark": {
+        "role": "neutral",
+        "displayName": "Ink Text",
+        "canonical": "#F4F7FA",
+        "tonalRamp": [
+          "oklch(15% 0.00513 247.88)",
+          "oklch(25% 0.00513 247.88)",
+          "oklch(35% 0.00513 247.88)",
+          "oklch(45% 0.00513 247.88)",
+          "oklch(55% 0.00513 247.88)",
+          "oklch(65% 0.00513 247.88)",
+          "oklch(80% 0.00513 247.88)",
+          "oklch(95% 0.00513 247.88)"
+        ]
+      },
+      "muted-dark": {
+        "role": "neutral",
+        "displayName": "Muted Steel",
+        "canonical": "#A9B4BF",
+        "tonalRamp": [
+          "oklch(15% 0.01999 248.09)",
+          "oklch(25% 0.01999 248.09)",
+          "oklch(35% 0.01999 248.09)",
+          "oklch(45% 0.01999 248.09)",
+          "oklch(55% 0.01999 248.09)",
+          "oklch(65% 0.01999 248.09)",
+          "oklch(80% 0.01999 248.09)",
+          "oklch(95% 0.01999 248.09)"
+        ]
+      },
+      "border-dark": {
+        "role": "neutral",
+        "displayName": "Workbench Line",
+        "canonical": "#303943",
+        "tonalRamp": [
+          "oklch(15% 0.02140 251.19)",
+          "oklch(25% 0.02140 251.19)",
+          "oklch(35% 0.02140 251.19)",
+          "oklch(45% 0.02140 251.19)",
+          "oklch(55% 0.02140 251.19)",
+          "oklch(65% 0.02140 251.19)",
+          "oklch(80% 0.02140 251.19)",
+          "oklch(95% 0.02140 251.19)"
+        ]
+      },
+      "background-light": {
+        "role": "neutral",
+        "displayName": "Light Background",
+        "canonical": "#F6F8FB",
+        "tonalRamp": [
+          "oklch(15% 0.00453 258.32)",
+          "oklch(25% 0.00453 258.32)",
+          "oklch(35% 0.00453 258.32)",
+          "oklch(45% 0.00453 258.32)",
+          "oklch(55% 0.00453 258.32)",
+          "oklch(65% 0.00453 258.32)",
+          "oklch(80% 0.00453 258.32)",
+          "oklch(95% 0.00453 258.32)"
+        ]
+      },
+      "surface-light": {
+        "role": "neutral",
+        "displayName": "Light Surface",
+        "canonical": "#FFFFFF",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(25% 0.00000 0.00)",
+          "oklch(35% 0.00000 0.00)",
+          "oklch(45% 0.00000 0.00)",
+          "oklch(55% 0.00000 0.00)",
+          "oklch(65% 0.00000 0.00)",
+          "oklch(80% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      },
+      "text-light": {
+        "role": "neutral",
+        "displayName": "Light Text",
+        "canonical": "#16212B",
+        "tonalRamp": [
+          "oklch(15% 0.02478 246.46)",
+          "oklch(25% 0.02478 246.46)",
+          "oklch(35% 0.02478 246.46)",
+          "oklch(45% 0.02478 246.46)",
+          "oklch(55% 0.02478 246.46)",
+          "oklch(65% 0.02478 246.46)",
+          "oklch(80% 0.02478 246.46)",
+          "oklch(95% 0.02478 246.46)"
+        ]
+      },
+      "muted-light": {
+        "role": "neutral",
+        "displayName": "Light Muted Text",
+        "canonical": "#5F6F7D",
+        "tonalRamp": [
+          "oklch(15% 0.02926 244.78)",
+          "oklch(25% 0.02926 244.78)",
+          "oklch(35% 0.02926 244.78)",
+          "oklch(45% 0.02926 244.78)",
+          "oklch(55% 0.02926 244.78)",
+          "oklch(65% 0.02926 244.78)",
+          "oklch(80% 0.02926 244.78)",
+          "oklch(95% 0.02926 244.78)"
+        ]
+      },
+      "rise": {
+        "role": "semantic",
+        "displayName": "Market Rise",
+        "canonical": "#F25D52",
+        "tonalRamp": [
+          "oklch(15% 0.18551 27.39)",
+          "oklch(25% 0.18551 27.39)",
+          "oklch(35% 0.18551 27.39)",
+          "oklch(45% 0.18551 27.39)",
+          "oklch(55% 0.18551 27.39)",
+          "oklch(65% 0.18551 27.39)",
+          "oklch(80% 0.18551 27.39)",
+          "oklch(95% 0.18551 27.39)"
+        ]
+      },
+      "fall": {
+        "role": "semantic",
+        "displayName": "Market Fall",
+        "canonical": "#35B779",
+        "tonalRamp": [
+          "oklch(15% 0.14471 157.82)",
+          "oklch(25% 0.14471 157.82)",
+          "oklch(35% 0.14471 157.82)",
+          "oklch(45% 0.14471 157.82)",
+          "oklch(55% 0.14471 157.82)",
+          "oklch(65% 0.14471 157.82)",
+          "oklch(80% 0.14471 157.82)",
+          "oklch(95% 0.14471 157.82)"
+        ]
+      },
+      "warning": {
+        "role": "semantic",
+        "displayName": "Audit Amber",
+        "canonical": "#E7A33D",
+        "tonalRamp": [
+          "oklch(15% 0.13928 73.38)",
+          "oklch(25% 0.13928 73.38)",
+          "oklch(35% 0.13928 73.38)",
+          "oklch(45% 0.13928 73.38)",
+          "oklch(55% 0.13928 73.38)",
+          "oklch(65% 0.13928 73.38)",
+          "oklch(80% 0.13928 73.38)",
+          "oklch(95% 0.13928 73.38)"
+        ]
       }
     },
     "typographyMeta": {
       "display": {
-        "displayName": "Workbench Heading",
-        "purpose": "Orientation headings only."
+        "displayName": "Display",
+        "purpose": "major page headings only."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "panel headings, result groups, and card titles."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "explanations, evidence summaries, and helper copy."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "form labels, navigation captions, badges, and metadata."
       },
       "data": {
-        "displayName": "Tabular Data",
-        "purpose": "Stock codes, prices, timestamps, percentages, and compact metrics."
+        "displayName": "Data",
+        "purpose": "stock codes, prices, timestamps, percentages, and compact metrics."
       }
     },
     "shadows": [
       {
         "name": "sticky-header",
         "value": "0 14px 34px rgba(3, 8, 13, 0.28)",
-        "purpose": "Top app header and fixed mobile chrome."
+        "purpose": "top app header and fixed mobile chrome."
       },
       {
         "name": "floating-sheet",
         "value": "0 24px 60px rgba(3, 8, 13, 0.38)",
-        "purpose": "Mobile criteria drawer, menus, and modal-like overlays."
+        "purpose": "mobile criteria drawer, menus, and modal-like overlays."
       },
       {
         "name": "raised-result",
         "value": "0 12px 28px rgba(3, 8, 13, 0.22)",
-        "purpose": "Selected assistant or result details only."
+        "purpose": "selected assistant/result details only."
       }
     ],
     "motion": [
       {
-        "name": "state-fast",
-        "value": "160ms cubic-bezier(0.2, 0, 0, 1)",
-        "purpose": "Hover, focus, selected, and small state changes."
+        "name": "motion-fast",
+        "value": "160ms",
+        "purpose": "按钮、导航与输入边框等控件状态切换。"
       },
       {
-        "name": "panel-enter",
-        "value": "220ms cubic-bezier(0.2, 0, 0, 1)",
-        "purpose": "Mobile sheet and drawer reveal."
+        "name": "motion-standard",
+        "value": "210ms",
+        "purpose": "抽屉和面板的结构性状态切换。"
+      },
+      {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "应用现有的状态过渡缓动；减少动效模式关闭非必要过渡。"
       }
     ],
     "breakpoints": [
-      { "name": "phone", "value": "640px" },
-      { "name": "tablet", "value": "980px" },
-      { "name": "desktop", "value": "1280px" }
+      {
+        "name": "narrow-mobile",
+        "value": "420px"
+      },
+      {
+        "name": "mobile",
+        "value": "768px"
+      },
+      {
+        "name": "split-workbench",
+        "value": "1180px"
+      },
+      {
+        "name": "expanded-results",
+        "value": "1280px"
+      },
+      {
+        "name": "wide-workbench",
+        "value": "1600px"
+      }
     ]
   },
   "components": [
     {
-      "name": "Primary Button",
+      "name": "主按钮",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "Primary command for running research actions.",
-      "html": "<button class=\"ds-btn-primary\">运行筛选</button>",
-      "css": ".ds-btn-primary { min-height: 40px; border: 0; border-radius: 4px; background: #0F7B8A; color: #fff; padding: 10px 14px; font: 700 14px/1.2 Fira Sans, Inter, system-ui, sans-serif; cursor: pointer; transition: background 160ms cubic-bezier(0.2,0,0,1), box-shadow 160ms cubic-bezier(0.2,0,0,1); } .ds-btn-primary:hover { background: #0B6470; } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(72,191,210,.28); }"
+      "description": "研究红主动作，提供悬停、键盘焦点、按下和处理中禁用状态。",
+      "html": "<div class=\"ds-button-row\"><button type=\"button\" class=\"ds-primary\">开始观察</button><button type=\"button\" class=\"ds-primary\" disabled aria-busy=\"true\">正在观察…</button></div>",
+      "css": ".ds-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 10px 14px; border: 1px solid var(--accent-muted, #A92924); border-radius: var(--radius-xs, 4px); background: var(--accent-muted, #A92924); color: var(--button-text, #FFFFFF); font-family: var(--font-sans, \"Segoe UI\", \"Microsoft YaHei UI\", system-ui, sans-serif); font-size: var(--fs-body, 14px); font-weight: 600; line-height: 1.3; cursor: pointer; transition: background-color var(--motion-fast, 160ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)), border-color var(--motion-fast, 160ms) ease; }\n.ds-primary:hover:not(:disabled) { background: var(--accent-strong, #C6322C); border-color: var(--accent-strong, #C6322C); }\n.ds-primary:focus-visible { outline: 2px solid var(--accent, #D83D35); outline-offset: 3px; }\n.ds-primary:active:not(:disabled) { background: var(--accent-action, #7F211C); border-color: var(--accent-action, #7F211C); }\n.ds-primary:disabled { color: var(--text-secondary, #A9B4BF); background: var(--surface-2, #222A33); border-color: var(--line, #303943); cursor: default; }\n@media (max-width: 768px) { .ds-primary { min-height: var(--touch-secondary, 44px); } }\n@media (prefers-reduced-motion: reduce) { .ds-primary { transition: none; } }\n.ds-button-row { display: flex; flex-wrap: wrap; gap: 8px; }"
     },
     {
-      "name": "Ghost Button",
+      "name": "次按钮",
       "kind": "button",
       "refersTo": "button-ghost",
-      "description": "Secondary command that does not compete with the main run action.",
-      "html": "<button class=\"ds-btn-ghost\">修改条件</button>",
-      "css": ".ds-btn-ghost { min-height: 40px; border: 1px solid #2B3844; border-radius: 4px; background: transparent; color: #48BFD2; padding: 9px 12px; font: 700 14px/1.2 Fira Sans, Inter, system-ui, sans-serif; cursor: pointer; transition: border-color 160ms cubic-bezier(0.2,0,0,1), background 160ms cubic-bezier(0.2,0,0,1); } .ds-btn-ghost:hover { border-color: #48BFD2; background: rgba(72,191,210,.09); } .ds-btn-ghost:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(72,191,210,.28); }"
+      "description": "薄边框与主题适配的研究红文字，用于更新、重试等次要动作。",
+      "html": "<button type=\"button\" class=\"ds-ghost\"><svg aria-hidden=\"true\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 7v5h-5\"/><path d=\"M4 17v-5h5\"/><path d=\"M6.1 7a7 7 0 0 1 11.5-1L20 9M4 15l2.4 3A7 7 0 0 0 17.9 17\"/></svg>更新数据</button>",
+      "css": ".ds-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 9px 12px; border: 1px solid var(--control-line, #657483); border-radius: var(--radius-xs, 4px); background: transparent; color: var(--accent-text, #FF8A80); font-family: var(--font-sans, \"Segoe UI\", \"Microsoft YaHei UI\", system-ui, sans-serif); font-size: var(--fs-body, 14px); font-weight: 600; line-height: 1.3; cursor: pointer; transition: background-color var(--motion-fast, 160ms) ease, border-color var(--motion-fast, 160ms) ease; }\n.ds-ghost:hover:not(:disabled) { background: var(--accent-soft, rgba(216, 61, 53, 0.14)); border-color: var(--accent, #D83D35); }\n.ds-ghost:focus-visible { outline: 2px solid var(--accent, #D83D35); outline-offset: 3px; }\n.ds-ghost:active:not(:disabled) { background: var(--surface-3, #222A33); }\n.ds-ghost:disabled { color: var(--text-secondary, #A9B4BF); background: var(--surface-2, #222A33); border-color: var(--line, #303943); cursor: default; }\n@media (max-width: 768px) { .ds-ghost { min-height: var(--touch-secondary, 44px); } }\n@media (prefers-reduced-motion: reduce) { .ds-ghost { transition: none; } }"
     },
     {
-      "name": "Research Input",
+      "name": "股票代码输入",
       "kind": "input",
       "refersTo": "input",
-      "description": "Compact field for codes, prompts, and numeric criteria.",
-      "html": "<label class=\"ds-field\"><span>股票代码</span><input value=\"300750.SZ\" /></label>",
-      "css": ".ds-field { display: grid; gap: 6px; color: #9BAAB7; font: 700 12px/1.3 Fira Sans, Inter, system-ui, sans-serif; } .ds-field input { min-height: 40px; border: 1px solid #2B3844; border-radius: 4px; background: #151B22; color: #F2F7FA; padding: 10px 12px; font: 500 13px/1.35 Fira Code, ui-monospace, monospace; } .ds-field input:focus { outline: none; border-color: #48BFD2; box-shadow: 0 0 0 3px rgba(72,191,210,.22); }"
+      "description": "标签保持可见，代码使用等宽字体，保留清晰的焦点、错误与禁用样式。",
+      "html": "<label class=\"ds-field\"><span class=\"ds-field-label\">股票代码</span><input class=\"ds-input\" type=\"text\" inputmode=\"numeric\" autocomplete=\"off\" placeholder=\"例如 600000\" aria-describedby=\"ds-stock-hint\"><small class=\"ds-field-hint\" id=\"ds-stock-hint\">支持股票代码或名称搜索。</small></label>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 100%; color: var(--text, #F4F7FA); font-family: var(--font-sans, \"Segoe UI\", \"Microsoft YaHei UI\", system-ui, sans-serif); }\n.ds-field-label { font-size: var(--fs-label, 12px); font-weight: 700; line-height: 1.3; }\n.ds-input { display: block; box-sizing: border-box; min-width: 0; min-height: 40px; padding: 10px 12px; border: 1px solid var(--control-line, #657483); border-radius: var(--radius-xs, 4px); color: var(--text, #F4F7FA); background: var(--surface, #14191F); font-family: var(--font-mono, Consolas, \"Cascadia Mono\", ui-monospace, monospace); font-size: var(--fs-data, 13px); font-variant-numeric: tabular-nums; caret-color: var(--accent, #D83D35); transition: border-color var(--motion-fast, 160ms) ease, background-color var(--motion-fast, 160ms) ease; }\n.ds-input::placeholder { color: var(--text-secondary, #A9B4BF); opacity: 1; }\n.ds-input:hover:not(:disabled) { border-color: var(--accent, #D83D35); }\n.ds-input:focus-visible { border-color: var(--accent, #D83D35); outline: 2px solid var(--accent, #D83D35); outline-offset: 2px; }\n.ds-input[aria-invalid=\"true\"] { border-color: var(--danger, #F0645C); }\n.ds-input:disabled { color: var(--text-secondary, #A9B4BF); background: var(--surface-2, #222A33); border-color: var(--line, #303943); cursor: default; }\n.ds-field-hint { font-size: var(--fs-caption, 12px); color: var(--text-secondary, #A9B4BF); line-height: 1.6; overflow-wrap: anywhere; }\n@media (max-width: 768px) { .ds-input { min-height: var(--touch-secondary, 44px); } }\n@media (prefers-reduced-motion: reduce) { .ds-input { transition: none; } }"
     },
     {
-      "name": "Navigation Item",
+      "name": "研究导航",
       "kind": "nav",
-      "refersTo": "navigation",
-      "description": "Persistent workbench destination with icon, label, and compact hint.",
-      "html": "<a class=\"ds-nav-item ds-nav-item-active\" href=\"#\"><span>筛</span><strong>筛选</strong><em>基础 / 概念 / 趋势</em></a>",
-      "css": ".ds-nav-item { display: grid; grid-template-columns: 32px 1fr; gap: 8px 10px; align-items: center; min-height: 48px; border: 1px solid transparent; border-radius: 8px; color: #9BAAB7; padding: 8px; text-decoration: none; } .ds-nav-item span { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid #2B3844; border-radius: 6px; color: #48BFD2; } .ds-nav-item strong { color: #F2F7FA; font: 700 14px/1.2 Fira Sans, Inter, system-ui, sans-serif; } .ds-nav-item em { grid-column: 2; color: #9BAAB7; font: 500 12px/1.2 Fira Sans, Inter, system-ui, sans-serif; font-style: normal; } .ds-nav-item-active { border-color: rgba(72,191,210,.35); background: rgba(72,191,210,.09); }"
+      "description": "图标与中文标签共同定位工作页面，当前页面使用研究红与柔和底色。",
+      "html": "<nav class=\"ds-nav\" aria-label=\"研究页面示例\"><a class=\"ds-nav-link\" href=\"#screening\"><svg aria-hidden=\"true\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4 7h16M7 12h10M10 17h4\"/></svg>选股</a><a class=\"ds-nav-link\" href=\"#observation\" aria-current=\"page\"><svg aria-hidden=\"true\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/></svg>观察</a><a class=\"ds-nav-link\" href=\"#news\"><svg aria-hidden=\"true\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"4\" y=\"3\" width=\"16\" height=\"18\" rx=\"2\"/><path d=\"M8 7h8M8 11h8M8 15h3M14 15h2M8 18h8\"/></svg>消息</a></nav>",
+      "css": ".ds-nav { display: grid; gap: 3px; font-family: var(--font-sans, \"Segoe UI\", \"Microsoft YaHei UI\", system-ui, sans-serif); }\n.ds-nav-link { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 0 12px; border-radius: var(--radius-sm, 6px); color: var(--text-secondary, #A9B4BF); font-size: 13px; font-weight: 650; line-height: 1.3; text-decoration: none; transition: color var(--motion-fast, 160ms) ease, background-color var(--motion-fast, 160ms) ease; }\n.ds-nav-link:hover { color: var(--text, #F4F7FA); background: var(--surface-2, #222A33); }\n.ds-nav-link[aria-current=\"page\"] { color: var(--accent-text, #FF8A80); background: var(--accent-soft, rgba(216, 61, 53, 0.14)); }\n.ds-nav-link:focus-visible { outline: 2px solid var(--accent, #D83D35); outline-offset: 2px; }\n.ds-nav-link:active { background: var(--surface-3, #222A33); }\n.ds-nav-link svg { flex: 0 0 auto; }\n@media (max-width: 768px) { .ds-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); } .ds-nav-link { flex-direction: column; justify-content: center; gap: 4px; min-height: var(--touch-secondary, 44px); padding: 8px 4px; } }\n@media (prefers-reduced-motion: reduce) { .ds-nav-link { transition: none; } }"
     },
     {
-      "name": "Result Panel",
+      "name": "连接状态标签",
+      "kind": "chip",
+      "description": "分别表达当前启用、未保存、已测试和未测试，状态始终带有文字。",
+      "html": "<div class=\"ds-badges\" aria-label=\"连接状态样式示例\"><span class=\"ds-badge\" data-state=\"current\">当前启用</span><span class=\"ds-badge\" data-state=\"dirty\">未保存</span><span class=\"ds-badge\" data-state=\"success\">已测试</span><span class=\"ds-badge\">未测试</span></div>",
+      "css": ".ds-badges { display: flex; flex-wrap: wrap; gap: 6px; font-family: var(--font-sans, \"Segoe UI\", \"Microsoft YaHei UI\", system-ui, sans-serif); }\n.ds-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border: 1px solid var(--line, #303943); border-radius: var(--radius-xs, 4px); background: var(--surface-2, #222A33); color: var(--text-secondary, #A9B4BF); font-size: var(--fs-caption, 12px); font-weight: 600; line-height: 1.4; white-space: nowrap; }\n.ds-badge[data-state=\"current\"] { color: var(--text, #F4F7FA); background: var(--accent-soft, rgba(216, 61, 53, 0.14)); }\n.ds-badge[data-state=\"dirty\"] { color: var(--text, #F4F7FA); background: color-mix(in srgb, var(--warning, #E7A33D) 14%, var(--surface-2, #222A33)); }\n.ds-badge[data-state=\"success\"] { color: var(--text, #F4F7FA); background: color-mix(in srgb, var(--success, #35B779) 14%, var(--surface-2, #222A33)); }"
+    },
+    {
+      "name": "证据容器",
       "kind": "card",
-      "refersTo": "result-panel",
-      "description": "Evidence-first container for screening, observation, and assistant results.",
-      "html": "<section class=\"ds-result-panel\"><header><span>结果</span><strong>候选 8 / 概念 4</strong></header><p>筛选完成，已按概念分组展示。</p></section>",
-      "css": ".ds-result-panel { border: 1px solid #2B3844; border-radius: 8px; background: #151B22; color: #F2F7FA; padding: 16px; } .ds-result-panel header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; } .ds-result-panel span { color: #9BAAB7; font: 700 12px/1.3 Fira Sans, Inter, system-ui, sans-serif; } .ds-result-panel strong { font: 600 13px/1.35 Fira Code, ui-monospace, monospace; } .ds-result-panel p { margin: 0; color: #C8D3DC; font: 400 14px/1.55 Fira Sans, Inter, system-ui, sans-serif; }"
+      "description": "平面薄边框容器，通过标题、分隔线和数据行组织来源与缺失信息。",
+      "html": "<section class=\"ds-evidence\" aria-label=\"证据容器样式示例\"><header class=\"ds-evidence-head\"><h3>财务概览</h3><span>样式示例</span></header><dl class=\"ds-evidence-rows\"><div><dt>报告期</dt><dd>待加载</dd></div><div><dt>数据来源</dt><dd>本地财务缓存</dd></div><div><dt>净利润增速</dt><dd class=\"ds-missing\">暂无数据</dd></div></dl></section>",
+      "css": ".ds-evidence { min-width: 0; border: 1px solid var(--line, #303943); border-radius: var(--radius-md, 8px); background: var(--surface, #14191F); color: var(--text, #F4F7FA); font-family: var(--font-sans, \"Segoe UI\", \"Microsoft YaHei UI\", system-ui, sans-serif); }\n.ds-evidence-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; padding: 16px; border-bottom: 1px solid var(--line, #303943); }\n.ds-evidence-head h3 { margin: 0; font-size: var(--fs-title, 18px); font-weight: 700; line-height: 1.25; }\n.ds-evidence-head span { color: var(--text-secondary, #A9B4BF); font-size: var(--fs-caption, 12px); line-height: 1.5; }\n.ds-evidence-rows { margin: 0; padding: 0 16px; }\n.ds-evidence-rows > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line-soft, rgba(255, 255, 255, 0.075)); }\n.ds-evidence-rows > div:last-child { border-bottom: 0; }\n.ds-evidence-rows dt { color: var(--text-secondary, #A9B4BF); font-size: var(--fs-label, 12px); line-height: 1.5; }\n.ds-evidence-rows dd { margin: 0; font-family: var(--font-mono, Consolas, \"Cascadia Mono\", ui-monospace, monospace); font-size: var(--fs-data, 13px); font-weight: 500; line-height: 1.5; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }\n.ds-evidence-rows .ds-missing { color: var(--text-tertiary, #A9B4BF); font-family: var(--font-sans, \"Segoe UI\", \"Microsoft YaHei UI\", system-ui, sans-serif); font-size: var(--fs-label, 12px); font-weight: 400; }"
+    },
+    {
+      "name": "观察研究报告",
+      "kind": "custom",
+      "description": "连续报告结构呈现股票、日期、完整判断与 2×2 关键指标，手机端上下排列。",
+      "html": "<section class=\"ds-report\" aria-label=\"观察报告样式示例\"><header class=\"ds-report-head\"><div><h3>示例股票 <span class=\"ds-report-symbol\">600000 · SH</span></h3><p>数据日期 <time datetime=\"2026-10-30\">2026-10-30</time> · 样式示例</p></div><button type=\"button\" class=\"ds-ghost\"><svg aria-hidden=\"true\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 7v5h-5\"/><path d=\"M4 17v-5h5\"/><path d=\"M6.1 7a7 7 0 0 1 11.5-1L20 9M4 15l2.4 3A7 7 0 0 0 17.9 17\"/></svg>更新数据</button></header><div class=\"ds-report-body\"><div class=\"ds-report-lead\"><div class=\"ds-report-verdict\"><h4>证据尚待补全</h4><p>当前财务与资金数据仍有缺失。补全来源与报告期后，可结合趋势证据继续观察；缺失信息保留明确提示。</p></div><dl class=\"ds-report-metrics\"><div><dt>综合评分</dt><dd class=\"ds-report-score\">—</dd></div><div><dt>趋势评分</dt><dd>—</dd></div><div><dt>量价状态</dt><dd class=\"ds-report-missing\">暂无数据</dd></div><div><dt>资金状态</dt><dd class=\"ds-report-missing\">暂无数据</dd></div></dl></div><p class=\"ds-report-boundary\">仅供研究，不构成投资建议。</p></div></section>",
+      "css": ".ds-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 9px 12px; border: 1px solid var(--control-line, #657483); border-radius: var(--radius-xs, 4px); background: transparent; color: var(--accent-text, #FF8A80); font-family: var(--font-sans, \"Segoe UI\", \"Microsoft YaHei UI\", system-ui, sans-serif); font-size: var(--fs-body, 14px); font-weight: 600; line-height: 1.3; cursor: pointer; transition: background-color var(--motion-fast, 160ms) ease, border-color var(--motion-fast, 160ms) ease; }\n.ds-ghost:hover:not(:disabled) { background: var(--accent-soft, rgba(216, 61, 53, 0.14)); border-color: var(--accent, #D83D35); }\n.ds-ghost:focus-visible { outline: 2px solid var(--accent, #D83D35); outline-offset: 3px; }\n.ds-ghost:active:not(:disabled) { background: var(--surface-3, #222A33); }\n.ds-ghost:disabled { color: var(--text-secondary, #A9B4BF); background: var(--surface-2, #222A33); border-color: var(--line, #303943); cursor: default; }\n@media (max-width: 768px) { .ds-ghost { min-height: var(--touch-secondary, 44px); } }\n@media (prefers-reduced-motion: reduce) { .ds-ghost { transition: none; } }\n.ds-report { min-width: 0; overflow: hidden; border: 1px solid var(--line, #303943); border-radius: var(--radius-md, 8px); background: var(--surface, #14191F); color: var(--text, #F4F7FA); font-family: var(--font-sans, \"Segoe UI\", \"Microsoft YaHei UI\", system-ui, sans-serif); }\n.ds-report-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4, 16px); padding: var(--space-5, 20px) var(--space-6, 24px); border-bottom: 1px solid var(--line, #303943); }\n.ds-report-head > div { min-width: 0; }\n.ds-report-head h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 0; font-size: var(--fs-headline, 20px); line-height: 1.5; overflow-wrap: anywhere; }\n.ds-report-symbol { color: var(--text-secondary, #A9B4BF); font-family: var(--font-mono, Consolas, \"Cascadia Mono\", ui-monospace, monospace); font-size: var(--fs-body, 14px); font-weight: 500; }\n.ds-report-head p { margin: 4px 0 0; color: var(--text-secondary, #A9B4BF); font-size: var(--fs-caption, 12px); line-height: 1.6; }\n.ds-report-head time { font-variant-numeric: tabular-nums; }\n.ds-report-head .ds-ghost { flex: 0 0 auto; white-space: nowrap; }\n.ds-report-body { padding: var(--space-5, 20px) var(--space-6, 24px); }\n.ds-report-lead { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); align-items: stretch; gap: var(--space-6, 24px); padding-bottom: var(--space-5, 20px); border-bottom: 1px solid var(--line, #303943); }\n.ds-report-verdict { position: relative; align-self: center; padding-left: var(--space-4, 16px); }\n.ds-report-verdict::before { position: absolute; top: 8px; left: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--warning, #E7A33D); content: \"\"; }\n.ds-report-verdict h4 { margin: 0; font-size: var(--fs-headline, 20px); line-height: 1.5; text-wrap: balance; }\n.ds-report-verdict p { max-width: 75ch; margin: 8px 0 0; color: var(--text-secondary, #A9B4BF); font-size: var(--fs-body, 14px); line-height: 1.7; overflow-wrap: anywhere; }\n.ds-report-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; padding: 0; }\n.ds-report-metrics > div { min-width: 0; padding: 12px 16px; border-left: 1px solid var(--line-soft, rgba(255, 255, 255, 0.075)); }\n.ds-report-metrics > div:nth-child(odd) { border-left: 0; }\n.ds-report-metrics > div:nth-child(n+3) { border-top: 1px solid var(--line-soft, rgba(255, 255, 255, 0.075)); }\n.ds-report-metrics dt { color: var(--text-tertiary, #A9B4BF); font-size: var(--fs-caption, 12px); font-weight: 600; line-height: 1.5; }\n.ds-report-metrics dd { margin: 4px 0 0; color: var(--text, #F4F7FA); font-family: var(--font-mono, Consolas, \"Cascadia Mono\", ui-monospace, monospace); font-size: var(--fs-title, 18px); font-weight: 700; line-height: 1.5; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }\n.ds-report-metrics .ds-report-score { color: var(--score, #F3C451); }\n.ds-report-metrics .ds-report-missing { color: var(--text-tertiary, #A9B4BF); font-family: var(--font-sans, \"Segoe UI\", \"Microsoft YaHei UI\", system-ui, sans-serif); font-size: var(--fs-label, 12px); font-weight: 400; }\n.ds-report-boundary { margin: 12px 0 0; color: var(--text-secondary, #A9B4BF); font-size: var(--fs-caption, 12px); line-height: 1.6; }\n@media (max-width: 768px) { .ds-report-head { align-items: stretch; flex-direction: column; padding: 16px; } .ds-report-head .ds-ghost { align-self: flex-start; } .ds-report-body { padding: 16px; } .ds-report-lead { grid-template-columns: minmax(0, 1fr); gap: 12px; } }"
+    },
+    {
+      "name": "模型连接列表",
+      "kind": "custom",
+      "description": "编辑选择与当前启用分别标记，草稿的未保存及未测试状态独立显示。",
+      "html": "<div class=\"ds-connections\" aria-label=\"模型连接列表样式示例\"><button type=\"button\" class=\"ds-connection\" aria-pressed=\"true\"><span class=\"ds-connection-name\">本地模型 · 示例</span><span class=\"ds-connection-model\">OpenAI · example-model</span><span class=\"ds-badges\"><span class=\"ds-badge\">正在编辑</span><span class=\"ds-badge\" data-state=\"dirty\">未保存</span><span class=\"ds-badge\">未测试</span></span></button><button type=\"button\" class=\"ds-connection\" aria-pressed=\"false\"><span class=\"ds-connection-name\">默认连接 · 示例</span><span class=\"ds-connection-model\">OpenAI · example-model</span><span class=\"ds-badges\"><span class=\"ds-badge\" data-state=\"current\">当前启用</span><span class=\"ds-badge\" data-state=\"success\">已测试</span></span></button></div>",
+      "css": ".ds-badges { display: flex; flex-wrap: wrap; gap: 6px; font-family: var(--font-sans, \"Segoe UI\", \"Microsoft YaHei UI\", system-ui, sans-serif); }\n.ds-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border: 1px solid var(--line, #303943); border-radius: var(--radius-xs, 4px); background: var(--surface-2, #222A33); color: var(--text-secondary, #A9B4BF); font-size: var(--fs-caption, 12px); font-weight: 600; line-height: 1.4; white-space: nowrap; }\n.ds-badge[data-state=\"current\"] { color: var(--text, #F4F7FA); background: var(--accent-soft, rgba(216, 61, 53, 0.14)); }\n.ds-badge[data-state=\"dirty\"] { color: var(--text, #F4F7FA); background: color-mix(in srgb, var(--warning, #E7A33D) 14%, var(--surface-2, #222A33)); }\n.ds-badge[data-state=\"success\"] { color: var(--text, #F4F7FA); background: color-mix(in srgb, var(--success, #35B779) 14%, var(--surface-2, #222A33)); }\n.ds-connections { display: grid; gap: 8px; min-width: 0; }\n.ds-connection { display: flex; flex-direction: column; gap: 8px; width: 100%; min-width: 0; padding: 12px; border: 1px solid var(--line, #303943); border-radius: var(--radius-md, 8px); background: var(--surface, #14191F); color: var(--text, #F4F7FA); font-family: var(--font-sans, \"Segoe UI\", \"Microsoft YaHei UI\", system-ui, sans-serif); text-align: left; cursor: pointer; transition: border-color var(--motion-fast, 160ms) ease, background-color var(--motion-fast, 160ms) ease; }\n.ds-connection-name { font-size: var(--fs-body, 14px); font-weight: 650; line-height: 1.5; overflow-wrap: anywhere; }\n.ds-connection-model { color: var(--text-secondary, #A9B4BF); font-family: var(--font-mono, Consolas, \"Cascadia Mono\", ui-monospace, monospace); font-size: var(--fs-caption, 12px); line-height: 1.5; overflow-wrap: anywhere; }\n.ds-connection[aria-pressed=\"true\"] { border-color: var(--accent, #D83D35); background: color-mix(in srgb, var(--accent-soft, rgba(216, 61, 53, 0.14)) 22%, var(--surface, #14191F)); }\n.ds-connection:hover:not(:disabled) { border-color: var(--accent, #D83D35); }\n.ds-connection:focus-visible { outline: 2px solid var(--accent, #D83D35); outline-offset: 3px; }\n.ds-connection:active:not(:disabled) { background: var(--surface-2, #222A33); }\n.ds-connection:disabled { color: var(--text-secondary, #A9B4BF); background: var(--surface-2, #222A33); cursor: default; }\n@media (prefers-reduced-motion: reduce) { .ds-connection { transition: none; } }"
+    },
+    {
+      "name": "连接诊断",
+      "kind": "custom",
+      "description": "短请求结果保留协议、脱敏地址、HTTP 状态和耗时，文字明确区分测试与启用。",
+      "html": "<section class=\"ds-diagnostic\" aria-label=\"连接诊断样式示例\"><h3><svg aria-hidden=\"true\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m5 12 4 4 10-10\"/></svg>测试通过 · 示例</h3><p>基础连接可用，保存并启用后生效。</p><dl class=\"ds-diagnostic-meta\"><div><dt>协议</dt><dd>OpenAI</dd></div><div><dt>HTTP 状态</dt><dd>200</dd></div><div><dt>耗时</dt><dd>640 ms</dd></div><div class=\"ds-diagnostic-address\"><dt>请求地址</dt><dd>http://localhost:11434/v1/chat/completions</dd></div></dl><button type=\"button\" class=\"ds-ghost\">重新测试</button></section>",
+      "css": ".ds-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 9px 12px; border: 1px solid var(--control-line, #657483); border-radius: var(--radius-xs, 4px); background: transparent; color: var(--accent-text, #FF8A80); font-family: var(--font-sans, \"Segoe UI\", \"Microsoft YaHei UI\", system-ui, sans-serif); font-size: var(--fs-body, 14px); font-weight: 600; line-height: 1.3; cursor: pointer; transition: background-color var(--motion-fast, 160ms) ease, border-color var(--motion-fast, 160ms) ease; }\n.ds-ghost:hover:not(:disabled) { background: var(--accent-soft, rgba(216, 61, 53, 0.14)); border-color: var(--accent, #D83D35); }\n.ds-ghost:focus-visible { outline: 2px solid var(--accent, #D83D35); outline-offset: 3px; }\n.ds-ghost:active:not(:disabled) { background: var(--surface-3, #222A33); }\n.ds-ghost:disabled { color: var(--text-secondary, #A9B4BF); background: var(--surface-2, #222A33); border-color: var(--line, #303943); cursor: default; }\n@media (max-width: 768px) { .ds-ghost { min-height: var(--touch-secondary, 44px); } }\n@media (prefers-reduced-motion: reduce) { .ds-ghost { transition: none; } }\n.ds-diagnostic { min-width: 0; padding: 12px 14px; border: 1px solid var(--line, #303943); border-radius: var(--radius-md, 8px); background: var(--surface-2, #222A33); color: var(--text, #F4F7FA); font-family: var(--font-sans, \"Segoe UI\", \"Microsoft YaHei UI\", system-ui, sans-serif); }\n.ds-diagnostic h3 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: var(--fs-body, 14px); font-weight: 600; line-height: 1.5; }\n.ds-diagnostic h3 svg { flex: 0 0 auto; color: var(--success, #35B779); }\n.ds-diagnostic p { margin: 6px 0 0; color: var(--text-secondary, #A9B4BF); font-size: var(--fs-caption, 12px); line-height: 1.6; overflow-wrap: anywhere; }\n.ds-diagnostic-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 12px 0; }\n.ds-diagnostic-meta > div { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; color: var(--text-secondary, #A9B4BF); font-size: var(--fs-caption, 12px); line-height: 1.6; }\n.ds-diagnostic-meta dt { font-weight: 600; }\n.ds-diagnostic-meta dd { margin: 0; font-family: var(--font-mono, Consolas, \"Cascadia Mono\", ui-monospace, monospace); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }\n.ds-diagnostic-meta .ds-diagnostic-address { flex-basis: 100%; flex-direction: column; gap: 2px; }\n.ds-diagnostic[data-state=\"error\"] h3 svg { color: var(--danger, #F0645C); }\n.ds-diagnostic[data-state=\"testing\"] h3 svg { color: var(--accent, #D83D35); }"
     }
   ],
   "narrative": {
     "northStar": "Research Desk Terminal",
-    "overview": "The interface should feel like a focused research desk: quiet, structured, and built around evidence. It uses a restrained dark-first workbench, strong text contrast, compact controls, and a single cyan action color so data and status remain louder than decoration.",
+    "overview": "The interface should feel like a focused research desk: quiet, structured, and built around evidence. It uses a restrained dark-first workbench, strong text contrast, compact controls, and a single disciplined red action color so data and status remain louder than decoration.\n\nThe system rejects marketing-page dramatics, generic finance neon, and noisy trading-software clutter. The design earns trust through consistent controls, visible states, and disciplined grouping.",
     "keyCharacteristics": [
       "Dense product UI with stable navigation, filters, result panels, and evidence blocks.",
       "Dark-first palette with a light mode equivalent, semantic rise/fall/warning colors, and no decorative gradients.",
@@ -122,7 +404,12 @@
     "rules": [
       {
         "name": "The One Action Color Rule",
-        "body": "Cyan is reserved for action, selection, focus, and progress. It is not decoration.",
+        "body": "Research Red is reserved for action, selection, focus, and progress. It is not decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "The Gold Score Rule",
+        "body": "Gold is reserved for the composite score. Factor scores stay neutral white so the hierarchy remains unambiguous.",
         "section": "colors"
       },
       {
@@ -142,18 +429,19 @@
       }
     ],
     "dos": [
-      "Do keep the current conditions and data source visible near the working surface.",
-      "Do use cyan only for action, selection, focus, and progress.",
-      "Do pair red/green market colors with text labels, arrows, or context.",
-      "Do keep controls at 44px minimum touch target on mobile.",
-      "Do preserve reduced-motion support and use motion only for state changes."
+      "**Do** keep the current conditions and data source visible near the working surface.",
+      "**Do** use research red only for action, selection, focus, and progress.",
+      "**Do** pair red/green market colors with text labels, arrows, or context.",
+      "**Do** keep controls at 44px minimum touch target on mobile.",
+      "**Do** keep mobile hit areas at least 44px in both density modes. Compact density only reduces non-interactive spacing; it never changes font size.",
+      "**Do** preserve reduced-motion support and use motion only for state changes."
     ],
     "donts": [
-      "Don't build marketing-style hero sections, decorative metric strips, or sales copy.",
-      "Don't use purple-blue gradients, glassmorphism, glowing blobs, or ornamental background effects.",
-      "Don't use thick side-stripe borders on cards or alerts.",
-      "Don't rely on red/green alone to convey meaning.",
-      "Don't write investment-advice language such as “必涨”, “稳赢”, “立即买入”, “目标价”, or “满仓”."
+      "**Don't** build marketing-style hero sections, decorative metric strips, or sales copy.",
+      "**Don't** use purple-blue gradients, glassmorphism, glowing blobs, or ornamental background effects.",
+      "**Don't** use thick side-stripe borders on cards or alerts.",
+      "**Don't** rely on red/green alone to convey meaning.",
+      "**Don't** write investment-advice language such as “必涨”, “稳赢”, “立即买入”, “目标价”, or “满仓”."
     ]
   }
 }

@@ -16,5 +16,3 @@
 .stock-research-table th, .stock-research-table td { text-align: left; padding: 8px 4px; border-bottom: 1px solid var(--line); }
 .stock-research-table th:last-child, .stock-research-table td:last-child { white-space: nowrap; }
 .stock-research-path { display: block; margin-top: 8px; overflow-wrap: anywhere; color: var(--text-secondary); }
-.stock-research-settings { width: 100%; min-width: 0; }
-.stock-research-settings > summary { cursor: pointer; font-weight: 600; padding: 8px 0; }

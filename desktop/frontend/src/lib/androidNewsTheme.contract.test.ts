@@ -44,10 +44,10 @@ describe("Android light theme contract", () => {
     ].map((token) => [token, light.get(token)]))).toEqual({
       "--splash-bg": "var(--bg)",
       "--splash-text": "var(--text)",
-      "--agent-workspace-bg": "#f7f8fa",
-      "--agent-rail-bg": "#ffffff",
-      "--agent-stage-bg": "#f4f6f8",
-      "--agent-composer-bg": "#eef1f5",
+      "--agent-workspace-bg": "var(--surface)",
+      "--agent-rail-bg": "var(--surface-2)",
+      "--agent-stage-bg": "var(--surface)",
+      "--agent-composer-bg": "var(--surface-2)",
       "--contrast-dark": "#ffffff",
     });
   });

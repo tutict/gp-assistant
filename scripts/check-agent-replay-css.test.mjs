@@ -50,8 +50,8 @@ test("agent replay drawer has full-screen mobile geometry above the rail", () =>
   assert.match(drawer, /width:\s*100%\s*;/);
   assert.match(drawer, /max-width:\s*none\s*;/);
   assert.match(drawer, /z-index:\s*calc\(var\(--z-drawer\)\s*\+\s*1\)\s*;/);
-  assert.match(responsive, /\.agent-run-drawer-header\s*\{[^}]*safe-area-inset-top/s);
-  assert.match(responsive, /\.agent-run-list\s*,\s*\.agent-run-detail\s*\{[^}]*safe-area-inset-bottom/s);
+  assert.match(responsive, /\.agent-run-drawer-header\s*\{[^}]*padding-top:\s*max\(7px,\s*var\(--safe-top\)\)/s);
+  assert.match(responsive, /\.agent-run-list\s*,\s*\.agent-run-detail\s*\{[^}]*padding-bottom:\s*calc\(12px\s*\+\s*var\(--safe-bottom\)\)/s);
   assert.match(responsive, /\.agent-thread-history\s*\{[^}]*display:\s*none/s);
   assert.match(responsive, /\.agent-mobile-history\s*\{[^}]*display:\s*inline-grid/s);
 });

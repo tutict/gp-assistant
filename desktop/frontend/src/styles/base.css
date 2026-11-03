@@ -19,7 +19,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-size: var(--fs-body);
-  line-height: 1.5;
+  line-height: 1.55;
   text-rendering: optimizeLegibility;
 }
 
@@ -29,6 +29,18 @@ select,
 textarea {
   color: inherit;
   font: inherit;
+  caret-color: var(--accent-text);
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-tertiary);
+  opacity: 1;
 }
 
 button,
@@ -46,7 +58,7 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 summary:focus-visible {
-  outline: 2px solid var(--accent-strong);
+  outline: 2px solid var(--accent-text);
   outline-offset: 2px;
 }
 
@@ -55,7 +67,7 @@ input:disabled,
 select:disabled,
 textarea:disabled {
   cursor: not-allowed;
-  opacity: 0.48;
+  opacity: 0.65;
 }
 
 a {
