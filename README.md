@@ -2,7 +2,7 @@
 
 **股选优**是一款面向中国股票市场研究的跨平台工作台。A 股提供智能选股、个股观察、严格样本外回测、新闻与本地 RAG 证据、个股情绪和研究 Agent；港股以完整研究工作流为目标，覆盖普通股目录、自选、观察、财务、筛选、回测、新闻与本地 RAG、情绪及研究 Agent，并按数据证据分阶段开放。用户可以在设置中切换市场，研究结果始终绑定当前市场上下文；未达到数据门槛的能力会明确显示状态并保持禁用。
 
-项目使用 **Tauri 2 + Rust + React/TypeScript**，Windows 桌面端与 Android 端共享界面和 Rust 核心能力。当前稳定版本为 **[v0.6.2](https://github.com/tutict/gp-assistant/releases/tag/v0.6.2)**：消息页在同一工作区切换「消息」和「情绪」。情绪快照只冻结本地已入库的消息和行情；阶段结论和追问必须引用这份快照。未配置模型时，消息问答可以回退到本地证据，但不会生成情绪结论。
+项目使用 **Tauri 2 + Rust + React/TypeScript**，Windows 桌面端与 Android 端共享界面和 Rust 核心能力。当前稳定版本为 **[v0.6.3 过渡版](https://github.com/tutict/gp-assistant/releases/tag/v0.6.3)**，补强行情证据展示、筛选结果解释、Android 布局稳定性和导入安全边界；详情见[版本说明](docs/release-notes-v0.6.3.md)。
 
 > 股选优只提供研究、筛选和策略验证工具，不构成投资建议，不承诺任何收益。市场有风险，投资需谨慎。
 
@@ -10,10 +10,10 @@
 
 ## 下载与安装
 
-请前往 [股选优 v0.6.2](https://github.com/tutict/gp-assistant/releases/tag/v0.6.2) 下载当前稳定版，或在 [GitHub Releases](https://github.com/tutict/gp-assistant/releases) 查看全部版本：
+请前往 [股选优 v0.6.3 过渡版](https://github.com/tutict/gp-assistant/releases/tag/v0.6.3) 下载当前稳定版，或在 [GitHub Releases](https://github.com/tutict/gp-assistant/releases) 查看全部版本：
 
-- **Windows 10/11 x64**：`guxuanyou_0.6.2_windows_x64_setup.exe`
-- **Android 7.0 及以上**：`guxuanyou_0.6.2_android_aarch64_release_signed.apk`
+- **Windows 10/11 x64**：[股选优_0.6.3_x64-setup.exe](https://github.com/tutict/gp-assistant/releases/download/v0.6.3/股选优_0.6.3_x64-setup.exe)（当前安装包未进行 Authenticode 签名）
+- **Android 7.0 及以上**：[guxuanyou_0.6.3_android_aarch64_release_signed.apk](https://github.com/tutict/gp-assistant/releases/download/v0.6.3/guxuanyou_0.6.3_android_aarch64_release_signed.apk)（APK 已签名，包名 `com.tutict.stockoptimizer`）
 
 Android 安装时如果系统提示“未知来源应用”，请只为当前文件来源临时授权。升级安装必须使用相同签名的 APK；正式发布包会保留一致的应用签名。
 

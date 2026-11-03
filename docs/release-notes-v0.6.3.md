@@ -1,6 +1,6 @@
 # 股选优 v0.6.3 过渡版
 
-> 发布准备稿。当前尚未发布；README 下载入口仍指向 v0.6.2。
+> v0.6.3 过渡版发布说明。
 
 v0.6.3 延续 v0.6.2 的研究工作流，重点补强行情证据展示、筛选结果解释、Android 布局稳定性和导入安全边界。
 
@@ -29,11 +29,9 @@ v0.6.3 延续 v0.6.2 的研究工作流，重点补强行情证据展示、筛�
 - Android APK SHA-256：`E13A359DC9562EE0C1B2CE6833EB1E554A16576FD90E80869F1B82026BB1FA3A`。
 - Windows 安装包 SHA-256：`19FB162E09E7AF5B07D49578D4D41EA2A10613A442AB22265FF6D5131E7B74C7`。
 
-以上是本机候选产物，尚未发布；README 下载入口继续指向稳定版 v0.6.2。
-
-## 预发布检查（2026-11-03）
+## 发布验证（2026-11-03）
 
 - 完整代码检查通过：版本一致性、可靠性 fixture、前端 735 项单测、核心与 Tauri/GEPA Rust 测试、格式检查、桌面浏览器回归、对比度审计、Android 包名隔离测试和 Android 环境预检。
 - `scripts/release-check.ps1 -SkipRust -SkipNode -SkipPrepare -SkipAndroidPreflight`：通过，构建并识别了 Android 签名 APK 和 Windows NSIS 安装包。Rust、前端和环境检查在同日的完整检查轮次中单独通过。
 - `-EvaluateBaseline` 同设备真实性能对比：未执行。当前没有可核验的设备基线。
-- 发布尚未执行；未创建 tag。设备安装升级验证和 Windows Authenticode 签名仍待完成。
+- 设备安装升级验证尚未完成；Windows 安装包没有 Authenticode 签名。

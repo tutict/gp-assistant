@@ -179,6 +179,22 @@ function Get-RandomHexPassword {
     return ([System.BitConverter]::ToString($bytes) -replace "-", "").ToLowerInvariant()
 }
 
+function Get-FileSha256 {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            return ([System.BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+        } finally {
+            $stream.Dispose()
+        }
+    } finally {
+        $algorithm.Dispose()
+    }
+}
+
 function Resolve-KeytoolExecutable {
     $JavaHome = [Environment]::GetEnvironmentVariable("JAVA_HOME")
     if ($JavaHome) {
@@ -807,7 +823,7 @@ function Test-AndroidCredentialResources {
         if ($rules.SelectNodes("//exclude").Count -lt 5) { throw "Backup exclusions missing." }
     }
     $pluginPath = Join-Path $main "java\com\gpassistant\credentials\CredentialPlugin.kt"
-    if ((Get-FileHash -LiteralPath $pluginPath).Hash -ne (Get-FileHash -LiteralPath (Join-Path $Root "desktop\src-tauri\android\credentials\CredentialPlugin.kt")).Hash) { throw "Plugin source copy differs." }
+    if ((Get-FileSha256 -Path $pluginPath) -ne (Get-FileSha256 -Path (Join-Path $Root "desktop\src-tauri\android\credentials\CredentialPlugin.kt"))) { throw "Plugin source copy differs." }
     $pluginSource = [System.IO.File]::ReadAllText($pluginPath)
     if (-not $pluginSource.Contains('gp-assistant\\.market-data')) { throw "Android credential vault does not accept the isolated market-data namespace." }
     $instrumentation = [System.IO.File]::ReadAllText((Join-Path $Root "desktop\src-tauri\android\credentials\CredentialVaultTest.kt"))
