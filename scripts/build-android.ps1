@@ -546,6 +546,7 @@ function Disable-AndroidCleartextPlaceholder {
 function Update-AndroidProjectForLanImport {
     $AndroidManifest = Join-Path $AndroidProjectDir "app\src\main\AndroidManifest.xml"
     $AndroidBuildGradle = Join-Path $AndroidProjectDir "app\build.gradle.kts"
+    $AndroidConfig = Join-Path $AndroidProjectDir "tauri.properties"
 
     Write-AndroidNetworkSecurityConfig
 
@@ -594,6 +595,22 @@ function Update-AndroidProjectForLanImport {
     if (Test-Path -LiteralPath $AndroidBuildGradle) {
         $gradle = Get-Content -LiteralPath $AndroidBuildGradle -Raw
         $updated = Disable-AndroidCleartextPlaceholder $gradle
+        $testApplicationId = "com.tutict.stockoptimizer.codextest"
+        if (Test-Path -LiteralPath $AndroidConfig) {
+            $androidProperties = Get-Content -LiteralPath $AndroidConfig -Raw
+            if ($androidProperties -match '(?m)^tauri\.android\.testPackageId=(?<id>[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+)$') {
+                $testApplicationId = $Matches.id
+            }
+        }
+        if ($testApplicationId -ne "com.tutict.stockoptimizer.codextest") {
+            throw "Android testPackageId must be the exact codextest package to keep the production app and its data isolated."
+        }
+        $updated = [regex]::Replace(
+            $updated,
+            'applicationId\s*=\s*"[^"]+"',
+            ('applicationId = "' + $testApplicationId + '"'),
+            1
+        )
         if ($updated -ne $gradle) {
             Set-Content -LiteralPath $AndroidBuildGradle -Value $updated -Encoding UTF8
         }
@@ -692,6 +709,10 @@ function Test-AndroidCredentialResources {
     }
     $pluginPath = Join-Path $main "java\com\gpassistant\credentials\CredentialPlugin.kt"
     if ((Get-FileHash -LiteralPath $pluginPath).Hash -ne (Get-FileHash -LiteralPath (Join-Path $Root "desktop\src-tauri\android\credentials\CredentialPlugin.kt")).Hash) { throw "Plugin source copy differs." }
+    $pluginSource = [System.IO.File]::ReadAllText($pluginPath)
+    if (-not $pluginSource.Contains('gp-assistant\\.market-data')) { throw "Android credential vault does not accept the isolated market-data namespace." }
+    $instrumentation = [System.IO.File]::ReadAllText((Join-Path $Root "desktop\src-tauri\android\credentials\CredentialVaultTest.kt"))
+    if ($instrumentation -notmatch 'testMarketDataNamespaceHasSeparateEncryptedEntry') { throw "Android market-data credential coverage is missing." }
     Write-Host "Credential generation tests passed (idempotent, backup exclusions, no extra permissions): $AndroidProjectDir"
 }
 

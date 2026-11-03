@@ -60,7 +60,10 @@ internal class CredentialVault(
     }
     private val keys get() = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
     internal fun file(reference: String): File {
-        require(Regex("^gp-assistant\\.llm\\.[A-Za-z0-9_-]{1,96}$").matches(reference))
+        val allowedReference = Regex(
+            "^(gp-assistant\\.llm\\.[A-Za-z0-9_-]{1,96}|gp-assistant\\.market-data\\.[a-z][a-z0-9_-]{0,47})$",
+        )
+        require(allowedReference.matches(reference))
         return File(root, "$reference.enc")
     }
     private fun key(create: Boolean): SecretKey {

@@ -4,6 +4,7 @@ use serde_json::Value;
 use std::sync::{Arc, Mutex, OnceLock};
 
 const PREFIX: &str = "gp-assistant.llm.";
+const MARKET_DATA_PREFIX: &str = "gp-assistant.market-data.";
 const STORE_ERROR: &str = "Credential store unavailable; key retained for this session only.";
 trait Backend: Send + Sync {
     fn write(&self, reference: &str, secret: &str) -> Result<(), ()>;
@@ -19,10 +20,10 @@ struct Vault {
     backend: Arc<dyn Backend>,
     lock: Mutex<()>,
 }
-fn validate_ref(reference: &str) -> Result<(), String> {
-    let suffix = reference.strip_prefix(PREFIX).unwrap_or_default();
+fn validate_reference(reference: &str, prefix: &str, max_suffix_len: usize) -> Result<(), String> {
+    let suffix = reference.strip_prefix(prefix).unwrap_or_default();
     if suffix.is_empty()
-        || suffix.len() > 96
+        || suffix.len() > max_suffix_len
         || !suffix
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
@@ -30,6 +31,24 @@ fn validate_ref(reference: &str) -> Result<(), String> {
         return Err("Invalid credential reference.".into());
     }
     Ok(())
+}
+fn validate_llm_ref(reference: &str) -> Result<(), String> {
+    validate_reference(reference, PREFIX, 96)
+}
+fn validate_market_data_ref(reference: &str) -> Result<(), String> {
+    validate_reference(reference, MARKET_DATA_PREFIX, 48)
+}
+fn market_data_credential_ref(provider_id: &str) -> Result<String, String> {
+    if provider_id.is_empty()
+        || provider_id.len() > 48
+        || !provider_id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+        || !provider_id.as_bytes()[0].is_ascii_lowercase()
+    {
+        return Err("Invalid market-data provider identifier.".into());
+    }
+    Ok(format!("{MARKET_DATA_PREFIX}{provider_id}"))
 }
 fn validate_secret(secret: &str) -> Result<(), String> {
     // Windows CRED_MAX_CREDENTIAL_BLOB_SIZE is 2560 bytes. Apply equally on Android.
@@ -40,7 +59,18 @@ fn validate_secret(secret: &str) -> Result<(), String> {
 }
 impl Vault {
     fn put(&self, reference: &str, secret: &str) -> Result<CredentialStatus, String> {
-        validate_ref(reference)?;
+        self.put_scoped(reference, secret, validate_llm_ref)
+    }
+    fn put_market_data(&self, reference: &str, secret: &str) -> Result<CredentialStatus, String> {
+        self.put_scoped(reference, secret, validate_market_data_ref)
+    }
+    fn put_scoped(
+        &self,
+        reference: &str,
+        secret: &str,
+        validate: fn(&str) -> Result<(), String>,
+    ) -> Result<CredentialStatus, String> {
+        validate(reference)?;
         validate_secret(secret)?;
         let _guard = self.lock.lock().map_err(|_| STORE_ERROR)?;
         self.backend
@@ -57,7 +87,17 @@ impl Vault {
         })
     }
     fn status(&self, reference: &str) -> Result<CredentialStatus, String> {
-        validate_ref(reference)?;
+        self.status_scoped(reference, validate_llm_ref)
+    }
+    fn market_data_status(&self, reference: &str) -> Result<CredentialStatus, String> {
+        self.status_scoped(reference, validate_market_data_ref)
+    }
+    fn status_scoped(
+        &self,
+        reference: &str,
+        validate: fn(&str) -> Result<(), String>,
+    ) -> Result<CredentialStatus, String> {
+        validate(reference)?;
         let _guard = self.lock.lock().map_err(|_| STORE_ERROR)?;
         let secret = self.backend.read(reference).map_err(|_| STORE_ERROR)?;
         if let Some(ref secret) = secret {
@@ -69,7 +109,17 @@ impl Vault {
         })
     }
     fn delete(&self, reference: &str) -> Result<CredentialStatus, String> {
-        validate_ref(reference)?;
+        self.delete_scoped(reference, validate_llm_ref)
+    }
+    fn delete_market_data(&self, reference: &str) -> Result<CredentialStatus, String> {
+        self.delete_scoped(reference, validate_market_data_ref)
+    }
+    fn delete_scoped(
+        &self,
+        reference: &str,
+        validate: fn(&str) -> Result<(), String>,
+    ) -> Result<CredentialStatus, String> {
+        validate(reference)?;
         let _guard = self.lock.lock().map_err(|_| STORE_ERROR)?;
         self.backend
             .delete(reference)
@@ -88,7 +138,7 @@ impl Vault {
         })
     }
     fn resolve(&self, reference: &str) -> Result<String, String> {
-        validate_ref(reference)?;
+        validate_llm_ref(reference)?;
         let _guard = self.lock.lock().map_err(|_| STORE_ERROR)?;
         let secret = self
             .backend
@@ -97,6 +147,19 @@ impl Vault {
             .ok_or("Stored credential is missing; re-enter the API key.")?;
         validate_secret(&secret)?;
         Ok(secret)
+    }
+}
+
+#[derive(Serialize)]
+pub(crate) struct MarketDataCredentialStatus {
+    provider_id: String,
+    has_key: bool,
+}
+
+fn market_data_status(provider_id: &str, has_key: bool) -> MarketDataCredentialStatus {
+    MarketDataCredentialStatus {
+        provider_id: provider_id.to_string(),
+        has_key,
     }
 }
 static VAULT: OnceLock<Vault> = OnceLock::new();
@@ -108,7 +171,7 @@ fn vault() -> Result<&'static Vault, String> {
 pub(crate) fn resolve_api_key(payload: &Value) -> Result<String, String> {
     if let Some(reference) = payload.get("credential_ref") {
         let reference = reference.as_str().ok_or("Invalid credential reference.")?;
-        validate_ref(reference)?;
+        validate_llm_ref(reference)?;
         return vault()?.resolve(reference);
     }
     let key = payload
@@ -147,6 +210,46 @@ pub(crate) async fn api_credential_delete(
     tauri::async_runtime::spawn_blocking(move || vault()?.delete(&credential_ref))
         .await
         .map_err(|_| STORE_ERROR.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn api_market_data_credential_put(
+    provider_id: String,
+    secret: String,
+) -> Result<MarketDataCredentialStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let reference = market_data_credential_ref(&provider_id)?;
+        let status = vault()?.put_market_data(&reference, &secret)?;
+        Ok(market_data_status(&provider_id, status.has_key))
+    })
+    .await
+    .map_err(|_| STORE_ERROR.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn api_market_data_credential_status(
+    provider_id: String,
+) -> Result<MarketDataCredentialStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let reference = market_data_credential_ref(&provider_id)?;
+        let status = vault()?.market_data_status(&reference)?;
+        Ok(market_data_status(&provider_id, status.has_key))
+    })
+    .await
+    .map_err(|_| STORE_ERROR.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn api_market_data_credential_delete(
+    provider_id: String,
+) -> Result<MarketDataCredentialStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let reference = market_data_credential_ref(&provider_id)?;
+        let status = vault()?.delete_market_data(&reference)?;
+        Ok(market_data_status(&provider_id, status.has_key))
+    })
+    .await
+    .map_err(|_| STORE_ERROR.to_string())?
 }
 
 pub(crate) fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
@@ -398,5 +501,41 @@ mod tests {
             resolve_api_key(&serde_json::json!({"api_key": SECRET})).unwrap(),
             SECRET
         );
+    }
+
+    #[test]
+    fn market_data_credentials_use_a_separate_provider_namespace() {
+        assert_eq!(
+            market_data_credential_ref("tushare").unwrap(),
+            "gp-assistant.market-data.tushare"
+        );
+        assert!(market_data_credential_ref("Tushare").is_err());
+        assert!(market_data_credential_ref("provider/account").is_err());
+        assert!(market_data_credential_ref(&"x".repeat(49)).is_err());
+        assert!(validate_llm_ref("gp-assistant.market-data.tushare").is_err());
+        assert!(validate_market_data_ref("gp-assistant.llm.tushare").is_err());
+        assert!(vault(Fake::default())
+            .resolve("gp-assistant.market-data.tushare")
+            .is_err());
+        assert!(resolve_api_key(&serde_json::json!({
+            "credential_ref": "gp-assistant.market-data.tushare"
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn market_data_secret_status_never_returns_secret_and_delete_is_verified() {
+        let vault = vault(Fake::default());
+        let credential_ref = market_data_credential_ref("tushare").unwrap();
+        let status = vault.put_market_data(&credential_ref, SECRET).unwrap();
+        assert!(status.has_key);
+        let encoded = serde_json::to_string(&status).unwrap();
+        assert!(encoded.contains("tushare"));
+        assert!(!encoded.contains(SECRET));
+        assert!(vault.market_data_status(&credential_ref).unwrap().has_key);
+        assert!(!vault.delete_market_data(&credential_ref).unwrap().has_key);
+        assert!(vault
+            .market_data_status(&credential_ref)
+            .is_ok_and(|s| !s.has_key));
     }
 }
