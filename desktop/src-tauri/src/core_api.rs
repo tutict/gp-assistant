@@ -17,17 +17,26 @@ pub(crate) async fn core_screen(payload: Value) -> Result<Value, String> {
 
 #[tauri::command]
 pub(crate) async fn core_screen_with_data(payload: Value) -> Result<Value, String> {
-    run_core("core_screen_with_data", move || gp_core::screen_with_data_value(payload)).await
+    run_core("core_screen_with_data", move || {
+        gp_core::screen_with_data_value(payload)
+    })
+    .await
 }
 
 #[tauri::command]
 pub(crate) async fn core_graph_screen(payload: Value) -> Result<Value, String> {
-    run_core("core_graph_screen", move || gp_core::graph_screen_value(payload)).await
+    run_core("core_graph_screen", move || {
+        gp_core::graph_screen_value(payload)
+    })
+    .await
 }
 
 #[tauri::command]
 pub(crate) async fn core_graph_screen_with_data(payload: Value) -> Result<Value, String> {
-    run_core("core_graph_screen_with_data", move || gp_core::graph_screen_with_data_value(payload)).await
+    run_core("core_graph_screen_with_data", move || {
+        gp_core::graph_screen_with_data_value(payload)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -37,7 +46,10 @@ pub(crate) async fn core_backtest(payload: Value) -> Result<Value, String> {
 
 #[tauri::command]
 pub(crate) async fn core_backtest_with_data(payload: Value) -> Result<Value, String> {
-    run_core("core_backtest_with_data", move || gp_core::backtest_with_data_value(payload)).await
+    run_core("core_backtest_with_data", move || {
+        gp_core::backtest_with_data_value(payload)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -47,17 +59,26 @@ pub(crate) async fn core_trend(payload: Value) -> Result<Value, String> {
 
 #[tauri::command]
 pub(crate) async fn core_trend_with_data(payload: Value) -> Result<Value, String> {
-    run_core("core_trend_with_data", move || gp_core::trend_with_data_value(payload)).await
+    run_core("core_trend_with_data", move || {
+        gp_core::trend_with_data_value(payload)
+    })
+    .await
 }
 
 #[tauri::command]
 pub(crate) async fn core_trend_screen(payload: Value) -> Result<Value, String> {
-    run_core("core_trend_screen", move || gp_core::trend_screen_value(payload)).await
+    run_core("core_trend_screen", move || {
+        gp_core::trend_screen_value(payload)
+    })
+    .await
 }
 
 #[tauri::command]
 pub(crate) async fn core_trend_screen_with_data(payload: Value) -> Result<Value, String> {
-    run_core("core_trend_screen_with_data", move || gp_core::trend_screen_with_data_value(payload)).await
+    run_core("core_trend_screen_with_data", move || {
+        gp_core::trend_screen_with_data_value(payload)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -67,10 +88,16 @@ pub(crate) async fn core_agent(payload: Value) -> Result<Value, String> {
 
 #[tauri::command]
 pub(crate) async fn core_agent_with_data(payload: Value) -> Result<Value, String> {
-    run_core("core_agent_with_data", move || gp_core::agent_with_data_value(payload)).await
+    run_core("core_agent_with_data", move || {
+        gp_core::agent_with_data_value(payload)
+    })
+    .await
 }
 
 #[tauri::command]
 pub(crate) async fn core_mobile_stock_skill(payload: Value) -> Result<Value, String> {
-    run_core("core_mobile_stock_skill", move || gp_core::mobile_stock_skill_value(payload)).await
+    run_core("core_mobile_stock_skill", move || {
+        gp_core::mobile_stock_skill_value(payload)
+    })
+    .await
 }

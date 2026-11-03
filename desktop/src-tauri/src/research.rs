@@ -709,23 +709,26 @@ impl ResearchStore {
             )
             .map_err(|error| format!("failed to prepare research query: {error}"))?;
         let rows = statement
-            .query_map(params![match_query, stock_code, remote_safe_only as i64], |row| {
-                Ok((
-                    Candidate {
-                        chunk_id: row.get(0)?,
-                        document_id: row.get(1)?,
-                        title: row.get(2)?,
-                        content: row.get(3)?,
-                        page_number: row.get(4)?,
-                        source_tier: row.get(5)?,
-                        source_name: row.get(6)?,
-                        published_at: row.get(7)?,
-                        url: row.get(8)?,
-                        remote_export_allowed: row.get::<_, i64>(9)? != 0,
-                    },
-                    row.get::<_, f64>(10)?,
-                ))
-            })
+            .query_map(
+                params![match_query, stock_code, remote_safe_only as i64],
+                |row| {
+                    Ok((
+                        Candidate {
+                            chunk_id: row.get(0)?,
+                            document_id: row.get(1)?,
+                            title: row.get(2)?,
+                            content: row.get(3)?,
+                            page_number: row.get(4)?,
+                            source_tier: row.get(5)?,
+                            source_name: row.get(6)?,
+                            published_at: row.get(7)?,
+                            url: row.get(8)?,
+                            remote_export_allowed: row.get::<_, i64>(9)? != 0,
+                        },
+                        row.get::<_, f64>(10)?,
+                    ))
+                },
+            )
             .map_err(|error| format!("failed to execute research query: {error}"))?;
 
         let mut scored = Vec::new();
@@ -748,7 +751,9 @@ impl ResearchStore {
             })
             .collect::<HashMap<_, _>>();
         let vector_candidates = query_vector
-            .map(|vector| self.vector_candidates(&connection, vector, stock_code.as_deref(), remote_safe_only))
+            .map(|vector| {
+                self.vector_candidates(&connection, vector, stock_code.as_deref(), remote_safe_only)
+            })
             .transpose()?
             .unwrap_or_default();
         let vector_ranking = vector_candidates
@@ -946,12 +951,12 @@ impl ResearchStore {
             .filter(|row| {
                 (!remote_safe_only || row.remote_export_allowed)
                     && stock_code
-                    .map(|expected| {
-                        row.stock_codes
-                            .iter()
-                            .any(|code| code.eq_ignore_ascii_case(expected))
-                    })
-                    .unwrap_or(true)
+                        .map(|expected| {
+                            row.stock_codes
+                                .iter()
+                                .any(|code| code.eq_ignore_ascii_case(expected))
+                        })
+                        .unwrap_or(true)
             })
             .filter_map(|row| {
                 cosine_similarity(query_vector, &row.vector)
@@ -2672,7 +2677,13 @@ fn load_vector_cache(
             let blob: Vec<u8> = row.get(2)?;
             let dimensions: i64 = row.get(3)?;
             let remote_export_allowed: i64 = row.get(4)?;
-            Ok((chunk_id, stock_codes_json, blob, dimensions, remote_export_allowed))
+            Ok((
+                chunk_id,
+                stock_codes_json,
+                blob,
+                dimensions,
+                remote_export_allowed,
+            ))
         })
         .map_err(|error| format!("failed to query embedding cache: {error}"))?
         .collect::<Result<Vec<_>, _>>()
@@ -3670,7 +3681,10 @@ mod tests {
         assert_eq!(fixture["version"], "research-retrieval-eval-v4");
         assert_eq!(fixture["cases"].as_array().map(Vec::len), Some(40));
         assert_eq!(fixture["dataset"]["split"], "frozen-golden");
-        assert_eq!(fixture["dataset"]["generator"], "agent-authored-synthetic-unreviewed");
+        assert_eq!(
+            fixture["dataset"]["generator"],
+            "agent-authored-synthetic-unreviewed"
+        );
 
         for case in fixture["cases"]
             .as_array()
@@ -3763,7 +3777,9 @@ mod tests {
                 .filter_map(Value::as_str)
             {
                 assert!(
-                    assertion_citations.iter().any(|citation| citation["document_id"] == required),
+                    assertion_citations
+                        .iter()
+                        .any(|citation| citation["document_id"] == required),
                     "{case_id}: required document {required} should be cited"
                 );
             }
@@ -3775,13 +3791,20 @@ mod tests {
                 .filter_map(Value::as_str)
             {
                 assert!(
-                    !assertion_citations.iter().any(|citation| citation["document_id"] == forbidden),
+                    !assertion_citations
+                        .iter()
+                        .any(|citation| citation["document_id"] == forbidden),
                     "{case_id}: forbidden document {forbidden} must not be cited"
                 );
             }
             if let Some(value) = expected.get("remote_safe_only").and_then(Value::as_bool) {
-                assert_eq!(response["remote_safe_only"], value, "{case_id}: remote policy");
-                assert!(citations.iter().all(|citation| citation["remote_export_allowed"] == true));
+                assert_eq!(
+                    response["remote_safe_only"], value,
+                    "{case_id}: remote policy"
+                );
+                assert!(citations
+                    .iter()
+                    .all(|citation| citation["remote_export_allowed"] == true));
             }
             for field in ["community_only", "fact_supported", "retrieval_mode"] {
                 if let Some(value) = expected.get(field) {
@@ -5045,13 +5068,23 @@ mod tests {
 
         let _store = ResearchStore::open(&path).expect("legacy schema should migrate");
         let connection = Connection::open(&path).unwrap();
-        let public_permission: i64 = connection.query_row(
-            "SELECT remote_export_allowed FROM documents WHERE id='legacy-public'", [], |row| row.get(0)
-        ).unwrap();
-        let private_permission: i64 = connection.query_row(
-            "SELECT remote_export_allowed FROM documents WHERE id='legacy-private'", [], |row| row.get(0)
-        ).unwrap();
-        let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+        let public_permission: i64 = connection
+            .query_row(
+                "SELECT remote_export_allowed FROM documents WHERE id='legacy-public'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let private_permission: i64 = connection
+            .query_row(
+                "SELECT remote_export_allowed FROM documents WHERE id='legacy-private'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
         assert_eq!(public_permission, 1);
         assert_eq!(private_permission, 0);
         assert_eq!(version, 3);
@@ -5128,12 +5161,14 @@ mod tests {
             }))
             .expect("consented query should succeed");
         assert_eq!(consented["citations"].as_array().unwrap().len(), 2);
-        assert!(consented["citations"].as_array().unwrap().iter().any(|item| item["document_id"] == "local-research"));
+        assert!(consented["citations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["document_id"] == "local-research"));
 
         let _ = remove_sqlite_files(&path);
     }
-
-
 }
 
 #[cfg(target_os = "windows")]

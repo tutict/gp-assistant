@@ -1,9 +1,9 @@
 mod credentials;
 mod diagnostics;
-mod perf_diagnostics;
 mod durability;
 mod external_data;
 mod jobs;
+mod perf_diagnostics;
 mod user_backup;
 mod workspace;
 use serde_json::{json, Value};
@@ -26,9 +26,9 @@ mod gepa_lab;
 mod hk_market;
 mod llm;
 mod market;
-mod metric_units;
 mod market_capabilities;
 mod market_domain;
+mod metric_units;
 mod news_rag;
 mod observe;
 mod prompt_upgrade;
@@ -40,10 +40,10 @@ mod research_import;
 mod rig_runtime;
 mod runtime;
 mod screening;
-mod stock_research_runtime;
 mod sentiment;
 mod sentiment_agent;
 mod sentiment_data;
+mod stock_research_runtime;
 mod watchlist;
 #[tauri::command]
 fn api_app_close_handler_ready(ready: bool) {

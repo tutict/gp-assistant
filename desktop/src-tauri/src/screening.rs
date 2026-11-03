@@ -98,19 +98,27 @@ pub(crate) fn local_trend_history_coverage(
     end: &str,
     required: usize,
 ) -> Vec<Value> {
-    let quotes = universe.iter().map(|stock| (stock.code.as_str(), stock)).collect::<HashMap<_, _>>();
+    let quotes = universe
+        .iter()
+        .map(|stock| (stock.code.as_str(), stock))
+        .collect::<HashMap<_, _>>();
     let start = crate::market::compact_date_key(start).unwrap_or_default();
     let end = crate::market::compact_date_key(end).unwrap_or_default();
     let mut coverage = local_history_coverage(data, overrides, codes, &start, &end, required);
     for item in &mut coverage {
         let code = item["code"].as_str().unwrap_or_default();
-        let quote_date = quotes.get(code)
+        let quote_date = quotes
+            .get(code)
             .and_then(|stock| stock.quote_time.as_deref())
             .and_then(crate::market::compact_date_key);
         // Historical windows remain readable; current windows must cover their quote date.
-        let target = quote_date.as_ref().filter(|date| **date >= start && **date <= end);
+        let target = quote_date
+            .as_ref()
+            .filter(|date| **date >= start && **date <= end);
         let behind = target.is_some_and(|target| {
-            item["as_of"].as_str().is_none_or(|latest| latest < target.as_str())
+            item["as_of"]
+                .as_str()
+                .is_none_or(|latest| latest < target.as_str())
         });
         item["quote_as_of"] = json!(quote_date);
         item["history_behind_quote"] = json!(behind);
@@ -757,7 +765,9 @@ pub(crate) async fn api_trend_screen_inner(
         prepare_trend_screen(&app, payload),
     )
     .await
-    .map_err(|_| format!("趋势日线准备超过 {TREND_SCREEN_HISTORY_TIMEOUT_SECS} 秒，请稍后重新运行筛选。"))??;
+    .map_err(|_| {
+        format!("趋势日线准备超过 {TREND_SCREEN_HISTORY_TIMEOUT_SECS} 秒，请稍后重新运行筛选。")
+    })??;
     let PreparedTrendScreen {
         data,
         stock_override,
@@ -1742,20 +1752,22 @@ pub(crate) async fn prepare_trend_screen(
     let candidate_request = request.clone();
     let candidate_data = Arc::clone(&data);
     let candidate_stocks = stock_override.clone();
-    let candidate_codes =
-        crate::runtime::run_cpu_bound("api_trend_screen_candidates", move || {
-            let universe = candidate_stocks
-                .as_deref()
-                .map(Vec::as_slice)
-                .unwrap_or(candidate_data.stocks.as_slice());
-            gp_core::trend_screen_candidate_codes(universe, &candidate_request)
-        })
-        .await?;
+    let candidate_codes = crate::runtime::run_cpu_bound("api_trend_screen_candidates", move || {
+        let universe = candidate_stocks
+            .as_deref()
+            .map(Vec::as_slice)
+            .unwrap_or(candidate_data.stocks.as_slice());
+        gp_core::trend_screen_candidate_codes(universe, &candidate_request)
+    })
+    .await?;
     let candidates = normalize_trend_prefetch_codes(candidate_codes.iter().map(String::as_str));
     let coverage = local_trend_history_coverage(
         data.as_ref(),
         &HashMap::new(),
-        stock_override.as_deref().map(Vec::as_slice).unwrap_or(&data.stocks),
+        stock_override
+            .as_deref()
+            .map(Vec::as_slice)
+            .unwrap_or(&data.stocks),
         &candidates,
         &request.start_date,
         &request.end_date,
@@ -1797,13 +1809,20 @@ pub(crate) async fn prepare_trend_screen(
                     let code = code.to_string();
                     let start_date = start_date.to_string();
                     let end_date = end_date.clone();
-                    async move { crate::market::fetch_observe_daily_history(&code, &start_date, &end_date).await }
+                    async move {
+                        crate::market::fetch_observe_daily_history(&code, &start_date, &end_date)
+                            .await
+                    }
                 },
                 |_, _| {},
-            ).await)
+            )
+            .await)
         })
         .await?;
-    let AdaptiveHistoryFetchOutcome { results: fetches, timed_out } = fetch_outcome;
+    let AdaptiveHistoryFetchOutcome {
+        results: fetches,
+        timed_out,
+    } = fetch_outcome;
     let completed = fetches.len();
 
     let mut history_override = HashMap::new();
@@ -1838,7 +1857,10 @@ pub(crate) async fn prepare_trend_screen(
     let coverage = local_trend_history_coverage(
         data.as_ref(),
         &history_override,
-        stock_override.as_deref().map(Vec::as_slice).unwrap_or(&data.stocks),
+        stock_override
+            .as_deref()
+            .map(Vec::as_slice)
+            .unwrap_or(&data.stocks),
         &candidates,
         &request.start_date,
         &request.end_date,
@@ -2858,7 +2880,10 @@ mod local_first_tests {
         let mut codes = vec!["stalled".to_string()];
         codes.extend((0..14).map(|index| format!("ready-{index}")));
         let outcome = tauri::async_runtime::block_on(collect_adaptive_history_results(
-            codes, "20260601".into(), Duration::from_millis(500), TREND_SCREEN_HISTORY_CONCURRENCY,
+            codes,
+            "20260601".into(),
+            Duration::from_millis(500),
+            TREND_SCREEN_HISTORY_CONCURRENCY,
             move |code, _| {
                 let code = code.to_string();
                 let active = Arc::clone(&fetch_active);
@@ -2866,41 +2891,63 @@ mod local_first_tests {
                 async move {
                     let running = active.fetch_add(1, Ordering::SeqCst) + 1;
                     peak.fetch_max(running, Ordering::SeqCst);
-                    if code == "stalled" { return std::future::pending().await; }
+                    if code == "stalled" {
+                        return std::future::pending().await;
+                    }
                     tokio::time::sleep(Duration::from_millis(5)).await;
                     active.fetch_sub(1, Ordering::SeqCst);
                     Ok(vec![json!({"date":"2026-10-30", "close":10.0})])
                 }
-            }, |_, _| {},
+            },
+            |_, _| {},
         ));
         assert!(outcome.timed_out);
         assert_eq!(outcome.results.len(), 14);
-        assert!(outcome.results.iter().all(|(code, result)| code != "stalled" && result.is_ok()));
+        assert!(outcome
+            .results
+            .iter()
+            .all(|(code, result)| code != "stalled" && result.is_ok()));
         assert!(peak.load(Ordering::SeqCst) > 1);
         assert!(peak.load(Ordering::SeqCst) <= TREND_SCREEN_HISTORY_CONCURRENCY);
     }
 
     #[test]
     fn trend_coverage_refreshes_old_bars_even_when_the_count_is_sufficient() {
-        let rows = (0..60).map(|index| {
-            let date = chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap()
-                .checked_add_days(chrono::Days::new(index)).unwrap();
-            serde_json::from_value::<gp_core::HistoryBar>(json!({
-                "date":date.format("%Y-%m-%d").to_string(), "close":10.0,
-                "open":10.0,"high":11.0,"low":9.0,"volume":100.0
-            })).unwrap()
-        }).collect::<Vec<_>>();
+        let rows = (0..60)
+            .map(|index| {
+                let date = chrono::NaiveDate::from_ymd_opt(2026, 7, 26)
+                    .unwrap()
+                    .checked_add_days(chrono::Days::new(index))
+                    .unwrap();
+                serde_json::from_value::<gp_core::HistoryBar>(json!({
+                    "date":date.format("%Y-%m-%d").to_string(), "close":10.0,
+                    "open":10.0,"high":11.0,"low":9.0,"volume":100.0
+                }))
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
         let code = "688279.SH".to_string();
         let stock = gp_core::StockItem {
-            code: code.clone(), price: 173.73, quote_time: Some("20261030161451".into()),
+            code: code.clone(),
+            price: 173.73,
+            quote_time: Some("20261030161451".into()),
             ..gp_core::StockItem::default()
         };
         let data = gp_core::CoreDataSet {
-            stocks: vec![stock], histories: [(code.clone(), rows.clone())].into_iter().collect(),
+            stocks: vec![stock],
+            histories: [(code.clone(), rows.clone())].into_iter().collect(),
             ..gp_core::CoreDataSet::default()
         };
         let codes = vec![code.clone()];
-        let old = local_trend_history_coverage(&data, &HashMap::new(), &data.stocks, &codes, "20260601", "20261101", 45);
+        let old = local_trend_history_coverage(
+            &data,
+            &HashMap::new(),
+            &data.stocks,
+            &codes,
+            "20260601",
+            "20261101",
+            45,
+        );
         assert_eq!(old[0]["available_bars"], 60);
         assert_eq!(old[0]["sufficient"], false);
         assert_eq!(old[0]["quote_as_of"], "20261030");
@@ -2909,13 +2956,30 @@ mod local_first_tests {
         assert!(local_data::require_coverage("trend_screen", &old).is_err());
 
         let mut fresh_rows = rows;
-        fresh_rows.push(serde_json::from_value(json!({"date":"2026-10-30", "close":173.73})).unwrap());
+        fresh_rows
+            .push(serde_json::from_value(json!({"date":"2026-10-30", "close":173.73})).unwrap());
         let overrides = [(code, fresh_rows)].into_iter().collect();
-        let fresh = local_trend_history_coverage(&data, &overrides, &data.stocks, &codes, "20260601", "20261101", 45);
+        let fresh = local_trend_history_coverage(
+            &data,
+            &overrides,
+            &data.stocks,
+            &codes,
+            "20260601",
+            "20261101",
+            45,
+        );
         assert_eq!(fresh[0]["sufficient"], true);
         assert_eq!(fresh[0]["history_behind_quote"], false);
 
-        let historical = local_trend_history_coverage(&data, &HashMap::new(), &data.stocks, &codes, "20260601", "20260923", 45);
+        let historical = local_trend_history_coverage(
+            &data,
+            &HashMap::new(),
+            &data.stocks,
+            &codes,
+            "20260601",
+            "20260923",
+            45,
+        );
         assert_eq!(historical[0]["sufficient"], true);
     }
 

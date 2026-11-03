@@ -849,18 +849,27 @@ pub(crate) fn api_upstream_rag_status(app: tauri::AppHandle) -> Result<Value, St
 }
 
 #[tauri::command]
-pub(crate) fn api_upstream_rag_build(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) fn api_upstream_rag_build(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     let data = crate::market::cached_market_data(&app)?;
     crate::rag_pack::upstream_rag_build(app, payload, data)
 }
 
 #[tauri::command]
-pub(crate) fn api_upstream_rag_transfer_start(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) fn api_upstream_rag_transfer_start(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     crate::rag_pack::upstream_rag_transfer_start(app, payload)
 }
 
 #[tauri::command]
-pub(crate) fn core_upstream_rag_import(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) fn core_upstream_rag_import(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     let manifest_value = payload
         .get("manifest")
         .cloned()
@@ -933,7 +942,10 @@ pub(crate) fn core_upstream_rag_import(app: tauri::AppHandle, payload: Value) ->
         "_local_manifest_path".to_string(),
         json!(version_dir.join("manifest.json").display().to_string()),
     );
-    manifest.insert("_imported_at_epoch_ms".to_string(), json!(crate::market::epoch_millis()));
+    manifest.insert(
+        "_imported_at_epoch_ms".to_string(),
+        json!(crate::market::epoch_millis()),
+    );
     fs::write(
         &tmp_manifest_path,
         serde_json::to_vec_pretty(&Value::Object(manifest.clone()))
@@ -983,14 +995,15 @@ pub(crate) fn core_upstream_rag_list(app: tauri::AppHandle) -> Result<Value, Str
             if !stock_dir.is_dir() {
                 continue;
             }
-            let current_version = crate::market::read_json_file(&stock_dir.join("current_manifest.json"))
-                .ok()
-                .and_then(|value| {
-                    value
-                        .get("pack_version")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                });
+            let current_version =
+                crate::market::read_json_file(&stock_dir.join("current_manifest.json"))
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .get("pack_version")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    });
             for version_entry in fs::read_dir(&stock_dir)
                 .map_err(|error| format!("读取 RAG 版本目录失败：{error}"))?
             {
@@ -1000,7 +1013,9 @@ pub(crate) fn core_upstream_rag_list(app: tauri::AppHandle) -> Result<Value, Str
                 if !version_dir.is_dir() {
                     continue;
                 }
-                if let Ok(mut manifest) = crate::market::read_json_file(&version_dir.join("manifest.json")) {
+                if let Ok(mut manifest) =
+                    crate::market::read_json_file(&version_dir.join("manifest.json"))
+                {
                     let pack_version = manifest
                         .get("pack_version")
                         .and_then(Value::as_str)
@@ -1030,7 +1045,10 @@ pub(crate) fn core_upstream_rag_list(app: tauri::AppHandle) -> Result<Value, Str
 }
 
 #[tauri::command]
-pub(crate) fn core_upstream_rag_detail(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) fn core_upstream_rag_detail(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     let root = upstream_rag_mobile_root(&app)?;
     let stock_code = payload
         .get("stock_code")
@@ -1059,7 +1077,10 @@ pub(crate) fn core_upstream_rag_detail(app: tauri::AppHandle, payload: Value) ->
 }
 
 #[tauri::command]
-pub(crate) fn core_upstream_rag_rollback(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) fn core_upstream_rag_rollback(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     let root = upstream_rag_mobile_root(&app)?;
     let stock_code = payload
         .get("stock_code")

@@ -174,7 +174,11 @@ pub(crate) fn requested(payload: &Value) -> bool {
 #[cfg(all(target_os = "android", debug_assertions))]
 #[link(name = "log")]
 unsafe extern "C" {
-    fn __android_log_write(priority: i32, tag: *const std::ffi::c_char, text: *const std::ffi::c_char) -> i32;
+    fn __android_log_write(
+        priority: i32,
+        tag: *const std::ffi::c_char,
+        text: *const std::ffi::c_char,
+    ) -> i32;
 }
 
 #[inline(always)]
@@ -208,11 +212,11 @@ mod tests {
             Stage::RustCalculation,
             Duration::from_millis(43),
         )
-            .with_cache_strategy(CacheStrategy::Refresh)
-            .with_counts(1, 750, 8)
-            .with_candidate_count(80)
-            .with_bytes(1_200, 6_400)
-            .with_outcome(Outcome::Ok);
+        .with_cache_strategy(CacheStrategy::Refresh)
+        .with_counts(1, 750, 8)
+        .with_candidate_count(80)
+        .with_bytes(1_200, 6_400)
+        .with_outcome(Outcome::Ok);
         let line: serde_json::Value = serde_json::from_str(&event.to_json()).unwrap();
 
         assert_eq!(

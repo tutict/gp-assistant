@@ -101,7 +101,11 @@ pub(crate) fn resolve_prompt(mode: &str, app: Option<&AppHandle>) -> ResolvedPro
             }
             Ok(_) => {}
             Err(_) => {
-                return compose(mode, builtin_body(mode), &format!("{BASE_PROMPT_VERSION}+degraded-overlay"));
+                return compose(
+                    mode,
+                    builtin_body(mode),
+                    &format!("{BASE_PROMPT_VERSION}+degraded-overlay"),
+                );
             }
         }
     }
@@ -513,7 +517,13 @@ mod tests {
         let profile_id = profile_id_for_mode(mode);
         let store = match load_store(overlay) {
             Ok(store) => store,
-            Err(_) => return compose(mode, builtin_body(mode), &format!("{BASE_PROMPT_VERSION}+degraded-overlay")),
+            Err(_) => {
+                return compose(
+                    mode,
+                    builtin_body(mode),
+                    &format!("{BASE_PROMPT_VERSION}+degraded-overlay"),
+                )
+            }
         };
         if let Some(active) = store
             .profiles

@@ -3327,25 +3327,49 @@ mod observation_snapshot_tests {
     fn sqlite_roundtrip_preserves_observation_details_and_supplement_freshness() {
         let mut data = market_fixture();
         data["stocks"][0]["circulating_market_cap_billion"] = json!(15.0);
-        data["financials"]["600519.SH"]["supplement_updated_at_epoch_ms"] = json!(1793422800000_u64);
+        data["financials"]["600519.SH"]["supplement_updated_at_epoch_ms"] =
+            json!(1793422800000_u64);
         let path = std::env::temp_dir().join(format!(
-            "gp-observation-roundtrip-{}-{}.sqlite", std::process::id(), crate::market::epoch_millis(),
+            "gp-observation-roundtrip-{}-{}.sqlite",
+            std::process::id(),
+            crate::market::epoch_millis(),
         ));
         {
             let mut store = crate::external_data::DataStore::open(&path).unwrap();
             crate::market::store_market_dataset(&mut store, &data, "test_fixture").unwrap();
         }
         let store = crate::external_data::DataStore::open(&path).unwrap();
-        let projected = crate::market::project_market_store(&store).unwrap().unwrap();
-        let stock = projected["stocks"].as_array().unwrap().iter()
-            .find(|stock| stock["code"] == "600519.SH").unwrap();
+        let projected = crate::market::project_market_store(&store)
+            .unwrap()
+            .unwrap();
+        let stock = projected["stocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|stock| stock["code"] == "600519.SH")
+            .unwrap();
         assert_eq!(stock["total_shares"], 1000000000.0);
         assert_eq!(stock["circulating_shares"], 800000000.0);
         assert_eq!(stock["circulating_market_cap_billion"], 15.0);
-        assert_eq!(projected["capital_evidence"]["600519.SH"]["market_active_brokerages"]["status"], "available");
-        assert_eq!(projected["capital_evidence"]["600519.SH"]["institutional_holdings"]["status"], "no_institutional_holders");
-        assert_eq!(projected["financials"]["600519.SH"]["supplement_updated_at_epoch_ms"], 1793422800000_u64);
-        assert_eq!(projected["histories"]["600519.SH"].as_array().unwrap().len(), 750);
+        assert_eq!(
+            projected["capital_evidence"]["600519.SH"]["market_active_brokerages"]["status"],
+            "available"
+        );
+        assert_eq!(
+            projected["capital_evidence"]["600519.SH"]["institutional_holdings"]["status"],
+            "no_institutional_holders"
+        );
+        assert_eq!(
+            projected["financials"]["600519.SH"]["supplement_updated_at_epoch_ms"],
+            1793422800000_u64
+        );
+        assert_eq!(
+            projected["histories"]["600519.SH"]
+                .as_array()
+                .unwrap()
+                .len(),
+            750
+        );
         drop(store);
         std::fs::remove_file(path).unwrap();
     }

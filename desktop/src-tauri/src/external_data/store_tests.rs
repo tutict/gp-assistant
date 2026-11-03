@@ -422,7 +422,11 @@ fn explicit_refresh_can_manually_retry_a_retryable_run_without_consuming_recover
         .finish_refresh_run(&run.run_id, RefreshRunState::Completed, 14, None, None)
         .unwrap();
     assert_eq!(
-        store.refresh_run_status(&run.run_id).unwrap().unwrap().state,
+        store
+            .refresh_run_status(&run.run_id)
+            .unwrap()
+            .unwrap()
+            .state,
         RefreshRunState::Completed
     );
 }

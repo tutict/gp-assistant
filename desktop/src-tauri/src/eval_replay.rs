@@ -1,6 +1,10 @@
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{env, fs, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use crate::{research::ResearchStore, rig_runtime};
 use stock_optimizer_core as gp_core;
@@ -36,7 +40,11 @@ fn agent_model_config_from_env() -> Result<Value, String> {
         env::var(name)
             .ok()
             .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| format!("missing {name}; model-backed replay never falls back to judge configuration"))
+            .ok_or_else(|| {
+                format!(
+                    "missing {name}; model-backed replay never falls back to judge configuration"
+                )
+            })
     };
     let base_url = required("RAG_EVAL_AGENT_BASE_URL")?;
     let api_key = required("RAG_EVAL_AGENT_API_KEY")?;
@@ -56,7 +64,8 @@ fn agent_model_config_from_env() -> Result<Value, String> {
     if temperature != 0.0 {
         return Err("RAG_EVAL_AGENT_TEMPERATURE must be 0 for reproducible replay".to_string());
     }
-    let api_format = env::var("RAG_EVAL_AGENT_API_FORMAT").unwrap_or_else(|_| "openai_chat".to_string());
+    let api_format =
+        env::var("RAG_EVAL_AGENT_API_FORMAT").unwrap_or_else(|_| "openai_chat".to_string());
     let public = json!({
         "base_url": base_url,
         "model": model,
@@ -64,10 +73,11 @@ fn agent_model_config_from_env() -> Result<Value, String> {
         "temperature": temperature,
         "prompt_version": prompt_version,
     });
-    let fingerprint = Sha256::digest(serde_json::to_vec(&public).map_err(|error| error.to_string())?)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
+    let fingerprint =
+        Sha256::digest(serde_json::to_vec(&public).map_err(|error| error.to_string())?)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
     let mut config = public;
     config["api_key"] = Value::String(api_key);
     config["agent_model_fingerprint"] = Value::String(fingerprint);
@@ -76,26 +86,56 @@ fn agent_model_config_from_env() -> Result<Value, String> {
 
 fn vec_for(label: &str) -> Vec<f32> {
     let mut v = vec![0.0; 512];
-    match label { "query" => v[0] = 1.0, "secondary" => { v[0] = 0.8; v[1] = 0.6; }, _ => v[1] = 1.0 }
+    match label {
+        "query" => v[0] = 1.0,
+        "secondary" => {
+            v[0] = 0.8;
+            v[1] = 0.6;
+        }
+        _ => v[1] = 1.0,
+    }
     v
 }
 
 fn temp_db(case_id: &str) -> PathBuf {
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
     env::temp_dir().join(format!("gp-assistant-replay-{case_id}-{stamp}.sqlite"))
 }
 
 fn fixture_documents(case: &Value) -> Vec<Value> {
-    let mut docs = case.get("documents").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut docs = case
+        .get("documents")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     for doc in &mut docs {
-        let repeat = doc.get("repeat_content").and_then(Value::as_u64).unwrap_or(1).min(100) as usize;
+        let repeat = doc
+            .get("repeat_content")
+            .and_then(Value::as_u64)
+            .unwrap_or(1)
+            .min(100) as usize;
         if repeat > 1 {
-            doc["content"] = Value::String(doc.get("content").and_then(Value::as_str).unwrap_or_default().repeat(repeat));
+            doc["content"] = Value::String(
+                doc.get("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .repeat(repeat),
+            );
         }
     }
     if let Some(generator) = case.get("generated_documents") {
-        let count = generator.get("count").and_then(Value::as_u64).unwrap_or(0).min(100) as usize;
-        let prefix = generator.get("document_id_prefix").and_then(Value::as_str).unwrap_or("generated-");
+        let count = generator
+            .get("count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            .min(100) as usize;
+        let prefix = generator
+            .get("document_id_prefix")
+            .and_then(Value::as_str)
+            .unwrap_or("generated-");
         for index in 0..count {
             let mut doc = json!({
                 "document_id": format!("{prefix}{index}"),
@@ -104,29 +144,61 @@ fn fixture_documents(case: &Value) -> Vec<Value> {
                 "source_tier": generator.get("source_tier").cloned().unwrap_or_else(|| json!("news")),
                 "stock_codes": generator.get("stock_codes").cloned().unwrap_or_else(|| json!([])),
             });
-            if let Some(published) = generator.get("published_at") { doc["published_at"] = published.clone(); }
+            if let Some(published) = generator.get("published_at") {
+                doc["published_at"] = published.clone();
+            }
             docs.push(doc);
         }
     }
     docs
 }
 
-fn query_vector(case: &Value) -> Option<Vec<f32>> { case.get("query_vector").and_then(Value::as_str).map(vec_for) }
+fn query_vector(case: &Value) -> Option<Vec<f32>> {
+    case.get("query_vector")
+        .and_then(Value::as_str)
+        .map(vec_for)
+}
 
 fn seed_embeddings(store: &ResearchStore, docs: &[Value]) -> Result<(), String> {
     let work = store.pending_embedding_chunks(50_000)?;
-    let items = work.into_iter().map(|item| {
-        let label = docs.iter().find(|doc| doc.get("document_id").and_then(Value::as_str).is_some_and(|id| item.chunk_id.starts_with(&format!("{id}:")))).and_then(|doc| doc.get("embedding")).and_then(Value::as_str).unwrap_or("orthogonal");
-        (item, vec_for(label))
-    }).collect::<Vec<_>>();
-    if !items.is_empty() { store.store_embeddings(&items, EMBEDDING_MODEL)?; }
+    let items = work
+        .into_iter()
+        .map(|item| {
+            let label = docs
+                .iter()
+                .find(|doc| {
+                    doc.get("document_id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|id| item.chunk_id.starts_with(&format!("{id}:")))
+                })
+                .and_then(|doc| doc.get("embedding"))
+                .and_then(Value::as_str)
+                .unwrap_or("orthogonal");
+            (item, vec_for(label))
+        })
+        .collect::<Vec<_>>();
+    if !items.is_empty() {
+        store.store_embeddings(&items, EMBEDDING_MODEL)?;
+    }
     Ok(())
 }
 
 fn citations(response: &Value) -> (Vec<String>, Vec<String>) {
-    let rows = response.get("citations").and_then(Value::as_array).cloned().unwrap_or_default();
-    let contexts = rows.iter().filter_map(|row| row.get("excerpt").and_then(Value::as_str)).map(ToOwned::to_owned).collect();
-    let ids = rows.iter().filter_map(|row| row.get("document_id").and_then(Value::as_str)).map(ToOwned::to_owned).collect();
+    let rows = response
+        .get("citations")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let contexts = rows
+        .iter()
+        .filter_map(|row| row.get("excerpt").and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+        .collect();
+    let ids = rows
+        .iter()
+        .filter_map(|row| row.get("document_id").and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+        .collect();
     (contexts, ids)
 }
 
@@ -150,7 +222,9 @@ fn replay_agent(
     }
     let mut events = Vec::new();
     let outcome = tauri::async_runtime::block_on(rig_runtime::execute_with_event_sink(
-        payload, data, |event| events.push(event),
+        payload,
+        data,
+        |event| events.push(event),
     ))?;
     let trace = events.iter().filter(|e| e["type"] == "tool_start").map(|event| {
         let id = event["payload"]["id"].as_str().unwrap_or("");
@@ -166,15 +240,24 @@ fn replay_case(
     profile: ReplayProfile,
     agent_config: Option<&Value>,
 ) -> Result<Value, String> {
-    let id = case.get("id").and_then(Value::as_str).ok_or_else(|| "case id missing".to_string())?;
+    let id = case
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "case id missing".to_string())?;
     let db = temp_db(id);
     let store = ResearchStore::open(&db)?;
     let docs = fixture_documents(case);
     store.ingest_documents(&docs)?;
     let private = case["category"] == "private_evidence"
-        || docs.iter().any(|doc| doc.get("user_imported").and_then(Value::as_bool).unwrap_or(false));
+        || docs.iter().any(|doc| {
+            doc.get("user_imported")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        });
     let qv = query_vector(case);
-    if qv.is_some() { seed_embeddings(&store, &docs)?; }
+    if qv.is_some() {
+        seed_embeddings(&store, &docs)?;
+    }
     let request = case.get("request").cloned().unwrap_or_else(|| json!({}));
     let mut retrieval_request = request.clone();
     if profile == ReplayProfile::ModelBacked {
@@ -194,11 +277,24 @@ fn replay_case(
     let (trace, agent_response, agent_events) = replay_agent(
         case,
         &response,
-        if should_call_model { ReplayProfile::ModelBacked } else { ReplayProfile::Deterministic },
-        if should_call_model { agent_config } else { None },
+        if should_call_model {
+            ReplayProfile::ModelBacked
+        } else {
+            ReplayProfile::Deterministic
+        },
+        if should_call_model {
+            agent_config
+        } else {
+            None
+        },
     )?;
-    let expect = case.get("expect").ok_or_else(|| format!("{id}: expect missing"))?;
-    let contract = expect.get("answer_contract").cloned().unwrap_or_else(|| json!({}));
+    let expect = case
+        .get("expect")
+        .ok_or_else(|| format!("{id}: expect missing"))?;
+    let contract = expect
+        .get("answer_contract")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     let tools = expect
         .get("agent_contract")
         .and_then(|a| a.get("expected_trace").or_else(|| a.get("required_tools")))
@@ -223,7 +319,11 @@ fn replay_case(
     let forbidden_tool_hits = actual_tool_trace
         .iter()
         .filter_map(|item| item.get("name").and_then(Value::as_str))
-        .filter(|name| forbidden_tools.iter().any(|item| item.as_str() == Some(*name)))
+        .filter(|name| {
+            forbidden_tools
+                .iter()
+                .any(|item| item.as_str() == Some(*name))
+        })
         .map(ToOwned::to_owned)
         .collect::<Vec<_>>();
     let required_document_ids = expect
@@ -256,14 +356,23 @@ fn replay_case(
     let missing_required_evidence = expected_evidence
         .iter()
         .filter_map(|item| item.get("sentence").and_then(Value::as_str))
-        .filter(|sentence| !local_contexts.iter().any(|context| context.contains(sentence)))
+        .filter(|sentence| {
+            !local_contexts
+                .iter()
+                .any(|context| context.contains(sentence))
+        })
         .map(ToOwned::to_owned)
         .collect::<Vec<_>>();
     let remote_forbidden_document_ids = docs
         .iter()
         .filter(|doc| {
-            doc.get("user_imported").and_then(Value::as_bool).unwrap_or(false)
-                && !doc.get("remote_export_allowed").and_then(Value::as_bool).unwrap_or(false)
+            doc.get("user_imported")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                && !doc
+                    .get("remote_export_allowed")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
         })
         .filter_map(|doc| doc.get("document_id").and_then(Value::as_str))
         .map(ToOwned::to_owned)
@@ -291,10 +400,17 @@ fn replay_case(
         .and_then(|config| config.get("agent_model_fingerprint"))
         .cloned()
         .unwrap_or(Value::Null);
-    let actual_output = agent_response.get("reply").and_then(Value::as_str).unwrap_or_default();
+    let actual_output = agent_response
+        .get("reply")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let expected_retrieval_context = expected_evidence
         .iter()
-        .filter_map(|x| x.get("sentence").and_then(Value::as_str).map(ToOwned::to_owned))
+        .filter_map(|x| {
+            x.get("sentence")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
         .collect::<Vec<_>>();
     let retrieval_gate = json!({
         "passed": retrieval_passed,
@@ -373,30 +489,54 @@ pub(crate) fn run(
     profile: ReplayProfile,
     agent_config: Option<&Value>,
 ) -> Result<Value, String> {
-    let allowed = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../app/prompts/research_retrieval_eval_cases.json");
-    if input.canonicalize().map_err(|e| e.to_string())? != allowed.canonicalize().map_err(|e| e.to_string())? {
+    let allowed = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../app/prompts/research_retrieval_eval_cases.json");
+    if input.canonicalize().map_err(|e| e.to_string())?
+        != allowed.canonicalize().map_err(|e| e.to_string())?
+    {
         return Err("Only the checked-in frozen fixture is allowed".to_string());
     }
-    let fixture: Value = serde_json::from_str(&fs::read_to_string(input).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    if fixture.get("version").and_then(Value::as_str) != Some(FIXTURE_VERSION) { return Err(format!("fixture must be {FIXTURE_VERSION}")); }
-    let cases = fixture.get("cases").and_then(Value::as_array).ok_or_else(|| "cases missing".to_string())?;
+    let fixture: Value =
+        serde_json::from_str(&fs::read_to_string(input).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    if fixture.get("version").and_then(Value::as_str) != Some(FIXTURE_VERSION) {
+        return Err(format!("fixture must be {FIXTURE_VERSION}"));
+    }
+    let cases = fixture
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "cases missing".to_string())?;
     if profile == ReplayProfile::ModelBacked && agent_config.is_none() {
-        return Err("model-backed replay requires explicit RAG_EVAL_AGENT_* configuration".to_string());
+        return Err(
+            "model-backed replay requires explicit RAG_EVAL_AGENT_* configuration".to_string(),
+        );
     }
     let rows = cases
         .iter()
         .map(|case| replay_case(case, profile, agent_config))
         .collect::<Result<Vec<_>, _>>()?;
-    if let Some(parent) = output.parent() { fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
-    let text = rows.iter().map(Value::to_string).collect::<Vec<_>>().join("\n") + "\n";
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let text = rows
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
     fs::write(output, &text).map_err(|e| e.to_string())?;
-    Ok(json!({"dataset_version": FIXTURE_VERSION, "case_count": rows.len(), "cloud_eval_case_count": rows.iter().filter(|row| row.get("cloud_eval_allowed") == Some(&Value::Bool(true))).count(), "output_path": output, "bytes": text.len()}))
+    Ok(
+        json!({"dataset_version": FIXTURE_VERSION, "case_count": rows.len(), "cloud_eval_case_count": rows.iter().filter(|row| row.get("cloud_eval_allowed") == Some(&Value::Bool(true))).count(), "output_path": output, "bytes": text.len()}),
+    )
 }
 
 pub fn cli(args: impl Iterator<Item = String>) -> Result<(), String> {
     let args = args.skip(1).collect::<Vec<_>>();
     if args.len() < 2 {
-        return Err("usage: rag-replay <fixture> <output> [--profile deterministic|model-backed]".to_string());
+        return Err(
+            "usage: rag-replay <fixture> <output> [--profile deterministic|model-backed]"
+                .to_string(),
+        );
     }
     let input = PathBuf::from(&args[0]);
     let output = PathBuf::from(&args[1]);
@@ -406,7 +546,9 @@ pub fn cli(args: impl Iterator<Item = String>) -> Result<(), String> {
         match args[index].as_str() {
             "--profile" => {
                 index += 1;
-                let value = args.get(index).ok_or_else(|| "--profile requires a value".to_string())?;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--profile requires a value".to_string())?;
                 profile = ReplayProfile::parse(value)?;
             }
             other => return Err(format!("unknown argument: {other}")),
@@ -440,8 +582,12 @@ mod tests {
                 "agent_contract":{"required_tools":[{"name":"portfolio_backtest","arguments":{"request":{}}}]}
             }
         });
-        let result = replay_case(&case, ReplayProfile::Deterministic, None).expect("offline replay should execute");
+        let result = replay_case(&case, ReplayProfile::Deterministic, None)
+            .expect("offline replay should execute");
         assert_eq!(result["agent_trace"]["tools"][0]["name"], "news_evidence");
-        assert_eq!(result["agent_trace"]["tools"][0]["arguments"]["query"], case["question"]);
+        assert_eq!(
+            result["agent_trace"]["tools"][0]["arguments"]["query"],
+            case["question"]
+        );
     }
 }

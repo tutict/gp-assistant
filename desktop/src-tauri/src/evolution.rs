@@ -481,7 +481,12 @@ impl EvolutionStore {
             [id], |row| row.get(0),
         ).map_err(|error| error.to_string())?;
         let now = agent_ledger::current_epoch_millis();
-        transaction.execute("UPDATE sentiment_strategy_versions SET status='superseded' WHERE strategy_id=?1", [id]).map_err(|error| error.to_string())?;
+        transaction
+            .execute(
+                "UPDATE sentiment_strategy_versions SET status='superseded' WHERE strategy_id=?1",
+                [id],
+            )
+            .map_err(|error| error.to_string())?;
         transaction.execute(
             "INSERT INTO sentiment_strategy_versions(strategy_id,version,payload_json,status,created_at) VALUES(?1,?2,?3,'active',?4)",
             params![id,version,payload.to_string(),now],
@@ -926,7 +931,10 @@ mod tests {
         let mut next = base.clone();
         next["name"] = json!("v2");
         assert!(s.save_strategy(&next).is_ok());
-        let versions = s.strategy_versions("s1").unwrap()["items"].as_array().unwrap().clone();
+        let versions = s.strategy_versions("s1").unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .clone();
         assert_eq!(versions.len(), 2);
         assert_eq!(versions[0]["status"], "active");
         assert_eq!(versions[1]["status"], "superseded");

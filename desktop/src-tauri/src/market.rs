@@ -324,7 +324,8 @@ pub(crate) async fn api_market_refresh(
                 | RefreshRunState::NeedsUserRetry
         )
     {
-        let mut prior = serde_json::to_value(run.clone()).map_err(|error| format!("encode market refresh status: {error}"))?;
+        let mut prior = serde_json::to_value(run.clone())
+            .map_err(|error| format!("encode market refresh status: {error}"))?;
         prior["run_id"] = Value::String(run.run_id);
         return Ok(prior);
     }
@@ -334,15 +335,31 @@ pub(crate) async fn api_market_refresh(
     ) {
         store.start_refresh_run(&run.run_id, false, now)?;
     }
-    store.record_source_attempt("tencent", DataDomain::Quote, Market::China, &now.to_string())?;
+    store.record_source_attempt(
+        "tencent",
+        DataDomain::Quote,
+        Market::China,
+        &now.to_string(),
+    )?;
     drop(store);
 
     match core_mobile_market_data_refresh_tencent(app.clone(), payload).await {
         Ok(mut result) => {
-            let failed = result.get("failed_batches").and_then(Value::as_u64).unwrap_or(0) > 0
-                || result.get("history_failed").and_then(Value::as_u64).unwrap_or(0) > 0;
+            let failed = result
+                .get("failed_batches")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                > 0
+                || result
+                    .get("history_failed")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+                    > 0;
             let terminal = result.get("done").and_then(Value::as_bool).unwrap_or(true)
-                || result.get("stopped_early").and_then(Value::as_bool).unwrap_or(false);
+                || result
+                    .get("stopped_early")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
             let state = if !terminal {
                 RefreshRunState::Running
             } else if failed {
@@ -361,7 +378,10 @@ pub(crate) async fn api_market_refresh(
             }
             if let Some(object) = result.as_object_mut() {
                 object.insert("run_id".into(), Value::String(run.run_id));
-                object.insert("state".into(), serde_json::to_value(state).unwrap_or(Value::Null));
+                object.insert(
+                    "state".into(),
+                    serde_json::to_value(state).unwrap_or(Value::Null),
+                );
             }
             Ok(result)
         }
@@ -380,10 +400,21 @@ pub(crate) async fn api_market_refresh(
             };
             let retryable = matches!(category, "timeout" | "http_429" | "http_5xx" | "connection");
             let mut store = crate::external_data::open_app_store(&app)?;
-            store.record_source_failure("tencent", DataDomain::Quote, Market::China, &crate::agent_ledger::current_epoch_millis().to_string(), category, &error)?;
+            store.record_source_failure(
+                "tencent",
+                DataDomain::Quote,
+                Market::China,
+                &crate::agent_ledger::current_epoch_millis().to_string(),
+                category,
+                &error,
+            )?;
             store.finish_refresh_run(
                 &run.run_id,
-                if retryable { RefreshRunState::Retryable } else { RefreshRunState::Failed },
+                if retryable {
+                    RefreshRunState::Retryable
+                } else {
+                    RefreshRunState::Failed
+                },
                 crate::agent_ledger::current_epoch_millis(),
                 Some(category),
                 Some(&error),
@@ -494,7 +525,12 @@ async fn resume_explicit_cn_run(
     let now = crate::agent_ledger::current_epoch_millis();
     let mut store = crate::external_data::open_app_store(app)?;
     store.start_refresh_run(&run.run_id, true, now)?;
-    store.record_source_attempt("mobile-market", run.request.domain, Market::China, &now.to_string())?;
+    store.record_source_attempt(
+        "mobile-market",
+        run.request.domain,
+        Market::China,
+        &now.to_string(),
+    )?;
     drop(store);
     let result = core_mobile_market_data_refresh_tencent(
         app.clone(),
@@ -513,16 +549,32 @@ async fn resume_explicit_cn_run(
     let mut store = crate::external_data::open_app_store(app)?;
     match result {
         Ok(result) => {
-            let partial = result.get("failed_batches").and_then(Value::as_u64).unwrap_or(0) > 0
-                || result.get("history_failed").and_then(Value::as_u64).unwrap_or(0) > 0
+            let partial = result
+                .get("failed_batches")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                > 0
+                || result
+                    .get("history_failed")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+                    > 0
                 || !result.get("done").and_then(Value::as_bool).unwrap_or(true)
-                || result.get("stopped_early").and_then(Value::as_bool).unwrap_or(false);
+                || result
+                    .get("stopped_early")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
             store.finish_refresh_run(
                 &run.run_id,
-                if partial { RefreshRunState::Retryable } else { RefreshRunState::Completed },
+                if partial {
+                    RefreshRunState::Retryable
+                } else {
+                    RefreshRunState::Completed
+                },
                 finished_at,
                 partial.then_some("partial_recovery"),
-                partial.then_some("foreground recovery made partial progress; user retry is required"),
+                partial
+                    .then_some("foreground recovery made partial progress; user retry is required"),
             )?;
             store.record_source_success(
                 "mobile-market",
@@ -557,7 +609,11 @@ async fn resume_explicit_cn_run(
             let transient = matches!(category, "timeout" | "http_429" | "http_5xx" | "connection");
             store.finish_refresh_run(
                 &run.run_id,
-                if transient { RefreshRunState::Retryable } else { RefreshRunState::Failed },
+                if transient {
+                    RefreshRunState::Retryable
+                } else {
+                    RefreshRunState::Failed
+                },
                 finished_at,
                 Some(category),
                 Some(&error),
@@ -2785,7 +2841,10 @@ pub(crate) fn normalize_stock_code(value: &str) -> Option<String> {
     if let Some(digits) = raw.strip_prefix("BJ").filter(|digits| valid_digits(digits)) {
         return Some(format!("{digits}.BJ"));
     }
-    if let Some(digits) = raw.strip_prefix("HK").filter(|digits| valid_hk_digits(digits)) {
+    if let Some(digits) = raw
+        .strip_prefix("HK")
+        .filter(|digits| valid_hk_digits(digits))
+    {
         return Some(format!("{digits}.HK"));
     }
     if let Some((digits, market)) = raw.split_once('.') {
@@ -4541,7 +4600,10 @@ pub(crate) fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String
     }))
 }
 
-pub(crate) fn external_market_domains() -> [(crate::external_data::DataDomain, crate::external_data::Market); 7] {
+pub(crate) fn external_market_domains() -> [(
+    crate::external_data::DataDomain,
+    crate::external_data::Market,
+); 7] {
     use crate::external_data::{DataDomain, Market};
     [
         (DataDomain::SecurityMaster, Market::China),
@@ -4585,116 +4647,281 @@ fn external_market_records_from_typed(
         .unwrap_or_else(epoch_millis);
     let fetched_at = fetched_at.to_string();
     let metadata = Value::Object(
-        data.as_object().into_iter().flat_map(|object| object.iter())
-            .filter(|(key, _)| !matches!(key.as_str(), "stocks" | "relations" | "histories" | "financials" | "factor_snapshots" | "capital_evidence"))
-            .map(|(key, value)| (key.clone(), value.clone())).collect(),
+        data.as_object()
+            .into_iter()
+            .flat_map(|object| object.iter())
+            .filter(|(key, _)| {
+                !matches!(
+                    key.as_str(),
+                    "stocks"
+                        | "relations"
+                        | "histories"
+                        | "financials"
+                        | "factor_snapshots"
+                        | "capital_evidence"
+                )
+            })
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
     );
-    let raw_stocks = data.get("stocks").and_then(Value::as_array).into_iter().flatten()
+    let raw_stocks = data
+        .get("stocks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
         .filter_map(|row| {
-            let code = row.get("code").and_then(Value::as_str).and_then(normalize_stock_code)?;
+            let code = row
+                .get("code")
+                .and_then(Value::as_str)
+                .and_then(normalize_stock_code)?;
             Some((code, row))
-        }).collect::<HashMap<_, _>>();
-    grouped.entry((DataDomain::SecurityMaster, Market::China)).or_default().push(
-        StoredRecord::new(DataDomain::SecurityMaster, Market::China, "cn", "metadata", source_id,
-            "public", &fetched_at, None, None, "unverified", vec![], metadata),
-    );
+        })
+        .collect::<HashMap<_, _>>();
+    grouped
+        .entry((DataDomain::SecurityMaster, Market::China))
+        .or_default()
+        .push(StoredRecord::new(
+            DataDomain::SecurityMaster,
+            Market::China,
+            "cn",
+            "metadata",
+            source_id,
+            "public",
+            &fetched_at,
+            None,
+            None,
+            "unverified",
+            vec![],
+            metadata,
+        ));
     for stock in &typed.stocks {
-        let base = serde_json::to_value(stock).map_err(|error| format!("encode market stock: {error}"))?;
+        let base =
+            serde_json::to_value(stock).map_err(|error| format!("encode market stock: {error}"))?;
         let security = serde_json::json!({
             "code": stock.code,
             "name": stock.name,
             "industry": stock.industry,
             "is_st": stock.is_st,
         });
-        grouped.entry((DataDomain::SecurityMaster, Market::China)).or_default().push(
-            StoredRecord::new(DataDomain::SecurityMaster, Market::China, &stock.code, "stock", source_id,
-                "public", &fetched_at, None, None, "unverified", vec![], security),
-        );
+        grouped
+            .entry((DataDomain::SecurityMaster, Market::China))
+            .or_default()
+            .push(StoredRecord::new(
+                DataDomain::SecurityMaster,
+                Market::China,
+                &stock.code,
+                "stock",
+                source_id,
+                "public",
+                &fetched_at,
+                None,
+                None,
+                "unverified",
+                vec![],
+                security,
+            ));
         let mut quote = serde_json::json!({
             "price": base["price"], "change_pct": base["change_pct"], "volume": base["volume"],
             "amount": base["amount"], "turnover_rate": base["turnover_rate"],
             "volume_ratio": base["volume_ratio"], "quote_time": base["quote_time"],
             "source": base["source"],
         });
-        if let Some(raw) = normalize_stock_code(&stock.code).and_then(|code| raw_stocks.get(&code)) {
-            for field in ["circulating_market_cap_billion", "total_shares", "circulating_shares"] {
-                if let Some(value) = raw.get(field).and_then(Value::as_f64).filter(|value| value.is_finite()) {
+        if let Some(raw) = normalize_stock_code(&stock.code).and_then(|code| raw_stocks.get(&code))
+        {
+            for field in [
+                "circulating_market_cap_billion",
+                "total_shares",
+                "circulating_shares",
+            ] {
+                if let Some(value) = raw
+                    .get(field)
+                    .and_then(Value::as_f64)
+                    .filter(|value| value.is_finite())
+                {
                     quote[field] = json!(value);
                 }
             }
         }
-        grouped.entry((DataDomain::Quote, Market::China)).or_default().push(
-            StoredRecord::new(DataDomain::Quote, Market::China, &stock.code, "quote", source_id,
-                "public", &fetched_at, stock.quote_time.as_deref(), None, "unverified", vec![], quote),
-        );
+        grouped
+            .entry((DataDomain::Quote, Market::China))
+            .or_default()
+            .push(StoredRecord::new(
+                DataDomain::Quote,
+                Market::China,
+                &stock.code,
+                "quote",
+                source_id,
+                "public",
+                &fetched_at,
+                stock.quote_time.as_deref(),
+                None,
+                "unverified",
+                vec![],
+                quote,
+            ));
         let financial_fields = [
-            "pe", "pb", "roe", "market_cap_billion", "dividend_yield", "latest_eps",
-            "deducted_net_profit_billion", "deducted_net_profit_margin",
+            "pe",
+            "pb",
+            "roe",
+            "market_cap_billion",
+            "dividend_yield",
+            "latest_eps",
+            "deducted_net_profit_billion",
+            "deducted_net_profit_margin",
             "deducted_net_profit_growth_rate",
         ];
         let fundamentals = financial_fields
             .iter()
-            .filter_map(|field| base.get(*field).map(|value| ((*field).to_string(), value.clone())))
+            .filter_map(|field| {
+                base.get(*field)
+                    .map(|value| ((*field).to_string(), value.clone()))
+            })
             .collect::<serde_json::Map<_, _>>();
-        grouped.entry((DataDomain::FinancialSnapshot, Market::China)).or_default().push(
-            StoredRecord::new(DataDomain::FinancialSnapshot, Market::China, &stock.code, "stock_factors", source_id,
-                "public", &fetched_at, None, None, "unverified", vec![], Value::Object(fundamentals)),
-        );
+        grouped
+            .entry((DataDomain::FinancialSnapshot, Market::China))
+            .or_default()
+            .push(StoredRecord::new(
+                DataDomain::FinancialSnapshot,
+                Market::China,
+                &stock.code,
+                "stock_factors",
+                source_id,
+                "public",
+                &fetched_at,
+                None,
+                None,
+                "unverified",
+                vec![],
+                Value::Object(fundamentals),
+            ));
     }
     for (index, relation) in typed.relations.iter().enumerate() {
-        let payload = serde_json::to_value(relation).map_err(|error| format!("encode market relation: {error}"))?;
+        let payload = serde_json::to_value(relation)
+            .map_err(|error| format!("encode market relation: {error}"))?;
         let key = format!("{index:08}-{}", sha256_hex(payload.to_string().as_bytes()));
-        grouped.entry((DataDomain::Relations, Market::China)).or_default().push(
-            StoredRecord::new(DataDomain::Relations, Market::China, "relations", key, source_id,
-                "derived_public", &fetched_at, None, None, "unverified", vec![], payload),
-        );
+        grouped
+            .entry((DataDomain::Relations, Market::China))
+            .or_default()
+            .push(StoredRecord::new(
+                DataDomain::Relations,
+                Market::China,
+                "relations",
+                key,
+                source_id,
+                "derived_public",
+                &fetched_at,
+                None,
+                None,
+                "unverified",
+                vec![],
+                payload,
+            ));
     }
     for (code, bars) in &typed.histories {
-        grouped.entry((DataDomain::DailyHistory, Market::China)).or_default().push(
-            StoredRecord::new(DataDomain::DailyHistory, Market::China, code, "history", source_id,
-                "public", &fetched_at, bars.last().map(|bar| bar.date.as_str()), None, "unverified", vec![],
-                serde_json::to_value(bars).map_err(|error| format!("encode market history: {error}"))?),
-        );
+        grouped
+            .entry((DataDomain::DailyHistory, Market::China))
+            .or_default()
+            .push(StoredRecord::new(
+                DataDomain::DailyHistory,
+                Market::China,
+                code,
+                "history",
+                source_id,
+                "public",
+                &fetched_at,
+                bars.last().map(|bar| bar.date.as_str()),
+                None,
+                "unverified",
+                vec![],
+                serde_json::to_value(bars)
+                    .map_err(|error| format!("encode market history: {error}"))?,
+            ));
     }
     for (code, financial) in &typed.financials {
         let mut payload = serde_json::to_value(financial)
             .map_err(|error| format!("encode market financials: {error}"))?;
         let raw = data.get("financials").and_then(|items| items.get(code));
-        if let Some(updated_at) = cache_epoch_ms(raw.and_then(|row| row.get("supplement_updated_at_epoch_ms"))) {
+        if let Some(updated_at) =
+            cache_epoch_ms(raw.and_then(|row| row.get("supplement_updated_at_epoch_ms")))
+        {
             payload["supplement_updated_at_epoch_ms"] = json!(updated_at);
         }
-        grouped.entry((DataDomain::FinancialSnapshot, Market::China)).or_default().push(
-            StoredRecord::new(DataDomain::FinancialSnapshot, Market::China, code, "financial", source_id,
-                "public", &fetched_at, None, None, "unverified", vec![],
-                payload),
-        );
+        grouped
+            .entry((DataDomain::FinancialSnapshot, Market::China))
+            .or_default()
+            .push(StoredRecord::new(
+                DataDomain::FinancialSnapshot,
+                Market::China,
+                code,
+                "financial",
+                source_id,
+                "public",
+                &fetched_at,
+                None,
+                None,
+                "unverified",
+                vec![],
+                payload,
+            ));
     }
     for (code, factors) in &typed.factor_snapshots {
-        grouped.entry((DataDomain::FactorSnapshot, Market::China)).or_default().push(
-            StoredRecord::new(DataDomain::FactorSnapshot, Market::China, code, "factor_snapshots", source_id,
-                "public", &fetched_at, factors.last().map(|factor| factor.date.as_str()), None, "unverified", vec![],
-                serde_json::to_value(factors).map_err(|error| format!("encode market factor snapshots: {error}"))?),
-        );
+        grouped
+            .entry((DataDomain::FactorSnapshot, Market::China))
+            .or_default()
+            .push(StoredRecord::new(
+                DataDomain::FactorSnapshot,
+                Market::China,
+                code,
+                "factor_snapshots",
+                source_id,
+                "public",
+                &fetched_at,
+                factors.last().map(|factor| factor.date.as_str()),
+                None,
+                "unverified",
+                vec![],
+                serde_json::to_value(factors)
+                    .map_err(|error| format!("encode market factor snapshots: {error}"))?,
+            ));
     }
     for (code, evidence) in &typed.capital_evidence {
         let mut payload = serde_json::to_value(evidence)
             .map_err(|error| format!("encode market capital evidence: {error}"))?;
-        let raw = data.get("capital_evidence").and_then(|items| items.get(code));
+        let raw = data
+            .get("capital_evidence")
+            .and_then(|items| items.get(code));
         for field in ["market_active_brokerages", "institutional_holdings"] {
-            if let Some(value) = raw.and_then(|row| row.get(field)).filter(|value| value.is_object()) {
+            if let Some(value) = raw
+                .and_then(|row| row.get(field))
+                .filter(|value| value.is_object())
+            {
                 payload[field] = value.clone();
             }
         }
-        grouped.entry((DataDomain::CapitalEvidence, Market::China)).or_default().push(
-            StoredRecord::new(DataDomain::CapitalEvidence, Market::China, code, "capital_evidence", source_id,
-                "public", &fetched_at, Some(&evidence.generated_at), None, "unverified", vec![],
-                payload),
-        );
+        grouped
+            .entry((DataDomain::CapitalEvidence, Market::China))
+            .or_default()
+            .push(StoredRecord::new(
+                DataDomain::CapitalEvidence,
+                Market::China,
+                code,
+                "capital_evidence",
+                source_id,
+                "public",
+                &fetched_at,
+                Some(&evidence.generated_at),
+                None,
+                "unverified",
+                vec![],
+                payload,
+            ));
     }
     Ok(grouped)
 }
 
-pub(crate) fn project_market_store(store: &crate::external_data::DataStore) -> Result<Option<Value>, String> {
+pub(crate) fn project_market_store(
+    store: &crate::external_data::DataStore,
+) -> Result<Option<Value>, String> {
     use crate::external_data::DataDomain;
     let mut records = Vec::new();
     for (domain, market) in external_market_domains() {
@@ -4703,11 +4930,15 @@ pub(crate) fn project_market_store(store: &crate::external_data::DataStore) -> R
     if records.is_empty() {
         return Ok(None);
     }
-    let metadata = records.iter().find(|record| record.domain == DataDomain::SecurityMaster && record.record_key == "metadata");
+    let metadata = records.iter().find(|record| {
+        record.domain == DataDomain::SecurityMaster && record.record_key == "metadata"
+    });
     let mut data = metadata
         .map(|metadata| metadata.payload.clone())
         .unwrap_or_else(|| serde_json::json!({}));
-    let object = data.as_object_mut().ok_or_else(|| "market store metadata is not a JSON object".to_string())?;
+    let object = data
+        .as_object_mut()
+        .ok_or_else(|| "market store metadata is not a JSON object".to_string())?;
     let mut stocks: BTreeMap<String, Value> = BTreeMap::new();
     let mut relations = Vec::new();
     let mut histories = serde_json::Map::new();
@@ -4716,28 +4947,49 @@ pub(crate) fn project_market_store(store: &crate::external_data::DataStore) -> R
     let mut capital = serde_json::Map::new();
     for record in records {
         match (record.domain, record.record_key.as_str()) {
-            (DataDomain::SecurityMaster, "stock") => { stocks.insert(record.entity_key, record.payload); }
+            (DataDomain::SecurityMaster, "stock") => {
+                stocks.insert(record.entity_key, record.payload);
+            }
             (DataDomain::Quote, "quote") => {
-                let row = stocks.entry(record.entity_key).or_insert_with(|| serde_json::json!({}));
-                if let (Some(target), Some(fields)) = (row.as_object_mut(), record.payload.as_object()) {
+                let row = stocks
+                    .entry(record.entity_key)
+                    .or_insert_with(|| serde_json::json!({}));
+                if let (Some(target), Some(fields)) =
+                    (row.as_object_mut(), record.payload.as_object())
+                {
                     target.extend(fields.clone());
                 }
             }
             (DataDomain::FinancialSnapshot, "stock_factors") => {
-                let row = stocks.entry(record.entity_key).or_insert_with(|| serde_json::json!({}));
-                if let (Some(target), Some(fields)) = (row.as_object_mut(), record.payload.as_object()) {
+                let row = stocks
+                    .entry(record.entity_key)
+                    .or_insert_with(|| serde_json::json!({}));
+                if let (Some(target), Some(fields)) =
+                    (row.as_object_mut(), record.payload.as_object())
+                {
                     target.extend(fields.clone());
                 }
             }
             (DataDomain::Relations, _) => relations.push(record.payload),
-            (DataDomain::DailyHistory, "history") => { histories.insert(record.entity_key, record.payload); }
-            (DataDomain::FinancialSnapshot, "financial") => { financials.insert(record.entity_key, record.payload); }
-            (DataDomain::FactorSnapshot, "factor_snapshots") => { factors.insert(record.entity_key, record.payload); }
-            (DataDomain::CapitalEvidence, "capital_evidence") => { capital.insert(record.entity_key, record.payload); }
+            (DataDomain::DailyHistory, "history") => {
+                histories.insert(record.entity_key, record.payload);
+            }
+            (DataDomain::FinancialSnapshot, "financial") => {
+                financials.insert(record.entity_key, record.payload);
+            }
+            (DataDomain::FactorSnapshot, "factor_snapshots") => {
+                factors.insert(record.entity_key, record.payload);
+            }
+            (DataDomain::CapitalEvidence, "capital_evidence") => {
+                capital.insert(record.entity_key, record.payload);
+            }
             _ => {}
         }
     }
-    object.insert("stocks".into(), Value::Array(stocks.into_values().collect()));
+    object.insert(
+        "stocks".into(),
+        Value::Array(stocks.into_values().collect()),
+    );
     object.insert("relations".into(), Value::Array(relations));
     object.insert("histories".into(), Value::Object(histories));
     object.insert("financials".into(), Value::Object(financials));
@@ -4809,7 +5061,10 @@ pub(crate) fn import_legacy_market_domains(
 }
 
 fn all_market_domains_promoted(
-    promoted: &HashSet<(crate::external_data::DataDomain, crate::external_data::Market)>,
+    promoted: &HashSet<(
+        crate::external_data::DataDomain,
+        crate::external_data::Market,
+    )>,
 ) -> bool {
     external_market_domains()
         .iter()
@@ -4819,17 +5074,22 @@ fn all_market_domains_promoted(
 pub(crate) fn project_market_store_with_legacy(
     store: &crate::external_data::DataStore,
     legacy: Option<&Value>,
-    promoted: &HashSet<(crate::external_data::DataDomain, crate::external_data::Market)>,
+    promoted: &HashSet<(
+        crate::external_data::DataDomain,
+        crate::external_data::Market,
+    )>,
 ) -> Result<Option<Value>, String> {
     use crate::external_data::{DataDomain, Market};
     let external = project_market_store(store)?;
     if external.is_none() && promoted.is_empty() {
         return Ok(legacy.cloned());
     }
-    let external = external.unwrap_or_else(|| serde_json::json!({
-        "stocks": [], "relations": [], "histories": {}, "financials": {},
-        "factor_snapshots": {}, "capital_evidence": {}
-    }));
+    let external = external.unwrap_or_else(|| {
+        serde_json::json!({
+            "stocks": [], "relations": [], "histories": {}, "financials": {},
+            "factor_snapshots": {}, "capital_evidence": {}
+        })
+    });
     let mut projected = legacy.cloned().unwrap_or_else(|| serde_json::json!({}));
     let Some(object) = projected.as_object_mut() else {
         return Err("legacy market dataset projection is not a JSON object".into());
@@ -4844,8 +5104,15 @@ pub(crate) fn project_market_store_with_legacy(
                 object.insert(key.to_string(), value.clone());
             }
         }
-        let external_stocks = external_object.get("stocks").and_then(Value::as_array).cloned().unwrap_or_default();
-        let valid_codes = external_stocks.iter().filter_map(|row| row.get("code").and_then(Value::as_str).map(str::to_string)).collect::<HashSet<_>>();
+        let external_stocks = external_object
+            .get("stocks")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let valid_codes = external_stocks
+            .iter()
+            .filter_map(|row| row.get("code").and_then(Value::as_str).map(str::to_string))
+            .collect::<HashSet<_>>();
         let mut stocks = object
             .get("stocks")
             .and_then(Value::as_array)
@@ -4854,20 +5121,29 @@ pub(crate) fn project_market_store_with_legacy(
             .into_iter()
             .filter_map(|row| {
                 let code = row.get("code").and_then(Value::as_str)?.to_string();
-                if !valid_codes.contains(&code) { return None; }
+                if !valid_codes.contains(&code) {
+                    return None;
+                }
                 Some((code, row))
             })
             .collect::<BTreeMap<_, _>>();
         for row in &external_stocks {
-            let Some(code) = row.get("code").and_then(Value::as_str) else { continue };
-            let target = stocks.entry(code.to_string()).or_insert_with(|| serde_json::json!({}));
+            let Some(code) = row.get("code").and_then(Value::as_str) else {
+                continue;
+            };
+            let target = stocks
+                .entry(code.to_string())
+                .or_insert_with(|| serde_json::json!({}));
             for field in ["code", "name", "industry", "is_st"] {
                 if let Some(value) = row.get(field) {
                     target[field] = value.clone();
                 }
             }
         }
-        object.insert("stocks".into(), Value::Array(stocks.into_values().collect()));
+        object.insert(
+            "stocks".into(),
+            Value::Array(stocks.into_values().collect()),
+        );
     }
 
     if promoted.contains(&(DataDomain::Quote, Market::China))
@@ -4884,7 +5160,16 @@ pub(crate) fn project_market_store_with_legacy(
         if promoted.contains(&(DataDomain::Quote, Market::China)) {
             for row in stocks.values_mut() {
                 if let Some(fields) = row.as_object_mut() {
-                    for field in ["price", "change_pct", "volume", "amount", "turnover_rate", "volume_ratio", "quote_time", "source"] {
+                    for field in [
+                        "price",
+                        "change_pct",
+                        "volume",
+                        "amount",
+                        "turnover_rate",
+                        "volume_ratio",
+                        "quote_time",
+                        "source",
+                    ] {
                         fields.remove(field);
                     }
                 }
@@ -4893,21 +5178,59 @@ pub(crate) fn project_market_store_with_legacy(
         if promoted.contains(&(DataDomain::FinancialSnapshot, Market::China)) {
             for row in stocks.values_mut() {
                 if let Some(fields) = row.as_object_mut() {
-                    for field in ["pe", "pb", "roe", "market_cap_billion", "dividend_yield", "latest_eps", "deducted_net_profit_billion", "deducted_net_profit_margin", "deducted_net_profit_growth_rate"] {
+                    for field in [
+                        "pe",
+                        "pb",
+                        "roe",
+                        "market_cap_billion",
+                        "dividend_yield",
+                        "latest_eps",
+                        "deducted_net_profit_billion",
+                        "deducted_net_profit_margin",
+                        "deducted_net_profit_growth_rate",
+                    ] {
                         fields.remove(field);
                     }
                 }
             }
         }
-        for row in external_object.get("stocks").and_then(Value::as_array).into_iter().flatten() {
-            let Some(code) = row.get("code").and_then(Value::as_str) else { continue };
-            let target = stocks.entry(code.to_string()).or_insert_with(|| serde_json::json!({}));
+        for row in external_object
+            .get("stocks")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(code) = row.get("code").and_then(Value::as_str) else {
+                continue;
+            };
+            let target = stocks
+                .entry(code.to_string())
+                .or_insert_with(|| serde_json::json!({}));
             let mut fields = Vec::new();
             if promoted.contains(&(DataDomain::Quote, Market::China)) {
-                fields.extend(["price", "change_pct", "volume", "amount", "turnover_rate", "volume_ratio", "quote_time", "source"]);
+                fields.extend([
+                    "price",
+                    "change_pct",
+                    "volume",
+                    "amount",
+                    "turnover_rate",
+                    "volume_ratio",
+                    "quote_time",
+                    "source",
+                ]);
             }
             if promoted.contains(&(DataDomain::FinancialSnapshot, Market::China)) {
-                fields.extend(["pe", "pb", "roe", "market_cap_billion", "dividend_yield", "latest_eps", "deducted_net_profit_billion", "deducted_net_profit_margin", "deducted_net_profit_growth_rate"]);
+                fields.extend([
+                    "pe",
+                    "pb",
+                    "roe",
+                    "market_cap_billion",
+                    "dividend_yield",
+                    "latest_eps",
+                    "deducted_net_profit_billion",
+                    "deducted_net_profit_margin",
+                    "deducted_net_profit_growth_rate",
+                ]);
             }
             for field in fields {
                 if let Some(value) = row.get(field) {
@@ -4915,7 +5238,10 @@ pub(crate) fn project_market_store_with_legacy(
                 }
             }
         }
-        object.insert("stocks".into(), Value::Array(stocks.into_values().collect()));
+        object.insert(
+            "stocks".into(),
+            Value::Array(stocks.into_values().collect()),
+        );
     }
 
     for (domain, key) in [
@@ -4929,7 +5255,11 @@ pub(crate) fn project_market_store_with_legacy(
             object.insert(
                 key.to_string(),
                 external_object.get(key).cloned().unwrap_or_else(|| {
-                    if key == "relations" { Value::Array(Vec::new()) } else { Value::Object(serde_json::Map::new()) }
+                    if key == "relations" {
+                        Value::Array(Vec::new())
+                    } else {
+                        Value::Object(serde_json::Map::new())
+                    }
                 }),
             );
         }
@@ -4951,13 +5281,23 @@ pub(crate) fn store_market_dataset(
         match store.replace_domain_batch(domain, market, &records) {
             Ok(count) => store.record_source_success(source_id, domain, market, &at, count)?,
             Err(error) => {
-                store.record_source_failure(source_id, domain, market, &at, "store_write", &error)?;
+                store.record_source_failure(
+                    source_id,
+                    domain,
+                    market,
+                    &at,
+                    "store_write",
+                    &error,
+                )?;
                 errors.push(format!("{}: {error}", domain.as_str()));
             }
         }
     }
     if !errors.is_empty() {
-        return Err(format!("some external market domains failed to commit: {}", errors.join("; ")));
+        return Err(format!(
+            "some external market domains failed to commit: {}",
+            errors.join("; ")
+        ));
     }
     Ok(())
 }
@@ -5178,10 +5518,15 @@ pub(crate) fn write_mobile_market_data_record(
         .map_err(|_| "mobile market update lock is poisoned".to_string())?;
     let (typed, summary) = parse_mobile_market_data_snapshot(&payload, "mobile market data")?;
     let path = mobile_market_data_path(app)?;
-    let app_data = path.parent().and_then(Path::parent).ok_or_else(|| "mobile market cache path has no app data ancestor".to_string())?;
+    let app_data = path
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| "mobile market cache path has no app data ancestor".to_string())?;
     let external_path = crate::external_data::store_path(app_data);
     let mut store = crate::external_data::DataStore::open(&external_path)?;
-    if path.exists() && !all_market_domains_promoted(&import_legacy_market_domains(&mut store, &path)?) {
+    if path.exists()
+        && !all_market_domains_promoted(&import_legacy_market_domains(&mut store, &path)?)
+    {
         return write_mobile_market_data_legacy(app, path, payload, include_data, typed, summary);
     }
     if let Err(error) = store_market_dataset(&mut store, &payload, "tencent") {
@@ -5189,10 +5534,26 @@ pub(crate) fn write_mobile_market_data_record(
         return Err(error);
     }
     clear_mobile_market_data_patches(app)?;
-    let bytes = serde_json::to_vec(&payload).map_err(|error| format!("serialize mobile market data failed: {error}"))?;
-    remember_mobile_market_data_cache(&path, bytes.len() as u64, file_modified_millis(&path), &payload, typed, &summary);
+    let bytes = serde_json::to_vec(&payload)
+        .map_err(|error| format!("serialize mobile market data failed: {error}"))?;
+    remember_mobile_market_data_cache(
+        &path,
+        bytes.len() as u64,
+        file_modified_millis(&path),
+        &payload,
+        typed,
+        &summary,
+    );
     remember_refresh_seed(app, &payload);
-    return Ok(market_cache_record(&path, bytes.len() as u64, file_modified_millis(&path), summary, &payload, include_data, "external market store written"));
+    return Ok(market_cache_record(
+        &path,
+        bytes.len() as u64,
+        file_modified_millis(&path),
+        summary,
+        &payload,
+        include_data,
+        "external market store written",
+    ));
 }
 
 fn write_mobile_market_data_legacy(
@@ -5650,14 +6011,19 @@ pub(crate) async fn persist_market_data_patch_updates(
         };
         if data.is_null() {
             let cached = read_mobile_market_data_record(&app, true)?;
-            data = cached.get("data").cloned().ok_or_else(|| "external market dataset is empty".to_string())?;
+            data = cached
+                .get("data")
+                .cloned()
+                .ok_or_else(|| "external market dataset is empty".to_string())?;
             apply_persisted_market_data_patches(&app, &mut data)?;
         } else {
             apply_market_data_patch(&mut data, &patch);
         }
         let (typed, summary) = parse_mobile_market_data_snapshot(&data, "updated market data")?;
         let external_path = crate::external_data::store_path(
-            path.parent().and_then(Path::parent).ok_or_else(|| "mobile market path has no app data ancestor".to_string())?,
+            path.parent()
+                .and_then(Path::parent)
+                .ok_or_else(|| "mobile market path has no app data ancestor".to_string())?,
         );
         if external_path.exists() {
             let mut store = crate::external_data::DataStore::open(&external_path)?;
@@ -5666,8 +6032,17 @@ pub(crate) async fn persist_market_data_patch_updates(
                 return Err(error);
             }
         } else {
-            let bytes = fs::metadata(&path).map(|metadata| metadata.len()).unwrap_or(0);
-            remember_mobile_market_data_cache(&path, bytes, file_modified_millis(&path), &data, typed, &summary);
+            let bytes = fs::metadata(&path)
+                .map(|metadata| metadata.len())
+                .unwrap_or(0);
+            remember_mobile_market_data_cache(
+                &path,
+                bytes,
+                file_modified_millis(&path),
+                &data,
+                typed,
+                &summary,
+            );
         }
         Ok(written)
     })

@@ -252,7 +252,11 @@ pub(crate) async fn api_data_refresh(
     app: tauri::AppHandle,
     payload: Value,
 ) -> Result<Value, String> {
-    let market = match payload.get("market").and_then(Value::as_str).unwrap_or("cn") {
+    let market = match payload
+        .get("market")
+        .and_then(Value::as_str)
+        .unwrap_or("cn")
+    {
         "hk" => return crate::hk_market::api_explicit_hk_refresh(app, payload).await,
         "cn" => Market::China,
         other => return Err(format!("unsupported refresh market: {other}")),

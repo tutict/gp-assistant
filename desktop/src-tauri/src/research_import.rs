@@ -551,7 +551,10 @@ mod tests {
 }
 
 #[tauri::command]
-pub(crate) async fn api_research_import_url(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_research_import_url(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     #[cfg(mobile)]
     {
         let _ = (app, payload);
@@ -570,7 +573,10 @@ pub(crate) async fn api_research_import_url(app: tauri::AppHandle, payload: Valu
 }
 
 #[tauri::command]
-pub(crate) async fn api_research_import_pdf(app: tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) async fn api_research_import_pdf(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
     #[cfg(mobile)]
     {
         let _ = (app, payload);
