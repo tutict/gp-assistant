@@ -376,13 +376,38 @@ function Update-AndroidManifestBranding {
     Set-Content -LiteralPath $AndroidManifest -Value $manifest -Encoding UTF8
 }
 function Update-AndroidSafeAreaInsets {
-    $mainActivityDir = Split-Path -Parent $AndroidMainActivity
-    if (-not (Test-Path -LiteralPath $mainActivityDir)) {
-        return
+    $androidPackageNamespace = "com.tutict.stockoptimizer"
+    if (Test-Path -LiteralPath $AndroidBuildGradle) {
+        $gradle = Get-Content -LiteralPath $AndroidBuildGradle -Raw
+        $namespaceMatch = [regex]::Match(
+            $gradle,
+            '(?m)^\s*namespace\s*=\s*"(?<namespace>[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)"'
+        )
+        if ($namespaceMatch.Success) {
+            $androidPackageNamespace = $namespaceMatch.Groups["namespace"].Value
+        }
     }
 
+    if ($androidPackageNamespace -notmatch '^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*$') {
+        throw "Android application namespace is not a valid Java package: $androidPackageNamespace"
+    }
+
+    $androidJavaRoot = Join-Path $Root "desktop\src-tauri\gen\android\app\src\main\java"
+    $namespacePath = $androidPackageNamespace.Replace('.', [System.IO.Path]::DirectorySeparatorChar)
+    $mainActivityDir = Join-Path $androidJavaRoot $namespacePath
+    $mainActivityPath = Join-Path $mainActivityDir "MainActivity.kt"
+    $javaRootFullPath = [System.IO.Path]::GetFullPath($androidJavaRoot).TrimEnd("\", "/")
+    $activityFullPath = [System.IO.Path]::GetFullPath($mainActivityPath)
+    if (-not $activityFullPath.StartsWith(
+        $javaRootFullPath + [System.IO.Path]::DirectorySeparatorChar,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "Refusing to write Android activity outside its generated Java source directory: $activityFullPath"
+    }
+    New-Item -ItemType Directory -Path $mainActivityDir -Force | Out-Null
+
     $mainActivity = @(
-        'package com.tutict.stockoptimizer',
+        ("package $androidPackageNamespace"),
         '',
         'import android.graphics.Color',
         'import android.os.Bundle',
@@ -402,16 +427,18 @@ function Update-AndroidSafeAreaInsets {
         '',
         '  override fun onWebViewCreate(webView: WebView) {',
         '    super.onWebViewCreate(webView)',
-        '    webView.addJavascriptInterface(AndroidSystemBarsBridge(this), "AndroidSystemBars")',
+        '    val systemBarsBridge = AndroidSystemBarsBridge(this)',
+        '    webView.addJavascriptInterface(systemBarsBridge, "AndroidSystemBars")',
         '    ViewCompat.setOnApplyWindowInsetsListener(webView) { _, insets ->',
-        '      syncSafeArea(webView, insets)',
+        '      syncSafeArea(webView, insets, systemBarsBridge)',
         '      insets',
         '    }',
+        '    ViewCompat.getRootWindowInsets(webView)?.let { syncSafeArea(webView, it, systemBarsBridge) }',
         '    ViewCompat.requestApplyInsets(webView)',
         '    webView.postDelayed({ ViewCompat.requestApplyInsets(webView) }, 300L)',
         '  }',
         '',
-        '  private fun syncSafeArea(webView: WebView, insets: WindowInsetsCompat) {',
+        '  private fun syncSafeArea(webView: WebView, insets: WindowInsetsCompat, bridge: AndroidSystemBarsBridge) {',
         '    val statusBars = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.statusBars())',
         '    val navigationBars = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.navigationBars())',
         '    val cutout = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.displayCutout())',
@@ -420,7 +447,8 @@ function Update-AndroidSafeAreaInsets {
         '    val right = maxOf(navigationBars.right, cutout.right) / density',
         '    val bottom = maxOf(navigationBars.bottom, cutout.bottom) / density',
         '    val left = maxOf(navigationBars.left, cutout.left) / density',
-        '    val script = "(function(){var s=document.documentElement.style;s.setProperty(\"--safe-top\",\"" + top + "px\");s.setProperty(\"--safe-right\",\"" + right + "px\");s.setProperty(\"--safe-bottom\",\"" + bottom + "px\");s.setProperty(\"--safe-left\",\"" + left + "px\")})()"',
+        '    bridge.updateSafeAreaInsets(top, right, bottom, left)',
+        '    val script = "(function(){var root=document.documentElement;if(!root||!root.style)return;var s=root.style;s.setProperty(\"--safe-top\",\"" + top + "px\");s.setProperty(\"--safe-right\",\"" + right + "px\");s.setProperty(\"--safe-bottom\",\"" + bottom + "px\");s.setProperty(\"--safe-left\",\"" + left + "px\")})()"',
         '    webView.post { webView.evaluateJavascript(script, null) }',
         '  }',
 
@@ -435,6 +463,12 @@ function Update-AndroidSafeAreaInsets {
         '}',
         '',
         'class AndroidSystemBarsBridge(private val activity: MainActivity) {',
+        '  @Volatile private var safeAreaInsetsJson = """{"top":0,"right":0,"bottom":0,"left":0}"""',
+        '  internal fun updateSafeAreaInsets(top: Float, right: Float, bottom: Float, left: Float) {',
+        '    safeAreaInsetsJson = """{"top":$top,"right":$right,"bottom":$bottom,"left":$left}"""',
+        '  }',
+        '  @android.webkit.JavascriptInterface',
+        '  fun getSafeAreaInsets(): String = safeAreaInsetsJson',
         '  @android.webkit.JavascriptInterface',
         '  fun setTheme(theme: String) {',
         '    val light = when (theme) { "light" -> true; "dark" -> false; else -> return }',
@@ -451,7 +485,7 @@ function Update-AndroidSafeAreaInsets {
         ''
     ) -join [Environment]::NewLine
 
-    Set-Content -LiteralPath $AndroidMainActivity -Value $mainActivity -Encoding UTF8
+    Set-Content -LiteralPath $mainActivityPath -Value $mainActivity -Encoding UTF8
 }
 
 function Update-AndroidStartupTheme {
