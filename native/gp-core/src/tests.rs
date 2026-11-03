@@ -1826,6 +1826,106 @@ fn trend_screen_ranks_candidates() {
     assert!(result.items[0].final_score >= result.items[4].final_score);
 }
 
+fn dated_trend_screen_fixture() -> CoreDataSet {
+    let start = NaiveDate::from_ymd_opt(2026, 6, 26).unwrap();
+    let history = (0..90)
+        .map(|index| {
+            let close = 100.0 + index as f64;
+            HistoryBar {
+                date: start.checked_add_days(Days::new(index)).unwrap().format("%Y-%m-%d").to_string(),
+                open: Some(close - 0.2),
+                high: Some(close + 0.5),
+                low: Some(close - 0.5),
+                close,
+                volume: Some(1_000_000.0),
+                capital: Some(1_000_000_000.0),
+            }
+        })
+        .collect::<Vec<_>>();
+    let stock = StockItem {
+        code: "111111.SZ".into(),
+        name: "趋势日期样本".into(),
+        industry: "半导体".into(),
+        price: 173.73,
+        pe: Some(20.0),
+        pb: Some(2.0),
+        roe: Some(0.15),
+        deducted_net_profit_billion: Some(1.0),
+        quote_time: Some("20261030161451".into()),
+        change_pct: Some(-0.1114),
+        ..StockItem::default()
+    };
+    CoreDataSet {
+        stocks: vec![stock],
+        histories: [("111111.SZ".into(), history)].into_iter().collect(),
+        ..CoreDataSet::default()
+    }
+}
+
+#[test]
+fn trend_screen_rejects_old_indicators_paired_with_a_newer_quote() {
+    let result = trend_screen_with_data(&dated_trend_screen_fixture(), &TrendScreenRequest {
+        start_date: "20260601".into(),
+        end_date: "20261101".into(),
+        limit: 5,
+        criteria: ScreenCriteria::default(),
+    }).unwrap();
+    assert_eq!(result.returned, 0);
+    assert!(result.notes.iter().any(|note| note.contains("111111.SZ")
+        && note.contains("2026-09-23") && note.contains("2026-10-30")));
+}
+
+#[test]
+fn trend_history_candidates_include_the_full_ranked_pool_beyond_the_display_limit() {
+    let seed = dated_trend_screen_fixture().stocks.remove(0);
+    let universe = (0..120).map(|index| StockItem {
+        code: format!("300{index:03}.SZ"), ..seed.clone()
+    }).collect::<Vec<_>>();
+    let request = TrendScreenRequest {
+        start_date: "20260601".into(), end_date: "20261101".into(), limit: 10,
+        criteria: ScreenCriteria { limit: 10, ..ScreenCriteria::default() },
+    };
+    let codes = trend_screen_candidate_codes(&universe, &request);
+    assert_eq!(codes.len(), 50);
+    assert_eq!(codes.iter().collect::<HashSet<_>>().len(), 50);
+}
+
+#[test]
+fn trend_screen_keeps_a_requested_historical_window_and_explains_kdj_risk() {
+    let result = trend_screen_with_data(&dated_trend_screen_fixture(), &TrendScreenRequest {
+        start_date: "20260601".into(),
+        end_date: "20260923".into(),
+        limit: 5,
+        criteria: ScreenCriteria::default(),
+    }).unwrap();
+    let item = &result.items[0];
+    assert!(item.signal.kdj_overbought);
+    assert!(!item.reasons.iter().any(|reason| reason == "kdj_overbought"));
+    assert!(item.explanation.risk_checks.iter().any(|risk| risk.contains("KDJ") && risk.contains("超买")));
+    assert!(item.explanation.basis.iter().any(|basis| basis.contains("2026-09-23") && basis.contains("K=")));
+    assert!(item.explanation.basis.iter().all(|basis| !basis.contains("Passed the current") && !basis.contains(" signal with")));
+    let contribution_sum: f64 = item.explanation.score_breakdown.iter().filter_map(|part| part.contribution).sum();
+    assert!((contribution_sum - item.final_score).abs() < 0.03);
+}
+
+#[test]
+fn a_sharp_daily_drop_can_leave_the_smoothed_d_line_in_the_high_zone() {
+    let mut data = dated_trend_screen_fixture();
+    let bars = data.histories.get_mut("111111.SZ").unwrap();
+    let previous = bars[bars.len() - 2].close;
+    let last = bars.last_mut().unwrap();
+    last.open = Some(previous);
+    last.high = Some(previous + 0.5);
+    last.close = previous * (1.0 - 0.1114);
+    last.low = Some(last.close - 0.5);
+    let result = trend_with_data(&data, &TrendIndicatorRequest {
+        code: "111111.SZ".into(), start_date: "20260601".into(), end_date: "20260923".into(), series_limit: 60,
+    }).unwrap();
+    assert!(result.signal.close_change_pct.unwrap() < -0.11);
+    assert!(result.signal.d.unwrap() >= 80.0);
+    assert!(result.signal.kdj_overbought);
+}
+
 #[test]
 fn sector_screen_uses_full_filtered_universe_before_grouping() {
     let stocks: Vec<StockItem> = (0..260)

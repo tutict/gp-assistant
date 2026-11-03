@@ -377,6 +377,47 @@ describe("ObservePanel requests", () => {
     await act(async () => renderer.unmount());
   });
 
+  it("shows cached observation while the financial supplement is still pending", async () => {
+    const cached = {
+      stock: { code: "600519.SH", name: "贵州茅台" },
+      financial_indicators: { period: "2026Q1", items: [{ metric_key: "latest_eps", label: "每股收益", value: "1元" }] },
+      notes: [],
+    };
+    let finishRefresh!: (value: unknown) => void;
+    const refresh = new Promise((resolve) => { finishRefresh = resolve; });
+    getJsonMock.mockResolvedValueOnce(cached).mockReturnValueOnce(refresh);
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<ObservePanel watchlist={[]} onWatchlistChange={() => undefined} initialCode="600519.SH" initialCodeRequestId={1} />);
+    });
+
+    expect(observeCalls()).toHaveLength(2);
+    expect(textContent(renderer)).toContain("贵州茅台");
+    expect(renderer.root.findAllByProps({ className: "observe-result" })).toHaveLength(1);
+    expect(renderer.root.findAllByProps({ className: "panel-feedback panel-feedback-loading panel-feedback-skeleton" })).toHaveLength(0);
+
+    await act(async () => finishRefresh({ ...cached, financial_indicators: { period: "2026中报", items: [{ metric_key: "latest_eps", label: "每股收益", value: "2元" }] } }));
+    expect(textContent(renderer)).toContain("2026中报");
+    await act(async () => renderer.unmount());
+  });
+
+  it("does not replace a new stock with a late financial supplement for the previous stock", async () => {
+    const cached = { stock: { code: "600519.SH", name: "贵州茅台" }, financial_indicators: { period: "2026Q1", items: [] }, notes: [] };
+    let finishRefresh!: (value: unknown) => void;
+    getJsonMock.mockResolvedValueOnce(cached).mockReturnValueOnce(new Promise((resolve) => { finishRefresh = resolve; }));
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<ObservePanel watchlist={[]} onWatchlistChange={() => undefined} initialCode="600519.SH" initialCodeRequestId={1} />); });
+    await act(async () => renderer.root.find((node) => node.type === "input" && node.props.id === "observeCode").props.onChange({ target: { value: "000001.SZ" } }));
+    await act(async () => renderer.root.find((node) => node.type === "button" && node.children.includes("开始观察")).props.onClick());
+    expect(textContent(renderer)).toContain("平安银行");
+
+    await act(async () => finishRefresh({ ...cached, financial_indicators: { period: "2026中报", items: [] } }));
+
+    expect(textContent(renderer)).toContain("平安银行");
+    expect(textContent(renderer)).not.toContain("贵州茅台");
+    await act(async () => renderer.unmount());
+  });
+
   it("refreshes a stale Q1 financial snapshot after the half-year report cutoff", async () => {
     const cached = {
       stock: { code: "600519.SH", name: "贵州茅台" },
@@ -549,6 +590,28 @@ describe("ObservePanel requests", () => {
       await Promise.resolve();
     });
     expect(renderer.root.findByProps({ className: "observe-detail-disclosure" }).props.open).toBe(false);
+    await act(async () => renderer.unmount());
+  });
+
+  it("resolves a bare six-digit Android observation code without market confirmation", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <ObservePanel
+          watchlist={[]}
+          onWatchlistChange={() => undefined}
+          mobileRuntime
+        />,
+      );
+    });
+
+    const input = renderer.root.find((node) => node.type === "input" && node.props.id === "observeCode");
+    await act(async () => {
+      input.props.onChange({ target: { value: "002185" } });
+    });
+
+    expect(renderer.root.findByProps({ id: "observeCode" }).props.value).toBe("002185.SZ");
+    expect(renderer.root.findAllByProps({ "aria-label": "选择市场" })).toHaveLength(0);
     await act(async () => renderer.unmount());
   });
 

@@ -351,7 +351,7 @@ describe("ScreenPanel adaptive states", () => {
       customTab.props.onClick();
     });
     expect(textContent(renderer)).toContain("暂无匹配股票");
-    expect(textContent(renderer)).toContain("用你设置的财务和市值条件筛选");
+    expect(textContent(renderer)).toContain("自定义条件筛选");
   });
 
   it("ignores a second run click while the current screening request is active", async () => {
@@ -399,7 +399,7 @@ describe("ScreenPanel adaptive states", () => {
 
     await act(async () => { adaptiveTab.props.onClick(); });
     expect(textContent(renderer)).not.toContain("自定义样本");
-    expect(textContent(renderer)).toContain("按当前市场状态从全市场挑出综合评分较高的股票");
+    expect(textContent(renderer)).toContain("全市场综合评分选股");
     await act(async () => { await runButton(renderer).props.onClick(); });
     expect(textContent(renderer)).toContain("智能样本");
 
@@ -408,9 +408,9 @@ describe("ScreenPanel adaptive states", () => {
     expect(textContent(renderer)).not.toContain("智能样本");
 
     await act(async () => { conceptTab.props.onClick(); });
-    expect(textContent(renderer)).toContain("按概念把候选股票分组查看");
+    expect(textContent(renderer)).toContain("概念分组筛选");
     await act(async () => { boardTab.props.onClick(); });
-    expect(textContent(renderer)).toContain("按行业板块分组查看");
+    expect(textContent(renderer)).toContain("板块分组筛选");
     await act(async () => { trendTab.props.onClick(); });
     expect(textContent(renderer)).not.toContain("在指定日期区间里看趋势强度");
   });

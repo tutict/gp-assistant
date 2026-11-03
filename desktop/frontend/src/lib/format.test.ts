@@ -5,8 +5,22 @@ import {
   hasMarketSuffix,
   normalizeStockCode,
   normalizeBacktestDateRange,
+  kdjRangeLabel,
+  reasonLabel,
   trendScreenStartDateInputValue,
 } from "./format";
+
+describe("technical evidence labels", () => {
+  it("describes a moving-average position consistently rather than claiming a new cross", () => {
+    expect(reasonLabel("swl_above_sws")).toBe("短期均线高于长期均线");
+    expect(reasonLabel("swl_strength")).toBe("短期均线高于长期均线");
+    expect(reasonLabel("主题:半导体")).toBe("主题:半导体");
+  });
+  it("does not hide conflicting KDJ extremes or mistake price deviation for KDJ oversold", () => {
+    expect(kdjRangeLabel({ kdj_overbought: true, kdj_oversold: true })).toBe("高低位信号分歧");
+    expect(kdjRangeLabel({ kdj_overbought: false, kdj_oversold: false, oversold: true })).toBe("未处于极端区间");
+  });
+});
 
 describe("formatRatioPercent", () => {
   it("formats core ratio fields as visible percentages", () => {

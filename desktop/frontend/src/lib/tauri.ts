@@ -24,6 +24,13 @@ import type { RateUnit } from "./rateUnits";
 import { parseMarketCapabilities } from "./marketCapabilities";
 import { parseSecurityId } from "./marketDomain";
 import type { HkObserveResult, ObserveResult } from "../types";
+import {
+  jsonByteLength,
+  logPerfRecord,
+  objectRecordCount,
+  perfDiagnosticsAreEnabled,
+  perfOutcomeForError,
+} from "./perfDiagnostics";
 
 declare global {
   interface Window {
@@ -220,6 +227,8 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
     prefix: "/api/observe/",
     handler: async ({ invoke, path, parsed }) => {
       const code = normalizeStockCode(decodeURIComponent(path.slice("/api/observe/".length)));
+      const mobileRuntime = isMobileTauriRuntime();
+      const perfEnabled = perfDiagnosticsAreEnabled(mobileRuntime);
       const payload: Record<string, unknown> = withAndroidNetworkOptions({
         code,
         data_policy: parsed.searchParams.get("data_policy") ?? "cache_only",
@@ -231,22 +240,98 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
         include_order_book: parsed.searchParams.get("include_order_book") === "true",
         include_chip_distribution: parsed.searchParams.get("include_chip_distribution") !== "false",
       });
-      // No prefetch, hydration or network timer on local reads.
-      if (payload.data_policy !== "refresh") return invokeLocalData(invoke, "api_observe", payload);
-      const mobileRuntime = isMobileTauriRuntime();
+      if (perfEnabled) payload.perf_diagnostics = true;
+      const cacheStrategy = payload.data_policy === "refresh" ? "refresh" : "cache_only";
+      const logInvoke = async () => {
+        const requestBytes = perfEnabled ? jsonByteLength(payload) : undefined;
+        const startedAt = perfEnabled ? performance.now() : 0;
+        try {
+          const result = await invokeLocalData(invoke, "api_observe", payload);
+          const responseRecord = asRecord(result);
+          logPerfRecord({
+            flow: "observe",
+            stage: "ipc_roundtrip",
+            elapsedMs: perfEnabled ? performance.now() - startedAt : 0,
+            cacheStrategy,
+            stockCount: responseRecord.stock ? 1 : 0,
+            historyRows: Array.isArray(asRecord(responseRecord.trend).series)
+              ? (asRecord(responseRecord.trend).series as unknown[]).length
+              : 0,
+            financialRecords: objectRecordCount(responseRecord.financial_indicators),
+            requestBytes,
+            responseBytes: perfEnabled ? jsonByteLength(result) : undefined,
+            outcome: "ok",
+          }, mobileRuntime);
+          return result;
+        } catch (error) {
+          logPerfRecord({
+            flow: "observe",
+            stage: "ipc_roundtrip",
+            elapsedMs: perfEnabled ? performance.now() - startedAt : 0,
+            cacheStrategy,
+            requestBytes,
+            outcome: perfOutcomeForError(error),
+          }, mobileRuntime);
+          throw error;
+        }
+      };
+      // Local reads skip WebView prefetch but still record the Rust command round trip.
+      if (payload.data_policy !== "refresh") return logInvoke();
       let history: Record<string, unknown>[] | null = null;
       if (mobileRuntime) {
         payload.mobile_fast_observe = true;
       }
-      const financialSnapshot = await loadBundledFinancialSnapshotForCode(code).catch(() => null);
+      const financialStartedAt = performance.now();
+      let financialSnapshot: Record<string, unknown> | null = null;
+      let financialOutcome: "ok" | "error" | "timeout" = "ok";
+      try {
+        financialSnapshot = await loadBundledFinancialSnapshotForCode(code);
+      } catch (error) {
+        financialOutcome = perfOutcomeForError(error);
+      }
       if (financialSnapshot) payload.financial_snapshot = financialSnapshot;
-      history = await fetchObserveDailyHistoryForTauriStable(payload, OBSERVE_PREFETCH_TIMEOUT_MS).catch(() => null);
+      logPerfRecord({
+        flow: "observe",
+        stage: "financial_snapshot_prefetch",
+        elapsedMs: performance.now() - financialStartedAt,
+        cacheStrategy,
+        stockCount: 1,
+        financialRecords: objectRecordCount(financialSnapshot?.financials),
+        outcome: financialOutcome,
+      }, mobileRuntime);
+      const historyStartedAt = performance.now();
+      let historyOutcome: "ok" | "error" | "timeout" = "ok";
+      try {
+        history = await fetchObserveDailyHistoryForTauriStable(payload, OBSERVE_PREFETCH_TIMEOUT_MS);
+      } catch (error) {
+        historyOutcome = perfOutcomeForError(error);
+      }
       if (Array.isArray(history) && history.length) payload.history = history;
+      logPerfRecord({
+        flow: "observe",
+        stage: "history_prefetch",
+        elapsedMs: performance.now() - historyStartedAt,
+        cacheStrategy,
+        stockCount: 1,
+        historyRows: history?.length || 0,
+        outcome: historyOutcome,
+      }, mobileRuntime);
 
-      const observeInvoke = invokeLocalData(invoke, "api_observe", payload);
+      const observeInvoke = logInvoke();
       if (!mobileRuntime) {
         const observeResult = await observeInvoke;
-        return hydrateObserveTrendFromHistory(observeResult as ObserveResult, code, history);
+        const hydrateStartedAt = performance.now();
+        const hydrated = hydrateObserveTrendFromHistory(observeResult as ObserveResult, code, history);
+        logPerfRecord({
+          flow: "observe",
+          stage: "trend_hydration",
+          elapsedMs: performance.now() - hydrateStartedAt,
+          cacheStrategy,
+          stockCount: 1,
+          historyRows: history?.length || 0,
+          outcome: "ok",
+        }, mobileRuntime);
+        return hydrated;
       }
 
       const observeResult = await withTimeout(
@@ -254,11 +339,22 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
         MOBILE_OBSERVE_INVOKE_TIMEOUT_MS,
         `移动端观察超过 ${Math.round(MOBILE_OBSERVE_INVOKE_TIMEOUT_MS / 1000)} 秒未返回，已中止等待。`,
       );
-      return hydrateObserveTrendFromHistory(
+      const hydrateStartedAt = performance.now();
+      const hydrated = hydrateObserveTrendFromHistory(
         observeResult as ObserveResult,
         code,
         history,
       );
+      logPerfRecord({
+        flow: "observe",
+        stage: "trend_hydration",
+        elapsedMs: performance.now() - hydrateStartedAt,
+        cacheStrategy,
+        stockCount: 1,
+        historyRows: history?.length || 0,
+        outcome: "ok",
+      }, mobileRuntime);
+      return hydrated;
     },
   },
   {
@@ -327,9 +423,76 @@ async function invokeLocalData(invoke: InvokeFn, command: string, payload: unkno
   catch (error) { throw new Error(formatLocalDataError(error), { cause: error }); }
 }
 async function invokeWithFinancialSnapshot(invoke: InvokeFn, command: string, payload: unknown): Promise<unknown> {
-  const base = { data_policy: "cache_only", ...asRecord(payload) };
-  const nextPayload = base.data_policy === "refresh" ? await withFinancialSnapshotPayload(base) : base;
-  return invokeLocalData(invoke, command, nextPayload);
+  const base: Record<string, unknown> = { data_policy: "cache_only", ...asRecord(payload) };
+  const mobileRuntime = isMobileTauriRuntime();
+  const perfEnabled = command === "api_screen" && perfDiagnosticsAreEnabled(mobileRuntime);
+  if (perfEnabled) base.perf_diagnostics = true;
+  const snapshotStartedAt = perfEnabled ? performance.now() : 0;
+  let nextPayload: unknown = base;
+  if (base.data_policy === "refresh") {
+    try {
+      nextPayload = await withFinancialSnapshotPayload(base);
+    } catch (error) {
+      if (command === "api_screen") {
+        logPerfRecord({
+          flow: "screening",
+          stage: "financial_snapshot_prefetch",
+          elapsedMs: performance.now() - snapshotStartedAt,
+          cacheStrategy: "refresh",
+          outcome: perfOutcomeForError(error),
+        }, mobileRuntime);
+      }
+      throw error;
+    }
+  }
+  const nextPayloadRecord = asRecord(nextPayload);
+  if (command === "api_screen" && base.data_policy === "refresh") {
+    const snapshot = asRecord(nextPayloadRecord.financial_snapshot);
+    logPerfRecord({
+      flow: "screening",
+      stage: "financial_snapshot_prefetch",
+      elapsedMs: performance.now() - snapshotStartedAt,
+      cacheStrategy: "refresh",
+      stockCount: Array.isArray(snapshot.stocks) ? snapshot.stocks.length : undefined,
+      financialRecords: objectRecordCount(snapshot.financials),
+      outcome: "ok",
+    }, mobileRuntime);
+  }
+  const requestBytes = perfEnabled ? jsonByteLength(nextPayloadRecord) : undefined;
+  const invokeStartedAt = perfEnabled ? performance.now() : 0;
+  try {
+    const result = await invokeLocalData(invoke, command, nextPayloadRecord);
+    if (command === "api_screen") {
+      const screenResult = asRecord(result);
+      logPerfRecord({
+        flow: "screening",
+        stage: "ipc_roundtrip",
+        elapsedMs: perfEnabled ? performance.now() - invokeStartedAt : 0,
+        cacheStrategy: base.data_policy === "refresh" ? "refresh" : "cache_only",
+        stockCount: Array.isArray(screenResult.results)
+          ? screenResult.results.length
+          : Array.isArray(screenResult.stocks)
+            ? screenResult.stocks.length
+            : undefined,
+        requestBytes,
+        responseBytes: perfEnabled ? jsonByteLength(result) : undefined,
+        outcome: "ok",
+      }, mobileRuntime);
+    }
+    return result;
+  } catch (error) {
+    if (command === "api_screen") {
+      logPerfRecord({
+        flow: "screening",
+        stage: "ipc_roundtrip",
+        elapsedMs: perfEnabled ? performance.now() - invokeStartedAt : 0,
+        cacheStrategy: base.data_policy === "refresh" ? "refresh" : "cache_only",
+        requestBytes,
+        outcome: perfOutcomeForError(error),
+      }, mobileRuntime);
+    }
+    throw error;
+  }
 }
 
 async function invokeBacktest(invoke: InvokeFn, payload: unknown): Promise<unknown> {

@@ -462,8 +462,8 @@ export function reasonLabel(reason: unknown): string {
     // 趋势信号
     short_buy_signal: "短线买入信号",
     red_hold: "红柱持有",
-    swl_above_sws: "短期均线上穿长期均线",
-    swl_strength: "短期均线强于长期均线",
+    swl_above_sws: "短期均线高于长期均线",
+    swl_strength: "短期均线高于长期均线",
     swl_below_sws: "短期均线低于长期均线",
     kdj_golden_cross: "KDJ金叉",
     kdj_dead_cross: "KDJ死叉",
@@ -483,6 +483,14 @@ export function reasonLabel(reason: unknown): string {
     technical_score_strong: "技术层评分强",
     pattern_score_strong: "形态层评分强",
     quality_soft_bonus: "质量评分加分",
+    breakdown_ma20: "跌破20日均线",
+    bearish_long_ma_stack: "长期均线空头排列",
+    volume_stall: "放量滞涨",
+    macd_bearish_divergence: "MACD动量减弱",
+    weak_final_score: "趋势强度不足",
+    insufficient_history: "日线样本不足",
+    low_volume: "成交量不足",
+    history_behind_quote: "日线落后行情",
     "signal_type:trend_continuation": "趋势延续",
     "signal_type:trend_reversal": "趋势反转",
     "signal_type:range_bound": "区间震荡",
@@ -492,11 +500,25 @@ export function reasonLabel(reason: unknown): string {
     "signal_type:pullback_buy": "回踩买点",
   };
   if (labels[raw]) return labels[raw];
-  if (/\b[a-z]+_[a-z_]+\b/.test(raw) || raw.includes(":")) {
+  if (/^[a-z][a-z0-9_]*(?::[a-z0-9_]+)?$/i.test(raw) && (raw.includes("_") || raw.includes(":"))) {
     console.warn(`[format] unmapped reason label: ${raw}`);
     return "未识别原因";
   }
   return raw;
+}
+
+export function kdjRangeLabel(signal: Record<string, unknown> = {}): string {
+  const k = parseLooseNumber(signal.k);
+  const d = parseLooseNumber(signal.d);
+  const j = parseLooseNumber(signal.j);
+  const overbought = typeof signal.kdj_overbought === "boolean" ? signal.kdj_overbought
+    : (k !== null && k >= 80) || (d !== null && d >= 80) || (j !== null && j >= 100);
+  const oversold = typeof signal.kdj_oversold === "boolean" ? signal.kdj_oversold
+    : (k !== null && k <= 20) || (d !== null && d <= 20) || (j !== null && j <= 0);
+  if (overbought && oversold) return "高低位信号分歧";
+  if (overbought) return "超买";
+  if (oversold) return "超卖";
+  return "未处于极端区间";
 }
 
 export function relationTypeLabel(type: unknown): string {

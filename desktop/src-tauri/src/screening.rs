@@ -1,3 +1,5 @@
+#[path = "screening_financial_overlay.rs"]
+mod financial_overlay;
 #[path = "local_data_policy.rs"]
 pub(crate) mod local_data_policy;
 use crate::screening::local_data_policy::{self as local_data, DataPolicy};
@@ -86,6 +88,39 @@ pub(crate) fn trend_screen_refresh_has_usable_history(coverage: &[Value]) -> boo
         .iter()
         .any(|item| item.get("sufficient").and_then(Value::as_bool) == Some(true))
 }
+
+pub(crate) fn local_trend_history_coverage(
+    data: &gp_core::CoreDataSet,
+    overrides: &HashMap<String, Vec<gp_core::HistoryBar>>,
+    universe: &[gp_core::StockItem],
+    codes: &[String],
+    start: &str,
+    end: &str,
+    required: usize,
+) -> Vec<Value> {
+    let quotes = universe.iter().map(|stock| (stock.code.as_str(), stock)).collect::<HashMap<_, _>>();
+    let start = crate::market::compact_date_key(start).unwrap_or_default();
+    let end = crate::market::compact_date_key(end).unwrap_or_default();
+    let mut coverage = local_history_coverage(data, overrides, codes, &start, &end, required);
+    for item in &mut coverage {
+        let code = item["code"].as_str().unwrap_or_default();
+        let quote_date = quotes.get(code)
+            .and_then(|stock| stock.quote_time.as_deref())
+            .and_then(crate::market::compact_date_key);
+        // Historical windows remain readable; current windows must cover their quote date.
+        let target = quote_date.as_ref().filter(|date| **date >= start && **date <= end);
+        let behind = target.is_some_and(|target| {
+            item["as_of"].as_str().is_none_or(|latest| latest < target.as_str())
+        });
+        item["quote_as_of"] = json!(quote_date);
+        item["history_behind_quote"] = json!(behind);
+        if behind {
+            item["sufficient"] = json!(false);
+            item["reason"] = json!("日线日期落后于行情日期，需要补齐日线后重新计算趋势依据");
+        }
+    }
+    coverage
+}
 pub(crate) fn adaptive_local_coverage(
     data: &gp_core::CoreDataSet,
     overrides: &HashMap<String, Vec<gp_core::HistoryBar>>,
@@ -121,11 +156,13 @@ pub(crate) fn local_metadata(
 
 pub(crate) const ADAPTIVE_SCREEN_DB_FILE: &str = "adaptive-screen.sqlite";
 
-pub(crate) const TREND_SCREEN_HISTORY_TIMEOUT_SECS: u64 = 18;
+pub(crate) const TREND_SCREEN_HISTORY_TIMEOUT_SECS: u64 = 45;
 
-pub(crate) const TREND_SCREEN_HISTORY_CONCURRENCY: usize = 6;
+pub(crate) const TREND_SCREEN_HISTORY_FETCH_TIMEOUT_SECS: u64 = 30;
 
-pub(crate) const TREND_SCREEN_HISTORY_PREFETCH_LIMIT: usize = 80;
+pub(crate) const TREND_SCREEN_HISTORY_CONCURRENCY: usize = 12;
+
+pub(crate) const TREND_SCREEN_HISTORY_PREFETCH_LIMIT: usize = 200;
 
 pub(crate) const MIN_TREND_SCREEN_HISTORY_BARS: usize = 45;
 
@@ -175,6 +212,23 @@ pub(crate) struct AdaptiveHistoryFetchOutcome {
     pub(crate) timed_out: bool,
 }
 
+fn adaptive_perf_counts(
+    data: &gp_core::CoreDataSet,
+    stock_override: Option<&[gp_core::StockItem]>,
+    history_override: Option<&HashMap<String, Vec<gp_core::HistoryBar>>>,
+) -> crate::perf_diagnostics::DataCounts {
+    crate::perf_diagnostics::DataCounts {
+        stock_count: stock_override.map_or(data.stocks.len(), <[_]>::len),
+        history_rows: data.histories.values().map(Vec::len).sum::<usize>()
+            + history_override
+                .into_iter()
+                .flat_map(HashMap::values)
+                .map(Vec::len)
+                .sum::<usize>(),
+        financial_records: data.financials.len(),
+    }
+}
+
 pub(crate) struct PreparedBacktest {
     pub(crate) data: Arc<gp_core::CoreDataSet>,
     pub(crate) stock_override: Option<Arc<Vec<gp_core::StockItem>>>,
@@ -196,11 +250,35 @@ pub(crate) async fn api_screen(app: tauri::AppHandle, payload: Value) -> Result<
     if legacy_screen_requested(&payload) {
         return api_legacy_screen(app, payload).await;
     }
-    adaptive_screen_with_timeout(
+    let diagnostics_enabled = crate::perf_diagnostics::requested(&payload);
+    let cache_strategy = if payload.get("data_policy").and_then(Value::as_str) == Some("refresh") {
+        crate::perf_diagnostics::CacheStrategy::Refresh
+    } else {
+        crate::perf_diagnostics::CacheStrategy::CacheOnly
+    };
+    let started = Instant::now();
+    let result = adaptive_screen_with_timeout(
         Duration::from_secs(ADAPTIVE_SCREEN_TOTAL_TIMEOUT_SECS),
         api_adaptive_screen(app, payload),
     )
-    .await
+    .await;
+    if result
+        .as_ref()
+        .err()
+        .is_some_and(|error| error.contains("端到端计算超过"))
+    {
+        crate::perf_diagnostics::record(
+            diagnostics_enabled,
+            crate::perf_diagnostics::PerfEvent::new(
+                crate::perf_diagnostics::Flow::Screening,
+                crate::perf_diagnostics::Stage::CommandTotal,
+                started.elapsed(),
+            )
+            .with_cache_strategy(cache_strategy)
+            .with_outcome(crate::perf_diagnostics::Outcome::Timeout),
+        );
+    }
+    result
 }
 
 pub(crate) fn legacy_screen_requested(payload: &Value) -> bool {
@@ -226,8 +304,30 @@ pub(crate) async fn api_adaptive_screen(
     payload: Value,
 ) -> Result<Value, String> {
     let transport = payload.clone();
+    let diagnostics_enabled = crate::perf_diagnostics::requested(&transport);
+    let cache_strategy = if transport.get("data_policy").and_then(Value::as_str) == Some("refresh")
+    {
+        crate::perf_diagnostics::CacheStrategy::Refresh
+    } else {
+        crate::perf_diagnostics::CacheStrategy::CacheOnly
+    };
     let started_at = Instant::now();
-    let prepared = prepare_adaptive_screen(&app, payload).await?;
+    let prepared = match prepare_adaptive_screen(&app, payload).await {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            crate::perf_diagnostics::record(
+                diagnostics_enabled,
+                crate::perf_diagnostics::PerfEvent::new(
+                    crate::perf_diagnostics::Flow::Screening,
+                    crate::perf_diagnostics::Stage::CommandTotal,
+                    started_at.elapsed(),
+                )
+                .with_cache_strategy(cache_strategy)
+                .with_outcome(crate::perf_diagnostics::Outcome::Error),
+            );
+            return Err(error);
+        }
+    };
     let PreparedAdaptiveScreen {
         data,
         stock_override,
@@ -239,6 +339,12 @@ pub(crate) async fn api_adaptive_screen(
         metadata,
         cache_hit,
     } = prepared;
+    let counts = adaptive_perf_counts(
+        data.as_ref(),
+        stock_override.as_deref().map(Vec::as_slice),
+        Some(&history_override),
+    );
+    let candidate_count = candidate_codes.len();
     emit_adaptive_screen_progress(
         &app,
         request.run_id.as_deref(),
@@ -247,7 +353,8 @@ pub(crate) async fn api_adaptive_screen(
         "判断市场状态",
     );
     let calculation_request = request.clone();
-    let mut result = crate::runtime::run_cpu_bound("api_screen", move || {
+    let calculation_started = Instant::now();
+    let calculation = crate::runtime::run_cpu_bound("api_screen", move || {
         let calculation_as_of = calculation_request.as_of_date.as_deref();
         let universe = stock_override
             .as_deref()
@@ -292,7 +399,28 @@ pub(crate) async fn api_adaptive_screen(
         .map_err(|error| error.to_string())?;
         serde_json::to_value(result).map_err(|error| error.to_string())
     })
-    .await??;
+    .await
+    .and_then(|result| result);
+    let calculation_elapsed = calculation_started.elapsed();
+    let calculation_event = crate::perf_diagnostics::PerfEvent::new(
+        crate::perf_diagnostics::Flow::Screening,
+        crate::perf_diagnostics::Stage::RustCalculation,
+        calculation_elapsed,
+    )
+    .with_cache_strategy(cache_strategy)
+    .with_counts(
+        counts.stock_count,
+        counts.history_rows,
+        counts.financial_records,
+    )
+    .with_candidate_count(candidate_count)
+    .with_outcome(if calculation.is_ok() {
+        crate::perf_diagnostics::Outcome::Ok
+    } else {
+        crate::perf_diagnostics::Outcome::Error
+    });
+    crate::perf_diagnostics::record(diagnostics_enabled, calculation_event);
+    let mut result = calculation?;
     crate::market::append_result_notes(&mut result, notes);
     emit_adaptive_screen_progress(
         &app,
@@ -313,11 +441,33 @@ pub(crate) async fn api_adaptive_screen(
                 .unwrap_or_else(|| "19700101".to_string())
         });
     let exposure_write_date = exposure_date.clone();
+    let persistence_started = Instant::now();
     let exposure_write =
         crate::runtime::run_io_bound("adaptive_screen_exposure_write", move || {
             adaptive_exposure_record_sync(&exposure_app, &exposure_result, &exposure_write_date)
         })
         .await?;
+    let persistence_elapsed = persistence_started.elapsed();
+    crate::perf_diagnostics::record(
+        diagnostics_enabled,
+        crate::perf_diagnostics::PerfEvent::new(
+            crate::perf_diagnostics::Flow::Screening,
+            crate::perf_diagnostics::Stage::ResultPersistence,
+            persistence_elapsed,
+        )
+        .with_cache_strategy(cache_strategy)
+        .with_counts(
+            counts.stock_count,
+            counts.history_rows,
+            counts.financial_records,
+        )
+        .with_candidate_count(candidate_count)
+        .with_outcome(if exposure_write.is_ok() {
+            crate::perf_diagnostics::Outcome::Ok
+        } else {
+            crate::perf_diagnostics::Outcome::Error
+        }),
+    );
     if let Err(error) = exposure_write {
         crate::market::append_result_notes(
             &mut result,
@@ -345,6 +495,27 @@ pub(crate) async fn api_adaptive_screen(
         .await;
     });
     local_data::attach_metadata(&mut result, metadata, &transport);
+    let total_elapsed = started_at.elapsed();
+    crate::perf_diagnostics::record(
+        diagnostics_enabled,
+        crate::perf_diagnostics::PerfEvent::new(
+            crate::perf_diagnostics::Flow::Screening,
+            crate::perf_diagnostics::Stage::CommandTotal,
+            total_elapsed,
+        )
+        .with_cache_strategy(cache_strategy)
+        .with_counts(
+            counts.stock_count,
+            counts.history_rows,
+            counts.financial_records,
+        )
+        .with_candidate_count(candidate_count)
+        .with_outcome(if cache_hit {
+            crate::perf_diagnostics::Outcome::CacheHit
+        } else {
+            crate::perf_diagnostics::Outcome::CacheMiss
+        }),
+    );
     Ok(result)
 }
 
@@ -586,7 +757,7 @@ pub(crate) async fn api_trend_screen_inner(
         prepare_trend_screen(&app, payload),
     )
     .await
-    .map_err(|_| format!("trend screen history prefetch exceeded {TREND_SCREEN_HISTORY_TIMEOUT_SECS}s; retry after refreshing market data."))??;
+    .map_err(|_| format!("趋势日线准备超过 {TREND_SCREEN_HISTORY_TIMEOUT_SECS} 秒，请稍后重新运行筛选。"))??;
     let PreparedTrendScreen {
         data,
         stock_override,
@@ -869,6 +1040,10 @@ pub(crate) fn adaptive_release_implementation_fingerprint() -> &'static str {
                     ("lib.rs", include_bytes!("lib.rs").as_slice()),
                     ("screening.rs", include_bytes!("screening.rs").as_slice()),
                     (
+                        "screening_financial_overlay.rs",
+                        include_bytes!("screening_financial_overlay.rs").as_slice(),
+                    ),
+                    (
                         "metric_units.rs",
                         include_bytes!("metric_units.rs").as_slice(),
                     ),
@@ -1083,11 +1258,37 @@ pub(crate) async fn prepare_adaptive_screen(
     app: &tauri::AppHandle,
     payload: Value,
 ) -> Result<PreparedAdaptiveScreen, String> {
+    let diagnostics_enabled = crate::perf_diagnostics::requested(&payload);
+    let cache_prepare_started = Instant::now();
     let force_cold_start = adaptive_release_validation_force_cold_start(&payload);
     let policy = DataPolicy::parse(&payload)?;
     let data = local_snapshot(app, &payload, "adaptive_screen")?;
     let stock_override = screen_stock_override(app, &data, &payload)?;
     let mut request = adaptive_screen_request_from_payload(payload)?;
+    let cache_prepare_elapsed = cache_prepare_started.elapsed();
+    let cache_counts = adaptive_perf_counts(
+        data.as_ref(),
+        stock_override.as_deref().map(Vec::as_slice),
+        None,
+    );
+    crate::perf_diagnostics::record(
+        diagnostics_enabled,
+        crate::perf_diagnostics::PerfEvent::new(
+            crate::perf_diagnostics::Flow::Screening,
+            crate::perf_diagnostics::Stage::CacheSnapshotPrepare,
+            cache_prepare_elapsed,
+        )
+        .with_cache_strategy(match policy {
+            DataPolicy::CacheOnly => crate::perf_diagnostics::CacheStrategy::CacheOnly,
+            DataPolicy::Refresh => crate::perf_diagnostics::CacheStrategy::Refresh,
+        })
+        .with_counts(
+            cache_counts.stock_count,
+            cache_counts.history_rows,
+            cache_counts.financial_records,
+        )
+        .with_outcome(crate::perf_diagnostics::Outcome::Ok),
+    );
     emit_adaptive_screen_progress(
         app,
         request.run_id.as_deref(),
@@ -1098,6 +1299,7 @@ pub(crate) async fn prepare_adaptive_screen(
     let candidate_data = Arc::clone(&data);
     let candidate_stocks = stock_override.clone();
     let criteria = request.criteria.clone();
+    let candidate_started = Instant::now();
     let candidates = crate::runtime::run_cpu_bound("adaptive_screen_candidates", move || {
         let universe = candidate_stocks
             .as_deref()
@@ -1110,6 +1312,31 @@ pub(crate) async fn prepare_adaptive_screen(
         )
     })
     .await?;
+    let candidate_elapsed = candidate_started.elapsed();
+    let candidate_counts = adaptive_perf_counts(
+        data.as_ref(),
+        stock_override.as_deref().map(Vec::as_slice),
+        None,
+    );
+    crate::perf_diagnostics::record(
+        diagnostics_enabled,
+        crate::perf_diagnostics::PerfEvent::new(
+            crate::perf_diagnostics::Flow::Screening,
+            crate::perf_diagnostics::Stage::CandidateGeneration,
+            candidate_elapsed,
+        )
+        .with_cache_strategy(match policy {
+            DataPolicy::CacheOnly => crate::perf_diagnostics::CacheStrategy::CacheOnly,
+            DataPolicy::Refresh => crate::perf_diagnostics::CacheStrategy::Refresh,
+        })
+        .with_counts(
+            candidate_counts.stock_count,
+            candidate_counts.history_rows,
+            candidate_counts.financial_records,
+        )
+        .with_candidate_count(candidates.len())
+        .with_outcome(crate::perf_diagnostics::Outcome::Ok),
+    );
     emit_adaptive_screen_progress(
         app,
         request.run_id.as_deref(),
@@ -1163,6 +1390,7 @@ pub(crate) async fn prepare_adaptive_screen(
     }
     let cache_hit = missing.is_empty();
 
+    let history_supplement_started = Instant::now();
     let mut history_override = HashMap::new();
     let mut notes = Vec::new();
     let mut history_prefetch_timed_out = false;
@@ -1265,6 +1493,37 @@ pub(crate) async fn prepare_adaptive_screen(
             failed
         ));
     }
+    let history_supplement_elapsed = history_supplement_started.elapsed();
+    let history_counts = adaptive_perf_counts(
+        data.as_ref(),
+        stock_override.as_deref().map(Vec::as_slice),
+        Some(&history_override),
+    );
+    crate::perf_diagnostics::record(
+        diagnostics_enabled,
+        crate::perf_diagnostics::PerfEvent::new(
+            crate::perf_diagnostics::Flow::Screening,
+            crate::perf_diagnostics::Stage::HistorySupplement,
+            history_supplement_elapsed,
+        )
+        .with_cache_strategy(match policy {
+            DataPolicy::CacheOnly => crate::perf_diagnostics::CacheStrategy::CacheOnly,
+            DataPolicy::Refresh => crate::perf_diagnostics::CacheStrategy::Refresh,
+        })
+        .with_counts(
+            history_counts.stock_count,
+            history_counts.history_rows,
+            history_counts.financial_records,
+        )
+        .with_candidate_count(candidates.len())
+        .with_outcome(if cache_hit {
+            crate::perf_diagnostics::Outcome::CacheHit
+        } else if history_prefetch_timed_out || history_override.len() < missing.len() {
+            crate::perf_diagnostics::Outcome::Partial
+        } else {
+            crate::perf_diagnostics::Outcome::Ok
+        }),
+    );
     if policy == DataPolicy::Refresh {
         request.as_of_date = adaptive_screen_as_of_date(
             request.as_of_date.clone(),
@@ -1480,51 +1739,40 @@ pub(crate) async fn prepare_trend_screen(
     let request =
         serde_json::from_value::<gp_core::TrendScreenRequest>(local_data::core_payload(payload))
             .map_err(|error| format!("invalid trend screen request: {error}"))?;
-    let criteria = request.criteria.clone();
+    let candidate_request = request.clone();
     let candidate_data = Arc::clone(&data);
     let candidate_stocks = stock_override.clone();
-    let candidate_result =
+    let candidate_codes =
         crate::runtime::run_cpu_bound("api_trend_screen_candidates", move || {
             let universe = candidate_stocks
                 .as_deref()
                 .map(Vec::as_slice)
                 .unwrap_or(candidate_data.stocks.as_slice());
-            gp_core::screen_stocks(universe, &criteria)
+            gp_core::trend_screen_candidate_codes(universe, &candidate_request)
         })
         .await?;
-    let candidates = trend_history_prefetch_codes_from_result(&candidate_result, request.limit);
-    let missing = candidates
-        .iter()
-        .filter(|code| {
-            !crate::market::typed_history_cache_has_bars(
-                data.as_ref(),
-                code,
-                &request.start_date,
-                &request.end_date,
-                MIN_TREND_SCREEN_HISTORY_BARS,
-            )
-        })
-        .take(TREND_SCREEN_HISTORY_PREFETCH_LIMIT)
-        .cloned()
-        .collect::<Vec<_>>();
-    let coverage = local_history_coverage(
+    let candidates = normalize_trend_prefetch_codes(candidate_codes.iter().map(String::as_str));
+    let coverage = local_trend_history_coverage(
         data.as_ref(),
         &HashMap::new(),
+        stock_override.as_deref().map(Vec::as_slice).unwrap_or(&data.stocks),
         &candidates,
         &request.start_date,
         &request.end_date,
         MIN_TREND_SCREEN_HISTORY_BARS,
     );
+    let missing = coverage
+        .iter()
+        .filter(|item| item["sufficient"].as_bool() != Some(true))
+        .filter_map(|item| item["code"].as_str().map(str::to_owned))
+        .take(TREND_SCREEN_HISTORY_PREFETCH_LIMIT)
+        .collect::<Vec<_>>();
     if policy == DataPolicy::CacheOnly {
         local_data::require_coverage("trend_screen", &coverage)?;
     }
     let metadata = local_metadata(data.as_ref(), policy, &coverage);
     let mut notes = Vec::new();
     if policy == DataPolicy::CacheOnly || missing.is_empty() {
-        notes.push(format!(
-            "Trend screen reused cached OHLCV history for {} candidates.",
-            candidates.len()
-        ));
         return Ok(PreparedTrendScreen {
             data,
             stock_override,
@@ -1538,33 +1786,30 @@ pub(crate) async fn prepare_trend_screen(
     let start_date = request.start_date.clone();
     let end_date = request.end_date.clone();
     let fetch_missing = missing.clone();
-    let fetches =
+    let fetch_outcome =
         crate::runtime::with_heavy_network_permit("api_trend_screen_history_fetch", async move {
-            let results = stream::iter(fetch_missing)
-                .map(|code| {
-                    let start_date = start_date.clone();
+            Ok(collect_adaptive_history_results(
+                fetch_missing,
+                start_date,
+                Duration::from_secs(TREND_SCREEN_HISTORY_FETCH_TIMEOUT_SECS),
+                TREND_SCREEN_HISTORY_CONCURRENCY,
+                move |code, start_date| {
+                    let code = code.to_string();
+                    let start_date = start_date.to_string();
                     let end_date = end_date.clone();
-                    async move {
-                        let result = crate::market::fetch_observe_daily_history(
-                            &code,
-                            &start_date,
-                            &end_date,
-                        )
-                        .await;
-                        (code, result)
-                    }
-                })
-                .buffer_unordered(TREND_SCREEN_HISTORY_CONCURRENCY)
-                .collect::<Vec<_>>()
-                .await;
-            Ok(results)
+                    async move { crate::market::fetch_observe_daily_history(&code, &start_date, &end_date).await }
+                },
+                |_, _| {},
+            ).await)
         })
         .await?;
+    let AdaptiveHistoryFetchOutcome { results: fetches, timed_out } = fetch_outcome;
+    let completed = fetches.len();
 
     let mut history_override = HashMap::new();
     let mut history_patch = serde_json::Map::new();
     let mut fetched = 0usize;
-    let mut failed = 0usize;
+    let mut failed = missing.len().saturating_sub(completed);
     for (code, result) in fetches {
         match result {
             Ok(rows) if !rows.is_empty() => {
@@ -1590,14 +1835,10 @@ pub(crate) async fn prepare_trend_screen(
             ));
         }
     }
-    notes.push(format!(
-        "Trend screen OHLCV prefetch: candidates {}, missing {}, fetched {fetched}, failed {failed}. Algorithm uses MA/KDJ/MACD/SWL/SWS, quant score, volume-price heat, and quality overlays.",
-        candidates.len(),
-        missing.len()
-    ));
-    let coverage = local_history_coverage(
+    let coverage = local_trend_history_coverage(
         data.as_ref(),
         &history_override,
+        stock_override.as_deref().map(Vec::as_slice).unwrap_or(&data.stocks),
         &candidates,
         &request.start_date,
         &request.end_date,
@@ -1608,7 +1849,11 @@ pub(crate) async fn prepare_trend_screen(
     } else if !trend_screen_refresh_has_usable_history(&coverage) {
         local_data::require_coverage("trend_screen", &coverage)?;
     }
-    let metadata = local_metadata(data.as_ref(), policy, &coverage);
+    let mut metadata = local_metadata(data.as_ref(), policy, &coverage);
+    metadata["history_prefetch"] = json!({
+        "requested": missing.len(), "completed": completed, "fetched": fetched, "failed": failed,
+        "concurrency": TREND_SCREEN_HISTORY_CONCURRENCY, "timed_out": timed_out,
+    });
     Ok(PreparedTrendScreen {
         data,
         stock_override,
@@ -1901,23 +2146,6 @@ pub(crate) fn backtest_history_rows_are_usable(rows: &[Value]) -> bool {
         >= MIN_BACKTEST_HISTORY_BARS
 }
 
-pub(crate) fn trend_history_prefetch_codes_from_result(
-    candidate_result: &gp_core::ScreenResult,
-    limit: usize,
-) -> Vec<String> {
-    let pool_size = TREND_SCREEN_HISTORY_PREFETCH_LIMIT
-        .max(limit.saturating_mul(5))
-        .max(50)
-        .min(200);
-    normalize_trend_prefetch_codes(
-        candidate_result
-            .items
-            .iter()
-            .take(pool_size)
-            .map(|item| item.stock.code.as_str()),
-    )
-}
-
 pub(crate) fn normalize_trend_prefetch_codes<'a>(
     codes: impl IntoIterator<Item = &'a str>,
 ) -> Vec<String> {
@@ -1931,27 +2159,6 @@ pub(crate) fn normalize_trend_prefetch_codes<'a>(
         }
     }
     normalized
-}
-
-#[cfg(test)]
-pub(crate) fn trend_history_prefetch_codes(candidate_result: &Value, limit: usize) -> Vec<String> {
-    let pool_size = TREND_SCREEN_HISTORY_PREFETCH_LIMIT
-        .max(limit.saturating_mul(5))
-        .max(50)
-        .min(200);
-    normalize_trend_prefetch_codes(
-        candidate_result
-            .get("items")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .take(pool_size)
-            .filter_map(|item| {
-                item.get("stock")
-                    .and_then(|stock| stock.get("code"))
-                    .and_then(Value::as_str)
-            }),
-    )
 }
 
 pub(crate) fn screen_financial_snapshot(
@@ -1992,23 +2199,18 @@ pub(crate) fn screen_stock_override(
     if let Ok(slot) = crate::market::screen_stock_overlay_cache().lock() {
         if let Some(entry) = slot.get(&path) {
             if Arc::ptr_eq(&entry.data, data)
-                && entry.financial_snapshot.as_ref() == financial_snapshot.as_ref()
+                && (Arc::ptr_eq(&entry.financial_snapshot, &financial_snapshot)
+                    || entry.financial_snapshot.as_ref() == financial_snapshot.as_ref())
             {
                 return Ok(Some(Arc::clone(&entry.stocks)));
             }
         }
     }
 
-    let mut stock_data = json!({ "stocks": &data.stocks });
-    merge_screen_financial_snapshot_into_data(&mut stock_data, financial_snapshot.as_ref());
-    let stocks = stock_data
-        .as_object_mut()
-        .and_then(|object| object.remove("stocks"))
-        .unwrap_or_else(|| json!([]));
-    let stocks = Arc::new(
-        serde_json::from_value(stocks)
-            .map_err(|error| format!("screen stock overlay parse failed: {error}"))?,
-    );
+    let stocks = Arc::new(financial_overlay::merge(
+        data.as_ref(),
+        financial_snapshot.as_ref(),
+    ));
     if let Ok(mut slot) = crate::market::screen_stock_overlay_cache().lock() {
         slot.insert(
             path,
@@ -2049,6 +2251,7 @@ pub(crate) async fn run_graph_screen_command(
     Ok(result)
 }
 
+#[cfg(test)]
 pub(crate) fn merge_screen_financial_snapshot_into_data(
     data: &mut Value,
     financial_snapshot: &Value,
@@ -2645,6 +2848,77 @@ pub(crate) fn adaptive_exposure_record_rows(
 #[cfg(test)]
 mod local_first_tests {
     use super::*;
+    #[test]
+    fn trend_parallel_fetch_keeps_completed_stocks_when_one_source_stalls() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let fetch_active = Arc::clone(&active);
+        let fetch_peak = Arc::clone(&peak);
+        let mut codes = vec!["stalled".to_string()];
+        codes.extend((0..14).map(|index| format!("ready-{index}")));
+        let outcome = tauri::async_runtime::block_on(collect_adaptive_history_results(
+            codes, "20260601".into(), Duration::from_millis(500), TREND_SCREEN_HISTORY_CONCURRENCY,
+            move |code, _| {
+                let code = code.to_string();
+                let active = Arc::clone(&fetch_active);
+                let peak = Arc::clone(&fetch_peak);
+                async move {
+                    let running = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(running, Ordering::SeqCst);
+                    if code == "stalled" { return std::future::pending().await; }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    active.fetch_sub(1, Ordering::SeqCst);
+                    Ok(vec![json!({"date":"2026-10-30", "close":10.0})])
+                }
+            }, |_, _| {},
+        ));
+        assert!(outcome.timed_out);
+        assert_eq!(outcome.results.len(), 14);
+        assert!(outcome.results.iter().all(|(code, result)| code != "stalled" && result.is_ok()));
+        assert!(peak.load(Ordering::SeqCst) > 1);
+        assert!(peak.load(Ordering::SeqCst) <= TREND_SCREEN_HISTORY_CONCURRENCY);
+    }
+
+    #[test]
+    fn trend_coverage_refreshes_old_bars_even_when_the_count_is_sufficient() {
+        let rows = (0..60).map(|index| {
+            let date = chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap()
+                .checked_add_days(chrono::Days::new(index)).unwrap();
+            serde_json::from_value::<gp_core::HistoryBar>(json!({
+                "date":date.format("%Y-%m-%d").to_string(), "close":10.0,
+                "open":10.0,"high":11.0,"low":9.0,"volume":100.0
+            })).unwrap()
+        }).collect::<Vec<_>>();
+        let code = "688279.SH".to_string();
+        let stock = gp_core::StockItem {
+            code: code.clone(), price: 173.73, quote_time: Some("20261030161451".into()),
+            ..gp_core::StockItem::default()
+        };
+        let data = gp_core::CoreDataSet {
+            stocks: vec![stock], histories: [(code.clone(), rows.clone())].into_iter().collect(),
+            ..gp_core::CoreDataSet::default()
+        };
+        let codes = vec![code.clone()];
+        let old = local_trend_history_coverage(&data, &HashMap::new(), &data.stocks, &codes, "20260601", "20261101", 45);
+        assert_eq!(old[0]["available_bars"], 60);
+        assert_eq!(old[0]["sufficient"], false);
+        assert_eq!(old[0]["quote_as_of"], "20261030");
+        assert_eq!(old[0]["as_of"], "20260923");
+        assert_eq!(old[0]["history_behind_quote"], true);
+        assert!(local_data::require_coverage("trend_screen", &old).is_err());
+
+        let mut fresh_rows = rows;
+        fresh_rows.push(serde_json::from_value(json!({"date":"2026-10-30", "close":173.73})).unwrap());
+        let overrides = [(code, fresh_rows)].into_iter().collect();
+        let fresh = local_trend_history_coverage(&data, &overrides, &data.stocks, &codes, "20260601", "20261101", 45);
+        assert_eq!(fresh[0]["sufficient"], true);
+        assert_eq!(fresh[0]["history_behind_quote"], false);
+
+        let historical = local_trend_history_coverage(&data, &HashMap::new(), &data.stocks, &codes, "20260601", "20260923", 45);
+        assert_eq!(historical[0]["sufficient"], true);
+    }
+
     #[test]
     fn cached_adaptive_coverage_keeps_old_data_and_exact_pit_boundary() {
         let mut data = gp_core::CoreDataSet::default();

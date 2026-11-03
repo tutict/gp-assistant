@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { LocateFixed, Maximize2, Minimize2, ZoomIn, ZoomOut } from "lucide-react";
 import type { TrendIndicatorPoint } from "../../types";
 import {
@@ -27,6 +27,13 @@ import {
 
 const DEFAULT_VISIBLE_BARS = 96;
 const MOBILE_DEFAULT_VISIBLE_BARS = 72;
+const MA_DEFINITIONS = [
+  { window: 5, label: "MA5", className: "ma-5" },
+  { window: 10, label: "MA10", className: "ma-10" },
+  { window: 20, label: "MA20", className: "ma-20" },
+  { window: 30, label: "MA30", className: "ma-30" },
+  { window: 60, label: "MA60", className: "ma-60" },
+] as const;
 
 type SeriesPoint = { date: string; [key: string]: number | string };
 type LayoutMode = "mobile" | "desktop";
@@ -109,8 +116,8 @@ export function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
   const [visibleCount, setVisibleCount] = useState(() => (mobileRuntime ? MOBILE_DEFAULT_VISIBLE_BARS : DEFAULT_VISIBLE_BARS));
   const [endIndex, setEndIndex] = useState<number | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const dailyBars = toDailyBars(series);
-  const bars = aggregateBars(dailyBars, period);
+  const dailyBars = useMemo(() => toDailyBars(series), [series]);
+  const bars = useMemo(() => aggregateBars(dailyBars, period), [dailyBars, period]);
 
   useEffect(() => {
     setEndIndex(bars.length);
@@ -183,7 +190,9 @@ export function TrendCharts({ series }: { series: TrendIndicatorPoint[] }) {
       <div className="signal-chart-stack kline-workspace kline-market-workspace">
         <section className="chart-wrap kline-chart kline-market-chart">
           <header className="kline-market-header">
-            <PeriodTabs period={period} onPeriodChange={setPeriod} />
+            <div className="kline-instrument-toolbar">
+              <PeriodTabs period={period} onPeriodChange={setPeriod} />
+            </div>
           </header>
           <div className="kline-empty-state">暂无可用 K 线数据</div>
         </section>
@@ -315,33 +324,35 @@ function CandlestickChart({
   const xByAbsoluteIndex = (index: number) => center(index - visibleStart);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
-  const closes = allBars.map((bar) => bar.close);
-  const maDefinitions = [
-    { window: 5, label: "MA5", className: "ma-5" },
-    { window: 10, label: "MA10", className: "ma-10" },
-    { window: 20, label: "MA20", className: "ma-20" },
-    { window: 30, label: "MA30", className: "ma-30" },
-    { window: 60, label: "MA60", className: "ma-60" },
-  ];
-  const maLines = maDefinitions.map((definition) => {
-    const values = movingAverage(closes, definition.window);
+  const indicators = useMemo(() => {
+    const closes = allBars.map((bar) => bar.close);
+    return {
+      averages: MA_DEFINITIONS.map((definition) => ({ ...definition, values: movingAverage(closes, definition.window) })),
+      macd: computeMacd(allBars),
+      dma: computeDmaLines(allBars),
+      mtm: computeMtmLines(allBars),
+      kdj: computeKdj(allBars),
+    };
+  }, [allBars]);
+  const maLines = indicators.averages.map(({ values, ...definition }) => {
     return {
       ...definition,
       latest: values[visibleEnd - 1],
       points: values
+        .slice(visibleStart, visibleEnd)
         .map((value, index) => {
-          if (value == null || index < visibleStart || index >= visibleEnd) return null;
-          return `${xByAbsoluteIndex(index).toFixed(2)},${yPrice(value).toFixed(2)}`;
+          if (value == null) return null;
+          return `${xByAbsoluteIndex(visibleStart + index).toFixed(2)},${yPrice(value).toFixed(2)}`;
         })
         .filter(Boolean)
         .join(" "),
     };
   });
 
-  const macd = computeMacd(allBars).slice(visibleStart, visibleEnd);
-  const dmaSeries = computeDmaLines(allBars).slice(visibleStart, visibleEnd);
-  const mtmSeries = computeMtmLines(allBars).slice(visibleStart, visibleEnd);
-  const kdjSeries = computeKdj(allBars).slice(visibleStart, visibleEnd);
+  const macd = indicators.macd.slice(visibleStart, visibleEnd);
+  const dmaSeries = indicators.dma.slice(visibleStart, visibleEnd);
+  const mtmSeries = indicators.mtm.slice(visibleStart, visibleEnd);
+  const kdjSeries = indicators.kdj.slice(visibleStart, visibleEnd);
   const volumes = visibleBars.map((bar) => (Number.isFinite(bar.volume) ? bar.volume : 0));
   const volumeMax = Math.max(...volumes, 1);
   const selectedIndex = selectedDate ? visibleBars.findIndex((bar) => bar.date === selectedDate) : -1;
@@ -467,21 +478,29 @@ function CandlestickChart({
   return (
     <section className={`chart-wrap kline-chart kline-market-chart ${mobileRuntime ? "mobile-chart" : "desktop-chart"}`}>
       <header className="kline-market-header">
-        <PeriodTabs period={period} onPeriodChange={onPeriodChange} />
-        <div className="kline-nav" aria-label="K线视图工具">
-          <button type="button" onClick={() => onZoom("in")} disabled={!canZoomIn} aria-label="放大K线" title="减少当前可见K线数量">
-            <ZoomIn aria-hidden="true" /><span>放大</span>
-          </button>
-          <button type="button" onClick={() => onZoom("out")} disabled={!canZoomOut} aria-label="缩小K线" title="增加当前可见K线数量">
-            <ZoomOut aria-hidden="true" /><span>缩小</span>
-          </button>
-          <button type="button" onClick={onReturnLatest} disabled={isAtLatest} aria-label="回到最新K线">
-            <LocateFixed aria-hidden="true" /><span>最新</span>
-          </button>
-          <button type="button" className="kline-fullscreen-toggle" onClick={onToggleFullscreen} aria-pressed={isFullscreen}>
-            {isFullscreen ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
-            <span>{isFullscreen ? "退出全屏" : mobileRuntime ? "横屏全屏" : "全屏"}</span>
-          </button>
+        <div className="kline-instrument-toolbar">
+          <PeriodTabs period={period} onPeriodChange={onPeriodChange} />
+          <div className="kline-nav" aria-label="K线视图工具">
+            <button type="button" onClick={() => onZoom("in")} disabled={!canZoomIn} aria-label="放大K线" title="减少当前可见K线数量">
+              <ZoomIn aria-hidden="true" /><span>放大</span>
+            </button>
+            <button type="button" onClick={() => onZoom("out")} disabled={!canZoomOut} aria-label="缩小K线" title="增加当前可见K线数量">
+              <ZoomOut aria-hidden="true" /><span>缩小</span>
+            </button>
+            <button type="button" onClick={onReturnLatest} disabled={isAtLatest} aria-label="回到最新K线" title="回到最近交易日">
+              <LocateFixed aria-hidden="true" /><span>最新</span>
+            </button>
+            <button
+              type="button"
+              className="kline-fullscreen-toggle"
+              onClick={onToggleFullscreen}
+              aria-label={isFullscreen ? "退出全屏" : mobileRuntime ? "横屏全屏" : "全屏"}
+              aria-pressed={isFullscreen}
+            >
+              {isFullscreen ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
+              <span>{isFullscreen ? "退出全屏" : mobileRuntime ? "横屏全屏" : "全屏"}</span>
+            </button>
+          </div>
         </div>
         <div className="kline-legend" aria-label="均线">
           <span>日线</span>

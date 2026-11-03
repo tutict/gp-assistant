@@ -4485,17 +4485,8 @@ fn mobile_market_cache_reuses_matching_metadata_and_invalidates_on_size() {
 
 #[test]
 fn trend_history_prefetch_codes_normalizes_and_deduplicates_candidates() {
-    let result = json!({
-        "items": [
-            {"stock": {"code": "000001"}},
-            {"stock": {"code": "000001.SZ"}},
-            {"stock": {"code": "600000.SH"}},
-            {"stock": {"code": "invalid"}}
-        ]
-    });
-
     assert_eq!(
-        trend_history_prefetch_codes(&result, 10),
+        normalize_trend_prefetch_codes(["000001", "000001.SZ", "600000.SH", "invalid"]),
         vec!["000001.SZ".to_string(), "600000.SH".to_string()]
     );
 }

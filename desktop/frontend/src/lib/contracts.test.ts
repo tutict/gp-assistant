@@ -539,6 +539,29 @@ describe("response normalizers", () => {
     expect(rows[1].score).toBe(88);
   });
 
+  it("retains the dates, KDJ inputs, risks, and contributions of a trend result", () => {
+    const rows = normalizeScreenRows({ items: [{
+      stock: { code: "688279.SH", name: "峰岹科技", price: 173.73, quote_time: "20261030161451" },
+      final_score: 73.37, trend_score: 73.37,
+      signal: { code: "688279.SH", date: "2026-09-23", close: 215.42, k: 82.43, d: 73.38, j: 100.53,
+        quality_score: 81, risk_flags: ["kdj_overbought"] },
+      explanation: { score_breakdown: [{ key: "technical_score", label: "技术层", contribution: 62.5 }] },
+    }] });
+    expect(rows[0]).toMatchObject({ quoteTime: "20261030161451", qualityScore: 81,
+      trendSignal: { date: "2026-09-23", close: 215.42, k: 82.43, d: 73.38, j: 100.53, risk_flags: ["kdj_overbought"] },
+      scoreBreakdown: [{ key: "technical_score", contribution: 62.5 }],
+    });
+  });
+
+  it("carries the chosen historical end date so a deliberate past window is not treated as an expired result", () => {
+    const rows = normalizeScreenRows({
+      data_metadata: { coverage: [{ code: "688279.SH", end_date: "20260923" }] },
+      items: [{ stock: { code: "688279.SH", name: "峰岹科技", quote_time: "20261030161451" },
+        signal: { date: "2026-09-23", close: 215.42 } }],
+    });
+    expect(rows[0].analysisEndDate).toBe("20260923");
+  });
+
   it("normalizes adaptive primary and exploration groups", () => {
     const groups = normalizeScreenGroups({
       groups: [

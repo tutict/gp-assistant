@@ -29,6 +29,7 @@ import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { Sheet } from "../ui/Sheet";
 import { RawJson } from "../RawJson";
 import { PanelFeedback } from "../ui/PanelFeedback";
+import { jsonByteLength, logPerfRecord, perfDiagnosticsAreEnabled, perfOutcomeForError } from "../../lib/perfDiagnostics";
 
 interface ScreenPanelProps {
   criteria: FilterCriteria;
@@ -53,10 +54,11 @@ const TABS: { key: ScreenMode; label: string }[] = [
 ];
 
 const MODE_NOTES: Partial<Record<ScreenMode, string>> = {
-  screen: "按当前市场状态从全市场挑出综合评分较高的股票",
-  sectorScreen: "按概念把候选股票分组查看",
-  boardScreen: "按行业板块分组查看",
-  customScreen: "用你设置的财务和市值条件筛选",
+  screen: "全市场综合评分选股",
+  sectorScreen: "概念分组筛选",
+  boardScreen: "板块分组筛选",
+  customScreen: "自定义条件筛选",
+  trendScreen: "日线趋势筛选",
 };
 
 const FULL_UNIVERSE_CRITERIA: FilterCriteria = {
@@ -158,6 +160,7 @@ export function ScreenPanel({
   onObserveStock,
   onNewsStock,
   onRunBacktest,
+  mobileRuntime = false,
   marketStatus,
 }: ScreenPanelProps) {
   const mobileLayout = useMediaQuery("(max-width: 768px)");
@@ -183,6 +186,7 @@ export function ScreenPanel({
     trendScreen: 0,
   });
   const runInFlightRef = useRef(false);
+  const pendingStableRenderRef = useRef<{ startedAt: number; mode: ScreenMode } | null>(null);
 
   const updateRun = useCallback((
     target: ScreenMode,
@@ -221,11 +225,13 @@ export function ScreenPanel({
   const run = useCallback(async (override?: ScreenRunOverride) => {
     if (runInFlightRef.current) return;
     runInFlightRef.current = true;
+    const runStartedAt = performance.now();
     const requestMode = override?.mode ?? mode;
     const requestCriteria = criteriaForMode(requestMode, override?.criteria ?? criteria);
     const requestTrendStart = override?.trendStart ?? trendStart;
     const requestTrendEnd = override?.trendEnd ?? trendEnd;
     const requestVersion = ++requestVersions.current[requestMode];
+    let finalCacheStrategy: "cache_only" | "refresh" = "cache_only";
     let adaptiveRequest: AdaptiveScreenRequest | undefined;
     updateRun(requestMode, (current) => ({
       ...current,
@@ -260,7 +266,12 @@ export function ScreenPanel({
         payload = buildTrendScreenRequest(requestCriteria, requestTrendStart, requestTrendEnd);
       }
 
-      const requestPayload = { ...(payload as Record<string, unknown>), data_policy: "cache_only" };
+      const perfEnabled = perfDiagnosticsAreEnabled(mobileRuntime);
+      const requestPayload = {
+        ...(payload as Record<string, unknown>),
+        data_policy: "cache_only",
+        ...(perfEnabled ? { perf_diagnostics: true } : {}),
+      };
       let data: unknown;
       try {
         data = await postJson(endpoint, requestPayload);
@@ -269,11 +280,47 @@ export function ScreenPanel({
           && shouldPrepareResearchDataForRetry(firstError);
         if (!canRetryWithPreparedData) throw firstError;
         if (requestMode === "screen") {
-          await refreshScreenMarketDataOncePerDay(marketStatus);
+          finalCacheStrategy = "refresh";
+          const refreshStartedAt = performance.now();
+          try {
+            await refreshScreenMarketDataOncePerDay(marketStatus);
+            logPerfRecord({
+              flow: "screening",
+              stage: "universe_refresh",
+              elapsedMs: performance.now() - refreshStartedAt,
+              cacheStrategy: "refresh",
+              requestBytes: jsonByteLength(SCREEN_RUN_REFRESH_OPTIONS),
+              outcome: "ok",
+            }, mobileRuntime);
+          } catch (refreshError) {
+            logPerfRecord({
+              flow: "screening",
+              stage: "universe_refresh",
+              elapsedMs: performance.now() - refreshStartedAt,
+              cacheStrategy: "refresh",
+              requestBytes: jsonByteLength(SCREEN_RUN_REFRESH_OPTIONS),
+              outcome: perfOutcomeForError(refreshError),
+            }, mobileRuntime);
+            throw refreshError;
+          }
         }
-        data = await postJson(endpoint, { ...(payload as Record<string, unknown>), data_policy: "refresh" });
+        finalCacheStrategy = "refresh";
+        const refreshPayload = {
+          ...(payload as Record<string, unknown>),
+          data_policy: "refresh",
+          ...(perfEnabled ? { perf_diagnostics: true } : {}),
+        };
+        data = await postJson(endpoint, refreshPayload);
       }
       if (requestVersion !== requestVersions.current[requestMode]) return;
+      logPerfRecord({
+        flow: "screening",
+        stage: "user_trigger",
+        elapsedMs: performance.now() - runStartedAt,
+        cacheStrategy: finalCacheStrategy,
+        outcome: "ok",
+      }, mobileRuntime);
+      pendingStableRenderRef.current = { startedAt: runStartedAt, mode: requestMode };
       updateRun(requestMode, (current) => ({
         ...current,
         result: data,
@@ -285,6 +332,13 @@ export function ScreenPanel({
       }));
     } catch (err) {
       if (requestVersion !== requestVersions.current[requestMode]) return;
+      logPerfRecord({
+        flow: "screening",
+        stage: "user_trigger",
+        elapsedMs: performance.now() - runStartedAt,
+        cacheStrategy: finalCacheStrategy,
+        outcome: perfOutcomeForError(err),
+      }, mobileRuntime);
       updateRun(requestMode, (current) => ({
         ...current,
         loading: false,
@@ -297,7 +351,7 @@ export function ScreenPanel({
         activeRunIdRef.current = null;
       }
     }
-  }, [criteria, marketStatus, mode, trendEnd, trendStart, updateRun]);
+  }, [criteria, marketStatus, mobileRuntime, mode, trendEnd, trendStart, updateRun]);
 
   const applyDraftAndRun = () => {
     if (mode === "customScreen") {
@@ -329,6 +383,49 @@ export function ScreenPanel({
 
   const current = runs[mode];
   const { result, error, loading } = current;
+  useEffect(() => {
+    if (error) {
+      pendingStableRenderRef.current = null;
+      return;
+    }
+    if (!perfDiagnosticsAreEnabled(mobileRuntime)) {
+      pendingStableRenderRef.current = null;
+      return;
+    }
+    const pending = pendingStableRenderRef.current;
+    if (!pending || pending.mode !== mode || loading || !result) return;
+    if (typeof requestAnimationFrame !== "function") {
+      pendingStableRenderRef.current = null;
+      logPerfRecord({
+        flow: "screening",
+        stage: "first_stable_render",
+        elapsedMs: performance.now() - pending.startedAt,
+        cacheStrategy: "local",
+        outcome: "ok",
+      }, mobileRuntime);
+      return;
+    }
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        if (pendingStableRenderRef.current !== pending) return;
+        pendingStableRenderRef.current = null;
+        logPerfRecord({
+          flow: "screening",
+          stage: "first_stable_render",
+          elapsedMs: performance.now() - pending.startedAt,
+          cacheStrategy: "local",
+          outcome: "ok",
+        }, mobileRuntime);
+      });
+    });
+    return () => {
+      if (typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(firstFrame);
+        if (secondFrame) cancelAnimationFrame(secondFrame);
+      }
+    };
+  }, [error, loading, mobileRuntime, mode, result]);
   const adaptiveProgress = current.progress;
   const hasControlFields = mode === "customScreen" || mode === "trendScreen";
   const appliedCriteriaSummary = [
@@ -395,7 +492,7 @@ export function ScreenPanel({
       ))}
     </div>
   );
-  const modeNote = MODE_NOTES[mode] ? <p className="screen-mode-note">{MODE_NOTES[mode]}</p> : null;
+  const modeNote = <p className="screen-mode-note">{MODE_NOTES[mode] && <>{MODE_NOTES[mode]} · </>}<span className="workspace-boundary">仅供研究，不构成投资建议。</span></p>;
 
   return (
     <div className={`panel-container screen-panel-container ${result != null ? "has-result" : ""}`}>
@@ -422,7 +519,6 @@ export function ScreenPanel({
         </>
       )}
 
-      <p className="workspace-boundary">仅供研究，不构成投资建议。</p>
       <div className="screen-criteria-summary">
         <span>{mode === "customScreen" ? `当前条件：${appliedCriteriaSummary}` : mode === "trendScreen" ? `趋势区间：${trendStart} 至 ${trendEnd}` : "当前条件：全市场 · 按综合评分排序"}</span>
         {mobileLayout && hasControlFields && <button type="button" className="action-btn" onClick={() => { setDraftCriteria({...criteria}); setDraftDates({start:trendStart,end:trendEnd}); setCriteriaOpen(true); }}>筛选条件</button>}

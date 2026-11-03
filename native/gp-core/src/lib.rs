@@ -4794,6 +4794,11 @@ pub fn trend_screen_with_data(
     trend_screen_with_source(&source, request)
 }
 
+pub fn trend_screen_candidate_codes(universe: &[StockItem], request: &TrendScreenRequest) -> Vec<String> {
+    screen_candidate_pool(universe, &request.criteria, request.limit)
+        .into_iter().map(|candidate| candidate.stock.code).collect()
+}
+
 pub fn trend_screen_with_source(
     source: &impl MarketDataSource,
     request: &TrendScreenRequest,
@@ -4802,6 +4807,7 @@ pub fn trend_screen_with_source(
     let candidate_pool = screen_candidate_pool(&universe, &request.criteria, request.limit);
     let mut items = Vec::new();
     let mut skipped = 0_usize;
+    let mut outdated = Vec::new();
 
     for candidate in &candidate_pool {
         let trend_request = TrendIndicatorRequest {
@@ -4814,6 +4820,15 @@ pub fn trend_screen_with_source(
             skipped += 1;
             continue;
         };
+        if trend_history_behind_quote(&candidate.stock, &analysis.signal, &request.end_date) {
+            outdated.push(format!(
+                "{}：日线截至 {}，落后于 {} 的行情，需补齐日线后重新计算依据。",
+                candidate.stock.code,
+                analysis.signal.date,
+                capital_trade_date(candidate.stock.quote_time.as_deref().unwrap_or_default()).unwrap_or_default(),
+            ));
+            continue;
+        }
         let layered = layered_trend_score(&candidate.stock, &analysis);
         if !trend_screen_candidate_allowed(&layered) {
             skipped += 1;
@@ -4826,7 +4841,11 @@ pub fn trend_screen_with_source(
         signal.pattern_layer_score = Some(round6(layered.pattern_score));
         signal.quality_score = Some(round6(layered.quality_score));
         let mut reasons = candidate.reasons.clone();
-        reasons.extend(signal.reasons.clone());
+        reasons.extend(signal.reasons.iter().filter(|reason| {
+            !signal.risk_flags.contains(reason)
+                && reason.as_str() != "cyan_watch"
+                && !(reason.as_str() == "kdj_oversold" && signal.kdj_overbought)
+        }).cloned());
         reasons.extend(layered.reason_tags.clone());
         reasons.sort();
         reasons.dedup();
@@ -4844,6 +4863,10 @@ pub fn trend_screen_with_source(
     items.truncate(request.limit.clamp(1, 100));
     let mut notes = trend_notes();
     notes.extend(deducted_profit_rule_notes(&universe, &request.criteria));
+    if !outdated.is_empty() {
+        notes.push(format!("{} 只候选的日线落后行情，未使用旧指标参与当前趋势排名。", outdated.len()));
+        notes.extend(outdated.into_iter().take(20));
+    }
     if skipped > 0 {
         notes.push(format!(
             "Skipped {skipped} stocks without usable OHLC history."
@@ -4856,6 +4879,18 @@ pub fn trend_screen_with_source(
         screen_style: "balanced_swing".to_string(),
         notes,
     })
+}
+
+fn trend_history_behind_quote(stock: &StockItem, signal: &TrendIndicatorSignal, end_date: &str) -> bool {
+    let quote_date = stock.quote_time.as_deref().and_then(capital_trade_date);
+    let Some(quote_date) = quote_date.and_then(|date| parse_date(&date).ok()) else {
+        return false;
+    };
+    match (parse_date(&signal.date), parse_date(end_date)) {
+        // A deliberately historical window can precede the current quote.
+        (Ok(history_date), Ok(end_date)) => quote_date <= end_date && history_date < quote_date,
+        _ => false,
+    }
 }
 
 pub fn agent_skill_registry() -> Vec<AgentSkill> {
@@ -9540,7 +9575,7 @@ fn trend_layer_risk_flags(
     let volume5 = trailing_mean(&volumes, 5);
     let volume20 = trailing_mean(&volumes, 20);
     let macd = macd_snapshot(&closes);
-    let mut flags = Vec::new();
+    let mut flags = signal.risk_flags.clone();
     if bars.len() < 45 {
         flags.push("insufficient_history".to_string());
     }
@@ -9710,38 +9745,66 @@ fn trend_screen_explanation(
 ) -> SelectionExplanation {
     let mut basis = vec![
         format!(
-            "Passed the current base screen with raw score {:.2}.",
+            "通过基础筛选，基础评分 {:.2}。",
             candidate.score
         ),
         format!(
-            "{} signal with technical {:.2}, pattern {:.2}, quality {:.2}.",
-            signal.signal_type,
+            "{}：技术分 {:.2}、形态分 {:.2}、质量分 {:.2}。",
+            trend_screen_signal_label(&signal.signal_type),
             layered.technical_score,
             layered.pattern_score,
             layered.quality_score
+        ),
+        format!(
+            "日线截至 {}，收盘价 {:.2} 元；K={}、D={}、J={}。",
+            signal.date, signal.close, trend_indicator_value(signal.k),
+            trend_indicator_value(signal.d), trend_indicator_value(signal.j),
         ),
     ];
     if let Some(pattern_text) = pattern_basis_text(signal) {
         basis.push(pattern_text);
     }
 
-    let base_component = candidate.score.clamp(0.0, 20.0) / 20.0 * 10.0;
+    let mut score_breakdown = vec![
+        score_contribution("technical_score", "技术层", layered.technical_score, layered.technical_score * 0.70, 75.0, 60.0),
+        score_contribution("pattern_score", "形态层", layered.pattern_score, layered.pattern_score * 0.20, 70.0, 55.0),
+        score_contribution("quality_score", "质量层", layered.quality_score, layered.quality_score * 0.10, 70.0, 50.0),
+    ];
+    let adjustment = layered.final_score - score_breakdown.iter().filter_map(|part| part.contribution).sum::<f64>();
+    if adjustment.abs() >= 0.01 {
+        score_breakdown.push(ScoreContribution {
+            key: "risk_adjustment".into(), label: "风险调整".into(),
+            value: Some(round2(adjustment)), contribution: Some(round2(adjustment)), tone: "negative".into(),
+        });
+    }
     SelectionExplanation {
         basis,
-        score_breakdown: vec![
-            score_contribution("technical_score", "Technical layer", layered.technical_score, layered.technical_score * 0.70, 75.0, 60.0),
-            score_contribution("pattern_score", "Pattern layer", layered.pattern_score, layered.pattern_score * 0.20, 70.0, 55.0),
-            score_contribution("quality_score", "Quality soft score", layered.quality_score, layered.quality_score * 0.10, 70.0, 50.0),
-            score_contribution("base_score", "Base screen soft tie-breaker", candidate.score, base_component, 14.0, 9.0),
-            score_contribution("final_score", "Final score", layered.final_score, layered.final_score, 80.0, 65.0),
-        ],
+        score_breakdown,
         risk_checks: trend_risk_checks(signal),
         verification: vec![
-            "Confirm the signal with next-day price-volume action before entry.".to_string(),
-            "Use trend-screen labels to separate breakout, pullback, continuation, and risk candidates.".to_string(),
+            "观察下一交易日的价格与成交量，确认信号是否延续。".to_string(),
+            "结合突破、回踩、趋势延续和风险预警状态继续核验。".to_string(),
         ],
     }
 }
+
+fn trend_screen_signal_label(signal_type: &str) -> &str {
+    match signal_type {
+        "trend_continuation" => "趋势延续",
+        "trend_reversal" => "趋势反转",
+        "range_bound" => "区间震荡",
+        "breakout_attempt" => "突破尝试",
+        "breakout_chase" => "突破追踪",
+        "pullback_buy" => "回踩观察",
+        "risk_warning" => "风险预警",
+        _ => "趋势观察",
+    }
+}
+
+fn trend_indicator_value(value: Option<f64>) -> String {
+    value.filter(|value| value.is_finite()).map(|value| format!("{value:.2}")).unwrap_or_else(|| "—".into())
+}
+
 fn pattern_basis_text(signal: &TrendIndicatorSignal) -> Option<String> {
     let mut labels = Vec::new();
     if signal
@@ -9749,59 +9812,83 @@ fn pattern_basis_text(signal: &TrendIndicatorSignal) -> Option<String> {
         .iter()
         .any(|value| value == "bottom_accumulation")
     {
-        labels.push("bottom accumulation");
+        labels.push("底部吸筹");
     }
     if signal
         .pattern_signals
         .iter()
         .any(|value| value == "swing_opportunity")
     {
-        labels.push("swing opportunity");
+        labels.push("波段机会");
     }
     if signal
         .pattern_signals
         .iter()
         .any(|value| value == "rebound_signal")
     {
-        labels.push("rebound signal");
+        labels.push("反弹信号");
     }
     if signal
         .pattern_signals
         .iter()
         .any(|value| value == "dragon_trend_volume")
     {
-        labels.push("trend-volume resonance");
+        labels.push("趋势量能共振");
     }
     if labels.is_empty() {
         None
     } else {
-        Some(format!("Pattern signals: {}.", labels.join(", ")))
+        Some(format!("形态信号：{}。", labels.join("、")))
     }
 }
 
 fn trend_risk_checks(signal: &TrendIndicatorSignal) -> Vec<String> {
     let mut risks = Vec::new();
+    if signal.kdj_overbought {
+        let zone = if signal.kdj_oversold { "KDJ高低位信号分歧" } else { "KDJ超买" };
+        let triggers = [("K", signal.k, 80.0), ("D", signal.d, 80.0), ("J", signal.j, 100.0)]
+            .into_iter().filter_map(|(label, value, threshold)| {
+                value.filter(|value| value.is_finite() && *value >= threshold)
+                    .map(|value| format!("{label}={value:.2}≥{threshold:.0}"))
+            }).collect::<Vec<_>>();
+        risks.push(format!("{zone}：{} 日线，{}；需观察高位回落风险。", signal.date, triggers.join("、")));
+    }
+    if signal.kdj_dead_cross {
+        risks.push("KDJ死叉，短期动量转弱。".into());
+    }
     if signal.white_exit {
-        risks.push(
-            "White-exit signal is active; short-buy setup has high invalidation risk.".to_string(),
-        );
+        risks.push("白线离场信号已触发，需重新核验短线趋势。".into());
     }
     if signal.cyan_watch {
-        risks.push("Cyan-watch state means trend confirmation is insufficient.".to_string());
+        risks.push("青线观察状态，趋势确认尚不充分。".into());
+    }
+    for flag in &signal.risk_flags {
+        let text = match flag.as_str() {
+            "swl_below_sws" => "短期均线低于长期均线。",
+            "breakdown_ma20" => "跌破20日均线：收盘价低于均线3%以上。",
+            "bearish_long_ma_stack" => "长期均线空头排列。",
+            "volume_stall" => "放量滞涨，需观察上方抛压。",
+            "macd_bearish_divergence" => "MACD动量减弱，存在顶背离风险。",
+            "weak_final_score" => "趋势强度不足：综合技术评分或趋势结构未通过强势确认。",
+            "insufficient_history" => "日线样本不足，技术评分参考性有限。",
+            "low_volume" => "成交量不足，信号确认受限。",
+            _ => continue,
+        };
+        risks.push(text.into());
     }
     if risks.is_empty() {
-        risks.push("No major break or high-zone risk is active, but next-day price-volume confirmation is still required.".to_string());
+        risks.push("暂未触发已配置的技术风险规则，仍需后续价格与成交量确认。".into());
     }
     risks
 }
 
 fn trend_notes() -> Vec<String> {
     vec![
-        "Accumulation analysis is inferred from daily OHLCV only; real chip distribution, seat-level LHB, and main-fund flow are not included."
+        "吸筹分析根据日线价量推断，暂未纳入真实筹码分布、龙虎榜席位和主力资金流。"
             .to_string(),
-        "WINNER(C) depends on chip-distribution data and is omitted; quant_score is scored out of 90."
+        "量化评分满分为90分，筹码分布相关指标尚未纳入。"
             .to_string(),
-        "SWS uses the formula's volume/capital term as a percent DMA coefficient and clips it to 1%-100%."
+        "长期均线根据量能动态平滑，用于趋势参考。"
             .to_string(),
     ]
 }

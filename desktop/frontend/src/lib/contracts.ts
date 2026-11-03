@@ -593,8 +593,12 @@ function normalizeLlmEndpointMode(value: unknown): "base_url" | "full_url" {
 export function normalizeScreenRows(result: ScreenResult | GraphScreenResult | TrendScreenResult | TrendIndicatorResult | unknown): StockRowView[] {
   const data = asRecord(result);
   const items = Array.isArray(data.items) ? data.items : [];
-  if (data.stock && data.signal) return [trendAnalyzeToRow(data as unknown as TrendIndicatorResult)];
-  return items.map((item) => normalizeStockRow(item)).filter((item): item is StockRowView => Boolean(item));
+  const metadata = asRecord(data.data_metadata);
+  const coverage = Array.isArray(metadata.coverage) ? metadata.coverage : [];
+  const analysisEndDate = asRecord(coverage[0]).end_date;
+  const rows = data.stock && data.signal ? [trendAnalyzeToRow(data as unknown as TrendIndicatorResult)]
+    : items.map((item) => normalizeStockRow(item)).filter((item): item is StockRowView => Boolean(item));
+  return rows.map((row) => row.trendSignal && typeof analysisEndDate === "string" ? { ...row, analysisEndDate } : row);
 }
 
 export function normalizeScreenGroups(result: ScreenResult | unknown): StockGroupView[] {
@@ -614,12 +618,16 @@ export function normalizeStockRow(item: unknown): StockRowView | null {
   const graph = raw as Partial<GraphStockSignal>;
   const trend = raw as Partial<TrendStockSignal>;
   const screened = raw as Partial<ScreenedStock>;
+  const explanation = (raw.explanation as StockRowView["explanation"]) || null;
+  const trendSignal = trend.signal && typeof trend.signal === "object" ? trend.signal : undefined;
   const score = firstNumber(raw.final_score, raw.score, graph.final_score, trend.final_score);
   return {
     code: stock.code,
     name: stock.name || stock.code,
     industry: stock.industry,
     price: firstNumber(stock.price),
+    quoteTime: stock.quote_time,
+    trendSignal,
     change_pct: firstNumber(stock.change_pct, stock.pct),
     pe: firstNumber(stock.pe),
     pb: firstNumber(stock.pb),
@@ -630,17 +638,18 @@ export function normalizeStockRow(item: unknown): StockRowView | null {
     scoreLabel: raw.final_score !== undefined ? "final" : raw.balanced_score !== undefined ? "balanced" : "score",
     reasons: Array.isArray(raw.reasons) ? raw.reasons as string[] : [],
     concept: String(screened.concept || ""),
-    qualityScore: firstNumber(screened.quality_score),
+    qualityScore: firstNumber(screened.quality_score, trendSignal?.quality_score),
     trendScore: firstNumber(screened.trend_score),
     riskScore: firstNumber(screened.risk_score),
     balancedScore: firstNumber(screened.balanced_score),
     factorScores: screened.factor_scores || {},
     industrySampleCount: firstNumber(screened.industry_sample_count),
-    scoreBreakdown: Array.isArray(screened.score_breakdown) ? screened.score_breakdown : [],
+    scoreBreakdown: Array.isArray(screened.score_breakdown) ? screened.score_breakdown
+      : trendSignal && Array.isArray(explanation?.score_breakdown) ? explanation.score_breakdown : [],
     reasonTags: Array.isArray(screened.reason_tags) ? screened.reason_tags : [],
     riskTags: Array.isArray(screened.risk_tags) ? screened.risk_tags : [],
     suitablePeriods: Array.isArray(screened.suitable_periods) ? screened.suitable_periods : [],
-    explanation: (raw.explanation as StockRowView["explanation"]) || null,
+    explanation,
     raw: item,
   };
 }
@@ -940,7 +949,7 @@ export function actionResultKind(result: unknown): "screen" | "sector" | "graph"
 
 function trendAnalyzeToRow(result: TrendIndicatorResult): StockRowView {
   return {
-    ...normalizeStockRow({ stock: result.stock, final_score: result.signal?.quant_score, reasons: result.signal?.reasons || [] })!,
+    ...normalizeStockRow({ stock: result.stock, signal: result.signal, final_score: result.signal?.quant_score, reasons: result.signal?.reasons || [] })!,
     scoreLabel: "trend",
     raw: result,
   };

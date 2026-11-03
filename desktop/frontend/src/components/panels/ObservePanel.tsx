@@ -1,5 +1,5 @@
 import { formatLocalDataError, shouldSuggestLocalRefresh } from "../../lib/localData";
-import { useCallback, useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
 import type { CapitalEvidenceItem, CapitalEvidenceResult, CapitalEvidenceSection, FinancialIndicatorItem, FinancialIndicatorSection, InstitutionalHoldingsSnapshot, MarketActiveBrokerageBoard, ObserveResult, StockItem, TrendIndicatorPoint, TrendIndicatorSignal, WatchlistItem } from "../../types";
 import { computeKdj, toDailyBars } from "../../lib/kline";
 import { calculateObserveQuant } from "../../lib/observeQuant";
@@ -8,6 +8,7 @@ import { parseSecurityId, type MarketCapability, type ObservationMetadata } from
 import { buildFundamentalSnapshotData, isFinancialPeriodStale } from "../../lib/fundamentalSnapshot";
 import { buildMainFundFlowView, hasMainFundFlowBreakdown, isLocalFundFlowProxy } from "../../lib/mainFundFlow";
 import { getJson } from "../../lib/tauri";
+import { logPerfRecord, objectRecordCount, perfDiagnosticsAreEnabled, perfOutcomeForError } from "../../lib/perfDiagnostics";
 import { CollapsibleNotes } from "../CollapsibleNotes";
 import { RawJson } from "../RawJson";
 import { StockCodeInput } from "../StockCodeInput";
@@ -21,6 +22,7 @@ import {
   formatPercent,
   formatPrice,
   formatRatioPercent,
+  kdjRangeLabel,
   metricOrMissing,
   normalizeStockCode,
   reasonLabel,
@@ -78,15 +80,18 @@ export function ObservePanel({
 }: ObservePanelProps) {
   const [code, setCode] = useState(initialCode || "");
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("正在加载行情、财务和趋势数据...");
   const [result, setResult] = useState<ObserveResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const observeVersionRef = useRef(0);
   const handledRequestRef = useRef(0);
+  const pendingStableRenderStartedAtRef = useRef<number | null>(null);
   const editCode = useCallback((value: string) => {
     observeVersionRef.current += 1;
     setCode(value);
     setLoading(false);
+    setRefreshing(false);
     setLoadingMessage("正在加载行情、财务和趋势数据...");
     setError(null);
     const nextCode = normalizeStockCode(value);
@@ -130,6 +135,9 @@ export function ObservePanel({
       return;
     }
     if (explicit) setCode(normalizedCode);
+    const runStartedAt = performance.now();
+    pendingStableRenderStartedAtRef.current = runStartedAt;
+    setRefreshing(false);
     setLoading(true);
     setLoadingMessage("正在加载行情、财务和趋势数据...");
     setError(null);
@@ -155,11 +163,15 @@ export function ObservePanel({
         setLoadingMessage("正在补齐行情历史...");
         data = await request("refresh");
       }
+      if (version !== observeVersionRef.current) return;
       const financialSnapshotStale = needsFinancialSnapshotRefresh(data);
       const publicMarketDataStale = needsPublicMarketDataRefresh(data);
       const mainFundFlowStale = needsMainFundFlowRefresh(data);
       if (!refreshAttempted && (financialSnapshotStale || publicMarketDataStale || mainFundFlowStale)) {
         refreshAttempted = true;
+        setResult(data);
+        setLoading(false);
+        setRefreshing(true);
         setLoadingMessage(financialSnapshotStale
           ? "正在更新最新财报快照..."
           : mainFundFlowStale
@@ -169,6 +181,15 @@ export function ObservePanel({
           data = await request("refresh");
         } catch (detailError) {
           if (version !== observeVersionRef.current) return;
+          logPerfRecord({
+            flow: "observe",
+            stage: "user_trigger",
+            elapsedMs: performance.now() - runStartedAt,
+            stockCount: 1,
+            historyRows: data.trend?.series?.length || 0,
+            financialRecords: objectRecordCount(data.financial_indicators),
+            outcome: "partial",
+          }, mobileRuntime);
           setResult({
             ...data,
             notes: [
@@ -185,19 +206,86 @@ export function ObservePanel({
         }
       }
       if (version !== observeVersionRef.current) return;
+      logPerfRecord({
+        flow: "observe",
+        stage: "user_trigger",
+        elapsedMs: performance.now() - runStartedAt,
+        stockCount: 1,
+        historyRows: data.trend?.series?.length || 0,
+        financialRecords: objectRecordCount(data.financial_indicators),
+        outcome: "ok",
+      }, mobileRuntime);
       setResult(data);
     } catch (err) {
       if (version !== observeVersionRef.current) return;
+      logPerfRecord({
+        flow: "observe",
+        stage: "user_trigger",
+        elapsedMs: performance.now() - runStartedAt,
+        stockCount: 1,
+        outcome: perfOutcomeForError(err),
+      }, mobileRuntime);
       const formatted = formatLocalDataError(err);
       setError(refreshAttempted && shouldSuggestLocalRefresh(err)
         ? formatted.replace(/。请先点击顶部「刷新」补齐行情，再重试。?$/, "。自动补齐失败，请稍后重试。")
         : formatted);
     } finally {
-      if (version === observeVersionRef.current) setLoading(false);
+      if (version === observeVersionRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [code]);
+  }, [code, mobileRuntime]);
   const runObserveRef = useRef(runObserve);
   runObserveRef.current = runObserve;
+
+  useEffect(() => {
+    if (error) {
+      pendingStableRenderStartedAtRef.current = null;
+      return;
+    }
+    if (!perfDiagnosticsAreEnabled(mobileRuntime)) {
+      pendingStableRenderStartedAtRef.current = null;
+      return;
+    }
+    if (loading || !result || pendingStableRenderStartedAtRef.current === null) return;
+    const startedAt = pendingStableRenderStartedAtRef.current;
+    if (typeof requestAnimationFrame !== "function") {
+      pendingStableRenderStartedAtRef.current = null;
+      logPerfRecord({
+        flow: "observe",
+        stage: "first_stable_render",
+        elapsedMs: performance.now() - startedAt,
+        stockCount: 1,
+        historyRows: result.trend?.series?.length || 0,
+        financialRecords: objectRecordCount(result.financial_indicators),
+        outcome: "ok",
+      }, mobileRuntime);
+      return;
+    }
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        if (pendingStableRenderStartedAtRef.current !== startedAt) return;
+        pendingStableRenderStartedAtRef.current = null;
+        logPerfRecord({
+          flow: "observe",
+          stage: "first_stable_render",
+          elapsedMs: performance.now() - startedAt,
+          stockCount: 1,
+          historyRows: result.trend?.series?.length || 0,
+          financialRecords: objectRecordCount(result.financial_indicators),
+          outcome: "ok",
+        }, mobileRuntime);
+      });
+    });
+    return () => {
+      if (typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(firstFrame);
+        if (secondFrame) cancelAnimationFrame(secondFrame);
+      }
+    };
+  }, [error, loading, mobileRuntime, result]);
 
   useEffect(() => {
     if (!initialCodeRequestId || handledRequestRef.current === initialCodeRequestId) return;
@@ -217,24 +305,26 @@ export function ObservePanel({
             value={code}
             onChange={editCode}
             placeholder="输入股票代码或名称"
-            resolveBareCode={!mobileRuntime}
+            resolveBareCode
           />
         </div>
-        <LocalFirstRunControl action="观察" loading={loading} onRun={() => void runObserve()} loadingLabel="观察中..." cacheRunLabel="开始观察" buttonClassName="run-btn observe-run-btn" />
+        <LocalFirstRunControl action="观察" loading={loading || refreshing} onRun={() => void runObserve()} loadingLabel={refreshing ? "更新中..." : "观察中..."} cacheRunLabel="开始观察" buttonClassName="run-btn observe-run-btn" />
       </div>
 
       <div className="panel-result observe-panel-result">
         {error && !loading && <PanelFeedback kind="error" title="观察失败" description={error} action={<button type="button" className="action-btn" onClick={() => runObserve()} disabled={loading}>重试</button>} />}
         {loading && <PanelFeedback kind="loading" description={loadingMessage} />}
-        {result && !loading && !error && <ObserveResultView result={result} expandProfessionalDetails={!mobileRuntime} inWatchlist={observedInWatchlist} onToggleWatchlist={toggleObservedWatchlist} onOpenNews={onOpenNews} onAskAgent={onAskAgent} capability={capability} />}
+        {refreshing && <p className="data-provenance" role="status" aria-live="polite">{loadingMessage}当前先展示已有数据。</p>}
+        {result && !loading && !error && <ObserveResultView result={result} mobileRuntime={mobileRuntime} expandProfessionalDetails={!mobileRuntime} inWatchlist={observedInWatchlist} onToggleWatchlist={toggleObservedWatchlist} onOpenNews={onOpenNews} onAskAgent={onAskAgent} capability={capability} />}
         {!result && !loading && !error && <PanelFeedback kind="empty" description="输入股票代码后开始观察。" />}
       </div>
     </div>
   );
 }
 
-export function ObserveResultView({ result, expandProfessionalDetails = false, inWatchlist = false, onToggleWatchlist, onOpenNews, onAskAgent, capability }: {
+export function ObserveResultView({ result, mobileRuntime = false, expandProfessionalDetails = false, inWatchlist = false, onToggleWatchlist, onOpenNews, onAskAgent, capability }: {
   result: ObserveResult;
+  mobileRuntime?: boolean;
   expandProfessionalDetails?: boolean;
   inWatchlist?: boolean;
   onToggleWatchlist?: () => void;
@@ -272,6 +362,10 @@ export function ObserveResultView({ result, expandProfessionalDetails = false, i
         capability={frameCapability}
         issues={result.notes || []}
         showDiagnostics={false}
+        headingMeta={<p className="observe-overview-data-summary" role="status">
+          <span>{`${stock.code} ${stock.industry || ""}`.trim()}</span>
+          <time>{formatObserveTime(stock.quote_time || signal?.date || series.at(-1)?.date)}</time>
+        </p>}
         actions={<div className="observe-overview-actions">
           {signal?.status && <span className={`state-pill ${signalStatusTone(signal.status)}`}>{signalStatusLabel(signal.status)}</span>}
           {onToggleWatchlist && <button type="button" className={`stock-row-action watchlist-action ${inWatchlist ? "saved" : ""}`} onClick={onToggleWatchlist}>{inWatchlist ? "已收藏" : "收藏"}</button>}
@@ -279,11 +373,9 @@ export function ObserveResultView({ result, expandProfessionalDetails = false, i
           {linkedCode && onAskAgent && <button type="button" className="stock-row-action" onClick={() => onAskAgent(observeAgentPrompt(stock.name || "", linkedCode))}>交给 Agent</button>}
         </div>}
       >
-        <p className="observe-overview-data-summary" role="status">
-          {`${stock.code} ${stock.industry || ""} · ${formatObserveTime(stock.quote_time || signal?.date || series.at(-1)?.date)}`}
-        </p>
       <ObserveTextMetrics
         stock={stock}
+        mobileRuntime={mobileRuntime}
         signal={signal}
         series={series}
         capital={capital}
@@ -355,7 +447,7 @@ function FundamentalSnapshot({ stock, financial }: { stock: StockItem; financial
       </header>
       <dl className="observe-fundamental-primary" aria-label="每股收益与股本结构">
         {snapshot.primary.map((item) => (
-          <div key={item.label}>
+          <div key={item.label} className={isMissingMetricText(item.value) ? "is-missing" : undefined}>
             <dt>{item.label}</dt>
             <dd>{item.value}</dd>
           </div>
@@ -363,7 +455,7 @@ function FundamentalSnapshot({ stock, financial }: { stock: StockItem; financial
       </dl>
       <dl className="observe-fundamental-grid">
         {snapshot.details.map((item) => (
-          <div key={item.label} className={item.tone || "neutral"}>
+          <div key={item.label} className={(item.tone || "neutral") + (isMissingMetricText(item.value) ? " is-missing" : "")}>
             <dt>{item.label}</dt>
             <dd>{item.value}</dd>
           </div>
@@ -375,6 +467,7 @@ function FundamentalSnapshot({ stock, financial }: { stock: StockItem; financial
 
 function ObserveTextMetrics({
   stock,
+  mobileRuntime,
   signal,
   series,
   capital,
@@ -385,6 +478,7 @@ function ObserveTextMetrics({
   children,
 }: {
   stock: StockItem;
+  mobileRuntime: boolean;
   signal?: TrendIndicatorSignal | null;
   series: TrendIndicatorPoint[];
   capital?: CapitalEvidenceResult | null;
@@ -397,7 +491,13 @@ function ObserveTextMetrics({
   const [professionalDetailsOpen, setProfessionalDetailsOpen] = useState(expandProfessionalDetails);
   const latest = series.length ? series[series.length - 1] : null;
   const previous = series.length > 1 ? series[series.length - 2] : null;
-  const kdj = kdjFromSignal(signal) || latestKdjFromSeries(series);
+  const kdj = useMemo(() => {
+    const startedAt = performance.now();
+    const value = kdjFromSignal(signal) || latestKdjFromSeries(series);
+    logPerfRecord({ flow: "observe", stage: "frontend_kdj", elapsedMs: performance.now() - startedAt,
+      cacheStrategy: "local", stockCount: 1, historyRows: series.length, outcome: "ok" }, mobileRuntime);
+    return value;
+  }, [signal, series, mobileRuntime]);
   const close = signal?.close ?? latest?.close ?? stock.price;
   const previousClose = signal?.previous_close ?? previous?.close;
   const change = signal?.close_change ?? numeric(close) - numeric(previousClose);
@@ -405,7 +505,13 @@ function ObserveTextMetrics({
   const financialLookup = buildFinancialLookup(financialItems);
   const capitalSummary = summarizeCapitalEvidence(capital);
   const analysisItems = buildMetricAnalysis({ stock, signal, latest, kdj, changePct, capital, capitalSummary, financialLookup });
-  const specialQuant = calculateObserveQuant(series);
+  const specialQuant = useMemo(() => {
+    const startedAt = performance.now();
+    const value = calculateObserveQuant(series);
+    logPerfRecord({ flow: "observe", stage: "frontend_quant", elapsedMs: performance.now() - startedAt,
+      cacheStrategy: "local", stockCount: 1, historyRows: series.length, outcome: "ok" }, mobileRuntime);
+    return value;
+  }, [series, mobileRuntime]);
 
   const sections: Array<{ title: string; items: Array<[string, string]> }> = [
     {
@@ -445,7 +551,7 @@ function ObserveTextMetrics({
       items: compactMetricItems([
         ["K / D / J", kdj ? `${formatNumber(kdj.k)} / ${formatNumber(kdj.d)} / ${formatNumber(kdj.j)}` : "--"],
         ["交叉信号", signal?.kdj_golden_cross ? "金叉" : signal?.kdj_dead_cross ? "死叉" : signal ? "无明显交叉" : "--"],
-        ["极端区间", signal?.kdj_overbought ? "超买" : signal?.kdj_oversold || signal?.oversold ? "超卖" : signal ? "未处于极端区间" : "--"],
+        ["极端区间", signal ? kdjRangeLabel(signal) : "--"],
         ["操作提示", [
           (signal?.red_hold ?? latest?.red_hold) ? "红持" : "",
           (signal?.cyan_watch ?? latest?.cyan_watch) ? "青观" : "",
@@ -507,22 +613,23 @@ function ObserveTextMetrics({
     <section className="observe-text-metrics observe-decision-summary" aria-label="观察判断">
       <header className="observe-decision-heading">
         <h3>观察摘要</h3>
-        <time>{formatObserveTime(stock.quote_time || signal?.date || latest?.date)}</time>
       </header>
 
-      <section className={`observe-verdict ${verdict.tone}`} aria-label="当前观察结论">
-        <h4>{verdict.title}</h4>
-        <p>{verdict.summary}</p>
-      </section>
+      <div className="observe-summary-lead">
+        <section className={`observe-verdict ${verdict.tone}`} aria-label="当前观察结论">
+          <h4>{verdict.title}</h4>
+          <p>{verdict.summary}</p>
+        </section>
 
-      <dl className="observe-key-metrics" aria-label="关键数值">
-        {keyMetrics.map((item) => (
-          <div key={item.label} className={`observe-fact ${item.tone || "neutral"}`}>
-            <dt>{item.label}</dt>
-            <dd>{item.value}</dd>
-          </div>
-        ))}
-      </dl>
+        <dl className="observe-key-metrics" aria-label="关键数值">
+          {keyMetrics.map((item) => (
+            <div key={item.label} className={"observe-fact " + (item.tone || "neutral") + (isMissingMetricText(item.value) ? " is-missing" : "")}>
+              <dt>{item.label}</dt>
+              <dd>{item.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
 
       <div className="observe-decision-grid" aria-label="核心判断">
         {decisionItems.map((item) => (
@@ -555,7 +662,7 @@ function ObserveTextMetrics({
               <h4>{section.title}</h4>
               <div className="observe-text-metric-grid">
                 {section.items.map(([label, value]) => (
-                  <div key={`${section.title}-${label}`} className="observe-text-metric-item">
+                  <div key={`${section.title}-${label}`} className={"observe-text-metric-item" + (value.length > 40 ? " metric-long" : "")}>
                     <span>{label}</span>
                     <strong>{value}</strong>
                   </div>
@@ -922,10 +1029,12 @@ function buildMetricAnalysis({
 
   if (Number.isFinite(k) || Number.isFinite(d) || Number.isFinite(j) || signal?.kdj_golden_cross || signal?.kdj_dead_cross) {
     const cross = signal?.kdj_golden_cross ? "出现金叉信号" : signal?.kdj_dead_cross ? "出现死叉信号" : "暂未出现明显交叉信号";
-    const zone = signal?.kdj_overbought ? "处于超买区，追高风险上升" : signal?.kdj_oversold || signal?.oversold ? "处于超卖区，反弹信号需要成交确认" : "未处于极端区间";
+    const range = kdjRangeLabel(signal || {});
+    const zone = range === "高低位信号分歧" ? "高低位信号分歧，需要结合各线数值和方向核验"
+      : range === "超买" ? "处于超买区，追高风险上升" : range === "超卖" ? "处于超卖区，反弹信号需要成交确认" : range;
     items.push({
       title: "KDJ 信号",
-      tone: signal?.kdj_golden_cross ? "positive" : signal?.kdj_dead_cross || signal?.kdj_overbought ? "warning" : "neutral",
+      tone: signal?.kdj_dead_cross || range === "超买" || range === "高低位信号分歧" ? "warning" : signal?.kdj_golden_cross ? "positive" : "neutral",
       text: `K/D/J 为 ${formatNumber(k)} / ${formatNumber(d)} / ${formatNumber(j)}，${cross}，${zone}。`,
     });
   }

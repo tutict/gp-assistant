@@ -2,7 +2,9 @@ use crate::screening::local_data_policy::{self as local_data, DataPolicy};
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    future::Future,
+    sync::Arc,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use stock_optimizer_core as gp_core;
 
@@ -51,9 +53,35 @@ pub(crate) async fn api_observe_inner(
     payload: Value,
 ) -> Result<Value, String> {
     let policy = DataPolicy::parse(&payload)?;
+    let diagnostics_enabled = crate::perf_diagnostics::requested(&payload);
+    let command_started = Instant::now();
     // Crucially: branch before acquiring the heavy-network permit or starting enrichment.
     if policy == DataPolicy::CacheOnly {
-        return observe_from_local_cache(&app, payload).await;
+        let result = observe_from_local_cache(&app, payload, diagnostics_enabled).await;
+        let elapsed = command_started.elapsed();
+        let outcome = if result.is_ok() {
+            crate::perf_diagnostics::Outcome::Ok
+        } else {
+            crate::perf_diagnostics::Outcome::Error
+        };
+        let counts = result
+            .as_ref()
+            .map(observe_result_counts)
+            .unwrap_or_default();
+        let event = crate::perf_diagnostics::PerfEvent::new(
+            crate::perf_diagnostics::Flow::Observe,
+            crate::perf_diagnostics::Stage::CommandTotal,
+            elapsed,
+        )
+        .with_cache_strategy(crate::perf_diagnostics::CacheStrategy::CacheOnly)
+        .with_counts(
+            counts.stock_count,
+            counts.history_rows,
+            counts.financial_records,
+        )
+        .with_outcome(outcome);
+        crate::perf_diagnostics::record(diagnostics_enabled, event);
+        return result;
     }
     let fallback_payload = payload.clone();
     let observe_timeout_secs = if payload
@@ -67,43 +95,129 @@ pub(crate) async fn api_observe_inner(
     };
     let network = Box::pin(crate::runtime::with_heavy_network_permit(
         "api_observe_network",
-        observe_core_payload_with_cached_history(&app, payload),
+        observe_core_payload_with_cached_history(&app, payload.clone()),
     ));
     match tokio::time::timeout(Duration::from_secs(observe_timeout_secs), network).await {
         Ok(Ok((core_payload, notes))) => {
             let metadata = observe_local_metadata(&core_payload, policy)?;
-            let mut result = run_observe_calculation(&core_payload).await?;
+            let mut result = run_observe_calculation(
+                &core_payload,
+                diagnostics_enabled,
+                observe_cache_strategy(policy),
+            )
+            .await?;
             enrich_observe_stock_quote_fields(&mut result, &core_payload);
             attach_observe_market_intelligence(&mut result, &core_payload);
             for note in notes {
                 append_observe_note(&mut result, note);
             }
             local_data::attach_metadata(&mut result, metadata, &fallback_payload);
+            let elapsed = command_started.elapsed();
+            let counts = observe_result_counts(&result);
+            crate::perf_diagnostics::record(
+                diagnostics_enabled,
+                crate::perf_diagnostics::PerfEvent::new(
+                    crate::perf_diagnostics::Flow::Observe,
+                    crate::perf_diagnostics::Stage::CommandTotal,
+                    elapsed,
+                )
+                .with_cache_strategy(observe_cache_strategy(policy))
+                .with_counts(
+                    counts.stock_count,
+                    counts.history_rows,
+                    counts.financial_records,
+                )
+                .with_outcome(crate::perf_diagnostics::Outcome::Ok),
+            );
             Ok(result)
         }
-        Ok(Err(error)) => Err(error),
+        Ok(Err(error)) => {
+            crate::perf_diagnostics::record(
+                diagnostics_enabled,
+                crate::perf_diagnostics::PerfEvent::new(
+                    crate::perf_diagnostics::Flow::Observe,
+                    crate::perf_diagnostics::Stage::CommandTotal,
+                    command_started.elapsed(),
+                )
+                .with_cache_strategy(observe_cache_strategy(policy))
+                .with_outcome(crate::perf_diagnostics::Outcome::Error),
+            );
+            Err(error)
+        }
         Err(_) => {
-            let mut result = observe_from_local_cache(&app, fallback_payload).await?;
+            let mut result =
+                observe_from_local_cache(&app, fallback_payload, diagnostics_enabled).await?;
             append_observe_note(
                 &mut result,
                 format!("观察在线补全超过 {observe_timeout_secs} 秒，已返回本地缓存结果。"),
+            );
+            let elapsed = command_started.elapsed();
+            let counts = observe_result_counts(&result);
+            crate::perf_diagnostics::record(
+                diagnostics_enabled,
+                crate::perf_diagnostics::PerfEvent::new(
+                    crate::perf_diagnostics::Flow::Observe,
+                    crate::perf_diagnostics::Stage::CommandTotal,
+                    elapsed,
+                )
+                .with_cache_strategy(crate::perf_diagnostics::CacheStrategy::Refresh)
+                .with_counts(
+                    counts.stock_count,
+                    counts.history_rows,
+                    counts.financial_records,
+                )
+                .with_outcome(crate::perf_diagnostics::Outcome::Timeout),
             );
             Ok(result)
         }
     }
 }
 
-async fn observe_from_local_cache(app: &tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let core_payload = observe_core_payload_from_cache(app, payload.clone()).map_err(|error| {
+async fn observe_from_local_cache(
+    app: &tauri::AppHandle,
+    payload: Value,
+    diagnostics_enabled: bool,
+) -> Result<Value, String> {
+    let cache_started = Instant::now();
+    let snapshot = crate::market::cached_market_data_views(app).map_err(|error| {
         local_data::missing_error(
             "observe",
             &[json!({"kind":"market_cache", "reason":error.chars().take(240).collect::<String>()})],
         )
     })?;
-    let metadata = observe_local_metadata(&core_payload, DataPolicy::CacheOnly)?;
-    let mut result = run_observe_calculation(&core_payload).await?;
-    enrich_observe_stock_quote_fields(&mut result, &core_payload);
-    attach_observe_market_intelligence(&mut result, &core_payload);
+    let request = observe_request_payload(payload.clone());
+    let code = observe_request_code(&request)?;
+    let counts = observe_snapshot_counts(snapshot.typed.as_ref(), &code);
+    crate::perf_diagnostics::record(
+        diagnostics_enabled,
+        crate::perf_diagnostics::PerfEvent::new(
+            crate::perf_diagnostics::Flow::Observe,
+            crate::perf_diagnostics::Stage::CacheSnapshotPrepare,
+            cache_started.elapsed(),
+        )
+        .with_cache_strategy(crate::perf_diagnostics::CacheStrategy::CacheOnly)
+        .with_counts(
+            counts.stock_count,
+            counts.history_rows,
+            counts.financial_records,
+        )
+        .with_outcome(crate::perf_diagnostics::Outcome::CacheHit),
+    );
+    let metadata = observe_cached_metadata(
+        snapshot.data.as_ref(),
+        snapshot.typed.as_ref(),
+        &request,
+        DataPolicy::CacheOnly,
+    )?;
+    let mut result = run_observe_calculation_with_snapshot(
+        Arc::clone(&snapshot.typed),
+        &request,
+        diagnostics_enabled,
+        crate::perf_diagnostics::CacheStrategy::CacheOnly,
+    )
+    .await?;
+    enrich_observe_stock_quote_fields_from_data(&mut result, snapshot.data.as_ref());
+    attach_observe_market_intelligence_from_data(&mut result, snapshot.data.as_ref());
     append_observe_note(
         &mut result,
         "仅使用本地已有数据；未刷新报价、财务、资金或历史行情。".to_string(),
@@ -114,12 +228,65 @@ async fn observe_from_local_cache(app: &tauri::AppHandle, payload: Value) -> Res
 
 pub(crate) fn observe_local_metadata(core: &Value, policy: DataPolicy) -> Result<Value, String> {
     let request = &core["request"];
-    let code = request
+    let code = observe_request_code(request)?;
+    let data = &core["data"];
+    let rows = data
+        .get("histories")
+        .and_then(|h| h.get(&code))
+        .and_then(Value::as_array);
+    observation_metadata_from_dates(
+        data,
+        request,
+        &code,
+        policy,
+        rows.into_iter()
+            .flatten()
+            .filter(|row| {
+                row.get("close")
+                    .and_then(Value::as_f64)
+                    .is_some_and(|close| close.is_finite() && close > 0.0)
+            })
+            .filter_map(|row| row.get("date").and_then(Value::as_str)),
+    )
+}
+
+fn observe_request_code(request: &Value) -> Result<String, String> {
+    request
         .get("code")
         .and_then(Value::as_str)
         .and_then(crate::market::normalize_stock_code)
-        .ok_or_else(|| "观察请求缺少有效股票代码。".to_string())?;
-    let data = &core["data"];
+        .ok_or_else(|| "观察请求缺少有效股票代码。".to_string())
+}
+
+fn observe_cached_metadata(
+    data: &Value,
+    typed: &gp_core::CoreDataSet,
+    request: &Value,
+    policy: DataPolicy,
+) -> Result<Value, String> {
+    let code = observe_request_code(request)?;
+    observation_metadata_from_dates(
+        data,
+        request,
+        &code,
+        policy,
+        typed
+            .histories
+            .get(&code)
+            .into_iter()
+            .flatten()
+            .filter(|row| row.close.is_finite() && row.close > 0.0)
+            .map(|row| row.date.as_str()),
+    )
+}
+
+fn observation_metadata_from_dates<'a>(
+    data: &Value,
+    request: &Value,
+    code: &str,
+    policy: DataPolicy,
+    dates: impl Iterator<Item = &'a str>,
+) -> Result<Value, String> {
     let stock = data
         .get("stocks")
         .and_then(Value::as_array)
@@ -131,7 +298,7 @@ pub(crate) fn observe_local_metadata(core: &Value, policy: DataPolicy) -> Result
                 .and_then(Value::as_str)
                 .and_then(crate::market::normalize_stock_code)
                 .as_deref()
-                == Some(code.as_str())
+                == Some(code)
         });
     let quote = json!({"kind":"quote", "code":code, "sufficient":stock.is_some_and(|s| s.get("price").and_then(Value::as_f64).is_some_and(|p| p.is_finite() && p > 0.0))});
     let required = if request
@@ -144,19 +311,8 @@ pub(crate) fn observe_local_metadata(core: &Value, policy: DataPolicy) -> Result
     } else {
         MIN_OBSERVE_HISTORY_BARS
     };
-    let rows = data
-        .get("histories")
-        .and_then(|h| h.get(&code))
-        .and_then(Value::as_array);
     let mut history = local_data::history_coverage(
-        rows.into_iter()
-            .flatten()
-            .filter(|r| {
-                r.get("close")
-                    .and_then(Value::as_f64)
-                    .is_some_and(|c| c.is_finite() && c > 0.0)
-            })
-            .filter_map(|r| r.get("date").and_then(Value::as_str)),
+        dates,
         request
             .get("start_date")
             .and_then(Value::as_str)
@@ -182,15 +338,140 @@ pub(crate) fn observe_local_metadata(core: &Value, policy: DataPolicy) -> Result
     Ok(metadata)
 }
 
-pub(crate) async fn run_observe_calculation(core_payload: &Value) -> Result<Value, String> {
+fn observe_snapshot_counts(
+    data: &gp_core::CoreDataSet,
+    code: &str,
+) -> crate::perf_diagnostics::DataCounts {
+    crate::perf_diagnostics::DataCounts {
+        stock_count: usize::from(data.stocks.iter().any(|stock| stock.code == code)),
+        history_rows: data.histories.get(code).map_or(0, Vec::len),
+        financial_records: data
+            .financials
+            .get(code)
+            .map_or(0, |financial| financial.quarterly_eps.len()),
+    }
+}
+
+async fn run_observe_calculation_with_snapshot(
+    data: Arc<gp_core::CoreDataSet>,
+    request: &Value,
+    diagnostics_enabled: bool,
+    cache_strategy: crate::perf_diagnostics::CacheStrategy,
+) -> Result<Value, String> {
+    let request: gp_core::StockObserveRequest = serde_json::from_value(request.clone())
+        .map_err(|error| format!("invalid observation request: {error}"))?;
+    let code =
+        crate::market::normalize_stock_code(&request.code).unwrap_or_else(|| request.code.clone());
+    let counts = observe_snapshot_counts(data.as_ref(), &code);
+    let started = Instant::now();
+    let result = crate::runtime::run_cpu_bound("api_observe_calculation", move || {
+        let result = gp_core::observe_with_data(data.as_ref(), &request)
+            .map_err(|error| error.to_string())?;
+        serde_json::to_value(result).map_err(|error| error.to_string())
+    })
+    .await
+    .and_then(|result| result);
+    crate::perf_diagnostics::record(
+        diagnostics_enabled,
+        crate::perf_diagnostics::PerfEvent::new(
+            crate::perf_diagnostics::Flow::Observe,
+            crate::perf_diagnostics::Stage::RustCalculation,
+            started.elapsed(),
+        )
+        .with_cache_strategy(cache_strategy)
+        .with_counts(
+            counts.stock_count,
+            counts.history_rows,
+            counts.financial_records,
+        )
+        .with_outcome(if result.is_ok() {
+            crate::perf_diagnostics::Outcome::Ok
+        } else {
+            crate::perf_diagnostics::Outcome::Error
+        }),
+    );
+    result
+}
+
+pub(crate) async fn run_observe_calculation(
+    core_payload: &Value,
+    diagnostics_enabled: bool,
+    cache_strategy: crate::perf_diagnostics::CacheStrategy,
+) -> Result<Value, String> {
+    let calculation_started = Instant::now();
     let payload = core_payload.clone();
-    crate::runtime::run_cpu_bound("api_observe_calculation", move || {
+    let result = crate::runtime::run_cpu_bound("api_observe_calculation", move || {
         gp_core::observe_with_data_value(payload).map_err(|error| error.to_string())
     })
-    .await?
+    .await
+    .and_then(|result| result);
+    let elapsed = calculation_started.elapsed();
+    let counts = observe_data_counts(core_payload);
+    let event = crate::perf_diagnostics::PerfEvent::new(
+        crate::perf_diagnostics::Flow::Observe,
+        crate::perf_diagnostics::Stage::RustCalculation,
+        elapsed,
+    )
+    .with_cache_strategy(cache_strategy)
+    .with_counts(
+        counts.stock_count,
+        counts.history_rows,
+        counts.financial_records,
+    )
+    .with_outcome(if result.is_ok() {
+        crate::perf_diagnostics::Outcome::Ok
+    } else {
+        crate::perf_diagnostics::Outcome::Error
+    });
+    crate::perf_diagnostics::record(diagnostics_enabled, event);
+    result
+}
+
+fn observe_cache_strategy(policy: DataPolicy) -> crate::perf_diagnostics::CacheStrategy {
+    match policy {
+        DataPolicy::CacheOnly => crate::perf_diagnostics::CacheStrategy::CacheOnly,
+        DataPolicy::Refresh => crate::perf_diagnostics::CacheStrategy::Refresh,
+    }
+}
+
+fn observe_data_counts(core_payload: &Value) -> crate::perf_diagnostics::DataCounts {
+    let data = core_payload.get("data").unwrap_or(core_payload);
+    let mut counts = crate::perf_diagnostics::data_counts(data);
+    if let Some(code) = core_payload
+        .get("request")
+        .and_then(|request| request.get("code"))
+        .and_then(Value::as_str)
+    {
+        counts.financial_records = crate::market::financial_quarterly_eps_count(data, code);
+    }
+    counts
+}
+
+fn observe_result_counts(result: &Value) -> crate::perf_diagnostics::DataCounts {
+    crate::perf_diagnostics::DataCounts {
+        stock_count: usize::from(result.get("stock").is_some_and(Value::is_object)),
+        history_rows: result
+            .pointer("/trend/series")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len),
+        financial_records: result
+            .pointer("/financial_indicators/items")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len),
+    }
+}
+
+async fn measure_observe_future<F: Future>(future: F) -> (Duration, F::Output) {
+    let started = Instant::now();
+    let result = future.await;
+    (started.elapsed(), result)
 }
 
 pub(crate) fn enrich_observe_stock_quote_fields(result: &mut Value, core_payload: &Value) {
+    enrich_observe_stock_quote_fields_from_data(result, &core_payload["data"]);
+}
+
+fn enrich_observe_stock_quote_fields_from_data(result: &mut Value, data: &Value) {
     const QUOTE_FIELDS: [&str; 4] = [
         "market_cap_billion",
         "circulating_market_cap_billion",
@@ -206,9 +487,8 @@ pub(crate) fn enrich_observe_stock_quote_fields(result: &mut Value, core_payload
     let Some(result_code) = result_code else {
         return;
     };
-    let source_stock = core_payload
-        .get("data")
-        .and_then(|data| data.get("stocks"))
+    let source_stock = data
+        .get("stocks")
         .and_then(Value::as_array)
         .and_then(|stocks| {
             stocks.iter().find(|stock| {
@@ -238,6 +518,10 @@ pub(crate) fn enrich_observe_stock_quote_fields(result: &mut Value, core_payload
 }
 
 pub(crate) fn attach_observe_market_intelligence(result: &mut Value, core_payload: &Value) {
+    attach_observe_market_intelligence_from_data(result, &core_payload["data"]);
+}
+
+fn attach_observe_market_intelligence_from_data(result: &mut Value, data: &Value) {
     let Some(code) = result
         .get("stock")
         .and_then(|stock| stock.get("code"))
@@ -246,9 +530,8 @@ pub(crate) fn attach_observe_market_intelligence(result: &mut Value, core_payloa
     else {
         return;
     };
-    let Some(evidence) = core_payload
-        .get("data")
-        .and_then(|data| data.get("capital_evidence"))
+    let Some(evidence) = data
+        .get("capital_evidence")
         .and_then(|items| items.get(&code))
     else {
         return;
@@ -829,12 +1112,15 @@ pub(crate) async fn observe_core_payload_with_cached_history(
     app: &tauri::AppHandle,
     payload: Value,
 ) -> Result<(Value, Vec<String>), String> {
-    let mut data = crate::market::cached_market_data(app)?;
+    let diagnostics_enabled = crate::perf_diagnostics::requested(&payload);
+    let cache_prepare_started = Instant::now();
     let code = payload
         .get("code")
         .and_then(Value::as_str)
         .and_then(crate::market::normalize_stock_code)
         .ok_or_else(|| "观察请求缺少有效股票代码。".to_string())?;
+    let snapshot = crate::market::cached_market_data_views(app)?;
+    let mut data = observe_data_for_code(snapshot.data.as_ref(), &code);
     let start_date = payload
         .get("start_date")
         .and_then(Value::as_str)
@@ -954,8 +1240,34 @@ pub(crate) async fn observe_core_payload_with_cached_history(
     let need_fundamental_supplement =
         observe_needs_fundamental_supplement_at(&data, &code, &end_date);
 
+    let cache_prepare_elapsed = cache_prepare_started.elapsed();
+    let mut cache_counts = crate::perf_diagnostics::data_counts(&data);
+    cache_counts.financial_records = crate::market::financial_quarterly_eps_count(&data, &code);
+    let cache_missed =
+        need_eps || need_history || need_exact_share_refresh || need_fundamental_supplement;
+    crate::perf_diagnostics::record(
+        diagnostics_enabled,
+        crate::perf_diagnostics::PerfEvent::new(
+            crate::perf_diagnostics::Flow::Observe,
+            crate::perf_diagnostics::Stage::CacheSnapshotPrepare,
+            cache_prepare_elapsed,
+        )
+        .with_cache_strategy(crate::perf_diagnostics::CacheStrategy::Refresh)
+        .with_counts(
+            cache_counts.stock_count,
+            cache_counts.history_rows,
+            cache_counts.financial_records,
+        )
+        .with_outcome(if cache_missed {
+            crate::perf_diagnostics::Outcome::CacheMiss
+        } else {
+            crate::perf_diagnostics::Outcome::CacheHit
+        }),
+    );
+
     // Capital evidence, online EPS, and daily history are independent network groups — fetch them
     // concurrently, then merge each result into `data` sequentially below.
+    let network_started = Instant::now();
     let capital_fetch_timeout = if mobile_fast_observe {
         12
     } else {
@@ -969,10 +1281,10 @@ pub(crate) async fn observe_core_payload_with_cached_history(
         async {
             if need_eps {
                 Some(
-                    tokio::time::timeout(
+                    measure_observe_future(tokio::time::timeout(
                         Duration::from_secs(OBSERVE_FINANCIAL_TOTAL_TIMEOUT_SECS),
                         crate::market::fetch_quarterly_eps_chain(&code),
-                    )
+                    ))
                     .await,
                 )
             } else {
@@ -982,10 +1294,10 @@ pub(crate) async fn observe_core_payload_with_cached_history(
         async {
             if need_history {
                 Some(
-                    tokio::time::timeout(
+                    measure_observe_future(tokio::time::timeout(
                         Duration::from_secs(OBSERVE_HISTORY_TOTAL_TIMEOUT_SECS),
                         crate::market::fetch_observe_daily_history(&code, &start_date, &end_date),
-                    )
+                    ))
                     .await,
                 )
             } else {
@@ -1008,16 +1320,105 @@ pub(crate) async fn observe_core_payload_with_cached_history(
         async {
             if need_fundamental_supplement {
                 Some(
-                    tokio::time::timeout(
+                    measure_observe_future(tokio::time::timeout(
                         Duration::from_secs(OBSERVE_FUNDAMENTAL_TOTAL_TIMEOUT_SECS),
                         fetch_observe_fundamental_supplement(&code, stock_price, &payload),
-                    )
+                    ))
                     .await,
                 )
             } else {
                 None
             }
         },
+    );
+
+    let network_elapsed = network_started.elapsed();
+    let mut network_counts = crate::perf_diagnostics::data_counts(&data);
+    network_counts.financial_records = crate::market::financial_quarterly_eps_count(&data, &code);
+    let eps_duration = eps_outcome
+        .as_ref()
+        .map_or(Duration::ZERO, |(elapsed, _)| *elapsed);
+    let supplement_duration = supplement_outcome
+        .as_ref()
+        .map_or(Duration::ZERO, |(elapsed, _)| *elapsed);
+    let financial_outcome = if eps_outcome.is_none() && supplement_outcome.is_none() {
+        crate::perf_diagnostics::Outcome::CacheHit
+    } else if matches!(eps_outcome.as_ref(), Some((_, Err(_))))
+        || matches!(
+            supplement_outcome.as_ref(),
+            Some((_, Err(_))) | Some((_, Ok(Err(_))))
+        )
+    {
+        crate::perf_diagnostics::Outcome::Partial
+    } else {
+        crate::perf_diagnostics::Outcome::Ok
+    };
+    crate::perf_diagnostics::record(
+        diagnostics_enabled,
+        crate::perf_diagnostics::PerfEvent::new(
+            crate::perf_diagnostics::Flow::Observe,
+            crate::perf_diagnostics::Stage::FinancialSupplement,
+            eps_duration.max(supplement_duration),
+        )
+        .with_cache_strategy(crate::perf_diagnostics::CacheStrategy::Refresh)
+        .with_counts(
+            network_counts.stock_count,
+            network_counts.history_rows,
+            network_counts.financial_records,
+        )
+        .with_outcome(financial_outcome),
+    );
+    let history_elapsed = history_outcome
+        .as_ref()
+        .map_or(Duration::ZERO, |(elapsed, _)| *elapsed);
+    let history_status = match history_outcome.as_ref() {
+        None => crate::perf_diagnostics::Outcome::CacheHit,
+        Some((_, Err(_))) => crate::perf_diagnostics::Outcome::Timeout,
+        Some((_, Ok(Err(_)))) => crate::perf_diagnostics::Outcome::Error,
+        Some((_, Ok(Ok(rows)))) if rows.is_empty() => crate::perf_diagnostics::Outcome::Partial,
+        Some((_, Ok(Ok(_)))) => crate::perf_diagnostics::Outcome::Ok,
+    };
+    crate::perf_diagnostics::record(
+        diagnostics_enabled,
+        crate::perf_diagnostics::PerfEvent::new(
+            crate::perf_diagnostics::Flow::Observe,
+            crate::perf_diagnostics::Stage::HistorySupplement,
+            history_elapsed,
+        )
+        .with_cache_strategy(crate::perf_diagnostics::CacheStrategy::Refresh)
+        .with_counts(
+            network_counts.stock_count,
+            network_counts.history_rows,
+            network_counts.financial_records,
+        )
+        .with_outcome(history_status),
+    );
+    crate::perf_diagnostics::record(
+        diagnostics_enabled,
+        crate::perf_diagnostics::PerfEvent::new(
+            crate::perf_diagnostics::Flow::Observe,
+            crate::perf_diagnostics::Stage::NetworkSupplement,
+            network_elapsed,
+        )
+        .with_cache_strategy(crate::perf_diagnostics::CacheStrategy::Refresh)
+        .with_counts(
+            network_counts.stock_count,
+            network_counts.history_rows,
+            network_counts.financial_records,
+        )
+        .with_outcome(
+            if matches!(financial_outcome, crate::perf_diagnostics::Outcome::Partial)
+                || matches!(
+                    history_status,
+                    crate::perf_diagnostics::Outcome::Error
+                        | crate::perf_diagnostics::Outcome::Timeout
+                )
+            {
+                crate::perf_diagnostics::Outcome::Partial
+            } else {
+                crate::perf_diagnostics::Outcome::Ok
+            },
+        ),
     );
 
     if need_exact_share_refresh {
@@ -1038,7 +1439,7 @@ pub(crate) async fn observe_core_payload_with_cached_history(
 
     if need_fundamental_supplement {
         match supplement_outcome {
-            Some(Ok(Ok((fields, supplement_notes)))) => {
+            Some((_, Ok(Ok((fields, supplement_notes))))) => {
                 if merge_observe_fundamental_supplement(&mut data, &code, fields) {
                     data_changed = true;
                     notes.push(format!(
@@ -1051,8 +1452,8 @@ pub(crate) async fn observe_core_payload_with_cached_history(
                         .map(|note| format!("专项基本面补全：{note}")),
                 );
             }
-            Some(Ok(Err(error))) => notes.push(format!("专项基本面补全失败：{error}")),
-            Some(Err(_)) => notes.push(format!(
+            Some((_, Ok(Err(error)))) => notes.push(format!("专项基本面补全失败：{error}")),
+            Some((_, Err(_))) => notes.push(format!(
                 "专项基本面补全超过 {OBSERVE_FUNDAMENTAL_TOTAL_TIMEOUT_SECS} 秒，保留本地财报快照。"
             )),
             None => {}
@@ -1118,7 +1519,7 @@ pub(crate) async fn observe_core_payload_with_cached_history(
     // Merge online EPS (financial).
     if need_eps {
         let fetch = match eps_outcome {
-            Some(Ok(fetch)) => fetch,
+            Some((_, Ok(fetch))) => fetch,
             _ => crate::market::QuarterlyEpsFetchResult {
                 points: Vec::new(),
                 sources: Vec::new(),
@@ -1178,7 +1579,7 @@ pub(crate) async fn observe_core_payload_with_cached_history(
             );
         } else {
             match history_outcome {
-                Some(Ok(Ok(rows))) if !rows.is_empty() => {
+                Some((_, Ok(Ok(rows)))) if !rows.is_empty() => {
                     let count = rows.len();
                     crate::market::insert_history_rows(&mut data, &code, rows);
                     data_changed = true;
@@ -1186,13 +1587,13 @@ pub(crate) async fn observe_core_payload_with_cached_history(
                         "观察日线历史已按需联网更新并写入本地缓存：{code} {count} 条。"
                     ));
                 }
-                Some(Ok(Ok(_))) => {
+                Some((_, Ok(Ok(_)))) => {
                     notes.push(format!("观察日线历史为空：{code}。"));
                 }
-                Some(Ok(Err(error))) => {
+                Some((_, Ok(Err(error)))) => {
                     notes.push(format!("观察日线历史拉取失败：{error}"));
                 }
-                Some(Err(_)) => {
+                Some((_, Err(_))) => {
                     notes.push(format!(
                         "观察日线历史拉取超过 {OBSERVE_HISTORY_TOTAL_TIMEOUT_SECS} 秒，已跳过在线补充。"
                     ));
@@ -1202,38 +1603,46 @@ pub(crate) async fn observe_core_payload_with_cached_history(
         }
     }
 
+    let persistence_started = Instant::now();
+    let mut persistence_outcome = crate::perf_diagnostics::Outcome::CacheHit;
     if data_changed {
-        let persist_data = data.clone();
-        if let Err(error) = crate::market::persist_market_data_updates(
-            app.clone(),
-            persist_data,
-            vec![code.clone()],
-        )
-        .await
+        let patch = crate::market::market_data_patch_for_codes(&data, std::slice::from_ref(&code));
+        if let Err(error) =
+            crate::market::persist_market_data_patch_updates(app.clone(), patch).await
         {
+            persistence_outcome = crate::perf_diagnostics::Outcome::Error;
             notes.push(format!("观察缓存补丁写入失败：{error}"));
+        } else {
+            persistence_outcome = crate::perf_diagnostics::Outcome::Ok;
         }
     }
+    let persistence_elapsed = persistence_started.elapsed();
+    let mut persisted_counts = crate::perf_diagnostics::data_counts(&data);
+    persisted_counts.financial_records = crate::market::financial_quarterly_eps_count(&data, &code);
+    crate::perf_diagnostics::record(
+        diagnostics_enabled,
+        crate::perf_diagnostics::PerfEvent::new(
+            crate::perf_diagnostics::Flow::Observe,
+            crate::perf_diagnostics::Stage::ResultPersistence,
+            persistence_elapsed,
+        )
+        .with_cache_strategy(crate::perf_diagnostics::CacheStrategy::Refresh)
+        .with_counts(
+            persisted_counts.stock_count,
+            persisted_counts.history_rows,
+            persisted_counts.financial_records,
+        )
+        .with_outcome(persistence_outcome),
+    );
 
-    let mut observe_request = local_data::core_payload(payload.clone());
-    if let Some(map) = observe_request.as_object_mut() {
-        map.remove("history");
-        map.remove("financial_eps_points");
-        map.remove("financial_eps_notes");
-        map.remove("financial_snapshot");
-        map.remove("mobile_fast_observe");
-    }
+    let observe_request = observe_request_payload(payload);
     let mut request = serde_json::Map::new();
     request.insert("data".to_string(), data);
     request.insert("request".to_string(), observe_request);
     Ok((Value::Object(request), notes))
 }
 
-pub(crate) fn observe_core_payload_from_cache(
-    app: &tauri::AppHandle,
-    payload: Value,
-) -> Result<Value, String> {
-    let data = crate::market::cached_market_data(app)?;
+fn observe_request_payload(payload: Value) -> Value {
     let mut observe_request = local_data::core_payload(payload);
     if let Some(map) = observe_request.as_object_mut() {
         map.remove("history");
@@ -1241,11 +1650,29 @@ pub(crate) fn observe_core_payload_from_cache(
         map.remove("financial_eps_notes");
         map.remove("financial_snapshot");
         map.remove("mobile_fast_observe");
+        map.remove("perf_diagnostics");
     }
-    let mut request = serde_json::Map::new();
-    request.insert("data".to_string(), data);
-    request.insert("request".to_string(), observe_request);
-    Ok(Value::Object(request))
+    observe_request
+}
+
+fn observe_data_for_code(data: &Value, code: &str) -> Value {
+    let mut projection = crate::market::market_data_patch_for_codes(data, &[code.to_string()]);
+    if let Some(projected) = projection.as_object_mut() {
+        for key in [
+            "schema_version",
+            "metric_contract_version",
+            "metric_units",
+            "stock_metric_units",
+            "source",
+            "generated_at",
+            "quote_generated_at",
+        ] {
+            if let Some(value) = data.get(key) {
+                projected.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+    projection
 }
 
 pub(crate) fn observe_error_result(
@@ -2769,5 +3196,157 @@ mod local_first_observe_tests {
             error["missing"][0]["required_bars"],
             MIN_FULL_OBSERVE_HISTORY_BARS
         );
+    }
+}
+
+#[cfg(test)]
+mod observation_snapshot_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn market_fixture() -> Value {
+        let start = chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let history = (0..750)
+            .map(|index| {
+                let date = start.checked_add_days(chrono::Days::new(index)).unwrap();
+                json!({"date":date.format("%Y%m%d").to_string(),"open":20.0,"high":21.0,"low":19.0,"close":20.0,"volume":1000000.0})
+            })
+            .collect::<Vec<_>>();
+        json!({
+            "metric_contract_version":gp_core::METRIC_CONTRACT_VERSION,
+            "metric_units":{"roe":"ratio"},
+            "generated_at":"2026-10-30T08:00:00Z",
+            "stocks":[
+                {"code":"600519.SH","name":"贵州茅台","industry":"白酒","price":20.0,"roe":0.25,"quote_time":"20261030","total_shares":1000000000.0,"circulating_shares":800000000.0},
+                {"code":"000001.SZ","name":"平安银行","industry":"银行","price":10.0,"roe":0.12}
+            ],
+            "histories":{"600519.SH":history,"000001.SZ":history},
+            "financials":{
+                "600519.SH":{"period":"2026Q3","roe":25.0,"latest_eps":2.5,"quarterly_eps":[{"period":"2026Q3","value":2.5}]},
+                "000001.SZ":{"period":"2026Q3","roe":12.0,"latest_eps":1.2}
+            },
+            "capital_evidence":{"600519.SH":{
+                "stock_code":"600519.SH","generated_at":"2026-10-30T08:00:00Z","items":[],
+                "market_active_brokerages":{"status":"available","checked_on":"2026-10-30","items":[]},
+                "institutional_holdings":{"status":"no_institutional_holders","checked_on":"2026-10-30","items":[]}
+            }}
+        })
+    }
+
+    fn request() -> Value {
+        json!({"code":"600519.SH","start_date":"19900101","end_date":"20261030","series_limit":10000})
+    }
+
+    #[test]
+    fn single_stock_projection_preserves_full_history_units_and_financial_evidence() {
+        let data = market_fixture();
+        let projection = observe_data_for_code(&data, "600519.SH");
+        assert_eq!(projection["stocks"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            projection["histories"]["600519.SH"]
+                .as_array()
+                .unwrap()
+                .len(),
+            750
+        );
+        assert!(projection["histories"].get("000001.SZ").is_none());
+        assert!(projection["financials"].get("000001.SZ").is_none());
+        assert_eq!(projection["metric_units"], json!({"roe":"ratio"}));
+        assert_eq!(projection["generated_at"], "2026-10-30T08:00:00Z");
+        assert_eq!(projection["financials"]["600519.SH"]["latest_eps"], 2.5);
+        assert_eq!(
+            projection["capital_evidence"]["600519.SH"]["institutional_holdings"]["status"],
+            "no_institutional_holders"
+        );
+        let expected = observe_local_metadata(
+            &json!({"data":data,"request":request()}),
+            DataPolicy::CacheOnly,
+        )
+        .unwrap();
+        let actual = observe_local_metadata(
+            &json!({"data":projection,"request":request()}),
+            DataPolicy::CacheOnly,
+        )
+        .unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn typed_cache_observation_matches_legacy_results_and_preserves_disclosure_details() {
+        let data = market_fixture();
+        let (typed, _) =
+            crate::market::parse_mobile_market_data_snapshot(&data, "test snapshot").unwrap();
+        let metadata =
+            observe_cached_metadata(&data, typed.as_ref(), &request(), DataPolicy::CacheOnly)
+                .unwrap();
+        assert_eq!(metadata["history_as_of"], "20260119");
+        assert_eq!(metadata["quote_as_of"], "20261030");
+        assert_eq!(metadata["coverage"][1]["available_bars"], 750);
+        assert_eq!(metadata["optional_data"]["financials"], true);
+        let legacy =
+            gp_core::observe_with_data_value(json!({"data":data,"request":request()})).unwrap();
+        let mut actual = tauri::async_runtime::block_on(run_observe_calculation_with_snapshot(
+            Arc::clone(&typed),
+            &request(),
+            false,
+            crate::perf_diagnostics::CacheStrategy::CacheOnly,
+        ))
+        .unwrap();
+        assert_eq!(actual, legacy);
+        assert_eq!(Arc::strong_count(&typed), 1);
+        enrich_observe_stock_quote_fields_from_data(&mut actual, &data);
+        attach_observe_market_intelligence_from_data(&mut actual, &data);
+        assert_eq!(actual["stock"]["total_shares"], 1000000000.0);
+        assert_eq!(
+            actual["institutional_holdings"]["status"],
+            "no_institutional_holders"
+        );
+        assert_eq!(actual["financial_indicators"]["period"], "2026Q3");
+    }
+
+    #[test]
+    fn typed_cache_still_rejects_insufficient_full_history() {
+        let data = market_fixture();
+        let (mut typed, _) =
+            crate::market::parse_mobile_market_data_snapshot(&data, "test snapshot").unwrap();
+        Arc::make_mut(&mut typed)
+            .histories
+            .get_mut("600519.SH")
+            .unwrap()
+            .truncate(749);
+        let error =
+            observe_cached_metadata(&data, typed.as_ref(), &request(), DataPolicy::CacheOnly)
+                .unwrap_err();
+        let error: Value = serde_json::from_str(&error).unwrap();
+        assert_eq!(error["missing_count"], 1);
+        assert_eq!(error["missing"][0]["required_bars"], 750);
+        assert_eq!(error["missing"][0]["available_bars"], 749);
+    }
+
+    #[test]
+    fn sqlite_roundtrip_preserves_observation_details_and_supplement_freshness() {
+        let mut data = market_fixture();
+        data["stocks"][0]["circulating_market_cap_billion"] = json!(15.0);
+        data["financials"]["600519.SH"]["supplement_updated_at_epoch_ms"] = json!(1793422800000_u64);
+        let path = std::env::temp_dir().join(format!(
+            "gp-observation-roundtrip-{}-{}.sqlite", std::process::id(), crate::market::epoch_millis(),
+        ));
+        {
+            let mut store = crate::external_data::DataStore::open(&path).unwrap();
+            crate::market::store_market_dataset(&mut store, &data, "test_fixture").unwrap();
+        }
+        let store = crate::external_data::DataStore::open(&path).unwrap();
+        let projected = crate::market::project_market_store(&store).unwrap().unwrap();
+        let stock = projected["stocks"].as_array().unwrap().iter()
+            .find(|stock| stock["code"] == "600519.SH").unwrap();
+        assert_eq!(stock["total_shares"], 1000000000.0);
+        assert_eq!(stock["circulating_shares"], 800000000.0);
+        assert_eq!(stock["circulating_market_cap_billion"], 15.0);
+        assert_eq!(projected["capital_evidence"]["600519.SH"]["market_active_brokerages"]["status"], "available");
+        assert_eq!(projected["capital_evidence"]["600519.SH"]["institutional_holdings"]["status"], "no_institutional_holders");
+        assert_eq!(projected["financials"]["600519.SH"]["supplement_updated_at_epoch_ms"], 1793422800000_u64);
+        assert_eq!(projected["histories"]["600519.SH"].as_array().unwrap().len(), 750);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
     }
 }

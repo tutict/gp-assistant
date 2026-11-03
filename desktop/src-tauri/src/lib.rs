@@ -1,5 +1,6 @@
 mod credentials;
 mod diagnostics;
+mod perf_diagnostics;
 mod durability;
 mod external_data;
 mod jobs;
@@ -26,8 +27,8 @@ mod hk_market;
 mod llm;
 mod market;
 mod metric_units;
-mod market_domain;
 mod market_capabilities;
+mod market_domain;
 mod news_rag;
 mod observe;
 mod prompt_upgrade;

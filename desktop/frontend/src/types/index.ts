@@ -363,6 +363,12 @@ export interface TrendIndicatorSignal {
   k?: number | null;
   d?: number | null;
   j?: number | null;
+  kdj_overbought?: boolean;
+  kdj_oversold?: boolean;
+  kdj_golden_cross?: boolean;
+  kdj_dead_cross?: boolean;
+  risk_flags?: string[];
+  quality_score?: number;
   support?: number | null;
   resistance?: number | null;
   quant_score?: number;
@@ -1087,6 +1093,9 @@ export interface StockRowView {
   name: string;
   industry?: string;
   price?: number;
+  quoteTime?: string;
+  trendSignal?: TrendIndicatorSignal;
+  analysisEndDate?: string;
   change_pct?: number | null;
   pe?: number;
   pb?: number;

@@ -40,9 +40,14 @@ export function formatLocalDataError(error: unknown): string {
   try {
     const parsed = JSON.parse(text);
     if (parsed.code === "LOCAL_DATA_MISSING") {
-      const details = (Array.isArray(parsed.missing) ? parsed.missing : []).slice(0, 5).map((item: Record<string, unknown>) =>
-        [item.code, item.kind, item.required_bars != null ? "日线 " + (item.available_bars ?? 0) + "/" + item.required_bars : item.reason, item.start_date && item.end_date ? item.start_date + "–" + item.end_date : ""].filter(Boolean).join(" · ")
-      ).join("；");
+      const date = (value: unknown) => String(value ?? "未知").replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+      const details = (Array.isArray(parsed.missing) ? parsed.missing : []).slice(0, 5).map((item: Record<string, unknown>) => {
+        const history = item.history_behind_quote === true
+          ? `日线截至 ${date(item.as_of)}，行情截至 ${date(item.quote_as_of)}，日期落后`
+          : item.required_bars != null ? "日线 " + (item.available_bars ?? 0) + "/" + item.required_bars : item.reason;
+        return [item.code, item.kind === "history" ? "日线" : item.kind, history,
+          item.start_date && item.end_date ? item.start_date + "–" + item.end_date : ""].filter(Boolean).join(" · ");
+      }).join("；");
       return "本地数据不足（" + (parsed.missing_count ?? 0) + " 项）：" + details + "。请先点击顶部「刷新」补齐行情，再重试。";
     }
     if (parsed.code === "REFRESH_REQUIRED") return "冷启动发布验证必须显式使用联网刷新模式（data_policy=refresh）。";
