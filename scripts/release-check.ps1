@@ -131,8 +131,9 @@ if (-not $SkipRust) {
     Invoke-Checked "Tauri GEPA cargo check" $cargo @("check", "--locked", "--features", "gepa-lab", "--manifest-path", "desktop/src-tauri/Cargo.toml")
 }
 
+$androidScript = Join-Path $Root "scripts/build-android.ps1"
+Invoke-Checked "Android application ID and credential generation tests" "powershell.exe" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $androidScript, "-CredentialGenerationTest")
 if (-not $SkipAndroidPreflight) {
-    $androidScript = Join-Path $Root "scripts/build-android.ps1"
     Invoke-Checked "Android build environment preflight" "powershell.exe" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $androidScript, "-PreflightOnly")
 }
 

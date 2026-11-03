@@ -1,6 +1,7 @@
 param(
     [switch] $InitOnly,
     [switch] $CredentialGenerationTest,
+    [switch] $AndroidPackageIdTest,
     [switch] $PreflightOnly,
     [switch] $Debug,
     [switch] $Aab,
@@ -339,6 +340,68 @@ function Find-UnsignedReleaseApk {
     return $apk
 }
 
+function Get-ExpectedAndroidApplicationId {
+    param([switch] $UseTestApplicationId)
+
+    if ($UseTestApplicationId) {
+        $testApplicationId = "com.tutict.stockoptimizer.codextest"
+        $AndroidConfig = Join-Path $AndroidProjectDir "tauri.properties"
+        if (Test-Path -LiteralPath $AndroidConfig) {
+            $androidProperties = Get-Content -LiteralPath $AndroidConfig -Raw
+            if ($androidProperties -match '(?m)^tauri\.android\.testPackageId=(?<id>[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+)\r?$') {
+                $testApplicationId = $Matches.id
+            }
+        }
+        if ($testApplicationId -ne "com.tutict.stockoptimizer.codextest") {
+            throw "Android testPackageId must be the exact codextest package to keep the production app and its data isolated."
+        }
+        return $testApplicationId
+    }
+
+    $tauriConfigPath = Join-Path $Root "desktop\src-tauri\tauri.conf.json"
+    $applicationId = [string]((Get-Content -LiteralPath $tauriConfigPath -Raw | ConvertFrom-Json).identifier)
+    if ($applicationId -notmatch '^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$') {
+        throw "Invalid production Android application identifier in ${tauriConfigPath}: $applicationId"
+    }
+    return $applicationId
+}
+
+function Assert-AndroidApkMetadata {
+    param(
+        [Parameter(Mandatory = $true)][string] $ApkPath,
+        [switch] $UseTestApplicationId
+    )
+
+    $aapt = Resolve-AndroidBuildToolExecutable "aapt.exe"
+    $badging = & $aapt "dump" "badging" $ApkPath 2>&1
+    $aaptExitCode = $LASTEXITCODE
+    if ($aaptExitCode -ne 0) {
+        throw "Read Android APK metadata failed with exit code ${aaptExitCode}: $ApkPath"
+    }
+
+    $packageLine = [string]($badging | Where-Object { [string]$_ -match '^package:' } | Select-Object -First 1)
+    if ($packageLine -notmatch "^package: name='(?<id>[^']+)' versionCode='(?<code>\d+)' versionName='(?<name>[^']*)'") {
+        throw "Unable to parse Android APK package metadata for ${ApkPath}: $packageLine"
+    }
+    $expectedApplicationId = Get-ExpectedAndroidApplicationId -UseTestApplicationId:$UseTestApplicationId
+    if ($Matches.id -ne $expectedApplicationId) {
+        throw "Android APK applicationId mismatch. Expected '$expectedApplicationId', got '$($Matches.id)': $ApkPath"
+    }
+
+    $expectedTauriConfig = Get-Content -LiteralPath (Join-Path $Root "desktop\src-tauri\tauri.conf.json") -Raw | ConvertFrom-Json
+    $expectedAndroidConfig = Get-Content -LiteralPath (Join-Path $Root "desktop\src-tauri\tauri.android.conf.json") -Raw | ConvertFrom-Json
+    $expectedVersionName = [string]$expectedTauriConfig.version
+    $expectedVersionCode = [string]$expectedAndroidConfig.bundle.android.versionCode
+    if ($Matches.name -ne $expectedVersionName) {
+        throw "Android APK versionName mismatch. Expected '$expectedVersionName', got '$($Matches.name)': $ApkPath"
+    }
+    if ($Matches.code -ne $expectedVersionCode) {
+        throw "Android APK versionCode mismatch. Expected '$expectedVersionCode', got '$($Matches.code)': $ApkPath"
+    }
+
+    Write-Host "Android APK metadata verified: applicationId=$expectedApplicationId versionName=$expectedVersionName versionCode=$expectedVersionCode"
+}
+
 function Sign-AndroidReleaseApk {
     if (-not $Signed) {
         return $null
@@ -544,6 +607,8 @@ function Disable-AndroidCleartextPlaceholder {
 }
 
 function Update-AndroidProjectForLanImport {
+    param([switch] $UseTestApplicationId)
+
     $AndroidManifest = Join-Path $AndroidProjectDir "app\src\main\AndroidManifest.xml"
     $AndroidBuildGradle = Join-Path $AndroidProjectDir "app\build.gradle.kts"
     $AndroidConfig = Join-Path $AndroidProjectDir "tauri.properties"
@@ -595,20 +660,14 @@ function Update-AndroidProjectForLanImport {
     if (Test-Path -LiteralPath $AndroidBuildGradle) {
         $gradle = Get-Content -LiteralPath $AndroidBuildGradle -Raw
         $updated = Disable-AndroidCleartextPlaceholder $gradle
-        $testApplicationId = "com.tutict.stockoptimizer.codextest"
-        if (Test-Path -LiteralPath $AndroidConfig) {
-            $androidProperties = Get-Content -LiteralPath $AndroidConfig -Raw
-            if ($androidProperties -match '(?m)^tauri\.android\.testPackageId=(?<id>[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+)$') {
-                $testApplicationId = $Matches.id
-            }
-        }
-        if ($testApplicationId -ne "com.tutict.stockoptimizer.codextest") {
-            throw "Android testPackageId must be the exact codextest package to keep the production app and its data isolated."
+        $applicationId = Get-ExpectedAndroidApplicationId -UseTestApplicationId:$UseTestApplicationId
+        if ($gradle -notmatch 'applicationId\s*=\s*"[^"]+"') {
+            throw "Android Gradle defaultConfig is missing applicationId: $AndroidBuildGradle"
         }
         $updated = [regex]::Replace(
             $updated,
             'applicationId\s*=\s*"[^"]+"',
-            ('applicationId = "' + $testApplicationId + '"'),
+            ('applicationId = "' + $applicationId + '"'),
             1
         )
         if ($updated -ne $gradle) {
@@ -687,6 +746,46 @@ function Install-AndroidCredentialResources {
     }
 }
 
+function Test-AndroidPackageIdIsolation {
+    # Host-only test: scratch generated project, no device, keys, or existing generated checkout.
+    $script:AndroidProjectDir = Join-Path ([System.IO.Path]::GetTempPath()) ("gp-android-package-id-" + [guid]::NewGuid())
+    $main = Join-Path $AndroidProjectDir "app\src\main"
+    New-Item -ItemType Directory -Path $main -Force | Out-Null
+    $manifestPath = Join-Path $main "AndroidManifest.xml"
+    [System.IO.File]::WriteAllText($manifestPath, '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><uses-permission android:name="android.permission.INTERNET"/><application android:allowBackup="true"/></manifest>')
+    $tauriConfigPath = Join-Path $Root "desktop\src-tauri\tauri.conf.json"
+    $productionApplicationId = [string]((Get-Content -LiteralPath $tauriConfigPath -Raw | ConvertFrom-Json).identifier)
+    if (-not $productionApplicationId) { throw "Production Android application identifier is missing from $tauriConfigPath." }
+    $gradlePath = Join-Path $AndroidProjectDir "app\build.gradle.kts"
+    [System.IO.File]::WriteAllText($gradlePath, "android {`n defaultConfig {`n applicationId = `"$productionApplicationId`"`n }`n}")
+    $androidPropertiesPath = Join-Path $AndroidProjectDir "tauri.properties"
+    [System.IO.File]::WriteAllText($androidPropertiesPath, "tauri.android.testPackageId=com.tutict.stockoptimizer.invalid`r`n")
+    Update-AndroidProjectForLanImport
+    $gradleAfterProjectUpdate = [System.IO.File]::ReadAllText($gradlePath)
+    if ($gradleAfterProjectUpdate -notmatch ('applicationId\s*=\s*"' + [regex]::Escape($productionApplicationId) + '"')) {
+        throw "Android release project update replaced the production application identifier."
+    }
+    $invalidTestPackageRejected = $false
+    try {
+        Update-AndroidProjectForLanImport -UseTestApplicationId
+    } catch {
+        $invalidTestPackageRejected = $true
+    }
+    if (-not $invalidTestPackageRejected) { throw "Android project update accepted a non-isolated test application identifier." }
+    [System.IO.File]::WriteAllText($androidPropertiesPath, "tauri.android.testPackageId=com.tutict.stockoptimizer.codextest`r`n")
+    Update-AndroidProjectForLanImport -UseTestApplicationId
+    $gradleAfterTestUpdate = [System.IO.File]::ReadAllText($gradlePath)
+    if ($gradleAfterTestUpdate -notmatch 'applicationId\s*=\s*"com\.tutict\.stockoptimizer\.codextest"') {
+        throw "Android test project update did not isolate the test application identifier."
+    }
+    Update-AndroidProjectForLanImport
+    $gradleAfterReleaseRestore = [System.IO.File]::ReadAllText($gradlePath)
+    if ($gradleAfterReleaseRestore -notmatch ('applicationId\s*=\s*"' + [regex]::Escape($productionApplicationId) + '"')) {
+        throw "Android release project update did not restore the production application identifier after a test build."
+    }
+    Write-Host "Android applicationId isolation tests passed (release package, test package, release restore)."
+}
+
 function Test-AndroidCredentialResources {
     # Host-only test: scratch generated project, no device, keys, or existing generated checkout.
     $script:AndroidProjectDir = Join-Path ([System.IO.Path]::GetTempPath()) ("gp-credential-generation-" + [guid]::NewGuid())
@@ -716,7 +815,12 @@ function Test-AndroidCredentialResources {
     Write-Host "Credential generation tests passed (idempotent, backup exclusions, no extra permissions): $AndroidProjectDir"
 }
 
-if ($CredentialGenerationTest) { Test-AndroidCredentialResources; return }
+if ($AndroidPackageIdTest) { Test-AndroidPackageIdIsolation; return }
+if ($CredentialGenerationTest) {
+    Test-AndroidPackageIdIsolation
+    Test-AndroidCredentialResources
+    return
+}
 
 Initialize-AndroidEnvironment
 
@@ -751,7 +855,7 @@ Invoke-Checked "Prepare Tauri Android frontend assets" "powershell.exe" @(
 
 Push-Location $DesktopDir
 try {
-    Update-AndroidProjectForLanImport
+    Update-AndroidProjectForLanImport -UseTestApplicationId:$Debug
     Install-AndroidCredentialResources
     Use-WindowsNpmCommandInAndroidBuildTask
     Use-LocalGradleDistribution
@@ -784,7 +888,16 @@ try {
     $BuildArgs += "--ci"
 
     Invoke-Checked "Build Tauri Android package" "npm.cmd" $BuildArgs
-    Sign-AndroidReleaseApk | Out-Null
+    if (-not $Debug -and -not $Aab) {
+        $unsignedReleaseApk = Find-UnsignedReleaseApk
+        Assert-AndroidApkMetadata -ApkPath $unsignedReleaseApk.FullName
+        $signedReleaseApk = Sign-AndroidReleaseApk | Select-Object -Last 1
+        if ($signedReleaseApk) {
+            Assert-AndroidApkMetadata -ApkPath $signedReleaseApk
+        }
+    } else {
+        Sign-AndroidReleaseApk | Out-Null
+    }
 } finally {
     Pop-Location
 }
