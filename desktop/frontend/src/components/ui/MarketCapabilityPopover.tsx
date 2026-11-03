@@ -41,7 +41,15 @@ export function MarketCapabilityPopover({
         <span className="market-capability-popover__summary-state">{summary}</span>
       </summary>
       <div className="market-capability-popover__content">
-        {error ? <p role="alert">能力状态读取失败：{error}</p> : null}
+        {error ? (
+          <div role="alert">
+            <p>能力状态暂时无法读取，相关数据状态未知。</p>
+            <details className="market-capability-details">
+              <summary>错误详情</summary>
+              <p>{error.slice(0, 500)}{error.length > 500 ? "…" : ""}</p>
+            </details>
+          </div>
+        ) : null}
         {items.map((capability) => (
           <MarketCapabilityStatus
             key={capability.id}

@@ -398,16 +398,6 @@ export default function App({ onMounted }: AppProps) {
         <div className="workbench-notices">
       {!credentialsReady && <p role="status">密钥正在初始化，可继续本地编辑；模型提交与设置保存暂不可用。</p>}
       {credentialError && <PanelFeedback kind="error" title="密钥保存状态" description={credentialError} action={credentialMigrationPending ? <button type="button" onClick={() => void retryCredentialMigration()}>重试安全迁移</button> : undefined} />}
-      {market === "cn" && view !== "news" && view !== "agent" && marketCapabilityIdsForView(view).map((id) => (
-        <MarketCapabilityStatus
-          key={id}
-          label={`A 股${marketCapabilityLabel(id)}`}
-          capability={marketCapability(id)}
-          loading={marketCapabilities === null && !marketCapabilityError}
-          error={marketCapabilityError}
-          plain
-        />
-      ))}
         </div>
         {view === "screen" && (
           market === "hk" ? null : <FilterBar status={marketStatus} onStatusChange={setMarketStatus} />
@@ -472,8 +462,6 @@ export default function App({ onMounted }: AppProps) {
               <WorkspaceErrorBoundary label="智能体"><AgentPanel
                 llmSettings={llmSettings}
                 onLlmSettingsChange={setLlmSettings}
-                marketCapabilities={marketCapabilities}
-                marketCapabilityError={marketCapabilityError}
                 watchlist={visibleWatchlist}
                 onWatchlistChange={setWatchlist}
                 draftPrompt={agentDraftRequest?.prompt || ""}
@@ -492,6 +480,27 @@ export default function App({ onMounted }: AppProps) {
             onNews={openNewsForStock}
             onBacktest={runWatchlistBacktest}
           /></WorkspaceErrorBoundary>
+        )}
+
+        {market === "cn" && view !== "agent" && view !== "news" && (
+          <details className="workbench-more-info">
+            <summary>
+              <span>更多信息</span>
+              <span className="workbench-more-info__hint">数据覆盖、来源与缺失项</span>
+            </summary>
+            <div className="workbench-more-info__body">
+              {marketCapabilityIdsForView(view).map((id) => (
+                <MarketCapabilityStatus
+                  key={id}
+                  label={`A 股${marketCapabilityLabel(id)}`}
+                  capability={marketCapability(id)}
+                  loading={marketCapabilities === null && !marketCapabilityError}
+                  error={marketCapabilityError}
+                  plain
+                />
+              ))}
+            </div>
+          </details>
         )}
 
       </main>

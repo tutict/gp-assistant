@@ -129,6 +129,11 @@ pub(crate) struct MobileMarketDataCacheEntry {
     pub(crate) summary: Value,
 }
 
+pub(crate) struct MarketDataSnapshot {
+    pub(crate) data: Arc<Value>,
+    pub(crate) typed: Arc<gp_core::CoreDataSet>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct MarketDataFileVersion {
     bytes: u64,
@@ -4579,12 +4584,16 @@ fn external_market_records_from_typed(
         .map(u128::from)
         .unwrap_or_else(epoch_millis);
     let fetched_at = fetched_at.to_string();
-    let mut metadata = data.clone();
-    if let Some(object) = metadata.as_object_mut() {
-        for key in ["stocks", "relations", "histories", "financials", "factor_snapshots", "capital_evidence"] {
-            object.remove(key);
-        }
-    }
+    let metadata = Value::Object(
+        data.as_object().into_iter().flat_map(|object| object.iter())
+            .filter(|(key, _)| !matches!(key.as_str(), "stocks" | "relations" | "histories" | "financials" | "factor_snapshots" | "capital_evidence"))
+            .map(|(key, value)| (key.clone(), value.clone())).collect(),
+    );
+    let raw_stocks = data.get("stocks").and_then(Value::as_array).into_iter().flatten()
+        .filter_map(|row| {
+            let code = row.get("code").and_then(Value::as_str).and_then(normalize_stock_code)?;
+            Some((code, row))
+        }).collect::<HashMap<_, _>>();
     grouped.entry((DataDomain::SecurityMaster, Market::China)).or_default().push(
         StoredRecord::new(DataDomain::SecurityMaster, Market::China, "cn", "metadata", source_id,
             "public", &fetched_at, None, None, "unverified", vec![], metadata),
@@ -4601,12 +4610,19 @@ fn external_market_records_from_typed(
             StoredRecord::new(DataDomain::SecurityMaster, Market::China, &stock.code, "stock", source_id,
                 "public", &fetched_at, None, None, "unverified", vec![], security),
         );
-        let quote = serde_json::json!({
+        let mut quote = serde_json::json!({
             "price": base["price"], "change_pct": base["change_pct"], "volume": base["volume"],
             "amount": base["amount"], "turnover_rate": base["turnover_rate"],
             "volume_ratio": base["volume_ratio"], "quote_time": base["quote_time"],
             "source": base["source"],
         });
+        if let Some(raw) = normalize_stock_code(&stock.code).and_then(|code| raw_stocks.get(&code)) {
+            for field in ["circulating_market_cap_billion", "total_shares", "circulating_shares"] {
+                if let Some(value) = raw.get(field).and_then(Value::as_f64).filter(|value| value.is_finite()) {
+                    quote[field] = json!(value);
+                }
+            }
+        }
         grouped.entry((DataDomain::Quote, Market::China)).or_default().push(
             StoredRecord::new(DataDomain::Quote, Market::China, &stock.code, "quote", source_id,
                 "public", &fetched_at, stock.quote_time.as_deref(), None, "unverified", vec![], quote),
@@ -4641,10 +4657,16 @@ fn external_market_records_from_typed(
         );
     }
     for (code, financial) in &typed.financials {
+        let mut payload = serde_json::to_value(financial)
+            .map_err(|error| format!("encode market financials: {error}"))?;
+        let raw = data.get("financials").and_then(|items| items.get(code));
+        if let Some(updated_at) = cache_epoch_ms(raw.and_then(|row| row.get("supplement_updated_at_epoch_ms"))) {
+            payload["supplement_updated_at_epoch_ms"] = json!(updated_at);
+        }
         grouped.entry((DataDomain::FinancialSnapshot, Market::China)).or_default().push(
             StoredRecord::new(DataDomain::FinancialSnapshot, Market::China, code, "financial", source_id,
                 "public", &fetched_at, None, None, "unverified", vec![],
-                serde_json::to_value(financial).map_err(|error| format!("encode market financials: {error}"))?),
+                payload),
         );
     }
     for (code, factors) in &typed.factor_snapshots {
@@ -4655,10 +4677,18 @@ fn external_market_records_from_typed(
         );
     }
     for (code, evidence) in &typed.capital_evidence {
+        let mut payload = serde_json::to_value(evidence)
+            .map_err(|error| format!("encode market capital evidence: {error}"))?;
+        let raw = data.get("capital_evidence").and_then(|items| items.get(code));
+        for field in ["market_active_brokerages", "institutional_holdings"] {
+            if let Some(value) = raw.and_then(|row| row.get(field)).filter(|value| value.is_object()) {
+                payload[field] = value.clone();
+            }
+        }
         grouped.entry((DataDomain::CapitalEvidence, Market::China)).or_default().push(
             StoredRecord::new(DataDomain::CapitalEvidence, Market::China, code, "capital_evidence", source_id,
                 "public", &fetched_at, Some(&evidence.generated_at), None, "unverified", vec![],
-                serde_json::to_value(evidence).map_err(|error| format!("encode market capital evidence: {error}"))?),
+                payload),
         );
     }
     Ok(grouped)
@@ -5644,15 +5674,6 @@ pub(crate) async fn persist_market_data_patch_updates(
     .await?
 }
 
-pub(crate) async fn persist_market_data_updates(
-    app: tauri::AppHandle,
-    data: Value,
-    codes: Vec<String>,
-) -> Result<usize, String> {
-    let patch = market_data_patch_for_codes(&data, &codes);
-    persist_market_data_patch_updates(app, patch).await
-}
-
 pub(crate) fn parse_mobile_market_data_snapshot(
     data: &Value,
     label: &str,
@@ -5670,6 +5691,12 @@ pub(crate) fn parse_mobile_market_data_snapshot(
 pub(crate) fn cached_market_data_snapshot(
     app: &tauri::AppHandle,
 ) -> Result<Arc<gp_core::CoreDataSet>, String> {
+    Ok(cached_market_data_views(app)?.typed)
+}
+
+pub(crate) fn cached_market_data_views(
+    app: &tauri::AppHandle,
+) -> Result<MarketDataSnapshot, String> {
     let path = mobile_market_data_path(app)?;
     let cache = read_mobile_market_data_record(app, false)?;
     if !cache
@@ -5683,7 +5710,10 @@ pub(crate) fn cached_market_data_snapshot(
         .lock()
         .map_err(|_| "mobile market cache lock is poisoned".to_string())?;
     slot.get(&path)
-        .map(|entry| Arc::clone(&entry.typed))
+        .map(|entry| MarketDataSnapshot {
+            data: Arc::clone(&entry.data),
+            typed: Arc::clone(&entry.typed),
+        })
         .ok_or_else(|| "mobile market typed snapshot is unavailable".to_string())
 }
 
