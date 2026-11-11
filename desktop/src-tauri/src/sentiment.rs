@@ -33,8 +33,28 @@ fn field<'a>(v: &'a Value, key: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("缺少有效的 {key}"))
 }
 fn code(v: &Value) -> Result<String, String> {
-    crate::market::normalize_stock_code(field(v, "stock_code")?)
-        .ok_or_else(|| "股票代码无效".into())
+    let raw = field(v, "stock_code")?;
+    let market = market(v)?;
+    if market == "hk" {
+        let raw = raw.trim().to_ascii_uppercase();
+        let digits = raw
+            .strip_suffix(".HK")
+            .or_else(|| raw.strip_prefix("HK"))
+            .ok_or_else(|| "港股代码必须带 .HK 市场后缀".to_string())?;
+        if digits.is_empty()
+            || digits.len() > 5
+            || !digits.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            return Err("港股代码无效".into());
+        }
+        return Ok(format!("{digits:0>5}.HK"));
+    }
+    let code =
+        crate::market::normalize_stock_code(raw).ok_or_else(|| "股票代码无效".to_string())?;
+    if code.ends_with(".HK") {
+        return Err("港股代码需要 market=hk".into());
+    }
+    Ok(code)
 }
 
 fn open(path: &Path) -> Result<Connection, String> {
@@ -87,12 +107,24 @@ fn connection(app: &AppHandle) -> Result<Connection, String> {
             .join("research/sentiment.sqlite"),
     )
 }
-fn generation(app: &AppHandle) -> Result<String, String> {
-    research::with_app_store(app, |store| store.sentiment_generation())
+fn market(payload: &Value) -> Result<&'static str, String> {
+    match payload
+        .get("market")
+        .and_then(Value::as_str)
+        .unwrap_or("cn")
+    {
+        "cn" => Ok("cn"),
+        "hk" => Ok("hk"),
+        value => Err(format!("unsupported sentiment market: {value}")),
+    }
+}
+fn generation(app: &AppHandle, market: &str) -> Result<String, String> {
+    research::with_app_store_for_market(app, market, |store| store.sentiment_generation())
 }
 
 async fn freeze(app: AppHandle, payload: Value) -> Result<Value, String> {
     let stock = code(&payload)?;
+    let is_hk = payload.get("market").and_then(Value::as_str) == Some("hk");
     let window = payload
         .get("window_days")
         .and_then(Value::as_u64)
@@ -101,9 +133,21 @@ async fn freeze(app: AppHandle, payload: Value) -> Result<Value, String> {
         return Err("当前情绪分析窗口为30个自然日".into());
     }
     runtime::run_io_bound("sentiment_snapshot", move || {
-        let cutoff = now();
-        let data = crate::market::cached_market_data(&app)?;
-        research::with_app_store(&app, |store| {
+        let data = if is_hk {
+            let app_data = app
+                .path()
+                .app_data_dir()
+                .map_err(|error| format!("failed to resolve app data directory: {error}"))?;
+            let cache = crate::hk_market::read_hk_market_cache(
+                &crate::hk_market::hk_market_cache_path(&app_data),
+            )?;
+            serde_json::to_value(crate::hk_research::project_hk_market_data(&cache)?)
+                .map_err(|error| error.to_string())?
+        } else {
+            crate::market::cached_market_data(&app)?
+        };
+        research::with_app_store_for_market(&app, if is_hk { "hk" } else { "cn" }, |store| {
+            let cutoff = now();
             sentiment_data::build_snapshot(
                 &stock,
                 30,
@@ -129,6 +173,7 @@ pub(crate) async fn api_sentiment_snapshot(
 #[tauri::command]
 pub(crate) async fn api_sentiment_start(app: AppHandle, payload: Value) -> Result<Value, String> {
     let stock = code(&payload)?;
+    let market = market(&payload)?.to_string();
     let llm = payload.get("llm").ok_or("请先配置 API 模型，再分析情绪")?;
     let config = rig_runtime::normalize_provider_config(llm)?;
     rig_runtime::validate_provider_config(&config)?;
@@ -168,7 +213,7 @@ pub(crate) async fn api_sentiment_start(app: AppHandle, payload: Value) -> Resul
             runtime::run_io_bound("sentiment_save",move || {
                 let mut state=runs().lock().map_err(|_|"任务锁不可用")?;
                 if save_cancel.is_cancelled() || state.get(&save_id).is_some_and(|v|v["status"]=="cancelled") {return Err("已取消分析".into());}
-                analysis["stale"]=json!(generation(&save_app)?!=analysis["snapshot"]["generation"].as_str().unwrap_or(""));
+                analysis["stale"]=json!(generation(&save_app, &market)?!=analysis["snapshot"]["generation"].as_str().unwrap_or(""));
                 connection(&save_app)?.execute("INSERT INTO analyses(id,stock_code,generation,created_at,result_json) VALUES(?1,?2,?3,?4,?5)",params![save_id,stock,analysis["snapshot"]["generation"].as_str().unwrap_or(""),now(),analysis.to_string()]).map_err(|e|e.to_string())?;
                 if let Some(run)=state.get_mut(&save_id) {run["status"]=json!("completed");run["stage"]=json!("分析完成");run["progress"]=json!(100);run["result"]=analysis;}
                 Ok::<(),String>(())
@@ -235,14 +280,16 @@ fn mark_stale(current: &str, value: &mut Value) {
         );
     }
 }
-fn load_history(app: &AppHandle, stock: Option<&str>) -> Result<Vec<Value>, String> {
-    let current = generation(app)?;
+fn load_history(app: &AppHandle, stock: Option<&str>, market: &str) -> Result<Vec<Value>, String> {
+    let current = generation(app, market)?;
     let db = connection(app)?;
     let mut query = db
-        .prepare("SELECT result_json FROM analyses WHERE (?1 IS NULL OR stock_code=?1) ORDER BY created_at DESC LIMIT 30")
+        .prepare("SELECT result_json FROM analyses WHERE (?1 IS NULL OR stock_code=?1) AND ((?2='hk' AND stock_code LIKE '%.HK') OR (?2!='hk' AND stock_code NOT LIKE '%.HK')) ORDER BY created_at DESC LIMIT 30")
         .map_err(|e| e.to_string())?;
     let rows = query
-        .query_map([stock], |row| row.get::<_, String>(0))
+        .query_map(rusqlite::params![stock, market], |row| {
+            row.get::<_, String>(0)
+        })
         .map_err(|e| e.to_string())?;
     rows.map(|row| {
         let mut value: Value =
@@ -252,7 +299,7 @@ fn load_history(app: &AppHandle, stock: Option<&str>) -> Result<Vec<Value>, Stri
     })
     .collect()
 }
-fn code_list(payload: &Value) -> Result<Vec<String>, String> {
+fn code_list(payload: &Value, market: &str) -> Result<Vec<String>, String> {
     let list = payload
         .get("stock_codes")
         .and_then(Value::as_array)
@@ -263,7 +310,21 @@ fn code_list(payload: &Value) -> Result<Vec<String>, String> {
     let mut codes = Vec::new();
     for item in list {
         let Some(text) = item.as_str() else { continue };
-        let Some(code) = crate::market::normalize_stock_code(text) else {
+        let normalized = if market == "hk" {
+            let value = text.trim().to_ascii_uppercase();
+            value
+                .strip_suffix(".HK")
+                .or_else(|| value.strip_prefix("HK"))
+                .filter(|digits| {
+                    !digits.is_empty()
+                        && digits.len() <= 5
+                        && digits.bytes().all(|byte| byte.is_ascii_digit())
+                })
+                .map(|digits| format!("{digits:0>5}.HK"))
+        } else {
+            crate::market::normalize_stock_code(text).filter(|code| !code.ends_with(".HK"))
+        };
+        let Some(code) = normalized else {
             continue;
         };
         if !codes.contains(&code) {
@@ -272,11 +333,15 @@ fn code_list(payload: &Value) -> Result<Vec<String>, String> {
     }
     Ok(codes)
 }
-fn load_latest_for_codes(app: &AppHandle, codes: &[String]) -> Result<Vec<Value>, String> {
+fn load_latest_for_codes(
+    app: &AppHandle,
+    codes: &[String],
+    market: &str,
+) -> Result<Vec<Value>, String> {
     if codes.is_empty() {
         return Ok(Vec::new());
     }
-    let current = generation(app)?;
+    let current = generation(app, market)?;
     let db = connection(app)?;
     let placeholders = vec!["?"; codes.len()].join(",");
     let sql = format!(
@@ -309,17 +374,19 @@ fn load_latest_for_codes(app: &AppHandle, codes: &[String]) -> Result<Vec<Value>
 #[tauri::command]
 pub(crate) async fn api_sentiment_latest(app: AppHandle, payload: Value) -> Result<Value, String> {
     let stock = code(&payload)?;
+    let market = market(&payload)?.to_string();
     runtime::run_io_bound("sentiment_latest", move || {
-        Ok(json!({"analysis":load_history(&app,Some(&stock))?.into_iter().next()}))
+        Ok(json!({"analysis":load_history(&app,Some(&stock), &market)?.into_iter().next()}))
     })
     .await?
 }
 #[tauri::command]
 pub(crate) async fn api_sentiment_history(app: AppHandle, payload: Value) -> Result<Value, String> {
+    let market = market(&payload)?.to_string();
     if payload.get("stock_codes").is_some() {
-        let codes = code_list(&payload)?;
+        let codes = code_list(&payload, &market)?;
         return runtime::run_io_bound("sentiment_history_stages", move || {
-            Ok(json!({"items": load_latest_for_codes(&app, &codes)?}))
+            Ok(json!({"items": load_latest_for_codes(&app, &codes, &market)?}))
         })
         .await?;
     }
@@ -329,7 +396,7 @@ pub(crate) async fn api_sentiment_history(app: AppHandle, payload: Value) -> Res
         None
     };
     runtime::run_io_bound("sentiment_history", move || {
-        Ok(json!({"items":load_history(&app,stock.as_deref())?}))
+        Ok(json!({"items":load_history(&app,stock.as_deref(), &market)?}))
     })
     .await?
 }
@@ -380,6 +447,19 @@ pub(crate) async fn api_sentiment_followup(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sentiment_hk_codes_are_canonical_and_never_default_to_cn() {
+        assert_eq!(
+            code(&json!({"market":"hk", "stock_code":"700.HK"})).unwrap(),
+            "00700.HK"
+        );
+        assert_eq!(
+            code(&json!({"market":"hk", "stock_code":"HK700"})).unwrap(),
+            "00700.HK"
+        );
+        assert!(code(&json!({"market":"hk", "stock_code":"600000.SH"})).is_err());
+        assert!(code(&json!({"stock_code":"00700.HK"})).is_err());
+    }
     #[test]
     fn storage_is_separate_and_roundtrips_immutable_snapshot() {
         let path = std::env::temp_dir().join(format!("sentiment-test-{}.sqlite", id()));
