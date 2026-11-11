@@ -33,6 +33,7 @@ impl MarketId {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SecurityKind {
     OrdinaryShare,
+    ListedEquity,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
@@ -44,6 +45,11 @@ pub(crate) struct SecurityId {
 
 impl SecurityId {
     pub(crate) fn new(market: MarketId, code: &str, kind: SecurityKind) -> Result<Self, String> {
+        if kind == SecurityKind::ListedEquity && market != MarketId::Hk {
+            return Err(
+                "listed_equity security identity is only valid for the HK market".to_owned(),
+            );
+        }
         if code.len() != market.canonical_code_length()
             || !code.bytes().all(|byte| byte.is_ascii_digit())
         {
@@ -79,6 +85,7 @@ impl SecurityId {
             self.market.wire_value(),
             match self.kind {
                 SecurityKind::OrdinaryShare => "ordinary_share",
+                SecurityKind::ListedEquity => "listed_equity",
             },
             self.code
         )
@@ -247,6 +254,12 @@ pub(crate) enum CapabilityStatus {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct QuoteCoverageScope {
+    pub(crate) currency: String,
+    pub(crate) excluded_count: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct MarketCapability {
     pub(crate) market: MarketId,
     pub(crate) id: CapabilityId,
@@ -255,6 +268,8 @@ pub(crate) struct MarketCapability {
     pub(crate) coverage: Option<CoverageSummary>,
     #[serde(default)]
     pub(crate) sources: Vec<CapabilitySourceEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) quote_scope: Option<QuoteCoverageScope>,
 }
 
 #[cfg(test)]
@@ -389,6 +404,13 @@ mod tests {
     }
 
     #[test]
+    fn listed_equity_identity_is_hong_kong_only() {
+        let id = SecurityId::new(MarketId::Hk, "00700", SecurityKind::ListedEquity).unwrap();
+        assert_eq!(id.key(), "hk:listed_equity:00700");
+        assert!(SecurityId::new(MarketId::Cn, "600000", SecurityKind::ListedEquity).is_err());
+    }
+
+    #[test]
     fn market_contract_serialization_matches_shared_fixture() {
         let fixture: serde_json::Value =
             serde_json::from_str(include_str!("../testdata/market-domain-contract.json")).unwrap();
@@ -408,6 +430,7 @@ mod tests {
         let money = Money::new(12.5, CurrencyCode::new("HKD").unwrap()).unwrap();
         let quantity = Quantity::new(100.0, "share").unwrap();
         let capability = MarketCapability {
+            quote_scope: None,
             market: MarketId::Hk,
             id: CapabilityId::Observe,
             status: CapabilityStatus::Limited,

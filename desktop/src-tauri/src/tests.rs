@@ -189,6 +189,7 @@ fn hk_market_cache_uses_a_separate_file_and_preserves_cn_cache_bytes() {
         fx_rate: None,
         fx_error: None,
         disclosures: HashMap::new(),
+        quarterly_updates: HashMap::new(),
         financial_errors: HashMap::new(),
         disclosure_errors: HashMap::new(),
     };
@@ -199,9 +200,12 @@ fn hk_market_cache_uses_a_separate_file_and_preserves_cn_cache_bytes() {
         hk_path.file_name().and_then(|name| name.to_str()),
         Some("hk-market-data.json")
     );
+    let mut expected_cache = cache.clone();
+    expected_cache.securities[0].classification_status =
+        crate::hk_market::HkClassificationStatus::ExchangeListedEquity;
     assert_eq!(
         crate::hk_market::read_hk_market_cache(&hk_path).unwrap(),
-        cache
+        expected_cache
     );
     assert_eq!(std::fs::read(&cn_path).unwrap(), b"cn cache sentinel");
     std::fs::remove_dir_all(root).expect("temporary cache directory should be removed");
@@ -287,7 +291,14 @@ fn hk_legacy_cache_promotes_to_external_sqlite_and_stays_as_read_only_recovery_c
         HkQuote {
             code: "00700".into(),
             name: "Tencent".into(),
+            name_zh: None,
             price: 417.8,
+            price_semantics_version: 1,
+            previous_close: None,
+            open: None,
+            high: None,
+            low: None,
+            change: None,
             change_pct: Some(1.2),
             volume_shares: Some(100),
             turnover_hkd: Some(41780.0),
@@ -356,7 +367,14 @@ fn hk_legacy_migration_falls_back_per_domain_when_one_domain_fails() {
         HkQuote {
             code: "00700".into(),
             name: "Tencent".into(),
+            name_zh: None,
             price: 417.8,
+            price_semantics_version: 1,
+            previous_close: None,
+            open: None,
+            high: None,
+            low: None,
+            change: None,
             change_pct: Some(0.0),
             volume_shares: Some(100),
             turnover_hkd: Some(1000.0),
@@ -438,21 +456,25 @@ fn invalid_hkex_update_does_not_replace_the_last_valid_cache() {
         fx_rate: None,
         fx_error: None,
         disclosures: HashMap::new(),
+        quarterly_updates: HashMap::new(),
         financial_errors: HashMap::new(),
         disclosure_errors: HashMap::new(),
     };
     crate::hk_market::write_hk_market_cache(&path, &cache).unwrap();
+    let mut expected_cache = cache.clone();
+    expected_cache.securities[0].classification_status =
+        crate::hk_market::HkClassificationStatus::ExchangeListedEquity;
 
     assert!(
         crate::hk_market::update_hkex_security_cache(&path, b"invalid workbook", "new").is_err()
     );
     assert_eq!(
         crate::hk_market::read_hk_market_cache(&path).unwrap(),
-        cache
+        expected_cache
     );
     crate::hk_market::record_hkex_refresh_error(&path, "attempt", "HKEX unavailable").unwrap();
     let recorded = crate::hk_market::read_hk_market_cache(&path).unwrap();
-    assert_eq!(recorded.securities, cache.securities);
+    assert_eq!(recorded.securities, expected_cache.securities);
     assert_eq!(
         recorded.securities_last_attempt_at.as_deref(),
         Some("attempt")
@@ -480,9 +502,15 @@ fn tencent_hk_quote_keeps_hkd_and_share_units_without_a_share_multipliers() {
     assert_eq!(quote.turnover_hkd, Some(7_901_198_756.124));
     assert_eq!(quote.quote_time.as_deref(), Some("2026/10/16 16:08:22"));
     assert_eq!(quote.pe, Some(15.26));
-    assert_eq!(quote.pb, Some(3.11));
+    assert_eq!(quote.pb, Some(2.92));
     assert_eq!(quote.dividend_yield_percent, Some(1.27));
     assert_eq!(quote.total_shares, Some(9_092_644_829));
+    let fields = serde_json::to_value(&quote).unwrap();
+    assert_eq!(fields["previous_close"], 417.8);
+    assert_eq!(fields["open"], 424.0);
+    assert_eq!(fields["high"], 428.8);
+    assert_eq!(fields["low"], 415.8);
+    assert_eq!(fields["change"], 0.0);
 }
 
 #[test]
@@ -518,6 +546,12 @@ fn hk_observation_merge_keeps_history_when_quote_refresh_fails() {
     cache.histories.insert(
         "00700".to_string(),
         HkHistoryRecord {
+            request_range: None,
+            request_ranges: Vec::new(),
+            price_adjustment: Default::default(),
+            bar_fetched_at: Default::default(),
+            revision_reason: None,
+            suspended_as_of: None,
             bars: vec![HkDailyBar {
                 date: "2026-10-16".to_string(),
                 open: 424.0,
@@ -535,14 +569,14 @@ fn hk_observation_merge_keeps_history_when_quote_refresh_fails() {
         &mut cache,
         "00700.HK",
         Err("quote offline".to_string()),
-        Ok(vec![HkDailyBar {
+        Ok(HkHistoryRecord { bars: vec![HkDailyBar {
             date: "2026-10-17".to_string(),
             open: 418.0,
             high: 420.0,
             low: 416.0,
             close: 419.0,
             volume_shares: Some(100),
-        }]),
+        }], source: "Tencent Finance".to_owned(), fetched_at: "new-fetch".to_owned(), ..Default::default() }),
         "new-fetch",
     );
     assert!(!result.quote_updated);
@@ -563,7 +597,14 @@ fn hk_observation_merge_keeps_quote_when_history_refresh_fails() {
         Ok(HkQuote {
             code: "00700".to_string(),
             name: "Tencent".to_string(),
+            name_zh: None,
             price: 419.0,
+            price_semantics_version: 1,
+            previous_close: None,
+            open: None,
+            high: None,
+            low: None,
+            change: None,
             change_pct: None,
             volume_shares: Some(100),
             turnover_hkd: Some(1000.0),
@@ -630,7 +671,7 @@ fn hk_quote_refresh_updates_cached_valuation_metrics_and_preserves_report_values
     assert_eq!(snapshot.revenue.value, Some(123.0));
     assert_eq!(snapshot.candidate_fetched_at, "candidate-at");
     assert_eq!(snapshot.pe.value, Some(15.26));
-    assert_eq!(snapshot.pb.value, Some(3.11));
+    assert_eq!(snapshot.pb.value, Some(2.92));
     assert_eq!(snapshot.dividend_yield.value, Some(1.27));
     assert_eq!(snapshot.market_cap.source, "Tencent Finance");
 }
@@ -672,8 +713,226 @@ fn hk_financial_fixture_preserves_period_disclosure_currency_and_metrics() {
     assert_eq!(snapshot.disclosed_at.as_deref(), Some("2026-08-25"));
     assert_eq!(snapshot.currency, "CNY");
     assert_eq!(snapshot.revenue.value, Some(401243000000.0));
-    assert_eq!(snapshot.eps.value, Some(12.639));
+    assert!((snapshot.eps.value.unwrap() - 12.639).abs() < 1e-9);
     assert_eq!(snapshot.roe.value, Some(9.966353785254));
+    assert_eq!(
+        snapshot.additional_metrics["revenue_yoy"].value,
+        Some(10.0725325491)
+    );
+    assert_eq!(
+        snapshot.additional_metrics["net_profit_yoy"].value,
+        Some(10.9672966559)
+    );
+    assert_eq!(
+        snapshot.additional_metrics["bps"].value,
+        Some(124.92561178447)
+    );
+}
+
+#[test]
+fn sina_hk_financial_fixture_parses_statement_values_and_preserves_units() {
+    let snapshot = parse_sina_hk_financial_snapshot(
+        include_str!("../testdata/sina-hk-financial.html"),
+        "00700.HK",
+        "sina-fetched-at",
+    )
+    .expect("Sina HK financial fixture should parse");
+
+    assert_eq!(snapshot.normalized_period, "2026H1");
+    assert_eq!(snapshot.report_date.as_deref(), Some("2026-06-30"));
+    assert_eq!(snapshot.disclosed_at.as_deref(), Some("2026-08-25"));
+    assert_eq!(snapshot.revenue.value, Some(401_243_000_000.0));
+    assert_eq!(snapshot.revenue.currency, "HKD");
+    assert_eq!(snapshot.net_profit.value, Some(117_369_000_000.0));
+    assert!((snapshot.eps.value.unwrap() - 12.639).abs() < 1e-9);
+    assert_eq!(snapshot.eps.unit, "currency/share");
+    assert_eq!(
+        snapshot.additional_metrics["revenue_yoy"].value,
+        Some(10.07)
+    );
+    assert_eq!(snapshot.additional_metrics["bps"].value, Some(124.925));
+    assert_eq!(snapshot.candidate_source, "Sina Finance HK statements");
+}
+
+#[test]
+fn hkex_quarterly_update_fixture_is_separate_from_the_h1_financial_snapshot() {
+    let update = parse_hkex_quarterly_update_text(
+        include_str!("../testdata/smoore-hkex-q3-update.txt"),
+        "06969.HK",
+        "Financial Update for the Period Ended 30 September 2026",
+        "2026-10-12",
+        "https://www1.hkexnews.hk/listedco/listconews/sehk/2026/1012/2026101201051.pdf",
+        "2026-11-07T10:00:00Z",
+    )
+    .expect("HKEX Q3 update should parse");
+
+    assert_eq!(update.code, "06969");
+    assert_eq!(update.period, "2026Q3");
+    assert_eq!(update.period_end, "2026-09-30");
+    assert_eq!(update.disclosed_at, "2026-10-12");
+    assert_eq!(update.currency, "CNY");
+    assert_eq!(update.unit, "million");
+    assert_eq!(update.audit_status, "unaudited");
+    assert_eq!(update.quarterly_revenue, Some(3946.2));
+    assert_eq!(update.quarterly_revenue_yoy_percent, Some(-6.0));
+    assert_eq!(update.quarterly_revenue_qoq_percent, Some(17.7));
+    assert_eq!(update.nine_month_revenue, Some(11155.1));
+    assert_eq!(update.nine_month_revenue_yoy_percent, Some(9.3));
+    assert_eq!(update.quarterly_net_profit, Some(365.1));
+    assert_eq!(update.quarterly_net_profit_yoy_percent, Some(15.2));
+    assert_eq!(update.quarterly_net_profit_qoq_percent, Some(18.0));
+    assert_eq!(update.nine_month_net_profit, Some(937.0));
+    assert_eq!(update.nine_month_net_profit_yoy_percent, Some(15.8));
+    assert_eq!(update.quarterly_total_comprehensive_income, Some(294.3));
+    assert_eq!(
+        update.quarterly_total_comprehensive_income_yoy_percent,
+        Some(3.6)
+    );
+    assert_eq!(
+        update.quarterly_total_comprehensive_income_qoq_percent,
+        Some(107.1)
+    );
+    assert_eq!(update.nine_month_total_comprehensive_income, Some(564.3));
+    assert_eq!(
+        update.nine_month_total_comprehensive_income_yoy_percent,
+        Some(-28.2)
+    );
+    assert!(update.source_url.ends_with("2026101201051.pdf"));
+}
+
+#[test]
+fn hkex_quarterly_search_selects_the_newest_q3_update_and_ignores_interim_results() {
+    let announcements = parse_hkex_quarterly_announcements(
+        include_str!("../testdata/hkex-quarterly-search.json"),
+        "06969.HK",
+    );
+
+    assert_eq!(announcements.len(), 1);
+    assert_eq!(
+        announcements[0].title,
+        "Financial Update for the Period Ended 30 September 2026"
+    );
+    assert_eq!(announcements[0].disclosed_at, "2026-10-12");
+    assert!(announcements[0].source_url.ends_with("2026101201051.pdf"));
+}
+
+#[test]
+fn hk_quarterly_update_refresh_preserves_the_last_good_update_on_provider_failure() {
+    let update = parse_hkex_quarterly_update_text(
+        include_str!("../testdata/smoore-hkex-q3-update.txt"),
+        "06969.HK",
+        "Financial Update for the Period Ended 30 September 2026",
+        "2026-10-12",
+        "https://www1.hkexnews.hk/listedco/listconews/sehk/2026/1012/2026101201051.pdf",
+        "initial-fetch",
+    )
+    .unwrap();
+    let mut cache = hk_test_cache();
+    let mut financial_snapshot = parse_hk_financial_snapshot(
+        include_str!("../testdata/eastmoney-hk-financial.json"),
+        "00700.HK",
+        "h1-fetch",
+    )
+    .unwrap();
+    financial_snapshot.code = "06969".to_string();
+    cache
+        .financials
+        .insert("06969".to_string(), financial_snapshot);
+    let financial_before_quarterly_refresh = build_hk_financial_result(&cache, "06969");
+
+    merge_hk_quarterly_update_refresh(
+        &mut cache,
+        "06969.HK",
+        Ok(Some(update.clone())),
+        "first-check",
+    );
+    merge_hk_quarterly_update_refresh(
+        &mut cache,
+        "06969.HK",
+        Err("HKEX request timed out".to_string()),
+        "second-check",
+    );
+
+    assert_eq!(cache.quarterly_updates["06969"].update, Some(update));
+    assert_eq!(cache.quarterly_updates["06969"].checked_at, "second-check");
+    assert_eq!(
+        cache.quarterly_updates["06969"].error.as_deref(),
+        Some("HKEX request timed out")
+    );
+    let result = build_hk_financial_result(&cache, "06969");
+    assert_eq!(result.quarterly_update.as_ref().unwrap().period, "2026Q3");
+    assert_eq!(result.stale, financial_before_quarterly_refresh.stale);
+    assert_eq!(
+        result.field_errors,
+        financial_before_quarterly_refresh.field_errors
+    );
+    assert!(result.quarterly_update_error.is_some());
+    assert!(!result.field_errors.contains_key("quarterly_update"));
+}
+
+#[test]
+fn hk_quarterly_update_refresh_never_replaces_a_newer_cached_period() {
+    let current = parse_hkex_quarterly_update_text(
+        include_str!("../testdata/smoore-hkex-q3-update.txt"),
+        "06969.HK",
+        "Financial Update for the Period Ended 30 September 2026",
+        "2026-10-12",
+        "https://www1.hkexnews.hk/listedco/listconews/sehk/2026/1012/2026101201051.pdf",
+        "current-fetch",
+    )
+    .unwrap();
+    let mut older = current.clone();
+    older.period = "2025Q3".to_string();
+    older.period_end = "2025-09-30".to_string();
+    older.disclosed_at = "2025-10-12".to_string();
+    let mut cache = hk_test_cache();
+    merge_hk_quarterly_update_refresh(
+        &mut cache,
+        "06969.HK",
+        Ok(Some(current.clone())),
+        "current-check",
+    );
+
+    merge_hk_quarterly_update_refresh(&mut cache, "06969.HK", Ok(Some(older)), "stale-check");
+
+    assert_eq!(cache.quarterly_updates["06969"].update, Some(current));
+}
+
+#[test]
+fn hk_financial_sources_keep_eastmoney_values_and_fill_missing_same_period_fields_from_sina() {
+    let mut eastmoney = parse_hk_financial_snapshot(
+        include_str!("../testdata/eastmoney-hk-financial.json"),
+        "00700.HK",
+        "eastmoney-at",
+    )
+    .unwrap();
+    eastmoney.net_profit.value = None;
+    eastmoney.additional_metrics.remove("gross_margin");
+    let sina = parse_sina_hk_financial_snapshot(
+        include_str!("../testdata/sina-hk-financial.html"),
+        "00700.HK",
+        "sina-at",
+    )
+    .unwrap();
+
+    let merged = merge_hk_financial_candidates(Ok(eastmoney), Ok(sina)).unwrap();
+
+    assert_eq!(merged.revenue.value, Some(401_243_000_000.0));
+    assert!(merged.revenue.source.contains("Eastmoney"));
+    assert_eq!(merged.net_profit.value, Some(117_369_000_000.0));
+    assert!(merged.net_profit.source.contains("Sina"));
+    assert_eq!(merged.additional_metrics["gross_margin"].value, Some(57.24));
+    assert!(merged.additional_metrics["gross_margin"]
+        .source
+        .contains("Sina"));
+    assert!(merged.candidate_source.contains("Eastmoney"));
+    assert!(merged.candidate_source.contains("Sina"));
+    assert_eq!(merged.candidate_fetched_at, "eastmoney-at");
+    assert_eq!(
+        merged.supplemental_source.as_deref(),
+        Some("Sina Finance HK statements")
+    );
+    assert_eq!(merged.supplemental_fetched_at.as_deref(), Some("sina-at"));
 }
 
 #[test]
@@ -684,7 +943,7 @@ fn hk_financial_providers_build_code_scoped_endpoints_and_reject_invalid_codes()
     let disclosure_url = hkex_disclosure_endpoint("00700.HK").unwrap();
     assert!(disclosure_url.contains("name=00700"));
     assert!(disclosure_url.contains("market=SEHK"));
-    assert!(eastmoney_hk_financial_endpoint("700").is_err());
+    assert!(eastmoney_hk_financial_endpoint("not-a-hk-code").is_err());
     assert!(hkex_disclosure_endpoint("600000.SH").is_err());
 }
 
@@ -720,7 +979,7 @@ fn hk_financial_refresh_enriches_valuation_fields_from_the_cached_hk_quote() {
     );
     let snapshot = &cache.financials["00700"];
     assert_eq!(snapshot.pe.value, Some(15.26));
-    assert_eq!(snapshot.pb.value, Some(3.11));
+    assert_eq!(snapshot.pb.value, Some(2.92));
     assert_eq!(snapshot.dividend_yield.value, Some(1.27));
     assert_eq!(snapshot.dividend_yield.unit, "percent");
     assert_eq!(snapshot.market_cap.currency, "HKD");
@@ -994,6 +1253,52 @@ fn hk_financial_refresh_merge_keeps_each_success_independently() {
 }
 
 #[test]
+fn hk_manual_financial_refresh_keeps_same_period_company_metadata_after_profile_failure() {
+    let mut cache = hk_test_cache();
+    let mut previous = parse_hk_financial_snapshot(
+        include_str!("../testdata/eastmoney-hk-financial.json"),
+        "00700.HK",
+        "old-at",
+    )
+    .unwrap();
+    previous.company_profile = Some(crate::hk_market::HkCompanyProfile {
+        code: "00700".to_owned(),
+        name: "腾讯控股有限公司".to_owned(),
+        name_zh: Some("腾讯控股".to_owned()),
+        industry: "软件服务".to_owned(),
+        business_summary: "提供互联网服务。".to_owned(),
+        source: "Eastmoney HK company profile".to_owned(),
+        fetched_at: "old-at".to_owned(),
+    });
+    let expected_profile = previous.company_profile.clone();
+    cache.financials.insert("00700".to_owned(), previous);
+    let mut refreshed = parse_hk_financial_snapshot(
+        include_str!("../testdata/eastmoney-hk-financial.json"),
+        "00700.HK",
+        "new-at",
+    )
+    .unwrap();
+    refreshed.field_errors.insert(
+        "company_profile".to_owned(),
+        "profile request failed".to_owned(),
+    );
+    let merged = merge_hk_financial_refresh(
+        &mut cache,
+        "00700.HK",
+        Ok(refreshed),
+        Err("fx unavailable".to_owned()),
+        Err("disclosure unavailable".to_owned()),
+    );
+    assert!(merged.snapshot_updated);
+    assert_eq!(cache.financials["00700"].company_profile, expected_profile);
+    assert_eq!(cache.financials["00700"].candidate_fetched_at, "new-at");
+    assert_eq!(
+        cache.financials["00700"].field_errors["company_profile"],
+        "profile request failed"
+    );
+}
+
+#[test]
 fn hk_financial_cache_sections_survive_atomic_write_and_reload() {
     let root = std::env::temp_dir().join(format!(
         "gp-assistant-hk-financial-cache-{}-{}",
@@ -1035,6 +1340,23 @@ fn hk_financial_cache_sections_survive_atomic_write_and_reload() {
             error: None,
         },
     );
+    let update = parse_hkex_quarterly_update_text(
+        include_str!("../testdata/smoore-hkex-q3-update.txt"),
+        "06969.HK",
+        "Financial Update for the Period Ended 30 September 2026",
+        "2026-10-12",
+        "https://www1.hkexnews.hk/listedco/listconews/sehk/2026/1012/2026101201051.pdf",
+        "update-fetch",
+    )
+    .unwrap();
+    cache.quarterly_updates.insert(
+        "06969".to_string(),
+        HkQuarterlyUpdateRecord {
+            update: Some(update),
+            checked_at: "update-check".to_string(),
+            error: None,
+        },
+    );
 
     write_hk_market_cache(&path, &cache).unwrap();
 
@@ -1058,6 +1380,7 @@ fn hk_test_cache() -> HkMarketCache {
         fx_rate: None,
         fx_error: None,
         disclosures: HashMap::new(),
+        quarterly_updates: HashMap::new(),
         financial_errors: HashMap::new(),
         disclosure_errors: HashMap::new(),
     }

@@ -25,6 +25,7 @@ mod cn_market;
 mod evolution;
 mod gepa_lab;
 mod hk_market;
+mod hk_research;
 mod llm;
 mod market;
 mod market_capabilities;
@@ -141,8 +142,10 @@ pub fn run() {
             market::api_market_ingest_tencent_quotes,
             market::api_market_clear_cache,
             hk_market::api_hk_market_status,
+            hk_market::api_hk_network_probe,
             hk_market::api_hk_market_refresh,
             hk_market::api_hk_stock_search,
+            hk_market::api_hk_confirm_ordinary_share,
             hk_market::api_hk_observe,
             hk_market::api_hk_financial_status,
             hk_market::api_hk_financial_refresh,
