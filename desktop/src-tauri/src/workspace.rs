@@ -36,7 +36,7 @@ fn only_fields(value: &Map<String, Value>, fields: &[&str]) -> bool {
     value.keys().all(|key| fields.contains(&key.as_str()))
 }
 fn value_limit(key: &str) -> usize {
-    if key == "agent.conversations" {
+    if matches!(key, "agent.conversations" | "hk.agent.conversations") {
         MAX_TOTAL as usize
     } else {
         MAX_VALUE
@@ -72,7 +72,12 @@ fn validate_value(key: &str, value: &Value) -> Result<String, String> {
     if key.len() > 280 || key.chars().any(char::is_control) {
         return Err(err("invalid key"));
     }
+    let original_key = key;
+    let key = if key == "hk.backtest.source" { "app.backtest.source" } else { key.strip_prefix("hk.")
+        .filter(|key| ["news.", "agent.", "backtest."].iter().any(|prefix| key.starts_with(prefix)))
+        .unwrap_or(key) };
     let valid = match key {
+        "app.market" => value == "cn" || value == "hk",
         "app.view" => value
             .as_str()
             .is_some_and(|v| ["screen", "observe", "backtest", "news", "agent"].contains(&v)),
@@ -178,7 +183,7 @@ fn validate_value(key: &str, value: &Value) -> Result<String, String> {
         return Err(err("unknown key or invalid value; original retained"));
     }
     let json = serde_json::to_string(value).map_err(err)?;
-    if json.len() > value_limit(key) {
+    if json.len() > value_limit(original_key) {
         return Err(err(
             "JSON value exceeds storage limit; content was not truncated",
         ));
@@ -417,6 +422,23 @@ mod tests {
         assert_eq!(saved.values["news.question"], "unsent");
     }
     #[test]
+    fn hk_backtest_source_saves_without_poisoning_other_workspace_edits() {
+        let root = Scratch::new();
+        let mut db = open_workspace(&root.0).unwrap();
+        commit_changes(&mut db, patch(0, json!({
+            "app.backtest.source":"criteria", "hk.backtest.source":"watchlist"
+        }))).unwrap();
+        commit_changes(&mut db, patch(1, json!({"news.question":"later draft"}))).unwrap();
+        drop(db);
+        let saved = read_snapshot(&mut open_workspace(&root.0).unwrap()).unwrap();
+        assert_eq!(saved.values["app.backtest.source"], "criteria");
+        assert_eq!(saved.values["hk.backtest.source"], "watchlist");
+        assert_eq!(saved.values["news.question"], "later draft");
+        let mut db = open_workspace(&root.0).unwrap();
+        assert!(commit_changes(&mut db, patch(2,json!({"hk.backtest.source":"invalid"}))).is_err());
+        assert_eq!(read_snapshot(&mut db).unwrap().revision,2);
+    }
+    #[test]
     fn workspace_rejects_future_unknown_corrupt_and_oversized_without_replacement() {
         let root = Scratch::new();
         let path = root.0.join("client-state.sqlite");
@@ -489,5 +511,18 @@ mod tests {
         assert_eq!(restored.values["agent.conversations"], conversations);
         assert_eq!(restored.values["backtest.adaptiveSpec"], spec);
         assert!(commit_changes(&mut db,patch(1,json!({"backtest.adaptiveSpec":{"criteria":{"api_key":"secret"},"mode":"auto","horizon":"swing_10_30d","primary_limit":10,"exploration_limit":10,"run_id":"bad"}}))).is_err());
+    }
+
+    #[test]
+    fn workspace_restores_market_and_hong_kong_research_state_without_replacing_mainland_state() {
+        let root = Scratch::new();
+        let mut db = open_workspace(&root.0).unwrap();
+        let values = json!({"app.market":"hk","news.stock":"600519.SH","news.question":"A股草稿",
+            "hk.news.stock":"00700.HK","hk.news.question":"港股草稿","hk.news.thread":"hk-thread",
+            "hk.agent.active":"hk-chat","hk.agent.conversations":[],"hk.agent.draft:hk-chat":"港股未发送问题"});
+        commit_changes(&mut db, patch(0, values.clone())).unwrap();
+        drop(db);
+        let restored = read_snapshot(&mut open_workspace(&root.0).unwrap()).unwrap();
+        assert_eq!(restored.values, values.as_object().unwrap().clone());
     }
 }

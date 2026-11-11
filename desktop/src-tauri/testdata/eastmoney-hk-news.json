@@ -1,0 +1,20 @@
+{
+  "result": {
+    "cmsArticleWebOld": [
+      {
+        "title": "Tencent Holdings announces quarterly results",
+        "content": "Tencent Holdings reported stronger quarterly revenue.",
+        "date": "2026-10-29 09:00:00",
+        "code": "202610291234567890",
+        "mediaName": "Eastmoney HK"
+      },
+      {
+        "title": "Unrelated market commentary",
+        "content": "General market coverage.",
+        "date": "2026-10-29 08:30:00",
+        "code": "202610291234567891",
+        "mediaName": "Eastmoney HK"
+      }
+    ]
+  }
+}

@@ -3293,7 +3293,7 @@ mod observation_snapshot_tests {
         assert_eq!(metadata["quote_as_of"], "20261030");
         assert_eq!(metadata["coverage"][1]["available_bars"], 750);
         assert_eq!(metadata["optional_data"]["financials"], true);
-        let legacy =
+        let mut legacy =
             gp_core::observe_with_data_value(json!({"data":data,"request":request()})).unwrap();
         let mut actual = tauri::async_runtime::block_on(run_observe_calculation_with_snapshot(
             Arc::clone(&typed),
@@ -3302,6 +3302,11 @@ mod observation_snapshot_tests {
             crate::perf_diagnostics::CacheStrategy::CacheOnly,
         ))
         .unwrap();
+        // The two calculations can cross a second; generation time is not part
+        // of the source snapshot whose financial and market semantics we compare.
+        assert!(actual["capital_evidence"]["generated_at"].as_str().is_some());
+        assert!(legacy["capital_evidence"]["generated_at"].as_str().is_some());
+        legacy["capital_evidence"]["generated_at"] = actual["capital_evidence"]["generated_at"].clone();
         assert_eq!(actual, legacy);
         assert_eq!(Arc::strong_count(&typed), 1);
         enrich_observe_stock_quote_fields_from_data(&mut actual, &data);

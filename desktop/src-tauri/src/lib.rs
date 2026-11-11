@@ -25,6 +25,7 @@ mod cn_market;
 mod evolution;
 mod gepa_lab;
 mod hk_market;
+mod hk_agent_research;
 mod hk_research;
 mod llm;
 mod market;

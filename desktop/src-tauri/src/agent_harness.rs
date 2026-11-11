@@ -178,6 +178,7 @@ pub(crate) fn merge_model_response(
         );
     }
     let evidence_count = build_evidence_catalog(&tool_response).len();
+    let hk_analysis = tool_response.get("market").and_then(Value::as_str) == Some("hk");
     let target = tool_response
         .as_object_mut()
         .ok_or_else(|| "agent tool response must be an object".to_string())?;
@@ -203,6 +204,9 @@ pub(crate) fn merge_model_response(
     };
     let reply = limit_chars(raw_reply, model_reply_limit);
     let sections = sanitized_sections(model_response.get("answer_sections"));
+    if hk_analysis {
+        crate::hk_agent_research::validate_model_analysis(&json!({"reply":reply.clone(),"answer_sections":sections.clone().unwrap_or_default()}),profile_id)?;
+    }
     validate_model_evidence(
         &json!({
             "reply": reply.clone(),

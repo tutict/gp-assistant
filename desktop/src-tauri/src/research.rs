@@ -21,6 +21,8 @@ use tauri::{Emitter, Manager};
 
 #[path = "research_recovery.rs"]
 mod recovery;
+#[path = "research_hk_cache.rs"]
+mod hk_cache;
 
 pub(crate) const RESEARCH_SCHEMA_VERSION: i64 = 3;
 const RESEARCH_PACK_SCHEMA_VERSION: i64 = 2;
@@ -47,6 +49,8 @@ pub(crate) struct ResearchMessage {
     pub source_tier: String,
     pub source_name: String,
     pub published_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
     pub unread: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope_type: Option<String>,
@@ -206,6 +210,16 @@ impl ResearchStore {
                 .map_err(|error| format!("failed to encode relation types: {error}"))?;
             let metadata_json = document_metadata(document).to_string();
             let content_hash = sha256_hex(content.as_bytes());
+            // Revocation applies to the logical source, including versions retained
+            // for saved citations. Public cache refreshes still respect user consent.
+            if !remote_export_allowed {
+                transaction.execute(
+                    "UPDATE documents SET remote_export_allowed=0, updated_at_epoch_ms=?3
+                     WHERE (id=?1 OR substr(id,1,length(?1)+10)=?1 || ':revision:')
+                       AND (?2=1 OR user_imported=0) AND remote_export_allowed<>0",
+                    params![document_id, user_imported, imported_at],
+                ).map_err(|error| format!("failed to revoke retained source permission: {error}"))?;
+            }
             let existing_document = transaction
                 .query_row(
                     "SELECT content_hash, cited_count FROM documents WHERE id = ?1",
@@ -277,7 +291,19 @@ impl ResearchStore {
                         title=excluded.title, content=excluded.content,
                         source_tier=excluded.source_tier, source_name=excluded.source_name,
                         url=excluded.url, published_at=excluded.published_at,
-                        updated_at_epoch_ms=excluded.updated_at_epoch_ms,
+                        updated_at_epoch_ms=CASE WHEN documents.title IS excluded.title
+                            AND documents.content_hash IS excluded.content_hash
+                            AND documents.content IS excluded.content
+                            AND documents.source_tier IS excluded.source_tier
+                            AND documents.source_name IS excluded.source_name
+                            AND documents.url IS excluded.url
+                            AND documents.published_at IS excluded.published_at
+                            AND documents.metadata_json IS excluded.metadata_json
+                            AND ?14=1
+                            AND documents.user_imported=MAX(documents.user_imported,excluded.user_imported)
+                            AND documents.remote_export_allowed=CASE WHEN excluded.user_imported=1 THEN excluded.remote_export_allowed
+                                WHEN documents.user_imported=1 THEN documents.remote_export_allowed ELSE excluded.remote_export_allowed END
+                            THEN documents.updated_at_epoch_ms ELSE excluded.updated_at_epoch_ms END,
                         content_hash=excluded.content_hash,
                         user_imported=MAX(documents.user_imported, excluded.user_imported),
                         remote_export_allowed=CASE WHEN excluded.user_imported = 1 THEN excluded.remote_export_allowed WHEN documents.user_imported = 1 THEN documents.remote_export_allowed ELSE excluded.remote_export_allowed END,
@@ -296,7 +322,8 @@ impl ResearchStore {
                         user_imported,
                         remote_export_allowed,
                         bool_field(document, "pinned"),
-                        metadata_json
+                        metadata_json,
+                        derived_metadata_unchanged
                     ],
                 )
                 .map_err(|error| format!("failed to store research document: {error}"))?;
@@ -321,6 +348,7 @@ impl ResearchStore {
                     published_at.as_deref(),
                     &content,
                     &stock_codes,
+                    &metadata_json,
                     imported_at,
                 )?;
                 invalidate_vector_cache(&self.path);
@@ -416,7 +444,7 @@ impl ResearchStore {
                             document_id,
                             message_stock,
                             title,
-                            excerpt(&content, 180),
+                            message_summary_with_metadata(&title, &content, &metadata_json),
                             sentiment,
                             source_tier,
                             published_at,
@@ -665,6 +693,193 @@ impl ResearchStore {
         self.query_with_vector(request, None)
     }
 
+    pub(crate) fn agent_evidence(&self, request: &Value) -> Result<Value, String> {
+        let stock_code = request.get("stock_code").and_then(Value::as_str)
+            .filter(|code| code.len() == 8 && code.ends_with(".HK")
+                && code.as_bytes()[..5].iter().all(u8::is_ascii_digit))
+            .ok_or_else(|| "canonical HK stock_code is required (for example 00700.HK)".to_string())?;
+        self.agent_evidence_for_scope(request, Some(stock_code))
+    }
+
+    pub(crate) fn unscoped_hk_agent_evidence(&self, request: &Value) -> Result<Value, String> {
+        self.agent_evidence_for_scope(request, None)
+    }
+
+    fn agent_evidence_for_scope(&self, request: &Value, stock_code: Option<&str>) -> Result<Value, String> {
+        let query = string_field(request, "query").unwrap_or_default();
+        if query.trim().is_empty() {
+            return Err("query is required".to_string());
+        }
+        if request.get("market").is_some_and(|market| market.as_str() != Some("hk")) {
+            return Err("agent evidence supports only the hk market".to_string());
+        }
+        let top_k = request.get("top_k").and_then(Value::as_u64).unwrap_or(16).clamp(1, 16) as usize;
+        let remote_safe_only = bool_field(request, "remote_safe_only");
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(|error| format!("failed to read agent evidence snapshot: {error}"))?;
+
+        // Recent documents guarantee source coverage even when the question's keywords
+        // occur only in news. Keyword hits select the relevant original chunk instead.
+        let mut candidates = HashMap::<String, AgentEvidenceCandidate>::new();
+        let mut recent = transaction.prepare(
+            "WITH scoped AS (
+                SELECT documents.id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY CASE WHEN documents.source_tier IN ('news', 'news_media') THEN 'news' ELSE documents.source_tier END
+                        ORDER BY documents.published_at DESC, documents.updated_at_epoch_ms DESC, documents.id
+                    ) AS recency
+                FROM documents JOIN chunks ON chunks.document_id = documents.id AND chunks.ordinal = 0
+                WHERE json_extract(documents.metadata_json, '$.news_cache_duplicate_of') IS NULL
+                  AND (json_extract(documents.metadata_json, '$.market') IS NULL OR json_extract(documents.metadata_json, '$.market') = 'hk')
+                  AND (?2 = 0 OR documents.remote_export_allowed = 1)
+                  AND (?1 IS NULL OR EXISTS (SELECT 1 FROM json_each(chunks.stock_codes_json) WHERE value = ?1))
+                  AND NOT EXISTS (SELECT 1 FROM json_each(chunks.stock_codes_json)
+                      WHERE type != 'text' OR value NOT GLOB '[0-9][0-9][0-9][0-9][0-9].HK')
+            )
+            SELECT chunks.id, chunks.document_id, chunks.title, chunks.content, chunks.page_number,
+                   chunks.source_tier, chunks.source_name, chunks.published_at, chunks.url,
+                   documents.remote_export_allowed, chunks.stock_codes_json, documents.metadata_json, 0.0
+                   , documents.content_hash, chunks.content_hash
+            FROM scoped JOIN documents ON documents.id = scoped.id
+            JOIN chunks ON chunks.document_id = documents.id AND chunks.ordinal = 0
+            WHERE scoped.recency <= 48"
+        ).map_err(|error| format!("failed to prepare recent agent evidence: {error}"))?;
+        let rows = recent.query_map(params![stock_code, remote_safe_only as i64], agent_evidence_candidate)
+            .map_err(|error| format!("failed to read recent agent evidence: {error}"))?;
+        for row in rows {
+            let candidate = row.map_err(|error| format!("failed to decode recent agent evidence: {error}"))?;
+            candidates.insert(candidate.document_id.clone(), candidate);
+        }
+        drop(recent);
+        let mut lexical = transaction.prepare(
+            "SELECT chunks.id, chunks.document_id, chunks.title, chunks.content, chunks.page_number,
+                    chunks.source_tier, chunks.source_name, chunks.published_at, chunks.url,
+                    documents.remote_export_allowed, chunks.stock_codes_json, documents.metadata_json,
+                    -bm25(chunks_fts, 0.0, 3.0, 2.0, 1.0), documents.content_hash, chunks.content_hash
+             FROM chunks_fts JOIN chunks ON chunks.id = chunks_fts.chunk_id
+             JOIN documents ON documents.id = chunks.document_id
+             WHERE chunks_fts MATCH ?1
+               AND json_extract(documents.metadata_json, '$.news_cache_duplicate_of') IS NULL
+               AND (json_extract(documents.metadata_json, '$.market') IS NULL OR json_extract(documents.metadata_json, '$.market') = 'hk')
+               AND (?3 = 0 OR documents.remote_export_allowed = 1)
+               AND (?2 IS NULL OR EXISTS (SELECT 1 FROM json_each(chunks.stock_codes_json) WHERE value = ?2))
+               AND NOT EXISTS (SELECT 1 FROM json_each(chunks.stock_codes_json)
+                   WHERE type != 'text' OR value NOT GLOB '[0-9][0-9][0-9][0-9][0-9].HK')
+             ORDER BY bm25(chunks_fts, 0.0, 3.0, 2.0, 1.0), chunks.ordinal, chunks.id
+             LIMIT 128"
+        ).map_err(|error| format!("failed to prepare lexical agent evidence: {error}"))?;
+        let rows = lexical.query_map(params![build_fts_match_query(&query), stock_code, remote_safe_only as i64], agent_evidence_candidate)
+            .map_err(|error| format!("failed to read lexical agent evidence: {error}"))?;
+        for row in rows {
+            let candidate = row.map_err(|error| format!("failed to decode lexical agent evidence: {error}"))?;
+            match candidates.entry(candidate.document_id.clone()) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    if candidate.lexical_score > entry.get().lexical_score { entry.insert(candidate); }
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => { entry.insert(candidate); }
+            }
+        }
+        drop(lexical);
+        transaction.commit().map_err(|error| format!("failed to finish agent evidence snapshot: {error}"))?;
+
+        let mut ranked = candidates.into_values().collect::<Vec<_>>();
+        ranked.sort_by(|left, right| {
+            (right.lexical_score > 0.0).cmp(&(left.lexical_score > 0.0))
+                .then_with(|| right.published_at.cmp(&left.published_at))
+                .then_with(|| right.lexical_score.total_cmp(&left.lexical_score))
+                .then_with(|| left.document_id.cmp(&right.document_id))
+        });
+        let mut selected = Vec::new();
+        let mut selected_ids = HashSet::new();
+        for group in ["filing", "financial_snapshot", "news"] {
+            if selected.len() >= top_k { break; }
+            if let Some(candidate) = ranked.iter().find(|candidate| agent_source_group(candidate.citation["source_tier"].as_str().unwrap_or_default()) == group) {
+                selected_ids.insert(candidate.document_id.clone());
+                selected.push(candidate.citation.clone());
+            }
+        }
+        for candidate in ranked {
+            if selected.len() >= top_k { break; }
+            if selected_ids.insert(candidate.document_id) { selected.push(candidate.citation); }
+        }
+        for (index, citation) in selected.iter_mut().enumerate() { citation["citation_id"] = json!(format!("C{}", index + 1)); }
+        let community_only = !selected.is_empty() && selected.iter().all(|item| item["source_tier"] == "community");
+        let answer = if selected.is_empty() {
+            "未找到足以支撑结论的本地证据。".to_string()
+        } else if community_only {
+            "当前只命中社区信息，不能单独作为事实结论；请补充公告、财务快照或可信新闻核验。".to_string()
+        } else {
+            selected.iter().map(|item| format!("[{}] {}", item["citation_id"].as_str().unwrap_or_default(), item["excerpt"].as_str().unwrap_or_default())).collect::<Vec<_>>().join("\n")
+        };
+        Ok(json!({"mode":"evidence_only","query":query.chars().take(2000).collect::<String>(),"stock_code":stock_code,"market":"hk",
+            "answer":answer,"citations":selected,"community_only":community_only,"fact_supported":!community_only && !selected.is_empty(),
+            "retrieval_mode":"scoped_sources_bm25_recency","remote_safe_only":remote_safe_only}))
+    }
+
+    pub(crate) fn validate_hk_context(&self, context: &Value, remote_safe_only: bool) -> Result<bool, String> {
+        let mut connection=self.connection()?;
+        let transaction=connection.transaction().map_err(|error|error.to_string())?;
+        self.validate_hk_context_in_connection(&transaction, context, remote_safe_only)
+    }
+
+    fn validate_hk_context_in_connection(&self, connection: &Connection, context: &Value, remote_safe_only: bool) -> Result<bool, String> {
+        let Some(code)=context.get("stock_code").and_then(Value::as_str)
+            .filter(|code|code.len()==8 && code.ends_with(".HK") && code.as_bytes()[..5].iter().all(u8::is_ascii_digit)) else {return Ok(false);};
+        if context.get("market").and_then(Value::as_str)!=Some("hk") {return Ok(false);}
+        let Some(evidence)=context.get("evidence").and_then(Value::as_array)
+            .filter(|evidence|!evidence.is_empty() && evidence.len()<=crate::hk_agent_research::MAX_EVIDENCE_ITEMS) else {return Ok(false);};
+        self.validate_hk_catalog(connection, evidence, Some(code), remote_safe_only)
+    }
+
+    fn validate_hk_catalog(&self, connection: &Connection, evidence: &[Value], code: Option<&str>, remote_safe_only: bool) -> Result<bool, String> {
+        let mut statement=connection.prepare(
+            "SELECT c.id,c.document_id,c.title,c.content,c.page_number,c.source_tier,c.source_name,c.published_at,c.url,
+                    d.remote_export_allowed,c.stock_codes_json,d.metadata_json,0.0,d.content_hash,c.content_hash
+             FROM chunks c JOIN documents d ON d.id=c.document_id
+             WHERE c.id=?1 AND d.id=?2
+               AND json_extract(d.metadata_json,'$.news_cache_duplicate_of') IS NULL
+               AND (json_extract(d.metadata_json,'$.market') IS NULL OR json_extract(d.metadata_json,'$.market')='hk')
+               AND (?3=0 OR d.remote_export_allowed=1)
+               AND (?4 IS NULL OR EXISTS(SELECT 1 FROM json_each(c.stock_codes_json) WHERE value=?4))
+               AND NOT EXISTS(SELECT 1 FROM json_each(c.stock_codes_json)
+                    WHERE type!='text' OR value NOT GLOB '[0-9][0-9][0-9][0-9][0-9].HK')"
+        ).map_err(|error|error.to_string())?;
+        let mut current=Vec::new();
+        for item in evidence {
+            let Some(document)=item.get("document_id").and_then(Value::as_str) else {return Ok(false);};
+            let Some(chunk)=item.get("chunk_id").and_then(Value::as_str) else {return Ok(false);};
+            if item.get("document_content_hash").and_then(Value::as_str).is_none()
+                || item.get("chunk_content_hash").and_then(Value::as_str).is_none() {return Ok(false);}
+            let Some(mut candidate)=statement.query_row(params![chunk,document,remote_safe_only as i64,code],agent_evidence_candidate)
+                .optional().map_err(|error|error.to_string())? else {return Ok(false);};
+            candidate.citation["citation_id"]=item.get("citation_id").cloned().unwrap_or_else(||json!(""));
+            current.push(candidate.citation);
+        }
+        drop(statement);
+        let source=json!({"citations":current});
+        let canonical=match code {
+            Some(code)=>crate::hk_agent_research::evidence_catalog(&source,code),
+            None=>crate::hk_agent_research::unscoped_evidence_catalog(&source),
+        };
+        Ok(canonical==evidence)
+    }
+
+    pub(crate) fn validate_hk_model_evidence(&self, snapshots: &[Value]) -> Result<bool, String> {
+        let mut connection=self.connection()?;
+        let transaction=connection.transaction().map_err(|error|error.to_string())?;
+        for snapshot in snapshots {
+            if snapshot.get("frozen_snapshot").and_then(Value::as_bool)==Some(true) {
+                let context=crate::hk_agent_research::context_from_frozen_evidence(snapshot);
+                if !self.validate_hk_context_in_connection(&transaction,&context,true)? {return Ok(false);}
+            } else {
+                let Some(citations)=snapshot.get("citations").and_then(Value::as_array) else {return Ok(false);};
+                let catalog=crate::hk_agent_research::unscoped_evidence_catalog(snapshot);
+                if catalog.len()!=citations.len() || !self.validate_hk_catalog(&transaction,&catalog,None,true)? {return Ok(false);}
+            }
+        }
+        Ok(true)
+    }
+
     pub(crate) fn query_with_vector(
         &self,
         request: &Value,
@@ -697,6 +912,7 @@ impl ResearchStore {
                  JOIN chunks ON chunks.id = chunks_fts.chunk_id
                  JOIN documents ON documents.id = chunks.document_id
                  WHERE chunks_fts MATCH ?1
+                   AND json_extract(documents.metadata_json, '$.news_cache_duplicate_of') IS NULL
                    AND (?3 = 0 OR documents.remote_export_allowed = 1)
                    AND (
                      ?2 IS NULL OR EXISTS (
@@ -979,7 +1195,10 @@ impl ResearchStore {
         let unread_count: i64 = if let Some(code) = stock_code.as_deref() {
             connection
                 .query_row(
-                    "SELECT COUNT(*) FROM research_messages WHERE unread = 1 AND stock_code = ?1",
+                    "SELECT COUNT(*) FROM research_messages messages
+                     JOIN documents ON documents.id = messages.document_id
+                     WHERE unread = 1 AND stock_code = ?1
+                       AND json_extract(documents.metadata_json, '$.news_cache_duplicate_of') IS NULL",
                     params![code],
                     |row| row.get(0),
                 )
@@ -987,7 +1206,10 @@ impl ResearchStore {
         } else {
             connection
                 .query_row(
-                    "SELECT COUNT(*) FROM research_messages WHERE unread = 1",
+                    "SELECT COUNT(*) FROM research_messages messages
+                     JOIN documents ON documents.id = messages.document_id
+                     WHERE unread = 1
+                       AND json_extract(documents.metadata_json, '$.news_cache_duplicate_of') IS NULL",
                     [],
                     |row| row.get(0),
                 )
@@ -996,8 +1218,10 @@ impl ResearchStore {
         let mut unread_by_stock = HashMap::new();
         let mut unread_statement = connection
             .prepare(
-                "SELECT stock_code, COUNT(*) FROM research_messages
+                "SELECT stock_code, COUNT(*) FROM research_messages messages
+                 JOIN documents ON documents.id = messages.document_id
                  WHERE unread = 1 AND stock_code IS NOT NULL AND stock_code != ''
+                   AND json_extract(documents.metadata_json, '$.news_cache_duplicate_of') IS NULL
                  GROUP BY stock_code",
             )
             .map_err(|error| format!("failed to prepare unread stock summary: {error}"))?;
@@ -1012,10 +1236,11 @@ impl ResearchStore {
             unread_by_stock.insert(code, count);
         }
         let document_count: i64 = connection
-            .query_row("SELECT COUNT(*) FROM documents", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM documents WHERE json_extract(metadata_json, '$.news_cache_duplicate_of') IS NULL", [], |row| row.get(0))
             .map_err(|error| format!("failed to count research documents: {error}"))?;
         let chunk_count: i64 = connection
-            .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM chunks JOIN documents ON documents.id = chunks.document_id
+                        WHERE json_extract(documents.metadata_json, '$.news_cache_duplicate_of') IS NULL", [], |row| row.get(0))
             .map_err(|error| format!("failed to count research chunks: {error}"))?;
         let updated_at_epoch_ms: Option<i64> = connection
             .query_row(
@@ -1029,7 +1254,9 @@ impl ResearchStore {
             .map_err(|error| format!("failed to read research refresh time: {error}"))?;
         let mut source_statement = connection
             .prepare(
-                "SELECT source_tier, COUNT(*) FROM documents GROUP BY source_tier
+                "SELECT source_tier, COUNT(*) FROM documents
+                 WHERE json_extract(metadata_json, '$.news_cache_duplicate_of') IS NULL
+                 GROUP BY source_tier
                  ORDER BY CASE source_tier
                     WHEN 'policy_official' THEN 1 WHEN 'filing' THEN 2
                     WHEN 'financial_snapshot' THEN 3 WHEN 'news_media' THEN 4
@@ -1086,10 +1313,11 @@ impl ResearchStore {
                 "SELECT messages.id, messages.document_id, messages.stock_code, messages.title,
                         messages.summary, messages.sentiment, messages.source_tier,
                         documents.source_name, messages.published_at, messages.unread,
-                        documents.metadata_json
+                        documents.metadata_json, documents.url, documents.content
                  FROM research_messages messages
                  JOIN documents ON documents.id = messages.document_id
                  WHERE (?1 IS NULL OR messages.stock_code = ?1)
+                   AND json_extract(documents.metadata_json, '$.news_cache_duplicate_of') IS NULL
                    AND (?2 = 0 OR messages.unread = 1)
                  ORDER BY COALESCE(messages.published_at, '') DESC, messages.created_at_epoch_ms DESC
                  LIMIT ?3 OFFSET ?4",
@@ -1097,16 +1325,22 @@ impl ResearchStore {
             .map_err(|error| format!("failed to prepare research messages: {error}"))?;
         let items = statement
             .query_map(params![stock_code, unread_only, limit, offset], |row| {
+                let title: String = row.get(3)?;
+                let content: String = row.get(12)?;
+                // Derive from full content so an old truncated headline does not
+                // hide the actual summary. Documents and saved citations stay intact.
+                let summary = message_summary_with_metadata(&title, &content, &row.get::<_,String>(10)?);
                 Ok(ResearchMessage {
                     id: row.get(0)?,
                     document_id: row.get(1)?,
                     stock_code: row.get(2)?,
-                    title: row.get(3)?,
-                    summary: row.get(4)?,
+                    title,
+                    summary,
                     sentiment: row.get(5)?,
                     source_tier: row.get(6)?,
                     source_name: row.get(7)?,
                     published_at: row.get(8)?,
+                    url: row.get(11)?,
                     unread: row.get::<_, i64>(9)? != 0,
                     scope_type: metadata_string(row.get::<_, String>(10)?, "scope_type"),
                     scope_tags: metadata_strings(row.get::<_, String>(10)?, "scope_tags"),
@@ -1522,6 +1756,7 @@ impl ResearchStore {
                  FROM documents d
                  LEFT JOIN chunks c ON c.document_id = d.id
                  LEFT JOIN embeddings e ON e.chunk_id = c.id
+                 WHERE json_extract(d.metadata_json, '$.news_cache_duplicate_of') IS NULL
                  GROUP BY d.id, d.title, d.source_tier, d.updated_at_epoch_ms
                  ORDER BY d.updated_at_epoch_ms DESC LIMIT 1000",
             )
@@ -1680,6 +1915,7 @@ impl ResearchStore {
                     d.imported_at_epoch_ms,d.updated_at_epoch_ms,d.metadata_json,c.sentiment,c.stock_codes_json
              FROM documents d JOIN chunks c ON c.id=(SELECT id FROM chunks WHERE document_id=d.id ORDER BY ordinal LIMIT 1)
              WHERE d.imported_at_epoch_ms<=?2 AND d.updated_at_epoch_ms<=?2
+               AND json_extract(d.metadata_json, '$.news_cache_duplicate_of') IS NULL
                AND (EXISTS(SELECT 1 FROM chunks sc,json_each(sc.stock_codes_json) code WHERE sc.document_id=d.id AND code.value=?1)
                     OR EXISTS(SELECT 1 FROM json_each(d.metadata_json,'$.mapped_stock_codes') code WHERE code.value=?1))
              ORDER BY d.published_at DESC,d.id LIMIT 10000"
@@ -1729,6 +1965,33 @@ impl ResearchStore {
 }
 
 fn open_app_store(app: &tauri::AppHandle) -> Result<ResearchStore, String> {
+    open_app_store_for_market(app, "cn")
+}
+
+pub(crate) fn market_from_payload(payload: &Value) -> Result<&'static str, String> {
+    match payload
+        .get("market")
+        .and_then(Value::as_str)
+        .unwrap_or("cn")
+    {
+        "cn" => Ok("cn"),
+        "hk" => Ok("hk"),
+        market => Err(format!("unsupported research market: {market}")),
+    }
+}
+
+fn research_database_path(research_dir: &Path, market: &str) -> Result<PathBuf, String> {
+    match market {
+        "cn" => Ok(research_dir.join("research.sqlite")),
+        "hk" => Ok(research_dir.join("research-hk.sqlite")),
+        other => Err(format!("unsupported research market: {other}")),
+    }
+}
+
+fn open_app_store_for_market(
+    app: &tauri::AppHandle,
+    market: &str,
+) -> Result<ResearchStore, String> {
     let migration_lock = LEGACY_MIGRATION_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = migration_lock
         .lock()
@@ -1740,8 +2003,16 @@ fn open_app_store(app: &tauri::AppHandle) -> Result<ResearchStore, String> {
     let research_dir = app_data.join("research");
     fs::create_dir_all(&research_dir)
         .map_err(|error| format!("failed to create research directory: {error}"))?;
-    let store = ResearchStore::open(research_dir.join("research.sqlite"))?;
-    migrate_legacy_sources(&store, &app_data)?;
+    let store = ResearchStore::open(research_database_path(&research_dir, market)?)?;
+    if market == "cn" {
+        migrate_legacy_sources(&store, &app_data)?;
+    } else {
+        // The local HK observation cache already contains currency-bearing reports.
+        // Make them searchable alongside news without requiring a second online fetch.
+        let cache = crate::hk_market::read_hk_market_cache(&crate::hk_market::hk_market_cache_path(&app_data))?;
+        store.ingest_documents(&hk_cache::documents(&cache, &[]))?;
+        ingest_news_cache_file_for_market(&store,&app_data.join("news").join("news-cache-hk.json"),crate::external_data::Market::HongKong)?;
+    }
     Ok(store)
 }
 
@@ -1751,6 +2022,17 @@ pub(crate) fn with_app_store<T>(
 ) -> Result<T, String> {
     with_recovered_app_database(app, || {
         let store = open_app_store(app)?;
+        operation(&store)
+    })
+}
+
+pub(crate) fn with_app_store_for_market<T>(
+    app: &tauri::AppHandle,
+    market: &str,
+    operation: impl FnOnce(&ResearchStore) -> Result<T, String>,
+) -> Result<T, String> {
+    with_recovered_app_database(app, || {
+        let store = open_app_store_for_market(app, market)?;
         operation(&store)
     })
 }
@@ -1766,6 +2048,18 @@ pub(crate) fn with_app_store_snapshot<T>(
     })
 }
 
+pub(crate) fn with_app_store_snapshot_for_market<T>(
+    app: &tauri::AppHandle,
+    market: &str,
+    operation: impl FnOnce(&ResearchStore) -> Result<T, String>,
+) -> Result<(u64, T), String> {
+    with_recovered_app_database(app, || {
+        let generation = APP_RESEARCH_DATABASE_GENERATION.load(AtomicOrdering::Acquire);
+        let store = open_app_store_for_market(app, market)?;
+        operation(&store).map(|result| (generation, result))
+    })
+}
+
 pub(crate) fn with_app_store_at_generation<T>(
     app: &tauri::AppHandle,
     expected_generation: u64,
@@ -1775,6 +2069,35 @@ pub(crate) fn with_app_store_at_generation<T>(
         ensure_app_database_generation(expected_generation)?;
         let store = open_app_store(app)?;
         operation(&store)
+    })
+}
+
+pub(crate) fn with_app_store_at_generation_for_market<T>(
+    app: &tauri::AppHandle,
+    expected_generation: u64,
+    market: &str,
+    operation: impl FnOnce(&ResearchStore) -> Result<T, String>,
+) -> Result<T, String> {
+    with_recovered_app_database(app, || {
+        ensure_app_database_generation(expected_generation)?;
+        let store = open_app_store_for_market(app, market)?;
+        operation(&store)
+    })
+}
+
+pub(crate) fn with_app_hk_model_evidence_send<T>(
+    app: &tauri::AppHandle,
+    expected_generation: u64,
+    snapshots: &[Value],
+    send: impl FnOnce() -> T,
+) -> Result<T, String> {
+    with_model_evidence_database_guard(|| {
+        ensure_app_database_generation(expected_generation)?;
+        let store = open_app_store_for_market(app, "hk")?;
+        if !store.validate_hk_model_evidence(snapshots)? {
+            return Err("研究资料、来源许可或证据库已经变化，请重新取证。".to_string());
+        }
+        Ok(send())
     })
 }
 
@@ -1823,20 +2146,133 @@ fn recover_research_files(research_dir: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn ingest_news_cache(app: &tauri::AppHandle) -> Result<Value, String> {
+    ingest_news_cache_for_market(app, "cn")
+}
+
+pub(crate) fn ingest_news_cache_for_market(
+    app: &tauri::AppHandle,
+    market: &str,
+) -> Result<Value, String> {
     let app_data = app
         .path()
         .app_data_dir()
         .map_err(|error| format!("failed to resolve app data directory: {error}"))?;
-    let path = app_data.join("news").join("news-cache.json");
-    with_app_store(app, |store| ingest_news_cache_file(store, &path))
+    let path = app_data.join("news").join(if market == "hk" {
+        "news-cache-hk.json"
+    } else {
+        "news-cache.json"
+    });
+    let news_market = if market == "hk" { crate::external_data::Market::HongKong } else { crate::external_data::Market::Global };
+    with_app_store_for_market(app, market, |store| ingest_news_cache_file_for_market(store, &path, news_market))
 }
 
+#[cfg(test)]
 fn ingest_news_cache_file(store: &ResearchStore, path: &Path) -> Result<Value, String> {
-    let documents = legacy_documents_from_file(path)?;
+    ingest_news_cache_file_for_market(store,path,crate::external_data::Market::Global)
+}
+
+fn ingest_news_cache_file_for_market(
+    store: &ResearchStore,
+    path: &Path,
+    market: crate::external_data::Market,
+) -> Result<Value, String> {
+    // Follow the news cache's authoritative storage, including its SQLite
+    // migration, instead of rereading the obsolete JSON recovery copy.
+    // Components normalize Windows slash spellings even when the JSON recovery
+    // file no longer exists, so filesystem canonicalization cannot be used.
+    let path = path.components().collect::<PathBuf>();
+    let items = crate::news_rag::read_news_cache_items_for_market(&path, market)?;
+    let fetched_at = items
+        .iter()
+        .filter_map(|item| item.get("fetched_at_epoch_ms").and_then(Value::as_i64))
+        .max();
+    let mut documents = Vec::new();
+    let mut duplicate_groups = Vec::new();
+    let connection = store.connection()?;
+    let mut existing = HashMap::new();
+    // Keep the raw spellings: PathBuf equality already considers the two slash
+    // forms equal, but the previous importer hashed their different strings.
+    let mut paths = HashSet::from([path.display().to_string()]);
+    {
+        let mut statement = connection
+            .prepare(
+                "SELECT id, imported_at_epoch_ms, json_extract(metadata_json, '$.legacy_path')
+             FROM documents WHERE json_type(metadata_json, '$.legacy_path') = 'text'",
+            )
+            .map_err(|error| format!("failed to inspect news cache identities: {error}"))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|error| format!("failed to query news cache identities: {error}"))?;
+        for row in rows {
+            let (id, imported_at, old_path) =
+                row.map_err(|error| format!("failed to read news cache identity: {error}"))?;
+            if Path::new(&old_path).components().collect::<PathBuf>() == path {
+                existing.insert(id, imported_at);
+                paths.insert(old_path);
+            }
+        }
+    }
+    for item in items {
+        validate_legacy_candidate_size(&item)?;
+        let permissions = item
+            .as_object()
+            .map(|item| {
+                ["user_imported", "remote_export_allowed"]
+                    .into_iter()
+                    .filter_map(|key| item.get(key).map(|value| (key, value.clone())))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if let Some(mut document) = normalize_legacy_document(item.clone(), &path, &[]) {
+            // Match both the former path spellings and news migrated from JSON
+            // without an item id. The oldest identity keeps its historical links.
+            let mut old_item = item.clone();
+            if let Some(fields) = old_item.as_object_mut() {
+                for key in ["document_id", "chunk_id", "id"] {
+                    fields.remove(key);
+                }
+            }
+            let mut matches = Vec::new();
+            for old_path in &paths {
+                for candidate in [&item, &old_item] {
+                    if let Some(candidate) =
+                        normalize_legacy_document(candidate.clone(), Path::new(old_path), &[])
+                    {
+                        let id = candidate["document_id"].as_str().unwrap();
+                        if let Some(imported_at) = existing.get(id) {
+                            matches.push((*imported_at, id.to_string(), old_path.clone()));
+                        }
+                    }
+                }
+            }
+            matches.sort();
+            matches.dedup_by(|left, right| left.1 == right.1);
+            if let Some((_, id, original_path)) = matches.first() {
+                document["document_id"] = json!(id);
+                document["metadata"]["legacy_path"] = json!(original_path);
+            }
+            if matches.len() > 1 {
+                duplicate_groups.push(matches.into_iter().map(|(_, id, _)| id).collect::<Vec<_>>());
+            }
+            for (key, value) in permissions {
+                document[key] = value;
+            }
+            documents.push(document);
+        }
+    }
+    drop(connection);
+    validate_portable_documents(&documents)?;
     let result = store.ingest_documents(&documents)?;
-    let refresh_epoch_ms = if path.exists() {
+    reconcile_news_cache_duplicates(store, &duplicate_groups)?;
+    let legacy_refresh_epoch_ms = if path.exists() {
         serde_json::from_slice::<Value>(
-            &fs::read(path)
+            &fs::read(&path)
                 .map_err(|error| format!("failed to read news cache refresh metadata: {error}"))?,
         )
         .ok()
@@ -1844,6 +2280,7 @@ fn ingest_news_cache_file(store: &ResearchStore, path: &Path) -> Result<Value, S
     } else {
         None
     };
+    let refresh_epoch_ms = fetched_at.into_iter().chain(legacy_refresh_epoch_ms).max();
     if let Some(refresh_epoch_ms) = refresh_epoch_ms {
         store
             .connection()?
@@ -1857,7 +2294,117 @@ fn ingest_news_cache_file(store: &ResearchStore, path: &Path) -> Result<Value, S
     Ok(result)
 }
 
+fn reconcile_news_cache_duplicates(
+    store: &ResearchStore,
+    groups: &[Vec<String>],
+) -> Result<(), String> {
+    if groups.is_empty() {
+        return Ok(());
+    }
+    let mut connection = store.connection()?;
+    let transaction = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|error| format!("failed to start news identity reconciliation: {error}"))?;
+    let mut changed = false;
+    for group in groups {
+        // The preceding import runs retention. Re-read live candidates after
+        // taking the write lock, since some pre-import identities may be gone.
+        let mut survivors = Vec::new();
+        for document_id in group {
+            let document = transaction
+                .query_row(
+                    "SELECT imported_at_epoch_ms, content_hash, metadata_json
+                     FROM documents WHERE id = ?1",
+                    params![document_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|error| format!("failed to read surviving news document: {error}"))?;
+            if let Some((imported_at, content_hash, metadata)) = document {
+                survivors.push((imported_at, document_id.clone(), content_hash, metadata));
+            }
+        }
+        survivors.sort();
+        let Some((_, canonical_id, canonical_hash, metadata)) = survivors.first() else {
+            continue;
+        };
+        let mut metadata: Value = serde_json::from_str(metadata)
+            .map_err(|error| format!("failed to decode canonical news metadata: {error}"))?;
+        if metadata
+            .as_object_mut()
+            .and_then(|fields| fields.remove("news_cache_duplicate_of"))
+            .is_some()
+        {
+            transaction
+                .execute(
+                    "UPDATE documents SET metadata_json=?2 WHERE id=?1",
+                    params![canonical_id, metadata.to_string()],
+                )
+                .map_err(|error| format!("failed to restore surviving news identity: {error}"))?;
+            changed = true;
+        }
+        for (_, duplicate_id, content_hash, metadata) in survivors.iter().skip(1) {
+            // Different cited content versions remain separate evidence.
+            if content_hash != canonical_hash {
+                continue;
+            }
+            let mut metadata: Value = serde_json::from_str(metadata)
+                .map_err(|error| format!("failed to decode duplicate news metadata: {error}"))?;
+            if metadata
+                .get("news_cache_duplicate_of")
+                .and_then(Value::as_str)
+                != Some(canonical_id.as_str())
+            {
+                metadata["news_cache_duplicate_of"] = json!(canonical_id);
+                transaction
+                    .execute(
+                        "UPDATE documents SET metadata_json = ?2 WHERE id = ?1",
+                        params![duplicate_id, metadata.to_string()],
+                    )
+                    .map_err(|error| {
+                        format!("failed to reconcile duplicate news identity: {error}")
+                    })?;
+                changed = true;
+            }
+            transaction
+                .execute(
+                    "UPDATE research_messages AS current
+                 SET unread = MIN(unread, COALESCE((
+                     SELECT MIN(previous.unread) FROM research_messages previous
+                     WHERE previous.document_id = ?2 AND previous.stock_code IS current.stock_code
+                 ), unread)) WHERE current.document_id = ?1",
+                    params![canonical_id, duplicate_id],
+                )
+                .map_err(|error| {
+                    format!("failed to preserve reconciled news read state: {error}")
+                })?;
+        }
+    }
+    // Alias documents and chunks are retained so saved citation ids still resolve.
+    transaction
+        .commit()
+        .map_err(|error| format!("failed to commit news identity reconciliation: {error}"))?;
+    if changed {
+        invalidate_vector_cache(&store.path);
+    }
+    Ok(())
+}
+
 pub(crate) fn export_app_pack(app: &tauri::AppHandle, payload: &Value) -> Result<Value, String> {
+    export_app_pack_for_market(app, payload, "cn")
+}
+
+pub(crate) fn export_app_pack_for_market(
+    app: &tauri::AppHandle,
+    payload: &Value,
+    market: &str,
+) -> Result<Value, String> {
     let app_data = app
         .path()
         .app_data_dir()
@@ -1868,9 +2415,15 @@ pub(crate) fn export_app_pack(app: &tauri::AppHandle, payload: &Value) -> Result
             app_data
                 .join("research")
                 .join("exports")
-                .join("research-pack-v2.sqlite")
+                .join(if market == "hk" {
+                    "research-pack-hk-v2.sqlite"
+                } else {
+                    "research-pack-v2.sqlite"
+                })
         });
-    with_app_store(app, |store| store.export_portable_pack(&destination))
+    with_app_store_for_market(app, market, |store| {
+        store.export_portable_pack(&destination)
+    })
 }
 
 pub(crate) fn import_app_pack(app: &tauri::AppHandle, payload: &Value) -> Result<Value, String> {
@@ -1879,6 +2432,69 @@ pub(crate) fn import_app_pack(app: &tauri::AppHandle, payload: &Value) -> Result
         open_app_store(app)?.reset_sentiment_generation()?;
         Ok(result)
     })
+}
+
+pub(crate) fn import_app_pack_for_market(
+    app: &tauri::AppHandle,
+    payload: &Value,
+    market: &str,
+) -> Result<Value, String> {
+    if market == "cn" {
+        return import_app_pack(app, payload);
+    }
+    if market != "hk" {
+        return Err(format!("unsupported research market: {market}"));
+    }
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("failed to resolve app data directory: {error}"))?;
+    let research_dir = app_data.join("research");
+    fs::create_dir_all(&research_dir)
+        .map_err(|error| format!("failed to create research directory: {error}"))?;
+    let mut temporary_source = None;
+    let source_path = if let Some(path) = string_field(payload, "path") {
+        PathBuf::from(path)
+    } else if let Some(encoded) = string_field(payload, "bytes_base64") {
+        use base64::{engine::general_purpose, Engine as _};
+        if encoded.len() > (MAX_PACK_BYTES as usize * 4 / 3 + 4) {
+            return Err("research pack exceeds the 64 MB safety limit".to_string());
+        }
+        let bytes = general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|error| format!("invalid research pack base64: {error}"))?;
+        if bytes.len() as u64 > MAX_PACK_BYTES {
+            return Err("research pack exceeds the 64 MB safety limit".to_string());
+        }
+        let path = research_dir.join(format!(
+            "incoming-hk-pack-{}-{}.sqlite",
+            epoch_millis(),
+            unique_suffix()
+        ));
+        crate::durability::atomic_write(&path, &bytes)?;
+        temporary_source = Some(path.clone());
+        path
+    } else {
+        return Err("path or bytes_base64 is required".to_string());
+    };
+    let result = read_portable_pack(&source_path).and_then(|documents| {
+        with_app_store_for_market(app, market, |store| {
+            let imported = store.ingest_documents(&documents)?;
+            store.reset_sentiment_generation()?;
+            Ok(json!({
+                "schema_version": RESEARCH_PACK_SCHEMA_VERSION,
+                "format": RESEARCH_PACK_FORMAT,
+                "document_count": documents.len(),
+                "imported": imported,
+                "fts_rebuilt": true,
+                "vectors_rebuild_required": cfg!(target_os = "windows")
+            }))
+        })
+    });
+    if let Some(path) = temporary_source {
+        let _ = fs::remove_file(path);
+    }
+    result
 }
 
 fn import_app_pack_unlocked(app: &tauri::AppHandle, payload: &Value) -> Result<Value, String> {
@@ -2527,7 +3143,7 @@ fn normalize_legacy_document(
     };
     let mut metadata = json!({"legacy_path": path.display().to_string()});
     if let Some(metadata_object) = metadata.as_object_mut() {
-        for key in ["scope_type", "scope_tags", "mapped_stock_codes"] {
+        for key in ["scope_type", "scope_tags", "mapped_stock_codes", "article_summary", "article_summary_status", "article_summary_url", "article_summary_fetched_at_epoch_ms"] {
             if let Some(value) = object.get(key) {
                 metadata_object.insert(key.to_string(), value.clone());
             }
@@ -2615,6 +3231,17 @@ fn with_shared_app_database<T>(operation: impl FnOnce() -> Result<T, String>) ->
     operation()
 }
 
+// Hold the existing database coordination boundary through request emission.
+// Unlike recovery/restore, this read-only operation does not change generation.
+pub(crate) fn with_model_evidence_database_guard<T>(
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let lock = APP_RESEARCH_DATABASE_LOCK.get_or_init(|| RwLock::new(()));
+    let _guard = lock.write()
+        .map_err(|_| "research database coordination lock is poisoned".to_string())?;
+    operation()
+}
+
 fn with_exclusive_app_database<T>(
     operation: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
@@ -2624,6 +3251,95 @@ fn with_exclusive_app_database<T>(
         .map_err(|_| "research database coordination lock is poisoned".to_string())?;
     APP_RESEARCH_DATABASE_GENERATION.fetch_add(1, AtomicOrdering::AcqRel);
     operation()
+}
+
+#[derive(Clone, Debug)]
+struct AgentEvidenceCandidate {
+    document_id: String,
+    published_at: Option<String>,
+    lexical_score: f64,
+    citation: Value,
+}
+
+fn agent_source_group(tier: &str) -> &str {
+    match tier { "news_media" | "news" => "news", other => other }
+}
+
+fn bounded_agent_metadata(value: &Value, budget: &mut usize, depth: usize) -> Option<Value> {
+    if depth > 6 || *budget < 4 { return None; }
+    match value {
+        Value::Object(object) => {
+            *budget -= 2;
+            let mut result = serde_json::Map::new();
+            let preferred = ["market", "report_period", "raw_report_period", "report_date", "period_end", "disclosed_at", "currency", "unit",
+                "verification_status", "audit_status", "metrics", "official_values", "verification_conflicts", "official_source_url",
+                "official_source_name", "fetched_at", "source_kind", "article_summary_status", "article_summary_url", "article_summary_fetched_at_epoch_ms"];
+            let keys = preferred.iter().filter_map(|key| object.get_key_value(*key))
+                .chain(object.iter().filter(|(key, _)| !preferred.contains(&key.as_str()))).take(48);
+            for (key, item) in keys {
+                if key.chars().count() > 128 { continue; }
+                let key_cost = serde_json::to_string(key).ok()?.chars().count() + 2;
+                if *budget < key_cost + 4 { break; }
+                *budget -= key_cost;
+                if let Some(item) = bounded_agent_metadata(item, budget, depth + 1) { result.insert(key.clone(), item); }
+            }
+            Some(Value::Object(result))
+        }
+        Value::Array(items) => {
+            *budget -= 2;
+            let mut result = Vec::new();
+            for item in items.iter().take(32) {
+                if *budget < 5 { break; }
+                *budget -= 1;
+                if let Some(item) = bounded_agent_metadata(item, budget, depth + 1) { result.push(item); }
+            }
+            Some(Value::Array(result))
+        }
+        Value::String(text) => {
+            let mut text = text.chars().take(1200).collect::<String>();
+            while serde_json::to_string(&text).ok()?.chars().count() > *budget { text.pop()?; }
+            *budget -= serde_json::to_string(&text).ok()?.chars().count();
+            Some(Value::String(text))
+        }
+        _ => {
+            let cost = value.to_string().chars().count();
+            if *budget < cost { None } else { *budget -= cost; Some(value.clone()) }
+        }
+    }
+}
+
+fn agent_evidence_candidate(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentEvidenceCandidate> {
+    let document_id: String = row.get(1)?;
+    let title: String = row.get(2)?;
+    let content: String = row.get(3)?;
+    let published_at: Option<String> = row.get(7)?;
+    let source_name: String = row.get(6)?;
+    let url: Option<String> = row.get(8)?;
+    let raw_metadata: String = row.get(11)?;
+    let metadata = serde_json::from_str::<Value>(&raw_metadata).unwrap_or_else(|_| json!({}));
+    let lexical_score: f64 = row.get(12)?;
+    let stock_codes: String = row.get(10)?;
+    let bounded_metadata = bounded_agent_metadata(&metadata, &mut 6000, 0).unwrap_or_else(|| json!({}));
+    let metadata_truncated = bounded_metadata != metadata;
+    let mut citation = json!({"citation_id":"","document_id":document_id,"chunk_id":row.get::<_, String>(0)?,
+        "title":title.chars().take(256).collect::<String>(),"excerpt":content.chars().take(1200).collect::<String>(),
+        "source_tier":row.get::<_, String>(5)?,"source_name":source_name.chars().take(128).collect::<String>(),
+        "published_at":published_at,"url":url.as_ref().map(|url| url.chars().take(2048).collect::<String>()),
+        "page_number":row.get::<_, Option<u32>>(4)?,"lexical_score":lexical_score,"vector_score":Value::Null,
+        "retrieval_score":lexical_score,"remote_export_allowed":row.get::<_, i64>(9)? != 0,
+        "document_content_hash":row.get::<_,String>(13)?,"chunk_content_hash":row.get::<_,String>(14)?,
+        "stock_codes":serde_json::from_str::<Value>(&stock_codes).unwrap_or_else(|_| json!([])),
+        "metadata":bounded_metadata});
+    if metadata_truncated { citation["metadata_truncated"] = json!(true); }
+    if let Some(summary) = metadata.get("article_summary").and_then(Value::as_str)
+        .filter(|text| text.chars().count() >= 15 && text.trim() != title.trim()) {
+        citation["article_summary"] = json!({"text":summary.chars().take(1200).collect::<String>(),
+            "provenance":"extracted_article_summary", "verification_status":"unverified_media_summary",
+            "status":metadata.get("article_summary_status").and_then(Value::as_str).unwrap_or("available").chars().take(64).collect::<String>(),
+            "url":metadata.get("article_summary_url").and_then(Value::as_str).or(url.as_deref()).map(|url|url.chars().take(2048).collect::<String>()),
+            "fetched_at_epoch_ms":metadata.get("article_summary_fetched_at_epoch_ms").and_then(Value::as_i64)});
+    }
+    Ok(AgentEvidenceCandidate {document_id, published_at, lexical_score, citation})
 }
 
 #[derive(Clone, Debug)]
@@ -2667,7 +3383,8 @@ fn load_vector_cache(
             "SELECT e.chunk_id, c.stock_codes_json, e.vector, e.dimensions,
                     d.remote_export_allowed
              FROM embeddings e JOIN chunks c ON c.id = e.chunk_id
-             JOIN documents d ON d.id = c.document_id",
+             JOIN documents d ON d.id = c.document_id
+             WHERE json_extract(d.metadata_json, '$.news_cache_duplicate_of') IS NULL",
         )
         .map_err(|error| format!("failed to prepare embedding cache: {error}"))?;
     let rows = statement
@@ -2841,6 +3558,7 @@ fn refresh_unchanged_document_metadata(
     published_at: Option<&str>,
     content: &str,
     stock_codes: &[String],
+    metadata_json: &str,
     imported_at: i64,
 ) -> Result<(), String> {
     let existing_messages = {
@@ -2950,7 +3668,7 @@ fn refresh_unchanged_document_metadata(
                     document_id,
                     message_stock,
                     title,
-                    excerpt(content, 180),
+                    message_summary_with_metadata(title, content, metadata_json),
                     sentiment,
                     source_tier,
                     published_at,
@@ -3557,6 +4275,40 @@ fn split_text(text: &str, target_chars: usize, overlap_chars: usize) -> Vec<Stri
     chunks
 }
 
+fn message_summary_with_metadata(title: &str, content: &str, metadata_json: &str) -> String {
+    if let Ok(metadata) = serde_json::from_str::<Value>(metadata_json) {
+        if let Some(summary) = metadata
+            .get("article_summary")
+            .and_then(Value::as_str)
+            .filter(|text| text.chars().count() >= 15 && text.trim() != title.trim())
+        {
+            return excerpt(summary.trim(), 240);
+        }
+    }
+    message_summary(title, content)
+}
+
+fn message_summary(title: &str, content: &str) -> String {
+    let heading = title.trim();
+    let mut body = content.trim();
+    if !heading.is_empty() {
+        if body.replace(heading, "").trim().is_empty() {
+            return String::new();
+        }
+        while let Some(rest) = body.strip_prefix(heading) {
+            if rest
+                .chars()
+                .next()
+                .is_some_and(|character| !character.is_whitespace())
+            {
+                break;
+            }
+            body = rest.trim_start();
+        }
+    }
+    excerpt(body, 180)
+}
+
 fn excerpt(value: &str, max_chars: usize) -> String {
     let mut result = value.chars().take(max_chars).collect::<String>();
     if value.chars().count() > max_chars {
@@ -3604,6 +4356,190 @@ fn vector_backend_status() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hk_context_fixture(store: &ResearchStore) -> (Value,Value) {
+        let document=json!({"document_id":"permission-hk","title":"腾讯研究资料","content":"原始资料只用于本地回放与已授权模型分析。",
+            "source_tier":"research_report","source_name":"用户导入","stock_codes":["00700.HK"],"user_imported":true,"remote_export_allowed":true,
+            "metadata":{"market":"hk","metrics":{"eps":{"value":12.639,"currency":"CNY","unit":"currency/share"}}}});
+        store.ingest_documents(&[document.clone()]).unwrap();
+        let evidence=store.agent_evidence(&json!({"query":"腾讯","stock_code":"00700.HK","remote_safe_only":true})).unwrap();
+        let context=crate::hk_agent_research::attach_evidence(json!({}),&evidence,"00700.HK")["research_context"].clone();
+        (document,context)
+    }
+
+    #[test]
+    fn saved_hk_context_rechecks_revoked_permission_and_preserves_local_history() {
+        let path=temporary_database_path("hk-context-revoked");
+        let store=ResearchStore::open(&path).unwrap();
+        let (mut document,context)=hk_context_fixture(&store);
+        assert!(store.validate_hk_context(&context,true).unwrap());
+        store.ingest_documents(&[document.clone()]).unwrap();
+        assert!(store.validate_hk_context(&context,true).unwrap());
+        document["remote_export_allowed"]=json!(false);
+        store.ingest_documents(&[document]).unwrap();
+        assert!(!store.validate_hk_context(&context,true).unwrap(),"old model consent cannot override current permission");
+        let current=store.agent_evidence(&json!({"query":"腾讯","stock_code":"00700.HK","remote_safe_only":true})).unwrap();
+        assert_eq!(current["citations"],json!([]));
+        assert!(!store.messages(&json!({"stock_code":"00700.HK"})).unwrap()["items"].as_array().unwrap().is_empty());
+        assert!(crate::hk_agent_research::answer_from_context(&context,"继续回放").to_string().contains("原始资料"));
+    }
+
+    #[test]
+    fn frozen_model_tool_evidence_retains_valid_source_identity() {
+        let store=ResearchStore::open(temporary_database_path("hk-frozen-source-validation")).unwrap();
+        let (document,context)=hk_context_fixture(&store);
+        let frozen=crate::hk_agent_research::frozen_evidence(&context);
+        let current=crate::hk_agent_research::context_from_frozen_evidence(&frozen);
+        assert!(store.validate_hk_context(&current,true).unwrap());
+        let mut revoked=document;
+        revoked["remote_export_allowed"]=json!(false);
+        store.ingest_documents(&[revoked]).unwrap();
+        assert!(!store.validate_hk_context(&current,true).unwrap());
+    }
+
+    #[test]
+    fn review_revoked_cited_revision_preserves_history_and_blocks_original_export() {
+        let store = ResearchStore::open(temporary_database_path("hk-cited-revocation")).unwrap();
+        let (mut document, context) = hk_context_fixture(&store);
+        let thread = store.create_thread(&json!({"stock_code":"00700.HK","title":"历史研究"})).unwrap();
+        let thread_id = thread["id"].as_str().unwrap();
+        let response = store.query(&json!({"query":"腾讯","stock_code":"00700.HK"})).unwrap();
+        store.save_answer(thread_id, "腾讯的原始资料", &response).unwrap();
+        assert!(store.connection().unwrap().query_row("SELECT cited_count FROM documents WHERE id='permission-hk'", [], |row| row.get::<_, i64>(0)).unwrap() > 0);
+        document["content"] = json!("更新后的资料也只允许在本地阅读。");
+        document["remote_export_allowed"] = json!(false);
+        store.ingest_documents(&[document]).unwrap();
+        assert!(!store.validate_hk_context(&context, true).unwrap(), "revocation must cover the retained original as well as its new revision");
+        let allowed: i64 = store.connection().unwrap().query_row("SELECT COUNT(*) FROM documents WHERE remote_export_allowed=1", [], |row| row.get(0)).unwrap();
+        assert_eq!(allowed, 0);
+        assert!(store.thread(thread_id).unwrap().to_string().contains("原始资料"));
+    }
+
+    #[test]
+    fn review_changed_chunk_semantics_advance_the_sentiment_cutoff_in_both_markets() {
+        for (market, code, second_code) in [("hk", "00700.HK", "00005.HK"), ("cn", "600519.SH", "600036.SH")] {
+            for (field, value) in [
+                ("stock_codes", json!([code, second_code])),
+                ("sentiment", json!("positive")),
+                ("page_number", json!(2)),
+                ("entities", json!(["新增主体"])),
+                ("relation_types", json!(["新增关系"])),
+            ] {
+                let store = ResearchStore::open(temporary_database_path(&format!("chunk-cutoff-{market}-{field}"))).unwrap();
+                let mut document = json!({"document_id":"known","title":"企业公告","content":"同一份原始公告正文",
+                    "source_tier":"filing","source_name":"交易所","stock_codes":[code],"metadata":{"market":market}});
+                store.ingest_documents(&[document.clone()]).unwrap();
+                store.connection().unwrap().execute("UPDATE documents SET imported_at_epoch_ms=1000,updated_at_epoch_ms=1000", []).unwrap();
+                assert_eq!(store.sentiment_documents(code, 2000).unwrap().len(), 1);
+                document[field] = value;
+                store.ingest_documents(&[document]).unwrap();
+                assert!(store.sentiment_documents(code, 2000).unwrap().is_empty(), "changed {market} {field} cannot enter an earlier evidence snapshot");
+            }
+        }
+    }
+
+    #[test]
+    fn unscoped_hk_model_evidence_keeps_current_bindings_and_market_permissions() {
+        let store = ResearchStore::open(temporary_database_path("hk-unscoped-permission")).unwrap();
+        let (document, _) = hk_context_fixture(&store);
+        store.ingest_documents(&[
+            json!({"document_id":"macro","title":"港股政策","content":"港股政策原文","source_tier":"news","metadata":{"market":"hk"}}),
+            json!({"document_id":"cn","title":"内地资料","content":"内地资料","stock_codes":["600519.SH"],"metadata":{"market":"cn"}}),
+            json!({"document_id":"local","title":"私有资料","content":"本地阅读资料","user_imported":true,"remote_export_allowed":false,"metadata":{"market":"hk"}}),
+        ]).unwrap();
+        let evidence = store.unscoped_hk_agent_evidence(&json!({"query":"研究","remote_safe_only":true})).unwrap();
+        assert_eq!(evidence["citations"].as_array().unwrap().len(), 2);
+        assert!(store.validate_hk_model_evidence(&[evidence.clone()]).unwrap());
+        let mut revoked = document;
+        revoked["remote_export_allowed"] = json!(false);
+        store.ingest_documents(&[revoked]).unwrap();
+        assert!(!store.validate_hk_model_evidence(&[evidence]).unwrap());
+    }
+
+    #[test]
+    fn model_send_boundary_serializes_revocation_until_the_checked_send_finishes() {
+        let path = temporary_database_path("hk-send-permission-barrier");
+        let store = ResearchStore::open(&path).unwrap();
+        let (mut document, context) = hk_context_fixture(&store);
+        document["remote_export_allowed"] = json!(false);
+        let writer_store = ResearchStore::open(&path).unwrap();
+        let (begin, begin_rx) = std::sync::mpsc::channel();
+        let (blocked, blocked_rx) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            begin_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(APP_RESEARCH_DATABASE_LOCK.get().unwrap().try_read().is_err());
+            blocked.send(()).unwrap();
+            with_shared_app_database(|| writer_store.ingest_documents(&[document])).unwrap();
+        });
+        let frozen = crate::hk_agent_research::frozen_evidence(&context);
+        with_model_evidence_database_guard(|| {
+            assert!(store.validate_hk_model_evidence(&[frozen.clone()])?);
+            let generation = APP_RESEARCH_DATABASE_GENERATION.load(AtomicOrdering::Acquire);
+            begin.send(()).unwrap();
+            blocked_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(APP_RESEARCH_DATABASE_GENERATION.load(AtomicOrdering::Acquire), generation);
+            // This point represents the request being handed to the transport.
+            Ok(())
+        }).unwrap();
+        writer.join().unwrap();
+        assert!(!store.validate_hk_model_evidence(&[frozen]).unwrap(), "the next provider turn must reject the committed revocation");
+    }
+
+    #[test]
+    fn saved_hk_context_rejects_changed_metrics_body_and_removed_documents() {
+        for change in ["metric","body","delete"] {
+            let path=temporary_database_path(&format!("hk-context-change-{change}"));
+            let store=ResearchStore::open(&path).unwrap();
+            let (mut document,context)=hk_context_fixture(&store);
+            match change {
+                "metric"=>{ document["metadata"]["metrics"]["eps"]["currency"]=json!("HKD");store.ingest_documents(&[document]).unwrap(); }
+                "body"=>{ document["content"]=json!("不同的当前资料，不能沿用原来的引用。");store.ingest_documents(&[document]).unwrap(); }
+                _=>{ store.connection().unwrap().execute("DELETE FROM documents WHERE id='permission-hk'",[]).unwrap(); }
+            }
+            assert!(!store.validate_hk_context(&context,true).unwrap(),"changed {change} must invalidate old E bindings");
+        }
+    }
+
+    #[test]
+    fn saved_hk_context_rejects_changes_beyond_excerpt_and_changed_article_summaries() {
+        for change in ["tail","summary","missing_hash"] {
+            let store=ResearchStore::open(temporary_database_path(&format!("hk-context-{change}"))).unwrap();
+            let (mut document,_)=hk_context_fixture(&store);
+            document["content"]=json!(format!("{}原始结尾","已知资料".repeat(400)));
+            document["metadata"]["article_summary"]=json!("这是原始正文摘要，内容涉及企业经营情况。");
+            store.ingest_documents(&[document.clone()]).unwrap();
+            let evidence=store.agent_evidence(&json!({"query":"资料","stock_code":"00700.HK"})).unwrap();
+            let mut context=crate::hk_agent_research::attach_evidence(json!({}),&evidence,"00700.HK")["research_context"].clone();
+            assert!(store.validate_hk_context(&context,true).unwrap());
+            match change {
+                "tail"=>document["content"]=json!(format!("{}不同结尾","已知资料".repeat(400))),
+                "summary"=>document["metadata"]["article_summary"]=json!("这是已经变化的正文摘要，讨论另一种财务状况。"),
+                _=>{context["evidence"][0].as_object_mut().unwrap().remove("document_content_hash");}
+            }
+            store.ingest_documents(&[document]).unwrap();
+            assert!(!store.validate_hk_context(&context,true).unwrap(),"invalid {change}");
+        }
+    }
+
+    #[test]
+    fn unchanged_hk_ingest_keeps_known_evidence_inside_the_sentiment_cutoff() {
+        let path = temporary_database_path("hk-unchanged-cutoff");
+        let store = ResearchStore::open(&path).unwrap();
+        let docs = [json!({"document_id":"known-hk","title":"腾讯公告","content":"已知公告原文",
+            "source_tier":"filing","source_name":"HKEXnews","stock_codes":["00700.HK"],
+            "published_at":"2026-11-09","metadata":{"market":"hk","report_period":"2026Q3"}})];
+        store.ingest_documents(&docs).unwrap();
+        store.connection().unwrap().execute("UPDATE documents SET imported_at_epoch_ms=1000,updated_at_epoch_ms=1000",[]).unwrap();
+        assert_eq!(store.sentiment_documents("00700.HK",2000).unwrap().len(),1);
+        store.ingest_documents(&docs).unwrap();
+        let retained = store.sentiment_documents("00700.HK",2000).unwrap();
+        assert_eq!(retained.len(),1,"reading the same cached content cannot make it newer than the snapshot");
+        assert_eq!(retained[0]["updated_at"],1000);
+        let mut changed = docs[0].clone();
+        changed["content"] = json!("截止之后真实更新的公告内容");
+        store.ingest_documents(&[changed]).unwrap();
+        assert!(store.sentiment_documents("00700.HK",2000).unwrap().is_empty());
+    }
     use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -3613,6 +4549,146 @@ mod tests {
             .expect("system time should be valid")
             .as_nanos();
         std::env::temp_dir().join(format!("gp-assistant-{name}-{unique}.sqlite"))
+    }
+
+    #[test]
+    fn agent_evidence_covers_sources_with_sparse_keywords_and_preserves_original_summary() {
+        let path = temporary_database_path("agent-evidence-sources");
+        let store = ResearchStore::open(&path).unwrap();
+        store.ingest_documents(&[
+            json!({"document_id":"financial","title":"中期业绩","content":"CNY 收入 300；报告期 2026H1；候选值。",
+                "stock_codes":["00700.HK"],"source_tier":"financial_snapshot","source_name":"Eastmoney",
+                "published_at":"2026-08-13","url":"https://example.com/financial","metadata":{"market":"hk","currency":"CNY"}}),
+            json!({"document_id":"filing-old","title":"年度公告","content":"年度公告收入。",
+                "stock_codes":["00700.HK"],"source_tier":"filing","published_at":"2025-03-19"}),
+            json!({"document_id":"filing-new","title":"季度公告","content":"季度公告净利润。",
+                "stock_codes":["00700.HK"],"source_tier":"filing","published_at":"2026-10-30"}),
+            json!({"document_id":"news","title":"混元招聘","content":"混元招聘原始标题摘录",
+                "stock_codes":["00700.HK"],"source_tier":"news","source_name":"新浪财经",
+                "published_at":"2026-11-09","url":"https://example.com/news",
+                "metadata":{"market":"hk","article_summary":"正文报道披露招聘六十余个岗位，并列明招聘计划。",
+                    "article_summary_status":"available","article_summary_url":"https://example.com/news",
+                    "article_summary_fetched_at_epoch_ms":1794116685279i64}}),
+        ]).unwrap();
+        let response = store.agent_evidence(&json!({"query":"混元招聘","stock_code":"00700.HK","top_k":3})).unwrap();
+        let citations = response["citations"].as_array().unwrap();
+        assert_eq!(citations.len(), 3, "sparse query must still cover all available core sources");
+        let tiers = citations.iter().filter_map(|item| item["source_tier"].as_str()).collect::<HashSet<_>>();
+        assert_eq!(tiers, HashSet::from(["filing", "financial_snapshot", "news"]));
+        assert!(citations.iter().any(|item| item["document_id"] == "filing-new"));
+        let news = citations.iter().find(|item| item["document_id"] == "news").unwrap();
+        assert_eq!(news["excerpt"], "混元招聘原始标题摘录");
+        assert_eq!(news["stock_codes"], json!(["00700.HK"]));
+        assert_eq!(news["metadata"]["market"], "hk");
+        assert_eq!(news["article_summary"]["text"], "正文报道披露招聘六十余个岗位，并列明招聘计划。");
+        assert_eq!(news["article_summary"]["provenance"], "extracted_article_summary");
+        assert_eq!(news["article_summary"]["url"], "https://example.com/news");
+        assert_eq!(news["article_summary"]["fetched_at_epoch_ms"], 1794116685279i64);
+        let connection = store.connection().unwrap();
+        let original: String = connection.query_row("SELECT content FROM documents WHERE id = 'news'", [], |row| row.get(0)).unwrap();
+        assert_eq!(original, "混元招聘原始标题摘录");
+        drop(connection);
+        drop(store);
+        remove_sqlite_files(&path).unwrap();
+    }
+
+    #[test]
+    fn agent_evidence_rejects_missing_or_noncanonical_hk_identity() {
+        let path = temporary_database_path("agent-evidence-identity");
+        let store = ResearchStore::open(&path).unwrap();
+        for code in [Value::Null, json!("00700"), json!("700.HK"), json!("000700.SH"), json!("00700.hk")] {
+            assert!(store.agent_evidence(&json!({"query":"研究","stock_code":code})).is_err(), "identity {code} must be rejected");
+        }
+        assert!(store.agent_evidence(&json!({"query":"","stock_code":"00700.HK"})).is_err());
+        assert!(store.agent_evidence(&json!({"query":"研究","stock_code":"00700.HK","market":"cn"})).is_err());
+        drop(store);
+        remove_sqlite_files(&path).unwrap();
+    }
+
+    #[test]
+    fn agent_evidence_filters_stock_market_duplicates_and_remote_permissions() {
+        let path = temporary_database_path("agent-evidence-isolation");
+        let store = ResearchStore::open(&path).unwrap();
+        let mut documents = Vec::new();
+        for (id, codes, market, remote) in [
+            ("allowed", json!(["00700.HK"]), "hk", true),
+            ("private", json!(["00700.HK"]), "hk", false),
+            ("other-hk", json!(["00005.HK"]), "hk", true),
+            ("cn", json!(["000700.SH"]), "cn", true),
+            ("wrong-market", json!(["00700.HK"]), "cn", true),
+            ("mixed-market", json!(["00700.HK","000700.SH"]), "hk", true),
+        ] {
+            documents.push(json!({"document_id":id,"title":"研究证据","content":"研究原始证据。","stock_codes":codes,
+                "source_tier":"news","remote_export_allowed":remote,"metadata":{"market":market}}));
+        }
+        documents.push(json!({"document_id":"duplicate","title":"研究证据","content":"研究重复证据。","stock_codes":["00700.HK"],
+            "source_tier":"news","metadata":{"market":"hk","news_cache_duplicate_of":"allowed"}}));
+        store.ingest_documents(&documents).unwrap();
+        let request = json!({"query":"研究","stock_code":"00700.HK","top_k":16});
+        let local = store.agent_evidence(&request).unwrap();
+        let ids = local["citations"].as_array().unwrap().iter().filter_map(|item| item["document_id"].as_str()).collect::<HashSet<_>>();
+        assert_eq!(ids, HashSet::from(["allowed", "private"]));
+        assert_eq!(local["citations"].as_array().unwrap().iter().find(|item| item["document_id"] == "private").unwrap()["remote_export_allowed"], false);
+        let safe = store.agent_evidence(&json!({"remote_safe_only":true, "query":"研究", "stock_code":"00700.HK","top_k":16})).unwrap();
+        assert_eq!(safe["citations"].as_array().unwrap().len(), 1);
+        assert_eq!(safe["citations"][0]["document_id"], "allowed");
+        assert_eq!(safe["citations"][0]["remote_export_allowed"], true);
+        drop(store);
+        remove_sqlite_files(&path).unwrap();
+    }
+
+    #[test]
+    fn agent_evidence_bounds_text_and_prefers_relevant_chunks_without_replacing_them() {
+        let path = temporary_database_path("agent-evidence-bounds");
+        let store = ResearchStore::open(&path).unwrap();
+        let mut documents = Vec::new();
+        for index in 0..24 {
+            documents.push(json!({"document_id":format!("news-{index:02}"),"title":"新消息标题".repeat(100),
+                "content":format!("{}\n专有线索：原始收入证据 {index}。", "普通正文。".repeat(200)),
+                "stock_codes":["00700.HK"],"source_tier":"news","published_at":format!("2026-11-{:02}", index + 1),
+                "metadata":{"market":"hk","article_summary":"正文提取补充。".repeat(300),"oversized":"长元数据".repeat(10000),
+                    "article_summary_status":"状态".repeat(10000),"article_summary_fetched_at_epoch_ms":["未知时间".repeat(10000)]}}));
+        }
+        store.ingest_documents(&documents).unwrap();
+        let result = store.agent_evidence(&json!({"query":"专有线索","stock_code":"00700.HK","top_k":99})).unwrap();
+        let citations = result["citations"].as_array().unwrap();
+        assert_eq!(citations.len(), 16);
+        assert_eq!(citations[0]["document_id"], "news-23");
+        let mut ids = HashSet::new();
+        for item in citations {
+            assert!(ids.insert(item["document_id"].clone().to_string()));
+            assert!(item["excerpt"].as_str().unwrap().contains("专有线索"));
+            assert!(item["excerpt"].as_str().unwrap().chars().count() <= 1200);
+            assert!(item["title"].as_str().unwrap().chars().count() <= 256);
+            assert!(item["article_summary"]["text"].as_str().unwrap().chars().count() <= 1200);
+            assert!(item["article_summary"]["status"].as_str().unwrap().chars().count() <= 64);
+            assert!(item["article_summary"]["fetched_at_epoch_ms"].is_null());
+        }
+        assert!(serde_json::to_string(&result).unwrap().chars().count() < 200_000);
+        let original: String = store.connection().unwrap().query_row("SELECT content FROM chunks WHERE id = ?1", params![citations[0]["chunk_id"].as_str().unwrap()], |row| row.get(0)).unwrap();
+        assert_eq!(citations[0]["excerpt"], original);
+        drop(store);
+        remove_sqlite_files(&path).unwrap();
+    }
+
+    #[test]
+    fn research_markets_use_separate_database_paths_and_unknown_markets_fail() {
+        let root = temporary_database_path("market-store-paths");
+        let research_dir = root.parent().unwrap().join(format!(
+            "{}-data",
+            root.file_stem().unwrap().to_string_lossy()
+        ));
+        let cn = super::research_database_path(&research_dir, "cn").unwrap();
+        let hk = super::research_database_path(&research_dir, "hk").unwrap();
+        assert_ne!(cn, hk);
+        assert_eq!(cn.file_name().unwrap(), "research.sqlite");
+        assert_eq!(hk.file_name().unwrap(), "research-hk.sqlite");
+        assert_eq!(super::market_from_payload(&json!({})).unwrap(), "cn");
+        assert_eq!(
+            super::market_from_payload(&json!({"market":"hk"})).unwrap(),
+            "hk"
+        );
+        assert!(super::market_from_payload(&json!({"market":"unknown"})).is_err());
     }
 
     fn retrieval_eval_documents(case: &Value) -> Vec<Value> {
@@ -4599,6 +5675,543 @@ mod tests {
         drop(store);
         let _ = fs::remove_file(cache_path);
         let _ = remove_sqlite_files(&database_path);
+        let migrated_cache_root = database_path.with_extension("");
+        if migrated_cache_root.exists() {
+            assert_eq!(migrated_cache_root.parent(),Some(std::env::temp_dir().as_path()));
+            fs::remove_dir_all(migrated_cache_root).unwrap();
+        }
+    }
+
+    #[test]
+    fn research_ingests_current_hong_kong_news_from_sqlite_when_no_legacy_json_exists() {
+        use crate::external_data::{DataDomain, DataStore, Market, StoredRecord};
+        let root = temporary_database_path("hk-sqlite-news-ingest").with_extension("dir");
+        let cache_path = root.join("news/news-cache-hk.json");
+        let mut external = DataStore::open(crate::external_data::store_path(&root)).unwrap();
+        let published = "2026-11-06 20:32:00";
+        let fetched = "1794154333645";
+        let item = json!({"id":"tencent-news-current","title":"腾讯股份购回交割","summary":"公司披露股份购回交割事项。",
+            "stock_codes":["00700.HK"],"source":"新浪财经","source_tier":"news","published_at":published,
+            "fetched_at_epoch_ms":1794154333645_u64,"url":"https://finance.sina.com.cn/stock/hk/tencent.shtml","remote_export_allowed":false});
+        external.replace_domain_batch(DataDomain::News, Market::HongKong, &[StoredRecord::new(DataDomain::News,Market::HongKong,
+            "current-news","item","sina_hk","news",fetched,Some(published),None,"unverified",vec![],item)]).unwrap();
+        external.replace_domain_batch(DataDomain::News, Market::Global, &[StoredRecord::new(DataDomain::News,Market::Global,
+            "mainland-news","item","fixture","news",fetched,Some(published),None,"unverified",vec![],
+            json!({"id":"cn-only","title":"A股资料不得进入港股库","summary":"A股资料。","stock_codes":["600519.SH"],"source":"fixture","published_at":published}))]).unwrap();
+        assert!(!cache_path.exists());
+        let store = ResearchStore::open(root.join("research/research-hk.sqlite")).unwrap();
+        let imported = ingest_news_cache_file_for_market(&store,&cache_path,Market::HongKong).unwrap();
+        assert_eq!(imported["document_count"],1);
+        let messages = store.messages(&json!({"stock_code":"00700.HK"})).unwrap();
+        assert_eq!(messages["items"][0]["title"],"腾讯股份购回交割");
+        assert_eq!(messages["items"][0]["url"],"https://finance.sina.com.cn/stock/hk/tencent.shtml");
+        assert_eq!(store.overview(&json!({})).unwrap()["updated_at_epoch_ms"],1794154333645_i64);
+        let result = store.query(&json!({"query":"腾讯 股份购回","stock_code":"00700.HK"})).unwrap();
+        assert_eq!(result["citations"][0]["source_name"],"新浪财经");
+        assert_eq!(result["citations"][0]["remote_export_allowed"],false);
+        assert!(!result.to_string().contains("A股资料不得进入港股库"));
+        ingest_news_cache_file_for_market(&store,&cache_path,Market::HongKong).unwrap();
+        assert_eq!(store.overview(&json!({})).unwrap()["document_count"],1);
+        drop(store);
+        drop(external);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn research_sqlite_news_migration_keeps_previously_cited_identity_without_a_legacy_item_id() {
+        let root = temporary_database_path("hk-news-original-identity").with_extension("dir");
+        let path = root.join("news/news-cache-hk.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path,serde_json::to_vec(&json!({"schema_version":1,"updated_at_epoch_ms":1794154333645_i64,"items":[{
+            "title":"腾讯股份购回交割","summary":"腾讯披露股份购回交割事项。","source":"新浪财经","source_tier":"news",
+            "published_at":"2026-11-06 20:32:00","stock_codes":["00700.HK"],"url":"https://finance.sina.com.cn/stock/hk/tencent.shtml"
+        }]})).unwrap()).unwrap();
+        let store = ResearchStore::open(root.join("research/research-hk.sqlite")).unwrap();
+        store.ingest_documents(&legacy_documents_from_file(&path).unwrap()).unwrap();
+        let cited = store.query(&json!({"query":"腾讯股份购回","stock_code":"00700.HK"})).unwrap()["citations"][0]["document_id"].clone();
+        assert!(cited.as_str().is_some());
+        ingest_news_cache_file_for_market(&store,&path,crate::external_data::Market::HongKong).unwrap();
+        assert_eq!(store.overview(&json!({})).unwrap()["document_count"],1);
+        let current = store.query(&json!({"query":"腾讯股份购回","stock_code":"00700.HK"})).unwrap();
+        assert_eq!(current["citations"][0]["document_id"],cited);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn news_cache_ingest_keeps_one_message_across_windows_separator_spellings() {
+        let root = temporary_database_path("hk-news-path-spelling").with_extension("dir");
+        let first_path = root.join("news/news-cache-hk.json");
+        let second_path = root.join("news").join("news-cache-hk.json");
+        fs::create_dir_all(second_path.parent().unwrap()).unwrap();
+        let item = json!({
+            "id":"tencent-path-news", "title":"腾讯股份购回交割",
+            "summary":"腾讯披露股份购回交割事项。", "source":"新浪财经",
+            "source_tier":"news", "stock_codes":["00700.HK"],
+            "published_at":"2026-11-09 11:55:00",
+            "url":"https://finance.sina.com.cn/stock/hk/tencent.shtml"
+        });
+        fs::write(
+            &second_path,
+            serde_json::to_vec(&json!({"items":[item]})).unwrap(),
+        )
+        .unwrap();
+        let store = ResearchStore::open(root.join("research/research-hk.sqlite")).unwrap();
+        ingest_news_cache_file_for_market(
+            &store,
+            &first_path,
+            crate::external_data::Market::HongKong,
+        )
+        .unwrap();
+        let first = store.messages(&json!({"stock_code":"00700.HK"})).unwrap();
+        assert_eq!(first["items"].as_array().unwrap().len(), 1);
+        let original_id = first["items"][0]["document_id"].clone();
+
+        ingest_news_cache_file_for_market(
+            &store,
+            &second_path,
+            crate::external_data::Market::HongKong,
+        )
+        .unwrap();
+        let current = store.messages(&json!({"stock_code":"00700.HK"})).unwrap();
+        assert_eq!(current["items"].as_array().unwrap().len(), 1);
+        assert_eq!(current["items"][0]["document_id"], original_id);
+        assert_eq!(store.overview(&json!({})).unwrap()["document_count"], 1);
+        drop(store);
+        assert_eq!(root.parent(), Some(std::env::temp_dir().as_path()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn news_cache_ingest_reconciles_existing_path_duplicates_without_losing_citations() {
+        let root =
+            temporary_database_path("hk-news-existing-path-duplicates").with_extension("dir");
+        let path = root.join("news").join("news-cache-hk.json");
+        let old_path = root.join("news").join(".").join("news-cache-hk.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let item = json!({
+            "id":"tencent-existing-news", "title":"腾讯股份购回交割",
+            "summary":"腾讯披露股份购回交割事项。", "source":"新浪财经",
+            "source_tier":"news", "stock_codes":["00700.HK"],
+            "published_at":"2026-11-09 11:55:00",
+            "url":"https://finance.sina.com.cn/stock/hk/tencent.shtml",
+            "remote_export_allowed":false
+        });
+        fs::write(
+            &path,
+            serde_json::to_vec(&json!({"items":[item.clone()]})).unwrap(),
+        )
+        .unwrap();
+        let store = ResearchStore::open(root.join("research/research-hk.sqlite")).unwrap();
+        // Reproduce documents written by the previous two importer paths.
+        let mut old = normalize_legacy_document(item.clone(), &old_path, &[]).unwrap();
+        old["remote_export_allowed"] = json!(false);
+        let mut current = normalize_legacy_document(item, &path, &[]).unwrap();
+        current["remote_export_allowed"] = json!(false);
+        store.ingest_documents(&[old, current]).unwrap();
+        let before = store.messages(&json!({"stock_code":"00700.HK"})).unwrap();
+        assert_eq!(before["items"].as_array().unwrap().len(), 2);
+        store
+            .mark_read(&json!({"message_ids":[before["items"][1]["id"].clone()]}))
+            .unwrap();
+        let response = store
+            .query(&json!({"query":"腾讯股份购回", "stock_code":"00700.HK"}))
+            .unwrap();
+        assert_eq!(response["citations"].as_array().unwrap().len(), 2);
+        let vector = vec![1.0_f32; 512];
+        let embeddings = store
+            .pending_embedding_chunks(10)
+            .unwrap()
+            .into_iter()
+            .map(|work| (work, vector.clone()))
+            .collect::<Vec<_>>();
+        store
+            .store_embeddings(&embeddings, "news-identity-fixture")
+            .unwrap();
+        let vector_query = json!({"query":"no-lexical-match-xyz", "stock_code":"00700.HK"});
+        assert_eq!(
+            store
+                .query_with_vector(&vector_query, Some(&vector))
+                .unwrap()["citations"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        let thread = store
+            .create_thread(&json!({"title":"腾讯查询", "stock_code":"00700.HK"}))
+            .unwrap();
+        let thread_id = thread["id"].as_str().unwrap();
+        store
+            .save_answer(thread_id, "腾讯股份购回", &response)
+            .unwrap();
+
+        ingest_news_cache_file_for_market(&store, &path, crate::external_data::Market::HongKong)
+            .unwrap();
+        let messages = store.messages(&json!({"stock_code":"00700.HK"})).unwrap();
+        assert_eq!(messages["items"].as_array().unwrap().len(), 1);
+        assert_eq!(messages["items"][0]["unread"], false);
+        let overview = store.overview(&json!({"stock_code":"00700.HK"})).unwrap();
+        assert_eq!(overview["document_count"], 1);
+        assert_eq!(overview["chunk_count"], 1);
+        assert_eq!(overview["unread_count"], 0);
+        assert!(overview["unread_by_stock"].get("00700.HK").is_none());
+        assert_eq!(overview["source_counts"][0]["count"], 1);
+        assert_eq!(
+            store
+                .messages(&json!({"stock_code":"00700.HK", "offset":1}))
+                .unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        let query = store
+            .query(&json!({"query":"腾讯股份购回", "stock_code":"00700.HK"}))
+            .unwrap();
+        assert_eq!(query["citations"].as_array().unwrap().len(), 1);
+        assert_eq!(query["citations"][0]["remote_export_allowed"], false);
+        let hybrid = store
+            .query_with_vector(&vector_query, Some(&vector))
+            .unwrap();
+        assert_eq!(hybrid["retrieval_mode"], "hybrid_rrf");
+        assert_eq!(hybrid["citations"].as_array().unwrap().len(), 1);
+        let history = store.thread(thread_id).unwrap();
+        assert_eq!(history["answers"][0]["citations"], response["citations"]);
+        assert_eq!(
+            store.document_statuses().unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .sentiment_documents("00700.HK", epoch_millis() + 60_000)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        ingest_news_cache_file_for_market(
+            &store,
+            &old_path,
+            crate::external_data::Market::HongKong,
+        )
+        .unwrap();
+        assert_eq!(
+            store.messages(&json!({"stock_code":"00700.HK"})).unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store.thread(thread_id).unwrap()["answers"][0]["citations"],
+            response["citations"]
+        );
+        drop(store);
+        assert_eq!(root.parent(), Some(std::env::temp_dir().as_path()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn news_cache_ingest_keeps_identical_item_ids_in_distinct_source_containers() {
+        let root = temporary_database_path("hk-news-distinct-containers").with_extension("dir");
+        let path = root.join("news").join("news-cache-hk.json");
+        let other_path = root.join("archive").join("news-cache-hk.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let item = json!({
+            "id":"tencent-shared-id", "title":"腾讯股份购回交割",
+            "summary":"腾讯披露股份购回交割事项。", "source":"新浪财经",
+            "source_tier":"news", "stock_codes":["00700.HK"],
+            "published_at":"2026-11-09 11:55:00",
+            "url":"https://finance.sina.com.cn/stock/hk/tencent.shtml"
+        });
+        fs::write(
+            &path,
+            serde_json::to_vec(&json!({"items":[item.clone()]})).unwrap(),
+        )
+        .unwrap();
+        let store = ResearchStore::open(root.join("research/research-hk.sqlite")).unwrap();
+        store
+            .ingest_documents(&[normalize_legacy_document(item, &other_path, &[]).unwrap()])
+            .unwrap();
+        ingest_news_cache_file_for_market(&store, &path, crate::external_data::Market::HongKong)
+            .unwrap();
+        assert_eq!(
+            store.messages(&json!({"stock_code":"00700.HK"})).unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(store.overview(&json!({})).unwrap()["document_count"], 2);
+        drop(store);
+        assert_eq!(root.parent(), Some(std::env::temp_dir().as_path()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn news_cache_ingest_survives_retention_of_duplicate_identities() {
+        for (label, protect_old) in [("old-canonical", true), ("new-alias", false)] {
+            let root = temporary_database_path(label).with_extension("dir");
+            let path = root.join("news").join("news-cache-hk.json");
+            let old_path = root.join("news").join(".").join("news-cache-hk.json");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let item = json!({
+                "id":"tencent-old-news", "title":"腾讯股份购回交割",
+                "summary":"腾讯披露股份购回交割事项。", "source":"新浪财经",
+                "source_tier":"news", "stock_codes":["00700.HK"],
+                "published_at":"2025-01-01 11:55:00", "user_imported":false,
+                "url":"https://finance.sina.com.cn/stock/hk/tencent-old.shtml"
+            });
+            fs::write(
+                &path,
+                serde_json::to_vec(&json!({"items":[item.clone()]})).unwrap(),
+            )
+            .unwrap();
+            let store = ResearchStore::open(root.join("research/research-hk.sqlite")).unwrap();
+            let mut old = normalize_legacy_document(item.clone(), &old_path, &[]).unwrap();
+            let mut current = normalize_legacy_document(item, &path, &[]).unwrap();
+            // Seed old records protected until the test establishes a citation.
+            for document in [&mut old, &mut current] {
+                document["pinned"] = json!(true);
+                document["user_imported"] = json!(false);
+            }
+            let old_id = old["document_id"].as_str().unwrap().to_string();
+            let current_id = current["document_id"].as_str().unwrap().to_string();
+            store.ingest_documents(&[old, current]).unwrap();
+            let protected_id = if protect_old { &old_id } else { &current_id };
+            let mut response = store
+                .query(&json!({"query":"腾讯股份购回","stock_code":"00700.HK"}))
+                .unwrap();
+            response["citations"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|citation| citation["document_id"].as_str() == Some(protected_id.as_str()));
+            assert_eq!(response["citations"].as_array().unwrap().len(), 1);
+            let thread = store
+                .create_thread(&json!({"title":"保留历史引用"}))
+                .unwrap();
+            let thread_id = thread["id"].as_str().unwrap();
+            store
+                .save_answer(thread_id, "腾讯股份购回", &response)
+                .unwrap();
+            let connection = store.connection().unwrap();
+            connection
+                .execute(
+                    "UPDATE documents SET pinned=0,imported_at_epoch_ms=1 WHERE id=?1",
+                    params![old_id],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "UPDATE documents SET pinned=0,imported_at_epoch_ms=2 WHERE id=?1",
+                    params![current_id],
+                )
+                .unwrap();
+            if !protect_old {
+                connection.execute("UPDATE documents SET metadata_json=json_set(metadata_json,'$.news_cache_duplicate_of',?2) WHERE id=?1",params![current_id,old_id]).unwrap();
+            }
+            drop(connection);
+
+            ingest_news_cache_file_for_market(
+                &store,
+                &path,
+                crate::external_data::Market::HongKong,
+            )
+            .expect("retention may remove a duplicate; cache ingestion must remain available");
+            let messages = store.messages(&json!({"stock_code":"00700.HK"})).unwrap();
+            assert_eq!(messages["items"].as_array().unwrap().len(), 1);
+            assert_eq!(
+                messages["items"][0]["document_id"].as_str(),
+                Some(protected_id.as_str())
+            );
+            assert_eq!(store.overview(&json!({})).unwrap()["document_count"], 1);
+            assert_eq!(
+                store
+                    .query(&json!({"query":"腾讯股份购回","stock_code":"00700.HK"}))
+                    .unwrap()["citations"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1
+            );
+            assert_eq!(
+                store.thread(thread_id).unwrap()["answers"][0]["citations"],
+                response["citations"]
+            );
+            drop(store);
+            assert_eq!(root.parent(), Some(std::env::temp_dir().as_path()));
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn article_summary_supplements_messages_without_changing_cited_document() {
+        let database = temporary_database_path("article-summary-metadata");
+        let source = database.with_extension("news-cache-hk.json");
+        let store = ResearchStore::open(&database).unwrap();
+        let mut item = json!({"id":"sina-recruitment","title":"腾讯招聘","summary":"腾讯招聘",
+            "source":"新浪财经","source_tier":"news","stock_codes":["00700.HK"],
+            "url":"https://t.cj.sina.cn/articles/view/1","published_at":"2026-11-09"});
+        let old = normalize_legacy_document(item.clone(), &source, &[]).unwrap();
+        store.ingest_documents(&[old.clone()]).unwrap();
+        let result = store
+            .query(&json!({"query":"腾讯招聘","stock_code":"00700.HK"}))
+            .unwrap();
+        let thread = store.create_thread(&json!({"title":"旧新闻引用"})).unwrap();
+        let thread_id = thread["id"].as_str().unwrap();
+        store.save_answer(thread_id, "腾讯招聘", &result).unwrap();
+        store.mark_read(&json!({"stock_code":"00700.HK"})).unwrap();
+        item["article_summary"] =
+            json!("腾讯混元上线招聘，社招有60余个岗位。青云课题涵盖逾160个岗位。");
+        item["article_summary_url"] = item["url"].clone();
+        item["article_summary_status"] = json!("available");
+        let updated = normalize_legacy_document(item, &source, &[]).unwrap();
+        assert_eq!(updated["content"], old["content"]);
+        store.ingest_documents(&[updated]).unwrap();
+        let messages = store.messages(&json!({"stock_code":"00700.HK"})).unwrap();
+        assert_eq!(
+            messages["items"][0]["summary"],
+            "腾讯混元上线招聘，社招有60余个岗位。青云课题涵盖逾160个岗位。"
+        );
+        assert_eq!(messages["items"][0]["unread"], false);
+        assert_eq!(messages["items"][0]["document_id"], old["document_id"]);
+        assert_eq!(store.index_status().unwrap()["document_count"], 1);
+        assert_eq!(
+            store.thread(thread_id).unwrap()["answers"][0]["citations"],
+            result["citations"]
+        );
+        drop(store);
+        let _ = remove_sqlite_files(&database);
+    }
+
+    #[test]
+    fn message_summary_read_recovers_legacy_cache_without_changing_history() {
+        let path = temporary_database_path("legacy-message-summary");
+        let store = ResearchStore::open(&path).unwrap();
+        let headline = "腾讯健康与灵北中国达成战略合作";
+        let long_headline = "腾讯披露人工智能业务、产品及研发投入的新进展，".repeat(20);
+        let body = "公司披露季度收入增长 15%，研发投入增加。";
+        let documents = [
+            json!({"document_id":"headline-only-news","title":headline,
+            "content":format!("{headline}\n{headline}"),"source_tier":"news","source_name":"新浪财经",
+            "stock_codes":["00700.HK"],"url":"https://example.com/tencent/news","published_at":"2026-11-09"}),
+            json!({"document_id":"long-headline-news","title":long_headline,
+            "content":format!("{long_headline}\n{body}"),"source_tier":"news","source_name":"新浪财经",
+            "stock_codes":["00700.HK"],"published_at":"2026-11-09"}),
+        ];
+        store.ingest_documents(&documents).unwrap();
+        let response = store
+            .query(&json!({"query":"腾讯","stock_code":"00700.HK"}))
+            .unwrap();
+        let thread = store
+            .create_thread(&json!({"title":"历史新闻查询"}))
+            .unwrap();
+        let thread_id = thread["id"].as_str().unwrap();
+        store.save_answer(thread_id, "腾讯新闻", &response).unwrap();
+        store
+            .mark_read(&json!({"message_ids":["message:headline-only-news:00700.HK"]}))
+            .unwrap();
+        // Simulate persisted summaries made by the old 180-character excerpt.
+        let connection = store.connection().unwrap();
+        connection
+            .execute(
+                "UPDATE research_messages SET summary=?2 WHERE document_id=?1",
+                params!["headline-only-news", format!("{headline}\n{headline}")],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE research_messages SET summary=?2 WHERE document_id=?1",
+                params![
+                    "long-headline-news",
+                    format!("{}…", long_headline.chars().take(180).collect::<String>())
+                ],
+            )
+            .unwrap();
+        drop(connection);
+        let result = store.messages(&json!({"stock_code":"00700.HK"})).unwrap();
+        let items = result["items"].as_array().unwrap();
+        let only = items
+            .iter()
+            .find(|item| item["document_id"] == "headline-only-news")
+            .unwrap();
+        let detailed = items
+            .iter()
+            .find(|item| item["document_id"] == "long-headline-news")
+            .unwrap();
+        assert_eq!(only["summary"], "");
+        assert_eq!(only["unread"], false);
+        assert_eq!(only["url"], "https://example.com/tencent/news");
+        assert_eq!(detailed["summary"], body);
+        store.ingest_documents(&documents).unwrap();
+        assert_eq!(store.index_status().unwrap()["document_count"], 2);
+        assert_eq!(
+            store.thread(thread_id).unwrap()["answers"][0]["citations"],
+            response["citations"]
+        );
+        drop(store);
+        let _ = remove_sqlite_files(&path);
+    }
+
+    #[test]
+    fn message_summary_generation_keeps_only_additional_content() {
+        let path = temporary_database_path("generated-message-summary");
+        let store = ResearchStore::open(&path).unwrap();
+        let headline = "腾讯发布业务进展";
+        let body = "公司披露季度收入增长 15%。";
+        let mut documents = [
+            json!({"document_id":"only","title":headline,"content":format!("{headline}\n{headline}")}),
+            json!({"document_id":"detailed","title":headline,"content":format!("{headline}\n{body}")}),
+            json!({"document_id":"issuer","title":"腾讯","content":"腾讯控股披露季度收入增长 15%。"}),
+        ];
+        store.ingest_documents(&documents).unwrap();
+        for (id, expected) in [
+            ("only", ""),
+            ("detailed", body),
+            ("issuer", "腾讯控股披露季度收入增长 15%。"),
+        ] {
+            let summary: String = store
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT summary FROM research_messages WHERE document_id=?1",
+                    params![id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(summary, expected);
+        }
+        store
+            .mark_read(&json!({"message_ids":["message:detailed:all"]}))
+            .unwrap();
+        documents[1]["entities"] = json!(["腾讯"]);
+        store.ingest_documents(&documents[1..2]).unwrap();
+        let result = store.messages(&json!({})).unwrap();
+        let detailed = result["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["document_id"] == "detailed")
+            .unwrap();
+        assert_eq!(detailed["summary"], body);
+        assert_eq!(detailed["unread"], false);
+        let summary: String = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT summary FROM research_messages WHERE document_id='detailed'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(summary, body);
+        drop(store);
+        let _ = remove_sqlite_files(&path);
     }
 
     #[test]
@@ -5172,8 +6785,8 @@ mod tests {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) static RESEARCH_EMBEDDING_JOB_GATE: ResearchEmbeddingJobGate =
-    ResearchEmbeddingJobGate::new();
+pub(crate) static RESEARCH_EMBEDDING_JOB_GATES: ResearchEmbeddingJobGates =
+    ResearchEmbeddingJobGates::new();
 
 #[cfg(target_os = "windows")]
 pub(crate) struct ResearchEmbeddingJobGate {
@@ -5215,13 +6828,60 @@ impl ResearchEmbeddingJobGate {
     }
 }
 
+#[cfg(target_os = "windows")]
+pub(crate) struct ResearchEmbeddingJobGates {
+    cn: ResearchEmbeddingJobGate,
+    hk: ResearchEmbeddingJobGate,
+}
+
+#[cfg(target_os = "windows")]
+impl ResearchEmbeddingJobGates {
+    pub(crate) const fn new() -> Self {
+        Self {
+            cn: ResearchEmbeddingJobGate::new(),
+            hk: ResearchEmbeddingJobGate::new(),
+        }
+    }
+
+    pub(crate) fn for_market(&self, market: &str) -> &ResearchEmbeddingJobGate {
+        if market == "hk" {
+            &self.hk
+        } else {
+            &self.cn
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[cfg(test)]
+mod embedding_market_gate_tests {
+    use super::ResearchEmbeddingJobGates;
+
+    #[test]
+    fn embedding_jobs_coalesce_per_market_without_losing_the_other_market_request() {
+        let gates = ResearchEmbeddingJobGates::new();
+        let cn = gates.for_market("cn");
+        let hk = gates.for_market("hk");
+
+        assert!(cn.request());
+        assert!(hk.request());
+        assert!(!cn.request());
+        assert!(!hk.request());
+        cn.begin_cycle();
+        hk.begin_cycle();
+        assert!(!cn.finish_cycle());
+        assert!(!hk.finish_cycle());
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn api_research_overview(
     app: tauri::AppHandle,
     payload: Value,
 ) -> Result<Value, String> {
+    let market = market_from_payload(&payload)?.to_string();
     crate::runtime::run_io_bound("api_research_overview", move || {
-        crate::research::with_app_store(&app, |store| {
+        crate::research::with_app_store_for_market(&app, &market, |store| {
             let mut overview = store.overview(&payload)?;
             #[cfg(target_os = "windows")]
             {
@@ -5251,8 +6911,9 @@ pub(crate) async fn api_research_messages(
     app: tauri::AppHandle,
     payload: Value,
 ) -> Result<Value, String> {
+    let market = market_from_payload(&payload)?.to_string();
     crate::runtime::run_io_bound("api_research_messages", move || {
-        crate::research::with_app_store(&app, |store| store.messages(&payload))
+        crate::research::with_app_store_for_market(&app, &market, |store| store.messages(&payload))
     })
     .await?
 }
@@ -5262,8 +6923,9 @@ pub(crate) async fn api_research_mark_read(
     app: tauri::AppHandle,
     payload: Value,
 ) -> Result<Value, String> {
+    let market = market_from_payload(&payload)?.to_string();
     crate::runtime::run_io_bound("api_research_mark_read", move || {
-        crate::research::with_app_store(&app, |store| store.mark_read(&payload))
+        crate::research::with_app_store_for_market(&app, &market, |store| store.mark_read(&payload))
     })
     .await?
 }
@@ -5273,51 +6935,57 @@ pub(crate) async fn api_research_query(
     app: tauri::AppHandle,
     payload: Value,
 ) -> Result<Value, String> {
+    let market = market_from_payload(&payload)?.to_string();
     let retrieval_app = app.clone();
     let mut retrieval_payload = payload.clone();
+    let retrieval_market = market.clone();
     let remote_model_requested = payload.get("llm").is_some();
     if remote_model_requested {
         retrieval_payload["remote_safe_only"] = Value::Bool(true);
     }
     let (database_generation, mut response) =
         crate::runtime::run_cpu_bound("api_research_query", move || {
-            crate::research::with_app_store_snapshot(&retrieval_app, |store| {
-                let response = {
-                    #[cfg(target_os = "windows")]
-                    {
-                        let query_vector_result = retrieval_payload
-                            .get("query")
-                            .and_then(Value::as_str)
-                            .map(|query| {
-                                crate::research_embeddings::embed(
-                                    &research_embedding_model_dir(&retrieval_app),
-                                    &[query.to_string()],
-                                )
-                            })
-                            .transpose();
-                        match query_vector_result {
-                            Ok(vectors) => {
-                                let query_vector =
-                                    vectors.and_then(|items| items.into_iter().next());
-                                store.query_with_vector(
-                                    &retrieval_payload,
-                                    query_vector.as_deref(),
-                                )?
-                            }
-                            Err(error) => {
-                                let mut fallback = store.query(&retrieval_payload)?;
-                                fallback["vector_warning"] = Value::String(error);
-                                fallback
+            crate::research::with_app_store_snapshot_for_market(
+                &retrieval_app,
+                &retrieval_market,
+                |store| {
+                    let response = {
+                        #[cfg(target_os = "windows")]
+                        {
+                            let query_vector_result = retrieval_payload
+                                .get("query")
+                                .and_then(Value::as_str)
+                                .map(|query| {
+                                    crate::research_embeddings::embed(
+                                        &research_embedding_model_dir(&retrieval_app),
+                                        &[query.to_string()],
+                                    )
+                                })
+                                .transpose();
+                            match query_vector_result {
+                                Ok(vectors) => {
+                                    let query_vector =
+                                        vectors.and_then(|items| items.into_iter().next());
+                                    store.query_with_vector(
+                                        &retrieval_payload,
+                                        query_vector.as_deref(),
+                                    )?
+                                }
+                                Err(error) => {
+                                    let mut fallback = store.query(&retrieval_payload)?;
+                                    fallback["vector_warning"] = Value::String(error);
+                                    fallback
+                                }
                             }
                         }
-                    }
-                    #[cfg(not(target_os = "windows"))]
-                    {
-                        store.query(&retrieval_payload)?
-                    }
-                };
-                Ok::<Value, String>(response)
-            })
+                        #[cfg(not(target_os = "windows"))]
+                        {
+                            store.query(&retrieval_payload)?
+                        }
+                    };
+                    Ok::<Value, String>(response)
+                },
+            )
         })
         .await??;
 
@@ -5345,9 +7013,24 @@ pub(crate) async fn api_research_query(
             .get("query")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        let market_question = if market == "hk" {
+            let stock_code = payload
+                .get("stock_code")
+                .and_then(Value::as_str)
+                .unwrap_or("港股知识库");
+            format!(
+                "市场：港股；目标证券：{stock_code}。仅基于港股知识库证据回答。问题：{question}"
+            )
+        } else {
+            question.to_string()
+        };
         match crate::runtime::with_heavy_network_permit(
             "api_research_answer",
-            crate::news_rag::synthesize_research_answer(payload.get("llm"), question, &citations),
+            crate::news_rag::synthesize_research_answer(
+                payload.get("llm"),
+                &market_question,
+                &citations,
+            ),
         )
         .await
         {
@@ -5380,12 +7063,17 @@ pub(crate) async fn api_research_query(
         .to_string();
     let saved_response = response.clone();
     crate::runtime::run_io_bound("api_research_save_answer", move || {
-        crate::research::with_app_store_at_generation(&app, database_generation, |store| {
-            if let Some(thread_id) = thread_id.as_deref() {
-                store.save_answer(thread_id, &question, &saved_response)?;
-            }
-            Ok(())
-        })
+        crate::research::with_app_store_at_generation_for_market(
+            &app,
+            database_generation,
+            &market,
+            |store| {
+                if let Some(thread_id) = thread_id.as_deref() {
+                    store.save_answer(thread_id, &question, &saved_response)?;
+                }
+                Ok(())
+            },
+        )
     })
     .await??;
     Ok(response)
@@ -5396,6 +7084,7 @@ pub(crate) async fn api_research_refresh(
     app: tauri::AppHandle,
     payload: Value,
 ) -> Result<Value, String> {
+    let market = market_from_payload(&payload)?.to_string();
     let news = crate::runtime::with_heavy_network_permit(
         "api_research_refresh",
         crate::news_rag::api_news_rag_impl(app.clone(), payload),
@@ -5403,19 +7092,27 @@ pub(crate) async fn api_research_refresh(
     .await?;
     let imported = {
         let app = app.clone();
+        let ingest_market = market.clone();
         crate::runtime::run_io_bound("api_research_ingest_news", move || {
-            crate::research::ingest_news_cache(&app)
+            crate::research::ingest_news_cache_for_market(&app, &ingest_market)
         })
         .await??
     };
-    schedule_research_embeddings(app);
+    schedule_research_embeddings_for_market(app, market);
     Ok(json!({"news": news, "imported": imported}))
 }
 
 #[tauri::command]
-pub(crate) async fn api_research_threads(app: tauri::AppHandle) -> Result<Value, String> {
+pub(crate) async fn api_research_threads(
+    app: tauri::AppHandle,
+    market: Option<String>,
+) -> Result<Value, String> {
+    let market = market.as_deref().unwrap_or("cn").to_string();
+    if !matches!(market.as_str(), "cn" | "hk") {
+        return Err(format!("unsupported research market: {market}"));
+    }
     crate::runtime::run_io_bound("api_research_threads", move || {
-        crate::research::with_app_store(&app, |store| store.threads())
+        crate::research::with_app_store_for_market(&app, &market, |store| store.threads())
     })
     .await?
 }
@@ -5425,8 +7122,11 @@ pub(crate) async fn api_research_thread_create(
     app: tauri::AppHandle,
     payload: Value,
 ) -> Result<Value, String> {
+    let market = market_from_payload(&payload)?.to_string();
     crate::runtime::run_io_bound("api_research_thread_create", move || {
-        crate::research::with_app_store(&app, |store| store.create_thread(&payload))
+        crate::research::with_app_store_for_market(&app, &market, |store| {
+            store.create_thread(&payload)
+        })
     })
     .await?
 }
@@ -5436,6 +7136,7 @@ pub(crate) async fn api_research_thread_detail(
     app: tauri::AppHandle,
     payload: Value,
 ) -> Result<Value, String> {
+    let market = market_from_payload(&payload)?.to_string();
     crate::runtime::run_io_bound("api_research_thread_detail", move || {
         let thread_id = payload
             .get("thread_id")
@@ -5443,7 +7144,7 @@ pub(crate) async fn api_research_thread_detail(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| "thread_id is required".to_string())?;
-        crate::research::with_app_store(&app, |store| store.thread(thread_id))
+        crate::research::with_app_store_for_market(&app, &market, |store| store.thread(thread_id))
     })
     .await?
 }
@@ -5453,6 +7154,7 @@ pub(crate) async fn api_research_thread_delete(
     app: tauri::AppHandle,
     payload: Value,
 ) -> Result<Value, String> {
+    let market = market_from_payload(&payload)?.to_string();
     let thread_id = payload
         .get("thread_id")
         .and_then(Value::as_str)
@@ -5467,7 +7169,7 @@ pub(crate) async fn api_research_thread_delete(
         ));
     }
     crate::runtime::run_io_bound("api_research_thread_delete", move || {
-        crate::research::with_app_store(&app, |store| {
+        crate::research::with_app_store_for_market(&app, &market, |store| {
             let deleted = store.delete_thread(&thread_id)?;
             Ok(json!({"deleted": deleted}))
         })
@@ -5476,10 +7178,18 @@ pub(crate) async fn api_research_thread_delete(
 }
 
 #[tauri::command]
-pub(crate) async fn api_research_index_status(app: tauri::AppHandle) -> Result<Value, String> {
+pub(crate) async fn api_research_index_status(
+    app: tauri::AppHandle,
+    market: Option<String>,
+) -> Result<Value, String> {
+    let market = market.as_deref().unwrap_or("cn").to_string();
+    if !matches!(market.as_str(), "cn" | "hk") {
+        return Err(format!("unsupported research market: {market}"));
+    }
     let status_app = app.clone();
+    let status_market = market.clone();
     let status = crate::runtime::run_io_bound("api_research_index_status", move || {
-        crate::research::with_app_store(&status_app, |store| {
+        crate::research::with_app_store_for_market(&status_app, &status_market, |store| {
             let mut status = store.index_status()?;
             status["documents"] = store.document_statuses()?["items"].clone();
             #[cfg(target_os = "windows")]
@@ -5498,7 +7208,7 @@ pub(crate) async fn api_research_index_status(app: tauri::AppHandle) -> Result<V
         .and_then(Value::as_i64)
         .is_some_and(|count| count > 0)
     {
-        schedule_research_embeddings(app);
+        schedule_research_embeddings_for_market(app, market);
     }
     Ok(status)
 }
@@ -5525,9 +7235,18 @@ pub(crate) fn finalize_research_index_status(mut status: Value, vector_status: V
 }
 
 #[tauri::command]
-pub(crate) async fn api_research_rebuild_index(app: tauri::AppHandle) -> Result<Value, String> {
+pub(crate) async fn api_research_rebuild_index(
+    app: tauri::AppHandle,
+    payload: Option<Value>,
+) -> Result<Value, String> {
+    let market = payload
+        .as_ref()
+        .map(market_from_payload)
+        .transpose()?
+        .unwrap_or("cn")
+        .to_string();
     crate::runtime::run_cpu_bound("api_research_rebuild_index", move || {
-        crate::research::with_app_store(&app, |store| store.rebuild_fts())
+        crate::research::with_app_store_for_market(&app, &market, |store| store.rebuild_fts())
     })
     .await?
 }
@@ -5535,24 +7254,34 @@ pub(crate) async fn api_research_rebuild_index(app: tauri::AppHandle) -> Result<
 #[tauri::command]
 pub(crate) async fn api_research_rebuild_embeddings(
     app: tauri::AppHandle,
+    payload: Value,
 ) -> Result<Value, String> {
+    let market = market_from_payload(&payload)?.to_string();
     #[cfg(target_os = "windows")]
     {
         crate::runtime::run_cpu_bound("api_research_rebuild_embeddings", move || {
-            rebuild_research_embeddings(&app)
+            rebuild_research_embeddings_for_market(&app, &market)
         })
         .await?
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = app;
+        let _ = (app, market);
         Err("Android uses BM25 only and does not load the Windows embedding model".to_string())
     }
 }
 
 #[cfg(target_os = "windows")]
 pub(crate) fn rebuild_research_embeddings(app: &tauri::AppHandle) -> Result<Value, String> {
-    crate::research::with_app_store(app, |store| {
+    rebuild_research_embeddings_for_market(app, "cn")
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn rebuild_research_embeddings_for_market(
+    app: &tauri::AppHandle,
+    market: &str,
+) -> Result<Value, String> {
+    crate::research::with_app_store_for_market(app, market, |store| {
         let model_dir = research_embedding_model_dir(app);
         let mut stored = 0usize;
         loop {
@@ -5586,16 +7315,23 @@ pub(crate) fn rebuild_research_embeddings(app: &tauri::AppHandle) -> Result<Valu
 
 #[cfg(target_os = "windows")]
 pub(crate) fn schedule_research_embeddings(app: tauri::AppHandle) {
-    if !RESEARCH_EMBEDDING_JOB_GATE.request() {
+    schedule_research_embeddings_for_market(app, "cn".to_string());
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn schedule_research_embeddings_for_market(app: tauri::AppHandle, market: String) {
+    let gate = RESEARCH_EMBEDDING_JOB_GATES.for_market(&market);
+    if !gate.request() {
         return;
     }
     tauri::async_runtime::spawn(async move {
         loop {
-            RESEARCH_EMBEDDING_JOB_GATE.begin_cycle();
+            gate.begin_cycle();
             let worker_app = app.clone();
+            let worker_market = market.clone();
             let result =
                 crate::runtime::run_cpu_bound("background_research_embeddings", move || {
-                    rebuild_research_embeddings(&worker_app)
+                    rebuild_research_embeddings_for_market(&worker_app, &worker_market)
                 })
                 .await
                 .and_then(|result| result);
@@ -5604,7 +7340,7 @@ pub(crate) fn schedule_research_embeddings(app: tauri::AppHandle) {
                 Err(error) => json!({"ok": false, "error": error}),
             };
             let _ = app.emit("research-embedding-status", event);
-            if !RESEARCH_EMBEDDING_JOB_GATE.finish_cycle() {
+            if !gate.finish_cycle() {
                 break;
             }
         }
@@ -5614,13 +7350,17 @@ pub(crate) fn schedule_research_embeddings(app: tauri::AppHandle) {
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn schedule_research_embeddings(_app: tauri::AppHandle) {}
 
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn schedule_research_embeddings_for_market(_app: tauri::AppHandle, _market: String) {}
+
 #[tauri::command]
 pub(crate) async fn api_research_pack_export(
     app: tauri::AppHandle,
     payload: Value,
 ) -> Result<Value, String> {
+    let market = market_from_payload(&payload)?.to_string();
     crate::runtime::run_io_bound("api_research_pack_export", move || {
-        crate::research::export_app_pack(&app, &payload)
+        crate::research::export_app_pack_for_market(&app, &payload, &market)
     })
     .await?
 }
@@ -5630,17 +7370,34 @@ pub(crate) async fn api_research_pack_import(
     app: tauri::AppHandle,
     payload: Value,
 ) -> Result<Value, String> {
+    let market = market_from_payload(&payload)?.to_string();
     let worker_app = app.clone();
+    let worker_market = market.clone();
     let result = crate::runtime::run_io_bound("api_research_pack_import", move || {
-        crate::research::import_app_pack(&worker_app, &payload)
+        if worker_market == "hk" {
+            crate::research::import_app_pack_for_market(&worker_app, &payload, &worker_market)
+        } else {
+            crate::research::import_app_pack(&worker_app, &payload)
+        }
     })
     .await??;
-    schedule_research_embeddings(app);
+    schedule_research_embeddings_for_market(app, market);
     Ok(result)
 }
 
 #[tauri::command]
-pub(crate) async fn api_research_pack_rollback(app: tauri::AppHandle) -> Result<Value, String> {
+pub(crate) async fn api_research_pack_rollback(
+    app: tauri::AppHandle,
+    payload: Option<Value>,
+) -> Result<Value, String> {
+    let market = payload
+        .as_ref()
+        .map(market_from_payload)
+        .transpose()?
+        .unwrap_or("cn");
+    if market == "hk" {
+        return Err("HK research pack rollback is unavailable; HK workspace documents are stored separately".to_string());
+    }
     crate::runtime::run_io_bound("api_research_pack_rollback", move || {
         crate::research::rollback_app_pack(&app)
     })

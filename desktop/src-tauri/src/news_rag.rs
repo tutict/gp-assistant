@@ -2,6 +2,7 @@ use crate::market::{
     build_http_client_with_proxy, cached_market_data, epoch_millis, normalize_stock_code,
     powershell_http_get_bytes_with_headers, read_json_file,
 };
+use futures::StreamExt;
 use scraper::{ElementRef, Html, Selector};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -15,6 +16,9 @@ use std::{
 };
 use tauri::Manager;
 
+#[path = "news_article_summary.rs"]
+mod article_summary;
+
 const NEWS_CACHE_FILE: &str = "news-cache.json";
 const SOURCE_TIER_NEWS: &str = "news";
 const SOURCE_TIER_POLICY_OFFICIAL: &str = "policy_official";
@@ -27,6 +31,7 @@ const CHAIN_RELATION_TYPES: [&str; 3] =
 const NEWS_TIMEOUT_SECS: u64 = 8;
 const NEWS_ANDROID_TIMEOUT_SECS: u64 = 5;
 const NEWS_MAX_CACHE_ITEMS: usize = 2_000;
+const NEWS_MAX_STOCK_BODY_BYTES: usize = 2 * 1024 * 1024;
 static NEWS_CACHE_WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 #[cfg(test)]
 static NEWS_CACHE_TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -35,7 +40,28 @@ pub(crate) async fn api_news_rag_impl(
     app: tauri::AppHandle,
     payload: Value,
 ) -> Result<Value, String> {
-    let data = cached_market_data(&app)?;
+    let is_hk = match payload
+        .get("market")
+        .and_then(Value::as_str)
+        .unwrap_or("cn")
+    {
+        "cn" => false,
+        "hk" => true,
+        market => return Err(format!("unsupported news market: {market}")),
+    };
+    let data = if is_hk {
+        let app_data = app
+            .path()
+            .app_data_dir()
+            .map_err(|error| format!("获取应用数据目录失败：{error}"))?;
+        let cache = crate::hk_market::read_hk_market_cache(
+            &crate::hk_market::hk_market_cache_path(&app_data),
+        )?;
+        let projection = crate::hk_research::project_hk_market_data(&cache)?;
+        serde_json::to_value(projection).map_err(|error| error.to_string())?
+    } else {
+        cached_market_data(&app)?
+    };
     let stock_by_code = stock_map(&data);
     let scope_codes = scope_codes(&payload, &stock_by_code);
     if scope_codes.is_empty() {
@@ -86,7 +112,11 @@ pub(crate) async fn api_news_rag_impl(
         && !mobile_fast
         && env_bool("GP_NEWS_ENABLE_US_MARKET_BRIEF", true);
 
-    let news_result = if mobile_fast {
+    let cache_path = news_cache_path_for_market(&app, is_hk)?;
+    let cached_hk = if is_hk { read_news_cache_items_for_market(&cache_path,crate::external_data::Market::HongKong)? } else { Vec::new() };
+    let news_result = if is_hk {
+        fetch_hk_news_items(&related_stocks, days, Some(&payload), &cached_hk).await
+    } else if mobile_fast {
         fetch_android_short_news_items(&related_stocks, &relations, days, Some(&payload)).await
     } else {
         fetch_news_items(
@@ -105,8 +135,15 @@ pub(crate) async fn api_news_rag_impl(
         None
     };
     let (fetched, adapter_notes) = news_result;
-    let cache_path = news_cache_path(&app)?;
-    let merged_cache = merge_into_news_cache(&cache_path, fetched)?;
+    let merged_cache = merge_into_news_cache_for_market(
+        &cache_path,
+        fetched,
+        if is_hk {
+            crate::external_data::Market::HongKong
+        } else {
+            crate::external_data::Market::Global
+        },
+    )?;
     let evidence = query_evidence(&merged_cache, &related_codes, days, max_items);
 
     let base_findings = if stock_only {
@@ -114,7 +151,7 @@ pub(crate) async fn api_news_rag_impl(
     } else {
         build_findings(&scope_codes, &relations, &evidence, &stock_by_code)
     };
-    let (findings, llm_notes, analysis_mode) = if stock_only {
+    let (findings, llm_notes, analysis_mode) = if stock_only && !is_hk {
         (
             base_findings,
             vec!["\u{5df2}\u{6309}\u{76ee}\u{6807}\u{4e2a}\u{80a1}\u{672c}\u{8eab}\u{6d88}\u{606f}\u{5206}\u{7ec4}\u{5c55}\u{793a}\u{5229}\u{597d}/\u{5229}\u{7a7a}\u{ff1b}\u{4e0a}\u{4e0b}\u{6e38} RAG \u{9700}\u{8981}\u{65f6}\u{8bf7}\u{5355}\u{72ec}\u{4f7f}\u{7528}\u{540c}\u{6b65}\u{5305}\u{6216}\u{5173}\u{7cfb}\u{56fe}\u{5206}\u{6790}\u{3002}".to_string()],
@@ -128,6 +165,7 @@ pub(crate) async fn api_news_rag_impl(
             &evidence,
             &stock_by_code,
             &base_findings,
+            if is_hk { "hk" } else { "cn" },
         )
         .await
     };
@@ -226,6 +264,10 @@ fn news_scope_mode(payload: &Value) -> &'static str {
 }
 
 fn scope_codes(payload: &Value, stock_by_code: &HashMap<String, Value>) -> Vec<String> {
+    let market = payload
+        .get("market")
+        .and_then(Value::as_str)
+        .unwrap_or("cn");
     let mut raw_codes = Vec::new();
     if let Some(code) = payload.get("code").and_then(Value::as_str) {
         raw_codes.push(code.to_string());
@@ -239,7 +281,7 @@ fn scope_codes(payload: &Value, stock_by_code: &HashMap<String, Value>) -> Vec<S
     let mut seen = HashSet::new();
     let mut result = Vec::new();
     for raw in raw_codes {
-        let Some(code) = normalize_stock_code(&raw) else {
+        let Some(code) = normalize_news_scope_code(&raw, market) else {
             continue;
         };
         if !stock_by_code.contains_key(&code) || !seen.insert(code.clone()) {
@@ -251,6 +293,22 @@ fn scope_codes(payload: &Value, stock_by_code: &HashMap<String, Value>) -> Vec<S
         }
     }
     result
+}
+
+fn normalize_news_scope_code(raw: &str, market: &str) -> Option<String> {
+    if market == "hk" {
+        let raw = raw.trim().to_ascii_uppercase();
+        let digits = raw.strip_suffix(".HK").or_else(|| raw.strip_prefix("HK"))?;
+        if digits.is_empty()
+            || digits.len() > 5
+            || !digits.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            return None;
+        }
+        return Some(format!("{digits:0>5}.HK"));
+    }
+    let code = normalize_stock_code(raw)?;
+    (!code.ends_with(".HK")).then_some(code)
 }
 
 fn scope_chain_relations(data: &Value, scope_codes: &[String]) -> Vec<Value> {
@@ -395,6 +453,66 @@ async fn fetch_android_short_news_items(
     }
 
     (dedupe_news_items(items), notes)
+}
+
+async fn fetch_hk_news_items(
+    stocks: &[Value],
+    days: i64,
+    network_payload: Option<&Value>,
+    cached: &[Value],
+) -> (Vec<Value>, Vec<String>) {
+    let client = match build_http_client_with_proxy(
+        "Mozilla/5.0 GuXuanYou/0.4 hk-news-rag",
+        Duration::from_secs(NEWS_TIMEOUT_SECS),
+        network_payload,
+    ) {
+        Ok(client) => client,
+        Err(error) => {
+            return (
+                Vec::new(),
+                vec![format!("HK news HTTP client failed: {error}")],
+            );
+        }
+    };
+    let (sina, eastmoney) = futures::join!(
+        fetch_sina_stock_news(&client, stocks, &[], days),
+        fetch_eastmoney_stock_news(&client, stocks, &[], days),
+    );
+    let mut items = Vec::new();
+    let mut notes = Vec::new();
+    for (source, result) in [("Sina", sina), ("Eastmoney", eastmoney)] {
+        match result {
+            Ok(source_items) if source_items.is_empty() => {
+                notes.push(format!("HK {source} news returned no usable items."));
+            }
+            Ok(source_items) => {
+                notes.push(format!(
+                    "HK {source} news returned {} usable items.",
+                    source_items.len()
+                ));
+                items.extend(source_items);
+            }
+            Err(error) => notes.push(format!(
+                "HK {source} news refresh failed; cached results remain available: {}",
+                limit_chars(&error, 160)
+            )),
+        }
+    }
+    let codes = stocks.iter().filter_map(|stock|stock.get("code").and_then(Value::as_str).and_then(normalize_stock_code)).collect::<HashSet<_>>();
+    let cutoff = cutoff_epoch_millis(days);
+    items.extend(cached.iter().filter(|item|item_epoch(item)>=cutoff && evidence_matches_codes(item,&codes)).cloned());
+    let mut items = dedupe_news_items(items);
+    items.sort_by_key(|item|std::cmp::Reverse(item_epoch(item)));
+    match article_summary::enrich(network_payload, &mut items, cached).await {
+        Ok(summaries) => notes.push(format!(
+            "港股原文摘要补全 {summaries} 条；尚未获取的摘要可再次更新重试。"
+        )),
+        Err(error) => notes.push(format!(
+            "港股原文摘要暂未补全，可再次更新重试：{}",
+            limit_chars(&error, 160)
+        )),
+    }
+    (items, notes)
 }
 
 async fn fetch_news_items(
@@ -791,7 +909,7 @@ fn parse_public_feed(body: &str, source_name: &str, source_tier: &str, limit: us
                 "source": source_name,
                 "source_tier": source_tier,
                 "published_at": published_at,
-                "url": url,
+                "url": url.clone(),
                 "stock_codes": [],
                 "relation_types": [],
                 "sentiment": "uncertain",
@@ -1297,9 +1415,15 @@ async fn fetch_eastmoney_stock_news(
         let Some(digits) = code_digits(&code) else {
             continue;
         };
+        let is_hk = code.ends_with(".HK");
+        let keyword = if is_hk {
+            format!("HK{digits}")
+        } else {
+            digits.clone()
+        };
         let callback = format!("jQuery{}_{}", 3510179294063109245u64, epoch_millis());
         let param = json!({
-            "uid": "", "keyword": digits, "type": ["cmsArticleWebOld"], "client": "web", "clientType": "web", "clientVersion": "curr",
+            "uid": "", "keyword": keyword, "type": ["cmsArticleWebOld"], "client": "web", "clientType": "web", "clientVersion": "curr",
             "param": {"cmsArticleWebOld": {"searchScope": "default", "sort": "default", "pageIndex": 1, "pageSize": 10, "preTag": "<em>", "postTag": "</em>"}}
         }).to_string();
         let now = epoch_millis().to_string();
@@ -1309,9 +1433,9 @@ async fn fetch_eastmoney_stock_news(
             .append_pair("cb", &callback)
             .append_pair("param", &param)
             .append_pair("_", &now);
-        let referer = format!("https://so.eastmoney.com/news/s?keyword={digits}");
+        let referer = format!("https://so.eastmoney.com/news/s?keyword={keyword}");
         let text =
-            http_get_text_with_headers_timeout(client, url.as_str(), &referer, NEWS_TIMEOUT_SECS)
+            http_get_stock_news_text(client, &code, url.as_str(), &referer, NEWS_TIMEOUT_SECS)
                 .await
                 .map_err(|error| format!("Eastmoney news request failed: {error}"))?;
         let data =
@@ -1322,42 +1446,95 @@ async fn fetch_eastmoney_stock_news(
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        for row in rows.into_iter().take(10) {
-            let title = clean_html(row.get("title").and_then(Value::as_str).unwrap_or(""));
-            if title.is_empty() {
+        let source_url = format!("https://so.eastmoney.com/news/s?keyword={keyword}");
+        items.extend(parse_eastmoney_news_rows(
+            &rows,
+            stock,
+            &relation_map,
+            cutoff,
+            &source_url,
+        ));
+    }
+    Ok(items)
+}
+
+fn parse_eastmoney_news_rows(
+    rows: &[Value],
+    stock: &Value,
+    relation_map: &HashMap<String, Vec<String>>,
+    cutoff: u128,
+    source_url: &str,
+) -> Vec<Value> {
+    let Some(code) = stock
+        .get("code")
+        .and_then(Value::as_str)
+        .and_then(normalize_stock_code)
+    else {
+        return Vec::new();
+    };
+    let is_hk = code.ends_with(".HK");
+    let digits = code_digits(&code).unwrap_or_default();
+    let industry = stock
+        .get("industry")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| vec![value.to_string()])
+        .unwrap_or_default();
+    let mut items = Vec::new();
+    for row in rows.iter().take(10) {
+        let title = clean_html(row.get("title").and_then(Value::as_str).unwrap_or(""));
+        if title.is_empty() {
+            continue;
+        }
+        let summary = clean_html(row.get("content").and_then(Value::as_str).unwrap_or(""));
+        let raw_date = row.get("date").and_then(Value::as_str).unwrap_or("");
+        let published_at = parse_news_time(raw_date);
+        let published_epoch = if is_hk {
+            let Some(epoch) = parse_time_epoch_millis(raw_date) else {
                 continue;
-            }
-            let summary = clean_html(row.get("content").and_then(Value::as_str).unwrap_or(""));
-            let published_at =
-                parse_news_time(row.get("date").and_then(Value::as_str).unwrap_or(""));
-            let published_epoch =
-                parse_time_epoch_millis(&published_at).unwrap_or_else(epoch_millis);
-            if published_epoch < cutoff {
-                continue;
-            }
-            let article_code = row.get("code").and_then(Value::as_str).unwrap_or("");
-            let url = if article_code.trim().is_empty() {
-                format!("https://so.eastmoney.com/news/s?keyword={digits}")
-            } else {
-                format!("http://finance.eastmoney.com/a/{article_code}.html")
             };
-            items.push(news_item(json!({
+            epoch
+        } else {
+            parse_time_epoch_millis(&published_at).unwrap_or_else(epoch_millis)
+        };
+        if published_epoch < cutoff {
+            continue;
+        }
+        let article_code = row.get("code").and_then(Value::as_str).unwrap_or("");
+        if is_hk {
+            let title_and_summary = format!("{title} {summary}").to_ascii_lowercase();
+            let digits_in_title = title_and_summary.contains(&digits);
+            let name = stock.get("name").and_then(Value::as_str).unwrap_or("");
+            if !digits_in_title
+                && (name.trim().is_empty()
+                    || !title_and_summary.contains(&name.to_ascii_lowercase()))
+            {
+                continue;
+            }
+        }
+        let url = if article_code.trim().is_empty() {
+            format!("https://so.eastmoney.com/news/s?keyword={digits}")
+        } else {
+            format!("http://finance.eastmoney.com/a/{article_code}.html")
+        };
+        items.push(news_item(json!({
                 "title": title,
                 "summary": if summary.is_empty() { title.clone() } else { summary.clone() },
                 "source": row.get("mediaName").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).unwrap_or("东方财富个股新闻"),
+                "source_id": if is_hk { "eastmoney_hk" } else { "eastmoney" },
                 "source_tier": SOURCE_TIER_NEWS,
                 "published_at": published_at,
                 "published_at_epoch_ms": published_epoch,
                 "url": url,
+                "source_url": if is_hk { source_url } else { url.as_str() },
                 "stock_codes": [code.clone()],
-                "industries": stock.get("industry").and_then(Value::as_str).map(|value| vec![value.to_string()]).unwrap_or_default(),
+                "industries": industry.clone(),
                 "relation_types": relation_map.get(&code).cloned().unwrap_or_default(),
                 "sentiment": infer_sentiment(&format!("{} {}", title, row.get("content").and_then(Value::as_str).unwrap_or(""))),
                 "fetched_at_epoch_ms": epoch_millis()
             })));
-        }
     }
-    Ok(items)
+    items
 }
 
 async fn fetch_sina_stock_news(
@@ -1385,13 +1562,14 @@ async fn fetch_sina_stock_news(
         let url = format!(
             "https://vip.stock.finance.sina.com.cn/corp/go.php/vCB_AllNewsStock/symbol/{symbol}.phtml"
         );
-        let html = http_get_text(client, &url).await?;
+        let html = http_get_stock_news_text(client, &code, &url, "", NEWS_TIMEOUT_SECS).await?;
         items.extend(parse_sina_stock_news(
             &html,
             stock,
             &relation_map,
             cutoff,
             max_items,
+            Some(&url),
         ));
     }
     Ok(items)
@@ -1438,6 +1616,7 @@ fn parse_sina_stock_news(
     relation_map: &HashMap<String, Vec<String>>,
     cutoff: u128,
     max_items: usize,
+    source_url: Option<&str>,
 ) -> Vec<Value> {
     let Some(code) = stock
         .get("code")
@@ -1484,10 +1663,12 @@ fn parse_sina_stock_news(
             "title": title,
             "summary": title.clone(),
             "source": SOURCE_SINA_FINANCE,
+            "source_id": if code.ends_with(".HK") { "sina_hk" } else { "sina_finance" },
             "source_tier": SOURCE_TIER_NEWS,
             "published_at": published_at,
             "published_at_epoch_ms": published_epoch,
             "url": url,
+            "source_url": source_url.unwrap_or(&url),
             "stock_codes": [code.clone()],
             "industries": industry.clone(),
             "relation_types": relation_map.get(&code).cloned().unwrap_or_default(),
@@ -1755,12 +1936,19 @@ fn news_item(mut item: Value) -> Value {
 }
 
 fn read_news_cache_items(path: &Path) -> Result<Vec<Value>, String> {
+    read_news_cache_items_for_market(path, crate::external_data::Market::Global)
+}
+
+pub(crate) fn read_news_cache_items_for_market(
+    path: &Path,
+    market: crate::external_data::Market,
+) -> Result<Vec<Value>, String> {
     let app_data = news_cache_app_data_dir(path)?;
     let database_path = crate::external_data::store_path(&app_data);
     if database_path.exists() {
         let mut store = crate::external_data::DataStore::open(&database_path)?;
         if path.exists() {
-            let report = import_news_cache(&mut store, path)?;
+            let report = import_news_cache_for_market(&mut store, path, market)?;
             if !report.promoted {
                 return read_news_cache_legacy(path);
             }
@@ -1768,33 +1956,24 @@ fn read_news_cache_items(path: &Path) -> Result<Vec<Value>, String> {
         if store
             .latest_promoted_legacy_import(
                 crate::external_data::DataDomain::News,
-                crate::external_data::Market::Global,
+                market,
                 &path.to_string_lossy(),
             )?
             .is_some()
         {
             return store
-                .read_domain_records(
-                    crate::external_data::DataDomain::News,
-                    crate::external_data::Market::Global,
-                )
+                .read_domain_records(crate::external_data::DataDomain::News, market)
                 .map(|records| records.into_iter().map(|record| record.payload).collect());
         }
-        let records = store.read_domain_records(
-            crate::external_data::DataDomain::News,
-            crate::external_data::Market::Global,
-        )?;
+        let records = store.read_domain_records(crate::external_data::DataDomain::News, market)?;
         if !records.is_empty() {
             return Ok(records.into_iter().map(|record| record.payload).collect());
         }
     } else if path.exists() {
         let mut store = crate::external_data::DataStore::open(&database_path)?;
-        if import_news_cache(&mut store, path)?.promoted {
+        if import_news_cache_for_market(&mut store, path, market)?.promoted {
             return store
-                .read_domain_records(
-                    crate::external_data::DataDomain::News,
-                    crate::external_data::Market::Global,
-                )
+                .read_domain_records(crate::external_data::DataDomain::News, market)
                 .map(|records| records.into_iter().map(|record| record.payload).collect());
         }
     }
@@ -1817,25 +1996,41 @@ fn import_news_cache(
     store: &mut crate::external_data::DataStore,
     path: &Path,
 ) -> Result<crate::external_data::LegacyImportReport, String> {
+    import_news_cache_for_market(store, path, crate::external_data::Market::Global)
+}
+
+fn import_news_cache_for_market(
+    store: &mut crate::external_data::DataStore,
+    path: &Path,
+    market: crate::external_data::Market,
+) -> Result<crate::external_data::LegacyImportReport, String> {
     crate::external_data::import_legacy_json(
         store,
         path,
         crate::external_data::DataDomain::News,
-        crate::external_data::Market::Global,
+        market,
         |value, _, _| {
-            Ok(news_items_to_external_records(
+            Ok(news_items_to_external_records_for_market(
                 value
                     .get("items")
                     .and_then(Value::as_array)
                     .cloned()
                     .unwrap_or_default(),
+                market,
             ))
         },
     )
 }
 
 fn news_items_to_external_records(items: Vec<Value>) -> Vec<crate::external_data::StoredRecord> {
-    use crate::external_data::{DataDomain, Market, StoredRecord};
+    news_items_to_external_records_for_market(items, crate::external_data::Market::Global)
+}
+
+fn news_items_to_external_records_for_market(
+    items: Vec<Value>,
+    market: crate::external_data::Market,
+) -> Vec<crate::external_data::StoredRecord> {
+    use crate::external_data::{DataDomain, StoredRecord};
     items
         .into_iter()
         .map(news_item)
@@ -1868,7 +2063,7 @@ fn news_items_to_external_records(items: Vec<Value>) -> Vec<crate::external_data
                 .map(str::to_string);
             StoredRecord::new(
                 DataDomain::News,
-                Market::Global,
+                market,
                 canonical_url_hash
                     .as_ref()
                     .map(|hash| format!("url:{hash}"))
@@ -1916,29 +2111,41 @@ fn canonical_news_url_hash(item: &Value) -> Option<String> {
 }
 
 fn merge_into_news_cache(path: &Path, fetched: Vec<Value>) -> Result<Vec<Value>, String> {
+    merge_into_news_cache_for_market(path, fetched, crate::external_data::Market::Global)
+}
+
+fn merge_into_news_cache_for_market(
+    path: &Path,
+    fetched: Vec<Value>,
+    market: crate::external_data::Market,
+) -> Result<Vec<Value>, String> {
     let cache_lock = NEWS_CACHE_WRITE_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = cache_lock
         .lock()
         .map_err(|_| "消息缓存写入锁已损坏".to_string())?;
-    let cached = read_news_cache_items(path)?;
+    let cached = read_news_cache_items_for_market(path, market)?;
     let merged = merge_news_items(cached, fetched);
-    write_news_cache_items(path, &merged)?;
+    write_news_cache_items_for_market(path, &merged, market)?;
     Ok(merged)
 }
 
 fn write_news_cache_items(path: &Path, items: &[Value]) -> Result<(), String> {
+    write_news_cache_items_for_market(path, items, crate::external_data::Market::Global)
+}
+
+fn write_news_cache_items_for_market(
+    path: &Path,
+    items: &[Value],
+    market: crate::external_data::Market,
+) -> Result<(), String> {
     let app_data = news_cache_app_data_dir(path)?;
     let database_path = crate::external_data::store_path(&app_data);
     let mut store = crate::external_data::DataStore::open(&database_path)?;
-    if path.exists() && !import_news_cache(&mut store, path)?.promoted {
+    if path.exists() && !import_news_cache_for_market(&mut store, path, market)?.promoted {
         return write_news_cache_legacy(path, items);
     }
-    let records = news_items_to_external_records(items.to_vec());
-    store.replace_domain_batch(
-        crate::external_data::DataDomain::News,
-        crate::external_data::Market::Global,
-        &records,
-    )?;
+    let records = news_items_to_external_records_for_market(items.to_vec(), market);
+    store.replace_domain_batch(crate::external_data::DataDomain::News, market, &records)?;
     Ok(())
 }
 
@@ -1972,26 +2179,37 @@ fn news_cache_app_data_dir(path: &Path) -> Result<PathBuf, String> {
 }
 
 fn news_cache_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    news_cache_path_for_market(app, false)
+}
+
+fn news_cache_path_for_market(app: &tauri::AppHandle, is_hk: bool) -> Result<PathBuf, String> {
     let mut root = app
         .path()
         .app_data_dir()
         .map_err(|error| format!("获取应用数据目录失败：{error}"))?;
     root.push("news");
-    root.push(NEWS_CACHE_FILE);
+    root.push(if is_hk {
+        "news-cache-hk.json"
+    } else {
+        NEWS_CACHE_FILE
+    });
     Ok(root)
 }
 
 fn merge_news_items(mut cached: Vec<Value>, fetched: Vec<Value>) -> Vec<Value> {
     cached.extend(fetched);
-    let mut seen = HashSet::new();
-    let mut unique = Vec::new();
+    let mut seen = HashMap::<String,usize>::new();
+    let mut unique = Vec::<Value>::new();
     for item in cached {
         let key = item
             .get("id")
             .and_then(Value::as_str)
             .map(str::to_string)
             .unwrap_or_else(|| news_key(&item));
-        if seen.insert(key) {
+        if let Some(index)=seen.get(&key) {
+            article_summary::merge_fields(&mut unique[*index],&item);
+        } else {
+            seen.insert(key,unique.len());
             unique.push(news_item(item));
         }
     }
@@ -2036,6 +2254,9 @@ fn news_evidence(item: &Value) -> Value {
         "title": item.get("title").and_then(Value::as_str).unwrap_or(""),
         "summary": item.get("summary").and_then(Value::as_str),
         "source": item.get("source").and_then(Value::as_str).unwrap_or("未知来源"),
+        "source_id": item.get("source_id").and_then(Value::as_str),
+        "source_url": item.get("source_url").and_then(Value::as_str),
+        "fetched_at_epoch_ms": item.get("fetched_at_epoch_ms").and_then(Value::as_u64),
         "source_tier": item.get("source_tier").and_then(Value::as_str).unwrap_or(SOURCE_TIER_NEWS),
         "published_at": item.get("published_at").and_then(Value::as_str),
         "url": item.get("url").and_then(Value::as_str),
@@ -2148,6 +2369,7 @@ async fn apply_llm_analysis(
     evidence: &[Value],
     stock_by_code: &HashMap<String, Value>,
     base_findings: &[Value],
+    market: &str,
 ) -> (Vec<Value>, Vec<String>, String) {
     if base_findings.is_empty() {
         return (
@@ -2170,6 +2392,7 @@ async fn apply_llm_analysis(
         evidence,
         stock_by_code,
         base_findings,
+        market,
     )
     .await
     {
@@ -2404,6 +2627,7 @@ async fn call_news_llm(
     evidence: &[Value],
     stock_by_code: &HashMap<String, Value>,
     findings: &[Value],
+    market: &str,
 ) -> Result<Value, String> {
     let client = build_http_client_with_proxy(
         config
@@ -2414,8 +2638,15 @@ async fn call_news_llm(
         None,
     )
     .map_err(|error| format!("create LLM HTTP client failed: {error}"))?;
-    let payload = news_llm_payload(scope_codes, relations, evidence, stock_by_code, findings);
-    let mut request = json!({"model": config.model, "messages": [{"role": "system", "content": news_llm_system_prompt()}, {"role": "user", "content": serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())}], "temperature": config.temperature});
+    let payload = news_llm_payload(
+        scope_codes,
+        relations,
+        evidence,
+        stock_by_code,
+        findings,
+        market,
+    );
+    let mut request = json!({"model": config.model, "messages": [{"role": "system", "content": news_llm_system_prompt(market)}, {"role": "user", "content": serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())}], "temperature": config.temperature});
     if config.json_mode {
         request["response_format"] = json!({"type": "json_object"});
     }
@@ -2571,12 +2802,17 @@ fn news_llm_payload(
     evidence: &[Value],
     stock_by_code: &HashMap<String, Value>,
     findings: &[Value],
+    market: &str,
 ) -> Value {
-    json!({"scope_codes": scope_codes, "stocks": scope_codes.iter().filter_map(|code| { let stock = stock_by_code.get(code)?; Some(json!({"code": code, "name": stock.get("name").and_then(Value::as_str).unwrap_or(code), "industry": stock.get("industry").and_then(Value::as_str).unwrap_or("")})) }).collect::<Vec<_>>(), "relations": relations.iter().take(30).map(|relation| json!({"source_code": relation.get("source_code").and_then(Value::as_str).unwrap_or(""), "target_code": relation.get("target_code").and_then(Value::as_str).unwrap_or(""), "relation_type": relation.get("relation_type").and_then(Value::as_str).unwrap_or(""), "weight": relation_weight(relation), "description": relation.get("description").and_then(Value::as_str)})).collect::<Vec<_>>(), "evidence": evidence.iter().take(30).enumerate().map(|(index, item)| json!({"id": format!("E{}", index + 1), "title": item.get("title").and_then(Value::as_str).unwrap_or(""), "summary": item.get("summary").and_then(Value::as_str).unwrap_or(""), "source": item.get("source").and_then(Value::as_str).unwrap_or(""), "source_tier": item.get("source_tier").and_then(Value::as_str).unwrap_or(SOURCE_TIER_NEWS), "published_at": item.get("published_at").and_then(Value::as_str), "stock_codes": string_array(item.get("stock_codes")), "relation_types": string_array(item.get("relation_types")), "sentiment": item.get("sentiment").and_then(Value::as_str).unwrap_or("uncertain")})).collect::<Vec<_>>(), "rule_findings": findings.iter().map(|finding| json!({"target": finding.get("target").and_then(Value::as_str).unwrap_or(""), "direction": finding.get("direction").and_then(Value::as_str).unwrap_or(""), "confidence": finding.get("confidence").and_then(Value::as_str).unwrap_or(""), "impact_chain": finding.get("impact_chain").and_then(Value::as_str).unwrap_or(""), "evidence_titles": finding.get("evidence").and_then(Value::as_array).into_iter().flatten().filter_map(|item| item.get("title").and_then(Value::as_str)).collect::<Vec<_>>(), "pending_checks": string_array(finding.get("pending_checks"))})).collect::<Vec<_>>()})
+    json!({"market": market, "scope_codes": scope_codes, "stocks": scope_codes.iter().filter_map(|code| { let stock = stock_by_code.get(code)?; Some(json!({"code": code, "name": stock.get("name").and_then(Value::as_str).unwrap_or(code), "industry": stock.get("industry").and_then(Value::as_str).unwrap_or("")})) }).collect::<Vec<_>>(), "relations": relations.iter().take(30).map(|relation| json!({"source_code": relation.get("source_code").and_then(Value::as_str).unwrap_or(""), "target_code": relation.get("target_code").and_then(Value::as_str).unwrap_or(""), "relation_type": relation.get("relation_type").and_then(Value::as_str).unwrap_or(""), "weight": relation_weight(relation), "description": relation.get("description").and_then(Value::as_str)})).collect::<Vec<_>>(), "evidence": evidence.iter().take(30).enumerate().map(|(index, item)| json!({"id": format!("E{}", index + 1), "title": item.get("title").and_then(Value::as_str).unwrap_or(""), "summary": item.get("summary").and_then(Value::as_str).unwrap_or(""), "source": item.get("source").and_then(Value::as_str).unwrap_or(""), "source_id": item.get("source_id").and_then(Value::as_str), "source_url": item.get("source_url").and_then(Value::as_str), "fetched_at_epoch_ms": item.get("fetched_at_epoch_ms").and_then(Value::as_u64), "source_tier": item.get("source_tier").and_then(Value::as_str).unwrap_or(SOURCE_TIER_NEWS), "published_at": item.get("published_at").and_then(Value::as_str), "stock_codes": string_array(item.get("stock_codes")), "relation_types": string_array(item.get("relation_types")), "sentiment": item.get("sentiment").and_then(Value::as_str).unwrap_or("uncertain")})).collect::<Vec<_>>(), "rule_findings": findings.iter().map(|finding| json!({"target": finding.get("target").and_then(Value::as_str).unwrap_or(""), "direction": finding.get("direction").and_then(Value::as_str).unwrap_or(""), "confidence": finding.get("confidence").and_then(Value::as_str).unwrap_or(""), "impact_chain": finding.get("impact_chain").and_then(Value::as_str).unwrap_or(""), "evidence_titles": finding.get("evidence").and_then(Value::as_array).into_iter().flatten().filter_map(|item| item.get("title").and_then(Value::as_str)).collect::<Vec<_>>(), "pending_checks": string_array(finding.get("pending_checks"))})).collect::<Vec<_>>()})
 }
 
-fn news_llm_system_prompt() -> &'static str {
-    "你是A股上下游消息RAG分析器，只能基于用户提供的关系边和证据判断。不要编造公告、客户、供应商、订单或新闻；不要给交易建议。community证据只能作为情绪、传闻或待核查线索，不能单独支撑确定性利好/利空。输出严格JSON：{\"findings\":[{\"target\":\"与输入target一致\",\"direction\":\"利好|利空|中性|不确定\",\"confidence\":\"低|中|高\",\"impact_chain\":\"一句中文解释\",\"pending_checks\":[\"待核查项\"]}],\"notes\":[\"简短说明\"]}。"
+fn news_llm_system_prompt(market: &str) -> &'static str {
+    if market == "hk" {
+        "你是港股消息RAG分析器，只能基于用户提供的港股证券和已检索证据判断。证券代码必须保持 .HK 市场后缀；不要把港股映射到A股，也不要编造公告、客户、供应商、订单或新闻；不要给交易建议。community证据只能作为情绪、传闻或待核查线索，不能单独支撑确定性利好/利空。输出严格JSON：{\"findings\":[{\"target\":\"与输入target一致\",\"direction\":\"利好|利空|中性|不确定\",\"confidence\":\"低|中|高\",\"impact_chain\":\"一句中文解释\",\"pending_checks\":[\"待核查项\"]}],\"notes\":[\"简短说明\"]}。"
+    } else {
+        "你是A股上下游消息RAG分析器，只能基于用户提供的关系边和证据判断。不要编造公告、客户、供应商、订单或新闻；不要给交易建议。community证据只能作为情绪、传闻或待核查线索，不能单独支撑确定性利好/利空。输出严格JSON：{\"findings\":[{\"target\":\"与输入target一致\",\"direction\":\"利好|利空|中性|不确定\",\"confidence\":\"低|中|高\",\"impact_chain\":\"一句中文解释\",\"pending_checks\":[\"待核查项\"]}],\"notes\":[\"简短说明\"]}。"
+    }
 }
 
 fn merge_llm_findings(base_findings: &[Value], llm_result: &Value) -> Vec<Value> {
@@ -2996,6 +3232,66 @@ fn current_iso_like() -> String {
 async fn http_get_text(client: &reqwest::Client, url: &str) -> Result<String, String> {
     http_get_text_with_headers_timeout(client, url, "", NEWS_TIMEOUT_SECS).await
 }
+async fn http_get_stock_news_text(
+    client: &reqwest::Client,
+    code: &str,
+    url: &str,
+    referer: &str,
+    timeout_secs: u64,
+) -> Result<String, String> {
+    stock_news_text_with_legacy(
+        client,
+        code,
+        url,
+        referer,
+        timeout_secs,
+        http_get_text_with_headers_timeout(client, url, referer, timeout_secs),
+    )
+    .await
+}
+
+async fn stock_news_text_with_legacy<L>(
+    client: &reqwest::Client,
+    code: &str,
+    url: &str,
+    referer: &str,
+    timeout_secs: u64,
+    legacy: L,
+) -> Result<String, String>
+where
+    L: std::future::Future<Output = Result<String, String>>,
+{
+    // The legacy Windows transport has its own proxy policy. Only poll it for
+    // mainland stocks; HK indexes must use the same selected client as articles.
+    if !code.ends_with(".HK") {
+        return legacy.await;
+    }
+    let mut request = client
+        .get(url)
+        .header("User-Agent", "Mozilla/5.0 GuXuanYou/0.3 news-rag")
+        .timeout(Duration::from_secs(timeout_secs));
+    if !referer.trim().is_empty() {
+        request = request.header("Referer", referer);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("GET {url} failed: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!("GET {url} HTTP {}", response.status()));
+    }
+    let mut bytes = Vec::new();
+    let mut body = response.bytes_stream();
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk.map_err(|error| format!("GET {url} body read failed: {error}"))?;
+        if chunk.len() > NEWS_MAX_STOCK_BODY_BYTES.saturating_sub(bytes.len()) {
+            return Err(format!("GET {url} body exceeds size limit"));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(decode_http_text(&bytes))
+}
+
 async fn http_get_text_with_headers_timeout(
     client: &reqwest::Client,
     url: &str,
@@ -3152,6 +3448,9 @@ fn stock_industries(stock: &Value) -> Vec<String> {
 fn sina_symbol(code: &str) -> Option<String> {
     let normalized = normalize_stock_code(code)?;
     let digits = code_digits(&normalized)?;
+    if normalized.ends_with(".HK") {
+        return Some(format!("hk{digits:0>5}"));
+    }
     let prefix =
         if normalized.ends_with(".SH") || digits.starts_with('6') || digits.starts_with('9') {
             "sh"
@@ -3320,6 +3619,13 @@ fn contains_any(text: &str, words: &[&str]) -> bool {
     words.iter().any(|word| text.contains(word))
 }
 fn code_digits(code: &str) -> Option<String> {
+    if code.ends_with(".HK") {
+        let digits = code
+            .chars()
+            .filter(|ch| ch.is_ascii_digit())
+            .collect::<String>();
+        return (digits.len() == 5).then_some(digits);
+    }
     let digits = code
         .chars()
         .filter(|ch| ch.is_ascii_digit())
@@ -3373,6 +3679,239 @@ mod tests {
     use super::*;
     use std::sync::atomic::Ordering as AtomicOrdering;
 
+    struct NewsHttpFixture {
+        url: String,
+        requests: std::sync::Arc<Mutex<Vec<String>>>,
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        worker: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl NewsHttpFixture {
+        fn start(status: u16, body: Vec<u8>, body_delay: Duration) -> Self {
+            use std::io::{Read, Write};
+            use std::net::TcpListener;
+
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/stock-news", listener.local_addr().unwrap());
+            listener.set_nonblocking(true).unwrap();
+            let requests = std::sync::Arc::new(Mutex::new(Vec::new()));
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let captured = requests.clone();
+            let stopped = stop.clone();
+            let worker = std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                while !stopped.load(AtomicOrdering::Relaxed) && std::time::Instant::now() < deadline
+                {
+                    let (mut stream, _) = match listener.accept() {
+                        Ok(connection) => connection,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(5));
+                            continue;
+                        }
+                        Err(error) => panic!("accept news fixture request: {error}"),
+                    };
+                    stream.set_nonblocking(false).unwrap();
+                    stream
+                        .set_read_timeout(Some(Duration::from_millis(500)))
+                        .unwrap();
+                    stream
+                        .set_write_timeout(Some(Duration::from_millis(500)))
+                        .unwrap();
+                    let mut request = Vec::new();
+                    let mut buffer = [0_u8; 2048];
+                    while request.len() < 16 * 1024 {
+                        match stream.read(&mut buffer) {
+                            Ok(0) | Err(_) => break,
+                            Ok(read) => request.extend_from_slice(&buffer[..read]),
+                        }
+                        if request.windows(4).any(|part| part == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    captured
+                        .lock()
+                        .unwrap()
+                        .push(String::from_utf8_lossy(&request).into_owned());
+                    // No Content-Length: oversized tests must exercise the streaming bound.
+                    let headers = format!("HTTP/1.1 {status} Fixture\r\nConnection: close\r\n\r\n");
+                    let _ = stream.write_all(headers.as_bytes());
+                    std::thread::sleep(body_delay);
+                    let _ = stream.write_all(&body);
+                }
+            });
+            Self {
+                url,
+                requests,
+                stop,
+                worker: Some(worker),
+            }
+        }
+
+        fn requests(&self) -> Vec<String> {
+            self.requests.lock().unwrap().clone()
+        }
+    }
+
+    impl Drop for NewsHttpFixture {
+        fn drop(&mut self) {
+            self.stop.store(true, AtomicOrdering::Relaxed);
+            self.worker.take().unwrap().join().unwrap();
+        }
+    }
+
+    fn news_fixture_client(mode: &str, proxy: Option<&NewsHttpFixture>) -> reqwest::Client {
+        let payload = json!({
+            "network_proxy_mode": mode,
+            "network_proxy_url": proxy.map(|fixture| fixture.url.trim_end_matches("/stock-news")),
+        });
+        build_http_client_with_proxy(
+            "offline news fixture",
+            Duration::from_secs(3),
+            Some(&payload),
+        )
+        .unwrap()
+    }
+
+    async fn legacy_fixture_get(client: &reqwest::Client, url: &str) -> Result<String, String> {
+        client
+            .get(url)
+            .send()
+            .await
+            .map_err(|error| error.to_string())?
+            .text()
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn hk_stock_news_manual_proxy_uses_only_configured_client() {
+        let origin = NewsHttpFixture::start(200, b"origin".to_vec(), Duration::ZERO);
+        let proxy = NewsHttpFixture::start(200, b"proxy".to_vec(), Duration::ZERO);
+        let client = news_fixture_client("manual", Some(&proxy));
+        let legacy_client = news_fixture_client("direct", None);
+        let body = tauri::async_runtime::block_on(stock_news_text_with_legacy(
+            &client,
+            "00700.HK",
+            &origin.url,
+            "https://so.eastmoney.com/news/s?keyword=HK00700",
+            2,
+            legacy_fixture_get(&legacy_client, &origin.url),
+        ))
+        .unwrap();
+        assert_eq!(
+            body, "proxy",
+            "HK stock news must honor the configured manual proxy"
+        );
+        assert!(
+            origin.requests().is_empty(),
+            "manual mode must not contact the origin directly"
+        );
+        let requests = proxy.requests();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with(&format!("GET {} HTTP/1.1", origin.url)));
+        let headers = requests[0].to_lowercase();
+        assert!(headers.contains("user-agent: mozilla/5.0 guxuanyou/0.3 news-rag"));
+        assert!(headers.contains("referer: https://so.eastmoney.com/news/s?keyword=hk00700"));
+    }
+
+    #[test]
+    fn hk_stock_news_direct_uses_origin_without_legacy_transport() {
+        let origin = NewsHttpFixture::start(200, b"origin".to_vec(), Duration::ZERO);
+        let client = news_fixture_client("direct", None);
+        let body = tauri::async_runtime::block_on(stock_news_text_with_legacy(
+            &client,
+            "00700.HK",
+            &origin.url,
+            "",
+            2,
+            async { Err("legacy transport must not run for HK".to_string()) },
+        ))
+        .unwrap();
+        assert_eq!(body, "origin");
+        assert_eq!(origin.requests().len(), 1);
+    }
+
+    #[test]
+    fn hk_stock_news_failed_proxy_does_not_fallback_to_origin() {
+        let origin = NewsHttpFixture::start(200, b"origin".to_vec(), Duration::ZERO);
+        let proxy = NewsHttpFixture::start(502, b"proxy unavailable".to_vec(), Duration::ZERO);
+        let client = news_fixture_client("manual", Some(&proxy));
+        let legacy_client = news_fixture_client("direct", None);
+        let result = tauri::async_runtime::block_on(stock_news_text_with_legacy(
+            &client,
+            "00700.HK",
+            &origin.url,
+            "",
+            2,
+            legacy_fixture_get(&legacy_client, &origin.url),
+        ));
+        assert!(
+            result.is_err(),
+            "a failed configured proxy must fail the HK index request"
+        );
+        assert!(
+            origin.requests().is_empty(),
+            "failed proxy must not trigger direct fallback"
+        );
+        assert_eq!(proxy.requests().len(), 1);
+    }
+
+    #[test]
+    fn cn_stock_news_keeps_legacy_transport() {
+        let origin = NewsHttpFixture::start(200, b"origin".to_vec(), Duration::ZERO);
+        let proxy = NewsHttpFixture::start(200, b"proxy".to_vec(), Duration::ZERO);
+        let client = news_fixture_client("manual", Some(&proxy));
+        let legacy_client = news_fixture_client("direct", None);
+        let body = tauri::async_runtime::block_on(stock_news_text_with_legacy(
+            &client,
+            "000001.SZ",
+            &origin.url,
+            "",
+            2,
+            legacy_fixture_get(&legacy_client, &origin.url),
+        ))
+        .unwrap();
+        assert_eq!(body, "origin");
+        assert_eq!(origin.requests().len(), 1);
+        assert!(proxy.requests().is_empty());
+    }
+
+    #[test]
+    fn hk_stock_news_bounds_streamed_response_body() {
+        let origin = NewsHttpFixture::start(200, vec![b'x'; 2 * 1024 * 1024 + 1], Duration::ZERO);
+        let client = news_fixture_client("direct", None);
+        let result = tauri::async_runtime::block_on(stock_news_text_with_legacy(
+            &client,
+            "00700.HK",
+            &origin.url,
+            "",
+            2,
+            legacy_fixture_get(&client, &origin.url),
+        ));
+        assert!(
+            result.is_err(),
+            "HK stock news must reject oversized streamed bodies"
+        );
+    }
+
+    #[test]
+    fn hk_stock_news_applies_request_timeout_to_body() {
+        let origin = NewsHttpFixture::start(200, b"delayed".to_vec(), Duration::from_millis(1200));
+        let client = news_fixture_client("direct", None);
+        let result = tauri::async_runtime::block_on(stock_news_text_with_legacy(
+            &client,
+            "00700.HK",
+            &origin.url,
+            "",
+            1,
+            legacy_fixture_get(&client, &origin.url),
+        ));
+        assert!(
+            result.is_err(),
+            "HK body reads must respect the per-request timeout"
+        );
+    }
+
     #[test]
     fn research_llm_protocol_adapter_keeps_prompt_roles_and_response_text() {
         let request = json!({
@@ -3396,6 +3935,21 @@ mod tests {
         let anthropic = adapt_news_llm_request(&request, "anthropic_messages");
         assert_eq!(anthropic["system"], "evidence only");
         assert_eq!(anthropic["messages"][0]["content"], "question");
+    }
+
+    #[test]
+    fn article_summary_enrichment_updates_cached_item_without_replacing_original_evidence() {
+        let cached = json!({"id":"same","title":"腾讯招聘","summary":"腾讯招聘","remote_export_allowed":false});
+        let fresh = json!({"id":"same","title":"腾讯招聘","summary":"腾讯招聘",
+            "article_summary":"腾讯混元上线招聘，社招有60余个岗位。青云课题涵盖逾160个岗位。",
+            "article_summary_status":"available","article_summary_url":"https://t.cj.sina.cn/articles/view/1"});
+        let result = merge_news_items(vec![cached],vec![fresh]);
+        assert_eq!(result.len(),1);
+        assert_eq!(result[0]["summary"],"腾讯招聘");
+        assert_eq!(result[0]["article_summary"],"腾讯混元上线招聘，社招有60余个岗位。青云课题涵盖逾160个岗位。");
+        assert_eq!(result[0]["remote_export_allowed"],false);
+        let reloaded = merge_news_items(result,vec![json!({"id":"same","title":"腾讯招聘","summary":"腾讯招聘"})]);
+        assert_eq!(reloaded[0]["article_summary_status"],"available");
     }
 
     #[test]
@@ -3532,13 +4086,128 @@ mod tests {
             </ul></div>
         "#;
         let cutoff = parse_time_epoch_millis("2026-06-01 00:00:00").unwrap();
-        let items = parse_sina_stock_news(&html, &stock, &relations, cutoff, 10);
+        let items = parse_sina_stock_news(&html, &stock, &relations, cutoff, 10, None);
         assert_eq!(items.len(), 2);
         assert_eq!(items[0]["source"], SOURCE_SINA_FINANCE);
         assert_eq!(items[0]["source_tier"], SOURCE_TIER_NEWS);
         assert_eq!(items[0]["stock_codes"][0], "000100.SZ");
         assert_eq!(items[0]["published_at"], "2026-06-25 17:37:00");
         assert!(items[0]["url"].as_str().unwrap().contains("cj.sina.cn"));
+    }
+
+    #[test]
+    fn sina_symbol_keeps_mainland_prefixes_and_routes_hk_symbols_to_hk() {
+        assert_eq!(sina_symbol("600000.SH").as_deref(), Some("sh600000"));
+        assert_eq!(sina_symbol("000001.SZ").as_deref(), Some("sz000001"));
+        assert_eq!(sina_symbol("00700.HK").as_deref(), Some("hk00700"));
+    }
+
+    #[test]
+    fn hk_sina_fixture_keeps_canonical_code_and_news_provenance() {
+        let stock = json!({"code":"00700.HK", "name":"Tencent", "market":"hk"});
+        let relations = HashMap::new();
+        let cutoff = parse_time_epoch_millis("2026-10-01 00:00:00").unwrap();
+        let html = include_str!("../testdata/sina-hk-stock-news.html");
+        let listing_url = "https://vip.stock.finance.sina.com.cn/corp/go.php/vCB_AllNewsStock/symbol/hk00700.phtml";
+        let items = parse_sina_stock_news(html, &stock, &relations, cutoff, 10, Some(listing_url));
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["stock_codes"], json!(["00700.HK"]));
+        assert_eq!(items[0]["source_id"], "sina_hk");
+        assert_eq!(items[0]["source_url"], listing_url);
+        assert!(items[0]["fetched_at_epoch_ms"].as_u64().is_some());
+        assert_eq!(items[0]["published_at"], "2026-10-29 09:15:00");
+
+        let evidence = items.iter().map(news_evidence).collect::<Vec<_>>();
+        let llm_input = news_llm_payload(
+            &["00700.HK".to_string()],
+            &[],
+            &evidence,
+            &HashMap::from([("00700.HK".to_string(), stock)]),
+            &[],
+            "hk",
+        );
+        assert_eq!(llm_input["market"], "hk");
+        assert_eq!(llm_input["scope_codes"], json!(["00700.HK"]));
+        assert!(news_llm_system_prompt("hk").contains("港股"));
+    }
+
+    #[test]
+    fn eastmoney_hk_fixture_filters_unrelated_rows_and_keeps_provenance() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("../testdata/eastmoney-hk-news.json")).unwrap();
+        let rows = fixture["result"]["cmsArticleWebOld"].as_array().unwrap();
+        let stock = json!({"code":"00700.HK", "name":"Tencent Holdings", "industry":""});
+        let source_url = "https://so.eastmoney.com/news/s?keyword=HK00700";
+        let cutoff = parse_time_epoch_millis("2026-10-01 00:00:00").unwrap();
+        let items = parse_eastmoney_news_rows(rows, &stock, &HashMap::new(), cutoff, source_url);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["stock_codes"], json!(["00700.HK"]));
+        assert_eq!(items[0]["source_id"], "eastmoney_hk");
+        assert_eq!(items[0]["source_url"], source_url);
+        assert!(items[0]["fetched_at_epoch_ms"].as_u64().is_some());
+        assert_eq!(items[0]["published_at"], "2026-10-29 09:00:00");
+    }
+
+    #[test]
+    fn hk_scope_never_resolves_a_mainland_code_without_hk_suffix() {
+        let hk_stocks = HashMap::from([(
+            "00700.HK".to_string(),
+            json!({"code":"00700.HK", "market":"hk"}),
+        )]);
+        let payload = json!({"market":"hk", "code":"00700"});
+        assert!(scope_codes(&payload, &hk_stocks).is_empty());
+        assert_eq!(
+            scope_codes(&json!({"market":"hk", "code":"700.HK"}), &hk_stocks),
+            vec!["00700.HK"]
+        );
+    }
+
+    #[test]
+    fn hk_news_cache_isolated_and_empty_refresh_keeps_cached_evidence() {
+        let root = std::env::temp_dir().join(format!(
+            "gp-hk-news-cache-{}-{}",
+            epoch_millis(),
+            NEWS_CACHE_TMP_COUNTER.fetch_add(1, AtomicOrdering::Relaxed)
+        ));
+        let news_dir = root.join("news");
+        fs::create_dir_all(&news_dir).unwrap();
+        let cn_path = news_dir.join("news-cache.json");
+        let hk_path = news_dir.join("news-cache-hk.json");
+        let cn_item = json!({"id":"cn-item","title":"CN","stock_codes":["00700.SH"],"source":"CN fixture","published_at":"2026-10-30"});
+        let hk_item = json!({"id":"hk-item","title":"HK","stock_codes":["00700.HK"],"source":"HK fixture","source_id":"sina_hk","source_url":"https://source.test/hk","fetched_at_epoch_ms":2,"published_at":"2026-10-30"});
+        merge_into_news_cache_for_market(
+            &cn_path,
+            vec![cn_item],
+            crate::external_data::Market::Global,
+        )
+        .unwrap();
+        merge_into_news_cache_for_market(
+            &hk_path,
+            vec![hk_item.clone()],
+            crate::external_data::Market::HongKong,
+        )
+        .unwrap();
+        let stale = merge_into_news_cache_for_market(
+            &hk_path,
+            Vec::new(),
+            crate::external_data::Market::HongKong,
+        )
+        .unwrap();
+
+        assert_eq!(stale, vec![hk_item]);
+        assert_eq!(
+            read_news_cache_items_for_market(&cn_path, crate::external_data::Market::Global)
+                .unwrap()[0]["stock_codes"][0],
+            "00700.SH"
+        );
+        assert_eq!(
+            read_news_cache_items_for_market(&hk_path, crate::external_data::Market::HongKong)
+                .unwrap()[0]["stock_codes"][0],
+            "00700.HK"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

@@ -38,6 +38,7 @@ impl PdfExtraction {
 }
 
 pub(crate) async fn import_url(app: &tauri::AppHandle, payload: &Value) -> Result<Value, String> {
+    let market = research::market_from_payload(payload)?;
     let raw_url = payload
         .get("url")
         .and_then(Value::as_str)
@@ -132,7 +133,9 @@ pub(crate) async fn import_url(app: &tauri::AppHandle, payload: &Value) -> Resul
             "pinned": true,
             "metadata": {"import_kind": "url"}
         })];
-        let result = research::with_app_store(app, |store| store.ingest_documents(&documents))?;
+        let result = research::with_app_store_for_market(app, market, |store| {
+            store.ingest_documents(&documents)
+        })?;
         return Ok(json!({
             "kind": "url",
             "final_url": url.as_str(),
@@ -144,6 +147,7 @@ pub(crate) async fn import_url(app: &tauri::AppHandle, payload: &Value) -> Resul
 }
 
 pub(crate) fn import_pdf(app: &tauri::AppHandle, payload: &Value) -> Result<Value, String> {
+    research::market_from_payload(payload)?;
     let encoded = payload
         .get("bytes_base64")
         .and_then(Value::as_str)
@@ -187,8 +191,10 @@ fn import_pdf_bytes(
     let extracted_page_count = extraction.documents.len();
     let ocr_required = extraction.ocr_required();
     let skipped_pages = extraction.skipped_pages.clone();
-    let imported =
-        research::with_app_store(app, |store| store.ingest_documents(&extraction.documents))?;
+    let market = research::market_from_payload(payload)?;
+    let imported = research::with_app_store_for_market(app, market, |store| {
+        store.ingest_documents(&extraction.documents)
+    })?;
     Ok(json!({
         "kind": "pdf",
         "page_count": page_count,
@@ -562,12 +568,13 @@ pub(crate) async fn api_research_import_url(
     }
     #[cfg(not(mobile))]
     {
+        let market = crate::research::market_from_payload(&payload)?.to_string();
         let result = crate::runtime::with_heavy_network_permit(
             "api_research_import_url",
             crate::research_import::import_url(&app, &payload),
         )
         .await?;
-        crate::research::schedule_research_embeddings(app);
+        crate::research::schedule_research_embeddings_for_market(app, market);
         Ok(result)
     }
 }
@@ -584,12 +591,13 @@ pub(crate) async fn api_research_import_pdf(
     }
     #[cfg(not(mobile))]
     {
+        let market = crate::research::market_from_payload(&payload)?.to_string();
         let worker_app = app.clone();
         let result = crate::runtime::run_cpu_bound("api_research_import_pdf", move || {
             crate::research_import::import_pdf(&worker_app, &payload)
         })
         .await??;
-        crate::research::schedule_research_embeddings(app);
+        crate::research::schedule_research_embeddings_for_market(app, market);
         Ok(result)
     }
 }
