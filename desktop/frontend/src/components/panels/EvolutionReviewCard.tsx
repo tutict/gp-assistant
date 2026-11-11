@@ -25,7 +25,7 @@ export function EvolutionReviewCard({ review: initialReview, llm, onClose }: { r
   const enhance = async () => {
     if (!llm) return;
     setEnhancing(true); setError(undefined);
-    try { setReview(await enhanceEvolutionReview(review, llm as unknown as Record<string, unknown>)); }
+    try { setReview(await enhanceEvolutionReview(review, llm)); }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setEnhancing(false); }
   };

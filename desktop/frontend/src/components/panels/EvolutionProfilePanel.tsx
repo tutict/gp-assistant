@@ -10,6 +10,7 @@ import {
   updateEvolutionSettings,
   type EvolutionProfile,
   type EvolutionRule,
+  type EvolutionRuleStatus,
 } from "../../lib/evolution";
 
 interface EvolutionProfileContentProps {
@@ -51,7 +52,7 @@ export function EvolutionProfileContent({ onClose, embedded = false }: Evolution
       setEditing(undefined);
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
-  const changeStatus = async (ruleId: string, status: string) => {
+  const changeStatus = async (ruleId: string, status: EvolutionRuleStatus) => {
     try { setProfile(await setEvolutionRuleStatus(ruleId, status)); }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };

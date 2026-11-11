@@ -404,7 +404,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
         tool_calls: message.result.tool_calls || [],
       }));
     } catch (cause) {
-      setEvolutionReview({ review_id: `local-error-${Date.now()}`, run_id: message.runId, conversation_id: activeConversation.id, status: "error", review_mode: "deterministic", research_goal: "复盘失败", evidence_and_process: { evidence_ids: [], tool_calls: [] }, conclusion_quality: { answer: cause instanceof Error ? cause.message : String(cause), has_answer: true }, blind_spot_candidates: [], rule_candidates: [] });
+      setEvolutionReview({ review_id: `local-error-${Date.now()}`, run_id: message.runId, conversation_id: activeConversation.id, status: "error", review_mode: "deterministic", research_goal: "复盘失败", evidence_and_process: { evidence_ids: [], tool_calls: [] }, conclusion_quality: { answer: cause instanceof Error ? cause.message : String(cause), has_answer: true }, blind_spot_candidates: [], rule_candidates: [], model_feedback: null });
     } finally {
       setEvolutionReviewLoading(false);
     }
@@ -415,9 +415,9 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     setEvolutionReviewLoading(true);
     try {
       const citations = extractEvolutionEvidenceIds(detail.result);
-      setEvolutionReview(await createEvolutionReview({ run_id: detail.runId, conversation_id: detail.conversationId, question: detail.question, answer: detail.result.reply || "", evidence_ids: citations, tool_calls: detail.result.tool_calls || [] }));
+      setEvolutionReview(await createEvolutionReview({ run_id: detail.runId, conversation_id: detail.conversationId ?? undefined, question: detail.question, answer: detail.result.reply || "", evidence_ids: citations, tool_calls: detail.result.tool_calls || [] }));
     } catch (cause) {
-      setEvolutionReview({ review_id: `local-error-${Date.now()}`, run_id: detail.runId, conversation_id: detail.conversationId, status: "error", review_mode: "deterministic", research_goal: "复盘失败", evidence_and_process: { evidence_ids: [], tool_calls: [] }, conclusion_quality: { answer: cause instanceof Error ? cause.message : String(cause), has_answer: true }, blind_spot_candidates: [], rule_candidates: [] });
+      setEvolutionReview({ review_id: `local-error-${Date.now()}`, run_id: detail.runId, conversation_id: detail.conversationId ?? null, status: "error", review_mode: "deterministic", research_goal: "复盘失败", evidence_and_process: { evidence_ids: [], tool_calls: [] }, conclusion_quality: { answer: cause instanceof Error ? cause.message : String(cause), has_answer: true }, blind_spot_candidates: [], rule_candidates: [], model_feedback: null });
     } finally { setEvolutionReviewLoading(false); }
   }, []);
 
