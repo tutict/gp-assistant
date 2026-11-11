@@ -5,7 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 
-DATASET_VERSION = "research-retrieval-eval-v4"
+DATASET_VERSION = "research-retrieval-eval-v5"
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_PATH = ROOT / "app" / "prompts" / "research_retrieval_eval_cases.json"
 
@@ -73,10 +73,10 @@ def validate_rows(rows: list[dict], require_model: bool) -> tuple[list[dict], in
 
 def promote(rows: list[dict], output: Path, manifest_path: Path, require_model: bool) -> dict:
     public, excluded_private = validate_rows(rows, require_model)
-    output.write_text("".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n" for row in public), encoding="utf-8")
+    output.write_text("".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n" for row in public), encoding="utf-8", newline="\n")
     digest = hashlib.sha256(output.read_bytes()).hexdigest()
     manifest = {DATASET_VERSION: {"path": output.name, "sha256": digest, "case_count": len(public), "excluded_private_case_count": excluded_private}}
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     return {"case_count": len(public), "excluded_private_case_count": excluded_private, "sha256": digest}
 
 

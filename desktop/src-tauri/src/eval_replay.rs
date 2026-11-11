@@ -9,7 +9,7 @@ use std::{
 use crate::{research::ResearchStore, rig_runtime};
 use stock_optimizer_core as gp_core;
 
-const FIXTURE_VERSION: &str = "research-retrieval-eval-v4";
+const FIXTURE_VERSION: &str = "research-retrieval-eval-v5";
 const EMBEDDING_MODEL: &str = "retrieval-replay-v3";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -272,7 +272,7 @@ fn replay_case(
         value
     };
     let local_response = store.query_with_vector(&local_request, qv.as_deref())?;
-    let (local_contexts, local_ids) = citations(&local_response);
+    let (_, local_ids) = citations(&local_response);
     let should_call_model = profile == ReplayProfile::ModelBacked && !private;
     let (trace, agent_response, agent_events) = replay_agent(
         case,
@@ -336,16 +336,22 @@ fn replay_case(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let local_assertions = case.get("privacy_policy")
+        .and_then(|policy| policy.get("expected_remote_export_allowed"))
+        .and_then(Value::as_bool) == Some(false);
+    let assertion_scope = if local_assertions { "local" } else { "requested" };
+    let assertion_response = if local_assertions { &local_response } else { &response };
+    let (assertion_contexts, assertion_ids) = citations(assertion_response);
     let missing_required_document_ids = required_document_ids
         .iter()
         .filter_map(Value::as_str)
-        .filter(|document_id| !local_ids.iter().any(|actual| actual == document_id))
+        .filter(|document_id| !assertion_ids.iter().any(|actual| actual == document_id))
         .map(ToOwned::to_owned)
         .collect::<Vec<_>>();
     let forbidden_document_ids_retrieved = forbidden_document_ids
         .iter()
         .filter_map(Value::as_str)
-        .filter(|document_id| local_ids.iter().any(|actual| actual == document_id))
+        .filter(|document_id| assertion_ids.iter().any(|actual| actual == document_id))
         .map(ToOwned::to_owned)
         .collect::<Vec<_>>();
     let expected_evidence = expect
@@ -355,12 +361,13 @@ fn replay_case(
         .unwrap_or_default();
     let missing_required_evidence = expected_evidence
         .iter()
-        .filter_map(|item| item.get("sentence").and_then(Value::as_str))
-        .filter(|sentence| {
-            !local_contexts
-                .iter()
-                .any(|context| context.contains(sentence))
+        .filter(|item| {
+            !assertion_response.get("citations").and_then(Value::as_array).into_iter().flatten()
+                .any(|citation| citation.get("document_id").and_then(Value::as_str) == item.get("document_id").and_then(Value::as_str)
+                    && item.get("sentence").and_then(Value::as_str).is_some_and(|sentence|
+                        citation.get("excerpt").and_then(Value::as_str).is_some_and(|excerpt| excerpt.contains(sentence))))
         })
+        .filter_map(|item| item.get("sentence").and_then(Value::as_str))
         .map(ToOwned::to_owned)
         .collect::<Vec<_>>();
     let remote_forbidden_document_ids = docs
@@ -414,6 +421,7 @@ fn replay_case(
         .collect::<Vec<_>>();
     let retrieval_gate = json!({
         "passed": retrieval_passed,
+        "assertion_scope": assertion_scope,
         "missing_required_document_ids": missing_required_document_ids,
         "forbidden_document_ids_retrieved": forbidden_document_ids_retrieved,
         "missing_required_evidence": missing_required_evidence,
@@ -445,7 +453,7 @@ fn replay_case(
         "agent_response": agent_response,
         "agent_events": agent_events,
     });
-    let output = json!({
+    let mut output = json!({
         "id": id, "dataset_version": FIXTURE_VERSION, "category": case.get("category"),
         "privacy_reviewed": true, "private_evidence_present": private, "remote_export_allowed": !private, "cloud_eval_allowed": !private,
         "question": case["question"], "request": request,
@@ -461,10 +469,11 @@ fn replay_case(
         "required_citations": expect.get("required_citations").cloned().unwrap_or_else(|| json!([])),
         "forbidden_claims": expect.get("answer_contract").and_then(|value| value.get("forbidden_claims")).cloned().unwrap_or_else(|| json!([])),
         "context": remote_contexts, "retrieval_context": remote_contexts,
-        "deterministic_retrieval_context": local_contexts,
+        "deterministic_retrieval_context": assertion_contexts,
         "expected_retrieval_evidence": expected_evidence,
         "expected_retrieval_context": expected_retrieval_context,
-        "retrieved_document_ids": local_ids,
+        "retrieval_relevance_contract": expect.get("retrieval_relevance_contract"),
+        "retrieved_document_ids": assertion_ids,
         "remote_retrieved_document_ids": remote_ids,
         "remote_forbidden_document_ids": remote_forbidden_document_ids,
         "required_document_ids": required_document_ids, "forbidden_document_ids": forbidden_document_ids,
@@ -476,6 +485,9 @@ fn replay_case(
         "replay": replay,
         "provenance": case.get("provenance"),
     });
+    output["retrieval_assertion_scope"] = json!(assertion_scope);
+    output["local_retrieved_document_ids"] = json!(local_ids);
+    output["deterministic_retrieval_citations"] = assertion_response.get("citations").cloned().unwrap_or_else(|| json!([]));
     drop(store);
     for suffix in ["", "-wal", "-shm"] {
         let _ = fs::remove_file(PathBuf::from(format!("{}{suffix}", db.display())));
@@ -567,6 +579,85 @@ pub fn cli(args: impl Iterator<Item = String>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn private_fixture_case(id: &str) -> Value {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../app/prompts/research_retrieval_eval_cases.json"
+        )).unwrap();
+        fixture["cases"].as_array().unwrap().iter()
+            .find(|case| case["id"] == id).unwrap().clone()
+    }
+
+    #[test]
+    fn private_replay_uses_the_same_assertion_projection_as_the_fixture_suite() {
+        for (id, scope) in [
+            ("remote_export_permission", "requested"),
+            ("private_evidence_01", "local"),
+            ("private_evidence_02", "requested"),
+            ("private_evidence_03", "requested"),
+            ("private_evidence_04", "local"),
+        ] {
+            let case = private_fixture_case(id);
+            let result = replay_case(&case, ReplayProfile::Deterministic, None).unwrap();
+            assert_eq!(result["retrieval_gate"]["passed"], true, "{id}");
+            assert_eq!(result["retrieval_assertion_scope"], scope, "{id}");
+            assert_eq!(result["retrieval_gate"]["assertion_scope"], scope, "{id}");
+            assert_eq!(result["cloud_eval_allowed"], false, "{id}");
+            assert_eq!(result["generation_eval_eligible"], false, "{id}");
+            let expected_ids = if scope == "local" {
+                &result["local_retrieved_document_ids"]
+            } else {
+                &result["remote_retrieved_document_ids"]
+            };
+            assert_eq!(&result["retrieved_document_ids"], expected_ids, "{id}");
+            if id == "remote_export_permission" {
+                assert!(result["local_retrieved_document_ids"].as_array().unwrap()
+                    .contains(&json!("remote-private")));
+                assert!(!result["remote_retrieved_document_ids"].as_array().unwrap()
+                    .contains(&json!("remote-private")));
+            }
+        }
+    }
+
+    #[test]
+    fn remote_required_evidence_cannot_be_satisfied_by_local_only_hits() {
+        let mut case = private_fixture_case("remote_export_permission");
+        case["id"] = json!("remote-required-local-only-negative");
+        for doc in case["documents"].as_array_mut().unwrap() {
+            if doc["document_id"] == "remote-public" {
+                doc["remote_export_allowed"] = json!(false);
+            }
+        }
+        let result = replay_case(&case, ReplayProfile::Deterministic, None).unwrap();
+        assert_eq!(result["retrieval_gate"]["passed"], false);
+        assert_eq!(result["retrieval_gate"]["missing_required_document_ids"], json!(["remote-public"]));
+        assert!(!result["retrieval_gate"]["missing_required_evidence"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn local_assertions_do_not_waive_remote_private_document_exclusion() {
+        let mut case = private_fixture_case("private_evidence_01");
+        case["id"] = json!("remote-private-leak-negative");
+        case["request"]["remote_safe_only"] = json!(false);
+        let result = replay_case(&case, ReplayProfile::Deterministic, None).unwrap();
+        assert_eq!(result["retrieval_gate"]["privacy_ok"], false);
+        assert_eq!(result["retrieval_gate"]["passed"], false);
+    }
+
+    #[test]
+    fn replay_preserves_relevance_annotations_for_offline_audit_only() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../app/prompts/research_retrieval_eval_cases.json"
+        )).unwrap();
+        let case = fixture["cases"].as_array().unwrap().iter()
+            .find(|case| case["id"] == "hybrid_rrf_shared_candidate").unwrap();
+        let result = replay_case(case, ReplayProfile::Deterministic, None).unwrap();
+        assert_eq!(result["retrieval_relevance_contract"], case["expect"]["retrieval_relevance_contract"]);
+        assert_eq!(result["retrieval_gate"]["passed"], true);
+        assert!(result["retrieved_document_ids"].as_array().unwrap()
+            .iter().any(|id| id == "hybrid-lexical-only"));
+        assert!(result["replay"]["response"].get("retrieval_relevance_contract").is_none());
+    }
 
     #[test]
     fn actual_agent_routing_does_not_use_expected_tools_as_an_execution_plan() {

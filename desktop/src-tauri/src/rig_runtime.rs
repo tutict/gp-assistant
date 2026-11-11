@@ -1124,6 +1124,10 @@ fn tool_schema(name: &str) -> Value {
                 json!({"type": "string", "maxLength": 256}),
             );
             properties.insert("stock_code".to_string(), json!({"type":"string","maxLength":12}));
+            properties.insert(
+                "as_of".to_string(),
+                json!({"type": "string", "maxLength": 40}),
+            );
         }
         "watchlist_review" => {}
         _ => {}
@@ -1202,6 +1206,7 @@ async fn dispatch_tool(
                 }
                 research_evidence_for_query(
                     query,
+                    arguments.get("as_of"),
                     research_evidence.as_ref(),
                     research_app.as_ref(),
                     &market,
@@ -1238,12 +1243,14 @@ async fn dispatch_tool(
 
 fn research_evidence_for_query(
     query: &str,
+    as_of: Option<&Value>,
     evidence: Option<&Value>,
     app: Option<&AppHandle>,
     market: &str,
     stock_code: Option<&str>,
     remote_safe_only: bool,
 ) -> Result<Value, String> {
+    let cutoff = crate::research::normalize_research_as_of(as_of)?;
     if let Some(evidence) = evidence.filter(|evidence|evidence.get("frozen_snapshot").and_then(Value::as_bool)==Some(true)
         && evidence.get("market").and_then(Value::as_str)==Some(market)
         && evidence.get("stock_code").and_then(Value::as_str)==stock_code) {
@@ -1253,10 +1260,22 @@ fn research_evidence_for_query(
                 return Err("研究快照与当前资料或来源许可不一致，请重新取证。".to_string());
             }
         }
-        return Ok(if remote_safe_only {remote_safe_evidence_snapshot(evidence)} else {evidence.clone()});
+        let mut snapshot = evidence.clone();
+        if let Some(cutoff) = cutoff.as_deref() {
+            let citations = evidence.get("citations").and_then(Value::as_array).into_iter().flatten()
+                .filter(|citation| crate::research::research_evidence_available_as_of(
+                    citation.get("published_at").and_then(Value::as_str), cutoff))
+                .cloned().collect::<Vec<_>>();
+            snapshot["citations"] = json!(citations);
+            snapshot["as_of"] = json!(cutoff);
+        }
+        return Ok(if remote_safe_only {remote_safe_evidence_snapshot(&snapshot)} else {snapshot});
     }
     if let Some(app) = app {
         let mut request = json!({"query": query, "top_k": 8, "remote_safe_only": remote_safe_only});
+        if let Some(cutoff) = &cutoff {
+            request["as_of"] = json!(cutoff);
+        }
         if let Some(stock_code) = stock_code.filter(|value| !value.trim().is_empty()) {
             request["stock_code"] = Value::String(stock_code.trim().to_string());
         }
@@ -1272,6 +1291,9 @@ fn research_evidence_for_query(
         return Ok(result);
     }
     if let Some(evidence) = evidence {
+        if cutoff.is_some() {
+            return Err("An as_of cutoff requires ResearchStore or a frozen HK evidence snapshot".to_string());
+        }
         return Ok(if remote_safe_only {
             remote_safe_evidence_snapshot(evidence)
         } else {
@@ -1387,12 +1409,15 @@ fn validate_tool_arguments(name: &str, arguments: &Value) -> Result<(), String> 
         ],
         "trend_screen" => &["criteria", "start_date", "end_date", "limit"],
         "portfolio_backtest" => &["request"],
-        "news_evidence" => &["query", "stock_code"],
+        "news_evidence" => &["query", "stock_code", "as_of"],
         "watchlist_review" => &[],
         _ => return Err(format!("unknown Rig tool: {name}")),
     };
     if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
         return Err(format!("{name} does not accept argument {key}"));
+    }
+    if name == "news_evidence" {
+        crate::research::normalize_research_as_of(object.get("as_of"))?;
     }
     if let Some(limit) = object.get("limit") {
         let valid = limit
@@ -2826,6 +2851,33 @@ mod tests {
         assert!(result["reply"].as_str().unwrap().contains("市场"));
         assert!(!result.to_string().contains("tencent-filing"));
         assert!(result.get("research_context").is_none());
+    }
+
+    #[test]
+    fn hk_frozen_evidence_respects_as_of_without_relabeling_sources() {
+        let (data, mut evidence) = hk_research_fixture();
+        evidence["citations"][0]["published_at"] = json!("2026-11-10T09:00:00.100000001+08:00");
+        evidence["citations"][1]["published_at"] = json!("2026-11-10T09:00:00.100000000+08:00");
+        evidence["citations"][2]["published_at"] = Value::Null;
+        let context = crate::hk_agent_research::attach_evidence(json!({}), &evidence, "00700.HK")["research_context"].clone();
+        let frozen = crate::hk_agent_research::frozen_evidence(&context);
+        for remote_safe_only in [false, true] {
+            let registry = RigToolRegistry::new_with_market_and_research_and_cancel(
+                data.clone(), json!({"stock_code":"00700.HK"}), Some(frozen.clone()), None,
+                Arc::new(RunCancellation::default()), remote_safe_only, "hk".to_string());
+            let result = tauri::async_runtime::block_on(registry.dispatch("news_evidence", json!({
+                "query":"news", "stock_code":"00700.HK", "as_of":"2026-11-10T09:00:00.100000000+08:00"
+            }))).unwrap();
+            assert_eq!(result["citations"].as_array().unwrap().len(), 1);
+            assert_eq!(result["citations"][0]["id"], "E2");
+            assert_eq!(result["citations"][0]["document_id"], "tencent-financial");
+            for invalid in [json!(""), json!("tomorrow"), json!(42)] {
+                assert!(tauri::async_runtime::block_on(registry.dispatch("news_evidence", json!({
+                    "query":"news", "stock_code":"00700.HK", "as_of":invalid
+                }))).is_err());
+            }
+        }
+        assert_eq!(frozen["citations"].as_array().unwrap().len(), 3);
     }
 
     #[test]

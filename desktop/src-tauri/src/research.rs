@@ -38,6 +38,40 @@ const MAX_RESEARCH_CHUNKS: i64 = 50_000;
 const RESEARCH_EMBEDDING_DIMENSIONS: i64 = 512;
 const RESEARCH_EMBEDDING_BLOB_BYTES: i64 = RESEARCH_EMBEDDING_DIMENSIONS * 4;
 
+fn normalized_research_timestamp(value: &str, end_of_date: bool) -> Option<String> {
+    let timestamp = if value.len() == 10 {
+        let date = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").ok()?;
+        if end_of_date {
+            date.and_hms_nano_opt(23, 59, 59, 999_999_999)?
+        } else {
+            date.and_hms_opt(0, 0, 0)?
+        }
+    } else if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(value) {
+        timestamp.naive_utc()
+    } else {
+        chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f")
+            .or_else(|_| chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f"))
+            .ok()?
+    };
+    Some(timestamp.format("%Y-%m-%d %H:%M:%S%.9f").to_string())
+}
+
+pub(crate) fn normalize_research_as_of(value: Option<&Value>) -> Result<Option<String>, String> {
+    let value = match value {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::String(value)) if value.trim().is_empty() => return Err("as_of cannot be empty".to_string()),
+        Some(Value::String(value)) if value.len() <= 40 => value.trim(),
+        Some(_) => return Err("as_of must be an ISO 8601 date or timestamp".to_string()),
+    };
+    normalized_research_timestamp(value, true).map(Some)
+        .ok_or_else(|| "as_of must be a valid ISO 8601 date or timestamp".to_string())
+}
+
+pub(crate) fn research_evidence_available_as_of(published_at: Option<&str>, cutoff: &str) -> bool {
+    published_at.and_then(|value| normalized_research_timestamp(value, false))
+        .is_some_and(|published| published.as_str() <= cutoff)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct ResearchMessage {
     pub id: String,
@@ -715,6 +749,7 @@ impl ResearchStore {
         }
         let top_k = request.get("top_k").and_then(Value::as_u64).unwrap_or(16).clamp(1, 16) as usize;
         let remote_safe_only = bool_field(request, "remote_safe_only");
+        let as_of = normalize_research_as_of(request.get("as_of"))?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(|error| format!("failed to read agent evidence snapshot: {error}"))?;
 
@@ -726,12 +761,13 @@ impl ResearchStore {
                 SELECT documents.id,
                     ROW_NUMBER() OVER (
                         PARTITION BY CASE WHEN documents.source_tier IN ('news', 'news_media') THEN 'news' ELSE documents.source_tier END
-                        ORDER BY documents.published_at DESC, documents.updated_at_epoch_ms DESC, documents.id
+                        ORDER BY research_timestamp_utc(documents.published_at) DESC, documents.updated_at_epoch_ms DESC, documents.id
                     ) AS recency
                 FROM documents JOIN chunks ON chunks.document_id = documents.id AND chunks.ordinal = 0
                 WHERE json_extract(documents.metadata_json, '$.news_cache_duplicate_of') IS NULL
                   AND (json_extract(documents.metadata_json, '$.market') IS NULL OR json_extract(documents.metadata_json, '$.market') = 'hk')
                   AND (?2 = 0 OR documents.remote_export_allowed = 1)
+                  AND (?3 IS NULL OR research_timestamp_utc(chunks.published_at) <= ?3)
                   AND (?1 IS NULL OR EXISTS (SELECT 1 FROM json_each(chunks.stock_codes_json) WHERE value = ?1))
                   AND NOT EXISTS (SELECT 1 FROM json_each(chunks.stock_codes_json)
                       WHERE type != 'text' OR value NOT GLOB '[0-9][0-9][0-9][0-9][0-9].HK')
@@ -744,7 +780,7 @@ impl ResearchStore {
             JOIN chunks ON chunks.document_id = documents.id AND chunks.ordinal = 0
             WHERE scoped.recency <= 48"
         ).map_err(|error| format!("failed to prepare recent agent evidence: {error}"))?;
-        let rows = recent.query_map(params![stock_code, remote_safe_only as i64], agent_evidence_candidate)
+        let rows = recent.query_map(params![stock_code, remote_safe_only as i64, as_of], agent_evidence_candidate)
             .map_err(|error| format!("failed to read recent agent evidence: {error}"))?;
         for row in rows {
             let candidate = row.map_err(|error| format!("failed to decode recent agent evidence: {error}"))?;
@@ -762,13 +798,14 @@ impl ResearchStore {
                AND json_extract(documents.metadata_json, '$.news_cache_duplicate_of') IS NULL
                AND (json_extract(documents.metadata_json, '$.market') IS NULL OR json_extract(documents.metadata_json, '$.market') = 'hk')
                AND (?3 = 0 OR documents.remote_export_allowed = 1)
+               AND (?4 IS NULL OR research_timestamp_utc(chunks.published_at) <= ?4)
                AND (?2 IS NULL OR EXISTS (SELECT 1 FROM json_each(chunks.stock_codes_json) WHERE value = ?2))
                AND NOT EXISTS (SELECT 1 FROM json_each(chunks.stock_codes_json)
                    WHERE type != 'text' OR value NOT GLOB '[0-9][0-9][0-9][0-9][0-9].HK')
              ORDER BY bm25(chunks_fts, 0.0, 3.0, 2.0, 1.0), chunks.ordinal, chunks.id
              LIMIT 128"
         ).map_err(|error| format!("failed to prepare lexical agent evidence: {error}"))?;
-        let rows = lexical.query_map(params![build_fts_match_query(&query), stock_code, remote_safe_only as i64], agent_evidence_candidate)
+        let rows = lexical.query_map(params![build_fts_match_query(&query), stock_code, remote_safe_only as i64, as_of], agent_evidence_candidate)
             .map_err(|error| format!("failed to read lexical agent evidence: {error}"))?;
         for row in rows {
             let candidate = row.map_err(|error| format!("failed to decode lexical agent evidence: {error}"))?;
@@ -785,7 +822,7 @@ impl ResearchStore {
         let mut ranked = candidates.into_values().collect::<Vec<_>>();
         ranked.sort_by(|left, right| {
             (right.lexical_score > 0.0).cmp(&(left.lexical_score > 0.0))
-                .then_with(|| right.published_at.cmp(&left.published_at))
+                .then_with(|| right.published_at_utc.cmp(&left.published_at_utc))
                 .then_with(|| right.lexical_score.total_cmp(&left.lexical_score))
                 .then_with(|| left.document_id.cmp(&right.document_id))
         });
@@ -901,11 +938,13 @@ impl ResearchStore {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         let connection = self.connection()?;
+        let as_of = normalize_research_as_of(request.get("as_of"))?;
         let match_query = build_fts_match_query(&query);
         let mut statement = connection
             .prepare(
                 "SELECT chunks.id, chunks.document_id, chunks.title, chunks.content, chunks.page_number,
                         chunks.source_tier, chunks.source_name, chunks.published_at, chunks.url,
+                        research_timestamp_utc(chunks.published_at) AS published_at_utc,
                         documents.remote_export_allowed,
                         -bm25(chunks_fts, 0.0, 3.0, 2.0, 1.0) AS lexical_score
                  FROM chunks_fts
@@ -920,31 +959,35 @@ impl ResearchStore {
                        WHERE value = ?2 COLLATE NOCASE
                      )
                    )
+                   AND (
+                     ?4 IS NULL OR (
+                       chunks.published_at IS NOT NULL
+                       AND research_timestamp_utc(chunks.published_at) <= ?4
+                     )
+                   )
                  ORDER BY bm25(chunks_fts, 0.0, 3.0, 2.0, 1.0)
                  LIMIT 50",
             )
             .map_err(|error| format!("failed to prepare research query: {error}"))?;
         let rows = statement
-            .query_map(
-                params![match_query, stock_code, remote_safe_only as i64],
-                |row| {
-                    Ok((
-                        Candidate {
-                            chunk_id: row.get(0)?,
-                            document_id: row.get(1)?,
-                            title: row.get(2)?,
-                            content: row.get(3)?,
-                            page_number: row.get(4)?,
-                            source_tier: row.get(5)?,
-                            source_name: row.get(6)?,
-                            published_at: row.get(7)?,
-                            url: row.get(8)?,
-                            remote_export_allowed: row.get::<_, i64>(9)? != 0,
-                        },
-                        row.get::<_, f64>(10)?,
-                    ))
-                },
-            )
+            .query_map(params![match_query, stock_code, remote_safe_only as i64, as_of], |row| {
+                Ok((
+                    Candidate {
+                        chunk_id: row.get(0)?,
+                        document_id: row.get(1)?,
+                        title: row.get(2)?,
+                        content: row.get(3)?,
+                        page_number: row.get(4)?,
+                        source_tier: row.get(5)?,
+                        source_name: row.get(6)?,
+                        published_at: row.get(7)?,
+                        url: row.get(8)?,
+                        published_at_utc: row.get(9)?,
+                        remote_export_allowed: row.get::<_, i64>(10)? != 0,
+                    },
+                    row.get::<_, f64>(11)?,
+                ))
+            })
             .map_err(|error| format!("failed to execute research query: {error}"))?;
 
         let mut scored = Vec::new();
@@ -967,9 +1010,7 @@ impl ResearchStore {
             })
             .collect::<HashMap<_, _>>();
         let vector_candidates = query_vector
-            .map(|vector| {
-                self.vector_candidates(&connection, vector, stock_code.as_deref(), remote_safe_only)
-            })
+            .map(|vector| self.vector_candidates(&connection, vector, stock_code.as_deref(), remote_safe_only, as_of.as_deref()))
             .transpose()?
             .unwrap_or_default();
         let vector_ranking = vector_candidates
@@ -995,13 +1036,25 @@ impl ResearchStore {
             .collect::<Vec<_>>();
         ranked.sort_by(
             |(left_candidate, _, _, left_score), (right_candidate, _, _, right_score)| {
-                source_rank(&right_candidate.source_tier)
-                    .cmp(&source_rank(&left_candidate.source_tier))
-                    .then_with(|| {
-                        right_score
-                            .partial_cmp(left_score)
-                            .unwrap_or(Ordering::Equal)
-                    })
+                let source_order = source_rank(&right_candidate.source_tier)
+                    .cmp(&source_rank(&left_candidate.source_tier));
+                let recency_order = right_candidate
+                    .published_at_utc
+                    .cmp(&left_candidate.published_at_utc);
+                let score_order = right_score
+                    .partial_cmp(left_score)
+                    .unwrap_or(Ordering::Equal);
+                if as_of.is_some() {
+                    source_order
+                        .then(recency_order)
+                        .then(score_order)
+                        .then_with(|| left_candidate.chunk_id.cmp(&right_candidate.chunk_id))
+                } else {
+                    source_order
+                        .then(score_order)
+                        .then(recency_order)
+                        .then_with(|| left_candidate.chunk_id.cmp(&right_candidate.chunk_id))
+                }
             },
         );
 
@@ -1154,6 +1207,7 @@ impl ResearchStore {
         query_vector: &[f32],
         stock_code: Option<&str>,
         remote_safe_only: bool,
+        as_of: Option<&str>,
     ) -> Result<Vec<(Candidate, f64)>, String> {
         if query_vector.len() != 512 {
             return Err(format!(
@@ -1166,6 +1220,9 @@ impl ResearchStore {
             .iter()
             .filter(|row| {
                 (!remote_safe_only || row.remote_export_allowed)
+                    && as_of
+                        .map(|cutoff| row.published_at_utc.as_deref().is_some_and(|published| published <= cutoff))
+                        .unwrap_or(true)
                     && stock_code
                         .map(|expected| {
                             row.stock_codes
@@ -3208,12 +3265,14 @@ struct CachedVector {
     stock_codes: Vec<String>,
     vector: Vec<f32>,
     remote_export_allowed: bool,
+    published_at_utc: Option<String>,
 }
 
 #[derive(Clone)]
 struct VectorCacheEntry {
     count: i64,
     newest_epoch_ms: i64,
+    newest_document_updated_at_epoch_ms: i64,
     rows: Arc<Vec<CachedVector>>,
 }
 
@@ -3256,7 +3315,7 @@ fn with_exclusive_app_database<T>(
 #[derive(Clone, Debug)]
 struct AgentEvidenceCandidate {
     document_id: String,
-    published_at: Option<String>,
+    published_at_utc: Option<String>,
     lexical_score: f64,
     citation: Value,
 }
@@ -3339,7 +3398,8 @@ fn agent_evidence_candidate(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentEv
             "url":metadata.get("article_summary_url").and_then(Value::as_str).or(url.as_deref()).map(|url|url.chars().take(2048).collect::<String>()),
             "fetched_at_epoch_ms":metadata.get("article_summary_fetched_at_epoch_ms").and_then(Value::as_i64)});
     }
-    Ok(AgentEvidenceCandidate {document_id, published_at, lexical_score, citation})
+    let published_at_utc = published_at.as_deref().and_then(|value| normalized_research_timestamp(value, false));
+    Ok(AgentEvidenceCandidate {document_id, published_at_utc, lexical_score, citation})
 }
 
 #[derive(Clone, Debug)]
@@ -3352,6 +3412,7 @@ struct Candidate {
     source_tier: String,
     source_name: String,
     published_at: Option<String>,
+    published_at_utc: Option<String>,
     url: Option<String>,
     remote_export_allowed: bool,
 }
@@ -3360,11 +3421,13 @@ fn load_vector_cache(
     connection: &Connection,
     path: &Path,
 ) -> Result<Arc<Vec<CachedVector>>, String> {
-    let (count, newest_epoch_ms) = connection
+    let (count, newest_epoch_ms, newest_document_updated_at_epoch_ms) = connection
         .query_row(
-            "SELECT COUNT(*), COALESCE(MAX(created_at_epoch_ms), 0) FROM embeddings",
+            "SELECT COUNT(*), COALESCE(MAX(created_at_epoch_ms), 0),
+                    COALESCE((SELECT MAX(updated_at_epoch_ms) FROM documents), 0)
+             FROM embeddings",
             [],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
         )
         .map_err(|error| format!("failed to inspect embedding cache version: {error}"))?;
     let cache = VECTOR_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -3373,7 +3436,10 @@ fn load_vector_cache(
             .lock()
             .map_err(|_| "vector cache lock is poisoned".to_string())?;
         if let Some(entry) = guard.get(path) {
-            if entry.count == count && entry.newest_epoch_ms == newest_epoch_ms {
+            if entry.count == count
+                && entry.newest_epoch_ms == newest_epoch_ms
+                && entry.newest_document_updated_at_epoch_ms == newest_document_updated_at_epoch_ms
+            {
                 return Ok(Arc::clone(&entry.rows));
             }
         }
@@ -3381,7 +3447,7 @@ fn load_vector_cache(
     let mut statement = connection
         .prepare(
             "SELECT e.chunk_id, c.stock_codes_json, e.vector, e.dimensions,
-                    d.remote_export_allowed
+                    d.remote_export_allowed, research_timestamp_utc(c.published_at)
              FROM embeddings e JOIN chunks c ON c.id = e.chunk_id
              JOIN documents d ON d.id = c.document_id
              WHERE json_extract(d.metadata_json, '$.news_cache_duplicate_of') IS NULL",
@@ -3394,19 +3460,14 @@ fn load_vector_cache(
             let blob: Vec<u8> = row.get(2)?;
             let dimensions: i64 = row.get(3)?;
             let remote_export_allowed: i64 = row.get(4)?;
-            Ok((
-                chunk_id,
-                stock_codes_json,
-                blob,
-                dimensions,
-                remote_export_allowed,
-            ))
+            let published_at_utc: Option<String> = row.get(5)?;
+            Ok((chunk_id, stock_codes_json, blob, dimensions, remote_export_allowed, published_at_utc))
         })
         .map_err(|error| format!("failed to query embedding cache: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("failed to read embedding cache: {error}"))?;
     let mut decoded = Vec::with_capacity(rows.len());
-    for (chunk_id, stock_codes_json, blob, dimensions, remote_export_allowed) in rows {
+    for (chunk_id, stock_codes_json, blob, dimensions, remote_export_allowed, published_at_utc) in rows {
         let vector = decode_f32_blob(&blob)?;
         if vector.len() != dimensions.max(0) as usize || vector.len() != 512 {
             continue;
@@ -3416,6 +3477,7 @@ fn load_vector_cache(
             stock_codes: serde_json::from_str(&stock_codes_json).unwrap_or_default(),
             vector,
             remote_export_allowed: remote_export_allowed != 0,
+            published_at_utc,
         });
     }
     let rows = Arc::new(decoded);
@@ -3427,6 +3489,7 @@ fn load_vector_cache(
             VectorCacheEntry {
                 count,
                 newest_epoch_ms,
+                newest_document_updated_at_epoch_ms,
                 rows: Arc::clone(&rows),
             },
         );
@@ -3446,7 +3509,7 @@ fn load_candidate(connection: &Connection, chunk_id: &str) -> Result<Candidate, 
         .query_row(
             "SELECT c.id, c.document_id, c.title, c.content, c.page_number,
                     c.source_tier, c.source_name, c.published_at, c.url,
-                    d.remote_export_allowed
+                    research_timestamp_utc(c.published_at), d.remote_export_allowed
              FROM chunks c JOIN documents d ON d.id = c.document_id
              WHERE c.id = ?1",
             params![chunk_id],
@@ -3461,7 +3524,8 @@ fn load_candidate(connection: &Connection, chunk_id: &str) -> Result<Candidate, 
                     source_name: row.get(6)?,
                     published_at: row.get(7)?,
                     url: row.get(8)?,
-                    remote_export_allowed: row.get::<_, i64>(9)? != 0,
+                    published_at_utc: row.get(9)?,
+                    remote_export_allowed: row.get::<_, i64>(10)? != 0,
                 })
             },
         )
@@ -3939,6 +4003,18 @@ fn configure_connection(connection: &Connection) -> Result<(), String> {
             "research database schema {version} is unsupported; original preserved"
         ));
     }
+    // One normalization function keeps SQL filtering, vector caches and frozen
+    // evidence comparisons at the same precision, before any candidate limit.
+    use rusqlite::functions::FunctionFlags;
+    connection.create_scalar_function(
+        "research_timestamp_utc",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC | FunctionFlags::SQLITE_INNOCUOUS,
+        |context| {
+            let value = context.get::<Option<String>>(0)?;
+            Ok(value.as_deref().and_then(|value| normalized_research_timestamp(value, false)))
+        },
+    ).map_err(|error| format!("failed to register research timestamp normalization: {error}"))?;
     crate::durability::configure_user_connection(connection)
 }
 
@@ -4754,13 +4830,10 @@ mod tests {
             "../../../app/prompts/research_retrieval_eval_cases.json"
         ))
         .expect("retrieval evaluation fixture should be valid JSON");
-        assert_eq!(fixture["version"], "research-retrieval-eval-v4");
+        assert_eq!(fixture["version"], "research-retrieval-eval-v5");
         assert_eq!(fixture["cases"].as_array().map(Vec::len), Some(40));
         assert_eq!(fixture["dataset"]["split"], "frozen-golden");
-        assert_eq!(
-            fixture["dataset"]["generator"],
-            "agent-authored-synthetic-unreviewed"
-        );
+        assert_eq!(fixture["dataset"]["generator"], "agent-authored-synthetic-reviewed-lineage-v1");
 
         for case in fixture["cases"]
             .as_array()
@@ -4994,6 +5067,180 @@ mod tests {
         assert_eq!(response["community_only"], false);
         drop(store);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn hk_as_of_filters_recent_and_lexical_candidates_before_their_limits() {
+        let path = temporary_database_path("hk-as-of-filter");
+        let store = ResearchStore::open(&path).unwrap();
+        let mut documents = (0..140).map(|index| json!({
+            "document_id": format!("hk-future-{index:03}"), "title": "Future filing",
+            "content": "hkcutoffprobe", "source_tier": "filing",
+            "published_at": "2026-08-21T09:00:00+08:00", "stock_codes": ["00700.HK"],
+            "metadata": {"market": "hk"}
+        })).collect::<Vec<_>>();
+        documents.extend([
+            json!({"document_id":"hk-valid", "title":"Current filing",
+                "content":"hkcutoffprobe older supporting details", "source_tier":"filing",
+                "published_at":"2026-08-20T08:45:00+08:00", "stock_codes":["00700.HK"]}),
+            json!({"document_id":"hk-unknown-date", "title":"Undated filing",
+                "content":"hkcutoffprobe", "source_tier":"filing", "stock_codes":["00700.HK"]})
+        ]);
+        store.ingest_documents(&documents).unwrap();
+        let request = json!({"query":"hkcutoffprobe", "stock_code":"00700.HK", "top_k":1,
+            "as_of":"2026-08-20T09:00:00+08:00"});
+        for result in [store.agent_evidence(&request), store.unscoped_hk_agent_evidence(&request)] {
+            let result = result.unwrap();
+            assert_eq!(result["citations"].as_array().unwrap().len(), 1);
+            assert_eq!(result["citations"][0]["document_id"], "hk-valid");
+        }
+        drop(store);
+        let _ = remove_sqlite_files(&path);
+    }
+
+    #[test]
+    fn as_of_rejects_invalid_dates_and_includes_the_whole_utc_date() {
+        let path = temporary_database_path("research-as-of-validation");
+        let store = ResearchStore::open(&path).unwrap();
+        store.ingest_documents(&[json!({"document_id":"late-utc", "title":"Late filing",
+            "content":"cutoffvalidation", "source_tier":"filing", "stock_codes":["00700.HK"],
+            "published_at":"2026-08-20T23:59:59.999999999Z"})]).unwrap();
+        for cutoff in [json!("2026-02-30"), json!("tomorrow"), json!(""), json!(42)] {
+            let request = json!({"query":"cutoffvalidation", "stock_code":"00700.HK", "as_of":cutoff});
+            assert!(store.query(&request).is_err(), "{cutoff}");
+            assert!(store.agent_evidence(&request).is_err(), "{cutoff}");
+        }
+        let request = json!({"query":"cutoffvalidation", "stock_code":"00700.HK", "as_of":"2026-08-20"});
+        for result in [store.query(&request), store.agent_evidence(&request)] {
+            assert_eq!(result.unwrap()["citations"][0]["document_id"], "late-utc");
+        }
+        drop(store);
+        let _ = remove_sqlite_files(&path);
+    }
+
+    #[test]
+    fn as_of_filters_future_lexical_and_vector_candidates_before_top_k() {
+        let path = temporary_database_path("research-as-of-filter");
+        let store = ResearchStore::open(&path).expect("research store should open");
+        let mut documents = (0..51)
+            .map(|index| {
+                json!({
+                    "document_id": format!("future-{index:02}"),
+                    "title": "Future filing",
+                    "content": "asofprobe",
+                    "source_tier": "filing",
+                    "published_at": "2026-08-21T09:00:00+08:00",
+                    "stock_codes": ["000001.SZ"]
+                })
+            })
+            .collect::<Vec<_>>();
+        documents.push(json!({
+            "document_id": "valid-before-cutoff",
+            "title": "Current filing",
+            "content": "asofprobe older supporting details",
+            "source_tier": "filing",
+            "published_at": "2026-08-19T09:00:00+08:00",
+            "stock_codes": ["000001.SZ"]
+        }));
+        store.ingest_documents(&documents).expect("documents should ingest");
+        let work = store.pending_embedding_chunks(500).expect("embedding work should load");
+        let embeddings = work
+            .into_iter()
+            .map(|item| {
+                let is_future = item.chunk_id.starts_with("future-");
+                let mut vector = vec![0.0f32; 512];
+                if is_future { vector[0] = 1.0; } else { vector[1] = 1.0; }
+                (item, vector)
+            })
+            .collect::<Vec<_>>();
+        store.store_embeddings(&embeddings, "as-of-test").expect("embeddings should store");
+        let mut query_vector = vec![0.0f32; 512];
+        query_vector[0] = 1.0;
+
+        let response = store
+            .query_with_vector(
+                &json!({
+                    "query": "asofprobe",
+                    "stock_code": "000001.SZ",
+                    "top_k": 1,
+                    "as_of": "2026-08-20T09:00:00+08:00"
+                }),
+                Some(&query_vector),
+            )
+            .expect("as-of query should succeed");
+
+        let citations = response["citations"].as_array().expect("citations should be an array");
+        assert_eq!(citations.len(), 1);
+        assert_eq!(citations[0]["document_id"], "valid-before-cutoff");
+        drop(store);
+        let _ = remove_sqlite_files(&path);
+    }
+
+    #[test]
+    fn as_of_preserves_subsecond_precision_before_all_candidate_limits() {
+        let path = temporary_database_path("research-as-of-subsecond");
+        let store = ResearchStore::open(&path).unwrap();
+        let mut documents = (0..51).map(|index| json!({
+            "document_id":format!("fractional-future-{index:02}"), "title":"Future notice",
+            "content":"fractionalprobe", "source_tier":"filing", "stock_codes":["00700.HK"],
+            "published_at":"2026-11-10T09:00:00.100000001+08:00"
+        })).collect::<Vec<_>>();
+        documents.push(json!({"document_id":"fractional-valid", "title":"Current notice",
+            "content":"fractionalprobe supporting details", "source_tier":"filing", "stock_codes":["00700.HK"],
+            "published_at":"2026-11-10T01:00:00.100000000Z"}));
+        store.ingest_documents(&documents).unwrap();
+        let work = store.pending_embedding_chunks(500).unwrap();
+        let embeddings = work.into_iter().map(|item| {
+            let mut vector = vec![0.0f32; 512];
+            let axis = if item.chunk_id.starts_with("fractional-future-") { 0 } else { 1 };
+            vector[axis] = 1.0;
+            (item, vector)
+        }).collect::<Vec<_>>();
+        store.store_embeddings(&embeddings, "fractional-test").unwrap();
+        let mut vector = vec![0.0f32; 512];
+        vector[0] = 1.0;
+        let request = json!({"query":"fractionalprobe", "stock_code":"00700.HK", "top_k":1,
+            "as_of":"2026-11-10T09:00:00.100000000+08:00"});
+        for result in [store.query(&request), store.query_with_vector(&request, Some(&vector)),
+            store.agent_evidence(&request), store.unscoped_hk_agent_evidence(&request)] {
+            let result = result.unwrap();
+            assert_eq!(result["citations"].as_array().unwrap().len(), 1);
+            assert_eq!(result["citations"][0]["document_id"], "fractional-valid");
+        }
+        drop(store);
+        let _ = remove_sqlite_files(&path);
+    }
+
+    #[test]
+    fn newer_publication_breaks_equal_source_and_retrieval_score_ties() {
+        let path = temporary_database_path("research-recency-tie-break");
+        let store = ResearchStore::open(&path).expect("research store should open");
+        store.ingest_documents(&[
+            json!({
+                "document_id": "a-old",
+                "title": "Certification filing",
+                "content": "recencyprobe certification status",
+                "source_tier": "filing",
+                "published_at": "2026-02-10T09:30:00+08:00"
+            }),
+            json!({
+                "document_id": "z-current",
+                "title": "Certification filing",
+                "content": "recencyprobe certification status",
+                "source_tier": "filing",
+                "published_at": "2026-08-20T09:30:00+08:00"
+            }),
+        ]).expect("documents should ingest");
+
+        let response = store
+            .query(&json!({"query":"recencyprobe", "top_k":2, "as_of":"2026-08-21T00:00:00+08:00"}))
+            .expect("query should succeed");
+
+        let citations = response["citations"].as_array().expect("citations should be an array");
+        assert_eq!(citations[0]["document_id"], "z-current");
+        assert_eq!(citations[1]["document_id"], "a-old");
+        drop(store);
+        let _ = remove_sqlite_files(&path);
     }
 
     #[test]

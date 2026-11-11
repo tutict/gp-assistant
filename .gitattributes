@@ -1,0 +1,3 @@
+# Frozen evaluation hashes must match across Windows and Linux checkouts.
+evals/deepeval/*.jsonl text eol=lf
+evals/deepeval/*_manifest.json text eol=lf

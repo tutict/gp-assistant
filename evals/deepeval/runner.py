@@ -113,6 +113,64 @@ def agent_config_fingerprint(config: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(public, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+def retrieval_audit(case: dict[str, Any]) -> dict[str, Any]:
+    """Observe returned evidence; never filter candidates or affect a hard gate."""
+    citations = case.get("replay", {}).get("response", {}).get("citations")
+    audit: dict[str, Any] = {
+        "scope": "returned_citations_only",
+        "affects_gate": False,
+        "status": "observed" if isinstance(citations, list) else "unavailable",
+    }
+    if not isinstance(citations, list):
+        return audit
+    contract = case.get("retrieval_relevance_contract") or {}
+    relevant = set(contract.get("relevant_document_ids") or [])
+    irrelevant = set(contract.get("irrelevant_document_ids") or [])
+    low_information = set(contract.get("low_information_document_ids") or [])
+    relevant_ranks: list[int] = []
+    irrelevant_ranks: list[int] = []
+    low_information_ranks: list[int] = []
+    observed_low_information: set[str] = set()
+    documents: set[str] = set()
+    excerpt_groups: dict[str, list[dict[str, Any]]] = {}
+    for rank, citation in enumerate(citations, start=1):
+        document_id = citation["document_id"]
+        documents.add(document_id)
+        if document_id in relevant:
+            relevant_ranks.append(rank)
+        if document_id in irrelevant:
+            irrelevant_ranks.append(rank)
+        if document_id in low_information:
+            low_information_ranks.append(rank)
+            observed_low_information.add(document_id)
+        # Whitespace-normalized exact excerpt identity is not semantic redundancy.
+        excerpt = " ".join(str(citation.get("excerpt") or "").split())
+        if excerpt:
+            excerpt_groups.setdefault(excerpt, []).append({
+                "rank": rank, "document_id": document_id,
+                "chunk_id": citation.get("chunk_id"),
+            })
+    duplicates = [group for group in excerpt_groups.values() if len(group) > 1]
+    order = None
+    if contract.get("relevant_before_irrelevant") is True and relevant_ranks and irrelevant_ranks:
+        order = max(relevant_ranks) < min(irrelevant_ranks)
+    audit.update({
+        "annotation_source": "synthetic_fixture_not_human_reviewed" if contract else "not_annotated",
+        "citation_count": len(citations),
+        "unique_document_count": len(documents),
+        "same_document_extra_citation_count": len(citations) - len(documents),
+        "low_information_document_ids": sorted(observed_low_information),
+        "low_information_citation_ranks": low_information_ranks,
+        "relevant_citation_ranks": relevant_ranks,
+        "irrelevant_citation_ranks": irrelevant_ranks,
+        "relevant_before_irrelevant": order,
+        "duplicate_excerpt_comparison": "exact_after_whitespace_normalization",
+        "duplicate_excerpt_groups": duplicates,
+        "duplicate_excerpt_extra_citation_count": sum(len(group) - 1 for group in duplicates),
+    })
+    return audit
+
+
 def deterministic_case(case: dict[str, Any]) -> dict[str, Any]:
     required = set(case.get("required_document_ids") or [])
     forbidden = set(case.get("forbidden_document_ids") or [])
@@ -120,13 +178,24 @@ def deterministic_case(case: dict[str, Any]) -> dict[str, Any]:
     actual_tools = [normalize_tool(item) for item in ((case.get("agent_trace") or {}).get("tools") or [])]
     expected_tools = [normalize_tool(item) for item in (case.get("expected_tools") or [])]
     retrieved_context = [str(item) for item in case.get("retrieval_context", [])]
-    evidence_context = [str(item) for item in (case.get("deterministic_retrieval_context") or case.get("retrieval_context") or [])]
+    assertion_context = case.get("deterministic_retrieval_context", case.get("retrieval_context", []))
+    evidence_context = [str(item) for item in (assertion_context or [])]
     expected_evidence = case.get("expected_retrieval_evidence") or []
     if expected_evidence:
+        assertion_citations = case.get("deterministic_retrieval_citations")
+        if not isinstance(assertion_citations, list) and case.get("retrieval_assertion_scope", "requested") == "requested":
+            assertion_citations = case.get("replay", {}).get("response", {}).get("citations")
+        if not isinstance(assertion_citations, list):
+            assertion_citations = []
         missing_evidence = [
             item for item in expected_evidence
             if item.get("document_id") not in retrieved
             or not any(str(item.get("sentence", "")) in context for context in evidence_context)
+            or not any(
+                citation.get("document_id") == item.get("document_id")
+                and str(item.get("sentence", "")) in str(citation.get("excerpt", ""))
+                for citation in assertion_citations
+            )
         ]
     else:
         missing_evidence = [
@@ -140,14 +209,15 @@ def deterministic_case(case: dict[str, Any]) -> dict[str, Any]:
         remote_ids = set(case.get("remote_retrieved_document_ids") or [])
     else:
         remote_ids = set(case.get("retrieved_document_ids") or [])
-    remote_projection = bool(case.get("request", {}).get("remote_safe_only")) or not case.get("cloud_eval_allowed", True)
-    forbidden_projection = remote_ids if remote_projection else retrieved
-    forbidden_retrieved = forbidden & forbidden_projection
+    # Required and forbidden evidence use the adapter's declared assertion projection.
+    # Remote privacy always checks the separate remote response, even for local assertions.
+    forbidden_retrieved = forbidden & retrieved
     privacy_ok = (
-        case.get("private_evidence_present") is False
+        private_ids.isdisjoint(remote_ids)
+        and (case.get("private_evidence_present") is False
         and case.get("remote_export_allowed") is True
         if case.get("cloud_eval_allowed", True)
-        else case.get("private_evidence_present") is True and private_ids.isdisjoint(remote_ids)
+        else case.get("private_evidence_present") is True)
     )
     retrieval_passed = (
         case.get("privacy_reviewed") is True
@@ -175,6 +245,7 @@ def deterministic_case(case: dict[str, Any]) -> dict[str, Any]:
     constructs = {
         "retrieval": {
             "passed": retrieval_passed,
+            "assertion_scope": case.get("retrieval_assertion_scope", "requested"),
             "missing_required_document_ids": sorted(required - retrieved),
             "forbidden_document_ids_retrieved": sorted(forbidden_retrieved),
             "missing_required_evidence": missing_evidence,
@@ -197,6 +268,7 @@ def deterministic_case(case: dict[str, Any]) -> dict[str, Any]:
     }
     return {
         "case_id": case.get("id"),
+        "retrieval_audit": retrieval_audit(case),
         "passed": retrieval_passed and trajectory_passed and constructs["generation"]["passed"],
         "retrieval_gate": constructs["retrieval"],
         "trace_gate": constructs["trajectory"],
@@ -210,14 +282,18 @@ def deterministic_case(case: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def make_test_cases(cases: list[dict[str, Any]]) -> list[Any]:
+def make_test_cases(cases: list[dict[str, Any]], track: str = "full") -> list[Any]:
     from deepeval.test_case import LLMTestCase, ToolCall
     output = []
     for case in cases:
         tools = [ToolCall(name=item["name"], input_parameters=item["arguments"]) for item in ((case.get("agent_trace") or {}).get("tools") or [])]
         expected_tools = [ToolCall(name=item["name"], input_parameters=item.get("arguments", {})) for item in case.get("expected_tools", [])]
         actual_output = case.get("agent_model_output") or case.get("agent_actual_output", case.get("actual_output", ""))
-        output.append(LLMTestCase(name=str(case["id"]), input=str(case.get("question", "")), actual_output=str(actual_output), expected_output=str(case.get("expected_output", "")), context=[str(x) for x in case.get("context", [])], retrieval_context=[str(x) for x in case.get("retrieval_context", [])], tools_called=tools, expected_tools=expected_tools))
+        if track == "retrieval":
+            expected_output = "\n".join(str(item) for item in case.get("expected_retrieval_context", []))
+        else:
+            expected_output = str(case.get("expected_output", ""))
+        output.append(LLMTestCase(name=str(case["id"]), input=str(case.get("question", "")), actual_output=str(actual_output), expected_output=expected_output, context=[str(x) for x in case.get("context", [])], retrieval_context=[str(x) for x in case.get("retrieval_context", [])], tools_called=tools, expected_tools=expected_tools))
     return output
 
 
@@ -248,13 +324,16 @@ def make_metrics(policy: dict[str, Any], judge: Any, track: str = "full") -> lis
     strict = set(policy.get("strict_metrics", []))
     flaky = set(policy.get("flaky_metrics", []))
     anchor = policy.get("deepeval_evaluation_anchor_metric", "acceptable_answer")
+    names = metric_names_for_track(track)
+    # DeepEval requires one non-flaky thresholded metric per evaluate() call.
+    # The configured anchor belongs to the generation track, so retrieval-only
+    # runs need a local engine anchor as well. This does not change policy_flaky
+    # or strict_metrics; it only lets exploratory metrics execute and report.
+    engine_anchor = anchor if anchor in names else (names[0] if names else None)
     common = {"model": judge, "async_mode": False}
 
     def is_engine_flaky(name: str) -> bool:
-        # DeepEval refuses to execute when every metric is marked flaky. Keep
-        # one non-gating anchor only to satisfy its runner; policy_flaky below
-        # remains the source of truth for release decisions.
-        return name in flaky and name != anchor
+        return name in flaky and name != engine_anchor
 
     metrics = [
         ContextualPrecisionMetric(threshold=t["contextual_precision"], strict_mode="contextual_precision" in strict, flaky=is_engine_flaky("contextual_precision"), **common),
@@ -264,7 +343,6 @@ def make_metrics(policy: dict[str, Any], judge: Any, track: str = "full") -> lis
         AnswerRelevancyMetric(threshold=t["answer_relevancy"], strict_mode="answer_relevancy" in strict, flaky=is_engine_flaky("answer_relevancy"), **common),
         GEval(name="acceptable_answer", evaluation_params=[SingleTurnParams.ACTUAL_OUTPUT, SingleTurnParams.EXPECTED_OUTPUT], criteria="The answer satisfies the expected answer without contradicting the evidence or adding unsupported factual claims.", threshold=t["acceptable_answer"], strict_mode="acceptable_answer" in strict, flaky=is_engine_flaky("acceptable_answer"), **common),
     ]
-    names = metric_names_for_track(track)
     metric_index = {name: index for index, name in enumerate(TRACK_METRICS["full"])}
     return [metrics[metric_index[name]] for name in names]
 
@@ -334,7 +412,7 @@ def run_judge(cases: list[dict[str, Any]], policy: dict[str, Any], repetitions: 
         executed_tracks = []
         for label, group_cases, metric_track in groups:
             result = evaluate(
-                test_cases=make_test_cases(group_cases),
+                test_cases=make_test_cases(group_cases, metric_track),
                 metrics=make_metrics(policy, judge, metric_track),
                 identifier=f"gp-assistant-rag-{policy['dataset_version']}-{label}-run-{index + 1}",
                 async_config=AsyncConfig(run_async=True, throttle_value=2.0, max_concurrent=1),
@@ -419,7 +497,7 @@ def main() -> int:
     if args.output:
         args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    return 0 if args.mode == "deterministic" or (args.mode == "report" and deterministic_ok) or report.get("gate", {}).get("passed") else 1
+    return 0 if (args.mode in {"deterministic", "report"} and deterministic_ok) or report.get("gate", {}).get("passed") else 1
 
 
 if __name__ == "__main__":

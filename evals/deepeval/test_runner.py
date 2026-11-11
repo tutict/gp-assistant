@@ -10,7 +10,7 @@ import runner
 class JudgeConfigTests(unittest.TestCase):
     def test_rejects_arbitrary_results_path_even_inside_repository(self):
         with self.assertRaisesRegex(SystemExit, "approved fixed evaluation payload"):
-            runner.approved_results_path(runner.ROOT / "arbitrary-results.jsonl", "research-retrieval-eval-v4")
+            runner.approved_results_path(runner.ROOT / "arbitrary-results.jsonl", "research-retrieval-eval-v5")
 
     def test_local_env_loads_relay_url_and_key(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -118,6 +118,36 @@ class JudgeConfigTests(unittest.TestCase):
             self.assertEqual(judge.base_url, "https://relay.example/v1")
             self.assertEqual(judge.temperature, 0.0)
 
+    def test_retrieval_track_has_an_engine_anchor_without_changing_policy_flaky_status(self):
+        with patch.dict(os.environ, {
+            "DEEPEVAL_JUDGE_API_KEY": "deepseek-test-key",
+            "DEEPEVAL_JUDGE_BASE_URL": "https://relay.example/v1",
+        }, clear=True):
+            policy = runner.read_json(runner.POLICY_PATH)
+            judge = runner.build_judge_model()
+            metrics = runner.make_metrics(policy, judge, "retrieval")
+
+        self.assertEqual(len(metrics), 3)
+        self.assertFalse(metrics[0].flaky)
+        self.assertTrue(metrics[1].flaky)
+        self.assertTrue(metrics[2].flaky)
+
+    def test_retrieval_track_uses_required_evidence_as_expected_output(self):
+        case = {
+            "id": "retrieval-reference",
+            "question": "What is supported?",
+            "expected_output": "The answer also contains a refusal boundary.",
+            "expected_retrieval_context": ["evidence sentence one", "evidence sentence two"],
+            "retrieval_context": ["evidence sentence one"],
+            "context": [],
+            "agent_trace": {"tools": []},
+            "expected_tools": [],
+        }
+        retrieval_case = runner.make_test_cases([case], "retrieval")[0]
+        generation_case = runner.make_test_cases([case], "generation")[0]
+        self.assertEqual(retrieval_case.expected_output, "evidence sentence one\nevidence sentence two")
+        self.assertEqual(generation_case.expected_output, case["expected_output"])
+
     def test_private_replay_allows_local_hit_but_requires_remote_exclusion(self):
         case = {
             "id": "private-case",
@@ -129,7 +159,9 @@ class JudgeConfigTests(unittest.TestCase):
             "remote_retrieved_document_ids": [],
             "remote_forbidden_document_ids": ["private-doc"],
             "required_document_ids": ["private-doc"],
-            "forbidden_document_ids": ["private-doc"],
+            # This document is locally required, and forbidden only remotely.
+            "forbidden_document_ids": [],
+            "retrieval_assertion_scope": "local",
             "request": {"remote_safe_only": True},
             "deterministic_retrieval_context": ["private evidence sentence"],
             "expected_retrieval_context": ["private evidence sentence"],
@@ -139,6 +171,8 @@ class JudgeConfigTests(unittest.TestCase):
         }
         result = runner.deterministic_case(case)
         self.assertTrue(result["passed"])
+        case["remote_retrieved_document_ids"] = ["private-doc"]
+        self.assertFalse(runner.deterministic_case(case)["passed"])
 
 
 if __name__ == "__main__":

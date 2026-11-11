@@ -1,5 +1,8 @@
 import os
+import io
+import sys
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
 
 import runner
@@ -36,6 +39,67 @@ class ReplayContractTests(unittest.TestCase):
         self.assertEqual(result["constructs"]["generation"]["status"], "not_applicable")
         self.assertEqual(result["constructs"]["generation"]["reason"], "deterministic replay has no product-model answer")
         self.assertTrue(result["passed"])
+
+    def test_deterministic_cli_exits_with_failure_when_a_hard_gate_fails(self):
+        case = self.make_case()
+        case["dataset_version"] = runner.read_json(runner.POLICY_PATH)["dataset_version"]
+        case["retrieved_document_ids"] = []
+        with patch.object(sys, "argv", ["runner.py", "--mode", "deterministic", "--track", "deterministic"]), \
+             patch.object(runner, "load_cases", return_value=[case]), redirect_stdout(io.StringIO()):
+            self.assertEqual(runner.main(), 1)
+
+    def local_private_case(self):
+        case = self.make_case()
+        case.update({
+            "private_evidence_present": True, "cloud_eval_allowed": False,
+            "remote_export_allowed": False, "retrieval_assertion_scope": "local",
+            "remote_retrieved_document_ids": [], "remote_forbidden_document_ids": ["doc-1"],
+            "request": {"remote_safe_only": True},
+        })
+        return case
+
+    def test_local_required_hit_and_remote_exclusion_are_separate_assertions(self):
+        case = self.local_private_case()
+        self.assertTrue(runner.deterministic_case(case)["passed"])
+        case["remote_retrieved_document_ids"] = ["doc-1"]
+        self.assertFalse(runner.deterministic_case(case)["retrieval_gate"]["privacy_ok"])
+
+    def test_forbidden_document_is_checked_in_the_same_projection_as_required(self):
+        case = self.local_private_case()
+        case["forbidden_document_ids"] = ["doc-1"]
+        result = runner.deterministic_case(case)
+        self.assertFalse(result["retrieval_gate"]["passed"])
+        self.assertEqual(result["forbidden_document_ids_retrieved"], ["doc-1"])
+
+    def test_empty_assertion_context_cannot_borrow_evidence_from_another_projection(self):
+        case = self.make_case()
+        case["deterministic_retrieval_context"] = []
+        self.assertFalse(runner.deterministic_case(case)["retrieval_gate"]["passed"])
+
+    def test_public_privacy_flags_do_not_waive_remote_forbidden_hits(self):
+        case = self.make_case()
+        case["remote_forbidden_document_ids"] = ["doc-1"]
+        self.assertFalse(runner.deterministic_case(case)["retrieval_gate"]["privacy_ok"])
+
+    def test_evidence_sentence_must_come_from_the_expected_document(self):
+        case = self.make_case()
+        case["retrieved_document_ids"] = ["doc-1", "doc-2"]
+        case["deterministic_retrieval_context"] = ["unrelated excerpt", "evidence sentence"]
+        case["expected_retrieval_evidence"] = [{"document_id": "doc-1", "sentence": "evidence sentence"}]
+        case["replay"] = {"response": {"citations": [
+            {"document_id": "doc-1", "excerpt": "unrelated excerpt"},
+            {"document_id": "doc-2", "excerpt": "evidence sentence"},
+        ]}}
+        self.assertFalse(runner.deterministic_case(case)["retrieval_gate"]["passed"])
+
+    def test_local_evidence_spans_use_the_local_citation_projection(self):
+        case = self.local_private_case()
+        case["expected_retrieval_evidence"] = [{"document_id": "doc-1", "sentence": "evidence sentence"}]
+        case["replay"] = {"response": {"citations": []}}
+        case["deterministic_retrieval_citations"] = [{"document_id": "doc-1", "excerpt": "evidence sentence"}]
+        self.assertTrue(runner.deterministic_case(case)["retrieval_gate"]["passed"])
+        case["deterministic_retrieval_citations"][0]["excerpt"] = "unrelated excerpt"
+        self.assertFalse(runner.deterministic_case(case)["retrieval_gate"]["passed"])
 
     def test_metric_tracks_are_explicit(self):
         self.assertEqual(

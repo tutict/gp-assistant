@@ -1,9 +1,9 @@
 {
-  "dataset_version": "research-retrieval-eval-v4",
-  "corpus_version": "research-corpus-v2",
+  "dataset_version": "research-retrieval-eval-v5",
+  "corpus_version": "research-corpus-v3",
   "chunking_version": "chars-520-overlap-80-v1",
   "embedding_model": "BAAI/bge-small-zh-v1.5-int8",
-  "index_version": "sqlite-fts5-rrf60-v1",
+  "index_version": "sqlite-fts5-rrf60-recency-v2",
   "prompt_version": "research-answer-v1",
   "judge_model": "deepseek-flash",
   "judge_temperature": 0,
