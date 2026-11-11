@@ -13,11 +13,55 @@ import {
   normalizeAgentRunMetrics,
   normalizeAgentRunSummary,
 } from "./agentRuns";
+import type { AgentResult } from "../types";
 
 describe("agent run ledger client", () => {
   beforeEach(() => {
     getJson.mockReset();
     postJson.mockReset();
+  });
+
+  it("round-trips HK filing, financial and article evidence and retained context through ledger reads", async () => {
+    const evidence = [
+      { id: "E1", citation_id: "citation-1", document_id: "filing", chunk_id: "filing-chunk", title: "腾讯公告", source: "HKEXnews",
+        level: "evidence", source_tier: "official", summary: "公告摘要", excerpt: "公告原始摘录", summary_kind: "excerpt",
+        published_at: "2026-11-09", url: "https://www.hkexnews.hk/tencent.pdf", report_period: "2026Q3", period_end: "2026-09-30",
+        currency: "CNY", unit: "million", audit_status: "unaudited", verification_status: "unverified", stock_codes: ["00700.HK"],
+        remote_export_allowed: false, metadata: { metric: { value: 0, currency: "CNY", unit: "million", missing_reason: null } } },
+      { id: "E2", document_id: "financial", title: "财务候选", source_tier: "candidate", summary: "现金流待核验", excerpt: "收入 0",
+        published_at: null, url: null, report_period: "2026H1", currency: "CNY", unit: "million", verification_status: "candidate",
+        stock_codes: ["00700.HK"], remote_export_allowed: true, metadata: { source: "local_financial", value: 0 } },
+      { id: "E3", document_id: "article", title: "媒体文章", source_tier: "media", summary: "正文摘要", excerpt: "媒体原文",
+        summary_kind: "article_summary", published_at: "2026-11-08", url: "https://example.test/news", stock_codes: ["00700.HK"],
+        remote_export_allowed: false, metadata: { publisher: "媒体" } },
+    ];
+    const result: AgentResult = { reply: "腾讯风险 [E1] [E2] [E3]", evidence_summary: evidence,
+      research_context: { market: "hk", source_run_id: "origin", stock_code: "00700.HK", snapshot_at_epoch_ms: 1794238200000,
+        evidence, data_gaps: ["现金流缺失"], reused: true } };
+    getJson.mockResolvedValue({ run: JSON.parse(JSON.stringify({ run_id: "completed", conversation_id: "chat", status: "completed", result })) });
+    const loaded = await getAgentRun("completed");
+    expect(loaded?.result?.evidence_summary).toEqual(evidence);
+    expect(loaded?.result?.research_context).toEqual(result.research_context);
+    expect(loaded?.result?.evidence_summary?.[0]).not.toBe(evidence[0]);
+  });
+
+  it("bounds retained evidence fields and rejects incompatible replay contexts", () => {
+    const item = { id: "E1", document_id: "doc", stock_codes: ["00700.HK"], excerpt: "x".repeat(10000), url: "x".repeat(3000),
+      metadata: { text: "x".repeat(1000), api_key: "secret", nested: { zero: 0 } }, remote_export_allowed: false };
+    const detail = normalizeAgentRunDetail({ run_id: "bounded", status: "completed", result: { reply: "answer",
+      evidence_summary: Array(20).fill(item), research_context: { market: "hk", stock_code: "00700.HK", snapshot_at_epoch_ms: 1,
+        evidence: Array(20).fill(item), data_gaps: Array(30).fill("x".repeat(1000)), reused: true } } });
+    expect(detail?.result?.evidence_summary).toHaveLength(16);
+    expect(detail?.result?.evidence_summary?.[0].excerpt).toHaveLength(1600);
+    expect(detail?.result?.evidence_summary?.[0].url).toBeNull();
+    expect(detail?.result?.evidence_summary?.[0].metadata).toEqual({ text: "x".repeat(600), nested: { zero: 0 } });
+    expect(detail?.result?.research_context?.data_gaps).toHaveLength(16);
+    expect(detail?.result?.research_context?.data_gaps[0]).toHaveLength(400);
+    for (const context of [ { market: "cn", stock_code: "00700.HK", snapshot_at_epoch_ms: 1 },
+      { market: "hk", stock_code: "600519.SH", snapshot_at_epoch_ms: 1 }, { market: "hk", stock_code: "00700.HK", snapshot_at_epoch_ms: -1 } ]) {
+      const invalid = normalizeAgentRunDetail({ run_id: "invalid", result: { reply: "legacy", research_context: context } });
+      expect(invalid?.result?.research_context).toBeUndefined();
+    }
   });
 
   it("normalizes bounded summaries and rejects missing run ids", () => {

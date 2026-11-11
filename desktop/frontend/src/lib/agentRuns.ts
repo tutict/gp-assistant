@@ -3,6 +3,7 @@ import type {
   AgentEvidenceItem,
   AgentHarnessMeta,
   AgentIntent,
+  AgentResearchContext,
   AgentResult,
   AgentStreamEvent,
   AgentToolCall,
@@ -14,6 +15,7 @@ import {
   requireBacktestResult,
 } from "./contracts";
 import { getJson, postJson } from "./tauri";
+import { MAX_AGENT_EVIDENCE_ITEMS } from "./agent";
 
 export type AgentRunStatus = "running" | "completed" | "failed" | "unknown";
 export const MAX_AGENT_REPLAY_EVENTS = 1_000;
@@ -384,15 +386,63 @@ function normalizeReplayEvidence(value: unknown): AgentEvidenceItem | null {
   if (!isRecord(value)) return null;
   const evidence: AgentEvidenceItem = {};
   for (const [key, maxLength] of [
-    ["title", METADATA_TEXT_MAX],
-    ["source", METADATA_TEXT_MAX],
+    ["id", 64],
+    ["citation_id", 64],
+    ["title", 160],
+    ["source", 200],
     ["level", SHORT_TEXT_MAX],
-    ["summary", DISPLAY_TEXT_MAX],
+    ["source_tier", 64],
+    ["summary", 1600],
+    ["excerpt", 1600],
+    ["summary_kind", 64],
   ] as const) {
-    const text = optionalBoundedText(value[key], maxLength);
-    if (text) evidence[key] = text;
+    const legacyMax = !value.document_id && (key === "title" || key === "source") ? METADATA_TEXT_MAX
+      : !value.document_id && key === "summary" ? DISPLAY_TEXT_MAX : maxLength;
+    if (typeof value[key] === "string") evidence[key] = value[key].slice(0, legacyMax);
   }
+  for (const key of ["document_id", "chunk_id"] as const) {
+    const id = boundedIdentity(value[key]);
+    if (id) evidence[key] = id;
+  }
+  for (const [key, maxLength] of [
+    ["published_at", 128], ["report_period", 64], ["period_end", 128], ["currency", 32], ["unit", 64],
+    ["verification_status", 64], ["audit_status", 64],
+  ] as const) {
+    if (value[key] === null) evidence[key] = null;
+    else if (typeof value[key] === "string") evidence[key] = value[key].slice(0, maxLength);
+  }
+  if (value.url === null) evidence.url = null;
+  else if (typeof value.url === "string") evidence.url = value.url.length <= 2048 ? value.url : null;
+  if (Array.isArray(value.stock_codes)) evidence.stock_codes = value.stock_codes.slice(0, 16).map(boundedIdentity).filter((id): id is string => Boolean(id));
+  if (typeof value.remote_export_allowed === "boolean") evidence.remote_export_allowed = value.remote_export_allowed;
+  if (isPlainRecord(value.metadata)) evidence.metadata = boundedReplayEvidenceMetadata(value.metadata) as Record<string, unknown>;
   return hasFields(evidence) ? evidence : null;
+}
+
+function boundedReplayEvidenceMetadata(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") return value.slice(0, 600);
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "boolean" || value === null) return value;
+  if (depth >= 4) return null;
+  if (Array.isArray(value)) return value.slice(0, 16).map(item => boundedReplayEvidenceMetadata(item, depth + 1));
+  if (!isPlainRecord(value)) return null;
+  return Object.fromEntries(Object.entries(value).slice(0, 48)
+    .filter(([key]) => key.length <= 256 && !isSensitiveKey(key) && !["__proto__", "prototype", "constructor"].includes(key))
+    .map(([key, item]) => [key, boundedReplayEvidenceMetadata(item, depth + 1)]));
+}
+
+function normalizeReplayResearchContext(value: unknown): AgentResearchContext | undefined {
+  if (!isRecord(value) || value.market !== "hk" || typeof value.stock_code !== "string" || !/^\d{5}\.HK$/.test(value.stock_code)) return undefined;
+  const snapshot = optionalNumber(value.snapshot_at_epoch_ms);
+  if (!snapshot) return undefined;
+  const sourceRunId = boundedRunIdentity(value.source_run_id);
+  const context: AgentResearchContext = { market: "hk", stock_code: value.stock_code, snapshot_at_epoch_ms: snapshot,
+    ...(sourceRunId ? { source_run_id: sourceRunId } : {}),
+    evidence: normalizeObjectList(value.evidence, normalizeReplayEvidence).slice(0, MAX_AGENT_EVIDENCE_ITEMS)
+      .filter(item => Boolean(item.document_id && item.stock_codes?.includes(value.stock_code as string))),
+    data_gaps: normalizeStringList(value.data_gaps, 400).slice(0, 16) };
+  if (typeof value.reused === "boolean") context.reused = value.reused;
+  return context;
 }
 
 function normalizeReplayAnswerSection(value: unknown): AgentAnswerSection | null {
@@ -437,7 +487,7 @@ function normalizeReplayResult(value: unknown): {
   const normalized = normalizeAgentResult(value);
   const result: AgentResult = {
     tool_calls: normalizeObjectList(normalized.tool_calls, normalizeReplayToolCall),
-    evidence_summary: normalizeObjectList(normalized.evidence_summary, normalizeReplayEvidence),
+    evidence_summary: normalizeObjectList(normalized.evidence_summary, normalizeReplayEvidence).slice(0, MAX_AGENT_EVIDENCE_ITEMS),
     answer_sections: normalizeObjectList(normalized.answer_sections, normalizeReplayAnswerSection),
     model_answer_sections: normalizeObjectList(normalized.model_answer_sections, normalizeReplayAnswerSection),
     warnings: normalizeStringList(normalized.warnings),
@@ -452,6 +502,8 @@ function normalizeReplayResult(value: unknown): {
   if (intent) result.intent = intent;
   const harness = normalizeReplayHarness(normalized.harness);
   if (harness) result.harness = harness;
+  const researchContext = normalizeReplayResearchContext(normalized.research_context);
+  if (researchContext) result.research_context = researchContext;
   const normalizedRecord = normalized as unknown as Record<string, unknown>;
   const resultRecord = result as unknown as Record<string, unknown>;
   let domainComplete = true;
@@ -465,6 +517,7 @@ function normalizeReplayResult(value: unknown): {
 }
 
 function hasMeaningfulReplayResult(result: AgentResult): boolean {
+  if (result.research_context) return true;
   if (result.reply || result.action) return true;
   if (result.intent && hasFields(result.intent)) return true;
   if (result.harness && hasFields(result.harness)) return true;

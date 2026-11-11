@@ -14,6 +14,7 @@ const tauriMocks = vi.hoisted(() => ({
   getTauriListen: vi.fn(),
   isTauriRuntime: vi.fn(),
   postJson: vi.fn(),
+  getJson: vi.fn(),
 }));
 
 const drawerMock = vi.hoisted(() => ({
@@ -207,6 +208,7 @@ beforeEach(() => {
   }));
   tauriMocks.isTauriRuntime.mockReset().mockReturnValue(true);
   tauriMocks.postJson.mockReset().mockResolvedValue({ deleted: 0 });
+  tauriMocks.getJson.mockReset().mockResolvedValue({ run: null });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("document", { visibilityState: "visible" });
   vi.stubGlobal("crypto", { randomUUID: () => "run-generated" });
@@ -242,6 +244,145 @@ afterEach(async () => {
 });
 
 describe("AgentPanel run replay interactions", () => {
+  const hkResult = { reply: "冻结的腾讯研究 [E1]", evidence_summary: [{ id: "E1", document_id: "filing", title: "冻结公告", stock_codes: ["00700.HK"] }],
+    research_context: { market: "hk", stock_code: "00700.HK", snapshot_at_epoch_ms: 1794238200000, source_run_id: "origin",
+      evidence: [{ id: "E1", document_id: "filing", title: "冻结公告", stock_codes: ["00700.HK"], remote_export_allowed: false }], data_gaps: [] } };
+  async function restoredHkPanel(messages: StoredMessage[] = [{ role: "assistant", content: "历史回答 [E1]", timestamp: 1, runId: "restored-run" }]) {
+    await workspaceTest.store.initialize();
+    workspaceTest.store.set("hk.agent.conversations", [conversation("hk-chat", "港股历史", messages), conversation("other-chat", "另一聊天")]);
+    workspaceTest.store.set("hk.agent.active", "hk-chat");
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<AgentPanel {...baseProps} market="hk" />); });
+    renderers.add(renderer);
+    return renderer;
+  }
+
+  it("hydrates restored completed HK results before a follow-up and keeps workspace rows lightweight", async () => {
+    const request = deferred<unknown>();
+    tauriMocks.getJson.mockReturnValue(request.promise);
+    const renderer = await restoredHkPanel();
+    invokeMock.mockResolvedValue({ reply: "继续回答" });
+    await act(async () => renderer.root.findByType("textarea").props.onChange({ target: { value: "它的风险是什么" } }));
+    let sendPromise!: Promise<void>;
+    await act(async () => { sendPromise = buttonWithClass(renderer, "send-btn").props.onClick(); await Promise.resolve(); });
+    expect(invokeMock).not.toHaveBeenCalled();
+    await act(async () => {
+      request.resolve({ run: { run_id: "restored-run", conversation_id: "hk-chat", status: "completed", result: hkResult } });
+      await sendPromise;
+    });
+    expect(invokeMock).toHaveBeenCalledWith("api_agent_stream", { payload: expect.objectContaining({
+      conversation_id: "hk-chat", research_context: expect.objectContaining({ source_run_id: "restored-run", stock_code: "00700.HK",
+        evidence: [expect.objectContaining({ document_id: "filing", remote_export_allowed: false })] }) }) });
+    expect(nodeText(renderer.root)).toContain("冻结公告");
+    const replyCitation = renderer.root.findAllByType("a").find(node => node.props["aria-label"] === "查看证据 E1");
+    expect(replyCitation?.props.href).toMatch(/^#agent-evidence-.+-E1$/);
+    await act(async () => workspaceTest.store.flush());
+    const rows = workspaceTest.snapshot().values["hk.agent.conversations"] as Array<{ messages: Array<Record<string, unknown>> }>;
+    expect(rows[0].messages.every(message => !("result" in message))).toBe(true);
+    await act(async () => renderer.root.findByType("textarea").props.onChange({ target: { value: "继续比较" } }));
+    expect(tauriMocks.getJson).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["failed", "hk-chat", false], ["running", "hk-chat", false], ["unknown", "hk-chat", false],
+    ["completed", "other-chat", false], ["completed", undefined, false], ["completed", "hk-chat", true],
+  ])("rejects unowned or unavailable ledger results (%s, %s, unavailable=%s)", async (status, owner, unavailable) => {
+    tauriMocks.getJson.mockResolvedValue({ run: { run_id: "restored-run", conversation_id: owner, status,
+      ...(unavailable ? { result: null } : { result: hkResult }) } });
+    const renderer = await restoredHkPanel();
+    expect(nodeText(renderer.root)).not.toContain("冻结公告");
+    invokeMock.mockResolvedValue({ reply: "fresh" });
+    await act(async () => renderer.root.findByType("textarea").props.onChange({ target: { value: "继续研究" } }));
+    await act(async () => { await buttonWithClass(renderer, "send-btn").props.onClick(); });
+    const payload = invokeMock.mock.calls.at(-1)?.[1]?.payload;
+    expect(payload).not.toHaveProperty("research_context");
+  });
+
+  it("discards hydration after switching chats and aborts the old request", async () => {
+    const request = deferred<unknown>();
+    tauriMocks.getJson.mockReturnValue(request.promise);
+    const renderer = await restoredHkPanel();
+    await act(async () => workspaceTest.store.set("hk.agent.active", "other-chat"));
+    expect(tauriMocks.getJson.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    await act(async () => { request.resolve({ run: { run_id: "restored-run", conversation_id: "hk-chat", status: "completed", result: hkResult } }); await request.promise; });
+    expect(nodeText(renderer.root)).not.toContain("冻结公告");
+    const rows = workspaceTest.store.get<Array<{ id: string; messages: Array<Record<string, unknown>> }>>("hk.agent.conversations", []);
+    expect(rows.find(row => row.id === "hk-chat")?.messages[0]).not.toHaveProperty("result");
+  });
+
+  it("cancels a follow-up waiting for hydration without starting a native run", async () => {
+    const request = deferred<unknown>();
+    tauriMocks.getJson.mockReturnValue(request.promise);
+    const renderer = await restoredHkPanel();
+    await act(async () => renderer.root.findByType("textarea").props.onChange({ target: { value: "继续研究" } }));
+    let sendPromise!: Promise<void>;
+    await act(async () => { sendPromise = buttonWithClass(renderer, "send-btn").props.onClick(); await Promise.resolve(); });
+    await act(async () => buttonWithClass(renderer, "send-btn").props.onClick());
+    expect(nodeText(renderer.root)).toContain("已取消。");
+    expect(buttonWithClass(renderer, "send-btn").props["aria-label"]).toBe("发送");
+    await act(async () => { request.resolve({ run: { run_id: "restored-run", conversation_id: "hk-chat", status: "completed", result: hkResult } }); await sendPromise; });
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(nodeText(renderer.root)).toContain("已取消。");
+  });
+
+  it("discards hydration after switching markets", async () => {
+    const request = deferred<unknown>();
+    tauriMocks.getJson.mockReturnValue(request.promise);
+    const renderer = await restoredHkPanel();
+    await act(async () => renderer.update(<WorkspaceProvider store={workspaceTest.store}><AgentPanel {...baseProps} market="cn" /></WorkspaceProvider>));
+    expect(tauriMocks.getJson.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    await act(async () => { request.resolve({ run: { run_id: "restored-run", conversation_id: "hk-chat", status: "completed", result: hkResult } }); await request.promise; });
+    const rows = workspaceTest.store.get<Array<{ id: string; messages: Array<Record<string, unknown>> }>>("hk.agent.conversations", []);
+    expect(rows.find(row => row.id === "hk-chat")?.messages[0]).not.toHaveProperty("result");
+    expect(nodeText(renderer.root)).not.toContain("冻结公告");
+  });
+
+  it("keeps available in-memory snapshots immediate and skips failed and unbounded run references", async () => {
+    const renderer = await restoredHkPanel([
+      { role: "assistant", content: "取消回答", timestamp: 1, runId: "cancelled", error: true } as StoredMessage,
+      { role: "assistant", content: "过长标识", timestamp: 2, runId: "中".repeat(100) },
+      { role: "assistant", content: "已有回答 [E1]", timestamp: 3, runId: "in-memory", result: hkResult } as StoredMessage,
+    ]);
+    invokeMock.mockResolvedValue({ reply: "follow-up" });
+    await act(async () => renderer.root.findByType("textarea").props.onChange({ target: { value: "继续" } }));
+    await act(async () => { await buttonWithClass(renderer, "send-btn").props.onClick(); });
+    expect(tauriMocks.getJson).not.toHaveBeenCalled();
+    expect(invokeMock.mock.calls.at(-1)?.[1]?.payload.research_context).toMatchObject({ source_run_id: "in-memory" });
+  });
+
+  it("uses the latest live snapshot without waiting for older unresolved ledger history", async () => {
+    const request = deferred<unknown>();
+    tauriMocks.getJson.mockReturnValue(request.promise);
+    const renderer = await restoredHkPanel([
+      { role: "assistant", content: "更早的历史", timestamp: 1, runId: "old-run" },
+      { role: "assistant", content: "已有回答 [E1]", timestamp: 3, runId: "in-memory", result: hkResult } as StoredMessage,
+    ]);
+    invokeMock.mockResolvedValue({ reply: "follow-up" });
+    await act(async () => renderer.root.findByType("textarea").props.onChange({ target: { value: "继续" } }));
+    let sendPromise!: Promise<void>;
+    await act(async () => { sendPromise = buttonWithClass(renderer, "send-btn").props.onClick(); await Promise.resolve(); });
+    expect(invokeMock.mock.calls.at(-1)?.[1]?.payload.research_context).toMatchObject({ source_run_id: "in-memory" });
+    await act(async () => { request.resolve({ run: null }); await sendPromise; });
+  });
+  it("keeps the Hong Kong assistant conversations and drafts separate and uses HK starter questions", async () => {
+    await workspaceTest.store.initialize();
+    workspaceTest.store.set("agent.conversations", [conversation("cn-history", "A股历史", [{role:"user",content:"看600519",timestamp:1}])]);
+    workspaceTest.store.set("agent.active", "cn-history");
+    workspaceTest.store.set("agent.draft:cn-history", "A股未发送草稿");
+    await workspaceTest.store.flush();
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<AgentPanel {...baseProps} llmSettings={null} market="hk" watchlist={[{code:"00700.HK",name:"腾讯控股"}]} />); });
+    renderers.add(renderer);
+    expect(nodeText(renderer.root)).not.toContain("A股历史");
+    expect(renderer.root.findByType("textarea").props.value).toBe("");
+    expect(nodeText(renderer.root)).toContain("00700");
+    expect(nodeText(renderer.root)).not.toContain("600519");
+    await act(async () => renderer.root.findByType("textarea").props.onChange({target:{value:"研究腾讯控股"}}));
+    await act(async () => workspaceTest.store.flush());
+    expect(workspaceTest.snapshot().values["agent.draft:cn-history"]).toBe("A股未发送草稿");
+    expect(Object.keys(workspaceTest.snapshot().values).some(key => key.startsWith("hk.agent.draft:"))).toBe(true);
+  });
+
   it("places starter questions in the chat canvas and fills a draft without sending", async () => {
     const renderer = await renderPanel();
     const thread = renderer.root.find((node) => hasClass(node, "agent-thread"));
@@ -316,6 +457,8 @@ describe("AgentPanel run replay interactions", () => {
     const renderer = await renderPanel();
     const { sendPromise } = await beginDeferredSend(renderer, request.promise);
 
+    await act(async () => streamHandler?.({ payload: { run_id: "run-generated", type: "result", response: hkResult } }));
+
     const stopButton = buttonWithClass(renderer, "send-btn");
     expect(stopButton.props["aria-label"]).toBe("停止");
     await act(async () => {
@@ -327,6 +470,8 @@ describe("AgentPanel run replay interactions", () => {
       payload: { run_id: "run-generated" },
     });
     expect(nodeText(renderer.root)).toContain("已取消");
+    const rows = workspaceTest.store.get<Array<{ messages: Array<{ result?: unknown }> }>>("agent.conversations", []);
+    expect(rows[0].messages.at(-1)?.result).toBeUndefined();
   });
 
   it("opens run history without an initial run and passes the drawer contract", async () => {

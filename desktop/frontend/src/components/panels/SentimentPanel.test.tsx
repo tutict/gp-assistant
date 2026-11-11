@@ -1,10 +1,21 @@
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act, create as createRenderer, type ReactTestRenderer } from "react-test-renderer";
+import type { ReactElement } from "react";
+import { WorkspaceProvider } from "../../hooks/useWorkspace";
+import { workspaceTestHarness } from "../../test/workspace";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { SentimentAnalysis, SentimentEvidence, SentimentRun, SentimentSnapshot } from "../../types/sentiment";
 import { SentimentPanel } from "./SentimentPanel";
+import { StockCodeInput } from "../StockCodeInput";
 
 const { postJson } = vi.hoisted(() => ({ postJson: vi.fn() }));
 const headerActions = vi.hoisted(() => ({ onRefresh: vi.fn(), onOpenKnowledge: vi.fn() }));
+let workspaceTest = workspaceTestHarness();
+function create(element: ReactElement, options?: Parameters<typeof createRenderer>[1]) {
+  const renderer = createRenderer(<WorkspaceProvider store={workspaceTest.store}>{element}</WorkspaceProvider>, options);
+  const update = renderer.update;
+  renderer.update = element => update(<WorkspaceProvider store={workspaceTest.store}>{element}</WorkspaceProvider>);
+  return renderer;
+}
 vi.mock("../../lib/tauri", () => ({ postJson }));
 vi.mock("./LlmSettingsPanel", () => ({ LlmSettingsPanel: (props: { openRequest?: number }) => <span data-model-open-request={props.openRequest} /> }));
 vi.mock("./NewsRagPanel", () => ({
@@ -12,6 +23,7 @@ vi.mock("./NewsRagPanel", () => ({
     code?: string;
     onCodeChange?: (code: string) => void;
     onHeaderToolsChange?: (tools: {
+      stockCode: string;
       refreshing: boolean;
       vectorReady: boolean;
       onRefresh: () => void;
@@ -23,7 +35,10 @@ vi.mock("./NewsRagPanel", () => ({
       <span>消息资料子视图</span>
       <span>{props.code}</span>
       <button type="button" onClick={() => props.onCodeChange?.("000001.SZ")}>消息内换股票</button>
+      <button type="button" onClick={() => props.onCodeChange?.(props.code || "")}>同步消息股票</button>
+      <button type="button" onClick={() => props.onCodeChange?.("")}>消息内清空股票</button>
       <button type="button" onClick={() => props.onHeaderToolsChange?.({
+        stockCode: props.code || "",
         refreshing: false,
         vectorReady: true,
         onRefresh: headerActions.onRefresh,
@@ -62,6 +77,7 @@ async function click(label: string) {
 }
 
 beforeEach(() => {
+  workspaceTest = workspaceTestHarness();
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("requestAnimationFrame", (callback: () => void) => { callback(); return 1; });
@@ -80,9 +96,69 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => renderer?.unmount());
   renderer = undefined;
+  workspaceTest.store.dispose();
   vi.useRealTimers();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
+});
+
+it("uses Hong Kong search and accepts a five-digit stock code in the news toolbar", async () => {
+  vi.stubGlobal("window", {setTimeout, clearTimeout});
+  await act(async () => { renderer = create(<SentimentPanel market="hk" watchlist={[]} />); });
+  const picker = renderer!.root.findByType(StockCodeInput);
+  expect(picker.props.market).toBe("hk");
+  await act(async () => renderer!.root.findAllByType("input").find(input => input.props.id === "sentiment-stock")!.props.onChange({target:{value:"00700"}}));
+  await act(async () => renderer!.root.findByProps({ className:"sentiment-toolbar" }).props.onSubmit({preventDefault:()=>undefined}));
+  expect(renderer!.root.findByProps({ id:"sentiment-stock" }).props.value).toBe("00700.HK");
+  expect(textOf(renderer!.toJSON())).not.toContain("输入六位代码");
+});
+
+it("clears the selected mainland stock when the message workspace changes to Hong Kong", async () => {
+  await act(async () => { renderer = create(<SentimentPanel market="cn" initialCode="600000.SH" />); });
+  await act(async () => renderer!.update(<SentimentPanel market="hk" watchlist={[{code:"00700.HK",name:"腾讯控股"}]} />));
+  expect(renderer!.root.findByProps({ id:"sentiment-stock" }).props.value).toBe("00700.HK");
+  expect(textOf(renderer!.toJSON())).not.toContain("600000.SH");
+});
+
+it("preserves the current message stock when the watchlist changes after a route handoff", async () => {
+  await act(async () => { renderer = create(<SentimentPanel market="hk" initialCode="00700.HK" watchlist={[{code:"00700.HK",name:"腾讯控股"}]} />); });
+  await act(async () => renderer!.root.findByType(StockCodeInput).props.onCommit("00005.HK"));
+  expect(renderer!.root.findByProps({id:"sentiment-stock"}).props.value).toBe("00005.HK");
+  await act(async () => renderer!.update(<SentimentPanel market="hk" initialCode="00700.HK" watchlist={[{code:"00700.HK",name:"腾讯控股"},{code:"00005.HK",name:"汇丰控股"}]} />));
+  expect(renderer!.root.findByProps({id:"sentiment-stock"}).props.value).toBe("00005.HK");
+});
+
+it("restores the last selected Hong Kong stock after reopening the message page", async () => {
+  vi.stubGlobal("window", { setTimeout, clearTimeout });
+  await act(async () => { renderer = create(<SentimentPanel market="hk" watchlist={[]} />); });
+  await act(async () => renderer!.root.findByType(StockCodeInput).props.onCommit("00700"));
+  await act(async () => { renderer!.unmount(); });
+  await act(async () => { renderer = create(<SentimentPanel market="hk" watchlist={[]} />); });
+  expect(renderer!.root.findByProps({ id: "sentiment-stock" }).props.value).toBe("00700.HK");
+});
+
+it("updates the Hong Kong code typed in the toolbar before starting a refresh", async () => {
+  vi.stubGlobal("window", { setTimeout, clearTimeout });
+  await act(async () => { renderer = create(<SentimentPanel market="hk" watchlist={[]} />); });
+  await click("显示顶栏工具");
+  await act(async () => renderer!.root.findByType(StockCodeInput).props.onChange("00700"));
+  await act(async () => renderer!.root.findByProps({ "aria-label": "立即更新消息" }).props.onClick());
+  expect(renderer!.root.findByProps({ id: "sentiment-stock" }).props.value).toBe("00700.HK");
+  expect(headerActions.onRefresh).not.toHaveBeenCalled();
+  await click("同步消息股票");
+  await click("显示顶栏工具");
+  expect(headerActions.onRefresh).toHaveBeenCalledOnce();
+});
+
+it("waits for the all-messages toolbar instead of refreshing the former stock", async () => {
+  vi.stubGlobal("window", { setTimeout, clearTimeout });
+  await act(async () => { renderer = create(<SentimentPanel market="hk" initialCode="00700.HK" />); });
+  await click("显示顶栏工具");
+  await click("消息内清空股票");
+  await act(async () => renderer!.root.findByProps({ "aria-label": "立即更新消息" }).props.onClick());
+  expect(headerActions.onRefresh).not.toHaveBeenCalled();
+  await click("显示顶栏工具");
+  expect(headerActions.onRefresh).toHaveBeenCalledOnce();
 });
 
 it("keeps the original run polling through the sources subview and displays its completion", async () => {

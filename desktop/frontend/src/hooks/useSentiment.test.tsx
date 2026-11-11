@@ -8,8 +8,8 @@ let state!: ReturnType<typeof useSentiment>;
 let renderer: ReactTestRenderer | undefined;
 const old = { analysis_id: "old", stock_code: "000001.SZ", snapshot: { snapshot_id: "frozen" } } as SentimentAnalysis;
 const llm = { model: "fixture", base_url: "http://localhost" };
-function Probe({ code, codes = [] }: { code: string; codes?: string[] }) {
-  state = useSentiment(code, codes);
+function Probe({ code, codes = [], market }: { code: string; codes?: string[]; market?: "cn" | "hk" }) {
+  state = useSentiment(code, codes, market);
   return null;
 }
 async function mount(codes?: string[]) {
@@ -39,6 +39,14 @@ it("loads this stock without sending an industry hint or calling a model", async
   await act(async () => state.start(undefined));
   expect(state.error).toContain("配置");
   expect(postJson.mock.calls.some(([path]) => path.endsWith("/start"))).toBe(false);
+});
+
+it("keeps HK sentiment requests in the HK namespace", async () => {
+  await act(async () => { renderer = create(<Probe code="00700.HK" market="hk" codes={["00700.HK"]} />); });
+
+  expect(postJson).toHaveBeenCalledWith("/api/sentiment/snapshot", { stock_code: "00700.HK", window_days: 30, market: "hk" });
+  expect(postJson).toHaveBeenCalledWith("/api/sentiment/latest", { stock_code: "00700.HK", market: "hk" });
+  expect(postJson).toHaveBeenCalledWith("/api/sentiment/history", { stock_codes: ["00700.HK"], market: "hk" });
 });
 
 it("starts manually and cancellation preserves previous analysis", async () => {

@@ -3,6 +3,7 @@ import { useTheme } from "./hooks/useTheme";
 import { useDensity } from "./hooks/useDensity";
 import { useFontScale } from "./hooks/useFontScale";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
+import { useMarketDataStatus } from "./hooks/useMarketDataStatus";
 import { useWorkspaceState, useWorkspaceStore, useWorkspaceStatus, WorkspaceCredentialsReady } from "./hooks/useWorkspace";
 import { WorkspaceErrorBoundary } from "./components/ui/ErrorBoundary";
 import { MarketCapabilityStatus } from "./components/ui/MarketCapabilityStatus";
@@ -17,11 +18,9 @@ import { Sidebar } from "./components/Sidebar";
 import { FilterBar, type FilterCriteria } from "./components/FilterBar";
 import { ScreenPanel } from "./components/panels/ScreenPanel";
 import { WatchlistPanel } from "./components/panels/WatchlistPanel";
-import { HkMarketPanel } from "./components/panels/HkMarketPanel";
 import { HkObservePanel } from "./components/panels/HkObservePanel";
-import { HkUnavailablePanel } from "./components/panels/HkUnavailablePanel";
 import { PanelFeedback } from "./components/ui/PanelFeedback";
-import type { AdaptiveScreenRequest, DataStatus, ScreenCriteria, WatchlistItem } from "./types";
+import type { AdaptiveScreenRequest, ScreenCriteria, WatchlistItem } from "./types";
 import { marketCapabilityLabel, type CapabilityId, type MarketCapability, type MarketId } from "./lib/marketDomain";
 import { marketCapabilityIdsForView, marketTransition, shouldApplyMarketCapabilities } from "./lib/marketCapabilities";
 import {
@@ -105,7 +104,7 @@ export default function App({ onMounted }: AppProps) {
   const [searchCode, setSearchCode] = useState("");
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [marketStatus, setMarketStatus] = useState<DataStatus | null>(null);
+  const { marketStatus, setMarketStatus, refreshMarketStatus } = useMarketDataStatus(market);
   const [marketCapabilities, setMarketCapabilities] = useState<MarketCapability[] | null>(null);
   const [marketCapabilityError, setMarketCapabilityError] = useState<string | null>(null);
   const marketCapabilitiesRequestIdRef = useRef(0);
@@ -160,20 +159,6 @@ export default function App({ onMounted }: AppProps) {
   }, [onMounted]);
 
   useEffect(() => {
-    let cancelled = false;
-    if (market === "hk") {
-      setMarketStatus(null);
-      return () => { cancelled = true; };
-    }
-    void getJson<DataStatus>("/api/data-sources/status")
-      .then((status) => { if (!cancelled) setMarketStatus(status); })
-      .catch(() => { if (!cancelled) setMarketStatus(null); });
-    return () => {
-      cancelled = true;
-    };
-  }, [market]);
-
-  useEffect(() => {
     const requestId = ++marketCapabilitiesRequestIdRef.current;
     let cancelled = false;
     setMarketCapabilities(null);
@@ -188,7 +173,7 @@ export default function App({ onMounted }: AppProps) {
         setMarketCapabilityError(error instanceof Error ? error.message : String(error));
       });
     return () => { cancelled = true; };
-  }, [market, marketStatus?.quote_generated_at, marketStatus?.universe_updated_at]);
+  }, [market, marketStatus?.quote_generated_at, marketStatus?.universe_updated_at, marketStatus?.history_updated_at, marketStatus?.financial_updated_at]);
 
   // Hash routing
   useEffect(() => {
@@ -250,6 +235,7 @@ export default function App({ onMounted }: AppProps) {
     setObserveRequest((prev) => ({ code, requestId: (prev?.requestId ?? 0) + 1 }));
     navigate("observe");
   }, [navigate, setSelectedStock]);
+  const hkObserveCode = observeRequest?.code || selectedStock;
 
   const changeMarket = useCallback((next: MarketId) => {
     const transition = marketTransition(market, next);
@@ -265,8 +251,9 @@ export default function App({ onMounted }: AppProps) {
     if (transition.clearObserveRequest) setObserveRequest(null);
     if (transition.clearNewsRequest) setNewsRequest(null);
     if (transition.clearBacktestRequest) setBacktestRouteRequest(null);
+    setAgentDraftRequest(null);
     setMarketStatus(null);
-  }, [market, setMarket, setSelectedStock]);
+  }, [market, setMarket, setSelectedStock, setMarketStatus]);
 
   const marketCapability = useCallback((id: CapabilityId) =>
     marketCapabilities?.find((item) => item.id === id) || null,
@@ -407,8 +394,13 @@ export default function App({ onMounted }: AppProps) {
           {visitedResearch.screen && (
             <div className="persistent-panel" hidden={view !== "screen"}>
               {market === "hk" ? <div className="hk-market-workspace">
-                <HkMarketPanel onObserveStock={observeStock} capability={marketCapability("security_directory")} capabilityLoading={marketCapabilities === null && !marketCapabilityError} capabilityError={marketCapabilityError} />
-                <HkUnavailablePanel feature="港股筛选" capability={marketCapability("screening")} loading={marketCapabilities === null && !marketCapabilityError} error={marketCapabilityError} onSwitchMarket={() => changeMarket("cn")} />
+                <WorkspaceErrorBoundary label="港股选股"><ScreenPanel
+                  market="hk" criteria={criteria} onCriteriaChange={setCriteria}
+                  watchlist={visibleWatchlist} onWatchlistChange={setWatchlist}
+                  onObserveStock={observeStock} onNewsStock={openNewsForStock}
+                  onRunBacktest={runCurrentCriteriaBacktest} mobileRuntime={mobileRuntime}
+                  onMarketDataChanged={refreshMarketStatus}
+                /></WorkspaceErrorBoundary>
               </div> : <WorkspaceErrorBoundary label="选股"><ScreenPanel
                 criteria={criteria} onCriteriaChange={setCriteria} watchlist={visibleWatchlist} onWatchlistChange={setWatchlist}
                 onObserveStock={observeStock} onNewsStock={openNewsForStock} onRunBacktest={runCurrentCriteriaBacktest} mobileRuntime={mobileRuntime} marketStatus={marketStatus}
@@ -418,9 +410,16 @@ export default function App({ onMounted }: AppProps) {
           {visitedResearch.observe && (
             <Suspense fallback={view === "observe" ? <PanelFeedback kind="loading" description="正在加载工作区..." /> : null}>
               <div className="persistent-panel" hidden={view !== "observe"}>
-                {market === "hk" ? marketCapabilities === null || marketCapability("observe")?.status === "unavailable"
-                  ? <HkUnavailablePanel feature="港股普通股观察" capability={marketCapability("observe")} additionalCapabilities={[marketCapability("financial_snapshot")].filter((item): item is MarketCapability => Boolean(item))} loading={marketCapabilities === null && !marketCapabilityError} error={marketCapabilityError} onSwitchMarket={() => changeMarket("cn")} />
-                  : <HkObservePanel code={observeRequest?.code || selectedStock} watchlist={visibleWatchlist} onWatchlistChange={(items) => setWatchlist([...items, ...watchlist.filter((item) => !visibleWatchlist.some((visible) => visible.code === item.code))])} /> : <WorkspaceErrorBoundary label="观察"><ObservePanel
+                {market === "hk" ? <HkObservePanel
+                  code={hkObserveCode}
+                  watchlist={visibleWatchlist}
+                  onWatchlistChange={(items) => setWatchlist([...items, ...watchlist.filter((item) => !visibleWatchlist.some((visible) => visible.code === item.code))])}
+                  mobileRuntime={mobileRuntime}
+                  onOpenNews={openNewsForStock}
+                  onAskAgent={handoffToAgent}
+                  capability={marketCapability("observe") || undefined}
+                  onMarketDataChanged={refreshMarketStatus}
+                /> : <WorkspaceErrorBoundary label="观察"><ObservePanel
                   watchlist={visibleWatchlist} onWatchlistChange={setWatchlist} initialCode={observeRequest?.code || selectedStock} initialCodeRequestId={observeRequest?.requestId ?? 0}
                   mobileRuntime={mobileRuntime} onOpenNews={openNewsForStock} onAskAgent={handoffToAgent}
                   capability={marketCapability("observe") || undefined}
@@ -431,18 +430,24 @@ export default function App({ onMounted }: AppProps) {
           {visitedResearch.backtest && (
             <Suspense fallback={view === "backtest" ? <PanelFeedback kind="loading" description="正在加载工作区..." /> : null}>
               <div className="persistent-panel" hidden={view !== "backtest"}>
-                {market === "hk" ? <HkUnavailablePanel feature="港股回测" capability={marketCapability("backtest")} loading={marketCapabilities === null && !marketCapabilityError} error={marketCapabilityError} onSwitchMarket={() => changeMarket("cn")} /> : <WorkspaceErrorBoundary label="回测"><BacktestPanel
+                {market === "hk" ? <WorkspaceErrorBoundary label="港股回测"><BacktestPanel
+                  key="hk" market="hk" criteria={criteria} watchlist={visibleWatchlist} marketStatus={marketStatus}
+                  preferredSource={backtestRouteRequest} onPreferredSourceConsumed={handleBacktestRouteConsumed}
+                  onMarketDataChanged={refreshMarketStatus}
+                /></WorkspaceErrorBoundary> : <WorkspaceErrorBoundary label="回测"><BacktestPanel
+                  key="cn"
                   criteria={criteria} watchlist={visibleWatchlist} preferredSource={backtestRouteRequest ?? (workspaceStatus.ready && !backtestDefaultApplied ? { source: backtestSource, requestId: -1 } : null)} onPreferredSourceConsumed={handleBacktestRouteConsumed}
                 /></WorkspaceErrorBoundary>}
               </div>
             </Suspense>
           )}
-          {view === "news" && market === "hk" && <HkUnavailablePanel feature="港股新闻、RAG 与情绪研究" capability={marketCapability("news_research")} additionalCapabilities={[marketCapability("sentiment")].filter((item): item is MarketCapability => Boolean(item))} loading={marketCapabilities === null && !marketCapabilityError} error={marketCapabilityError} onSwitchMarket={() => changeMarket("cn")} />}
-          {view === "news" && market === "cn" && (
+          {view === "news" && (
             <Suspense fallback={<PanelFeedback kind="loading" description="正在加载工作区..." />}>
               <WorkspaceErrorBoundary label="消息研究"><NewsRagPanel
+                key={market}
                 llmSettings={llmSettings}
                 onLlmSettingsChange={setLlmSettings}
+                market={market}
                 marketCapabilities={marketCapabilities}
                 marketCapabilityError={marketCapabilityError}
                 watchlist={visibleWatchlist}
@@ -456,14 +461,15 @@ export default function App({ onMounted }: AppProps) {
               /></WorkspaceErrorBoundary>
             </Suspense>
           )}
-          {view === "agent" && market === "hk" && <HkUnavailablePanel feature="港股研究 Agent" capability={marketCapability("research_agent")} loading={marketCapabilities === null && !marketCapabilityError} error={marketCapabilityError} onSwitchMarket={() => changeMarket("cn")} />}
-          {view === "agent" && market === "cn" && (
+          {view === "agent" && (
             <Suspense fallback={<PanelFeedback kind="loading" description="正在加载工作区..." />}>
               <WorkspaceErrorBoundary label="智能体"><AgentPanel
+                key={market}
                 llmSettings={llmSettings}
                 onLlmSettingsChange={setLlmSettings}
                 watchlist={visibleWatchlist}
-                onWatchlistChange={setWatchlist}
+                onWatchlistChange={(items) => setWatchlist(market === "hk" ? [...items, ...watchlist.filter(item => !item.code.endsWith(".HK"))] : [...items, ...watchlist.filter(item => item.code.endsWith(".HK"))])}
+                market={market}
                 draftPrompt={agentDraftRequest?.prompt || ""}
                 draftRequestId={agentDraftRequest?.requestId ?? 0}
               /></WorkspaceErrorBoundary>
@@ -471,7 +477,13 @@ export default function App({ onMounted }: AppProps) {
           )}
         </div>
 
-        {market === "hk" && view === "screen" && <WorkspaceErrorBoundary label="港股自选"><WatchlistPanel items={visibleWatchlist} onChange={(items) => setWatchlist([...items, ...watchlist.filter((item) => !visibleWatchlist.some((visible) => visible.code === item.code))])} onObserve={observeStock} /></WorkspaceErrorBoundary>}
+        {market === "hk" && view !== "agent" && view !== "news" && <WorkspaceErrorBoundary label="港股自选"><WatchlistPanel
+          items={visibleWatchlist}
+          onChange={(items) => setWatchlist([...items, ...watchlist.filter((item) => !visibleWatchlist.some((visible) => visible.code === item.code))])}
+          onObserve={observeStock}
+          onNews={openNewsForStock}
+          onBacktest={runWatchlistBacktest}
+        /></WorkspaceErrorBoundary>}
         {market === "cn" && view !== "agent" && view !== "news" && (
           <WorkspaceErrorBoundary label="自选股"><WatchlistPanel
             items={visibleWatchlist}
@@ -482,7 +494,7 @@ export default function App({ onMounted }: AppProps) {
           /></WorkspaceErrorBoundary>
         )}
 
-        {market === "cn" && view !== "agent" && view !== "news" && (
+        {view !== "agent" && view !== "news" && (
           <details className="workbench-more-info">
             <summary>
               <span>更多信息</span>
@@ -492,7 +504,7 @@ export default function App({ onMounted }: AppProps) {
               {marketCapabilityIdsForView(view).map((id) => (
                 <MarketCapabilityStatus
                   key={id}
-                  label={`A 股${marketCapabilityLabel(id)}`}
+                  label={`${market === "hk" ? "港股" : "A 股"}${marketCapabilityLabel(id)}`}
                   capability={marketCapability(id)}
                   loading={marketCapabilities === null && !marketCapabilityError}
                   error={marketCapabilityError}

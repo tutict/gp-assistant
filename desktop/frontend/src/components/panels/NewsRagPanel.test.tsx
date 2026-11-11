@@ -11,12 +11,16 @@ import type { ResearchMessage } from "../../types";
 const tauriMocks = vi.hoisted(() => ({
   getJson: vi.fn(),
   postJson: vi.fn(),
+  openExternalUrl: vi.fn(),
   mobile: false,
+  native: false,
 }));
 vi.mock("../../lib/tauri", () => ({
   getJson: tauriMocks.getJson,
   postJson: tauriMocks.postJson,
+  openExternalUrl: tauriMocks.openExternalUrl,
   isMobileTauriRuntime: () => tauriMocks.mobile,
+  isTauriRuntime: () => tauriMocks.native,
 }));
 const { getJson, postJson } = tauriMocks;
 
@@ -76,6 +80,8 @@ describe("NewsRagPanel", () => {
   beforeEach(() => {
     workspaceTest = workspaceTestHarness();
     tauriMocks.mobile = false;
+    tauriMocks.native = false;
+    tauriMocks.openExternalUrl.mockResolvedValue(undefined);
     getJson.mockImplementation((path: string) => {
       if (path.startsWith("/api/research/overview")) {
         return Promise.resolve({
@@ -111,6 +117,38 @@ describe("NewsRagPanel", () => {
     vi.unstubAllGlobals();
   });
 
+  it.each([
+    { label: "cached headline repeated on two lines", title: "腾讯健康与灵北中国达成战略合作", summary: "腾讯健康与灵北中国达成战略合作\n腾讯健康与灵北中国达成战略合作", expected: "" },
+    { label: "headline repeated without a separator", title: "腾讯健康与灵北中国达成战略合作", summary: "腾讯健康与灵北中国达成战略合作腾讯健康与灵北中国达成战略合作", expected: "" },
+    { label: "useful text after repeated headlines", title: "腾讯发布业务进展", summary: "腾讯发布业务进展\n腾讯发布业务进展\n公司披露季度收入增长 15%。", expected: "公司披露季度收入增长 15%。" },
+    { label: "truncated cached headline echo", title: "模型追上第一梯队，腾讯AI还差什么？", summary: "模型追上第一梯队，腾讯AI还差什么？ 模型追上第一梯队，腾讯…", expected: "" },
+    { label: "issuer prefix is part of a real sentence", title: "腾讯", summary: "腾讯控股披露季度收入增长 15%。", expected: "腾讯控股披露季度收入增长 15%。" },
+    { label: "headline quoted inside useful text", title: "腾讯发布业务进展", summary: "报告在“腾讯发布业务进展”一节披露收入增长 15%。", expected: "报告在“腾讯发布业务进展”一节披露收入增长 15%。" },
+    { label: "summary not supplied", title: "腾讯发布业务进展", summary: "", expected: "" },
+  ])("normalizes message headline summaries ($label)", async ({ title, summary, expected }) => {
+    const item: ResearchMessage = { ...message, stock_code: "00700.HK", title, summary,
+      source_name: "新浪财经", source_tier: "news", url: "https://finance.sina.com.cn/stock/hk/tencent.shtml" };
+    getJson.mockImplementation(async (path: string) => path.includes("/messages")
+      ? { items: [item] } : path.includes("/overview")
+        ? { document_count: 1, unread_count: 1, retrieval: { vector: { ready: false } } }
+        : { items: [] });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<NewsRagPanel market="hk" initialCode="00700.HK" />); });
+    const event = renderer.root.find((node) => node.type === "button" && String(node.props.className).startsWith("research-event "));
+    expect(textOf(event.findByType("strong").children)).toBe(title);
+    const displayed = expected || "暂未获取摘要，可更新消息或查看原文。";
+    const previews = event.findAllByProps({ className: "research-event-summary" });
+    expect(previews).toHaveLength(1);
+    expect(textOf(previews[0].children)).toBe(displayed);
+    if (!expected) expect(textOf(event.children).split(title)).toHaveLength(2);
+    await act(async () => { event.props.onClick(); });
+    const detail = renderer.root.findByProps({ className: "research-event-detail" });
+    expect(detail.findAllByType("p")).toHaveLength(1);
+    expect(textOf(detail.findByType("p").children)).toBe(displayed);
+    expect(detail.findByType("a").props.href).toBe(item.url);
+    await act(async () => renderer.unmount());
+  });
+
   it("keeps questions and historical answers out of the reading stream until requested", async () => {
     postJson.mockResolvedValue({ answers: [{ id: "a", question: "旧问题", answer: "历史答案", citations: [] }] });
     getJson.mockImplementation(async (path: string) => path.endsWith("/threads")
@@ -129,6 +167,169 @@ describe("NewsRagPanel", () => {
     expect(renderer.root.findAllByType("textarea")).toHaveLength(0);
     await act(async () => renderer.root.findByProps({ "aria-label": "打开研究问答" }).props.onClick());
     expect(renderer.root.findByType("textarea").props.value).toBe("未发送草稿");
+    await act(async () => renderer.unmount());
+  });
+
+  it("keeps HK research requests in the Hong Kong market namespace", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<NewsRagPanel market="hk" initialCode="00700.HK" />); });
+
+    expect(getJson).toHaveBeenCalledWith(expect.stringContaining("/api/research/messages?market=hk"));
+    expect(getJson).toHaveBeenCalledWith(expect.stringContaining("/api/research/threads?market=hk"));
+    await act(async () => renderer.unmount());
+  });
+
+  it("keeps HK research drafts and selected stocks separate from the mainland workspace", async () => {
+    workspaceTest.store.dispose();
+    workspaceTest = workspaceTestHarness(undefined, {"news.stock":"600000.SH","news.question":"A股未发送草稿","news.thread":"cn-thread"});
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<NewsRagPanel market="hk" />); });
+    await openQuestions(renderer);
+    expect(renderer.root.findByType("textarea").props.value).toBe("");
+    expect(getJson.mock.calls.some(([path]) => String(path).includes("stock_code=600000.SH"))).toBe(false);
+    await act(async () => renderer.root.findByType("textarea").props.onChange({target:{value:"港股未发送草稿"}}));
+    await act(async () => workspaceTest.store.flush());
+    expect(workspaceTest.snapshot().values["news.question"]).toBe("A股未发送草稿");
+    expect(workspaceTest.snapshot().values["hk.news.question"]).toBe("港股未发送草稿");
+    await act(async () => renderer.unmount());
+  });
+
+  it("finishes the HK refresh state after reloading messages so another update is available", async () => {
+    const hkMessage = {...message, stock_code:"00700.HK", title:"腾讯控股业绩公告"};
+    getJson.mockImplementation(async (path:string) => path.includes("/messages") ? {items:[hkMessage]} : {items:[]});
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<NewsRagPanel market="hk" initialCode="00700.HK" />); });
+    const refresh = () => renderer.root.findByProps({className:"research-actions"}).findAllByType("button").find(button => /^更新/.test(textOf(button.children)))!;
+    await act(async () => refresh().props.onClick());
+    expect(refresh().props.disabled).toBe(false);
+    expect(textOf(renderer.toJSON())).toContain("腾讯控股业绩公告");
+    await act(async () => refresh().props.onClick());
+    expect(postJson.mock.calls.filter(([path]) => path === "/api/research/refresh")).toHaveLength(2);
+    await act(async () => renderer.unmount());
+  });
+
+  it("refreshes the stocks in the HK all-messages stream and reloads the extracted summary", async () => {
+    const headline = { ...message, stock_code: "00700.HK", title: "腾讯正在大举招聘", summary: "腾讯正在大举招聘" };
+    const completed = { ...headline, summary: "腾讯混元上线招聘，社招有60余个岗位。青云课题涵盖逾160个岗位。" };
+    let refreshed = false;
+    getJson.mockImplementation(async (path: string) => path.includes("/messages")
+      ? { items: [refreshed ? completed : headline] } : { items: [] });
+    postJson.mockImplementation(async (path: string, payload: Record<string, unknown>) => {
+      if (path === "/api/research/refresh") {
+        expect(payload).toMatchObject({ market: "hk", code: "", seed_codes: ["00700.HK"] });
+        refreshed = true;
+        return { news: { scope_codes: ["00700.HK"], message_count: 1, notes: ["港股原文摘要补全 1 条。"] } };
+      }
+      return {};
+    });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<NewsRagPanel market="hk" code="" onCodeChange={() => undefined} />); });
+    await act(async () => renderer.root.find((node) => node.type === "button" && textOf(node) === "更新").props.onClick());
+    expect(textOf(renderer.toJSON())).toContain(completed.summary);
+    expect(textOf(renderer.toJSON())).toContain("港股原文摘要补全 1 条。");
+    await act(async () => renderer.unmount());
+  });
+
+  it("shows the reason when an HK refresh resolves no stock instead of silently reloading old messages", async () => {
+    const cached = { ...message, stock_code: "00700.HK", title: "已缓存腾讯消息" };
+    getJson.mockImplementation(async (path: string) => path.includes("/messages") ? { items: [cached] } : { items: [] });
+    postJson.mockResolvedValue({ news: { scope_codes: [], message_count: 0, notes: ["目标港股未匹配到证券目录，请确认股票代码。"] } });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<NewsRagPanel market="hk" initialCode="00700.HK" />); });
+    await act(async () => renderer.root.find((node) => node.type === "button" && textOf(node) === "更新").props.onClick());
+    expect(textOf(renderer.toJSON())).toContain("目标港股未匹配到证券目录，请确认股票代码。");
+    expect(textOf(renderer.toJSON())).toContain(cached.title);
+    await act(async () => renderer.unmount());
+  });
+
+  it("opens a source with the desktop bridge and keeps a failed browser launch visible", async () => {
+    tauriMocks.native = true;
+    tauriMocks.openExternalUrl.mockRejectedValue(new Error("系统浏览器未能打开，请复制链接后打开。"));
+    const item = { ...message, stock_code: "00700.HK", url: "https://t.cj.sina.cn/articles/view/1651428902/626ece2602001lifc" };
+    getJson.mockImplementation(async (path: string) => path.includes("/messages") ? { items: [item] } : { items: [] });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<NewsRagPanel market="hk" initialCode="00700.HK" />); });
+    await act(async () => renderer.root.find((node) => node.type === "button" && String(node.props.className).startsWith("research-event ")).props.onClick());
+    const link = renderer.root.findByProps({ className: "research-event-detail" }).findByType("a");
+    const preventDefault = vi.fn();
+    await act(async () => { link.props.onClick({ preventDefault }); });
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(tauriMocks.openExternalUrl).toHaveBeenCalledWith(item.url);
+    expect(textOf(renderer.toJSON())).toContain("系统浏览器未能打开，请复制链接后打开。");
+    expect(renderer.root.findByProps({ role: "alert" }).findByType("a").props.href).toBe(item.url);
+    await act(async () => renderer.unmount());
+  });
+
+  it("reports an HK client failure even when the backend returns cached messages with a valid stock scope", async () => {
+    const cached = { ...message, stock_code: "00700.HK", title: "已缓存腾讯消息" };
+    getJson.mockImplementation(async (path: string) => path.includes("/messages") ? { items: [cached] } : { items: [] });
+    postJson.mockResolvedValue({ news: { scope_codes: ["00700.HK"], message_count: 1,
+      notes: ["HK news HTTP client failed: invalid proxy settings"] } });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<NewsRagPanel market="hk" initialCode="00700.HK" />); });
+    await act(async () => renderer.root.find((node) => node.type === "button" && textOf(node) === "更新").props.onClick());
+    const visible = textOf(renderer.toJSON());
+    expect(visible).toContain("港股消息更新失败，请检查网络或代理设置后重试。");
+    expect(visible).toContain(cached.title);
+    expect(visible).not.toContain("消息已更新。");
+    await act(async () => renderer.unmount());
+  });
+
+  it("refreshes visible HK news without expanding the scope to unrelated financial snapshots", async () => {
+    const article = { ...message, stock_code: "00700.HK", title: "腾讯招聘", summary: "腾讯招聘",
+      source_tier: "news", url: "https://t.cj.sina.cn/articles/view/1651428902/626ece2602001lifc" };
+    const financial = { ...message, id: "financial", stock_code: "01288.HK", title: "农业银行财务快照", source_tier: "financial_snapshot" };
+    getJson.mockImplementation(async (path: string) => path.includes("/messages") ? { items: [financial, article] } : { items: [] });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<NewsRagPanel market="hk" code="" onCodeChange={() => undefined} />); });
+    await act(async () => renderer.root.find((node) => node.type === "button" && textOf(node) === "更新").props.onClick());
+    expect(postJson).toHaveBeenCalledWith("/api/research/refresh", expect.objectContaining({
+      seed_codes: ["00700.HK"], summary_priority_urls: [article.url],
+    }));
+    await act(async () => renderer.unmount());
+  });
+
+  it.each([
+    { online: false, visibility: "visible" },
+    { online: true, visibility: "hidden" },
+  ])("attempts a manual HK refresh and reports its result when connectivity metadata is $online/$visibility", async ({ online, visibility }) => {
+    const hkMessage = { ...message, stock_code: "00700.HK", title: "已缓存腾讯公告" };
+    getJson.mockImplementation(async (path: string) => path.includes("/messages") ? { items: [hkMessage] } : { items: [] });
+    vi.stubGlobal("navigator", { onLine: online });
+    Object.assign(document, { visibilityState: visibility });
+    postJson.mockImplementation(async (path: string) => {
+      if (path === "/api/research/refresh") throw new Error("本次消息刷新连接超时");
+      return {};
+    });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<NewsRagPanel market="hk" initialCode="00700.HK" />); });
+    const refresh = () => renderer.root.findByProps({ className: "research-actions" }).findAllByType("button").find(button => /^更新/.test(textOf(button.children)))!;
+    await act(async () => refresh().props.onClick());
+    expect(textOf(renderer.toJSON())).toContain("本次消息刷新连接超时");
+    expect(textOf(renderer.toJSON())).toContain("已缓存腾讯公告");
+    expect(refresh().props.disabled).toBe(false);
+    expect(postJson).toHaveBeenCalledWith("/api/research/refresh", expect.objectContaining({ market: "hk", code: "00700.HK" }));
+    await act(async () => renderer.unmount());
+  });
+
+  it("shows the assistant research citations with their source and original link", () => {
+    const result = {research_store:true,answer:"每股收益来自报告 [C1]",citations:[{citation_id:"C1",document_id:"hk-financial-00700",chunk_id:"hk-financial-00700:0",title:"腾讯控股 2026H1 财务快照",excerpt:"每股收益 CNY 12.639/股",source_tier:"financial_snapshot",source_name:"Eastmoney HK financial indicators",published_at:"2026-08-13",url:"https://example.com/filing",remote_export_allowed:true,lexical_score:1,retrieval_score:1}]};
+    const html = renderToStaticMarkup(<NewsRagView result={result} />);
+    expect(html).toContain("腾讯控股 2026H1 财务快照");
+    expect(html).toContain("CNY 12.639/股");
+    expect(html).toContain("Eastmoney HK financial indicators");
+    expect(html).toContain("https://example.com/filing");
+    expect(html).not.toContain("没有命中的消息证据");
+  });
+
+  it("opens a Hong Kong message with its original source link", async () => {
+    getJson.mockImplementation(async (path:string) => path.includes("/messages") ? {items:[{...message,stock_code:"00700.HK",title:"腾讯控股业绩公告",url:"https://finance.sina.com.cn/stock/hk/example.shtml"}]} : {items:[]});
+    let renderer!: ReactTestRenderer;
+    await act(async () => {renderer=create(<NewsRagPanel market="hk" initialCode="00700.HK" />);});
+    await act(async () => renderer.root.find(node => node.type === "button" && String(node.props.className).startsWith("research-event ")).props.onClick());
+    const detail = renderer.root.findByProps({className:"research-event-detail"});
+    expect(detail.findByType("a").props.href).toBe("https://finance.sina.com.cn/stock/hk/example.shtml");
+    expect(detail.findByType("a").props.target).toBe("_blank");
     await act(async () => renderer.unmount());
   });
 
@@ -774,6 +975,19 @@ describe("NewsRagPanel", () => {
     expect(typeof tools.onRefresh).toBe("function");
     expect(typeof tools.onOpenKnowledge).toBe("function");
     await act(async () => { renderer.unmount(); });
+  });
+
+  it("reads the HK research index from the HK workspace", async () => {
+    const onHeaderToolsChange = vi.fn();
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<NewsRagPanel market="hk" llmSettings={null} embedded onHeaderToolsChange={onHeaderToolsChange} />);
+    });
+    const tools = onHeaderToolsChange.mock.calls.at(-1)?.[0];
+    await act(async () => tools.onOpenKnowledge());
+
+    expect(getJson).toHaveBeenCalledWith("/api/research/index-status?market=hk");
+    await act(async () => renderer.unmount());
   });
 
   it("uses a single-row mobile composer with an embedded send button", async () => {

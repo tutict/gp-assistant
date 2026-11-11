@@ -1,5 +1,5 @@
-import { Component, type ReactNode } from "react";
-import type { AgentResult, BacktestResult, NewsRagResult, ObserveResult, StockRowView, WatchlistItem } from "../../types";
+import { Component, useId, useState, type ReactNode } from "react";
+import type { AgentEvidenceItem, AgentResult, BacktestResult, HkObserveResult, NewsRagResult, ObserveResult, StockRowView, WatchlistItem } from "../../types";
 import { actionResultKind, normalizeScreenRows } from "../../lib/contracts";
 import { agentHarnessExecutionLabel, agentHarnessLabel, MAX_AGENT_EVIDENCE_ITEMS } from "../../lib/agent";
 import { StockList } from "../StockList";
@@ -7,6 +7,8 @@ import { RawJson } from "../RawJson";
 import { BacktestResultView } from "./BacktestPanel";
 import { NewsRagView } from "./NewsRagPanel";
 import { ObserveResultView } from "./ObservePanel";
+import { toHkSharedObserveResult } from "./hkObserveAdapter";
+import { openExternalUrl } from "../../lib/tauri";
 
 export const AGENT_RESULT_UNAVAILABLE_TEXT = "结果不可用";
 
@@ -39,16 +41,27 @@ class ResultRenderBoundary extends Component<{
   }
 }
 
-export function AgentResultView({ result, watchlist, onToggleWatchlist }: {
+export function AgentResultView({ result, watchlist, onToggleWatchlist, reply = result.reply, replyClassName = "agent-final-reply" }: {
   result: AgentResult;
   watchlist: WatchlistItem[];
   onToggleWatchlist: (item: StockRowView) => void;
+  reply?: string;
+  replyClassName?: string;
 }) {
   const showDomain = hasDomainView(result);
+  const citationPrefix = `agent-evidence-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   return (
     <div className="agent-result-stack">
+      {reply && <p className={replyClassName}><CitedText text={reply} result={result} citationPrefix={citationPrefix} /></p>}
+      {result.research_context && (
+        <div className="agent-research-context" role="status">
+          <strong>{result.research_context.stock_code} · {result.research_context.reused ? "沿用研究快照" : "本次研究快照"}</strong>
+          <span>取证时间：{new Date(result.research_context.snapshot_at_epoch_ms).toLocaleString("zh-CN", { hour12: false })}</span>
+          {result.research_context.reused && <span>本轮沿用已有证据；询问最新资料可重新读取缓存。</span>}
+        </div>
+      )}
       <ResultRenderBoundary result={result}>
-        <AgentAnswerSections result={result} />
+        <AgentAnswerSections result={result} citationPrefix={citationPrefix} />
       </ResultRenderBoundary>
       {showDomain && (
         <ResultRenderBoundary result={result}>
@@ -60,7 +73,7 @@ export function AgentResultView({ result, watchlist, onToggleWatchlist }: {
         </ResultRenderBoundary>
       )}
       <ResultRenderBoundary result={result}>
-        <AgentEvidenceAndNotes result={result} showRaw={!showDomain} />
+        <AgentEvidenceAndNotes result={result} showRaw={!showDomain} citationPrefix={citationPrefix} />
       </ResultRenderBoundary>
     </div>
   );
@@ -90,7 +103,12 @@ function AgentDomainResult({ result, watchlist, onToggleWatchlist }: {
       : null;
   }
   if (kind === "news") return <NewsRagView result={nested as unknown as NewsRagResult} />;
-  if (kind === "observe") return <ObserveResultView result={nested as unknown as ObserveResult} />;
+  if (kind === "observe") {
+    const observe = nested.market === "hk" && nested.security && Array.isArray(nested.history)
+      ? toHkSharedObserveResult(nested as unknown as HkObserveResult)
+      : nested as unknown as ObserveResult;
+    return <ObserveResultView result={observe} />;
+  }
   return null;
 }
 
@@ -120,7 +138,39 @@ function intentMeta(values: Array<string | null | undefined>) {
   return values.filter(Boolean).map((value) => INTENT_META_LABELS[value || ""] || "").filter(Boolean).join(" · ");
 }
 
-function AgentAnswerSections({ result }: { result: AgentResult }) {
+function evidenceId(item: AgentEvidenceItem, index: number) {
+  return item.id && /^E[1-9]\d*$/.test(item.id) ? item.id : `E${index + 1}`;
+}
+
+function CitedText({ text, result, citationPrefix }: { text: string; result: AgentResult; citationPrefix: string }) {
+  const evidence = Array.isArray(result.evidence_summary) ? result.evidence_summary.slice(0, MAX_AGENT_EVIDENCE_ITEMS) : [];
+  const ids = new Set(evidence.map(evidenceId));
+  return <>{String(text).split(/(\[E\d+\])/g).map((part, index) => {
+    const id = /^\[(E\d+)\]$/.exec(part)?.[1];
+    return id && ids.has(id)
+      ? <a key={index} className="agent-inline-citation" href={`#${citationPrefix}-${id}`} aria-label={`查看证据 ${id}`} onClick={event => {
+        // The app owns hash navigation; citations only move focus within this answer.
+        event.preventDefault();
+        const target = event.currentTarget.ownerDocument.getElementById(`${citationPrefix}-${id}`);
+        target?.scrollIntoView({ block: "nearest", inline: "nearest" });
+        target?.focus({ preventScroll: true });
+      }}>{part}</a>
+      : part;
+  })}</>;
+}
+
+const EVIDENCE_STATUS_LABELS: Record<string, string> = {
+  candidate: "候选数据，尚未核验", candidate_only: "候选数据，尚未核验", unverified: "尚未核验", verified: "已核验",
+  official: "官方披露", official_disclosure: "官方披露", official_disclosure_unaudited: "官方披露，未经审计",
+  metadata_only: "仅有披露线索，尚未核验",
+};
+const EVIDENCE_SOURCE_LABELS: Record<string, string> = {
+  primary: "一手来源", official: "官方披露", official_filing: "官方公告", filing: "官方公告",
+  financial_snapshot: "财务快照", candidate: "候选数据", media: "媒体报道", news: "新闻报道", user_import: "用户资料",
+};
+const EVIDENCE_UNIT_LABELS: Record<string, string> = { million: "百万元", billion: "十亿元", percent: "%", per_share: "每股" };
+
+function AgentAnswerSections({ result, citationPrefix }: { result: AgentResult; citationPrefix: string }) {
   const sections = Array.isArray(result.answer_sections) ? result.answer_sections : [];
   const modelSections = Array.isArray(result.model_answer_sections) ? result.model_answer_sections : [];
   if (!sections.length && !modelSections.length) return null;
@@ -130,7 +180,7 @@ function AgentAnswerSections({ result }: { result: AgentResult }) {
         {sections.map((section, index) => (
           <article key={String(section.title || "section") + "-" + index}>
             <strong>{section.title || "结论"}</strong>
-            {(section.bullets || []).map((bullet, bulletIndex) => <p key={bulletIndex}>{bullet}</p>)}
+            {(section.bullets || []).map((bullet, bulletIndex) => <p key={bulletIndex}><CitedText text={bullet} result={result} citationPrefix={citationPrefix} /></p>)}
           </article>
         ))}
       </div>
@@ -145,7 +195,7 @@ function AgentAnswerSections({ result }: { result: AgentResult }) {
           {modelSections.map((section, index) => (
             <article key={String(section.title || "model-section") + "-" + index}>
               <strong>{section.title || "研究推断"}</strong>
-              {(section.bullets || []).map((bullet, bulletIndex) => <p key={bulletIndex}>{bullet}</p>)}
+              {(section.bullets || []).map((bullet, bulletIndex) => <p key={bulletIndex}><CitedText text={bullet} result={result} citationPrefix={citationPrefix} /></p>)}
             </article>
           ))}
         </div>
@@ -154,7 +204,38 @@ function AgentAnswerSections({ result }: { result: AgentResult }) {
   </>;
 }
 
-function AgentEvidenceAndNotes({ result, showRaw }: { result: AgentResult; showRaw: boolean }) {
+function EvidenceSourceCard({ item, id, citationPrefix }: { item: AgentEvidenceItem; id: string; citationPrefix: string }) {
+  const [opening, setOpening] = useState(false);
+  const [error, setError] = useState("");
+  let url = "";
+  try {
+    const parsed = new URL(item.url || "");
+    if (["http:", "https:"].includes(parsed.protocol)) url = parsed.href;
+  } catch { /* An absent or malformed source remains visible without an open action. */ }
+  const openSource = async () => {
+    if (!url || opening) return;
+    setOpening(true);
+    setError("");
+    try { await openExternalUrl(url); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "原文暂时无法打开"); }
+    finally { setOpening(false); }
+  };
+  const status = item.verification_status ? EVIDENCE_STATUS_LABELS[item.verification_status] || item.verification_status : "";
+  const level = item.source_tier || item.level;
+  return <article id={`${citationPrefix}-${id}`} tabIndex={-1}>
+    <span>{`${id}${level && level !== "evidence" ? ` · ${EVIDENCE_SOURCE_LABELS[level] || level}` : ""}`}</span>
+    <strong>{item.title || item.source || "证据"}</strong>
+    <p>{item.summary || item.source || "暂无证据摘要"}</p>
+    {item.source && <em>{item.source}</em>}
+    {(item.published_at || item.document_id) && <em>披露日期：{item.published_at || "未提供"}</em>}
+    {(item.report_period || item.currency || item.unit) && <em>{[item.report_period, item.currency, item.unit ? EVIDENCE_UNIT_LABELS[item.unit] || item.unit : ""].filter(Boolean).join(" · ")}</em>}
+    {(status || item.audit_status || item.summary_kind === "article_summary") && <em>{[status, item.audit_status === "unaudited" ? "未经审计" : item.audit_status, item.summary_kind === "article_summary" ? "正文摘要" : ""].filter(Boolean).join(" · ")}</em>}
+    {url && <button className="agent-source-open" type="button" disabled={opening} onClick={openSource}>{opening ? "正在打开…" : "查看原文"}</button>}
+    {error && <p role="status">{error}</p>}
+  </article>;
+}
+
+function AgentEvidenceAndNotes({ result, showRaw, citationPrefix }: { result: AgentResult; showRaw: boolean; citationPrefix: string }) {
   const toolCalls = Array.isArray(result.tool_calls) ? result.tool_calls : [];
   const allEvidence = Array.isArray(result.evidence_summary) ? result.evidence_summary : [];
   const evidence = allEvidence.slice(0, MAX_AGENT_EVIDENCE_ITEMS);
@@ -169,12 +250,7 @@ function AgentEvidenceAndNotes({ result, showRaw }: { result: AgentResult; showR
       {evidence.length > 0 && (
         <div className="agent-evidence-grid">
           {evidence.map((item, index) => (
-            <article key={String(item.title || "evidence") + "-" + index}>
-              <span>{`E${index + 1}${item.level && item.level !== "evidence" ? ` · ${item.level}` : ""}`}</span>
-              <strong>{item.title || item.source || "证据"}</strong>
-              <p>{item.summary || item.source || "暂无证据摘要"}</p>
-              {item.source && <em>{item.source}</em>}
-            </article>
+            <EvidenceSourceCard key={String(item.document_id || item.title || "evidence") + "-" + index} item={item} id={evidenceId(item, index)} citationPrefix={citationPrefix} />
           ))}
         </div>
       )}

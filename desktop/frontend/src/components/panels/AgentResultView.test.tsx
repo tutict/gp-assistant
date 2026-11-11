@@ -9,7 +9,10 @@ const componentMocks = vi.hoisted(() => ({
   observe: vi.fn(),
   rawJson: vi.fn(),
   stockList: vi.fn(),
+  openExternalUrl: vi.fn(),
 }));
+
+vi.mock("../../lib/tauri", () => ({ openExternalUrl: componentMocks.openExternalUrl }));
 
 vi.mock("../StockList", () => ({
   StockList: (props: Record<string, unknown>) => {
@@ -79,6 +82,94 @@ function renderResult(
 }
 
 describe("AgentResultView", () => {
+  it.each([["pointer", 1], ["keyboard", 0]])("keeps the assistant route and focuses the exact evidence card on %s activation", async (_activation, detail) => {
+    const result = { reply: "查看原文 [E2]，未知 [E9]", evidence_summary: [{ id: "E1", title: "第一条" }, { id: "E2", title: "第二条" }] };
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(<><AgentResultView result={result} watchlist={[]} onToggleWatchlist={vi.fn()} /><AgentResultView result={result} watchlist={[]} onToggleWatchlist={vi.fn()} /></>);
+      });
+      const links = renderer!.root.findAllByType("a");
+      expect(links).toHaveLength(2);
+      const link = links[1];
+      const linkedCardId = String(link.props.href).slice(1);
+      const articles = renderer!.root.findAllByType("article").filter(node => node.props.id);
+      expect(articles.find(node => node.props.id === linkedCardId)?.props.tabIndex).toBe(-1);
+      let focusedCardId = "";
+      let scrolledCardId = "";
+      let focusPreventedScroll = false;
+      const cards = new Map(articles.map(node => [node.props.id, {
+        id: node.props.id,
+        scrollIntoView: () => { scrolledCardId = node.props.id; },
+        focus: (options?: FocusOptions) => { focusedCardId = node.props.id; focusPreventedScroll = options?.preventScroll === true; },
+      }]));
+      const ownerDocument = { getElementById: (id: string) => cards.get(id) || null };
+      const event = { detail, defaultPrevented: false, currentTarget: { ownerDocument }, preventDefault() { this.defaultPrevented = true; } };
+      let route = "#agent";
+      await act(async () => link.props.onClick?.(event));
+      // Model the browser's default same-page navigation after the real click handler returns.
+      if (!event.defaultPrevented) route = link.props.href;
+      expect(route).toBe("#agent");
+      expect(scrolledCardId).toBe(linkedCardId);
+      expect(focusedCardId).toBe(linkedCardId);
+      expect(focusPreventedScroll).toBe(true);
+      expect(link.props["aria-label"]).toBe("查看证据 E2");
+    } finally {
+      if (renderer) await act(async () => renderer!.unmount());
+    }
+  });
+  it("links reply prose to the same evidence cards without duplicating the reply", () => {
+    const { html } = renderResult({ reply: "主回答 [E1] 与未知 [E9]", evidence_summary: [{ id: "E1", title: "原文" }] });
+    const target = html.match(/href="#([^"]+-E1)"/)?.[1];
+    expect(target).toBeTruthy();
+    expect(html).toContain(`id="${target}"`);
+    expect(html.match(/主回答/g)).toHaveLength(1);
+    expect(html).not.toMatch(/href="#[^"]+-E9"/);
+  });
+  it("labels HK source tiers and disclosure status without implying an audit", () => {
+    const { html } = renderResult({ evidence_summary: [
+      { id: "E1", source_tier: "filing", title: "季度公告", verification_status: "official_disclosure_unaudited", audit_status: "unaudited" },
+      { id: "E2", source_tier: "financial_snapshot", title: "财务数据", verification_status: "metadata_only", currency: "CNY", unit: "million" },
+    ] });
+    expect(html).toContain("官方公告");
+    expect(html).toContain("官方披露，未经审计");
+    expect(html).toContain("财务快照");
+    expect(html).toContain("仅有披露线索，尚未核验");
+    expect(html).toContain("百万元");
+  });
+  it("connects answer citations to dated source cards and preserves financial units", () => {
+    const result = {
+      action: "stock_research",
+      answer_sections: [{ title: "盈利质量", bullets: ["收入 CNY 192869 百万元，未经审计。[E1]", "未知引用 [E9] 保留文字。"] }],
+      evidence_summary: [{ id: "E1", title: "腾讯季度业绩公告", source: "HKEXnews", summary: "单季收入 CNY 192869 百万元。",
+        published_at: "2026-11-09", report_period: "2026Q3", currency: "CNY", unit: "million", audit_status: "unaudited",
+        url: "https://www.hkexnews.hk/listedco/listconews/sehk/2026/1109/tencent.pdf" }],
+    };
+    const { html } = renderResult(result);
+    const target = html.match(/href="#([^"]+-E1)"/)?.[1];
+    expect(target).toBeTruthy();
+    expect(html).toContain(`id="${target}"`);
+    expect(html).toContain("2026-11-09");
+    expect(html).toContain("2026Q3");
+    expect(html).toContain("CNY");
+    expect(html).toContain("查看原文");
+    expect(html).not.toMatch(/href="#[^"]+-E9"/);
+  });
+
+  it("opens the actual evidence source through the existing external URL action", async () => {
+    const url = "https://www.hkexnews.hk/listedco/listconews/sehk/2026/1109/tencent.pdf";
+    const result = { evidence_summary: [{ title: "腾讯公告", source: "HKEXnews", summary: "公告摘要", url }] };
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => { renderer = create(<AgentResultView result={result} watchlist={[]} onToggleWatchlist={vi.fn()} />); });
+      const button = renderer!.root.findAllByType("button").find((node) => node.children.join("").includes("查看原文"));
+      expect(button).toBeDefined();
+      await act(async () => { await button!.props.onClick(); });
+      expect(componentMocks.openExternalUrl).toHaveBeenCalledWith(url);
+    } finally {
+      if (renderer) await act(async () => renderer!.unmount());
+    }
+  });
   it("renders structured agent details with the legacy result fallback", () => {
     const result: AgentResult = {
       action: "data_status",

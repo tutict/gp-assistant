@@ -4,7 +4,7 @@ import type { LlmSettings, ScreenCriteria, WatchlistItem } from "../../types";
 import { buildSentimentParameterProposal, type SentimentParameterProposal } from "../../lib/evolutionPolicy";
 import { getSentimentStrategies, getSentimentStrategyVersions, rollbackSentimentStrategy, saveSentimentStrategy, setSentimentStrategyStatus, type SentimentStrategy, type SentimentStrategyVersion } from "../../lib/evolution";
 import type { SentimentEvidence, SentimentSnapshot, SentimentTimelinePoint } from "../../types/sentiment";
-import { normalizeStockCode } from "../../lib/format";
+import { normalizeStockCode, normalizeStockCodeForMarket } from "../../lib/format";
 import { buildLlmConfig, requireBacktestResult } from "../../lib/contracts";
 import { postJson } from "../../lib/tauri";
 import { useSentiment } from "../../hooks/useSentiment";
@@ -29,7 +29,7 @@ import type { MarketCapability } from "../../lib/marketDomain";
 import { MarketCapabilityStatus } from "../ui/MarketCapabilityStatus";
 import { marketCapabilityLabel } from "../../lib/marketDomain";
 import { ResearchMore } from "./ResearchMore";
-import { useWorkspaceCredentialsReady } from "../../hooks/useWorkspace";
+import { useWorkspaceCredentialsReady, useWorkspaceState } from "../../hooks/useWorkspace";
 
 const NewsRagPanel = lazy(async () => ({ default: (await import("./NewsRagPanel")).NewsRagPanel }));
 type WorkspaceView = "sources" | "sentiment";
@@ -44,10 +44,12 @@ interface Props {
   onGoToScreen?: () => void;
   marketCapabilities?: MarketCapability[] | null;
   marketCapabilityError?: string | null;
+  market?: "cn" | "hk";
   criteria?: ScreenCriteria;
   onApplyScreenCriteria?: (criteria: ScreenCriteria) => void;
 }
 interface ResearchHeaderTools {
+  stockCode: string;
   refreshing: boolean;
   vectorReady: boolean;
   onRefresh: () => void;
@@ -87,24 +89,38 @@ function Notes({ title, items }: { title: string; items: string[] }) {
 }
 
 export function SentimentPanel(props: Props) {
+  const market = props.market || "cn";
   const credentialsReady = useWorkspaceCredentialsReady();
   const [modelOpenRequest, setModelOpenRequest] = useState(0);
   const [dataStatusOpen, setDataStatusOpen] = useState(false);
   const [sentimentStockOpen, setSentimentStockOpen] = useState(false);
   const modelReturnFocusRef = useRef<HTMLElement | null>(null);
   const configureModel = useCallback(() => { modelReturnFocusRef.current = document.activeElement as HTMLElement | null; setModelOpenRequest((value) => value + 1); }, []);
-  const [code, setCode] = useState(() => normalizeStockCode(props.initialCode || props.watchlist?.[0]?.code || ""));
+  const [storedCode, setCode] = useWorkspaceState(market === "hk" ? "hk.news.stock" : "news.stock",
+    normalizeStockCodeForMarket(props.initialCode || props.watchlist?.[0]?.code || "", market));
+  const code = normalizeStockCodeForMarket(storedCode, market);
+  const activeMarketRef = useRef(market);
   const watchlistCodes = useMemo(
-    () => [...new Set((props.watchlist ?? []).map((item) => normalizeStockCode(item.code)).filter(Boolean))],
-    [props.watchlist],
+    () => [...new Set((props.watchlist ?? []).map((item) => normalizeStockCodeForMarket(item.code, market)).filter(Boolean))],
+    [market, props.watchlist],
   );
-  const state = useSentiment(code, watchlistCodes);
+  const watchlistCodesRef = useRef(watchlistCodes);
+  watchlistCodesRef.current = watchlistCodes;
+  const state = useSentiment(code, watchlistCodes, market);
   const [input, setInput] = useState(code);
+  const inputCodeRef = useRef(code);
+  useEffect(() => {
+    const previous = inputCodeRef.current;
+    setInput(current => current === previous ? code : current);
+    inputCodeRef.current = code;
+  }, [code]);
+  const [pendingRefreshCode, setPendingRefreshCode] = useState<string | null>(null);
   const [view, setView] = useState<WorkspaceView>(props.initialView || "sources");
   const [researchTools, setResearchTools] = useState<ResearchHeaderTools | null>(null);
   const onHeaderToolsChange = useCallback((next: ResearchHeaderTools) => {
     setResearchTools((current) => (
       current
+      && current.stockCode === next.stockCode
       && current.refreshing === next.refreshing
       && current.vectorReady === next.vectorReady
       && current.onRefresh === next.onRefresh
@@ -118,11 +134,25 @@ export function SentimentPanel(props: Props) {
   const [inputError, setInputError] = useState("");
   const selectCode = (next: string) => {
     setSentimentStockOpen(false);
-    const normalized = normalizeStockCode(next);
+    const normalized = normalizeStockCodeForMarket(next, market);
+    if (next.trim() && !normalized) {
+      setInputError(market === "hk" ? "请输入港股代码或从港股搜索结果中选择。" : "请输入六位 A 股代码或从搜索结果中选择。");
+      return;
+    }
+    // The controlled child echoes its newly applied code. Keep that code's queued update.
+    setPendingRefreshCode(current => current === normalized ? current : null);
     setCode(normalized);
     setInput(normalized);
     setInputError("");
   };
+  useEffect(() => {
+    if (pendingRefreshCode === null) return;
+    if (activeMarketRef.current !== market) { setPendingRefreshCode(null); return; }
+    if (pendingRefreshCode !== code) { setPendingRefreshCode(null); return; }
+    if (researchTools?.stockCode !== code) return;
+    setPendingRefreshCode(null);
+    researchTools.onRefresh();
+  }, [code, market, pendingRefreshCode, researchTools]);
   const openView = (next: WorkspaceView) => {
     setSentimentStockOpen(false);
     setView(next);
@@ -131,30 +161,44 @@ export function SentimentPanel(props: Props) {
   };
   const commitInput = (value: string) => {
     const trimmed = value.trim();
-    if (/^\d{6}(\.(SH|SZ|BJ))?$/i.test(trimmed)) {
-      selectCode(trimmed);
-      return;
+    const normalized = normalizeStockCodeForMarket(trimmed, market);
+    if (normalized) {
+      selectCode(normalized);
+      return normalized;
     }
     const matches = (props.watchlist || []).filter((item) => {
       const name = item.name?.trim();
-      return Boolean(name) && (name === trimmed || name!.includes(trimmed) || trimmed.includes(name!));
+      return Boolean(name) && Boolean(normalizeStockCodeForMarket(item.code, market)) && (name === trimmed || name!.includes(trimmed) || trimmed.includes(name!));
     });
     if (matches.length === 1) {
       selectCode(matches[0].code);
+      return normalizeStockCodeForMarket(matches[0].code, market);
+    }
+    setInputError(trimmed ? market === "hk" ? "请从港股搜索结果中选择一只股票，或输入五位港股代码。" : "请从搜索结果中选择一只股票，或输入六位代码。" : "请输入股票代码或名称。");
+    return null;
+  };
+  const refreshCurrentMessages = () => {
+    const requestedCode = input.trim() ? commitInput(input) : code;
+    if (requestedCode === null) return;
+    if (requestedCode !== code || researchTools?.stockCode !== requestedCode) {
+      setPendingRefreshCode(requestedCode);
       return;
     }
-    setInputError(trimmed ? "请从搜索结果中选择一只股票，或输入六位代码。" : "请输入股票代码或名称。");
+    researchTools?.onRefresh();
   };
   useEffect(() => {
-    if (props.initialCode) {
-      const next = normalizeStockCode(props.initialCode);
+    const marketChanged = activeMarketRef.current !== market;
+    activeMarketRef.current = market;
+    const next = normalizeStockCodeForMarket(props.initialCode, market)
+      || (marketChanged ? watchlistCodesRef.current[0] || "" : "");
+    if (next || marketChanged) {
       setSentimentStockOpen(false);
       setCode(next);
       setInput(next);
       setInputError("");
     }
     if (props.initialView) openView(props.initialView);
-  }, [props.initialCode, props.initialCodeRequestId, props.initialView]);
+  }, [market, props.initialCode, props.initialCodeRequestId, props.initialView]);
   return <section className={`sentiment-panel ${view === "sources" ? "is-sources" : "is-sentiment"}`} id="sectionNewsRag" aria-label="研究工作区">
     <header className="sentiment-header">
       <div className="sentiment-tabs" role="tablist" aria-label="消息或情绪" onKeyDown={(event) => {
@@ -175,7 +219,7 @@ export function SentimentPanel(props: Props) {
       </div>
       <form className="sentiment-toolbar" onSubmit={(event) => { event.preventDefault(); commitInput(input); }}>
         <label className="visually-hidden" htmlFor="sentiment-stock">股票</label>
-        <StockCodeInput id="sentiment-stock" value={input} onChange={(value) => { setInput(value); setInputError(""); }} onCommit={commitInput} placeholder="代码或名称" inputAriaLabel="股票代码或名称" />
+        <StockCodeInput id="sentiment-stock" market={market} value={input} onChange={(value) => { setInput(value); setInputError(""); }} onCommit={commitInput} placeholder={market === "hk" ? "港股代码或名称" : "代码或名称"} inputAriaLabel="股票代码或名称" />
         <button className="sentiment-icon-action" type="submit" aria-label="查看股票消息" title="查看股票消息">
           <Search size={16} aria-hidden="true" />
           <span className="visually-hidden">查看</span>
@@ -184,7 +228,7 @@ export function SentimentPanel(props: Props) {
       <div className="sentiment-header-actions">
         <button type="button" className="sentiment-icon-action research-mobile-stock-button" aria-label="打开股票列表"
           onClick={() => view === "sources" ? researchTools?.onOpenInbox() : setSentimentStockOpen(true)}><Menu size={16} aria-hidden="true" /><span>股票</span></button>
-        <button type="button" className="sentiment-icon-action" onClick={() => researchTools?.onRefresh()} disabled={!researchTools || researchTools.refreshing}
+        <button type="button" className="sentiment-icon-action" onClick={refreshCurrentMessages} disabled={!researchTools || researchTools.refreshing}
           aria-label={researchTools?.refreshing ? "消息更新中" : "立即更新消息"}>
           <RefreshCw size={16} aria-hidden="true" className={researchTools?.refreshing ? "sentiment-icon-spin" : undefined} /><span>{researchTools?.refreshing ? "更新中" : "更新"}</span>
         </button>
@@ -198,13 +242,13 @@ export function SentimentPanel(props: Props) {
       <div className="research-detail-heading"><h2>数据状态</h2><button type="button" className="research-icon-button" aria-label="关闭数据状态" onClick={() => setDataStatusOpen(false)}><X size={18} /></button></div>
       <p>{researchTools?.vectorReady ? "关键词 + 语义检索" : "关键词检索"}</p>
       {(["news_research", "sentiment"] as const).map((id) => <MarketCapabilityStatus key={id} label={marketCapabilityLabel(id)}
-        capability={props.marketCapabilities?.find((item) => item.market === "cn" && item.id === id)}
+        capability={props.marketCapabilities?.find((item) => item.market === market && item.id === id)}
         loading={props.marketCapabilities === null && !props.marketCapabilityError} error={props.marketCapabilityError} showCoverage plain />)}
       {props.marketCapabilities === undefined && <p>当前未提供市场能力状态。</p>}
     </Sheet>
     {inputError && <p role="alert" className="sentiment-error">{inputError}</p>}
     <div id="sentiment-panel-sources" role="tabpanel" aria-labelledby="sentiment-tab-sources" className="sentiment-view sentiment-view-sources" hidden={view !== "sources"}>
-      {mountedViews.sources && <Suspense fallback={<p className="sentiment-empty">正在加载消息与资料…</p>}><NewsRagPanel llmSettings={props.llmSettings} onLlmSettingsChange={props.onLlmSettingsChange} watchlist={props.watchlist} code={code} onCodeChange={selectCode} onGoToScreen={props.onGoToScreen} embedded active={view === "sources"} onHeaderToolsChange={onHeaderToolsChange} /></Suspense>}
+      {mountedViews.sources && <Suspense fallback={<p className="sentiment-empty">正在加载消息与资料…</p>}><NewsRagPanel market={market} llmSettings={props.llmSettings} onLlmSettingsChange={props.onLlmSettingsChange} watchlist={props.watchlist} code={code} onCodeChange={selectCode} onGoToScreen={props.onGoToScreen} embedded active={view === "sources"} onHeaderToolsChange={onHeaderToolsChange} /></Suspense>}
     </div>
     <div id="sentiment-panel-analysis" role="tabpanel" aria-labelledby="sentiment-tab-sentiment" className="sentiment-view sentiment-view-analysis" hidden={view !== "sentiment"}>
       {view === "sentiment" && <p className="workspace-boundary">仅供研究，不构成投资建议。</p>}

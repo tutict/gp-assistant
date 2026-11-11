@@ -931,10 +931,7 @@ function RunDetail({
       )}
       {!detail.resultUnavailable && detail.status !== "failed" && detail.result && (
         <section className="agent-run-result" aria-label="运行结果">
-          {detail.result.reply && (
-            <p className="agent-final-reply agent-run-final-reply">{detail.result.reply}</p>
-          )}
-          <AgentResultView result={detail.result} watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} />
+          <AgentResultView result={detail.result} replyClassName="agent-final-reply agent-run-final-reply" watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} />
         </section>
       )}
     </section>

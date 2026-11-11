@@ -5,7 +5,7 @@ import type { SentimentAnalysis, SentimentFollowup, SentimentRun, SentimentSnaps
 
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-export function useSentiment(code: string, watchlistCodes: readonly string[] = []) {
+export function useSentiment(code: string, watchlistCodes: readonly string[] = [], market: "cn" | "hk" = "cn") {
   const [snapshot, setSnapshot] = useState<SentimentSnapshot | null>(null);
   const [latest, setLatest] = useState<SentimentAnalysis | null>(null);
   const [analysis, setAnalysis] = useState<SentimentAnalysis | null>(null);
@@ -20,6 +20,7 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
   const [followupsByAnalysis, setFollowupsByAnalysis] = useState<Record<string, Array<SentimentFollowup & { question: string }>>>({});
   const generation = useRef(0);
   const loadedCode = useRef<string | null>(null);
+  const loadedMarket = useRef<"cn" | "hk" | null>(null);
   const operation = useRef(0);
   const startingRef = useRef(false);
   const askingRef = useRef(false);
@@ -29,11 +30,12 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
   const [reload, setReload] = useState(0);
   const stageKey = [...new Set(watchlistCodes.filter(Boolean))].sort().join("|");
 
+  const marketScope = market === "hk" ? { market: "hk" as const } : {};
   const abandon = (runId: string | null) => {
     if (!runId) return;
     dismissedRun.current = runId;
     if (activeRun.current === runId) activeRun.current = null;
-    void postJson("/api/sentiment/cancel", { run_id: runId }).catch(() => undefined);
+    void postJson("/api/sentiment/cancel", { run_id: runId, ...marketScope }).catch(() => undefined);
   };
 
   useEffect(() => {
@@ -41,8 +43,9 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
     operation.current += 1;
     startingRef.current = false;
     askingRef.current = false;
-    const codeChanged = loadedCode.current !== code;
+    const codeChanged = loadedCode.current !== code || loadedMarket.current !== market;
     loadedCode.current = code;
+    loadedMarket.current = market;
     if (codeChanged) {
       abandon(activeRun.current);
       analysisRef.current = null;
@@ -60,11 +63,11 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
       return;
     }
     setLoading(true);
-    const request = { stock_code: code, window_days: 30 };
+    const request = { stock_code: code, window_days: 30, ...marketScope };
     void Promise.allSettled([
       postJson<SentimentSnapshot>("/api/sentiment/snapshot", request),
-      postJson<{ analysis: SentimentAnalysis | null }>("/api/sentiment/latest", { stock_code: code }),
-      postJson<{ items: SentimentAnalysis[] }>("/api/sentiment/history", { stock_code: code }),
+      postJson<{ analysis: SentimentAnalysis | null }>("/api/sentiment/latest", { stock_code: code, ...marketScope }),
+      postJson<{ items: SentimentAnalysis[] }>("/api/sentiment/history", { stock_code: code, ...marketScope }),
     ]).then(([fresh, previous, past]) => {
       if (generation.current !== current) return;
       if (fresh.status === "fulfilled") setSnapshot(fresh.value);
@@ -82,7 +85,7 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
       generation.current += 1;
       abandon(activeRun.current);
     };
-  }, [code, reload]);
+  }, [code, market, reload]);
 
   useEffect(() => {
     const codes = stageKey ? stageKey.split("|") : [];
@@ -92,7 +95,7 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
       return;
     }
     let disposed = false;
-    void postJson<{ items: SentimentAnalysis[] }>("/api/sentiment/history", { stock_codes: codes })
+    void postJson<{ items: SentimentAnalysis[] }>("/api/sentiment/history", { stock_codes: codes, ...marketScope })
       .then((result) => {
         if (disposed) return;
         setStages(result.items);
@@ -105,7 +108,7 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
     return () => {
       disposed = true;
     };
-  }, [stageKey, reload]);
+  }, [stageKey, market, reload]);
 
   const runId = run?.status === "running" ? run.run_id : null;
   useEffect(() => {
@@ -115,7 +118,7 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
       try {
-        const next = await postJson<SentimentRun>("/api/sentiment/status", { run_id: runId });
+        const next = await postJson<SentimentRun>("/api/sentiment/status", { run_id: runId, ...marketScope });
         if (disposed || current !== generation.current || dismissedRun.current === runId || activeRun.current !== runId) return;
         setRun((previous) => previous?.run_id === runId && previous.status === "cancelled" ? previous : next);
         if (next.status === "running") {
@@ -141,7 +144,7 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
       disposed = true;
       clearTimeout(timer);
     };
-  }, [runId]);
+  }, [runId, market]);
 
   const start = useCallback(async (llm: LlmClientConfig | undefined) => {
     if (!code || loading || startingRef.current || activeRun.current) return;
@@ -159,6 +162,7 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
         stock_code: code,
         window_days: 30,
         llm,
+        ...marketScope,
       });
       if (current !== generation.current || op !== operation.current) {
         abandon(result.run_id);
@@ -175,7 +179,7 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
         setStarting(false);
       }
     }
-  }, [code, loading]);
+  }, [code, loading, market]);
 
   const cancel = useCallback(async () => {
     const id = activeRun.current;
@@ -185,11 +189,11 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
     activeRun.current = null;
     setRun((previous) => previous?.run_id === id ? { ...previous, status: "cancelled", stage: "已取消" } : previous);
     try {
-      const result = await postJson<{ cancelled: boolean }>("/api/sentiment/cancel", { run_id: id });
+      const result = await postJson<{ cancelled: boolean }>("/api/sentiment/cancel", { run_id: id, ...marketScope });
       if (current !== generation.current || dismissedRun.current !== id) return;
       if (!result.cancelled) {
         dismissedRun.current = null;
-        const next = await postJson<SentimentRun>("/api/sentiment/status", { run_id: id });
+        const next = await postJson<SentimentRun>("/api/sentiment/status", { run_id: id, ...marketScope });
         if (current !== generation.current) return;
         setRun(next);
         if (next.status === "completed" && next.result) {
@@ -201,7 +205,7 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
     } catch (failure) {
       if (current === generation.current) setError(`取消失败：${message(failure)}`);
     }
-  }, []);
+  }, [market]);
 
   const selectAnalysis = useCallback((next: SentimentAnalysis) => {
     analysisRef.current = next;
@@ -232,6 +236,7 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
         analysis_id: target.analysis_id,
         question: question.trim(),
         llm,
+        ...marketScope,
       });
       if (current !== generation.current || op !== operation.current) return false;
       setFollowupsByAnalysis((items) => ({
@@ -248,7 +253,7 @@ export function useSentiment(code: string, watchlistCodes: readonly string[] = [
         setAsking(false);
       }
     }
-  }, []);
+  }, [market]);
 
   return {
     snapshot,

@@ -3,7 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentResult, AgentStreamEvent, LlmSettings, StockRowView, WatchlistItem } from "../../types";
 import { buildTauriAgentPayload, getTauriInvoke, getTauriListen, isTauriRuntime } from "../../lib/tauri";
 import { activeLlmProvider, buildLlmConfig, normalizeAgentResult, normalizeAgentStreamEvent, parseSseBlock } from "../../lib/contracts";
-import { buildAgentStreamPayload, MAX_AGENT_MESSAGE_CHARS } from "../../lib/agent";
+import { boundedAgentRunId, buildAgentStreamPayload, MAX_AGENT_MESSAGE_CHARS } from "../../lib/agent";
+import { awaitAgentHistory, hydrateAgentHistory, type AgentHistoryResultCache } from "../../lib/agentHistoryHydration";
 import { deleteAgentConversationRuns, type AgentRunDetail } from "../../lib/agentRuns";
 import { GepaLabPanel } from "./GepaLabPanel";
 import { useWorkspaceState, useWorkspaceStore, useWorkspaceStatus, useWorkspaceCredentialsReady, WorkspaceSaveStatus } from "../../hooks/useWorkspace";
@@ -23,6 +24,7 @@ interface AgentPanelProps {
   onWatchlistChange: (items: WatchlistItem[]) => void;
   draftPrompt?: string;
   draftRequestId?: number;
+  market?: "cn" | "hk";
 }
 
 interface ChatMessage {
@@ -62,6 +64,11 @@ const AGENT_EXAMPLES: Record<AgentMode, string[]> = {
   expert: ["当前市场情绪周期处在什么阶段，依据是什么", "哪条主线最强，什么证据会让它失效", "用游资早期框架看 600519，指出环境、主线和失效条件"],
   research: ["用价值复利框架评估 600519 的企业质量", "这家公司的资本配置有什么值得担心的地方", "当前估值假设是否经得起盈利下修"],
 };
+const HK_AGENT_EXAMPLES: Record<AgentMode, string[]> = {
+  quick: ["观察 00700.HK 的行情和财务", "看一下港股自选的风险和数据缺项", "查询 00700.HK 最近的公告和新闻"],
+  expert: ["结合港股行情和消息判断当前市场情绪", "港股当前主线有哪些证据和失效条件", "分析 00700.HK 的量价、消息与风险"],
+  research: ["用价值复利框架评估 00700.HK 的企业质量", "根据港股公告评估公司的资本配置", "核对 00700.HK 的报表币种、盈利和估值假设"],
+};
 function agentModeLabel(mode: string | undefined) {
   return AGENT_MODES.find((item) => item.id === mode)?.label || "快速模式";
 }
@@ -100,14 +107,15 @@ function publishConversationDeletion(event: ConversationDeletionEvent) {
   for (const listener of conversationDeletionListeners) listener(event);
 }
 
-export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatchlistChange, draftPrompt, draftRequestId }: AgentPanelProps) {
+export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatchlistChange, draftPrompt, draftRequestId, market = "cn" }: AgentPanelProps) {
+  const statePrefix = market === "hk" ? "hk.agent" : "agent";
   const [failedLedgerDeletionIds, ledgerDeletionMarkerIds, syncLedgerDeletionIds] = usePersistentLedgerDeletionIds();
   const workspace = useWorkspaceStore();
   const workspaceStatus = useWorkspaceStatus();
   const credentialsReady = useWorkspaceCredentialsReady();
   const initialConversations = useMemo(() => [createConversation()], []);
-  const [conversations, setConversations] = useWorkspaceState<AgentConversation[]>("agent.conversations", initialConversations);
-  const [activeConversationId, setActiveConversationId] = useWorkspaceState("agent.active", "");
+  const [conversations, setConversations] = useWorkspaceState<AgentConversation[]>(`${statePrefix}.conversations`, initialConversations);
+  const [activeConversationId, setActiveConversationId] = useWorkspaceState(`${statePrefix}.active`, "");
   const [railCollapsed, setRailCollapsed] = useLocalStorage<boolean>(AGENT_RAIL_COLLAPSED_KEY, false);
   const [settingsRequest, setSettingsRequest] = useState(0);
   const [conversationSearch, setConversationSearch] = useState("");
@@ -141,7 +149,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   }, []);
 
   const activeConversation = conversations.find((item) => item.id === activeConversationId) || conversations[0] || null;
-  const [input, setDraft] = useWorkspaceState(`agent.draft:${activeConversation?.id || "compose"}`, "");
+  const [input, setDraft] = useWorkspaceState(`${statePrefix}.draft:${activeConversation?.id || "compose"}`, "");
   const setInput = useCallback((value: string) => {
     if (!workspaceStatus.ready && activeConversation) {
       setActiveConversationId(activeConversation.id);
@@ -159,6 +167,11 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   const activeMode = AGENT_MODES.find((item) => item.id === activeConversation?.mode) || AGENT_MODES[0];
   const currentRunning = Boolean(activeConversation?.id && runningConversationIds.includes(activeConversation.id));
   const messages = activeConversation?.messages || [];
+  const hydrationScope = useMemo(() => ({ conversationId: activeConversation?.id, market,
+    controller: new AbortController(), cache: new Map() as AgentHistoryResultCache }), [activeConversation?.id, market]);
+  const currentHydrationScope = useRef(hydrationScope);
+  currentHydrationScope.current = hydrationScope;
+  useEffect(() => () => hydrationScope.controller.abort(), [hydrationScope]);
   const modelRequired = activeMode.id !== "quick" && !activeLlmConfig;
   const sortedConversations = useMemo(
     () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
@@ -195,13 +208,13 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
 
   useEffect(() => {
     if (!workspaceStatus.ready) return;
-    if (!workspace.get<AgentConversation[]>("agent.conversations", []).length) setConversations(conversations);
+    if (!workspace.get<AgentConversation[]>(`${statePrefix}.conversations`, []).length) setConversations(conversations);
     if (!activeConversation && conversations[0]) {
       setActiveConversationId(conversations[0].id);
     } else if (activeConversation && activeConversation.id !== activeConversationId) {
       setActiveConversationId(activeConversation.id);
     }
-  }, [activeConversation, activeConversationId, conversations, setActiveConversationId, setConversations, workspace, workspaceStatus.ready]);
+  }, [activeConversation, activeConversationId, conversations, setActiveConversationId, setConversations, statePrefix, workspace, workspaceStatus.ready]);
 
   const handleThreadScroll = useCallback(() => {
     const node = threadRef.current;
@@ -251,16 +264,33 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     )), !activeRunsRef.current.has(conversationId));
   }, [setConversations]);
 
+  useEffect(() => {
+    const conversationId = hydrationScope.conversationId;
+    if (!workspaceStatus.ready || !conversationId || activeConversationDeleting || market !== "hk") return;
+    const excluded = new Set(Array.from(activeRunsRef.current.values(), run => run.runId));
+    void hydrateAgentHistory(messages, conversationId, market, hydrationScope.controller.signal, hydrationScope.cache, excluded)
+      .then(hydrated => {
+        if (hydrated === messages || hydrationScope.controller.signal.aborted || currentHydrationScope.current !== hydrationScope
+          || conversationDeletionInFlightIds.has(conversationId) || persistedLedgerDeletionIds().has(conversationId)) return;
+        const results = new Map(hydrated.filter(message => message.result).map(message => [message.runId, message.result]));
+        // Patch only still-present successful rows; deletion and a newer live result always win.
+        setConversations(current => current.map(conversation => conversation.id !== conversationId ? conversation : {
+          ...conversation, messages: conversation.messages.map(message => !message.result && !message.error && message.role === "assistant"
+            && results.has(message.runId) ? { ...message, result: results.get(message.runId) } : message),
+        }), false);
+      });
+  }, [hydrationScope, messages, market, activeConversationDeleting, setConversations, workspaceStatus.ready]);
+
   const startNewChat = useCallback(() => {
     const next = createConversation("quick");
     setConversations((prev) => [next, ...prev].slice(0, MAX_AGENT_CONVERSATIONS));
     setActiveConversationId(next.id);
-    workspace.set(`agent.draft:${next.id}`, "");
+    workspace.set(`${statePrefix}.draft:${next.id}`, "");
     void workspace.flush();
     if (typeof window !== "undefined" && window.matchMedia?.(AGENT_MOBILE_DRAWER_QUERY).matches) {
       setRailCollapsed(true);
     }
-  }, [setActiveConversationId, setConversations, setRailCollapsed, workspace]);
+  }, [setActiveConversationId, setConversations, setRailCollapsed, statePrefix, workspace]);
 
   const switchConversation = useCallback((conversationId: string) => {
     setActiveConversationId(conversationId);
@@ -273,14 +303,14 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
   }, [setActiveConversationId, setRailCollapsed, workspace]);
 
   const removeLocalConversation = useCallback((conversationId: string) => {
-    workspace.set(`agent.draft:${conversationId}`, null);
+    workspace.set(`${statePrefix}.draft:${conversationId}`, null);
     setConversations((prev) => {
       const remaining = prev.filter((conversation) => conversation.id !== conversationId);
       const next = remaining.length ? remaining : [createConversation()];
       setActiveConversationId((current) => current === conversationId ? next[0].id : current);
       return next;
     });
-  }, [setActiveConversationId, setConversations, workspace]);
+  }, [setActiveConversationId, setConversations, statePrefix, workspace]);
 
   useEffect(() => {
     if (!workspaceStatus.ready) return;
@@ -445,9 +475,9 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     setConversations((prev) => [next, ...prev].slice(0, MAX_AGENT_CONVERSATIONS));
     setActiveConversationId(next.id);
     const prompt = draftPrompt || "";
-    workspace.set(`agent.draft:${next.id}`, prompt);
+    workspace.set(`${statePrefix}.draft:${next.id}`, prompt);
     void workspace.flush();
-  }, [draftPrompt, draftRequestId, setActiveConversationId, setConversations, workspace]);
+  }, [draftPrompt, draftRequestId, setActiveConversationId, setConversations, statePrefix, workspace]);
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -482,7 +512,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
       };
     });
 
-    workspace.persist("agent.conversations");
+    workspace.persist(`${statePrefix}.conversations`);
     void workspace.flush();
 
     const patchAssistant = (patch: Partial<ChatMessage>) => {
@@ -496,6 +526,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     };
 
     const applyEvent = (event: AgentStreamEvent) => {
+      if (controller.signal.aborted) return;
       if (event.run_id && event.run_id !== runId) return;
       if (event.type === "status") {
         const step = {
@@ -543,14 +574,28 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     };
 
     try {
+      const latestContextCandidate = [...messages].reverse().find(message => message.role === "assistant" && !message.error
+        && (message.result?.research_context?.market === "hk" || (!message.result && boundedAgentRunId(message.runId))));
+      const needsHydration = market === "hk" && Boolean(latestContextCandidate && !latestContextCandidate.result);
+      const history = needsHydration
+        ? await awaitAgentHistory(hydrateAgentHistory(messages, conversationId, market, hydrationScope.controller.signal, hydrationScope.cache),
+          [controller.signal, hydrationScope.controller.signal])
+        : messages;
+      if (controller.signal.aborted || hydrationScope.controller.signal.aborted || currentHydrationScope.current !== hydrationScope
+        || conversationDeletionInFlightIds.has(conversationId) || persistedLedgerDeletionIds().has(conversationId)) {
+        const cancelled = new Error("已取消");
+        cancelled.name = "AbortError";
+        throw cancelled;
+      }
       const payload = buildAgentStreamPayload({
         message: text,
         runId,
         conversationId,
         llm: activeLlmConfig,
         mode,
+        market,
         watchlist,
-        history: messages.map((message) => ({ role: message.role, content: message.content })),
+        history: history.map((message) => ({ role: message.role, content: message.content, runId: message.runId, result: message.result, error: message.error })),
       });
       if (!payload) return;
       await requestAgentStream(payload, applyEvent, controller.signal);
@@ -559,19 +604,19 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
     } catch (err) {
       const error = err as Error;
       patchAssistant(controller.signal.aborted || error.name === "AbortError"
-        ? { content: "已取消。", error: false, steps: undefined }
-        : { content: `错误：${error.message}`, error: true, steps: undefined });
+        ? { content: "已取消。", result: undefined, error: false, steps: undefined }
+        : { content: `错误：${error.message}`, result: undefined, error: true, steps: undefined });
       setFinishedRunConversationId(conversationId);
       setFinishedRunId(runId);
     } finally {
       if (activeRunsRef.current.get(conversationId)?.controller === controller) {
         activeRunsRef.current.delete(conversationId);
       }
-      workspace.persist("agent.conversations");
+      workspace.persist(`${statePrefix}.conversations`);
       void workspace.flush();
       setRunningConversationIds(Array.from(activeRunsRef.current.keys()));
     }
-  }, [activeConversation?.id, activeConversation?.mode, activeLlmConfig, input, messages, updateConversation, watchlist, credentialsReady, setInput, workspace]);
+  }, [activeConversation?.id, activeConversation?.mode, activeLlmConfig, hydrationScope, input, market, messages, updateConversation, watchlist, credentialsReady, setInput, statePrefix, workspace]);
 
   const composerCard = (
     <div className="agent-composer-card">
@@ -785,6 +830,7 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
               {!input.trim() && (
                 <AgentEmptyState
                   mode={activeMode.id}
+                  market={market}
                   activeModel={activeLlmConfig?.model}
                   onExample={setInput}
                   onConfigureModel={() => setSettingsRequest((value) => value + 1)}
@@ -805,10 +851,10 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
                 )}
               </div>
               <div className="agent-message-body">
-                {msg.steps?.length ? <AgentSteps steps={msg.steps} /> : (
+                {msg.steps?.length ? <AgentSteps steps={msg.steps} /> : !msg.result ? (
                   <p className="agent-final-reply">{msg.role === "assistant" && !msg.result ? sanitizeLegacyAgentReply(msg.content) : msg.content}</p>
-                )}
-                {msg.result && <AgentResultView result={msg.result} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} />}
+                ) : null}
+                {msg.result && <AgentResultView result={msg.result} reply={msg.content} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} />}
               </div>
             </article>
           ))}
@@ -845,11 +891,13 @@ export function AgentPanel({ llmSettings, onLlmSettingsChange, watchlist, onWatc
 
 function AgentEmptyState({
   mode,
+  market = "cn",
   activeModel,
   onExample,
   onConfigureModel,
 }: {
   mode: AgentMode;
+  market?: "cn" | "hk";
   activeModel?: string;
   onExample: (example: string) => void;
   onConfigureModel: () => void;
@@ -861,7 +909,7 @@ function AgentEmptyState({
         <h2>有什么可以帮忙？</h2>
       </div>
       <div className="agent-examples">
-        {AGENT_EXAMPLES[mode].map((example) => (
+        {(market === "hk" ? HK_AGENT_EXAMPLES : AGENT_EXAMPLES)[mode].map((example) => (
           <button
             key={example}
             type="button"

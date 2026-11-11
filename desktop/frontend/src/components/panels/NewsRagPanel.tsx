@@ -10,9 +10,10 @@ import type {
   ResearchThread, WatchlistItem,
 } from "../../types";
 import { buildLlmConfig, buildNewsRagRequest, normalizeNewsGroups } from "../../lib/contracts";
-import { formatBytes, formatDateTime, normalizeStockCode } from "../../lib/format";
-import { getJson, isMobileTauriRuntime, postJson } from "../../lib/tauri";
+import { formatBytes, formatDateTime, normalizeStockCode, normalizeStockCodeForMarket } from "../../lib/format";
+import { getJson, isMobileTauriRuntime, isTauriRuntime, openExternalUrl, postJson } from "../../lib/tauri";
 import { applyMarkRead, pushCitation, useEventSelection } from "../../lib/newsInteractions";
+import { newsSummary } from "../../lib/newsSummary";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
 import { PanelFeedback } from "../ui/PanelFeedback";
 import { useMobileComposer } from "../../hooks/useMobileComposer";
@@ -34,7 +35,9 @@ interface NewsRagPanelProps {
   onGoToScreen?: () => void;
   embedded?: boolean;
   active?: boolean;
+  market?: "cn" | "hk";
   onHeaderToolsChange?: (tools: {
+    stockCode: string;
     refreshing: boolean;
     vectorReady: boolean;
     onRefresh: () => void;
@@ -49,6 +52,8 @@ const MAX_PDF_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_RESEARCH_PACK_BYTES = 64 * 1024 * 1024;
 
 export function NewsRagPanel(props: NewsRagPanelProps) {
+  const market = props.market || "cn";
+  const statePrefix = market === "hk" ? "hk.news" : "news";
   const workspace = useWorkspaceStore();
   const credentialsReady = useWorkspaceCredentialsReady();
   const mobile = useMediaQuery("(max-width: 768px)");
@@ -57,21 +62,21 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const questionInputId = useId();
   const watchlist = props.watchlist || EMPTY_WATCHLIST;
   const controlled = props.onCodeChange !== undefined;
-  const [uncontrolledCode, setUncontrolledCode] = useWorkspaceState("news.stock", normalizeStockCode(props.initialCode || watchlist[0]?.code || ""));
-  const code = controlled ? normalizeStockCode(props.code || "") : uncontrolledCode;
+  const [uncontrolledCode, setUncontrolledCode] = useWorkspaceState(`${statePrefix}.stock`, normalizeStockCodeForMarket(props.initialCode || watchlist[0]?.code || "", market));
+  const code = normalizeStockCodeForMarket(controlled ? props.code || "" : uncontrolledCode, market);
   const codeRef = useRef(code);
   const [overview, setOverview] = useState<ResearchOverview | null>(null);
   const [messages, setMessages] = useState<ResearchMessage[]>([]);
   const overviewRef = useRef<ResearchOverview | null>(null);
   const messagesRef = useRef<ResearchMessage[]>([]);
   const [threads, setThreads] = useState<ResearchThread[]>([]);
-  const [threadId, setThreadId] = useWorkspaceState("news.thread", "");
+  const [threadId, setThreadId] = useWorkspaceState(`${statePrefix}.thread`, "");
   const threadIdRef = useRef("");
   const threadLoadRequestRef = useRef(0);
   const deletedThreadIdsRef = useRef(new Set<string>());
   const workspaceGenerationRef = useRef(0);
   const [answers, setAnswers] = useState<ResearchAnswer[]>([]);
-  const [question, setQuestion] = useWorkspaceState("news.question", "");
+  const [question, setQuestion] = useWorkspaceState(`${statePrefix}.question`, "");
   const [citationStack, setCitationStack] = useState<ResearchCitation[]>([]);
   const [citationPointer, setCitationPointer] = useState(-1);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
@@ -79,6 +84,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [asking, setAsking] = useState(false);
   const [error, setError] = useState("");
+  const [refreshNotice, setRefreshNotice] = useState("");
   const [questionError, setQuestionError] = useState<QuestionFailure | null>(null);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [questionsOpen, setQuestionsOpen] = useState(false);
@@ -111,7 +117,11 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
 
   useEffect(() => { threadIdRef.current = threadId; }, [threadId]);
   const selectCode = useCallback((nextCode: string) => {
-    const normalized = normalizeStockCode(nextCode);
+    const normalized = normalizeStockCodeForMarket(nextCode, market);
+    if (nextCode.trim() && !normalized) {
+      setError(market === "hk" ? "请从港股搜索结果中选择证券。" : "请从 A 股搜索结果中选择证券。");
+      return;
+    }
     if (normalized === codeRef.current) return;
     codeRef.current = normalized;
     workspaceGenerationRef.current += 1;
@@ -129,17 +139,18 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     setCitationPointer(-1);
     setEvidenceOpen(false);
     setError("");
+    setRefreshNotice("");
     setQuestionError(null);
     setLoading(true);
     if (controlled) props.onCodeChange?.(normalized);
     else setUncontrolledCode(normalized);
-  }, [closeEvent, controlled, props.onCodeChange, setThreadId, setUncontrolledCode]);
+  }, [closeEvent, controlled, market, props.onCodeChange, setThreadId, setUncontrolledCode]);
   useEffect(() => { if (codeRef.current !== code) selectCode(code); setSearch(code); }, [code, selectCode]);
   useEffect(() => {
     if (controlled) return;
-    const next = normalizeStockCode(props.initialCode);
+    const next = normalizeStockCodeForMarket(props.initialCode, market);
     if (next) selectCode(next);
-  }, [controlled, props.initialCode, props.initialCodeRequestId, selectCode]);
+  }, [controlled, market, props.initialCode, props.initialCodeRequestId, selectCode]);
 
   const loadThread = useCallback(async (
     id: string,
@@ -155,7 +166,10 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       && threadIdRef.current === id && threadLoadRequestRef.current === request;
     setQuestionError((current) => current?.threadId === id ? null : current);
     try {
-      const detail = await postJson<ThreadDetail>("/api/research/threads/detail", { thread_id: id });
+      const detail = await postJson<ThreadDetail>("/api/research/threads/detail", {
+        thread_id: id,
+        ...(market === "hk" ? { market } : {}),
+      });
       if (!ownsRequest()) return;
       setAnswers(detail.answers || []);
       setQuestionError((current) => current?.threadId === id ? null : current);
@@ -166,22 +180,23 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         });
       }
     }
-  }, []);
+  }, [market]);
 
-  const loadWorkspace = useCallback(async (quiet = false) => {
-    const generation = ++workspaceGenerationRef.current;
+  const loadWorkspace = useCallback(async (quiet = false, generation = ++workspaceGenerationRef.current) => {
     if (!quiet) setLoading(true);
     setError("");
     try {
       await workspace.initialize();
       if (generation !== workspaceGenerationRef.current) return;
-      const messageQuery = code
-        ? `?stock_code=${encodeURIComponent(code)}&limit=120`
-        : "?limit=120";
+      const messageQuery = market === "hk"
+        ? `?market=hk${code ? `&stock_code=${encodeURIComponent(code)}` : ""}&limit=120`
+        : code ? `?stock_code=${encodeURIComponent(code)}&limit=120` : "?limit=120";
       const [nextOverview, messageResult, threadResult] = await Promise.all([
-        getJson<ResearchOverview>("/api/research/overview"),
+        getJson<ResearchOverview>(market === "hk"
+          ? `/api/research/overview?market=hk${code ? `&stock_code=${encodeURIComponent(code)}` : ""}`
+          : "/api/research/overview"),
         getJson<{ items?: ResearchMessage[] }>(`/api/research/messages${messageQuery}`),
-        getJson<{ items?: ResearchThread[] }>("/api/research/threads"),
+        getJson<{ items?: ResearchThread[] }>(market === "hk" ? "/api/research/threads?market=hk" : "/api/research/threads"),
       ]);
       if (generation !== workspaceGenerationRef.current) return;
       const nextThreads = (threadResult.items || []).filter(
@@ -193,7 +208,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       setMessages(messagesRef.current);
       setThreads(nextThreads);
       const preferred = nextThreads.find((item) =>
-        item.id === workspace.get("news.thread", threadIdRef.current) && (item.stock_code || "") === code)
+        item.id === workspace.get(`${statePrefix}.thread`, threadIdRef.current) && (item.stock_code || "") === code)
         || nextThreads.find((item) => item.stock_code === code)
         || (!code ? nextThreads.find((item) => !item.stock_code) : undefined);
       if (preferred) {
@@ -212,7 +227,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     } finally {
       if (!quiet && generation === workspaceGenerationRef.current) setLoading(false);
     }
-  }, [code, loadThread, setThreadId, workspace]);
+  }, [code, loadThread, market, setThreadId, statePrefix, workspace]);
 
   useEffect(() => {
     void loadWorkspace();
@@ -221,15 +236,48 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
 
   const refresh = useCallback(async (background = false) => {
     const generation = workspaceGenerationRef.current;
-    if (!code || !navigator.onLine || document.visibilityState !== "visible") {
-      if (!background) await loadWorkspace();
+    const refreshCodes = code ? [code] : market === "hk"
+      ? [...new Set([...messagesRef.current.filter(message => message.source_tier !== "financial_snapshot").map(message => message.stock_code), ...watchlist.map(stock => stock.code)]
+        .map(raw => normalizeStockCodeForMarket(raw, market)).filter(Boolean))].slice(0, 10)
+      : [];
+    // Desktop connectivity and visibility hints can lag behind an explicit user
+    // action. Only background work should be suppressed by these hints.
+    if (!refreshCodes.length || (background && (!navigator.onLine || document.visibilityState !== "visible"))) {
+      if (!background) {
+        if (market === "hk") setError("暂无可更新的港股消息，请先选择股票或添加港股自选。");
+        else await loadWorkspace();
+      }
       return;
     }
-    if (!background) setRefreshing(true);
+    if (!background) { setRefreshing(true); setError(""); setRefreshNotice(""); }
     try {
-      await postJson("/api/research/refresh", buildNewsRagRequest(code, 30, undefined, watchlist));
+      const payload = buildNewsRagRequest(code, 30, undefined, watchlist, true, market);
+      if (!code) payload.seed_codes = refreshCodes;
+      if (market === "hk") {
+        payload.include_us_market_brief = false;
+        payload.scope_mode = "stock_only";
+        const visible = messagesRef.current.filter(message => !code || message.stock_code === code);
+        const selected = visible.find(message => message.id === selectedId);
+        payload.summary_priority_urls = [...new Set([selected?.url, ...visible.map(message => message.url)]
+          .map(url => safeExternalUrl(url)).filter((url): url is string => Boolean(url)))].slice(0, 120);
+      }
+      const result = await postJson<{ news?: { scope_codes?: string[]; notes?: string[] } }>("/api/research/refresh", payload);
       if (generation !== workspaceGenerationRef.current) return;
-      await loadWorkspace(true);
+      if (market === "hk" && result.news?.scope_codes?.length === 0) {
+        throw new Error(result.news.notes?.[0] || "目标港股未匹配到证券目录，请确认股票代码。");
+      }
+      if (market === "hk" && result.news?.notes?.some(note => note.startsWith("HK news HTTP client failed:"))) {
+        throw new Error("港股消息更新失败，请检查网络或代理设置后重试。");
+      }
+      await loadWorkspace(true, generation);
+      if (!background && generation === workspaceGenerationRef.current) {
+        const summaryNotice = result.news?.notes?.find(note => note.startsWith("港股原文摘要"));
+        const sourceFailed = market === "hk" && result.news?.notes?.some(note => note.startsWith("HK ") && note.includes("news refresh failed;"));
+        const outcome = sourceFailed
+          ? `${summaryNotice || "本次新闻来源未能更新。"} 部分新闻来源暂时不可用，已有消息仍可阅读。`
+          : summaryNotice || "消息已更新。";
+        setRefreshNotice(market === "hk" ? `${refreshCodes.length === 1 ? refreshCodes[0] : `已更新 ${refreshCodes.length} 只港股`} · ${outcome}` : outcome);
+      }
     } catch (nextError) {
       if (!background && generation === workspaceGenerationRef.current) {
         setError((nextError as Error).message);
@@ -237,7 +285,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     } finally {
       if (!background && generation === workspaceGenerationRef.current) setRefreshing(false);
     }
-  }, [code, loadWorkspace, watchlist]);
+  }, [code, loadWorkspace, market, selectedId, watchlist]);
 
   const visibleMessages = useMemo(
     () => code ? messages.filter((message) => message.stock_code === code) : messages,
@@ -270,7 +318,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     const uniqueIds = [...new Set(ids)].filter(Boolean);
     if (!uniqueIds.length) return;
     try {
-      await postJson("/api/research/mark-read", { message_ids: uniqueIds });
+      await postJson("/api/research/mark-read", { message_ids: uniqueIds, ...(market === "hk" ? { market } : {}) });
       const result = applyMarkRead(messagesRef.current, overviewRef.current, uniqueIds);
       messagesRef.current = result.messages;
       overviewRef.current = result.overview;
@@ -288,7 +336,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     } catch (nextError) {
       setError((nextError as Error).message);
     }
-  }, []);
+  }, [market]);
 
   const markReadStock = useCallback(async (stockCode: string) => {
     const normalizedStockCode = normalizeStockCode(stockCode);
@@ -297,7 +345,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     const unreadCount = overviewRef.current?.unread_by_stock?.[normalizedStockCode] || 0;
     if (!ids.length && unreadCount <= 0) return;
     try {
-      await postJson("/api/research/mark-read", { stock_code: normalizedStockCode });
+      await postJson("/api/research/mark-read", { stock_code: normalizedStockCode, ...(market === "hk" ? { market } : {}) });
       const nextMessages = messagesRef.current.map((message) =>
         ids.includes(message.id) ? { ...message, unread: false } : message,
       );
@@ -319,7 +367,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     } catch (nextError) {
       setError((nextError as Error).message);
     }
-  }, []);
+  }, [market]);
 
   const rememberQuestions = useCallback(() => {
     const input = questionInputRef.current;
@@ -399,6 +447,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     const thread = await postJson<ResearchThread>("/api/research/threads/create", {
       title: requestedCode ? `${requestedCode} 研究` : "综合研究",
       stock_code: requestedCode || null,
+      ...(market === "hk" ? { market } : {}),
     });
     if (generation !== workspaceGenerationRef.current) return null;
     threadIdRef.current = thread.id;
@@ -411,7 +460,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     setInboxOpen(false);
     queueMicrotask(() => questionInputRef.current?.focus());
     return thread.id;
-  }, [code, closeEvent]);
+  }, [code, closeEvent, market]);
 
   const createQuestionThread = useCallback(async () => {
     const generation = workspaceGenerationRef.current;
@@ -435,7 +484,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     setDeletingThreadId(thread.id);
     setQuestionError(null);
     try {
-      await postJson("/api/research/threads/delete", { thread_id: thread.id });
+      await postJson("/api/research/threads/delete", { thread_id: thread.id, ...(market === "hk" ? { market } : {}) });
       deletedThreadIdsRef.current.add(thread.id);
       setThreads((current) => current.filter((item) => item.id !== thread.id));
       if (threadIdRef.current === thread.id) {
@@ -449,7 +498,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     } finally {
       setDeletingThreadId(null);
     }
-  }, [asking, deleteCandidateId, deletingThreadId, loadWorkspace]);
+  }, [asking, deleteCandidateId, deletingThreadId, loadWorkspace, market]);
 
   const ask = useCallback(async () => {
     const text = question.trim();
@@ -468,6 +517,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       failureTitle = "提问失败";
       const result = await postJson<ResearchQueryResult>("/api/research/query", {
         query: text, stock_code: requestedCode || null, thread_id: activeThread, top_k: 8,
+        ...(market === "hk" ? { market } : {}),
         llm: activeLlmConfig,
       });
       if (generation !== workspaceGenerationRef.current) return;
@@ -480,7 +530,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       if (answer.citations[0]) pushCitationSelection(answer.citations[0]);
       if (mobile) setInboxOpen(false);
       failureTitle = "会话列表更新失败";
-      const nextThreads = await getJson<{ items?: ResearchThread[] }>("/api/research/threads");
+      const nextThreads = await getJson<{ items?: ResearchThread[] }>(market === "hk" ? "/api/research/threads?market=hk" : "/api/research/threads");
       if (generation === workspaceGenerationRef.current) {
         setThreads((nextThreads.items || []).filter(
           (thread) => !deletedThreadIdsRef.current.has(thread.id),
@@ -491,7 +541,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     } finally {
       if (generation === workspaceGenerationRef.current) setAsking(false);
     }
-  }, [activeLlmConfig, answers.length, asking, code, createThread, deletingThreadId, mobile, pushCitationSelection, question, threadId, threads, credentialsReady, setQuestion, workspace]);
+  }, [activeLlmConfig, answers.length, asking, code, createThread, deletingThreadId, market, mobile, pushCitationSelection, question, threadId, threads, credentialsReady, setQuestion, workspace]);
 
   useEffect(() => {
     if (!highlightAnswerId) return;
@@ -509,34 +559,39 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     setManagementResult(null);
     try {
       setManagementResult(await action());
-      setIndexStatus(await getJson<ResearchIndexStatus>("/api/research/index-status"));
+      setIndexStatus(await getJson<ResearchIndexStatus>(market === "hk"
+        ? "/api/research/index-status?market=hk"
+        : "/api/research/index-status"));
       await loadWorkspace(true);
     } catch (nextError) {
       setManagementResult({ error: (nextError as Error).message });
     } finally {
       setManagementBusy(false);
     }
-  }, [loadWorkspace]);
+  }, [loadWorkspace, market]);
 
   const openKnowledge = useCallback(() => {
     setKnowledgeOpen(true);
-    void getJson<ResearchIndexStatus>("/api/research/index-status")
+    void getJson<ResearchIndexStatus>(market === "hk"
+      ? "/api/research/index-status?market=hk"
+      : "/api/research/index-status")
       .then(setIndexStatus)
       .catch((nextError) => setManagementResult({ error: (nextError as Error).message }));
-  }, []);
+  }, [market]);
   const vectorReady = overview?.retrieval?.vector?.ready === true;
   const onHeaderRefresh = useCallback(() => { void refresh(); }, [refresh]);
   const onHeaderInbox = useCallback(() => { closeCitation(); setInboxOpen(true); }, [closeCitation]);
   useEffect(() => {
     if (!props.embedded || !props.onHeaderToolsChange) return;
     props.onHeaderToolsChange({
+      stockCode: code,
       refreshing,
       vectorReady,
       onRefresh: onHeaderRefresh,
       onOpenKnowledge: openKnowledge,
       onOpenInbox: onHeaderInbox,
     });
-  }, [onHeaderInbox, onHeaderRefresh, openKnowledge, props.embedded, props.onHeaderToolsChange, refreshing, vectorReady]);
+  }, [code, onHeaderInbox, onHeaderRefresh, openKnowledge, props.embedded, props.onHeaderToolsChange, refreshing, vectorReady]);
 
   const unreadVisibleIds = visibleMessages.filter((message) => message.unread).map((message) => message.id);
   const lastUpdated = formatResearchUpdatedAt(overview);
@@ -544,8 +599,8 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   return <section className="research-workspace" aria-label="研究消息中心">
     {loading && !overview && <p className="research-loading-status" role="status">正在打开研究消息中心，可继续编辑草稿…</p>}
     {!props.embedded && <header className="research-topbar">
-      <form className="sentiment-toolbar" onSubmit={(event) => { event.preventDefault(); const next = normalizeStockCode(search); if (/^\d{6}\.(SH|SZ|BJ)$/.test(next)) selectCode(next); else setError("请输入六位股票代码，或从搜索结果中选择股票。"); }}>
-        <StockCodeInput id={`${questionInputId}-stock`} value={search} onChange={setSearch} onCommit={selectCode} placeholder="代码或名称" inputAriaLabel="股票代码或名称" />
+      <form className="sentiment-toolbar" onSubmit={(event) => { event.preventDefault(); const next = normalizeStockCodeForMarket(search, market); if (next) selectCode(next); else setError(market === "hk" ? "请输入五位港股代码，或从港股自选中选择股票。" : "请输入六位股票代码，或从搜索结果中选择股票。"); }}>
+        <StockCodeInput id={`${questionInputId}-stock`} market={market} value={search} onChange={setSearch} onCommit={selectCode} placeholder={market === "hk" ? "五位港股代码或名称" : "代码或名称"} inputAriaLabel="股票代码或名称" />
         <button type="submit" className="sentiment-icon-action" aria-label="查看股票消息"><Search size={16} /></button>
       </form>
       <div className="research-actions">
@@ -560,6 +615,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     {error && <div className="research-error">
       <PanelFeedback kind="error" title="研究中心暂时不可用" description={error} />
     </div>}
+    {refreshNotice && <p className="research-loading-status" role="status">{refreshNotice}</p>}
 
     <div className="research-columns">
       <ResearchSurfaceSheet active={mobile} open={active && inboxOpen} close={()=>setInboxOpen(false)} label="自选股收件箱">
@@ -669,7 +725,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       <div className="research-detail-heading"><h2>数据状态</h2><button type="button" className="research-icon-button" aria-label="关闭数据状态" onClick={() => setDataStatusOpen(false)}><X size={18} /></button></div>
       <p>{vectorReady ? "关键词 + 语义检索" : "关键词检索"}</p><p>{lastUpdated ? `上次更新 ${lastUpdated}` : "尚未记录更新时间"}</p>
     </Sheet>
-    {knowledgeOpen && <ResearchPortal><KnowledgeDrawer code={code} mobile={nativeMobile}
+    {knowledgeOpen && <ResearchPortal><KnowledgeDrawer code={code} market={market} mobile={nativeMobile}
       status={indexStatus} management={management} busy={managementBusy}
       result={managementResult} close={() => setKnowledgeOpen(false)} /></ResearchPortal>}
   </section>;
@@ -695,6 +751,9 @@ function EventGroup(props: {
     <header><span>{props.label}</span><b>{props.messages.length}</b></header>
     {props.messages.map((message) => {
       const selected = props.selectedId === message.id;
+      const originalUrl = safeExternalUrl(message.url);
+      const summary = newsSummary(message.title, message.summary)
+        || (originalUrl ? "暂未获取摘要，可更新消息或查看原文。" : "该来源暂未提供摘要。");
       return <div className={`research-event-shell${selected ? " selected expanded" : ""}`} key={message.id}>
         <button type="button" ref={(element) => props.setEventRef(message.id, element)}
           aria-expanded={selected}
@@ -709,7 +768,7 @@ function EventGroup(props: {
           <span className={`research-dot research-event-dot-desktop ${message.unread ? "unread" : "neutral"}`} aria-label={message.unread ? "未读" : undefined} />
           <span className="research-event-content">
             <strong>{message.title}</strong>
-            <span className="research-event-summary">{message.summary}</span>
+            {summary ? <span className="research-event-summary">{summary}</span> : null}
             <span className="research-event-meta">
               <span className="research-source-name">{message.source_name}</span>
               <time>{formatDateTime(message.published_at)}</time>
@@ -718,7 +777,8 @@ function EventGroup(props: {
           </span>
         </button>
         {selected && <div className="research-event-detail">
-          <p>{message.summary}</p>
+          {summary ? <p>{summary}</p> : null}
+          {originalUrl ? <SourceLink url={originalUrl}>打开原文</SourceLink> : null}
           <div className="research-event-detail-meta">
             <span className="research-badge">{sourceTierLabel(message.source_tier)}</span>
             {message.scope_type && <span className="research-badge">{scopeTypeLabel(message.scope_type)}</span>}
@@ -903,6 +963,21 @@ function EvidencePanel(props: {
   </aside>;
 }
 
+function SourceLink({ url, children }: { url: string; children: ReactNode }) {
+  const [openError, setOpenError] = useState("");
+  return <>
+    <a href={url} target="_blank" rel="noreferrer" onClick={(event) => {
+      if (!isTauriRuntime()) return;
+      event.preventDefault();
+      setOpenError("");
+      void openExternalUrl(url).catch((error: unknown) => {
+        setOpenError(error instanceof Error ? error.message : "系统浏览器未能打开，请复制链接后打开。");
+      });
+    }}>{children}</a>
+    {openError && <p role="alert">{openError} <a href={url} target="_blank" rel="noreferrer">{url}</a></p>}
+  </>;
+}
+
 export function EvidenceInspector({ citation: item }: { citation: ResearchCitation }) {
   const externalUrl = safeExternalUrl(item.url);
   return <div className="research-evidence-card">
@@ -921,9 +996,9 @@ export function EvidenceInspector({ citation: item }: { citation: ResearchCitati
       <div><dt>关键词</dt><dd>{formatScore(item.lexical_score)}</dd></div>
       <div><dt>向量</dt><dd>{item.vector_score == null ? "未使用" : formatScore(item.vector_score)}</dd></div>
     </dl></details>
-    {externalUrl && <a href={externalUrl} target="_blank" rel="noreferrer">
+    {externalUrl && <SourceLink url={externalUrl}>
       <ExternalLink size={15} />打开原文
-    </a>}
+    </SourceLink>}
     {item.source_tier === "community" && <p className="research-community-warning">
       社区信息只能作为线索，不能单独支撑事实结论。
     </p>}
@@ -946,6 +1021,7 @@ function CitationRichText(props: {
 }
 function KnowledgeDrawer(props: {
   code: string;
+  market: "cn" | "hk";
   mobile: boolean;
   status: ResearchIndexStatus | null;
   management: (action: () => Promise<unknown>) => Promise<void>;
@@ -960,6 +1036,7 @@ function KnowledgeDrawer(props: {
     return postJson(endpoint, {
       bytes_base64: await fileToBase64(file),
       stock_codes: props.code ? [props.code] : [],
+      ...(props.market === "hk" ? { market: "hk" } : {}),
       ...(endpoint === "/api/research/import-pdf"
         ? { remote_export_allowed: allowRemoteExport }
         : {}),
@@ -999,6 +1076,7 @@ function KnowledgeDrawer(props: {
           onClick={() => void props.management(() => postJson("/api/research/import-url", {
             url: url.trim(), stock_codes: props.code ? [props.code] : [],
             remote_export_allowed: allowRemoteExport,
+            ...(props.market === "hk" ? { market: "hk" } : {}),
           }))}><Download size={15} />导入 URL</button>
         <label className="knowledge-file-button"><FileText size={16} />
           <span>导入文本型 PDF</span>
@@ -1016,12 +1094,12 @@ function KnowledgeDrawer(props: {
         <div className="knowledge-button-row">
           <button type="button" disabled={props.busy}
             onClick={() => void props.management(() =>
-              postJson("/api/research/rebuild-index", {}))}>
+              postJson("/api/research/rebuild-index", props.market === "hk" ? { market: "hk" } : {}))}>
             <RefreshCw size={15} />重建 FTS
           </button>
           <button type="button" disabled={props.busy}
             onClick={() => void props.management(() =>
-              postJson("/api/research/rebuild-embeddings", {}))}>
+              postJson("/api/research/rebuild-embeddings", props.market === "hk" ? { market: "hk" } : {}))}>
             <Search size={15} />生成向量
           </button>
         </div>
@@ -1041,15 +1119,17 @@ function KnowledgeDrawer(props: {
         <div className={`knowledge-button-row${props.mobile ? " single" : ""}`}>
           {!props.mobile && <button type="button" disabled={props.busy}
             onClick={() => void props.management(() =>
-              postJson("/api/research/pack/export", {}))}>
+              postJson("/api/research/pack/export", props.market === "hk" ? { market: "hk" } : {}))}>
             <Upload size={15} />导出 v2 包
           </button>}
-          <button type="button" disabled={props.busy}
+          <button type="button" disabled={props.busy || props.market === "hk"}
+            title={props.market === "hk" ? "港股资料单独存储，暂不支持回滚" : undefined}
             onClick={() => void props.management(() =>
-              postJson("/api/research/pack/rollback", {}))}>
+              postJson("/api/research/pack/rollback", props.market === "hk" ? { market: "hk" } : {}))}>
             <RotateCcw size={15} />回滚导入
           </button>
         </div>
+        {props.market === "hk" && <small>港股资料库与 A 股隔离；目前港股资料包不支持回滚。</small>}
         <label className="knowledge-file-button"><Database size={16} />
           <span>导入 SQLite v2 / 旧版包</span>
           <input type="file" accept=".sqlite,.json" onChange={(event) => {
@@ -1099,8 +1179,25 @@ export function researchOperationNotice(result: unknown): {
   return { tone: "success", text: "操作已完成，索引状态已刷新。" };
 }
 
-export function NewsRagView({ result }: { result: NewsRagResult }) {
-  const groups = normalizeNewsGroups(result.sentiment_groups);
+export function NewsRagView({ result }: { result: NewsRagResult | Partial<ResearchQueryResult> }) {
+  if ("citations" in result && Array.isArray(result.citations)) {
+    const citations = result.citations.slice(0, 12);
+    return <div className="agent-news-evidence">
+      <header><strong>研究证据</strong><span>{result.citations.length} 条</span></header>
+      {result.answer ? <p>{result.answer}</p> : null}
+      {!citations.length ? <p>当前没有命中的研究证据，可更新消息或导入资料后重试。</p> : citations.map(citation => {
+        const url = safeExternalUrl(citation.url);
+        return <article key={`${citation.document_id}-${citation.chunk_id}`}>
+          <span>{citation.citation_id} · {sourceTierLabel(citation.source_tier)}</span>
+          <div><strong>{citation.title}</strong><p>{citation.excerpt}</p>
+            <p className="data-provenance">{citation.source_name}{citation.published_at ? ` · ${formatDateTime(citation.published_at)}` : ""}</p>
+            {url ? <SourceLink url={url}>打开原文</SourceLink> : null}
+          </div>
+        </article>;
+      })}
+    </div>;
+  }
+  const groups = normalizeNewsGroups((result as NewsRagResult).sentiment_groups);
   const items = [...groups.positive, ...groups.negative, ...groups.mixed, ...groups.uncertain];
   return <div className="agent-news-evidence">
     <header><strong>消息证据</strong><span>{items.length} 条</span></header>
