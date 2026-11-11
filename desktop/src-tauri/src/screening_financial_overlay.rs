@@ -21,7 +21,7 @@ pub(super) fn merge(data: &gp_core::CoreDataSet, snapshot: &Value) -> Vec<gp_cor
                 (crate::market::normalize_stock_code(code), value.as_object())
             {
                 if let Some(stock) = stocks.get_mut(&code) {
-                    merge_fields(stock, row);
+                    if !older_than_cached_report(data, &code, row) { merge_fields(stock, row); }
                 }
             }
         }
@@ -34,7 +34,7 @@ pub(super) fn merge(data: &gp_core::CoreDataSet, snapshot: &Value) -> Vec<gp_cor
                 .and_then(crate::market::normalize_stock_code);
             if let (Some(code), Some(row)) = (code, row.as_object()) {
                 if let Some(stock) = stocks.get_mut(&code) {
-                    merge_fields(stock, row);
+                    if !older_than_cached_report(data, &code, row) { merge_fields(stock, row); }
                 }
             }
         }
@@ -63,6 +63,13 @@ pub(super) fn merge(data: &gp_core::CoreDataSet, snapshot: &Value) -> Vec<gp_cor
             stock
         })
         .collect()
+}
+
+fn older_than_cached_report(data: &gp_core::CoreDataSet, code: &str, row: &Map<String, Value>) -> bool {
+    let cached = data.financials.get(code).and_then(|report| report.period.as_deref())
+        .and_then(crate::observe::financial_period_rank);
+    let incoming = row.get("period").and_then(Value::as_str).and_then(crate::observe::financial_period_rank);
+    cached.is_some_and(|cached| incoming.is_none_or(|incoming| incoming < cached))
 }
 
 fn merge_fields(stock: &mut gp_core::StockItem, row: &Map<String, Value>) {
@@ -145,5 +152,17 @@ mod tests {
         assert_eq!(actual[0].name, "贵州茅台");
         assert_eq!(actual[1].code, "000001.SZ");
         assert!(!actual[1].industry.is_empty());
+    }
+
+    #[test]
+    fn cn_data_screening_does_not_fill_a_new_report_from_an_old_bundle() {
+        let data: gp_core::CoreDataSet = serde_json::from_value(json!({
+            "stocks":[{"code":"000001.SZ","name":"样本","industry":"银行","price":12.0}],
+            "financials":{"000001.SZ":{"period":"2026Q3","source":"eastmoney_cn_financial","roe":null,"latest_eps":null}}
+        })).unwrap();
+        let old = json!({"financials":{"000001.SZ":{"period":"2026Q1","latest_eps":2.5,"deducted_net_profit_billion":10.0}}});
+        let stocks=super::merge(&data,&old);
+        assert_eq!(stocks[0].latest_eps,None);
+        assert_eq!(stocks[0].deducted_net_profit_billion,None);
     }
 }
