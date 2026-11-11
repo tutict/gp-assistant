@@ -617,7 +617,7 @@ pub(crate) fn financial_report_period_is_stale(period: &str, as_of_date: &str) -
     actual < expected_year * 4 + expected_quarter
 }
 
-fn financial_period_rank(period: &str) -> Option<i32> {
+pub(crate) fn financial_period_rank(period: &str) -> Option<i32> {
     let normalized = crate::market::financial_period_from_text(period)?;
     let (year, quarter) = normalized.split_once('Q')?;
     Some(year.parse::<i32>().ok()? * 4 + quarter.parse::<i32>().ok()?)
@@ -642,35 +642,35 @@ pub(crate) fn parse_latest_observe_financial_snapshot(
                     .is_some_and(|row_code| row_code == digits)
         })
         .max_by_key(|row| {
-            crate::market::object_string_any(row, &["REPORT_DATE"]).unwrap_or_default()
+            crate::market::object_string_any(row, &["REPORT_DATE", "REPORTDATE"]).unwrap_or_default()
         })
         .ok_or_else(|| "东方财富财报接口未返回报告期数据".to_string())?;
     let period =
-        crate::market::eastmoney_metric_period(Some(row), &["REPORT_DATE_NAME", "REPORT_DATE"])
+        crate::market::eastmoney_metric_period(Some(row), &["REPORT_DATE_NAME", "REPORT_DATE", "REPORTDATE"])
             .ok_or_else(|| "东方财富财报记录缺少报告期".to_string())?;
     let mut fields = serde_json::Map::new();
     fields.insert("period".to_string(), json!(period));
     fields.insert("source".to_string(), json!("东方财富最新定期报告"));
-    let mut put_number = |target: &str, source: &str, scale: f64| {
-        if let Some(number) = crate::market::object_number_any_loose(row, &[source]) {
+    let mut put_number = |target: &str, sources: &[&str], scale: f64| {
+        if let Some(number) = crate::market::object_number_any_loose(row, sources) {
             fields.insert(target.to_string(), json!(number * scale));
         }
     };
-    for (target, source, scale) in [
-        ("latest_eps", "EPSJB", 1.0),
-        ("latest_bps", "BPS", 1.0),
-        ("operating_revenue_billion", "TOTALOPERATEREVE", 1e-8),
-        ("operating_revenue_yoy", "TOTALOPERATEREVETZ", 1.0),
-        ("parent_net_profit_billion", "PARENTNETPROFIT", 1e-8),
-        ("parent_net_profit_yoy", "PARENTNETPROFITTZ", 1.0),
-        ("deducted_net_profit_billion", "KCFJCXSYJLR", 1e-8),
-        ("deducted_net_profit_growth_rate", "KCFJCXSYJLRTZ", 1.0),
-        ("gross_margin", "XSMLL", 1.0),
-        ("net_margin", "XSJLL", 1.0),
-        ("roe", "ROEJQ", 1.0),
-        ("asset_liability_ratio", "ZCFZL", 1.0),
+    for (target, sources, scale) in [
+        ("latest_eps", &["EPSJB", "BASIC_EPS"][..], 1.0),
+        ("latest_bps", &["BPS"][..], 1.0),
+        ("operating_revenue_billion", &["TOTALOPERATEREVE", "TOTAL_OPERATE_INCOME"][..], 1e-8),
+        ("operating_revenue_yoy", &["TOTALOPERATEREVETZ", "YSTZ", "TOI_RATIO"][..], 1.0),
+        ("parent_net_profit_billion", &["PARENTNETPROFIT", "PARENT_NETPROFIT"][..], 1e-8),
+        ("parent_net_profit_yoy", &["PARENTNETPROFITTZ", "SJLTZ", "PARENT_NETPROFIT_RATIO"][..], 1.0),
+        ("deducted_net_profit_billion", &["KCFJCXSYJLR", "DEDUCT_PARENT_NETPROFIT"][..], 1e-8),
+        ("deducted_net_profit_growth_rate", &["KCFJCXSYJLRTZ", "DPN_RATIO"][..], 1.0),
+        ("gross_margin", &["XSMLL"][..], 1.0),
+        ("net_margin", &["XSJLL"][..], 1.0),
+        ("roe", &["ROEJQ", "WEIGHTAVG_ROE"][..], 1.0),
+        ("asset_liability_ratio", &["ZCFZL"][..], 1.0),
     ] {
-        put_number(target, source, scale);
+        put_number(target, sources, scale);
     }
     if let (Some(deducted), Some(revenue)) = (
         fields
@@ -689,6 +689,9 @@ pub(crate) fn parse_latest_observe_financial_snapshot(
     }
     if let Some(notice_date) = crate::market::object_string_any(row, &["NOTICE_DATE"]) {
         fields.insert("report_notice_date".to_string(), json!(notice_date));
+    }
+    if let Some(currency) = crate::market::object_string_any(row, &["CURRENCY"]) {
+        fields.insert("currency".to_string(), json!(currency));
     }
     Ok(fields)
 }
@@ -978,7 +981,7 @@ pub(crate) fn merge_observe_fundamental_supplement(
             let valid_number = crate::market::json_f64(Some(&value)).is_some();
             let valid_period = (field == "period" || field.ends_with("_period"))
                 && value.as_str().is_some_and(|value| !value.trim().is_empty());
-            let valid_text = matches!(field.as_str(), "source" | "report_notice_date")
+            let valid_text = matches!(field.as_str(), "source" | "report_notice_date" | "report_fetched_at" | "currency")
                 && value.as_str().is_some_and(|value| !value.trim().is_empty());
             if (valid_number || valid_period || valid_text) && entry.get(field) != Some(value) {
                 entry.insert(field.clone(), value.clone());
@@ -1010,6 +1013,13 @@ pub(crate) fn merge_observe_fundamental_supplement(
         })
         .and_then(Value::as_object_mut)
     {
+        if let Some(roe) = fields.get("roe").and_then(Value::as_f64).filter(|value| value.is_finite()) {
+            let value = json!(roe / 100.0);
+            if stock.get("roe") != Some(&value) {
+                stock.insert("roe".to_string(), value);
+                changed = true;
+            }
+        }
         for field in [
             "latest_eps",
             "latest_bps",

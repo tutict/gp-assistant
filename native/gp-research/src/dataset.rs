@@ -406,6 +406,7 @@ impl DatasetReader {
             None
         };
         Ok(StockItem {
+            financial_coverage: None,
             code: security.code.clone(),
             name: status.name.clone(),
             industry: status.industry.clone(),

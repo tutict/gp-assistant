@@ -1,5 +1,71 @@
 use super::*;
 
+#[test]
+fn themes_do_not_match_ai_embedded_in_english_company_names() {
+    for name in ["TAI PING CARPET", "CHABAIDAO", "RETAIL HOLDINGS"] {
+        let stock = StockItem {
+            name: name.to_owned(),
+            ..StockItem::default()
+        };
+        assert!(
+            theme_match_for_stock(&stock).is_none(),
+            "false AI theme for {name}"
+        );
+    }
+}
+
+#[test]
+fn themes_keep_standalone_english_acronyms_and_chinese_keywords() {
+    for name in ["AI TECHNOLOGY", "AI算力", "CPO光模块", "AIGC", "人工智能"] {
+        let stock = StockItem {
+            name: name.to_owned(),
+            ..StockItem::default()
+        };
+        assert_eq!(
+            theme_match_for_stock(&stock).map(|theme| theme.0),
+            Some("ai_chain"),
+            "missing theme for {name}"
+        );
+    }
+}
+
+#[test]
+fn hk_verified_industry_takes_precedence_over_the_company_name_for_themes() {
+    let stock = StockItem {
+        code: "01490.HK".to_owned(),
+        name: "AI X TECH".to_owned(),
+        industry: "媒体及娱乐".to_owned(),
+        ..StockItem::default()
+    };
+    assert!(theme_match_for_stock(&stock).is_none());
+    assert_ne!(concept_group_for_stock(&stock), "AI算力与芯片");
+    let sector = sector_screen_stocks(
+        &[StockItem {
+            price: 0.25,
+            ..stock.clone()
+        }],
+        &SectorScreenRequest {
+            min_sector_candidates: 1,
+            ..SectorScreenRequest::default()
+        },
+    );
+    assert!(sector
+        .groups
+        .iter()
+        .any(|group| group.sector != "AI算力与芯片"
+            && group.items.iter().any(|item| item.stock.code == "01490.HK")));
+    let chip = StockItem {
+        code: "02878.HK".to_owned(),
+        name: "SOLOMON SYSTECH".to_owned(),
+        industry: "半导体".to_owned(),
+        ..StockItem::default()
+    };
+    assert_eq!(
+        theme_match_for_stock(&chip).map(|theme| theme.0),
+        Some("ai_chain")
+    );
+}
+
 fn adaptive_history(base: f64, slope: f64, bars: usize) -> Vec<HistoryBar> {
     (0..bars)
         .map(|index| {
@@ -1093,6 +1159,7 @@ fn sample_data_set() -> CoreDataSet {
                     },
                 ],
                 notes: vec!["季度 EPS 明细来自缓存".to_string()],
+                ..Default::default()
             },
         )]),
         capital_evidence: HashMap::from([(
@@ -2830,6 +2897,7 @@ fn market_scope_filter_is_independent_from_industry() {
 #[test]
 fn selected_industry_does_not_match_empty_stock_industry() {
     let universe = vec![StockItem {
+        financial_coverage: None,
         code: "000001.SZ".to_string(),
         name: "平安银行".to_string(),
         industry: "".to_string(),
@@ -2867,6 +2935,7 @@ fn selected_industry_does_not_match_empty_stock_industry() {
 fn optional_metric_sort_keeps_missing_values_last() {
     let universe = vec![
         StockItem {
+            financial_coverage: None,
             code: "000001.SZ".to_string(),
             name: "平安银行".to_string(),
             industry: "银行".to_string(),
@@ -2894,6 +2963,7 @@ fn optional_metric_sort_keeps_missing_values_last() {
             industry: "银行".to_string(),
             is_st: false,
             price: 9.0,
+            financial_coverage: None,
             pe: Some(5.0),
             pb: Some(0.6),
             roe: Some(0.11),
@@ -2916,6 +2986,7 @@ fn optional_metric_sort_keeps_missing_values_last() {
             industry: "银行".to_string(),
             is_st: false,
             price: 31.0,
+            financial_coverage: None,
             pe: Some(7.0),
             pb: Some(0.9),
             roe: Some(0.14),

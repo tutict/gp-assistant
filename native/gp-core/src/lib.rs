@@ -66,6 +66,28 @@ impl From<serde_json::Error> for CoreError {
 
 pub type CoreResult<T> = Result<T, CoreError>;
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct FinancialCoverage {
+    pub eps: bool,
+    pub roe: bool,
+    pub revenue: bool,
+    pub net_profit: bool,
+}
+
+impl FinancialCoverage {
+    fn missing_fields(&self) -> Vec<&'static str> {
+        [
+            (self.eps, "每股收益"),
+            (self.roe, "净资产收益率"),
+            (self.revenue, "营业总收入"),
+            (self.net_profit, "归母净利润"),
+        ]
+        .into_iter()
+        .filter_map(|(available, label)| (!available).then_some(label))
+        .collect()
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StockItem {
     pub code: String,
@@ -86,6 +108,8 @@ pub struct StockItem {
     pub dividend_yield: Option<f64>,
     #[serde(default)]
     pub latest_eps: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub financial_coverage: Option<FinancialCoverage>,
     #[serde(default)]
     pub deducted_net_profit_billion: Option<f64>,
     #[serde(default)]
@@ -120,6 +144,7 @@ impl Default for StockItem {
             market_cap_billion: None,
             dividend_yield: None,
             latest_eps: None,
+            financial_coverage: None,
             deducted_net_profit_billion: None,
             deducted_net_profit_margin: None,
             deducted_net_profit_growth_rate: None,
@@ -1098,6 +1123,8 @@ pub struct QuarterlyEpsPoint {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct StockFinancialSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_eps: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_bps: Option<f64>,
@@ -1109,6 +1136,12 @@ pub struct StockFinancialSnapshot {
     pub parent_net_profit_billion: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_net_profit_yoy: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deducted_net_profit_billion: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deducted_net_profit_margin: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deducted_net_profit_growth_rate: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gross_margin: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1135,6 +1168,10 @@ pub struct StockFinancialSnapshot {
     pub period: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_notice_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_fetched_at: Option<String>,
     #[serde(default)]
     pub quarterly_eps: Vec<QuarterlyEpsPoint>,
     #[serde(default)]
@@ -3088,6 +3125,7 @@ fn apply_factor_snapshot(
         market_cap_billion: finite(snapshot.market_cap_billion),
         dividend_yield: finite(snapshot.dividend_yield),
         latest_eps: None,
+        financial_coverage: None,
         deducted_net_profit_billion: finite(snapshot.deducted_net_profit_billion),
         deducted_net_profit_margin: finite(snapshot.deducted_net_profit_margin),
         deducted_net_profit_growth_rate: finite(snapshot.deducted_net_profit_growth_rate),
@@ -7557,6 +7595,9 @@ fn size_score(stock: &StockItem) -> f64 {
 }
 
 fn data_quality_score(stock: &StockItem) -> f64 {
+    if let Some(coverage) = &stock.financial_coverage {
+        return (4 - coverage.missing_fields().len()) as f64 / 4.0;
+    }
     let mut score: f64 = 0.0;
     if stock.roe.and_then(ratio_percentage_points).is_some() {
         score += 0.30;
@@ -7850,7 +7891,24 @@ fn build_risk_tags(
     if factor_scores.get("fundamental").copied().unwrap_or(0.0) <= 0.38 {
         tags.push("质量偏弱".to_string());
     }
-    if factor_scores.get("data_quality").copied().unwrap_or(0.0) < 0.70 {
+    if let Some(coverage) = &stock.financial_coverage {
+        let missing = coverage.missing_fields();
+        if !missing.is_empty() {
+            tags.push(format!("财务缺项：{}", missing.join("、")));
+        }
+        if stock
+            .latest_eps
+            .is_some_and(|value| value.is_finite() && value < 0.0)
+        {
+            tags.push("最新报告期亏损".to_owned());
+        }
+        if stock
+            .pe
+            .is_some_and(|value| value.is_finite() && value < 0.0)
+        {
+            tags.push("PE为负，盈利估值不适用".to_owned());
+        }
+    } else if factor_scores.get("data_quality").copied().unwrap_or(0.0) < 0.70 {
         tags.push("核心财务数据缺失较多".to_string());
     }
     if factor_scores
@@ -8041,6 +8099,9 @@ fn theme_match_for_text(text: &str) -> Option<(&'static str, &'static str, f64)>
 }
 
 fn stock_text(stock: &StockItem) -> String {
+    if stock.code.ends_with(".HK") && !stock.industry.trim().is_empty() {
+        return stock.industry.to_lowercase();
+    }
     format!("{} {}", stock.name, stock.industry).to_lowercase()
 }
 
@@ -10316,9 +10377,30 @@ fn extract_date(message: &str, default: &str, first: bool) -> String {
     }
 }
 fn contains_any(text: &str, needles: &[&str]) -> bool {
-    needles
-        .iter()
-        .any(|needle| text.contains(&needle.to_lowercase()))
+    needles.iter().any(|needle| {
+        let needle = needle.to_lowercase();
+        if needle.is_ascii()
+            && needle
+                .chars()
+                .any(|character| character.is_ascii_alphabetic())
+        {
+            // Match English keywords as words, while allowing adjacent Chinese text.
+            text.match_indices(&needle).any(|(start, matched)| {
+                let word_character =
+                    |character: char| character.is_ascii_alphanumeric() || character == '_';
+                text[..start]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|character| !word_character(character))
+                    && text[start + matched.len()..]
+                        .chars()
+                        .next()
+                        .is_none_or(|character| !word_character(character))
+            })
+        } else {
+            text.contains(&needle)
+        }
+    })
 }
 
 fn score_contribution(

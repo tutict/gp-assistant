@@ -21,6 +21,7 @@ use tauri_plugin_shell::ShellExt;
 mod agent_harness;
 mod agent_ledger;
 mod core_api;
+mod cn_market;
 mod evolution;
 mod gepa_lab;
 mod hk_market;
