@@ -24,6 +24,15 @@
 .stock-detail-metrics, .stock-mobile-metrics { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: var(--space-3); margin: 0; }
 .stock-detail-metrics dt, .stock-mobile-metrics dt { color: var(--text-secondary); font-size: var(--fs-label); }
 .stock-detail-metrics dd, .stock-mobile-metrics dd { margin: 3px 0 0; color: var(--text); font-family: var(--font-mono); font-size: var(--fs-data); }
+.stock-hk-financial-details { margin-block: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line); min-width: 0; }
+.stock-hk-financial-details > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }
+.stock-hk-financial-details h4 { margin: 0; font-size: var(--fs-body); }
+.stock-hk-financial-details .data-provenance { color: var(--text-secondary); font-size: var(--fs-caption); overflow-wrap: anywhere; }
+.stock-hk-financial-grid { row-gap: var(--space-3); }
+.stock-hk-financial-grid > div { min-width: 0; }
+.stock-hk-financial-grid dd { overflow-wrap: anywhere; }
+.stock-details[data-market="hk"] > .stock-detail-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.stock-row[data-market="hk"] .stock-mobile-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .stock-result-boundary { margin: var(--space-3) 0; color: var(--text-secondary); font-size: var(--fs-caption); }
 .stock-list { display: grid; gap: var(--space-3); }
 .stock-details-toggle { white-space: nowrap; }

@@ -126,4 +126,26 @@ describe("Header", () => {
     expect(renderer.root.findByProps({ className: "icon-button settings-trigger" })).toBeTruthy();
     expect(renderer.root.findAllByProps({ className: "density-control" })).toHaveLength(0);
   });
+
+  it("does not show a directory download date as HK quote data", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <Header
+          {...commonProps}
+          theme="dark"
+          searchCode=""
+          watchlistCount={0}
+          dataStatus={{ market: "hk", universe_count: 0, universe_updated_at: "2026-11-07T08:00:00Z", stale: true }}
+          shortcutHelpOpen={false}
+          onSearchCommit={vi.fn()}
+        />,
+      );
+    });
+    const values = renderer.root.findAllByType("strong").map((node) => node.children.join(""));
+    expect(values).toContain("--");
+    expect(values).toContain("未缓存");
+    expect(values).not.toContain("2026/11/07");
+    await act(async () => renderer.unmount());
+  });
 });

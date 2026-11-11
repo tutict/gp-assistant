@@ -58,6 +58,10 @@ export function MarketCapabilityStatus({
       aria-live={error ? "assertive" : "polite"}
     >
       <strong>{title}</strong>
+      {capability?.quote_scope ? <p className="market-capability-coverage">
+        报价范围：{quoteCurrencyLabel(capability.quote_scope.currency)}
+        {capability.quote_scope.excluded_count > 0 ? `；${capability.quote_scope.excluded_count} 个其他币种交易柜台暂未纳入。` : "。"}
+      </p> : null}
       {(reasonOverride || capability?.reason) ? <p>{localizeCapabilityReason(reasonOverride || capability?.reason || "")}</p> : null}
       {showCoverage && coverage && coverage.requested_count > 0 ? (
         <>
@@ -123,6 +127,8 @@ function freshnessLabel(value: "fresh" | "stale" | "unknown"): string {
 function verificationLabel(value: string): string {
   switch (value) {
     case "verified": return "已核验";
+    case "source_reported": return "来源已核对";
+    case "scope_checked": return "证券范围已核对";
     case "metadata_only": return "仅元数据";
     case "conflict": return "有冲突";
     case "unavailable": return "不可用";
@@ -132,11 +138,23 @@ function verificationLabel(value: string): string {
 }
 
 function sourceLabel(value: string): string {
+  if (value === "hk_market_cache") return "港股本地缓存";
+  if (value === "hkex") return "港交所证券目录";
   if (value === "tencent") return "腾讯行情";
+  if (value === "eastmoney_cn_financial") return "东方财富定期报告";
+  if (value === "sse_szse_listed_bse_quote") return "沪深交易所与北交所行情目录";
+  if (value === "eastmoney_cn_directory") return "东方财富北交所行情目录";
+  if (value === "sse") return "上交所上市目录";
+  if (value === "szse") return "深交所上市目录";
   if (value === "legacy_market_cache") return "本地缓存";
   if (value.startsWith("data/cache/")) return "本地缓存文件";
   if (value === "frankfurter_ecb") return "欧洲央行参考汇率";
   return value.split(/[\\/]/).at(-1)?.replace(/[-_]+/g, " ") || "数据来源";
+}
+
+function quoteCurrencyLabel(value: string): string {
+  const labels: Record<string, string> = { HKD: "港币（HKD）", CNY: "人民币（CNY）", USD: "美元（USD）" };
+  return labels[value] || value;
 }
 
 function domainLabel(value: string): string {
@@ -161,6 +179,29 @@ function localizeEvidenceFlag(value: string): string {
     provider_rights_unverified: "数据授权待确认",
     complete_universe_unverified: "全市场覆盖待确认",
     complete_screening_factor_coverage: "筛选字段覆盖不足",
+    per_security_financial_field_coverage: "财务源未提供部分核心指标",
+    current_listed_universe_checked: "当前上市证券范围已核对",
+    bse_quote_directory_scope: "北交所按行情目录纳入",
+    roe_not_applicable_non_positive_equity: "部分证券净资产为负，ROE 不适用",
+    reported_roe_missing: "来源未提供部分 ROE",
+    reported_eps_missing: "来源未提供部分 EPS",
+    latest_available_report: "采用来源最近已公开报告",
+    point_in_time_publication_date: "缺少历史财报公开日期",
+    history_freshness_per_security: "逐证券历史日期待核对",
+    per_security_freshness_unknown: "逐证券历史日期待核对",
+    history_freshness_unknown: "历史行情日期待核对",
+    daily_history: "缺少日线历史",
+    minimum_history_depth: "历史日线长度不足",
+    point_in_time_financial_availability: "缺少点时财报可用日期",
+    delisted_universe: "缺少历史退市名单",
+    delisted_universe_unverified: "历史退市名单待核对",
+    corporate_actions: "缺少公司行动记录",
+    corporate_actions_unverified: "公司行动记录待核对",
+    exchange_calendar_and_trading_restrictions: "缺少完整交易日历与交易限制",
+    strict_out_of_sample_fold_count: "严格样本外验证次数不足",
+    pit_history_depth: "点时因子的历史长度不足",
+    research_history_on_demand: "按所选股票与区间补取日线",
+    research_backtest_current_universe: "当前名单研究回测，未满足严格回测要求",
     cached_quote_stale: "行情已过期",
     external_cache_status_only: "仅有缓存状态",
     point_in_time_publication_date_missing: "缺少财报公开时间",
@@ -169,6 +210,11 @@ function localizeEvidenceFlag(value: string): string {
     strict_out_of_sample_folds_missing: "严格样本外折次不足",
     market_rules_missing: "缺少交易规则证据",
     model_processing_rights: "模型处理权限待确认",
+    currency_matched_cached_quote: "有效港币行情",
+    currency_matched: "报价币种与证券一致",
+    ordinary_share_user_confirmed_records_present: "含用户确认的普通股",
+    ordinary_share_source_verified: "普通股类别已核验",
+    hkex_listed_equity_class_unresolved: "按港交所上市股权目录纳入（普通股类别未细分）",
   };
   return labels[value] || value.replace(/[-_]+/g, " ");
 }
@@ -206,6 +252,13 @@ function evidenceTimestamp(value: string): number {
 }
 
 function localizeCapabilityReason(reason: string): string {
+  if (reason === "required data coverage is incomplete") return "所需数据尚未全部覆盖。";
+  if (reason.startsWith("no HKEX-listed equity has a cached, currency-matched quote")) {
+    return "尚无可用于筛选的港币行情，请刷新港股行情。";
+  }
+  if (reason === "cached HK screening quotes are stale or their fetch time is unknown") {
+    return "港股筛选行情已过期或缺少更新时间，请刷新港股行情。";
+  }
   if (reason.startsWith("A-share observation uses cached quote/history")) {
     return "A 股观察显示本地行情和历史数据；数据授权与逐证券历史新鲜度尚未核验。";
   }

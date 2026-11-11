@@ -1,8 +1,10 @@
 import { Fragment, memo, useCallback, useId, useMemo, useRef, useState } from "react";
-import type { StockRowView, WatchlistItem } from "../types";
+import type { HkFinancialSnapshot, StockRowView, WatchlistItem } from "../types";
 import { formatNumber, formatPrice, formatRatioPercent, formatSignedPercent } from "../lib/format";
 import { selectionEvidence, type SelectionEvidence } from "../lib/selectionEvidence";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { formatHkAmount, formatHkDataTime, formatHkNumber, hkDataTimestamp } from "../lib/hkFormat";
+import { HkScreenFinancialDetails } from "./HkScreenFinancialDetails";
 
 interface StockListProps {
   items: StockRowView[];
@@ -46,34 +48,48 @@ interface EntryProps {
 }
 
 const StockEntry = memo(function StockEntry({item, mobile, saved, expanded, detailId, onExpand, onToggleWatchlist, onObserveStock, onNewsStock}: EntryProps) {
+  const hkStock = item.code.endsWith(".HK");
+  const [retainedFinancial, retainFinancial] = useState<HkFinancialSnapshot>();
+  const financial = retainedFinancial?.code === item.code.replace(/\.HK$/i, "")
+    && (!item.hkFinancial || (hkDataTimestamp(retainedFinancial.candidate_fetched_at) ?? 0) >= (hkDataTimestamp(item.hkFinancial.candidate_fetched_at) ?? 0))
+    ? retainedFinancial : item.hkFinancial;
+  const englishName = hkStock && !!item.name && !/[\u3400-\u9fff]/u.test(item.name);
+  const peText = item.pe != null && item.pe <= 0 ? item.pe < 0 ? "亏损" : "不适用" : formatNumber(item.pe);
+  const epsText = hkStock ? formatHkNumber(item.eps) : formatNumber(item.eps);
   const tone = Number.isFinite(item.change_pct) ? Number(item.change_pct)>0 ? "rise" : Number(item.change_pct)<0 ? "fall" : "neutral" : "neutral";
   const change = typeof item.change_pct === "number" ? formatSignedPercent(item.change_pct * 100) : "—";
   const evidence = useMemo(() => selectionEvidence(item), [item]);
   const riskWarning = evidence.riskSummary.includes("风险预警");
   const reason = evidence.historyBehindQuote ? "历史指标待更新" : riskWarning ? "风险预警" : evidence.supports[0];
-  const identity = <div className="stock-title"><strong>{item.name || item.code}</strong><span>{item.code} {item.industry}</span>{reason ? <small className="stock-selection-reason">{evidence.historyBehindQuote || riskWarning ? "状态" : "入选"}：{reason}</small> : null}{item.industrySampleCount !== undefined ? <small className="stock-selection-reason">行业样本：{item.industrySampleCount === 0 ? "未核验，使用中性分位" : item.industrySampleCount}</small> : null}{Boolean(evidence.riskSummary.length) && <small className="stock-risk-summary">关注：{evidence.riskSummary.join("、")}</small>}</div>;
+  const identity = <div className="stock-title"><strong>{item.name || item.code}</strong><span>{item.code} {item.industry}{englishName ? " · 英文简称" : ""}</span>{item.hkFinancial ? <small className="stock-selection-reason">财务 {item.hkFinancial.normalized_period} · EPS {item.hkFinancial.eps?.currency || item.hkFinancial.currency}/股</small> : null}{reason ? <small className="stock-selection-reason">{evidence.historyBehindQuote || riskWarning ? "状态" : "入选"}：{reason}</small> : null}{item.industrySampleCount !== undefined ? <small className="stock-selection-reason">行业样本：{item.industrySampleCount === 0 ? "未核验，使用中性分位" : item.industrySampleCount}</small> : null}{Boolean(evidence.riskSummary.length) && <small className="stock-risk-summary">关注：{evidence.riskSummary.join("、")}</small>}</div>;
   const actions = <div className="row-button-group">
     <button type="button" className={`stock-row-action watchlist-action ${saved ? "saved" : ""}`} aria-pressed={saved} onClick={() => onToggleWatchlist(item)}>{saved ? "已收藏" : "收藏"}</button>
     {onObserveStock && <button type="button" className="stock-row-action observe-action" onClick={()=>onObserveStock(item.code)}>观察</button>}
     {onNewsStock && <button type="button" className="stock-row-action" onClick={()=>onNewsStock(item.code)}>消息</button>}
     <button type="button" className="stock-row-action stock-details-toggle" aria-expanded={expanded} aria-controls={expanded ? detailId : undefined} onClick={()=>onExpand(expanded ? null : item.code)}>{expanded ? "收起依据" : "展开依据"}</button>
   </div>;
-  const details = expanded ? <StockDetails item={item} evidence={evidence} id={detailId} /> : null;
-  if (mobile) return <article className="stock-row">
+  const details = expanded ? <StockDetails item={financial ? {...item, hkFinancial: financial} : item} evidence={evidence} id={detailId} onFinancialSnapshot={retainFinancial} /> : null;
+  if (mobile) return <article className="stock-row" data-market={item.code.endsWith(".HK") ? "hk" : "cn"}>
     <header className="stock-row-head">{identity}<div className={`stock-current-price ${tone}`}><span>现价</span><strong>{formatPrice(item.price)}</strong><span>涨跌幅 {change}</span></div></header>
-    <dl className="stock-mobile-metrics"><div><dt>PE</dt><dd>{formatNumber(item.pe)}</dd></div><div><dt>PB</dt><dd>{formatNumber(item.pb)}</dd></div><div><dt>综合分</dt><dd>{formatNumber(displayStockScore(item))}</dd></div></dl>
+    <dl className="stock-mobile-metrics"><div><dt>PE</dt><dd>{peText}</dd></div><div><dt>PB</dt><dd>{formatNumber(item.pb)}</dd></div><div><dt>综合分</dt><dd>{formatNumber(displayStockScore(item))}</dd></div>{hkStock ? <div><dt>EPS</dt><dd>{epsText}</dd></div> : null}</dl>
     {actions}{details}
   </article>;
-  return <Fragment><tr className="stock-row"><th scope="row">{identity}</th><td className={tone}>{formatPrice(item.price)}</td><td className={tone}>{change}</td><td>{formatNumber(item.pe)}</td><td>{formatNumber(item.pb)}</td><td className="stock-eps-column">{formatNumber(item.eps)}</td><td>{formatNumber(displayStockScore(item))}</td><td>{actions}</td></tr>
+  return <Fragment><tr className="stock-row"><th scope="row">{identity}</th><td className={tone}>{formatPrice(item.price)}</td><td className={tone}>{change}</td><td title={item.pe != null && item.pe < 0 ? `PE ${item.pe}，亏损时盈利估值不适用` : undefined}>{peText}</td><td>{formatNumber(item.pb)}</td><td className="stock-eps-column">{epsText}</td><td>{formatNumber(displayStockScore(item))}</td><td>{actions}</td></tr>
     {expanded && <tr className="stock-detail-row"><td colSpan={8}>{details}</td></tr>}
   </Fragment>;
 });
 
-function StockDetails({item,evidence,id}: {item:StockRowView;evidence:SelectionEvidence;id:string}) {
-  return <section className="stock-details" id={id} aria-label={`${item.name || item.code}入选依据`}>
-    <dl className="stock-detail-metrics">{[["质量分",item.qualityScore],["趋势分",item.trendScore],["风险分（越高风险越大）",item.riskScore],["EPS",item.eps]].map(([label,value])=><div key={String(label)}><dt>{label}</dt><dd>{formatNumber(value)}</dd></div>)}</dl>
+function StockDetails({item,evidence,id,onFinancialSnapshot}: {item:StockRowView;evidence:SelectionEvidence;id:string;onFinancialSnapshot:(snapshot:HkFinancialSnapshot)=>void}) {
+  const hkStock = item.code.endsWith(".HK");
+  const marketCap = hkStock && item.quoteCurrency ? formatHkAmount(item.market_cap_billion == null ? undefined : item.market_cap_billion * 1_000_000_000, item.quoteCurrency) : `${formatNumber(item.market_cap_billion)} 亿`;
+  const scoreMetrics = [["质量分",item.qualityScore],["趋势分",item.trendScore],["风险分（越高风险越大）",item.riskScore]];
+  if (!hkStock) scoreMetrics.push(["EPS",item.eps]);
+  return <section className="stock-details" id={id} data-market={hkStock ? "hk" : "cn"} aria-label={`${item.name || item.code}入选依据`}>
+    <dl className="stock-detail-metrics">{scoreMetrics.map(([label,value])=><div key={String(label)}><dt>{label}</dt><dd>{formatNumber(value)}</dd></div>)}</dl>
     {item.concept && <p>概念：{item.concept}</p>}
-    <p>净资产收益率：{item.roe == null ? "—" : formatRatioPercent(item.roe)} · 市值：{formatNumber(item.market_cap_billion)} 亿</p>
+    <p>{hkStock ? null : <>净资产收益率：{item.roe == null ? "—" : formatRatioPercent(item.roe)} · </>}市值：{marketCap}</p>
+    {hkStock && (item.quoteTime || item.quoteSource) ? <p className="data-provenance">行情 {formatHkDataTime(item.quoteTime)}{item.quoteSource ? ` · ${item.quoteSource}` : ""} · {item.quoteCurrency || "币种未知"}</p> : null}
+    {hkStock ? <HkScreenFinancialDetails code={item.code} snapshot={item.hkFinancial} initialError={item.hkFinancialError} onSnapshot={onFinancialSnapshot} /> : null}
     {!!item.suitablePeriods?.length && <p>观察周期：{item.suitablePeriods.join("、")}</p>}
     {evidence.context && <p>{evidence.context}</p>}
     {!!evidence.scoreBreakdown.length && <p>评分贡献：{evidence.scoreBreakdown.map(part => `${part.label} ${formatNumber(part.contribution)}`).join(" · ")}</p>}

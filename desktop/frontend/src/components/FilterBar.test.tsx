@@ -6,11 +6,12 @@ import { FilterBar } from "./FilterBar";
 
 vi.mock("../lib/tauri", () => ({
   getTauriInvoke: vi.fn(() => null),
+  getJson: vi.fn(),
   postJson: vi.fn(),
   refreshTauriMarketData: vi.fn(),
 }));
 
-import { postJson } from "../lib/tauri";
+import { getJson, postJson } from "../lib/tauri";
 
 const postJsonMock = vi.mocked(postJson);
 
@@ -22,6 +23,7 @@ describe("FilterBar", () => {
     nextTimerId = 1;
     timers = new Map();
     postJsonMock.mockReset();
+    vi.mocked(getJson).mockReset();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("window", {
       setTimeout: vi.fn((callback: () => void) => {
@@ -88,6 +90,20 @@ describe("FilterBar", () => {
 
     expect(postJsonMock).not.toHaveBeenCalled();
     expect(renderer.root.findByProps({ className: "screen-toolbar-refresh-btn" })).toBeTruthy();
+  });
+
+  it("rereads the market status after a refresh returns a cache record", async () => {
+    const status: DataStatus={universe_count:5579,quote_trade_date:"20261106",current_trade_date:"20261106",financial_updated_at:"1794113089918",stale:false};
+    postJsonMock.mockResolvedValue({refreshed:true,status:{exists:true,stock_count:5579,generated_at:"1794113111699",summary:{stock_count:5579}}});
+    vi.mocked(getJson).mockResolvedValue(status);
+    const onStatusChange=vi.fn();
+    let renderer!: ReactTestRenderer;
+    await act(async()=>{renderer=create(<FilterBar status={{universe_count:5930}} onStatusChange={onStatusChange} />);});
+    await act(async()=>{await renderer.root.findByProps({className:"screen-toolbar-refresh-btn"}).props.onClick();});
+    expect(getJson).toHaveBeenCalledWith("/api/data-sources/status");
+    expect(onStatusChange).toHaveBeenLastCalledWith(status);
+    expect(onStatusChange.mock.calls.some(([value])=>value?.exists)).toBe(false);
+    await act(async()=>renderer.unmount());
   });
 
   it("requires a matching cleanup preview before confirming external data removal", async () => {

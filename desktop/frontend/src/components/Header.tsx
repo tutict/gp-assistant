@@ -41,10 +41,12 @@ function formatCount(value: unknown): string {
 
 function freshnessLabel(status: DataStatus | null): string {
   if (!status) return "待检查";
+  if (status.market === "hk" && status.universe_count === 0) return "未缓存";
   if (status.stale === true) return "待更新";
   if (status.quote_trade_date && status.current_trade_date) {
     return status.quote_trade_date === status.current_trade_date ? "最新" : "待更新";
   }
+  if (status.market === "hk" && !status.quote_trade_date) return "待检查";
   return status.stale === false ? "最新" : "待检查";
 }
 
@@ -67,9 +69,11 @@ export function Header({
   onLlmSettingsChange,
 }: HeaderProps) {
   const refreshDate = dataStatus?.quote_trade_date
-    ?? dataStatus?.quote_generated_at
-    ?? dataStatus?.generated_at
-    ?? dataStatus?.universe_updated_at;
+    ?? (dataStatus?.market === "hk" ? null : (
+      dataStatus?.quote_generated_at
+      ?? dataStatus?.generated_at
+      ?? dataStatus?.universe_updated_at
+    ));
   const cacheFreshness = freshnessLabel(dataStatus);
   const helpRef = useRef<HTMLElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);

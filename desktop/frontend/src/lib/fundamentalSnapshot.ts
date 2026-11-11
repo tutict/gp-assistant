@@ -49,6 +49,7 @@ export function buildFundamentalSnapshotData(
   financial?: FinancialIndicatorSection | null,
 ): FundamentalSnapshotData {
   const items = financial?.items || [];
+  const isHk = /\.HK$/i.test(stock.code);
   const lookup = buildFinancialLookup(items);
   const totalShares = positiveNumber(stock.total_shares);
   const circulatingShares = positiveNumber(stock.circulating_shares);
@@ -78,9 +79,16 @@ export function buildFundamentalSnapshotData(
     { label: "资产负债率", value: financialMetricAny(lookup, ["asset_liability_ratio", "debt_to_asset_ratio", "资产负债率"]) },
     { label: "商誉净资产比", value: financialMetricAny(lookup, ["goodwill_to_net_assets", "goodwill_net_asset_ratio", "商誉净资产比"]) },
     { label: "质押总股本比", value: financialMetricAny(lookup, ["pledged_share_ratio", "pledge_total_share_ratio", "质押总股本比"]) },
-    { label: "股息率", value: financialMetricAny(lookup, ["dividend_yield", "股息率"], metricOrMissing(formatRatioPercent(stock.dividend_yield))) },
+    { label: "股息率", value: isHk && finiteNumber(stock.dividend_yield) != null
+      ? formatRatioPercent(stock.dividend_yield)
+      : financialMetricAny(lookup, ["dividend_yield", "股息率"], metricOrMissing(formatRatioPercent(stock.dividend_yield))) },
     { label: "股利支付率(静)", value: financialMetricAny(lookup, ["dividend_payout_ratio", "static_dividend_payout_ratio", "股利支付率(静)", "股利支付率"]) },
-  ].map((item) => ({ ...item, tone: fundamentalMetricTone(item.label, item.value) }));
+  ].filter(item => !isHk || !["扣非净利润", "扣非净利同比", "商誉净资产比", "质押总股本比", "股利支付率(静)"].includes(item.label));
+  if (isHk) details.push(
+    { label: "摊薄每股收益", value: financialMetricAny(lookup, ["diluted_eps", "摊薄每股收益"]) },
+    { label: "经营现金流", value: financialMetricAny(lookup, ["operating_cash_flow", "经营现金流"]) },
+    { label: "流动比率", value: financialMetricAny(lookup, ["current_ratio", "流动比率"]) },
+  );
 
   return {
     quoteTime: String(stock.quote_time || "时间未知"),
@@ -90,7 +98,7 @@ export function buildFundamentalSnapshotData(
       { label: "总股本", value: formatShareCount(totalShares) },
       { label: "流通股", value: formatShareCount(circulatingShares) },
     ],
-    details,
+    details: details.map(item => ({ ...item, tone: fundamentalMetricTone(item.label, item.value) })),
   };
 }
 

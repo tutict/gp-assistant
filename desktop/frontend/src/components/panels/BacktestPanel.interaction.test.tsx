@@ -69,6 +69,28 @@ function runButton(renderer: ReactTestRenderer) {
 }
 
 describe("BacktestPanel interactions", () => {
+  it("starts HK backtests with independent HK conditions instead of restored A-share conditions", async () => {
+    workspaceTest.store.dispose();
+    workspaceTest = workspaceTestHarness(undefined, {
+      "backtest.criteria": { ...criteria, industry: "电池", marketScope: "创业板", requireInstitutionBuyRatio: true },
+      "backtest.end": "2026-10-16",
+    });
+    postJsonMock.mockResolvedValue({ ...result, symbols: ["00700.HK"] });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<BacktestPanel market="hk" criteria={{ ...criteria, industry: "电池", marketScope: "创业板" }} watchlist={[{ code: "00700.HK", name: "腾讯控股" }]} marketStatus={{ market: "hk", industry_options: ["半导体", "药品及生物科技"] }} />); });
+    expect(renderer.root.findByProps({ id: "btIndustry" }).props.value).toBe("");
+    expect(textContent(renderer)).not.toContain("创业板");
+    expect(textContent(renderer)).toContain("半导体");
+    expect(renderer.root.findByProps({ id: "btEnd" }).props.value).toBe(currentSystemDateInputValue());
+    await act(async () => { await runButton(renderer).props.onClick(); });
+    const payload = postJsonMock.mock.calls[0][1];
+    expect(payload.market).toBe("hk");
+    expect(payload.data_policy).toBe("refresh");
+    expect(payload.criteria).not.toHaveProperty("market_scope");
+    expect(payload.criteria).not.toHaveProperty("industry");
+    expect(payload.criteria).not.toHaveProperty("min_deducted_net_profit_growth_rate");
+    await act(async () => renderer.unmount());
+  });
   it("repairs persisted future and reversed dates before a request is made", async () => {
     workspaceTest.store.dispose();
     workspaceTest = workspaceTestHarness(undefined, {
@@ -81,6 +103,21 @@ describe("BacktestPanel interactions", () => {
     expect(renderer.root.findByProps({ id: "btStart" }).props.value).toBe("2020-01-01");
     expect(renderer.root.findByProps({ id: "btEnd" }).props.value).toBe(currentSystemDateInputValue());
     expect(renderer.root.findByProps({ id: "btEnd" }).props.max).toBe(currentSystemDateInputValue());
+    await act(async () => renderer.unmount());
+  });
+
+  it("prepares HK history on demand for candidate snapshot backtests", async () => {
+    postJsonMock.mockResolvedValue(result);
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<BacktestPanel criteria={criteria} watchlist={[{ code: "00700.HK", name: "Tencent" }]} market="hk" />); });
+    await act(async () => { await runButton(renderer).props.onClick(); });
+
+    expect(postJsonMock).toHaveBeenCalledWith("/api/backtest", expect.objectContaining({
+      market: "hk",
+      strategy_mode: "candidate_snapshot",
+      data_policy: "refresh",
+    }), expect.anything());
+    expect(textContent(renderer)).toContain("研究型回测");
     await act(async () => renderer.unmount());
   });
 

@@ -11,6 +11,7 @@ interface StockCodeInputProps {
   placeholder?: string;
   listMode?: boolean;
   resolveBareCode?: boolean;
+  market?: "cn" | "hk";
   inputRef?: Ref<HTMLInputElement>;
   inputAriaLabel?: string;
   onCommit?: (value: string) => void;
@@ -29,6 +30,7 @@ export function StockCodeInput({
   placeholder,
   listMode = false,
   resolveBareCode = false,
+  market = "cn",
   inputRef,
   inputAriaLabel,
   onCommit,
@@ -53,7 +55,7 @@ export function StockCodeInput({
   }, [digits, suggestions]);
   const hasExactSuggestion = Boolean(exactSuggestion);
   const showStockSuggest = open && !completeCode && (suggestions.length > 0 || loading);
-  const showMarketConfirm = !resolveBareCode && open && digits.length === 6 && !hasMarketSuffix(lookupToken) && !loading && !hasExactSuggestion && suggestions.length === 0;
+  const showMarketConfirm = market === "cn" && !resolveBareCode && open && digits.length === 6 && !hasMarketSuffix(lookupToken) && !loading && !hasExactSuggestion && suggestions.length === 0;
   const suggestedMarket = showMarketConfirm ? inferMarketFromDigits(digits) : "";
 
   useEffect(() => {
@@ -78,7 +80,13 @@ export function StockCodeInput({
     const timer = window.setTimeout(async () => {
       try {
         const params = new URLSearchParams({ q: query, limit: "6" });
-        const items = await getJson<StockItem[]>(`/api/stock-search?${params}`);
+        const items = market === "hk"
+          ? (await getJson<{ items?: Array<{ code: string; name: string; name_zh?: string }> }>(`/api/hk/stock-search?${params}`)).items?.map((item) => ({
+            code: normalizeStockCode(item.code, "HK"),
+            name: item.name_zh || item.name || item.code,
+            industry: "港股",
+          })).filter((item) => Boolean(item.code)) || []
+          : await getJson<StockItem[]>(`/api/stock-search?${params}`);
         if (current === requestId.current) {
           setSuggestions(items || []);
           setActiveIndex(0);
@@ -91,7 +99,7 @@ export function StockCodeInput({
       }
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [completeCode, lookupToken]);
+  }, [completeCode, lookupToken, market]);
 
   const applyValue = useCallback((next: string) => {
     if (!listMode) {
@@ -134,8 +142,9 @@ export function StockCodeInput({
         onChange={(event) => {
           const next = event.target.value;
           const deletingResolvedSuffix = value.length > next.length && value.startsWith(next);
-          const resolved = resolveBareCode && !listMode && !deletingResolvedSuffix && /^[0-9]{6}$/.test(next.trim())
-            ? normalizeStockCode(next)
+          const bareCodePattern = market === "hk" ? /^[0-9]{5}$/ : /^[0-9]{6}$/;
+          const resolved = resolveBareCode && !listMode && !deletingResolvedSuffix && bareCodePattern.test(next.trim())
+            ? normalizeStockCode(next, market === "hk" ? "HK" : undefined)
             : "";
           if (resolved) {
             requestId.current += 1;

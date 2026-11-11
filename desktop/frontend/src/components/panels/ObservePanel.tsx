@@ -6,6 +6,7 @@ import { calculateObserveQuant } from "../../lib/observeQuant";
 import type { ObserveQuantConclusion } from "../../lib/observeQuant";
 import { parseSecurityId, type MarketCapability, type ObservationMetadata } from "../../lib/marketDomain";
 import { buildFundamentalSnapshotData, isFinancialPeriodStale } from "../../lib/fundamentalSnapshot";
+import { formatHkAmount, formatHkPrice, formatHkSignedPercent } from "../../lib/hkFormat";
 import { buildMainFundFlowView, hasMainFundFlowBreakdown, isLocalFundFlowProxy } from "../../lib/mainFundFlow";
 import { getJson } from "../../lib/tauri";
 import { logPerfRecord, objectRecordCount, perfDiagnosticsAreEnabled, perfOutcomeForError } from "../../lib/perfDiagnostics";
@@ -322,7 +323,7 @@ export function ObservePanel({
   );
 }
 
-export function ObserveResultView({ result, mobileRuntime = false, expandProfessionalDetails = false, inWatchlist = false, onToggleWatchlist, onOpenNews, onAskAgent, capability }: {
+export function ObserveResultView({ result, mobileRuntime = false, expandProfessionalDetails = false, inWatchlist = false, onToggleWatchlist, onOpenNews, onAskAgent, capability, extraActions, financialAction, financialMeta, stockInformation, financialDisclosure }: {
   result: ObserveResult;
   mobileRuntime?: boolean;
   expandProfessionalDetails?: boolean;
@@ -331,6 +332,11 @@ export function ObserveResultView({ result, mobileRuntime = false, expandProfess
   onOpenNews?: (code: string) => void;
   onAskAgent?: (prompt: string) => void;
   capability?: MarketCapability;
+  extraActions?: ReactNode;
+  financialAction?: ReactNode;
+  financialMeta?: string;
+  stockInformation?: ReactNode;
+  financialDisclosure?: ReactNode;
 }) {
   const stock = result.stock || { code: "", name: "" };
   const linkedCode = normalizeStockCode(stock.code) || stock.code;
@@ -339,13 +345,17 @@ export function ObserveResultView({ result, mobileRuntime = false, expandProfess
   const series = trend?.series || [];
   const financial = result.financial_indicators;
   const capital = result.capital_evidence;
-  const identity = parseSecurityId("cn", stock.code.replace(/\.(?:SH|SZ)$/i, ""), "ordinary_share");
+  const market = result.market || "cn";
+  const hkHistoryError = market === "hk"
+    ? (result.notes || []).find((note) => note.startsWith("日 K："))?.replace(/^日 K：\s*/, "")
+    : undefined;
+  const identity = parseSecurityId(market, stock.code.replace(/\.(?:SH|SZ|HK)$/i, ""), result.security_kind || "ordinary_share");
   if (!identity) {
-    return <PanelFeedback kind="error" title="证券身份无效" description="观察结果缺少规范的 A 股代码，无法创建证券身份。" />;
+    return <PanelFeedback kind="error" title="证券身份无效" description="观察结果缺少规范的市场代码，无法创建证券身份。" />;
   }
   const provenance = observationProvenance(result);
   const frameCapability = capability || {
-    market: "cn" as const,
+    market,
     id: "observe" as const,
     status: "limited" as const,
     reason: "此响应未包含市场能力注册表快照。",
@@ -355,7 +365,7 @@ export function ObserveResultView({ result, mobileRuntime = false, expandProfess
   return (
     <div className="observe-result">
       <ObservationPanelFrame
-        market="cn"
+        market={market}
         title={stock.name || stock.code}
         security={identity}
         provenance={provenance}
@@ -364,13 +374,15 @@ export function ObserveResultView({ result, mobileRuntime = false, expandProfess
         showDiagnostics={false}
         headingMeta={<p className="observe-overview-data-summary" role="status">
           <span>{`${stock.code} ${stock.industry || ""}`.trim()}</span>
-          <time>{formatObserveTime(stock.quote_time || signal?.date || series.at(-1)?.date)}</time>
+          {market === "hk" && stock.quote_currency ? <span>报价币种 {stock.quote_currency}</span> : null}
+          <time>{formatObserveTime(market === "hk" && stock.price != null ? stock.quote_time : stock.quote_time || signal?.date || series.at(-1)?.date)}</time>
         </p>}
         actions={<div className="observe-overview-actions">
           {signal?.status && <span className={`state-pill ${signalStatusTone(signal.status)}`}>{signalStatusLabel(signal.status)}</span>}
           {onToggleWatchlist && <button type="button" className={`stock-row-action watchlist-action ${inWatchlist ? "saved" : ""}`} onClick={onToggleWatchlist}>{inWatchlist ? "已收藏" : "收藏"}</button>}
           {linkedCode && onOpenNews && <button type="button" className="stock-row-action" onClick={() => onOpenNews(linkedCode)}>消息</button>}
           {linkedCode && onAskAgent && <button type="button" className="stock-row-action" onClick={() => onAskAgent(observeAgentPrompt(stock.name || "", linkedCode))}>交给 Agent</button>}
+          {extraActions}
         </div>}
       >
       <ObserveTextMetrics
@@ -379,16 +391,31 @@ export function ObserveResultView({ result, mobileRuntime = false, expandProfess
         signal={signal}
         series={series}
         capital={capital}
+        market={market}
         marketActiveBrokerages={result.market_active_brokerages}
         institutionalHoldings={result.institutional_holdings}
         financialItems={financial?.items || []}
         expandProfessionalDetails={expandProfessionalDetails}
       >
+        {stockInformation}
         <section className="signal-card observe-chart-card">
           <header><div><h3>行情图表</h3><p>K 线、均线与技术指标</p></div></header>
-          {series.length > 1 ? <TrendCharts series={series} /> : <PanelFeedback kind="empty" description="行情数据不足，暂时无法绘制图表。其他已取得的指标仍可查看。" />}
+          {market === "hk" && series.length < 25 ? (
+            <p className="data-provenance hk-history-status" role="status" aria-live="polite">
+              港股日 K 当前有 {series.length} 条有效记录{series.length < 2 ? "，暂时无法绘制图表" : "，部分技术指标样本不足"}。
+              {hkHistoryError ? ` 获取失败：${hkHistoryError}。` : ""}
+              {" 点击右上角“刷新行情”重试；若持续失败，请到“设置 → 本机工具 → 网络代理”检查“腾讯日 K”测试结果。"}
+            </p>
+          ) : null}
+          {series.length > 1 ? <TrendCharts series={series} /> : market === "hk" ? null : <PanelFeedback kind="empty" description="行情数据不足，暂时无法绘制图表。其他已取得的指标仍可查看。" />}
         </section>
-        <FundamentalSnapshot stock={stock} financial={financial} />
+        <FundamentalSnapshot
+          stock={stock}
+          financial={financial}
+          financialMeta={financialMeta || (market === "hk" && financial ? [financial.source || "港股财务源", financial.period || "报告期未知", financial.report_date ? `报告 ${financial.report_date}` : "", financial.disclosed_at ? `披露 ${financial.disclosed_at}` : "", financial.updated_at ? `主源抓取 ${financial.updated_at}` : "", financial.supplemental_source ? `${financial.supplemental_source}抓取 ${financial.supplemental_updated_at || "时间未知"}` : "", financial.verification_status === "conflict" ? "核验有冲突" : "来源候选值未核验", financial.fx_reference ? `汇率参考 ${financial.fx_reference.rate}（${financial.fx_reference.observed_at}）` : "金额按来源原币展示"].filter(Boolean).join(" · ") : undefined)}
+          action={financialAction}
+          disclosure={financialDisclosure}
+        />
       </ObserveTextMetrics>
 
       <CollapsibleNotes notes={[...(result.notes || []), ...(signal?.notes || [])]} />
@@ -432,19 +459,24 @@ function observationCoverage(result: ObserveResult): MarketCapability["coverage"
   };
 }
 
-function FundamentalSnapshot({ stock, financial }: { stock: StockItem; financial?: FinancialIndicatorSection | null }) {
+export function FundamentalSnapshot({ stock, financial, financialMeta, action, disclosure }: { stock: StockItem; financial?: FinancialIndicatorSection | null; financialMeta?: string; action?: ReactNode; disclosure?: ReactNode }) {
   const snapshot = buildFundamentalSnapshotData(stock, financial);
   return (
-    <section className="observe-fundamental-snapshot" aria-label="最新基本面">
+    <section className="observe-fundamental-snapshot" aria-label="最新基本面" data-market={/\.HK$/i.test(stock.code) ? "hk" : "cn"}>
       <header>
         <div>
           <h3>基本面快照</h3>
+          {financialMeta ? <p className="data-provenance">{financialMeta}</p> : null}
         </div>
         <div className="observe-fundamental-periods">
           <time><span>行情</span>{formatObserveTime(snapshot.quoteTime)}</time>
-          <time><span>财务</span>{snapshot.financialPeriod}</time>
+          {financial?.latest_disclosure_period ? <time><span>最新披露</span>{financial.latest_disclosure_period}</time> : null}
+          <time><span>{financial?.latest_disclosure_period ? "报表" : "财务"}</span>{snapshot.financialPeriod}</time>
+          {action}
         </div>
       </header>
+      {disclosure}
+      {financial?.latest_disclosure_period && financial?.period ? <p className="data-provenance hk-statement-period">{financial.period} 报表指标 · 每股与资产指标保留原报告期，估值和股本取行情快照。</p> : null}
       <dl className="observe-fundamental-primary" aria-label="每股收益与股本结构">
         {snapshot.primary.map((item) => (
           <div key={item.label} className={isMissingMetricText(item.value) ? "is-missing" : undefined}>
@@ -471,6 +503,7 @@ function ObserveTextMetrics({
   signal,
   series,
   capital,
+  market,
   marketActiveBrokerages,
   institutionalHoldings,
   financialItems,
@@ -482,6 +515,7 @@ function ObserveTextMetrics({
   signal?: TrendIndicatorSignal | null;
   series: TrendIndicatorPoint[];
   capital?: CapitalEvidenceResult | null;
+  market: ObserveResult["market"];
   marketActiveBrokerages?: MarketActiveBrokerageBoard | null;
   institutionalHoldings?: InstitutionalHoldingsSnapshot | null;
   financialItems: FinancialIndicatorItem[];
@@ -499,12 +533,12 @@ function ObserveTextMetrics({
     return value;
   }, [signal, series, mobileRuntime]);
   const close = signal?.close ?? latest?.close ?? stock.price;
-  const previousClose = signal?.previous_close ?? previous?.close;
+  const previousClose = market === "hk" ? signal?.previous_close : signal?.previous_close ?? previous?.close;
   const change = signal?.close_change ?? numeric(close) - numeric(previousClose);
   const changePct = signal?.close_change_pct ?? ratioChange(close, previousClose);
   const financialLookup = buildFinancialLookup(financialItems);
   const capitalSummary = summarizeCapitalEvidence(capital);
-  const analysisItems = buildMetricAnalysis({ stock, signal, latest, kdj, changePct, capital, capitalSummary, financialLookup });
+  const analysisItems = buildMetricAnalysis({ stock, signal, latest, kdj, changePct, capital, capitalSummary, financialLookup, market });
   const specialQuant = useMemo(() => {
     const startedAt = performance.now();
     const value = calculateObserveQuant(series);
@@ -521,16 +555,16 @@ function ObserveTextMetrics({
     {
       title: "行情与估值",
       items: compactMetricItems([
-        ["最新价", formatPrice(close)],
+        ["最新价", market === "hk" ? formatHkPrice(close) : formatPrice(close)],
         ["涨跌额", formatSignedNumber(change)],
-        ["涨跌幅", formatSignedPercent(changePct)],
-        ["成交量", formatNumber(latest?.volume)],
+        ["涨跌幅", market === "hk" ? formatHkSignedPercent(changePct) : formatSignedPercent(changePct)],
+        [market === "hk" ? "最新日 K 成交量" : "成交量", formatNumber(latest?.volume)],
         ["市盈率", formatNumber(stock.pe)],
         ["市净率", formatNumber(stock.pb)],
         ["ROE", formatRatioPercent(stock.roe)],
         ["股息率", formatRatioPercent(stock.dividend_yield)],
         ["总市值", formatMarketCap(stock)],
-        ["行情时间", formatObserveTime(stock.quote_time || signal?.date || latest?.date, "--")],
+        ["行情时间", formatObserveTime(market === "hk" && stock.price != null ? stock.quote_time : stock.quote_time || signal?.date || latest?.date, "--")],
       ]),
     },
     {
@@ -601,7 +635,12 @@ function ObserveTextMetrics({
   const verdict = buildObservationVerdict(signal);
   const nextSignal = buildObservationNextSignal(signal);
   const changeTone: MetricAnalysisTone = numeric(changePct) > 0 ? "positive" : numeric(changePct) < 0 ? "negative" : "neutral";
-  const keyMetrics: Array<{ label: string; value: string; tone?: MetricAnalysisTone }> = [
+  const keyMetrics: Array<{ label: string; value: string; tone?: MetricAnalysisTone }> = market === "hk" ? [
+    { label: stock.price != null ? "最新价" : "最新日 K 收盘", value: formatHkPrice(close) },
+    { label: "涨跌额", value: Number.isFinite(change) ? `${change > 0 ? "+" : ""}${formatHkPrice(change)}` : "暂无", tone: changeTone },
+    { label: "涨跌幅", value: formatHkSignedPercent(changePct), tone: changeTone },
+    { label: "总市值", value: formatHkAmount(stock.market_cap, stock.quote_currency || "HKD") },
+  ] : [
     { label: "最新价", value: metricOrMissing(formatPrice(close)) },
     { label: "涨跌幅", value: metricOrMissing(formatSignedPercent(changePct)), tone: changeTone },
     { label: "支撑位", value: metricOrMissing(formatPrice(signal?.support)) },
@@ -646,8 +685,8 @@ function ObserveTextMetrics({
       </section>
 
       {children}
-      <CapitalQuantPanel capital={capital} />
-      <PublicMarketIntelligencePanel activeBrokerages={marketActiveBrokerages} holdings={institutionalHoldings} />
+      <CapitalQuantPanel capital={capital} market={market} />
+      <PublicMarketIntelligencePanel activeBrokerages={marketActiveBrokerages} holdings={institutionalHoldings} market={market} />
 
       <details
         className="observe-detail-disclosure"
@@ -692,7 +731,8 @@ function ObserveSpecialQuant({ conclusions }: { conclusions: ObserveQuantConclus
   );
 }
 
-function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null }) {
+function CapitalQuantPanel({ capital, market }: { capital?: CapitalEvidenceResult | null; market: ObserveResult["market"] }) {
+  const isHk = market === "hk";
   const items = capital?.items || [];
   const proxy = items.find((item) => item.category === "fund_flow" && isLocalFundFlowProxy(item));
   const mainFlow = buildMainFundFlowView(capital);
@@ -719,13 +759,13 @@ function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null
     <section className="observe-capital-quant" aria-label="主力资金与量价代理">
       <header>
         <h4>资金量化证据</h4>
-        <small>主力资金 · 量价代理</small>
+        <small>{isHk && !mainFlow.available ? "港股资金流数据源暂未接入" : "主力资金 · 量价代理"}</small>
       </header>
       <article className={"capital-main-flow " + mainFlow.tone + (mainFlow.available ? "" : " unavailable")}>
         <header>
           <div>
-            <h5>最新交易日主力资金</h5>
-            <small>{mainFlow.tradeDate} · {mainFlow.source}</small>
+            <h5>{isHk ? "港股主力资金流" : "最新交易日主力资金"}</h5>
+            <small>{isHk && !mainFlow.available ? "港股资金流数据源暂未接入" : `${mainFlow.tradeDate} · ${mainFlow.source}`}</small>
           </div>
           <span>{mainFlow.status}</span>
         </header>
@@ -740,7 +780,9 @@ function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null
           ]} />
         ) : (
           <p className="capital-main-flow-missing">
-            {proxy
+            {isHk && !mainFlow.available
+              ? "当前免费港股数据源未返回主力资金流；行情代理无法补出此字段。"
+              : proxy
               ? "主力资金接口暂不可用，以下为本地量价代理估算。"
               : "主力资金接口暂不可用，当前没有可用的量价代理估算。"}
           </p>
@@ -776,19 +818,24 @@ function CapitalQuantPanel({ capital }: { capital?: CapitalEvidenceResult | null
 function PublicMarketIntelligencePanel({
   activeBrokerages,
   holdings,
+  market,
 }: {
   activeBrokerages?: MarketActiveBrokerageBoard | null;
   holdings?: InstitutionalHoldingsSnapshot | null;
+  market: ObserveResult["market"];
 }) {
+  const isHk = market === "hk";
   return (
     <section className="public-market-intelligence" aria-label="龙虎榜和机构持仓公开信息">
       <article className="public-market-intelligence-block">
         <header>
           <div>
-            <h4>全市场每日活跃营业部</h4>
-            <small>{activeBrokerages?.trade_date || "日期暂缺"} · 东方财富公开龙虎榜统计</small>
+            <h4>{isHk ? "港股营业部与龙虎榜" : "全市场每日活跃营业部"}</h4>
+            <small>{activeBrokerages?.status === "available"
+              ? `${activeBrokerages.trade_date || "日期暂缺"} · ${activeBrokerages.source || "公开榜单"}`
+              : isHk ? "港股营业部与龙虎榜数据源暂未接入" : `${activeBrokerages?.trade_date || "日期暂缺"} · 东方财富公开龙虎榜统计`}</small>
           </div>
-          <span>{activeBrokerages?.status === "available" ? `前 ${activeBrokerages.items.length} 席` : "数据暂缺"}</span>
+          <span>{activeBrokerages?.status === "available" ? `前 ${activeBrokerages.items.length} 席` : isHk ? "数据源未覆盖" : "数据暂缺"}</span>
         </header>
         {activeBrokerages?.status === "available" && activeBrokerages.items.length ? (
           <>
@@ -812,7 +859,7 @@ function PublicMarketIntelligencePanel({
           </>
         ) : (
           <p className="capital-quant-empty">
-            {activeBrokerages?.note || "尚无全市场营业部榜单数据。"}
+            {activeBrokerages?.note || (isHk ? "免费港股行情源不提供 A 股式龙虎榜营业部统计。" : "尚无全市场营业部榜单数据。")}
           </p>
         )}
       </article>
@@ -820,14 +867,14 @@ function PublicMarketIntelligencePanel({
       <article className="public-market-intelligence-block">
         <header>
           <div>
-            <h4>机构持仓</h4>
+            <h4>{isHk ? "港股机构持仓" : "机构持仓"}</h4>
             <small>
-              {holdings?.report_period || "报告期暂缺"}
+              {holdings?.report_period || (isHk ? "港股机构持仓数据源暂未接入" : "报告期暂缺")}
               {holdings?.report_date ? ` · 截至 ${holdings.report_date}` : ""}
               {holdings?.disclosed_at ? ` · 披露 ${holdings.disclosed_at}` : ""}
             </small>
           </div>
-          <span>{holdings?.status === "available" ? `${holdings.items.length} 家` : "数据暂缺"}</span>
+          <span>{holdings?.status === "available" ? `${holdings.items.length} 家` : isHk ? "数据源未覆盖" : "数据暂缺"}</span>
         </header>
         {holdings?.status === "available" && holdings.items.length ? (
           <>
@@ -852,7 +899,7 @@ function PublicMarketIntelligencePanel({
           <p className="capital-quant-empty">
             {holdings?.status === "no_institutional_holders"
               ? "本报告期前十大流通股东中暂无识别到机构类别。"
-              : holdings?.note || "尚无机构持仓披露数据。"}
+              : holdings?.note || (isHk ? "当前免费港股财务源没有提供机构持仓明细；行情刷新不会补出此字段。" : "尚无机构持仓披露数据。")}
           </p>
         )}
       </article>
@@ -976,6 +1023,7 @@ function buildMetricAnalysis({
   capital,
   capitalSummary,
   financialLookup,
+  market,
 }: {
   stock: StockItem;
   signal?: TrendIndicatorSignal | null;
@@ -985,6 +1033,7 @@ function buildMetricAnalysis({
   capital?: CapitalEvidenceResult | null;
   capitalSummary: Record<string, string>;
   financialLookup: Map<string, string>;
+  market: ObserveResult["market"];
 }): MetricAnalysisItem[] {
   const items: MetricAnalysisItem[] = [];
   const pct = numeric(changePct);
@@ -1004,7 +1053,7 @@ function buildMetricAnalysis({
   const j = numeric(kdj?.j);
 
   const priceText = Number.isFinite(pct)
-    ? `近端涨跌幅为 ${formatSignedPercent(pct)}，${pct > 0.03 ? "短线情绪偏强" : pct < -0.03 ? "短线承压较明显" : pct > 0 ? "价格小幅走强" : pct < 0 ? "价格小幅回落" : "价格变化不大"}。`
+    ? `近端涨跌幅为 ${market === "hk" ? formatHkSignedPercent(pct) : formatSignedPercent(pct)}，${pct > 0.03 ? "短线情绪偏强" : pct < -0.03 ? "短线承压较明显" : pct > 0 ? "价格小幅走强" : pct < 0 ? "价格小幅回落" : "价格变化不大"}。`
     : "当前缺少可用涨跌幅，价格动量需要结合图表确认。";
   const valuationBits = [
     Number.isFinite(pe) ? `PE ${formatNumber(pe)}` : "PE 暂缺",
@@ -1074,7 +1123,9 @@ function buildMetricAnalysis({
     "每股收益(估算)",
     "每股收益(计算)",
   ]) || formatStockEps(stock);
-  const profitGrowth = financialMetricValue(financialLookup, [
+  const profitGrowth = market === "hk" ? financialMetricValue(financialLookup, [
+    "net_profit_yoy", "net_profit_parent_yoy", "归母净利润同比", "归母净利同比",
+  ]) : financialMetricValue(financialLookup, [
     "deducted_net_profit_growth_rate",
     "扣非净利润增长率",
     "扣非净利同比",
@@ -1084,7 +1135,7 @@ function buildMetricAnalysis({
   items.push({
     title: "财务资金",
     tone: capitalScore >= 60 ? "positive" : capitalScore <= 30 ? "warning" : "neutral",
-    text: `财务侧 EPS ${eps || "暂缺"}、扣非增长 ${profitGrowth || "暂缺"}。${capitalText}`,
+    text: `财务侧 EPS ${eps || "暂缺"}、${market === "hk" ? "归母净利同比" : "扣非增长"} ${profitGrowth || "暂缺"}。${capitalText}`,
   });
 
   return items;

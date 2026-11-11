@@ -41,6 +41,8 @@ interface ScreenPanelProps {
   onRunBacktest?: (screenSpec?: AdaptiveScreenRequest, criteriaSnapshot?: FilterCriteria) => void;
   mobileRuntime?: boolean;
   marketStatus?: DataStatus | null;
+  market?: "cn" | "hk";
+  onMarketDataChanged?: () => void;
 }
 
 type ScreenMode = "screen" | "sectorScreen" | "boardScreen" | "customScreen" | "trendScreen";
@@ -118,6 +120,7 @@ export function resetScreenRefreshForTests(): void {
 function shouldPrepareResearchDataForRetry(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("本地数据不足")
+    || message.includes("LOCAL_DATA_MISSING")
     || message.includes("市场状态数据不足")
     || message.includes("历史数据不足");
 }
@@ -162,6 +165,8 @@ export function ScreenPanel({
   onRunBacktest,
   mobileRuntime = false,
   marketStatus,
+  onMarketDataChanged,
+  market = "cn",
 }: ScreenPanelProps) {
   const mobileLayout = useMediaQuery("(max-width: 768px)");
   const [criteriaOpen, setCriteriaOpen] = useState(false);
@@ -187,6 +192,7 @@ export function ScreenPanel({
   });
   const runInFlightRef = useRef(false);
   const pendingStableRenderRef = useRef<{ startedAt: number; mode: ScreenMode } | null>(null);
+  const [hkRefreshing, setHkRefreshing] = useState(false);
 
   const updateRun = useCallback((
     target: ScreenMode,
@@ -269,6 +275,7 @@ export function ScreenPanel({
       const perfEnabled = perfDiagnosticsAreEnabled(mobileRuntime);
       const requestPayload = {
         ...(payload as Record<string, unknown>),
+        market,
         data_policy: "cache_only",
         ...(perfEnabled ? { perf_diagnostics: true } : {}),
       };
@@ -279,6 +286,9 @@ export function ScreenPanel({
         const canRetryWithPreparedData = (requestMode === "screen" || requestMode === "trendScreen")
           && shouldPrepareResearchDataForRetry(firstError);
         if (!canRetryWithPreparedData) throw firstError;
+        if (market === "hk" && requestMode !== "trendScreen") {
+          throw firstError;
+        }
         if (requestMode === "screen") {
           finalCacheStrategy = "refresh";
           const refreshStartedAt = performance.now();
@@ -307,10 +317,11 @@ export function ScreenPanel({
         finalCacheStrategy = "refresh";
         const refreshPayload = {
           ...(payload as Record<string, unknown>),
+          market,
           data_policy: "refresh",
           ...(perfEnabled ? { perf_diagnostics: true } : {}),
         };
-        data = await postJson(endpoint, refreshPayload);
+        data = await postJson(endpoint, refreshPayload, market === "hk" ? { timeoutMs: 90_000 } : undefined);
       }
       if (requestVersion !== requestVersions.current[requestMode]) return;
       logPerfRecord({
@@ -347,11 +358,31 @@ export function ScreenPanel({
       }));
     } finally {
       runInFlightRef.current = false;
+      if (market === "hk") onMarketDataChanged?.();
       if (requestVersion === requestVersions.current[requestMode] && requestMode === "screen") {
         activeRunIdRef.current = null;
       }
     }
-  }, [criteria, marketStatus, mobileRuntime, mode, trendEnd, trendStart, updateRun]);
+  }, [criteria, market, marketStatus, mobileRuntime, mode, onMarketDataChanged, trendEnd, trendStart, updateRun]);
+
+  const refreshHkMarket = async () => {
+    if (market !== "hk" || hkRefreshing || loading) return;
+    setHkRefreshing(true);
+    try {
+      await postJson("/api/hk/refresh");
+      await run();
+    } catch (error) {
+      onMarketDataChanged?.();
+      updateRun(mode, (current) => ({
+        ...current,
+        loading: false,
+        error: formatLocalDataError(error),
+        progress: null,
+      }));
+    } finally {
+      setHkRefreshing(false);
+    }
+  };
 
   const applyDraftAndRun = () => {
     if (mode === "customScreen") {
@@ -469,8 +500,16 @@ export function ScreenPanel({
   );
 
   const runButton = (
-    <LocalFirstRunControl action="筛选" loading={loading} onRun={() => void run()} loadingLabel="筛选中..." />
+    <LocalFirstRunControl action="筛选" loading={loading} disabled={hkRefreshing} onRun={() => void run()} loadingLabel="筛选中..." />
   );
+  const hkRefreshButton = market === "hk" ? (
+    <button
+      type="button"
+      className="action-btn hk-screen-refresh"
+      disabled={loading || hkRefreshing}
+      onClick={() => void refreshHkMarket()}
+    >{hkRefreshing ? "刷新中…" : "刷新港股行情"}</button>
+  ) : null;
 
   const modeTabs = (
     <div className="panel-tabs screen-panel-tabs" role="tablist" aria-label="选股模式">
@@ -501,6 +540,7 @@ export function ScreenPanel({
           {modeTabs}
           {modeNote}
           <div className="panel-controls screen-panel-run-card">
+            {hkRefreshButton}
             {runButton}
           </div>
         </>
@@ -508,6 +548,7 @@ export function ScreenPanel({
         <>
           <div className="screen-panel-desktop-toolbar">
             {modeTabs}
+            {hkRefreshButton}
             {runButton}
           </div>
           {modeNote}
@@ -534,13 +575,13 @@ export function ScreenPanel({
 
       <div className="panel-result screen-panel-result">
         {result != null && !loading && !error && localDataSummary(result) && <p className="workspace-boundary" role="status">{localDataSummary(result)}</p>}
-        {error && <PanelFeedback kind="error" title="查询失败" description={dataUnavailable ? `${error} 若顶部仍是待检查或待同步，先点「刷新」再重试。` : error} action={<button type="button" className="action-btn" onClick={() => void run()}>重试</button>} />}
+        {error && <PanelFeedback kind="error" title="查询失败" description={market !== "hk" && dataUnavailable ? `${error} 若顶部仍是待检查或待同步，先点「刷新」再重试。` : error} action={<button type="button" className="action-btn" onClick={() => void run()}>重试</button>} />}
         {loading && !error && (
           <PanelFeedback
             kind="loading"
             description={mode === "screen" && adaptiveProgress
               ? adaptiveProgress.message + "（" + adaptiveProgress.percent + "%）"
-              : "正在分析候选股票..."}
+              : market === "hk" && mode === "trendScreen" ? "正在准备港股日线并计算趋势..." : "正在分析候选股票..."}
           />
         )}
         {result != null && !loading && !error && (

@@ -1,6 +1,6 @@
 import { ChevronRight, RefreshCw, Settings, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getTauriInvoke, postJson, refreshTauriMarketData } from "../lib/tauri";
+import { getJson, getTauriInvoke, postJson, refreshTauriMarketData } from "../lib/tauri";
 import { formatBytes, formatMarketRefreshDate } from "../lib/format";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { DataStatus } from "../types";
@@ -177,7 +177,10 @@ export function FilterBar({ status, onStatusChange }: FilterBarProps) {
       const data = invoke
         ? await refreshTauriMarketData(invoke, { ...refreshOptions, onLog: updateProgressFromRefresh })
         : await postJson<{ status?: DataStatus; notes?: string[]; refreshed?: boolean }>("/api/data-sources/refresh-universe", refreshOptions);
-      const nextStatus = (data.status || data) as DataStatus;
+      const returnedStatus = (data.status || data) as DataStatus;
+      const nextStatus = Number.isFinite(returnedStatus.universe_count)
+        ? returnedStatus
+        : await getJson<DataStatus>("/api/data-sources/status");
       commitStatus(nextStatus);
       setProgress({ label: "刷新、落盘、校验完成", value: 100 });
       appendLog((Array.isArray(data.notes) ? data.notes.join(" ") : "") || (data.refreshed ? "刷新完成。" : "刷新检查完成。"), "success");

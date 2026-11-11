@@ -1,7 +1,7 @@
 import { useWorkspaceState, useWorkspaceStatus, useWorkspaceStore } from "../../hooks/useWorkspace";
 import { formatLocalDataError, localDataSummary } from "../../lib/localData";
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
-import type { AdaptiveScreenRequest, BacktestResult, EquityPoint, StockItem, VolatilitySnapshot, WatchlistItem } from "../../types";
+import type { AdaptiveScreenRequest, BacktestResult, DataStatus, EquityPoint, StockItem, VolatilitySnapshot, WatchlistItem } from "../../types";
 import type { FilterCriteria } from "../FilterBar";
 import { getJson, postJson } from "../../lib/tauri";
 import { buildBacktestRequest, requireBacktestResult } from "../../lib/contracts";
@@ -39,23 +39,28 @@ interface BacktestPanelProps {
   watchlist: WatchlistItem[];
   preferredSource?: BacktestRouteRequest | null;
   onPreferredSourceConsumed?: (requestId: number) => void;
+  market?: "cn" | "hk";
+  marketStatus?: DataStatus | null;
+  onMarketDataChanged?: () => void;
 }
 
-export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferredSourceConsumed }: BacktestPanelProps) {
+export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferredSourceConsumed, market = "cn", marketStatus, onMarketDataChanged }: BacktestPanelProps) {
   const workspace = useWorkspaceStore();
   const workspaceStatus = useWorkspaceStatus();
-  const [source, setSource] = useWorkspaceState<BacktestSource>("app.backtest.source", "criteria");
-  const [start, setStart] = useWorkspaceState("backtest.start", "2020-01-01");
-  const [end, setEnd] = useWorkspaceState("backtest.end", currentSystemDateInputValue());
-  const [topN, setTopN] = useWorkspaceState("backtest.topN", 10);
-  const [rebalance, setRebalance] = useWorkspaceState("backtest.rebalance", "monthly");
-  const [benchmark, setBenchmark] = useWorkspaceState("backtest.benchmark", "candidate_equal_weight");
-  const [strategyMode, setStrategyMode] = useWorkspaceState("backtest.strategyMode", "candidate_snapshot");
-  const [savedAdaptiveSpec, saveAdaptiveSpec] = useWorkspaceState<AdaptiveScreenRequest | null>("backtest.adaptiveSpec", null);
-  const adaptiveScreenSpec = savedAdaptiveSpec ?? undefined;
+  const statePrefix = market === "hk" ? "hk.backtest" : "backtest";
+  const defaultCriteria = market === "hk" ? { ...criteria, includeSt: true, requireInstitutionBuyRatio: false, industry: "", marketScope: "", minRoe: "", maxPe: "", maxPb: "", minMcap: "" } : { ...criteria };
+  const [source, setSource] = useWorkspaceState<BacktestSource>(market === "hk" ? `${statePrefix}.source` : "app.backtest.source", "criteria");
+  const [start, setStart] = useWorkspaceState(`${statePrefix}.start`, "2020-01-01");
+  const [end, setEnd] = useWorkspaceState(`${statePrefix}.end`, currentSystemDateInputValue());
+  const [topN, setTopN] = useWorkspaceState(`${statePrefix}.topN`, 10);
+  const [rebalance, setRebalance] = useWorkspaceState(`${statePrefix}.rebalance`, "monthly");
+  const [benchmark, setBenchmark] = useWorkspaceState(`${statePrefix}.benchmark`, "candidate_equal_weight");
+  const [strategyMode, setStrategyMode] = useWorkspaceState(`${statePrefix}.strategyMode`, "candidate_snapshot");
+  const [savedAdaptiveSpec, saveAdaptiveSpec] = useWorkspaceState<AdaptiveScreenRequest | null>(`${statePrefix}.adaptiveSpec`, null);
+  const adaptiveScreenSpec = market === "hk" ? undefined : savedAdaptiveSpec ?? undefined;
   const setAdaptiveScreenSpec = (spec: AdaptiveScreenRequest | undefined) => saveAdaptiveSpec(spec ?? null);
-  const [workingCriteria, setWorkingCriteria] = useWorkspaceState<FilterCriteria>("backtest.criteria", { ...criteria });
-  const [costBps, setCostBps] = useWorkspaceState("backtest.costBps", 10);
+  const [workingCriteria, setWorkingCriteria] = useWorkspaceState<FilterCriteria>(`${statePrefix}.criteria`, defaultCriteria);
+  const [costBps, setCostBps] = useWorkspaceState(`${statePrefix}.costBps`, 10);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -85,11 +90,11 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     consumedPreferredRequestIdRef.current = preferredSource.requestId;
     if (preferredSource.requestId === -1) {
       setSource(preferredSource.source);
-      if (!workspace.get("backtest.criteria", undefined)) setWorkingCriteria({ ...criteria });
+      if (!workspace.get(`${statePrefix}.criteria`, undefined)) setWorkingCriteria(defaultCriteria);
       onPreferredSourceConsumed?.(preferredSource.requestId);
       return;
     }
-    const nextAdaptiveScreenSpec = preferredSource.source === "criteria"
+    const nextAdaptiveScreenSpec = market !== "hk" && preferredSource.source === "criteria"
       ? preferredSource.adaptiveScreenSpec
       : undefined;
     requestVersionRef.current += 1;
@@ -98,7 +103,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     setWorkingCriteria(
       preferredSource.source === "criteria"
         ? { ...(preferredSource.criteriaSnapshot ?? criteria) }
-        : { ...criteria },
+        : defaultCriteria,
     );
     setStrategyMode(nextAdaptiveScreenSpec ? "adaptive_swing_v1" : "candidate_snapshot");
     setResult(null);
@@ -128,22 +133,23 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     setError(null);
   };
 
-  const effectiveFilterCriteria = source === "criteria" ? workingCriteria : criteria;
+  const effectiveFilterCriteria = source === "criteria" ? workingCriteria : defaultCriteria;
   const updateWorkingCriteria = (patch: Partial<FilterCriteria>) => {
     setWorkingCriteria((current) => ({ ...current, ...patch }));
   };
 
   const parameterSignature = JSON.stringify({
+    market,
     source,
     start: normalizedDateRange.startDate,
     end: normalizedDateRange.endDate,
     topN,
     rebalance,
     benchmark,
-    strategyMode,
+    strategyMode: market === "hk" ? "candidate_snapshot" : strategyMode,
     costBps,
     criteria: effectiveFilterCriteria,
-    adaptiveScreenSpec,
+    adaptiveScreenSpec: market === "hk" ? undefined : adaptiveScreenSpec,
     symbols: source === "watchlist" ? watchlistSignature : "",
   });
 
@@ -165,6 +171,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
       if (start !== requestDateRange.startDate) setStart(requestDateRange.startDate);
       if (end !== requestDateRange.endDate) setEnd(requestDateRange.endDate);
       const payload = buildBacktestRequest({
+        market,
         source,
         criteria: effectiveFilterCriteria,
         watchlist,
@@ -174,10 +181,14 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
         rebalanceFrequency: rebalance,
         transactionCostBps: costBps,
         benchmark,
-        strategyMode,
-        adaptiveScreenSpec,
+        strategyMode: market === "hk" ? "candidate_snapshot" : strategyMode,
+        adaptiveScreenSpec: market === "hk" ? undefined : adaptiveScreenSpec,
       });
-      const data = await postJson<unknown>("/api/backtest", { ...payload, data_policy: "refresh" }, { timeoutMs: 90_000 });
+      const data = await postJson<unknown>("/api/backtest", {
+        ...payload,
+        market,
+        data_policy: "refresh",
+      }, { timeoutMs: 90_000 });
       const nextResult = requireBacktestResult(data);
       if (requestVersion === requestVersionRef.current) { setResult(nextResult); setResultSignature(parameterSignature); }
     } catch (err) {
@@ -187,6 +198,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     } finally {
       requestInFlightRef.current = false;
       setLoading(false);
+      if (market === "hk") onMarketDataChanged?.();
     }
   };
 
@@ -198,20 +210,22 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     ? `${Math.min(topN, watchlist.length)} / ${watchlist.length} 只`
     : (criteriaScopeText || "全部行业 / 全部范围");
   const selectedIndustry = effectiveFilterCriteria.industry.trim();
-  const industryOptions = selectedIndustry && !ALL_INDUSTRY_OPTIONS.includes(selectedIndustry)
-    ? [selectedIndustry, ...ALL_INDUSTRY_OPTIONS]
-    : ALL_INDUSTRY_OPTIONS;
+  const availableIndustries = market === "hk" ? ["", ...(marketStatus?.industry_options ?? [])] : ALL_INDUSTRY_OPTIONS;
+  const industryOptions = selectedIndustry && !availableIndustries.includes(selectedIndustry)
+    ? [selectedIndustry, ...availableIndustries]
+    : availableIndustries;
   const canEditCriteria = source === "criteria" && !adaptiveScreenSpec;
   const runLabel = loading ? "回测计算中..." : result && resultSignature !== parameterSignature ? "重新回测" : "运行回测";
-  const strategyDescription = strategyMode === "walk_forward"
+  const activeStrategyMode = market === "hk" ? "candidate_snapshot" : strategyMode;
+  const strategyDescription = activeStrategyMode === "walk_forward"
     ? "使用历史快照做滚动验证。"
-    : strategyMode === "adaptive_swing_v1"
+    : activeStrategyMode === "adaptive_swing_v1"
       ? "按每个区间重新筛选候选股。"
       : "评估当前候选名单的组合表现。";
 
   return (
     <div className="panel-container">
-      <div className="backtest-context">
+        <div className="backtest-context">
         <div className="backtest-context-head">
           <span>{source === "watchlist" ? "自选股" : "当前条件"}</span>
           <strong>{sourceText}</strong>
@@ -264,13 +278,13 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
                       </option>
                     ))}
                   </select>
-                  <small className="backtest-industry-hint">{industryFilterHint(selectedIndustry)}</small>
+                  <small className="backtest-industry-hint">{market === "hk" ? "按港股行业分类筛选" : industryFilterHint(selectedIndustry)}</small>
                 </div>
                 <div className="form-row">
                   <label htmlFor="btMarketScope">股票池范围（本页）</label>
-                  <select id="btMarketScope" value={normalizeMarketScope(effectiveFilterCriteria.marketScope)} disabled={loading}
+                  <select id="btMarketScope" value={market === "hk" ? "" : normalizeMarketScope(effectiveFilterCriteria.marketScope)} disabled={loading || market === "hk"}
                     onChange={(event) => updateWorkingCriteria({ marketScope: event.target.value })}>
-                    {MARKET_SCOPE_OPTIONS.map((option) => (
+                    {(market === "hk" ? [{ value: "", label: "全部港币股票" }] : MARKET_SCOPE_OPTIONS).map((option) => (
                       <option key={option.value || "all-scopes"} value={option.value}>{option.label}</option>
                     ))}
                   </select>
@@ -327,7 +341,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
               </div>
               <div className="form-row">
                 <label htmlFor="btStrategyMode">回测方式</label>
-                <select id="btStrategyMode" value={strategyMode} disabled={loading} onChange={(e) => {
+                <select id="btStrategyMode" value={activeStrategyMode} disabled={loading || market === "hk"} onChange={(e) => {
                   setStrategyMode(e.target.value);
                   if (e.target.value !== "adaptive_swing_v1") setAdaptiveScreenSpec(undefined);
                 }}>
@@ -344,6 +358,9 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
             <p className="backtest-field-note" role="status">{strategyDescription}</p>
           </section>
           <p className="backtest-parameter-boundary workspace-boundary">
+            {market === "hk" && <>
+              研究型回测使用港股日线，缺少所选日期区间时按需补齐；当前证券范围和免费数据可能缺少退市证券、复权公司行动及点时财报，结果不代表严格历史模拟。
+            </>}
             仅供研究，不构成投资建议。
           </p>
         </div>
@@ -356,7 +373,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
             ? `${error} 请补齐历史因子快照，或切换到“候选快照”查看非严格历史组合表现。`
             : error}
         />}
-        {loading && !result && !error && <PanelFeedback kind="loading" description="正在计算组合表现..." />}
+        {loading && !result && !error && <PanelFeedback kind="loading" description={market === "hk" ? "正在准备港股日线并计算组合表现..." : "正在计算组合表现..."} />}
         {result && !loading && <BacktestResultView result={result} watchlist={watchlist} />}
         {!result && !loading && !error && <PanelFeedback kind="empty" description="选择股票来源并设置参数后运行回测。" />}
       </div>

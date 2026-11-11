@@ -13,6 +13,23 @@ afterAll(() => {
 });
 
 describe("ScreenResultView", () => {
+  it("shows hydrated EPS values from HK financial caches in the stock list", () => {
+    const markup = renderToStaticMarkup(<ScreenResultView result={{ total: 1, returned: 1,
+      items: [{ stock: { code: "01522.HK", name: "京投交通科技", price: 0.19, latest_eps: 0.23 }, score: 15.31, reasons: [] }],
+    }} grouped={false} watchlist={[]} onToggleWatchlist={() => undefined} />);
+
+    expect(markup.match(/<td class="stock-eps-column">([^<]+)/)?.[1]).toBe("0.23");
+  });
+
+  it("shows Chinese HK names supplied by the screening result", () => {
+    const markup = renderToStaticMarkup(<ScreenResultView result={{ total: 1, returned: 1,
+      items: [{ stock: { code: "01186.HK", name: "中国中铁", price: 4.11 }, score: 16.96, reasons: [] }],
+    }} grouped={false} watchlist={[]} onToggleWatchlist={() => undefined} />);
+
+    expect(markup).toContain("中国中铁");
+    expect(markup).not.toContain("CHINA RAIL CONS");
+  });
+
   it("keeps history coverage warnings in expandable notes while retaining other screening notes", () => {
     const markup = renderToStaticMarkup(<ScreenResultView result={{ total: 1, returned: 1,
       items: [{ stock: { code: "688279.SH", name: "峰岹科技", price: 173.73 }, score: 10.46, reasons: [] }],

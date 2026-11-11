@@ -75,6 +75,7 @@ async function renderPanel(
   onCriteriaChange: (criteria: FilterCriteria) => void = () => undefined,
   panelCriteria: FilterCriteria = criteria,
   onRunBacktest?: (screenSpec?: AdaptiveScreenRequest, criteriaSnapshot?: FilterCriteria) => void,
+  market?: "cn" | "hk",
 ) {
   let renderer!: ReactTestRenderer;
   await act(async () => {
@@ -85,6 +86,7 @@ async function renderPanel(
         watchlist={[]}
         onWatchlistChange={() => undefined}
         onRunBacktest={onRunBacktest}
+        market={market}
       />,
     );
   });
@@ -92,6 +94,17 @@ async function renderPanel(
 }
 
 describe("ScreenPanel adaptive states", () => {
+  it("prepares missing HK trend history without retrying the A-share route", async () => {
+    postJsonMock.mockRejectedValueOnce(new Error(JSON.stringify({ code: "LOCAL_DATA_MISSING", operation: "hk_trend_screen", action: "refresh", missing: [] })))
+      .mockResolvedValueOnce({ market: "hk", total: 100, returned: 0, items: [], notes: [], data_metadata: { data_policy: "refresh", history_as_of: "20261106" } });
+    const renderer = await renderPanel(undefined, criteria, undefined, "hk");
+    await act(async () => { renderer.root.findAllByProps({ role: "tab" }).find((node) => node.children.includes("趋势选股"))!.props.onClick(); });
+    await act(async () => { await runButton(renderer).props.onClick(); });
+    expect(postJsonMock.mock.calls.map(([url]) => url)).toEqual(["/api/trend-screen", "/api/trend-screen"]);
+    expect(postJsonMock.mock.calls[1][1]).toMatchObject({ market: "hk", data_policy: "refresh" });
+    expect(textContent(renderer)).not.toContain("查询失败");
+    await act(async () => renderer.unmount());
+  });
   beforeEach(() => {
     resetScreenRefreshForTests();
   });
@@ -206,6 +219,31 @@ describe("ScreenPanel adaptive states", () => {
 
     expect(postJsonMock).toHaveBeenCalledWith("/api/screen", expect.any(Object));
     expectNoCustomFilters(postJsonMock.mock.calls[0][1].criteria);
+  });
+
+  it("sends HK market scope with HK screening requests", async () => {
+    postJsonMock.mockResolvedValue({ total: 0, returned: 0, items: [], groups: [] });
+    const renderer = await renderPanel(undefined, criteria, undefined, "hk");
+
+    await act(async () => { await runButton(renderer).props.onClick(); });
+
+    expect(postJsonMock).toHaveBeenCalledWith("/api/screen", expect.objectContaining({ market: "hk" }));
+    await act(async () => renderer.unmount());
+  });
+
+  it("refreshes HK quotes from the screening toolbar and reruns screening", async () => {
+    postJsonMock
+      .mockResolvedValueOnce({ security_count: 2756 })
+      .mockResolvedValueOnce({ total: 0, returned: 0, items: [], groups: [] });
+    const renderer = await renderPanel(undefined, criteria, undefined, "hk");
+    const refresh = renderer.root.find(
+      (node) => node.type === "button" && node.props.className?.includes("hk-screen-refresh"),
+    );
+
+    await act(async () => { await refresh.props.onClick(); });
+
+    expect(postJsonMock).toHaveBeenNthCalledWith(1, "/api/hk/refresh");
+    expect(postJsonMock).toHaveBeenNthCalledWith(2, "/api/screen", expect.objectContaining({ market: "hk" }));
   });
 
   it("does not render fixed adaptive mode and horizon controls", async () => {
