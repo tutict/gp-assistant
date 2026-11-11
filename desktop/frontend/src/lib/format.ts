@@ -165,6 +165,14 @@ export function normalizeStockCode(value: unknown, market?: string): string {
   return `${digits}.${market || inferMarketFromDigits(digits)}`;
 }
 
+export function normalizeStockCodeForMarket(value: unknown, market: "cn" | "hk"): string {
+  const raw = String(value ?? "").trim().toUpperCase();
+  const matchesMarket = market === "hk"
+    ? /^(?:\d{1,5}(?:\.HK)?|HK\d{1,5})$/.test(raw)
+    : /^(?:\d{6}(?:\.(?:SH|SZ|BJ))?|(?:SH|SZ|BJ)\d{6})$/.test(raw);
+  return matchesMarket ? normalizeStockCode(raw, market === "hk" ? "HK" : undefined) : "";
+}
+
 export function sanitizeStockCodeInput(value: unknown): string {
   return String(value ?? "")
     .trim()

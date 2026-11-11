@@ -1331,6 +1331,72 @@
   line-height: 1.6;
 }
 
+.network-proxy-panel .network-proxy-field {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+}
+
+.network-proxy-panel .network-proxy-field :is(input, select) {
+  min-height: 40px;
+}
+
+.network-proxy-code-field input {
+  font-variant-numeric: tabular-nums;
+}
+
+.network-proxy-panel .network-proxy-field small {
+  color: var(--text-tertiary);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+}
+
+.network-proxy-panel .network-proxy-field [aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.network-proxy-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.network-proxy-actions :is(.save-btn, .clear-btn) {
+  min-height: 40px;
+}
+
+.network-proxy-message {
+  color: var(--text-secondary);
+}
+
+.network-proxy-results {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.network-proxy-results li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.network-proxy-results li[data-status="unavailable"] > span {
+  color: var(--warning);
+}
+
+.network-proxy-results small {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
 .settings-disclosure-body :is(input:not([type="checkbox"]), select, textarea) {
   max-width: 100%;
   width: 100%;

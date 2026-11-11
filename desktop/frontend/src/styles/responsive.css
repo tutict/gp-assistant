@@ -385,6 +385,11 @@
     width: 100%;
     min-height: var(--touch-comfort);
   }
+  .screen-panel-run-card .hk-screen-refresh {
+    width: 100%;
+    min-height: var(--touch-comfort);
+    margin-bottom: var(--space-2);
+  }
   .screen-panel-result {
     padding-top: 4px;
   }
@@ -1167,6 +1172,24 @@
   }
   :root[data-composer-keyboard="open"] .app:is([data-active-view="news"], [data-active-view="agent"]) {
     top: calc(var(--composer-viewport-offset, 0px) + var(--safe-top));
+  }
+}
+
+/* Give narrow HK metrics enough width for their currency and share units. */
+@media (max-width: 768px) {
+  .observe-result .hk-quarterly-inline .hk-financial-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 480px) {
+  .observe-result .hk-stock-information .observe-fundamental-grid > div,
+  .observe-result .observe-fundamental-snapshot[data-market="hk"] .observe-fundamental-grid > div {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: var(--space-1);
+  }
+  .observe-result .hk-stock-information .observe-fundamental-grid dd,
+  .observe-result .observe-fundamental-snapshot[data-market="hk"] .observe-fundamental-grid dd {
+    text-align: left;
   }
 }
 

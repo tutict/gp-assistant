@@ -14,6 +14,7 @@ import type {
   BacktestResult,
   GraphScreenResult,
   GraphStockSignal,
+  HkFinancialSnapshot,
   LlmClientConfig,
   LlmSettings,
   NewsEvidence,
@@ -193,6 +194,7 @@ export function buildTrendAnalyzeRequest(code: string, startDate: string, endDat
 }
 
 export function buildBacktestRequest(args: {
+  market?: "cn" | "hk";
   source: "criteria" | "watchlist";
   criteria: FilterCriteria;
   watchlist: WatchlistItem[];
@@ -205,7 +207,7 @@ export function buildBacktestRequest(args: {
   strategyMode?: string;
   adaptiveScreenSpec?: AdaptiveScreenRequest;
 }): Record<string, unknown> {
-  const adaptiveScreenSpec = args.source === "criteria" ? args.adaptiveScreenSpec : undefined;
+  const adaptiveScreenSpec = args.market !== "hk" && args.source === "criteria" ? args.adaptiveScreenSpec : undefined;
   const algorithm = adaptiveScreenSpec?.algorithm_version || "adaptive_swing_v1";
   if (adaptiveScreenSpec && algorithm !== "adaptive_swing_v1" && algorithm !== "adaptive_swing_v2") {
     throw new Error("无法回测未知的自适应算法版本");
@@ -215,15 +217,21 @@ export function buildBacktestRequest(args: {
     throw new Error("校准策略缺少已冻结的参数版本，请重新运行选股");
   }
   const dateRange = normalizeBacktestDateRange(args.startDate, args.endDate);
+  const backtestCriteria = adaptiveScreenSpec?.criteria || buildScreenCriteria(args.criteria, {
+    limit: 100, score_profile: "quality", applyDeductedProfitRule: args.market !== "hk" && args.source === "criteria",
+  });
+  if (args.market === "hk") {
+    backtestCriteria.include_st = true;
+    backtestCriteria.require_institution_buy_ratio_gt_sell_ratio = false;
+    delete backtestCriteria.market_scope;
+    delete backtestCriteria.min_deducted_net_profit_billion;
+    delete backtestCriteria.min_deducted_net_profit_margin;
+    delete backtestCriteria.min_deducted_net_profit_growth_rate;
+  }
   return {
     metric_contract_version: METRIC_CONTRACT_VERSION,
     source: args.source,
-    criteria: adaptiveScreenSpec?.criteria
-      || buildScreenCriteria(args.criteria, {
-        limit: 100,
-        score_profile: "quality",
-        applyDeductedProfitRule: args.source === "criteria",
-      }),
+    criteria: backtestCriteria,
     strategy_mode: adaptiveScreenSpec
       ? algorithm + ":" + adaptiveScreenSpec.mode
       : args.strategyMode || "candidate_snapshot",
@@ -400,8 +408,10 @@ export function buildNewsRagRequest(
   llm?: LlmClientConfig,
   watchlist?: WatchlistItem[],
   includePublicSources = true,
+  market: "cn" | "hk" = "cn",
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = {
+    ...(market === "hk" ? { market } : {}),
     code,
     seed_codes: code ? [code] : [],
     criteria: {},
@@ -611,6 +621,15 @@ export function normalizeSectorGroups(result: SectorScreenResult | ScreenResult 
   return groups.map((group) => normalizeStockGroup(group, "sector"));
 }
 
+export function normalizeHkScreenFinancialSnapshot(value: unknown, code: string): HkFinancialSnapshot | undefined {
+  const snapshot = asRecord(value);
+  const canonical = code.replace(/\.HK$/i, "");
+  if (!/^\d{5}\.HK$/i.test(code) || snapshot.code !== canonical) return undefined;
+  if (!["currency", "normalized_period", "raw_report_period", "candidate_source", "candidate_fetched_at", "verification_status"]
+    .every(key => typeof snapshot[key] === "string")) return undefined;
+  return snapshot as unknown as HkFinancialSnapshot;
+}
+
 export function normalizeStockRow(item: unknown): StockRowView | null {
   const raw = asRecord(item);
   const stock = (raw.stock && typeof raw.stock === "object" ? raw.stock : raw) as StockItem;
@@ -620,6 +639,7 @@ export function normalizeStockRow(item: unknown): StockRowView | null {
   const screened = raw as Partial<ScreenedStock>;
   const explanation = (raw.explanation as StockRowView["explanation"]) || null;
   const trendSignal = trend.signal && typeof trend.signal === "object" ? trend.signal : undefined;
+  const hkFinancialError = asRecord(stock).hk_financial_error;
   const score = firstNumber(raw.final_score, raw.score, graph.final_score, trend.final_score);
   return {
     code: stock.code,
@@ -627,6 +647,10 @@ export function normalizeStockRow(item: unknown): StockRowView | null {
     industry: stock.industry,
     price: firstNumber(stock.price),
     quoteTime: stock.quote_time,
+    quoteCurrency: typeof stock.quote_currency === "string" ? stock.quote_currency : undefined,
+    quoteSource: typeof stock.quote_source === "string" ? stock.quote_source : undefined,
+    hkFinancial: normalizeHkScreenFinancialSnapshot(stock.hk_financial_snapshot, stock.code),
+    hkFinancialError: typeof hkFinancialError === "string" ? hkFinancialError : undefined,
     trendSignal,
     change_pct: firstNumber(stock.change_pct, stock.pct),
     pe: firstNumber(stock.pe),

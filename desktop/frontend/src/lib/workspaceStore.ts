@@ -35,7 +35,7 @@ export function createWorkspaceStore(transport: WorkspaceTransport, legacy?: Leg
         const incoming = { ...migration, ...restored };
         for (const [key, value] of Object.entries(incoming)) {
           if (!touched.has(key)) values[key] = value;
-          else if (!hasHydrated && key === "agent.conversations" && Array.isArray(value) && Array.isArray(values[key])) {
+          else if (!hasHydrated && ["agent.conversations", "hk.agent.conversations"].includes(key) && Array.isArray(value) && Array.isArray(values[key])) {
             const local = values[key] as { id: string }[];
             values[key] = [...local, ...value.filter(item => !local.some(entry => entry.id === item.id))].slice(0, 40);
             if (dirty.has(key)) dirty.set(key, { version: ++version, value: workspaceValue(key, values[key]) });

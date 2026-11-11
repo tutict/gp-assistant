@@ -22,22 +22,31 @@ export interface StockItem {
   deducted_net_profit_growth_rate?: number;
   is_st?: boolean;
   quote_time?: string;
+  quote_currency?: string;
   [key: string]: unknown;
 }
 
 export interface HkSecurity {
   code: string;
   name: string;
+  name_zh?: string;
   currency: string;
   board_lot?: number;
   security_type: string;
-  classification_status: "unverified" | "verified_ordinary_share";
+  classification_status: "unverified" | "exchange_listed_equity" | "verified_ordinary_share" | "user_confirmed_ordinary_share";
 }
 
 export interface HkQuote {
   code: string;
   name: string;
+  name_zh?: string | null;
   price: number;
+  price_semantics_version?: number;
+  previous_close?: number | null;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  change?: number | null;
   change_pct?: number;
   volume_shares?: number;
   turnover_hkd?: number;
@@ -72,6 +81,9 @@ export interface HkObserveResult {
   financial?: HkFinancialSnapshot | null;
   fx_rate?: HkFxRate | null;
   official_disclosure?: HkDisclosureMetadata | null;
+  quarterly_update?: HkQuarterlyUpdate | null;
+  quarterly_update_checked_at?: string | null;
+  quarterly_update_error?: string | null;
   candidate_updated_at?: string | null;
   fx_updated_at?: string | null;
   official_checked_at?: string | null;
@@ -97,6 +109,16 @@ export interface HkFinancialMetric {
   reason?: string | null;
 }
 
+export interface HkCompanyProfile {
+  code: string;
+  name: string;
+  name_zh?: string | null;
+  industry: string;
+  business_summary: string;
+  source: string;
+  fetched_at: string;
+}
+
 export interface HkFinancialSnapshot {
   code: string;
   currency: string;
@@ -106,11 +128,15 @@ export interface HkFinancialSnapshot {
   disclosed_at?: string | null;
   candidate_source: string;
   candidate_fetched_at: string;
+  company_profile?: HkCompanyProfile | null;
+  supplemental_source?: string | null;
+  supplemental_fetched_at?: string | null;
   official_source_url?: string | null;
   official_source_name?: string | null;
   verification_status: string;
   verification_conflicts?: string[];
   official_values?: Record<string, HkFinancialMetric>;
+  additional_metrics?: Record<string, HkFinancialMetric>;
   field_errors?: Record<string, string>;
   revenue?: HkFinancialMetric | null;
   net_profit?: HkFinancialMetric | null;
@@ -143,12 +169,44 @@ export interface HkDisclosureMetadata {
   error?: string | null;
 }
 
+export interface HkQuarterlyUpdate {
+  code: string;
+  period: string;
+  period_end: string;
+  disclosed_at: string;
+  title: string;
+  source_name: string;
+  source_url: string;
+  currency: string;
+  unit: string;
+  audit_status: "audited" | "unaudited" | "unspecified" | string;
+  fetched_at: string;
+  quarterly_revenue?: number | null;
+  quarterly_revenue_yoy_percent?: number | null;
+  quarterly_revenue_qoq_percent?: number | null;
+  nine_month_revenue?: number | null;
+  nine_month_revenue_yoy_percent?: number | null;
+  quarterly_net_profit?: number | null;
+  quarterly_net_profit_yoy_percent?: number | null;
+  quarterly_net_profit_qoq_percent?: number | null;
+  nine_month_net_profit?: number | null;
+  nine_month_net_profit_yoy_percent?: number | null;
+  quarterly_total_comprehensive_income?: number | null;
+  quarterly_total_comprehensive_income_yoy_percent?: number | null;
+  quarterly_total_comprehensive_income_qoq_percent?: number | null;
+  nine_month_total_comprehensive_income?: number | null;
+  nine_month_total_comprehensive_income_yoy_percent?: number | null;
+}
+
 export interface HkFinancialResult {
   market: "hk";
   code: string;
   snapshot?: HkFinancialSnapshot | null;
   fx_rate?: HkFxRate | null;
   official_disclosure?: HkDisclosureMetadata | null;
+  quarterly_update?: HkQuarterlyUpdate | null;
+  quarterly_update_checked_at?: string | null;
+  quarterly_update_error?: string | null;
   candidate_updated_at?: string | null;
   fx_updated_at?: string | null;
   official_checked_at?: string | null;
@@ -414,12 +472,22 @@ export interface FinancialIndicatorItem {
   raw_value?: string | number | null;
   period?: string | null;
   tone?: string;
+  reason?: string | null;
 }
 
 export interface FinancialIndicatorSection {
   title?: string;
   period?: string | null;
+  latest_disclosure_period?: string | null;
+  latest_disclosure_date?: string | null;
+  report_date?: string | null;
+  disclosed_at?: string | null;
+  updated_at?: string | null;
+  supplemental_source?: string | null;
+  supplemental_updated_at?: string | null;
   source?: string | null;
+  verification_status?: string | null;
+  fx_reference?: { rate: number; source: string; observed_at: string } | null;
   items?: FinancialIndicatorItem[];
   quarterly_eps?: FinancialIndicatorItem[];
   notes?: string[];
@@ -528,6 +596,8 @@ export interface InstitutionalHoldingsSnapshot {
 }
 
 export interface ObserveResult {
+  market?: "cn" | "hk";
+  security_kind?: "ordinary_share" | "listed_equity";
   source: string;
   stock: StockItem;
   financial_indicators?: FinancialIndicatorSection | null;
@@ -768,6 +838,7 @@ export interface ResearchMessage {
   source_tier: ResearchSourceTier;
   source_name: string;
   published_at?: string | null;
+  url?: string | null;
   unread: boolean;
   scope_type?: "macro" | "industry" | "region" | "company" | string;
   scope_tags?: string[];
@@ -942,10 +1013,38 @@ export interface AgentToolCall {
 }
 
 export interface AgentEvidenceItem {
+  id?: string;
+  citation_id?: string;
+  document_id?: string;
+  chunk_id?: string;
   title?: string;
   source?: string;
   level?: string;
   summary?: string;
+  excerpt?: string;
+  summary_kind?: "article_summary" | "excerpt" | string;
+  source_tier?: string;
+  published_at?: string | null;
+  url?: string | null;
+  report_period?: string | null;
+  period_end?: string | null;
+  currency?: string | null;
+  unit?: string | null;
+  verification_status?: string | null;
+  audit_status?: string | null;
+  stock_codes?: string[];
+  remote_export_allowed?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgentResearchContext {
+  market: "hk";
+  source_run_id?: string;
+  stock_code: string;
+  snapshot_at_epoch_ms: number;
+  evidence: AgentEvidenceItem[];
+  data_gaps: string[];
+  reused?: boolean;
 }
 
 export interface AgentAnswerSection {
@@ -984,6 +1083,7 @@ export interface AgentResult {
   trend_screen?: Record<string, unknown> | null;
   data?: Record<string, unknown> | null;
   harness?: AgentHarnessMeta | null;
+  research_context?: AgentResearchContext | null;
 }
 
 export interface AgentStreamEvent {
@@ -999,6 +1099,7 @@ export interface AgentStreamEvent {
 }
 
 export interface DataStatus {
+  market?: "cn" | "hk";
   source?: string;
   cache_dir?: string;
   cache_bytes?: number;
@@ -1010,6 +1111,9 @@ export interface DataStatus {
   quote_generated_at?: string | number | null;
   quote_trade_date?: string | null;
   current_trade_date?: string | null;
+  history_updated_at?: string | number | null;
+  financial_updated_at?: string | number | null;
+  industry_options?: string[];
   generated_at?: string | number | null;
   universe_age_hours?: number | null;
   stale?: boolean;
@@ -1094,6 +1198,10 @@ export interface StockRowView {
   industry?: string;
   price?: number;
   quoteTime?: string;
+  quoteCurrency?: string;
+  quoteSource?: string;
+  hkFinancial?: HkFinancialSnapshot;
+  hkFinancialError?: string;
   trendSignal?: TrendIndicatorSignal;
   analysisEndDate?: string;
   change_pct?: number | null;

@@ -3,6 +3,67 @@ import { agentHarnessExecutionLabel, agentHarnessLabel, buildAgentStreamPayload,
 import type { LlmClientConfig, WatchlistItem } from "../types";
 
 describe("buildAgentStreamPayload", () => {
+  it("uses the latest successful assistant run as the authoritative follow-up source", () => {
+    const context = { market: "hk" as const, stock_code: "00700.HK", snapshot_at_epoch_ms: 1794238200000,
+      source_run_id: "origin", evidence: [], data_gaps: [] };
+    const history = [
+      { role: "assistant" as const, content: "first", runId: "origin", result: { research_context: context } },
+      { role: "assistant" as const, content: "reused", runId: "latest-completed", result: { research_context: context } },
+      { role: "assistant" as const, content: "failed", runId: "failed", error: true, result: { research_context: context } },
+    ];
+    const payload = buildAgentStreamPayload({ message: "继续", runId: "next", conversationId: "chat", mode: "quick", market: "hk", watchlist: [], history });
+    expect(payload?.research_context).toMatchObject({ source_run_id: "latest-completed" });
+  });
+
+  it("falls back to a bounded origin run ID and rejects invalid run identities", () => {
+    const context = { market: "hk" as const, stock_code: "00700.HK", snapshot_at_epoch_ms: 1794238200000,
+      source_run_id: "origin", evidence: [], data_gaps: [] };
+    for (const runId of [undefined, "中".repeat(100), "..", " "]) {
+      const payload = buildAgentStreamPayload({ message: "继续", runId: "next", mode: "quick", market: "hk", watchlist: [],
+        history: [{ role: "assistant", content: "first", runId, result: { research_context: context } }] });
+      expect(payload?.research_context).toMatchObject({ source_run_id: "origin" });
+    }
+  });
+  it("carries the last successful HK research stock and evidence into a follow-up", () => {
+    const history = [
+      { role: "user" as const, content: "研究腾讯" },
+      { role: "assistant" as const, content: "腾讯仍需核对现金流。[E1]", result: {
+        research_context: { market: "hk" as const, stock_code: "00700.HK", snapshot_at_epoch_ms: 1794238200000,
+          evidence: [{ id: "E1", document_id: "tencent-filing", title: "腾讯公告", source: "HKEXnews", summary: "业绩公告摘要",
+            stock_codes: ["00700.HK"], published_at: "2026-11-09", url: "https://www.hkexnews.hk/tencent.pdf", remote_export_allowed: true }],
+          data_gaps: ["经营现金流缺失"] }
+      } },
+      { role: "assistant" as const, content: "已取消。" },
+    ];
+    const payload = buildAgentStreamPayload({ message: "它的风险在哪里", runId: "follow-up", mode: "research", market: "hk", watchlist: [], history });
+    expect(payload?.context).toMatchObject({ stock_code: "00700.HK" });
+    expect(payload?.research_context).toMatchObject({ stock_code: "00700.HK", snapshot_at_epoch_ms: 1794238200000,
+      evidence: [expect.objectContaining({ id: "E1", source: "HKEXnews", published_at: "2026-11-09", remote_export_allowed: true })],
+      data_gaps: ["经营现金流缺失"] });
+  });
+
+  it("bounds retained research evidence while preserving source permissions", () => {
+    const evidence = Array.from({ length: 24 }, (_, index) => ({ id: `E${index + 1}`, document_id: `source-${index}`,
+      title: "腾讯公告", summary: "x".repeat(20_000), excerpt: "原始摘录", stock_codes: ["00700.HK"], remote_export_allowed: false }));
+    const history = [{ role: "assistant" as const, content: "研究结果", result: { research_context: {
+      market: "hk" as const, stock_code: "00700.HK", snapshot_at_epoch_ms: 1794238200000, evidence, data_gaps: [] } } }];
+    const payload = buildAgentStreamPayload({ message: "继续研究", runId: "bounded-follow-up", mode: "quick", market: "hk", watchlist: [], history });
+    const context = payload?.research_context as { evidence: Array<{summary:string;remote_export_allowed:boolean}> };
+    expect(context?.evidence).toHaveLength(16);
+    expect(context.evidence[0].summary.length).toBeLessThanOrEqual(1600);
+    expect(context.evidence.every((item) => item.remote_export_allowed === false)).toBe(true);
+  });
+  it("preserves an explicit market scope for agent requests", () => {
+    const payload = buildAgentStreamPayload({
+      message: "研究港股",
+      runId: "run-hk",
+      mode: "quick",
+      watchlist: [],
+      market: "hk",
+    });
+
+    expect(payload).toMatchObject({ message: "研究港股", run_id: "run-hk", market: "hk" });
+  });
   it("returns null for blank messages so the Agent cannot send empty requests", () => {
     expect(buildAgentStreamPayload({
       message: "   ",

@@ -23,6 +23,7 @@ import { FINANCIAL_RATE_UNITS, STOCK_RATE_UNITS, METRIC_CONTRACT_VERSION, conver
 import type { RateUnit } from "./rateUnits";
 import { parseMarketCapabilities } from "./marketCapabilities";
 import { parseSecurityId } from "./marketDomain";
+import { networkProxyPayload, readNetworkProxySettings } from "./networkProxy";
 import type { HkObserveResult, ObserveResult } from "../types";
 import {
   jsonByteLength,
@@ -142,23 +143,34 @@ export const TAURI_GET_ROUTES: Record<string, TauriRouteHandler> = {
     return capabilities;
   },
   "/api/hk/market-status": async ({ invoke }) => invoke("api_hk_market_status"),
+  "/api/hk/network-probe": async ({ invoke, parsed }) => invoke("api_hk_network_probe", {
+    payload: withHkNetworkOptions({ code: parsed.searchParams.get("code") || "00700.HK" }),
+  }),
   "/api/hk/stock-search": async ({ invoke, parsed }) => invoke("api_hk_stock_search", {
     payload: { query: parsed.searchParams.get("q") || "", limit: Number(parsed.searchParams.get("limit") || 20) },
   }),
   "/api/hk/financial-status": async ({ invoke, parsed }) => invoke("api_hk_financial_status", { payload: { code: parsed.searchParams.get("code") || "" } }),
   "/api/rag-pack/status": async ({ invoke }) => invoke("api_rag_pack_status"),
   "/api/research/overview": async ({ invoke, parsed }) => invoke("api_research_overview", {
-    payload: { stock_code: parsed.searchParams.get("stock_code") || "" },
+    payload: {
+      ...(parsed.searchParams.get("market") === "hk" ? { market: "hk" } : {}),
+      stock_code: parsed.searchParams.get("stock_code") || "",
+    },
   }),
   "/api/research/messages": async ({ invoke, parsed }) => invoke("api_research_messages", {
     payload: {
+      ...(parsed.searchParams.get("market") === "hk" ? { market: "hk" } : {}),
       stock_code: parsed.searchParams.get("stock_code") || "",
       unread_only: parsed.searchParams.get("unread_only") === "true",
       limit: Number(parsed.searchParams.get("limit") || 100),
     },
   }),
-  "/api/research/threads": async ({ invoke }) => invoke("api_research_threads"),
-  "/api/research/index-status": async ({ invoke }) => invoke("api_research_index_status"),
+  "/api/research/threads": async ({ invoke, parsed }) => parsed.searchParams.get("market") === "hk"
+    ? invoke("api_research_threads", { payload: { market: "hk" } })
+    : invoke("api_research_threads"),
+  "/api/research/index-status": async ({ invoke, parsed }) => parsed.searchParams.get("market") === "hk"
+    ? invoke("api_research_index_status", { market: "hk" })
+    : invoke("api_research_index_status"),
   "/api/agent/prompt-overlays": async ({ invoke }) => invoke("api_agent_prompt_overlays"),
   "/api/evolution/settings": async ({ invoke }) => invoke("api_evolution_settings"),
   "/api/evolution/profile": async ({ invoke }) => invoke("api_evolution_profile"),
@@ -361,7 +373,7 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
     prefix: "/api/hk/observe/",
     handler: async ({ invoke, path, parsed }) => {
       const result = await invoke<HkObserveResult>("api_hk_observe", {
-        payload: withAndroidNetworkOptions({
+        payload: withHkNetworkOptions({
           code: decodeURIComponent(path.slice("/api/hk/observe/".length)),
           data_policy: parsed.searchParams.get("data_policy") || "cache_only",
           ...(parsed.searchParams.has("request_id")
@@ -369,10 +381,11 @@ export const TAURI_GET_PREFIX_ROUTES: { prefix: string; handler: TauriRouteHandl
             : {}),
         }),
       });
+      const listedEquity = result.security.classification_status === "exchange_listed_equity";
       if (result.market !== "hk"
-        || result.security.classification_status !== "verified_ordinary_share"
-        || !parseSecurityId("hk", result.security.code, "ordinary_share")) {
-        throw new Error("港股普通股分类或证券身份未核验，不能进入观察。");
+        || !["exchange_listed_equity", "verified_ordinary_share", "user_confirmed_ordinary_share"].includes(result.security.classification_status)
+        || !parseSecurityId("hk", result.security.code, listedEquity ? "listed_equity" : "ordinary_share")) {
+        throw new Error("港股证券的交易所上市分类或证券身份不可用。");
       }
       return result;
     },
@@ -423,7 +436,10 @@ async function invokeLocalData(invoke: InvokeFn, command: string, payload: unkno
   catch (error) { throw new Error(formatLocalDataError(error), { cause: error }); }
 }
 async function invokeWithFinancialSnapshot(invoke: InvokeFn, command: string, payload: unknown): Promise<unknown> {
-  const base: Record<string, unknown> = { data_policy: "cache_only", ...asRecord(payload) };
+  const basePayload: Record<string, unknown> = { data_policy: "cache_only", ...asRecord(payload) };
+  const base: Record<string, unknown> = basePayload.market === "hk"
+    ? withHkNetworkOptions(basePayload)
+    : basePayload;
   const mobileRuntime = isMobileTauriRuntime();
   const perfEnabled = command === "api_screen" && perfDiagnosticsAreEnabled(mobileRuntime);
   if (perfEnabled) base.perf_diagnostics = true;
@@ -524,14 +540,16 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/news-rag": async ({ invoke, payload }) => isMobileTauriRuntime()
     ? withTimeout(analyzeMobileStockNews(invoke, asRecord(payload)), MOBILE_NEWS_RAG_TIMEOUT_MS, `移动端消息分析超过 ${Math.round(MOBILE_NEWS_RAG_TIMEOUT_MS / 1000)} 秒未返回，已中止等待。`)
     : invoke("api_news_rag", { payload }),
-  "/api/research/refresh": async ({ invoke, payload }) => invoke("api_research_refresh", { payload }),
+  "/api/research/refresh": async ({ invoke, payload }) => invoke("api_research_refresh", {
+    payload: asRecord(payload).market === "hk" ? withHkNetworkOptions(asRecord(payload)) : payload,
+  }),
   "/api/research/mark-read": async ({ invoke, payload }) => invoke("api_research_mark_read", { payload }),
   "/api/research/query": async ({ invoke, payload }) => invoke("api_research_query", { payload }),
   "/api/research/threads/create": async ({ invoke, payload }) => invoke("api_research_thread_create", { payload }),
   "/api/research/threads/detail": async ({ invoke, payload }) => invoke("api_research_thread_detail", { payload }),
   "/api/research/threads/delete": async ({ invoke, payload }) => invoke("api_research_thread_delete", { payload }),
-  "/api/research/rebuild-index": async ({ invoke }) => invoke("api_research_rebuild_index"),
-  "/api/research/rebuild-embeddings": async ({ invoke }) => invoke("api_research_rebuild_embeddings"),
+  "/api/research/rebuild-index": async ({ invoke, payload }) => invoke("api_research_rebuild_index", { payload: asRecord(payload) }),
+  "/api/research/rebuild-embeddings": async ({ invoke, payload }) => invoke("api_research_rebuild_embeddings", { payload: asRecord(payload) }),
   "/api/research/import-url": async ({ invoke, payload }) => invoke("api_research_import_url", { payload }),
   "/api/research/import-pdf": async ({ invoke, payload }) => invoke("api_research_import_pdf", { payload }),
   "/api/research/pack/export": async ({ invoke, payload }) => invoke("api_research_pack_export", { payload }),
@@ -543,8 +561,11 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/upstream-rag/build": async ({ invoke, payload }) => invoke("api_upstream_rag_build", { payload }),
   "/api/upstream-rag/transfer/start": async ({ invoke, payload }) => invoke("api_upstream_rag_transfer_start", { payload }),
   "/api/data-sources/refresh-universe": async ({ invoke, payload }) => refreshTauriMarketData(invoke, asRecord(payload)),
-  "/api/hk/refresh": async ({ invoke }) => invoke("api_hk_market_refresh"),
-  "/api/hk/financial-refresh": async ({ invoke, payload }) => invoke("api_hk_financial_refresh", { payload }),
+  "/api/hk/refresh": async ({ invoke }) => invoke("api_hk_market_refresh", {
+    payload: withHkNetworkOptions({}),
+  }),
+  "/api/hk/confirm-ordinary-share": async ({ invoke, payload }) => invoke("api_hk_confirm_ordinary_share", { payload }),
+  "/api/hk/financial-refresh": async ({ invoke, payload }) => invoke("api_hk_financial_refresh", { payload: withHkNetworkOptions(asRecord(payload)) }),
   "/api/data-sources/prune-cache": async ({ invoke }) => {
     const result = await invoke("api_market_clear_cache");
     return result;
@@ -553,10 +574,10 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/upstream-rag/mobile/detail": async ({ invoke, payload }) => invoke("core_upstream_rag_detail", { payload }),
   "/api/upstream-rag/mobile/rollback": async ({ invoke, payload }) => invoke("core_upstream_rag_rollback", { payload }),
   "/api/llm/models": async ({ invoke, payload }) => invoke("api_llm_models", {
-    payload: withAndroidNetworkOptions(asRecord(payload)),
+    payload: withAndroidShortSourceOption(asRecord(payload)),
   }),
   "/api/llm/test": async ({ invoke, payload }) => invoke("api_llm_test", {
-    payload: withAndroidNetworkOptions(asRecord(payload)),
+    payload: withAndroidShortSourceOption(asRecord(payload)),
   }),
   "/api/agent": async ({ invoke, payload }) => invokeAgent(invoke, payload),
   "/api/agent/stream": async ({ invoke, payload }) => invokeAgent(invoke, payload),
@@ -584,6 +605,9 @@ export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
   "/api/agent/runs/delete-conversation": async ({ invoke, payload }) => invoke("api_agent_run_delete_conversation", { payload }),
 };
 export function buildTauriAgentPayload(request: Record<string, unknown>): Record<string, unknown> {
+  if (request.market !== undefined && request.market !== "cn" && request.market !== "hk") {
+    throw new Error("研究市场必须为 cn 或 hk");
+  }
   return {
     message: String(request.message || ""),
     run_id: String(request.run_id || `react-agent-${Date.now()}`),
@@ -591,6 +615,9 @@ export function buildTauriAgentPayload(request: Record<string, unknown>): Record
       ? { conversation_id: request.conversation_id.trim() }
       : {}),
     mode: String(request.mode || "quick"),
+    ...(request.market !== undefined ? { market: request.market } : {}),
+    ...(request.research_context && typeof request.research_context === "object" && !Array.isArray(request.research_context)
+      ? { research_context: request.research_context } : {}),
     context: request.context,
     platform: request.platform,
     network: request.network,
@@ -646,6 +673,31 @@ function buildAndroidNetworkOptions(): Record<string, unknown> {
     proxy_url: localStorage.getItem("stock-optimizer-proxy-url") || "",
     android_short_sources: isMobileTauriRuntime(),
   };
+}
+
+function buildNetworkProxyOptions(): Record<string, string> {
+  const storage = typeof window !== "undefined" ? window.localStorage : typeof localStorage !== "undefined" ? localStorage : undefined;
+  if (!storage) {
+    return networkProxyPayload({ mode: "system", url: "" });
+  }
+  return networkProxyPayload(readNetworkProxySettings(storage));
+}
+
+export function withNetworkProxyOptions<T extends Record<string, unknown>>(payload: T): T & Record<string, string> {
+  if (!isTauriRuntime()) return payload as T & Record<string, string>;
+  return { ...payload, ...buildNetworkProxyOptions() };
+}
+
+function withAndroidShortSourceOption<T extends Record<string, unknown>>(payload: T): T & Record<string, unknown> {
+  if (!isMobileTauriRuntime()) return payload;
+  return { ...payload, android_short_sources: true };
+}
+
+function withHkNetworkOptions<T extends Record<string, unknown>>(payload: T): T & Record<string, unknown> {
+  const withProxy = withNetworkProxyOptions(payload);
+  return isMobileTauriRuntime()
+    ? { ...withProxy, android_short_sources: true }
+    : withProxy;
 }
 
 function withAndroidNetworkOptions<T extends Record<string, unknown>>(payload: T): T & Record<string, unknown> {
@@ -831,7 +883,7 @@ export async function validateTauriMarketCache(
   if (!Object.keys(data).length) throw new Error("本地行情缓存回传为空，无法校验。");
   const summary = asRecord(await invoke("core_validate_data_source", { payload: data }));
   const stockCount = Number(summary.stock_count || record.stock_count || 0);
-  const historyCount = Number(summary.history_count || 0);
+  const historyCount = Number(summary.history_symbol_count ?? summary.history_count ?? 0);
   log?.(`本地行情缓存校验通过：${stockCount} 只股票，历史序列 ${historyCount} 组，落盘 ${record.bytes || 0} B。`, "success");
   return {
     ok: true,
@@ -865,6 +917,8 @@ function formatRustMarketRefreshLog(event: Record<string, unknown>): string {
   const data = asRecord(event.payload);
   if (stage === "command_received") return `Rust 命令已进入：种子 ${data.seed_stock_count || 0} 只，候选上限 ${data.max_candidates || "-"}，批次 ${Number(data.batch_start || 0) + 1} 起。`;
   if (stage === "candidate_ready") return `Rust 候选池已生成：${data.candidate_count || 0} 只，本地种子 ${data.seed_candidate_count || 0} 只。`;
+  if (stage === "cn_reference_start") return "正在更新 A 股上市目录与最新公开财报。";
+  if (stage === "cn_reference_complete") return data.error ? String(data.error) : `A 股目录 ${data.directory_count || 0} 只；已获取 ${data.financial_fetched || 0}/${data.financial_requested || 0} 只证券的最新财报，报告期 ${data.report_period || "待确认"}。`;
   if (stage === "batch_window") return `Rust 批次窗口：${Number(data.batch_start || 0) + 1}-${data.batch_end || "?"}/${data.total_batches || "?"}，单批超时 ${data.batch_timeout_seconds || "?"} 秒。`;
   if (stage === "batch_response") return `Rust 批次 ${data.batch_index || "?"} 已返回：HTTP ${data.status || "-"}，${data.byte_len || 0} B，解析 ${data.parsed_count || 0} 只，耗时 ${data.elapsed_ms || "?"} ms。`;
   if (stage === "batch_error") return `Rust 批次 ${data.batch_index || "?"} 失败：${data.error || "unknown"}。`;
@@ -1457,8 +1511,8 @@ export async function openExternalUrl(rawUrl: string): Promise<void> {
     try {
       await invoke("open_external_url", { url });
       return;
-    } catch (error) {
-      console.warn("open_external_url failed, falling back to window.open", error);
+    } catch {
+      throw new Error("系统浏览器未能打开，请复制链接后打开。");
     }
   }
   window.open(url, "_blank", "noopener,noreferrer");

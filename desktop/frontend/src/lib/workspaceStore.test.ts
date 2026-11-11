@@ -11,6 +11,26 @@ function setup(load: Promise<WorkspaceSnapshot> = Promise.resolve(empty())) {
   return { store: createWorkspaceStore(transport), transport, saved: () => saved };
 }
 describe("durable workspace", () => {
+  it("saves independent HK and CN backtest sources without blocking later drafts", async () => {
+    const { store, transport, saved } = setup();
+    await store.initialize();
+    store.set("app.backtest.source", "criteria");
+    store.set("hk.backtest.source", "watchlist");
+    store.set("news.question", "随后编辑的消息草稿");
+    await store.flush();
+    expect(store.getStatus().state).toBe("saved");
+    const reopened = createWorkspaceStore({ ...transport, load: async () => saved() });
+    await reopened.initialize();
+    expect(reopened.get("app.backtest.source", "")).toBe("criteria");
+    expect(reopened.get("hk.backtest.source", "")).toBe("watchlist");
+    expect(reopened.get("news.question", "")).toBe("随后编辑的消息草稿");
+    reopened.set("hk.backtest.source", "criteria");
+    reopened.set("hk.news.question", "港股消息草稿");
+    await reopened.flush();
+    expect(reopened.getStatus().state).toBe("saved");
+    expect(saved().values["hk.news.question"]).toBe("港股消息草稿");
+    store.dispose(); reopened.dispose();
+  });
   it("restores offline without overwriting edits made during hydration", async () => {
     const loading = deferred<WorkspaceSnapshot>(); const { store, transport } = setup(loading.promise);
     const init = store.initialize(); store.set("news.question", "typed while loading");

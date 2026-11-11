@@ -3,6 +3,12 @@ import { isMarketCapability, marketCapabilityLabel, marketCapabilityStatusLabel,
 import fixture from "../../../src-tauri/testdata/market-domain-contract.json";
 
 describe("market domain wire contract", () => {
+  it("validates optional quote currency scope without counting it as missing data", () => {
+    const capability = { ...fixture.capability, quote_scope: { currency: "HKD", excluded_count: 24 } };
+    expect(isMarketCapability(capability)).toBe(true);
+    expect(isMarketCapability({ ...capability, quote_scope: { currency: "HKD", excluded_count: -1 } })).toBe(false);
+    expect(isMarketCapability({ ...capability, quote_scope: { currency: "Hong Kong", excluded_count: 24 } })).toBe(false);
+  });
   it("uses one market capability label vocabulary across panels", () => {
     expect(marketCapabilityLabel("security_directory")).toBe("证券目录");
     expect(marketCapabilityLabel("backtest")).toBe("回测");
@@ -89,5 +95,14 @@ describe("market domain wire contract", () => {
     });
     expect(parseSecurityId("hk", "700", "ordinary_share")).toBeNull();
     expect(parseSecurityId("hk", "00700.HK", "ordinary_share")).toBeNull();
+  });
+
+  it("represents an HKEX equity listing without claiming its ordinary or preference share class", () => {
+    expect(parseSecurityId("hk", "00700", "listed_equity")).toEqual({
+      market: "hk",
+      code: "00700",
+      kind: "listed_equity",
+    });
+    expect(parseSecurityId("cn", "600000", "listed_equity")).toBeNull();
   });
 });

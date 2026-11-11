@@ -1,6 +1,6 @@
 export type MarketId = "cn" | "hk";
 
-export type SecurityKind = "ordinary_share";
+export type SecurityKind = "ordinary_share" | "listed_equity";
 
 export interface SecurityId {
   market: MarketId;
@@ -71,6 +71,11 @@ export const CAPABILITY_IDS = {
 
 export type CapabilityId = keyof typeof CAPABILITY_IDS;
 
+export interface QuoteCoverageScope {
+  currency: CurrencyCode;
+  excluded_count: number;
+}
+
 export interface MarketCapability {
   market: MarketId;
   id: CapabilityId;
@@ -79,6 +84,7 @@ export interface MarketCapability {
   coverage: CoverageSummary | null;
   /** Optional for compatibility with older native capability responses. */
   sources?: CapabilitySourceEvidence[];
+  quote_scope?: QuoteCoverageScope | null;
 }
 
 export function marketCapabilityStatusLabel(
@@ -165,6 +171,13 @@ function isCapabilitySourceEvidence(value: unknown): value is CapabilitySourceEv
   );
 }
 
+function isQuoteCoverageScope(value: unknown): value is QuoteCoverageScope {
+  return isRecord(value)
+    && typeof value.currency === "string"
+    && /^[A-Z]{3}$/.test(value.currency)
+    && isNonnegativeSafeInteger(value.excluded_count);
+}
+
 export function isMarketCapability(value: unknown): value is MarketCapability {
   return (
     isRecord(value) &&
@@ -173,6 +186,7 @@ export function isMarketCapability(value: unknown): value is MarketCapability {
     isCapabilityStatus(value.status) &&
     isOptionalString(value.reason) &&
     (value.coverage === null || isCoverageSummary(value.coverage)) &&
+    (!Object.hasOwn(value, "quote_scope") || value.quote_scope === null || isQuoteCoverageScope(value.quote_scope)) &&
     (!Object.hasOwn(value, "sources") || (
       Array.isArray(value.sources) &&
       value.sources.every((source) => isCapabilitySourceEvidence(source) && source.market === value.market)
@@ -186,7 +200,10 @@ export function parseSecurityId(
   kind: SecurityKind,
 ): SecurityId | null {
   const pattern = market === "hk" ? /^\d{5}$/ : /^\d{6}$/;
-  if (!pattern.test(code) || kind !== "ordinary_share") {
+  const kindMatchesMarket = market === "hk"
+    ? kind === "ordinary_share" || kind === "listed_equity"
+    : kind === "ordinary_share";
+  if (!pattern.test(code) || !kindMatchesMarket) {
     return null;
   }
 

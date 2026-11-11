@@ -23,6 +23,24 @@ import {
   parseUpstreamImportDescriptor,
   sanitizePersistedLlmSettings,
 } from "./contracts";
+
+describe("HK backtest filters", () => {
+  it("does not impose A-share deducted-profit or institutional-flow rules on HK data", () => {
+    const payload = buildBacktestRequest({
+      market: "hk", source: "criteria", criteria: {
+        includeSt: false, requireInstitutionBuyRatio: true, minRoe: "", maxPe: "", maxPb: "", minMcap: "",
+        industry: "半导体", marketScope: "创业板", resultLimit: 10, sortBy: "score", sortDir: "desc", scoreProfile: "quality",
+      }, watchlist: [], startDate: "2020-01-01", endDate: "2026-11-07", topN: 10,
+      rebalanceFrequency: "monthly", transactionCostBps: 10, benchmark: "candidate_equal_weight",
+    });
+    const filters = payload.criteria as Record<string, unknown>;
+    expect(filters.industry).toBe("半导体");
+    expect(filters).not.toHaveProperty("market_scope");
+    expect(filters).not.toHaveProperty("min_deducted_net_profit_billion");
+    expect(filters).not.toHaveProperty("min_deducted_net_profit_growth_rate");
+    expect(filters.require_institution_buy_ratio_gt_sell_ratio).toBe(false);
+  });
+});
 import type { FilterCriteria } from "../components/FilterBar";
 import type { LlmSettings } from "../types";
 
@@ -440,6 +458,11 @@ describe("contract payload builders", () => {
       seed_codes: ["300750.SZ"],
       days: 30,
       max_items: 24,
+    });
+    expect(buildNewsRagRequest("00700.HK", 30, undefined, undefined, true, "hk")).toMatchObject({
+      market: "hk",
+      code: "00700.HK",
+      seed_codes: ["00700.HK"],
     });
   });
 });

@@ -15,6 +15,20 @@ describe("Agent Tauri routes", () => {
     vi.resetModules();
   });
 
+  it("keeps HK market and the owned research snapshot across the actual native adapter", async () => {
+    const { buildAgentStreamPayload } = await import("./agent");
+    const { TAURI_POST_ROUTES } = await import("./tauri");
+    const payload = buildAgentStreamPayload({message:"它的风险在哪里",runId:"followup-run",conversationId:"hk-chat",mode:"research",market:"hk",watchlist:[],
+      history:[{role:"assistant",content:"腾讯研究结果。[E1]",runId:"source-run",result:{research_context:{market:"hk",stock_code:"00700.HK",snapshot_at_epoch_ms:1794238200000,
+        data_gaps:["经营现金流缺失"],evidence:[{id:"E1",document_id:"tencent-filing",title:"腾讯公告",source:"HKEXnews",summary:"公告摘要",published_at:"2026-11-09",url:"https://www.hkexnews.hk/tencent.pdf",stock_codes:["00700.HK"],remote_export_allowed:false}]}}}]});
+    const packets: Array<{command:string;args?:Record<string,unknown>}> = [];
+    const invoke: InvokeFn = async <T,>(command:string,args?:Record<string,unknown>) => {packets.push({command,args});return {} as T;};
+    await TAURI_POST_ROUTES["/api/agent/stream"]({invoke,path:"/api/agent/stream",parsed:new URL("http://tauri.localhost/api/agent/stream"),payload});
+    expect(packets).toHaveLength(1);
+    expect(packets[0]).toMatchObject({command:"api_agent_stream",args:{payload:{market:"hk",conversation_id:"hk-chat",context:{stock_code:"00700.HK"},
+      research_context:{source_run_id:"source-run",stock_code:"00700.HK",evidence:[expect.objectContaining({document_id:"tencent-filing",published_at:"2026-11-09",remote_export_allowed:false})]}}}});
+  });
+
   it("forwards model configuration and bounded history to the native harness", async () => {
     const { TAURI_POST_ROUTES } = await import("./tauri");
     const invokeMock = vi.fn(async (): Promise<unknown> => ({}));

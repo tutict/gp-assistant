@@ -38,6 +38,8 @@ function validCoreCriteria(value: unknown): boolean {
 }
 export function workspaceValue(key: string, value: unknown): unknown {
   if (bytes(key) > 280 || /[\u0000-\u001f]/.test(key)) throw new Error("Invalid workspace key");
+  if (key === "hk.backtest.source") key = "app.backtest.source";
+  else if (/^hk\.(?:news\.|agent\.|backtest\.)/.test(key)) key = key.slice(3);
   let result: unknown;
   if (key.startsWith("agent.draft:") && key.length > 12) result = value === null ? null : text(value, 32000);
   else switch (key) {

@@ -40,8 +40,20 @@ export function formatLocalDataError(error: unknown): string {
   try {
     const parsed = JSON.parse(text);
     if (parsed.code === "LOCAL_DATA_MISSING") {
+      const missing = Array.isArray(parsed.missing) ? parsed.missing as Record<string, unknown>[] : [];
+      if (String(parsed.operation || "").startsWith("hk_") && missing.some((item) => item.kind === "hk_quotes")) {
+        return "港股行情缓存为空。请在「选股」页点击港股目录上的“刷新目录与行情”，批量获取可用 HKD 行情后重试。";
+      }
       const date = (value: unknown) => String(value ?? "未知").replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
-      const details = (Array.isArray(parsed.missing) ? parsed.missing : []).slice(0, 5).map((item: Record<string, unknown>) => {
+      if (String(parsed.operation || "").startsWith("hk_") && missing.some(item => item.kind === "history")) {
+        const details = missing.slice(0, 5).map(item => [item.code,
+          item.reason || "所选港股历史区间尚未补齐",
+          item.as_of ? `日线截至 ${date(item.as_of)}` : "暂无日线",
+          item.start_date && item.end_date ? `${date(item.start_date)} 至 ${date(item.end_date)}` : "",
+        ].filter(Boolean).join(" · ")).join("；");
+        return `港股日线准备未完成（${parsed.missing_count ?? missing.length} 项）：${details}。请在本页重新运行以补齐日线；区间过长时可缩短日期。`;
+      }
+      const details = missing.slice(0, 5).map((item: Record<string, unknown>) => {
         const history = item.history_behind_quote === true
           ? `日线截至 ${date(item.as_of)}，行情截至 ${date(item.quote_as_of)}，日期落后`
           : item.required_bars != null ? "日线 " + (item.available_bars ?? 0) + "/" + item.required_bars : item.reason;

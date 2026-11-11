@@ -8,6 +8,7 @@ import { IconButton } from "../ui/IconButton";
 import { Sheet } from "../ui/Sheet";
 import { BackupPanel } from "./BackupPanel";
 import { ReliabilityPanel } from "./ReliabilityPanel";
+import { NetworkProxyPanel } from "./NetworkProxyPanel";
 import "../../styles/stock-research.css";
 
 const LazyStockResearchPanel = lazy(() => import("./StockResearchPanel").then((module) => ({ default: module.StockResearchPanel })));
@@ -153,6 +154,9 @@ export function SettingsSheet({ open, onClose, settings, llmSettings, onLlmSetti
         ) : null}
         <section className="settings-group" aria-labelledby={`${groupId}-tools`}>
           <h3 className="settings-group-heading" id={`${groupId}-tools`}>本机工具</h3>
+          <SettingsDisclosure title="网络代理" description="配置并测试港股免费数据源连接" icon={<Activity size={18} />}>
+            <NetworkProxyPanel />
+          </SettingsDisclosure>
           <SettingsDisclosure title="加密备份" description="备份与恢复本机研究数据" icon={<ShieldCheck size={18} />}>
             <BackupPanel />
           </SettingsDisclosure>
