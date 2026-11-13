@@ -205,7 +205,10 @@ pub(crate) fn merge_model_response(
     let reply = limit_chars(raw_reply, model_reply_limit);
     let sections = sanitized_sections(model_response.get("answer_sections"));
     if hk_analysis {
-        crate::hk_agent_research::validate_model_analysis(&json!({"reply":reply.clone(),"answer_sections":sections.clone().unwrap_or_default()}),profile_id)?;
+        crate::hk_agent_research::validate_model_analysis(
+            &json!({"reply":reply.clone(),"answer_sections":sections.clone().unwrap_or_default()}),
+            profile_id,
+        )?;
     }
     validate_model_evidence(
         &json!({

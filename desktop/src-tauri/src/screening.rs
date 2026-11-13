@@ -1,7 +1,7 @@
-#[path = "screening_financial_overlay.rs"]
-mod financial_overlay;
 #[path = "cn_backtest_history.rs"]
 mod cn_backtest_history;
+#[path = "screening_financial_overlay.rs"]
+mod financial_overlay;
 #[path = "hk_research_history.rs"]
 mod hk_history;
 #[path = "local_data_policy.rs"]
@@ -151,28 +151,52 @@ pub(crate) fn adaptive_local_coverage(
 }
 
 pub(crate) fn adaptive_screen_candidate_gaps(coverage: &[Value]) -> Result<Vec<Value>, String> {
-    let benchmarks=crate::market::adaptive_benchmark_codes();
+    let benchmarks = crate::market::adaptive_benchmark_codes();
     let benchmark_coverage=benchmarks.iter().map(|code| {
         coverage.iter().find(|item|item.get("code").and_then(Value::as_str)==Some(*code)).cloned()
             .unwrap_or_else(||json!({"code":code,"kind":"history","sufficient":false,"available_bars":0,"required_bars":MIN_ADAPTIVE_SCREEN_HISTORY_BARS}))
     }).collect::<Vec<_>>();
     local_data::require_coverage("adaptive_screen", &benchmark_coverage)?;
-    let is_current_short_history=|item:&Value| {
-        let available=item.get("available_bars").and_then(Value::as_u64).unwrap_or(0);
-        let required=item.get("required_bars").and_then(Value::as_u64).unwrap_or(MIN_ADAPTIVE_SCREEN_HISTORY_BARS as u64);
-        available>0 && available<required
-            && item.get("as_of").and_then(Value::as_str).zip(item.get("end_date").and_then(Value::as_str))
-                .is_some_and(|(as_of,end)|as_of==end)
+    let is_current_short_history = |item: &Value| {
+        let available = item
+            .get("available_bars")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let required = item
+            .get("required_bars")
+            .and_then(Value::as_u64)
+            .unwrap_or(MIN_ADAPTIVE_SCREEN_HISTORY_BARS as u64);
+        available > 0
+            && available < required
+            && item
+                .get("as_of")
+                .and_then(Value::as_str)
+                .zip(item.get("end_date").and_then(Value::as_str))
+                .is_some_and(|(as_of, end)| as_of == end)
     };
-    let blocking=coverage.iter().filter(|item|item.get("sufficient").and_then(Value::as_bool)!=Some(true)
-        && !is_current_short_history(item)).cloned().collect::<Vec<_>>();
+    let blocking = coverage
+        .iter()
+        .filter(|item| {
+            item.get("sufficient").and_then(Value::as_bool) != Some(true)
+                && !is_current_short_history(item)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     local_data::require_coverage("adaptive_screen", &blocking)?;
     // The core omits candidates without a complete technical window and still
     // requires at least 60% of the initial pool. Keep those coverage checks there;
     // a newly listed stock must not make an otherwise usable market request fail.
-    Ok(coverage.iter().filter(|item|is_current_short_history(item)
-        && !item.get("code").and_then(Value::as_str).is_some_and(|code|benchmarks.contains(&code)))
-        .cloned().collect())
+    Ok(coverage
+        .iter()
+        .filter(|item| {
+            is_current_short_history(item)
+                && !item
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .is_some_and(|code| benchmarks.contains(&code))
+        })
+        .cloned()
+        .collect())
 }
 pub(crate) fn local_metadata(
     data: &gp_core::CoreDataSet,
@@ -338,11 +362,16 @@ async fn api_hk_screen(app: &tauri::AppHandle, payload: Value) -> Result<Value, 
         ));
     }
     let provider_payload = &payload;
-    let completed =
-        hydrate_hk_screen_candidates(cache, data, HkCandidateScreenRequest::Screen(&request), Duration::from_secs(HK_SCREEN_FINANCIAL_PREPARE_TIMEOUT_SECS), |cache, codes, deadline| async move {
+    let completed = hydrate_hk_screen_candidates(
+        cache,
+        data,
+        HkCandidateScreenRequest::Screen(&request),
+        Duration::from_secs(HK_SCREEN_FINANCIAL_PREPARE_TIMEOUT_SECS),
+        |cache, codes, deadline| async move {
             hydrate_hk_screen_financials(app, provider_payload, &cache, &codes, deadline).await
-        })
-        .await?;
+        },
+    )
+    .await?;
     let final_cache = completed.cache;
     let data = completed.data;
     let mut result = completed.result;
@@ -385,36 +414,64 @@ const HK_SCREEN_FINANCIAL_PREPARE_TIMEOUT_SECS: u64 = 30;
 const HK_SCREEN_FINANCIAL_CONCURRENCY: usize = 6;
 const HK_SCREEN_FINANCIAL_DEFERRED: &str = "财务预载达到限时，点击刷新财务可重试。";
 
-fn mark_hk_financial_preparation_errors(cache: &mut crate::hk_market::HkMarketCache, codes: &[String], reason: &str) {
+fn mark_hk_financial_preparation_errors(
+    cache: &mut crate::hk_market::HkMarketCache,
+    codes: &[String],
+    reason: &str,
+) {
     for code in codes {
-        cache.financial_errors.entry(code.clone()).or_insert_with(|| reason.to_string());
+        cache
+            .financial_errors
+            .entry(code.clone())
+            .or_insert_with(|| reason.to_string());
     }
 }
 
-fn preserve_hk_prepared_financials(previous: &crate::hk_market::HkMarketCache, latest: &mut crate::hk_market::HkMarketCache) {
+fn preserve_hk_prepared_financials(
+    previous: &crate::hk_market::HkMarketCache,
+    latest: &mut crate::hk_market::HkMarketCache,
+) {
     let fetched_time = |snapshot: &crate::hk_market::HkFinancialSnapshot| {
-        snapshot.candidate_fetched_at.parse::<u128>().ok()
-            .or_else(|| crate::market::parse_cache_datetime_epoch_ms(&snapshot.candidate_fetched_at)).unwrap_or(0)
+        snapshot
+            .candidate_fetched_at
+            .parse::<u128>()
+            .ok()
+            .or_else(|| {
+                crate::market::parse_cache_datetime_epoch_ms(&snapshot.candidate_fetched_at)
+            })
+            .unwrap_or(0)
     };
     for (code, snapshot) in &previous.financials {
-        if snapshot.code != *code { continue; }
+        if snapshot.code != *code {
+            continue;
+        }
         let previous_time = fetched_time(snapshot);
-        let keep = latest.financials.get(code).is_none_or(|current| {
-            previous_time > fetched_time(current)
-        });
+        let keep = latest
+            .financials
+            .get(code)
+            .is_none_or(|current| previous_time > fetched_time(current));
         if keep {
             latest.financials.insert(code.clone(), snapshot.clone());
-            if let Some(error) = previous.financial_errors.get(code) { latest.financial_errors.insert(code.clone(), error.clone()); }
-            else { latest.financial_errors.remove(code); }
+            if let Some(error) = previous.financial_errors.get(code) {
+                latest.financial_errors.insert(code.clone(), error.clone());
+            } else {
+                latest.financial_errors.remove(code);
+            }
         }
     }
     for (code, error) in &previous.financial_errors {
         let keep_error = latest.financials.get(code).is_none_or(|current| {
-            previous.financials.get(code).is_some_and(|old| {
-                fetched_time(current) <= fetched_time(old)
-            })
+            previous
+                .financials
+                .get(code)
+                .is_some_and(|old| fetched_time(current) <= fetched_time(old))
         });
-        if keep_error { latest.financial_errors.entry(code.clone()).or_insert_with(|| error.clone()); }
+        if keep_error {
+            latest
+                .financial_errors
+                .entry(code.clone())
+                .or_insert_with(|| error.clone());
+        }
     }
 }
 
@@ -434,9 +491,14 @@ impl<'a> HkCandidateScreenRequest<'a> {
 
     fn calculate(self, data: &gp_core::CoreDataSet) -> Result<Value, String> {
         match self {
-            Self::Screen(request) => serde_json::to_value(gp_core::screen_stocks(&data.stocks, request)),
-            Self::Grouped(request) => serde_json::to_value(gp_core::sector_screen_stocks(&data.stocks, request)),
-        }.map_err(|error| error.to_string())
+            Self::Screen(request) => {
+                serde_json::to_value(gp_core::screen_stocks(&data.stocks, request))
+            }
+            Self::Grouped(request) => {
+                serde_json::to_value(gp_core::sector_screen_stocks(&data.stocks, request))
+            }
+        }
+        .map_err(|error| error.to_string())
     }
 
     fn limit(self) -> usize {
@@ -447,38 +509,56 @@ impl<'a> HkCandidateScreenRequest<'a> {
     }
 }
 
-fn hk_unresolved_filter_candidates(data: &gp_core::CoreDataSet, criteria: &gp_core::ScreenCriteria) -> Vec<gp_core::StockItem> {
-    data.stocks.iter().filter_map(|stock| {
-        let mut relaxed = criteria.clone();
-        let mut unresolved = false;
-        if criteria.min_roe.is_some() && stock.roe.is_none() {
-            relaxed.min_roe = None;
-            unresolved = true;
-        }
-        if criteria.industry.as_deref().is_some_and(|industry| !industry.trim().is_empty()) && stock.industry.trim().is_empty() {
-            relaxed.industry = None;
-            unresolved = true;
-        }
-        if criteria.min_market_cap_billion.is_some() && stock.market_cap_billion.is_none() {
-            relaxed.min_market_cap_billion = None;
-            unresolved = true;
-        }
-        if criteria.min_deducted_net_profit_billion.is_some() && stock.deducted_net_profit_billion.is_none() {
-            relaxed.min_deducted_net_profit_billion = None;
-            unresolved = true;
-        }
-        if criteria.min_deducted_net_profit_margin.is_some() && stock.deducted_net_profit_margin.is_none() {
-            relaxed.min_deducted_net_profit_margin = None;
-            unresolved = true;
-        }
-        if criteria.min_deducted_net_profit_growth_rate.is_some() && stock.deducted_net_profit_growth_rate.is_none() {
-            relaxed.min_deducted_net_profit_growth_rate = None;
-            unresolved = true;
-        }
-        // Keep every known identity, quote and financial rejection. Unknown inputs only
-        // make a candidate eligible for preparation, never for the final result.
-        (unresolved && gp_core::screen_stocks(std::slice::from_ref(stock), &relaxed).total > 0).then(|| stock.clone())
-    }).collect()
+fn hk_unresolved_filter_candidates(
+    data: &gp_core::CoreDataSet,
+    criteria: &gp_core::ScreenCriteria,
+) -> Vec<gp_core::StockItem> {
+    data.stocks
+        .iter()
+        .filter_map(|stock| {
+            let mut relaxed = criteria.clone();
+            let mut unresolved = false;
+            if criteria.min_roe.is_some() && stock.roe.is_none() {
+                relaxed.min_roe = None;
+                unresolved = true;
+            }
+            if criteria
+                .industry
+                .as_deref()
+                .is_some_and(|industry| !industry.trim().is_empty())
+                && stock.industry.trim().is_empty()
+            {
+                relaxed.industry = None;
+                unresolved = true;
+            }
+            if criteria.min_market_cap_billion.is_some() && stock.market_cap_billion.is_none() {
+                relaxed.min_market_cap_billion = None;
+                unresolved = true;
+            }
+            if criteria.min_deducted_net_profit_billion.is_some()
+                && stock.deducted_net_profit_billion.is_none()
+            {
+                relaxed.min_deducted_net_profit_billion = None;
+                unresolved = true;
+            }
+            if criteria.min_deducted_net_profit_margin.is_some()
+                && stock.deducted_net_profit_margin.is_none()
+            {
+                relaxed.min_deducted_net_profit_margin = None;
+                unresolved = true;
+            }
+            if criteria.min_deducted_net_profit_growth_rate.is_some()
+                && stock.deducted_net_profit_growth_rate.is_none()
+            {
+                relaxed.min_deducted_net_profit_growth_rate = None;
+                unresolved = true;
+            }
+            // Keep every known identity, quote and financial rejection. Unknown inputs only
+            // make a candidate eligible for preparation, never for the final result.
+            (unresolved && gp_core::screen_stocks(std::slice::from_ref(stock), &relaxed).total > 0)
+                .then(|| stock.clone())
+        })
+        .collect()
 }
 
 fn hk_filter_preparation_codes(
@@ -488,11 +568,14 @@ fn hk_filter_preparation_codes(
     cache: &crate::hk_market::HkMarketCache,
     now: u128,
 ) -> Vec<String> {
-    let unresolved = hk_unresolved_filter_candidates(data, request.criteria()).into_iter()
-        .filter(|stock| crate::hk_market::canonical_hk_code(&stock.code).is_some_and(|code| {
-            !attempted.contains(&code)
-                && hk_screen_candidate_refresh_needed(cache.financials.get(&code), now)
-        }))
+    let unresolved = hk_unresolved_filter_candidates(data, request.criteria())
+        .into_iter()
+        .filter(|stock| {
+            crate::hk_market::canonical_hk_code(&stock.code).is_some_and(|code| {
+                !attempted.contains(&code)
+                    && hk_screen_candidate_refresh_needed(cache.financials.get(&code), now)
+            })
+        })
         .collect::<Vec<_>>();
     let mut ranking = request.criteria().clone();
     ranking.min_roe = None;
@@ -502,8 +585,11 @@ fn hk_filter_preparation_codes(
     ranking.min_deducted_net_profit_margin = None;
     ranking.min_deducted_net_profit_growth_rate = None;
     ranking.limit = request.limit();
-    gp_core::screen_stocks(&unresolved, &ranking).items.into_iter()
-        .filter_map(|item| crate::hk_market::canonical_hk_code(&item.stock.code)).collect()
+    gp_core::screen_stocks(&unresolved, &ranking)
+        .items
+        .into_iter()
+        .filter_map(|item| crate::hk_market::canonical_hk_code(&item.stock.code))
+        .collect()
 }
 
 async fn hydrate_hk_screen_candidates<F, Fut>(
@@ -537,14 +623,23 @@ where
             .unwrap_or_default();
         let candidate_codes = hk_screen_candidate_codes(&result, request.limit())
             .into_iter()
-            .chain(hk_filter_preparation_codes(&data, request, &attempted_codes, &cache, now))
+            .chain(hk_filter_preparation_codes(
+                &data,
+                request,
+                &attempted_codes,
+                &cache,
+                now,
+            ))
             .filter(|code| {
                 !attempted_codes.contains(code)
                     && hk_screen_candidate_refresh_needed(cache.financials.get(code), now)
             })
             .collect::<Vec<_>>();
         let mut seen = HashSet::new();
-        let candidate_codes = candidate_codes.into_iter().filter(|code| seen.insert(code.clone())).collect::<Vec<_>>();
+        let candidate_codes = candidate_codes
+            .into_iter()
+            .filter(|code| seen.insert(code.clone()))
+            .collect::<Vec<_>>();
         if candidate_codes.is_empty() {
             break;
         }
@@ -552,19 +647,39 @@ where
         let requested_count = candidate_codes.len();
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
-            mark_hk_financial_preparation_errors(&mut cache, &candidate_codes, HK_SCREEN_FINANCIAL_DEFERRED);
-            merge_hk_hydration_summaries(&mut financial_hydration, &json!({"requested_count":requested_count,"deferred_count":requested_count,"errors":[HK_SCREEN_FINANCIAL_DEFERRED]}));
+            mark_hk_financial_preparation_errors(
+                &mut cache,
+                &candidate_codes,
+                HK_SCREEN_FINANCIAL_DEFERRED,
+            );
+            merge_hk_hydration_summaries(
+                &mut financial_hydration,
+                &json!({"requested_count":requested_count,"deferred_count":requested_count,"errors":[HK_SCREEN_FINANCIAL_DEFERRED]}),
+            );
             break;
         }
-        match tokio::time::timeout_at(deadline, hydrate(cache.clone(), candidate_codes.clone(), deadline)).await {
+        match tokio::time::timeout_at(
+            deadline,
+            hydrate(cache.clone(), candidate_codes.clone(), deadline),
+        )
+        .await
+        {
             Ok(Ok((mut updated_cache, hydration))) => {
                 let updated_count = hydration["updated_count"].as_u64().unwrap_or(0);
                 // A later successful write may reread a disk snapshot which lacks
                 // earlier source data retained after a failed write in this run.
                 preserve_hk_prepared_financials(&cache, &mut updated_cache);
                 if hydration["failed_count"].as_u64().unwrap_or(0) > 0 {
-                    let missing = candidate_codes.iter().filter(|code| !updated_cache.financials.contains_key(*code)).cloned().collect::<Vec<_>>();
-                    let reason = hydration["errors"].as_array().and_then(|errors| errors.first()).and_then(Value::as_str).unwrap_or("本轮财务数据未准备完成，请点击刷新财务重试。");
+                    let missing = candidate_codes
+                        .iter()
+                        .filter(|code| !updated_cache.financials.contains_key(*code))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let reason = hydration["errors"]
+                        .as_array()
+                        .and_then(|errors| errors.first())
+                        .and_then(Value::as_str)
+                        .unwrap_or("本轮财务数据未准备完成，请点击刷新财务重试。");
                     mark_hk_financial_preparation_errors(&mut updated_cache, &missing, reason);
                 }
                 merge_hk_hydration_summaries(&mut financial_hydration, &hydration);
@@ -595,14 +710,23 @@ where
                 break;
             }
             Err(_) => {
-                mark_hk_financial_preparation_errors(&mut cache, &candidate_codes, HK_SCREEN_FINANCIAL_DEFERRED);
-                merge_hk_hydration_summaries(&mut financial_hydration, &json!({"requested_count":requested_count,"deferred_count":requested_count,"errors":[HK_SCREEN_FINANCIAL_DEFERRED]}));
+                mark_hk_financial_preparation_errors(
+                    &mut cache,
+                    &candidate_codes,
+                    HK_SCREEN_FINANCIAL_DEFERRED,
+                );
+                merge_hk_hydration_summaries(
+                    &mut financial_hydration,
+                    &json!({"requested_count":requested_count,"deferred_count":requested_count,"errors":[HK_SCREEN_FINANCIAL_DEFERRED]}),
+                );
                 break;
             }
         }
     }
-    let unresolved_codes = hk_unresolved_filter_candidates(&data, request.criteria()).into_iter()
-        .filter_map(|stock| crate::hk_market::canonical_hk_code(&stock.code)).collect::<Vec<_>>();
+    let unresolved_codes = hk_unresolved_filter_candidates(&data, request.criteria())
+        .into_iter()
+        .filter_map(|stock| crate::hk_market::canonical_hk_code(&stock.code))
+        .collect::<Vec<_>>();
     financial_hydration["filter_coverage"] = json!({
         "complete": unresolved_codes.is_empty(),
         "unresolved_count": unresolved_codes.len(),
@@ -741,7 +865,10 @@ struct HkScreenFinancialHydration {
     errors: Vec<String>,
 }
 
-type HkScreenFinancialOutcome = (String, Result<crate::hk_market::HkFinancialSnapshot, String>);
+type HkScreenFinancialOutcome = (
+    String,
+    Result<crate::hk_market::HkFinancialSnapshot, String>,
+);
 
 struct HkScreenFinancialFetch {
     outcomes: Vec<HkScreenFinancialOutcome>,
@@ -749,15 +876,23 @@ struct HkScreenFinancialFetch {
     attempted_count: usize,
 }
 
-async fn collect_hk_screen_financials<F, Fut>(codes: Vec<String>, deadline: tokio::time::Instant, mut fetch: F) -> HkScreenFinancialFetch
-where F: FnMut(String) -> Fut, Fut: std::future::Future<Output = Result<crate::hk_market::HkFinancialSnapshot, String>> {
+async fn collect_hk_screen_financials<F, Fut>(
+    codes: Vec<String>,
+    deadline: tokio::time::Instant,
+    mut fetch: F,
+) -> HkScreenFinancialFetch
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<crate::hk_market::HkFinancialSnapshot, String>>,
+{
     let mut pending = codes.iter().cloned().collect::<HashSet<_>>();
     let mut attempted_count = 0;
     let mut fetching = stream::iter(codes.into_iter().map(|code| {
         attempted_count += 1;
         let future = fetch(code.clone());
         async move { (code, future.await) }
-    })).buffer_unordered(HK_SCREEN_FINANCIAL_CONCURRENCY);
+    }))
+    .buffer_unordered(HK_SCREEN_FINANCIAL_CONCURRENCY);
     let mut outcomes = Vec::new();
     while let Ok(Some(outcome)) = tokio::time::timeout_at(deadline, fetching.next()).await {
         pending.remove(&outcome.0);
@@ -766,10 +901,17 @@ where F: FnMut(String) -> Fut, Fut: std::future::Future<Output = Result<crate::h
     drop(fetching);
     let mut deferred_codes = pending.into_iter().collect::<Vec<_>>();
     deferred_codes.sort();
-    HkScreenFinancialFetch { outcomes, deferred_codes, attempted_count }
+    HkScreenFinancialFetch {
+        outcomes,
+        deferred_codes,
+        attempted_count,
+    }
 }
 
-fn apply_hk_screen_financial_outcomes(cache: &mut crate::hk_market::HkMarketCache, outcomes: &[HkScreenFinancialOutcome]) {
+fn apply_hk_screen_financial_outcomes(
+    cache: &mut crate::hk_market::HkMarketCache,
+    outcomes: &[HkScreenFinancialOutcome],
+) {
     for (code, financial) in outcomes {
         match financial {
             Ok(snapshot) => {
@@ -783,7 +925,9 @@ fn apply_hk_screen_financial_outcomes(cache: &mut crate::hk_market::HkMarketCach
                 cache.financials.insert(code.clone(), snapshot);
                 cache.financial_errors.remove(code);
             }
-            Err(error) => { cache.financial_errors.insert(code.clone(), error.clone()); }
+            Err(error) => {
+                cache.financial_errors.insert(code.clone(), error.clone());
+            }
         }
     }
 }
@@ -839,13 +983,15 @@ async fn hydrate_hk_screen_financials(
         }
     };
     let fetched_at = crate::hk_market::current_epoch_millis();
-    let fetched = collect_hk_screen_financials(codes, deadline, |code| {
-        let client = client.clone();
-        let fetched_at = fetched_at.clone();
-        async move {
-            crate::hk_market::fetch_hk_financial_snapshot(&client, &code, &fetched_at).await
-        }
-    }).await;
+    let fetched =
+        collect_hk_screen_financials(codes, deadline, |code| {
+            let client = client.clone();
+            let fetched_at = fetched_at.clone();
+            async move {
+                crate::hk_market::fetch_hk_financial_snapshot(&client, &code, &fetched_at).await
+            }
+        })
+        .await;
     summary.attempted_count = fetched.attempted_count;
     summary.deferred_count = fetched.deferred_codes.len();
     for (code, financial) in &fetched.outcomes {
@@ -853,7 +999,9 @@ async fn hydrate_hk_screen_financials(
             Ok(_) => summary.updated_count += 1,
             Err(error) => {
                 summary.failed_count += 1;
-                if summary.errors.len() < 3 { summary.errors.push(format!("{code}: {error}")); }
+                if summary.errors.len() < 3 {
+                    summary.errors.push(format!("{code}: {error}"));
+                }
             }
         }
     }
@@ -871,13 +1019,23 @@ async fn hydrate_hk_screen_financials(
             Err(error) => {
                 summary.cache_write_failed_count = fetched.outcomes.len();
                 let reason = format!("财务缓存写入失败：{error}");
-                let codes = fetched.outcomes.iter().map(|(code, _)| code.clone()).collect::<Vec<_>>();
+                let codes = fetched
+                    .outcomes
+                    .iter()
+                    .map(|(code, _)| code.clone())
+                    .collect::<Vec<_>>();
                 mark_hk_financial_preparation_errors(&mut refreshed, &codes, &reason);
-                if summary.errors.len() < 3 { summary.errors.push(reason); }
+                if summary.errors.len() < 3 {
+                    summary.errors.push(reason);
+                }
             }
         }
     }
-    mark_hk_financial_preparation_errors(&mut refreshed, &fetched.deferred_codes, HK_SCREEN_FINANCIAL_DEFERRED);
+    mark_hk_financial_preparation_errors(
+        &mut refreshed,
+        &fetched.deferred_codes,
+        HK_SCREEN_FINANCIAL_DEFERRED,
+    );
     Ok((
         refreshed,
         serde_json::to_value(summary).unwrap_or(Value::Null),
@@ -922,10 +1080,22 @@ fn append_hk_financial_hydration_note(result: &mut Value, summary: &Value) {
             }
         )));
     }
-    if deferred > 0 { notes.push(json!(format!("财务预载暂未完成 {deferred} 只，已有数据可直接查看；需要时可点击刷新财务。"))); }
-    if cache_failed > 0 { notes.push(json!(format!("{cache_failed} 只财务缓存保存失败，本页保留当前可读取的数据。"))); }
-    let unresolved = summary["filter_coverage"]["unresolved_count"].as_u64().unwrap_or(0);
-    if unresolved > 0 { notes.push(json!(format!("{unresolved} 只候选缺少筛选条件所需的财务或行业数据，匹配覆盖尚未完整；这些候选暂未计入匹配数，不能视为已确认不符合条件。"))); }
+    if deferred > 0 {
+        notes.push(json!(format!(
+            "财务预载暂未完成 {deferred} 只，已有数据可直接查看；需要时可点击刷新财务。"
+        )));
+    }
+    if cache_failed > 0 {
+        notes.push(json!(format!(
+            "{cache_failed} 只财务缓存保存失败，本页保留当前可读取的数据。"
+        )));
+    }
+    let unresolved = summary["filter_coverage"]["unresolved_count"]
+        .as_u64()
+        .unwrap_or(0);
+    if unresolved > 0 {
+        notes.push(json!(format!("{unresolved} 只候选缺少筛选条件所需的财务或行业数据，匹配覆盖尚未完整；这些候选暂未计入匹配数，不能视为已确认不符合条件。")));
+    }
 }
 
 fn hk_projected_cache(
@@ -1365,21 +1535,32 @@ pub(crate) async fn api_sector_screen(
         let (cache, data) = hk_projected_cache(&app)?;
         let provider_app = &app;
         let provider_payload = &transport;
-        let completed = hydrate_hk_screen_candidates(cache, data, HkCandidateScreenRequest::Grouped(&request), Duration::from_secs(HK_SCREEN_FINANCIAL_PREPARE_TIMEOUT_SECS), |cache, codes, deadline| async move {
-            hydrate_hk_screen_financials(provider_app, provider_payload, &cache, &codes, deadline).await
-        }).await?;
+        let completed = hydrate_hk_screen_candidates(
+            cache,
+            data,
+            HkCandidateScreenRequest::Grouped(&request),
+            Duration::from_secs(HK_SCREEN_FINANCIAL_PREPARE_TIMEOUT_SECS),
+            |cache, codes, deadline| async move {
+                hydrate_hk_screen_financials(
+                    provider_app,
+                    provider_payload,
+                    &cache,
+                    &codes,
+                    deadline,
+                )
+                .await
+            },
+        )
+        .await?;
         let mut result = completed.result;
-        let enriched = crate::hk_research::attach_cached_hk_financial_metrics(&mut result, &completed.cache);
+        let enriched =
+            crate::hk_research::attach_cached_hk_financial_metrics(&mut result, &completed.cache);
         append_hk_financial_hydration_note(&mut result, &completed.summary);
         result["market"] = json!("hk");
         let mut metadata = hk_research_metadata(&completed.cache, &completed.data, policy.as_str());
         metadata["financial_hydration"] = completed.summary;
         metadata["financial_enriched_count"] = json!(enriched);
-        local_data::attach_metadata(
-            &mut result,
-            metadata,
-            &transport,
-        );
+        local_data::attach_metadata(&mut result, metadata, &transport);
         return Ok(result);
     }
     let policy = DataPolicy::parse(&payload)?;
@@ -1809,13 +1990,19 @@ fn hk_candidate_backtest_value(
 fn append_hk_history_note(result: &mut Value, summary: &Value) {
     crate::market::append_result_notes(
         result,
-        vec![format!(
-            "港股日线：可用 {}/{} 只，本轮补齐 {} 只，失败 {} 只。",
-            summary["available_count"],
-            summary["candidate_count"],
-            summary["updated_count"],
-            summary["failed_count"]
-        ), format!("日线按完整区间验证复权价格：前复权 {} 只、后复权 {} 只，单只证券不混用价格口径。", summary["qfq_count"], summary["hfq_count"])],
+        vec![
+            format!(
+                "港股日线：可用 {}/{} 只，本轮补齐 {} 只，失败 {} 只。",
+                summary["available_count"],
+                summary["candidate_count"],
+                summary["updated_count"],
+                summary["failed_count"]
+            ),
+            format!(
+                "日线按完整区间验证复权价格：前复权 {} 只、后复权 {} 只，单只证券不混用价格口径。",
+                summary["qfq_count"], summary["hfq_count"]
+            ),
+        ],
     );
     if let Some(errors) = summary["errors"].as_array() {
         crate::market::append_result_notes(
@@ -1827,8 +2014,14 @@ fn append_hk_history_note(result: &mut Value, summary: &Value) {
                 .collect(),
         );
     }
-    if let Some(count) = summary["suspended_count"].as_u64().filter(|count| *count > 0) {
-        crate::market::append_result_notes(result, vec![format!("{count} 只停牌证券使用最后成交日行情。")]);
+    if let Some(count) = summary["suspended_count"]
+        .as_u64()
+        .filter(|count| *count > 0)
+    {
+        crate::market::append_result_notes(
+            result,
+            vec![format!("{count} 只停牌证券使用最后成交日行情。")],
+        );
     }
 }
 
@@ -2489,12 +2682,29 @@ pub(crate) async fn prepare_adaptive_screen(
     );
     let excluded = adaptive_screen_candidate_gaps(&coverage)?;
     if !excluded.is_empty() {
-        let details=excluded.iter().take(5).map(|item|format!("{}（日线 {}/{}）",
-            item.get("code").and_then(Value::as_str).unwrap_or("未知证券"),
-            item.get("available_bars").and_then(Value::as_u64).unwrap_or(0),
-            item.get("required_bars").and_then(Value::as_u64).unwrap_or(MIN_ADAPTIVE_SCREEN_HISTORY_BARS as u64)))
-            .collect::<Vec<_>>().join("、");
-        notes.push(format!("本次未纳入 {} 只历史长度不足的候选：{details}。其余候选继续按原算法筛选。",excluded.len()));
+        let details = excluded
+            .iter()
+            .take(5)
+            .map(|item| {
+                format!(
+                    "{}（日线 {}/{}）",
+                    item.get("code")
+                        .and_then(Value::as_str)
+                        .unwrap_or("未知证券"),
+                    item.get("available_bars")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0),
+                    item.get("required_bars")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(MIN_ADAPTIVE_SCREEN_HISTORY_BARS as u64)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("、");
+        notes.push(format!(
+            "本次未纳入 {} 只历史长度不足的候选：{details}。其余候选继续按原算法筛选。",
+            excluded.len()
+        ));
     }
     let mut metadata = local_metadata(data.as_ref(), policy, &coverage);
     metadata["excluded_history"] = json!({"count":excluded.len(),"items":excluded});
@@ -2950,8 +3160,11 @@ pub(crate) async fn prepare_backtest(
         &request.end_date,
         minimum_bars,
     );
-    let missing = coverage.iter().filter(|item| item["sufficient"] != true)
-        .filter_map(|item| item["code"].as_str().map(str::to_owned)).collect::<Vec<_>>();
+    let missing = coverage
+        .iter()
+        .filter(|item| item["sufficient"] != true)
+        .filter_map(|item| item["code"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
     if policy == DataPolicy::CacheOnly {
         local_data::require_coverage("backtest", &coverage)?;
     }
@@ -3013,7 +3226,10 @@ pub(crate) async fn prepare_backtest(
     for (code, result) in fetches {
         match result {
             Ok(history) if history.rows.len() >= minimum_bars => {
-                history_patch.insert(code.clone(), serde_json::to_value(&history.rows).map_err(|error| error.to_string())?);
+                history_patch.insert(
+                    code.clone(),
+                    serde_json::to_value(&history.rows).map_err(|error| error.to_string())?,
+                );
                 range_proofs.insert(code.clone(), history.proof);
                 history_override.insert(code, history.rows);
                 fetched += 1;
@@ -3058,7 +3274,9 @@ pub(crate) async fn prepare_backtest(
         candidates.len(),
         missing.len()
     ));
-    notes.push("回测日线已按所选区间验证，使用不复权价格；新股从上市日开始提供实际日线。".to_string());
+    notes.push(
+        "回测日线已按所选区间验证，使用不复权价格；新股从上市日开始提供实际日线。".to_string(),
+    );
     let coverage = cn_backtest_history::coverage(
         data.as_ref(),
         raw.as_ref(),
@@ -3147,7 +3365,9 @@ mod hk_market_route_tests {
 
     #[test]
     fn hk_screen_financial_hydration_includes_every_visible_sector_row() {
-        let rows = (1..=12).map(|index| json!({"stock":{"code":format!("{index:05}.HK")}})).collect::<Vec<_>>();
+        let rows = (1..=12)
+            .map(|index| json!({"stock":{"code":format!("{index:05}.HK")}}))
+            .collect::<Vec<_>>();
         let result = json!({"groups":[{"sector":"新能源与储能","items":rows},{"sector":"公用环保","items":[{"stock":{"code":"00001.HK"}}]}]});
         let codes = hk_screen_candidate_codes(&result, 1);
         assert_eq!(codes.len(), 12);
@@ -3270,16 +3490,35 @@ mod hk_market_route_tests {
     #[tokio::test]
     async fn hk_cold_filter_prepares_roe_and_industry_before_final_matching() {
         for criteria in [
-            gp_core::ScreenCriteria { min_roe: Some(0.15), max_pe: Some(20.0), ..Default::default() },
-            gp_core::ScreenCriteria { industry: Some("互联网".to_owned()), max_pe: Some(20.0), ..Default::default() },
+            gp_core::ScreenCriteria {
+                min_roe: Some(0.15),
+                max_pe: Some(20.0),
+                ..Default::default()
+            },
+            gp_core::ScreenCriteria {
+                industry: Some("互联网".to_owned()),
+                max_pe: Some(20.0),
+                ..Default::default()
+            },
         ] {
             let mut cache = cold_filter_cache();
             cache.quotes.get_mut("00002").unwrap().pe = Some(100.0);
             let data = crate::hk_research::project_hk_market_data(&cache).unwrap();
-            let completed = super::hydrate_hk_screen_candidates(cache, data, super::HkCandidateScreenRequest::Screen(&criteria), std::time::Duration::from_secs(30), hydrate_cold_filter_fixture).await.unwrap();
+            let completed = super::hydrate_hk_screen_candidates(
+                cache,
+                data,
+                super::HkCandidateScreenRequest::Screen(&criteria),
+                std::time::Duration::from_secs(30),
+                hydrate_cold_filter_fixture,
+            )
+            .await
+            .unwrap();
             assert_eq!(completed.result["total"], 1);
             assert_eq!(completed.result["items"][0]["stock"]["code"], "00001.HK");
-            assert_eq!(completed.summary["attempted_count"], 1, "known quote rejection must stay excluded");
+            assert_eq!(
+                completed.summary["attempted_count"], 1,
+                "known quote rejection must stay excluded"
+            );
             assert_eq!(completed.summary["filter_coverage"]["unresolved_count"], 0);
         }
     }
@@ -3298,49 +3537,104 @@ mod hk_market_route_tests {
         let mut cache = cold_filter_cache();
         let now = crate::hk_market::current_epoch_millis();
         let mut fresh = crate::hk_market::parse_hk_financial_snapshot(
-            include_str!("../testdata/eastmoney-hk-financial.json"), "00001", &now,
-        ).unwrap();
+            include_str!("../testdata/eastmoney-hk-financial.json"),
+            "00001",
+            &now,
+        )
+        .unwrap();
         fresh.roe.value = None;
         fresh.supplemental_source = Some("Sina HK financial".to_owned());
         fresh.supplemental_fetched_at = Some(now.clone());
-        fresh.field_errors.insert("company_profile".to_owned(), "already attempted".to_owned());
-        assert!(!super::hk_screen_candidate_refresh_needed(Some(&fresh), now.parse().unwrap()));
+        fresh
+            .field_errors
+            .insert("company_profile".to_owned(), "already attempted".to_owned());
+        assert!(!super::hk_screen_candidate_refresh_needed(
+            Some(&fresh),
+            now.parse().unwrap()
+        ));
         cache.financials.insert("00001".to_owned(), fresh);
         let data = crate::hk_research::project_hk_market_data(&cache).unwrap();
-        let criteria = gp_core::ScreenCriteria { min_roe: Some(0.15), limit: 1, ..Default::default() };
+        let criteria = gp_core::ScreenCriteria {
+            min_roe: Some(0.15),
+            limit: 1,
+            ..Default::default()
+        };
         let mut relaxed = criteria.clone();
         relaxed.min_roe = None;
-        assert_eq!(gp_core::screen_stocks(&data.stocks, &relaxed).items[0].stock.code, "00001.HK");
+        assert_eq!(
+            gp_core::screen_stocks(&data.stocks, &relaxed).items[0]
+                .stock
+                .code,
+            "00001.HK"
+        );
         let mut requested = Vec::new();
         let completed = super::hydrate_hk_screen_candidates(
-            cache, data, super::HkCandidateScreenRequest::Screen(&criteria),
-            std::time::Duration::from_secs(30), |cache, codes, deadline| {
+            cache,
+            data,
+            super::HkCandidateScreenRequest::Screen(&criteria),
+            std::time::Duration::from_secs(30),
+            |cache, codes, deadline| {
                 requested.extend(codes.iter().cloned());
                 hydrate_cold_filter_fixture(cache, codes, deadline)
             },
-        ).await.unwrap();
-        assert_eq!(requested, ["00002"], "a recent incomplete stock cannot consume the cold candidate's preparation slot");
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            requested,
+            ["00002"],
+            "a recent incomplete stock cannot consume the cold candidate's preparation slot"
+        );
         assert_eq!(completed.result["total"], 1);
         assert_eq!(completed.result["items"][0]["stock"]["code"], "00002.HK");
         assert_eq!(completed.summary["filter_coverage"]["unresolved_count"], 1);
     }
 
-    async fn hydrate_cold_filter_fixture(mut cache: crate::hk_market::HkMarketCache, codes: Vec<String>, _: tokio::time::Instant) -> Result<(crate::hk_market::HkMarketCache, serde_json::Value), String> {
+    async fn hydrate_cold_filter_fixture(
+        mut cache: crate::hk_market::HkMarketCache,
+        codes: Vec<String>,
+        _: tokio::time::Instant,
+    ) -> Result<(crate::hk_market::HkMarketCache, serde_json::Value), String> {
         for code in &codes {
-            let mut snapshot = crate::hk_market::parse_hk_financial_snapshot(include_str!("../testdata/eastmoney-hk-financial.json"), code, &crate::hk_market::current_epoch_millis()).unwrap();
+            let mut snapshot = crate::hk_market::parse_hk_financial_snapshot(
+                include_str!("../testdata/eastmoney-hk-financial.json"),
+                code,
+                &crate::hk_market::current_epoch_millis(),
+            )
+            .unwrap();
             snapshot.roe.value = Some(20.0);
             snapshot.company_profile = Some(serde_json::from_value(json!({"code":code,"name":"互联网样本","name_zh":null,"industry":"互联网","business_summary":"fixture","source":"fixture","fetched_at":crate::hk_market::current_epoch_millis()})).unwrap());
             cache.financials.insert(code.clone(), snapshot);
         }
-        Ok((cache, json!({"requested_count":codes.len(),"attempted_count":codes.len(),"updated_count":codes.len(),"errors":[]})))
+        Ok((
+            cache,
+            json!({"requested_count":codes.len(),"attempted_count":codes.len(),"updated_count":codes.len(),"errors":[]}),
+        ))
     }
 
     #[tokio::test]
     async fn hk_cold_filter_prepares_grouped_conditions_before_group_size_checks() {
         let cache = cold_filter_cache();
         let data = crate::hk_research::project_hk_market_data(&cache).unwrap();
-        let request = gp_core::SectorScreenRequest { criteria: gp_core::ScreenCriteria { min_roe:Some(0.15), industry:Some("互联网".to_owned()), ..Default::default() }, group_by:"board".to_owned(), min_sector_candidates:2, ..Default::default() };
-        let completed = super::hydrate_hk_screen_candidates(cache, data, super::HkCandidateScreenRequest::Grouped(&request), std::time::Duration::from_secs(30), hydrate_cold_filter_fixture).await.unwrap();
+        let request = gp_core::SectorScreenRequest {
+            criteria: gp_core::ScreenCriteria {
+                min_roe: Some(0.15),
+                industry: Some("互联网".to_owned()),
+                ..Default::default()
+            },
+            group_by: "board".to_owned(),
+            min_sector_candidates: 2,
+            ..Default::default()
+        };
+        let completed = super::hydrate_hk_screen_candidates(
+            cache,
+            data,
+            super::HkCandidateScreenRequest::Grouped(&request),
+            std::time::Duration::from_secs(30),
+            hydrate_cold_filter_fixture,
+        )
+        .await
+        .unwrap();
         assert_eq!(completed.result["returned"], 2);
         assert_eq!(completed.summary["updated_count"], 2);
         assert_eq!(completed.summary["filter_coverage"]["complete"], true);
@@ -3351,17 +3645,44 @@ mod hk_market_route_tests {
         for deferred in [false, true] {
             let cache = cold_filter_cache();
             let data = crate::hk_research::project_hk_market_data(&cache).unwrap();
-            let criteria = gp_core::ScreenCriteria { min_roe:Some(0.15), industry:Some("互联网".to_owned()), ..Default::default() };
-            let budget = if deferred { std::time::Duration::ZERO } else { std::time::Duration::from_secs(30) };
-            let completed = super::hydrate_hk_screen_candidates(cache, data, super::HkCandidateScreenRequest::Screen(&criteria), budget, |_, _, _| async { Err("fixture financial source unavailable".to_owned()) }).await.unwrap();
+            let criteria = gp_core::ScreenCriteria {
+                min_roe: Some(0.15),
+                industry: Some("互联网".to_owned()),
+                ..Default::default()
+            };
+            let budget = if deferred {
+                std::time::Duration::ZERO
+            } else {
+                std::time::Duration::from_secs(30)
+            };
+            let completed = super::hydrate_hk_screen_candidates(
+                cache,
+                data,
+                super::HkCandidateScreenRequest::Screen(&criteria),
+                budget,
+                |_, _, _| async { Err("fixture financial source unavailable".to_owned()) },
+            )
+            .await
+            .unwrap();
             assert_eq!(completed.result["total"], 0);
             assert_eq!(completed.summary["filter_coverage"]["complete"], false);
             assert_eq!(completed.summary["filter_coverage"]["unresolved_count"], 2);
-            assert_eq!(completed.summary[if deferred { "deferred_count" } else { "failed_count" }], 2);
+            assert_eq!(
+                completed.summary[if deferred {
+                    "deferred_count"
+                } else {
+                    "failed_count"
+                }],
+                2
+            );
             assert!(completed.cache.financial_errors.contains_key("00001"));
             let mut result = completed.result;
             super::append_hk_financial_hydration_note(&mut result, &completed.summary);
-            assert!(result["notes"].as_array().unwrap().iter().any(|note| note.as_str().unwrap_or_default().contains("筛选条件")));
+            assert!(result["notes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|note| note.as_str().unwrap_or_default().contains("筛选条件")));
         }
     }
 
@@ -3369,23 +3690,55 @@ mod hk_market_route_tests {
     async fn hk_cold_filter_applies_original_criteria_after_preparation_and_keeps_unknown_fields() {
         let cache = cold_filter_cache();
         let data = crate::hk_research::project_hk_market_data(&cache).unwrap();
-        let criteria = gp_core::ScreenCriteria { min_roe:Some(0.15), industry:Some("互联网".to_owned()), limit:1, ..Default::default() };
-        let completed = super::hydrate_hk_screen_candidates(cache, data, super::HkCandidateScreenRequest::Screen(&criteria), std::time::Duration::from_secs(30), |cache, codes, deadline| async move {
-            let (mut cache, summary) = hydrate_cold_filter_fixture(cache, codes, deadline).await?;
-            if let Some(snapshot) = cache.financials.get_mut("00001") { snapshot.roe.value = Some(5.0); }
-            if let Some(snapshot) = cache.financials.get_mut("00002") {
-                snapshot.roe.value = None;
-                snapshot.field_errors.insert("roe".to_owned(), "fixture issuer does not disclose ROE".to_owned());
-                snapshot.supplemental_source = Some("fixture attempted".to_owned());
-                snapshot.supplemental_fetched_at = Some(crate::hk_market::current_epoch_millis());
-            }
-            Ok((cache, summary))
-        }).await.unwrap();
-        assert_eq!(completed.result["total"], 0, "prepared low ROE and unresolved ROE must not pass full criteria");
+        let criteria = gp_core::ScreenCriteria {
+            min_roe: Some(0.15),
+            industry: Some("互联网".to_owned()),
+            limit: 1,
+            ..Default::default()
+        };
+        let completed = super::hydrate_hk_screen_candidates(
+            cache,
+            data,
+            super::HkCandidateScreenRequest::Screen(&criteria),
+            std::time::Duration::from_secs(30),
+            |cache, codes, deadline| async move {
+                let (mut cache, summary) =
+                    hydrate_cold_filter_fixture(cache, codes, deadline).await?;
+                if let Some(snapshot) = cache.financials.get_mut("00001") {
+                    snapshot.roe.value = Some(5.0);
+                }
+                if let Some(snapshot) = cache.financials.get_mut("00002") {
+                    snapshot.roe.value = None;
+                    snapshot.field_errors.insert(
+                        "roe".to_owned(),
+                        "fixture issuer does not disclose ROE".to_owned(),
+                    );
+                    snapshot.supplemental_source = Some("fixture attempted".to_owned());
+                    snapshot.supplemental_fetched_at =
+                        Some(crate::hk_market::current_epoch_millis());
+                }
+                Ok((cache, summary))
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            completed.result["total"], 0,
+            "prepared low ROE and unresolved ROE must not pass full criteria"
+        );
         assert_eq!(completed.summary["updated_count"], 2);
         assert_eq!(completed.summary["filter_coverage"]["unresolved_count"], 1);
-        assert_eq!(completed.summary["filter_coverage"]["unresolved_codes"], json!(["00002"]));
-        assert!(completed.summary["filter_coverage"]["errors"].as_array().unwrap().iter().any(|error| error["code"] == "00002" && error["field"] == "roe" && error["reason"] == "fixture issuer does not disclose ROE"));
+        assert_eq!(
+            completed.summary["filter_coverage"]["unresolved_codes"],
+            json!(["00002"])
+        );
+        assert!(completed.summary["filter_coverage"]["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|error| error["code"] == "00002"
+                && error["field"] == "roe"
+                && error["reason"] == "fixture issuer does not disclose ROE"));
     }
 
     #[tokio::test]
@@ -3430,7 +3783,13 @@ mod hk_market_route_tests {
                 cache.securities.push(serde_json::from_value(json!({"code":code,"name":format!("新能源样本{index}"),"currency":"HKD","board_lot":100,"security_type":"Equity","classification_status":"exchange_listed_equity"})).unwrap());
                 cache.quotes.insert(code.clone(), serde_json::from_value(json!({"code":code,"name":format!("新能源样本{index}"),"price":10.0,"price_semantics_version":1,"pe":10.0,"pb":1.0,"market_cap_hkd":10000000000.0,"currency":"HKD","source":"fixture","change_pct":0.0})).unwrap());
             }
-            let request = gp_core::SectorScreenRequest { max_sectors: 5, per_sector_limit: 3, min_sector_candidates: 1, group_by: group_by.to_string(), ..Default::default() };
+            let request = gp_core::SectorScreenRequest {
+                max_sectors: 5,
+                per_sector_limit: 3,
+                min_sector_candidates: 1,
+                group_by: group_by.to_string(),
+                ..Default::default()
+            };
             let data = crate::hk_research::project_hk_market_data(&cache).unwrap();
             let completed = super::hydrate_hk_screen_candidates(cache, data, super::HkCandidateScreenRequest::Grouped(&request), std::time::Duration::from_secs(30), |mut cache, codes, _| async move {
                 let count = codes.len();
@@ -3444,11 +3803,31 @@ mod hk_market_route_tests {
             let mut result = completed.result;
             crate::hk_research::attach_cached_hk_financial_metrics(&mut result, &completed.cache);
             assert_eq!(result["returned"], 3);
-            for row in result["groups"].as_array().unwrap().iter().flat_map(|group| group["items"].as_array().unwrap()) {
-                assert_eq!(row["stock"]["hk_financial_snapshot"]["eps"]["value"], 12.639);
-                assert!(row["stock"]["hk_financial_snapshot"]["revenue"]["value"].as_f64().is_some());
+            for row in result["groups"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|group| group["items"].as_array().unwrap())
+            {
+                assert_eq!(
+                    row["stock"]["hk_financial_snapshot"]["eps"]["value"],
+                    12.639
+                );
+                assert!(row["stock"]["hk_financial_snapshot"]["revenue"]["value"]
+                    .as_f64()
+                    .is_some());
             }
-            let repeated = super::hydrate_hk_screen_candidates(completed.cache, completed.data, super::HkCandidateScreenRequest::Grouped(&request), std::time::Duration::from_secs(30), |_, _, _| async { panic!("prepared grouped rows must reuse the cached financials") }).await.unwrap();
+            let repeated = super::hydrate_hk_screen_candidates(
+                completed.cache,
+                completed.data,
+                super::HkCandidateScreenRequest::Grouped(&request),
+                std::time::Duration::from_secs(30),
+                |_, _, _| async {
+                    panic!("prepared grouped rows must reuse the cached financials")
+                },
+            )
+            .await
+            .unwrap();
             assert_eq!(repeated.summary["attempted_count"], 0);
         }
     }
@@ -3460,14 +3839,22 @@ mod hk_market_route_tests {
             cache.securities.push(serde_json::from_value(json!({"code":"01798","name":"大唐新能源","currency":"HKD","board_lot":100,"security_type":"Equity","classification_status":"exchange_listed_equity"})).unwrap());
             cache.quotes.insert("01798".to_string(), serde_json::from_value(json!({"code":"01798","name":"大唐新能源","price":1.0,"price_semantics_version":1,"currency":"HKD","pe":4.0,"pb":0.3,"market_cap_hkd":10000000000.0,"source":"fixture"})).unwrap());
             let data = crate::hk_research::project_hk_market_data(&cache).unwrap();
-            let request = gp_core::SectorScreenRequest { min_sector_candidates: 1, ..Default::default() };
+            let request = gp_core::SectorScreenRequest {
+                min_sector_candidates: 1,
+                ..Default::default()
+            };
             let completed = super::hydrate_hk_screen_candidates(cache, data, super::HkCandidateScreenRequest::Grouped(&request), std::time::Duration::from_secs(30), |cache, codes, _| async move {
                 Ok((cache, json!({"requested_count":codes.len(),"attempted_count":0,"updated_count":0,"failed_count":codes.len(),"errors":[error]})))
             }).await.unwrap();
             let mut result = completed.result;
             crate::hk_research::attach_cached_hk_financial_metrics(&mut result, &completed.cache);
-            assert_eq!(result["groups"][0]["items"][0]["stock"]["hk_financial_error"], error);
-            assert!(result["groups"][0]["items"][0]["stock"].get("hk_financial_snapshot").is_none());
+            assert_eq!(
+                result["groups"][0]["items"][0]["stock"]["hk_financial_error"],
+                error
+            );
+            assert!(result["groups"][0]["items"][0]["stock"]
+                .get("hk_financial_snapshot")
+                .is_none());
         }
     }
 
@@ -3480,7 +3867,12 @@ mod hk_market_route_tests {
         }
         let durable = cache.clone();
         let data = crate::hk_research::project_hk_market_data(&cache).unwrap();
-        let request = gp_core::SectorScreenRequest { group_by:"board".to_string(), per_sector_limit:1, min_sector_candidates:1, ..Default::default() };
+        let request = gp_core::SectorScreenRequest {
+            group_by: "board".to_string(),
+            per_sector_limit: 1,
+            min_sector_candidates: 1,
+            ..Default::default()
+        };
         let mut batch = 0;
         let completed = super::hydrate_hk_screen_candidates(cache, data, super::HkCandidateScreenRequest::Grouped(&request), std::time::Duration::from_secs(30), |cache, codes, _| {
             batch += 1;
@@ -3499,35 +3891,73 @@ mod hk_market_route_tests {
             }
         }).await.unwrap();
         assert_eq!(batch, 2);
-        assert_eq!(completed.cache.financials.get("00001").and_then(|snapshot| snapshot.eps.value), Some(-1.0));
+        assert_eq!(
+            completed
+                .cache
+                .financials
+                .get("00001")
+                .and_then(|snapshot| snapshot.eps.value),
+            Some(-1.0)
+        );
         assert_eq!(completed.cache.financials.len(), 2);
-        for code in hk_screen_candidate_codes(&completed.result, 1) { assert!(completed.cache.financials.contains_key(&code)); }
+        for code in hk_screen_candidate_codes(&completed.result, 1) {
+            assert!(completed.cache.financials.contains_key(&code));
+        }
     }
 
     #[test]
     fn hk_prepared_financials_preserve_errors_for_the_same_snapshot_until_newer_data_arrives() {
         let mut previous = crate::hk_market::HkMarketCache::default();
-        let snapshot = crate::hk_market::parse_hk_financial_snapshot(include_str!("../testdata/eastmoney-hk-financial.json"), "00700", "1794116685279").unwrap();
+        let snapshot = crate::hk_market::parse_hk_financial_snapshot(
+            include_str!("../testdata/eastmoney-hk-financial.json"),
+            "00700",
+            "1794116685279",
+        )
+        .unwrap();
         previous.financials.insert("00700".to_string(), snapshot);
         let mut durable = previous.clone();
-        previous.financial_errors.insert("00700".to_string(), "本轮财务源请求及缓存写入失败".to_string());
+        previous.financial_errors.insert(
+            "00700".to_string(),
+            "本轮财务源请求及缓存写入失败".to_string(),
+        );
         super::preserve_hk_prepared_financials(&previous, &mut durable);
-        assert_eq!(durable.financial_errors.get("00700").map(String::as_str), Some("本轮财务源请求及缓存写入失败"));
+        assert_eq!(
+            durable.financial_errors.get("00700").map(String::as_str),
+            Some("本轮财务源请求及缓存写入失败")
+        );
         durable.financial_errors.clear();
-        durable.financials.get_mut("00700").unwrap().candidate_fetched_at = "1794116685280".to_string();
+        durable
+            .financials
+            .get_mut("00700")
+            .unwrap()
+            .candidate_fetched_at = "1794116685280".to_string();
         super::preserve_hk_prepared_financials(&previous, &mut durable);
         assert!(!durable.financial_errors.contains_key("00700"));
     }
 
     #[tokio::test]
     async fn hk_financial_preload_keeps_completed_data_when_a_source_stalls() {
-        let fetched = super::collect_hk_screen_financials(vec!["00700".to_string(), "01798".to_string()], tokio::time::Instant::now() + std::time::Duration::from_millis(20), |code| async move {
-            if code == "01798" { std::future::pending::<()>().await; }
-            crate::hk_market::parse_hk_financial_snapshot(include_str!("../testdata/eastmoney-hk-financial.json"), &code, &crate::hk_market::current_epoch_millis())
-        }).await;
+        let fetched = super::collect_hk_screen_financials(
+            vec!["00700".to_string(), "01798".to_string()],
+            tokio::time::Instant::now() + std::time::Duration::from_millis(20),
+            |code| async move {
+                if code == "01798" {
+                    std::future::pending::<()>().await;
+                }
+                crate::hk_market::parse_hk_financial_snapshot(
+                    include_str!("../testdata/eastmoney-hk-financial.json"),
+                    &code,
+                    &crate::hk_market::current_epoch_millis(),
+                )
+            },
+        )
+        .await;
         assert_eq!(fetched.outcomes.len(), 1);
         assert_eq!(fetched.outcomes[0].0, "00700");
-        assert_eq!(fetched.outcomes[0].1.as_ref().unwrap().eps.value, Some(12.639));
+        assert_eq!(
+            fetched.outcomes[0].1.as_ref().unwrap().eps.value,
+            Some(12.639)
+        );
         assert_eq!(fetched.deferred_codes, vec!["01798".to_string()]);
         assert_eq!(fetched.attempted_count, 2);
     }
@@ -3540,7 +3970,11 @@ mod hk_market_route_tests {
             cache.quotes.insert(code.to_string(), serde_json::from_value(json!({"code":code,"name":"新能源样本","price":10.0,"price_semantics_version":1,"pe":10.0,"pb":1.0,"market_cap_hkd":10000000000.0,"currency":"HKD","source":"fixture"})).unwrap());
         }
         let data = crate::hk_research::project_hk_market_data(&cache).unwrap();
-        let request = gp_core::SectorScreenRequest { min_sector_candidates:1, per_sector_limit:5, ..Default::default() };
+        let request = gp_core::SectorScreenRequest {
+            min_sector_candidates: 1,
+            per_sector_limit: 5,
+            ..Default::default()
+        };
         let completed = super::hydrate_hk_screen_candidates(cache, data, super::HkCandidateScreenRequest::Grouped(&request), std::time::Duration::from_millis(30), |mut cache, codes, deadline| async move {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             let requested = codes.len();
@@ -3560,20 +3994,37 @@ mod hk_market_route_tests {
     }
 
     #[tokio::test]
-    async fn hk_financial_preload_bounds_cold_requests_and_marks_unfinished_rows_for_manual_retry() {
+    async fn hk_financial_preload_bounds_cold_requests_and_marks_unfinished_rows_for_manual_retry()
+    {
         let codes = (1..=120).map(|index| format!("{index:05}")).collect();
-        let fetched = super::collect_hk_screen_financials(codes, tokio::time::Instant::now() + std::time::Duration::from_millis(20), |_| async {
-            std::future::pending::<Result<crate::hk_market::HkFinancialSnapshot, String>>().await
-        }).await;
+        let fetched = super::collect_hk_screen_financials(
+            codes,
+            tokio::time::Instant::now() + std::time::Duration::from_millis(20),
+            |_| async {
+                std::future::pending::<Result<crate::hk_market::HkFinancialSnapshot, String>>()
+                    .await
+            },
+        )
+        .await;
         assert!(fetched.outcomes.is_empty());
         assert_eq!(fetched.attempted_count, 6);
         assert_eq!(fetched.deferred_codes.len(), 120);
         let mut cache = crate::hk_market::HkMarketCache::default();
-        super::mark_hk_financial_preparation_errors(&mut cache, &fetched.deferred_codes, super::HK_SCREEN_FINANCIAL_DEFERRED);
-        let mut result = json!({"groups":[{"sector":"新能源与储能","items":[{"stock":{"code":"00001.HK"}}]}]});
+        super::mark_hk_financial_preparation_errors(
+            &mut cache,
+            &fetched.deferred_codes,
+            super::HK_SCREEN_FINANCIAL_DEFERRED,
+        );
+        let mut result =
+            json!({"groups":[{"sector":"新能源与储能","items":[{"stock":{"code":"00001.HK"}}]}]});
         crate::hk_research::attach_cached_hk_financial_metrics(&mut result, &cache);
-        assert_eq!(result["groups"][0]["items"][0]["stock"]["hk_financial_error"], "财务预载达到限时，点击刷新财务可重试。");
-        assert!(result["groups"][0]["items"][0]["stock"].get("hk_financial_snapshot").is_none());
+        assert_eq!(
+            result["groups"][0]["items"][0]["stock"]["hk_financial_error"],
+            "财务预载达到限时，点击刷新财务可重试。"
+        );
+        assert!(result["groups"][0]["items"][0]["stock"]
+            .get("hk_financial_snapshot")
+            .is_none());
     }
 
     #[test]

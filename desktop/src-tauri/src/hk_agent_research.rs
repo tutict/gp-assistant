@@ -533,11 +533,20 @@ pub(crate) fn frozen_evidence(context: &Value) -> Value {
 }
 
 pub(crate) fn context_from_frozen_evidence(evidence: &Value) -> Value {
-    let originals=evidence.get("citations").and_then(Value::as_array).into_iter().flatten().map(|citation| {
-        let mut original=citation.clone();
-        if let Some(fields)=original.as_object_mut() {fields.remove("source_name");fields.remove("article_summary");}
-        original
-    }).collect::<Vec<_>>();
+    let originals = evidence
+        .get("citations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|citation| {
+            let mut original = citation.clone();
+            if let Some(fields) = original.as_object_mut() {
+                fields.remove("source_name");
+                fields.remove("article_summary");
+            }
+            original
+        })
+        .collect::<Vec<_>>();
     json!({"market":evidence["market"],"stock_code":evidence["stock_code"],"evidence":originals})
 }
 

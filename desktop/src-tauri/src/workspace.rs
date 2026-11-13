@@ -73,9 +73,17 @@ fn validate_value(key: &str, value: &Value) -> Result<String, String> {
         return Err(err("invalid key"));
     }
     let original_key = key;
-    let key = if key == "hk.backtest.source" { "app.backtest.source" } else { key.strip_prefix("hk.")
-        .filter(|key| ["news.", "agent.", "backtest."].iter().any(|prefix| key.starts_with(prefix)))
-        .unwrap_or(key) };
+    let key = if key == "hk.backtest.source" {
+        "app.backtest.source"
+    } else {
+        key.strip_prefix("hk.")
+            .filter(|key| {
+                ["news.", "agent.", "backtest."]
+                    .iter()
+                    .any(|prefix| key.starts_with(prefix))
+            })
+            .unwrap_or(key)
+    };
     let valid = match key {
         "app.market" => value == "cn" || value == "hk",
         "app.view" => value
@@ -425,9 +433,16 @@ mod tests {
     fn hk_backtest_source_saves_without_poisoning_other_workspace_edits() {
         let root = Scratch::new();
         let mut db = open_workspace(&root.0).unwrap();
-        commit_changes(&mut db, patch(0, json!({
-            "app.backtest.source":"criteria", "hk.backtest.source":"watchlist"
-        }))).unwrap();
+        commit_changes(
+            &mut db,
+            patch(
+                0,
+                json!({
+                    "app.backtest.source":"criteria", "hk.backtest.source":"watchlist"
+                }),
+            ),
+        )
+        .unwrap();
         commit_changes(&mut db, patch(1, json!({"news.question":"later draft"}))).unwrap();
         drop(db);
         let saved = read_snapshot(&mut open_workspace(&root.0).unwrap()).unwrap();
@@ -435,8 +450,10 @@ mod tests {
         assert_eq!(saved.values["hk.backtest.source"], "watchlist");
         assert_eq!(saved.values["news.question"], "later draft");
         let mut db = open_workspace(&root.0).unwrap();
-        assert!(commit_changes(&mut db, patch(2,json!({"hk.backtest.source":"invalid"}))).is_err());
-        assert_eq!(read_snapshot(&mut db).unwrap().revision,2);
+        assert!(
+            commit_changes(&mut db, patch(2, json!({"hk.backtest.source":"invalid"}))).is_err()
+        );
+        assert_eq!(read_snapshot(&mut db).unwrap().revision, 2);
     }
     #[test]
     fn workspace_rejects_future_unknown_corrupt_and_oversized_without_replacement() {

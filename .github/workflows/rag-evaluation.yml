@@ -15,6 +15,13 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install the verified Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default 1.100.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Cache RAG embedding model
         uses: actions/cache@v4
         with:
@@ -101,6 +108,14 @@ jobs:
             "ready=true" >> $env:GITHUB_OUTPUT
             Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value 'Trusted model-backed replay and DeepEval are configured and will run.'
           }
+      - name: Install the verified Rust toolchain
+        if: steps.trusted-config.outputs.ready == 'true'
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default 1.100.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Cache RAG embedding model
         uses: actions/cache@v4
         if: steps.trusted-config.outputs.ready == 'true'

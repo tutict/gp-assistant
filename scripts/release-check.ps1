@@ -123,8 +123,10 @@ if (-not $SkipPrepare) {
 if (-not $SkipRust) {
     $cargo = Resolve-CommandPath "cargo" "Install the Rust stable toolchain and retry."
     Invoke-Checked "Rust gp-core format check" $cargo @("fmt", "--manifest-path", "native/gp-core/Cargo.toml", "--", "--check")
+    Invoke-Checked "Rust gp-research format check" $cargo @("fmt", "--manifest-path", "native/gp-research/Cargo.toml", "--", "--check")
     Invoke-Checked "Tauri Rust format check" $cargo @("fmt", "--manifest-path", "desktop/src-tauri/Cargo.toml", "--", "--check")
     Invoke-Checked "Rust gp-core tests" $cargo @("test", "--locked", "--manifest-path", "native/gp-core/Cargo.toml")
+    Invoke-Checked "Rust gp-research tests" $cargo @("test", "--locked", "--manifest-path", "native/gp-research/Cargo.toml")
     Invoke-Checked "Tauri Rust tests" $cargo @("test", "--locked", "--manifest-path", "desktop/src-tauri/Cargo.toml")
     Invoke-Checked "Tauri GEPA Rust tests" $cargo @("test", "--locked", "--features", "gepa-lab", "--manifest-path", "desktop/src-tauri/Cargo.toml")
     Invoke-Checked "Tauri cargo check" $cargo @("check", "--locked", "--manifest-path", "desktop/src-tauri/Cargo.toml")

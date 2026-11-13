@@ -14,6 +14,8 @@ interface StockCodeInputProps {
   market?: "cn" | "hk";
   inputRef?: Ref<HTMLInputElement>;
   inputAriaLabel?: string;
+  inputAriaInvalid?: boolean;
+  inputAriaDescribedBy?: string;
   onCommit?: (value: string) => void;
 }
 
@@ -33,6 +35,8 @@ export function StockCodeInput({
   market = "cn",
   inputRef,
   inputAriaLabel,
+  inputAriaInvalid,
+  inputAriaDescribedBy,
   onCommit,
 }: StockCodeInputProps) {
   const [suggestions, setSuggestions] = useState<StockItem[]>([]);
@@ -41,6 +45,7 @@ export function StockCodeInput({
   const [activeIndex, setActiveIndex] = useState(0);
   const requestId = useRef(0);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const restoringInputFocusRef = useRef(false);
 
   const lookupToken = useMemo(() => {
     if (!listMode) return sanitizeStockLookupInput(value);
@@ -133,7 +138,18 @@ export function StockCodeInput({
   }, [applyValue, digits, onCommit]);
 
   return (
-    <div className="stock-code-input" ref={wrapperRef}>
+    <div className="stock-code-input" ref={wrapperRef} onKeyDown={(event) => {
+      if (event.key !== "Escape" || (!showStockSuggest && !showMarketConfirm)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      requestId.current += 1;
+      if (loading) setSuggestions([]);
+      setLoading(false);
+      setOpen(false);
+      restoringInputFocusRef.current = true;
+      wrapperRef.current?.querySelector<HTMLInputElement>("input")?.focus();
+      restoringInputFocusRef.current = false;
+    }}>
       <input
         ref={inputRef}
         id={id}
@@ -157,7 +173,7 @@ export function StockCodeInput({
           onChange(next);
           setOpen(true);
         }}
-        onFocus={() => setOpen(!completeCode)}
+        onFocus={() => { if (!restoringInputFocusRef.current) setOpen(!completeCode); }}
         onKeyDown={(event) => {
           if (event.key === "Enter" && completeCode && !listMode) {
             event.preventDefault();
@@ -175,13 +191,13 @@ export function StockCodeInput({
           } else if (event.key === "Enter") {
             event.preventDefault();
             chooseSuggestion(suggestions[activeIndex]);
-          } else if (event.key === "Escape") {
-            setOpen(false);
           }
         }}
         placeholder={placeholder || "600519.SH"}
         autoComplete="off"
         aria-label={inputAriaLabel}
+        aria-invalid={inputAriaInvalid}
+        aria-describedby={inputAriaDescribedBy}
         aria-autocomplete="list"
         aria-expanded={open}
       />

@@ -368,6 +368,7 @@ export default function App({ onMounted }: AppProps) {
         onSearchCommit={handleGlobalSearchCommit}
         onToggleHelp={toggleShortcutHelp}
         onToggleSettings={toggleSettings}
+        onCloseSettings={() => setSettingsOpen(false)}
         onToggleTheme={toggleTheme}
         onToggleMobileNav={() => setMobileNavOpen(true)}
         llmSettings={llmSettings}

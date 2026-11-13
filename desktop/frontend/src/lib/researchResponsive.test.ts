@@ -85,7 +85,7 @@ describe("mobile UI density contract", () => {
 
   it("does not reserve an empty control-panel row above the mobile screen run button", () => {
     expect(responsiveCss).toMatch(
-      /\.screen-panel-controls,\s*\.screen-panel-run-card\s*\{[^}]*min-height:\s*0[^}]*margin-top:\s*0/,
+      /\.screen-panel-controls,\s*\.screen-panel-run-card:not\(\.screen-panel-result-toolbar\)\s*\{[^}]*min-height:\s*0[^}]*margin-top:\s*0/,
     );
   });
 

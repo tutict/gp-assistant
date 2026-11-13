@@ -71,15 +71,6 @@
   .hk-market-panel > .panel-feedback-empty { min-height: 76px; padding: var(--space-3) 0; border: 0; border-radius: 0; background: transparent; }
   .stock-mobile-list .row-button-group { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stock-mobile-list .row-button-group button { min-width: var(--touch-height); width: 100%; padding-inline: 6px; }
-  :root[data-composer-keyboard="open"] { --bottom-nav-height: 0px; --safe-bottom: 0px; }
-  :root[data-composer-keyboard="open"] .app:is([data-active-view="news"], [data-active-view="agent"]) {
-    position: fixed; top: var(--composer-viewport-offset, 0px); left: 0; right: 0;
-    height: var(--composer-viewport-height); min-height: 0; overflow: hidden;
-  }
-  :root[data-composer-keyboard="open"] .sidebar { display: none; }
-  :root[data-composer-keyboard="open"] .app .workbench { height: calc(var(--composer-viewport-height) - var(--header-height)); padding-bottom: 0; }
-  :root[data-composer-keyboard="open"] .app :is(.research-workspace, .agent-workspace) { height: calc(var(--composer-viewport-height) - var(--header-height)); min-height: 0; }
-  :root[data-composer-keyboard="open"] .app .agent-chat-stage { min-height: 0; }
   /* Density affects spacing, never the minimum mobile hit area. */
   .app :is(button, select, textarea, input:not([type="checkbox"]):not([type="radio"]), summary, a.nav-link),
 .sheet-backdrop :is(button, select, textarea, input:not([type="checkbox"]):not([type="radio"]), summary) {
@@ -372,7 +363,7 @@
     margin-top: 6px;
   }
   .screen-panel-controls,
-.screen-panel-run-card {
+.screen-panel-run-card:not(.screen-panel-result-toolbar) {
     display: block;
     min-height: 0;
     margin-top: 0;
@@ -380,21 +371,18 @@
     background: transparent;
     padding: 0;
   }
-  .screen-panel-run-card .run-btn,
+  .screen-panel-run-card:not(.screen-panel-result-toolbar) .run-btn,
 .screen-panel-controls > .run-btn {
     width: 100%;
-    min-height: var(--touch-comfort);
+    min-height: var(--touch-primary);
   }
-  .screen-panel-run-card .hk-screen-refresh {
+  .screen-panel-run-card:not(.screen-panel-result-toolbar) .hk-screen-refresh {
     width: 100%;
-    min-height: var(--touch-comfort);
+    min-height: var(--touch-primary);
     margin-bottom: var(--space-2);
   }
   .screen-panel-result {
     padding-top: 4px;
-  }
-  .screen-result-metric-strip {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .metric-strip,
 .detail-grid,
@@ -463,7 +451,7 @@
   }
   .observe-panel-controls {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
   .observe-code-row {
     display: grid;
@@ -771,11 +759,11 @@
   .agent-message,
 .agent-message.user,
 .agent-message.assistant {
-    width: fit-content;
-    max-width: min(720px, 100%);
+    width: 100%;
+    max-width: 100%;
   }
-  .agent-message.user {
-    max-width: min(88%, 520px);
+  .agent-message.user .agent-message-body {
+    max-width: 88%;
   }
   .agent-composer-card {
     position: sticky;
@@ -934,17 +922,6 @@
   }
   .screen-mobile-status-inline strong {
     font-size: var(--fs-label);
-  }
-  .screen-result-metric-strip {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .screen-result-metric-strip .metric {
-    min-height: 52px;
-    padding: 7px 5px;
-    text-align: center;
-  }
-  .screen-result-metric-strip .metric strong {
-    font-size: var(--fs-data);
   }
   .score-chip {
     padding-inline: 4px;
@@ -1169,9 +1146,6 @@
   .app[data-active-view="observe"] .panel-controls .stock-code-input,
   .app[data-active-view="observe"] .panel-controls input {
     min-height: var(--touch-primary);
-  }
-  :root[data-composer-keyboard="open"] .app:is([data-active-view="news"], [data-active-view="agent"]) {
-    top: calc(var(--composer-viewport-offset, 0px) + var(--safe-top));
   }
 }
 

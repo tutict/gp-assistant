@@ -132,6 +132,7 @@ type ScreenRunState = {
   progress: { percent: number; message: string } | null;
   adaptiveRequest?: AdaptiveScreenRequest;
   criteriaSnapshot: FilterCriteria;
+  trendDatesSnapshot?: { start: string; end: string };
 };
 
 type ScreenRunOverride = {
@@ -143,6 +144,19 @@ type ScreenRunOverride = {
 
 function criteriaForMode(mode: ScreenMode, customCriteria: FilterCriteria): FilterCriteria {
   return mode === "customScreen" ? customCriteria : FULL_UNIVERSE_CRITERIA;
+}
+
+function summarizeCriteria(criteria: FilterCriteria): string {
+  const sortLabel = ({ score: "综合评分", market_cap: "市值", pe: "市盈率", pb: "市净率", roe: "净资产收益率", change_pct: "涨跌幅" } as Record<string, string>)[criteria.sortBy] || criteria.sortBy;
+  const profileLabel = ({ balanced: "综合平衡", quality: "稳健质量", trend: "趋势轮动", rotation: "趋势轮动" } as Record<string, string>)[criteria.scoreProfile] || criteria.scoreProfile;
+  return [
+    criteria.industry || "全部行业", criteria.marketScope || "全部范围",
+    criteria.includeSt ? "包含 ST" : "排除 ST",
+    criteria.maxPe && `PE≤${criteria.maxPe}`, criteria.maxPb && `PB≤${criteria.maxPb}`,
+    criteria.minRoe && `ROE≥${criteria.minRoe}`, criteria.minMcap && `市值≥${criteria.minMcap}亿`,
+    criteria.requireInstitutionBuyRatio && "机构买入占比高于卖出", `最多 ${criteria.resultLimit} 只`,
+    `${sortLabel}${criteria.sortDir === "asc" ? "升序" : "降序"}`, profileLabel,
+  ].filter(Boolean).join(" · ");
 }
 
 function emptyRunState(criteriaSnapshot: FilterCriteria): ScreenRunState {
@@ -173,6 +187,7 @@ export function ScreenPanel({
   const [draftCriteria, setDraftCriteria] = useState(criteria);
   const [draftDates, setDraftDates] = useState({ start: "", end: "" });
   const [mode, setMode] = useState<ScreenMode>("screen");
+  const selectedTabRef = useRef<HTMLButtonElement>(null);
   const [runs, setRuns] = useState<Record<ScreenMode, ScreenRunState>>(() => ({
     screen: emptyRunState(FULL_UNIVERSE_CRITERIA),
     sectorScreen: emptyRunState(FULL_UNIVERSE_CRITERIA),
@@ -193,6 +208,10 @@ export function ScreenPanel({
   const runInFlightRef = useRef(false);
   const pendingStableRenderRef = useRef<{ startedAt: number; mode: ScreenMode } | null>(null);
   const [hkRefreshing, setHkRefreshing] = useState(false);
+
+  useEffect(() => {
+    if (mobileLayout) selectedTabRef.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [mobileLayout, mode]);
 
   const updateRun = useCallback((
     target: ScreenMode,
@@ -243,7 +262,6 @@ export function ScreenPanel({
       ...current,
       loading: true,
       error: null,
-      criteriaSnapshot: { ...requestCriteria },
       progress: requestMode === "screen" ? { percent: 2, message: "准备初选" } : null,
     }));
     try {
@@ -340,6 +358,7 @@ export function ScreenPanel({
         progress: null,
         adaptiveRequest: requestMode === "screen" && adaptiveRequest ? freezeAdaptiveScreenRequest(adaptiveRequest, data) : current.adaptiveRequest,
         criteriaSnapshot: { ...requestCriteria },
+        trendDatesSnapshot: requestMode === "trendScreen" ? { start: requestTrendStart, end: requestTrendEnd } : undefined,
       }));
     } catch (err) {
       if (requestVersion !== requestVersions.current[requestMode]) return;
@@ -459,13 +478,17 @@ export function ScreenPanel({
   }, [error, loading, mobileRuntime, mode, result]);
   const adaptiveProgress = current.progress;
   const hasControlFields = mode === "customScreen" || mode === "trendScreen";
-  const appliedCriteriaSummary = [
-    criteria.industry || "全部行业", criteria.marketScope || "全部范围",
-    criteria.includeSt ? "包含 ST" : "排除 ST",
-    criteria.maxPe && `PE≤${criteria.maxPe}`, criteria.maxPb && `PB≤${criteria.maxPb}`,
-    criteria.minRoe && `ROE≥${criteria.minRoe}`, criteria.minMcap && `市值≥${criteria.minMcap}亿`,
-    criteria.requireInstitutionBuyRatio && "机构买入占比高于卖出", `最多 ${criteria.resultLimit} 只`,
-  ].filter(Boolean).join(" · ");
+  const appliedCriteriaSummary = summarizeCriteria(criteria);
+  const currentConditions = mode === "customScreen" ? `当前条件：${appliedCriteriaSummary}`
+    : mode === "trendScreen" ? `趋势区间：${trendStart} 至 ${trendEnd}` : "当前条件：全市场 · 按综合评分排序";
+  const resultConditionsChanged = result != null && (mode === "customScreen"
+    ? (Object.keys(current.criteriaSnapshot) as (keyof FilterCriteria)[]).some(key => criteria[key] !== current.criteriaSnapshot[key])
+    : mode === "trendScreen" && Boolean(current.trendDatesSnapshot
+      && (trendStart !== current.trendDatesSnapshot.start || trendEnd !== current.trendDatesSnapshot.end)));
+  const resultConditions = mode === "customScreen" ? summarizeCriteria(current.criteriaSnapshot)
+    : mode === "trendScreen" && current.trendDatesSnapshot ? `${current.trendDatesSnapshot.start} 至 ${current.trendDatesSnapshot.end}`
+      : "全市场 · 按综合评分排序";
+  const mobileResults = mobileLayout && result != null;
   const controlsClassName = `panel-controls screen-panel-controls ${mode === "customScreen" ? "custom-screen-controls" : mode === "sectorScreen" || mode === "boardScreen" ? "grouped-screen-controls" : ""}`;
   const dataUnavailable = localDataUnavailable(marketStatus);
   const emptyDescription = dataUnavailable
@@ -516,11 +539,11 @@ export function ScreenPanel({
       {TABS.map((tab) => (
         <button
           key={tab.key}
+          ref={mode === tab.key ? selectedTabRef : undefined}
           className={`panel-tab ${mode === tab.key ? "active" : ""}`}
           role="tab"
           aria-selected={mode === tab.key}
-          onClick={(event) => {
-            if (mobileLayout) event?.currentTarget?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+          onClick={() => {
             setMode(tab.key);
             setCriteriaOpen(false);
           }}
@@ -532,14 +555,22 @@ export function ScreenPanel({
     </div>
   );
   const modeNote = <p className="screen-mode-note">{MODE_NOTES[mode] && <>{MODE_NOTES[mode]} · </>}<span className="workspace-boundary">仅供研究，不构成投资建议。</span></p>;
+  const adjustmentButton = mobileLayout && hasControlFields ? (
+    <button type="button" className="action-btn screen-adjust-criteria" onClick={() => {
+      setDraftCriteria({ ...criteria });
+      setDraftDates({ start: trendStart, end: trendEnd });
+      setCriteriaOpen(true);
+    }}>{mobileResults ? "调整条件" : "筛选条件"}</button>
+  ) : null;
 
   return (
     <div className={`panel-container screen-panel-container ${result != null ? "has-result" : ""}`}>
       {mobileLayout ? (
         <>
           {modeTabs}
-          {modeNote}
-          <div className="panel-controls screen-panel-run-card">
+          {!mobileResults && modeNote}
+          <div className={`panel-controls screen-panel-run-card${mobileResults ? " screen-panel-result-toolbar" : ""}`}>
+            {mobileResults && adjustmentButton}
             {hkRefreshButton}
             {runButton}
           </div>
@@ -561,30 +592,43 @@ export function ScreenPanel({
       )}
 
       <div className="screen-criteria-summary">
-        <span>{mode === "customScreen" ? `当前条件：${appliedCriteriaSummary}` : mode === "trendScreen" ? `趋势区间：${trendStart} 至 ${trendEnd}` : "当前条件：全市场 · 按综合评分排序"}</span>
-        {mobileLayout && hasControlFields && <button type="button" className="action-btn" onClick={() => { setDraftCriteria({...criteria}); setDraftDates({start:trendStart,end:trendEnd}); setCriteriaOpen(true); }}>筛选条件</button>}
+        {mobileResults ? (
+          <details className="screen-current-conditions" key={mode}>
+            <summary>当前条件</summary>
+            <p>{currentConditions}</p>
+          </details>
+        ) : <span>{currentConditions}</span>}
+        {!mobileResults && adjustmentButton}
       </div>
       <Sheet open={mobileLayout && criteriaOpen} onClose={()=>setCriteriaOpen(false)} label="筛选条件" className="screen-criteria-sheet" backdropClassName="screen-criteria-sheet-backdrop">
         <header><h3>筛选条件</h3><button type="button" className="action-btn" onClick={()=>setCriteriaOpen(false)}>取消</button></header>
+        <div className="screen-criteria-sheet-body">
         {mode === "customScreen" ? <div className="custom-screen-criteria"><CriteriaFields criteria={draftCriteria} onChange={setDraftCriteria} idPrefix="mobileScreenDraft" /></div> : <>
           <label>开始日期<input type="date" value={draftDates.start} onChange={e=>setDraftDates({...draftDates,start:e.target.value})} /></label>
           <label>结束日期<input type="date" value={draftDates.end} onChange={e=>setDraftDates({...draftDates,end:e.target.value})} /></label>
         </>}
+        </div>
         <footer><button type="button" className="run-btn" onClick={applyDraftAndRun} disabled={loading}>应用并筛选</button></footer>
       </Sheet>
 
-      <div className="panel-result screen-panel-result">
-        {result != null && !loading && !error && localDataSummary(result) && <p className="workspace-boundary" role="status">{localDataSummary(result)}</p>}
-        {error && <PanelFeedback kind="error" title="查询失败" description={market !== "hk" && dataUnavailable ? `${error} 若顶部仍是待检查或待同步，先点「刷新」再重试。` : error} action={<button type="button" className="action-btn" onClick={() => void run()}>重试</button>} />}
+      <div className="panel-result screen-panel-result" aria-busy={loading}>
+        {result != null && localDataSummary(result) && <p className="workspace-boundary" role="status">{localDataSummary(result)}</p>}
+        {result != null && (resultConditionsChanged || loading || error) && (
+          <p className="screen-result-conditions" role="status">
+            {resultConditionsChanged ? "条件已修改，当前结果仍使用：" : "当前结果使用："}{resultConditions}
+          </p>
+        )}
+        {error && <PanelFeedback compact={result != null} kind="error" title="查询失败" description={market !== "hk" && dataUnavailable ? `${error} 若顶部仍是待检查或待同步，先点「刷新」再重试。` : error} action={<button type="button" className="action-btn" onClick={() => void run()}>重试</button>} />}
         {loading && !error && (
           <PanelFeedback
+            compact={result != null}
             kind="loading"
             description={mode === "screen" && adaptiveProgress
               ? adaptiveProgress.message + "（" + adaptiveProgress.percent + "%）"
               : market === "hk" && mode === "trendScreen" ? "正在准备港股日线并计算趋势..." : "正在分析候选股票..."}
           />
         )}
-        {result != null && !loading && !error && (
+        {result != null && (
           <ScreenResultView
             key={mode}
             result={result}
@@ -600,6 +644,7 @@ export function ScreenPanel({
         )}
         {!result && !loading && !error && <PanelFeedback kind="empty" description={emptyDescription} />}
       </div>
+      {mobileResults && modeNote}
     </div>
   );
 }
@@ -644,13 +689,14 @@ export const ScreenResultView = memo(function ScreenResultView({
 
   return (
     <div className="result-list screen-result-list">
-      <p className="screen-result-lead">按综合评分选出 {rows.length} 只。分数高只说明更符合当前条件，不是买卖建议。每只股票下面有一条入选原因。</p>
+      <dl className="screen-result-summary" aria-label="筛选结果统计">
+        <div><dt>返回数</dt><dd>{resultRecord.returned ?? rows.length}</dd></div>
+        <div><dt>总数</dt><dd>{resultRecord.total ?? rows.length}</dd></div>
+        <div><dt>最高分</dt><dd>{highestScore?.toFixed(2) ?? "—"}</dd></div>
+      </dl>
+      <p className="screen-result-lead">综合评分反映条件匹配程度；入选原因与资料来源可在个股依据中查看。</p>
+      <p className="workspace-boundary screen-result-boundary">仅供研究，不构成投资建议。</p>
       {resultRecord.parameter_set_id ? <p className="screen-result-lead">参数版本：{resultRecord.parameter_set_id} · 评分修订：{resultRecord.scoring_revision || "未记录"}</p> : null}
-      <div className="metric-strip screen-result-metric-strip">
-        <div className="metric"><span>返回数</span><strong>{resultRecord.returned ?? rows.length}</strong></div>
-        <div className="metric"><span>总数</span><strong>{resultRecord.total ?? rows.length}</strong></div>
-        <div className="metric"><span>最高分</span><strong>{highestScore?.toFixed(2) ?? "—"}</strong></div>
-      </div>
 
       {resultRecord.market_regime && (
         <section className="adaptive-regime-summary" aria-label="市场状态">

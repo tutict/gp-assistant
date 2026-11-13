@@ -13,7 +13,8 @@ export interface ShortcutEventLike {
   metaKey?: boolean;
   altKey?: boolean;
   isComposing?: boolean;
-  target?: EventTarget | { tagName?: string; isContentEditable?: boolean } | null;
+  defaultPrevented?: boolean;
+  target?: EventTarget | { tagName?: string; isContentEditable?: boolean; closest?: (selector: string) => unknown } | null;
   preventDefault?: () => void;
 }
 
@@ -35,7 +36,8 @@ export function isEditableTarget(target: ShortcutEventLike["target"]): boolean {
 }
 
 export function resolveGlobalShortcut(event: ShortcutEventLike): GlobalShortcutAction | null {
-  if (event.isComposing) return null;
+  const target = event.target as { closest?: (selector: string) => unknown } | null;
+  if (event.isComposing || event.defaultPrevented || target?.closest?.('[role="dialog"]')) return null;
   if (event.key === "Escape") return { type: "escape" };
   if (event.key.toLowerCase() === "k" && (event.ctrlKey || event.metaKey)) {
     return { type: "focus-search" };

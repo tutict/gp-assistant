@@ -24,7 +24,9 @@ fn cn_market_refresh_reads_batch_financial_reports_without_losing_negative_or_ze
     assert_eq!(report["roe"], -22.8);
     assert_eq!(report["deducted_net_profit_growth_rate"], 0.0);
     assert!((report["operating_revenue_billion"].as_f64().unwrap() - 1049.989984522).abs() < 1e-8);
-    assert!((report["deducted_net_profit_billion"].as_f64().unwrap() + 215.3752365932).abs() < 1e-8);
+    assert!(
+        (report["deducted_net_profit_billion"].as_f64().unwrap() + 215.3752365932).abs() < 1e-8
+    );
     assert_eq!(report["report_notice_date"], "2026-10-30 00:00:00");
 }
 
@@ -40,7 +42,8 @@ fn cn_market_refresh_does_not_downgrade_reports_during_quote_batch_merges() {
     let bundled = json!({"financials":{"000002.SZ":{
         "period":"2026Q1", "latest_eps":-0.5, "roe":-5.23, "source":"old-bundled-snapshot"
     }}});
-    let merged = filtered_financial_snapshot_map(&seed, &bundled, &HashSet::from(["000002.SZ".to_string()]));
+    let merged =
+        filtered_financial_snapshot_map(&seed, &bundled, &HashSet::from(["000002.SZ".to_string()]));
     assert_eq!(merged["000002.SZ"]["period"], "2026Q3");
     assert_eq!(merged["000002.SZ"]["latest_eps"], -2.01);
     assert_eq!(merged["000002.SZ"]["roe"], -22.8);
@@ -53,7 +56,11 @@ fn cn_market_refresh_projects_reported_loss_roe_into_screening_with_ratio_units(
         "code":"000002.SZ", "name":"万科A", "price":6.08, "roe":null, "latest_eps":-0.5
     }]});
     let fields = json!({"period":"2026Q3", "roe":-22.8, "latest_eps":-2.01});
-    assert!(merge_observe_fundamental_supplement(&mut data, "000002.SZ", fields.as_object().unwrap().clone()));
+    assert!(merge_observe_fundamental_supplement(
+        &mut data,
+        "000002.SZ",
+        fields.as_object().unwrap().clone()
+    ));
     assert_eq!(data["stocks"][0]["latest_eps"], -2.01);
     assert!((data["stocks"][0]["roe"].as_f64().unwrap() + 0.228).abs() < 1e-12);
 }
@@ -70,7 +77,13 @@ fn cn_market_refresh_keeps_reported_negative_valuation_ratios() {
     fields[46] = "-0.42";
     fields[52] = "18.0";
     let text = format!("v_sz000002=\"{}\";", fields.join("~"));
-    let seed = HashMap::from([("000002.SZ".to_string(), json!({"pe":20.0,"pb":0.8,"roe":-0.228}).as_object().unwrap().clone())]);
+    let seed = HashMap::from([(
+        "000002.SZ".to_string(),
+        json!({"pe":20.0,"pb":0.8,"roe":-0.228})
+            .as_object()
+            .unwrap()
+            .clone(),
+    )]);
     let stocks = parse_tencent_quotes(&text, &seed, false);
     assert_eq!(stocks[0]["pe"], -6.32);
     assert_eq!(stocks[0]["pb"], -0.42);
@@ -79,7 +92,11 @@ fn cn_market_refresh_keeps_reported_negative_valuation_ratios() {
 
 #[test]
 fn cn_market_refresh_persists_report_fields_period_and_publication_evidence() {
-    let root = std::env::temp_dir().join(format!("gp-cn-report-roundtrip-{}-{}", std::process::id(), epoch_millis()));
+    let root = std::env::temp_dir().join(format!(
+        "gp-cn-report-roundtrip-{}-{}",
+        std::process::id(),
+        epoch_millis()
+    ));
     std::fs::create_dir_all(&root).unwrap();
     let data = json!({
         "stocks":[{"code":"000002.SZ","name":"万科A","industry":"房地产","price":6.08,"roe":-0.228,"period":"2026Q3","latest_bps":7.80289650705}],
@@ -90,13 +107,23 @@ fn cn_market_refresh_persists_report_fields_period_and_publication_evidence() {
             "report_notice_date":"2026-10-30", "report_fetched_at":"1794105983398"
         }}
     });
-    let mut store = crate::external_data::DataStore::open(crate::external_data::store_path(&root)).unwrap();
+    let mut store =
+        crate::external_data::DataStore::open(crate::external_data::store_path(&root)).unwrap();
     store_market_dataset(&mut store, &data, "tencent").unwrap();
     let projected = project_market_store(&store).unwrap().unwrap();
-    assert_eq!(projected["financials"]["000002.SZ"]["report_notice_date"], "2026-10-30");
-    assert_eq!(projected["financials"]["000002.SZ"]["report_fetched_at"], "1794105983398");
+    assert_eq!(
+        projected["financials"]["000002.SZ"]["report_notice_date"],
+        "2026-10-30"
+    );
+    assert_eq!(
+        projected["financials"]["000002.SZ"]["report_fetched_at"],
+        "1794105983398"
+    );
     assert_eq!(projected["financials"]["000002.SZ"]["currency"], "CNY");
-    assert_eq!(projected["financials"]["000002.SZ"]["deducted_net_profit_growth_rate"], 0.0);
+    assert_eq!(
+        projected["financials"]["000002.SZ"]["deducted_net_profit_growth_rate"],
+        0.0
+    );
     assert_eq!(projected["stocks"][0]["period"], "2026Q3");
     assert_eq!(projected["stocks"][0]["latest_bps"], 7.80289650705);
     drop(store);
@@ -134,35 +161,81 @@ fn cn_data_weekend_refresh_uses_the_last_trading_day_for_quote_coverage() {
     let data = json!({"generated_at_epoch_ms":generated,"stocks":[{
         "code":"000002.SZ","price":6.08,"change_pct":0.01,"quote_time":"20261106150000"
     }]});
-    let cache = market_cache_record(Path::new("fixture.json"),0,None,json!({"stock_count":1}),&data,false,"fixture");
+    let cache = market_cache_record(
+        Path::new("fixture.json"),
+        0,
+        None,
+        json!({"stock_count":1}),
+        &data,
+        false,
+        "fixture",
+    );
     assert_eq!(cache["quote_coverage_trade_date"], "20261106");
     assert_eq!(cache["quote_observed"], 1);
-    assert!(!market_quote_cache_stale(Some(generated),generated,Some(1.0)));
+    assert!(!market_quote_cache_stale(
+        Some(generated),
+        generated,
+        Some(1.0)
+    ));
 }
 
 #[test]
 fn cn_data_reported_missing_roe_does_not_turn_into_a_valuation_estimate() {
-    let mut fields = vec!["";80];
-    fields[1]="样本公司";fields[2]="000001";fields[3]="12.0";fields[39]="20.0";fields[46]="2.0";
-    let seed = HashMap::from([("000001.SZ".to_string(),json!({"roe":null,"financial_source":"eastmoney_cn_financial","latest_eps":0.5}).as_object().unwrap().clone())]);
-    let stocks = parse_tencent_quotes(&format!("v_sz000001=\"{}\";",fields.join("~")),&seed,false);
+    let mut fields = vec![""; 80];
+    fields[1] = "样本公司";
+    fields[2] = "000001";
+    fields[3] = "12.0";
+    fields[39] = "20.0";
+    fields[46] = "2.0";
+    let seed = HashMap::from([(
+        "000001.SZ".to_string(),
+        json!({"roe":null,"financial_source":"eastmoney_cn_financial","latest_eps":0.5})
+            .as_object()
+            .unwrap()
+            .clone(),
+    )]);
+    let stocks = parse_tencent_quotes(
+        &format!("v_sz000001=\"{}\";", fields.join("~")),
+        &seed,
+        false,
+    );
     assert!(stocks[0]["roe"].is_null());
 }
 
 #[test]
 fn cn_data_loss_report_does_not_reuse_a_missing_quotes_old_positive_pe() {
-    let mut fields=vec!["";80];
-    fields[1]="样本公司";fields[2]="000001";fields[3]="12.0";fields[46]="2.0";
-    let seed=HashMap::from([("000001.SZ".to_string(),json!({"pe":20.0,"latest_eps":-0.5,"financial_source":"eastmoney_cn_financial"}).as_object().unwrap().clone())]);
-    let stocks=parse_tencent_quotes(&format!("v_sz000001=\"{}\";",fields.join("~")),&seed,false);
+    let mut fields = vec![""; 80];
+    fields[1] = "样本公司";
+    fields[2] = "000001";
+    fields[3] = "12.0";
+    fields[46] = "2.0";
+    let seed = HashMap::from([(
+        "000001.SZ".to_string(),
+        json!({"pe":20.0,"latest_eps":-0.5,"financial_source":"eastmoney_cn_financial"})
+            .as_object()
+            .unwrap()
+            .clone(),
+    )]);
+    let stocks = parse_tencent_quotes(
+        &format!("v_sz000001=\"{}\";", fields.join("~")),
+        &seed,
+        false,
+    );
     assert!(stocks[0]["pe"].is_null());
 }
 
 #[test]
 fn cn_data_dynamic_pe_is_not_substituted_for_a_missing_ttm_pe() {
-    let mut fields=vec!["";80];
-    fields[1]="光庭信息";fields[2]="301221";fields[3]="26.7";fields[52]="-478837.88";
-    let stocks=parse_tencent_quotes(&format!("v_sz301221=\"{}\";",fields.join("~")),&HashMap::new(),false);
+    let mut fields = vec![""; 80];
+    fields[1] = "光庭信息";
+    fields[2] = "301221";
+    fields[3] = "26.7";
+    fields[52] = "-478837.88";
+    let stocks = parse_tencent_quotes(
+        &format!("v_sz301221=\"{}\";", fields.join("~")),
+        &HashMap::new(),
+        false,
+    );
     assert!(stocks[0]["pe"].is_null());
 }
 
@@ -171,9 +244,9 @@ fn cn_data_quote_enrichment_keeps_new_report_holes_empty() {
     let seed=HashMap::from([("002389.SZ".to_string(),json!({"code":"002389.SZ","period":"2026Q3","latest_eps":null,"deducted_net_profit_growth_rate":null}).as_object().unwrap().clone())]);
     for snapshot in [
         json!({"financials":{"002389.SZ":{"period":"2026Q1","latest_eps":0.1026,"deducted_net_profit_growth_rate":25.0}}}),
-        json!({"financials":{"002389.SZ":{"latest_eps":0.1026}}})
+        json!({"financials":{"002389.SZ":{"latest_eps":0.1026}}}),
     ] {
-        let stocks=enriched_stock_maps(&seed,&snapshot);
+        let stocks = enriched_stock_maps(&seed, &snapshot);
         assert!(stocks["002389.SZ"]["latest_eps"].is_null());
         assert!(stocks["002389.SZ"]["deducted_net_profit_growth_rate"].is_null());
     }
@@ -181,76 +254,136 @@ fn cn_data_quote_enrichment_keeps_new_report_holes_empty() {
 
 #[test]
 fn cn_data_adaptive_screen_reports_short_candidate_history_without_blocking_the_market() {
-    let mut coverage=vec![json!({"code":"001246.SZ","kind":"history","sufficient":false,"available_bars":23,"required_bars":60,"as_of":"20261106","end_date":"20261106"})];
-    for code in ["000002.SZ","600519.SH","000001.SZ","600000.SH","000001.SH","399001.SZ","399006.SZ"] {
+    let mut coverage = vec![
+        json!({"code":"001246.SZ","kind":"history","sufficient":false,"available_bars":23,"required_bars":60,"as_of":"20261106","end_date":"20261106"}),
+    ];
+    for code in [
+        "000002.SZ",
+        "600519.SH",
+        "000001.SZ",
+        "600000.SH",
+        "000001.SH",
+        "399001.SZ",
+        "399006.SZ",
+    ] {
         coverage.push(json!({"code":code,"kind":"history","sufficient":true,"available_bars":120,"required_bars":60,"as_of":"20261106"}));
     }
-    let gaps=adaptive_screen_candidate_gaps(&coverage).unwrap();
-    assert_eq!(gaps.len(),1);
-    assert_eq!(gaps[0]["code"],"001246.SZ");
-    assert_eq!(gaps[0]["available_bars"],23);
-    coverage.iter_mut().find(|item|item["code"]=="399001.SZ").unwrap()["sufficient"]=json!(false);
-    let error: Value=serde_json::from_str(&adaptive_screen_candidate_gaps(&coverage).unwrap_err()).unwrap();
-    assert_eq!(error["missing_count"],1);
-    assert_eq!(error["missing"][0]["code"],"399001.SZ");
-    coverage.iter_mut().find(|item|item["code"]=="399001.SZ").unwrap()["sufficient"]=json!(true);
-    coverage[0]["as_of"]=Value::Null;
-    let error: Value=serde_json::from_str(&adaptive_screen_candidate_gaps(&coverage).unwrap_err()).unwrap();
-    assert_eq!(error["missing"][0]["code"],"001246.SZ");
+    let gaps = adaptive_screen_candidate_gaps(&coverage).unwrap();
+    assert_eq!(gaps.len(), 1);
+    assert_eq!(gaps[0]["code"], "001246.SZ");
+    assert_eq!(gaps[0]["available_bars"], 23);
+    coverage
+        .iter_mut()
+        .find(|item| item["code"] == "399001.SZ")
+        .unwrap()["sufficient"] = json!(false);
+    let error: Value =
+        serde_json::from_str(&adaptive_screen_candidate_gaps(&coverage).unwrap_err()).unwrap();
+    assert_eq!(error["missing_count"], 1);
+    assert_eq!(error["missing"][0]["code"], "399001.SZ");
+    coverage
+        .iter_mut()
+        .find(|item| item["code"] == "399001.SZ")
+        .unwrap()["sufficient"] = json!(true);
+    coverage[0]["as_of"] = Value::Null;
+    let error: Value =
+        serde_json::from_str(&adaptive_screen_candidate_gaps(&coverage).unwrap_err()).unwrap();
+    assert_eq!(error["missing"][0]["code"], "001246.SZ");
 }
 
 #[test]
 fn cn_data_legacy_projection_retains_current_reference_metadata_and_report_identity() {
-    let root=std::env::temp_dir().join(format!("gp-cn-reference-projection-{}-{}",std::process::id(),epoch_millis()));
+    let root = std::env::temp_dir().join(format!(
+        "gp-cn-reference-projection-{}-{}",
+        std::process::id(),
+        epoch_millis()
+    ));
     std::fs::create_dir_all(&root).unwrap();
-    let reference=json!({"directory":{"checked":true,"count":1,"fetched_at":"1794113089918"},"financial":{"latest_report_period":"2026Q3","fetched_at":"1794113089918"},"calendar":{"checked":true,"coverage_start":"20260930","coverage_end":"20261108","trading_dates":["20260930","20261106"]}});
-    let latest=json!({"source":"tencent","generated_at_epoch_ms":1794113111699_u64,"cn_reference":reference,
+    let reference = json!({"directory":{"checked":true,"count":1,"fetched_at":"1794113089918"},"financial":{"latest_report_period":"2026Q3","fetched_at":"1794113089918"},"calendar":{"checked":true,"coverage_start":"20260930","coverage_end":"20261108","trading_dates":["20260930","20261106"]}});
+    let latest = json!({"source":"tencent","generated_at_epoch_ms":1794113111699_u64,"cn_reference":reference,
         "archived_stocks":{"000003.SZ":{"code":"000003.SZ","name":"旧证券"}},
         "stocks":[{"code":"000002.SZ","name":"万科A","industry":"房地产","price":3.24,"quote_time":"20261106161442","period":"2026Q3","latest_bps":7.8,"financial_source":"eastmoney_cn_financial","financial_report_notice_date":"2026-10-30"}],
         "financials":{"000002.SZ":{"period":"2026Q3","latest_eps":-2.01,"source":"eastmoney_cn_financial","report_notice_date":"2026-10-30","report_fetched_at":"1794113089918"}}});
-    let legacy=json!({"stocks":[{"code":"000002.SZ","name":"旧名称","industry":"房地产","price":6.0,"period":"2026Q1","latest_bps":12.0}],"cn_reference":{"directory":{"checked":false}},"generated_at":"old"});
-    let mut store=crate::external_data::DataStore::open(crate::external_data::store_path(&root)).unwrap();
-    store_market_dataset(&mut store,&latest,"tencent").unwrap();
-    let promoted=external_market_domains().into_iter().collect();
-    let projected=project_market_store_with_legacy(&store,Some(&legacy),&promoted).unwrap().unwrap();
-    assert_eq!(projected["cn_reference"],reference);
-    assert_eq!(projected["archived_stocks"],latest["archived_stocks"]);
-    assert_eq!(projected["stocks"][0]["period"],"2026Q3");
-    assert_eq!(projected["stocks"][0]["latest_bps"],7.8);
-    assert_eq!(projected["stocks"][0]["financial_source"],"eastmoney_cn_financial");
-    let cache=market_cache_record(Path::new("fixture.json"),0,None,json!({"stock_count":1}),&projected,false,"fixture");
-    assert_eq!(cache["cn_reference"]["financial"]["latest_report_period"],"2026Q3");
-    assert_eq!(cache["quote_coverage_trade_date"],"20261106");
+    let legacy = json!({"stocks":[{"code":"000002.SZ","name":"旧名称","industry":"房地产","price":6.0,"period":"2026Q1","latest_bps":12.0}],"cn_reference":{"directory":{"checked":false}},"generated_at":"old"});
+    let mut store =
+        crate::external_data::DataStore::open(crate::external_data::store_path(&root)).unwrap();
+    store_market_dataset(&mut store, &latest, "tencent").unwrap();
+    let promoted = external_market_domains().into_iter().collect();
+    let projected = project_market_store_with_legacy(&store, Some(&legacy), &promoted)
+        .unwrap()
+        .unwrap();
+    assert_eq!(projected["cn_reference"], reference);
+    assert_eq!(projected["archived_stocks"], latest["archived_stocks"]);
+    assert_eq!(projected["stocks"][0]["period"], "2026Q3");
+    assert_eq!(projected["stocks"][0]["latest_bps"], 7.8);
+    assert_eq!(
+        projected["stocks"][0]["financial_source"],
+        "eastmoney_cn_financial"
+    );
+    let cache = market_cache_record(
+        Path::new("fixture.json"),
+        0,
+        None,
+        json!({"stock_count":1}),
+        &projected,
+        false,
+        "fixture",
+    );
+    assert_eq!(
+        cache["cn_reference"]["financial"]["latest_report_period"],
+        "2026Q3"
+    );
+    assert_eq!(cache["quote_coverage_trade_date"], "20261106");
     drop(store);
-    assert_eq!(root.parent(),Some(std::env::temp_dir().as_path()));
+    assert_eq!(root.parent(), Some(std::env::temp_dir().as_path()));
     std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 fn cn_backtest_range_patch_preserves_reference_metadata_and_tracks_each_series() {
-    let mut data=json!({"cn_reference":{"directory":{"checked":true,"count":5579},"history_ranges":{"300390.SZ":{"bars_hash":"prior"}}}});
-    let patch=json!({"histories":{"300750.SZ":[{"date":"2026-10-16","close":10.0}]},"cn_reference":{"history_ranges":{"300750.SZ":{"bars_hash":"new"}}}});
-    let selected=market_data_patch_for_codes(&patch,&["300750.SZ".to_string()]);
-    assert_eq!(selected["cn_reference"]["history_ranges"]["300750.SZ"]["bars_hash"],"new");
-    apply_market_data_patch(&mut data,&selected);
-    assert_eq!(data["cn_reference"]["directory"]["checked"],true);
-    assert_eq!(data["cn_reference"]["history_ranges"]["300390.SZ"]["bars_hash"],"prior");
-    assert_eq!(data["cn_reference"]["history_ranges"]["300750.SZ"]["bars_hash"],"new");
-    let proof_only=json!({"cn_reference":{"history_ranges":{"301358.SZ":{"bars_hash":"proof-only"}}}});
-    assert_eq!(market_data_patch_codes(&proof_only),vec!["301358.SZ".to_string()]);
-    let selected=market_data_patch_for_codes(&data,&["300750.SZ".to_string()]);
-    assert!(selected["cn_reference"]["history_ranges"].get("300390.SZ").is_none());
+    let mut data = json!({"cn_reference":{"directory":{"checked":true,"count":5579},"history_ranges":{"300390.SZ":{"bars_hash":"prior"}}}});
+    let patch = json!({"histories":{"300750.SZ":[{"date":"2026-10-16","close":10.0}]},"cn_reference":{"history_ranges":{"300750.SZ":{"bars_hash":"new"}}}});
+    let selected = market_data_patch_for_codes(&patch, &["300750.SZ".to_string()]);
+    assert_eq!(
+        selected["cn_reference"]["history_ranges"]["300750.SZ"]["bars_hash"],
+        "new"
+    );
+    apply_market_data_patch(&mut data, &selected);
+    assert_eq!(data["cn_reference"]["directory"]["checked"], true);
+    assert_eq!(
+        data["cn_reference"]["history_ranges"]["300390.SZ"]["bars_hash"],
+        "prior"
+    );
+    assert_eq!(
+        data["cn_reference"]["history_ranges"]["300750.SZ"]["bars_hash"],
+        "new"
+    );
+    let proof_only =
+        json!({"cn_reference":{"history_ranges":{"301358.SZ":{"bars_hash":"proof-only"}}}});
+    assert_eq!(
+        market_data_patch_codes(&proof_only),
+        vec!["301358.SZ".to_string()]
+    );
+    let selected = market_data_patch_for_codes(&data, &["300750.SZ".to_string()]);
+    assert!(selected["cn_reference"]["history_ranges"]
+        .get("300390.SZ")
+        .is_none());
 }
 
 #[test]
 fn cn_data_calendar_covers_holidays_and_the_first_session_before_open() {
-    let calendar=json!({"checked":true,"coverage_start":"20260901","coverage_end":"20261108","trading_dates":["20260929","20260930","20261008","20261106"]});
-    for time in ["2026-10-06T04:00:00Z","2026-10-08T01:00:00Z"] {
-        let epoch=parse_cache_datetime_epoch_ms(time).unwrap();
-        assert_eq!(expected_market_quote_date_with_calendar(epoch,Some(&calendar)).as_deref(),Some("20260930"));
+    let calendar = json!({"checked":true,"coverage_start":"20260901","coverage_end":"20261108","trading_dates":["20260929","20260930","20261008","20261106"]});
+    for time in ["2026-10-06T04:00:00Z", "2026-10-08T01:00:00Z"] {
+        let epoch = parse_cache_datetime_epoch_ms(time).unwrap();
+        assert_eq!(
+            expected_market_quote_date_with_calendar(epoch, Some(&calendar)).as_deref(),
+            Some("20260930")
+        );
     }
-    let epoch=parse_cache_datetime_epoch_ms("2026-10-08T02:00:00Z").unwrap();
-    assert_eq!(expected_market_quote_date_with_calendar(epoch,Some(&calendar)).as_deref(),Some("20261008"));
+    let epoch = parse_cache_datetime_epoch_ms("2026-10-08T02:00:00Z").unwrap();
+    assert_eq!(
+        expected_market_quote_date_with_calendar(epoch, Some(&calendar)).as_deref(),
+        Some("20261008")
+    );
 }
 
 #[test]
@@ -694,14 +827,19 @@ fn hk_observation_merge_keeps_history_when_quote_refresh_fails() {
         &mut cache,
         "00700.HK",
         Err("quote offline".to_string()),
-        Ok(HkHistoryRecord { bars: vec![HkDailyBar {
-            date: "2026-10-17".to_string(),
-            open: 418.0,
-            high: 420.0,
-            low: 416.0,
-            close: 419.0,
-            volume_shares: Some(100),
-        }], source: "Tencent Finance".to_owned(), fetched_at: "new-fetch".to_owned(), ..Default::default() }),
+        Ok(HkHistoryRecord {
+            bars: vec![HkDailyBar {
+                date: "2026-10-17".to_string(),
+                open: 418.0,
+                high: 420.0,
+                low: 416.0,
+                close: 419.0,
+                volume_shares: Some(100),
+            }],
+            source: "Tencent Finance".to_owned(),
+            fetched_at: "new-fetch".to_owned(),
+            ..Default::default()
+        }),
         "new-fetch",
     );
     assert!(!result.quote_updated);

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../lib/tauri", () => ({ getJson: vi.fn() }));
 
 import { Header } from "./Header";
+import { SettingsSheet } from "./settings/SettingsSheet";
 
 describe("Header", () => {
   beforeEach(() => {
@@ -29,6 +30,19 @@ describe("Header", () => {
     onToggleTheme: vi.fn(),
     onToggleMobileNav: vi.fn(),
   };
+
+  it("uses an explicit close callback without toggling the settings open state again", async () => {
+    const onCloseSettings = vi.fn();
+    const onToggleSettings = vi.fn();
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<Header {...commonProps} theme="dark" searchCode=""
+      watchlistCount={0} dataStatus={null} shortcutHelpOpen={false} onSearchCommit={vi.fn()}
+      onCloseSettings={onCloseSettings} onToggleSettings={onToggleSettings} />); });
+    await act(async () => renderer.root.findByType(SettingsSheet).props.onClose());
+    expect(onCloseSettings).toHaveBeenCalledOnce();
+    expect(onToggleSettings).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+  });
 
   it("commits a stock from the global search", async () => {
     const onSearchCommit = vi.fn();

@@ -28,15 +28,28 @@ console.log("Release package build contract passed.");
 
 // Behavioral additions run the real PowerShell gate with packaging deliberately skipped.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, rmdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-const releasePath=fileURLToPath(new URL('./release-check.ps1',import.meta.url));
+const fixturePath=fileURLToPath(new URL('./release-check-fixture.ps1',import.meta.url));
 const skipped=['-SkipAndroidPreflight','-SkipRust','-SkipNode','-SkipPrepare','-SkipPackageBuild','-SkipReliability'];
 function release(args) {
-  return spawnSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',releasePath,...skipped,...args],{encoding:'utf8',timeout:30000});
+  const temporary=mkdtempSync(join(tmpdir(),'gp-release-process-'));
+  const parametersPath=join(temporary,'parameters.json');
+  const parameters=Object.fromEntries(skipped.map(flag=>[flag.slice(1),true]));
+  for(let i=0;i<args.length;i++) {
+    const name=args[i].slice(1);
+    parameters[name]=i+1<args.length&&!args[i+1].startsWith('-')?args[++i]:true;
+  }
+  writeFileSync(parametersPath,JSON.stringify(parameters));
+  try {
+    return spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',fixturePath,'-ParametersPath',parametersPath],{encoding:'utf8',timeout:30000,windowsHide:true,stdio:['ignore','pipe','pipe']});
+  } finally {
+    rmSync(parametersPath,{force:true});
+    rmdirSync(temporary);
+  }
 }
 test('release gate rejects requested-but-absent measured baselines',()=>{
   const result=release(['-EvaluateBaseline']);

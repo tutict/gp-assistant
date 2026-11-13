@@ -14,6 +14,7 @@ import { formatBytes, formatDateTime, normalizeStockCode, normalizeStockCodeForM
 import { getJson, isMobileTauriRuntime, isTauriRuntime, openExternalUrl, postJson } from "../../lib/tauri";
 import { applyMarkRead, pushCitation, useEventSelection } from "../../lib/newsInteractions";
 import { newsSummary } from "../../lib/newsSummary";
+import { formatNewsTime, newsRefreshFeedback, type NewsRefreshFeedback } from "../../lib/researchNews";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
 import { PanelFeedback } from "../ui/PanelFeedback";
 import { useMobileComposer } from "../../hooks/useMobileComposer";
@@ -84,7 +85,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [asking, setAsking] = useState(false);
   const [error, setError] = useState("");
-  const [refreshNotice, setRefreshNotice] = useState("");
+  const [refreshNotice, setRefreshNotice] = useState<NewsRefreshFeedback | null>(null);
   const [questionError, setQuestionError] = useState<QuestionFailure | null>(null);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [questionsOpen, setQuestionsOpen] = useState(false);
@@ -139,7 +140,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     setCitationPointer(-1);
     setEvidenceOpen(false);
     setError("");
-    setRefreshNotice("");
+    setRefreshNotice(null);
     setQuestionError(null);
     setLoading(true);
     if (controlled) props.onCodeChange?.(normalized);
@@ -220,10 +221,12 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
         setThreadId("");
         setAnswers([]);
       }
+      return true;
     } catch (nextError) {
       if (generation === workspaceGenerationRef.current) {
         setError((nextError as Error).message);
       }
+      return false;
     } finally {
       if (!quiet && generation === workspaceGenerationRef.current) setLoading(false);
     }
@@ -236,10 +239,8 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
 
   const refresh = useCallback(async (background = false) => {
     const generation = workspaceGenerationRef.current;
-    const refreshCodes = code ? [code] : market === "hk"
-      ? [...new Set([...messagesRef.current.filter(message => message.source_tier !== "financial_snapshot").map(message => message.stock_code), ...watchlist.map(stock => stock.code)]
-        .map(raw => normalizeStockCodeForMarket(raw, market)).filter(Boolean))].slice(0, 10)
-      : [];
+    const refreshCodes = code ? [code] : [...new Set([...messagesRef.current.filter(message => message.source_tier !== "financial_snapshot").map(message => message.stock_code), ...watchlist.map(stock => stock.code)]
+      .map(raw => normalizeStockCodeForMarket(raw, market)).filter(Boolean))].slice(0, 10);
     // Desktop connectivity and visibility hints can lag behind an explicit user
     // action. Only background work should be suppressed by these hints.
     if (!refreshCodes.length || (background && (!navigator.onLine || document.visibilityState !== "visible"))) {
@@ -249,34 +250,33 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       }
       return;
     }
-    if (!background) { setRefreshing(true); setError(""); setRefreshNotice(""); }
+    if (!background) { setRefreshing(true); setError(""); setRefreshNotice(null); }
     try {
-      const payload = buildNewsRagRequest(code, 30, undefined, watchlist, true, market);
+      const payload = buildNewsRagRequest(code, 30, undefined, watchlist.filter(stock => normalizeStockCodeForMarket(stock.code, market)), true, market);
       if (!code) payload.seed_codes = refreshCodes;
+      payload.include_us_market_brief = false;
+      const visible = messagesRef.current.filter(message => !code || message.stock_code === code);
+      const selected = visible.find(message => message.id === selectedId);
+      payload.summary_priority_urls = [...new Set([selected?.url, ...visible.map(message => message.url)]
+        .map(url => safeExternalUrl(url)).filter((url): url is string => Boolean(url)))].slice(0, 120);
       if (market === "hk") {
-        payload.include_us_market_brief = false;
         payload.scope_mode = "stock_only";
-        const visible = messagesRef.current.filter(message => !code || message.stock_code === code);
-        const selected = visible.find(message => message.id === selectedId);
-        payload.summary_priority_urls = [...new Set([selected?.url, ...visible.map(message => message.url)]
-          .map(url => safeExternalUrl(url)).filter((url): url is string => Boolean(url)))].slice(0, 120);
       }
-      const result = await postJson<{ news?: { scope_codes?: string[]; notes?: string[] } }>("/api/research/refresh", payload);
+      const result = await postJson<{ news?: NewsRagResult }>("/api/research/refresh", payload);
       if (generation !== workspaceGenerationRef.current) return;
-      if (market === "hk" && result.news?.scope_codes?.length === 0) {
-        throw new Error(result.news.notes?.[0] || "目标港股未匹配到证券目录，请确认股票代码。");
+      if (result.news?.scope_codes?.length === 0) {
+        throw new Error(result.news.notes?.[0] || (market === "hk" ? "目标港股未匹配到证券目录，请确认股票代码。" : "目标 A 股未匹配到证券目录，请确认股票代码。"));
       }
       if (market === "hk" && result.news?.notes?.some(note => note.startsWith("HK news HTTP client failed:"))) {
         throw new Error("港股消息更新失败，请检查网络或代理设置后重试。");
       }
-      await loadWorkspace(true, generation);
+      const reloaded = await loadWorkspace(true, generation);
+      if (!reloaded) return;
       if (!background && generation === workspaceGenerationRef.current) {
-        const summaryNotice = result.news?.notes?.find(note => note.startsWith("港股原文摘要"));
-        const sourceFailed = market === "hk" && result.news?.notes?.some(note => note.startsWith("HK ") && note.includes("news refresh failed;"));
-        const outcome = sourceFailed
-          ? `${summaryNotice || "本次新闻来源未能更新。"} 部分新闻来源暂时不可用，已有消息仍可阅读。`
-          : summaryNotice || "消息已更新。";
-        setRefreshNotice(market === "hk" ? `${refreshCodes.length === 1 ? refreshCodes[0] : `已更新 ${refreshCodes.length} 只港股`} · ${outcome}` : outcome);
+        const feedback = newsRefreshFeedback(result.news);
+        setRefreshNotice(market === "hk" && feedback.status !== "failed"
+          ? { ...feedback, message: `${refreshCodes.length === 1 ? refreshCodes[0] : `已更新 ${refreshCodes.length} 只港股`} · ${feedback.message}` }
+          : feedback);
       }
     } catch (nextError) {
       if (!background && generation === workspaceGenerationRef.current) {
@@ -615,7 +615,12 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
     {error && <div className="research-error">
       <PanelFeedback kind="error" title="研究中心暂时不可用" description={error} />
     </div>}
-    {refreshNotice && <p className="research-loading-status" role="status">{refreshNotice}</p>}
+    {refreshNotice && <PanelFeedback compact
+      kind={refreshNotice.status === "failed" ? "error" : refreshNotice.status === "partial" ? "warning" : refreshNotice.status === "empty" ? "empty" : "success"}
+      title={refreshNotice.status === "failed" ? "消息更新失败" : undefined}
+      description={refreshNotice.message}
+      action={refreshNotice.status === "failed" || refreshNotice.status === "partial" ? <button type="button" className="research-ghost-button"
+        disabled={refreshing} onClick={() => void refresh()}>重试更新</button> : undefined} />}
 
     <div className="research-columns">
       <ResearchSurfaceSheet active={mobile} open={active && inboxOpen} close={()=>setInboxOpen(false)} label="自选股收件箱">
@@ -627,14 +632,17 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
       <main className="research-stream">
         <div className="research-stream-body">
         <div className="research-reading-heading">
-          <h1>{stock?.name || (code ? "股票消息" : "全部消息")}{code && <small>{code}</small>}</h1>
+          <div className="research-reading-identity">
+            <h1>{stock?.name || (code ? "股票消息" : "全部消息")}{code && <small>{code}</small>}</h1>
+            <p className="research-update-meta"><span>{visibleMessages.length} 条消息</span>
+              <span>{lastUpdated ? `上次更新 ${lastUpdated}` : "尚未记录更新时间"}</span></p>
+          </div>
           <button type="button" className="research-ghost-button" aria-label="打开研究问答" aria-expanded={questionsOpen}
             onClick={() => { setInboxOpen(false); setQuestionsOpen(true); }}><MessageSquareText size={16} aria-hidden="true" />研究问答</button>
         </div>
         {visibleMessages.length > 0 && <details className="research-daily-brief">
           <summary className="research-brief-summary"><span>{summary}</span><strong>今日新增 {todayMessages.length} 条</strong><ChevronRight className="research-brief-chevron" size={16} aria-hidden="true" /></summary>
           <div className="research-brief-expanded"><ResearchBriefCounts positive={grouped.positive.length} negative={grouped.negative.length} uncertain={grouped.uncertain.length} />
-            <p>{lastUpdated ? `上次更新 ${lastUpdated}` : "尚未记录更新时间"} · 每 15 分钟自动更新</p>
           </div>
         </details>}
 
@@ -643,7 +651,6 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
               {readNotice && <small className={readNoticePulse ? "is-flashing" : ""}>{readNotice}</small>}
               {(unreadVisibleIds.length > 0 || (code && (overview?.unread_by_stock?.[code] || 0) > 0)) && <button type="button" className="research-ghost-button"
                 onClick={() => code ? void markReadStock(code) : void markReadBatch(unreadVisibleIds, true)}>全部已读</button>}
-              <span>{visibleMessages.length} 条</span>
             </div>
           </div>
           {loading ? null : !visibleMessages.length ? <ResearchEmptyState
@@ -752,7 +759,10 @@ function EventGroup(props: {
     {props.messages.map((message) => {
       const selected = props.selectedId === message.id;
       const originalUrl = safeExternalUrl(message.url);
-      const summary = newsSummary(message.title, message.summary)
+      const summaryText = newsSummary(message.title, message.summary);
+      const fetchedAt = formatNewsTime(message.fetched_at_epoch_ms);
+      const summaryFetchedAt = formatNewsTime(message.article_summary_fetched_at_epoch_ms);
+      const summary = summaryText
         || (originalUrl ? "暂未获取摘要，可更新消息或查看原文。" : "该来源暂未提供摘要。");
       return <div className={`research-event-shell${selected ? " selected expanded" : ""}`} key={message.id}>
         <button type="button" ref={(element) => props.setEventRef(message.id, element)}
@@ -768,21 +778,26 @@ function EventGroup(props: {
           <span className={`research-dot research-event-dot-desktop ${message.unread ? "unread" : "neutral"}`} aria-label={message.unread ? "未读" : undefined} />
           <span className="research-event-content">
             <strong>{message.title}</strong>
-            {summary ? <span className="research-event-summary">{summary}</span> : null}
+            {!selected && summary ? <span className="research-event-summary">{summary}</span> : null}
             <span className="research-event-meta">
               <span className="research-source-name">{message.source_name}</span>
-              <time>{formatDateTime(message.published_at)}</time>
+              <time>{message.published_at ? `发布 ${formatNewsTime(message.published_at) || "时间未记录"}` : "发布时间未记录"}</time>
               {message.unread && <span className="research-unread-label">未读</span>}
             </span>
           </span>
         </button>
         {selected && <div className="research-event-detail">
           {summary ? <p>{summary}</p> : null}
-          {originalUrl ? <SourceLink url={originalUrl}>打开原文</SourceLink> : null}
+          {originalUrl ? <SourceLink url={originalUrl}>{new URL(originalUrl).hostname === "so.eastmoney.com" ? "查看消息来源" : "打开原文"}</SourceLink> : <p>当前来源未提供原文链接。</p>}
           <div className="research-event-detail-meta">
+            <span className="research-badge">{summaryText ? message.summary_kind === "article_summary" ? "原文摘要" : "来源摘录" : "摘要未获取"}</span>
             <span className="research-badge">{sourceTierLabel(message.source_tier)}</span>
             {message.scope_type && <span className="research-badge">{scopeTypeLabel(message.scope_type)}</span>}
             {message.scope_tags?.map((tag) => <span className="research-badge" key={tag}>{tag}</span>)}
+          </div>
+          <div className="research-event-detail-meta research-event-provenance">
+            <span>{fetchedAt ? `消息抓取 ${fetchedAt}` : "消息抓取时间未记录"}</span>
+            {summaryFetchedAt ? <span>{summaryText && message.summary_kind === "article_summary" ? "摘要抓取" : "摘要尝试"} {summaryFetchedAt}</span> : null}
           </div>
           {message.citations?.length ? <div className="research-event-detail-evidence">
             <span>已关联 {message.citations.length} 条证据</span>
@@ -1279,9 +1294,7 @@ export function formatResearchUpdatedAt(overview: ResearchOverview | null): stri
   if (!overview) return "";
   const raw = overview.updated_at_epoch_ms || overview.last_refresh_at || overview.last_updated_at;
   if (!raw) return "";
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return formatNewsTime(raw);
 }
 
 function formatScore(value?: number | null): string {

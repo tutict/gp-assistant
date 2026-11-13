@@ -92,10 +92,11 @@ describe("BacktestPanel interactions", () => {
     await act(async () => renderer.unmount());
   });
   it("repairs persisted future and reversed dates before a request is made", async () => {
+    const futureYear = Number(currentSystemDateInputValue().slice(0, 4)) + 1;
     workspaceTest.store.dispose();
     workspaceTest = workspaceTestHarness(undefined, {
-      "backtest.start": "2027-01-01",
-      "backtest.end": "2026-11-12",
+      "backtest.start": `${futureYear}-01-02`,
+      "backtest.end": `${futureYear}-01-01`,
     });
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(<BacktestPanel criteria={criteria} watchlist={watchlist} />); });

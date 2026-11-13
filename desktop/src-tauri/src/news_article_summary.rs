@@ -517,7 +517,7 @@ mod tests {
             "seed_codes":stocks.iter().map(|stock| stock["code"].clone()).collect::<Vec<_>>(),
             "summary_priority_urls":priority,"network_proxy_mode":"system","include_us_market_brief":false,"scope_mode":"stock_only"});
         let started = std::time::Instant::now();
-        let (items, notes) =
+        let super::super::NewsFetchResult { items, notes, .. } =
             super::super::fetch_hk_news_items(&stocks, 30, Some(&payload), &cached).await;
         assert!(
             items.iter().all(

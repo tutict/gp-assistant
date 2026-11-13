@@ -673,7 +673,7 @@ describe("NewsRagPanel", () => {
       messages: [],
     });
 
-    expect(text).toMatch(/^\d{2}:\d{2}$/);
+    expect(text).toBe("2026/01/01 08:34");
   });
 
   it("loads the selected stock inbox and marks an unread event read", async () => {

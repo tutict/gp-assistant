@@ -117,15 +117,22 @@ impl Request {
                     .any(|key| key != "path" && key != "bytes_base64" && key != "market")
                     || object.keys().filter(|key| key.as_str() != "market").count() != 1
                     || !object
-                        .iter().filter(|(key,_)| key.as_str() != "market")
-                        .all(|(_,v)| v.as_str().is_some_and(|s| !s.trim().is_empty()))
-                    || object.get("market").is_some_and(|value| !matches!(value.as_str(),Some("cn" | "hk")))
+                        .iter()
+                        .filter(|(key, _)| key.as_str() != "market")
+                        .all(|(_, v)| v.as_str().is_some_and(|s| !s.trim().is_empty()))
+                    || object
+                        .get("market")
+                        .is_some_and(|value| !matches!(value.as_str(), Some("cn" | "hk")))
                 {
                     return Err("job_pack_payload_invalid".into());
                 }
             }
-            Kind::Index if object.keys().any(|key| key != "market")
-                || object.get("market").is_some_and(|value| !matches!(value.as_str(),Some("cn" | "hk"))) => {
+            Kind::Index
+                if object.keys().any(|key| key != "market")
+                    || object
+                        .get("market")
+                        .is_some_and(|value| !matches!(value.as_str(), Some("cn" | "hk"))) =>
+            {
                 return Err("job_index_payload_invalid".into())
             }
             _ => {}
@@ -774,24 +781,40 @@ mod tests {
         assert_eq!(cn.payload, json!({"market":"cn"}));
         assert_eq!(hk.payload, json!({"market":"hk"}));
         assert_ne!(cn.fingerprint, hk.fingerprint);
-        for invalid in [json!({"market":"us"}), json!({"market":null}), json!({"market":"hk","extra":true})] {
+        for invalid in [
+            json!({"market":"us"}),
+            json!({"market":null}),
+            json!({"market":"hk","extra":true}),
+        ] {
             assert!(Request::new("research_rebuild_index", invalid).is_err());
         }
     }
 
     #[test]
     fn research_pack_jobs_keep_the_market_and_one_bounded_input() {
-        for input in [json!({"path":"fixture.sqlite"}), json!({"bytes_base64":"Zml4dHVyZQ=="})] {
+        for input in [
+            json!({"path":"fixture.sqlite"}),
+            json!({"bytes_base64":"Zml4dHVyZQ=="}),
+        ] {
             let default = Request::new("research_pack_import", input.clone()).unwrap();
             assert_eq!(default.payload, input);
             for market in ["cn", "hk"] {
                 let mut scoped = input.clone();
                 scoped["market"] = json!(market);
-                assert_eq!(Request::new("research_pack_import", scoped.clone()).unwrap().payload, scoped);
+                assert_eq!(
+                    Request::new("research_pack_import", scoped.clone())
+                        .unwrap()
+                        .payload,
+                    scoped
+                );
             }
         }
-        for invalid in [json!({"market":"hk"}),json!({"path":"fixture.sqlite","bytes_base64":"Zml4dHVyZQ==","market":"hk"}),
-            json!({"path":"fixture.sqlite","market":"us"}),json!({"path":"fixture.sqlite","market":"hk","extra":true})] {
+        for invalid in [
+            json!({"market":"hk"}),
+            json!({"path":"fixture.sqlite","bytes_base64":"Zml4dHVyZQ==","market":"hk"}),
+            json!({"path":"fixture.sqlite","market":"us"}),
+            json!({"path":"fixture.sqlite","market":"hk","extra":true}),
+        ] {
             assert!(Request::new("research_pack_import", invalid).is_err());
         }
     }

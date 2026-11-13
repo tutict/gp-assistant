@@ -27,4 +27,13 @@ describe("global shortcuts", () => {
     expect(resolveGlobalShortcut(event({ key: "?" }))).toEqual({ type: "toggle-help" });
     expect(resolveGlobalShortcut(event({ key: "Escape" }))).toEqual({ type: "escape" });
   });
+
+  it.each(["Escape", "2", "k"])("leaves %s to the open dialog instead of changing the page underneath", (key) => {
+    const target = { tagName: "BUTTON", closest: () => ({ role: "dialog" }) };
+    expect(resolveGlobalShortcut(event({ key, ctrlKey: key === "k", target }))).toBeNull();
+  });
+
+  it("does not act again after another control consumes the shortcut", () => {
+    expect(resolveGlobalShortcut(event({ key: "Escape", defaultPrevented: true }))).toBeNull();
+  });
 });

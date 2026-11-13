@@ -317,11 +317,16 @@ pub(crate) fn cn_evidence_from_cache(
     };
     let stale = bool_value(status, "stale");
     let reference = status.get("cn_reference");
-    let directory_checked = reference.and_then(|reference| reference.get("directory"))
-        .is_some_and(|directory| bool_value(directory,"checked") && count_value(directory,"count") == universe_count
-            && data.stocks.len() as u64 == universe_count);
-    let financial_checked = reference.and_then(|reference| reference.get("financial"))
-        .is_some_and(|financial| count_value(financial,"fetched_count") > 0);
+    let directory_checked = reference
+        .and_then(|reference| reference.get("directory"))
+        .is_some_and(|directory| {
+            bool_value(directory, "checked")
+                && count_value(directory, "count") == universe_count
+                && data.stocks.len() as u64 == universe_count
+        });
+    let financial_checked = reference
+        .and_then(|reference| reference.get("financial"))
+        .is_some_and(|financial| count_value(financial, "fetched_count") > 0);
     let source_id = status
         .get("source")
         .and_then(Value::as_str)
@@ -329,10 +334,24 @@ pub(crate) fn cn_evidence_from_cache(
         .unwrap_or("legacy_market_cache")
         .to_owned();
     let fetched_at = status.get("quote_generated_at").and_then(string_value);
-    let directory_fetched_at = reference.and_then(|reference| reference.pointer("/directory/fetched_at")).and_then(string_value)
+    let directory_fetched_at = reference
+        .and_then(|reference| reference.pointer("/directory/fetched_at"))
+        .and_then(string_value)
         .or_else(|| status.get("universe_updated_at").and_then(string_value));
-    let directory_freshness = freshness_from_timestamp(crate::market::epoch_millis(),directory_fetched_at.as_deref().and_then(cache_timestamp_epoch_ms));
-    let financial_freshness = freshness_from_timestamp(crate::market::epoch_millis(),reference.and_then(|reference|reference.pointer("/financial/fetched_at")).and_then(string_value).as_deref().and_then(cache_timestamp_epoch_ms));
+    let directory_freshness = freshness_from_timestamp(
+        crate::market::epoch_millis(),
+        directory_fetched_at
+            .as_deref()
+            .and_then(cache_timestamp_epoch_ms),
+    );
+    let financial_freshness = freshness_from_timestamp(
+        crate::market::epoch_millis(),
+        reference
+            .and_then(|reference| reference.pointer("/financial/fetched_at"))
+            .and_then(string_value)
+            .as_deref()
+            .and_then(cache_timestamp_epoch_ms),
+    );
     let quote_date = status.get("quote_trade_date").and_then(string_value);
     let quote_requested = count_value(status, "quote_requested");
     let quote_reported = count_value(status, "quote_observed");
@@ -367,15 +386,20 @@ pub(crate) fn cn_evidence_from_cache(
         .filter(|stock| {
             data.financials.get(&stock.code).is_some_and(|snapshot| {
                 if financial_checked {
-                    snapshot.latest_eps.is_some() && snapshot.latest_bps.is_some()
-                        && snapshot.operating_revenue_billion.is_some() && snapshot.parent_net_profit_billion.is_some()
-                        && (snapshot.roe.is_some() || snapshot.latest_bps.is_some_and(|bps|bps<=0.0))
+                    snapshot.latest_eps.is_some()
+                        && snapshot.latest_bps.is_some()
+                        && snapshot.operating_revenue_billion.is_some()
+                        && snapshot.parent_net_profit_billion.is_some()
+                        && (snapshot.roe.is_some()
+                            || snapshot.latest_bps.is_some_and(|bps| bps <= 0.0))
                         && snapshot.report_notice_date.is_some()
-                } else { snapshot.latest_eps.is_some()
-                    || snapshot.latest_bps.is_some()
-                    || snapshot.operating_revenue_billion.is_some()
-                    || snapshot.parent_net_profit_billion.is_some()
-                    || snapshot.roe.is_some() }
+                } else {
+                    snapshot.latest_eps.is_some()
+                        || snapshot.latest_bps.is_some()
+                        || snapshot.operating_revenue_billion.is_some()
+                        || snapshot.parent_net_profit_billion.is_some()
+                        || snapshot.roe.is_some()
+                }
             })
         })
         .count() as u64;
@@ -399,7 +423,11 @@ pub(crate) fn cn_evidence_from_cache(
     let directory_coverage = cache_coverage(
         universe_count,
         (data.stocks.len() as u64).min(universe_count),
-        if directory_checked { &[] } else { &["complete_exchange_universe", "provider_rights"] },
+        if directory_checked {
+            &[]
+        } else {
+            &["complete_exchange_universe", "provider_rights"]
+        },
         None,
         quote_date.clone(),
     );
@@ -440,12 +468,18 @@ pub(crate) fn cn_evidence_from_cache(
         universe_count,
         financial_symbols.min(universe_count),
         if financial_checked {
-            if financial_symbols == universe_count { &[] } else { &["per_security_financial_field_coverage"] }
-        } else { &[
-            "provider_rights",
-            "point_in_time_publication_date",
-            "per_security_financial_field_coverage",
-        ] },
+            if financial_symbols == universe_count {
+                &[]
+            } else {
+                &["per_security_financial_field_coverage"]
+            }
+        } else {
+            &[
+                "provider_rights",
+                "point_in_time_publication_date",
+                "per_security_financial_field_coverage",
+            ]
+        },
         None,
         None,
     );
@@ -456,16 +490,34 @@ pub(crate) fn cn_evidence_from_cache(
             stock.price.is_finite()
                 && stock.price > 0.0
                 && stock.pe.is_some()
-                && (stock.pb.is_some() || (financial_checked && data.financials.get(&stock.code).and_then(|report| report.latest_bps).is_some_and(|bps|bps <= 0.0)))
-                && (stock.roe.is_some() || (financial_checked && data.financials.get(&stock.code).and_then(|report| report.latest_bps).is_some_and(|bps|bps <= 0.0)))
+                && (stock.pb.is_some()
+                    || (financial_checked
+                        && data
+                            .financials
+                            .get(&stock.code)
+                            .and_then(|report| report.latest_bps)
+                            .is_some_and(|bps| bps <= 0.0)))
+                && (stock.roe.is_some()
+                    || (financial_checked
+                        && data
+                            .financials
+                            .get(&stock.code)
+                            .and_then(|report| report.latest_bps)
+                            .is_some_and(|bps| bps <= 0.0)))
         })
         .count() as u64;
     let screening_coverage = cache_coverage(
         universe_count,
         screening_symbols.min(universe_count),
         if financial_checked {
-            if screening_symbols == universe_count { &[] } else { &["complete_screening_factor_coverage"] }
-        } else { &["provider_rights", "complete_screening_factor_coverage"] },
+            if screening_symbols == universe_count {
+                &[]
+            } else {
+                &["complete_screening_factor_coverage"]
+            }
+        } else {
+            &["provider_rights", "complete_screening_factor_coverage"]
+        },
         None,
         quote_date.clone(),
     );
@@ -498,7 +550,11 @@ pub(crate) fn cn_evidence_from_cache(
 
     let mut directory_sources = if universe_count > 0 {
         vec![source_evidence(
-            if directory_checked { "sse_szse_listed_bse_quote" } else { "legacy_market_cache" },
+            if directory_checked {
+                "sse_szse_listed_bse_quote"
+            } else {
+                "legacy_market_cache"
+            },
             "security_master",
             MarketId::Cn,
             directory_fetched_at,
@@ -512,8 +568,15 @@ pub(crate) fn cn_evidence_from_cache(
             } else {
                 CapabilityFreshness::Unknown
             },
-            if directory_checked { &["provider_rights_unverified", "current_listed_universe_checked", "bse_quote_directory_scope"] }
-                else { &["provider_rights_unverified", "complete_universe_unverified"] },
+            if directory_checked {
+                &[
+                    "provider_rights_unverified",
+                    "current_listed_universe_checked",
+                    "bse_quote_directory_scope",
+                ]
+            } else {
+                &["provider_rights_unverified", "complete_universe_unverified"]
+            },
             Some(directory_coverage.clone()),
         )]
     } else {
@@ -548,10 +611,17 @@ pub(crate) fn cn_evidence_from_cache(
         Some(quote_coverage.clone()),
     );
     if directory_checked {
-        for source in &mut directory_sources { source.verification_status = "scope_checked".to_owned(); }
+        for source in &mut directory_sources {
+            source.verification_status = "scope_checked".to_owned();
+        }
     }
-    let current_codes: std::collections::HashSet<_> = data.stocks.iter().map(|stock| stock.code.as_str()).collect();
-    let mut financial_source_groups = std::collections::BTreeMap::<(String,Option<String>),CapabilitySourceEvidence>::new();
+    let current_codes: std::collections::HashSet<_> = data
+        .stocks
+        .iter()
+        .map(|stock| stock.code.as_str())
+        .collect();
+    let mut financial_source_groups =
+        std::collections::BTreeMap::<(String, Option<String>), CapabilitySourceEvidence>::new();
     for (code, snapshot) in &data.financials {
         if !current_codes.contains(code.as_str()) {
             continue;
@@ -565,42 +635,64 @@ pub(crate) fn cn_evidence_from_cache(
         };
         let period = snapshot.period.clone();
         let mut flags = vec!["provider_rights_unverified"];
-        if snapshot.report_notice_date.is_none() {flags.push("point_in_time_publication_date_missing");}
+        if snapshot.report_notice_date.is_none() {
+            flags.push("point_in_time_publication_date_missing");
+        }
         let mut item = source_evidence(
-                source,
-                "financial_snapshot",
-                MarketId::Cn,
-                snapshot.report_fetched_at.clone(),
-                None,
-                snapshot.report_notice_date.clone(),
-                period.clone(),
-                freshness_from_timestamp(crate::market::epoch_millis(),snapshot.report_fetched_at.as_deref().and_then(cache_timestamp_epoch_ms)),
-                &flags,
-                None,
-            );
+            source,
+            "financial_snapshot",
+            MarketId::Cn,
+            snapshot.report_fetched_at.clone(),
+            None,
+            snapshot.report_notice_date.clone(),
+            period.clone(),
+            freshness_from_timestamp(
+                crate::market::epoch_millis(),
+                snapshot
+                    .report_fetched_at
+                    .as_deref()
+                    .and_then(cache_timestamp_epoch_ms),
+            ),
+            &flags,
+            None,
+        );
         if snapshot.report_fetched_at.is_some() && snapshot.report_notice_date.is_some() {
             item.verification_status = "source_reported".to_owned();
             if snapshot.roe.is_none() {
-                item.quality_flags.push(if snapshot.latest_bps.is_some_and(|bps|bps <= 0.0) {
-                    "roe_not_applicable_non_positive_equity"
-                } else { "reported_roe_missing" }.to_owned());
+                item.quality_flags.push(
+                    if snapshot.latest_bps.is_some_and(|bps| bps <= 0.0) {
+                        "roe_not_applicable_non_positive_equity"
+                    } else {
+                        "reported_roe_missing"
+                    }
+                    .to_owned(),
+                );
             }
-            if snapshot.latest_eps.is_none() {item.quality_flags.push("reported_eps_missing".to_owned());}
-            if reference.and_then(|reference| reference.pointer("/financial/latest_report_period")).and_then(Value::as_str)
-                .is_some_and(|latest| Some(latest) != period.as_deref()) {
-                item.quality_flags.push("latest_available_report".to_owned());
+            if snapshot.latest_eps.is_none() {
+                item.quality_flags.push("reported_eps_missing".to_owned());
+            }
+            if reference
+                .and_then(|reference| reference.pointer("/financial/latest_report_period"))
+                .and_then(Value::as_str)
+                .is_some_and(|latest| Some(latest) != period.as_deref())
+            {
+                item.quality_flags
+                    .push("latest_available_report".to_owned());
             }
         }
-        let key = (source.to_string(),period);
+        let key = (source.to_string(), period);
         if let Some(existing) = financial_source_groups.get_mut(&key) {
             existing.fetched_at = existing.fetched_at.clone().max(item.fetched_at);
             existing.disclosed_at = existing.disclosed_at.clone().max(item.disclosed_at);
             existing.quality_flags.extend(item.quality_flags);
-            existing.quality_flags.sort();existing.quality_flags.dedup();
-        } else {financial_source_groups.insert(key,item);}
+            existing.quality_flags.sort();
+            existing.quality_flags.dedup();
+        } else {
+            financial_source_groups.insert(key, item);
+        }
     }
     let mut financial_sources: Vec<_> = financial_source_groups.into_values().collect();
-    financial_sources.sort_by(|left,right| right.report_period.cmp(&left.report_period));
+    financial_sources.sort_by(|left, right| right.report_period.cmp(&left.report_period));
     let mut backtest_sources = Vec::new();
     let factor_source_ids = data
         .factor_snapshots
@@ -726,25 +818,59 @@ pub(crate) fn cn_evidence_from_cache(
         ),
     ];
     if directory_checked {
-        if let Some(item)=output.iter_mut().find(|item|item.id==CapabilityId::SecurityDirectory) {
-            item.release_gate_open=directory_freshness==CapabilityFreshness::Fresh;item.coverage_complete=true;
-            if !item.release_gate_open {item.reason=Some("证券目录缓存已过期，请刷新股票池。".to_string());}
+        if let Some(item) = output
+            .iter_mut()
+            .find(|item| item.id == CapabilityId::SecurityDirectory)
+        {
+            item.release_gate_open = directory_freshness == CapabilityFreshness::Fresh;
+            item.coverage_complete = true;
+            if !item.release_gate_open {
+                item.reason = Some("证券目录缓存已过期，请刷新股票池。".to_string());
+            }
         }
-        if let Some(item)=output.iter_mut().find(|item|item.id==CapabilityId::Observe) {
-            item.reason=Some("覆盖数量为已缓存日线的证券数；选择股票后按需补取历史行情。".to_string());
+        if let Some(item) = output
+            .iter_mut()
+            .find(|item| item.id == CapabilityId::Observe)
+        {
+            item.reason =
+                Some("覆盖数量为已缓存日线的证券数；选择股票后按需补取历史行情。".to_string());
         }
-        let research_symbols=data.stocks.iter().filter(|stock|stock.price.is_finite() && stock.price>0.0
-            && valid_history_bar_count(data,&stock.code)>=crate::screening::MIN_BACKTEST_HISTORY_BARS).count() as u64;
-        if let Some(item)=output.iter_mut().find(|item|item.id==CapabilityId::Backtest) {
-            item.release_gate_open=quote_observed>0;
-            item.coverage_complete=false;
-            item.usable_records=quote_observed;
-            item.coverage=Some(cache_coverage(universe_count,research_symbols,
-                &["research_history_on_demand","point_in_time_financial_availability","delisted_universe","corporate_actions","exchange_calendar_and_trading_restrictions","strict_out_of_sample_fold_count"],
-                backtest_coverage.start_date.clone(),backtest_coverage.end_date.clone()));
+        let research_symbols = data
+            .stocks
+            .iter()
+            .filter(|stock| {
+                stock.price.is_finite()
+                    && stock.price > 0.0
+                    && valid_history_bar_count(data, &stock.code)
+                        >= crate::screening::MIN_BACKTEST_HISTORY_BARS
+            })
+            .count() as u64;
+        if let Some(item) = output
+            .iter_mut()
+            .find(|item| item.id == CapabilityId::Backtest)
+        {
+            item.release_gate_open = quote_observed > 0;
+            item.coverage_complete = false;
+            item.usable_records = quote_observed;
+            item.coverage = Some(cache_coverage(
+                universe_count,
+                research_symbols,
+                &[
+                    "research_history_on_demand",
+                    "point_in_time_financial_availability",
+                    "delisted_universe",
+                    "corporate_actions",
+                    "exchange_calendar_and_trading_restrictions",
+                    "strict_out_of_sample_fold_count",
+                ],
+                backtest_coverage.start_date.clone(),
+                backtest_coverage.end_date.clone(),
+            ));
             item.reason=Some("当前名单研究回测可运行，日线按所选股票与区间准备；严格回测仍需历史名单、点时财报与公司行动。".to_string());
             for source in &mut backtest_sources {
-                source.quality_flags.push("research_backtest_current_universe".to_string());
+                source
+                    .quality_flags
+                    .push("research_backtest_current_universe".to_string());
             }
         }
     }
@@ -752,13 +878,30 @@ pub(crate) fn cn_evidence_from_cache(
         for item in &mut output {
             match item.id {
                 CapabilityId::FinancialSnapshot => {
-                    item.release_gate_open=financial_freshness==CapabilityFreshness::Fresh;item.coverage_complete=financial_symbols==universe_count;
-                    item.reason=Some(if item.release_gate_open {"部分证券的核心财务指标暂缺；已有指标使用最近公开报告。"}else{"财务快照检查时间已过期，请刷新股票池。"}.to_string());
+                    item.release_gate_open = financial_freshness == CapabilityFreshness::Fresh;
+                    item.coverage_complete = financial_symbols == universe_count;
+                    item.reason = Some(
+                        if item.release_gate_open {
+                            "部分证券的核心财务指标暂缺；已有指标使用最近公开报告。"
+                        } else {
+                            "财务快照检查时间已过期，请刷新股票池。"
+                        }
+                        .to_string(),
+                    );
                 }
                 CapabilityId::Screening => {
-                    item.release_gate_open=directory_checked && directory_freshness==CapabilityFreshness::Fresh && !stale;
-                    item.coverage_complete=screening_symbols==universe_count;
-                    item.reason=Some(if stale {"A 股行情已过期，请刷新行情后筛选。"} else {"财务源未提供部分筛选指标；亏损或负净资产指标按不适用处理。"}.to_string());
+                    item.release_gate_open = directory_checked
+                        && directory_freshness == CapabilityFreshness::Fresh
+                        && !stale;
+                    item.coverage_complete = screening_symbols == universe_count;
+                    item.reason = Some(
+                        if stale {
+                            "A 股行情已过期，请刷新行情后筛选。"
+                        } else {
+                            "财务源未提供部分筛选指标；亏损或负净资产指标按不适用处理。"
+                        }
+                        .to_string(),
+                    );
                 }
                 _ => {}
             }
@@ -865,17 +1008,30 @@ fn freshness_from_timestamp(now: u128, fetched_at: Option<u128>) -> CapabilityFr
 
 fn hk_quote_observed_date(raw: &str) -> Option<String> {
     if let Ok(observed) = chrono::DateTime::parse_from_rfc3339(raw) {
-        return Some(observed.with_timezone(&chrono::FixedOffset::east_opt(8 * 3600)?).format("%Y%m%d").to_string());
+        return Some(
+            observed
+                .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600)?)
+                .format("%Y%m%d")
+                .to_string(),
+        );
     }
     let date = crate::market::compact_date_key(raw)?;
-    chrono::NaiveDate::parse_from_str(&date, "%Y%m%d").ok().map(|date| date.format("%Y%m%d").to_string())
+    chrono::NaiveDate::parse_from_str(&date, "%Y%m%d")
+        .ok()
+        .map(|date| date.format("%Y%m%d").to_string())
 }
 
-fn hk_coverage_freshness(values: impl IntoIterator<Item = CapabilityFreshness>, expected: u64) -> CapabilityFreshness {
+fn hk_coverage_freshness(
+    values: impl IntoIterator<Item = CapabilityFreshness>,
+    expected: u64,
+) -> CapabilityFreshness {
     let values = values.into_iter().collect::<Vec<_>>();
     if values.contains(&CapabilityFreshness::Stale) {
         CapabilityFreshness::Stale
-    } else if expected == 0 || values.len() as u64 != expected || values.contains(&CapabilityFreshness::Unknown) {
+    } else if expected == 0
+        || values.len() as u64 != expected
+        || values.contains(&CapabilityFreshness::Unknown)
+    {
         CapabilityFreshness::Unknown
     } else {
         CapabilityFreshness::Fresh
@@ -1037,46 +1193,105 @@ fn hk_evidence_from_cache_with_news(
         .parse::<u128>()
         .unwrap_or_default();
     let expected_quote_date = crate::market::expected_market_quote_date_from_epoch_ms(now);
-    let per_security_freshness = projected.stocks.iter().map(|stock| {
-        let code = stock.code.strip_suffix(".HK").unwrap_or_default();
-        let quote = cache.quotes.get(code);
-        let downloaded = freshness_from_timestamp(now, quote.and_then(|quote| quote.fetched_at.as_deref()).and_then(cache_timestamp_epoch_ms));
-        let observed = quote.and_then(|quote| quote.quote_time.as_deref()).and_then(hk_quote_observed_date);
-        let observation_freshness = match observed.as_ref().zip(expected_quote_date.as_ref()) {
-            Some((observed, expected)) if observed == expected => CapabilityFreshness::Fresh,
-            Some(_) => CapabilityFreshness::Stale,
-            None => CapabilityFreshness::Unknown,
-        };
-        let quote_freshness = if cache.quote_errors.contains_key(code) || quote.is_some_and(|quote| quote.last_error.is_some()) {
-            CapabilityFreshness::Stale
-        } else {
-            hk_coverage_freshness([downloaded, observation_freshness], 2)
-        };
-        // History contributes to Observe's release gate. Every projected security needs
-        // its own prepared history download; the newest record cannot cover the others.
-        // Existing prepared/suspension handling in project_hk_market_data is retained.
-        let history_freshness = match cache.histories.get(code).filter(|_| projected.histories.contains_key(&stock.code)) {
-            Some(history) if history.last_error.is_some() || cache.history_errors.contains_key(code) => CapabilityFreshness::Stale,
-            Some(history) => freshness_from_timestamp(now, cache_timestamp_epoch_ms(&history.fetched_at)),
-            None => CapabilityFreshness::Unknown,
-        };
-        (quote_freshness, history_freshness, downloaded, observation_freshness)
-    }).collect::<Vec<_>>();
-    let quote_freshness = hk_coverage_freshness(per_security_freshness.iter().map(|row| row.0), eligible_hkd_count);
-    let history_freshness = hk_coverage_freshness(per_security_freshness.iter().map(|row| row.1), projected_count);
-    let current_quote_count = per_security_freshness.iter().filter(|row| row.0 == CapabilityFreshness::Fresh).count() as u64;
-    let current_history_count = per_security_freshness.iter().filter(|row| row.1 == CapabilityFreshness::Fresh).count() as u64;
-    let current_observe_count = per_security_freshness.iter().filter(|row| row.0 == CapabilityFreshness::Fresh && row.1 == CapabilityFreshness::Fresh).count() as u64;
+    let per_security_freshness = projected
+        .stocks
+        .iter()
+        .map(|stock| {
+            let code = stock.code.strip_suffix(".HK").unwrap_or_default();
+            let quote = cache.quotes.get(code);
+            let downloaded = freshness_from_timestamp(
+                now,
+                quote
+                    .and_then(|quote| quote.fetched_at.as_deref())
+                    .and_then(cache_timestamp_epoch_ms),
+            );
+            let observed = quote
+                .and_then(|quote| quote.quote_time.as_deref())
+                .and_then(hk_quote_observed_date);
+            let observation_freshness = match observed.as_ref().zip(expected_quote_date.as_ref()) {
+                Some((observed, expected)) if observed == expected => CapabilityFreshness::Fresh,
+                Some(_) => CapabilityFreshness::Stale,
+                None => CapabilityFreshness::Unknown,
+            };
+            let quote_freshness = if cache.quote_errors.contains_key(code)
+                || quote.is_some_and(|quote| quote.last_error.is_some())
+            {
+                CapabilityFreshness::Stale
+            } else {
+                hk_coverage_freshness([downloaded, observation_freshness], 2)
+            };
+            // History contributes to Observe's release gate. Every projected security needs
+            // its own prepared history download; the newest record cannot cover the others.
+            // Existing prepared/suspension handling in project_hk_market_data is retained.
+            let history_freshness = match cache
+                .histories
+                .get(code)
+                .filter(|_| projected.histories.contains_key(&stock.code))
+            {
+                Some(history)
+                    if history.last_error.is_some() || cache.history_errors.contains_key(code) =>
+                {
+                    CapabilityFreshness::Stale
+                }
+                Some(history) => {
+                    freshness_from_timestamp(now, cache_timestamp_epoch_ms(&history.fetched_at))
+                }
+                None => CapabilityFreshness::Unknown,
+            };
+            (
+                quote_freshness,
+                history_freshness,
+                downloaded,
+                observation_freshness,
+            )
+        })
+        .collect::<Vec<_>>();
+    let quote_freshness = hk_coverage_freshness(
+        per_security_freshness.iter().map(|row| row.0),
+        eligible_hkd_count,
+    );
+    let history_freshness = hk_coverage_freshness(
+        per_security_freshness.iter().map(|row| row.1),
+        projected_count,
+    );
+    let current_quote_count = per_security_freshness
+        .iter()
+        .filter(|row| row.0 == CapabilityFreshness::Fresh)
+        .count() as u64;
+    let current_history_count = per_security_freshness
+        .iter()
+        .filter(|row| row.1 == CapabilityFreshness::Fresh)
+        .count() as u64;
+    let current_observe_count = per_security_freshness
+        .iter()
+        .filter(|row| row.0 == CapabilityFreshness::Fresh && row.1 == CapabilityFreshness::Fresh)
+        .count() as u64;
     projected_coverage.available_count = current_quote_count;
     projected_coverage.missing_count = eligible_hkd_count.saturating_sub(current_quote_count);
-    if per_security_freshness.iter().any(|row| row.3 != CapabilityFreshness::Fresh) {
-        projected_coverage.missing_fields.push("current_quote_observation".to_owned());
+    if per_security_freshness
+        .iter()
+        .any(|row| row.3 != CapabilityFreshness::Fresh)
+    {
+        projected_coverage
+            .missing_fields
+            .push("current_quote_observation".to_owned());
     }
-    if per_security_freshness.iter().any(|row| row.2 != CapabilityFreshness::Fresh) {
-        projected_coverage.missing_fields.push("per_security_quote_fetch_time".to_owned());
+    if per_security_freshness
+        .iter()
+        .any(|row| row.2 != CapabilityFreshness::Fresh)
+    {
+        projected_coverage
+            .missing_fields
+            .push("per_security_quote_fetch_time".to_owned());
     }
-    if per_security_freshness.iter().any(|row| row.0 == CapabilityFreshness::Stale && row.2 == CapabilityFreshness::Fresh && row.3 == CapabilityFreshness::Fresh) {
-        projected_coverage.missing_fields.push("successful_quote_refresh".to_owned());
+    if per_security_freshness.iter().any(|row| {
+        row.0 == CapabilityFreshness::Stale
+            && row.2 == CapabilityFreshness::Fresh
+            && row.3 == CapabilityFreshness::Fresh
+    }) {
+        projected_coverage
+            .missing_fields
+            .push("successful_quote_refresh".to_owned());
     }
     let freshness = quote_freshness;
     let quote_fetched_at = projected
@@ -1155,7 +1370,10 @@ fn hk_evidence_from_cache_with_news(
                 requested_count: projected_count,
                 available_count: current_history_count,
                 missing_count: projected_count.saturating_sub(current_history_count),
-                missing_fields: (current_history_count < projected_count).then(|| "per_security_history_fetch_time".to_owned()).into_iter().collect(),
+                missing_fields: (current_history_count < projected_count)
+                    .then(|| "per_security_history_fetch_time".to_owned())
+                    .into_iter()
+                    .collect(),
                 ..projected_coverage.clone()
             }),
         )]
@@ -1492,45 +1710,78 @@ mod tests {
 
     #[test]
     fn cn_data_research_backtest_reports_cached_history_separately_from_strict_pit_data() {
-        let mut data=gp_core::CoreDataSet::default();
-        data.stocks=vec![stock("000001.SZ","20261106"),stock("600000.SH","20261106")];
-        data.histories.insert("000001.SZ".to_string(),history("20261106"));
-        let now=crate::market::epoch_millis().to_string();
-        let status=json!({"universe_count":2,"stale":false,"cn_reference":{"directory":{"checked":true,"count":2,"fetched_at":now}}});
-        let items=evidence_for(data,status,json!({"sources":[]}));
-        let backtest=capabilities_for_market(MarketId::Cn,&items).into_iter().find(|item|item.id==CapabilityId::Backtest).unwrap();
-        assert_eq!(backtest.status,CapabilityStatus::Limited);
-        assert_eq!(backtest.coverage.as_ref().unwrap().available_count,1);
-        assert_eq!(backtest.coverage.as_ref().unwrap().requested_count,2);
-        assert!(backtest.coverage.as_ref().unwrap().missing_fields.contains(&"point_in_time_financial_availability".to_string()));
+        let mut data = gp_core::CoreDataSet::default();
+        data.stocks = vec![
+            stock("000001.SZ", "20261106"),
+            stock("600000.SH", "20261106"),
+        ];
+        data.histories
+            .insert("000001.SZ".to_string(), history("20261106"));
+        let now = crate::market::epoch_millis().to_string();
+        let status = json!({"universe_count":2,"stale":false,"cn_reference":{"directory":{"checked":true,"count":2,"fetched_at":now}}});
+        let items = evidence_for(data, status, json!({"sources":[]}));
+        let backtest = capabilities_for_market(MarketId::Cn, &items)
+            .into_iter()
+            .find(|item| item.id == CapabilityId::Backtest)
+            .unwrap();
+        assert_eq!(backtest.status, CapabilityStatus::Limited);
+        assert_eq!(backtest.coverage.as_ref().unwrap().available_count, 1);
+        assert_eq!(backtest.coverage.as_ref().unwrap().requested_count, 2);
+        assert!(backtest
+            .coverage
+            .as_ref()
+            .unwrap()
+            .missing_fields
+            .contains(&"point_in_time_financial_availability".to_string()));
         assert!(backtest.reason.as_deref().unwrap().contains("研究回测"));
     }
 
     #[test]
     fn cn_data_checked_local_coverage_is_available_without_claiming_distribution_rights() {
-        let mut data=gp_core::CoreDataSet::default();
-        let fetched_at=crate::market::epoch_millis().to_string();
-        let mut company=stock("000002.SZ","20261106");
-        company.pe=Some(-6.3);company.pb=Some(0.4);company.roe=Some(-0.228);
+        let mut data = gp_core::CoreDataSet::default();
+        let fetched_at = crate::market::epoch_millis().to_string();
+        let mut company = stock("000002.SZ", "20261106");
+        company.pe = Some(-6.3);
+        company.pb = Some(0.4);
+        company.roe = Some(-0.228);
         data.stocks.push(company);
         data.financials.insert("000002.SZ".to_string(),serde_json::from_value(json!({
             "period":"2026Q3","source":"eastmoney_cn_financial","currency":"CNY","latest_eps":-2.01,"latest_bps":7.8,
             "operating_revenue_billion":1049.98,"parent_net_profit_billion":-239.43,"roe":-22.8,
             "report_notice_date":"2026-10-30","report_fetched_at":fetched_at
         })).unwrap());
-        let status=json!({"source":"tencent","universe_count":1,"quote_generated_at":fetched_at,"quote_trade_date":"20261106","stale":false,
+        let status = json!({"source":"tencent","universe_count":1,"quote_generated_at":fetched_at,"quote_trade_date":"20261106","stale":false,
             "cn_reference":{"directory":{"checked":true,"count":1,"fetched_at":fetched_at,"scope":"sse_szse_listed_bse_quote","sources":["sse","szse","eastmoney_cn_directory"]},
                 "financial":{"fetched_at":fetched_at,"latest_report_period":"2026Q3","requested_count":1,"fetched_count":1,"errors":[]}}});
-        let items=evidence_for(data,status,json!({"sources":[]}));
-        let capabilities=capabilities_for_market(MarketId::Cn,&items);
-        for id in [CapabilityId::SecurityDirectory,CapabilityId::FinancialSnapshot,CapabilityId::Screening] {
-            let capability=capabilities.iter().find(|item|item.id==id).unwrap();
-            assert_eq!(capability.status,CapabilityStatus::Available);
-            assert!(!capability.coverage.as_ref().unwrap().missing_fields.contains(&"provider_rights".to_string()));
-            assert!(capability.sources.iter().any(|source|source.quality_flags.contains(&"provider_rights_unverified".to_string())));
+        let items = evidence_for(data, status, json!({"sources":[]}));
+        let capabilities = capabilities_for_market(MarketId::Cn, &items);
+        for id in [
+            CapabilityId::SecurityDirectory,
+            CapabilityId::FinancialSnapshot,
+            CapabilityId::Screening,
+        ] {
+            let capability = capabilities.iter().find(|item| item.id == id).unwrap();
+            assert_eq!(capability.status, CapabilityStatus::Available);
+            assert!(!capability
+                .coverage
+                .as_ref()
+                .unwrap()
+                .missing_fields
+                .contains(&"provider_rights".to_string()));
+            assert!(capability.sources.iter().any(|source| source
+                .quality_flags
+                .contains(&"provider_rights_unverified".to_string())));
         }
-        let financial=capabilities.iter().find(|item|item.id==CapabilityId::FinancialSnapshot).unwrap();
-        assert!(financial.sources.iter().any(|source|source.report_period.as_deref()==Some("2026Q3") && source.disclosed_at.as_deref()==Some("2026-10-30") && source.fetched_at.is_some()));
+        let financial = capabilities
+            .iter()
+            .find(|item| item.id == CapabilityId::FinancialSnapshot)
+            .unwrap();
+        assert!(financial
+            .sources
+            .iter()
+            .any(|source| source.report_period.as_deref() == Some("2026Q3")
+                && source.disclosed_at.as_deref() == Some("2026-10-30")
+                && source.fetched_at.is_some()));
     }
 
     #[test]
@@ -1897,7 +2148,8 @@ mod tests {
     }
 
     fn current_hk_quote_date() -> String {
-        crate::market::expected_market_quote_date_from_epoch_ms(crate::market::epoch_millis()).unwrap()
+        crate::market::expected_market_quote_date_from_epoch_ms(crate::market::epoch_millis())
+            .unwrap()
     }
 
     fn hk_freshness_cache() -> crate::hk_market::HkMarketCache {
@@ -1914,15 +2166,31 @@ mod tests {
         let mut cache = hk_freshness_cache();
         cache.quotes.get_mut("00700").unwrap().quote_time = Some("2020-01-02T08:00:00Z".to_owned());
         let evidence = hk_evidence_from_cache(&cache).unwrap();
-        for id in [CapabilityId::Observe, CapabilityId::Screening, CapabilityId::ResearchAgent] {
+        for id in [
+            CapabilityId::Observe,
+            CapabilityId::Screening,
+            CapabilityId::ResearchAgent,
+        ] {
             assert!(!capability(&evidence, id).release_gate_open);
-            assert_eq!(capability(&evidence, id).coverage.as_ref().unwrap().missing_count, 1);
+            assert_eq!(
+                capability(&evidence, id)
+                    .coverage
+                    .as_ref()
+                    .unwrap()
+                    .missing_count,
+                1
+            );
         }
         let source = &capability(&evidence, CapabilityId::Screening).sources[0];
         assert_eq!(source.freshness, CapabilityFreshness::Stale);
         assert_eq!(source.observed_at.as_deref(), Some("2020-01-02T08:00:00Z"));
         assert_eq!(source.fetched_at, cache.quotes["00700"].fetched_at);
-        assert!(source.coverage.as_ref().unwrap().missing_fields.contains(&"current_quote_observation".to_owned()));
+        assert!(source
+            .coverage
+            .as_ref()
+            .unwrap()
+            .missing_fields
+            .contains(&"current_quote_observation".to_owned()));
     }
 
     #[test]
@@ -1934,21 +2202,36 @@ mod tests {
             cache.securities.push(security);
             let mut quote = cache.quotes["00700"].clone();
             quote.code = "09988".to_owned();
-            if old_quote { quote.fetched_at = Some("1".to_owned()); }
+            if old_quote {
+                quote.fetched_at = Some("1".to_owned());
+            }
             cache.quotes.insert("09988".to_owned(), quote);
             let mut history = cache.histories["00700"].clone();
-            if !old_quote { history.fetched_at = "1".to_owned(); }
+            if !old_quote {
+                history.fetched_at = "1".to_owned();
+            }
             cache.histories.insert("09988".to_owned(), history);
             let evidence = hk_evidence_from_cache(&cache).unwrap();
             assert!(!capability(&evidence, CapabilityId::Observe).release_gate_open);
-            assert_eq!(capability(&evidence, CapabilityId::Observe).coverage.as_ref().unwrap().missing_count, 1);
+            assert_eq!(
+                capability(&evidence, CapabilityId::Observe)
+                    .coverage
+                    .as_ref()
+                    .unwrap()
+                    .missing_count,
+                1
+            );
             if old_quote {
                 let source = &capability(&evidence, CapabilityId::Screening).sources[0];
                 assert_eq!(source.freshness, CapabilityFreshness::Stale);
                 assert_eq!(source.coverage.as_ref().unwrap().available_count, 1);
             } else {
                 assert!(capability(&evidence, CapabilityId::Screening).release_gate_open);
-                let source = capability(&evidence, CapabilityId::Backtest).sources.iter().find(|source| source.domain == "daily_history").unwrap();
+                let source = capability(&evidence, CapabilityId::Backtest)
+                    .sources
+                    .iter()
+                    .find(|source| source.domain == "daily_history")
+                    .unwrap();
                 assert_eq!(source.freshness, CapabilityFreshness::Stale);
                 assert_eq!(source.coverage.as_ref().unwrap().available_count, 1);
             }
@@ -1960,7 +2243,11 @@ mod tests {
         for unknown_observation in [false, true] {
             let mut cache = hk_freshness_cache();
             let quote = cache.quotes.get_mut("00700").unwrap();
-            if unknown_observation { quote.quote_time = None; } else { quote.fetched_at = None; }
+            if unknown_observation {
+                quote.quote_time = None;
+            } else {
+                quote.fetched_at = None;
+            }
             let evidence = hk_evidence_from_cache(&cache).unwrap();
             let screening = capability(&evidence, CapabilityId::Screening);
             assert!(!screening.release_gate_open);
@@ -1974,9 +2261,17 @@ mod tests {
         let mut cache = hk_freshness_cache();
         let date = current_hk_quote_date();
         // At +14:00 midnight the observed Hong Kong date is the previous day.
-        cache.quotes.get_mut("00700").unwrap().quote_time = Some(format!("{}-{}-{}T00:30:00+14:00", &date[..4], &date[4..6], &date[6..8]));
+        cache.quotes.get_mut("00700").unwrap().quote_time = Some(format!(
+            "{}-{}-{}T00:30:00+14:00",
+            &date[..4],
+            &date[4..6],
+            &date[6..8]
+        ));
         let evidence = hk_evidence_from_cache(&cache).unwrap();
-        assert_eq!(capability(&evidence, CapabilityId::Screening).sources[0].freshness, CapabilityFreshness::Stale);
+        assert_eq!(
+            capability(&evidence, CapabilityId::Screening).sources[0].freshness,
+            CapabilityFreshness::Stale
+        );
     }
 
     #[test]
@@ -1987,13 +2282,22 @@ mod tests {
         let history = cache.histories.get_mut("00700").unwrap();
         history.bars[0].date = "20200102".to_owned();
         history.suspended_as_of = Some(date.clone());
-        history.request_range = Some(crate::hk_market::HkHistoryRequestRange { start_date:"20200102".to_owned(), end_date:date });
-        assert!(crate::hk_market::hk_history_suspension_matches_quote(history, &cache.quotes["00700"]));
+        history.request_range = Some(crate::hk_market::HkHistoryRequestRange {
+            start_date: "20200102".to_owned(),
+            end_date: date,
+        });
+        assert!(crate::hk_market::hk_history_suspension_matches_quote(
+            history,
+            &cache.quotes["00700"]
+        ));
         let evidence = hk_evidence_from_cache(&cache).unwrap();
         assert!(capability(&evidence, CapabilityId::Observe).release_gate_open);
         cache.quotes.get_mut("00700").unwrap().quote_time = Some("2020-01-02T08:00:00Z".to_owned());
         let evidence = hk_evidence_from_cache(&cache).unwrap();
-        assert!(!capability(&evidence, CapabilityId::Screening).release_gate_open, "an old suspension marker cannot establish current quote coverage");
+        assert!(
+            !capability(&evidence, CapabilityId::Screening).release_gate_open,
+            "an old suspension marker cannot establish current quote coverage"
+        );
     }
 
     #[test]

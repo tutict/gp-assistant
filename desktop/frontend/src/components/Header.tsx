@@ -21,6 +21,7 @@ interface HeaderProps {
   onSearchCommit: (value: string) => void;
   onToggleHelp: () => void;
   onToggleSettings: () => void;
+  onCloseSettings?: () => void;
   onToggleTheme: () => void;
   onToggleMobileNav: () => void;
   llmSettings?: LlmSettings | null;
@@ -63,6 +64,7 @@ export function Header({
   onSearchCommit,
   onToggleHelp,
   onToggleSettings,
+  onCloseSettings,
   onToggleTheme,
   onToggleMobileNav,
   llmSettings,
@@ -171,7 +173,7 @@ export function Header({
 
       <SettingsSheet
         open={settingsOpen}
-        onClose={onToggleSettings}
+        onClose={onCloseSettings || onToggleSettings}
         settings={settings}
         llmSettings={llmSettings}
         onLlmSettingsChange={onLlmSettingsChange}
@@ -187,6 +189,12 @@ export function Header({
             aria-label="快捷键帮助"
             onMouseDown={(event) => event.stopPropagation()}
             onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                onToggleHelp();
+                return;
+              }
               if (event.key !== "Tab") return;
               event.preventDefault();
               helpRef.current?.querySelector<HTMLButtonElement>("button")?.focus();

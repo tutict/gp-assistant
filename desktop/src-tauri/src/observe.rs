@@ -642,12 +642,15 @@ pub(crate) fn parse_latest_observe_financial_snapshot(
                     .is_some_and(|row_code| row_code == digits)
         })
         .max_by_key(|row| {
-            crate::market::object_string_any(row, &["REPORT_DATE", "REPORTDATE"]).unwrap_or_default()
+            crate::market::object_string_any(row, &["REPORT_DATE", "REPORTDATE"])
+                .unwrap_or_default()
         })
         .ok_or_else(|| "东方财富财报接口未返回报告期数据".to_string())?;
-    let period =
-        crate::market::eastmoney_metric_period(Some(row), &["REPORT_DATE_NAME", "REPORT_DATE", "REPORTDATE"])
-            .ok_or_else(|| "东方财富财报记录缺少报告期".to_string())?;
+    let period = crate::market::eastmoney_metric_period(
+        Some(row),
+        &["REPORT_DATE_NAME", "REPORT_DATE", "REPORTDATE"],
+    )
+    .ok_or_else(|| "东方财富财报记录缺少报告期".to_string())?;
     let mut fields = serde_json::Map::new();
     fields.insert("period".to_string(), json!(period));
     fields.insert("source".to_string(), json!("东方财富最新定期报告"));
@@ -659,12 +662,36 @@ pub(crate) fn parse_latest_observe_financial_snapshot(
     for (target, sources, scale) in [
         ("latest_eps", &["EPSJB", "BASIC_EPS"][..], 1.0),
         ("latest_bps", &["BPS"][..], 1.0),
-        ("operating_revenue_billion", &["TOTALOPERATEREVE", "TOTAL_OPERATE_INCOME"][..], 1e-8),
-        ("operating_revenue_yoy", &["TOTALOPERATEREVETZ", "YSTZ", "TOI_RATIO"][..], 1.0),
-        ("parent_net_profit_billion", &["PARENTNETPROFIT", "PARENT_NETPROFIT"][..], 1e-8),
-        ("parent_net_profit_yoy", &["PARENTNETPROFITTZ", "SJLTZ", "PARENT_NETPROFIT_RATIO"][..], 1.0),
-        ("deducted_net_profit_billion", &["KCFJCXSYJLR", "DEDUCT_PARENT_NETPROFIT"][..], 1e-8),
-        ("deducted_net_profit_growth_rate", &["KCFJCXSYJLRTZ", "DPN_RATIO"][..], 1.0),
+        (
+            "operating_revenue_billion",
+            &["TOTALOPERATEREVE", "TOTAL_OPERATE_INCOME"][..],
+            1e-8,
+        ),
+        (
+            "operating_revenue_yoy",
+            &["TOTALOPERATEREVETZ", "YSTZ", "TOI_RATIO"][..],
+            1.0,
+        ),
+        (
+            "parent_net_profit_billion",
+            &["PARENTNETPROFIT", "PARENT_NETPROFIT"][..],
+            1e-8,
+        ),
+        (
+            "parent_net_profit_yoy",
+            &["PARENTNETPROFITTZ", "SJLTZ", "PARENT_NETPROFIT_RATIO"][..],
+            1.0,
+        ),
+        (
+            "deducted_net_profit_billion",
+            &["KCFJCXSYJLR", "DEDUCT_PARENT_NETPROFIT"][..],
+            1e-8,
+        ),
+        (
+            "deducted_net_profit_growth_rate",
+            &["KCFJCXSYJLRTZ", "DPN_RATIO"][..],
+            1.0,
+        ),
         ("gross_margin", &["XSMLL"][..], 1.0),
         ("net_margin", &["XSJLL"][..], 1.0),
         ("roe", &["ROEJQ", "WEIGHTAVG_ROE"][..], 1.0),
@@ -981,8 +1008,10 @@ pub(crate) fn merge_observe_fundamental_supplement(
             let valid_number = crate::market::json_f64(Some(&value)).is_some();
             let valid_period = (field == "period" || field.ends_with("_period"))
                 && value.as_str().is_some_and(|value| !value.trim().is_empty());
-            let valid_text = matches!(field.as_str(), "source" | "report_notice_date" | "report_fetched_at" | "currency")
-                && value.as_str().is_some_and(|value| !value.trim().is_empty());
+            let valid_text = matches!(
+                field.as_str(),
+                "source" | "report_notice_date" | "report_fetched_at" | "currency"
+            ) && value.as_str().is_some_and(|value| !value.trim().is_empty());
             if (valid_number || valid_period || valid_text) && entry.get(field) != Some(value) {
                 entry.insert(field.clone(), value.clone());
                 changed = true;
@@ -1013,7 +1042,11 @@ pub(crate) fn merge_observe_fundamental_supplement(
         })
         .and_then(Value::as_object_mut)
     {
-        if let Some(roe) = fields.get("roe").and_then(Value::as_f64).filter(|value| value.is_finite()) {
+        if let Some(roe) = fields
+            .get("roe")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+        {
             let value = json!(roe / 100.0);
             if stock.get("roe") != Some(&value) {
                 stock.insert("roe".to_string(), value);
@@ -3304,9 +3337,14 @@ mod observation_snapshot_tests {
         .unwrap();
         // The two calculations can cross a second; generation time is not part
         // of the source snapshot whose financial and market semantics we compare.
-        assert!(actual["capital_evidence"]["generated_at"].as_str().is_some());
-        assert!(legacy["capital_evidence"]["generated_at"].as_str().is_some());
-        legacy["capital_evidence"]["generated_at"] = actual["capital_evidence"]["generated_at"].clone();
+        assert!(actual["capital_evidence"]["generated_at"]
+            .as_str()
+            .is_some());
+        assert!(legacy["capital_evidence"]["generated_at"]
+            .as_str()
+            .is_some());
+        legacy["capital_evidence"]["generated_at"] =
+            actual["capital_evidence"]["generated_at"].clone();
         assert_eq!(actual, legacy);
         assert_eq!(Arc::strong_count(&typed), 1);
         enrich_observe_stock_quote_fields_from_data(&mut actual, &data);

@@ -1,22 +1,26 @@
 import type { ReactNode } from "react";
-import { AlertCircle, Inbox } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Inbox, LoaderCircle } from "lucide-react";
 
-type PanelFeedbackKind = "empty" | "error" | "loading";
+type PanelFeedbackKind = "empty" | "error" | "loading" | "warning" | "success";
 
 interface PanelFeedbackProps {
   kind: PanelFeedbackKind;
   title?: string;
   description: string;
   action?: ReactNode;
+  compact?: boolean;
 }
 
 const FEEDBACK_ICONS = {
   empty: Inbox,
   error: AlertCircle,
+  warning: AlertTriangle,
+  success: CheckCircle2,
+  loading: LoaderCircle,
 } as const;
 
-export function PanelFeedback({ kind, title, description, action }: PanelFeedbackProps) {
-  if (kind === "loading") {
+export function PanelFeedback({ kind, title, description, action, compact = false }: PanelFeedbackProps) {
+  if (kind === "loading" && !compact) {
     return (
       <div
         className="panel-feedback panel-feedback-loading panel-feedback-skeleton"
@@ -41,7 +45,7 @@ export function PanelFeedback({ kind, title, description, action }: PanelFeedbac
   const Icon = FEEDBACK_ICONS[kind];
   return (
     <div
-      className={`panel-feedback panel-feedback-${kind}`}
+      className={`panel-feedback panel-feedback-${kind}${compact ? " panel-feedback-compact" : ""}`}
       role={kind === "error" ? "alert" : "status"}
       aria-live={kind === "error" ? "assertive" : "polite"}
     >

@@ -336,11 +336,21 @@ fn replay_case(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let local_assertions = case.get("privacy_policy")
+    let local_assertions = case
+        .get("privacy_policy")
         .and_then(|policy| policy.get("expected_remote_export_allowed"))
-        .and_then(Value::as_bool) == Some(false);
-    let assertion_scope = if local_assertions { "local" } else { "requested" };
-    let assertion_response = if local_assertions { &local_response } else { &response };
+        .and_then(Value::as_bool)
+        == Some(false);
+    let assertion_scope = if local_assertions {
+        "local"
+    } else {
+        "requested"
+    };
+    let assertion_response = if local_assertions {
+        &local_response
+    } else {
+        &response
+    };
     let (assertion_contexts, assertion_ids) = citations(assertion_response);
     let missing_required_document_ids = required_document_ids
         .iter()
@@ -362,10 +372,24 @@ fn replay_case(
     let missing_required_evidence = expected_evidence
         .iter()
         .filter(|item| {
-            !assertion_response.get("citations").and_then(Value::as_array).into_iter().flatten()
-                .any(|citation| citation.get("document_id").and_then(Value::as_str) == item.get("document_id").and_then(Value::as_str)
-                    && item.get("sentence").and_then(Value::as_str).is_some_and(|sentence|
-                        citation.get("excerpt").and_then(Value::as_str).is_some_and(|excerpt| excerpt.contains(sentence))))
+            !assertion_response
+                .get("citations")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|citation| {
+                    citation.get("document_id").and_then(Value::as_str)
+                        == item.get("document_id").and_then(Value::as_str)
+                        && item
+                            .get("sentence")
+                            .and_then(Value::as_str)
+                            .is_some_and(|sentence| {
+                                citation
+                                    .get("excerpt")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|excerpt| excerpt.contains(sentence))
+                            })
+                })
         })
         .filter_map(|item| item.get("sentence").and_then(Value::as_str))
         .map(ToOwned::to_owned)
@@ -487,7 +511,10 @@ fn replay_case(
     });
     output["retrieval_assertion_scope"] = json!(assertion_scope);
     output["local_retrieved_document_ids"] = json!(local_ids);
-    output["deterministic_retrieval_citations"] = assertion_response.get("citations").cloned().unwrap_or_else(|| json!([]));
+    output["deterministic_retrieval_citations"] = assertion_response
+        .get("citations")
+        .cloned()
+        .unwrap_or_else(|| json!([]));
     drop(store);
     for suffix in ["", "-wal", "-shm"] {
         let _ = fs::remove_file(PathBuf::from(format!("{}{suffix}", db.display())));
@@ -583,9 +610,15 @@ mod tests {
     fn private_fixture_case(id: &str) -> Value {
         let fixture: Value = serde_json::from_str(include_str!(
             "../../../app/prompts/research_retrieval_eval_cases.json"
-        )).unwrap();
-        fixture["cases"].as_array().unwrap().iter()
-            .find(|case| case["id"] == id).unwrap().clone()
+        ))
+        .unwrap();
+        fixture["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["id"] == id)
+            .unwrap()
+            .clone()
     }
 
     #[test]
@@ -611,9 +644,13 @@ mod tests {
             };
             assert_eq!(&result["retrieved_document_ids"], expected_ids, "{id}");
             if id == "remote_export_permission" {
-                assert!(result["local_retrieved_document_ids"].as_array().unwrap()
+                assert!(result["local_retrieved_document_ids"]
+                    .as_array()
+                    .unwrap()
                     .contains(&json!("remote-private")));
-                assert!(!result["remote_retrieved_document_ids"].as_array().unwrap()
+                assert!(!result["remote_retrieved_document_ids"]
+                    .as_array()
+                    .unwrap()
                     .contains(&json!("remote-private")));
             }
         }
@@ -630,8 +667,14 @@ mod tests {
         }
         let result = replay_case(&case, ReplayProfile::Deterministic, None).unwrap();
         assert_eq!(result["retrieval_gate"]["passed"], false);
-        assert_eq!(result["retrieval_gate"]["missing_required_document_ids"], json!(["remote-public"]));
-        assert!(!result["retrieval_gate"]["missing_required_evidence"].as_array().unwrap().is_empty());
+        assert_eq!(
+            result["retrieval_gate"]["missing_required_document_ids"],
+            json!(["remote-public"])
+        );
+        assert!(!result["retrieval_gate"]["missing_required_evidence"]
+            .as_array()
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -648,15 +691,28 @@ mod tests {
     fn replay_preserves_relevance_annotations_for_offline_audit_only() {
         let fixture: Value = serde_json::from_str(include_str!(
             "../../../app/prompts/research_retrieval_eval_cases.json"
-        )).unwrap();
-        let case = fixture["cases"].as_array().unwrap().iter()
-            .find(|case| case["id"] == "hybrid_rrf_shared_candidate").unwrap();
+        ))
+        .unwrap();
+        let case = fixture["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["id"] == "hybrid_rrf_shared_candidate")
+            .unwrap();
         let result = replay_case(case, ReplayProfile::Deterministic, None).unwrap();
-        assert_eq!(result["retrieval_relevance_contract"], case["expect"]["retrieval_relevance_contract"]);
+        assert_eq!(
+            result["retrieval_relevance_contract"],
+            case["expect"]["retrieval_relevance_contract"]
+        );
         assert_eq!(result["retrieval_gate"]["passed"], true);
-        assert!(result["retrieved_document_ids"].as_array().unwrap()
-            .iter().any(|id| id == "hybrid-lexical-only"));
-        assert!(result["replay"]["response"].get("retrieval_relevance_contract").is_none());
+        assert!(result["retrieved_document_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|id| id == "hybrid-lexical-only"));
+        assert!(result["replay"]["response"]
+            .get("retrieval_relevance_contract")
+            .is_none());
     }
 
     #[test]

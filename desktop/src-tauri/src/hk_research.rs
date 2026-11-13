@@ -632,9 +632,14 @@ mod tests {
     #[test]
     fn grouped_result_keeps_financial_preparation_failures_without_fabricating_a_snapshot() {
         let mut cache = fixture_cache();
-        cache.financial_errors.insert("00700".to_string(), "financial source timeout".to_string());
+        cache
+            .financial_errors
+            .insert("00700".to_string(), "financial source timeout".to_string());
         let mut result = serde_json::json!({"groups":[{"sector":"消费零售","items":[{"stock":{"code":"00700.HK"},"score":15.3}]}]});
-        assert_eq!(super::attach_cached_hk_financial_metrics(&mut result, &cache), 0);
+        assert_eq!(
+            super::attach_cached_hk_financial_metrics(&mut result, &cache),
+            0
+        );
         let stock = &result["groups"][0]["items"][0]["stock"];
         assert_eq!(stock["hk_financial_error"], "financial source timeout");
         assert!(stock.get("hk_financial_snapshot").is_none());

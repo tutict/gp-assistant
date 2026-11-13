@@ -1,0 +1,131 @@
+/* Native window insets also apply when a phone or tablet uses the wide layout. */
+@media (min-width: 769px) {
+  :root[data-native-keyboard] { --header-height: calc(48px + var(--safe-top)); }
+  :root[data-native-keyboard] .app-header {
+    min-height: var(--header-height);
+    padding-top: var(--safe-top);
+    padding-inline: max(var(--space-4), var(--safe-left)) max(var(--space-4), var(--safe-right));
+  }
+  :root[data-native-keyboard] :is(.settings-trigger, .theme-toggle, .shortcut-help-trigger) {
+    width: var(--touch-secondary);
+    min-width: var(--touch-secondary);
+    min-height: var(--touch-secondary);
+  }
+}
+
+:root[data-native-keyboard="open"] {
+  --keyboard-viewport-height: calc(var(--native-viewport-height) - var(--native-ime-height));
+}
+:root[data-composer-keyboard="open"] { --keyboard-viewport-height: var(--composer-viewport-height); }
+:root:is([data-composer-keyboard="open"], [data-native-keyboard="open"]) {
+  --header-height: 48px;
+  --bottom-nav-height: 0px;
+  --safe-bottom: 0px;
+}
+:root:is([data-composer-keyboard="open"], [data-native-keyboard="open"]) .app {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: calc(var(--composer-viewport-offset, 0px) + var(--safe-top));
+  left: 0;
+  right: 0;
+  height: calc(var(--keyboard-viewport-height) - var(--safe-top));
+  min-height: 0;
+  overflow: hidden;
+}
+:root:is([data-composer-keyboard="open"], [data-native-keyboard="open"]) .app .app-header {
+  flex: 0 0 var(--header-height);
+  min-height: var(--header-height);
+  padding-top: 0;
+}
+:root:is([data-composer-keyboard="open"], [data-native-keyboard="open"]) .sidebar { display: none; }
+:root:is([data-composer-keyboard="open"], [data-native-keyboard="open"]) .app .workbench {
+  height: calc(var(--keyboard-viewport-height) - var(--safe-top) - var(--header-height));
+  min-height: 0;
+  padding-block: 0;
+  padding-inline: max(8px, var(--safe-left)) max(8px, var(--safe-right));
+  overflow-y: auto;
+}
+:root:is([data-composer-keyboard="open"], [data-native-keyboard="open"]) .app :is(.research-workspace, .agent-workspace) {
+  height: calc(var(--keyboard-viewport-height) - var(--safe-top) - var(--header-height));
+  min-height: 0;
+}
+:root[data-composer-keyboard="open"] .app .agent-workspace { grid-template-columns: minmax(0, 1fr); }
+:root[data-composer-keyboard="open"] .app .agent-rail { display: none; }
+:root[data-composer-keyboard="open"] .app .agent-chat-stage { min-height: 0; }
+:root[data-composer-keyboard="open"] .app .agent-thread.empty { padding: 0; justify-content: flex-end; }
+:root[data-composer-keyboard="open"] .app .agent-empty-state { display: none; }
+:root[data-composer-keyboard="open"] .app .agent-empty-layout {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  height: 100%;
+  min-height: 0;
+}
+:root[data-composer-keyboard="open"] .app :is(.send-btn, .agent-mode-tabs button) {
+  min-height: var(--touch-primary);
+  min-width: var(--touch-primary);
+}
+:root[data-composer-keyboard="open"] .app .send-btn { width: var(--touch-primary); height: var(--touch-primary); }
+:root[data-native-keyboard="open"] :is(.sheet-backdrop, .llm-settings-modal-backdrop) {
+  bottom: auto;
+  height: calc(var(--native-viewport-height) - var(--native-ime-height));
+}
+:root[data-native-keyboard="open"] .sheet-panel {
+  max-height: calc(var(--native-viewport-height) - var(--native-ime-height) - var(--safe-top));
+}
+:root[data-native-keyboard="open"] .llm-settings-body.dialog {
+  top: var(--safe-top);
+  left: 0;
+  width: 100%;
+  height: calc(var(--native-viewport-height) - var(--native-ime-height) - var(--safe-top));
+  max-height: calc(var(--native-viewport-height) - var(--native-ime-height) - var(--safe-top));
+  transform: none;
+}
+:root[data-native-keyboard="open"] .llm-switcher-summary { padding-top: var(--space-3); }
+
+@media (max-height: 480px) {
+  :root:is([data-composer-keyboard="open"], [data-native-keyboard="open"]) { --header-height: 0px; }
+  :root:is([data-composer-keyboard="open"], [data-native-keyboard="open"]) .app .app-header { display: none; }
+  :root[data-composer-keyboard="open"] .app .agent-thread-toolbar { display: none; }
+  :root[data-composer-keyboard="open"] .app .agent-chat-stage { grid-template-rows: minmax(0, 1fr) auto; }
+  :root[data-composer-keyboard="open"] .app .agent-composer-card {
+    width: min(760px, calc(100% - 8px));
+    margin: 0 auto 4px;
+    max-height: calc(100% - 4px);
+    padding: 6px;
+    gap: 2px 8px;
+    overflow: auto;
+  }
+  :root[data-composer-keyboard="open"] .app .agent-composer-card > .workspace-boundary { display: none; }
+  :root[data-native-keyboard="open"] .llm-config-content {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    scroll-padding-top: var(--touch-primary);
+  }
+  :root[data-native-keyboard="open"] .llm-switcher-summary {
+    grid-template-columns: var(--touch-primary) minmax(0, 1fr) auto;
+    position: sticky;
+    z-index: 1;
+    top: 0;
+    flex: 0 0 var(--touch-primary);
+    height: var(--touch-primary);
+    min-height: var(--touch-primary);
+    padding: 0 8px;
+    border-bottom: 0;
+  }
+  :root[data-native-keyboard="open"] .llm-switcher-summary > div > span { display: none; }
+  :root[data-native-keyboard="open"] .llm-switcher-summary :is(.llm-sheet-back-btn, .llm-add-btn) {
+    height: var(--touch-primary);
+    min-height: var(--touch-primary);
+  }
+  :root[data-native-keyboard="open"] .llm-sheet-back-btn { width: var(--touch-primary); min-width: var(--touch-primary); }
+  :root[data-native-keyboard="open"] .llm-switcher-grid { flex: 0 0 auto; overflow: visible; }
+  :root[data-native-keyboard="open"] :is(.llm-editor-container, .llm-provider-sidebar) { overflow: visible; }
+  :root[data-native-keyboard="open"] .llm-config-footer { flex: 0 0 auto; }
+  :root[data-native-keyboard="open"] .llm-switcher :is(.llm-field input, .llm-field select, .llm-submit-actions > button) {
+    min-height: var(--touch-primary);
+    line-height: 1.3;
+  }
+}

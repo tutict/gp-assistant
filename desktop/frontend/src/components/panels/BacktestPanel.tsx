@@ -1,4 +1,5 @@
 import { useWorkspaceState, useWorkspaceStatus, useWorkspaceStore } from "../../hooks/useWorkspace";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { formatLocalDataError, localDataSummary } from "../../lib/localData";
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { AdaptiveScreenRequest, BacktestResult, DataStatus, EquityPoint, StockItem, VolatilitySnapshot, WatchlistItem } from "../../types";
@@ -44,6 +45,19 @@ interface BacktestPanelProps {
   onMarketDataChanged?: () => void;
 }
 
+interface CompletedBacktestConditions {
+  scope: string;
+  dates: string;
+  mode: string;
+  cost: string;
+}
+
+function backtestScopeLabel(industry: string | undefined, marketScope: unknown, market: "cn" | "hk"): string {
+  const industryLabel = industry?.trim();
+  if (market === "hk") return `${industryLabel || "全部行业"} / 全部港币股票`;
+  return [industryLabel, normalizeMarketScope(marketScope)].filter(Boolean).join(" / ") || "全部行业 / 全部范围";
+}
+
 export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferredSourceConsumed, market = "cn", marketStatus, onMarketDataChanged }: BacktestPanelProps) {
   const workspace = useWorkspaceStore();
   const workspaceStatus = useWorkspaceStatus();
@@ -65,6 +79,13 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resultSignature, setResultSignature] = useState("");
+  const [completedConditions, setCompletedConditions] = useState<CompletedBacktestConditions | null>(null);
+  const [parametersExpanded, setParametersExpanded] = useState(true);
+  const mobileLayout = useMediaQuery("(max-width: 768px)");
+  const parametersCollapsed = mobileLayout && Boolean(result) && !parametersExpanded;
+  const parameterGroupsId = useId();
+  const resultHeadingId = useId();
+  const resultHeadingRef = useRef<HTMLHeadingElement>(null);
   const requestInFlightRef = useRef(false);
   const requestVersionRef = useRef(0);
   const consumedPreferredRequestIdRef = useRef<number | null>(null);
@@ -76,6 +97,14 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     () => normalizeBacktestDateRange(start, end, today),
     [end, start, today],
   );
+
+  useEffect(() => {
+    if (!completedConditions) return;
+    const heading = resultHeadingRef.current;
+    heading?.focus?.({ preventScroll: true });
+    const reducedMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    heading?.scrollIntoView?.({ block: "start", behavior: reducedMotion ? "auto" : "smooth" });
+  }, [completedConditions]);
 
   useEffect(() => {
     if (!workspaceStatus.ready || dateRangeHydratedRef.current) return;
@@ -107,6 +136,8 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     );
     setStrategyMode(nextAdaptiveScreenSpec ? "adaptive_swing_v1" : "candidate_snapshot");
     setResult(null);
+    setCompletedConditions(null);
+    setParametersExpanded(true);
     setError(null);
     onPreferredSourceConsumed?.(preferredSource.requestId);
   }, [criteria, onPreferredSourceConsumed, preferredSource]);
@@ -117,6 +148,8 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     if (source !== "watchlist") return;
     requestVersionRef.current += 1;
     setResult(null);
+    setCompletedConditions(null);
+    setParametersExpanded(true);
     setError(null);
   }, [source, watchlistSignature]);
 
@@ -130,6 +163,8 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
       setStrategyMode("candidate_snapshot");
     }
     setResult(null);
+    setCompletedConditions(null);
+    setParametersExpanded(true);
     setError(null);
   };
 
@@ -156,7 +191,6 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
   const run = async () => {
     if (requestInFlightRef.current) return;
     if (source === "watchlist" && watchlist.length === 0) {
-      setResult(null);
       setError("自选股为空，请先从筛选结果中收藏股票。");
       return;
     }
@@ -165,7 +199,6 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     const requestVersion = ++requestVersionRef.current;
     setLoading(true);
     setError(null);
-    setResult(null);
     try {
       const requestDateRange = normalizeBacktestDateRange(start, end, today);
       if (start !== requestDateRange.startDate) setStart(requestDateRange.startDate);
@@ -190,7 +223,21 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
         data_policy: "refresh",
       }, { timeoutMs: 90_000 });
       const nextResult = requireBacktestResult(data);
-      if (requestVersion === requestVersionRef.current) { setResult(nextResult); setResultSignature(parameterSignature); }
+      if (requestVersion === requestVersionRef.current) {
+        const requestedWatchlistCount = Array.isArray(payload.stock_codes) ? payload.stock_codes.length : 0;
+        const submittedCriteria = payload.criteria as AdaptiveScreenRequest["criteria"];
+        setResult(nextResult);
+        setResultSignature(parameterSignature);
+        setCompletedConditions({
+          scope: source === "watchlist"
+            ? `自选股 · ${Math.min(Number(payload.top_n), requestedWatchlistCount)} / ${requestedWatchlistCount} 只`
+            : `当前条件 · ${backtestScopeLabel(submittedCriteria.industry, submittedCriteria.market_scope, market)}`,
+          dates: `${requestDateRange.startDate} — ${requestDateRange.endDate}`,
+          mode: backtestStrategyLabel(payload.algorithm_version ?? activeStrategyMode),
+          cost: `${payload.transaction_cost_bps} 基点`,
+        });
+        setParametersExpanded(false);
+      }
     } catch (err) {
       if (requestVersion === requestVersionRef.current) {
         setError(formatLocalDataError(err));
@@ -204,11 +251,11 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
 
   const effectiveCriteria = source === "criteria" ? adaptiveScreenSpec?.criteria : undefined;
   const criteriaScopeText = effectiveCriteria
-    ? [effectiveCriteria.industry, effectiveCriteria.market_scope].filter(Boolean).join(" / ")
-    : [effectiveFilterCriteria.industry, effectiveFilterCriteria.marketScope].filter(Boolean).join(" / ");
+    ? backtestScopeLabel(effectiveCriteria.industry, effectiveCriteria.market_scope, market)
+    : backtestScopeLabel(effectiveFilterCriteria.industry, effectiveFilterCriteria.marketScope, market);
   const sourceText = source === "watchlist"
     ? `${Math.min(topN, watchlist.length)} / ${watchlist.length} 只`
-    : (criteriaScopeText || "全部行业 / 全部范围");
+    : criteriaScopeText;
   const selectedIndustry = effectiveFilterCriteria.industry.trim();
   const availableIndustries = market === "hk" ? ["", ...(marketStatus?.industry_options ?? [])] : ALL_INDUSTRY_OPTIONS;
   const industryOptions = selectedIndustry && !availableIndustries.includes(selectedIndustry)
@@ -222,6 +269,12 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     : activeStrategyMode === "adaptive_swing_v1"
       ? "按每个区间重新筛选候选股。"
       : "评估当前候选名单的组合表现。";
+  const researchBoundary = <>
+    {market === "hk" && <>
+      研究型回测使用港股日线，缺少所选日期区间时按需补齐；当前证券范围和免费数据可能缺少退市证券、复权公司行动及点时财报，结果不代表严格历史模拟。
+    </>}
+    仅供研究，不构成投资建议。
+  </>;
 
   return (
     <div className="panel-container">
@@ -259,8 +312,27 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
       )}
 
       <section className="backtest-parameter-panel" aria-labelledby="backtest-parameters-title">
-        <h3 id="backtest-parameters-title">回测参数</h3>
-        <div className="backtest-parameter-groups">
+        <header className="backtest-parameter-heading">
+          <h3 id="backtest-parameters-title">回测参数</h3>
+          {mobileLayout && result && <button
+            type="button"
+            className="backtest-parameter-toggle"
+            aria-expanded={!parametersCollapsed}
+            aria-controls={parameterGroupsId}
+            disabled={loading}
+            onClick={() => setParametersExpanded((current) => !current)}
+          >{parametersCollapsed ? "调整参数" : "收起参数"}</button>}
+        </header>
+        {completedConditions && <div className="backtest-completed-summary">
+          <dl className="backtest-completed-conditions" aria-label="已完成回测条件">
+            <div><dt>股票范围</dt><dd>{completedConditions.scope}</dd></div>
+            <div><dt>回测区间</dt><dd>{completedConditions.dates}</dd></div>
+            <div><dt>回测方式</dt><dd>{completedConditions.mode}</dd></div>
+            <div><dt>单次成本</dt><dd>{completedConditions.cost}</dd></div>
+          </dl>
+          {parametersCollapsed && <p className="workspace-boundary">{researchBoundary}</p>}
+        </div>}
+        <div className="backtest-parameter-groups" id={parameterGroupsId} hidden={parametersCollapsed}>
           <section className="criteria-field-group backtest-field-group">
             <header>
               <strong>股票范围</strong>
@@ -358,10 +430,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
             <p className="backtest-field-note" role="status">{strategyDescription}</p>
           </section>
           <p className="backtest-parameter-boundary workspace-boundary">
-            {market === "hk" && <>
-              研究型回测使用港股日线，缺少所选日期区间时按需补齐；当前证券范围和免费数据可能缺少退市证券、复权公司行动及点时财报，结果不代表严格历史模拟。
-            </>}
-            仅供研究，不构成投资建议。
+            {researchBoundary}
           </p>
         </div>
       </section>
@@ -369,12 +438,16 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
         {error && <PanelFeedback
           kind="error"
           title="回测失败"
+          compact={Boolean(result)}
           description={strategyMode === "walk_forward"
             ? `${error} 请补齐历史因子快照，或切换到“候选快照”查看非严格历史组合表现。`
             : error}
         />}
-        {loading && !result && !error && <PanelFeedback kind="loading" description={market === "hk" ? "正在准备港股日线并计算组合表现..." : "正在计算组合表现..."} />}
-        {result && !loading && <BacktestResultView result={result} watchlist={watchlist} />}
+        {loading && !error && <PanelFeedback kind="loading" compact={Boolean(result)} description={market === "hk" ? "正在准备港股日线并计算组合表现..." : "正在计算组合表现..."} />}
+        {result && <section aria-labelledby={resultHeadingId} aria-busy={loading}>
+          <h3 className="backtest-result-heading" id={resultHeadingId} ref={resultHeadingRef} tabIndex={-1}>回测结果</h3>
+          <BacktestResultView result={result} watchlist={watchlist} />
+        </section>}
         {!result && !loading && !error && <PanelFeedback kind="empty" description="选择股票来源并设置参数后运行回测。" />}
       </div>
     </div>

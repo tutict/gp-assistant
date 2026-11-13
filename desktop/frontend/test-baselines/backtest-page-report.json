@@ -2,14 +2,50 @@
   "backtestPageBaselines": [
     {
       "device": "desktop-1440-dark",
+      "parameters": "backtest-page/desktop-1440-dark/backtest-parameters.png",
       "page": "backtest-page/desktop-1440-dark/backtest.png",
       "volatility": "backtest-page/desktop-1440-dark/volatility.png",
+      "baselines": {
+        "parameters": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 446368,
+          "ratio": 0,
+          "maxChannelDelta": 0,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        },
+        "page": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 2633760,
+          "ratio": 0,
+          "maxChannelDelta": 0,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        },
+        "volatility": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 642912,
+          "ratio": 0,
+          "maxChannelDelta": 0,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        }
+      },
       "selector": ".backtest-volatility",
       "diagnostics": {
         "route": "backtest-page",
         "title": "股选优",
         "activeView": "backtest",
-        "rootTextLength": 2513,
+        "rootTextLength": 2511,
         "rootWidth": 1440,
         "rootScrollWidth": 1440,
         "bodyWidth": 1440,
@@ -26,7 +62,7 @@
         "tokens": {
           "text": "rgb(244, 247, 250)",
           "textSecondary": "rgb(169, 180, 191)",
-          "rise": "rgb(238, 85, 76)",
+          "rise": "rgb(242, 93, 82)",
           "fall": "rgb(53, 183, 121)",
           "success": "rgb(53, 183, 121)",
           "error": "rgb(240, 100, 92)",
@@ -34,9 +70,9 @@
           "headline": "20px"
         },
         "summary": "rgb(244, 247, 250)",
-        "positiveMetric": "rgb(238, 85, 76)",
+        "positiveMetric": "rgb(242, 93, 82)",
         "negativeMetric": "rgb(53, 183, 121)",
-        "directionalVolatility": "rgb(238, 85, 76)",
+        "directionalVolatility": "rgb(242, 93, 82)",
         "neutralVolatility": "rgb(244, 247, 250)",
         "gatePassed": "rgb(53, 183, 121)",
         "gateFailed": "rgb(240, 100, 92)",
@@ -50,14 +86,50 @@
     },
     {
       "device": "desktop-1440-light",
+      "parameters": "backtest-page/desktop-1440-light/backtest-parameters.png",
       "page": "backtest-page/desktop-1440-light/backtest.png",
       "volatility": "backtest-page/desktop-1440-light/volatility.png",
+      "baselines": {
+        "parameters": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 446368,
+          "ratio": 0,
+          "maxChannelDelta": 0,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        },
+        "page": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 2633760,
+          "ratio": 0,
+          "maxChannelDelta": 0,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        },
+        "volatility": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 642912,
+          "ratio": 0,
+          "maxChannelDelta": 0,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        }
+      },
       "selector": ".backtest-volatility",
       "diagnostics": {
         "route": "backtest-page",
         "title": "股选优",
         "activeView": "backtest",
-        "rootTextLength": 2513,
+        "rootTextLength": 2511,
         "rootWidth": 1440,
         "rootScrollWidth": 1440,
         "bodyWidth": 1440,
@@ -72,8 +144,8 @@
       },
       "runtimeColors": {
         "tokens": {
-          "text": "rgb(24, 33, 42)",
-          "textSecondary": "rgb(86, 100, 115)",
+          "text": "rgb(22, 33, 43)",
+          "textSecondary": "rgb(95, 111, 125)",
           "rise": "rgb(216, 61, 53)",
           "fall": "rgb(22, 134, 83)",
           "success": "rgb(22, 134, 83)",
@@ -81,16 +153,16 @@
           "chartLine1": "rgb(31, 111, 214)",
           "headline": "20px"
         },
-        "summary": "rgb(24, 33, 42)",
+        "summary": "rgb(22, 33, 43)",
         "positiveMetric": "rgb(216, 61, 53)",
         "negativeMetric": "rgb(22, 134, 83)",
         "directionalVolatility": "rgb(216, 61, 53)",
-        "neutralVolatility": "rgb(24, 33, 42)",
+        "neutralVolatility": "rgb(22, 33, 43)",
         "gatePassed": "rgb(22, 134, 83)",
         "gateFailed": "rgb(201, 55, 48)",
-        "smallMetricLabel": "rgb(86, 100, 115)",
-        "volatilityLabel": "rgb(86, 100, 115)",
-        "interpretationMeta": "rgb(86, 100, 115)",
+        "smallMetricLabel": "rgb(95, 111, 125)",
+        "volatilityLabel": "rgb(95, 111, 125)",
+        "interpretationMeta": "rgb(95, 111, 125)",
         "heroFontSize": "20px",
         "portfolioCurve": "rgb(31, 111, 214)",
         "negativeVolatility": "rgb(22, 134, 83)"
@@ -98,14 +170,50 @@
     },
     {
       "device": "desktop-1920-dark",
+      "parameters": "backtest-page/desktop-1920-dark/backtest-parameters.png",
       "page": "backtest-page/desktop-1920-dark/backtest.png",
       "volatility": "backtest-page/desktop-1920-dark/volatility.png",
+      "baselines": {
+        "parameters": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 509704,
+          "ratio": 0,
+          "maxChannelDelta": 1,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        },
+        "page": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 3511680,
+          "ratio": 0,
+          "maxChannelDelta": 0,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        },
+        "volatility": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 734136,
+          "ratio": 0,
+          "maxChannelDelta": 0,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        }
+      },
       "selector": ".backtest-volatility",
       "diagnostics": {
         "route": "backtest-page",
         "title": "股选优",
         "activeView": "backtest",
-        "rootTextLength": 2513,
+        "rootTextLength": 2511,
         "rootWidth": 1920,
         "rootScrollWidth": 1920,
         "bodyWidth": 1920,
@@ -122,7 +230,7 @@
         "tokens": {
           "text": "rgb(244, 247, 250)",
           "textSecondary": "rgb(169, 180, 191)",
-          "rise": "rgb(238, 85, 76)",
+          "rise": "rgb(242, 93, 82)",
           "fall": "rgb(53, 183, 121)",
           "success": "rgb(53, 183, 121)",
           "error": "rgb(240, 100, 92)",
@@ -130,9 +238,9 @@
           "headline": "20px"
         },
         "summary": "rgb(244, 247, 250)",
-        "positiveMetric": "rgb(238, 85, 76)",
+        "positiveMetric": "rgb(242, 93, 82)",
         "negativeMetric": "rgb(53, 183, 121)",
-        "directionalVolatility": "rgb(238, 85, 76)",
+        "directionalVolatility": "rgb(242, 93, 82)",
         "neutralVolatility": "rgb(244, 247, 250)",
         "gatePassed": "rgb(53, 183, 121)",
         "gateFailed": "rgb(240, 100, 92)",
@@ -146,14 +254,50 @@
     },
     {
       "device": "desktop-1920-light",
+      "parameters": "backtest-page/desktop-1920-light/backtest-parameters.png",
       "page": "backtest-page/desktop-1920-light/backtest.png",
       "volatility": "backtest-page/desktop-1920-light/volatility.png",
+      "baselines": {
+        "parameters": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 509704,
+          "ratio": 0,
+          "maxChannelDelta": 1,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        },
+        "page": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 3511680,
+          "ratio": 0,
+          "maxChannelDelta": 0,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        },
+        "volatility": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 734136,
+          "ratio": 0,
+          "maxChannelDelta": 0,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        }
+      },
       "selector": ".backtest-volatility",
       "diagnostics": {
         "route": "backtest-page",
         "title": "股选优",
         "activeView": "backtest",
-        "rootTextLength": 2513,
+        "rootTextLength": 2511,
         "rootWidth": 1920,
         "rootScrollWidth": 1920,
         "bodyWidth": 1920,
@@ -168,8 +312,8 @@
       },
       "runtimeColors": {
         "tokens": {
-          "text": "rgb(24, 33, 42)",
-          "textSecondary": "rgb(86, 100, 115)",
+          "text": "rgb(22, 33, 43)",
+          "textSecondary": "rgb(95, 111, 125)",
           "rise": "rgb(216, 61, 53)",
           "fall": "rgb(22, 134, 83)",
           "success": "rgb(22, 134, 83)",
@@ -177,16 +321,16 @@
           "chartLine1": "rgb(31, 111, 214)",
           "headline": "20px"
         },
-        "summary": "rgb(24, 33, 42)",
+        "summary": "rgb(22, 33, 43)",
         "positiveMetric": "rgb(216, 61, 53)",
         "negativeMetric": "rgb(22, 134, 83)",
         "directionalVolatility": "rgb(216, 61, 53)",
-        "neutralVolatility": "rgb(24, 33, 42)",
+        "neutralVolatility": "rgb(22, 33, 43)",
         "gatePassed": "rgb(22, 134, 83)",
         "gateFailed": "rgb(201, 55, 48)",
-        "smallMetricLabel": "rgb(86, 100, 115)",
-        "volatilityLabel": "rgb(86, 100, 115)",
-        "interpretationMeta": "rgb(86, 100, 115)",
+        "smallMetricLabel": "rgb(95, 111, 125)",
+        "volatilityLabel": "rgb(95, 111, 125)",
+        "interpretationMeta": "rgb(95, 111, 125)",
         "heroFontSize": "20px",
         "portfolioCurve": "rgb(31, 111, 214)",
         "negativeVolatility": "rgb(22, 134, 83)"
@@ -194,14 +338,50 @@
     },
     {
       "device": "phone-390-dark",
+      "parameters": "backtest-page/phone-390-dark/backtest-parameters.png",
       "page": "backtest-page/phone-390-dark/backtest.png",
       "volatility": "backtest-page/phone-390-dark/volatility.png",
+      "baselines": {
+        "parameters": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 3349170,
+          "ratio": 0,
+          "maxChannelDelta": 0,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        },
+        "page": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 6275880,
+          "ratio": 0,
+          "maxChannelDelta": 0,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        },
+        "volatility": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 3426588,
+          "ratio": 0,
+          "maxChannelDelta": 0,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        }
+      },
       "selector": ".backtest-volatility",
       "diagnostics": {
         "route": "backtest-page",
         "title": "股选优",
         "activeView": "backtest",
-        "rootTextLength": 2513,
+        "rootTextLength": 2528,
         "rootWidth": 390,
         "rootScrollWidth": 390,
         "bodyWidth": 390,
@@ -218,7 +398,7 @@
         "tokens": {
           "text": "rgb(244, 247, 250)",
           "textSecondary": "rgb(169, 180, 191)",
-          "rise": "rgb(238, 85, 76)",
+          "rise": "rgb(242, 93, 82)",
           "fall": "rgb(53, 183, 121)",
           "success": "rgb(53, 183, 121)",
           "error": "rgb(240, 100, 92)",
@@ -226,9 +406,9 @@
           "headline": "18px"
         },
         "summary": "rgb(244, 247, 250)",
-        "positiveMetric": "rgb(238, 85, 76)",
+        "positiveMetric": "rgb(242, 93, 82)",
         "negativeMetric": "rgb(53, 183, 121)",
-        "directionalVolatility": "rgb(238, 85, 76)",
+        "directionalVolatility": "rgb(242, 93, 82)",
         "neutralVolatility": "rgb(244, 247, 250)",
         "gatePassed": "rgb(53, 183, 121)",
         "gateFailed": "rgb(240, 100, 92)",
@@ -242,14 +422,50 @@
     },
     {
       "device": "phone-390-light",
+      "parameters": "backtest-page/phone-390-light/backtest-parameters.png",
       "page": "backtest-page/phone-390-light/backtest.png",
       "volatility": "backtest-page/phone-390-light/volatility.png",
+      "baselines": {
+        "parameters": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 3349170,
+          "ratio": 0,
+          "maxChannelDelta": 0,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        },
+        "page": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 6275880,
+          "ratio": 0,
+          "maxChannelDelta": 0,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        },
+        "volatility": {
+          "status": "matched",
+          "pass": true,
+          "reason": "pixels",
+          "differentPixels": 0,
+          "totalPixels": 3426588,
+          "ratio": 0,
+          "maxChannelDelta": 0,
+          "channelThreshold": 8,
+          "maxDiffRatio": 0.001
+        }
+      },
       "selector": ".backtest-volatility",
       "diagnostics": {
         "route": "backtest-page",
         "title": "股选优",
         "activeView": "backtest",
-        "rootTextLength": 2513,
+        "rootTextLength": 2528,
         "rootWidth": 390,
         "rootScrollWidth": 390,
         "bodyWidth": 390,
@@ -264,8 +480,8 @@
       },
       "runtimeColors": {
         "tokens": {
-          "text": "rgb(24, 33, 42)",
-          "textSecondary": "rgb(86, 100, 115)",
+          "text": "rgb(22, 33, 43)",
+          "textSecondary": "rgb(95, 111, 125)",
           "rise": "rgb(216, 61, 53)",
           "fall": "rgb(22, 134, 83)",
           "success": "rgb(22, 134, 83)",
@@ -273,16 +489,16 @@
           "chartLine1": "rgb(31, 111, 214)",
           "headline": "18px"
         },
-        "summary": "rgb(24, 33, 42)",
+        "summary": "rgb(22, 33, 43)",
         "positiveMetric": "rgb(216, 61, 53)",
         "negativeMetric": "rgb(22, 134, 83)",
         "directionalVolatility": "rgb(216, 61, 53)",
-        "neutralVolatility": "rgb(24, 33, 42)",
+        "neutralVolatility": "rgb(22, 33, 43)",
         "gatePassed": "rgb(22, 134, 83)",
         "gateFailed": "rgb(201, 55, 48)",
-        "smallMetricLabel": "rgb(86, 100, 115)",
-        "volatilityLabel": "rgb(86, 100, 115)",
-        "interpretationMeta": "rgb(86, 100, 115)",
+        "smallMetricLabel": "rgb(95, 111, 125)",
+        "volatilityLabel": "rgb(95, 111, 125)",
+        "interpretationMeta": "rgb(95, 111, 125)",
         "heroFontSize": "18px",
         "portfolioCurve": "rgb(31, 111, 214)",
         "negativeVolatility": "rgb(22, 134, 83)"

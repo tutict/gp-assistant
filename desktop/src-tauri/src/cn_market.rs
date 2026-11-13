@@ -6,6 +6,314 @@ use std::io::Cursor;
 use std::time::Duration;
 
 const FINANCIAL_SOURCE: &str = "eastmoney_cn_financial";
+const COMPANY_PROFILE_TTL_MS: u128 = 7 * 24 * 60 * 60 * 1000;
+const COMPANY_PROFILE_MAX_BYTES: u64 = 256 * 1024;
+
+#[derive(Default)]
+struct CompanyProfileCacheState {
+    published: Option<PublishedCompanyProfile>,
+}
+
+struct PublishedCompanyProfile {
+    generation: u64,
+    profile: Value,
+    cache_warning: Option<String>,
+}
+
+type CompanyProfileStateHandle = std::sync::Arc<std::sync::Mutex<CompanyProfileCacheState>>;
+type CompanyProfileRequestRegistry = std::collections::HashMap<
+    std::path::PathBuf,
+    std::sync::Weak<std::sync::Mutex<CompanyProfileCacheState>>,
+>;
+
+fn company_profile_request(
+    path: &std::path::Path,
+) -> Result<(CompanyProfileStateHandle, u64), String> {
+    use std::sync::{Arc, Mutex, OnceLock, Weak};
+    static REQUESTS: OnceLock<Mutex<CompanyProfileRequestRegistry>> = OnceLock::new();
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let mut requests = REQUESTS
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .map_err(|_| "公司资料缓存状态暂不可用，请刷新重试。".to_owned())?;
+    // Keep only in-flight state; completed stock lookups must not grow a permanent registry.
+    requests.retain(|_, state| state.strong_count() > 0);
+    let state = requests
+        .get(path)
+        .and_then(Weak::upgrade)
+        .unwrap_or_else(|| {
+            let state = Arc::new(Mutex::new(CompanyProfileCacheState::default()));
+            requests.insert(path.to_path_buf(), Arc::downgrade(&state));
+            state
+        });
+    let generation = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Ok((state, generation))
+}
+
+fn cn_company_profile_code(raw: &str) -> Result<String, String> {
+    crate::market::normalize_stock_code(raw)
+        .filter(|code| {
+            code.split_once('.').is_some_and(|(digits, market)| {
+                crate::market::valid_digits(digits) && matches!(market, "SH" | "SZ" | "BJ")
+            })
+        })
+        .ok_or_else(|| "请输入有效 A 股代码。".to_owned())
+}
+
+fn cn_company_profile_text(value: &Value, field: &str) -> Option<String> {
+    text(value, field).filter(|value| !matches!(value.as_str(), "--" | "—"))
+}
+
+fn valid_cn_company_profile(profile: &Value, code: &str) -> bool {
+    profile.get("code").and_then(Value::as_str) == Some(code)
+        && [
+            "name",
+            "industry",
+            "business_summary",
+            "company_summary",
+            "source",
+            "fetched_at",
+        ]
+        .iter()
+        .all(|key| profile.get(key).is_some_and(Value::is_string))
+        && cn_company_profile_text(profile, "name").is_some()
+        && cn_company_profile_text(profile, "source").is_some()
+        && ["business_summary", "company_summary"]
+            .iter()
+            .any(|key| cn_company_profile_text(profile, key).is_some())
+        && text(profile, "fetched_at")
+            .and_then(|value| value.parse::<u128>().ok())
+            .is_some_and(|time| time > 0)
+}
+
+fn parse_cn_company_profile(
+    payload: &Value,
+    code: &str,
+    fetched_at: &str,
+) -> Result<Value, String> {
+    let code = cn_company_profile_code(code)?;
+    if payload.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err(format!(
+            "公司资料来源返回错误：{}",
+            text(payload, "message").unwrap_or_else(|| "未返回成功状态".to_owned())
+        ));
+    }
+    let row = payload
+        .pointer("/result/data")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter().find(|row| {
+                text(row, "SECUCODE")
+                    .and_then(|value| cn_company_profile_code(&value).ok())
+                    .as_deref()
+                    == Some(code.as_str())
+            })
+        })
+        .ok_or_else(|| "公司资料未返回匹配当前股票的数据。".to_owned())?;
+    let profile = json!({"code":code,"name":cn_company_profile_text(row,"ORG_NAME").unwrap_or_default(),
+        "industry":cn_company_profile_text(row,"EM2016").unwrap_or_default(),
+        "business_summary":cn_company_profile_text(row,"MAIN_BUSINESS").unwrap_or_default(),
+        "company_summary":cn_company_profile_text(row,"ORG_PROFILE").unwrap_or_default(),
+        "source":"东方财富公司资料","fetched_at":fetched_at});
+    if !valid_cn_company_profile(&profile, &code) {
+        return Err("公司资料暂未提供公司名称或业务介绍。".to_owned());
+    }
+    Ok(profile)
+}
+
+fn read_cn_company_profile(path: &std::path::Path, code: &str) -> Result<Option<Value>, String> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("公司资料缓存读取失败：{error}")),
+    };
+    if !metadata.is_file() || metadata.len() > COMPANY_PROFILE_MAX_BYTES {
+        return Err("公司资料缓存无效，请刷新公司资料。".to_owned());
+    }
+    let bytes = std::fs::read(path).map_err(|error| format!("公司资料缓存读取失败：{error}"))?;
+    let profile: Value = serde_json::from_slice(&bytes)
+        .map_err(|_| "公司资料缓存无效，请刷新公司资料。".to_owned())?;
+    if !valid_cn_company_profile(&profile, code) {
+        return Err("公司资料缓存与当前股票不匹配，请刷新公司资料。".to_owned());
+    }
+    Ok(Some(profile))
+}
+
+async fn load_cn_company_profile<F>(
+    path: &std::path::Path,
+    code: &str,
+    now: &str,
+    refresh: bool,
+    fetch: F,
+) -> Result<Value, String>
+where
+    F: std::future::Future<Output = Result<Value, String>>,
+{
+    load_cn_company_profile_with_writer(
+        path,
+        code,
+        now,
+        refresh,
+        fetch,
+        crate::durability::atomic_write_json_with_status,
+    )
+    .await
+}
+
+async fn load_cn_company_profile_with_writer<F>(
+    path: &std::path::Path,
+    code: &str,
+    now: &str,
+    refresh: bool,
+    fetch: F,
+    write: impl FnOnce(&std::path::Path, &[u8]) -> Result<(), crate::durability::AtomicWriteError>,
+) -> Result<Value, String>
+where
+    F: std::future::Future<Output = Result<Value, String>>,
+{
+    let code = cn_company_profile_code(code)?;
+    let (request_state, generation) = company_profile_request(path)?;
+    let cached = {
+        let _guard = request_state
+            .lock()
+            .map_err(|_| "公司资料缓存状态暂不可用，请刷新重试。".to_owned())?;
+        match read_cn_company_profile(path, &code) {
+            Ok(cached) => cached,
+            Err(_) if refresh => None,
+            Err(error) => return Err(error),
+        }
+    };
+    let now_ms = now
+        .parse::<u128>()
+        .map_err(|_| "公司资料抓取时间无效。".to_owned())?;
+    let fresh = cached
+        .as_ref()
+        .and_then(|profile| text(profile, "fetched_at"))
+        .and_then(|time| time.parse::<u128>().ok())
+        .and_then(|time| now_ms.checked_sub(time))
+        .is_some_and(|age| age < COMPANY_PROFILE_TTL_MS);
+    if fresh && !refresh {
+        return Ok(json!({"code":code,"profile":cached,"stale":false,"error":null}));
+    }
+    let fetched = fetch.await;
+    let mut state = request_state
+        .lock()
+        .map_err(|_| "公司资料缓存状态暂不可用，请刷新重试。".to_owned())?;
+    // Network requests stay concurrent. File replacement advances the generation,
+    // including visible commits whose directory sync needs a retry.
+    if let Some(published) = &state.published {
+        if published.generation > generation {
+            return Ok(
+                json!({"code":code,"profile":published.profile,"stale":false,"error":published.cache_warning}),
+            );
+        }
+    }
+    match fetched {
+        Ok(profile) => {
+            if !valid_cn_company_profile(&profile, &code) {
+                return Err("未返回匹配当前股票的公司资料".to_owned());
+            }
+            let bytes = serde_json::to_vec(&profile).map_err(|error| error.to_string())?;
+            let (replaced, error) = if bytes.len() as u64 > COMPANY_PROFILE_MAX_BYTES {
+                (
+                    false,
+                    Some("资料已读取，但超过本地缓存大小限制，本次未保存。".to_owned()),
+                )
+            } else {
+                match write(path, &bytes) {
+                    Ok(()) => (true, None),
+                    Err(error) if error.was_replaced() => (
+                        true,
+                        Some("资料已读取并更新缓存，但存储同步未确认，可刷新重试。".to_owned()),
+                    ),
+                    Err(_) => (
+                        false,
+                        Some("资料已读取，本地缓存保存失败，可刷新重试。".to_owned()),
+                    ),
+                }
+            };
+            if replaced {
+                state.published = Some(PublishedCompanyProfile {
+                    generation,
+                    profile: profile.clone(),
+                    cache_warning: error.clone(),
+                });
+            }
+            Ok(json!({"code":code,"profile":profile,"stale":false,"error":error}))
+        }
+        Err(error) => {
+            let cached = state
+                .published
+                .as_ref()
+                .map(|published| published.profile.clone())
+                .or(cached);
+            Ok(json!({"code":code,"stale":cached.is_some(),"profile":cached,"error":error}))
+        }
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn api_cn_company_profile(
+    app: tauri::AppHandle,
+    payload: Value,
+) -> Result<Value, String> {
+    use tauri::Manager;
+    let code = cn_company_profile_code(
+        payload
+            .get("code")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )?;
+    let path = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("cn-company-profiles")
+        .join(format!("{code}.json"));
+    let fetched_at = crate::market::epoch_millis().to_string();
+    let refresh = payload
+        .get("refresh")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let fetch = async {
+        let work = crate::runtime::with_heavy_network_permit("api_cn_company_profile", async {
+            let preferred = crate::market::build_http_client_with_proxy(
+                "Mozilla/5.0 GuXuanYou cn-company-profile",
+                Duration::from_secs(6),
+                Some(&payload),
+            )?;
+            let direct = crate::market::build_direct_http_client(
+                "Mozilla/5.0 GuXuanYou cn-company-profile",
+                Duration::from_secs(6),
+            )?;
+            let mut url = reqwest::Url::parse(crate::market::EASTMONEY_SECURITIES_ENDPOINT)
+                .expect("fixed public endpoint");
+            url.query_pairs_mut()
+                .append_pair("reportName", "RPT_F10_ORG_BASICINFO")
+                .append_pair(
+                    "columns",
+                    "SECUCODE,ORG_NAME,EM2016,MAIN_BUSINESS,ORG_PROFILE",
+                )
+                .append_pair("filter", &format!("(SECUCODE=\"{code}\")"))
+                .append_pair("pageNumber", "1")
+                .append_pair("pageSize", "1")
+                .append_pair("source", "HSF10")
+                .append_pair("client", "PC");
+            let response = fetch_json(
+                &preferred,
+                &direct,
+                url.as_str(),
+                "https://emweb.securities.eastmoney.com/",
+            )
+            .await?;
+            parse_cn_company_profile(&response, &code, &fetched_at)
+        });
+        tokio::time::timeout(Duration::from_secs(12), work)
+            .await
+            .map_err(|_| "公司资料连接超时，请刷新重试。".to_owned())?
+    };
+    load_cn_company_profile(&path, &code, &fetched_at, refresh, fetch).await
+}
 
 fn supplement_report_metrics(reports: &mut Map<String, Value>, rows: &[Value]) -> usize {
     let mut supplemented = 0;
@@ -488,11 +796,23 @@ async fn reference_bytes(
     if !response.status().is_success() {
         return Err(format!("公开数据接口返回 HTTP {}", response.status()));
     }
-    let bytes = response.bytes().await.map_err(|error| error.to_string())?;
-    if bytes.len() > 10 * 1024 * 1024 {
+    const LIMIT: usize = 10 * 1024 * 1024;
+    if response
+        .content_length()
+        .is_some_and(|length| length > LIMIT as u64)
+    {
         return Err("公开数据单页超过读取上限".to_string());
     }
-    Ok(bytes.to_vec())
+    let mut body = response.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk.map_err(|error| error.to_string())?;
+        if bytes.len().saturating_add(chunk.len()) > LIMIT {
+            return Err("公开数据单页超过读取上限".to_string());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 async fn fetch_bytes(
@@ -1032,6 +1352,471 @@ async fn prepare_reference_data(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cn_company_profile_selects_the_requested_issuer_and_keeps_business_context() {
+        let payload = json!({"success":true,"result":{"data":[
+            {"SECUCODE":"000001.SZ","ORG_NAME":"另一家公司","MAIN_BUSINESS":"银行业务"},
+            {"SECUCODE":"600909.SH","ORG_NAME":"华安证券股份有限公司","EM2016":"金融-非银行金融-证券",
+             "MAIN_BUSINESS":"证券自营业务投资股票、基金、债券等金融资产",
+             "ORG_PROFILE":"业务涵盖证券经纪、资产管理、私募投资、并购重组等领域。"}
+        ]}});
+        let profile = parse_cn_company_profile(&payload, "600909.SH", "1000").unwrap();
+        assert_eq!(profile["code"], "600909.SH");
+        assert_eq!(profile["name"], "华安证券股份有限公司");
+        assert_eq!(
+            profile["business_summary"],
+            "证券自营业务投资股票、基金、债券等金融资产"
+        );
+        assert_eq!(
+            profile["company_summary"],
+            "业务涵盖证券经纪、资产管理、私募投资、并购重组等领域。"
+        );
+        assert_eq!(profile["source"], "东方财富公司资料");
+        assert_eq!(profile["fetched_at"], "1000");
+    }
+
+    #[test]
+    fn cn_company_profile_rejects_wrong_issuers_and_missing_business_descriptions() {
+        let other = json!({"success":true,"result":{"data":[{"SECUCODE":"000001.SZ","ORG_NAME":"银行","MAIN_BUSINESS":"银行业务"}]}});
+        assert!(parse_cn_company_profile(&other, "600909.SH", "1000").is_err());
+        assert!(parse_cn_company_profile(&other, "00700.HK", "1000").is_err());
+        let empty = json!({"success":true,"result":{"data":[{"SECUCODE":"600909.SH","ORG_NAME":"华安证券","MAIN_BUSINESS":"-","ORG_PROFILE":null}]}});
+        assert!(parse_cn_company_profile(&empty, "600909.SH", "1000").is_err());
+    }
+
+    #[test]
+    fn cn_company_profile_rejects_a_failed_provider_response_even_with_an_embedded_row() {
+        let failed = json!({"success":false,"message":"provider unavailable","result":{"data":[
+            {"SECUCODE":"600909.SH","ORG_NAME":"华安证券","MAIN_BUSINESS":"证券业务"}
+        ]}});
+        assert!(parse_cn_company_profile(&failed, "600909.SH", "1000").is_err());
+    }
+
+    #[test]
+    fn cn_company_profile_keeps_the_company_overview_when_business_is_a_missing_value_marker() {
+        let payload = json!({"success":true,"result":{"data":[
+            {"SECUCODE":"600909.SH","ORG_NAME":"华安证券","MAIN_BUSINESS":"--","ORG_PROFILE":"提供证券经纪和资产管理服务。"}
+        ]}});
+        let profile = parse_cn_company_profile(&payload, "600909.SH", "1000").unwrap();
+        assert_eq!(profile["business_summary"], "");
+        assert_eq!(profile["company_summary"], "提供证券经纪和资产管理服务。");
+    }
+
+    fn company_profile_fixture_path() -> std::path::PathBuf {
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        std::env::temp_dir().join(format!(
+            "gp-company-profile-{}-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        ))
+    }
+
+    fn company_profile_fixture() -> Value {
+        json!({"code":"600909.SH","name":"华安证券股份有限公司","industry":"证券",
+            "business_summary":"证券经纪和资产管理","company_summary":"综合类证券公司",
+            "source":"东方财富公司资料","fetched_at":"1000"})
+    }
+
+    #[tokio::test]
+    async fn cn_company_profile_uses_a_fresh_cache_without_fetching() {
+        let path = company_profile_fixture_path();
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&company_profile_fixture()).unwrap(),
+        )
+        .unwrap();
+        let result = load_cn_company_profile(&path, "600909.SH", "2000", false, async {
+            panic!("fresh cache must not make a provider request")
+        })
+        .await
+        .unwrap();
+        assert_eq!(result["profile"]["business_summary"], "证券经纪和资产管理");
+        assert_eq!(result["stale"], false);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn cn_company_profile_saves_successful_first_reads_and_cache_refreshes() {
+        for (has_cache, refresh, now_ms) in [
+            (false, false, 2000),
+            (true, false, 1000 + COMPANY_PROFILE_TTL_MS),
+            (true, true, 2000),
+        ] {
+            let path = company_profile_fixture_path();
+            if has_cache {
+                std::fs::write(
+                    &path,
+                    serde_json::to_vec(&company_profile_fixture()).unwrap(),
+                )
+                .unwrap();
+            }
+            let now = now_ms.to_string();
+            let mut updated = company_profile_fixture();
+            updated["business_summary"] = json!("最新证券经纪和资产管理业务");
+            updated["fetched_at"] = json!(now);
+            let result = load_cn_company_profile(&path, "600909.SH", &now, refresh, async {
+                Ok(updated.clone())
+            })
+            .await
+            .unwrap();
+            assert_eq!(result["profile"], updated);
+            assert_eq!(result["stale"], false);
+            assert_eq!(result["error"], Value::Null);
+            assert_eq!(
+                read_cn_company_profile(&path, "600909.SH").unwrap(),
+                Some(updated)
+            );
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn cn_company_profile_failed_refresh_retains_the_previous_sourced_profile() {
+        let path = company_profile_fixture_path();
+        let bytes = serde_json::to_vec(&company_profile_fixture()).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let result = load_cn_company_profile(&path, "600909.SH", "2000", true, async {
+            Err("公司资料连接超时".to_owned())
+        })
+        .await
+        .unwrap();
+        assert_eq!(result["profile"]["business_summary"], "证券经纪和资产管理");
+        assert_eq!(result["profile"]["fetched_at"], "1000");
+        assert_eq!(result["stale"], true);
+        assert_eq!(result["error"], "公司资料连接超时");
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn cn_company_profile_older_completion_cannot_overwrite_newer_refresh() {
+        for newer_time in ["1000", "2000"] {
+            let path = company_profile_fixture_path();
+            let (older_started_tx, older_started_rx) = tokio::sync::oneshot::channel();
+            let (finish_older_tx, finish_older_rx) = tokio::sync::oneshot::channel();
+            let mut newer = company_profile_fixture();
+            newer["business_summary"] = json!("最新证券业务资料");
+            newer["fetched_at"] = json!(newer_time);
+            let older = load_cn_company_profile(&path, "600909.SH", "1000", true, async {
+                older_started_tx.send(()).unwrap();
+                finish_older_rx.await.unwrap();
+                Ok(company_profile_fixture())
+            });
+            let later = async {
+                older_started_rx.await.unwrap();
+                let result = load_cn_company_profile(&path, "600909.SH", newer_time, true, async {
+                    Ok(newer.clone())
+                })
+                .await
+                .unwrap();
+                finish_older_tx.send(()).unwrap();
+                result
+            };
+            let (older, later) = tokio::join!(older, later);
+            let stored = read_cn_company_profile(&path, "600909.SH").unwrap();
+            let normal = load_cn_company_profile(&path, "600909.SH", "3000", false, async {
+                panic!("the newer cached profile must remain readable")
+            })
+            .await
+            .unwrap();
+            std::fs::remove_file(&path).unwrap();
+            assert_eq!(stored, Some(newer.clone()));
+            assert_eq!(normal["profile"], newer);
+            assert_eq!(later["profile"], newer);
+            assert_eq!(older.unwrap()["profile"], newer);
+        }
+    }
+
+    #[tokio::test]
+    async fn cn_company_profile_oversized_refresh_preserves_readable_cache_and_reports_error() {
+        let path = company_profile_fixture_path();
+        let original = company_profile_fixture();
+        let before = serde_json::to_vec(&original).unwrap();
+        std::fs::write(&path, &before).unwrap();
+        let mut large = original.clone();
+        large["business_summary"] = json!("x".repeat(COMPANY_PROFILE_MAX_BYTES as usize));
+        large["fetched_at"] = json!("2000");
+        let result = load_cn_company_profile(&path, "600909.SH", "2000", true, async {
+            Ok(large.clone())
+        })
+        .await
+        .unwrap();
+        let after = std::fs::read(&path).unwrap();
+        let cached = read_cn_company_profile(&path, "600909.SH");
+        std::fs::remove_file(path).unwrap();
+        assert!(
+            result["error"].is_string(),
+            "oversized cache writes must report a save error"
+        );
+        assert_eq!(result["profile"], large);
+        assert_eq!(before, after);
+        assert_eq!(cached.unwrap(), Some(original));
+    }
+
+    #[tokio::test]
+    async fn cn_company_profile_replaced_cache_survives_sync_failure_and_older_completion() {
+        use crate::durability::CommitPhase;
+        let path = company_profile_fixture_path();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
+        let mut newer = company_profile_fixture();
+        newer["business_summary"] = json!("最新证券业务资料");
+        newer["fetched_at"] = json!("2000");
+        let older = load_cn_company_profile(&path, "600909.SH", "1000", true, async {
+            started_tx.send(()).unwrap();
+            finish_rx.await.unwrap();
+            Ok(company_profile_fixture())
+        });
+        let later = async {
+            started_rx.await.unwrap();
+            let result = load_cn_company_profile_with_writer(
+                &path,
+                "600909.SH",
+                "2000",
+                true,
+                async { Ok(newer.clone()) },
+                |path, bytes| {
+                    crate::durability::atomic_write_with_status_and_hook(path, bytes, |phase| {
+                        if phase == CommitPhase::Replaced {
+                            Err("injected directory sync failure".to_owned())
+                        } else {
+                            Ok(())
+                        }
+                    })
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                read_cn_company_profile(&path, "600909.SH").unwrap(),
+                Some(newer.clone())
+            );
+            finish_tx.send(()).unwrap();
+            result
+        };
+        let (older, later) = tokio::join!(older, later);
+        let older = older.unwrap();
+        let stored = read_cn_company_profile(&path, "600909.SH").unwrap();
+        assert_eq!(
+            stored,
+            Some(newer.clone()),
+            "an already replaced file must keep its publication generation"
+        );
+        assert_eq!(older["profile"], newer);
+        assert!(
+            later["error"].is_string(),
+            "an unconfirmed directory sync must stay visible"
+        );
+        assert_eq!(
+            older["error"], later["error"],
+            "earlier completions must retain the durability warning"
+        );
+
+        let retry = load_cn_company_profile(&path, "600909.SH", "3000", true, async {
+            Ok(newer.clone())
+        })
+        .await
+        .unwrap();
+        assert_eq!(retry["error"], Value::Null);
+        assert_eq!(
+            read_cn_company_profile(&path, "600909.SH").unwrap(),
+            Some(newer)
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn cn_company_profile_failed_write_does_not_block_older_completion() {
+        use crate::durability::CommitPhase;
+        let path = company_profile_fixture_path();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
+        let older = load_cn_company_profile(&path, "600909.SH", "1000", true, async {
+            started_tx.send(()).unwrap();
+            finish_rx.await.unwrap();
+            Ok(company_profile_fixture())
+        });
+        let later = async {
+            started_rx.await.unwrap();
+            let mut newer = company_profile_fixture();
+            newer["fetched_at"] = json!("2000");
+            let result = load_cn_company_profile_with_writer(
+                &path,
+                "600909.SH",
+                "2000",
+                true,
+                async { Ok(newer) },
+                |path, bytes| {
+                    crate::durability::atomic_write_with_status_and_hook(path, bytes, |phase| {
+                        if phase == CommitPhase::Synced {
+                            Err("injected replacement failure".to_owned())
+                        } else {
+                            Ok(())
+                        }
+                    })
+                },
+            )
+            .await
+            .unwrap();
+            assert!(
+                !path.exists(),
+                "a pre-replacement failure must preserve the original missing file"
+            );
+            finish_tx.send(()).unwrap();
+            result
+        };
+        let (older, later) = tokio::join!(older, later);
+        assert!(later["error"].is_string());
+        assert_eq!(older.unwrap()["profile"], company_profile_fixture());
+        assert_eq!(
+            read_cn_company_profile(&path, "600909.SH").unwrap(),
+            Some(company_profile_fixture())
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn cn_company_profile_cache_byte_limit_accepts_boundary_and_refuses_one_more_byte() {
+        for extra in [0, 1] {
+            let path = company_profile_fixture_path();
+            let mut profile = company_profile_fixture();
+            profile["business_summary"] = json!("");
+            let overhead = serde_json::to_vec(&profile).unwrap().len();
+            profile["business_summary"] =
+                json!("x".repeat(COMPANY_PROFILE_MAX_BYTES as usize - overhead + extra));
+            assert_eq!(
+                serde_json::to_vec(&profile).unwrap().len(),
+                COMPANY_PROFILE_MAX_BYTES as usize + extra
+            );
+            let result = load_cn_company_profile(&path, "600909.SH", "1000", false, async {
+                Ok(profile.clone())
+            })
+            .await
+            .unwrap();
+            let cached = read_cn_company_profile(&path, "600909.SH");
+            let exists = path.exists();
+            if exists {
+                std::fs::remove_file(path).unwrap();
+            }
+            assert_eq!(exists, extra == 0);
+            assert_eq!(result["error"].is_null(), extra == 0);
+            assert_eq!(cached.unwrap(), (extra == 0).then_some(profile));
+        }
+    }
+
+    fn read_reference_request(stream: &mut std::net::TcpStream) {
+        use std::io::Read;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0; 1024];
+        while !request.ends_with(b"\r\n\r\n") {
+            let count = stream.read(&mut buffer).unwrap();
+            assert_ne!(count, 0);
+            request.extend_from_slice(&buffer[..count]);
+        }
+    }
+
+    #[tokio::test]
+    async fn cn_reference_read_limit_rejects_oversized_content_length_before_body() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut connection, _) = listener.accept().unwrap();
+            read_reference_request(&mut connection);
+            write!(
+                connection,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                10 * 1024 * 1024 + 1
+            )
+            .unwrap();
+        });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let error = reference_bytes(
+            &client,
+            &format!("http://{address}"),
+            "https://example.com/",
+        )
+        .await
+        .unwrap_err();
+        server.join().unwrap();
+        assert_eq!(error, "公开数据单页超过读取上限");
+    }
+
+    #[tokio::test]
+    async fn cn_reference_read_limit_rejects_chunked_body_without_waiting_for_end() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (body_sent_tx, body_sent_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut connection, _) = listener.accept().unwrap();
+            read_reference_request(&mut connection);
+            connection
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            let length = 10 * 1024 * 1024 + 1;
+            write!(connection, "{length:x}\r\n").unwrap();
+            let chunk = [b'x'; 16 * 1024];
+            let mut sent = 0;
+            while sent < length {
+                let count = chunk.len().min(length - sent);
+                if connection.write_all(&chunk[..count]).is_err() {
+                    break;
+                }
+                sent += count;
+            }
+            let _ = connection.write_all(b"\r\n");
+            let _ = body_sent_tx.send(());
+            let _ = finish_rx.recv_timeout(Duration::from_secs(5));
+            let _ = connection.write_all(b"0\r\n\r\n");
+        });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let mut reader = tokio::spawn(async move {
+            reference_bytes(
+                &client,
+                &format!("http://{address}"),
+                "https://example.com/",
+            )
+            .await
+        });
+        body_sent_rx.await.unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), &mut reader).await;
+        let _ = finish_tx.send(());
+        server.join().unwrap();
+        if result.is_err() {
+            reader.abort();
+        }
+        assert!(
+            result.is_ok(),
+            "the byte limit must be enforced before the response terminates"
+        );
+        assert_eq!(
+            result.unwrap().unwrap().unwrap_err(),
+            "公开数据单页超过读取上限"
+        );
+    }
     use serde_json::json;
 
     #[test]

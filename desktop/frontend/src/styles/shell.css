@@ -628,13 +628,20 @@
   border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.panel-feedback-compact {
+  min-height: var(--control-height);
+  padding: var(--space-3);
 }
 
 .panel-feedback > svg {
   flex: 0 0 auto;
 }
 
-.panel-feedback > div {
+.panel-feedback > div:not(.panel-feedback-action) {
+  flex: 1 1 180px;
   min-width: 0;
 }
 
@@ -655,6 +662,16 @@
 .panel-feedback-error {
   border-color: color-mix(in srgb, var(--error) 38%, var(--line));
   color: var(--error);
+}
+
+.panel-feedback-warning {
+  border-color: color-mix(in srgb, var(--warning) 38%, var(--line));
+  color: var(--warning);
+}
+
+.panel-feedback-success {
+  border-color: color-mix(in srgb, var(--success) 38%, var(--line));
+  color: var(--success);
 }
 
 .panel-feedback-loading > svg,
@@ -713,6 +730,8 @@
 }
 
 .panel-feedback-action {
+  flex: 0 0 auto;
+  max-width: 100%;
   margin-left: auto;
 }
 

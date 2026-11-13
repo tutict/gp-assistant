@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, type KeyboardEvent } from "react";
 import { useMediaQuery } from "./useMediaQuery";
+import { NATIVE_VIEWPORT_RESIZE_EVENT, readMobileViewport } from "../lib/mobileViewport";
 
 /** Keeps a focused composer within the visible viewport, including mobile keyboards. */
 export function useMobileComposer(value: string) {
@@ -11,13 +12,13 @@ export function useMobileComposer(value: string) {
   const resize = useCallback(() => {
     const textarea = textareaRef.current;
     if (!textarea || typeof window === "undefined") return;
-    const available = window.visualViewport?.height || window.innerHeight;
+    const available = readMobileViewport().height;
     if (!available) return;
-    const limit = Math.floor(available * 0.3);
+    const limit = Math.max(48, Math.floor(available * 0.3));
     textarea.style.height = "auto";
     textarea.style.maxHeight = `${limit}px`;
-    textarea.style.minHeight = `${Math.min(44, limit)}px`;
-    textarea.style.height = `${Math.min(Math.max(44, textarea.scrollHeight), limit)}px`;
+    textarea.style.minHeight = "48px";
+    textarea.style.height = `${Math.min(Math.max(48, textarea.scrollHeight), limit)}px`;
     textarea.style.overflowY = textarea.scrollHeight > limit ? "auto" : "hidden";
   }, []);
 
@@ -46,25 +47,25 @@ export function useMobileComposer(value: string) {
     const sync = () => {
       resize();
       const focused = document.activeElement === textareaRef.current && textareaRef.current !== null;
-      const height = viewport?.height || window.innerHeight;
-      // Pinch zoom also shrinks visualViewport; it must not be treated as a keyboard.
-      const keyboard = mobile && focused && Boolean(viewport) && (viewport?.scale || 1) === 1
-        && window.innerHeight - height > Math.max(120, window.innerHeight * 0.15);
+      const bounds = readMobileViewport();
+      const keyboard = focused && bounds.keyboard && (mobile || bounds.nativeKeyboard);
       if (!keyboard) { restore(); return; }
       ownsViewport = true;
       root.dataset.composerKeyboard = "open";
-      root.style.setProperty("--composer-viewport-height", `${height}px`);
-      root.style.setProperty("--composer-viewport-offset", `${viewport?.offsetTop || 0}px`);
+      root.style.setProperty("--composer-viewport-height", `${bounds.height}px`);
+      root.style.setProperty("--composer-viewport-offset", `${bounds.offsetTop}px`);
     };
     syncRef.current = sync;
     viewport?.addEventListener("resize", sync);
     viewport?.addEventListener("scroll", sync);
     window.addEventListener?.("resize", sync);
+    window.addEventListener?.(NATIVE_VIEWPORT_RESIZE_EVENT, sync);
     sync();
     return () => {
       viewport?.removeEventListener("resize", sync);
       viewport?.removeEventListener("scroll", sync);
       window.removeEventListener?.("resize", sync);
+      window.removeEventListener?.(NATIVE_VIEWPORT_RESIZE_EVENT, sync);
       syncRef.current = () => {};
       restore();
     };

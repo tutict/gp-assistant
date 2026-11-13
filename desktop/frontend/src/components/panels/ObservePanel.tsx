@@ -85,6 +85,7 @@ export function ObservePanel({
   const [loadingMessage, setLoadingMessage] = useState("正在加载行情、财务和趋势数据...");
   const [result, setResult] = useState<ObserveResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [inputError, setInputError] = useState<string | null>(null);
   const observeVersionRef = useRef(0);
   const handledRequestRef = useRef(0);
   const pendingStableRenderStartedAtRef = useRef<number | null>(null);
@@ -95,6 +96,7 @@ export function ObservePanel({
     setRefreshing(false);
     setLoadingMessage("正在加载行情、财务和趋势数据...");
     setError(null);
+    setInputError(null);
     const nextCode = normalizeStockCode(value);
     setResult((current) => {
       const currentCode = normalizeStockCode(current?.stock?.code);
@@ -131,17 +133,22 @@ export function ObservePanel({
     const normalizedCode = normalizeStockCode(explicit ? requestedCode : code);
     const version = ++observeVersionRef.current;
     if (!normalizedCode) {
-      setError("请输入有效股票代码。");
+      setInputError("请输入有效股票代码。");
+      setError(null);
+      setResult(null);
       setLoading(false);
+      setRefreshing(false);
       return;
     }
     if (explicit) setCode(normalizedCode);
+    setResult(current => normalizeStockCode(current?.stock?.code) === normalizedCode ? current : null);
     const runStartedAt = performance.now();
     pendingStableRenderStartedAtRef.current = runStartedAt;
     setRefreshing(false);
     setLoading(true);
     setLoadingMessage("正在加载行情、财务和趋势数据...");
     setError(null);
+    setInputError(null);
     let refreshAttempted = false;
     try {
       const request = (dataPolicy: "cache_only" | "refresh") => {
@@ -159,6 +166,7 @@ export function ObservePanel({
       try {
         data = await request("cache_only");
       } catch (localError) {
+        if (version !== observeVersionRef.current) return;
         if (!shouldSuggestLocalRefresh(localError)) throw localError;
         refreshAttempted = true;
         setLoadingMessage("正在补齐行情历史...");
@@ -301,23 +309,28 @@ export function ObservePanel({
       <div className="panel-controls observe-panel-controls">
         <div className="form-row inline stock-code-row observe-code-row">
           <label htmlFor="observeCode">股票代码</label>
-          <StockCodeInput
-            id="observeCode"
-            value={code}
-            onChange={editCode}
-            placeholder="输入股票代码或名称"
-            resolveBareCode
-          />
+          <div className="observe-code-field">
+            <StockCodeInput
+              id="observeCode"
+              value={code}
+              onChange={editCode}
+              placeholder="输入股票代码或名称"
+              resolveBareCode
+              inputAriaInvalid={Boolean(inputError)}
+              inputAriaDescribedBy={inputError ? "observeCodeError" : undefined}
+            />
+            {inputError ? <p id="observeCodeError" className="observe-input-error" role="alert">{inputError}</p> : null}
+          </div>
         </div>
         <LocalFirstRunControl action="观察" loading={loading || refreshing} onRun={() => void runObserve()} loadingLabel={refreshing ? "更新中..." : "观察中..."} cacheRunLabel="开始观察" buttonClassName="run-btn observe-run-btn" />
       </div>
 
       <div className="panel-result observe-panel-result">
-        {error && !loading && <PanelFeedback kind="error" title="观察失败" description={error} action={<button type="button" className="action-btn" onClick={() => runObserve()} disabled={loading}>重试</button>} />}
-        {loading && <PanelFeedback kind="loading" description={loadingMessage} />}
+        {error && !loading && <PanelFeedback kind="error" compact={Boolean(result)} title="观察失败" description={result ? `${error} 当前保留上次观察结果。` : error} action={<button type="button" className="action-btn" onClick={() => runObserve()} disabled={loading}>重试</button>} />}
+        {loading && <PanelFeedback kind="loading" compact={Boolean(result)} description={result ? `${loadingMessage} 当前展示上次观察结果。` : loadingMessage} />}
         {refreshing && <p className="data-provenance" role="status" aria-live="polite">{loadingMessage}当前先展示已有数据。</p>}
-        {result && !loading && !error && <ObserveResultView result={result} mobileRuntime={mobileRuntime} expandProfessionalDetails={!mobileRuntime} inWatchlist={observedInWatchlist} onToggleWatchlist={toggleObservedWatchlist} onOpenNews={onOpenNews} onAskAgent={onAskAgent} capability={capability} />}
-        {!result && !loading && !error && <PanelFeedback kind="empty" description="输入股票代码后开始观察。" />}
+        {result && <ObserveResultView result={result} mobileRuntime={mobileRuntime} inWatchlist={observedInWatchlist} onToggleWatchlist={toggleObservedWatchlist} onOpenNews={onOpenNews} onAskAgent={onAskAgent} capability={capability} />}
+        {!result && !loading && !error && !inputError && <PanelFeedback kind="empty" description="输入股票代码后开始观察。" />}
       </div>
     </div>
   );
@@ -461,6 +474,7 @@ function observationCoverage(result: ObserveResult): MarketCapability["coverage"
 
 export function FundamentalSnapshot({ stock, financial, financialMeta, action, disclosure }: { stock: StockItem; financial?: FinancialIndicatorSection | null; financialMeta?: string; action?: ReactNode; disclosure?: ReactNode }) {
   const snapshot = buildFundamentalSnapshotData(stock, financial);
+  const missingFields = snapshot.details.filter(item => isMissingMetricText(item.value)).map(item => item.label);
   return (
     <section className="observe-fundamental-snapshot" aria-label="最新基本面" data-market={/\.HK$/i.test(stock.code) ? "hk" : "cn"}>
       <header>
@@ -485,14 +499,18 @@ export function FundamentalSnapshot({ stock, financial, financialMeta, action, d
           </div>
         ))}
       </dl>
-      <dl className="observe-fundamental-grid">
-        {snapshot.details.map((item) => (
-          <div key={item.label} className={(item.tone || "neutral") + (isMissingMetricText(item.value) ? " is-missing" : "")}>
-            <dt>{item.label}</dt>
-            <dd>{item.value}</dd>
-          </div>
-        ))}
-      </dl>
+      {missingFields.length ? <p className="observe-fundamental-missing">暂无：{missingFields.join("、")}。</p> : null}
+      <details className="observe-fundamental-details">
+        <summary>完整财务指标</summary>
+        <dl className="observe-fundamental-grid">
+          {snapshot.details.map((item) => (
+            <div key={item.label} className={(item.tone || "neutral") + (isMissingMetricText(item.value) ? " is-missing" : "")}>
+              <dt>{item.label}</dt>
+              <dd>{item.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
     </section>
   );
 }
@@ -657,7 +675,6 @@ function ObserveTextMetrics({
       <div className="observe-summary-lead">
         <section className={`observe-verdict ${verdict.tone}`} aria-label="当前观察结论">
           <h4>{verdict.title}</h4>
-          <p>{verdict.summary}</p>
         </section>
 
         <dl className="observe-key-metrics" aria-label="关键数值">
@@ -670,20 +687,6 @@ function ObserveTextMetrics({
         </dl>
       </div>
 
-      <div className="observe-decision-grid" aria-label="核心判断">
-        {decisionItems.map((item) => (
-          <article key={item.title} className={`observe-fact observe-decision-item ${item.tone}`}>
-            <span>{observationDecisionLabel(item.title)}</span>
-            <p>{firstSentence(item.text)}</p>
-          </article>
-        ))}
-      </div>
-
-      <section className="observe-next-signal observe-fact" aria-label="下一步观察信号">
-        <span>下一步看什么</span>
-        <p>{nextSignal}</p>
-      </section>
-
       {children}
       <CapitalQuantPanel capital={capital} market={market} />
       <PublicMarketIntelligencePanel activeBrokerages={marketActiveBrokerages} holdings={institutionalHoldings} market={market} />
@@ -694,6 +697,19 @@ function ObserveTextMetrics({
         onToggle={(event: SyntheticEvent<HTMLDetailsElement>) => setProfessionalDetailsOpen(event.currentTarget.open)}
       >
         <summary><span>专业指标明细</span><small>{expandProfessionalDetails ? "默认展开" : "需要时展开"}</small></summary>
+        <p className="observe-verdict-explanation">{verdict.summary}</p>
+        <div className="observe-decision-grid" aria-label="核心判断">
+          {decisionItems.map((item) => (
+            <article key={item.title} className={`observe-fact observe-decision-item ${item.tone}`}>
+              <span>{observationDecisionLabel(item.title)}</span>
+              <p>{firstSentence(item.text)}</p>
+            </article>
+          ))}
+        </div>
+        <section className="observe-next-signal observe-fact" aria-label="下一步观察信号">
+          <span>下一步看什么</span>
+          <p>{nextSignal}</p>
+        </section>
         <ObserveSpecialQuant conclusions={specialQuant.conclusions} />
         <div className="observe-text-metric-sections">
           {detailSections.filter((section) => section.items.length).map((section) => (

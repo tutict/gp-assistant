@@ -399,10 +399,16 @@ pub(crate) enum HkHistoryPriceAdjustment {
 
 impl HkHistoryPriceAdjustment {
     fn query_value(self) -> &'static str {
-        match self { Self::Forward => "qfq", Self::Backward => "hfq" }
+        match self {
+            Self::Forward => "qfq",
+            Self::Backward => "hfq",
+        }
     }
     fn alternate(self) -> Self {
-        match self { Self::Forward => Self::Backward, Self::Backward => Self::Forward }
+        match self {
+            Self::Forward => Self::Backward,
+            Self::Backward => Self::Forward,
+        }
     }
 }
 
@@ -421,7 +427,12 @@ struct HkHistoryPage {
 }
 
 impl From<Vec<HkDailyBar>> for HkHistoryPage {
-    fn from(bars: Vec<HkDailyBar>) -> Self { Self { bars, suspended_as_of: None } }
+    fn from(bars: Vec<HkDailyBar>) -> Self {
+        Self {
+            bars,
+            suspended_as_of: None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -432,7 +443,9 @@ enum HkHistoryFetchError {
 
 impl std::fmt::Display for HkHistoryFetchError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self { Self::InvalidPrices(message) | Self::Provider(message) => formatter.write_str(message) }
+        match self {
+            Self::InvalidPrices(message) | Self::Provider(message) => formatter.write_str(message),
+        }
     }
 }
 
@@ -448,9 +461,11 @@ pub(crate) fn merge_hk_history_record(
 ) -> HkHistoryRecord {
     let mut ranges = incoming.request_ranges.clone();
     ranges.extend(incoming.request_range.clone());
-    let incoming_rows = incoming.bars.iter().filter_map(|bar| {
-        crate::market::compact_date_key(&bar.date).map(|key| (key, bar.clone()))
-    }).collect::<std::collections::BTreeMap<_,_>>();
+    let incoming_rows = incoming
+        .bars
+        .iter()
+        .filter_map(|bar| crate::market::compact_date_key(&bar.date).map(|key| (key, bar.clone())))
+        .collect::<std::collections::BTreeMap<_, _>>();
     let mut bars = std::collections::BTreeMap::new();
     let mut bar_fetched_at = HashMap::new();
     let mut incoming_is_newer = true;
@@ -460,49 +475,88 @@ pub(crate) fn merge_hk_history_record(
             >= hk_history_timestamp(&previous.fetched_at);
         // Adjustment types cannot share one price series.
         if previous.price_adjustment != incoming.price_adjustment {
-            return if incoming_is_newer { incoming } else { previous.clone() };
+            return if incoming_is_newer {
+                incoming
+            } else {
+                previous.clone()
+            };
         }
         for bar in &previous.bars {
             if let Some(key) = crate::market::compact_date_key(&bar.date) {
-                bar_fetched_at.insert(key.clone(), previous.bar_fetched_at.get(&key).cloned()
-                    .unwrap_or_else(|| previous.fetched_at.clone()));
+                bar_fetched_at.insert(
+                    key.clone(),
+                    previous
+                        .bar_fetched_at
+                        .get(&key)
+                        .cloned()
+                        .unwrap_or_else(|| previous.fetched_at.clone()),
+                );
                 bars.insert(key, bar.clone());
             }
         }
-        let local_now = chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap());
-        let closed_date = if local_now.time() < chrono::NaiveTime::from_hms_opt(16, 15, 0).unwrap() {
+        let local_now =
+            chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap());
+        let closed_date = if local_now.time() < chrono::NaiveTime::from_hms_opt(16, 15, 0).unwrap()
+        {
             local_now.date_naive().pred_opt().unwrap()
-        } else { local_now.date_naive() }.format("%Y%m%d").to_string();
-        let changed_dates = bars.iter().filter_map(|(date, old)| {
-            let new = incoming_rows.get(date)?;
-            (date <= &closed_date && !hk_history_prices_equal(old, new)).then_some(date)
-        }).collect::<Vec<_>>();
+        } else {
+            local_now.date_naive()
+        }
+        .format("%Y%m%d")
+        .to_string();
+        let changed_dates = bars
+            .iter()
+            .filter_map(|(date, old)| {
+                let new = incoming_rows.get(date)?;
+                (date <= &closed_date && !hk_history_prices_equal(old, new)).then_some(date)
+            })
+            .collect::<Vec<_>>();
         if changed_dates.iter().any(|date| {
-            hk_history_timestamp(incoming.bar_fetched_at.get(*date).unwrap_or(&incoming.fetched_at))
-                < hk_history_timestamp(bar_fetched_at.get(*date).unwrap_or(&previous.fetched_at))
+            hk_history_timestamp(
+                incoming
+                    .bar_fetched_at
+                    .get(*date)
+                    .unwrap_or(&incoming.fetched_at),
+            ) < hk_history_timestamp(bar_fetched_at.get(*date).unwrap_or(&previous.fetched_at))
         }) {
             let mut kept = previous.clone();
-            kept.revision_reason = Some("较旧的复权价格版本已丢弃，缺少的历史区间需重新补齐。".to_owned());
+            kept.revision_reason =
+                Some("较旧的复权价格版本已丢弃，缺少的历史区间需重新补齐。".to_owned());
             return kept;
         }
-        invalidate_archive = !changed_dates.is_empty() && bars.keys().any(|date| !incoming_rows.contains_key(date));
+        invalidate_archive =
+            !changed_dates.is_empty() && bars.keys().any(|date| !incoming_rows.contains_key(date));
         if !invalidate_archive {
             ranges.extend(previous.request_ranges.clone());
             ranges.extend(previous.request_range.clone());
         }
     }
     for (key, bar) in &incoming_rows {
-        let fetched_at = incoming.bar_fetched_at.get(key).unwrap_or(&incoming.fetched_at);
+        let fetched_at = incoming
+            .bar_fetched_at
+            .get(key)
+            .unwrap_or(&incoming.fetched_at);
         let previous_at = bar_fetched_at.get(key).map(String::as_str).unwrap_or("0");
-        if !bars.contains_key(key) || hk_history_timestamp(fetched_at) >= hk_history_timestamp(previous_at) {
+        if !bars.contains_key(key)
+            || hk_history_timestamp(fetched_at) >= hk_history_timestamp(previous_at)
+        {
             bars.insert(key.clone(), bar.clone());
             bar_fetched_at.insert(key.clone(), fetched_at.clone());
         }
     }
-    let revision_reason = invalidate_archive.then(|| "数据源重算了复权历史，未重新获取的旧区间已暂停使用，回测时会按需重新补齐。".to_owned());
+    let revision_reason = invalidate_archive.then(|| {
+        "数据源重算了复权历史，未重新获取的旧区间已暂停使用，回测时会按需重新补齐。".to_owned()
+    });
     if invalidate_archive && ranges.is_empty() {
-        if let Some((first, last)) = incoming_rows.keys().next().zip(incoming_rows.keys().next_back()) {
-            ranges.push(HkHistoryRequestRange { start_date: first.clone(), end_date: last.clone() });
+        if let Some((first, last)) = incoming_rows
+            .keys()
+            .next()
+            .zip(incoming_rows.keys().next_back())
+        {
+            ranges.push(HkHistoryRequestRange {
+                start_date: first.clone(),
+                end_date: last.clone(),
+            });
         }
     }
     if !incoming_is_newer {
@@ -511,7 +565,10 @@ pub(crate) fn merge_hk_history_record(
     ranges.sort_by(|left, right| left.start_date.cmp(&right.start_date));
     let mut merged_ranges: Vec<HkHistoryRequestRange> = Vec::new();
     for range in ranges {
-        if let Some(last) = merged_ranges.last_mut().filter(|last| range.start_date <= last.end_date) {
+        if let Some(last) = merged_ranges
+            .last_mut()
+            .filter(|last| range.start_date <= last.end_date)
+        {
             last.end_date = last.end_date.clone().max(range.end_date);
         } else {
             merged_ranges.push(range);
@@ -520,26 +577,39 @@ pub(crate) fn merge_hk_history_record(
     incoming.request_range = (merged_ranges.len() == 1).then(|| merged_ranges[0].clone());
     incoming.request_ranges = merged_ranges;
     incoming.bar_fetched_at = bar_fetched_at;
-    if revision_reason.is_some() { incoming.revision_reason = revision_reason; }
+    if revision_reason.is_some() {
+        incoming.revision_reason = revision_reason;
+    }
     incoming.bars = bars.into_values().collect();
     incoming
 }
 
 fn hk_history_timestamp(raw: &str) -> u128 {
-    raw.parse().unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339(raw)
-        .map(|date| date.timestamp_millis().max(0) as u128).unwrap_or(0))
+    raw.parse().unwrap_or_else(|_| {
+        chrono::DateTime::parse_from_rfc3339(raw)
+            .map(|date| date.timestamp_millis().max(0) as u128)
+            .unwrap_or(0)
+    })
 }
 
 fn hk_history_prices_equal(left: &HkDailyBar, right: &HkDailyBar) -> bool {
-    [left.open, left.high, left.low, left.close].into_iter()
+    [left.open, left.high, left.low, left.close]
+        .into_iter()
         .zip([right.open, right.high, right.low, right.close])
-        .all(|(left, right)| (left-right).abs() <= left.abs().max(right.abs()).max(1.0)*1e-8)
+        .all(|(left, right)| (left - right).abs() <= left.abs().max(right.abs()).max(1.0) * 1e-8)
 }
 
 pub(crate) fn hk_history_bar_is_prepared(history: &HkHistoryRecord, bar: &HkDailyBar) -> bool {
-    if history.request_ranges.is_empty() && history.request_range.is_none() { return true; }
-    let Some(date) = crate::market::compact_date_key(&bar.date) else { return false; };
-    history.request_ranges.iter().chain(history.request_range.iter())
+    if history.request_ranges.is_empty() && history.request_range.is_none() {
+        return true;
+    }
+    let Some(date) = crate::market::compact_date_key(&bar.date) else {
+        return false;
+    };
+    history
+        .request_ranges
+        .iter()
+        .chain(history.request_range.iter())
         .any(|range| range.start_date <= date && date <= range.end_date)
 }
 
@@ -547,17 +617,25 @@ pub(crate) fn hk_history_bars_for_quote(
     history: &HkHistoryRecord,
     quote: Option<&HkQuote>,
 ) -> Vec<HkDailyBar> {
-    let mut bars = history.bars.iter().filter(|bar| hk_history_bar_is_prepared(history, bar)).cloned().collect::<Vec<_>>();
+    let mut bars = history
+        .bars
+        .iter()
+        .filter(|bar| hk_history_bar_is_prepared(history, bar))
+        .cloned()
+        .collect::<Vec<_>>();
     if history.price_adjustment != HkHistoryPriceAdjustment::Backward {
         return bars;
     }
     let Some(last) = bars.last() else { return bars };
     let Some(quote) = quote.filter(|quote| {
-        quote.price.is_finite() && quote.price > 0.0
+        quote.price.is_finite()
+            && quote.price > 0.0
             && (crate::market::compact_date_key(quote.quote_time.as_deref().unwrap_or_default())
                 == crate::market::compact_date_key(&last.date)
                 || hk_history_suspension_matches_quote(history, quote))
-    }) else { return bars };
+    }) else {
+        return bars;
+    };
     let scale = quote.price / last.close;
     if !scale.is_finite() || scale <= 0.0 {
         return bars;
@@ -571,12 +649,21 @@ pub(crate) fn hk_history_bars_for_quote(
     bars
 }
 
-pub(crate) fn hk_history_suspension_matches_quote(history: &HkHistoryRecord, quote: &HkQuote) -> bool {
-    quote.volume_shares == Some(0) && history.suspended_as_of.as_ref().is_some_and(|date| {
-        crate::market::compact_date_key(quote.quote_time.as_deref().unwrap_or_default()).as_ref() == Some(date)
-            && history.request_ranges.iter().chain(history.request_range.iter())
-                .any(|range| range.start_date <= *date && *date <= range.end_date)
-    })
+pub(crate) fn hk_history_suspension_matches_quote(
+    history: &HkHistoryRecord,
+    quote: &HkQuote,
+) -> bool {
+    quote.volume_shares == Some(0)
+        && history.suspended_as_of.as_ref().is_some_and(|date| {
+            crate::market::compact_date_key(quote.quote_time.as_deref().unwrap_or_default())
+                .as_ref()
+                == Some(date)
+                && history
+                    .request_ranges
+                    .iter()
+                    .chain(history.request_range.iter())
+                    .any(|range| range.start_date <= *date && *date <= range.end_date)
+        })
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -2960,7 +3047,9 @@ pub(crate) fn merge_hk_observation_update(
     match history {
         Ok(history) => {
             let record = merge_hk_history_record(cache.histories.get(&code), history);
-            if let Some(reason) = &record.revision_reason { result.notes.push(reason.clone()); }
+            if let Some(reason) = &record.revision_reason {
+                result.notes.push(reason.clone());
+            }
             cache.histories.insert(code.clone(), record);
             cache.history_errors.remove(&code);
             result.history_updated = true;
@@ -3329,7 +3418,12 @@ pub(crate) fn parse_tencent_hk_history(text: &str, code: &str) -> Result<Vec<HkD
     let rows = value
         .get("data")
         .and_then(|data| data.get(&symbol))
-        .and_then(|stock| stock.get("hfqday").or_else(|| stock.get("qfqday")).or_else(|| stock.get("day")))
+        .and_then(|stock| {
+            stock
+                .get("hfqday")
+                .or_else(|| stock.get("qfqday"))
+                .or_else(|| stock.get("day"))
+        })
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| format!("Tencent returned no daily history for {code}"))?;
     let mut bars = Vec::with_capacity(rows.len());
@@ -3385,7 +3479,10 @@ fn tencent_hk_daily_history_url(code: &str) -> Result<String, String> {
     tencent_hk_daily_history_url_with_adjustment(code, HkHistoryPriceAdjustment::Forward)
 }
 
-fn tencent_hk_daily_history_url_with_adjustment(code: &str, adjustment: HkHistoryPriceAdjustment) -> Result<String, String> {
+fn tencent_hk_daily_history_url_with_adjustment(
+    code: &str,
+    adjustment: HkHistoryPriceAdjustment,
+) -> Result<String, String> {
     let canonical = canonical_hk_code(code)
         .ok_or_else(|| format!("invalid HK stock code for daily history: {code}"))?;
     let param = format!("hk{canonical},day,,,2000,{}", adjustment.query_value());
@@ -3393,35 +3490,82 @@ fn tencent_hk_daily_history_url_with_adjustment(code: &str, adjustment: HkHistor
     Ok(format!("{TENCENT_HK_DAILY_KLINE_ENDPOINT}{encoded}"))
 }
 
-fn parse_tencent_hk_price_page(text: &str, code: &str, adjustment: HkHistoryPriceAdjustment) -> Result<HkHistoryPage, HkHistoryFetchError> {
-    let raw = text.trim().split_once('=').map(|(_, raw)| raw).unwrap_or(text)
-        .trim().trim_end_matches(';');
-    let value: serde_json::Value = serde_json::from_str(raw).map_err(|error| HkHistoryFetchError::Provider(error.to_string()))?;
+fn parse_tencent_hk_price_page(
+    text: &str,
+    code: &str,
+    adjustment: HkHistoryPriceAdjustment,
+) -> Result<HkHistoryPage, HkHistoryFetchError> {
+    let raw = text
+        .trim()
+        .split_once('=')
+        .map(|(_, raw)| raw)
+        .unwrap_or(text)
+        .trim()
+        .trim_end_matches(';');
+    let value: serde_json::Value = serde_json::from_str(raw)
+        .map_err(|error| HkHistoryFetchError::Provider(error.to_string()))?;
     if value["code"].as_i64() != Some(0) {
-        return Err(HkHistoryFetchError::Provider(format!("{code} 港股日线数据源错误：{}", value["msg"].as_str().unwrap_or("无效响应"))));
+        return Err(HkHistoryFetchError::Provider(format!(
+            "{code} 港股日线数据源错误：{}",
+            value["msg"].as_str().unwrap_or("无效响应")
+        )));
     }
-    let stock = value["data"][format!("hk{code}")].as_object()
+    let stock = value["data"][format!("hk{code}")]
+        .as_object()
         .ok_or_else(|| HkHistoryFetchError::Provider(format!("{code} 港股日线响应缺少证券数据")))?;
-    let quote = stock.get("qt").and_then(|quotes| quotes.get(format!("hk{code}"))).and_then(serde_json::Value::as_array);
-    let suspended_as_of = quote.filter(|fields| fields.get(40).and_then(serde_json::Value::as_str) == Some("S"))
-        .and_then(|fields| fields.get(30)).and_then(serde_json::Value::as_str)
+    let quote = stock
+        .get("qt")
+        .and_then(|quotes| quotes.get(format!("hk{code}")))
+        .and_then(serde_json::Value::as_array);
+    let suspended_as_of = quote
+        .filter(|fields| fields.get(40).and_then(serde_json::Value::as_str) == Some("S"))
+        .and_then(|fields| fields.get(30))
+        .and_then(serde_json::Value::as_str)
         .and_then(crate::market::compact_date_key);
     let requested_key = format!("{}day", adjustment.query_value());
     // Tencent uses `day` when the requested adjustment has no corporate actions to apply.
-    let Some(rows) = stock.get(&requested_key).or_else(|| stock.get("day")).and_then(serde_json::Value::as_array) else {
-        if ["day", "qfqday", "hfqday"].iter().all(|key| !stock.contains_key(*key)) {
-            return Ok(HkHistoryPage { bars: Vec::new(), suspended_as_of });
+    let Some(rows) = stock
+        .get(&requested_key)
+        .or_else(|| stock.get("day"))
+        .and_then(serde_json::Value::as_array)
+    else {
+        if ["day", "qfqday", "hfqday"]
+            .iter()
+            .all(|key| !stock.contains_key(*key))
+        {
+            return Ok(HkHistoryPage {
+                bars: Vec::new(),
+                suspended_as_of,
+            });
         }
-        return Err(HkHistoryFetchError::Provider(format!("{code} 数据源没有返回所请求的 {} 复权日线", adjustment.query_value())));
+        return Err(HkHistoryFetchError::Provider(format!(
+            "{code} 数据源没有返回所请求的 {} 复权日线",
+            adjustment.query_value()
+        )));
     };
-    if rows.is_empty() { return Ok(HkHistoryPage { bars: Vec::new(), suspended_as_of }); }
-    let isolated = serde_json::json!({"data":{format!("hk{code}"):{"day":rows}}});
-    let bars = parse_tencent_hk_history(&isolated.to_string(), code)
-        .map_err(|_| HkHistoryFetchError::InvalidPrices(format!("{code} {} 日线包含非正或无效价格，所选区间未补齐", adjustment.query_value())))?;
-    if bars.len() != rows.len() {
-        return Err(HkHistoryFetchError::InvalidPrices(format!("{code} {} 日线含无效或重复价格，所选区间未补齐", adjustment.query_value())));
+    if rows.is_empty() {
+        return Ok(HkHistoryPage {
+            bars: Vec::new(),
+            suspended_as_of,
+        });
     }
-    Ok(HkHistoryPage { bars, suspended_as_of })
+    let isolated = serde_json::json!({"data":{format!("hk{code}"):{"day":rows}}});
+    let bars = parse_tencent_hk_history(&isolated.to_string(), code).map_err(|_| {
+        HkHistoryFetchError::InvalidPrices(format!(
+            "{code} {} 日线包含非正或无效价格，所选区间未补齐",
+            adjustment.query_value()
+        ))
+    })?;
+    if bars.len() != rows.len() {
+        return Err(HkHistoryFetchError::InvalidPrices(format!(
+            "{code} {} 日线含无效或重复价格，所选区间未补齐",
+            adjustment.query_value()
+        )));
+    }
+    Ok(HkHistoryPage {
+        bars,
+        suspended_as_of,
+    })
 }
 
 async fn collect_tencent_hk_history_range<F, Fut>(
@@ -3439,40 +3583,70 @@ where
     let mut suspended_as_of = None;
     for page_index in 0..8 {
         let fetched = fetch_page(cursor).await?;
-        if page_index == 0 { suspended_as_of = fetched.suspended_as_of; }
+        if page_index == 0 {
+            suspended_as_of = fetched.suspended_as_of;
+        }
         let page = fetched.bars;
         if page.is_empty() {
             return if merged.is_empty() {
-                Err(HkHistoryFetchError::Provider(format!("{code} 在所选区间没有可用港股日线")))
-            } else { Ok(HkHistoryPage { bars: merged.into_values().collect(), suspended_as_of }) };
+                Err(HkHistoryFetchError::Provider(format!(
+                    "{code} 在所选区间没有可用港股日线"
+                )))
+            } else {
+                Ok(HkHistoryPage {
+                    bars: merged.into_values().collect(),
+                    suspended_as_of,
+                })
+            };
         }
         let first = chrono::NaiveDate::parse_from_str(&page[0].date, "%Y-%m-%d")
             .map_err(|error| HkHistoryFetchError::Provider(error.to_string()))?;
         if previous_first == Some(first) && first == cursor && page.len() == 1 {
-            if merged.get(&page[0].date).is_some_and(|bar| !hk_history_prices_equal(bar, &page[0])) {
-                return Err(HkHistoryFetchError::InvalidPrices(format!("{code} 分页期间复权价格版本发生变化，请重新补齐区间")));
+            if merged
+                .get(&page[0].date)
+                .is_some_and(|bar| !hk_history_prices_equal(bar, &page[0]))
+            {
+                return Err(HkHistoryFetchError::InvalidPrices(format!(
+                    "{code} 分页期间复权价格版本发生变化，请重新补齐区间"
+                )));
             }
-            cursor = first.pred_opt().ok_or_else(|| HkHistoryFetchError::Provider("港股日线日期超出可查询范围".to_owned()))?;
+            cursor = first.pred_opt().ok_or_else(|| {
+                HkHistoryFetchError::Provider("港股日线日期超出可查询范围".to_owned())
+            })?;
             continue;
         }
         if first > cursor || previous_first.is_some_and(|previous| first >= previous) {
-            return Err(HkHistoryFetchError::Provider(format!("{code} 日线分页未向前推进，无法补齐所选区间")));
+            return Err(HkHistoryFetchError::Provider(format!(
+                "{code} 日线分页未向前推进，无法补齐所选区间"
+            )));
         }
         for bar in page {
             let day = chrono::NaiveDate::parse_from_str(&bar.date, "%Y-%m-%d")
                 .map_err(|error| HkHistoryFetchError::Provider(error.to_string()))?;
             if day <= cursor {
-                if merged.get(&bar.date).is_some_and(|previous| !hk_history_prices_equal(previous, &bar)) {
-                    return Err(HkHistoryFetchError::InvalidPrices(format!("{code} 分页期间复权价格版本发生变化，请重新补齐区间")));
+                if merged
+                    .get(&bar.date)
+                    .is_some_and(|previous| !hk_history_prices_equal(previous, &bar))
+                {
+                    return Err(HkHistoryFetchError::InvalidPrices(format!(
+                        "{code} 分页期间复权价格版本发生变化，请重新补齐区间"
+                    )));
                 }
                 merged.insert(bar.date.clone(), bar);
             }
         }
-        if first <= start { return Ok(HkHistoryPage { bars: merged.into_values().collect(), suspended_as_of }); }
+        if first <= start {
+            return Ok(HkHistoryPage {
+                bars: merged.into_values().collect(),
+                suspended_as_of,
+            });
+        }
         previous_first = Some(first);
         cursor = first;
     }
-    Err(HkHistoryFetchError::Provider(format!("{code} 日线分页达到上限，所选区间未补齐，请缩短回测日期")))
+    Err(HkHistoryFetchError::Provider(format!(
+        "{code} 日线分页达到上限，所选区间未补齐，请缩短回测日期"
+    )))
 }
 
 async fn fetch_tencent_hk_adjusted_range(
@@ -3487,24 +3661,36 @@ async fn fetch_tencent_hk_adjusted_range(
         let canonical = canonical.clone();
         let client = client.clone();
         async move {
-        let param = format!("hk{canonical},day,,{},640,{}", cursor.format("%Y-%m-%d"), adjustment.query_value());
-        let encoded =
-            percent_encoding::utf8_percent_encode(&param, percent_encoding::NON_ALPHANUMERIC);
-        let response = client
-            .get(format!("{TENCENT_HK_DAILY_KLINE_ENDPOINT}{encoded}"))
-            .header(reqwest::header::REFERER, "https://gu.qq.com/")
-            .timeout(std::time::Duration::from_secs(HK_REQUEST_TIMEOUT_SECS))
-            .send()
-            .await
-            .map_err(|error| HkHistoryFetchError::Provider(format!("{canonical} 港股日线请求失败：{error}")))?;
-        let bytes =
-            crate::external_data::provider::read_bounded_response(response, 2 * 1024 * 1024)
+            let param = format!(
+                "hk{canonical},day,,{},640,{}",
+                cursor.format("%Y-%m-%d"),
+                adjustment.query_value()
+            );
+            let encoded =
+                percent_encoding::utf8_percent_encode(&param, percent_encoding::NON_ALPHANUMERIC);
+            let response = client
+                .get(format!("{TENCENT_HK_DAILY_KLINE_ENDPOINT}{encoded}"))
+                .header(reqwest::header::REFERER, "https://gu.qq.com/")
+                .timeout(std::time::Duration::from_secs(HK_REQUEST_TIMEOUT_SECS))
+                .send()
                 .await
-                .map_err(|error| HkHistoryFetchError::Provider(format!("{canonical} 港股日线响应失败：{}", error.message())))?;
-        let text = String::from_utf8_lossy(&bytes);
-        parse_tencent_hk_price_page(&text, &canonical, adjustment)
+                .map_err(|error| {
+                    HkHistoryFetchError::Provider(format!("{canonical} 港股日线请求失败：{error}"))
+                })?;
+            let bytes =
+                crate::external_data::provider::read_bounded_response(response, 2 * 1024 * 1024)
+                    .await
+                    .map_err(|error| {
+                        HkHistoryFetchError::Provider(format!(
+                            "{canonical} 港股日线响应失败：{}",
+                            error.message()
+                        ))
+                    })?;
+            let text = String::from_utf8_lossy(&bytes);
+            parse_tencent_hk_price_page(&text, &canonical, adjustment)
         }
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn fetch_tencent_hk_history_range(
@@ -3527,20 +3713,34 @@ pub(crate) async fn fetch_tencent_hk_history_range(
     }
     fetch_valid_hk_adjustment_range(preferred_adjustment, |adjustment| {
         fetch_tencent_hk_adjusted_range(client, &canonical, start, end, adjustment)
-    }).await
+    })
+    .await
 }
 
-async fn fetch_valid_hk_adjustment_range<F, Fut>(preferred_adjustment: HkHistoryPriceAdjustment, fetcher: F) -> Result<HkFetchedHistory, String>
-where F: Fn(HkHistoryPriceAdjustment) -> Fut,
+async fn fetch_valid_hk_adjustment_range<F, Fut>(
+    preferred_adjustment: HkHistoryPriceAdjustment,
+    fetcher: F,
+) -> Result<HkFetchedHistory, String>
+where
+    F: Fn(HkHistoryPriceAdjustment) -> Fut,
     Fut: std::future::Future<Output = Result<HkHistoryPage, HkHistoryFetchError>>,
 {
     match fetcher(preferred_adjustment).await {
-        Ok(page) => Ok(HkFetchedHistory { bars: page.bars, price_adjustment: preferred_adjustment, suspended_as_of: page.suspended_as_of }),
+        Ok(page) => Ok(HkFetchedHistory {
+            bars: page.bars,
+            price_adjustment: preferred_adjustment,
+            suspended_as_of: page.suspended_as_of,
+        }),
         Err(HkHistoryFetchError::InvalidPrices(primary)) => {
             let alternate = preferred_adjustment.alternate();
-            let page = fetcher(alternate).await
+            let page = fetcher(alternate)
+                .await
                 .map_err(|error| format!("{primary}；另一复权口径也不可用：{error}"))?;
-            Ok(HkFetchedHistory { bars: page.bars, price_adjustment: alternate, suspended_as_of: page.suspended_as_of })
+            Ok(HkFetchedHistory {
+                bars: page.bars,
+                price_adjustment: alternate,
+                suspended_as_of: page.suspended_as_of,
+            })
         }
         Err(error) => Err(error.to_string()),
     }
@@ -3590,7 +3790,10 @@ impl TencentHkMarketProvider {
     }
 
     fn with_history_adjustments(mut self, histories: &HashMap<String, HkHistoryRecord>) -> Self {
-        self.history_adjustments = histories.iter().map(|(code, history)| (code.clone(), history.price_adjustment)).collect();
+        self.history_adjustments = histories
+            .iter()
+            .map(|(code, history)| (code.clone(), history.price_adjustment))
+            .collect();
         self
     }
 }
@@ -4217,9 +4420,14 @@ impl crate::external_data::provider::DataProvider for TencentHkMarketProvider {
                         ));
                     }
                     DataDomain::DailyHistory if request.market == Market::HongKong => {
-                        let adjustment = self.history_adjustments.get(&canonical).copied().unwrap_or_default();
-                        let url = tencent_hk_daily_history_url_with_adjustment(&canonical, adjustment)
-                            .map_err(ProviderError::quality)?;
+                        let adjustment = self
+                            .history_adjustments
+                            .get(&canonical)
+                            .copied()
+                            .unwrap_or_default();
+                        let url =
+                            tencent_hk_daily_history_url_with_adjustment(&canonical, adjustment)
+                                .map_err(ProviderError::quality)?;
                         let response = self
                             .client
                             .get(url)
@@ -4237,10 +4445,14 @@ impl crate::external_data::provider::DataProvider for TencentHkMarketProvider {
                         let page = parse_tencent_hk_price_page(&text, &canonical, adjustment)
                             .map_err(|error| ProviderError::invalid_payload(error.to_string()))?;
                         let bars = page.bars;
-                        let request_range = bars.first().zip(bars.last()).and_then(|(first, last)| {
-                            Some(HkHistoryRequestRange { start_date: crate::market::compact_date_key(&first.date)?,
-                                end_date: crate::market::compact_date_key(&last.date)?.max(page.suspended_as_of.clone().unwrap_or_default()) })
-                        });
+                        let request_range =
+                            bars.first().zip(bars.last()).and_then(|(first, last)| {
+                                Some(HkHistoryRequestRange {
+                                    start_date: crate::market::compact_date_key(&first.date)?,
+                                    end_date: crate::market::compact_date_key(&last.date)?
+                                        .max(page.suspended_as_of.clone().unwrap_or_default()),
+                                })
+                            });
                         let history = HkHistoryRecord {
                             bars,
                             request_range,
@@ -4427,12 +4639,19 @@ fn merge_hk_history_batch(
 ) -> Result<(), String> {
     use crate::external_data::{DataDomain, Market};
     for record in records {
-        if record.domain != DataDomain::DailyHistory || record.market != Market::HongKong
-            || record.record_key != "history" { continue; }
-        let previous = store.read_records(record.domain, record.market, &record.entity_key)?
-            .into_iter().find(|record| record.record_key == "history")
+        if record.domain != DataDomain::DailyHistory
+            || record.market != Market::HongKong
+            || record.record_key != "history"
+        {
+            continue;
+        }
+        let previous = store
+            .read_records(record.domain, record.market, &record.entity_key)?
+            .into_iter()
+            .find(|record| record.record_key == "history")
             .map(|record| serde_json::from_value::<HkHistoryRecord>(record.payload))
-            .transpose().map_err(|error| error.to_string())?;
+            .transpose()
+            .map_err(|error| error.to_string())?;
         let incoming = serde_json::from_value::<HkHistoryRecord>(record.payload.clone())
             .map_err(|error| error.to_string())?;
         let merged = merge_hk_history_record(previous.as_ref(), incoming);
@@ -4527,8 +4746,9 @@ pub(crate) async fn resume_explicit_hk_refreshes(app: AppHandle) -> Result<Value
                 continue;
             }
         };
-        let provider = TencentHkMarketProvider::new(client, &securities)
-            .with_history_adjustments(&read_hk_market_cache(&hk_market_data_path(&app)?)?.histories);
+        let provider = TencentHkMarketProvider::new(client, &securities).with_history_adjustments(
+            &read_hk_market_cache(&hk_market_data_path(&app)?)?.histories,
+        );
         let request_id = run
             .request
             .request_id
@@ -6023,7 +6243,8 @@ pub(crate) async fn api_hk_observe(
             timeout,
             Some(&payload),
         )?;
-        let provider = TencentHkMarketProvider::new(client, &cache.securities).with_history_adjustments(&cache.histories);
+        let provider = TencentHkMarketProvider::new(client, &cache.securities)
+            .with_history_adjustments(&cache.histories);
         let request_id = payload
             .get("request_id")
             .and_then(serde_json::Value::as_str)
@@ -6167,13 +6388,27 @@ pub(crate) async fn api_hk_observe(
         }
     }
     let stale = quote.is_none() || history.is_none() || !notes.is_empty();
-    if history.as_ref().is_some_and(|history| history.price_adjustment == HkHistoryPriceAdjustment::Backward) {
-        notes.push("历史图表使用后复权价格；同日数据按最新报价归一，缩放不改变历史收益率。".to_owned());
+    if history
+        .as_ref()
+        .is_some_and(|history| history.price_adjustment == HkHistoryPriceAdjustment::Backward)
+    {
+        notes.push(
+            "历史图表使用后复权价格；同日数据按最新报价归一，缩放不改变历史收益率。".to_owned(),
+        );
     }
-    if let Some(reason) = history.as_ref().and_then(|history| history.revision_reason.as_ref()) {
-        if !notes.contains(reason) { notes.push(reason.clone()); }
+    if let Some(reason) = history
+        .as_ref()
+        .and_then(|history| history.revision_reason.as_ref())
+    {
+        if !notes.contains(reason) {
+            notes.push(reason.clone());
+        }
     }
-    if history.as_ref().zip(quote.as_ref()).is_some_and(|(history,quote)|hk_history_suspension_matches_quote(history,quote)) {
+    if history
+        .as_ref()
+        .zip(quote.as_ref())
+        .is_some_and(|(history, quote)| hk_history_suspension_matches_quote(history, quote))
+    {
         notes.push("该证券处于停牌状态，日线使用最后成交日行情。".to_owned());
     }
     let financial = build_hk_financial_result(&cache, &code);
@@ -6929,15 +7164,35 @@ mod currency_contract_tests {
     #[test]
     fn tencent_hk_backward_history_rejects_invalid_rows_and_a_different_adjustment_type() {
         let invalid = r#"{"code":0,"data":{"hk01171":{"hfqday":[["2026-11-05","10","10","11","9","100"],["2026-11-06","-1","-1","-1","-2","100"]]}}}"#;
-        assert!(super::parse_tencent_hk_price_page(invalid, "01171", super::HkHistoryPriceAdjustment::Backward).unwrap_err().to_string().contains("未补齐"));
-        let forward = r#"{"code":0,"data":{"hk01171":{"qfqday":[["2026-11-05","10","10","11","9","100"]]}}}"#;
-        assert!(super::parse_tencent_hk_price_page(forward, "01171", super::HkHistoryPriceAdjustment::Backward).unwrap_err().to_string().contains("hfq"));
+        assert!(super::parse_tencent_hk_price_page(
+            invalid,
+            "01171",
+            super::HkHistoryPriceAdjustment::Backward
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("未补齐"));
+        let forward =
+            r#"{"code":0,"data":{"hk01171":{"qfqday":[["2026-11-05","10","10","11","9","100"]]}}}"#;
+        assert!(super::parse_tencent_hk_price_page(
+            forward,
+            "01171",
+            super::HkHistoryPriceAdjustment::Backward
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("hfq"));
     }
 
     #[test]
     fn tencent_hk_adjusted_history_accepts_unadjusted_rows_returned_for_a_new_listing() {
         let response = r#"{"code":0,"data":{"hk09971":{"day":[["2026-07-08","34.120","33.220","37.380","33.000","11270830.00"]]}}}"#;
-        let bars = super::parse_tencent_hk_price_page(response, "09971", super::HkHistoryPriceAdjustment::Backward).unwrap();
+        let bars = super::parse_tencent_hk_price_page(
+            response,
+            "09971",
+            super::HkHistoryPriceAdjustment::Backward,
+        )
+        .unwrap();
         assert_eq!(bars.bars.len(), 1);
         assert_eq!(bars.bars[0].close, 33.220);
     }
@@ -6948,27 +7203,47 @@ mod currency_contract_tests {
         quote[30] = serde_json::json!("2026/11/06 16:08:54");
         quote[40] = serde_json::json!("S");
         let text = serde_json::json!({"code":0,"data":{"hk02555":{"qfqday":[["2026-10-12","3.875","3.860","3.900","3.845","280000.000"]],"qt":{"hk02555":quote}}}}).to_string();
-        let page = super::parse_tencent_hk_price_page(&text,"02555",super::HkHistoryPriceAdjustment::Forward).unwrap();
-        assert_eq!(page.bars.last().unwrap().date,"2026-10-12");
-        assert_eq!(page.suspended_as_of.as_deref(),Some("20261106"));
+        let page = super::parse_tencent_hk_price_page(
+            &text,
+            "02555",
+            super::HkHistoryPriceAdjustment::Forward,
+        )
+        .unwrap();
+        assert_eq!(page.bars.last().unwrap().date, "2026-10-12");
+        assert_eq!(page.suspended_as_of.as_deref(), Some("20261106"));
     }
 
     #[tokio::test]
-    async fn hk_history_switches_the_whole_range_when_the_preferred_adjustment_has_invalid_prices() {
+    async fn hk_history_switches_the_whole_range_when_the_preferred_adjustment_has_invalid_prices()
+    {
         use super::HkHistoryPriceAdjustment as Adjustment;
         let attempts = std::sync::Mutex::new(Vec::new());
         let fetched = super::fetch_valid_hk_adjustment_range(Adjustment::Forward, |adjustment| {
             attempts.lock().unwrap().push(adjustment);
             async move {
                 if adjustment == Adjustment::Forward {
-                    Err(super::HkHistoryFetchError::InvalidPrices("nonpositive early dividend price".to_owned()))
+                    Err(super::HkHistoryFetchError::InvalidPrices(
+                        "nonpositive early dividend price".to_owned(),
+                    ))
                 } else {
-                    Ok(vec![super::HkDailyBar { date:"2020-01-02".to_owned(), open:20.0, close:20.0,
-                        high:21.0, low:19.0, volume_shares:Some(100) }].into())
+                    Ok(vec![super::HkDailyBar {
+                        date: "2020-01-02".to_owned(),
+                        open: 20.0,
+                        close: 20.0,
+                        high: 21.0,
+                        low: 19.0,
+                        volume_shares: Some(100),
+                    }]
+                    .into())
                 }
             }
-        }).await.unwrap();
-        assert_eq!(*attempts.lock().unwrap(), vec![Adjustment::Forward, Adjustment::Backward]);
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            *attempts.lock().unwrap(),
+            vec![Adjustment::Forward, Adjustment::Backward]
+        );
         assert_eq!(fetched.price_adjustment, Adjustment::Backward);
         assert_eq!(fetched.bars[0].close, 20.0);
     }
@@ -6976,10 +7251,19 @@ mod currency_contract_tests {
     #[tokio::test]
     async fn hk_history_reports_network_errors_without_trying_a_different_price_basis() {
         let calls = std::sync::atomic::AtomicUsize::new(0);
-        let error = super::fetch_valid_hk_adjustment_range(super::HkHistoryPriceAdjustment::Forward, |_| {
-            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            async { Err(super::HkHistoryFetchError::Provider("provider timeout".to_owned())) }
-        }).await.unwrap_err();
+        let error = super::fetch_valid_hk_adjustment_range(
+            super::HkHistoryPriceAdjustment::Forward,
+            |_| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async {
+                    Err(super::HkHistoryFetchError::Provider(
+                        "provider timeout".to_owned(),
+                    ))
+                }
+            },
+        )
+        .await
+        .unwrap_err();
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert!(error.contains("provider timeout"));
     }
@@ -6988,10 +7272,21 @@ mod currency_contract_tests {
     async fn tencent_hk_history_pagination_never_claims_coverage_after_its_page_limit() {
         let start = chrono::NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
         let end = chrono::NaiveDate::from_ymd_opt(2026, 11, 7).unwrap();
-        let result = super::collect_tencent_hk_history_range("01171", start, end, |cursor| async move {
-            Ok(vec![super::HkDailyBar { date: (cursor - chrono::Duration::days(1)).format("%Y-%m-%d").to_string(),
-                open: 10.0, close: 10.0, high: 11.0, low: 9.0, volume_shares: Some(100) }].into())
-        }).await;
+        let result =
+            super::collect_tencent_hk_history_range("01171", start, end, |cursor| async move {
+                Ok(vec![super::HkDailyBar {
+                    date: (cursor - chrono::Duration::days(1))
+                        .format("%Y-%m-%d")
+                        .to_string(),
+                    open: 10.0,
+                    close: 10.0,
+                    high: 11.0,
+                    low: 9.0,
+                    volume_shares: Some(100),
+                }]
+                .into())
+            })
+            .await;
         assert!(result.unwrap_err().to_string().contains("达到上限"));
     }
 
@@ -7003,11 +7298,26 @@ mod currency_contract_tests {
         let result = super::collect_tencent_hk_history_range("01171", start, end, |cursor| {
             requested += 1;
             let exhausted = requested > 1;
-            async move { Ok(if exhausted { Vec::new() } else {
-                vec![super::HkDailyBar { date: (cursor - chrono::Duration::days(1)).format("%Y-%m-%d").to_string(),
-                    open: 10.0, close: 10.0, high: 11.0, low: 9.0, volume_shares: Some(100) }]
-            }.into()) }
-        }).await.unwrap();
+            async move {
+                Ok(if exhausted {
+                    Vec::new()
+                } else {
+                    vec![super::HkDailyBar {
+                        date: (cursor - chrono::Duration::days(1))
+                            .format("%Y-%m-%d")
+                            .to_string(),
+                        open: 10.0,
+                        close: 10.0,
+                        high: 11.0,
+                        low: 9.0,
+                        volume_shares: Some(100),
+                    }]
+                }
+                .into())
+            }
+        })
+        .await
+        .unwrap();
         assert_eq!(result.bars.len(), 1);
         assert_eq!(requested, 2);
     }
@@ -7018,9 +7328,12 @@ mod currency_contract_tests {
             "bars":[{"date":"2026-11-05","open":20.0,"close":20.0,"high":21.0,"low":19.0},
                 {"date":"2026-11-06","open":40.0,"close":40.0,"high":41.0,"low":39.0}],
             "source":"fixture","fetched_at":"200","price_adjustment":"hfq"
-        })).unwrap();
-        let quote: super::HkQuote = serde_json::from_value(serde_json::json!({"code":"01171","name":"兖矿能源",
-            "currency":"HKD","price":10.0,"source":"fixture","quote_time":"2026/11/06 16:00:00"})).unwrap();
+        }))
+        .unwrap();
+        let quote: super::HkQuote =
+            serde_json::from_value(serde_json::json!({"code":"01171","name":"兖矿能源",
+            "currency":"HKD","price":10.0,"source":"fixture","quote_time":"2026/11/06 16:00:00"}))
+            .unwrap();
         let normalized = super::hk_history_bars_for_quote(&backward, Some(&quote));
         assert_eq!(normalized[1].close, 10.0);
         assert_eq!(normalized[1].close / normalized[0].close, 2.0);
@@ -7032,7 +7345,10 @@ mod currency_contract_tests {
         let merged = super::merge_hk_history_record(Some(&old_forward), backward);
         assert_eq!(merged.bars.len(), 2);
         assert_eq!(merged.bars[0].date, "2026-11-05");
-        assert_eq!(merged.price_adjustment, super::HkHistoryPriceAdjustment::Backward);
+        assert_eq!(
+            merged.price_adjustment,
+            super::HkHistoryPriceAdjustment::Backward
+        );
     }
 
     #[test]
@@ -7043,14 +7359,43 @@ mod currency_contract_tests {
                 {"date":"2026-10-30","open":10.0,"close":10.0,"high":11.0,"low":9.0}],
             "source":"fixture","fetched_at":"100","price_adjustment":"hfq",
             "request_range":{"start_date":"20200101","end_date":"20261030"}
-        })).unwrap();
+        }))
+        .unwrap();
         cache.histories.insert("01171".to_owned(), archive);
-        super::merge_hk_observation_update(&mut cache, "01171", Err("fixture quote unavailable".to_owned()),
-            Ok(super::HkHistoryRecord { bars: vec![super::HkDailyBar { date: "2026-10-30".to_owned(), open: 10.0, close: 10.0,
-                high: 11.0, low: 9.0, volume_shares: Some(100) }, super::HkDailyBar { date: "2026-11-06".to_owned(), open: 20.0, close: 20.0,
-                high: 21.0, low: 19.0, volume_shares: Some(100) }], source: "fixture".to_owned(), fetched_at: "200".to_owned(),
+        super::merge_hk_observation_update(
+            &mut cache,
+            "01171",
+            Err("fixture quote unavailable".to_owned()),
+            Ok(super::HkHistoryRecord {
+                bars: vec![
+                    super::HkDailyBar {
+                        date: "2026-10-30".to_owned(),
+                        open: 10.0,
+                        close: 10.0,
+                        high: 11.0,
+                        low: 9.0,
+                        volume_shares: Some(100),
+                    },
+                    super::HkDailyBar {
+                        date: "2026-11-06".to_owned(),
+                        open: 20.0,
+                        close: 20.0,
+                        high: 21.0,
+                        low: 19.0,
+                        volume_shares: Some(100),
+                    },
+                ],
+                source: "fixture".to_owned(),
+                fetched_at: "200".to_owned(),
                 price_adjustment: super::HkHistoryPriceAdjustment::Backward,
-                request_range: Some(super::HkHistoryRequestRange {start_date:"20261030".to_owned(),end_date:"20261107".to_owned()}), ..Default::default() }), "200");
+                request_range: Some(super::HkHistoryRequestRange {
+                    start_date: "20261030".to_owned(),
+                    end_date: "20261107".to_owned(),
+                }),
+                ..Default::default()
+            }),
+            "200",
+        );
         let history = &cache.histories["01171"];
         assert_eq!(history.bars.len(), 3);
         assert_eq!(history.bars.first().unwrap().date, "2020-01-02");
@@ -7066,13 +7411,21 @@ mod currency_contract_tests {
                 {"date":"2026-11-06","open":40.0,"close":40.0,"high":41.0,"low":39.0}],
             "source":"fixture","fetched_at":"200","price_adjustment":"hfq",
             "request_range":{"start_date":"20200101","end_date":"20261107"}
-        })).unwrap();
+        }))
+        .unwrap();
         cache.histories.insert("01171".to_owned(), latest.clone());
         let incoming: super::HkHistoryRecord = serde_json::from_value(serde_json::json!({
             "bars":[{"date":"2024-04-02","open":10.0,"close":10.0,"high":11.0,"low":9.0}],
             "source":"fixture","fetched_at":"100","price_adjustment":"qfq"
-        })).unwrap();
-        super::merge_hk_observation_update(&mut cache, "01171", Err("fixture quote unavailable".to_owned()), Ok(incoming), "100");
+        }))
+        .unwrap();
+        super::merge_hk_observation_update(
+            &mut cache,
+            "01171",
+            Err("fixture quote unavailable".to_owned()),
+            Ok(incoming),
+            "100",
+        );
         assert_eq!(cache.histories["01171"], latest);
     }
 
@@ -7084,14 +7437,45 @@ mod currency_contract_tests {
         let error = super::collect_tencent_hk_history_range("01171", start, end, |cursor| {
             page += 1;
             let number = page;
-            async move { Ok(if number == 1 {
-                vec![super::HkDailyBar { date:"2024-04-02".to_owned(), open:20.0, close:20.0, high:21.0, low:19.0, volume_shares:Some(100) }]
-            } else {
-                vec![super::HkDailyBar { date:"2019-01-22".to_owned(), open:10.0, close:10.0, high:11.0, low:9.0, volume_shares:Some(100) },
-                    super::HkDailyBar { date:cursor.format("%Y-%m-%d").to_string(), open:19.0, close:19.0, high:20.0, low:18.0, volume_shares:Some(100) }]
-            }.into()) }
-        }).await.unwrap_err();
-        assert!(matches!(error, super::HkHistoryFetchError::InvalidPrices(_)));
+            async move {
+                Ok(if number == 1 {
+                    vec![super::HkDailyBar {
+                        date: "2024-04-02".to_owned(),
+                        open: 20.0,
+                        close: 20.0,
+                        high: 21.0,
+                        low: 19.0,
+                        volume_shares: Some(100),
+                    }]
+                } else {
+                    vec![
+                        super::HkDailyBar {
+                            date: "2019-01-22".to_owned(),
+                            open: 10.0,
+                            close: 10.0,
+                            high: 11.0,
+                            low: 9.0,
+                            volume_shares: Some(100),
+                        },
+                        super::HkDailyBar {
+                            date: cursor.format("%Y-%m-%d").to_string(),
+                            open: 19.0,
+                            close: 19.0,
+                            high: 20.0,
+                            low: 18.0,
+                            volume_shares: Some(100),
+                        },
+                    ]
+                }
+                .into())
+            }
+        })
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            super::HkHistoryFetchError::InvalidPrices(_)
+        ));
     }
 
     #[test]

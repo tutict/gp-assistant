@@ -1,9 +1,10 @@
 [package]
 name = "stock-optimizer-core"
-version = "0.6.3"
+version = "0.6.4"
 edition = "2021"
-rust-version = "1.99"
-description = "Embeddable A-share screening core for 鑲￠€変紭"
+rust-version = "1.100"
+resolver = "3"
+description = "Embeddable A-share screening core for 股选优"
 
 [lib]
 crate-type = ["rlib", "staticlib", "cdylib"]
@@ -14,3 +15,8 @@ regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

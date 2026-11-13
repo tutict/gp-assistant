@@ -14,8 +14,8 @@ use rig_core::{
     tool::{DynamicTool, ToolExecutionError, ToolOutput},
 };
 use serde_json::{json, Map, Value};
-use std::collections::HashSet;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex, OnceLock,
@@ -183,7 +183,15 @@ fn governed_model_outcome(outcome: &str) -> &'static str {
     }
 }
 
-type ModelEvidenceSender = Arc<dyn Fn(reqwest::Client, reqwest::Request, Arc<RunCancellation>) -> Result<Result<reqwest::Response, reqwest::Error>, String> + Send + Sync>;
+type ModelEvidenceSender = Arc<
+    dyn Fn(
+            reqwest::Client,
+            reqwest::Request,
+            Arc<RunCancellation>,
+        ) -> Result<Result<reqwest::Response, reqwest::Error>, String>
+        + Send
+        + Sync,
+>;
 
 struct ModelRequestDropGuard(Arc<RunCancellation>);
 
@@ -216,7 +224,10 @@ struct BoundedHttpClient {
 
 impl std::fmt::Debug for BoundedHttpClient {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("BoundedHttpClient").field("evidence_checked",&self.evidence_sender.is_some()).finish_non_exhaustive()
+        formatter
+            .debug_struct("BoundedHttpClient")
+            .field("evidence_checked", &self.evidence_sender.is_some())
+            .finish_non_exhaustive()
     }
 }
 
@@ -228,20 +239,33 @@ impl Default for BoundedHttpClient {
 
 impl BoundedHttpClient {
     fn with_evidence_sender(mut self, sender: ModelEvidenceSender) -> Self {
-        self.evidence_sender=Some(sender); self
+        self.evidence_sender = Some(sender);
+        self
     }
-    async fn execute_request(&self, request: reqwest::Request) -> Result<reqwest::Response,RigHttpError> {
-        let client=self.inner.clone();
-        let Some(sender)=self.evidence_sender.clone() else {
-            return client.execute(request).await.map_err(|error|RigHttpError::Instance(Box::new(error)));
+    async fn execute_request(
+        &self,
+        request: reqwest::Request,
+    ) -> Result<reqwest::Response, RigHttpError> {
+        let client = self.inner.clone();
+        let Some(sender) = self.evidence_sender.clone() else {
+            return client
+                .execute(request)
+                .await
+                .map_err(|error| RigHttpError::Instance(Box::new(error)));
         };
-        let cancellation=Arc::new(RunCancellation::default());
-        let _drop_guard=ModelRequestDropGuard(Arc::clone(&cancellation));
-        let result=runtime::run_io_bound("rig_model_evidence_send",move || sender(client,request,cancellation)).await;
+        let cancellation = Arc::new(RunCancellation::default());
+        let _drop_guard = ModelRequestDropGuard(Arc::clone(&cancellation));
+        let result = runtime::run_io_bound("rig_model_evidence_send", move || {
+            sender(client, request, cancellation)
+        })
+        .await;
         match result {
-            Ok(Ok(response))=>response.map_err(|error|RigHttpError::Instance(Box::new(error))),
-            _=>Err(RigHttpError::non_success_with_details(reqwest::StatusCode::FORBIDDEN,Default::default(),
-                "研究资料、来源许可或证据库已经变化，请重新取证。".to_string())),
+            Ok(Ok(response)) => response.map_err(|error| RigHttpError::Instance(Box::new(error))),
+            _ => Err(RigHttpError::non_success_with_details(
+                reqwest::StatusCode::FORBIDDEN,
+                Default::default(),
+                "研究资料、来源许可或证据库已经变化，请重新取证。".to_string(),
+            )),
         }
     }
     fn new(inner: reqwest::Client, fixed_endpoint: Option<String>) -> Self {
@@ -661,12 +685,14 @@ pub(crate) fn build_model_with_payload(
     config: &ProviderConfig,
     network_payload: &Value,
 ) -> Result<CompletionModel, RigAgentError> {
-    build_model_with_evidence_sender(config,network_payload,None)
+    build_model_with_evidence_sender(config, network_payload, None)
 }
 
 fn build_model_with_evidence_sender(
-    config: &ProviderConfig, network_payload: &Value, evidence_sender: Option<ModelEvidenceSender>,
-) -> Result<CompletionModel,RigAgentError> {
+    config: &ProviderConfig,
+    network_payload: &Value,
+    evidence_sender: Option<ModelEvidenceSender>,
+) -> Result<CompletionModel, RigAgentError> {
     validate_provider_config(config).map_err(RigAgentError::PolicyRejected)?;
     validate_full_endpoint_kind(config)?;
     let api_key = config.api_key.clone().unwrap_or_default();
@@ -694,13 +720,19 @@ fn build_model_with_evidence_sender(
         ProviderKind::OpenAiResponses => {
             let client = rig_core::providers::openai::OpenAIConfig::new(api_key)
                 .with_base_url(base_url)
-                .connect(with_optional_evidence_sender(BoundedHttpClient::new(http_client, None),evidence_sender));
+                .connect(with_optional_evidence_sender(
+                    BoundedHttpClient::new(http_client, None),
+                    evidence_sender,
+                ));
             Ok(client.responses(config.model.clone()).into())
         }
         ProviderKind::Anthropic => {
             let client = rig_core::providers::anthropic::AnthropicConfig::new(api_key)
                 .with_base_url(base_url)
-                .connect(with_optional_evidence_sender(BoundedHttpClient::new(http_client, None),evidence_sender));
+                .connect(with_optional_evidence_sender(
+                    BoundedHttpClient::new(http_client, None),
+                    evidence_sender,
+                ));
             Ok(client.completion(config.model.clone()).into())
         }
         ProviderKind::OpenAiChat | ProviderKind::OpenAiCompatible => {
@@ -714,14 +746,23 @@ fn build_model_with_evidence_sender(
             };
             let client = rig_core::providers::openai::OpenAIConfig::new(api_key)
                 .with_base_url(base_url)
-                .connect(with_optional_evidence_sender(BoundedHttpClient::new(http_client, fixed_endpoint),evidence_sender));
+                .connect(with_optional_evidence_sender(
+                    BoundedHttpClient::new(http_client, fixed_endpoint),
+                    evidence_sender,
+                ));
             Ok(client.chat(config.model.clone()).into())
         }
     }
 }
 
-fn with_optional_evidence_sender(client: BoundedHttpClient, sender: Option<ModelEvidenceSender>) -> BoundedHttpClient {
-    match sender {Some(sender)=>client.with_evidence_sender(sender),None=>client}
+fn with_optional_evidence_sender(
+    client: BoundedHttpClient,
+    sender: Option<ModelEvidenceSender>,
+) -> BoundedHttpClient {
+    match sender {
+        Some(sender) => client.with_evidence_sender(sender),
+        None => client,
+    }
 }
 
 fn validate_full_endpoint_kind(config: &ProviderConfig) -> Result<(), RigAgentError> {
@@ -831,9 +872,12 @@ pub(crate) struct RigToolRegistry {
 
 impl RigToolRegistry {
     fn freeze_research_context(&self, context: &Value) -> Result<(), String> {
-        let frozen=crate::hk_agent_research::frozen_evidence(context);
-        record_model_evidence(&self.model_evidence,&frozen)?;
-        let mut snapshot = self.research_evidence.lock().map_err(|_|"研究证据快照锁不可用".to_string())?;
+        let frozen = crate::hk_agent_research::frozen_evidence(context);
+        record_model_evidence(&self.model_evidence, &frozen)?;
+        let mut snapshot = self
+            .research_evidence
+            .lock()
+            .map_err(|_| "研究证据快照锁不可用".to_string())?;
         *snapshot = Some(frozen);
         Ok(())
     }
@@ -950,9 +994,11 @@ impl RigToolRegistry {
                             if cancellation.is_cancelled() {
                                 return Err(ToolExecutionError::other("Agent run cancelled"));
                             }
-                            let evidence = research_evidence.lock().map(|snapshot|snapshot.clone())
-                                .map_err(|_|ToolExecutionError::other("研究证据快照锁不可用"))?;
-                            let capture_evidence=market=="hk" && tool_name=="news_evidence";
+                            let evidence = research_evidence
+                                .lock()
+                                .map(|snapshot| snapshot.clone())
+                                .map_err(|_| ToolExecutionError::other("研究证据快照锁不可用"))?;
+                            let capture_evidence = market == "hk" && tool_name == "news_evidence";
                             let result = tokio::select! {
                                 _ = cancellation.cancelled() => {
                                     return Err(ToolExecutionError::other("Agent run cancelled"));
@@ -974,7 +1020,8 @@ impl RigToolRegistry {
                                     .map_err(ToolExecutionError::other)?,
                             };
                             if capture_evidence {
-                                record_model_evidence(&model_evidence,&result).map_err(ToolExecutionError::other)?;
+                                record_model_evidence(&model_evidence, &result)
+                                    .map_err(ToolExecutionError::other)?;
                             }
                             Ok(ToolOutput::json(result))
                         })
@@ -1004,9 +1051,12 @@ impl RigToolRegistry {
     }
 
     pub(crate) async fn dispatch(&self, name: &str, arguments: Value) -> Result<Value, String> {
-        let research_evidence = self.research_evidence.lock().map(|snapshot|snapshot.clone())
-            .map_err(|_|"研究证据快照锁不可用".to_string())?;
-        let result=dispatch_tool(
+        let research_evidence = self
+            .research_evidence
+            .lock()
+            .map(|snapshot| snapshot.clone())
+            .map_err(|_| "研究证据快照锁不可用".to_string())?;
+        let result = dispatch_tool(
             name,
             self.data.clone(),
             self.context.clone(),
@@ -1017,23 +1067,35 @@ impl RigToolRegistry {
             arguments,
         )
         .await?;
-        if self.market=="hk" && name=="news_evidence" {
-            record_model_evidence(&self.model_evidence,&result)?;
+        if self.market == "hk" && name == "news_evidence" {
+            record_model_evidence(&self.model_evidence, &result)?;
         }
         Ok(result)
     }
 }
 
 fn record_model_evidence(snapshots: &Mutex<Vec<Value>>, evidence: &Value) -> Result<(), String> {
-    let citations=evidence.get("citations").and_then(Value::as_array)
-        .ok_or_else(||"研究工具未提供可验证的证据列表".to_string())?;
-    if citations.is_empty() {return Ok(());}
-    let snapshot=if evidence.get("frozen_snapshot").and_then(Value::as_bool)==Some(true) {
+    let citations = evidence
+        .get("citations")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "研究工具未提供可验证的证据列表".to_string())?;
+    if citations.is_empty() {
+        return Ok(());
+    }
+    let snapshot = if evidence.get("frozen_snapshot").and_then(Value::as_bool) == Some(true) {
         evidence.clone()
-    } else {json!({"citations":citations})};
-    let mut snapshots=snapshots.lock().map_err(|_|"模型研究证据锁不可用".to_string())?;
-    if snapshots.contains(&snapshot) {return Ok(());}
-    if snapshots.len()>=16 {return Err("模型研究证据批次超过限制，请缩小研究范围".to_string());}
+    } else {
+        json!({"citations":citations})
+    };
+    let mut snapshots = snapshots
+        .lock()
+        .map_err(|_| "模型研究证据锁不可用".to_string())?;
+    if snapshots.contains(&snapshot) {
+        return Ok(());
+    }
+    if snapshots.len() >= 16 {
+        return Err("模型研究证据批次超过限制，请缩小研究范围".to_string());
+    }
     snapshots.push(snapshot);
     Ok(())
 }
@@ -1123,7 +1185,10 @@ fn tool_schema(name: &str) -> Value {
                 "query".to_string(),
                 json!({"type": "string", "maxLength": 256}),
             );
-            properties.insert("stock_code".to_string(), json!({"type":"string","maxLength":12}));
+            properties.insert(
+                "stock_code".to_string(),
+                json!({"type":"string","maxLength":12}),
+            );
             properties.insert(
                 "as_of".to_string(),
                 json!({"type": "string", "maxLength": 40}),
@@ -1151,12 +1216,24 @@ async fn dispatch_tool(
         return Err("Rig tool arguments exceed 16 KiB".to_string());
     }
     if name == "stock_observe" {
-        let code = arguments.get("code").and_then(Value::as_str).and_then(|code| canonical_agent_stock_code(code, &market))
-            .ok_or_else(|| format!("证券代码不属于当前{}市场", if market == "hk" {"港股"} else {"A 股"}))?;
+        let code = arguments
+            .get("code")
+            .and_then(Value::as_str)
+            .and_then(|code| canonical_agent_stock_code(code, &market))
+            .ok_or_else(|| {
+                format!(
+                    "证券代码不属于当前{}市场",
+                    if market == "hk" { "港股" } else { "A 股" }
+                )
+            })?;
         arguments["code"] = json!(code);
         if market == "hk" {
             if let Some(app) = research_app.as_ref() {
-                let result = crate::hk_market::api_hk_observe(app.clone(), json!({"code":code,"data_policy":"cache_only"})).await?;
+                let result = crate::hk_market::api_hk_observe(
+                    app.clone(),
+                    json!({"code":code,"data_policy":"cache_only"}),
+                )
+                .await?;
                 return bound_hk_observation(result, &arguments);
             }
         }
@@ -1192,17 +1269,41 @@ async fn dispatch_tool(
                     .get("query")
                     .and_then(Value::as_str)
                     .unwrap_or("新闻");
-                if has_foreign_market_identity(query,&market) {return Err("研究证据问题中的证券代码不属于当前市场".to_string());}
+                if has_foreign_market_identity(query, &market) {
+                    return Err("研究证据问题中的证券代码不属于当前市场".to_string());
+                }
                 let requested_code = arguments.get("stock_code").and_then(Value::as_str);
-                let explicit_code = requested_code.map(|code|canonical_agent_stock_code(code,&market)
-                    .ok_or_else(||"研究证据证券代码不属于当前市场".to_string())).transpose()?;
+                let explicit_code = requested_code
+                    .map(|code| {
+                        canonical_agent_stock_code(code, &market)
+                            .ok_or_else(|| "研究证据证券代码不属于当前市场".to_string())
+                    })
+                    .transpose()?;
                 let stock_code = explicit_code
                     .or_else(|| extract_stock_code(query, &market, &data))
-                    .or_else(||context.get("stock_code").and_then(Value::as_str).and_then(|code|canonical_agent_stock_code(code,&market)));
-                if requested_code.is_some() && stock_code.is_none() { return Err("研究证据证券代码不属于当前市场".to_string()); }
-                if let Some(scope)=research_evidence.as_ref().filter(|value|value.get("frozen_snapshot").and_then(Value::as_bool)==Some(true))
-                    .and_then(|value|value.get("stock_code")).and_then(Value::as_str) {
-                    if stock_code.as_deref()!=Some(scope) {return Err("当前研究快照只覆盖当前证券，请在新问题中明确切换证券后重新取证".to_string());}
+                    .or_else(|| {
+                        context
+                            .get("stock_code")
+                            .and_then(Value::as_str)
+                            .and_then(|code| canonical_agent_stock_code(code, &market))
+                    });
+                if requested_code.is_some() && stock_code.is_none() {
+                    return Err("研究证据证券代码不属于当前市场".to_string());
+                }
+                if let Some(scope) = research_evidence
+                    .as_ref()
+                    .filter(|value| {
+                        value.get("frozen_snapshot").and_then(Value::as_bool) == Some(true)
+                    })
+                    .and_then(|value| value.get("stock_code"))
+                    .and_then(Value::as_str)
+                {
+                    if stock_code.as_deref() != Some(scope) {
+                        return Err(
+                            "当前研究快照只覆盖当前证券，请在新问题中明确切换证券后重新取证"
+                                .to_string(),
+                        );
+                    }
                 }
                 research_evidence_for_query(
                     query,
@@ -1251,25 +1352,42 @@ fn research_evidence_for_query(
     remote_safe_only: bool,
 ) -> Result<Value, String> {
     let cutoff = crate::research::normalize_research_as_of(as_of)?;
-    if let Some(evidence) = evidence.filter(|evidence|evidence.get("frozen_snapshot").and_then(Value::as_bool)==Some(true)
-        && evidence.get("market").and_then(Value::as_str)==Some(market)
-        && evidence.get("stock_code").and_then(Value::as_str)==stock_code) {
-        if let Some(app)=app {
-            let context=crate::hk_agent_research::context_from_frozen_evidence(evidence);
-            if !crate::research::with_app_store_for_market(app,"hk",|store|store.validate_hk_context(&context,remote_safe_only))? {
+    if let Some(evidence) = evidence.filter(|evidence| {
+        evidence.get("frozen_snapshot").and_then(Value::as_bool) == Some(true)
+            && evidence.get("market").and_then(Value::as_str) == Some(market)
+            && evidence.get("stock_code").and_then(Value::as_str) == stock_code
+    }) {
+        if let Some(app) = app {
+            let context = crate::hk_agent_research::context_from_frozen_evidence(evidence);
+            if !crate::research::with_app_store_for_market(app, "hk", |store| {
+                store.validate_hk_context(&context, remote_safe_only)
+            })? {
                 return Err("研究快照与当前资料或来源许可不一致，请重新取证。".to_string());
             }
         }
         let mut snapshot = evidence.clone();
         if let Some(cutoff) = cutoff.as_deref() {
-            let citations = evidence.get("citations").and_then(Value::as_array).into_iter().flatten()
-                .filter(|citation| crate::research::research_evidence_available_as_of(
-                    citation.get("published_at").and_then(Value::as_str), cutoff))
-                .cloned().collect::<Vec<_>>();
+            let citations = evidence
+                .get("citations")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|citation| {
+                    crate::research::research_evidence_available_as_of(
+                        citation.get("published_at").and_then(Value::as_str),
+                        cutoff,
+                    )
+                })
+                .cloned()
+                .collect::<Vec<_>>();
             snapshot["citations"] = json!(citations);
             snapshot["as_of"] = json!(cutoff);
         }
-        return Ok(if remote_safe_only {remote_safe_evidence_snapshot(&snapshot)} else {snapshot});
+        return Ok(if remote_safe_only {
+            remote_safe_evidence_snapshot(&snapshot)
+        } else {
+            snapshot
+        });
     }
     if let Some(app) = app {
         let mut request = json!({"query": query, "top_k": 8, "remote_safe_only": remote_safe_only});
@@ -1281,9 +1399,14 @@ fn research_evidence_for_query(
         }
         let mut result = crate::research::with_app_store_for_market(app, market, |store| {
             if market == "hk" {
-                if stock_code.is_some() {store.agent_evidence(&request)} else {store.unscoped_hk_agent_evidence(&request)}
+                if stock_code.is_some() {
+                    store.agent_evidence(&request)
+                } else {
+                    store.unscoped_hk_agent_evidence(&request)
+                }
+            } else {
+                store.query(&request)
             }
-            else { store.query(&request) }
         })?;
         if let Some(object) = result.as_object_mut() {
             object.insert("research_store".to_string(), Value::Bool(true));
@@ -1292,7 +1415,10 @@ fn research_evidence_for_query(
     }
     if let Some(evidence) = evidence {
         if cutoff.is_some() {
-            return Err("An as_of cutoff requires ResearchStore or a frozen HK evidence snapshot".to_string());
+            return Err(
+                "An as_of cutoff requires ResearchStore or a frozen HK evidence snapshot"
+                    .to_string(),
+            );
         }
         return Ok(if remote_safe_only {
             remote_safe_evidence_snapshot(evidence)
@@ -1312,22 +1438,47 @@ fn research_evidence_for_query(
 
 fn bound_hk_observation(mut result: Value, arguments: &Value) -> Result<Value, String> {
     let parse_date = |field: &str| -> Result<Option<String>, String> {
-        arguments.get(field).and_then(Value::as_str).map(|raw| {
-            let key = crate::market::compact_date_key(raw).ok_or_else(|| format!("无效日线日期：{raw}"))?;
-            chrono::NaiveDate::parse_from_str(&key,"%Y%m%d").map_err(|_| format!("无效日线日期：{raw}"))?;
-            Ok(key)
-        }).transpose()
+        arguments
+            .get(field)
+            .and_then(Value::as_str)
+            .map(|raw| {
+                let key = crate::market::compact_date_key(raw)
+                    .ok_or_else(|| format!("无效日线日期：{raw}"))?;
+                chrono::NaiveDate::parse_from_str(&key, "%Y%m%d")
+                    .map_err(|_| format!("无效日线日期：{raw}"))?;
+                Ok(key)
+            })
+            .transpose()
     };
     let start = parse_date("start_date")?;
     let end = parse_date("end_date")?;
-    if start.as_ref().zip(end.as_ref()).is_some_and(|(start,end)|start>end) { return Err("日线开始日期不能晚于结束日期".to_string()); }
-    let limit = arguments.get("series_limit").and_then(Value::as_u64).unwrap_or(120).clamp(1,750) as usize;
+    if start
+        .as_ref()
+        .zip(end.as_ref())
+        .is_some_and(|(start, end)| start > end)
+    {
+        return Err("日线开始日期不能晚于结束日期".to_string());
+    }
+    let limit = arguments
+        .get("series_limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(120)
+        .clamp(1, 750) as usize;
     let mut total = 0;
     if let Some(history) = result.get_mut("history").and_then(Value::as_array_mut) {
-        history.retain(|bar| bar.get("date").and_then(Value::as_str).and_then(crate::market::compact_date_key)
-            .is_some_and(|date| start.as_ref().is_none_or(|start| date>=*start) && end.as_ref().is_none_or(|end|date<=*end)));
+        history.retain(|bar| {
+            bar.get("date")
+                .and_then(Value::as_str)
+                .and_then(crate::market::compact_date_key)
+                .is_some_and(|date| {
+                    start.as_ref().is_none_or(|start| date >= *start)
+                        && end.as_ref().is_none_or(|end| date <= *end)
+                })
+        });
         total = history.len();
-        if total>limit { history.drain(..total-limit); }
+        if total > limit {
+            history.drain(..total - limit);
+        }
     }
     result["history_total_bars"] = json!(total);
     result["history_display_limit"] = json!(limit);
@@ -1436,8 +1587,13 @@ fn validate_tool_arguments(name: &str, arguments: &Value) -> Result<(), String> 
         }
     }
     if name == "stock_observe" {
-        let code = object.get("code").and_then(Value::as_str).ok_or("stock_observe.code is required")?;
-        if canonical_agent_stock_code(code, "cn").is_none() && canonical_agent_stock_code(code, "hk").is_none() {
+        let code = object
+            .get("code")
+            .and_then(Value::as_str)
+            .ok_or("stock_observe.code is required")?;
+        if canonical_agent_stock_code(code, "cn").is_none()
+            && canonical_agent_stock_code(code, "hk").is_none()
+        {
             return Err("stock_observe.code is invalid".to_string());
         }
     }
@@ -1551,53 +1707,137 @@ where
     let explicit_code = extract_stock_code(&message, &market, &data);
     let mut historical_code = None;
     let mut historical_foreign = false;
-    if market=="hk" {
-        for entry in bounded_history(payload.get("history").unwrap_or(&Value::Null)).iter().rev().filter(|entry|entry.role=="user") {
-            if has_foreign_market_identity(&entry.content,&market) {historical_foreign=true;break;}
-            if let Some(code)=extract_stock_code(&entry.content,&market,&data) {historical_code=Some(code);break;}
+    if market == "hk" {
+        for entry in bounded_history(payload.get("history").unwrap_or(&Value::Null))
+            .iter()
+            .rev()
+            .filter(|entry| entry.role == "user")
+        {
+            if has_foreign_market_identity(&entry.content, &market) {
+                historical_foreign = true;
+                break;
+            }
+            if let Some(code) = extract_stock_code(&entry.content, &market, &data) {
+                historical_code = Some(code);
+                break;
+            }
         }
     }
-    if has_foreign_market_identity(&message,&market) || (explicit_code.is_none() && historical_foreign) {
-        let response = add_runtime_harness(json!({"market":market,"action":"clarify","reply":format!("当前为{}研究市场，问题中的证券代码属于其他市场；请切换市场或提供当前市场的证券代码。",if market=="hk" {"港股"} else {"A 股"}),
-            "evidence_summary":[],"tool_calls":[],"warnings":[],"next_actions":[]}),mode,"not_requested",None,None,prompt_upgrade::BASE_PROMPT_VERSION);
-        emit_compatibility_events(&run_id,&response,&mut sink);
-        return Ok(RigAgentOutcome {response});
+    if has_foreign_market_identity(&message, &market)
+        || (explicit_code.is_none() && historical_foreign)
+    {
+        let response = add_runtime_harness(
+            json!({"market":market,"action":"clarify","reply":format!("当前为{}研究市场，问题中的证券代码属于其他市场；请切换市场或提供当前市场的证券代码。",if market=="hk" {"港股"} else {"A 股"}),
+            "evidence_summary":[],"tool_calls":[],"warnings":[],"next_actions":[]}),
+            mode,
+            "not_requested",
+            None,
+            None,
+            prompt_upgrade::BASE_PROMPT_VERSION,
+        );
+        emit_compatibility_events(&run_id, &response, &mut sink);
+        return Ok(RigAgentOutcome { response });
     }
-    let market_task = ["全市场","选股","筛选","板块","自选","指数","回测","组合"].iter().any(|word|message.contains(word));
-    let retained_code = payload.get("research_context").filter(|value|value.get("market").and_then(Value::as_str)==Some("hk"))
-        .and_then(|value|value.get("stock_code")).and_then(Value::as_str).and_then(|code|canonical_agent_stock_code(code,&market));
-    if let Some(code) = explicit_code.or_else(||(!market_task).then_some(historical_code).flatten())
-        .or_else(||(!market_task).then(||context.get("stock_code").and_then(Value::as_str).and_then(|code|canonical_agent_stock_code(code,&market))).flatten())
-        .or_else(||(!market_task).then_some(retained_code).flatten()) {
+    let market_task = [
+        "全市场",
+        "选股",
+        "筛选",
+        "板块",
+        "自选",
+        "指数",
+        "回测",
+        "组合",
+    ]
+    .iter()
+    .any(|word| message.contains(word));
+    let retained_code = payload
+        .get("research_context")
+        .filter(|value| value.get("market").and_then(Value::as_str) == Some("hk"))
+        .and_then(|value| value.get("stock_code"))
+        .and_then(Value::as_str)
+        .and_then(|code| canonical_agent_stock_code(code, &market));
+    if let Some(code) = explicit_code
+        .or_else(|| (!market_task).then_some(historical_code).flatten())
+        .or_else(|| {
+            (!market_task)
+                .then(|| {
+                    context
+                        .get("stock_code")
+                        .and_then(Value::as_str)
+                        .and_then(|code| canonical_agent_stock_code(code, &market))
+                })
+                .flatten()
+        })
+        .or_else(|| (!market_task).then_some(retained_code).flatten())
+    {
         context["stock_code"] = json!(code);
-    } else if let Some(object)=context.as_object_mut() {
+    } else if let Some(object) = context.as_object_mut() {
         object.remove("stock_code");
     }
     let prompt_app = research_app.clone();
     let remote_safe_only = matches!(run_mode(mode), RunMode::Model) && payload.get("llm").is_some();
-    let retained_snapshot = if let Some(app)=research_app.as_ref() {
-        let source_run = payload.get("research_context").and_then(|context|context.get("source_run_id")).and_then(Value::as_str)
-            .filter(|run_id|!run_id.is_empty() && run_id.len()<=MAX_RUN_ID_CHARS).map(str::to_string);
-        let conversation = payload.get("conversation_id").and_then(Value::as_str).unwrap_or_default().to_string();
-        let app=app.clone();
-        runtime::run_io_bound("hk_saved_research_context",move || {
-            source_run.and_then(|run_id|crate::agent_ledger::with_app_store(&app,|store|store.get_run(&run_id)).ok().flatten())
-                .and_then(|run|crate::hk_agent_research::snapshot_for_run(&run,&conversation))
-                .filter(|context|crate::research::with_app_store_for_market(&app,"hk",|store|store.validate_hk_context(context,remote_safe_only)).unwrap_or(false))
-        }).await.unwrap_or(None)
-    } else {payload.get("research_context").cloned()};
-    let retained = if market=="hk" && !market_task {
-        context.get("stock_code").and_then(Value::as_str).and_then(|stock_code| {
-            crate::hk_agent_research::reusable_context(retained_snapshot.as_ref().unwrap_or(&Value::Null),stock_code,&message,remote_safe_only)
+    let retained_snapshot = if let Some(app) = research_app.as_ref() {
+        let source_run = payload
+            .get("research_context")
+            .and_then(|context| context.get("source_run_id"))
+            .and_then(Value::as_str)
+            .filter(|run_id| !run_id.is_empty() && run_id.len() <= MAX_RUN_ID_CHARS)
+            .map(str::to_string);
+        let conversation = payload
+            .get("conversation_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let app = app.clone();
+        runtime::run_io_bound("hk_saved_research_context", move || {
+            source_run
+                .and_then(|run_id| {
+                    crate::agent_ledger::with_app_store(&app, |store| store.get_run(&run_id))
+                        .ok()
+                        .flatten()
+                })
+                .and_then(|run| crate::hk_agent_research::snapshot_for_run(&run, &conversation))
+                .filter(|context| {
+                    crate::research::with_app_store_for_market(&app, "hk", |store| {
+                        store.validate_hk_context(context, remote_safe_only)
+                    })
+                    .unwrap_or(false)
+                })
         })
-    } else {None};
-    if market=="hk" {
+        .await
+        .unwrap_or(None)
+    } else {
+        payload.get("research_context").cloned()
+    };
+    let retained = if market == "hk" && !market_task {
+        context
+            .get("stock_code")
+            .and_then(Value::as_str)
+            .and_then(|stock_code| {
+                crate::hk_agent_research::reusable_context(
+                    retained_snapshot.as_ref().unwrap_or(&Value::Null),
+                    stock_code,
+                    &message,
+                    remote_safe_only,
+                )
+            })
+    } else {
+        None
+    };
+    if market == "hk" {
         // Prior assistant prose can contain obsolete E# bindings or local-only
         // excerpts. Only the validated current stock and evidence enter synthesis.
         context = json!({"stock_code":context.get("stock_code"),"watchlist":context.get("watchlist").cloned().unwrap_or_else(||json!([]))});
     }
-    let registry_evidence = retained.as_ref().map(crate::hk_agent_research::frozen_evidence)
-        .or_else(||research_app.is_none().then(||payload.get("research_evidence").cloned()).flatten());
+    let registry_evidence = retained
+        .as_ref()
+        .map(crate::hk_agent_research::frozen_evidence)
+        .or_else(|| {
+            research_app
+                .is_none()
+                .then(|| payload.get("research_evidence").cloned())
+                .flatten()
+        });
     let registry = RigToolRegistry::new_with_market_and_research_and_cancel(
         data.clone(),
         context.clone(),
@@ -1612,43 +1852,70 @@ where
     sink(status_event(&run_id, "understand", "理解任务", 18));
     sink(status_event(&run_id, "intent", "选择 Rig 工具", 24));
 
-    let mut base_response = if let Some(retained)=retained.as_ref() {
-        crate::hk_agent_research::answer_from_context(retained,&message)
-    } else {tokio::select! {
-        _ = cancellation.cancelled() => {
-            return Err(RigAgentError::Cancelled.to_string());
+    let mut base_response = if let Some(retained) = retained.as_ref() {
+        crate::hk_agent_research::answer_from_context(retained, &message)
+    } else {
+        tokio::select! {
+            _ = cancellation.cancelled() => {
+                return Err(RigAgentError::Cancelled.to_string());
+            }
+            result = run_deterministic_baseline(&registry, &message) => result?,
         }
-        result = run_deterministic_baseline(&registry, &message) => result?,
-    }};
+    };
     if market == "hk" && retained.is_none() {
         if let Some(stock_code) = context.get("stock_code").and_then(Value::as_str) {
-            let existing = base_response.get("data").filter(|value| value.get("citations").is_some())
-                .or_else(|| base_response.get("data").and_then(|value| value.get("news")).filter(|value|value.get("citations").is_some())).cloned();
-            let evidence = if let Some(existing) = existing { existing } else {
+            let existing = base_response
+                .get("data")
+                .filter(|value| value.get("citations").is_some())
+                .or_else(|| {
+                    base_response
+                        .get("data")
+                        .and_then(|value| value.get("news"))
+                        .filter(|value| value.get("citations").is_some())
+                })
+                .cloned();
+            let evidence = if let Some(existing) = existing {
+                existing
+            } else {
                 let arguments = json!({"query":limit_text(&message,256),"stock_code":stock_code});
                 match registry.dispatch("news_evidence", arguments.clone()).await {
                     Ok(evidence) => {
-                        if let Some(calls) = base_response.get_mut("tool_calls").and_then(Value::as_array_mut) {
+                        if let Some(calls) = base_response
+                            .get_mut("tool_calls")
+                            .and_then(Value::as_array_mut)
+                        {
                             calls.push(json!({"id":"tool_hk_research_evidence","tool":"news_evidence","label":"港股研究证据",
                                 "status":"ok","input":arguments,"output_summary":tool_result_summary(&evidence)}));
                         }
                         evidence
                     }
                     Err(error) => {
-                        if let Some(warnings) = base_response.get_mut("warnings").and_then(Value::as_array_mut) {
-                            warnings.push(json!(format!("港股研究证据暂不可用：{}",limit_text(&error,240))));
+                        if let Some(warnings) = base_response
+                            .get_mut("warnings")
+                            .and_then(Value::as_array_mut)
+                        {
+                            warnings.push(json!(format!(
+                                "港股研究证据暂不可用：{}",
+                                limit_text(&error, 240)
+                            )));
                         }
                         json!({"citations":[]})
                     }
                 }
             };
-            base_response = crate::hk_agent_research::attach_evidence(base_response,&evidence,stock_code);
-            crate::hk_agent_research::note_requested_period(&mut base_response,&message);
+            base_response =
+                crate::hk_agent_research::attach_evidence(base_response, &evidence, stock_code);
+            crate::hk_agent_research::note_requested_period(&mut base_response, &message);
             base_response["research_context"]["source_run_id"] = json!(run_id);
         }
     }
-    if market=="hk" {
-        if let Some(research_context)=base_response.get("research_context").filter(|context|context.get("evidence").and_then(Value::as_array).is_some_and(|evidence|!evidence.is_empty())) {
+    if market == "hk" {
+        if let Some(research_context) = base_response.get("research_context").filter(|context| {
+            context
+                .get("evidence")
+                .and_then(Value::as_array)
+                .is_some_and(|evidence| !evidence.is_empty())
+        }) {
             registry.freeze_research_context(research_context)?;
         }
     }
@@ -1675,7 +1942,14 @@ where
             );
             let system_prompt = format!("{system_prompt}\n当前市场：{}。证券代码必须保留{}后缀；金额必须说明原始币种。仅使用当前市场证据，并注明缓存日期。",
                 if market == "hk" {"港股"} else {"A 股"}, if market == "hk" {" .HK "} else {" .SH/.SZ/.BJ "});
-            let system_prompt = if market == "hk" {format!("{system_prompt}\n{}",crate::hk_agent_research::ANALYSIS_PROMPT)} else {system_prompt};
+            let system_prompt = if market == "hk" {
+                format!(
+                    "{system_prompt}\n{}",
+                    crate::hk_agent_research::ANALYSIS_PROMPT
+                )
+            } else {
+                system_prompt
+            };
             let prompt_version = resolved_prompt.version;
             let llm_value = payload.get("llm");
             let config = match llm_value {
@@ -1709,28 +1983,60 @@ where
             };
             let model_name = config.model.clone();
             let mut evidence_sender = None;
-            if market=="hk" {
-                if let Some(app)=prompt_app.as_ref() {
-                    let read_app=app.clone();
-                    let snapshots=registry.model_evidence.lock().map_err(|_|"模型研究证据锁不可用".to_string())?.clone();
-                    let checked=runtime::run_io_bound("hk_model_evidence_snapshot",move || {
-                        crate::research::with_app_store_snapshot_for_market(&read_app,"hk",|store|store.validate_hk_model_evidence(&snapshots))
-                    }).await.ok().and_then(Result::ok);
-                    let Some((generation,true))=checked else {
-                        return complete_with_fallback(&run_id,base_response,mode,"policy_rejected","资料或来源许可已变化，已保留本地结果，请重新取证。",Some(config.api_format.clone()),&prompt_version,&mut sink);
+            if market == "hk" {
+                if let Some(app) = prompt_app.as_ref() {
+                    let read_app = app.clone();
+                    let snapshots = registry
+                        .model_evidence
+                        .lock()
+                        .map_err(|_| "模型研究证据锁不可用".to_string())?
+                        .clone();
+                    let checked = runtime::run_io_bound("hk_model_evidence_snapshot", move || {
+                        crate::research::with_app_store_snapshot_for_market(
+                            &read_app,
+                            "hk",
+                            |store| store.validate_hk_model_evidence(&snapshots),
+                        )
+                    })
+                    .await
+                    .ok()
+                    .and_then(Result::ok);
+                    let Some((generation, true)) = checked else {
+                        return complete_with_fallback(
+                            &run_id,
+                            base_response,
+                            mode,
+                            "policy_rejected",
+                            "资料或来源许可已变化，已保留本地结果，请重新取证。",
+                            Some(config.api_format.clone()),
+                            &prompt_version,
+                            &mut sink,
+                        );
                     };
-                    let app=app.clone();
-                    let model_evidence=Arc::clone(&registry.model_evidence);
-                    evidence_sender=Some(Arc::new(move |client: reqwest::Client,request: reqwest::Request,cancellation: Arc<RunCancellation>| {
-                        if cancellation.is_cancelled() {return Err("Agent run cancelled".to_string());}
-                        let snapshots=model_evidence.lock().map_err(|_|"模型研究证据锁不可用".to_string())?.clone();
-                        crate::research::with_app_hk_model_evidence_send(&app,generation,&snapshots,|| {
-                            send_model_request(client,request,cancellation)
-                        })?
-                    }) as ModelEvidenceSender);
+                    let app = app.clone();
+                    let model_evidence = Arc::clone(&registry.model_evidence);
+                    evidence_sender = Some(Arc::new(
+                        move |client: reqwest::Client,
+                              request: reqwest::Request,
+                              cancellation: Arc<RunCancellation>| {
+                            if cancellation.is_cancelled() {
+                                return Err("Agent run cancelled".to_string());
+                            }
+                            let snapshots = model_evidence
+                                .lock()
+                                .map_err(|_| "模型研究证据锁不可用".to_string())?
+                                .clone();
+                            crate::research::with_app_hk_model_evidence_send(
+                                &app,
+                                generation,
+                                &snapshots,
+                                || send_model_request(client, request, cancellation),
+                            )?
+                        },
+                    ) as ModelEvidenceSender);
                 }
             }
-            let model = match build_model_with_evidence_sender(&config, &payload,evidence_sender) {
+            let model = match build_model_with_evidence_sender(&config, &payload, evidence_sender) {
                 Ok(model) => model,
                 Err(error) => {
                     return complete_with_fallback(
@@ -1749,11 +2055,18 @@ where
                 }
             };
             let bounded_context = bounded_model_context(&base_response, &context);
-            let model_history = if market=="hk" {
-                json!(bounded_history(payload.get("history").unwrap_or(&Value::Null)).iter().filter(|entry|entry.role=="user")
-                    .map(|entry|json!({"role":"user","content":entry.content})).collect::<Vec<_>>())
-            } else {payload.get("history").cloned().unwrap_or(Value::Null)};
-            let history = history_messages_for_model(&model_history,llm_value);
+            let model_history = if market == "hk" {
+                json!(
+                    bounded_history(payload.get("history").unwrap_or(&Value::Null))
+                        .iter()
+                        .filter(|entry| entry.role == "user")
+                        .map(|entry| json!({"role":"user","content":entry.content}))
+                        .collect::<Vec<_>>()
+                )
+            } else {
+                payload.get("history").cloned().unwrap_or(Value::Null)
+            };
+            let history = history_messages_for_model(&model_history, llm_value);
             let history_bytes = serde_json::to_vec(&history)
                 .map(|bytes| bytes.len())
                 .unwrap_or(usize::MAX);
@@ -1958,8 +2271,13 @@ async fn run_deterministic_baseline(
     message: &str,
 ) -> Result<Value, String> {
     let lower = message.to_ascii_lowercase();
-    let stock_code = extract_stock_code(message, &registry.market, &registry.data)
-        .or_else(||registry.context.get("stock_code").and_then(Value::as_str).and_then(|code|canonical_agent_stock_code(code,&registry.market)));
+    let stock_code = extract_stock_code(message, &registry.market, &registry.data).or_else(|| {
+        registry
+            .context
+            .get("stock_code")
+            .and_then(Value::as_str)
+            .and_then(|code| canonical_agent_stock_code(code, &registry.market))
+    });
     let ordered_observe_news = (lower.contains("先")
         && (lower.contains("再") || lower.contains("然后")))
         || (lower.contains("first") && (lower.contains("then") || lower.contains("next")))
@@ -2118,73 +2436,201 @@ async fn run_deterministic_baseline(
 
 fn canonical_agent_stock_code(raw: &str, market: &str) -> Option<String> {
     let raw = raw.trim().to_ascii_uppercase();
-    if raw.is_empty() || raw.len() > 12 || !raw.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '.') { return None; }
+    if raw.is_empty()
+        || raw.len() > 12
+        || !raw
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '.')
+    {
+        return None;
+    }
     if market == "hk" {
-        let digits = raw.strip_prefix("HK").or_else(|| raw.strip_suffix(".HK")).unwrap_or(&raw);
-        if digits.is_empty() || digits.len() > 5 || !digits.bytes().all(|ch| ch.is_ascii_digit()) { return None; }
+        let digits = raw
+            .strip_prefix("HK")
+            .or_else(|| raw.strip_suffix(".HK"))
+            .unwrap_or(&raw);
+        if digits.is_empty() || digits.len() > 5 || !digits.bytes().all(|ch| ch.is_ascii_digit()) {
+            return None;
+        }
         return Some(format!("{digits:0>5}.HK"));
     }
-    let digits = [".SH", ".SZ", ".BJ"].iter().find_map(|suffix| raw.strip_suffix(suffix))
-        .or_else(|| ["SH", "SZ", "BJ"].iter().find_map(|prefix| raw.strip_prefix(prefix))).unwrap_or(&raw);
-    if digits.len() != 6 || !digits.bytes().all(|ch| ch.is_ascii_digit()) { return None; }
+    let digits = [".SH", ".SZ", ".BJ"]
+        .iter()
+        .find_map(|suffix| raw.strip_suffix(suffix))
+        .or_else(|| {
+            ["SH", "SZ", "BJ"]
+                .iter()
+                .find_map(|prefix| raw.strip_prefix(prefix))
+        })
+        .unwrap_or(&raw);
+    if digits.len() != 6 || !digits.bytes().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
     let code = crate::market::normalize_stock_code(&raw)?;
     (!code.ends_with(".HK")).then_some(code)
 }
 
 fn extract_stock_code(message: &str, market: &str, data: &Value) -> Option<String> {
     let stocks = data.get("stocks").and_then(Value::as_array);
-    let tokens = message.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '.').map(|token| token.trim_end_matches('.')).collect::<Vec<_>>();
+    let tokens = message
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '.')
+        .map(|token| token.trim_end_matches('.'))
+        .collect::<Vec<_>>();
     for token in &tokens {
         if token.bytes().any(|ch| ch.is_ascii_alphabetic()) {
-            if let Some(code) = canonical_agent_stock_code(token, market) { return Some(code); }
+            if let Some(code) = canonical_agent_stock_code(token, market) {
+                return Some(code);
+            }
         }
     }
-    let matches = stocks.into_iter().flatten().filter(|stock| {
-        stock.get("name").and_then(Value::as_str).is_some_and(|name| {
-            if name.chars().count() < 2 { return false; }
-            if message.contains(name) { return true; }
-            // Common Chinese issuer short names remain unambiguous only when exactly
-            // one cached security matches; numbers such as report years play no role.
-            let short = name.strip_suffix("控股").or_else(|| name.strip_suffix("集团")).unwrap_or(name);
-            short.chars().count() >= 2 && short.chars().any(|ch| ('\u{3400}'..='\u{9fff}').contains(&ch)) && message.contains(short)
+    let matches = stocks
+        .into_iter()
+        .flatten()
+        .filter(|stock| {
+            stock
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| {
+                    if name.chars().count() < 2 {
+                        return false;
+                    }
+                    if message.contains(name) {
+                        return true;
+                    }
+                    // Common Chinese issuer short names remain unambiguous only when exactly
+                    // one cached security matches; numbers such as report years play no role.
+                    let short = name
+                        .strip_suffix("控股")
+                        .or_else(|| name.strip_suffix("集团"))
+                        .unwrap_or(name);
+                    short.chars().count() >= 2
+                        && short
+                            .chars()
+                            .any(|ch| ('\u{3400}'..='\u{9fff}').contains(&ch))
+                        && message.contains(short)
+                })
         })
-    }).filter_map(|stock| stock.get("code").and_then(Value::as_str).and_then(|code| canonical_agent_stock_code(code, market))).collect::<HashSet<_>>();
-    if matches.len() == 1 { return matches.into_iter().next(); }
+        .filter_map(|stock| {
+            stock
+                .get("code")
+                .and_then(Value::as_str)
+                .and_then(|code| canonical_agent_stock_code(code, market))
+        })
+        .collect::<HashSet<_>>();
+    if matches.len() == 1 {
+        return matches.into_iter().next();
+    }
     for token in tokens {
-        if token.len() == if market == "hk" {5} else {6} && token.bytes().all(|ch| ch.is_ascii_digit())
-            && (market!="hk" || bare_hk_stock_reference(message,token,data)) {
-            if let Some(code) = canonical_agent_stock_code(token, market) { return Some(code); }
+        if token.len() == if market == "hk" { 5 } else { 6 }
+            && token.bytes().all(|ch| ch.is_ascii_digit())
+            && (market != "hk" || bare_hk_stock_reference(message, token, data))
+        {
+            if let Some(code) = canonical_agent_stock_code(token, market) {
+                return Some(code);
+            }
         }
     }
     None
 }
 
 fn has_foreign_market_identity(message: &str, market: &str) -> bool {
-    message.split(|ch:char|!ch.is_ascii_alphanumeric() && ch!='.').any(|token| {
-        let token = token.trim_end_matches('.').to_ascii_uppercase();
-        if !token.bytes().any(|ch|ch.is_ascii_digit()) {return false;}
-        if market=="hk" {
-            [".SH",".SZ",".BJ"].iter().any(|suffix|token.ends_with(suffix))
-                || ["SH","SZ","BJ"].iter().any(|prefix|token.strip_prefix(prefix).is_some_and(|code|code.len()==6 && code.bytes().all(|ch|ch.is_ascii_digit())))
-        } else {
-            token.ends_with(".HK") || token.strip_prefix("HK").is_some_and(|code|!code.is_empty() && code.len()<=5 && code.bytes().all(|ch|ch.is_ascii_digit()))
-        }
-    })
+    message
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '.')
+        .any(|token| {
+            let token = token.trim_end_matches('.').to_ascii_uppercase();
+            if !token.bytes().any(|ch| ch.is_ascii_digit()) {
+                return false;
+            }
+            if market == "hk" {
+                [".SH", ".SZ", ".BJ"]
+                    .iter()
+                    .any(|suffix| token.ends_with(suffix))
+                    || ["SH", "SZ", "BJ"].iter().any(|prefix| {
+                        token.strip_prefix(prefix).is_some_and(|code| {
+                            code.len() == 6 && code.bytes().all(|ch| ch.is_ascii_digit())
+                        })
+                    })
+            } else {
+                token.ends_with(".HK")
+                    || token.strip_prefix("HK").is_some_and(|code| {
+                        !code.is_empty()
+                            && code.len() <= 5
+                            && code.bytes().all(|ch| ch.is_ascii_digit())
+                    })
+            }
+        })
 }
 
 fn bare_hk_stock_reference(message: &str, token: &str, data: &Value) -> bool {
-    message.match_indices(token).any(|(index,_)| {
-        let after = message[index+token.len()..].trim_start();
-        let before = message[..index].chars().rev().take(16).collect::<Vec<_>>().into_iter().rev().collect::<String>();
-        let lower_after = limit_text(after,16).to_ascii_lowercase();
-        if !after.starts_with("股价") && ["元","万","亿","百","千","股","年","月","日","人","倍","%","％","million","billion","cny","hkd","usd"]
-            .iter().any(|unit|lower_after.starts_with(unit)) {return false;}
-        let code_intro = ["代码","股票","证券","观察","研究","分析","换成","换为","看一下"].iter().any(|intro|before.trim_end().ends_with(intro));
-        if code_intro || message[..index].trim().is_empty() {return true;}
-        if ["营业收入","营收","收入","净利润","现金流","金额","EPS","eps","市值","超过","至少","大于","小于",">","<"]
-            .iter().any(|label|before.contains(label)) {return false;}
+    message.match_indices(token).any(|(index, _)| {
+        let after = message[index + token.len()..].trim_start();
+        let before = message[..index]
+            .chars()
+            .rev()
+            .take(16)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<String>();
+        let lower_after = limit_text(after, 16).to_ascii_lowercase();
+        if !after.starts_with("股价")
+            && [
+                "元", "万", "亿", "百", "千", "股", "年", "月", "日", "人", "倍", "%", "％",
+                "million", "billion", "cny", "hkd", "usd",
+            ]
+            .iter()
+            .any(|unit| lower_after.starts_with(unit))
+        {
+            return false;
+        }
+        let code_intro = [
+            "代码",
+            "股票",
+            "证券",
+            "观察",
+            "研究",
+            "分析",
+            "换成",
+            "换为",
+            "看一下",
+        ]
+        .iter()
+        .any(|intro| before.trim_end().ends_with(intro));
+        if code_intro || message[..index].trim().is_empty() {
+            return true;
+        }
+        if [
+            "营业收入",
+            "营收",
+            "收入",
+            "净利润",
+            "现金流",
+            "金额",
+            "EPS",
+            "eps",
+            "市值",
+            "超过",
+            "至少",
+            "大于",
+            "小于",
+            ">",
+            "<",
+        ]
+        .iter()
+        .any(|label| before.contains(label))
+        {
+            return false;
+        }
         let canonical = format!("{token}.HK");
-        message.trim()==token || data.get("stocks").and_then(Value::as_array).is_some_and(|stocks|stocks.iter().any(|stock|stock.get("code").and_then(Value::as_str)==Some(&canonical)))
+        message.trim() == token
+            || data
+                .get("stocks")
+                .and_then(Value::as_array)
+                .is_some_and(|stocks| {
+                    stocks
+                        .iter()
+                        .any(|stock| stock.get("code").and_then(Value::as_str) == Some(&canonical))
+                })
     })
 }
 
@@ -2531,113 +2977,184 @@ mod tests {
 
     #[test]
     fn model_transport_rechecks_current_evidence_for_every_provider_turn() {
-        let (origin, server)=tool_outcome_fixture();
-        let allowed=Arc::new(AtomicBool::new(true));
-        let calls=Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let check_allowed=Arc::clone(&allowed);
-        let check_calls=Arc::clone(&calls);
-        let http=reqwest::Client::builder().no_proxy().timeout(std::time::Duration::from_secs(2)).build().unwrap();
-        let client=BoundedHttpClient::new(http,None).with_evidence_sender(Arc::new(move |client,request,cancellation| {
-            check_calls.fetch_add(1,Ordering::SeqCst);
-            if !check_allowed.load(Ordering::SeqCst) {return Err("研究资料许可已改变".to_string());}
-            send_model_request(client,request,cancellation)
-        }));
-        let request=||Request::builder().method("POST").uri(format!("{origin}/model")).body(Bytes::from_static(b"{}")).unwrap();
-        let streaming_request=||Request::builder().method("POST").uri(format!("{origin}/model")).body(Bytes::from_static(br#"{"stream":true}"#)).unwrap();
-        assert!(tauri::async_runtime::block_on(client.send::<Bytes,Bytes>(request())).is_ok());
+        let (origin, server) = tool_outcome_fixture();
+        let allowed = Arc::new(AtomicBool::new(true));
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let check_allowed = Arc::clone(&allowed);
+        let check_calls = Arc::clone(&calls);
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let client = BoundedHttpClient::new(http, None).with_evidence_sender(Arc::new(
+            move |client, request, cancellation| {
+                check_calls.fetch_add(1, Ordering::SeqCst);
+                if !check_allowed.load(Ordering::SeqCst) {
+                    return Err("研究资料许可已改变".to_string());
+                }
+                send_model_request(client, request, cancellation)
+            },
+        ));
+        let request = || {
+            Request::builder()
+                .method("POST")
+                .uri(format!("{origin}/model"))
+                .body(Bytes::from_static(b"{}"))
+                .unwrap()
+        };
+        let streaming_request = || {
+            Request::builder()
+                .method("POST")
+                .uri(format!("{origin}/model"))
+                .body(Bytes::from_static(br#"{"stream":true}"#))
+                .unwrap()
+        };
+        assert!(tauri::async_runtime::block_on(client.send::<Bytes, Bytes>(request())).is_ok());
         assert!(tauri::async_runtime::block_on(client.send_streaming(streaming_request())).is_ok());
-        assert_eq!(server.join().unwrap().len(),2);
-        allowed.store(false,Ordering::SeqCst);
-        assert!(tauri::async_runtime::block_on(client.send::<Bytes,Bytes>(request())).is_err());
-        assert!(tauri::async_runtime::block_on(client.send_streaming(streaming_request())).is_err());
-        let multipart=Request::builder().method("POST").uri(format!("{origin}/model")).body(MultipartForm::default()).unwrap();
+        assert_eq!(server.join().unwrap().len(), 2);
+        allowed.store(false, Ordering::SeqCst);
+        assert!(tauri::async_runtime::block_on(client.send::<Bytes, Bytes>(request())).is_err());
+        assert!(
+            tauri::async_runtime::block_on(client.send_streaming(streaming_request())).is_err()
+        );
+        let multipart = Request::builder()
+            .method("POST")
+            .uri(format!("{origin}/model"))
+            .body(MultipartForm::default())
+            .unwrap();
         assert!(tauri::async_runtime::block_on(client.send_multipart::<Bytes>(multipart)).is_err());
-        assert_eq!(calls.load(Ordering::SeqCst),5);
+        assert_eq!(calls.load(Ordering::SeqCst), 5);
     }
 
     #[test]
     fn aborted_model_request_releases_the_evidence_guard_without_waiting_for_headers() {
-        let listener=std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let endpoint=format!("http://{}/model",listener.local_addr().unwrap());
-        let (accepted,accepted_rx)=std::sync::mpsc::channel();
-        let (stop,stopped)=std::sync::mpsc::channel();
-        let server=std::thread::spawn(move || {
-            let (_connection,_)=listener.accept().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/model", listener.local_addr().unwrap());
+        let (accepted, accepted_rx) = std::sync::mpsc::channel();
+        let (stop, stopped) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (_connection, _) = listener.accept().unwrap();
             accepted.send(()).unwrap();
             // Keep response headers pending until the test finishes checking abort.
-            let _=stopped.recv_timeout(std::time::Duration::from_secs(5));
+            let _ = stopped.recv_timeout(std::time::Duration::from_secs(5));
         });
-        let (released,released_rx)=std::sync::mpsc::channel();
-        let http=reqwest::Client::builder().no_proxy().timeout(std::time::Duration::from_secs(4)).build().unwrap();
-        let transport=BoundedHttpClient::new(http,None).with_evidence_sender(Arc::new(move |client,request,cancellation| {
-            let result=crate::research::with_model_evidence_database_guard(||send_model_request(client,request,cancellation));
-            let _=released.send(());
-            result
-        }));
-        let task=tauri::async_runtime::spawn(async move {
-            let request=Request::builder().method("POST").uri(endpoint).body(Bytes::from_static(b"{}")).unwrap();
-            transport.send::<Bytes,Bytes>(request).await
+        let (released, released_rx) = std::sync::mpsc::channel();
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(4))
+            .build()
+            .unwrap();
+        let transport = BoundedHttpClient::new(http, None).with_evidence_sender(Arc::new(
+            move |client, request, cancellation| {
+                let result = crate::research::with_model_evidence_database_guard(|| {
+                    send_model_request(client, request, cancellation)
+                });
+                let _ = released.send(());
+                result
+            },
+        ));
+        let task = tauri::async_runtime::spawn(async move {
+            let request = Request::builder()
+                .method("POST")
+                .uri(endpoint)
+                .body(Bytes::from_static(b"{}"))
+                .unwrap();
+            transport.send::<Bytes, Bytes>(request).await
         });
-        accepted_rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+        accepted_rx
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
         task.abort();
-        let _=tauri::async_runtime::block_on(task);
-        let released_before_headers=released_rx.recv_timeout(std::time::Duration::from_secs(1)).is_ok();
-        let _=stop.send(());
+        let _ = tauri::async_runtime::block_on(task);
+        let released_before_headers = released_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .is_ok();
+        let _ = stop.send(());
         server.join().unwrap();
         if !released_before_headers {
             // Clean up the old behavior before failing, so the global gate is released.
-            let _=released_rx.recv_timeout(std::time::Duration::from_secs(2));
+            let _ = released_rx.recv_timeout(std::time::Duration::from_secs(2));
         }
-        assert!(released_before_headers,"dropping the request future must cancel its I/O worker and release the database guard");
+        assert!(
+            released_before_headers,
+            "dropping the request future must cancel its I/O worker and release the database guard"
+        );
     }
 
-    fn hk_evidence_provider_fixture() -> (String, std::sync::mpsc::Sender<()>, std::thread::JoinHandle<Vec<Value>>) {
+    fn hk_evidence_provider_fixture() -> (
+        String,
+        std::sync::mpsc::Sender<()>,
+        std::thread::JoinHandle<Vec<Value>>,
+    ) {
         use std::io::{BufRead, Read, Write};
-        let listener=std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
-        let address=listener.local_addr().unwrap();
-        let (stop,stopped)=std::sync::mpsc::channel();
-        let worker=std::thread::spawn(move || {
-            let mut requests=Vec::new();
-            let deadline=std::time::Instant::now()+std::time::Duration::from_secs(5);
-            while std::time::Instant::now()<deadline && stopped.try_recv().is_err() {
-                let (mut connection,_)=match listener.accept() {
-                    Ok(connection)=>connection,
-                    Err(error) if error.kind()==std::io::ErrorKind::WouldBlock=>{
-                        if stopped.recv_timeout(std::time::Duration::from_millis(5)).is_ok() {break;}
+        let address = listener.local_addr().unwrap();
+        let (stop, stopped) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while std::time::Instant::now() < deadline && stopped.try_recv().is_err() {
+                let (mut connection, _) = match listener.accept() {
+                    Ok(connection) => connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if stopped
+                            .recv_timeout(std::time::Duration::from_millis(5))
+                            .is_ok()
+                        {
+                            break;
+                        }
                         continue;
                     }
-                    Err(error)=>panic!("HK model fixture accept failed: {error}"),
+                    Err(error) => panic!("HK model fixture accept failed: {error}"),
                 };
                 connection.set_nonblocking(false).unwrap();
-                connection.set_read_timeout(Some(std::time::Duration::from_secs(1))).unwrap();
-                connection.set_write_timeout(Some(std::time::Duration::from_secs(1))).unwrap();
-                let mut reader=std::io::BufReader::new(&mut connection);
-                let mut line=String::new();
-                let mut length=0;
+                connection
+                    .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+                    .unwrap();
+                connection
+                    .set_write_timeout(Some(std::time::Duration::from_secs(1)))
+                    .unwrap();
+                let mut reader = std::io::BufReader::new(&mut connection);
+                let mut line = String::new();
+                let mut length = 0;
                 loop {
                     line.clear();
                     reader.read_line(&mut line).unwrap();
-                    if line=="\r\n" {break;}
-                    if let Some(value)=line.to_ascii_lowercase().strip_prefix("content-length:") {
-                        length=value.trim().parse::<usize>().unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse::<usize>().unwrap();
                     }
                 }
-                assert!(length<=MAX_MODEL_REQUEST_BYTES);
-                let mut body=vec![0;length];
+                assert!(length <= MAX_MODEL_REQUEST_BYTES);
+                let mut body = vec![0; length];
                 reader.read_exact(&mut body).unwrap();
-                let request:Value=serde_json::from_slice(&body).unwrap();
-                let first=requests.is_empty();
-                let tool_calls=json!([{"index":0,"id":"call-news","type":"function","function":{
+                let request: Value = serde_json::from_slice(&body).unwrap();
+                let first = requests.is_empty();
+                let tool_calls = json!([{"index":0,"id":"call-news","type":"function","function":{
                     "name":"news_evidence","arguments":json!({"query":"腾讯","stock_code":"00700.HK"}).to_string()}}]);
-                let finish=if first {"tool_calls"} else {"stop"};
-                let (content_type,response)=if request["stream"]==true {
-                    let delta=if first {json!({"role":"assistant","tool_calls":tool_calls})} else {json!({"role":"assistant","content":"done"})};
-                    let chunk=json!({"id":"fixture","object":"chat.completion.chunk","created":1,"model":"fixture-model",
+                let finish = if first { "tool_calls" } else { "stop" };
+                let (content_type, response) = if request["stream"] == true {
+                    let delta = if first {
+                        json!({"role":"assistant","tool_calls":tool_calls})
+                    } else {
+                        json!({"role":"assistant","content":"done"})
+                    };
+                    let chunk = json!({"id":"fixture","object":"chat.completion.chunk","created":1,"model":"fixture-model",
                         "choices":[{"index":0,"delta":delta,"finish_reason":finish}]});
-                    ("text/event-stream",format!("data: {chunk}\n\ndata: [DONE]\n\n"))
+                    (
+                        "text/event-stream",
+                        format!("data: {chunk}\n\ndata: [DONE]\n\n"),
+                    )
                 } else {
-                    let message=if first {json!({"role":"assistant","content":null,"tool_calls":tool_calls})} else {json!({"role":"assistant","content":"done"})};
+                    let message = if first {
+                        json!({"role":"assistant","content":null,"tool_calls":tool_calls})
+                    } else {
+                        json!({"role":"assistant","content":"done"})
+                    };
                     ("application/json",json!({"id":"fixture","object":"chat.completion","created":1,"model":"fixture-model",
                         "choices":[{"index":0,"message":message,"finish_reason":finish}]}).to_string())
                 };
@@ -2646,76 +3163,139 @@ mod tests {
             }
             requests
         });
-        (format!("http://{address}/v1"),stop,worker)
+        (format!("http://{address}/v1"), stop, worker)
     }
 
     #[test]
     fn hk_model_blocks_revoked_evidence_acquired_after_an_empty_initial_catalog() {
-        struct RevokeAfterNews { path:std::path::PathBuf, document:Value, revoke:bool }
+        struct RevokeAfterNews {
+            path: std::path::PathBuf,
+            document: Value,
+            revoke: bool,
+        }
         impl AgentHook for RevokeAfterNews {
-            async fn on_outcome(&self,_:&HookContext,event:OutcomeEvent<'_>)->OutcomeAction {
-                if self.revoke && event.tool_name()==Some("news_evidence") && event.tool_result().is_some_and(|result|result.status_name()=="success") {
-                    let mut document=self.document.clone();
-                    document["remote_export_allowed"]=json!(false);
-                    crate::research::ResearchStore::open(&self.path).unwrap().ingest_documents(&[document]).unwrap();
+            async fn on_outcome(&self, _: &HookContext, event: OutcomeEvent<'_>) -> OutcomeAction {
+                if self.revoke
+                    && event.tool_name() == Some("news_evidence")
+                    && event
+                        .tool_result()
+                        .is_some_and(|result| result.status_name() == "success")
+                {
+                    let mut document = self.document.clone();
+                    document["remote_export_allowed"] = json!(false);
+                    crate::research::ResearchStore::open(&self.path)
+                        .unwrap()
+                        .ingest_documents(&[document])
+                        .unwrap();
                 }
                 OutcomeAction::Proceed
             }
         }
-        for streaming in [false,true] {
-            for revoke in [false,true] {
-                let unique=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-                let path=std::env::temp_dir().join(format!("hk-model-evidence-{unique}.sqlite"));
-                let store=crate::research::ResearchStore::open(&path).unwrap();
-                let document=json!({"document_id":"private-hk","title":"腾讯资料","content":"原始资料是固定离线测试样本。",
+        for streaming in [false, true] {
+            for revoke in [false, true] {
+                let unique = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos();
+                let path = std::env::temp_dir().join(format!("hk-model-evidence-{unique}.sqlite"));
+                let store = crate::research::ResearchStore::open(&path).unwrap();
+                let document = json!({"document_id":"private-hk","title":"腾讯资料","content":"原始资料是固定离线测试样本。",
                     "source_tier":"research_report","stock_codes":["00700.HK"],"user_imported":true,"remote_export_allowed":true,"metadata":{"market":"hk"}});
                 store.ingest_documents(&[document.clone()]).unwrap();
-                let evidence=store.unscoped_hk_agent_evidence(&json!({"query":"腾讯","remote_safe_only":true})).unwrap();
-                let registry=RigToolRegistry::new_with_market_and_research_and_cancel(json!({}),json!({}),Some(evidence),None,
-                    Arc::new(RunCancellation::default()),true,"hk".to_string());
+                let evidence = store
+                    .unscoped_hk_agent_evidence(&json!({"query":"腾讯","remote_safe_only":true}))
+                    .unwrap();
+                let registry = RigToolRegistry::new_with_market_and_research_and_cancel(
+                    json!({}),
+                    json!({}),
+                    Some(evidence),
+                    None,
+                    Arc::new(RunCancellation::default()),
+                    true,
+                    "hk".to_string(),
+                );
                 assert!(registry.model_evidence.lock().unwrap().is_empty());
-                let checked=Arc::clone(&registry.model_evidence);
-                let read_path=path.clone();
-                let sender:ModelEvidenceSender=Arc::new(move |client,request,cancellation| {
+                let checked = Arc::clone(&registry.model_evidence);
+                let read_path = path.clone();
+                let sender: ModelEvidenceSender = Arc::new(move |client, request, cancellation| {
                     crate::research::with_model_evidence_database_guard(|| {
-                        let store=crate::research::ResearchStore::open(&read_path)?;
-                        let snapshots=checked.lock().map_err(|_|"evidence lock failed".to_string())?.clone();
-                        if !store.validate_hk_model_evidence(&snapshots)? {return Err("permission revoked".to_string());}
-                        send_model_request(client,request,cancellation)
+                        let store = crate::research::ResearchStore::open(&read_path)?;
+                        let snapshots = checked
+                            .lock()
+                            .map_err(|_| "evidence lock failed".to_string())?
+                            .clone();
+                        if !store.validate_hk_model_evidence(&snapshots)? {
+                            return Err("permission revoked".to_string());
+                        }
+                        send_model_request(client, request, cancellation)
                     })
                 });
-                let (base_url,stop,worker)=hk_evidence_provider_fixture();
+                let (base_url, stop, worker) = hk_evidence_provider_fixture();
                 let config=normalize_provider_config(&json!({"api_format":"openai_chat","model":"fixture-model","api_key":"fixture-key",
                     "base_url":base_url,"timeout_seconds":2})).unwrap();
-                let tool=registry.tools().into_iter().find(|tool|tool.definition().name.to_string()=="news_evidence").unwrap();
-                let agent=rig_agent::AgentBuilder::new(build_model_with_evidence_sender(&config,&json!({"network_proxy_mode":"direct"}),Some(sender)).unwrap())
-                    .default_max_turns(2).dynamic_tool(tool).add_hook(RevokeAfterNews {path:path.clone(),document,revoke}).build();
-                let result=tauri::async_runtime::block_on(async {
+                let tool = registry
+                    .tools()
+                    .into_iter()
+                    .find(|tool| tool.definition().name.to_string() == "news_evidence")
+                    .unwrap();
+                let agent = rig_agent::AgentBuilder::new(
+                    build_model_with_evidence_sender(
+                        &config,
+                        &json!({"network_proxy_mode":"direct"}),
+                        Some(sender),
+                    )
+                    .unwrap(),
+                )
+                .default_max_turns(2)
+                .dynamic_tool(tool)
+                .add_hook(RevokeAfterNews {
+                    path: path.clone(),
+                    document,
+                    revoke,
+                })
+                .build();
+                let result = tauri::async_runtime::block_on(async {
                     if streaming {
-                        let mut stream=agent.prompt("先筛选，再看候选新闻").stream();
-                        let mut output=None;
-                        while let Some(item)=stream.next().await {
-                            if let rig_agent::agent::MultiTurnStreamItem::FinalResponse(response)=item.map_err(|error|error.to_string())? {
-                                output=Some(response.output());
+                        let mut stream = agent.prompt("先筛选，再看候选新闻").stream();
+                        let mut output = None;
+                        while let Some(item) = stream.next().await {
+                            if let rig_agent::agent::MultiTurnStreamItem::FinalResponse(response) =
+                                item.map_err(|error| error.to_string())?
+                            {
+                                output = Some(response.output());
                             }
                         }
-                        output.ok_or_else(||"missing final response".to_string())
-                    } else {agent.prompt("先筛选，再看候选新闻").await.map(|response|response.output()).map_err(|error|error.to_string())}
+                        output.ok_or_else(|| "missing final response".to_string())
+                    } else {
+                        agent
+                            .prompt("先筛选，再看候选新闻")
+                            .await
+                            .map(|response| response.output())
+                            .map_err(|error| error.to_string())
+                    }
                 });
-                let _=stop.send(());
-                let requests=worker.join().unwrap();
-                assert!(!registry.model_evidence.lock().unwrap().is_empty(),"actual dynamic tools must register the evidence they return");
+                let _ = stop.send(());
+                let requests = worker.join().unwrap();
+                assert!(
+                    !registry.model_evidence.lock().unwrap().is_empty(),
+                    "actual dynamic tools must register the evidence they return"
+                );
                 if revoke {
                     assert!(result.is_err());
                     assert_eq!(requests.len(),1,"no retained private evidence may reach the next provider request after revocation");
                 } else {
-                    assert_eq!(result.unwrap(),"done");
-                    assert_eq!(requests.len(),2);
-                    assert!(requests[1].to_string().contains("原始资料"),"a permitted ordinary follow-up must still receive its evidence");
+                    assert_eq!(result.unwrap(), "done");
+                    assert_eq!(requests.len(), 2);
+                    assert!(
+                        requests[1].to_string().contains("原始资料"),
+                        "a permitted ordinary follow-up must still receive its evidence"
+                    );
                 }
                 drop(agent);
                 drop(store);
-                for suffix in ["","-wal","-shm"] {let _=std::fs::remove_file(format!("{}{suffix}",path.display()));}
+                for suffix in ["", "-wal", "-shm"] {
+                    let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+                }
             }
         }
     }
@@ -2723,7 +3303,9 @@ mod tests {
     fn hk_research_fixture() -> (Value, Value) {
         let mut data = gp_core::CoreDataSet::default();
         data.stocks.push(gp_core::StockItem {
-            code: "00700.HK".to_string(), name: "腾讯控股".to_string(), price: 400.0,
+            code: "00700.HK".to_string(),
+            name: "腾讯控股".to_string(),
+            price: 400.0,
             ..Default::default()
         });
         let evidence = json!({"citations":[
@@ -2753,8 +3335,12 @@ mod tests {
         let (data, evidence) = hk_research_fixture();
         let result = tauri::async_runtime::block_on(execute_with_event_sink(
             json!({"run_id":"hk-source-answer","market":"hk","mode":"quick",
-                "message":"分析腾讯的公告、财务和新闻","research_evidence":evidence}), data, |_| {}
-        )).unwrap().response;
+                "message":"分析腾讯的公告、财务和新闻","research_evidence":evidence}),
+            data,
+            |_| {},
+        ))
+        .unwrap()
+        .response;
         let cards = result["evidence_summary"].as_array().unwrap();
         assert_eq!(cards.len(), 3);
         assert_eq!(cards[0]["id"], "E1");
@@ -2762,7 +3348,10 @@ mod tests {
         assert_eq!(cards[0]["published_at"], "2026-11-09");
         assert!(cards[0]["url"].as_str().unwrap().ends_with("tencent.pdf"));
         assert_eq!(cards[1]["report_period"], "2026H1");
-        assert!(cards[2]["summary"].as_str().unwrap().contains("混元招聘涉及研发投入"));
+        assert!(cards[2]["summary"]
+            .as_str()
+            .unwrap()
+            .contains("混元招聘涉及研发投入"));
         assert_eq!(cards[2]["summary_kind"], "article_summary");
         assert_eq!(cards[2]["excerpt"], "腾讯正在招聘。");
         assert!(result["answer_sections"].to_string().contains("[E1]"));
@@ -2774,16 +3363,24 @@ mod tests {
         let (data, evidence) = hk_research_fixture();
         let result = tauri::async_runtime::block_on(execute_with_event_sink(
             json!({"run_id":"hk-financial-answer","market":"hk","mode":"quick",
-                "message":"评估00700.HK的盈利质量","research_evidence":evidence}), data, |_| {}
-        )).unwrap().response;
+                "message":"评估00700.HK的盈利质量","research_evidence":evidence}),
+            data,
+            |_| {},
+        ))
+        .unwrap()
+        .response;
         assert_eq!(result["evidence_summary"].as_array().unwrap().len(), 3);
-        assert!(result["tool_calls"].as_array().unwrap().iter().any(|call| call["tool"] == "news_evidence"));
+        assert!(result["tool_calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|call| call["tool"] == "news_evidence"));
         assert_eq!(result["research_context"]["stock_code"], "00700.HK");
     }
 
     #[test]
     fn hk_agent_followup_reuses_the_stock_snapshot_without_running_tools_again() {
-        let (data,evidence) = hk_research_fixture();
+        let (data, evidence) = hk_research_fixture();
         let first = tauri::async_runtime::block_on(execute_with_event_sink(
             json!({"run_id":"hk-first-snapshot","market":"hk","mode":"quick","message":"研究腾讯公告","research_evidence":evidence}),data,|_|{}
         )).unwrap().response;
@@ -2792,62 +3389,77 @@ mod tests {
                 "context":{"stock_code":"00700.HK"},"research_context":first["research_context"]}),
             serde_json::to_value(gp_core::CoreDataSet::default()).unwrap(),|_|{}
         )).unwrap().response;
-        assert_eq!(second["research_context"]["stock_code"],"00700.HK");
-        assert_eq!(second["research_context"]["snapshot_at_epoch_ms"],first["research_context"]["snapshot_at_epoch_ms"]);
-        assert_eq!(second["research_context"]["reused"],true);
-        assert_eq!(second["evidence_summary"],first["evidence_summary"]);
-        assert_eq!(second["tool_calls"][0]["status"],"cached");
+        assert_eq!(second["research_context"]["stock_code"], "00700.HK");
+        assert_eq!(
+            second["research_context"]["snapshot_at_epoch_ms"],
+            first["research_context"]["snapshot_at_epoch_ms"]
+        );
+        assert_eq!(second["research_context"]["reused"], true);
+        assert_eq!(second["evidence_summary"], first["evidence_summary"]);
+        assert_eq!(second["tool_calls"][0]["status"], "cached");
         assert!(!second["tool_calls"].to_string().contains("stock_screen"));
     }
 
     #[test]
     fn hk_agent_old_text_history_can_bind_a_pronoun_followup_to_the_last_user_stock() {
-        let (data,evidence) = hk_research_fixture();
+        let (data, evidence) = hk_research_fixture();
         let result = tauri::async_runtime::block_on(execute_with_event_sink(
             json!({"run_id":"hk-text-followup","market":"hk","mode":"quick","message":"它的盈利质量呢",
                 "history":[{"role":"user","content":"观察腾讯00700.HK"},{"role":"assistant","content":"腾讯已展示"}],
                 "research_evidence":evidence}),data,|_|{}
         )).unwrap().response;
-        assert_eq!(result["research_context"]["stock_code"],"00700.HK");
-        assert_eq!(result["tool_calls"][0]["input"]["code"],"00700.HK");
+        assert_eq!(result["research_context"]["stock_code"], "00700.HK");
+        assert_eq!(result["tool_calls"][0]["input"]["code"], "00700.HK");
     }
 
     #[test]
     fn hk_agent_financial_amounts_do_not_replace_the_active_security() {
-        let (data,evidence)=hk_research_fixture();
-        assert_eq!(extract_stock_code("它的营业收入是否超过10000百万元？","hk",&data),None);
-        let context = crate::hk_agent_research::attach_evidence(json!({}),&evidence,"00700.HK")["research_context"].clone();
+        let (data, evidence) = hk_research_fixture();
+        assert_eq!(
+            extract_stock_code("它的营业收入是否超过10000百万元？", "hk", &data),
+            None
+        );
+        let context = crate::hk_agent_research::attach_evidence(json!({}), &evidence, "00700.HK")
+            ["research_context"]
+            .clone();
         let result = tauri::async_runtime::block_on(execute_with_event_sink(
             json!({"run_id":"hk-money-followup","market":"hk","mode":"quick","message":"它的营业收入是否超过10000百万元？",
                 "research_context":context}),data,|_|{}
         )).unwrap().response;
-        assert_eq!(result["research_context"]["stock_code"],"00700.HK");
-        assert_eq!(result["research_context"]["reused"],true);
+        assert_eq!(result["research_context"]["stock_code"], "00700.HK");
+        assert_eq!(result["research_context"]["reused"], true);
         assert!(!result.to_string().contains("10000.HK"));
     }
 
     #[test]
     fn hk_agent_leading_bare_code_with_prose_selects_the_new_issuer_without_cached_quotes() {
-        let (data,evidence)=hk_research_fixture();
-        assert_eq!(extract_stock_code("00005有什么风险","hk",&data),Some("00005.HK".to_string()));
-        let context = crate::hk_agent_research::attach_evidence(json!({}),&evidence,"00700.HK")["research_context"].clone();
+        let (data, evidence) = hk_research_fixture();
+        assert_eq!(
+            extract_stock_code("00005有什么风险", "hk", &data),
+            Some("00005.HK".to_string())
+        );
+        let context = crate::hk_agent_research::attach_evidence(json!({}), &evidence, "00700.HK")
+            ["research_context"]
+            .clone();
         let result = tauri::async_runtime::block_on(execute_with_event_sink(
             json!({"run_id":"hk-bare-switch","market":"hk","mode":"quick","message":"00005有什么风险","research_context":context}),data,|_|{}
         )).unwrap().response;
-        assert_eq!(result["research_context"]["stock_code"],"00005.HK");
-        assert_eq!(result["research_context"]["reused"],false);
+        assert_eq!(result["research_context"]["stock_code"], "00005.HK");
+        assert_eq!(result["research_context"]["reused"], false);
         assert!(!result.to_string().contains("tencent-filing"));
     }
 
     #[test]
     fn hk_agent_explicit_foreign_market_identity_does_not_reuse_previous_company() {
-        let (data,evidence)=hk_research_fixture();
-        let context = crate::hk_agent_research::attach_evidence(json!({}),&evidence,"00700.HK")["research_context"].clone();
+        let (data, evidence) = hk_research_fixture();
+        let context = crate::hk_agent_research::attach_evidence(json!({}), &evidence, "00700.HK")
+            ["research_context"]
+            .clone();
         let result = tauri::async_runtime::block_on(execute_with_event_sink(
             json!({"run_id":"hk-foreign-followup","market":"hk","mode":"quick","message":"换成600519.SH研究，它的风险是什么",
                 "research_context":context,"history":[{"role":"user","content":"研究腾讯00700.HK"}]}),data,|_|{}
         )).unwrap().response;
-        assert_eq!(result["action"],"clarify");
+        assert_eq!(result["action"], "clarify");
         assert!(result["reply"].as_str().unwrap().contains("市场"));
         assert!(!result.to_string().contains("tencent-filing"));
         assert!(result.get("research_context").is_none());
@@ -2859,12 +3471,20 @@ mod tests {
         evidence["citations"][0]["published_at"] = json!("2026-11-10T09:00:00.100000001+08:00");
         evidence["citations"][1]["published_at"] = json!("2026-11-10T09:00:00.100000000+08:00");
         evidence["citations"][2]["published_at"] = Value::Null;
-        let context = crate::hk_agent_research::attach_evidence(json!({}), &evidence, "00700.HK")["research_context"].clone();
+        let context = crate::hk_agent_research::attach_evidence(json!({}), &evidence, "00700.HK")
+            ["research_context"]
+            .clone();
         let frozen = crate::hk_agent_research::frozen_evidence(&context);
         for remote_safe_only in [false, true] {
             let registry = RigToolRegistry::new_with_market_and_research_and_cancel(
-                data.clone(), json!({"stock_code":"00700.HK"}), Some(frozen.clone()), None,
-                Arc::new(RunCancellation::default()), remote_safe_only, "hk".to_string());
+                data.clone(),
+                json!({"stock_code":"00700.HK"}),
+                Some(frozen.clone()),
+                None,
+                Arc::new(RunCancellation::default()),
+                remote_safe_only,
+                "hk".to_string(),
+            );
             let result = tauri::async_runtime::block_on(registry.dispatch("news_evidence", json!({
                 "query":"news", "stock_code":"00700.HK", "as_of":"2026-11-10T09:00:00.100000000+08:00"
             }))).unwrap();
@@ -2872,9 +3492,13 @@ mod tests {
             assert_eq!(result["citations"][0]["id"], "E2");
             assert_eq!(result["citations"][0]["document_id"], "tencent-financial");
             for invalid in [json!(""), json!("tomorrow"), json!(42)] {
-                assert!(tauri::async_runtime::block_on(registry.dispatch("news_evidence", json!({
-                    "query":"news", "stock_code":"00700.HK", "as_of":invalid
-                }))).is_err());
+                assert!(tauri::async_runtime::block_on(registry.dispatch(
+                    "news_evidence",
+                    json!({
+                        "query":"news", "stock_code":"00700.HK", "as_of":invalid
+                    })
+                ))
+                .is_err());
             }
         }
         assert_eq!(frozen["citations"].as_array().unwrap().len(), 3);
@@ -2882,40 +3506,77 @@ mod tests {
 
     #[test]
     fn hk_frozen_evidence_tool_cannot_return_the_previous_company_for_another_code() {
-        let (data,evidence)=hk_research_fixture();
-        let context = crate::hk_agent_research::attach_evidence(json!({}),&evidence,"00700.HK")["research_context"].clone();
-        let registry = RigToolRegistry::new_with_market_and_research_and_cancel(data,json!({"stock_code":"00700.HK"}),
-            Some(crate::hk_agent_research::frozen_evidence(&context)),None,Arc::new(RunCancellation::default()),false,"hk".to_string());
-        let result = tauri::async_runtime::block_on(registry.dispatch("news_evidence",json!({"query":"汇丰的公告","stock_code":"00005.HK"})));
+        let (data, evidence) = hk_research_fixture();
+        let context = crate::hk_agent_research::attach_evidence(json!({}), &evidence, "00700.HK")
+            ["research_context"]
+            .clone();
+        let registry = RigToolRegistry::new_with_market_and_research_and_cancel(
+            data,
+            json!({"stock_code":"00700.HK"}),
+            Some(crate::hk_agent_research::frozen_evidence(&context)),
+            None,
+            Arc::new(RunCancellation::default()),
+            false,
+            "hk".to_string(),
+        );
+        let result = tauri::async_runtime::block_on(registry.dispatch(
+            "news_evidence",
+            json!({"query":"汇丰的公告","stock_code":"00005.HK"}),
+        ));
         assert!(result.is_err());
     }
 
     #[test]
     fn hk_agent_explicit_invalid_news_code_is_rejected_before_context_fallback() {
-        let (data,evidence)=hk_research_fixture();
-        let context = crate::hk_agent_research::attach_evidence(json!({}),&evidence,"00700.HK")["research_context"].clone();
-        let registry = RigToolRegistry::new_with_market_and_research_and_cancel(data,json!({"stock_code":"00700.HK"}),
-            Some(crate::hk_agent_research::frozen_evidence(&context)),None,Arc::new(RunCancellation::default()),false,"hk".to_string());
-        let result = tauri::async_runtime::block_on(registry.dispatch("news_evidence",json!({"query":"风险","stock_code":"600519.SH"})));
+        let (data, evidence) = hk_research_fixture();
+        let context = crate::hk_agent_research::attach_evidence(json!({}), &evidence, "00700.HK")
+            ["research_context"]
+            .clone();
+        let registry = RigToolRegistry::new_with_market_and_research_and_cancel(
+            data,
+            json!({"stock_code":"00700.HK"}),
+            Some(crate::hk_agent_research::frozen_evidence(&context)),
+            None,
+            Arc::new(RunCancellation::default()),
+            false,
+            "hk".to_string(),
+        );
+        let result = tauri::async_runtime::block_on(registry.dispatch(
+            "news_evidence",
+            json!({"query":"风险","stock_code":"600519.SH"}),
+        ));
         assert!(result.is_err());
     }
 
     #[test]
     fn hk_registry_binds_the_collected_snapshot_before_model_tool_reads() {
-        let (data,evidence)=hk_research_fixture();
-        let context = crate::hk_agent_research::attach_evidence(json!({}),&evidence,"00700.HK")["research_context"].clone();
-        let registry = RigToolRegistry::new_with_market_and_research_and_cancel(data,json!({"stock_code":"00700.HK"}),
-            None,None,Arc::new(RunCancellation::default()),false,"hk".to_string());
+        let (data, evidence) = hk_research_fixture();
+        let context = crate::hk_agent_research::attach_evidence(json!({}), &evidence, "00700.HK")
+            ["research_context"]
+            .clone();
+        let registry = RigToolRegistry::new_with_market_and_research_and_cancel(
+            data,
+            json!({"stock_code":"00700.HK"}),
+            None,
+            None,
+            Arc::new(RunCancellation::default()),
+            false,
+            "hk".to_string(),
+        );
         registry.freeze_research_context(&context).unwrap();
-        let result = tauri::async_runtime::block_on(registry.dispatch("news_evidence",json!({"query":"资本配置","stock_code":"00700.HK"}))).unwrap();
-        assert_eq!(result["frozen_snapshot"],true);
-        assert_eq!(result["citations"][0]["id"],"E1");
-        assert_eq!(result["citations"][0]["document_id"],"tencent-filing");
+        let result = tauri::async_runtime::block_on(registry.dispatch(
+            "news_evidence",
+            json!({"query":"资本配置","stock_code":"00700.HK"}),
+        ))
+        .unwrap();
+        assert_eq!(result["frozen_snapshot"], true);
+        assert_eq!(result["citations"][0]["id"], "E1");
+        assert_eq!(result["citations"][0]["document_id"], "tencent-filing");
     }
 
     #[test]
     fn hk_agent_switch_or_refresh_does_not_keep_previous_issuer_evidence() {
-        let (data,evidence) = hk_research_fixture();
+        let (data, evidence) = hk_research_fixture();
         let first = tauri::async_runtime::block_on(execute_with_event_sink(
             json!({"run_id":"hk-scope-first","market":"hk","mode":"quick","message":"研究腾讯","research_evidence":evidence.clone()}),data.clone(),|_|{}
         )).unwrap().response;
@@ -2925,17 +3586,21 @@ mod tests {
             "published_at":"2026-11-10","url":"https://www.hkexnews.hk/hsbc.pdf","stock_codes":["00005.HK"],"remote_export_allowed":true}]);
         let switched = tauri::async_runtime::block_on(execute_with_event_sink(
             json!({"run_id":"hk-scope-next","market":"hk","mode":"quick","message":"研究00005.HK",
-                "research_context":first["research_context"],"research_evidence":next_evidence}),data.clone(),|_|{}
-        )).unwrap().response;
-        assert_eq!(switched["research_context"]["stock_code"],"00005.HK");
-        assert_eq!(switched["research_context"]["reused"],false);
+                "research_context":first["research_context"],"research_evidence":next_evidence}),
+            data.clone(),
+            |_| {},
+        ))
+        .unwrap()
+        .response;
+        assert_eq!(switched["research_context"]["stock_code"], "00005.HK");
+        assert_eq!(switched["research_context"]["reused"], false);
         assert!(!switched.to_string().contains("tencent-filing"));
         let refreshed = tauri::async_runtime::block_on(execute_with_event_sink(
             json!({"run_id":"hk-refresh-next","market":"hk","mode":"quick","message":"刷新腾讯的最新研究证据",
                 "research_context":first["research_context"],"research_evidence":{"citations":[]}}),data,|_|{}
         )).unwrap().response;
-        assert_eq!(refreshed["research_context"]["reused"],false);
-        assert_eq!(refreshed["evidence_summary"],json!([]));
+        assert_eq!(refreshed["research_context"]["reused"], false);
+        assert_eq!(refreshed["evidence_summary"], json!([]));
     }
 
     #[test]
@@ -2977,10 +3642,26 @@ mod tests {
     #[test]
     fn hk_agent_observes_the_requested_five_digit_security_instead_of_screening_the_market() {
         let mut data = gp_core::CoreDataSet::default();
-        data.stocks.push(gp_core::StockItem {code:"00700.HK".to_string(),name:"腾讯控股".to_string(),price:400.0, ..Default::default()});
-        for question in ["观察 00700", "观察 HK00700", "观察 700.HK", "看一下腾讯控股"] {
+        data.stocks.push(gp_core::StockItem {
+            code: "00700.HK".to_string(),
+            name: "腾讯控股".to_string(),
+            price: 400.0,
+            ..Default::default()
+        });
+        for question in [
+            "观察 00700",
+            "观察 HK00700",
+            "观察 700.HK",
+            "看一下腾讯控股",
+        ] {
             let payload = json!({"run_id":format!("hk-baseline-{question}"),"market":"hk","mode":"quick","message":question});
-            let result = tauri::async_runtime::block_on(execute_with_event_sink(payload, serde_json::to_value(&data).unwrap(), |_| {})).unwrap().response;
+            let result = tauri::async_runtime::block_on(execute_with_event_sink(
+                payload,
+                serde_json::to_value(&data).unwrap(),
+                |_| {},
+            ))
+            .unwrap()
+            .response;
             assert_eq!(result["action"], "observe_stock", "question {question}");
             assert_eq!(result["tool_calls"][0]["input"]["code"], "00700.HK");
             assert_eq!(result["tool_calls"][0]["status"], "ok");
@@ -2991,13 +3672,23 @@ mod tests {
     #[test]
     fn hk_agent_identifies_company_names_before_years_that_are_also_valid_stock_numbers() {
         let data = json!({"stocks":[{"code":"00700.HK","name":"腾讯控股"},{"code":"02026.HK","name":"小马智行－W"},{"code":"02025.HK","name":"瑞丰动力"}]});
-        for query in ["腾讯2026年中报", "腾讯控股2025年业绩", "腾讯2026年归母净利润"] {
-            assert_eq!(extract_stock_code(query,"hk",&data).as_deref(), Some("00700.HK"));
+        for query in [
+            "腾讯2026年中报",
+            "腾讯控股2025年业绩",
+            "腾讯2026年归母净利润",
+        ] {
+            assert_eq!(
+                extract_stock_code(query, "hk", &data).as_deref(),
+                Some("00700.HK")
+            );
         }
         for query in ["2026年港股行情", "2025年市场消息", "成交量 2026 股"] {
-            assert_eq!(extract_stock_code(query,"hk",&data), None);
+            assert_eq!(extract_stock_code(query, "hk", &data), None);
         }
-        assert_eq!(extract_stock_code("观察HK2026","hk",&data).as_deref(),Some("02026.HK"));
+        assert_eq!(
+            extract_stock_code("观察HK2026", "hk", &data).as_deref(),
+            Some("02026.HK")
+        );
     }
 
     #[test]
@@ -3005,7 +3696,10 @@ mod tests {
         assert!(validate_tool_arguments("stock_observe", &json!({"code":"00700.HK"})).is_ok());
         assert!(validate_tool_arguments("stock_observe", &json!({"code":"920001.BJ"})).is_ok());
         for code in ["00700.SH", "1.2.3", "badcode", "600519--SH"] {
-            assert!(validate_tool_arguments("stock_observe", &json!({"code":code})).is_err(), "invalid {code}");
+            assert!(
+                validate_tool_arguments("stock_observe", &json!({"code":code})).is_err(),
+                "invalid {code}"
+            );
         }
     }
 
@@ -3015,13 +3709,13 @@ mod tests {
         let history = (0..2500).map(|index| json!({"date":(first+chrono::Duration::days(index)).format("%Y-%m-%d").to_string(),"open":400.0,"high":410.0,"low":390.0,"close":405.0,"volume_shares":1000000})).collect::<Vec<_>>();
         let raw = json!({"market":"hk","security":{"code":"00700","name":"腾讯控股"},"history":history,
             "financial":{"code":"00700","currency":"CNY","normalized_period":"2026H1","eps":{"value":12.639,"currency":"CNY","unit":"currency/share"}},"notes":[]});
-        assert!(serde_json::to_vec(&raw).unwrap().len()>MAX_TOOL_OUTPUT_BYTES);
-        let result = bound_hk_observation(raw,&json!({"series_limit":120})).unwrap();
-        assert_eq!(result["security"]["code"],"00700");
-        assert_eq!(result["financial"]["currency"],"CNY");
-        assert_eq!(result["financial"]["eps"]["value"],12.639);
-        assert_eq!(result["history"].as_array().unwrap().len(),120);
-        assert_eq!(result["history_total_bars"],2500);
+        assert!(serde_json::to_vec(&raw).unwrap().len() > MAX_TOOL_OUTPUT_BYTES);
+        let result = bound_hk_observation(raw, &json!({"series_limit":120})).unwrap();
+        assert_eq!(result["security"]["code"], "00700");
+        assert_eq!(result["financial"]["currency"], "CNY");
+        assert_eq!(result["financial"]["eps"]["value"], 12.639);
+        assert_eq!(result["history"].as_array().unwrap().len(), 120);
+        assert_eq!(result["history_total_bars"], 2500);
     }
 
     #[test]
@@ -3898,7 +4592,9 @@ fn filter_agent_data_for_market(mut data: Value, market: &str) -> Result<Value, 
         histories.retain(|code, _| belongs(code));
     }
     for section in ["financials", "factor_snapshots", "capital_evidence"] {
-        if let Some(items) = data.get_mut(section).and_then(Value::as_object_mut) { items.retain(|code, _| belongs(code)); }
+        if let Some(items) = data.get_mut(section).and_then(Value::as_object_mut) {
+            items.retain(|code, _| belongs(code));
+        }
     }
     if let Some(relations) = data.get_mut("relations").and_then(Value::as_array_mut) {
         relations.retain(|relation| {

@@ -48,11 +48,11 @@ interface SettingsSheetProps {
   onLlmSettingsChange?: import("../../lib/llmCredentialStore").LlmSettingsSetter;
 }
 
-function SettingControl({ setting }: { setting: SettingDescriptor }) {
+function SettingControl({ setting, descriptionId }: { setting: SettingDescriptor; descriptionId?: string }) {
   const value = setting.get();
   if (setting.type === "segmented") {
     return (
-      <div className="settings-segmented" role="group" aria-label={setting.title}>
+      <div className="settings-segmented" role="group" aria-label={setting.title} aria-describedby={descriptionId}>
         {setting.options?.map((option) => (
           <button
             key={option.value}
@@ -78,6 +78,7 @@ function SettingControl({ setting }: { setting: SettingDescriptor }) {
         role="switch"
         aria-checked={Boolean(value)}
         aria-label={setting.title}
+        aria-describedby={descriptionId}
         disabled={setting.disabled}
         onClick={setting.disabled ? undefined : () => setting.set(!value)}
       >
@@ -91,6 +92,7 @@ function SettingControl({ setting }: { setting: SettingDescriptor }) {
       className="settings-select"
       value={String(value)}
       aria-label={setting.title}
+      aria-describedby={descriptionId}
       disabled={setting.disabled}
       onChange={setting.disabled ? undefined : (event) => setting.set(event.currentTarget.value)}
     >
@@ -102,14 +104,15 @@ function SettingControl({ setting }: { setting: SettingDescriptor }) {
 }
 
 function SettingItem({ setting }: { setting: SettingDescriptor }) {
+  const descriptionId = useId();
   return (
     <section className={`settings-item ${setting.disabled ? "settings-item-disabled" : ""}`.trim()}>
       <div className="settings-item-copy">
         <strong className="settings-item-title">{setting.title}</strong>
-        {setting.description ? <span>{setting.description}</span> : null}
+        {setting.description ? <span id={descriptionId}>{setting.description}</span> : null}
       </div>
       {setting.badge ? <span className="settings-item-badge">{setting.badge}</span> : null}
-      <SettingControl setting={setting} />
+      <SettingControl setting={setting} descriptionId={setting.description ? descriptionId : undefined} />
     </section>
   );
 }

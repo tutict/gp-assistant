@@ -373,7 +373,7 @@ function installAnalysis(frozen: SentimentSnapshot, analysisOverrides: Partial<S
   });
 }
 
-it("leads with at most three actual frozen citations in analysis order and folds detailed work", async () => {
+it("shows the overview and timeline before folded frozen citations while preserving analysis order", async () => {
   installAnalysis({ ...snapshot, evidence: ["E1", "E2", "E3", "E4"].map(id => evidenceFixture(id)) }, { evidence_ids: ["missing", "E3", "E1", "E3", "E4", "E2"] });
   await act(async () => { renderer = create(<SentimentPanel initialView="sentiment" initialCode={snapshot.stock_code} />); });
   const main = renderer!.root.findByProps({ className: "sentiment-main" });
@@ -381,8 +381,8 @@ it("leads with at most three actual frozen citations in analysis order and folds
   expect(key.findAllByProps({ className: "sentiment-evidence-row" }).map(row => row.props["data-evidence-id"])).toEqual(["E3", "E1", "E4"]);
   const sections = main.children.filter(child => typeof child !== "string");
   expect(sections.findIndex(node => node.props["aria-label"] === "情绪结论")).toBeLessThan(sections.findIndex(node => node.props["aria-label"] === "关键证据"));
-  expect(sections.findIndex(node => node.props["aria-label"] === "关键证据")).toBeLessThan(sections.findIndex(node => node.props.className === "sentiment-timeline"));
-  for (const label of ["三个分析维度", "详细来源", "分析历史", "策略与参数"]) {
+  expect(sections.findIndex(node => node.props.className === "sentiment-timeline")).toBeLessThan(sections.findIndex(node => node.props["aria-label"] === "关键证据"));
+  for (const label of ["关键证据", "三个分析维度", "详细来源", "分析历史", "策略与参数"]) {
     const fold = main.findByProps({ "aria-label": label });
     expect(fold.type).toBe("details");
     expect(fold.props.open).not.toBe(true);

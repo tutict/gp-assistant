@@ -517,6 +517,7 @@ async function invokeBacktest(invoke: InvokeFn, payload: unknown): Promise<unkno
 }
 
 export const TAURI_POST_ROUTES: Record<string, TauriRouteHandler> = {
+  "/api/cn/company-profile": async ({ invoke, payload }) => invoke("api_cn_company_profile", { payload: withNetworkProxyOptions(asRecord(payload)) }),
   "/api/data/refresh": async ({ invoke, payload }) => invoke("api_data_refresh", {
     payload: withAndroidNetworkOptions(asRecord(payload)),
   }),

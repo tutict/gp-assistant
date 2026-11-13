@@ -58,6 +58,14 @@ const versions = new Map([
     "native/gp-core/Cargo.lock stock-optimizer-core",
     cargoLockPackageVersion("native/gp-core/Cargo.lock", "stock-optimizer-core"),
   ],
+  [
+    "native/gp-research/Cargo.lock stock-optimizer-core",
+    cargoLockPackageVersion("native/gp-research/Cargo.lock", "stock-optimizer-core"),
+  ],
+  [
+    "desktop/src-tauri/Cargo.lock stock-optimizer-core",
+    cargoLockPackageVersion("desktop/src-tauri/Cargo.lock", "stock-optimizer-core"),
+  ],
 ]);
 const expectedVersion = desktopPackage.version;
 

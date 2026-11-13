@@ -20,12 +20,12 @@ use tauri_plugin_shell::ShellExt;
 
 mod agent_harness;
 mod agent_ledger;
-mod core_api;
 mod cn_market;
+mod core_api;
 mod evolution;
 mod gepa_lab;
-mod hk_market;
 mod hk_agent_research;
+mod hk_market;
 mod hk_research;
 mod llm;
 mod market;
@@ -150,6 +150,7 @@ pub fn run() {
             hk_market::api_hk_observe,
             hk_market::api_hk_financial_status,
             hk_market::api_hk_financial_refresh,
+            cn_market::api_cn_company_profile,
             screening::api_screen,
             screening::api_sector_screen,
             screening::api_custom_screen,
@@ -295,6 +296,7 @@ fn setup_desktop(app: &mut tauri::App) -> tauri::Result<()> {
         .title("股选优")
         .inner_size(1280.0, 860.0)
         .min_inner_size(960.0, 680.0)
+        .zoom_hotkeys_enabled(cfg!(target_os = "windows"))
         .visible(false)
         .on_page_load(|window, payload| {
             if matches!(payload.event(), PageLoadEvent::Started) {

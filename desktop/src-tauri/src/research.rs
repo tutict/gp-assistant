@@ -19,10 +19,10 @@ use std::{
 };
 use tauri::{Emitter, Manager};
 
-#[path = "research_recovery.rs"]
-mod recovery;
 #[path = "research_hk_cache.rs"]
 mod hk_cache;
+#[path = "research_recovery.rs"]
+mod recovery;
 
 pub(crate) const RESEARCH_SCHEMA_VERSION: i64 = 3;
 const RESEARCH_PACK_SCHEMA_VERSION: i64 = 2;
@@ -59,16 +59,20 @@ fn normalized_research_timestamp(value: &str, end_of_date: bool) -> Option<Strin
 pub(crate) fn normalize_research_as_of(value: Option<&Value>) -> Result<Option<String>, String> {
     let value = match value {
         None | Some(Value::Null) => return Ok(None),
-        Some(Value::String(value)) if value.trim().is_empty() => return Err("as_of cannot be empty".to_string()),
+        Some(Value::String(value)) if value.trim().is_empty() => {
+            return Err("as_of cannot be empty".to_string())
+        }
         Some(Value::String(value)) if value.len() <= 40 => value.trim(),
         Some(_) => return Err("as_of must be an ISO 8601 date or timestamp".to_string()),
     };
-    normalized_research_timestamp(value, true).map(Some)
+    normalized_research_timestamp(value, true)
+        .map(Some)
         .ok_or_else(|| "as_of must be a valid ISO 8601 date or timestamp".to_string())
 }
 
 pub(crate) fn research_evidence_available_as_of(published_at: Option<&str>, cutoff: &str) -> bool {
-    published_at.and_then(|value| normalized_research_timestamp(value, false))
+    published_at
+        .and_then(|value| normalized_research_timestamp(value, false))
         .is_some_and(|published| published.as_str() <= cutoff)
 }
 
@@ -83,6 +87,12 @@ pub(crate) struct ResearchMessage {
     pub source_tier: String,
     pub source_name: String,
     pub published_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fetched_at_epoch_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub article_summary_fetched_at_epoch_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     pub unread: bool,
@@ -247,12 +257,16 @@ impl ResearchStore {
             // Revocation applies to the logical source, including versions retained
             // for saved citations. Public cache refreshes still respect user consent.
             if !remote_export_allowed {
-                transaction.execute(
-                    "UPDATE documents SET remote_export_allowed=0, updated_at_epoch_ms=?3
+                transaction
+                    .execute(
+                        "UPDATE documents SET remote_export_allowed=0, updated_at_epoch_ms=?3
                      WHERE (id=?1 OR substr(id,1,length(?1)+10)=?1 || ':revision:')
                        AND (?2=1 OR user_imported=0) AND remote_export_allowed<>0",
-                    params![document_id, user_imported, imported_at],
-                ).map_err(|error| format!("failed to revoke retained source permission: {error}"))?;
+                        params![document_id, user_imported, imported_at],
+                    )
+                    .map_err(|error| {
+                        format!("failed to revoke retained source permission: {error}")
+                    })?;
             }
             let existing_document = transaction
                 .query_row(
@@ -728,10 +742,17 @@ impl ResearchStore {
     }
 
     pub(crate) fn agent_evidence(&self, request: &Value) -> Result<Value, String> {
-        let stock_code = request.get("stock_code").and_then(Value::as_str)
-            .filter(|code| code.len() == 8 && code.ends_with(".HK")
-                && code.as_bytes()[..5].iter().all(u8::is_ascii_digit))
-            .ok_or_else(|| "canonical HK stock_code is required (for example 00700.HK)".to_string())?;
+        let stock_code = request
+            .get("stock_code")
+            .and_then(Value::as_str)
+            .filter(|code| {
+                code.len() == 8
+                    && code.ends_with(".HK")
+                    && code.as_bytes()[..5].iter().all(u8::is_ascii_digit)
+            })
+            .ok_or_else(|| {
+                "canonical HK stock_code is required (for example 00700.HK)".to_string()
+            })?;
         self.agent_evidence_for_scope(request, Some(stock_code))
     }
 
@@ -739,19 +760,32 @@ impl ResearchStore {
         self.agent_evidence_for_scope(request, None)
     }
 
-    fn agent_evidence_for_scope(&self, request: &Value, stock_code: Option<&str>) -> Result<Value, String> {
+    fn agent_evidence_for_scope(
+        &self,
+        request: &Value,
+        stock_code: Option<&str>,
+    ) -> Result<Value, String> {
         let query = string_field(request, "query").unwrap_or_default();
         if query.trim().is_empty() {
             return Err("query is required".to_string());
         }
-        if request.get("market").is_some_and(|market| market.as_str() != Some("hk")) {
+        if request
+            .get("market")
+            .is_some_and(|market| market.as_str() != Some("hk"))
+        {
             return Err("agent evidence supports only the hk market".to_string());
         }
-        let top_k = request.get("top_k").and_then(Value::as_u64).unwrap_or(16).clamp(1, 16) as usize;
+        let top_k = request
+            .get("top_k")
+            .and_then(Value::as_u64)
+            .unwrap_or(16)
+            .clamp(1, 16) as usize;
         let remote_safe_only = bool_field(request, "remote_safe_only");
         let as_of = normalize_research_as_of(request.get("as_of"))?;
         let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(|error| format!("failed to read agent evidence snapshot: {error}"))?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to read agent evidence snapshot: {error}"))?;
 
         // Recent documents guarantee source coverage even when the question's keywords
         // occur only in news. Keyword hits select the relevant original chunk instead.
@@ -780,10 +814,15 @@ impl ResearchStore {
             JOIN chunks ON chunks.document_id = documents.id AND chunks.ordinal = 0
             WHERE scoped.recency <= 48"
         ).map_err(|error| format!("failed to prepare recent agent evidence: {error}"))?;
-        let rows = recent.query_map(params![stock_code, remote_safe_only as i64, as_of], agent_evidence_candidate)
+        let rows = recent
+            .query_map(
+                params![stock_code, remote_safe_only as i64, as_of],
+                agent_evidence_candidate,
+            )
             .map_err(|error| format!("failed to read recent agent evidence: {error}"))?;
         for row in rows {
-            let candidate = row.map_err(|error| format!("failed to decode recent agent evidence: {error}"))?;
+            let candidate =
+                row.map_err(|error| format!("failed to decode recent agent evidence: {error}"))?;
             candidates.insert(candidate.document_id.clone(), candidate);
         }
         drop(recent);
@@ -805,23 +844,40 @@ impl ResearchStore {
              ORDER BY bm25(chunks_fts, 0.0, 3.0, 2.0, 1.0), chunks.ordinal, chunks.id
              LIMIT 128"
         ).map_err(|error| format!("failed to prepare lexical agent evidence: {error}"))?;
-        let rows = lexical.query_map(params![build_fts_match_query(&query), stock_code, remote_safe_only as i64, as_of], agent_evidence_candidate)
+        let rows = lexical
+            .query_map(
+                params![
+                    build_fts_match_query(&query),
+                    stock_code,
+                    remote_safe_only as i64,
+                    as_of
+                ],
+                agent_evidence_candidate,
+            )
             .map_err(|error| format!("failed to read lexical agent evidence: {error}"))?;
         for row in rows {
-            let candidate = row.map_err(|error| format!("failed to decode lexical agent evidence: {error}"))?;
+            let candidate =
+                row.map_err(|error| format!("failed to decode lexical agent evidence: {error}"))?;
             match candidates.entry(candidate.document_id.clone()) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {
-                    if candidate.lexical_score > entry.get().lexical_score { entry.insert(candidate); }
+                    if candidate.lexical_score > entry.get().lexical_score {
+                        entry.insert(candidate);
+                    }
                 }
-                std::collections::hash_map::Entry::Vacant(entry) => { entry.insert(candidate); }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(candidate);
+                }
             }
         }
         drop(lexical);
-        transaction.commit().map_err(|error| format!("failed to finish agent evidence snapshot: {error}"))?;
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to finish agent evidence snapshot: {error}"))?;
 
         let mut ranked = candidates.into_values().collect::<Vec<_>>();
         ranked.sort_by(|left, right| {
-            (right.lexical_score > 0.0).cmp(&(left.lexical_score > 0.0))
+            (right.lexical_score > 0.0)
+                .cmp(&(left.lexical_score > 0.0))
                 .then_with(|| right.published_at_utc.cmp(&left.published_at_utc))
                 .then_with(|| right.lexical_score.total_cmp(&left.lexical_score))
                 .then_with(|| left.document_id.cmp(&right.document_id))
@@ -829,46 +885,112 @@ impl ResearchStore {
         let mut selected = Vec::new();
         let mut selected_ids = HashSet::new();
         for group in ["filing", "financial_snapshot", "news"] {
-            if selected.len() >= top_k { break; }
-            if let Some(candidate) = ranked.iter().find(|candidate| agent_source_group(candidate.citation["source_tier"].as_str().unwrap_or_default()) == group) {
+            if selected.len() >= top_k {
+                break;
+            }
+            if let Some(candidate) = ranked.iter().find(|candidate| {
+                agent_source_group(
+                    candidate.citation["source_tier"]
+                        .as_str()
+                        .unwrap_or_default(),
+                ) == group
+            }) {
                 selected_ids.insert(candidate.document_id.clone());
                 selected.push(candidate.citation.clone());
             }
         }
         for candidate in ranked {
-            if selected.len() >= top_k { break; }
-            if selected_ids.insert(candidate.document_id) { selected.push(candidate.citation); }
+            if selected.len() >= top_k {
+                break;
+            }
+            if selected_ids.insert(candidate.document_id) {
+                selected.push(candidate.citation);
+            }
         }
-        for (index, citation) in selected.iter_mut().enumerate() { citation["citation_id"] = json!(format!("C{}", index + 1)); }
-        let community_only = !selected.is_empty() && selected.iter().all(|item| item["source_tier"] == "community");
+        for (index, citation) in selected.iter_mut().enumerate() {
+            citation["citation_id"] = json!(format!("C{}", index + 1));
+        }
+        let community_only = !selected.is_empty()
+            && selected
+                .iter()
+                .all(|item| item["source_tier"] == "community");
         let answer = if selected.is_empty() {
             "未找到足以支撑结论的本地证据。".to_string()
         } else if community_only {
-            "当前只命中社区信息，不能单独作为事实结论；请补充公告、财务快照或可信新闻核验。".to_string()
+            "当前只命中社区信息，不能单独作为事实结论；请补充公告、财务快照或可信新闻核验。"
+                .to_string()
         } else {
-            selected.iter().map(|item| format!("[{}] {}", item["citation_id"].as_str().unwrap_or_default(), item["excerpt"].as_str().unwrap_or_default())).collect::<Vec<_>>().join("\n")
+            selected
+                .iter()
+                .map(|item| {
+                    format!(
+                        "[{}] {}",
+                        item["citation_id"].as_str().unwrap_or_default(),
+                        item["excerpt"].as_str().unwrap_or_default()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
         };
-        Ok(json!({"mode":"evidence_only","query":query.chars().take(2000).collect::<String>(),"stock_code":stock_code,"market":"hk",
+        Ok(
+            json!({"mode":"evidence_only","query":query.chars().take(2000).collect::<String>(),"stock_code":stock_code,"market":"hk",
             "answer":answer,"citations":selected,"community_only":community_only,"fact_supported":!community_only && !selected.is_empty(),
-            "retrieval_mode":"scoped_sources_bm25_recency","remote_safe_only":remote_safe_only}))
+            "retrieval_mode":"scoped_sources_bm25_recency","remote_safe_only":remote_safe_only}),
+        )
     }
 
-    pub(crate) fn validate_hk_context(&self, context: &Value, remote_safe_only: bool) -> Result<bool, String> {
-        let mut connection=self.connection()?;
-        let transaction=connection.transaction().map_err(|error|error.to_string())?;
+    pub(crate) fn validate_hk_context(
+        &self,
+        context: &Value,
+        remote_safe_only: bool,
+    ) -> Result<bool, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
         self.validate_hk_context_in_connection(&transaction, context, remote_safe_only)
     }
 
-    fn validate_hk_context_in_connection(&self, connection: &Connection, context: &Value, remote_safe_only: bool) -> Result<bool, String> {
-        let Some(code)=context.get("stock_code").and_then(Value::as_str)
-            .filter(|code|code.len()==8 && code.ends_with(".HK") && code.as_bytes()[..5].iter().all(u8::is_ascii_digit)) else {return Ok(false);};
-        if context.get("market").and_then(Value::as_str)!=Some("hk") {return Ok(false);}
-        let Some(evidence)=context.get("evidence").and_then(Value::as_array)
-            .filter(|evidence|!evidence.is_empty() && evidence.len()<=crate::hk_agent_research::MAX_EVIDENCE_ITEMS) else {return Ok(false);};
+    fn validate_hk_context_in_connection(
+        &self,
+        connection: &Connection,
+        context: &Value,
+        remote_safe_only: bool,
+    ) -> Result<bool, String> {
+        let Some(code) = context
+            .get("stock_code")
+            .and_then(Value::as_str)
+            .filter(|code| {
+                code.len() == 8
+                    && code.ends_with(".HK")
+                    && code.as_bytes()[..5].iter().all(u8::is_ascii_digit)
+            })
+        else {
+            return Ok(false);
+        };
+        if context.get("market").and_then(Value::as_str) != Some("hk") {
+            return Ok(false);
+        }
+        let Some(evidence) = context
+            .get("evidence")
+            .and_then(Value::as_array)
+            .filter(|evidence| {
+                !evidence.is_empty()
+                    && evidence.len() <= crate::hk_agent_research::MAX_EVIDENCE_ITEMS
+            })
+        else {
+            return Ok(false);
+        };
         self.validate_hk_catalog(connection, evidence, Some(code), remote_safe_only)
     }
 
-    fn validate_hk_catalog(&self, connection: &Connection, evidence: &[Value], code: Option<&str>, remote_safe_only: bool) -> Result<bool, String> {
+    fn validate_hk_catalog(
+        &self,
+        connection: &Connection,
+        evidence: &[Value],
+        code: Option<&str>,
+        remote_safe_only: bool,
+    ) -> Result<bool, String> {
         let mut statement=connection.prepare(
             "SELECT c.id,c.document_id,c.title,c.content,c.page_number,c.source_tier,c.source_name,c.published_at,c.url,
                     d.remote_export_allowed,c.stock_codes_json,d.metadata_json,0.0,d.content_hash,c.content_hash
@@ -881,37 +1003,71 @@ impl ResearchStore {
                AND NOT EXISTS(SELECT 1 FROM json_each(c.stock_codes_json)
                     WHERE type!='text' OR value NOT GLOB '[0-9][0-9][0-9][0-9][0-9].HK')"
         ).map_err(|error|error.to_string())?;
-        let mut current=Vec::new();
+        let mut current = Vec::new();
         for item in evidence {
-            let Some(document)=item.get("document_id").and_then(Value::as_str) else {return Ok(false);};
-            let Some(chunk)=item.get("chunk_id").and_then(Value::as_str) else {return Ok(false);};
-            if item.get("document_content_hash").and_then(Value::as_str).is_none()
-                || item.get("chunk_content_hash").and_then(Value::as_str).is_none() {return Ok(false);}
-            let Some(mut candidate)=statement.query_row(params![chunk,document,remote_safe_only as i64,code],agent_evidence_candidate)
-                .optional().map_err(|error|error.to_string())? else {return Ok(false);};
-            candidate.citation["citation_id"]=item.get("citation_id").cloned().unwrap_or_else(||json!(""));
+            let Some(document) = item.get("document_id").and_then(Value::as_str) else {
+                return Ok(false);
+            };
+            let Some(chunk) = item.get("chunk_id").and_then(Value::as_str) else {
+                return Ok(false);
+            };
+            if item
+                .get("document_content_hash")
+                .and_then(Value::as_str)
+                .is_none()
+                || item
+                    .get("chunk_content_hash")
+                    .and_then(Value::as_str)
+                    .is_none()
+            {
+                return Ok(false);
+            }
+            let Some(mut candidate) = statement
+                .query_row(
+                    params![chunk, document, remote_safe_only as i64, code],
+                    agent_evidence_candidate,
+                )
+                .optional()
+                .map_err(|error| error.to_string())?
+            else {
+                return Ok(false);
+            };
+            candidate.citation["citation_id"] = item
+                .get("citation_id")
+                .cloned()
+                .unwrap_or_else(|| json!(""));
             current.push(candidate.citation);
         }
         drop(statement);
-        let source=json!({"citations":current});
-        let canonical=match code {
-            Some(code)=>crate::hk_agent_research::evidence_catalog(&source,code),
-            None=>crate::hk_agent_research::unscoped_evidence_catalog(&source),
+        let source = json!({"citations":current});
+        let canonical = match code {
+            Some(code) => crate::hk_agent_research::evidence_catalog(&source, code),
+            None => crate::hk_agent_research::unscoped_evidence_catalog(&source),
         };
-        Ok(canonical==evidence)
+        Ok(canonical == evidence)
     }
 
     pub(crate) fn validate_hk_model_evidence(&self, snapshots: &[Value]) -> Result<bool, String> {
-        let mut connection=self.connection()?;
-        let transaction=connection.transaction().map_err(|error|error.to_string())?;
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
         for snapshot in snapshots {
-            if snapshot.get("frozen_snapshot").and_then(Value::as_bool)==Some(true) {
-                let context=crate::hk_agent_research::context_from_frozen_evidence(snapshot);
-                if !self.validate_hk_context_in_connection(&transaction,&context,true)? {return Ok(false);}
+            if snapshot.get("frozen_snapshot").and_then(Value::as_bool) == Some(true) {
+                let context = crate::hk_agent_research::context_from_frozen_evidence(snapshot);
+                if !self.validate_hk_context_in_connection(&transaction, &context, true)? {
+                    return Ok(false);
+                }
             } else {
-                let Some(citations)=snapshot.get("citations").and_then(Value::as_array) else {return Ok(false);};
-                let catalog=crate::hk_agent_research::unscoped_evidence_catalog(snapshot);
-                if catalog.len()!=citations.len() || !self.validate_hk_catalog(&transaction,&catalog,None,true)? {return Ok(false);}
+                let Some(citations) = snapshot.get("citations").and_then(Value::as_array) else {
+                    return Ok(false);
+                };
+                let catalog = crate::hk_agent_research::unscoped_evidence_catalog(snapshot);
+                if catalog.len() != citations.len()
+                    || !self.validate_hk_catalog(&transaction, &catalog, None, true)?
+                {
+                    return Ok(false);
+                }
             }
         }
         Ok(true)
@@ -970,24 +1126,27 @@ impl ResearchStore {
             )
             .map_err(|error| format!("failed to prepare research query: {error}"))?;
         let rows = statement
-            .query_map(params![match_query, stock_code, remote_safe_only as i64, as_of], |row| {
-                Ok((
-                    Candidate {
-                        chunk_id: row.get(0)?,
-                        document_id: row.get(1)?,
-                        title: row.get(2)?,
-                        content: row.get(3)?,
-                        page_number: row.get(4)?,
-                        source_tier: row.get(5)?,
-                        source_name: row.get(6)?,
-                        published_at: row.get(7)?,
-                        url: row.get(8)?,
-                        published_at_utc: row.get(9)?,
-                        remote_export_allowed: row.get::<_, i64>(10)? != 0,
-                    },
-                    row.get::<_, f64>(11)?,
-                ))
-            })
+            .query_map(
+                params![match_query, stock_code, remote_safe_only as i64, as_of],
+                |row| {
+                    Ok((
+                        Candidate {
+                            chunk_id: row.get(0)?,
+                            document_id: row.get(1)?,
+                            title: row.get(2)?,
+                            content: row.get(3)?,
+                            page_number: row.get(4)?,
+                            source_tier: row.get(5)?,
+                            source_name: row.get(6)?,
+                            published_at: row.get(7)?,
+                            url: row.get(8)?,
+                            published_at_utc: row.get(9)?,
+                            remote_export_allowed: row.get::<_, i64>(10)? != 0,
+                        },
+                        row.get::<_, f64>(11)?,
+                    ))
+                },
+            )
             .map_err(|error| format!("failed to execute research query: {error}"))?;
 
         let mut scored = Vec::new();
@@ -1010,7 +1169,15 @@ impl ResearchStore {
             })
             .collect::<HashMap<_, _>>();
         let vector_candidates = query_vector
-            .map(|vector| self.vector_candidates(&connection, vector, stock_code.as_deref(), remote_safe_only, as_of.as_deref()))
+            .map(|vector| {
+                self.vector_candidates(
+                    &connection,
+                    vector,
+                    stock_code.as_deref(),
+                    remote_safe_only,
+                    as_of.as_deref(),
+                )
+            })
             .transpose()?
             .unwrap_or_default();
         let vector_ranking = vector_candidates
@@ -1221,7 +1388,11 @@ impl ResearchStore {
             .filter(|row| {
                 (!remote_safe_only || row.remote_export_allowed)
                     && as_of
-                        .map(|cutoff| row.published_at_utc.as_deref().is_some_and(|published| published <= cutoff))
+                        .map(|cutoff| {
+                            row.published_at_utc
+                                .as_deref()
+                                .is_some_and(|published| published <= cutoff)
+                        })
                         .unwrap_or(true)
                     && stock_code
                         .map(|expected| {
@@ -1384,9 +1555,22 @@ impl ResearchStore {
             .query_map(params![stock_code, unread_only, limit, offset], |row| {
                 let title: String = row.get(3)?;
                 let content: String = row.get(12)?;
+                let metadata_json: String = row.get(10)?;
+                let metadata: Value = serde_json::from_str(&metadata_json).unwrap_or(Value::Null);
                 // Derive from full content so an old truncated headline does not
                 // hide the actual summary. Documents and saved citations stay intact.
-                let summary = message_summary_with_metadata(&title, &content, &row.get::<_,String>(10)?);
+                let summary = message_summary_with_metadata(&title, &content, &metadata_json);
+                let summary_kind = if summary.is_empty() {
+                    "unavailable"
+                } else if metadata
+                    .get("article_summary")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| text.chars().count() >= 15 && text.trim() != title.trim())
+                {
+                    "article_summary"
+                } else {
+                    "excerpt"
+                };
                 Ok(ResearchMessage {
                     id: row.get(0)?,
                     document_id: row.get(1)?,
@@ -1397,6 +1581,12 @@ impl ResearchStore {
                     source_tier: row.get(6)?,
                     source_name: row.get(7)?,
                     published_at: row.get(8)?,
+                    fetched_at_epoch_ms: metadata_epoch_millis(&metadata, "fetched_at_epoch_ms"),
+                    article_summary_fetched_at_epoch_ms: metadata_epoch_millis(
+                        &metadata,
+                        "article_summary_fetched_at_epoch_ms",
+                    ),
+                    summary_kind: Some(summary_kind.to_owned()),
                     url: row.get(11)?,
                     unread: row.get::<_, i64>(9)? != 0,
                     scope_type: metadata_string(row.get::<_, String>(10)?, "scope_type"),
@@ -2066,9 +2256,15 @@ fn open_app_store_for_market(
     } else {
         // The local HK observation cache already contains currency-bearing reports.
         // Make them searchable alongside news without requiring a second online fetch.
-        let cache = crate::hk_market::read_hk_market_cache(&crate::hk_market::hk_market_cache_path(&app_data))?;
+        let cache = crate::hk_market::read_hk_market_cache(
+            &crate::hk_market::hk_market_cache_path(&app_data),
+        )?;
         store.ingest_documents(&hk_cache::documents(&cache, &[]))?;
-        ingest_news_cache_file_for_market(&store,&app_data.join("news").join("news-cache-hk.json"),crate::external_data::Market::HongKong)?;
+        ingest_news_cache_file_for_market(
+            &store,
+            &app_data.join("news").join("news-cache-hk.json"),
+            crate::external_data::Market::HongKong,
+        )?;
     }
     Ok(store)
 }
@@ -2219,13 +2415,19 @@ pub(crate) fn ingest_news_cache_for_market(
     } else {
         "news-cache.json"
     });
-    let news_market = if market == "hk" { crate::external_data::Market::HongKong } else { crate::external_data::Market::Global };
-    with_app_store_for_market(app, market, |store| ingest_news_cache_file_for_market(store, &path, news_market))
+    let news_market = if market == "hk" {
+        crate::external_data::Market::HongKong
+    } else {
+        crate::external_data::Market::Global
+    };
+    with_app_store_for_market(app, market, |store| {
+        ingest_news_cache_file_for_market(store, &path, news_market)
+    })
 }
 
 #[cfg(test)]
 fn ingest_news_cache_file(store: &ResearchStore, path: &Path) -> Result<Value, String> {
-    ingest_news_cache_file_for_market(store,path,crate::external_data::Market::Global)
+    ingest_news_cache_file_for_market(store, path, crate::external_data::Market::Global)
 }
 
 fn ingest_news_cache_file_for_market(
@@ -3200,7 +3402,16 @@ fn normalize_legacy_document(
     };
     let mut metadata = json!({"legacy_path": path.display().to_string()});
     if let Some(metadata_object) = metadata.as_object_mut() {
-        for key in ["scope_type", "scope_tags", "mapped_stock_codes", "article_summary", "article_summary_status", "article_summary_url", "article_summary_fetched_at_epoch_ms"] {
+        for key in [
+            "scope_type",
+            "scope_tags",
+            "mapped_stock_codes",
+            "fetched_at_epoch_ms",
+            "article_summary",
+            "article_summary_status",
+            "article_summary_url",
+            "article_summary_fetched_at_epoch_ms",
+        ] {
             if let Some(value) = object.get(key) {
                 metadata_object.insert(key.to_string(), value.clone());
             }
@@ -3296,7 +3507,8 @@ pub(crate) fn with_model_evidence_database_guard<T>(
     operation: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
     let lock = APP_RESEARCH_DATABASE_LOCK.get_or_init(|| RwLock::new(()));
-    let _guard = lock.write()
+    let _guard = lock
+        .write()
         .map_err(|_| "research database coordination lock is poisoned".to_string())?;
     operation()
 }
@@ -3321,26 +3533,63 @@ struct AgentEvidenceCandidate {
 }
 
 fn agent_source_group(tier: &str) -> &str {
-    match tier { "news_media" | "news" => "news", other => other }
+    match tier {
+        "news_media" | "news" => "news",
+        other => other,
+    }
 }
 
 fn bounded_agent_metadata(value: &Value, budget: &mut usize, depth: usize) -> Option<Value> {
-    if depth > 6 || *budget < 4 { return None; }
+    if depth > 6 || *budget < 4 {
+        return None;
+    }
     match value {
         Value::Object(object) => {
             *budget -= 2;
             let mut result = serde_json::Map::new();
-            let preferred = ["market", "report_period", "raw_report_period", "report_date", "period_end", "disclosed_at", "currency", "unit",
-                "verification_status", "audit_status", "metrics", "official_values", "verification_conflicts", "official_source_url",
-                "official_source_name", "fetched_at", "source_kind", "article_summary_status", "article_summary_url", "article_summary_fetched_at_epoch_ms"];
-            let keys = preferred.iter().filter_map(|key| object.get_key_value(*key))
-                .chain(object.iter().filter(|(key, _)| !preferred.contains(&key.as_str()))).take(48);
+            let preferred = [
+                "market",
+                "report_period",
+                "raw_report_period",
+                "report_date",
+                "period_end",
+                "disclosed_at",
+                "currency",
+                "unit",
+                "verification_status",
+                "audit_status",
+                "metrics",
+                "official_values",
+                "verification_conflicts",
+                "official_source_url",
+                "official_source_name",
+                "fetched_at",
+                "source_kind",
+                "article_summary_status",
+                "article_summary_url",
+                "article_summary_fetched_at_epoch_ms",
+            ];
+            let keys = preferred
+                .iter()
+                .filter_map(|key| object.get_key_value(*key))
+                .chain(
+                    object
+                        .iter()
+                        .filter(|(key, _)| !preferred.contains(&key.as_str())),
+                )
+                .take(48);
             for (key, item) in keys {
-                if key.chars().count() > 128 { continue; }
+                if key.chars().count() > 128 {
+                    continue;
+                }
                 let key_cost = serde_json::to_string(key).ok()?.chars().count() + 2;
-                if *budget < key_cost + 4 { break; }
+                if *budget < key_cost + 4 {
+                    break;
+                }
                 *budget -= key_cost;
-                if let Some(item) = bounded_agent_metadata(item, budget, depth + 1) { result.insert(key.clone(), item); }
+                if let Some(item) = bounded_agent_metadata(item, budget, depth + 1) {
+                    result.insert(key.clone(), item);
+                }
             }
             Some(Value::Object(result))
         }
@@ -3348,21 +3597,32 @@ fn bounded_agent_metadata(value: &Value, budget: &mut usize, depth: usize) -> Op
             *budget -= 2;
             let mut result = Vec::new();
             for item in items.iter().take(32) {
-                if *budget < 5 { break; }
+                if *budget < 5 {
+                    break;
+                }
                 *budget -= 1;
-                if let Some(item) = bounded_agent_metadata(item, budget, depth + 1) { result.push(item); }
+                if let Some(item) = bounded_agent_metadata(item, budget, depth + 1) {
+                    result.push(item);
+                }
             }
             Some(Value::Array(result))
         }
         Value::String(text) => {
             let mut text = text.chars().take(1200).collect::<String>();
-            while serde_json::to_string(&text).ok()?.chars().count() > *budget { text.pop()?; }
+            while serde_json::to_string(&text).ok()?.chars().count() > *budget {
+                text.pop()?;
+            }
             *budget -= serde_json::to_string(&text).ok()?.chars().count();
             Some(Value::String(text))
         }
         _ => {
             let cost = value.to_string().chars().count();
-            if *budget < cost { None } else { *budget -= cost; Some(value.clone()) }
+            if *budget < cost {
+                None
+            } else {
+                *budget -= cost;
+                Some(value.clone())
+            }
         }
     }
 }
@@ -3378,7 +3638,8 @@ fn agent_evidence_candidate(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentEv
     let metadata = serde_json::from_str::<Value>(&raw_metadata).unwrap_or_else(|_| json!({}));
     let lexical_score: f64 = row.get(12)?;
     let stock_codes: String = row.get(10)?;
-    let bounded_metadata = bounded_agent_metadata(&metadata, &mut 6000, 0).unwrap_or_else(|| json!({}));
+    let bounded_metadata =
+        bounded_agent_metadata(&metadata, &mut 6000, 0).unwrap_or_else(|| json!({}));
     let metadata_truncated = bounded_metadata != metadata;
     let mut citation = json!({"citation_id":"","document_id":document_id,"chunk_id":row.get::<_, String>(0)?,
         "title":title.chars().take(256).collect::<String>(),"excerpt":content.chars().take(1200).collect::<String>(),
@@ -3389,17 +3650,29 @@ fn agent_evidence_candidate(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentEv
         "document_content_hash":row.get::<_,String>(13)?,"chunk_content_hash":row.get::<_,String>(14)?,
         "stock_codes":serde_json::from_str::<Value>(&stock_codes).unwrap_or_else(|_| json!([])),
         "metadata":bounded_metadata});
-    if metadata_truncated { citation["metadata_truncated"] = json!(true); }
-    if let Some(summary) = metadata.get("article_summary").and_then(Value::as_str)
-        .filter(|text| text.chars().count() >= 15 && text.trim() != title.trim()) {
+    if metadata_truncated {
+        citation["metadata_truncated"] = json!(true);
+    }
+    if let Some(summary) = metadata
+        .get("article_summary")
+        .and_then(Value::as_str)
+        .filter(|text| text.chars().count() >= 15 && text.trim() != title.trim())
+    {
         citation["article_summary"] = json!({"text":summary.chars().take(1200).collect::<String>(),
             "provenance":"extracted_article_summary", "verification_status":"unverified_media_summary",
             "status":metadata.get("article_summary_status").and_then(Value::as_str).unwrap_or("available").chars().take(64).collect::<String>(),
             "url":metadata.get("article_summary_url").and_then(Value::as_str).or(url.as_deref()).map(|url|url.chars().take(2048).collect::<String>()),
             "fetched_at_epoch_ms":metadata.get("article_summary_fetched_at_epoch_ms").and_then(Value::as_i64)});
     }
-    let published_at_utc = published_at.as_deref().and_then(|value| normalized_research_timestamp(value, false));
-    Ok(AgentEvidenceCandidate {document_id, published_at_utc, lexical_score, citation})
+    let published_at_utc = published_at
+        .as_deref()
+        .and_then(|value| normalized_research_timestamp(value, false));
+    Ok(AgentEvidenceCandidate {
+        document_id,
+        published_at_utc,
+        lexical_score,
+        citation,
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -3427,7 +3700,13 @@ fn load_vector_cache(
                     COALESCE((SELECT MAX(updated_at_epoch_ms) FROM documents), 0)
              FROM embeddings",
             [],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
         )
         .map_err(|error| format!("failed to inspect embedding cache version: {error}"))?;
     let cache = VECTOR_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -3461,13 +3740,22 @@ fn load_vector_cache(
             let dimensions: i64 = row.get(3)?;
             let remote_export_allowed: i64 = row.get(4)?;
             let published_at_utc: Option<String> = row.get(5)?;
-            Ok((chunk_id, stock_codes_json, blob, dimensions, remote_export_allowed, published_at_utc))
+            Ok((
+                chunk_id,
+                stock_codes_json,
+                blob,
+                dimensions,
+                remote_export_allowed,
+                published_at_utc,
+            ))
         })
         .map_err(|error| format!("failed to query embedding cache: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("failed to read embedding cache: {error}"))?;
     let mut decoded = Vec::with_capacity(rows.len());
-    for (chunk_id, stock_codes_json, blob, dimensions, remote_export_allowed, published_at_utc) in rows {
+    for (chunk_id, stock_codes_json, blob, dimensions, remote_export_allowed, published_at_utc) in
+        rows
+    {
         let vector = decode_f32_blob(&blob)?;
         if vector.len() != dimensions.max(0) as usize || vector.len() != 512 {
             continue;
@@ -4006,15 +4294,21 @@ fn configure_connection(connection: &Connection) -> Result<(), String> {
     // One normalization function keeps SQL filtering, vector caches and frozen
     // evidence comparisons at the same precision, before any candidate limit.
     use rusqlite::functions::FunctionFlags;
-    connection.create_scalar_function(
-        "research_timestamp_utc",
-        1,
-        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC | FunctionFlags::SQLITE_INNOCUOUS,
-        |context| {
-            let value = context.get::<Option<String>>(0)?;
-            Ok(value.as_deref().and_then(|value| normalized_research_timestamp(value, false)))
-        },
-    ).map_err(|error| format!("failed to register research timestamp normalization: {error}"))?;
+    connection
+        .create_scalar_function(
+            "research_timestamp_utc",
+            1,
+            FunctionFlags::SQLITE_UTF8
+                | FunctionFlags::SQLITE_DETERMINISTIC
+                | FunctionFlags::SQLITE_INNOCUOUS,
+            |context| {
+                let value = context.get::<Option<String>>(0)?;
+                Ok(value
+                    .as_deref()
+                    .and_then(|value| normalized_research_timestamp(value, false)))
+            },
+        )
+        .map_err(|error| format!("failed to register research timestamp normalization: {error}"))?;
     crate::durability::configure_user_connection(connection)
 }
 
@@ -4045,6 +4339,13 @@ fn document_metadata(document: &Value) -> Value {
         }
     }
     metadata
+}
+
+fn metadata_epoch_millis(metadata: &Value, key: &str) -> Option<i64> {
+    metadata
+        .get(key)
+        .and_then(Value::as_i64)
+        .filter(|time| *time > 0 && *time <= 8_640_000_000_000_000)
 }
 
 fn metadata_string(raw: String, key: &str) -> Option<String> {
@@ -4433,67 +4734,125 @@ fn vector_backend_status() -> Value {
 mod tests {
     use super::*;
 
-    fn hk_context_fixture(store: &ResearchStore) -> (Value,Value) {
-        let document=json!({"document_id":"permission-hk","title":"腾讯研究资料","content":"原始资料只用于本地回放与已授权模型分析。",
+    fn hk_context_fixture(store: &ResearchStore) -> (Value, Value) {
+        let document = json!({"document_id":"permission-hk","title":"腾讯研究资料","content":"原始资料只用于本地回放与已授权模型分析。",
             "source_tier":"research_report","source_name":"用户导入","stock_codes":["00700.HK"],"user_imported":true,"remote_export_allowed":true,
             "metadata":{"market":"hk","metrics":{"eps":{"value":12.639,"currency":"CNY","unit":"currency/share"}}}});
         store.ingest_documents(&[document.clone()]).unwrap();
-        let evidence=store.agent_evidence(&json!({"query":"腾讯","stock_code":"00700.HK","remote_safe_only":true})).unwrap();
-        let context=crate::hk_agent_research::attach_evidence(json!({}),&evidence,"00700.HK")["research_context"].clone();
-        (document,context)
+        let evidence = store
+            .agent_evidence(
+                &json!({"query":"腾讯","stock_code":"00700.HK","remote_safe_only":true}),
+            )
+            .unwrap();
+        let context = crate::hk_agent_research::attach_evidence(json!({}), &evidence, "00700.HK")
+            ["research_context"]
+            .clone();
+        (document, context)
     }
 
     #[test]
     fn saved_hk_context_rechecks_revoked_permission_and_preserves_local_history() {
-        let path=temporary_database_path("hk-context-revoked");
-        let store=ResearchStore::open(&path).unwrap();
-        let (mut document,context)=hk_context_fixture(&store);
-        assert!(store.validate_hk_context(&context,true).unwrap());
+        let path = temporary_database_path("hk-context-revoked");
+        let store = ResearchStore::open(&path).unwrap();
+        let (mut document, context) = hk_context_fixture(&store);
+        assert!(store.validate_hk_context(&context, true).unwrap());
         store.ingest_documents(&[document.clone()]).unwrap();
-        assert!(store.validate_hk_context(&context,true).unwrap());
-        document["remote_export_allowed"]=json!(false);
+        assert!(store.validate_hk_context(&context, true).unwrap());
+        document["remote_export_allowed"] = json!(false);
         store.ingest_documents(&[document]).unwrap();
-        assert!(!store.validate_hk_context(&context,true).unwrap(),"old model consent cannot override current permission");
-        let current=store.agent_evidence(&json!({"query":"腾讯","stock_code":"00700.HK","remote_safe_only":true})).unwrap();
-        assert_eq!(current["citations"],json!([]));
-        assert!(!store.messages(&json!({"stock_code":"00700.HK"})).unwrap()["items"].as_array().unwrap().is_empty());
-        assert!(crate::hk_agent_research::answer_from_context(&context,"继续回放").to_string().contains("原始资料"));
+        assert!(
+            !store.validate_hk_context(&context, true).unwrap(),
+            "old model consent cannot override current permission"
+        );
+        let current = store
+            .agent_evidence(
+                &json!({"query":"腾讯","stock_code":"00700.HK","remote_safe_only":true}),
+            )
+            .unwrap();
+        assert_eq!(current["citations"], json!([]));
+        assert!(
+            !store.messages(&json!({"stock_code":"00700.HK"})).unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            crate::hk_agent_research::answer_from_context(&context, "继续回放")
+                .to_string()
+                .contains("原始资料")
+        );
     }
 
     #[test]
     fn frozen_model_tool_evidence_retains_valid_source_identity() {
-        let store=ResearchStore::open(temporary_database_path("hk-frozen-source-validation")).unwrap();
-        let (document,context)=hk_context_fixture(&store);
-        let frozen=crate::hk_agent_research::frozen_evidence(&context);
-        let current=crate::hk_agent_research::context_from_frozen_evidence(&frozen);
-        assert!(store.validate_hk_context(&current,true).unwrap());
-        let mut revoked=document;
-        revoked["remote_export_allowed"]=json!(false);
+        let store =
+            ResearchStore::open(temporary_database_path("hk-frozen-source-validation")).unwrap();
+        let (document, context) = hk_context_fixture(&store);
+        let frozen = crate::hk_agent_research::frozen_evidence(&context);
+        let current = crate::hk_agent_research::context_from_frozen_evidence(&frozen);
+        assert!(store.validate_hk_context(&current, true).unwrap());
+        let mut revoked = document;
+        revoked["remote_export_allowed"] = json!(false);
         store.ingest_documents(&[revoked]).unwrap();
-        assert!(!store.validate_hk_context(&current,true).unwrap());
+        assert!(!store.validate_hk_context(&current, true).unwrap());
     }
 
     #[test]
     fn review_revoked_cited_revision_preserves_history_and_blocks_original_export() {
         let store = ResearchStore::open(temporary_database_path("hk-cited-revocation")).unwrap();
         let (mut document, context) = hk_context_fixture(&store);
-        let thread = store.create_thread(&json!({"stock_code":"00700.HK","title":"历史研究"})).unwrap();
+        let thread = store
+            .create_thread(&json!({"stock_code":"00700.HK","title":"历史研究"}))
+            .unwrap();
         let thread_id = thread["id"].as_str().unwrap();
-        let response = store.query(&json!({"query":"腾讯","stock_code":"00700.HK"})).unwrap();
-        store.save_answer(thread_id, "腾讯的原始资料", &response).unwrap();
-        assert!(store.connection().unwrap().query_row("SELECT cited_count FROM documents WHERE id='permission-hk'", [], |row| row.get::<_, i64>(0)).unwrap() > 0);
+        let response = store
+            .query(&json!({"query":"腾讯","stock_code":"00700.HK"}))
+            .unwrap();
+        store
+            .save_answer(thread_id, "腾讯的原始资料", &response)
+            .unwrap();
+        assert!(
+            store
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT cited_count FROM documents WHERE id='permission-hk'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap()
+                > 0
+        );
         document["content"] = json!("更新后的资料也只允许在本地阅读。");
         document["remote_export_allowed"] = json!(false);
         store.ingest_documents(&[document]).unwrap();
-        assert!(!store.validate_hk_context(&context, true).unwrap(), "revocation must cover the retained original as well as its new revision");
-        let allowed: i64 = store.connection().unwrap().query_row("SELECT COUNT(*) FROM documents WHERE remote_export_allowed=1", [], |row| row.get(0)).unwrap();
+        assert!(
+            !store.validate_hk_context(&context, true).unwrap(),
+            "revocation must cover the retained original as well as its new revision"
+        );
+        let allowed: i64 = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM documents WHERE remote_export_allowed=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(allowed, 0);
-        assert!(store.thread(thread_id).unwrap().to_string().contains("原始资料"));
+        assert!(store
+            .thread(thread_id)
+            .unwrap()
+            .to_string()
+            .contains("原始资料"));
     }
 
     #[test]
     fn review_changed_chunk_semantics_advance_the_sentiment_cutoff_in_both_markets() {
-        for (market, code, second_code) in [("hk", "00700.HK", "00005.HK"), ("cn", "600519.SH", "600036.SH")] {
+        for (market, code, second_code) in [
+            ("hk", "00700.HK", "00005.HK"),
+            ("cn", "600519.SH", "600036.SH"),
+        ] {
             for (field, value) in [
                 ("stock_codes", json!([code, second_code])),
                 ("sentiment", json!("positive")),
@@ -4501,15 +4860,28 @@ mod tests {
                 ("entities", json!(["新增主体"])),
                 ("relation_types", json!(["新增关系"])),
             ] {
-                let store = ResearchStore::open(temporary_database_path(&format!("chunk-cutoff-{market}-{field}"))).unwrap();
+                let store = ResearchStore::open(temporary_database_path(&format!(
+                    "chunk-cutoff-{market}-{field}"
+                )))
+                .unwrap();
                 let mut document = json!({"document_id":"known","title":"企业公告","content":"同一份原始公告正文",
                     "source_tier":"filing","source_name":"交易所","stock_codes":[code],"metadata":{"market":market}});
                 store.ingest_documents(&[document.clone()]).unwrap();
-                store.connection().unwrap().execute("UPDATE documents SET imported_at_epoch_ms=1000,updated_at_epoch_ms=1000", []).unwrap();
+                store
+                    .connection()
+                    .unwrap()
+                    .execute(
+                        "UPDATE documents SET imported_at_epoch_ms=1000,updated_at_epoch_ms=1000",
+                        [],
+                    )
+                    .unwrap();
                 assert_eq!(store.sentiment_documents(code, 2000).unwrap().len(), 1);
                 document[field] = value;
                 store.ingest_documents(&[document]).unwrap();
-                assert!(store.sentiment_documents(code, 2000).unwrap().is_empty(), "changed {market} {field} cannot enter an earlier evidence snapshot");
+                assert!(
+                    store.sentiment_documents(code, 2000).unwrap().is_empty(),
+                    "changed {market} {field} cannot enter an earlier evidence snapshot"
+                );
             }
         }
     }
@@ -4523,9 +4895,13 @@ mod tests {
             json!({"document_id":"cn","title":"内地资料","content":"内地资料","stock_codes":["600519.SH"],"metadata":{"market":"cn"}}),
             json!({"document_id":"local","title":"私有资料","content":"本地阅读资料","user_imported":true,"remote_export_allowed":false,"metadata":{"market":"hk"}}),
         ]).unwrap();
-        let evidence = store.unscoped_hk_agent_evidence(&json!({"query":"研究","remote_safe_only":true})).unwrap();
+        let evidence = store
+            .unscoped_hk_agent_evidence(&json!({"query":"研究","remote_safe_only":true}))
+            .unwrap();
         assert_eq!(evidence["citations"].as_array().unwrap().len(), 2);
-        assert!(store.validate_hk_model_evidence(&[evidence.clone()]).unwrap());
+        assert!(store
+            .validate_hk_model_evidence(&[evidence.clone()])
+            .unwrap());
         let mut revoked = document;
         revoked["remote_export_allowed"] = json!(false);
         store.ingest_documents(&[revoked]).unwrap();
@@ -4543,7 +4919,11 @@ mod tests {
         let (blocked, blocked_rx) = std::sync::mpsc::channel();
         let writer = std::thread::spawn(move || {
             begin_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-            assert!(APP_RESEARCH_DATABASE_LOCK.get().unwrap().try_read().is_err());
+            assert!(APP_RESEARCH_DATABASE_LOCK
+                .get()
+                .unwrap()
+                .try_read()
+                .is_err());
             blocked.send(()).unwrap();
             with_shared_app_database(|| writer_store.ingest_documents(&[document])).unwrap();
         });
@@ -4553,47 +4933,90 @@ mod tests {
             let generation = APP_RESEARCH_DATABASE_GENERATION.load(AtomicOrdering::Acquire);
             begin.send(()).unwrap();
             blocked_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-            assert_eq!(APP_RESEARCH_DATABASE_GENERATION.load(AtomicOrdering::Acquire), generation);
+            assert_eq!(
+                APP_RESEARCH_DATABASE_GENERATION.load(AtomicOrdering::Acquire),
+                generation
+            );
             // This point represents the request being handed to the transport.
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
         writer.join().unwrap();
-        assert!(!store.validate_hk_model_evidence(&[frozen]).unwrap(), "the next provider turn must reject the committed revocation");
+        assert!(
+            !store.validate_hk_model_evidence(&[frozen]).unwrap(),
+            "the next provider turn must reject the committed revocation"
+        );
     }
 
     #[test]
     fn saved_hk_context_rejects_changed_metrics_body_and_removed_documents() {
-        for change in ["metric","body","delete"] {
-            let path=temporary_database_path(&format!("hk-context-change-{change}"));
-            let store=ResearchStore::open(&path).unwrap();
-            let (mut document,context)=hk_context_fixture(&store);
+        for change in ["metric", "body", "delete"] {
+            let path = temporary_database_path(&format!("hk-context-change-{change}"));
+            let store = ResearchStore::open(&path).unwrap();
+            let (mut document, context) = hk_context_fixture(&store);
             match change {
-                "metric"=>{ document["metadata"]["metrics"]["eps"]["currency"]=json!("HKD");store.ingest_documents(&[document]).unwrap(); }
-                "body"=>{ document["content"]=json!("不同的当前资料，不能沿用原来的引用。");store.ingest_documents(&[document]).unwrap(); }
-                _=>{ store.connection().unwrap().execute("DELETE FROM documents WHERE id='permission-hk'",[]).unwrap(); }
+                "metric" => {
+                    document["metadata"]["metrics"]["eps"]["currency"] = json!("HKD");
+                    store.ingest_documents(&[document]).unwrap();
+                }
+                "body" => {
+                    document["content"] = json!("不同的当前资料，不能沿用原来的引用。");
+                    store.ingest_documents(&[document]).unwrap();
+                }
+                _ => {
+                    store
+                        .connection()
+                        .unwrap()
+                        .execute("DELETE FROM documents WHERE id='permission-hk'", [])
+                        .unwrap();
+                }
             }
-            assert!(!store.validate_hk_context(&context,true).unwrap(),"changed {change} must invalidate old E bindings");
+            assert!(
+                !store.validate_hk_context(&context, true).unwrap(),
+                "changed {change} must invalidate old E bindings"
+            );
         }
     }
 
     #[test]
     fn saved_hk_context_rejects_changes_beyond_excerpt_and_changed_article_summaries() {
-        for change in ["tail","summary","missing_hash"] {
-            let store=ResearchStore::open(temporary_database_path(&format!("hk-context-{change}"))).unwrap();
-            let (mut document,_)=hk_context_fixture(&store);
-            document["content"]=json!(format!("{}原始结尾","已知资料".repeat(400)));
-            document["metadata"]["article_summary"]=json!("这是原始正文摘要，内容涉及企业经营情况。");
+        for change in ["tail", "summary", "missing_hash"] {
+            let store =
+                ResearchStore::open(temporary_database_path(&format!("hk-context-{change}")))
+                    .unwrap();
+            let (mut document, _) = hk_context_fixture(&store);
+            document["content"] = json!(format!("{}原始结尾", "已知资料".repeat(400)));
+            document["metadata"]["article_summary"] =
+                json!("这是原始正文摘要，内容涉及企业经营情况。");
             store.ingest_documents(&[document.clone()]).unwrap();
-            let evidence=store.agent_evidence(&json!({"query":"资料","stock_code":"00700.HK"})).unwrap();
-            let mut context=crate::hk_agent_research::attach_evidence(json!({}),&evidence,"00700.HK")["research_context"].clone();
-            assert!(store.validate_hk_context(&context,true).unwrap());
+            let evidence = store
+                .agent_evidence(&json!({"query":"资料","stock_code":"00700.HK"}))
+                .unwrap();
+            let mut context =
+                crate::hk_agent_research::attach_evidence(json!({}), &evidence, "00700.HK")
+                    ["research_context"]
+                    .clone();
+            assert!(store.validate_hk_context(&context, true).unwrap());
             match change {
-                "tail"=>document["content"]=json!(format!("{}不同结尾","已知资料".repeat(400))),
-                "summary"=>document["metadata"]["article_summary"]=json!("这是已经变化的正文摘要，讨论另一种财务状况。"),
-                _=>{context["evidence"][0].as_object_mut().unwrap().remove("document_content_hash");}
+                "tail" => {
+                    document["content"] = json!(format!("{}不同结尾", "已知资料".repeat(400)))
+                }
+                "summary" => {
+                    document["metadata"]["article_summary"] =
+                        json!("这是已经变化的正文摘要，讨论另一种财务状况。")
+                }
+                _ => {
+                    context["evidence"][0]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("document_content_hash");
+                }
             }
             store.ingest_documents(&[document]).unwrap();
-            assert!(!store.validate_hk_context(&context,true).unwrap(),"invalid {change}");
+            assert!(
+                !store.validate_hk_context(&context, true).unwrap(),
+                "invalid {change}"
+            );
         }
     }
 
@@ -4601,20 +5024,39 @@ mod tests {
     fn unchanged_hk_ingest_keeps_known_evidence_inside_the_sentiment_cutoff() {
         let path = temporary_database_path("hk-unchanged-cutoff");
         let store = ResearchStore::open(&path).unwrap();
-        let docs = [json!({"document_id":"known-hk","title":"腾讯公告","content":"已知公告原文",
+        let docs = [
+            json!({"document_id":"known-hk","title":"腾讯公告","content":"已知公告原文",
             "source_tier":"filing","source_name":"HKEXnews","stock_codes":["00700.HK"],
-            "published_at":"2026-11-09","metadata":{"market":"hk","report_period":"2026Q3"}})];
+            "published_at":"2026-11-09","metadata":{"market":"hk","report_period":"2026Q3"}}),
+        ];
         store.ingest_documents(&docs).unwrap();
-        store.connection().unwrap().execute("UPDATE documents SET imported_at_epoch_ms=1000,updated_at_epoch_ms=1000",[]).unwrap();
-        assert_eq!(store.sentiment_documents("00700.HK",2000).unwrap().len(),1);
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE documents SET imported_at_epoch_ms=1000,updated_at_epoch_ms=1000",
+                [],
+            )
+            .unwrap();
+        assert_eq!(
+            store.sentiment_documents("00700.HK", 2000).unwrap().len(),
+            1
+        );
         store.ingest_documents(&docs).unwrap();
-        let retained = store.sentiment_documents("00700.HK",2000).unwrap();
-        assert_eq!(retained.len(),1,"reading the same cached content cannot make it newer than the snapshot");
-        assert_eq!(retained[0]["updated_at"],1000);
+        let retained = store.sentiment_documents("00700.HK", 2000).unwrap();
+        assert_eq!(
+            retained.len(),
+            1,
+            "reading the same cached content cannot make it newer than the snapshot"
+        );
+        assert_eq!(retained[0]["updated_at"], 1000);
         let mut changed = docs[0].clone();
         changed["content"] = json!("截止之后真实更新的公告内容");
         store.ingest_documents(&[changed]).unwrap();
-        assert!(store.sentiment_documents("00700.HK",2000).unwrap().is_empty());
+        assert!(store
+            .sentiment_documents("00700.HK", 2000)
+            .unwrap()
+            .is_empty());
     }
     use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -4646,22 +5088,54 @@ mod tests {
                     "article_summary_status":"available","article_summary_url":"https://example.com/news",
                     "article_summary_fetched_at_epoch_ms":1794116685279i64}}),
         ]).unwrap();
-        let response = store.agent_evidence(&json!({"query":"混元招聘","stock_code":"00700.HK","top_k":3})).unwrap();
+        let response = store
+            .agent_evidence(&json!({"query":"混元招聘","stock_code":"00700.HK","top_k":3}))
+            .unwrap();
         let citations = response["citations"].as_array().unwrap();
-        assert_eq!(citations.len(), 3, "sparse query must still cover all available core sources");
-        let tiers = citations.iter().filter_map(|item| item["source_tier"].as_str()).collect::<HashSet<_>>();
-        assert_eq!(tiers, HashSet::from(["filing", "financial_snapshot", "news"]));
-        assert!(citations.iter().any(|item| item["document_id"] == "filing-new"));
-        let news = citations.iter().find(|item| item["document_id"] == "news").unwrap();
+        assert_eq!(
+            citations.len(),
+            3,
+            "sparse query must still cover all available core sources"
+        );
+        let tiers = citations
+            .iter()
+            .filter_map(|item| item["source_tier"].as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            tiers,
+            HashSet::from(["filing", "financial_snapshot", "news"])
+        );
+        assert!(citations
+            .iter()
+            .any(|item| item["document_id"] == "filing-new"));
+        let news = citations
+            .iter()
+            .find(|item| item["document_id"] == "news")
+            .unwrap();
         assert_eq!(news["excerpt"], "混元招聘原始标题摘录");
         assert_eq!(news["stock_codes"], json!(["00700.HK"]));
         assert_eq!(news["metadata"]["market"], "hk");
-        assert_eq!(news["article_summary"]["text"], "正文报道披露招聘六十余个岗位，并列明招聘计划。");
-        assert_eq!(news["article_summary"]["provenance"], "extracted_article_summary");
+        assert_eq!(
+            news["article_summary"]["text"],
+            "正文报道披露招聘六十余个岗位，并列明招聘计划。"
+        );
+        assert_eq!(
+            news["article_summary"]["provenance"],
+            "extracted_article_summary"
+        );
         assert_eq!(news["article_summary"]["url"], "https://example.com/news");
-        assert_eq!(news["article_summary"]["fetched_at_epoch_ms"], 1794116685279i64);
+        assert_eq!(
+            news["article_summary"]["fetched_at_epoch_ms"],
+            1794116685279i64
+        );
         let connection = store.connection().unwrap();
-        let original: String = connection.query_row("SELECT content FROM documents WHERE id = 'news'", [], |row| row.get(0)).unwrap();
+        let original: String = connection
+            .query_row(
+                "SELECT content FROM documents WHERE id = 'news'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(original, "混元招聘原始标题摘录");
         drop(connection);
         drop(store);
@@ -4672,11 +5146,26 @@ mod tests {
     fn agent_evidence_rejects_missing_or_noncanonical_hk_identity() {
         let path = temporary_database_path("agent-evidence-identity");
         let store = ResearchStore::open(&path).unwrap();
-        for code in [Value::Null, json!("00700"), json!("700.HK"), json!("000700.SH"), json!("00700.hk")] {
-            assert!(store.agent_evidence(&json!({"query":"研究","stock_code":code})).is_err(), "identity {code} must be rejected");
+        for code in [
+            Value::Null,
+            json!("00700"),
+            json!("700.HK"),
+            json!("000700.SH"),
+            json!("00700.hk"),
+        ] {
+            assert!(
+                store
+                    .agent_evidence(&json!({"query":"研究","stock_code":code}))
+                    .is_err(),
+                "identity {code} must be rejected"
+            );
         }
-        assert!(store.agent_evidence(&json!({"query":"","stock_code":"00700.HK"})).is_err());
-        assert!(store.agent_evidence(&json!({"query":"研究","stock_code":"00700.HK","market":"cn"})).is_err());
+        assert!(store
+            .agent_evidence(&json!({"query":"","stock_code":"00700.HK"}))
+            .is_err());
+        assert!(store
+            .agent_evidence(&json!({"query":"研究","stock_code":"00700.HK","market":"cn"}))
+            .is_err());
         drop(store);
         remove_sqlite_files(&path).unwrap();
     }
@@ -4692,7 +5181,7 @@ mod tests {
             ("other-hk", json!(["00005.HK"]), "hk", true),
             ("cn", json!(["000700.SH"]), "cn", true),
             ("wrong-market", json!(["00700.HK"]), "cn", true),
-            ("mixed-market", json!(["00700.HK","000700.SH"]), "hk", true),
+            ("mixed-market", json!(["00700.HK", "000700.SH"]), "hk", true),
         ] {
             documents.push(json!({"document_id":id,"title":"研究证据","content":"研究原始证据。","stock_codes":codes,
                 "source_tier":"news","remote_export_allowed":remote,"metadata":{"market":market}}));
@@ -4702,9 +5191,22 @@ mod tests {
         store.ingest_documents(&documents).unwrap();
         let request = json!({"query":"研究","stock_code":"00700.HK","top_k":16});
         let local = store.agent_evidence(&request).unwrap();
-        let ids = local["citations"].as_array().unwrap().iter().filter_map(|item| item["document_id"].as_str()).collect::<HashSet<_>>();
+        let ids = local["citations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|item| item["document_id"].as_str())
+            .collect::<HashSet<_>>();
         assert_eq!(ids, HashSet::from(["allowed", "private"]));
-        assert_eq!(local["citations"].as_array().unwrap().iter().find(|item| item["document_id"] == "private").unwrap()["remote_export_allowed"], false);
+        assert_eq!(
+            local["citations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["document_id"] == "private")
+                .unwrap()["remote_export_allowed"],
+            false
+        );
         let safe = store.agent_evidence(&json!({"remote_safe_only":true, "query":"研究", "stock_code":"00700.HK","top_k":16})).unwrap();
         assert_eq!(safe["citations"].as_array().unwrap().len(), 1);
         assert_eq!(safe["citations"][0]["document_id"], "allowed");
@@ -4726,7 +5228,9 @@ mod tests {
                     "article_summary_status":"状态".repeat(10000),"article_summary_fetched_at_epoch_ms":["未知时间".repeat(10000)]}}));
         }
         store.ingest_documents(&documents).unwrap();
-        let result = store.agent_evidence(&json!({"query":"专有线索","stock_code":"00700.HK","top_k":99})).unwrap();
+        let result = store
+            .agent_evidence(&json!({"query":"专有线索","stock_code":"00700.HK","top_k":99}))
+            .unwrap();
         let citations = result["citations"].as_array().unwrap();
         assert_eq!(citations.len(), 16);
         assert_eq!(citations[0]["document_id"], "news-23");
@@ -4736,12 +5240,34 @@ mod tests {
             assert!(item["excerpt"].as_str().unwrap().contains("专有线索"));
             assert!(item["excerpt"].as_str().unwrap().chars().count() <= 1200);
             assert!(item["title"].as_str().unwrap().chars().count() <= 256);
-            assert!(item["article_summary"]["text"].as_str().unwrap().chars().count() <= 1200);
-            assert!(item["article_summary"]["status"].as_str().unwrap().chars().count() <= 64);
+            assert!(
+                item["article_summary"]["text"]
+                    .as_str()
+                    .unwrap()
+                    .chars()
+                    .count()
+                    <= 1200
+            );
+            assert!(
+                item["article_summary"]["status"]
+                    .as_str()
+                    .unwrap()
+                    .chars()
+                    .count()
+                    <= 64
+            );
             assert!(item["article_summary"]["fetched_at_epoch_ms"].is_null());
         }
         assert!(serde_json::to_string(&result).unwrap().chars().count() < 200_000);
-        let original: String = store.connection().unwrap().query_row("SELECT content FROM chunks WHERE id = ?1", params![citations[0]["chunk_id"].as_str().unwrap()], |row| row.get(0)).unwrap();
+        let original: String = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT content FROM chunks WHERE id = ?1",
+                params![citations[0]["chunk_id"].as_str().unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(citations[0]["excerpt"], original);
         drop(store);
         remove_sqlite_files(&path).unwrap();
@@ -4833,7 +5359,10 @@ mod tests {
         assert_eq!(fixture["version"], "research-retrieval-eval-v5");
         assert_eq!(fixture["cases"].as_array().map(Vec::len), Some(40));
         assert_eq!(fixture["dataset"]["split"], "frozen-golden");
-        assert_eq!(fixture["dataset"]["generator"], "agent-authored-synthetic-reviewed-lineage-v1");
+        assert_eq!(
+            fixture["dataset"]["generator"],
+            "agent-authored-synthetic-reviewed-lineage-v1"
+        );
 
         for case in fixture["cases"]
             .as_array()
@@ -5073,23 +5602,30 @@ mod tests {
     fn hk_as_of_filters_recent_and_lexical_candidates_before_their_limits() {
         let path = temporary_database_path("hk-as-of-filter");
         let store = ResearchStore::open(&path).unwrap();
-        let mut documents = (0..140).map(|index| json!({
-            "document_id": format!("hk-future-{index:03}"), "title": "Future filing",
-            "content": "hkcutoffprobe", "source_tier": "filing",
-            "published_at": "2026-08-21T09:00:00+08:00", "stock_codes": ["00700.HK"],
-            "metadata": {"market": "hk"}
-        })).collect::<Vec<_>>();
+        let mut documents = (0..140)
+            .map(|index| {
+                json!({
+                    "document_id": format!("hk-future-{index:03}"), "title": "Future filing",
+                    "content": "hkcutoffprobe", "source_tier": "filing",
+                    "published_at": "2026-08-21T09:00:00+08:00", "stock_codes": ["00700.HK"],
+                    "metadata": {"market": "hk"}
+                })
+            })
+            .collect::<Vec<_>>();
         documents.extend([
             json!({"document_id":"hk-valid", "title":"Current filing",
                 "content":"hkcutoffprobe older supporting details", "source_tier":"filing",
                 "published_at":"2026-08-20T08:45:00+08:00", "stock_codes":["00700.HK"]}),
             json!({"document_id":"hk-unknown-date", "title":"Undated filing",
-                "content":"hkcutoffprobe", "source_tier":"filing", "stock_codes":["00700.HK"]})
+                "content":"hkcutoffprobe", "source_tier":"filing", "stock_codes":["00700.HK"]}),
         ]);
         store.ingest_documents(&documents).unwrap();
         let request = json!({"query":"hkcutoffprobe", "stock_code":"00700.HK", "top_k":1,
             "as_of":"2026-08-20T09:00:00+08:00"});
-        for result in [store.agent_evidence(&request), store.unscoped_hk_agent_evidence(&request)] {
+        for result in [
+            store.agent_evidence(&request),
+            store.unscoped_hk_agent_evidence(&request),
+        ] {
             let result = result.unwrap();
             assert_eq!(result["citations"].as_array().unwrap().len(), 1);
             assert_eq!(result["citations"][0]["document_id"], "hk-valid");
@@ -5102,15 +5638,19 @@ mod tests {
     fn as_of_rejects_invalid_dates_and_includes_the_whole_utc_date() {
         let path = temporary_database_path("research-as-of-validation");
         let store = ResearchStore::open(&path).unwrap();
-        store.ingest_documents(&[json!({"document_id":"late-utc", "title":"Late filing",
+        store
+            .ingest_documents(&[json!({"document_id":"late-utc", "title":"Late filing",
             "content":"cutoffvalidation", "source_tier":"filing", "stock_codes":["00700.HK"],
-            "published_at":"2026-08-20T23:59:59.999999999Z"})]).unwrap();
+            "published_at":"2026-08-20T23:59:59.999999999Z"})])
+            .unwrap();
         for cutoff in [json!("2026-02-30"), json!("tomorrow"), json!(""), json!(42)] {
-            let request = json!({"query":"cutoffvalidation", "stock_code":"00700.HK", "as_of":cutoff});
+            let request =
+                json!({"query":"cutoffvalidation", "stock_code":"00700.HK", "as_of":cutoff});
             assert!(store.query(&request).is_err(), "{cutoff}");
             assert!(store.agent_evidence(&request).is_err(), "{cutoff}");
         }
-        let request = json!({"query":"cutoffvalidation", "stock_code":"00700.HK", "as_of":"2026-08-20"});
+        let request =
+            json!({"query":"cutoffvalidation", "stock_code":"00700.HK", "as_of":"2026-08-20"});
         for result in [store.query(&request), store.agent_evidence(&request)] {
             assert_eq!(result.unwrap()["citations"][0]["document_id"], "late-utc");
         }
@@ -5142,18 +5682,28 @@ mod tests {
             "published_at": "2026-08-19T09:00:00+08:00",
             "stock_codes": ["000001.SZ"]
         }));
-        store.ingest_documents(&documents).expect("documents should ingest");
-        let work = store.pending_embedding_chunks(500).expect("embedding work should load");
+        store
+            .ingest_documents(&documents)
+            .expect("documents should ingest");
+        let work = store
+            .pending_embedding_chunks(500)
+            .expect("embedding work should load");
         let embeddings = work
             .into_iter()
             .map(|item| {
                 let is_future = item.chunk_id.starts_with("future-");
                 let mut vector = vec![0.0f32; 512];
-                if is_future { vector[0] = 1.0; } else { vector[1] = 1.0; }
+                if is_future {
+                    vector[0] = 1.0;
+                } else {
+                    vector[1] = 1.0;
+                }
                 (item, vector)
             })
             .collect::<Vec<_>>();
-        store.store_embeddings(&embeddings, "as-of-test").expect("embeddings should store");
+        store
+            .store_embeddings(&embeddings, "as-of-test")
+            .expect("embeddings should store");
         let mut query_vector = vec![0.0f32; 512];
         query_vector[0] = 1.0;
 
@@ -5169,7 +5719,9 @@ mod tests {
             )
             .expect("as-of query should succeed");
 
-        let citations = response["citations"].as_array().expect("citations should be an array");
+        let citations = response["citations"]
+            .as_array()
+            .expect("citations should be an array");
         assert_eq!(citations.len(), 1);
         assert_eq!(citations[0]["document_id"], "valid-before-cutoff");
         drop(store);
@@ -5180,29 +5732,46 @@ mod tests {
     fn as_of_preserves_subsecond_precision_before_all_candidate_limits() {
         let path = temporary_database_path("research-as-of-subsecond");
         let store = ResearchStore::open(&path).unwrap();
-        let mut documents = (0..51).map(|index| json!({
-            "document_id":format!("fractional-future-{index:02}"), "title":"Future notice",
-            "content":"fractionalprobe", "source_tier":"filing", "stock_codes":["00700.HK"],
-            "published_at":"2026-11-10T09:00:00.100000001+08:00"
-        })).collect::<Vec<_>>();
+        let mut documents = (0..51)
+            .map(|index| {
+                json!({
+                    "document_id":format!("fractional-future-{index:02}"), "title":"Future notice",
+                    "content":"fractionalprobe", "source_tier":"filing", "stock_codes":["00700.HK"],
+                    "published_at":"2026-11-10T09:00:00.100000001+08:00"
+                })
+            })
+            .collect::<Vec<_>>();
         documents.push(json!({"document_id":"fractional-valid", "title":"Current notice",
             "content":"fractionalprobe supporting details", "source_tier":"filing", "stock_codes":["00700.HK"],
             "published_at":"2026-11-10T01:00:00.100000000Z"}));
         store.ingest_documents(&documents).unwrap();
         let work = store.pending_embedding_chunks(500).unwrap();
-        let embeddings = work.into_iter().map(|item| {
-            let mut vector = vec![0.0f32; 512];
-            let axis = if item.chunk_id.starts_with("fractional-future-") { 0 } else { 1 };
-            vector[axis] = 1.0;
-            (item, vector)
-        }).collect::<Vec<_>>();
-        store.store_embeddings(&embeddings, "fractional-test").unwrap();
+        let embeddings = work
+            .into_iter()
+            .map(|item| {
+                let mut vector = vec![0.0f32; 512];
+                let axis = if item.chunk_id.starts_with("fractional-future-") {
+                    0
+                } else {
+                    1
+                };
+                vector[axis] = 1.0;
+                (item, vector)
+            })
+            .collect::<Vec<_>>();
+        store
+            .store_embeddings(&embeddings, "fractional-test")
+            .unwrap();
         let mut vector = vec![0.0f32; 512];
         vector[0] = 1.0;
         let request = json!({"query":"fractionalprobe", "stock_code":"00700.HK", "top_k":1,
             "as_of":"2026-11-10T09:00:00.100000000+08:00"});
-        for result in [store.query(&request), store.query_with_vector(&request, Some(&vector)),
-            store.agent_evidence(&request), store.unscoped_hk_agent_evidence(&request)] {
+        for result in [
+            store.query(&request),
+            store.query_with_vector(&request, Some(&vector)),
+            store.agent_evidence(&request),
+            store.unscoped_hk_agent_evidence(&request),
+        ] {
             let result = result.unwrap();
             assert_eq!(result["citations"].as_array().unwrap().len(), 1);
             assert_eq!(result["citations"][0]["document_id"], "fractional-valid");
@@ -5215,28 +5784,32 @@ mod tests {
     fn newer_publication_breaks_equal_source_and_retrieval_score_ties() {
         let path = temporary_database_path("research-recency-tie-break");
         let store = ResearchStore::open(&path).expect("research store should open");
-        store.ingest_documents(&[
-            json!({
-                "document_id": "a-old",
-                "title": "Certification filing",
-                "content": "recencyprobe certification status",
-                "source_tier": "filing",
-                "published_at": "2026-02-10T09:30:00+08:00"
-            }),
-            json!({
-                "document_id": "z-current",
-                "title": "Certification filing",
-                "content": "recencyprobe certification status",
-                "source_tier": "filing",
-                "published_at": "2026-08-20T09:30:00+08:00"
-            }),
-        ]).expect("documents should ingest");
+        store
+            .ingest_documents(&[
+                json!({
+                    "document_id": "a-old",
+                    "title": "Certification filing",
+                    "content": "recencyprobe certification status",
+                    "source_tier": "filing",
+                    "published_at": "2026-02-10T09:30:00+08:00"
+                }),
+                json!({
+                    "document_id": "z-current",
+                    "title": "Certification filing",
+                    "content": "recencyprobe certification status",
+                    "source_tier": "filing",
+                    "published_at": "2026-08-20T09:30:00+08:00"
+                }),
+            ])
+            .expect("documents should ingest");
 
         let response = store
             .query(&json!({"query":"recencyprobe", "top_k":2, "as_of":"2026-08-21T00:00:00+08:00"}))
             .expect("query should succeed");
 
-        let citations = response["citations"].as_array().expect("citations should be an array");
+        let citations = response["citations"]
+            .as_array()
+            .expect("citations should be an array");
         assert_eq!(citations[0]["document_id"], "z-current");
         assert_eq!(citations[1]["document_id"], "a-old");
         drop(store);
@@ -5924,7 +6497,10 @@ mod tests {
         let _ = remove_sqlite_files(&database_path);
         let migrated_cache_root = database_path.with_extension("");
         if migrated_cache_root.exists() {
-            assert_eq!(migrated_cache_root.parent(),Some(std::env::temp_dir().as_path()));
+            assert_eq!(
+                migrated_cache_root.parent(),
+                Some(std::env::temp_dir().as_path())
+            );
             fs::remove_dir_all(migrated_cache_root).unwrap();
         }
     }
@@ -5940,25 +6516,52 @@ mod tests {
         let item = json!({"id":"tencent-news-current","title":"腾讯股份购回交割","summary":"公司披露股份购回交割事项。",
             "stock_codes":["00700.HK"],"source":"新浪财经","source_tier":"news","published_at":published,
             "fetched_at_epoch_ms":1794154333645_u64,"url":"https://finance.sina.com.cn/stock/hk/tencent.shtml","remote_export_allowed":false});
-        external.replace_domain_batch(DataDomain::News, Market::HongKong, &[StoredRecord::new(DataDomain::News,Market::HongKong,
-            "current-news","item","sina_hk","news",fetched,Some(published),None,"unverified",vec![],item)]).unwrap();
+        external
+            .replace_domain_batch(
+                DataDomain::News,
+                Market::HongKong,
+                &[StoredRecord::new(
+                    DataDomain::News,
+                    Market::HongKong,
+                    "current-news",
+                    "item",
+                    "sina_hk",
+                    "news",
+                    fetched,
+                    Some(published),
+                    None,
+                    "unverified",
+                    vec![],
+                    item,
+                )],
+            )
+            .unwrap();
         external.replace_domain_batch(DataDomain::News, Market::Global, &[StoredRecord::new(DataDomain::News,Market::Global,
             "mainland-news","item","fixture","news",fetched,Some(published),None,"unverified",vec![],
             json!({"id":"cn-only","title":"A股资料不得进入港股库","summary":"A股资料。","stock_codes":["600519.SH"],"source":"fixture","published_at":published}))]).unwrap();
         assert!(!cache_path.exists());
         let store = ResearchStore::open(root.join("research/research-hk.sqlite")).unwrap();
-        let imported = ingest_news_cache_file_for_market(&store,&cache_path,Market::HongKong).unwrap();
-        assert_eq!(imported["document_count"],1);
+        let imported =
+            ingest_news_cache_file_for_market(&store, &cache_path, Market::HongKong).unwrap();
+        assert_eq!(imported["document_count"], 1);
         let messages = store.messages(&json!({"stock_code":"00700.HK"})).unwrap();
-        assert_eq!(messages["items"][0]["title"],"腾讯股份购回交割");
-        assert_eq!(messages["items"][0]["url"],"https://finance.sina.com.cn/stock/hk/tencent.shtml");
-        assert_eq!(store.overview(&json!({})).unwrap()["updated_at_epoch_ms"],1794154333645_i64);
-        let result = store.query(&json!({"query":"腾讯 股份购回","stock_code":"00700.HK"})).unwrap();
-        assert_eq!(result["citations"][0]["source_name"],"新浪财经");
-        assert_eq!(result["citations"][0]["remote_export_allowed"],false);
+        assert_eq!(messages["items"][0]["title"], "腾讯股份购回交割");
+        assert_eq!(
+            messages["items"][0]["url"],
+            "https://finance.sina.com.cn/stock/hk/tencent.shtml"
+        );
+        assert_eq!(
+            store.overview(&json!({})).unwrap()["updated_at_epoch_ms"],
+            1794154333645_i64
+        );
+        let result = store
+            .query(&json!({"query":"腾讯 股份购回","stock_code":"00700.HK"}))
+            .unwrap();
+        assert_eq!(result["citations"][0]["source_name"], "新浪财经");
+        assert_eq!(result["citations"][0]["remote_export_allowed"], false);
         assert!(!result.to_string().contains("A股资料不得进入港股库"));
-        ingest_news_cache_file_for_market(&store,&cache_path,Market::HongKong).unwrap();
-        assert_eq!(store.overview(&json!({})).unwrap()["document_count"],1);
+        ingest_news_cache_file_for_market(&store, &cache_path, Market::HongKong).unwrap();
+        assert_eq!(store.overview(&json!({})).unwrap()["document_count"], 1);
         drop(store);
         drop(external);
         std::fs::remove_dir_all(root).unwrap();
@@ -5974,13 +6577,21 @@ mod tests {
             "published_at":"2026-11-06 20:32:00","stock_codes":["00700.HK"],"url":"https://finance.sina.com.cn/stock/hk/tencent.shtml"
         }]})).unwrap()).unwrap();
         let store = ResearchStore::open(root.join("research/research-hk.sqlite")).unwrap();
-        store.ingest_documents(&legacy_documents_from_file(&path).unwrap()).unwrap();
-        let cited = store.query(&json!({"query":"腾讯股份购回","stock_code":"00700.HK"})).unwrap()["citations"][0]["document_id"].clone();
+        store
+            .ingest_documents(&legacy_documents_from_file(&path).unwrap())
+            .unwrap();
+        let cited = store
+            .query(&json!({"query":"腾讯股份购回","stock_code":"00700.HK"}))
+            .unwrap()["citations"][0]["document_id"]
+            .clone();
         assert!(cited.as_str().is_some());
-        ingest_news_cache_file_for_market(&store,&path,crate::external_data::Market::HongKong).unwrap();
-        assert_eq!(store.overview(&json!({})).unwrap()["document_count"],1);
-        let current = store.query(&json!({"query":"腾讯股份购回","stock_code":"00700.HK"})).unwrap();
-        assert_eq!(current["citations"][0]["document_id"],cited);
+        ingest_news_cache_file_for_market(&store, &path, crate::external_data::Market::HongKong)
+            .unwrap();
+        assert_eq!(store.overview(&json!({})).unwrap()["document_count"], 1);
+        let current = store
+            .query(&json!({"query":"腾讯股份购回","stock_code":"00700.HK"}))
+            .unwrap();
+        assert_eq!(current["citations"][0]["document_id"], cited);
         drop(store);
         fs::remove_dir_all(root).unwrap();
     }
@@ -6482,6 +7093,37 @@ mod tests {
         assert_eq!(item["source_name"], "中国政府网");
         assert_eq!(item["scope_type"], "region");
         assert_eq!(item["scope_tags"], json!(["宁德"]));
+    }
+
+    #[test]
+    fn cn_news_messages_preserve_publication_fetch_and_summary_provenance() {
+        let database = temporary_database_path("cn-news-provenance");
+        let source = database.with_extension("news-cache.json");
+        let store = ResearchStore::open(&database).unwrap();
+        let item = json!({"id":"cn-source","title":"华安证券发布业务进展","summary":"华安证券发布业务进展",
+            "source":"新浪财经","source_id":"sina_finance","source_tier":"news","stock_codes":["600909.SH"],
+            "url":"https://finance.sina.com.cn/stock/s/2026-11-12/doc-cn-fixture.shtml",
+            "published_at":"2026-11-12 09:00:00","fetched_at_epoch_ms":1794448800000_i64,
+            "article_summary":"证券经纪和资产管理业务持续发展。","article_summary_status":"available",
+            "article_summary_fetched_at_epoch_ms":1794448920000_i64});
+        let document = normalize_legacy_document(item, &source, &[]).unwrap();
+        store.ingest_documents(&[document.clone()]).unwrap();
+        store.mark_read(&json!({"stock_code":"600909.SH"})).unwrap();
+        let projected =
+            store.messages(&json!({"stock_code":"600909.SH"})).unwrap()["items"][0].clone();
+        assert_eq!(projected["published_at"], "2026-11-12 09:00:00");
+        assert_eq!(projected["source_name"], "新浪财经");
+        assert_eq!(projected["fetched_at_epoch_ms"], 1794448800000_i64);
+        assert_eq!(
+            projected["article_summary_fetched_at_epoch_ms"],
+            1794448920000_i64
+        );
+        assert_eq!(projected["summary_kind"], "article_summary");
+        assert_eq!(projected["summary"], "证券经纪和资产管理业务持续发展。");
+        assert_eq!(projected["document_id"], document["document_id"]);
+        assert_eq!(projected["unread"], false);
+        drop(store);
+        remove_sqlite_files(&database).unwrap();
     }
 
     #[test]

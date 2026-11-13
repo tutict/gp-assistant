@@ -516,6 +516,14 @@ const mockEmptySentimentSnapshot = (stockCode) => ({
 
 const mockResearchMessagesEmpty = [];
 const fixedResearchNow = Date.parse("2026-08-16T23:59:00+08:00");
+const mockNewsFetchedAt = fixedResearchNow - 180000;
+const mockNewsRefreshPartial = { news: { refresh: {
+  status: "partial", fetched_count: 5, summary_count: 2,
+  sources: [
+    { source_id: "filing", source_name: "公告来源", successful_requests: 1, failed_requests: 0, fetched_count: 3, errors: [] },
+    { source_id: "news", source_name: "新闻来源", successful_requests: 0, failed_requests: 1, fetched_count: 0, errors: ["截图样例：来源暂时超时"] },
+  ],
+} } };
 const mockResearchMessagesData = [
   {
     id: "news-msg-1",
@@ -525,6 +533,11 @@ const mockResearchMessagesData = [
     summary: "管理层披露的经营节奏继续改善，毛利率与费用率同步优化。",
     sentiment: "positive",
     source_tier: "filing",
+    source_name: "公司公告",
+    url: "https://example.com/research/news-1",
+    fetched_at_epoch_ms: mockNewsFetchedAt,
+    article_summary_fetched_at_epoch_ms: mockNewsFetchedAt + 60000,
+    summary_kind: "article_summary",
     published_at: "2026-08-16T09:10:00Z",
     unread: true,
   },
@@ -536,6 +549,9 @@ const mockResearchMessagesData = [
     summary: "财务快照显示库存周转恢复正常，终端动销更平滑。",
     sentiment: "bullish",
     source_tier: "financial_snapshot",
+    source_name: "财务快照",
+    fetched_at_epoch_ms: mockNewsFetchedAt,
+    summary_kind: "excerpt",
     published_at: "2026-08-16T10:05:00Z",
     unread: false,
   },
@@ -547,6 +563,9 @@ const mockResearchMessagesData = [
     summary: "部分研报认为短期估值修复已较充分，后续要看旺季兑现。",
     sentiment: "negative",
     source_tier: "research_report",
+    source_name: "研报资料",
+    fetched_at_epoch_ms: mockNewsFetchedAt,
+    summary_kind: "excerpt",
     published_at: "2026-08-16T11:20:00Z",
     unread: true,
   },
@@ -558,6 +577,11 @@ const mockResearchMessagesData = [
     summary: "行业新闻显示竞品促销动作增加，价格节奏需要继续跟踪。",
     sentiment: "bearish",
     source_tier: "news",
+    source_name: "财经新闻",
+    url: "https://example.com/research/news-4",
+    fetched_at_epoch_ms: mockNewsFetchedAt,
+    article_summary_fetched_at_epoch_ms: mockNewsFetchedAt + 120000,
+    summary_kind: "article_summary",
     published_at: "2026-08-16T14:00:00Z",
     unread: false,
   },
@@ -569,6 +593,9 @@ const mockResearchMessagesData = [
     summary: "社区消息围绕渠道、动销与补库存节奏展开，结论仍待核查。",
     sentiment: "neutral",
     source_tier: "community",
+    source_name: "社区线索",
+    fetched_at_epoch_ms: null,
+    summary_kind: "excerpt",
     published_at: "2026-08-16T15:25:00Z",
     unread: true,
   },
@@ -665,6 +692,7 @@ const mockResearchOverviewData = {
   unread_count: 3,
   unread_by_stock: { "600519.SH": 3 },
   messages: mockResearchMessagesData,
+  updated_at_epoch_ms: mockNewsFetchedAt,
   retrieval: { vector: { ready: true } },
 };
 
@@ -1043,6 +1071,16 @@ async function installHarnessState(page, observeResult = mockObserveResult, rese
     });
   });
   await page.route("**/api/screen", (route) => route.fulfill({ json: mockScreenResult }));
+  await page.route("**/api/cn/company-profile", (route) => {
+    const code = route.request().postDataJSON()?.code || mockStocks[0].code;
+    const stock = mockStocks.find(item => item.code === code);
+    return route.fulfill({ json: { code, stale: false, error: null, profile: {
+      code, name: stock?.name || code, industry: stock?.industry || "",
+      company_summary: "公司简介截图样例，用于验证长文字、来源和更新时间展示。",
+      business_summary: "主营业务截图样例：产品研发、生产与销售，以及相关经营服务。",
+      source: "公开公司资料（截图样例）", fetched_at: String(mockNewsFetchedAt),
+    } } });
+  });
   await page.route("**/api/observe/**", (route) => route.fulfill({ json: observeResult }));
   await page.route("**/api/backtest", (route) => route.fulfill({ json: mockBacktestResult }));
   const researchOverview = researchState?.overview ?? {};
@@ -1055,7 +1093,7 @@ async function installHarnessState(page, observeResult = mockObserveResult, rese
   await page.route("**/api/research/threads", (route) => route.fulfill({ json: { items: researchThreads } }));
   await page.route("**/api/research/threads/detail", (route) => route.fulfill({ json: researchDetail }));
   await page.route("**/api/research/index-status", (route) => route.fulfill({ json: researchIndexStatus }));
-  await page.route("**/api/research/refresh*", (route) => route.fulfill({ json: { refreshed: true } }));
+  await page.route("**/api/research/refresh*", (route) => route.fulfill({ json: researchState?.refresh ?? { refreshed: true } }));
   await page.route("**/api/research/mark-read", (route) => route.fulfill({ json: { updated: 1 } }));
   await page.route("**/api/research/threads/delete", (route) => route.fulfill({ json: { deleted: 1 } }));
   await page.route("**/api/research/threads/create", (route) => route.fulfill({
@@ -1682,6 +1720,7 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
       hasTouch: device.mobile,
       isMobile: device.mobile,
       colorScheme: device.theme,
+      reducedMotion: "reduce",
     });
     const page = await context.newPage();
     const consoleIssues = [];
@@ -1693,15 +1732,33 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
     page.on("pageerror", (error) => consoleIssues.push("pageerror: " + error.message));
 
     try {
+      await installFixedResearchClock(page);
       await installHarnessState(page);
       await page.goto(deviceUrl(device, "#sectionBacktest"), { waitUntil: "networkidle" });
+      await disableResearchMotion(page);
       await page.locator(".backtest-parameter-groups").waitFor({ state: "visible" });
+      const parameterBox = await page.locator(".backtest-parameter-groups").boundingBox();
+      const nativeDateInputs = await page.locator(".backtest-parameter-groups input[type=date]").evaluateAll((inputs) =>
+        inputs.map((input) => {
+          const rect = input.getBoundingClientRect();
+          return { id: input.id, value: input.value, x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        }),
+      );
+      if (nativeDateInputs[0]?.value !== "2020-01-01" || nativeDateInputs[1]?.value !== "2026-08-16") {
+        throw new Error(`${device.name} did not retain the fixed ISO backtest dates: ${JSON.stringify(nativeDateInputs)}`);
+      }
       const parameterDirectory = resolve(outputRoot, "backtest-page", device.name);
       mkdirSync(parameterDirectory, { recursive: true });
       const parameterPath = resolve(parameterDirectory, "backtest-parameters.png");
       await page.locator(".backtest-parameter-groups").screenshot({ path: parameterPath });
       const parameterRelativePath = `backtest-page/${device.name}/backtest-parameters.png`;
       const parameterBaseline = checkScreenshotBaseline(parameterPath, parameterRelativePath);
+      const dateRendering = {
+        locale: await page.evaluate(() => navigator.language),
+        deviceScaleFactor: device.dpr,
+        parameterBox,
+        inputs: nativeDateInputs,
+      };
       await page.getByLabel("运行回测").click();
       await page.locator(".backtest-result").waitFor({ state: "visible" });
       await page.getByRole("tab", { name: "结果概览", exact: true }).click();
@@ -1737,6 +1794,7 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
       reports.push({
         device: device.name,
         parameters: parameterRelativePath,
+        dateRendering,
         page: backtestRelativePath,
         volatility: volatilityRelativePath,
         baselines: { parameters: parameterBaseline, page: backtestBaseline, volatility: volatilityBaseline },
@@ -1885,7 +1943,7 @@ async function assertNewsPageState(page, device, scenarioName) {
     }
   }
 
-  if (scenarioName === "data") {
+  if (scenarioName === "data" || scenarioName === "partial") {
     const brief = page.locator(".research-daily-brief");
     if (await brief.getAttribute("open") !== null) {
       throw new Error(`${device.name}/${scenarioName} daily brief should start collapsed`);
@@ -1924,6 +1982,14 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         indexStatus: { schema_version: 1, document_count: 18, chunk_count: 52 },
       },
     },
+    {
+      name: "partial",
+      researchState: {
+        overview: mockResearchOverviewData, messages: mockResearchMessagesData,
+        threads: mockResearchThreads, detail: mockResearchThreadDetail,
+        refresh: mockNewsRefreshPartial,
+      },
+    },
   ];
   const reports = [];
 
@@ -1956,6 +2022,19 @@ async function captureNewsPageBaselines(browser, targetRoot) {
         await page.mouse.move(device.width / 2, Math.min(180, device.height / 3));
         await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
 
+        if (scenario.name === "partial") {
+          await page.getByRole("button", { name: "立即更新消息", exact: true }).click();
+          await page.getByText(/部分消息来源未更新/).waitFor({ state: "visible" });
+          await page.getByRole("button", { name: "重试更新", exact: true }).waitFor({ state: "visible" });
+          const recovery = await page.getByRole("button", { name: "重试更新", exact: true }).evaluate(element => {
+            const button = element.getBoundingClientRect();
+            const feedback = element.closest(".panel-feedback").getBoundingClientRect();
+            return { button: button.toJSON(), feedback: feedback.toJSON() };
+          });
+          if (recovery.button.bottom > recovery.feedback.bottom + 1 || recovery.button.height < 47.5) {
+            throw new Error(`${device.name} partial refresh recovery is clipped or undersized: ${JSON.stringify(recovery)}`);
+          }
+        }
         const checks = await assertNewsPageState(page, device, scenario.name);
 
         const directory = resolve(targetRoot, "news", scenario.name, device.name);
@@ -2697,7 +2776,7 @@ async function runScreenshotHarness() {
   }
 }
 
-export { installHarnessState, startBuiltAppServer, installAgentReplayState, mockObserveResult, mockResearchOverviewData, mockResearchOverviewEmpty, mockResearchMessagesData, mockResearchMessagesEmpty, mockResearchThreads, mockResearchThreadDetail };
+export { installHarnessState, startBuiltAppServer, installAgentReplayState, mockObserveResult, mockResearchOverviewData, mockResearchOverviewEmpty, mockResearchMessagesData, mockResearchMessagesEmpty, mockResearchThreads, mockResearchThreadDetail, mockNewsRefreshPartial };
 
 const isDirect = process.argv[1]
   && resolve(process.argv[1]) === fileURLToPath(import.meta.url);

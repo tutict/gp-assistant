@@ -1,7 +1,7 @@
 {
   "name": "gp-assistant-frontend",
   "private": true,
-  "version": "0.6.3",
+  "version": "0.6.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -29,25 +29,25 @@
     "test:contrast:built": "node ../../scripts/ui-contrast-audit.mjs --serve --fail",
     "test:bundle": "node ../../scripts/check-bundle-budget.mjs",
     "test:desktop": "npm run build:app && npm run test:desktop:built",
-    "test:desktop:built": "node ../../scripts/ui-screenshot.mjs --serve --check-only --check-search-overlay --check-news-page --check-backtest-page --check-news-interactions",
+    "test:desktop:built": "node ../../scripts/ui-screenshot.mjs --serve --check-only --compare-all-baselines --check-search-overlay --check-news-page --check-backtest-page --check-news-interactions",
     "ui:screenshots": "node ../../scripts/ui-screenshot.mjs",
     "ui:backtest": "npm run build:app && node ../../scripts/ui-screenshot.mjs --serve --backtest-page-only --output ./test-baselines --stable-report"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",
-    "lucide-react": "^1.65.0",
+    "lucide-react": "^1.72.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@types/react-test-renderer": "^19.3.0",
-    "@vitejs/plugin-react": "^6.1.2",
-    "playwright": "^1.64.1",
+    "@types/react-test-renderer": "^19.3.1",
+    "@vitejs/plugin-react": "^6.3.0",
+    "playwright": "1.64.1",
     "react-test-renderer": "^19.3.1",
     "typescript": "7.0.2",
-    "vite": "^8.3.5",
-    "vitest": "^5.0.5"
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
   }
 }

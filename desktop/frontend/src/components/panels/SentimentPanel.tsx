@@ -469,10 +469,6 @@ function StockWorkspace({ code, view, props, state, onSelect, stockOpen, onStock
         <details className="sentiment-rationale"><summary>判断依据、反证与失效条件</summary><div className="sentiment-reasoning"><Notes title="支持证据" items={analysis.support} /><Notes title="反对证据" items={analysis.against} /><Notes title="失效条件" items={analysis.invalidation} /></div></details>
       </section> : !state.loading && <p className="sentiment-empty-inline">{code ? "尚无分析，先核对证据再生成结论。" : "选择股票或输入代码开始研究。"}</p>}
       {!analysis && coverageDisclosure}
-      {analysis && <section className="sentiment-key-evidence" aria-label="关键证据">
-        <h3>关键证据</h3>
-        {keyEvidence.length ? keyEvidence.map((item) => <EvidenceRow key={item.id} item={item} onOpen={(id) => openEvidence(id, "analysis")} />) : <p>本次分析没有可展示的原始证据摘要。</p>}
-      </section>}
       {timelineSnapshot && <section className="sentiment-timeline">
         <div className="sentiment-section-heading">
           <h3>30 天情绪与市场表现</h3>
@@ -491,6 +487,10 @@ function StockWorkspace({ code, view, props, state, onSelect, stockOpen, onStock
         <div className="sentiment-section-heading"><p>{selectedDate ? `${selectedDate} 的事件与讨论` : "选择日期后，只显示当天的证据；缺失值保留为空。日期按北京时间归类。"}</p>{selectedDate && <button className="btn" type="button" onClick={() => setSelectedDate(null)}>全部日期</button>}</div>
         <details><summary>查看逐日数据表</summary><div className="sentiment-table-scroll" tabIndex={0} role="region" aria-label="逐日数据"><table><thead><tr><th>日期</th><th>正面</th><th>负面</th><th>讨论</th><th>情绪净值</th><th>收盘价</th><th>成交量</th><th>行业涨跌幅</th><th>行业上涨占比</th></tr></thead><tbody>{timelineSnapshot.timeline.map((point) => <tr key={point.date} data-selected={point.date === selectedDate}><td><button type="button" onClick={() => setSelectedDate(point.date === selectedDate ? null : point.date)}>{point.date}</button></td>{(["positive", "negative", "discussion_count", "sentiment_balance", "close", "volume", "industry_return", "industry_breadth"] as const).map((key) => <td key={key}>{number(point[key])}</td>)}</tr>)}</tbody></table></div></details>
       </section>}
+      {analysis && <details className="sentiment-key-evidence sentiment-detail-group" aria-label="关键证据">
+        <summary>关键证据 · {keyEvidence.length} 条</summary>
+        {keyEvidence.length ? keyEvidence.map((item) => <EvidenceRow key={item.id} item={item} onOpen={(id) => openEvidence(id, "analysis")} />) : <p>本次分析没有可展示的原始证据摘要。</p>}
+      </details>}
       {analysis && <details className="sentiment-detail-group" aria-label="三个分析维度"><summary>三个分析维度</summary><section className="sentiment-dimensions">{(["messages", "price", "industry"] as const).map((key) => {
         const dimension = analysis.dimensions.find((item) => item.key === key);
         return <article key={key}><h3>{dimensionLabels[key]} <span>{dimension?.direction || "证据不足"}</span></h3><p>{dimension?.summary || "此维度暂无可验证结论。"}</p><Refs ids={dimension?.evidence_ids || []} onOpen={(id) => openEvidence(id, "analysis")} />{dimension && <details><summary>支持、反对与缺口</summary><Notes title="支持" items={dimension.support} /><Notes title="反对" items={dimension.against} /><Notes title="数据缺口" items={dimension.gaps} /></details>}</article>;

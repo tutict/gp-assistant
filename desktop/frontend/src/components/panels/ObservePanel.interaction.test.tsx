@@ -5,7 +5,7 @@ const { getJsonMock } = vi.hoisted(() => ({ getJsonMock: vi.fn() }));
 
 vi.mock("../../lib/tauri", () => ({ getJson: getJsonMock }));
 
-import { ObservePanel } from "./ObservePanel";
+import { FundamentalSnapshot, ObservePanel, ObserveResultView } from "./ObservePanel";
 import { currentSystemDateInputValue } from "../../lib/format";
 
 function textContent(renderer: ReactTestRenderer): string {
@@ -118,9 +118,9 @@ describe("ObservePanel requests", () => {
     expect(textContent(renderer)).toContain("仅供选股研究，不构成投资建议；请结合公告、财报和自身风险承受能力独立判断。");
     expect(renderer.root.findAllByProps({ className: "observe-overview-data-summary" })).toHaveLength(1);
     const details = renderer.root.findByProps({ className: "observe-detail-disclosure" });
-    expect(details.props.open).toBe(true);
-    await act(async () => { details.props.onToggle({ currentTarget: { open: false } }); });
-    expect(renderer.root.findByProps({ className: "observe-detail-disclosure" }).props.open).toBe(false);
+    expect(details.props.open).toBe(false);
+    await act(async () => { details.props.onToggle({ currentTarget: { open: true } }); });
+    expect(renderer.root.findByProps({ className: "observe-detail-disclosure" }).props.open).toBe(true);
 
     await act(async () => {
       renderer.update(<ObservePanel {...props} />);
@@ -204,6 +204,121 @@ describe("ObservePanel requests", () => {
     });
     expect(textContent(renderer)).toContain("请输入有效股票代码。");
     expect(observeCalls()).toHaveLength(0);
+    const input = renderer.root.find(node => node.type === "input" && node.props.id === "observeCode");
+    expect(input.props["aria-invalid"]).toBe(true);
+    const feedback = renderer.root.findByProps({ id: input.props["aria-describedby"] });
+    expect(feedback.props.role).toBe("alert");
+    expect(feedback.parent?.props.className).toBe("observe-code-field");
+    expect(renderer.root.findAll(node => node.type === "button" && node.children.includes("重试"))).toHaveLength(0);
+    await act(async () => { input.props.onChange({ target: { value: "000001.SZ" } }); });
+    expect(input.props["aria-invalid"]).toBe(false);
+    expect(textContent(renderer)).not.toContain("请输入有效股票代码。");
+    await act(async () => renderer.unmount());
+  });
+
+  it("keeps a same-stock result visible during retry and failure with an independent retry", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<ObservePanel watchlist={[]} onWatchlistChange={vi.fn()} initialCode="600519.SH" initialCodeRequestId={1} />); });
+    let rejectRetry: (error: Error) => void = () => undefined;
+    getJsonMock.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRetry = reject; }));
+    const run = renderer.root.find(node => node.type === "button" && node.children.includes("开始观察"));
+    await act(async () => { run.props.onClick(); });
+    expect(textContent(renderer)).toContain("贵州茅台");
+    expect(renderer.root.findByProps({ role: "status", className: "panel-feedback panel-feedback-loading panel-feedback-compact" })).toBeTruthy();
+    await act(async () => { rejectRetry(new Error("网络请求失败")); });
+    expect(textContent(renderer)).toContain("贵州茅台");
+    expect(textContent(renderer)).toContain("网络请求失败");
+    expect(renderer.root.find(node => node.type === "input" && node.props.id === "observeCode").props["aria-invalid"]).toBe(false);
+    const retry = renderer.root.find(node => node.type === "button" && node.children.includes("重试"));
+    await act(async () => { retry.props.onClick(); });
+    expect(observeCalls()).toHaveLength(3);
+    expect(textContent(renderer)).toContain("贵州茅台");
+    expect(textContent(renderer)).not.toContain("网络请求失败");
+    await act(async () => renderer.unmount());
+  });
+
+  it("clears a retained result for an incoming different stock before its request finishes", async () => {
+    let renderer!: ReactTestRenderer;
+    const props = { watchlist: [], onWatchlistChange: vi.fn(), initialCode: "600519.SH", initialCodeRequestId: 1 };
+    await act(async () => { renderer = create(<ObservePanel {...props} />); });
+    let resolveRequest: (value: unknown) => void = () => undefined;
+    getJsonMock.mockImplementationOnce(() => new Promise(resolve => { resolveRequest = resolve; }));
+    await act(async () => { renderer.update(<ObservePanel {...props} initialCode="000001.SZ" initialCodeRequestId={2} />); });
+    expect(textContent(renderer)).not.toContain("贵州茅台");
+    await act(async () => {
+      resolveRequest({ stock: { code: "000001.SZ", name: "平安银行" }, notes: [] });
+    });
+    expect(textContent(renderer)).toContain("平安银行");
+    expect(textContent(renderer)).not.toContain("贵州茅台");
+    await act(async () => renderer.unmount());
+  });
+
+  it("ignores a late local miss instead of refreshing an abandoned stock", async () => {
+    let rejectRequest: (error: Error) => void = () => undefined;
+    getJsonMock.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRequest = reject; }));
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<ObservePanel watchlist={[]} onWatchlistChange={vi.fn()} initialCode="600519.SH" initialCodeRequestId={1} />); });
+    await act(async () => {
+      renderer.root.find(node => node.type === "input" && node.props.id === "observeCode").props.onChange({ target: { value: "000001.SZ" } });
+    });
+    await act(async () => {
+      rejectRequest(new Error(JSON.stringify({ code: "LOCAL_DATA_MISSING", missing_count: 1, missing: [{ kind: "history", code: "600519.SH", available_bars: 1, required_bars: 750 }] })));
+    });
+    expect(observeCalls()).toHaveLength(1);
+    expect(textContent(renderer)).not.toContain("贵州茅台");
+    expect(textContent(renderer)).not.toContain("正在补齐行情历史");
+    await act(async () => renderer.unmount());
+  });
+
+  it("keeps missing financial fields explicit outside the collapsed full grid", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<FundamentalSnapshot stock={{ code: "600519.SH", name: "贵州茅台", pe: 20 }} />);
+    });
+    const details = renderer.root.findByProps({ className: "observe-fundamental-details" });
+    expect(details.type).toBe("details");
+    expect(details.props.open).not.toBe(true);
+    const missing = renderer.root.findByProps({ className: "observe-fundamental-missing" });
+    expect(details.findAllByProps({ className: "observe-fundamental-missing" })).toHaveLength(0);
+    expect(renderer.root.findByProps({ "aria-label": "每股收益与股本结构" }).findAllByType("dd").map(node => node.children.join(""))).toEqual(["—", "暂无", "暂无"]);
+    expect(missing.children.join("")).toContain("营业总收入");
+    expect(missing.children.join("")).toContain("归母净利润");
+    expect(missing.children.join("")).toContain("资产负债率");
+    expect(missing.children.join("")).not.toContain("市盈率(TTM)");
+    await act(async () => renderer.unmount());
+  });
+
+  it("preserves HK zero values, source currency and missing coverage in the disclosed financial grid", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<FundamentalSnapshot stock={{ code: "00700.HK", name: "腾讯控股", pe: 0, dividend_yield: 0 }} financial={{ period: "2026H1", items: [{ metric_key: "latest_eps", value: "CNY 0" }, { metric_key: "operating_revenue", value: "CNY 100" }] }} />);
+    });
+    const details = renderer.root.findByProps({ className: "observe-fundamental-details" });
+    const values = details.findAllByType("dd").map(node => node.children.join(""));
+    expect(values).toContain("0.00");
+    expect(values).toContain("0.00%");
+    expect(values).toContain("CNY 100");
+    expect(textContent(renderer)).toContain("CNY 0");
+    expect(renderer.root.findAllByType("time").flatMap(node => node.children)).toContain("2026H1");
+    expect(textContent(renderer)).not.toContain("扣非净利润");
+    expect(renderer.root.findByProps({ className: "observe-fundamental-missing" }).children.join("")).toContain("归母净利润");
+    await act(async () => renderer.unmount());
+  });
+
+  it("shows the concise verdict and key values before chart with explanations in disclosure", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<ObserveResultView result={{ source: "local", stock: { code: "600519.SH", name: "贵州茅台", price: 1500 }, notes: [] }} />);
+    });
+    const text = textContent(renderer);
+    expect(text.indexOf("方向尚未形成，等待关键信号")).toBeLessThan(text.indexOf("行情图表"));
+    expect(text.indexOf("最新价")).toBeLessThan(text.indexOf("行情图表"));
+    const detail = renderer.root.findByProps({ className: "observe-detail-disclosure" });
+    expect(detail.props.open).toBe(false);
+    expect(detail.findAllByProps({ "aria-label": "核心判断" })).toHaveLength(1);
+    expect(detail.findAllByProps({ "aria-label": "下一步观察信号" })).toHaveLength(1);
+    await act(async () => { detail.props.onToggle({ currentTarget: { open: true } }); });
+    expect(renderer.root.findByProps({ className: "observe-detail-disclosure" }).props.open).toBe(true);
     await act(async () => renderer.unmount());
   });
   it("keeps observation local when no external fund-flow record is cached", async () => {

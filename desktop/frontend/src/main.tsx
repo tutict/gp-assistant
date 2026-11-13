@@ -4,10 +4,14 @@ import App from "./App";
 import { WorkspaceProvider } from "./hooks/useWorkspace";
 import { WorkspaceErrorBoundary } from "./components/ui/ErrorBoundary";
 import { applyAndroidSafeAreaInsets, type AndroidSystemBarsBridge } from "./lib/androidSafeArea";
+import { handleAndroidBack } from "./lib/androidBack";
+import { installNativeInputVisibility } from "./lib/mobileViewport";
 import "./styles/global.css";
 
 const androidSystemBars = (window as Window & { AndroidSystemBars?: AndroidSystemBarsBridge }).AndroidSystemBars;
 applyAndroidSafeAreaInsets(document.documentElement.style, androidSystemBars);
+window.__gpHandleAndroidBack = () => handleAndroidBack();
+installNativeInputVisibility();
 
 // Hide boot splash after React mounts
 function hideBootSplash() {

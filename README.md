@@ -183,8 +183,8 @@ flowchart LR
 ### 环境要求
 
 - Windows 10/11
-- Node.js 20.19+（20.x）或 22.12+，以及 npm
-- Rust stable toolchain
+- Node.js 22.12+（22.x）或 24.x（推荐），以及 npm
+- Rust 1.100+（本次发布验证使用 1.100.0）
 - Tauri 2 所需的 Windows WebView2/构建环境
 - Android 构建额外需要 JDK 17 或 21、Android SDK 和 Android NDK
 

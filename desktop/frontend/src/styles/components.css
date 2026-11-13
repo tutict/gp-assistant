@@ -1190,7 +1190,7 @@
 
 .settings-segmented > button {
   min-height: var(--touch-dense);
-  padding: 0 var(--space-2);
+  padding: var(--space-1) var(--space-2);
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
@@ -1198,6 +1198,8 @@
   cursor: pointer;
   font-size: var(--fs-label);
   font-weight: 680;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
 }
 
 .settings-segmented > button:hover {
@@ -1220,7 +1222,7 @@
 .settings-item > .settings-select,
 .settings-item > .settings-toggle {
   grid-column: 2;
-  grid-row: 1 / span 2;
+  grid-row: 1;
 }
 
 .settings-item > .settings-select {

@@ -115,4 +115,37 @@ describe("StockCodeInput", () => {
 
     expect(onCommit).toHaveBeenCalledWith("600519.SH");
   });
+
+  it.each(["loading", "market", "option", "nested"])("consumes Escape for the %s lookup popup and restores input focus", async (state) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("document", { addEventListener: vi.fn(), removeEventListener: vi.fn(), activeElement: null });
+    let search!: () => Promise<void>;
+    vi.stubGlobal("window", { setTimeout: vi.fn((callback) => { search = callback; return 1; }), clearTimeout: vi.fn() });
+    getJsonMock.mockReset().mockResolvedValue(state === "market" ? [] : [{ code: "600519.SH", name: "贵州茅台" }]);
+    let renderer!: ReactTestRenderer;
+    const focus = vi.fn(() => renderer.root.findByType("input").props.onFocus());
+    await act(async () => {
+      renderer = create(<StockCodeInput id="popupCode" value={state === "market" ? "600519" : "贵州"} onChange={vi.fn()} />, {
+        createNodeMock: element => element.type === "div" && (element.props as { className?: string }).className === "stock-code-input"
+          ? { querySelector: () => ({ focus }) } : null,
+      });
+    });
+    await act(async () => renderer.root.findByType("input").props.onFocus());
+    if (state !== "loading") await act(async () => { await search(); });
+    expect(renderer.root.findAllByProps({ className: state === "market" ? "market-confirm" : "stock-suggest" })).toHaveLength(1);
+    const preventDefault = vi.fn(), stopPropagation = vi.fn();
+    const wrapper = renderer.root.findByProps({ className: "stock-code-input" });
+    await act(async () => wrapper.props.onKeyDown({ key: "Escape", preventDefault, stopPropagation,
+      target: { tagName: state === "option" || state === "market" ? "BUTTON" : "INPUT" } }));
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(stopPropagation).toHaveBeenCalledOnce();
+    expect(focus).toHaveBeenCalledOnce();
+    expect(renderer.root.findAllByProps({ className: "stock-suggest" })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ className: "market-confirm" })).toHaveLength(0);
+    if (state === "loading") {
+      await act(async () => { await search(); });
+      expect(renderer.root.findAllByProps({ className: "stock-suggest" })).toHaveLength(0);
+    }
+    await act(async () => renderer.unmount());
+  });
 });

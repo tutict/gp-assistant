@@ -109,6 +109,23 @@ export interface HkFinancialMetric {
   reason?: string | null;
 }
 
+export interface CnCompanyProfile {
+  code: string;
+  name: string;
+  industry: string;
+  business_summary: string;
+  company_summary: string;
+  source: string;
+  fetched_at: string;
+}
+
+export interface CnCompanyProfileResult {
+  code: string;
+  profile: CnCompanyProfile | null;
+  stale: boolean;
+  error: string | null;
+}
+
 export interface HkCompanyProfile {
   code: string;
   name: string;
@@ -816,6 +833,7 @@ export interface NewsRagResult {
   sentiment_groups?: NewsSentimentGroups;
   us_market_brief?: Record<string, unknown>;
   notes?: string[];
+  refresh?: NewsRefreshReport;
 }
 
 export type ResearchSourceTier =
@@ -838,12 +856,32 @@ export interface ResearchMessage {
   source_tier: ResearchSourceTier;
   source_name: string;
   published_at?: string | null;
+  fetched_at_epoch_ms?: number | null;
+  article_summary_fetched_at_epoch_ms?: number | null;
+  summary_kind?: "article_summary" | "excerpt" | "unavailable";
   url?: string | null;
   unread: boolean;
   scope_type?: "macro" | "industry" | "region" | "company" | string;
   scope_tags?: string[];
   mapped_stock_codes?: string[];
   citations?: ResearchCitation[];
+}
+
+export interface NewsSourceRefresh {
+  source_id: string;
+  source_name: string;
+  successful_requests: number;
+  failed_requests: number;
+  fetched_count: number;
+  errors: string[];
+}
+
+export interface NewsRefreshReport {
+  status: "success" | "partial" | "failed" | "empty";
+  fetched_count: number;
+  summary_count: number;
+  completed_at_epoch_ms?: number;
+  sources: NewsSourceRefresh[];
 }
 
 export interface ResearchCitation {

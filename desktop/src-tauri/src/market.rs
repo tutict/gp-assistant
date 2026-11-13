@@ -357,7 +357,11 @@ pub(crate) async fn api_market_refresh(
                     .and_then(Value::as_u64)
                     .unwrap_or(0)
                     > 0;
-            let failed = failed || result.pointer("/reference_refresh/failed").and_then(Value::as_bool).unwrap_or(false);
+            let failed = failed
+                || result
+                    .pointer("/reference_refresh/failed")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
             let terminal = result.get("done").and_then(Value::as_bool).unwrap_or(true)
                 || result
                     .get("stopped_early")
@@ -878,8 +882,8 @@ pub(crate) fn build_http_client_with_proxy(
         proxy.as_deref(),
         has_network_proxy_settings,
     )?
-        .build()
-        .map_err(|error| format!("create HTTP client failed: {error}"))?;
+    .build()
+    .map_err(|error| format!("create HTTP client failed: {error}"))?;
 
     let mut cache = http_client_cache()
         .lock()
@@ -1352,14 +1356,25 @@ pub(crate) async fn core_mobile_market_data_refresh_tencent_inner(
     let reference_refresh = if batch_start == 0 && scan_candidates {
         let summary = crate::cn_market::refresh_reference_data(&app, &mut seed, &payload).await?;
         seed["cn_reference"]["last_refresh"] = summary.clone();
-        if summary.get("financial_fetched").and_then(Value::as_u64).unwrap_or(0) > 0
-            || summary.get("directory_count").and_then(Value::as_u64).unwrap_or(0) > 0 {
+        if summary
+            .get("financial_fetched")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0
+            || summary
+                .get("directory_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                > 0
+        {
             // Financial successes survive a later quote failure or cancellation.
             write_mobile_market_data_record(&app, seed.clone(), false)?;
         }
         summary
     } else {
-        seed.pointer("/cn_reference/last_refresh").cloned().unwrap_or(Value::Null)
+        seed.pointer("/cn_reference/last_refresh")
+            .cloned()
+            .unwrap_or(Value::Null)
     };
     let refresh = refresh_tencent_market_data(
         &app,
@@ -2057,12 +2072,21 @@ pub(crate) async fn refresh_tencent_market_data(
         "histories": histories,
         "financials": filtered_financial_snapshot_map(&seed, &financial_snapshot, &valid_codes)
     });
-    for field in ["cn_reference", "archived_stocks", "factor_snapshots", "capital_evidence"] {
-        if let Some(value) = seed.get(field) { dataset[field] = value.clone(); }
+    for field in [
+        "cn_reference",
+        "archived_stocks",
+        "factor_snapshots",
+        "capital_evidence",
+    ] {
+        if let Some(value) = seed.get(field) {
+            dataset[field] = value.clone();
+        }
     }
     if let Some(entries) = seed.get("financials").and_then(Value::as_object) {
         for (code, entry) in entries {
-            if !valid_codes.contains(code) { dataset["financials"][code] = entry.clone(); }
+            if !valid_codes.contains(code) {
+                dataset["financials"][code] = entry.clone();
+            }
         }
     }
 
@@ -2261,12 +2285,21 @@ pub(crate) fn ingest_tencent_market_data(
         "financials": filtered_financial_snapshot_map(&seed, &financial_snapshot, &valid_codes)
     });
 
-    for field in ["cn_reference", "archived_stocks", "factor_snapshots", "capital_evidence"] {
-        if let Some(value) = seed.get(field) { dataset[field] = value.clone(); }
+    for field in [
+        "cn_reference",
+        "archived_stocks",
+        "factor_snapshots",
+        "capital_evidence",
+    ] {
+        if let Some(value) = seed.get(field) {
+            dataset[field] = value.clone();
+        }
     }
     if let Some(entries) = seed.get("financials").and_then(Value::as_object) {
         for (code, entry) in entries {
-            if !valid_codes.contains(code) { dataset["financials"][code] = entry.clone(); }
+            if !valid_codes.contains(code) {
+                dataset["financials"][code] = entry.clone();
+            }
         }
     }
 
@@ -2409,12 +2442,22 @@ pub(crate) fn merge_stock_financial_fields(
         row.insert("code".to_string(), json!(code));
         row
     });
-    let current_period = target.get("period").and_then(Value::as_str).and_then(crate::observe::financial_period_rank);
-    let incoming_period = source.get("period").and_then(Value::as_str).and_then(crate::observe::financial_period_rank);
-    if current_period.is_some_and(|current| incoming_period.is_none_or(|incoming| incoming < current)) {
+    let current_period = target
+        .get("period")
+        .and_then(Value::as_str)
+        .and_then(crate::observe::financial_period_rank);
+    let incoming_period = source
+        .get("period")
+        .and_then(Value::as_str)
+        .and_then(crate::observe::financial_period_rank);
+    if current_period
+        .is_some_and(|current| incoming_period.is_none_or(|incoming| incoming < current))
+    {
         return;
     }
-    let newer = incoming_period.zip(current_period).is_some_and(|(incoming,current)| incoming > current);
+    let newer = incoming_period
+        .zip(current_period)
+        .is_some_and(|(incoming, current)| incoming > current);
     for field in SCREEN_STOCK_FINANCIAL_FIELDS {
         if !newer && finite_object_number(target, field).is_some() {
             continue;
@@ -2422,10 +2465,12 @@ pub(crate) fn merge_stock_financial_fields(
         if let Some(value) = finite_object_number(source, field) {
             target.insert(field.to_string(), json!(value));
         } else if newer {
-            target.insert(field.to_string(),Value::Null);
+            target.insert(field.to_string(), Value::Null);
         }
     }
-    if newer {target.insert("period".to_string(),source["period"].clone());}
+    if newer {
+        target.insert("period".to_string(), source["period"].clone());
+    }
 }
 
 pub(crate) fn filtered_financial_snapshot_map(
@@ -2497,23 +2542,43 @@ pub(crate) fn merge_financial_entry(
 
     let incoming_period = object_string_any(object, &["period", "latest_period", "report_period"])
         .and_then(|period| crate::observe::financial_period_rank(&period));
-    let existing_period = entry.get("period").and_then(Value::as_str)
+    let existing_period = entry
+        .get("period")
+        .and_then(Value::as_str)
         .and_then(crate::observe::financial_period_rank);
-    if incoming_period.zip(existing_period).is_some_and(|(incoming, existing)| incoming < existing) {
+    if incoming_period
+        .zip(existing_period)
+        .is_some_and(|(incoming, existing)| incoming < existing)
+    {
         return;
     }
     let different_report_source = object.get("report_fetched_at").is_some()
         && (entry.get("report_fetched_at").is_none()
             || object.get("source") != entry.get("source")
             || object.get("report_notice_date") != entry.get("report_notice_date"));
-    if incoming_period.is_some() && (existing_period.is_none()
-        || incoming_period.zip(existing_period).is_some_and(|(incoming, existing)| incoming > existing)
-        || different_report_source) {
+    if incoming_period.is_some()
+        && (existing_period.is_none()
+            || incoming_period
+                .zip(existing_period)
+                .is_some_and(|(incoming, existing)| incoming > existing)
+            || different_report_source)
+    {
         for field in [
-            "latest_eps", "latest_bps", "operating_revenue_billion", "operating_revenue_yoy",
-            "parent_net_profit_billion", "parent_net_profit_yoy", "deducted_net_profit_billion",
-            "deducted_net_profit_margin", "deducted_net_profit_growth_rate", "gross_margin",
-            "net_margin", "roe", "asset_liability_ratio", "report_notice_date", "report_fetched_at",
+            "latest_eps",
+            "latest_bps",
+            "operating_revenue_billion",
+            "operating_revenue_yoy",
+            "parent_net_profit_billion",
+            "parent_net_profit_yoy",
+            "deducted_net_profit_billion",
+            "deducted_net_profit_margin",
+            "deducted_net_profit_growth_rate",
+            "gross_margin",
+            "net_margin",
+            "roe",
+            "asset_liability_ratio",
+            "report_notice_date",
+            "report_fetched_at",
         ] {
             entry.remove(field);
         }
@@ -2556,7 +2621,12 @@ pub(crate) fn merge_financial_entry(
     {
         entry.insert("period".to_string(), json!(period));
     }
-    for field in ["source", "currency", "report_notice_date", "report_fetched_at"] {
+    for field in [
+        "source",
+        "currency",
+        "report_notice_date",
+        "report_fetched_at",
+    ] {
         if let Some(value) = object_string(object, field).filter(|value| !value.trim().is_empty()) {
             entry.insert(field.to_string(), json!(value));
         }
@@ -2871,7 +2941,13 @@ pub(crate) fn parse_tencent_quotes(
             .or_else(|| existing.and_then(|object| object_string(object, "quote_time")));
         let roe = existing
             .and_then(|object| object_f64(object, "roe"))
-            .or_else(|| if existing.is_some_and(|object| object.get("financial_source").is_some()) { None } else { estimate_roe(pe, pb) });
+            .or_else(|| {
+                if existing.is_some_and(|object| object.get("financial_source").is_some()) {
+                    None
+                } else {
+                    estimate_roe(pe, pb)
+                }
+            });
         let industry = existing
             .and_then(|object| object_string(object, "industry"))
             .filter(|value| !value.trim().is_empty())
@@ -3198,16 +3274,27 @@ pub(crate) fn market_quote_cache_stale(
     now_epoch_ms: u128,
     quote_coverage_ratio: Option<f64>,
 ) -> bool {
-    market_quote_cache_stale_with_calendar(generated_at_epoch_ms,now_epoch_ms,quote_coverage_ratio,None)
+    market_quote_cache_stale_with_calendar(
+        generated_at_epoch_ms,
+        now_epoch_ms,
+        quote_coverage_ratio,
+        None,
+    )
 }
 
 fn market_quote_cache_stale_with_calendar(
-    generated_at_epoch_ms: Option<u128>, now_epoch_ms: u128, quote_coverage_ratio: Option<f64>, calendar: Option<&Value>,
+    generated_at_epoch_ms: Option<u128>,
+    now_epoch_ms: u128,
+    quote_coverage_ratio: Option<f64>,
+    calendar: Option<&Value>,
 ) -> bool {
-    let Some(quote_date) = generated_at_epoch_ms.and_then(|epoch|expected_market_quote_date_with_calendar(epoch,calendar)) else {
+    let Some(quote_date) = generated_at_epoch_ms
+        .and_then(|epoch| expected_market_quote_date_with_calendar(epoch, calendar))
+    else {
         return true;
     };
-    let Some(expected_date) = expected_market_quote_date_with_calendar(now_epoch_ms,calendar) else {
+    let Some(expected_date) = expected_market_quote_date_with_calendar(now_epoch_ms, calendar)
+    else {
         return true;
     };
     let coverage_is_complete = quote_coverage_ratio.is_some_and(|ratio| {
@@ -3236,17 +3323,37 @@ pub(crate) fn expected_market_quote_date_from_epoch_ms(epoch_ms: u128) -> Option
     Some(format!("{year:04}{month:02}{day:02}"))
 }
 
-pub(crate) fn expected_market_quote_date_with_calendar(epoch_ms: u128, calendar: Option<&Value>) -> Option<String> {
+pub(crate) fn expected_market_quote_date_with_calendar(
+    epoch_ms: u128,
+    calendar: Option<&Value>,
+) -> Option<String> {
     let date = local_yyyymmdd_from_epoch_ms(epoch_ms)?;
-    if let Some(calendar) = calendar.filter(|calendar|calendar.get("checked").and_then(Value::as_bool)==Some(true)) {
-        let start=calendar.get("coverage_start").and_then(Value::as_str);
-        let end=calendar.get("coverage_end").and_then(Value::as_str);
-        if start.zip(end).is_some_and(|(start,end)| start <= date.as_str() && date.as_str() <= end) {
-            let minutes=((epoch_ms / 1000 + 8*60*60) % 86400) / 60;
-            let include_today=minutes >= 9*60+30;
-            if let Some(expected)=calendar.get("trading_dates").and_then(Value::as_array)
-                .into_iter().flatten().filter_map(Value::as_str)
-                .filter(|candidate|if include_today {*candidate <= date.as_str()}else{*candidate < date.as_str()}).max() {
+    if let Some(calendar) =
+        calendar.filter(|calendar| calendar.get("checked").and_then(Value::as_bool) == Some(true))
+    {
+        let start = calendar.get("coverage_start").and_then(Value::as_str);
+        let end = calendar.get("coverage_end").and_then(Value::as_str);
+        if start
+            .zip(end)
+            .is_some_and(|(start, end)| start <= date.as_str() && date.as_str() <= end)
+        {
+            let minutes = ((epoch_ms / 1000 + 8 * 60 * 60) % 86400) / 60;
+            let include_today = minutes >= 9 * 60 + 30;
+            if let Some(expected) = calendar
+                .get("trading_dates")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter(|candidate| {
+                    if include_today {
+                        *candidate <= date.as_str()
+                    } else {
+                        *candidate < date.as_str()
+                    }
+                })
+                .max()
+            {
                 return Some(expected.to_string());
             }
         }
@@ -4761,9 +4868,10 @@ pub(crate) fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String
         .or_else(|| cache_epoch_ms(cache.get("generated_at")));
     let updated_at_epoch_ms = cache_epoch_ms(cache.get("updated_at_epoch_ms"));
     let now_epoch_ms = epoch_millis();
-    let calendar=cache.pointer("/cn_reference/calendar");
-    let quote_date = generated_at_epoch_ms.and_then(|epoch|expected_market_quote_date_with_calendar(epoch,calendar));
-    let current_date = expected_market_quote_date_with_calendar(now_epoch_ms,calendar);
+    let calendar = cache.pointer("/cn_reference/calendar");
+    let quote_date = generated_at_epoch_ms
+        .and_then(|epoch| expected_market_quote_date_with_calendar(epoch, calendar));
+    let current_date = expected_market_quote_date_with_calendar(now_epoch_ms, calendar);
     let quote_coverage_ratio = cache.get("quote_coverage_ratio").and_then(Value::as_f64);
     let quote_requested = cache
         .get("quote_requested")
@@ -4773,7 +4881,12 @@ pub(crate) fn market_data_status(app: &tauri::AppHandle) -> Result<Value, String
         .get("quote_observed")
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    let stale = market_quote_cache_stale_with_calendar(generated_at_epoch_ms, now_epoch_ms, quote_coverage_ratio,calendar);
+    let stale = market_quote_cache_stale_with_calendar(
+        generated_at_epoch_ms,
+        now_epoch_ms,
+        quote_coverage_ratio,
+        calendar,
+    );
     if stale {
         notes.push(format!(
             "cached Tencent quote snapshot is stale or incomplete: {quote_observed}/{quote_requested} same-day changes; refresh before rotation screening"
@@ -4903,10 +5016,12 @@ fn external_market_records_from_typed(
             "industry": stock.industry,
             "is_st": stock.is_st,
         });
-        let raw_security=raw_stocks.get(&stock.code);
-        if let Some(raw)=raw_security {
-            for field in ["listing_date","directory_source"] {
-                if let Some(value)=raw.get(field) {security[field]=value.clone();}
+        let raw_security = raw_stocks.get(&stock.code);
+        if let Some(raw) = raw_security {
+            for field in ["listing_date", "directory_source"] {
+                if let Some(value) = raw.get(field) {
+                    security[field] = value.clone();
+                }
             }
         }
         grouped
@@ -4917,7 +5032,10 @@ fn external_market_records_from_typed(
                 Market::China,
                 &stock.code,
                 "stock",
-                raw_security.and_then(|row|row.get("directory_source")).and_then(Value::as_str).unwrap_or(source_id),
+                raw_security
+                    .and_then(|row| row.get("directory_source"))
+                    .and_then(Value::as_str)
+                    .unwrap_or(source_id),
                 "public",
                 &fetched_at,
                 None,
@@ -4984,7 +5102,13 @@ fn external_market_records_from_typed(
             })
             .collect::<serde_json::Map<_, _>>();
         if let Some(raw) = raw_stocks.get(&stock.code) {
-            for field in ["period", "latest_bps", "financial_source", "financial_report_notice_date", "financial_coverage"] {
+            for field in [
+                "period",
+                "latest_bps",
+                "financial_source",
+                "financial_report_notice_date",
+                "financial_coverage",
+            ] {
                 if let Some(value) = raw.get(field) {
                     fundamentals.insert(field.to_string(), value.clone());
                 }
@@ -5069,10 +5193,17 @@ fn external_market_records_from_typed(
                 "financial",
                 financial.source.as_deref().unwrap_or(source_id),
                 "public",
-                financial.report_fetched_at.as_deref().unwrap_or(&fetched_at),
+                financial
+                    .report_fetched_at
+                    .as_deref()
+                    .unwrap_or(&fetched_at),
                 None,
                 financial.report_notice_date.as_deref(),
-                if financial.report_fetched_at.is_some() && financial.report_notice_date.is_some() {"source_reported"}else{"unverified"},
+                if financial.report_fetched_at.is_some() && financial.report_notice_date.is_some() {
+                    "source_reported"
+                } else {
+                    "unverified"
+                },
                 vec!["provider_rights_unverified".to_string()],
                 payload,
             ));
@@ -5312,10 +5443,18 @@ pub(crate) fn project_market_store_with_legacy(
         .ok_or_else(|| "external market dataset projection is not a JSON object".to_string())?;
 
     if promoted.contains(&(DataDomain::SecurityMaster, Market::China)) {
-        for key in ["source", "generated_at", "generated_at_epoch_ms", "updated_at_epoch_ms", "notes", "cn_reference", "archived_stocks"] {
+        for key in [
+            "source",
+            "generated_at",
+            "generated_at_epoch_ms",
+            "updated_at_epoch_ms",
+            "notes",
+            "cn_reference",
+            "archived_stocks",
+        ] {
             if let Some(value) = external_object.get(key) {
                 object.insert(key.to_string(), value.clone());
-            } else if matches!(key,"cn_reference"|"archived_stocks") {
+            } else if matches!(key, "cn_reference" | "archived_stocks") {
                 object.remove(key);
             }
         }
@@ -5349,7 +5488,14 @@ pub(crate) fn project_market_store_with_legacy(
             let target = stocks
                 .entry(code.to_string())
                 .or_insert_with(|| serde_json::json!({}));
-            for field in ["code", "name", "industry", "is_st", "listing_date", "directory_source"] {
+            for field in [
+                "code",
+                "name",
+                "industry",
+                "is_st",
+                "listing_date",
+                "directory_source",
+            ] {
                 if let Some(value) = row.get(field) {
                     target[field] = value.clone();
                 }
@@ -5936,7 +6082,9 @@ pub(crate) fn market_cache_record(
         .unwrap_or(Value::Null);
     let data_notes = data.get("notes").cloned().unwrap_or_else(|| json!([]));
     let generated_at_epoch_ms = cache_epoch_ms(Some(&generated_at));
-    let quote_coverage_trade_date = generated_at_epoch_ms.and_then(|epoch|expected_market_quote_date_with_calendar(epoch,data.pointer("/cn_reference/calendar")));
+    let quote_coverage_trade_date = generated_at_epoch_ms.and_then(|epoch| {
+        expected_market_quote_date_with_calendar(epoch, data.pointer("/cn_reference/calendar"))
+    });
     let (quote_requested, quote_observed, quote_coverage_ratio) =
         market_quote_coverage(data, quote_coverage_trade_date.as_deref());
     let mut record = serde_json::Map::new();
@@ -5973,7 +6121,12 @@ pub(crate) fn market_cache_record(
     record.insert("data_notes".to_string(), data_notes);
     if let Some(reference) = data.get("cn_reference") {
         let mut reference = reference.clone();
-        if let Some(directory) = reference.get_mut("directory").and_then(Value::as_object_mut) { directory.remove("codes"); }
+        if let Some(directory) = reference
+            .get_mut("directory")
+            .and_then(Value::as_object_mut)
+        {
+            directory.remove("codes");
+        }
         record.insert("cn_reference".to_string(), reference);
     }
     if include_data {
@@ -6072,9 +6225,14 @@ pub(crate) fn market_data_patch_for_codes(data: &Value, codes: &[String]) -> Val
         }
         Value::Object(selected)
     };
-    let history_ranges = data.pointer("/cn_reference/history_ranges").and_then(Value::as_object)
-        .into_iter().flatten().filter(|(code, _)| normalize_stock_code(code).is_some_and(|code| codes.contains(&code)))
-        .map(|(code, value)| (code.clone(), value.clone())).collect::<serde_json::Map<_, _>>();
+    let history_ranges = data
+        .pointer("/cn_reference/history_ranges")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter(|(code, _)| normalize_stock_code(code).is_some_and(|code| codes.contains(&code)))
+        .map(|(code, value)| (code.clone(), value.clone()))
+        .collect::<serde_json::Map<_, _>>();
     json!({
         "schema_version": 1,
         "updated_at_epoch_ms": epoch_millis(),
@@ -6137,12 +6295,21 @@ pub(crate) fn apply_market_data_patch(data: &mut Value, patch: &Value) {
             }
         }
     }
-    if let Some(ranges) = patch.pointer("/cn_reference/history_ranges").and_then(Value::as_object) {
-        let reference = target.entry("cn_reference".to_string()).or_insert_with(|| json!({}));
+    if let Some(ranges) = patch
+        .pointer("/cn_reference/history_ranges")
+        .and_then(Value::as_object)
+    {
+        let reference = target
+            .entry("cn_reference".to_string())
+            .or_insert_with(|| json!({}));
         if let Some(reference) = reference.as_object_mut() {
-            let histories = reference.entry("history_ranges".to_string()).or_insert_with(|| json!({}));
+            let histories = reference
+                .entry("history_ranges".to_string())
+                .or_insert_with(|| json!({}));
             if let Some(histories) = histories.as_object_mut() {
-                for (code, proof) in ranges { histories.insert(code.clone(), proof.clone()); }
+                for (code, proof) in ranges {
+                    histories.insert(code.clone(), proof.clone());
+                }
             }
         }
     }
@@ -6209,7 +6376,10 @@ pub(crate) fn market_data_patch_codes(patch: &Value) -> Vec<String> {
             codes.extend(items.keys().filter_map(|code| normalize_stock_code(code)));
         }
     }
-    if let Some(ranges) = patch.pointer("/cn_reference/history_ranges").and_then(Value::as_object) {
+    if let Some(ranges) = patch
+        .pointer("/cn_reference/history_ranges")
+        .and_then(Value::as_object)
+    {
         codes.extend(ranges.keys().filter_map(|code| normalize_stock_code(code)));
     }
     let mut codes = codes.into_iter().collect::<Vec<_>>();

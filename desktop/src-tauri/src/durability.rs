@@ -36,10 +36,30 @@ fn unique_temporary(path: &Path) -> Result<(PathBuf, File), String> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CommitPhase {
+pub(crate) enum CommitPhase {
     Written,
     Synced,
+    Replaced,
     Committed,
+}
+
+#[derive(Debug)]
+pub(crate) enum AtomicWriteError {
+    BeforeReplacement(String),
+    /// The new file is already visible, even if directory durability is unconfirmed.
+    AfterReplacement(String),
+}
+
+impl AtomicWriteError {
+    pub(crate) fn was_replaced(&self) -> bool {
+        matches!(self, Self::AfterReplacement(_))
+    }
+
+    fn into_message(self) -> String {
+        match self {
+            Self::BeforeReplacement(message) | Self::AfterReplacement(message) => message,
+        }
+    }
 }
 
 /// Success means the new file was synced and replaced in its own directory.
@@ -47,16 +67,34 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     atomic_write_with_hook(path, bytes, |_| Ok(()))
 }
 pub(crate) fn atomic_write_json(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    serde_json::from_slice::<serde_json::Value>(bytes)
-        .map_err(|e| format!("invalid JSON snapshot: {e}"))?;
-    atomic_write(path, bytes)
+    atomic_write_json_with_status(path, bytes).map_err(AtomicWriteError::into_message)
 }
-fn atomic_write_with_hook(
+
+/// Distinguish failures before replacement from an already visible, unsynced commit.
+pub(crate) fn atomic_write_json_with_status(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), AtomicWriteError> {
+    serde_json::from_slice::<serde_json::Value>(bytes)
+        .map_err(|e| AtomicWriteError::BeforeReplacement(format!("invalid JSON snapshot: {e}")))?;
+    atomic_write_with_status_and_hook(path, bytes, |_| Ok(()))
+}
+pub(crate) fn atomic_write_with_hook(
+    path: &Path,
+    bytes: &[u8],
+    hook: impl FnMut(CommitPhase) -> Result<(), String>,
+) -> Result<(), String> {
+    atomic_write_with_status_and_hook(path, bytes, hook).map_err(AtomicWriteError::into_message)
+}
+
+pub(crate) fn atomic_write_with_status_and_hook(
     path: &Path,
     bytes: &[u8],
     mut hook: impl FnMut(CommitPhase) -> Result<(), String>,
-) -> Result<(), String> {
-    let (temporary, mut file) = unique_temporary(path)?;
+) -> Result<(), AtomicWriteError> {
+    let (temporary, mut file) =
+        unique_temporary(path).map_err(AtomicWriteError::BeforeReplacement)?;
+    let mut replaced = false;
     let result = (|| {
         file.write_all(bytes)
             .map_err(|e| format!("write temporary file: {e}"))?;
@@ -69,13 +107,21 @@ fn atomic_write_with_hook(
         }
         hook(CommitPhase::Synced)?;
         replace_file(&temporary, path)?;
+        replaced = true;
+        hook(CommitPhase::Replaced)?;
         sync_parent(path)?;
         hook(CommitPhase::Committed)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
     }
-    result
+    result.map_err(|message| {
+        if replaced {
+            AtomicWriteError::AfterReplacement(message)
+        } else {
+            AtomicWriteError::BeforeReplacement(message)
+        }
+    })
 }
 
 /// Stream an immutable, already validated snapshot without buffering a database in RAM.
@@ -280,19 +326,26 @@ mod tests {
         for phase in [
             CommitPhase::Written,
             CommitPhase::Synced,
+            CommitPhase::Replaced,
             CommitPhase::Committed,
         ] {
             atomic_write(&path, b"old").unwrap();
-            assert!(atomic_write_with_hook(&path, b"new", |at| if at == phase {
-                Err("injected failure".into())
-            } else {
-                Ok(())
+            let error = atomic_write_with_status_and_hook(&path, b"new", |at| {
+                if at == phase {
+                    Err("injected failure".into())
+                } else {
+                    Ok(())
+                }
             })
-            .is_err());
+            .unwrap_err();
+            assert_eq!(
+                error.was_replaced(),
+                matches!(phase, CommitPhase::Replaced | CommitPhase::Committed)
+            );
             let current = fs::read(&path).unwrap();
             assert_eq!(
                 current,
-                if phase == CommitPhase::Committed {
+                if matches!(phase, CommitPhase::Replaced | CommitPhase::Committed) {
                     b"new"
                 } else {
                     b"old"
@@ -300,6 +353,19 @@ mod tests {
             );
         }
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn invalid_json_fails_before_a_visible_replacement() {
+        let path = std::env::temp_dir().join(format!(
+            "gp-durability-invalid-status-{}.json",
+            std::process::id()
+        ));
+        super::atomic_write_json(&path, br#"{"version":1}"#).unwrap();
+        let error = super::atomic_write_json_with_status(&path, b"{truncated").unwrap_err();
+        assert!(!error.was_replaced());
+        assert_eq!(fs::read(&path).unwrap(), br#"{"version":1}"#);
+        fs::remove_file(path).unwrap();
     }
     #[test]
     fn snapshot_includes_committed_wal_without_copying_live_files() {
@@ -359,6 +425,7 @@ mod tests {
         for phase in [
             CommitPhase::Written,
             CommitPhase::Synced,
+            CommitPhase::Replaced,
             CommitPhase::Committed,
         ] {
             atomic_write(&path, br#"{"version":1}"#).unwrap();
@@ -373,7 +440,7 @@ mod tests {
                 serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
             assert_eq!(
                 value["version"],
-                if phase == CommitPhase::Committed {
+                if matches!(phase, CommitPhase::Replaced | CommitPhase::Committed) {
                     2
                 } else {
                     1

@@ -1,10 +1,11 @@
 import { Fragment, memo, useCallback, useId, useMemo, useRef, useState } from "react";
-import type { HkFinancialSnapshot, StockRowView, WatchlistItem } from "../types";
+import type { CnCompanyProfileResult, HkFinancialSnapshot, StockRowView, WatchlistItem } from "../types";
 import { formatNumber, formatPrice, formatRatioPercent, formatSignedPercent } from "../lib/format";
 import { selectionEvidence, type SelectionEvidence } from "../lib/selectionEvidence";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { formatHkAmount, formatHkDataTime, formatHkNumber, hkDataTimestamp } from "../lib/hkFormat";
 import { HkScreenFinancialDetails } from "./HkScreenFinancialDetails";
+import { CnCompanyProfileDetails } from "./CnCompanyProfileDetails";
 
 interface StockListProps {
   items: StockRowView[];
@@ -50,6 +51,7 @@ interface EntryProps {
 const StockEntry = memo(function StockEntry({item, mobile, saved, expanded, detailId, onExpand, onToggleWatchlist, onObserveStock, onNewsStock}: EntryProps) {
   const hkStock = item.code.endsWith(".HK");
   const [retainedFinancial, retainFinancial] = useState<HkFinancialSnapshot>();
+  const [retainedCompany, retainCompany] = useState<CnCompanyProfileResult>();
   const financial = retainedFinancial?.code === item.code.replace(/\.HK$/i, "")
     && (!item.hkFinancial || (hkDataTimestamp(retainedFinancial.candidate_fetched_at) ?? 0) >= (hkDataTimestamp(item.hkFinancial.candidate_fetched_at) ?? 0))
     ? retainedFinancial : item.hkFinancial;
@@ -68,7 +70,7 @@ const StockEntry = memo(function StockEntry({item, mobile, saved, expanded, deta
     {onNewsStock && <button type="button" className="stock-row-action" onClick={()=>onNewsStock(item.code)}>消息</button>}
     <button type="button" className="stock-row-action stock-details-toggle" aria-expanded={expanded} aria-controls={expanded ? detailId : undefined} onClick={()=>onExpand(expanded ? null : item.code)}>{expanded ? "收起依据" : "展开依据"}</button>
   </div>;
-  const details = expanded ? <StockDetails item={financial ? {...item, hkFinancial: financial} : item} evidence={evidence} id={detailId} onFinancialSnapshot={retainFinancial} /> : null;
+  const details = expanded ? <StockDetails item={financial ? {...item, hkFinancial: financial} : item} evidence={evidence} id={detailId} onFinancialSnapshot={retainFinancial} companyResult={retainedCompany} onCompanyResult={retainCompany} /> : null;
   if (mobile) return <article className="stock-row" data-market={item.code.endsWith(".HK") ? "hk" : "cn"}>
     <header className="stock-row-head">{identity}<div className={`stock-current-price ${tone}`}><span>现价</span><strong>{formatPrice(item.price)}</strong><span>涨跌幅 {change}</span></div></header>
     <dl className="stock-mobile-metrics"><div><dt>PE</dt><dd>{peText}</dd></div><div><dt>PB</dt><dd>{formatNumber(item.pb)}</dd></div><div><dt>综合分</dt><dd>{formatNumber(displayStockScore(item))}</dd></div>{hkStock ? <div><dt>EPS</dt><dd>{epsText}</dd></div> : null}</dl>
@@ -79,13 +81,14 @@ const StockEntry = memo(function StockEntry({item, mobile, saved, expanded, deta
   </Fragment>;
 });
 
-function StockDetails({item,evidence,id,onFinancialSnapshot}: {item:StockRowView;evidence:SelectionEvidence;id:string;onFinancialSnapshot:(snapshot:HkFinancialSnapshot)=>void}) {
+function StockDetails({item,evidence,id,onFinancialSnapshot,companyResult,onCompanyResult}: {item:StockRowView;evidence:SelectionEvidence;id:string;onFinancialSnapshot:(snapshot:HkFinancialSnapshot)=>void;companyResult?:CnCompanyProfileResult;onCompanyResult:(result:CnCompanyProfileResult)=>void}) {
   const hkStock = item.code.endsWith(".HK");
   const marketCap = hkStock && item.quoteCurrency ? formatHkAmount(item.market_cap_billion == null ? undefined : item.market_cap_billion * 1_000_000_000, item.quoteCurrency) : `${formatNumber(item.market_cap_billion)} 亿`;
   const scoreMetrics = [["质量分",item.qualityScore],["趋势分",item.trendScore],["风险分（越高风险越大）",item.riskScore]];
   if (!hkStock) scoreMetrics.push(["EPS",item.eps]);
   return <section className="stock-details" id={id} data-market={hkStock ? "hk" : "cn"} aria-label={`${item.name || item.code}入选依据`}>
     <dl className="stock-detail-metrics">{scoreMetrics.map(([label,value])=><div key={String(label)}><dt>{label}</dt><dd>{formatNumber(value)}</dd></div>)}</dl>
+    {!hkStock ? <CnCompanyProfileDetails code={item.code} initialResult={companyResult} onResult={onCompanyResult} /> : null}
     {item.concept && <p>概念：{item.concept}</p>}
     <p>{hkStock ? null : <>净资产收益率：{item.roe == null ? "—" : formatRatioPercent(item.roe)} · </>}市值：{marketCap}</p>
     {hkStock && (item.quoteTime || item.quoteSource) ? <p className="data-provenance">行情 {formatHkDataTime(item.quoteTime)}{item.quoteSource ? ` · ${item.quoteSource}` : ""} · {item.quoteCurrency || "币种未知"}</p> : null}
