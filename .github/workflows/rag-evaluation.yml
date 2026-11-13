@@ -61,10 +61,19 @@ jobs:
       - name: Install Playwright Chromium
         run: npm --prefix desktop/frontend exec -- playwright install chromium
       - name: Run desktop UI regression gate
+        id: ui-regression
         env:
           # Hosted Windows rasterization has a stable 5.312% phone-390 dark news diff.
           UI_BASELINE_MAX_DIFF_RATIO: '0.055'
         run: npm --prefix desktop/frontend run test:desktop
+      - name: Preserve UI regression evidence
+        if: failure() && steps.ui-regression.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-regression-${{ github.run_id }}
+          path: artifacts/ui-shots/
+          retention-days: 7
+          if-no-files-found: error
       - name: Run frontend unit tests
         run: npm --prefix desktop/frontend run test:unit
       - name: Validate 40-case frozen golden fixture
