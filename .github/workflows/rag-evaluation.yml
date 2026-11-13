@@ -53,6 +53,9 @@ jobs:
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --features eval-replay --lib eval_replay::tests::actual_agent_routing_does_not_use_expected_tools_as_an_execution_plan -- --exact
       - name: Compile gepa-lab feature and run shared replay gates
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --features gepa-lab --lib gepa_lab::tests::gepa_replay_payload_uses_shared_runtime_and_keeps_rubric_out_of_agent_input -- --exact
+      - name: Install verified UI baseline font
+        shell: pwsh
+        run: ./scripts/prepare-ui-fonts.ps1 -Install
       - name: Cache Playwright Chromium
         uses: actions/cache@v4
         with:
@@ -63,7 +66,7 @@ jobs:
       - name: Run desktop UI regression gate
         id: ui-regression
         env:
-          # Hosted Windows rasterization has a stable 5.312% phone-390 dark news diff.
+          # Preserve the existing hosted Windows rasterization allowance.
           UI_BASELINE_MAX_DIFF_RATIO: '0.055'
         run: npm --prefix desktop/frontend run test:desktop
       - name: Preserve UI regression evidence
