@@ -1000,7 +1000,7 @@ function checkScreenshotBaseline(actualPath, relativePath) {
   return { status: "matched", path: baselinePath, ...comparison };
 }
 
-async function installFixedResearchClock(page) {
+export async function installFixedResearchClock(page) {
   await page.addInitScript((fixedNow) => {
     const NativeDate = Date;
     globalThis.Date = new Proxy(NativeDate, {
@@ -1017,7 +1017,7 @@ async function installFixedResearchClock(page) {
   }, fixedResearchNow);
 }
 
-async function disableResearchMotion(page) {
+export async function disableResearchMotion(page) {
   await page.addStyleTag({
     content: `
       *, *::before, *::after {
@@ -1254,7 +1254,7 @@ const boxFor = async (page, selector) => {
   });
 };
 
-const pageDiagnostics = async (page, routeName) => page.evaluate((name) => {
+export const pageDiagnostics = async (page, routeName) => page.evaluate((name) => {
   const root = document.querySelector("#root");
   const app = document.querySelector(".app");
   const workspace = document.querySelector(".agent-workspace");
@@ -1279,7 +1279,7 @@ const pageDiagnostics = async (page, routeName) => page.evaluate((name) => {
   };
 }, routeName);
 
-function assertPageDiagnostics(diagnostics, deviceName) {
+export function assertPageDiagnostics(diagnostics, deviceName) {
   if (diagnostics.rootTextLength < 10) {
     throw new Error(deviceName + "/" + diagnostics.route + " rendered a blank application shell");
   }
@@ -1787,9 +1787,6 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
       const mobileNavigationOverride = await page.addStyleTag({
         content: "@media (max-width: 768px) { .sidebar { visibility: hidden !important; } }",
       });
-      if (process.env.UI_SCREENSHOT_CLEAR_FOCUS === "1") {
-        await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
-      }
       const resultScroll = await alignBacktestResultScreenshot(page);
       const backtestPath = resolve(directory, "backtest.png");
       const readCaptureState = () => page.evaluate(() => ({
@@ -1803,11 +1800,10 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
         reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
       }));
       const beforeCapture = await readCaptureState();
-      const caretMode = process.env.UI_SCREENSHOT_INITIAL_CARET === "1" ? "initial" : "hide";
-      await page.screenshot({ path: backtestPath, fullPage: true, caret: caretMode });
+      await page.screenshot({ path: backtestPath, fullPage: true });
       const afterCapture = await readCaptureState();
       writeFileSync(resolve(directory, "backtest-renderer.json"), JSON.stringify({
-        browser: browser.version(), legacyScreenshot: process.env.PLAYWRIGHT_LEGACY_SCREENSHOT || "", caretMode,
+        browser: browser.version(), legacyScreenshot: process.env.PLAYWRIGHT_LEGACY_SCREENSHOT || "",
         resultScroll, beforeCapture, afterCapture,
       }, null, 2) + "\n");
       if (Math.abs(afterCapture.scroll.y - beforeCapture.scroll.y) > 1) {

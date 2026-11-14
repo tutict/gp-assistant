@@ -8,12 +8,12 @@ permissions:
 
 jobs:
   backtest:
-    name: Backtest screenshot diagnostics (${{ matrix.capture }})
+    name: Backtest screenshot diagnostics (${{ matrix.method }})
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        capture: [focused, blurred, initial-caret]
+        method: [wrapper, metrics-wrapper, cdp, fonts-ready]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,17 +33,18 @@ jobs:
       - name: Install verified UI baseline font
         shell: pwsh
         run: ./scripts/prepare-ui-fonts.ps1 -Install
+      - name: Record hosted display
+        shell: pwsh
+        run: Get-CimInstance -ClassName Win32_VideoController | Select-Object Name,CurrentHorizontalResolution,CurrentVerticalResolution | ConvertTo-Json
       - name: Capture backtest diagnostics
         env:
-          UI_SCREENSHOT_CLEAR_FOCUS: ${{ matrix.capture == 'blurred' && '1' || '' }}
-          UI_SCREENSHOT_INITIAL_CARET: ${{ matrix.capture == 'initial-caret' && '1' || '' }}
           UI_BASELINE_MAX_DIFF_RATIO: '0.055'
-        run: node scripts/ui-screenshot.mjs --serve --backtest-page-only --compare-baselines --compare-all-baselines --output artifacts/ui-diagnostics/${{ matrix.capture }}
+        run: node scripts/ui-capture-diagnostics.mjs --method ${{ matrix.method }} --output artifacts/ui-diagnostics/${{ matrix.method }}
       - name: Preserve diagnostic screenshots and metadata
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: backtest-diagnostics-${{ matrix.capture }}-${{ github.run_id }}
+          name: backtest-diagnostics-${{ matrix.method }}-${{ github.run_id }}
           path: artifacts/ui-diagnostics/
           retention-days: 7
           if-no-files-found: error
