@@ -1710,6 +1710,22 @@ async function assertBacktestRuntimeColors(page) {
   return { ...positive, negativeVolatility };
 }
 
+export async function alignBacktestResultScreenshot(page) {
+  return page.locator(".backtest-result-heading").evaluate((heading) => {
+    const documentTop = heading.getBoundingClientRect().top + window.scrollY;
+    const scrollMargin = Number.parseFloat(getComputedStyle(heading).scrollMarginTop) || 0;
+    const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    const expectedY = Math.min(maxScroll, Math.max(0, documentTop - scrollMargin));
+    // Full-page screenshots place sticky navigation at the current scroll offset.
+    // Reapply the result heading anchor after browser-driven click scrolling.
+    heading.scrollIntoView({ block: "start", behavior: "instant" });
+    if (Math.abs(window.scrollY - expectedY) > 1) {
+      throw new Error(`Backtest screenshot did not settle at its result heading: ${window.scrollY} instead of ${expectedY}`);
+    }
+    return { x: window.scrollX, y: window.scrollY, expectedY };
+  });
+}
+
 async function captureBacktestPageBaselines(browser, targetRoot) {
   const reports = [];
   for (const device of backtestPageBaselineDevices) {
@@ -1771,6 +1787,7 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
       const mobileNavigationOverride = await page.addStyleTag({
         content: "@media (max-width: 768px) { .sidebar { visibility: hidden !important; } }",
       });
+      const resultScroll = await alignBacktestResultScreenshot(page);
       const backtestPath = resolve(directory, "backtest.png");
       await page.screenshot({ path: backtestPath, fullPage: true });
       const backtestRelativePath = `backtest-page/${device.name}/backtest.png`;
@@ -1795,6 +1812,7 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
         device: device.name,
         parameters: parameterRelativePath,
         dateRendering,
+        resultScroll,
         page: backtestRelativePath,
         volatility: volatilityRelativePath,
         baselines: { parameters: parameterBaseline, page: backtestBaseline, volatility: volatilityBaseline },
