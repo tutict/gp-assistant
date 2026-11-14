@@ -1726,6 +1726,45 @@ export async function alignBacktestResultScreenshot(page) {
   });
 }
 
+async function freezeStickyChromeForFullPageCapture(page, scrollY) {
+  return page.evaluate((currentScrollY) => {
+    return [".app-header", ".sidebar"].map((selector) => {
+      const element = document.querySelector(selector);
+      if (!element) return { selector, found: false, frozen: false };
+      const computedPosition = getComputedStyle(element).position;
+      const original = {
+        position: element.style.getPropertyValue("position"),
+        positionPriority: element.style.getPropertyPriority("position"),
+        top: element.style.getPropertyValue("top"),
+        topPriority: element.style.getPropertyPriority("top"),
+      };
+      if (computedPosition !== "sticky") {
+        return { selector, found: true, frozen: false, computedPosition, original };
+      }
+      element.style.setProperty("position", "relative", "important");
+      element.style.setProperty("top", `${currentScrollY}px`, "important");
+      return { selector, found: true, frozen: true, computedPosition, original };
+    });
+  }, scrollY);
+}
+
+async function restoreStickyChromeAfterFullPageCapture(page, frozenChrome) {
+  await page.evaluate((elements) => {
+    for (const item of elements) {
+      if (!item.frozen) continue;
+      const element = document.querySelector(item.selector);
+      if (!element) continue;
+      for (const [property, value, priority] of [
+        ["position", item.original.position, item.original.positionPriority],
+        ["top", item.original.top, item.original.topPriority],
+      ]) {
+        if (value) element.style.setProperty(property, value, priority);
+        else element.style.removeProperty(property);
+      }
+    }
+  }, frozenChrome);
+}
+
 async function captureBacktestPageBaselines(browser, targetRoot) {
   const reports = [];
   for (const device of backtestPageBaselineDevices) {
@@ -1800,11 +1839,16 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
         reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
       }));
       const beforeCapture = await readCaptureState();
-      await page.screenshot({ path: backtestPath, fullPage: true });
+      const frozenChrome = await freezeStickyChromeForFullPageCapture(page, beforeCapture.scroll.y);
+      try {
+        await page.screenshot({ path: backtestPath, fullPage: true });
+      } finally {
+        await restoreStickyChromeAfterFullPageCapture(page, frozenChrome);
+      }
       const afterCapture = await readCaptureState();
       writeFileSync(resolve(directory, "backtest-renderer.json"), JSON.stringify({
         browser: browser.version(), legacyScreenshot: process.env.PLAYWRIGHT_LEGACY_SCREENSHOT || "",
-        resultScroll, beforeCapture, afterCapture,
+        resultScroll, frozenChrome, beforeCapture, afterCapture,
       }, null, 2) + "\n");
       if (Math.abs(afterCapture.scroll.y - beforeCapture.scroll.y) > 1) {
         throw new Error(`Backtest screenshot capture changed scroll position: ${beforeCapture.scroll.y} to ${afterCapture.scroll.y}`);

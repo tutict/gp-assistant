@@ -174,6 +174,16 @@ describe("backtest page screenshot contract", () => {
     expect(hideNavigation).toBeLessThan(fullPageCapture);
   });
 
+  it("freezes sticky chrome before full-page capture", () => {
+    const captureStart = screenshotHarness.indexOf("async function captureBacktestPageBaselines");
+    const captureEnd = screenshotHarness.indexOf("async function captureObserveSummaryBaselines", captureStart);
+    const captureSource = screenshotHarness.slice(captureStart, captureEnd);
+    const freezeChrome = captureSource.indexOf("freezeStickyChromeForFullPageCapture");
+    const fullPageCapture = captureSource.indexOf("path: backtestPath, fullPage: true");
+    expect(freezeChrome).toBeGreaterThanOrEqual(0);
+    expect(freezeChrome).toBeLessThan(fullPageCapture);
+  });
+
   it("writes canonical backtest baselines to a stable tracked directory", () => {
     expect(frontendPackage).toContain("--output ./test-baselines");
     expect(frontendPackage).toContain("--stable-report");
