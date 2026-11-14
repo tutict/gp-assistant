@@ -1787,6 +1787,9 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
       const mobileNavigationOverride = await page.addStyleTag({
         content: "@media (max-width: 768px) { .sidebar { visibility: hidden !important; } }",
       });
+      if (process.env.UI_SCREENSHOT_CLEAR_FOCUS === "1") {
+        await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+      }
       const resultScroll = await alignBacktestResultScreenshot(page);
       const backtestPath = resolve(directory, "backtest.png");
       const readCaptureState = () => page.evaluate(() => ({
@@ -1800,12 +1803,16 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
         reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
       }));
       const beforeCapture = await readCaptureState();
-      await page.screenshot({ path: backtestPath, fullPage: true });
+      const caretMode = process.env.UI_SCREENSHOT_INITIAL_CARET === "1" ? "initial" : "hide";
+      await page.screenshot({ path: backtestPath, fullPage: true, caret: caretMode });
       const afterCapture = await readCaptureState();
       writeFileSync(resolve(directory, "backtest-renderer.json"), JSON.stringify({
-        browser: browser.version(), legacyScreenshot: process.env.PLAYWRIGHT_LEGACY_SCREENSHOT || "",
+        browser: browser.version(), legacyScreenshot: process.env.PLAYWRIGHT_LEGACY_SCREENSHOT || "", caretMode,
         resultScroll, beforeCapture, afterCapture,
       }, null, 2) + "\n");
+      if (Math.abs(afterCapture.scroll.y - beforeCapture.scroll.y) > 1) {
+        throw new Error(`Backtest screenshot capture changed scroll position: ${beforeCapture.scroll.y} to ${afterCapture.scroll.y}`);
+      }
       const backtestRelativePath = `backtest-page/${device.name}/backtest.png`;
       const backtestBaseline = checkScreenshotBaseline(backtestPath, backtestRelativePath);
       const volatility = page.locator(".backtest-volatility");
