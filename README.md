@@ -2,18 +2,26 @@
 
 **股选优**是一款面向中国股票市场研究的跨平台工作台。A 股提供智能选股、个股观察、严格样本外回测、新闻与本地 RAG 证据、个股情绪和研究 Agent；港股以完整研究工作流为目标，覆盖普通股目录、自选、观察、财务、筛选、回测、新闻与本地 RAG、情绪及研究 Agent，并按数据证据分阶段开放。用户可以在设置中切换市场，研究结果始终绑定当前市场上下文；未达到数据门槛的能力会明确显示状态并保持禁用。
 
-项目使用 **Tauri 2 + Rust + React/TypeScript**，Windows 桌面端与 Android 端共享界面和 Rust 核心能力。当前稳定版本为 **[v0.6.3 过渡版](https://github.com/tutict/gp-assistant/releases/tag/v0.6.3)**，补强行情证据展示、筛选结果解释、Android 布局稳定性和导入安全边界；详情见[版本说明](docs/release-notes-v0.6.3.md)。
+项目使用 **Tauri 2 + Rust + React/TypeScript**，Windows 桌面端与 Android 端共享界面和 Rust 核心能力。当前稳定版本为 **[v0.6.4](https://github.com/tutict/gp-assistant/releases/tag/v0.6.4)**，重点更新公司资料与消息证据、研究工作区、移动端交互、缓存可靠性和发布构建；详情见[版本说明](docs/release-notes-v0.6.4.md)。
 
 > 股选优只提供研究、筛选和策略验证工具，不构成投资建议，不承诺任何收益。市场有风险，投资需谨慎。
 
 ![股选优界面](./current-guxuanyou.png)
 
+## v0.6.4 更新重点
+
+- **研究证据更完整**：A 股公司资料保留来源和抓取时间；新闻、政策和媒体消息区分发布时间、抓取时间、来源和部分失败状态；研究 Agent 可在复盘抽屉中查看事件时间线、工具调用和最终回答。
+- **桌面与手机操作更稳定**：统一加载、成功、部分失败和失败反馈；手机主要操作保持 48px 触控尺寸；软键盘、系统返回、设置 Sheet、焦点恢复和短横屏模型编辑均有适配。
+- **回测与选股结果更易核验**：结果摘要优先展示范围、日期、方式和成本；回测保留严格滚动样本外约束、逐折明细、基准对比和波动率诊断；截图和交互门禁保持原有严格阈值。
+- **数据更新更可控**：公司资料按请求代次发布，旧响应不能覆盖新结果；缓存写入和公开数据读取有大小上限，失败时保留可用缓存并显示重试原因；外部来源在授权或证据不足时保持关闭。
+- **发布包已更新**：Windows x64 NSIS 安装包和 Android ARM64 签名 APK 已上传到 v0.6.4 Release。Windows 安装包当前未进行 Authenticode 签名，Android APK 保持 `com.tutict.stockoptimizer` 包名和原签名。
+
 ## 下载与安装
 
-请前往 [股选优 v0.6.3 过渡版](https://github.com/tutict/gp-assistant/releases/tag/v0.6.3) 下载当前稳定版，或在 [GitHub Releases](https://github.com/tutict/gp-assistant/releases) 查看全部版本：
+请前往 [股选优 v0.6.4](https://github.com/tutict/gp-assistant/releases/tag/v0.6.4) 下载当前稳定版，或在 [GitHub Releases](https://github.com/tutict/gp-assistant/releases) 查看全部版本：
 
-- **Windows 10/11 x64**：[guxuanyou_0.6.3_windows_x64_setup.exe](https://github.com/tutict/gp-assistant/releases/download/v0.6.3/guxuanyou_0.6.3_windows_x64_setup.exe)（当前安装包未进行 Authenticode 签名）
-- **Android 7.0 及以上**：[guxuanyou_0.6.3_android_aarch64_release_signed.apk](https://github.com/tutict/gp-assistant/releases/download/v0.6.3/guxuanyou_0.6.3_android_aarch64_release_signed.apk)（APK 已签名，包名 `com.tutict.stockoptimizer`）
+- **Windows 10/11 x64**：[guxuanyou_0.6.4_windows_x64_setup.exe](https://github.com/tutict/gp-assistant/releases/download/v0.6.4/guxuanyou_0.6.4_windows_x64_setup.exe)（当前安装包未进行 Authenticode 签名）
+- **Android 7.0 及以上**：[guxuanyou_0.6.4_android_aarch64_release_signed.apk](https://github.com/tutict/gp-assistant/releases/download/v0.6.4/guxuanyou_0.6.4_android_aarch64_release_signed.apk)（APK 已签名，包名 `com.tutict.stockoptimizer`）
 
 Android 安装时如果系统提示“未知来源应用”，请只为当前文件来源临时授权。升级安装必须使用相同签名的 APK；正式发布包会保留一致的应用签名。
 
@@ -23,16 +31,16 @@ Android 安装时如果系统提示“未知来源应用”，请只为当前文
 | --- | --- |
 | 选股 | 按估值、盈利质量、成长、风险、市值、行业与市场状态筛选，提供质量、趋势、风险和综合评分 |
 | 多策略筛选 | 提供智能选股、概念分组、板块分组、自定义选股和趋势选股五种模式，界面默认使用 adaptive_swing_v1，结果可加入自选池 |
-| 个股观察 | 汇总行情、总股本、流通股、EPS、财务质量、机构资金、量价状态和专业量化明细 |
+| 个股观察 | 汇总行情、公司资料、总股本、流通股、EPS、财务质量、机构资金、量价状态和专业量化明细，并保留来源与抓取时间 |
 | K 线与指标 | 支持日 K、周 K、月 K，显示均线、MACD、KDJ、成交量、十字定位、缩放和手机横向全屏 |
 | 港股行情与财务观察 | 读取港股目录、行情、日 K、候选财务、汇率和披露元数据缓存，并分别显示来源、观测时间、核验状态、币种、覆盖和失败原因；港交所 `Equity` 类记录的普通股身份尚未核验，未核验记录不能进入观察；HKEX、Tencent、Eastmoney 与 HKEXnews 的自动刷新在提供方授权证据完成前关闭；HKD/CNY 日汇率固定到 ECB 来源并显示实际观测日期 |
 | 研究摘要 | 首屏提炼资金背离、趋势效率、波动状态和流动性风险，原始指标保留在专业明细中 |
 | 回测 | 支持条件候选池或自选池回测、等权组合、调仓、成本扣减和严格滚动样本外验证 |
-| 新闻与证据 | 聚合个股消息、政策与媒体来源、上下游关系和本地 RAG 证据，区分来源、时间与正负面线索 |
+| 新闻与证据 | 聚合个股消息、政策与媒体来源、上下游关系和本地 RAG 证据，区分来源、发布时间、抓取时间、正负面线索，并支持部分失败后继续阅读缓存 |
 | 个股情绪 | 与消息共用股票和页面。按近 30 天冻结快照查看阶段、消息、量价和行业证据；追问只引用该快照，缺失覆盖会明确标注 |
-| 研究 Agent | 调用筛选、观察、回测和消息工具，以聊天方式组织证据并解释结果；运行记录可通过复盘抽屉查看事件时间线、工具调用和最终结果 |
+| 研究 Agent | 调用筛选、观察、回测和消息工具，以聊天方式组织证据并解释结果；运行记录可通过复盘抽屉查看事件时间线、工具调用、证据和最终结果 |
 | 模型与界面设置 | 支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、兼容网关和本地模型服务；主题、界面密度和字体缩放可持久化保存 |
-| 数据维护 | 查看股票池及外部数据来源、迁移、容量和重试状态；刷新由用户显式触发；清理先预览，再确认 |
+| 数据维护 | 查看股票池及外部数据来源、迁移、容量和重试状态；外部来源单独存储，刷新由用户显式触发；清理先预览，再确认 |
 
 ## 设计与数据原则
 
@@ -100,7 +108,7 @@ Walk-forward 回测把每个调仓日至下一调仓日视为独立样本外区�
 
 ### adaptive_swing_v1 发布验证
 
-> **v0.6.2 状态：常规发布检查已通过，adaptive 严格门槛尚未验证。** 当前可用数据不包含覆盖回测区间的全市场点时（PIT）历史因子、上市、ST 与可交易状态，因此本版本不宣称 adaptive 严格发布门槛已经通过。严格回测语义保持不变：缺少 `factor_snapshots` 等必要证据时会在历史行情预取前明确失败，不使用当前数据回填；普通 `candidate_snapshot` 回测仍可正常使用。完整 PIT 数据采集作为后续独立工作。
+> **v0.6.4 状态：常规发布检查已通过，adaptive 严格门槛尚未验证。** 当前可用数据不包含覆盖回测区间的全市场点时（PIT）历史因子、上市、ST 与可交易状态，因此本版本不宣称 adaptive 严格发布门槛已经通过。严格回测语义保持不变：缺少 `factor_snapshots` 等必要证据时会在历史行情预取前明确失败，不使用当前数据回填；普通 `candidate_snapshot` 回测仍可正常使用。完整 PIT 数据采集作为后续独立工作。
 
 发布验证前必须准备覆盖回测区间的全市场日线，以及带报告期和实际可见日期的历史因子快照；只有当前单期财务快照时，不能形成至少 60 个严格样本外折次的有效证据。
 
