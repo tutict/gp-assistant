@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        method: [wrapper, metrics-wrapper, cdp, fonts-ready]
+        method: [wrapper, full-chromium, full-chromium-zh]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

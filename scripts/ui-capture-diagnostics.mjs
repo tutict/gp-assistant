@@ -13,7 +13,7 @@ const option = (name, fallback) => {
   return index < 0 ? fallback : process.argv[index + 1];
 };
 const method = option("--method", "wrapper");
-if (!["wrapper", "metrics-wrapper", "cdp", "fonts-ready"].includes(method)) {
+if (!["wrapper", "metrics-wrapper", "cdp", "fonts-ready", "full-chromium", "full-chromium-zh"].includes(method)) {
   throw new Error(`Unknown diagnostic method: ${method}`);
 }
 const output = resolve(option("--output", "artifacts/ui-capture-diagnostics"));
@@ -43,14 +43,16 @@ async function windowBounds(browser, context, page) {
   }
 }
 const { server, url } = await startBuiltAppServer();
-const report = { method, node: process.version, viewportEmulated: true };
+const launchOptions = method.startsWith("full-chromium") ? { channel: "chromium" } : {};
+const report = { method, node: process.version, viewportEmulated: true, launchOptions };
 let browser;
 try {
-  browser = await chromium.launch();
+  browser = await chromium.launch(launchOptions);
   report.browser = browser.version();
   const context = await browser.newContext({
     viewport: { width: 1920, height: 1080 }, screen: { width: 1920, height: 1080 },
     deviceScaleFactor: 1, hasTouch: false, isMobile: false, colorScheme: "dark", reducedMotion: "reduce",
+    ...(method === "full-chromium-zh" ? { locale: "zh-CN" } : {}),
   });
   const page = await context.newPage();
   await installFixedResearchClock(page);
@@ -97,7 +99,7 @@ try {
   report.scrollUnchanged = Math.abs(report.initial.scroll.y - report.afterCapture.scroll.y) <= 1;
   await context.close();
   await browser.close();
-  browser = await chromium.launch();
+  browser = await chromium.launch(launchOptions);
   const nativeContext = await browser.newContext({ viewport: null });
   const nativePage = await nativeContext.newPage();
   report.nativeProbe = {
