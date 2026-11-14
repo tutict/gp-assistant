@@ -78,6 +78,24 @@ try {
   if (method === "fonts-ready") await page.evaluate(() => document.fonts.ready);
   report.anchor = await alignBacktestResultScreenshot(page);
   report.initial = await readState(page);
+  report.stickyChrome = await page.evaluate((scrollY) => {
+    const elements = [".app-header", ".sidebar"].map((selector) => {
+      const element = document.querySelector(selector);
+      if (!element) return { selector, found: false };
+      const before = element.getBoundingClientRect();
+      element.style.setProperty("position", "relative", "important");
+      element.style.setProperty("top", `${scrollY}px`, "important");
+      const after = element.getBoundingClientRect();
+      return {
+        selector,
+        found: true,
+        documentTop: before.top + window.scrollY,
+        beforeViewportTop: before.top,
+        afterViewportTop: after.top,
+      };
+    });
+    return { scrollY, elements };
+  }, report.initial.scroll.y);
   const pageSession = await context.newCDPSession(page);
   if (method === "metrics-wrapper" || method === "cdp") {
     report.layoutMetrics = await pageSession.send("Page.getLayoutMetrics");
