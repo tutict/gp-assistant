@@ -1789,7 +1789,23 @@ async function captureBacktestPageBaselines(browser, targetRoot) {
       });
       const resultScroll = await alignBacktestResultScreenshot(page);
       const backtestPath = resolve(directory, "backtest.png");
+      const readCaptureState = () => page.evaluate(() => ({
+        scroll: { x: scrollX, y: scrollY },
+        viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
+        document: { width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight },
+        heading: document.querySelector(".backtest-result-heading").getBoundingClientRect().toJSON(),
+        header: document.querySelector(".app-header").getBoundingClientRect().toJSON(),
+        focusedElement: document.activeElement?.className || document.activeElement?.tagName,
+        locale: navigator.language,
+        reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+      }));
+      const beforeCapture = await readCaptureState();
       await page.screenshot({ path: backtestPath, fullPage: true });
+      const afterCapture = await readCaptureState();
+      writeFileSync(resolve(directory, "backtest-renderer.json"), JSON.stringify({
+        browser: browser.version(), legacyScreenshot: process.env.PLAYWRIGHT_LEGACY_SCREENSHOT || "",
+        resultScroll, beforeCapture, afterCapture,
+      }, null, 2) + "\n");
       const backtestRelativePath = `backtest-page/${device.name}/backtest.png`;
       const backtestBaseline = checkScreenshotBaseline(backtestPath, backtestRelativePath);
       const volatility = page.locator(".backtest-volatility");

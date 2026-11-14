@@ -1,0 +1,48 @@
+name: Desktop UI Diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    name: Backtest screenshot diagnostics (${{ matrix.screenshot }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        screenshot: [default, legacy]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/frontend/package-lock.json
+      - name: Build the fixed frontend fixture
+        shell: pwsh
+        run: |
+          npm ci --prefix desktop/frontend
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm --prefix desktop/frontend run build:app
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install Playwright Chromium
+        run: npm --prefix desktop/frontend exec -- playwright install chromium
+      - name: Install verified UI baseline font
+        shell: pwsh
+        run: ./scripts/prepare-ui-fonts.ps1 -Install
+      - name: Capture backtest diagnostics
+        env:
+          PLAYWRIGHT_LEGACY_SCREENSHOT: ${{ matrix.screenshot == 'legacy' && '1' || '' }}
+          UI_BASELINE_MAX_DIFF_RATIO: '0.055'
+        run: node scripts/ui-screenshot.mjs --serve --backtest-page-only --compare-baselines --compare-all-baselines --output artifacts/ui-diagnostics/${{ matrix.screenshot }}
+      - name: Preserve diagnostic screenshots and metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-diagnostics-${{ matrix.screenshot }}-${{ github.run_id }}
+          path: artifacts/ui-diagnostics/
+          retention-days: 7
+          if-no-files-found: error
