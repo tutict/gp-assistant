@@ -139,7 +139,7 @@ pub(super) async fn enrich(
     cached: &[Value],
 ) -> Result<usize, String> {
     let default_redirects = reqwest::redirect::Policy::default();
-    let client = crate::market::build_http_client_with_redirect_policy(
+    let client = crate::network::http::build_http_client_with_redirect_policy(
         "Mozilla/5.0 GuXuanYou/0.4 article-summary",
         Duration::from_secs(6),
         network_payload,

@@ -7,7 +7,7 @@ pub(super) fn merge(data: &gp_core::CoreDataSet, snapshot: &Value) -> Vec<gp_cor
     let mut codes = Vec::with_capacity(data.stocks.len());
     let mut stocks = HashMap::with_capacity(data.stocks.len());
     for stock in &data.stocks {
-        let Some(code) = crate::market::normalize_stock_code(&stock.code) else {
+        let Some(code) = crate::market_domain::codes::normalize_stock_code(&stock.code) else {
             continue;
         };
         let mut stock = stock.clone();
@@ -17,9 +17,10 @@ pub(super) fn merge(data: &gp_core::CoreDataSet, snapshot: &Value) -> Vec<gp_cor
     }
     if let Some(financials) = snapshot.get("financials").and_then(Value::as_object) {
         for (code, value) in financials {
-            if let (Some(code), Some(row)) =
-                (crate::market::normalize_stock_code(code), value.as_object())
-            {
+            if let (Some(code), Some(row)) = (
+                crate::market_domain::codes::normalize_stock_code(code),
+                value.as_object(),
+            ) {
                 if let Some(stock) = stocks.get_mut(&code) {
                     if !older_than_cached_report(data, &code, row) {
                         merge_fields(stock, row);
@@ -33,7 +34,7 @@ pub(super) fn merge(data: &gp_core::CoreDataSet, snapshot: &Value) -> Vec<gp_cor
             let code = row
                 .get("code")
                 .and_then(Value::as_str)
-                .and_then(crate::market::normalize_stock_code);
+                .and_then(crate::market_domain::codes::normalize_stock_code);
             if let (Some(code), Some(row)) = (code, row.as_object()) {
                 if let Some(stock) = stocks.get_mut(&code) {
                     if !older_than_cached_report(data, &code, row) {
@@ -45,7 +46,7 @@ pub(super) fn merge(data: &gp_core::CoreDataSet, snapshot: &Value) -> Vec<gp_cor
     }
     if let Some(industries) = snapshot.get("industries").and_then(Value::as_object) {
         for (code, value) in industries {
-            let code = crate::market::normalize_stock_code(code);
+            let code = crate::market_domain::codes::normalize_stock_code(code);
             let industry = value
                 .as_str()
                 .map(str::trim)
@@ -62,7 +63,7 @@ pub(super) fn merge(data: &gp_core::CoreDataSet, snapshot: &Value) -> Vec<gp_cor
         .filter_map(|code| stocks.remove(&code))
         .map(|mut stock| {
             if stock.industry.trim().is_empty() {
-                stock.industry = crate::market::board_label(&stock.code).to_string();
+                stock.industry = crate::market_domain::codes::board_label(&stock.code).to_string();
             }
             stock
         })
@@ -103,7 +104,7 @@ fn merge_fields(stock: &mut gp_core::StockItem, row: &Map<String, Value>) {
         ("latest_eps", &mut stock.latest_eps),
     ] {
         if target.is_none_or(|value| !value.is_finite()) {
-            *target = crate::market::finite_object_number(row, field);
+            *target = crate::market_domain::financial::finite_object_number(row, field);
         }
     }
 }

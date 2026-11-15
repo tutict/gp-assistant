@@ -339,13 +339,13 @@ pub(crate) fn cn_evidence_from_cache(
         .and_then(string_value)
         .or_else(|| status.get("universe_updated_at").and_then(string_value));
     let directory_freshness = freshness_from_timestamp(
-        crate::market::epoch_millis(),
+        crate::market_domain::dates::epoch_millis(),
         directory_fetched_at
             .as_deref()
             .and_then(cache_timestamp_epoch_ms),
     );
     let financial_freshness = freshness_from_timestamp(
-        crate::market::epoch_millis(),
+        crate::market_domain::dates::epoch_millis(),
         reference
             .and_then(|reference| reference.pointer("/financial/fetched_at"))
             .and_then(string_value)
@@ -647,7 +647,7 @@ pub(crate) fn cn_evidence_from_cache(
             snapshot.report_notice_date.clone(),
             period.clone(),
             freshness_from_timestamp(
-                crate::market::epoch_millis(),
+                crate::market_domain::dates::epoch_millis(),
                 snapshot
                     .report_fetched_at
                     .as_deref()
@@ -993,7 +993,7 @@ fn cache_timestamp_epoch_ms(value: &str) -> Option<u128> {
     value
         .parse::<u128>()
         .ok()
-        .or_else(|| crate::market::parse_cache_datetime_epoch_ms(value))
+        .or_else(|| crate::market_domain::dates::parse_cache_datetime_epoch_ms(value))
 }
 
 fn freshness_from_timestamp(now: u128, fetched_at: Option<u128>) -> CapabilityFreshness {
@@ -1015,7 +1015,7 @@ fn hk_quote_observed_date(raw: &str) -> Option<String> {
                 .to_string(),
         );
     }
-    let date = crate::market::compact_date_key(raw)?;
+    let date = crate::market_domain::dates::compact_date_key(raw)?;
     chrono::NaiveDate::parse_from_str(&date, "%Y%m%d")
         .ok()
         .map(|date| date.format("%Y%m%d").to_string())
@@ -1192,7 +1192,8 @@ fn hk_evidence_from_cache_with_news(
     let now = crate::hk_market::current_epoch_millis()
         .parse::<u128>()
         .unwrap_or_default();
-    let expected_quote_date = crate::market::expected_market_quote_date_from_epoch_ms(now);
+    let expected_quote_date =
+        crate::market_domain::dates::expected_market_quote_date_from_epoch_ms(now);
     let per_security_freshness = projected
         .stocks
         .iter()
@@ -1717,7 +1718,7 @@ mod tests {
         ];
         data.histories
             .insert("000001.SZ".to_string(), history("20261106"));
-        let now = crate::market::epoch_millis().to_string();
+        let now = crate::market_domain::dates::epoch_millis().to_string();
         let status = json!({"universe_count":2,"stale":false,"cn_reference":{"directory":{"checked":true,"count":2,"fetched_at":now}}});
         let items = evidence_for(data, status, json!({"sources":[]}));
         let backtest = capabilities_for_market(MarketId::Cn, &items)
@@ -1739,7 +1740,7 @@ mod tests {
     #[test]
     fn cn_data_checked_local_coverage_is_available_without_claiming_distribution_rights() {
         let mut data = gp_core::CoreDataSet::default();
-        let fetched_at = crate::market::epoch_millis().to_string();
+        let fetched_at = crate::market_domain::dates::epoch_millis().to_string();
         let mut company = stock("000002.SZ", "20261106");
         company.pe = Some(-6.3);
         company.pb = Some(0.4);
@@ -2148,8 +2149,10 @@ mod tests {
     }
 
     fn current_hk_quote_date() -> String {
-        crate::market::expected_market_quote_date_from_epoch_ms(crate::market::epoch_millis())
-            .unwrap()
+        crate::market_domain::dates::expected_market_quote_date_from_epoch_ms(
+            crate::market_domain::dates::epoch_millis(),
+        )
+        .unwrap()
     }
 
     fn hk_freshness_cache() -> crate::hk_market::HkMarketCache {

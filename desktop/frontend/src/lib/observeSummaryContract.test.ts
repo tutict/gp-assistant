@@ -11,7 +11,8 @@ const { readFileSync } = await import(nodeFs);
 const stylesDirectory = new URL("../styles/", import.meta.url);
 const pagesCss = readFileSync(new URL("pages.css", stylesDirectory), "utf8");
 const responsiveCss = readFileSync(new URL("responsive.css", stylesDirectory), "utf8");
-const nativeCore = readFileSync(new URL("../../../../native/gp-core/src/lib.rs", import.meta.url), "utf8");
+const nativeTrendIndicators = readFileSync(new URL("../../../../native/gp-core/src/trend/indicators.rs", import.meta.url), "utf8");
+const nativeTrendRules = readFileSync(new URL("../../../../native/gp-core/src/trend_screen/rules.rs", import.meta.url), "utf8");
 let ObserveResultView: ObservePanelModule["ObserveResultView"];
 let formatObserveTime: ObservePanelModule["formatObserveTime"];
 let patternSignalLabel: ObservePanelModule["patternSignalLabel"];
@@ -61,12 +62,12 @@ function cssRule(css: string, selector: string): string {
   return css.slice(start, end + 1);
 }
 
-function nativeStringSet(startMarker: string, endMarker: string): string[] {
-  const start = nativeCore.indexOf(startMarker);
-  const end = nativeCore.indexOf(endMarker, start);
+function nativeStringSet(source: string, startMarker: string, endMarker: string): string[] {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start);
   expect(start).toBeGreaterThanOrEqual(0);
   expect(end).toBeGreaterThan(start);
-  return [...nativeCore.slice(start, end).matchAll(/(?:push|return|default)[^\n]*?"([a-z][a-z0-9_:-]+)"/g)]
+  return [...source.slice(start, end).matchAll(/(?:push|return|default)[^\n]*?"([a-z][a-z0-9_:-]+)"/g)]
     .map((match) => match[1])
     .filter((value, index, values) => values.indexOf(value) === index);
 }
@@ -216,13 +217,13 @@ describe("observe summary copy contract", () => {
   });
 
   it("keeps every native trend enum in a translated frontend map", () => {
-    const signalTypes = nativeStringSet("fn classify_trend_signal", "fn layered_reason_tags");
+    const signalTypes = nativeStringSet(nativeTrendRules, "fn classify_trend_signal", "fn layered_reason_tags");
     const riskFlags = [
-      ...nativeStringSet("fn trend_layer_risk_flags", "fn closes_from_points"),
-      ...nativeStringSet("fn trend_risk_flags_from_bar", "fn closes_from_points"),
+      ...nativeStringSet(nativeTrendRules, "fn trend_layer_risk_flags", "fn closes_from_points"),
+      ...nativeStringSet(nativeTrendIndicators, "fn trend_risk_flags_from_bar", "fn trend_notes"),
     ].filter((value, index, values) => values.indexOf(value) === index);
-    const patternSignals = nativeStringSet("fn pattern_signals", "fn trend_status");
-    const reasons = nativeStringSet("fn trend_reasons", "fn pattern_score");
+    const patternSignals = nativeStringSet(nativeTrendIndicators, "fn pattern_signals", "fn trend_status");
+    const reasons = nativeStringSet(nativeTrendIndicators, "fn trend_reasons", "fn pattern_score");
 
     for (const value of ["trend_continuation", "trend_reversal", "range_bound", "breakout_attempt"])
       expect(signalTypeLabel(value)).not.toBe("未识别类型");

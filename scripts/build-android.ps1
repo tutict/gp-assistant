@@ -481,7 +481,8 @@ function Sign-AndroidReleaseApk {
 
 
 function Use-LocalGradleDistribution {
-    $GradleZip = "C:\tmp\gradle-8.14.3-bin.zip"
+    $GradleZipOverride = [Environment]::GetEnvironmentVariable('GP_ANDROID_GRADLE_ZIP')
+    $GradleZip = if ($GradleZipOverride) { [System.IO.Path]::GetFullPath($GradleZipOverride) } else { 'C:\tmp\gradle-8.14.3-bin.zip' }
     $WrapperProperties = Join-Path $AndroidProjectDir "gradle\wrapper\gradle-wrapper.properties"
     if (-not (Test-Path -LiteralPath $GradleZip) -or -not (Test-Path -LiteralPath $WrapperProperties)) {
         return
@@ -510,7 +511,29 @@ function Use-LocalGradleDistribution {
     try {
         $Normalized = $Updated.TrimEnd("`r", "`n") + [Environment]::NewLine
         [System.IO.File]::WriteAllText($TempProperties, $Normalized, [System.Text.Encoding]::ASCII)
-        [System.IO.File]::Replace($TempProperties, $WrapperProperties, $BackupProperties)
+        $SecuritySections = [System.Security.AccessControl.AccessControlSections]::Access -bor
+            [System.Security.AccessControl.AccessControlSections]::Owner -bor
+            [System.Security.AccessControl.AccessControlSections]::Group
+        $OriginalSecurity = (Get-Acl -LiteralPath $WrapperProperties).GetSecurityDescriptorSddlForm($SecuritySections)
+        try {
+            [System.IO.File]::Replace($TempProperties, $WrapperProperties, $BackupProperties)
+        } catch [System.UnauthorizedAccessException] {
+            if (-not (Test-Path -LiteralPath $TempProperties) -or -not (Test-Path -LiteralPath $WrapperProperties)) {
+                throw
+            }
+            $CurrentSecurity = (Get-Acl -LiteralPath $WrapperProperties).GetSecurityDescriptorSddlForm($SecuritySections)
+            $TempSecurity = (Get-Acl -LiteralPath $TempProperties).GetSecurityDescriptorSddlForm($SecuritySections)
+            if ([System.IO.File]::ReadAllText($WrapperProperties) -cne $Current -or
+                [System.IO.File]::ReadAllText($TempProperties) -cne $Normalized -or
+                $CurrentSecurity -cne $OriginalSecurity -or
+                $TempSecurity -cne $CurrentSecurity) {
+                throw
+            }
+            [System.IO.File]::Replace($TempProperties, $WrapperProperties, $BackupProperties, $true)
+        }
+        if ((Get-Acl -LiteralPath $WrapperProperties).GetSecurityDescriptorSddlForm($SecuritySections) -cne $OriginalSecurity) {
+            throw "Gradle wrapper file security changed during replacement."
+        }
     } finally {
         if (Test-Path -LiteralPath $TempProperties) {
             Remove-Item -LiteralPath $TempProperties -Force

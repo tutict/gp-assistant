@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
-use crate::{parse_date, round4, HistoryBar};
+use crate::dates::parse_date;
+use crate::market_data::HistoryBar;
+use crate::numeric::round4;
 
 const ATR_PERIOD: usize = 14;
 const BOLLINGER_PERIOD: usize = 20;

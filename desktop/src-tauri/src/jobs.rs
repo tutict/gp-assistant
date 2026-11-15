@@ -728,7 +728,7 @@ pub(crate) fn has_active_work(app: &tauri::AppHandle) -> bool {
 
 async fn dispatch(app: tauri::AppHandle, kind: Kind, payload: Value) -> Result<Value, String> {
     match kind {
-        Kind::MarketRefresh => crate::market::api_market_refresh(app, payload).await,
+        Kind::MarketRefresh => crate::market::commands::api_market_refresh(app, payload).await,
         Kind::Backtest => crate::screening::api_backtest(app, payload).await,
         // Deliberately use the existing synchronous import primitive, not the command
         // that detaches embedding work. FTS is rebuilt by import_app_pack itself.

@@ -279,7 +279,7 @@ fn upsert_records(conn: &Connection, items: Vec<WatchlistRecord>) -> Result<(), 
             item.added_at,
             item.source,
             item.screen_criteria_summary,
-            crate::market::epoch_millis() as i64
+            crate::market_domain::dates::epoch_millis() as i64
         ])
         .map_err(sql_error)?;
     }
@@ -295,7 +295,7 @@ fn apply_mutation(conn: &Connection, mutation: WatchlistMutation) -> Result<(), 
                 .map(watchlist_item_from_value)
                 .collect::<Result<Vec<_>, _>>()?;
             for code in removes {
-                let code = crate::market::normalize_stock_code(&code)
+                let code = crate::market_domain::codes::normalize_stock_code(&code)
                     .ok_or_else(|| "watchlist code is required".to_string())?;
                 conn.execute("DELETE FROM watchlist WHERE code=?1", params![code])
                     .map_err(sql_error)?;
@@ -456,19 +456,21 @@ pub(crate) fn watchlist_item_from_value(value: &Value) -> Result<WatchlistRecord
     let code = value
         .get("code")
         .and_then(Value::as_str)
-        .and_then(crate::market::normalize_stock_code)
+        .and_then(crate::market_domain::codes::normalize_stock_code)
         .ok_or_else(|| "watchlist code is required".to_string())?;
     Ok(WatchlistRecord {
         code,
-        name: crate::market::optional_trimmed_string(value.get("name")),
-        industry: crate::market::optional_trimmed_string(value.get("industry")),
-        added_at: crate::market::optional_trimmed_string(value.get("added_at"))
-            .unwrap_or_else(|| crate::market::epoch_millis().to_string()),
-        source: crate::market::optional_trimmed_string(value.get("source")),
-        screen_criteria_summary: crate::market::optional_trimmed_string(
+        name: crate::wire_values::optional_trimmed_string(value.get("name")),
+        industry: crate::wire_values::optional_trimmed_string(value.get("industry")),
+        added_at: crate::wire_values::optional_trimmed_string(value.get("added_at"))
+            .unwrap_or_else(|| crate::market_domain::dates::epoch_millis().to_string()),
+        source: crate::wire_values::optional_trimmed_string(value.get("source")),
+        screen_criteria_summary: crate::wire_values::optional_trimmed_string(
             value.get("screenCriteriaSummary"),
         )
-        .or_else(|| crate::market::optional_trimmed_string(value.get("screen_criteria_summary"))),
+        .or_else(|| {
+            crate::wire_values::optional_trimmed_string(value.get("screen_criteria_summary"))
+        }),
     })
 }
 
@@ -661,7 +663,7 @@ mod reliability_tests {
             Self(std::env::temp_dir().join(format!(
                 "watchlist-reliability-{}-{}-{suffix}.sqlite",
                 std::process::id(),
-                crate::market::epoch_millis()
+                crate::market_domain::dates::epoch_millis()
             )))
         }
         fn open(&self) -> Connection {

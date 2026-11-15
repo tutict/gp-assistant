@@ -66,8 +66,8 @@ pub(crate) fn local_history_coverage(
     codes
         .iter()
         .map(|code| {
-            let normalized =
-                crate::market::normalize_stock_code(code).unwrap_or_else(|| code.clone());
+            let normalized = crate::market_domain::codes::normalize_stock_code(code)
+                .unwrap_or_else(|| code.clone());
             let rows = overrides
                 .get(code)
                 .or_else(|| data.histories.get(code))
@@ -106,15 +106,15 @@ pub(crate) fn local_trend_history_coverage(
         .iter()
         .map(|stock| (stock.code.as_str(), stock))
         .collect::<HashMap<_, _>>();
-    let start = crate::market::compact_date_key(start).unwrap_or_default();
-    let end = crate::market::compact_date_key(end).unwrap_or_default();
+    let start = crate::market_domain::dates::compact_date_key(start).unwrap_or_default();
+    let end = crate::market_domain::dates::compact_date_key(end).unwrap_or_default();
     let mut coverage = local_history_coverage(data, overrides, codes, &start, &end, required);
     for item in &mut coverage {
         let code = item["code"].as_str().unwrap_or_default();
         let quote_date = quotes
             .get(code)
             .and_then(|stock| stock.quote_time.as_deref())
-            .and_then(crate::market::compact_date_key);
+            .and_then(crate::market_domain::dates::compact_date_key);
         // Historical windows remain readable; current windows must cover their quote date.
         let target = quote_date
             .as_ref()
@@ -140,7 +140,7 @@ pub(crate) fn adaptive_local_coverage(
     as_of: Option<&str>,
 ) -> Vec<Value> {
     codes.iter().map(|code| {
-        let normalized = crate::market::normalize_stock_code(code).unwrap_or_else(|| code.clone());
+        let normalized = crate::market_domain::codes::normalize_stock_code(code).unwrap_or_else(|| code.clone());
         let rows = overrides.get(code).or_else(|| data.histories.get(code)).or_else(|| data.histories.get(&normalized)).map(Vec::as_slice).unwrap_or(&[]);
         let window = adaptive_history_window(rows, as_of);
         let mut item = local_data::history_coverage(window.iter().filter(|bar| bar.close.is_finite() && bar.close > 0.0).map(|bar| bar.date.as_str()), "19900101", as_of.unwrap_or("20501231"), MIN_ADAPTIVE_SCREEN_HISTORY_BARS);
@@ -151,7 +151,7 @@ pub(crate) fn adaptive_local_coverage(
 }
 
 pub(crate) fn adaptive_screen_candidate_gaps(coverage: &[Value]) -> Result<Vec<Value>, String> {
-    let benchmarks = crate::market::adaptive_benchmark_codes();
+    let benchmarks = crate::market_domain::codes::adaptive_benchmark_codes();
     let benchmark_coverage=benchmarks.iter().map(|code| {
         coverage.iter().find(|item|item.get("code").and_then(Value::as_str)==Some(*code)).cloned()
             .unwrap_or_else(||json!({"code":code,"kind":"history","sufficient":false,"available_bars":0,"required_bars":MIN_ADAPTIVE_SCREEN_HISTORY_BARS}))
@@ -207,7 +207,7 @@ pub(crate) fn local_metadata(
         .stocks
         .iter()
         .filter_map(|stock| stock.quote_time.as_deref())
-        .filter_map(crate::market::compact_date_key)
+        .filter_map(crate::market_domain::dates::compact_date_key)
         .min();
     let mut metadata = local_data::metadata(policy, quote_as_of, coverage);
     metadata["stock_count"] = json!(data.stocks.len());
@@ -437,7 +437,9 @@ fn preserve_hk_prepared_financials(
             .parse::<u128>()
             .ok()
             .or_else(|| {
-                crate::market::parse_cache_datetime_epoch_ms(&snapshot.candidate_fetched_at)
+                crate::market_domain::dates::parse_cache_datetime_epoch_ms(
+                    &snapshot.candidate_fetched_at,
+                )
             })
             .unwrap_or(0)
     };
@@ -963,7 +965,7 @@ async fn hydrate_hk_screen_financials(
         ));
     }
     let timeout = Duration::from_secs(8);
-    let client = crate::market::build_http_client_with_proxy(
+    let client = crate::network::http::build_http_client_with_proxy(
         "Mozilla/5.0 GuXuanYou HK screening financials",
         timeout,
         Some(payload),
@@ -1116,13 +1118,13 @@ fn hk_research_metadata(
         .stocks
         .iter()
         .filter_map(|stock| stock.quote_time.as_deref())
-        .filter_map(crate::market::compact_date_key)
+        .filter_map(crate::market_domain::dates::compact_date_key)
         .max();
     let history_as_of = data
         .histories
         .values()
         .flat_map(|bars| bars.iter().map(|bar| bar.date.as_str()))
-        .filter_map(crate::market::compact_date_key)
+        .filter_map(crate::market_domain::dates::compact_date_key)
         .max();
     json!({
         "market":"hk",
@@ -1222,7 +1224,7 @@ pub(crate) async fn api_adaptive_screen(
         let mut histories = candidate_codes
             .iter()
             .map(String::as_str)
-            .chain(crate::market::adaptive_benchmark_codes())
+            .chain(crate::market_domain::codes::adaptive_benchmark_codes())
             .filter_map(|code| {
                 data.histories.get(code).map(|rows| {
                     (
@@ -1237,7 +1239,7 @@ pub(crate) async fn api_adaptive_screen(
                 .into_iter()
                 .map(|(code, rows)| (code, adaptive_history_window(&rows, calculation_as_of))),
         );
-        let benchmarks = crate::market::adaptive_benchmark_codes()
+        let benchmarks = crate::market_domain::codes::adaptive_benchmark_codes()
             .into_iter()
             .filter_map(|code| {
                 histories
@@ -1280,7 +1282,7 @@ pub(crate) async fn api_adaptive_screen(
     });
     crate::perf_diagnostics::record(diagnostics_enabled, calculation_event);
     let mut result = calculation?;
-    crate::market::append_result_notes(&mut result, notes);
+    crate::wire_values::append_result_notes(&mut result, notes);
     emit_adaptive_screen_progress(
         &app,
         request.run_id.as_deref(),
@@ -1296,8 +1298,10 @@ pub(crate) async fn api_adaptive_screen(
         .filter(|value| !value.trim().is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| {
-            crate::market::local_yyyymmdd_from_epoch_ms(crate::market::epoch_millis())
-                .unwrap_or_else(|| "19700101".to_string())
+            crate::market_domain::dates::local_yyyymmdd_from_epoch_ms(
+                crate::market_domain::dates::epoch_millis(),
+            )
+            .unwrap_or_else(|| "19700101".to_string())
         });
     let exposure_write_date = exposure_date.clone();
     let persistence_started = Instant::now();
@@ -1328,7 +1332,7 @@ pub(crate) async fn api_adaptive_screen(
         }),
     );
     if let Err(error) = exposure_write {
-        crate::market::append_result_notes(
+        crate::wire_values::append_result_notes(
             &mut result,
             vec![format!("近期曝光记录写入失败：{error}")],
         );
@@ -1411,7 +1415,7 @@ pub(crate) async fn api_legacy_screen(
             }),
         );
     }
-    crate::market::append_result_notes(
+    crate::wire_values::append_result_notes(
         &mut result,
         vec![
             "本次选股按显式兼容请求使用 legacy_balanced；未指定算法时默认使用 adaptive_swing_v1。"
@@ -1466,11 +1470,11 @@ pub(crate) fn adaptive_screen_request_from_payload(
 pub(crate) fn adaptive_required_history_codes(candidates: &[String]) -> Vec<String> {
     let mut required_codes = candidates.to_vec();
     required_codes.extend(
-        crate::market::adaptive_benchmark_codes()
+        crate::market_domain::codes::adaptive_benchmark_codes()
             .into_iter()
             .map(str::to_string),
     );
-    crate::market::dedupe_stock_codes(&mut required_codes);
+    crate::market_domain::codes::dedupe_stock_codes(&mut required_codes);
     required_codes
 }
 
@@ -1743,7 +1747,7 @@ pub(crate) async fn api_trend_screen_inner(
         serde_json::to_value(result).map_err(|error| error.to_string())
     })
     .await??;
-    crate::market::append_result_notes(&mut result, notes);
+    crate::wire_values::append_result_notes(&mut result, notes);
     local_data::attach_metadata(&mut result, metadata, &transport);
     Ok(result)
 }
@@ -1898,13 +1902,13 @@ pub(crate) async fn api_backtest(app: tauri::AppHandle, payload: Value) -> Resul
         })
         .await?;
         if let Err(error) = gate_write {
-            crate::market::append_result_notes(
+            crate::wire_values::append_result_notes(
                 &mut result,
                 vec![format!("发布门槛报告写入失败：{error}")],
             );
         }
     }
-    crate::market::append_result_notes(&mut result, notes);
+    crate::wire_values::append_result_notes(&mut result, notes);
     local_data::attach_metadata(&mut result, metadata, &transport);
     Ok(result)
 }
@@ -1988,7 +1992,7 @@ fn hk_candidate_backtest_value(
 }
 
 fn append_hk_history_note(result: &mut Value, summary: &Value) {
-    crate::market::append_result_notes(
+    crate::wire_values::append_result_notes(
         result,
         vec![
             format!(
@@ -2005,7 +2009,7 @@ fn append_hk_history_note(result: &mut Value, summary: &Value) {
         ],
     );
     if let Some(errors) = summary["errors"].as_array() {
-        crate::market::append_result_notes(
+        crate::wire_values::append_result_notes(
             result,
             errors
                 .iter()
@@ -2018,7 +2022,7 @@ fn append_hk_history_note(result: &mut Value, summary: &Value) {
         .as_u64()
         .filter(|count| *count > 0)
     {
-        crate::market::append_result_notes(
+        crate::wire_values::append_result_notes(
             result,
             vec![format!("{count} 只停牌证券使用最后成交日行情。")],
         );
@@ -2047,7 +2051,7 @@ fn hk_backtest_request(
     data: &gp_core::CoreDataSet,
 ) -> Result<gp_core::BacktestRequest, String> {
     let mut request = serde_json::from_value::<gp_core::BacktestRequest>(
-        crate::market::strip_core_side_payload_fields(payload.clone()),
+        crate::market_domain::datasets::strip_core_side_payload_fields(payload.clone()),
     )
     .map_err(|error| format!("invalid HK backtest request: {error}"))?;
     request.strategy_mode = "candidate_snapshot".to_owned();
@@ -2101,15 +2105,15 @@ pub(crate) fn adaptive_backtest_fold_max_industry_count(
     fold: &gp_core::WalkForwardFold,
     data: &gp_core::CoreDataSet,
 ) -> Option<usize> {
-    let as_of = crate::market::compact_date_key(
+    let as_of = crate::market_domain::dates::compact_date_key(
         fold.signal_date
             .as_deref()
             .unwrap_or(fold.selection_date.as_str()),
     )?;
     let mut counts = HashMap::<String, usize>::new();
     for code in &fold.selected_symbols {
-        let normalized =
-            crate::market::normalize_stock_code(code).unwrap_or_else(|| code.to_ascii_uppercase());
+        let normalized = crate::market_domain::codes::normalize_stock_code(code)
+            .unwrap_or_else(|| code.to_ascii_uppercase());
         let industry = data
             .factor_snapshots
             .get(code)
@@ -2120,7 +2124,7 @@ pub(crate) fn adaptive_backtest_fold_max_industry_count(
                 let available = snapshot
                     .available_date
                     .as_deref()
-                    .and_then(crate::market::compact_date_key)?;
+                    .and_then(crate::market_domain::dates::compact_date_key)?;
                 let industry = snapshot
                     .industry
                     .as_deref()
@@ -2492,7 +2496,7 @@ pub(crate) async fn prepare_adaptive_screen(
     let target_history_date = request
         .as_of_date
         .as_deref()
-        .and_then(crate::market::compact_date_key)
+        .and_then(crate::market_domain::dates::compact_date_key)
         .or_else(|| {
             let universe = stock_override
                 .as_deref()
@@ -2501,7 +2505,9 @@ pub(crate) async fn prepare_adaptive_screen(
             adaptive_quote_target_date(universe, &candidates)
         })
         .or_else(|| {
-            crate::market::expected_market_quote_date_from_epoch_ms(crate::market::epoch_millis())
+            crate::market_domain::dates::expected_market_quote_date_from_epoch_ms(
+                crate::market_domain::dates::epoch_millis(),
+            )
         });
     // Age alone is not a miss. Choose a common cached PIT date unless explicitly requested.
     if policy == DataPolicy::CacheOnly {
@@ -2559,7 +2565,7 @@ pub(crate) async fn prepare_adaptive_screen(
                         let code = code.to_string();
                         let start_date = start_date.to_string();
                         async move {
-                            crate::market::fetch_observe_daily_history(
+                            crate::market::providers::history::fetch_observe_daily_history(
                                 &code,
                                 &start_date,
                                 "20501231",
@@ -2742,8 +2748,8 @@ pub(crate) async fn prepare_adaptive_screen(
 
 pub(crate) fn adaptive_history_start_date() -> String {
     const LOOKBACK_MILLIS: u128 = 220 * 24 * 60 * 60 * 1_000;
-    crate::market::local_yyyymmdd_from_epoch_ms(
-        crate::market::epoch_millis().saturating_sub(LOOKBACK_MILLIS),
+    crate::market_domain::dates::local_yyyymmdd_from_epoch_ms(
+        crate::market_domain::dates::epoch_millis().saturating_sub(LOOKBACK_MILLIS),
     )
     .unwrap_or_else(|| "20200101".to_string())
 }
@@ -2753,7 +2759,7 @@ pub(crate) fn adaptive_history_window(
     as_of_date: Option<&str>,
 ) -> Vec<gp_core::HistoryBar> {
     let target = match as_of_date {
-        Some(value) => match crate::market::compact_date_key(value) {
+        Some(value) => match crate::market_domain::dates::compact_date_key(value) {
             Some(target) => Some(target),
             None => return Vec::new(),
         },
@@ -2763,7 +2769,7 @@ pub(crate) fn adaptive_history_window(
         .iter()
         .filter(|bar| {
             target.as_ref().is_none_or(|target| {
-                crate::market::compact_date_key(&bar.date)
+                crate::market_domain::dates::compact_date_key(&bar.date)
                     .is_some_and(|date| date.as_str() <= target.as_str())
             })
         })
@@ -2777,7 +2783,7 @@ pub(crate) fn adaptive_history_window(
     if target.is_some()
         && window
             .last()
-            .and_then(|bar| crate::market::compact_date_key(&bar.date))
+            .and_then(|bar| crate::market_domain::dates::compact_date_key(&bar.date))
             != target
     {
         return Vec::new();
@@ -2790,7 +2796,7 @@ pub(crate) fn adaptive_point_in_time_universe(
     histories: &HashMap<String, Vec<gp_core::HistoryBar>>,
     as_of_date: Option<&str>,
 ) -> Vec<gp_core::StockItem> {
-    let target = as_of_date.and_then(crate::market::compact_date_key);
+    let target = as_of_date.and_then(crate::market_domain::dates::compact_date_key);
     universe
         .iter()
         .map(|stock| {
@@ -2799,7 +2805,7 @@ pub(crate) fn adaptive_point_in_time_universe(
                 stock
                     .quote_time
                     .as_deref()
-                    .and_then(crate::market::compact_date_key)
+                    .and_then(crate::market_domain::dates::compact_date_key)
                     .is_some_and(|quote_date| quote_date == *target)
             });
             let bars = histories.get(&stock.code);
@@ -2842,7 +2848,7 @@ pub(crate) fn latest_adaptive_data_date(
                 .or_else(|| data.histories.get(code))
                 .and_then(|bars| {
                     bars.iter()
-                        .filter_map(|bar| crate::market::compact_date_key(&bar.date))
+                        .filter_map(|bar| crate::market_domain::dates::compact_date_key(&bar.date))
                         .max()
                 })
         })
@@ -2869,7 +2875,7 @@ pub(crate) fn adaptive_quote_target_date(
         .iter()
         .filter(|stock| candidates.contains(&stock.code.to_ascii_uppercase()))
         .filter_map(|stock| stock.quote_time.as_deref())
-        .filter_map(crate::market::compact_date_key)
+        .filter_map(crate::market_domain::dates::compact_date_key)
         .max()
 }
 
@@ -2879,17 +2885,20 @@ pub(crate) fn adaptive_history_cache_is_usable(
     target_date: Option<&str>,
     min_bars: usize,
 ) -> bool {
-    if !crate::market::typed_history_cache_has_bars(data, code, "20200101", "20501231", min_bars) {
+    if !crate::market_domain::history::typed_history_cache_has_bars(
+        data, code, "20200101", "20501231", min_bars,
+    ) {
         return false;
     }
-    let normalized = crate::market::normalize_stock_code(code).unwrap_or_else(|| code.to_string());
+    let normalized =
+        crate::market_domain::codes::normalize_stock_code(code).unwrap_or_else(|| code.to_string());
     let latest = data
         .histories
         .get(code)
         .or_else(|| data.histories.get(&normalized))
         .into_iter()
         .flatten()
-        .filter_map(|bar| crate::market::compact_date_key(&bar.date))
+        .filter_map(|bar| crate::market_domain::dates::compact_date_key(&bar.date))
         .max();
     match (latest, target_date) {
         (Some(latest), Some(target)) => latest.as_str() >= target,
@@ -2969,8 +2978,12 @@ pub(crate) async fn prepare_trend_screen(
                     let start_date = start_date.to_string();
                     let end_date = end_date.clone();
                     async move {
-                        crate::market::fetch_observe_daily_history(&code, &start_date, &end_date)
-                            .await
+                        crate::market::providers::history::fetch_observe_daily_history(
+                            &code,
+                            &start_date,
+                            &end_date,
+                        )
+                        .await
                     }
                 },
                 |_, _| {},
@@ -3134,11 +3147,11 @@ pub(crate) async fn prepare_backtest(
     };
     if adaptive_backtest {
         candidates.extend(
-            crate::market::adaptive_benchmark_codes()
+            crate::market_domain::codes::adaptive_benchmark_codes()
                 .into_iter()
                 .map(str::to_string),
         );
-        crate::market::dedupe_stock_codes(&mut candidates);
+        crate::market_domain::codes::dedupe_stock_codes(&mut candidates);
     }
     let history_start_date = if adaptive_backtest {
         "19900101".to_string()
@@ -3189,7 +3202,10 @@ pub(crate) async fn prepare_backtest(
     let end_date = request.end_date.clone();
     let fetch_missing = missing.clone();
     let fetch_raw = Arc::clone(&raw);
-    let known = cn_backtest_history::known_through(raw.as_ref(), crate::market::epoch_millis())?;
+    let known = cn_backtest_history::known_through(
+        raw.as_ref(),
+        crate::market_domain::dates::epoch_millis(),
+    )?;
     let fetches =
         crate::runtime::with_heavy_network_permit("api_backtest_history_fetch", async move {
             let results = stream::iter(fetch_missing)
@@ -3323,11 +3339,11 @@ pub(crate) fn backtest_history_rows_are_usable(rows: &[Value]) -> bool {
     let mut dates = HashSet::new();
     rows.iter()
         .filter_map(|row| {
-            let close = crate::market::json_f64(row.get("close"))?;
+            let close = crate::wire_values::json_f64(row.get("close"))?;
             (close > 0.0)
                 .then(|| row.get("date").and_then(Value::as_str))
                 .flatten()
-                .and_then(crate::market::compact_date_key)
+                .and_then(crate::market_domain::dates::compact_date_key)
         })
         .filter(|date| dates.insert(date.clone()))
         .take(MIN_BACKTEST_HISTORY_BARS)
@@ -4226,7 +4242,7 @@ pub(crate) fn normalize_trend_prefetch_codes<'a>(
     let mut seen = HashSet::new();
     let mut normalized = Vec::new();
     for code in codes {
-        if let Some(code) = crate::market::normalize_stock_code(code) {
+        if let Some(code) = crate::market_domain::codes::normalize_stock_code(code) {
             if seen.insert(code.clone()) {
                 normalized.push(code);
             }
@@ -4239,22 +4255,21 @@ pub(crate) fn screen_financial_snapshot(
     app: &tauri::AppHandle,
     payload: &Value,
 ) -> Result<Option<Arc<Value>>, String> {
-    if let Some(snapshot) = payload
-        .get("financial_snapshot")
-        .filter(|snapshot| crate::market::financial_snapshot_payload_present(snapshot))
-    {
+    if let Some(snapshot) = payload.get("financial_snapshot").filter(|snapshot| {
+        crate::market_domain::financial::financial_snapshot_payload_present(snapshot)
+    }) {
         let snapshot = Arc::new(crate::metric_units::normalize_financial_snapshot(snapshot)?);
-        if let Some(path) = crate::market::cache_context_path(app) {
-            if let Ok(mut slot) = crate::market::refresh_financial_snapshot_cache().lock() {
+        if let Some(path) = crate::market::cache::snapshots::cache_context_path(app) {
+            if let Ok(mut slot) = crate::market::cache::refresh_financial_snapshot_cache().lock() {
                 slot.insert(path, Arc::clone(&snapshot));
             }
         }
         return Ok(Some(snapshot));
     }
-    let Some(path) = crate::market::cache_context_path(app) else {
+    let Some(path) = crate::market::cache::snapshots::cache_context_path(app) else {
         return Ok(None);
     };
-    Ok(crate::market::refresh_financial_snapshot_cache()
+    Ok(crate::market::cache::refresh_financial_snapshot_cache()
         .lock()
         .map_err(|_| "财务缓存暂不可读".to_string())?
         .get(&path)
@@ -4269,8 +4284,8 @@ pub(crate) fn screen_stock_override(
     let Some(financial_snapshot) = screen_financial_snapshot(app, payload)? else {
         return Ok(None);
     };
-    let path = crate::market::mobile_market_data_path(app)?;
-    if let Ok(slot) = crate::market::screen_stock_overlay_cache().lock() {
+    let path = crate::market::store::files::mobile_market_data_path(app)?;
+    if let Ok(slot) = crate::market::cache::screen_stock_overlay_cache().lock() {
         if let Some(entry) = slot.get(&path) {
             if Arc::ptr_eq(&entry.data, data)
                 && (Arc::ptr_eq(&entry.financial_snapshot, &financial_snapshot)
@@ -4285,10 +4300,10 @@ pub(crate) fn screen_stock_override(
         data.as_ref(),
         financial_snapshot.as_ref(),
     ));
-    if let Ok(mut slot) = crate::market::screen_stock_overlay_cache().lock() {
+    if let Ok(mut slot) = crate::market::cache::screen_stock_overlay_cache().lock() {
         slot.insert(
             path,
-            crate::market::ScreenStockOverlayCacheEntry {
+            crate::market::cache::ScreenStockOverlayCacheEntry {
                 data: Arc::clone(data),
                 financial_snapshot,
                 stocks: Arc::clone(&stocks),
@@ -4353,17 +4368,18 @@ pub(crate) fn merge_screen_financial_snapshot_into_data(
     data: &mut Value,
     financial_snapshot: &Value,
 ) {
-    if !crate::market::financial_snapshot_payload_present(financial_snapshot) {
+    if !crate::market_domain::financial::financial_snapshot_payload_present(financial_snapshot) {
         return;
     }
-    let (seed_stocks, seed_codes) = crate::market::seed_stock_maps(data);
+    let (seed_stocks, seed_codes) = crate::market_domain::datasets::seed_stock_maps(data);
     if seed_codes.is_empty() {
         return;
     }
-    let enriched_stocks = crate::market::enriched_stock_maps(&seed_stocks, financial_snapshot);
+    let enriched_stocks =
+        crate::market_domain::financial::enriched_stock_maps(&seed_stocks, financial_snapshot);
     let mut stocks = Vec::with_capacity(seed_codes.len());
     let mut seen = HashSet::new();
-    crate::market::append_preserved_seed_stocks(
+    crate::market_domain::datasets::append_preserved_seed_stocks(
         &seed_codes,
         &enriched_stocks,
         &mut stocks,
@@ -4506,9 +4522,9 @@ pub(crate) fn adaptive_release_run_record_rows(
     release_evidence_qualified: bool,
 ) -> Result<(), String> {
     initialize_adaptive_exposure_db(conn)?;
-    let trade_date = crate::market::compact_date_key(trade_date)
+    let trade_date = crate::market_domain::dates::compact_date_key(trade_date)
         .ok_or_else(|| "adaptive screen run trade date is invalid".to_string())?;
-    let recorded_at = crate::market::epoch_millis().min(i64::MAX as u128) as i64;
+    let recorded_at = crate::market_domain::dates::epoch_millis().min(i64::MAX as u128) as i64;
     let keep_after = recorded_at.saturating_sub(30 * 24 * 60 * 60 * 1_000);
     let run_id = run_id
         .map(str::trim)
@@ -4580,7 +4596,7 @@ pub(crate) fn adaptive_release_operational_evidence_rows(
     conn: &Connection,
 ) -> Result<(Option<usize>, Option<u64>, Option<u64>), String> {
     initialize_adaptive_exposure_db(conn)?;
-    let keep_after = (crate::market::epoch_millis().min(i64::MAX as u128) as i64)
+    let keep_after = (crate::market_domain::dates::epoch_millis().min(i64::MAX as u128) as i64)
         .saturating_sub(30 * 24 * 60 * 60 * 1_000);
     let recent_json = {
         let mut statement = conn
@@ -4692,7 +4708,7 @@ pub(crate) fn adaptive_release_gate_store_rows(
             input_json,
             report_json,
             i64::from(report.passed),
-            crate::market::epoch_millis().min(i64::MAX as u128) as i64
+            crate::market_domain::dates::epoch_millis().min(i64::MAX as u128) as i64
         ],
     )
     .map_err(|error| format!("store adaptive release gate failed: {error}"))?;
@@ -4809,7 +4825,7 @@ pub(crate) fn adaptive_exposure_recent_rows(
     current_trade_date: Option<&str>,
 ) -> Result<Vec<gp_core::AdaptiveRecentExposure>, String> {
     let cutoff_date = current_trade_date
-        .and_then(crate::market::compact_date_key)
+        .and_then(crate::market_domain::dates::compact_date_key)
         .unwrap_or_else(|| "99999999".to_string());
     let mut statement = conn
         .prepare(
@@ -4862,9 +4878,9 @@ pub(crate) fn adaptive_exposure_record_rows(
     trade_date: &str,
 ) -> Result<(), String> {
     initialize_adaptive_exposure_db(conn)?;
-    let trade_date = crate::market::compact_date_key(trade_date)
+    let trade_date = crate::market_domain::dates::compact_date_key(trade_date)
         .ok_or_else(|| "adaptive screen trade date is invalid".to_string())?;
-    let selected_at = crate::market::epoch_millis() as i64;
+    let selected_at = crate::market_domain::dates::epoch_millis() as i64;
     let keep_after = selected_at.saturating_sub(30 * 24 * 60 * 60 * 1_000);
     let algorithm_version = result
         .get("algorithm_version")

@@ -583,7 +583,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!(
             "gp-hk-research-financial-{}-{}",
             std::process::id(),
-            crate::market::epoch_millis()
+            crate::market_domain::dates::epoch_millis()
         ));
         let store = crate::research::ResearchStore::open(root.join("research-hk.sqlite")).unwrap();
         store

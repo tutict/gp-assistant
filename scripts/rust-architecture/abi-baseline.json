@@ -1,0 +1,5252 @@
+{
+  "symbols": [
+    "gp_core_agent_json",
+    "gp_core_agent_with_data_json",
+    "gp_core_backtest_json",
+    "gp_core_backtest_with_data_json",
+    "gp_core_free_string",
+    "gp_core_graph_screen_json",
+    "gp_core_graph_screen_with_data_json",
+    "gp_core_mobile_stock_skill_json",
+    "gp_core_screen_json",
+    "gp_core_screen_with_data_json",
+    "gp_core_trend_json",
+    "gp_core_trend_screen_json",
+    "gp_core_trend_screen_with_data_json",
+    "gp_core_trend_with_data_json",
+    "gp_core_validate_data_source_json"
+  ],
+  "cases": 50,
+  "synthetic_ok": 6,
+  "results": {
+    "gp_core_agent_json::null": {
+      "error": "Input pointer is null",
+      "ok": false
+    },
+    "gp_core_agent_json::utf8": {
+      "error": "invalid utf-8 sequence of 1 bytes from index 0",
+      "ok": false
+    },
+    "gp_core_agent_json::json": {
+      "error": "EOF while parsing an object at line 1 column 1",
+      "ok": false
+    },
+    "gp_core_agent_with_data_json::null": {
+      "error": "Input pointer is null",
+      "ok": false
+    },
+    "gp_core_agent_with_data_json::utf8": {
+      "error": "invalid utf-8 sequence of 1 bytes from index 0",
+      "ok": false
+    },
+    "gp_core_agent_with_data_json::json": {
+      "error": "EOF while parsing an object at line 1 column 1",
+      "ok": false
+    },
+    "gp_core_backtest_json::null": {
+      "error": "Input pointer is null",
+      "ok": false
+    },
+    "gp_core_backtest_json::utf8": {
+      "error": "invalid utf-8 sequence of 1 bytes from index 0",
+      "ok": false
+    },
+    "gp_core_backtest_json::json": {
+      "error": "EOF while parsing an object at line 1 column 1",
+      "ok": false
+    },
+    "gp_core_backtest_with_data_json::null": {
+      "error": "Input pointer is null",
+      "ok": false
+    },
+    "gp_core_backtest_with_data_json::utf8": {
+      "error": "invalid utf-8 sequence of 1 bytes from index 0",
+      "ok": false
+    },
+    "gp_core_backtest_with_data_json::json": {
+      "error": "EOF while parsing an object at line 1 column 1",
+      "ok": false
+    },
+    "gp_core_graph_screen_json::null": {
+      "error": "Input pointer is null",
+      "ok": false
+    },
+    "gp_core_graph_screen_json::utf8": {
+      "error": "invalid utf-8 sequence of 1 bytes from index 0",
+      "ok": false
+    },
+    "gp_core_graph_screen_json::json": {
+      "error": "EOF while parsing an object at line 1 column 1",
+      "ok": false
+    },
+    "gp_core_graph_screen_with_data_json::null": {
+      "error": "Input pointer is null",
+      "ok": false
+    },
+    "gp_core_graph_screen_with_data_json::utf8": {
+      "error": "invalid utf-8 sequence of 1 bytes from index 0",
+      "ok": false
+    },
+    "gp_core_graph_screen_with_data_json::json": {
+      "error": "EOF while parsing an object at line 1 column 1",
+      "ok": false
+    },
+    "gp_core_mobile_stock_skill_json::null": {
+      "error": "Input pointer is null",
+      "ok": false
+    },
+    "gp_core_mobile_stock_skill_json::utf8": {
+      "error": "invalid utf-8 sequence of 1 bytes from index 0",
+      "ok": false
+    },
+    "gp_core_mobile_stock_skill_json::json": {
+      "error": "EOF while parsing an object at line 1 column 1",
+      "ok": false
+    },
+    "gp_core_screen_json::null": {
+      "error": "Input pointer is null",
+      "ok": false
+    },
+    "gp_core_screen_json::utf8": {
+      "error": "invalid utf-8 sequence of 1 bytes from index 0",
+      "ok": false
+    },
+    "gp_core_screen_json::json": {
+      "error": "EOF while parsing an object at line 1 column 1",
+      "ok": false
+    },
+    "gp_core_screen_with_data_json::null": {
+      "error": "Input pointer is null",
+      "ok": false
+    },
+    "gp_core_screen_with_data_json::utf8": {
+      "error": "invalid utf-8 sequence of 1 bytes from index 0",
+      "ok": false
+    },
+    "gp_core_screen_with_data_json::json": {
+      "error": "EOF while parsing an object at line 1 column 1",
+      "ok": false
+    },
+    "gp_core_trend_json::null": {
+      "error": "Input pointer is null",
+      "ok": false
+    },
+    "gp_core_trend_json::utf8": {
+      "error": "invalid utf-8 sequence of 1 bytes from index 0",
+      "ok": false
+    },
+    "gp_core_trend_json::json": {
+      "error": "EOF while parsing an object at line 1 column 1",
+      "ok": false
+    },
+    "gp_core_trend_screen_json::null": {
+      "error": "Input pointer is null",
+      "ok": false
+    },
+    "gp_core_trend_screen_json::utf8": {
+      "error": "invalid utf-8 sequence of 1 bytes from index 0",
+      "ok": false
+    },
+    "gp_core_trend_screen_json::json": {
+      "error": "EOF while parsing an object at line 1 column 1",
+      "ok": false
+    },
+    "gp_core_trend_screen_with_data_json::null": {
+      "error": "Input pointer is null",
+      "ok": false
+    },
+    "gp_core_trend_screen_with_data_json::utf8": {
+      "error": "invalid utf-8 sequence of 1 bytes from index 0",
+      "ok": false
+    },
+    "gp_core_trend_screen_with_data_json::json": {
+      "error": "EOF while parsing an object at line 1 column 1",
+      "ok": false
+    },
+    "gp_core_trend_with_data_json::null": {
+      "error": "Input pointer is null",
+      "ok": false
+    },
+    "gp_core_trend_with_data_json::utf8": {
+      "error": "invalid utf-8 sequence of 1 bytes from index 0",
+      "ok": false
+    },
+    "gp_core_trend_with_data_json::json": {
+      "error": "EOF while parsing an object at line 1 column 1",
+      "ok": false
+    },
+    "gp_core_validate_data_source_json::null": {
+      "error": "Input pointer is null",
+      "ok": false
+    },
+    "gp_core_validate_data_source_json::utf8": {
+      "error": "invalid utf-8 sequence of 1 bytes from index 0",
+      "ok": false
+    },
+    "gp_core_validate_data_source_json::json": {
+      "error": "EOF while parsing an object at line 1 column 1",
+      "ok": false
+    },
+    "gp_core_validate_data_source_json::synthetic": {
+      "data": {
+        "factor_snapshot_count": 0,
+        "factor_snapshot_symbol_count": 0,
+        "history_bar_count": 216,
+        "history_symbol_count": 2,
+        "relation_count": 0,
+        "stock_count": 2,
+        "warnings": []
+      },
+      "ok": true
+    },
+    "gp_core_screen_with_data_json::synthetic": {
+      "data": {
+        "groups": [
+          {
+            "description": "AI上下游、芯片、算力、能源、新材料、医药、游戏等热门方向，按综合分和主题优先级展示。",
+            "items": [],
+            "key": "hot",
+            "returned": 0,
+            "title": "热门股",
+            "total": 0
+          },
+          {
+            "description": "综合分大于 10 的候选，已尽量避免与热门股重复。",
+            "items": [
+              {
+                "balanced_score": 13.598848,
+                "concept": "金融地产",
+                "factor_scores": {
+                  "balanced_score": 0.70448,
+                  "data_quality": 0.8,
+                  "fundamental": 1.0,
+                  "industry_quality_pct": 0.5,
+                  "industry_relative_score": 0.5,
+                  "industry_valuation_pct": 0.5,
+                  "market_heat": 0.243,
+                  "overheat_penalty": 0.0,
+                  "quality_score": 0.9,
+                  "risk": 0.36,
+                  "size": 0.88,
+                  "theme": 0.35,
+                  "trend_score": 0.5441,
+                  "valuation": 1.0
+                },
+                "industry_sample_count": null,
+                "quality_score": 16.56,
+                "reason_tags": [
+                  "质量较强",
+                  "估值有安全边际",
+                  "行业内相对评分"
+                ],
+                "reasons": [
+                  "估值较低",
+                  "基本面较强",
+                  "低热度降权"
+                ],
+                "risk_score": 7.2,
+                "risk_tags": [
+                  "低热度板块降权"
+                ],
+                "score": 13.598848,
+                "score_breakdown": [
+                  {
+                    "contribution": 0.9856,
+                    "key": "theme",
+                    "label": "主题匹配",
+                    "tone": "weak",
+                    "value": 7.0
+                  },
+                  {
+                    "contribution": 4.576,
+                    "key": "fundamental",
+                    "label": "质量盈利",
+                    "tone": "strong",
+                    "value": 20.0
+                  },
+                  {
+                    "contribution": 3.52,
+                    "key": "valuation",
+                    "label": "估值安全",
+                    "tone": "strong",
+                    "value": 20.0
+                  },
+                  {
+                    "contribution": 0.684288,
+                    "key": "market_heat",
+                    "label": "趋势热度",
+                    "tone": "weak",
+                    "value": 4.86
+                  },
+                  {
+                    "contribution": 1.23904,
+                    "key": "size",
+                    "label": "规模流动性",
+                    "tone": "strong",
+                    "value": 17.6
+                  },
+                  {
+                    "contribution": 1.39392,
+                    "key": "risk",
+                    "label": "风险控制",
+                    "tone": "neutral",
+                    "value": 7.2
+                  },
+                  {
+                    "contribution": 0.0,
+                    "key": "overheat_penalty",
+                    "label": "过热惩罚",
+                    "tone": "neutral",
+                    "value": 0.0
+                  },
+                  {
+                    "contribution": 1.2000000000000017,
+                    "key": "industry_relative_score",
+                    "label": "行业内相对评分",
+                    "tone": "neutral",
+                    "value": 10.0
+                  }
+                ],
+                "score_explanation": "质量盈利贡献 4.58分；估值安全贡献 3.52分；风险控制贡献 1.39分。",
+                "stock": {
+                  "amount": null,
+                  "change_pct": null,
+                  "code": "000001.SZ",
+                  "deducted_net_profit_billion": null,
+                  "deducted_net_profit_growth_rate": null,
+                  "deducted_net_profit_margin": null,
+                  "dividend_yield": 0.04,
+                  "industry": "银行",
+                  "is_st": false,
+                  "latest_eps": null,
+                  "market_cap_billion": 100.0,
+                  "name": "Synthetic bank 0",
+                  "pb": 1.2,
+                  "pe": 10.0,
+                  "price": 12.0,
+                  "quote_time": null,
+                  "roe": 0.15,
+                  "turnover_rate": null,
+                  "volume": null,
+                  "volume_ratio": null
+                },
+                "suitable_periods": [
+                  "仅观察验证"
+                ],
+                "theme_category": null,
+                "trend_score": 10.882
+              },
+              {
+                "balanced_score": 13.598848,
+                "concept": "金融地产",
+                "factor_scores": {
+                  "balanced_score": 0.70448,
+                  "data_quality": 0.8,
+                  "fundamental": 1.0,
+                  "industry_quality_pct": 0.5,
+                  "industry_relative_score": 0.5,
+                  "industry_valuation_pct": 0.5,
+                  "market_heat": 0.243,
+                  "overheat_penalty": 0.0,
+                  "quality_score": 0.9,
+                  "risk": 0.36,
+                  "size": 0.88,
+                  "theme": 0.35,
+                  "trend_score": 0.5441,
+                  "valuation": 1.0
+                },
+                "industry_sample_count": null,
+                "quality_score": 16.56,
+                "reason_tags": [
+                  "质量较强",
+                  "估值有安全边际",
+                  "行业内相对评分"
+                ],
+                "reasons": [
+                  "估值较低",
+                  "基本面较强",
+                  "低热度降权"
+                ],
+                "risk_score": 7.2,
+                "risk_tags": [
+                  "低热度板块降权"
+                ],
+                "score": 13.598848,
+                "score_breakdown": [
+                  {
+                    "contribution": 0.9856,
+                    "key": "theme",
+                    "label": "主题匹配",
+                    "tone": "weak",
+                    "value": 7.0
+                  },
+                  {
+                    "contribution": 4.576,
+                    "key": "fundamental",
+                    "label": "质量盈利",
+                    "tone": "strong",
+                    "value": 20.0
+                  },
+                  {
+                    "contribution": 3.52,
+                    "key": "valuation",
+                    "label": "估值安全",
+                    "tone": "strong",
+                    "value": 20.0
+                  },
+                  {
+                    "contribution": 0.684288,
+                    "key": "market_heat",
+                    "label": "趋势热度",
+                    "tone": "weak",
+                    "value": 4.86
+                  },
+                  {
+                    "contribution": 1.23904,
+                    "key": "size",
+                    "label": "规模流动性",
+                    "tone": "strong",
+                    "value": 17.6
+                  },
+                  {
+                    "contribution": 1.39392,
+                    "key": "risk",
+                    "label": "风险控制",
+                    "tone": "neutral",
+                    "value": 7.2
+                  },
+                  {
+                    "contribution": 0.0,
+                    "key": "overheat_penalty",
+                    "label": "过热惩罚",
+                    "tone": "neutral",
+                    "value": 0.0
+                  },
+                  {
+                    "contribution": 1.2000000000000017,
+                    "key": "industry_relative_score",
+                    "label": "行业内相对评分",
+                    "tone": "neutral",
+                    "value": 10.0
+                  }
+                ],
+                "score_explanation": "质量盈利贡献 4.58分；估值安全贡献 3.52分；风险控制贡献 1.39分。",
+                "stock": {
+                  "amount": null,
+                  "change_pct": null,
+                  "code": "000002.SZ",
+                  "deducted_net_profit_billion": null,
+                  "deducted_net_profit_growth_rate": null,
+                  "deducted_net_profit_margin": null,
+                  "dividend_yield": 0.04,
+                  "industry": "银行",
+                  "is_st": false,
+                  "latest_eps": null,
+                  "market_cap_billion": 101.0,
+                  "name": "Synthetic bank 1",
+                  "pb": 1.2,
+                  "pe": 11.0,
+                  "price": 13.0,
+                  "quote_time": null,
+                  "roe": 0.15,
+                  "turnover_rate": null,
+                  "volume": null,
+                  "volume_ratio": null
+                },
+                "suitable_periods": [
+                  "仅观察验证"
+                ],
+                "theme_category": null,
+                "trend_score": 10.882
+              }
+            ],
+            "key": "potential",
+            "returned": 2,
+            "title": "潜力股",
+            "total": 2
+          }
+        ],
+        "items": [
+          {
+            "balanced_score": 13.598848,
+            "concept": "金融地产",
+            "factor_scores": {
+              "balanced_score": 0.70448,
+              "data_quality": 0.8,
+              "fundamental": 1.0,
+              "industry_quality_pct": 0.5,
+              "industry_relative_score": 0.5,
+              "industry_valuation_pct": 0.5,
+              "market_heat": 0.243,
+              "overheat_penalty": 0.0,
+              "quality_score": 0.9,
+              "risk": 0.36,
+              "size": 0.88,
+              "theme": 0.35,
+              "trend_score": 0.5441,
+              "valuation": 1.0
+            },
+            "industry_sample_count": null,
+            "quality_score": 16.56,
+            "reason_tags": [
+              "质量较强",
+              "估值有安全边际",
+              "行业内相对评分"
+            ],
+            "reasons": [
+              "估值较低",
+              "基本面较强",
+              "低热度降权"
+            ],
+            "risk_score": 7.2,
+            "risk_tags": [
+              "低热度板块降权"
+            ],
+            "score": 13.598848,
+            "score_breakdown": [
+              {
+                "contribution": 0.9856,
+                "key": "theme",
+                "label": "主题匹配",
+                "tone": "weak",
+                "value": 7.0
+              },
+              {
+                "contribution": 4.576,
+                "key": "fundamental",
+                "label": "质量盈利",
+                "tone": "strong",
+                "value": 20.0
+              },
+              {
+                "contribution": 3.52,
+                "key": "valuation",
+                "label": "估值安全",
+                "tone": "strong",
+                "value": 20.0
+              },
+              {
+                "contribution": 0.684288,
+                "key": "market_heat",
+                "label": "趋势热度",
+                "tone": "weak",
+                "value": 4.86
+              },
+              {
+                "contribution": 1.23904,
+                "key": "size",
+                "label": "规模流动性",
+                "tone": "strong",
+                "value": 17.6
+              },
+              {
+                "contribution": 1.39392,
+                "key": "risk",
+                "label": "风险控制",
+                "tone": "neutral",
+                "value": 7.2
+              },
+              {
+                "contribution": 0.0,
+                "key": "overheat_penalty",
+                "label": "过热惩罚",
+                "tone": "neutral",
+                "value": 0.0
+              },
+              {
+                "contribution": 1.2000000000000017,
+                "key": "industry_relative_score",
+                "label": "行业内相对评分",
+                "tone": "neutral",
+                "value": 10.0
+              }
+            ],
+            "score_explanation": "质量盈利贡献 4.58分；估值安全贡献 3.52分；风险控制贡献 1.39分。",
+            "stock": {
+              "amount": null,
+              "change_pct": null,
+              "code": "000001.SZ",
+              "deducted_net_profit_billion": null,
+              "deducted_net_profit_growth_rate": null,
+              "deducted_net_profit_margin": null,
+              "dividend_yield": 0.04,
+              "industry": "银行",
+              "is_st": false,
+              "latest_eps": null,
+              "market_cap_billion": 100.0,
+              "name": "Synthetic bank 0",
+              "pb": 1.2,
+              "pe": 10.0,
+              "price": 12.0,
+              "quote_time": null,
+              "roe": 0.15,
+              "turnover_rate": null,
+              "volume": null,
+              "volume_ratio": null
+            },
+            "suitable_periods": [
+              "仅观察验证"
+            ],
+            "theme_category": null,
+            "trend_score": 10.882
+          },
+          {
+            "balanced_score": 13.598848,
+            "concept": "金融地产",
+            "factor_scores": {
+              "balanced_score": 0.70448,
+              "data_quality": 0.8,
+              "fundamental": 1.0,
+              "industry_quality_pct": 0.5,
+              "industry_relative_score": 0.5,
+              "industry_valuation_pct": 0.5,
+              "market_heat": 0.243,
+              "overheat_penalty": 0.0,
+              "quality_score": 0.9,
+              "risk": 0.36,
+              "size": 0.88,
+              "theme": 0.35,
+              "trend_score": 0.5441,
+              "valuation": 1.0
+            },
+            "industry_sample_count": null,
+            "quality_score": 16.56,
+            "reason_tags": [
+              "质量较强",
+              "估值有安全边际",
+              "行业内相对评分"
+            ],
+            "reasons": [
+              "估值较低",
+              "基本面较强",
+              "低热度降权"
+            ],
+            "risk_score": 7.2,
+            "risk_tags": [
+              "低热度板块降权"
+            ],
+            "score": 13.598848,
+            "score_breakdown": [
+              {
+                "contribution": 0.9856,
+                "key": "theme",
+                "label": "主题匹配",
+                "tone": "weak",
+                "value": 7.0
+              },
+              {
+                "contribution": 4.576,
+                "key": "fundamental",
+                "label": "质量盈利",
+                "tone": "strong",
+                "value": 20.0
+              },
+              {
+                "contribution": 3.52,
+                "key": "valuation",
+                "label": "估值安全",
+                "tone": "strong",
+                "value": 20.0
+              },
+              {
+                "contribution": 0.684288,
+                "key": "market_heat",
+                "label": "趋势热度",
+                "tone": "weak",
+                "value": 4.86
+              },
+              {
+                "contribution": 1.23904,
+                "key": "size",
+                "label": "规模流动性",
+                "tone": "strong",
+                "value": 17.6
+              },
+              {
+                "contribution": 1.39392,
+                "key": "risk",
+                "label": "风险控制",
+                "tone": "neutral",
+                "value": 7.2
+              },
+              {
+                "contribution": 0.0,
+                "key": "overheat_penalty",
+                "label": "过热惩罚",
+                "tone": "neutral",
+                "value": 0.0
+              },
+              {
+                "contribution": 1.2000000000000017,
+                "key": "industry_relative_score",
+                "label": "行业内相对评分",
+                "tone": "neutral",
+                "value": 10.0
+              }
+            ],
+            "score_explanation": "质量盈利贡献 4.58分；估值安全贡献 3.52分；风险控制贡献 1.39分。",
+            "stock": {
+              "amount": null,
+              "change_pct": null,
+              "code": "000002.SZ",
+              "deducted_net_profit_billion": null,
+              "deducted_net_profit_growth_rate": null,
+              "deducted_net_profit_margin": null,
+              "dividend_yield": 0.04,
+              "industry": "银行",
+              "is_st": false,
+              "latest_eps": null,
+              "market_cap_billion": 101.0,
+              "name": "Synthetic bank 1",
+              "pb": 1.2,
+              "pe": 11.0,
+              "price": 13.0,
+              "quote_time": null,
+              "roe": 0.15,
+              "turnover_rate": null,
+              "volume": null,
+              "volume_ratio": null
+            },
+            "suitable_periods": [
+              "仅观察验证"
+            ],
+            "theme_category": null,
+            "trend_score": 10.882
+          }
+        ],
+        "notes": [
+          "普通筛选已拆成热门股和综合分大于 10 的潜力股，每类最多 10 只。"
+        ],
+        "returned": 2,
+        "total": 2
+      },
+      "ok": true
+    },
+    "gp_core_graph_screen_with_data_json::synthetic": {
+      "data": {
+        "center_context": {
+          "codes": [],
+          "label": "自定义筛选",
+          "mode": "custom_criteria"
+        },
+        "items": [
+          {
+            "base_score": 13.598848,
+            "explanation": {
+              "basis": [
+                "质量盈利贡献 4.58分；估值安全贡献 3.52分；风险控制贡献 1.39分。"
+              ],
+              "risk_checks": [],
+              "score_breakdown": [],
+              "verification": []
+            },
+            "final_score": 13.598848,
+            "reasons": [
+              "估值较低",
+              "基本面较强",
+              "低热度降权"
+            ],
+            "related": [],
+            "relation_score": 0.0,
+            "stock": {
+              "amount": null,
+              "change_pct": null,
+              "code": "000001.SZ",
+              "deducted_net_profit_billion": null,
+              "deducted_net_profit_growth_rate": null,
+              "deducted_net_profit_margin": null,
+              "dividend_yield": 0.04,
+              "industry": "银行",
+              "is_st": false,
+              "latest_eps": null,
+              "market_cap_billion": 100.0,
+              "name": "Synthetic bank 0",
+              "pb": 1.2,
+              "pe": 10.0,
+              "price": 12.0,
+              "quote_time": null,
+              "roe": 0.15,
+              "turnover_rate": null,
+              "volume": null,
+              "volume_ratio": null
+            },
+            "suggested_weight": 0.5
+          },
+          {
+            "base_score": 13.598848,
+            "explanation": {
+              "basis": [
+                "质量盈利贡献 4.58分；估值安全贡献 3.52分；风险控制贡献 1.39分。"
+              ],
+              "risk_checks": [],
+              "score_breakdown": [],
+              "verification": []
+            },
+            "final_score": 13.598848,
+            "reasons": [
+              "估值较低",
+              "基本面较强",
+              "低热度降权"
+            ],
+            "related": [],
+            "relation_score": 0.0,
+            "stock": {
+              "amount": null,
+              "change_pct": null,
+              "code": "000002.SZ",
+              "deducted_net_profit_billion": null,
+              "deducted_net_profit_growth_rate": null,
+              "deducted_net_profit_margin": null,
+              "dividend_yield": 0.04,
+              "industry": "银行",
+              "is_st": false,
+              "latest_eps": null,
+              "market_cap_billion": 101.0,
+              "name": "Synthetic bank 1",
+              "pb": 1.2,
+              "pe": 11.0,
+              "price": 13.0,
+              "quote_time": null,
+              "roe": 0.15,
+              "turnover_rate": null,
+              "volume": null,
+              "volume_ratio": null
+            },
+            "suggested_weight": 0.5
+          }
+        ],
+        "notes": [
+          "自定义筛选使用页面筛选条件，不再依赖中心股票或关系传播。",
+          "旧关系图入口已降级为自定义筛选兼容结果，relation_count 固定为 0。",
+          "普通筛选已拆成热门股和综合分大于 10 的潜力股，每类最多 10 只。"
+        ],
+        "relation_count": 0,
+        "returned": 2,
+        "total": 2
+      },
+      "ok": true
+    },
+    "gp_core_backtest_with_data_json::synthetic": {
+      "error": "walk_forward 严格回测要求完整的历史因子快照 factor_snapshots；缺少 2 个：000001.SZ、000002.SZ",
+      "ok": false
+    },
+    "gp_core_trend_with_data_json::synthetic": {
+      "data": {
+        "series": [
+          {
+            "accumulation_index": -9.0,
+            "accumulation_strength": 13.0,
+            "anomaly_heat": 21.6,
+            "close": 10.0,
+            "cyan_watch": false,
+            "d": 50.0,
+            "date": "2024-01-01",
+            "high": 10.3,
+            "j": 50.0,
+            "k": 50.0,
+            "low": 9.7,
+            "open": 9.9,
+            "popularity_heat": 27.6,
+            "rebound_signal": 25.3333,
+            "red_hold": false,
+            "short_buy": false,
+            "swing_opportunity": 5.24,
+            "swl": 10.0,
+            "sws": 10.0,
+            "trend_heat": 0.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.0,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -9.3548,
+            "accumulation_strength": 12.8548,
+            "anomaly_heat": 22.12,
+            "close": 10.02,
+            "cyan_watch": false,
+            "d": 50.1792,
+            "date": "2024-01-02",
+            "high": 10.32,
+            "j": 51.2545,
+            "k": 50.5376,
+            "low": 9.72,
+            "open": 9.92,
+            "popularity_heat": 28.32,
+            "rebound_signal": 31.0753,
+            "red_hold": false,
+            "short_buy": false,
+            "swing_opportunity": 4.8961,
+            "swl": 10.0031,
+            "sws": 10.0,
+            "trend_heat": 0.0,
+            "volume": 100000.0,
+            "volume_price_heat": 18.04,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -9.9241,
+            "accumulation_strength": 12.6462,
+            "anomaly_heat": 22.0758,
+            "close": 10.04,
+            "cyan_watch": false,
+            "d": 50.5862,
+            "date": "2024-01-03",
+            "high": 10.34,
+            "j": 53.0279,
+            "k": 51.4001,
+            "low": 9.74,
+            "open": 9.94,
+            "popularity_heat": 28.2874,
+            "rebound_signal": 33.7043,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 4.4018,
+            "swl": 10.0088,
+            "sws": 10.0001,
+            "trend_heat": 0.0,
+            "volume": 100000.0,
+            "volume_price_heat": 18.0379,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -10.616,
+            "accumulation_strength": 12.414,
+            "anomaly_heat": 22.0319,
+            "close": 10.06,
+            "cyan_watch": false,
+            "d": 51.207,
+            "date": "2024-01-04",
+            "high": 10.36,
+            "j": 54.9317,
+            "k": 52.4485,
+            "low": 9.76,
+            "open": 9.96,
+            "popularity_heat": 28.255,
+            "rebound_signal": 34.7915,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 3.8518,
+            "swl": 10.0167,
+            "sws": 10.0002,
+            "trend_heat": 0.0,
+            "volume": 100000.0,
+            "volume_price_heat": 18.0359,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -11.3715,
+            "accumulation_strength": 12.1776,
+            "anomaly_heat": 21.9881,
+            "close": 10.08,
+            "cyan_watch": false,
+            "d": 52.0024,
+            "date": "2024-01-05",
+            "high": 10.38,
+            "j": 56.7747,
+            "k": 53.5931,
+            "low": 9.78,
+            "open": 9.98,
+            "popularity_heat": 31.8227,
+            "rebound_signal": 35.1213,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 3.2918,
+            "swl": 10.0264,
+            "sws": 10.0004,
+            "trend_heat": 20.0,
+            "volume": 100000.0,
+            "volume_price_heat": 18.0338,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -12.6621,
+            "accumulation_strength": 11.7374,
+            "anomaly_heat": 22.9762,
+            "close": 10.14,
+            "cyan_watch": false,
+            "d": 53.1844,
+            "date": "2024-01-08",
+            "high": 10.44,
+            "j": 60.2769,
+            "k": 55.5486,
+            "low": 9.84,
+            "open": 10.04,
+            "popularity_heat": 33.219,
+            "rebound_signal": 34.7138,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 2.2491,
+            "swl": 10.0439,
+            "sws": 10.0006,
+            "trend_heat": 20.0,
+            "volume": 100000.0,
+            "volume_price_heat": 20.0952,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -13.7572,
+            "accumulation_strength": 11.4214,
+            "anomaly_heat": 21.8146,
+            "close": 10.16,
+            "cyan_watch": false,
+            "d": 54.5256,
+            "date": "2024-01-09",
+            "high": 10.46,
+            "j": 62.5724,
+            "k": 57.2078,
+            "low": 9.86,
+            "open": 10.06,
+            "popularity_heat": 31.6947,
+            "rebound_signal": 34.3393,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 1.5004,
+            "swl": 10.0616,
+            "sws": 10.001,
+            "trend_heat": 20.0,
+            "volume": 100000.0,
+            "volume_price_heat": 18.0256,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -14.7099,
+            "accumulation_strength": 11.1722,
+            "anomaly_heat": 21.7717,
+            "close": 10.18,
+            "cyan_watch": false,
+            "d": 55.9008,
+            "date": "2024-01-10",
+            "high": 10.48,
+            "j": 64.1525,
+            "k": 58.6514,
+            "low": 9.88,
+            "open": 10.08,
+            "popularity_heat": 31.663,
+            "rebound_signal": 33.9902,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 0.9102,
+            "swl": 10.0795,
+            "sws": 10.0016,
+            "trend_heat": 20.0,
+            "volume": 100000.0,
+            "volume_price_heat": 18.0236,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -15.5566,
+            "accumulation_strength": 10.9611,
+            "anomaly_heat": 21.7289,
+            "close": 10.2,
+            "cyan_watch": false,
+            "d": 57.2453,
+            "date": "2024-01-11",
+            "high": 10.5,
+            "j": 65.3121,
+            "k": 59.9342,
+            "low": 9.9,
+            "open": 10.1,
+            "popularity_heat": 31.6314,
+            "rebound_signal": 33.6618,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 0.4551,
+            "swl": 10.0977,
+            "sws": 10.0023,
+            "trend_heat": 20.0,
+            "volume": 100000.0,
+            "volume_price_heat": 18.0216,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -16.3223,
+            "accumulation_strength": 10.7732,
+            "anomaly_heat": 21.6863,
+            "close": 10.22,
+            "cyan_watch": false,
+            "d": 58.4267,
+            "date": "2024-01-12",
+            "high": 10.52,
+            "j": 65.5151,
+            "k": 60.7895,
+            "low": 9.92,
+            "open": 10.12,
+            "popularity_heat": 36.1,
+            "rebound_signal": 33.3512,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 5.0475,
+            "swl": 10.116,
+            "sws": 10.0031,
+            "trend_heat": 45.0,
+            "volume": 100000.0,
+            "volume_price_heat": 18.0196,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -17.3815,
+            "accumulation_strength": 10.4548,
+            "anomaly_heat": 22.6614,
+            "close": 10.28,
+            "cyan_watch": false,
+            "d": 59.6028,
+            "date": "2024-01-15",
+            "high": 10.58,
+            "j": 66.6592,
+            "k": 61.9549,
+            "low": 9.98,
+            "open": 10.18,
+            "popularity_heat": 37.4777,
+            "rebound_signal": 32.7968,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 6.812,
+            "swl": 10.1407,
+            "sws": 10.004,
+            "trend_heat": 45.0,
+            "volume": 100000.0,
+            "volume_price_heat": 20.0528,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -18.2544,
+            "accumulation_strength": 10.2274,
+            "anomaly_heat": 21.5175,
+            "close": 10.3,
+            "cyan_watch": false,
+            "d": 60.6458,
+            "date": "2024-01-16",
+            "high": 10.6,
+            "j": 66.9039,
+            "k": 62.7318,
+            "low": 10.0,
+            "open": 10.2,
+            "popularity_heat": 35.9755,
+            "rebound_signal": 32.3984,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 7.5326,
+            "swl": 10.1645,
+            "sws": 10.0052,
+            "trend_heat": 45.0,
+            "volume": 100000.0,
+            "volume_price_heat": 18.0117,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -18.9957,
+            "accumulation_strength": 10.0485,
+            "anomaly_heat": 21.4757,
+            "close": 10.32,
+            "cyan_watch": false,
+            "d": 61.5138,
+            "date": "2024-01-17",
+            "high": 10.62,
+            "j": 66.7218,
+            "k": 63.2498,
+            "low": 10.02,
+            "open": 10.22,
+            "popularity_heat": 35.9447,
+            "rebound_signal": 32.0833,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 7.7385,
+            "swl": 10.1876,
+            "sws": 10.0066,
+            "trend_heat": 45.0,
+            "volume": 100000.0,
+            "volume_price_heat": 18.0097,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -19.6425,
+            "accumulation_strength": 9.8966,
+            "anomaly_heat": 21.4341,
+            "close": 10.34,
+            "cyan_watch": false,
+            "d": 62.0092,
+            "date": "2024-01-18",
+            "high": 10.64,
+            "j": 64.9813,
+            "k": 62.9999,
+            "low": 10.04,
+            "open": 10.24,
+            "popularity_heat": 35.914,
+            "rebound_signal": 31.8147,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 7.6935,
+            "swl": 10.2101,
+            "sws": 10.0081,
+            "trend_heat": 45.0,
+            "volume": 100000.0,
+            "volume_price_heat": 18.0078,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -20.22,
+            "accumulation_strength": 9.7608,
+            "anomaly_heat": 21.3926,
+            "close": 10.36,
+            "cyan_watch": false,
+            "d": 62.2838,
+            "date": "2024-01-19",
+            "high": 10.66,
+            "j": 63.932,
+            "k": 62.8332,
+            "low": 10.06,
+            "open": 10.26,
+            "popularity_heat": 35.8834,
+            "rebound_signal": 31.574,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 7.5293,
+            "swl": 10.2321,
+            "sws": 10.0098,
+            "trend_heat": 45.0,
+            "volume": 100000.0,
+            "volume_price_heat": 18.0058,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -21.0094,
+            "accumulation_strength": 9.5275,
+            "anomaly_heat": 22.3552,
+            "close": 10.42,
+            "cyan_watch": false,
+            "d": 62.6284,
+            "date": "2024-01-22",
+            "high": 10.72,
+            "j": 64.6955,
+            "k": 63.3174,
+            "low": 10.12,
+            "open": 10.32,
+            "popularity_heat": 37.2429,
+            "rebound_signal": 31.1596,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 7.0552,
+            "swl": 10.26,
+            "sws": 10.0117,
+            "trend_heat": 45.0,
+            "volume": 100000.0,
+            "volume_price_heat": 20.0116,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -21.6601,
+            "accumulation_strength": 9.3599,
+            "anomaly_heat": 21.2284,
+            "close": 10.44,
+            "cyan_watch": false,
+            "d": 62.9656,
+            "date": "2024-01-23",
+            "high": 10.74,
+            "j": 64.9892,
+            "k": 63.6402,
+            "low": 10.14,
+            "open": 10.34,
+            "popularity_heat": 35.7622,
+            "rebound_signal": 30.8618,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 6.6976,
+            "swl": 10.2865,
+            "sws": 10.0138,
+            "trend_heat": 45.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9981,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -22.2137,
+            "accumulation_strength": 9.2271,
+            "anomaly_heat": 21.1877,
+            "close": 10.46,
+            "cyan_watch": false,
+            "d": 63.2622,
+            "date": "2024-01-24",
+            "high": 10.76,
+            "j": 65.0416,
+            "k": 63.8554,
+            "low": 10.16,
+            "open": 10.36,
+            "popularity_heat": 35.7322,
+            "rebound_signal": 30.6259,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 6.4028,
+            "swl": 10.3119,
+            "sws": 10.0161,
+            "trend_heat": 45.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9962,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -22.698,
+            "accumulation_strength": 9.1136,
+            "anomaly_heat": 21.1472,
+            "close": 10.48,
+            "cyan_watch": false,
+            "d": 63.3093,
+            "date": "2024-01-25",
+            "high": 10.78,
+            "j": 63.592,
+            "k": 63.4036,
+            "low": 10.18,
+            "open": 10.38,
+            "popularity_heat": 35.7023,
+            "rebound_signal": 30.4241,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 6.1436,
+            "swl": 10.3364,
+            "sws": 10.0187,
+            "trend_heat": 45.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9943,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -23.132,
+            "accumulation_strength": 9.0113,
+            "anomaly_heat": 21.1069,
+            "close": 10.5,
+            "cyan_watch": false,
+            "d": 63.2403,
+            "date": "2024-01-26",
+            "high": 10.8,
+            "j": 62.8264,
+            "k": 63.1024,
+            "low": 10.2,
+            "open": 10.4,
+            "popularity_heat": 40.1725,
+            "rebound_signal": 30.2423,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 14.1863,
+            "swl": 10.3601,
+            "sws": 10.0214,
+            "trend_heat": 70.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9924,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -23.7317,
+            "accumulation_strength": 8.8332,
+            "anomaly_heat": 22.0571,
+            "close": 10.56,
+            "cyan_watch": false,
+            "d": 63.3258,
+            "date": "2024-01-29",
+            "high": 10.86,
+            "j": 63.8388,
+            "k": 63.4968,
+            "low": 10.26,
+            "open": 10.46,
+            "popularity_heat": 41.5143,
+            "rebound_signal": 29.9258,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 17.907,
+            "swl": 10.3895,
+            "sws": 10.0243,
+            "trend_heat": 70.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.9714,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -24.2279,
+            "accumulation_strength": 8.7048,
+            "anomaly_heat": 20.947,
+            "close": 10.58,
+            "cyan_watch": false,
+            "d": 63.4705,
+            "date": "2024-01-30",
+            "high": 10.88,
+            "j": 64.3384,
+            "k": 63.7598,
+            "low": 10.28,
+            "open": 10.48,
+            "popularity_heat": 40.0545,
+            "rebound_signal": 29.6973,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 19.6738,
+            "swl": 10.4173,
+            "sws": 10.0275,
+            "trend_heat": 70.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9848,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -24.6519,
+            "accumulation_strength": 8.6024,
+            "anomaly_heat": 20.9074,
+            "close": 10.6,
+            "cyan_watch": false,
+            "d": 63.6254,
+            "date": "2024-01-31",
+            "high": 10.9,
+            "j": 64.5546,
+            "k": 63.9351,
+            "low": 10.3,
+            "open": 10.5,
+            "popularity_heat": 40.0253,
+            "rebound_signal": 29.5153,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 20.4669,
+            "swl": 10.4438,
+            "sws": 10.0309,
+            "trend_heat": 70.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.983,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -25.0248,
+            "accumulation_strength": 8.5143,
+            "anomaly_heat": 20.8679,
+            "close": 10.62,
+            "cyan_watch": false,
+            "d": 63.5691,
+            "date": "2024-02-01",
+            "high": 10.92,
+            "j": 63.2319,
+            "k": 63.4567,
+            "low": 10.32,
+            "open": 10.52,
+            "popularity_heat": 39.9962,
+            "rebound_signal": 29.3588,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 20.7761,
+            "swl": 10.4692,
+            "sws": 10.0345,
+            "trend_heat": 70.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9811,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -25.3606,
+            "accumulation_strength": 8.4346,
+            "anomaly_heat": 20.8286,
+            "close": 10.64,
+            "cyan_watch": false,
+            "d": 63.4254,
+            "date": "2024-02-02",
+            "high": 10.94,
+            "j": 62.5627,
+            "k": 63.1378,
+            "low": 10.34,
+            "open": 10.54,
+            "popularity_heat": 42.6672,
+            "rebound_signal": 29.217,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 24.0661,
+            "swl": 10.4938,
+            "sws": 10.0383,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9793,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -25.8301,
+            "accumulation_strength": 8.2942,
+            "anomaly_heat": 21.7669,
+            "close": 10.7,
+            "cyan_watch": false,
+            "d": 63.4571,
+            "date": "2024-02-05",
+            "high": 11.0,
+            "j": 63.6472,
+            "k": 63.5205,
+            "low": 10.4,
+            "open": 10.6,
+            "popularity_heat": 43.9917,
+            "rebound_signal": 28.9675,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 25.4731,
+            "swl": 10.5238,
+            "sws": 10.0423,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.9323,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -26.2201,
+            "accumulation_strength": 8.1926,
+            "anomaly_heat": 20.6729,
+            "close": 10.72,
+            "cyan_watch": false,
+            "d": 63.5632,
+            "date": "2024-02-06",
+            "high": 11.02,
+            "j": 64.2002,
+            "k": 63.7755,
+            "low": 10.42,
+            "open": 10.62,
+            "popularity_heat": 42.5523,
+            "rebound_signal": 28.7868,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 26.102,
+            "swl": 10.5523,
+            "sws": 10.0465,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.972,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -26.5547,
+            "accumulation_strength": 8.1112,
+            "anomaly_heat": 20.6343,
+            "close": 10.74,
+            "cyan_watch": false,
+            "d": 63.6907,
+            "date": "2024-02-07",
+            "high": 11.04,
+            "j": 64.4554,
+            "k": 63.9456,
+            "low": 10.44,
+            "open": 10.64,
+            "popularity_heat": 42.5239,
+            "rebound_signal": 28.6421,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 26.3441,
+            "swl": 10.5793,
+            "sws": 10.051,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9701,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -26.8502,
+            "accumulation_strength": 8.0409,
+            "anomaly_heat": 20.5959,
+            "close": 10.76,
+            "cyan_watch": false,
+            "d": 63.615,
+            "date": "2024-02-08",
+            "high": 11.06,
+            "j": 63.1611,
+            "k": 63.4637,
+            "low": 10.46,
+            "open": 10.66,
+            "popularity_heat": 42.4955,
+            "rebound_signal": 28.5171,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 26.395,
+            "swl": 10.6053,
+            "sws": 10.0557,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9683,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -27.1175,
+            "accumulation_strength": 7.977,
+            "anomaly_heat": 20.5576,
+            "close": 10.78,
+            "cyan_watch": false,
+            "d": 63.4575,
+            "date": "2024-02-09",
+            "high": 11.08,
+            "j": 62.5124,
+            "k": 63.1425,
+            "low": 10.48,
+            "open": 10.68,
+            "popularity_heat": 42.4673,
+            "rebound_signal": 28.4035,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 26.3523,
+            "swl": 10.6302,
+            "sws": 10.0606,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9665,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -27.495,
+            "accumulation_strength": 7.8635,
+            "anomaly_heat": 21.4842,
+            "close": 10.84,
+            "cyan_watch": false,
+            "d": 63.4795,
+            "date": "2024-02-12",
+            "high": 11.14,
+            "j": 63.6116,
+            "k": 63.5236,
+            "low": 10.54,
+            "open": 10.74,
+            "popularity_heat": 43.775,
+            "rebound_signal": 28.2018,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 26.1378,
+            "swl": 10.6607,
+            "sws": 10.0657,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.8942,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -27.8095,
+            "accumulation_strength": 7.7811,
+            "anomaly_heat": 20.4059,
+            "close": 10.86,
+            "cyan_watch": false,
+            "d": 63.5789,
+            "date": "2024-02-13",
+            "high": 11.16,
+            "j": 64.1751,
+            "k": 63.7776,
+            "low": 10.56,
+            "open": 10.76,
+            "popularity_heat": 42.3554,
+            "rebound_signal": 28.0552,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 25.9697,
+            "swl": 10.6895,
+            "sws": 10.071,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9594,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -28.0802,
+            "accumulation_strength": 7.7149,
+            "anomaly_heat": 20.3683,
+            "close": 10.88,
+            "cyan_watch": false,
+            "d": 63.7016,
+            "date": "2024-02-14",
+            "high": 11.18,
+            "j": 64.4378,
+            "k": 63.947,
+            "low": 10.58,
+            "open": 10.78,
+            "popularity_heat": 42.3276,
+            "rebound_signal": 27.9375,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 25.8265,
+            "swl": 10.7168,
+            "sws": 10.0766,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9576,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -28.3201,
+            "accumulation_strength": 7.6574,
+            "anomaly_heat": 20.3309,
+            "close": 10.9,
+            "cyan_watch": false,
+            "d": 63.6226,
+            "date": "2024-02-15",
+            "high": 11.2,
+            "j": 63.1487,
+            "k": 63.4647,
+            "low": 10.6,
+            "open": 10.8,
+            "popularity_heat": 42.3,
+            "rebound_signal": 27.8354,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 25.6972,
+            "swl": 10.743,
+            "sws": 10.0823,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9559,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -28.538,
+            "accumulation_strength": 7.605,
+            "anomaly_heat": 20.2936,
+            "close": 10.92,
+            "cyan_watch": false,
+            "d": 63.4628,
+            "date": "2024-02-16",
+            "high": 11.22,
+            "j": 62.5038,
+            "k": 63.1431,
+            "low": 10.62,
+            "open": 10.82,
+            "popularity_heat": 42.2725,
+            "rebound_signal": 27.7423,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 25.5765,
+            "swl": 10.7682,
+            "sws": 10.0883,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9541,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -28.8481,
+            "accumulation_strength": 7.5114,
+            "anomaly_heat": 21.2088,
+            "close": 10.98,
+            "cyan_watch": false,
+            "d": 63.4832,
+            "date": "2024-02-19",
+            "high": 11.28,
+            "j": 63.6056,
+            "k": 63.524,
+            "low": 10.68,
+            "open": 10.88,
+            "popularity_heat": 43.5637,
+            "rebound_signal": 27.5758,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 25.3564,
+            "swl": 10.7989,
+            "sws": 10.0945,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.8571,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -29.1071,
+            "accumulation_strength": 7.4432,
+            "anomaly_heat": 20.1457,
+            "close": 11.0,
+            "cyan_watch": false,
+            "d": 63.5814,
+            "date": "2024-02-20",
+            "high": 11.3,
+            "j": 64.1708,
+            "k": 63.7779,
+            "low": 10.7,
+            "open": 10.9,
+            "popularity_heat": 42.1634,
+            "rebound_signal": 27.4546,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 25.1957,
+            "swl": 10.8278,
+            "sws": 10.1009,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9472,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -29.3306,
+            "accumulation_strength": 7.3883,
+            "anomaly_heat": 20.1091,
+            "close": 11.02,
+            "cyan_watch": false,
+            "d": 63.7033,
+            "date": "2024-02-21",
+            "high": 11.32,
+            "j": 64.4348,
+            "k": 63.9472,
+            "low": 10.72,
+            "open": 10.92,
+            "popularity_heat": 42.1364,
+            "rebound_signal": 27.3569,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 25.066,
+            "swl": 10.8554,
+            "sws": 10.1075,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9455,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -29.5294,
+            "accumulation_strength": 7.3405,
+            "anomaly_heat": 20.0726,
+            "close": 11.04,
+            "cyan_watch": false,
+            "d": 63.6238,
+            "date": "2024-02-22",
+            "high": 11.34,
+            "j": 63.1467,
+            "k": 63.4648,
+            "low": 10.74,
+            "open": 10.94,
+            "popularity_heat": 42.1094,
+            "rebound_signal": 27.2719,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 24.953,
+            "swl": 10.8817,
+            "sws": 10.1143,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9437,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -29.7103,
+            "accumulation_strength": 7.2967,
+            "anomaly_heat": 20.0362,
+            "close": 11.06,
+            "cyan_watch": false,
+            "d": 63.4636,
+            "date": "2024-02-23",
+            "high": 11.36,
+            "j": 62.5023,
+            "k": 63.1432,
+            "low": 10.76,
+            "open": 10.96,
+            "popularity_heat": 42.0826,
+            "rebound_signal": 27.1942,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 24.8495,
+            "swl": 10.9071,
+            "sws": 10.1213,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.942,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -29.9697,
+            "accumulation_strength": 7.2181,
+            "anomaly_heat": 20.9403,
+            "close": 11.12,
+            "cyan_watch": false,
+            "d": 63.4837,
+            "date": "2024-02-26",
+            "high": 11.42,
+            "j": 63.6046,
+            "k": 63.524,
+            "low": 10.82,
+            "open": 11.02,
+            "popularity_heat": 43.3579,
+            "rebound_signal": 27.0545,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 24.6634,
+            "swl": 10.9378,
+            "sws": 10.1285,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.821,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -30.1867,
+            "accumulation_strength": 7.1608,
+            "anomaly_heat": 19.8921,
+            "close": 11.14,
+            "cyan_watch": false,
+            "d": 63.5818,
+            "date": "2024-02-27",
+            "high": 11.44,
+            "j": 64.1702,
+            "k": 63.7779,
+            "low": 10.84,
+            "open": 11.04,
+            "popularity_heat": 41.9763,
+            "rebound_signal": 26.9525,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 24.5275,
+            "swl": 10.9669,
+            "sws": 10.1359,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9353,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -30.3745,
+            "accumulation_strength": 7.1145,
+            "anomaly_heat": 19.8564,
+            "close": 11.16,
+            "cyan_watch": false,
+            "d": 63.7036,
+            "date": "2024-02-28",
+            "high": 11.46,
+            "j": 64.4344,
+            "k": 63.9472,
+            "low": 10.86,
+            "open": 11.06,
+            "popularity_heat": 41.9499,
+            "rebound_signal": 26.8702,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 24.4179,
+            "swl": 10.9945,
+            "sws": 10.1436,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9336,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -30.5418,
+            "accumulation_strength": 7.0741,
+            "anomaly_heat": 19.8208,
+            "close": 11.18,
+            "cyan_watch": false,
+            "d": 63.624,
+            "date": "2024-02-29",
+            "high": 11.48,
+            "j": 63.1464,
+            "k": 63.4648,
+            "low": 10.88,
+            "open": 11.08,
+            "popularity_heat": 41.9237,
+            "rebound_signal": 26.7984,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 24.3222,
+            "swl": 11.0209,
+            "sws": 10.1514,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9319,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -30.6945,
+            "accumulation_strength": 7.037,
+            "anomaly_heat": 19.7853,
+            "close": 11.2,
+            "cyan_watch": false,
+            "d": 63.4637,
+            "date": "2024-03-01",
+            "high": 11.5,
+            "j": 62.5021,
+            "k": 63.1432,
+            "low": 10.9,
+            "open": 11.1,
+            "popularity_heat": 41.8975,
+            "rebound_signal": 26.7325,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 24.2344,
+            "swl": 11.0464,
+            "sws": 10.1594,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9302,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -30.9146,
+            "accumulation_strength": 6.9701,
+            "anomaly_heat": 20.6786,
+            "close": 11.26,
+            "cyan_watch": false,
+            "d": 63.4838,
+            "date": "2024-03-04",
+            "high": 11.56,
+            "j": 63.6044,
+            "k": 63.524,
+            "low": 10.96,
+            "open": 11.16,
+            "popularity_heat": 43.1571,
+            "rebound_signal": 26.6136,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 24.0759,
+            "swl": 11.0772,
+            "sws": 10.1676,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.7857,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -31.0991,
+            "accumulation_strength": 6.9212,
+            "anomaly_heat": 19.6448,
+            "close": 11.28,
+            "cyan_watch": false,
+            "d": 63.5819,
+            "date": "2024-03-05",
+            "high": 11.58,
+            "j": 64.1701,
+            "k": 63.7779,
+            "low": 10.98,
+            "open": 11.18,
+            "popularity_heat": 41.7938,
+            "rebound_signal": 26.5266,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 23.9601,
+            "swl": 11.1063,
+            "sws": 10.176,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9236,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -31.2591,
+            "accumulation_strength": 6.8817,
+            "anomaly_heat": 19.6099,
+            "close": 11.3,
+            "cyan_watch": false,
+            "d": 63.7036,
+            "date": "2024-03-06",
+            "high": 11.6,
+            "j": 64.4343,
+            "k": 63.9472,
+            "low": 11.0,
+            "open": 11.2,
+            "popularity_heat": 41.7681,
+            "rebound_signal": 26.4563,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 23.8664,
+            "swl": 11.134,
+            "sws": 10.1846,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.922,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -31.4019,
+            "accumulation_strength": 6.8471,
+            "anomaly_heat": 19.5752,
+            "close": 11.32,
+            "cyan_watch": false,
+            "d": 63.624,
+            "date": "2024-03-07",
+            "high": 11.62,
+            "j": 63.1463,
+            "k": 63.4648,
+            "low": 11.02,
+            "open": 11.22,
+            "popularity_heat": 41.7425,
+            "rebound_signal": 26.3948,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 23.7844,
+            "swl": 11.1605,
+            "sws": 10.1934,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9204,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -31.5325,
+            "accumulation_strength": 6.8153,
+            "anomaly_heat": 19.5406,
+            "close": 11.34,
+            "cyan_watch": false,
+            "d": 63.4637,
+            "date": "2024-03-08",
+            "high": 11.64,
+            "j": 62.5021,
+            "k": 63.1432,
+            "low": 11.04,
+            "open": 11.24,
+            "popularity_heat": 41.717,
+            "rebound_signal": 26.3383,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 23.7091,
+            "swl": 11.1859,
+            "sws": 10.2024,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9187,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -31.7217,
+            "accumulation_strength": 6.7576,
+            "anomaly_heat": 20.4233,
+            "close": 11.4,
+            "cyan_watch": false,
+            "d": 63.4838,
+            "date": "2024-03-11",
+            "high": 11.7,
+            "j": 63.6044,
+            "k": 63.524,
+            "low": 11.1,
+            "open": 11.3,
+            "popularity_heat": 42.9614,
+            "rebound_signal": 26.2358,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 23.5726,
+            "swl": 11.2168,
+            "sws": 10.2116,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.7513,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -31.8805,
+            "accumulation_strength": 6.7155,
+            "anomaly_heat": 19.4035,
+            "close": 11.42,
+            "cyan_watch": false,
+            "d": 63.5819,
+            "date": "2024-03-12",
+            "high": 11.72,
+            "j": 64.17,
+            "k": 63.7779,
+            "low": 11.12,
+            "open": 11.32,
+            "popularity_heat": 41.6158,
+            "rebound_signal": 26.1608,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 23.4726,
+            "swl": 11.246,
+            "sws": 10.221,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9123,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -32.0183,
+            "accumulation_strength": 6.6813,
+            "anomaly_heat": 19.3695,
+            "close": 11.44,
+            "cyan_watch": false,
+            "d": 63.7036,
+            "date": "2024-03-13",
+            "high": 11.74,
+            "j": 64.4343,
+            "k": 63.9472,
+            "low": 11.14,
+            "open": 11.34,
+            "popularity_heat": 41.5907,
+            "rebound_signal": 26.1,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 23.3916,
+            "swl": 11.2737,
+            "sws": 10.2305,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9107,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -32.1417,
+            "accumulation_strength": 6.6513,
+            "anomaly_heat": 19.3357,
+            "close": 11.46,
+            "cyan_watch": false,
+            "d": 63.624,
+            "date": "2024-03-14",
+            "high": 11.76,
+            "j": 63.1463,
+            "k": 63.4648,
+            "low": 11.16,
+            "open": 11.36,
+            "popularity_heat": 41.5657,
+            "rebound_signal": 26.0468,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 23.3207,
+            "swl": 11.3002,
+            "sws": 10.2402,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9091,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -32.2547,
+            "accumulation_strength": 6.6237,
+            "anomaly_heat": 19.3019,
+            "close": 11.48,
+            "cyan_watch": false,
+            "d": 63.4638,
+            "date": "2024-03-15",
+            "high": 11.78,
+            "j": 62.5021,
+            "k": 63.1432,
+            "low": 11.18,
+            "open": 11.38,
+            "popularity_heat": 41.5408,
+            "rebound_signal": 25.9977,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 23.2553,
+            "swl": 11.3257,
+            "sws": 10.2501,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9075,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -32.419,
+            "accumulation_strength": 6.5735,
+            "anomaly_heat": 20.1742,
+            "close": 11.54,
+            "cyan_watch": false,
+            "d": 63.4838,
+            "date": "2024-03-18",
+            "high": 11.84,
+            "j": 63.6044,
+            "k": 63.524,
+            "low": 11.24,
+            "open": 11.44,
+            "popularity_heat": 42.7704,
+            "rebound_signal": 25.9085,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 23.1364,
+            "swl": 11.3566,
+            "sws": 10.2602,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.7178,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -32.5571,
+            "accumulation_strength": 6.5368,
+            "anomaly_heat": 19.1681,
+            "close": 11.56,
+            "cyan_watch": false,
+            "d": 63.5819,
+            "date": "2024-03-19",
+            "high": 11.86,
+            "j": 64.17,
+            "k": 63.7779,
+            "low": 11.26,
+            "open": 11.46,
+            "popularity_heat": 41.4421,
+            "rebound_signal": 25.8432,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 23.0493,
+            "swl": 11.3858,
+            "sws": 10.2705,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.9012,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -32.6772,
+            "accumulation_strength": 6.5069,
+            "anomaly_heat": 19.1349,
+            "close": 11.58,
+            "cyan_watch": false,
+            "d": 63.7036,
+            "date": "2024-03-20",
+            "high": 11.88,
+            "j": 64.4343,
+            "k": 63.9472,
+            "low": 11.28,
+            "open": 11.48,
+            "popularity_heat": 41.4176,
+            "rebound_signal": 25.7901,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.9786,
+            "swl": 11.4135,
+            "sws": 10.281,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8997,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -32.7848,
+            "accumulation_strength": 6.4807,
+            "anomaly_heat": 19.1019,
+            "close": 11.6,
+            "cyan_watch": false,
+            "d": 63.624,
+            "date": "2024-03-21",
+            "high": 11.9,
+            "j": 63.1463,
+            "k": 63.4648,
+            "low": 11.3,
+            "open": 11.5,
+            "popularity_heat": 41.3933,
+            "rebound_signal": 25.7435,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.9166,
+            "swl": 11.44,
+            "sws": 10.2916,
+            "trend_heat": 85.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8981,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -32.8836,
+            "accumulation_strength": 6.4566,
+            "anomaly_heat": 19.069,
+            "close": 11.62,
+            "cyan_watch": false,
+            "d": 63.4638,
+            "date": "2024-03-22",
+            "high": 11.92,
+            "j": 62.5021,
+            "k": 63.1432,
+            "low": 11.32,
+            "open": 11.52,
+            "popularity_heat": 44.069,
+            "rebound_signal": 25.7006,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.8594,
+            "swl": 11.4655,
+            "sws": 10.3023,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8966,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.002,
+            "accumulation_strength": 6.423,
+            "anomaly_heat": 19.9312,
+            "close": 11.68,
+            "cyan_watch": false,
+            "d": 63.4838,
+            "date": "2024-03-25",
+            "high": 11.98,
+            "j": 63.6044,
+            "k": 63.524,
+            "low": 11.38,
+            "open": 11.58,
+            "popularity_heat": 45.284,
+            "rebound_signal": 25.6409,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7798,
+            "swl": 11.4965,
+            "sws": 10.3133,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.685,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.081,
+            "accumulation_strength": 6.4062,
+            "anomaly_heat": 18.9384,
+            "close": 11.7,
+            "cyan_watch": false,
+            "d": 63.5819,
+            "date": "2024-03-26",
+            "high": 12.0,
+            "j": 64.17,
+            "k": 63.7779,
+            "low": 11.4,
+            "open": 11.6,
+            "popularity_heat": 43.9726,
+            "rebound_signal": 25.611,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.74,
+            "swl": 11.5256,
+            "sws": 10.3245,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8904,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1336,
+            "accumulation_strength": 6.3978,
+            "anomaly_heat": 18.906,
+            "close": 11.72,
+            "cyan_watch": false,
+            "d": 63.7036,
+            "date": "2024-03-27",
+            "high": 12.02,
+            "j": 64.4343,
+            "k": 63.9472,
+            "low": 11.42,
+            "open": 11.62,
+            "popularity_heat": 43.9487,
+            "rebound_signal": 25.5961,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7201,
+            "swl": 11.5534,
+            "sws": 10.3358,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8889,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1687,
+            "accumulation_strength": 6.3936,
+            "anomaly_heat": 18.8737,
+            "close": 11.74,
+            "cyan_watch": false,
+            "d": 63.624,
+            "date": "2024-03-28",
+            "high": 12.04,
+            "j": 63.1463,
+            "k": 63.4648,
+            "low": 11.44,
+            "open": 11.64,
+            "popularity_heat": 43.9249,
+            "rebound_signal": 25.5886,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7101,
+            "swl": 11.5799,
+            "sws": 10.3472,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8874,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1395,
+            "accumulation_strength": 6.413,
+            "anomaly_heat": 18.8416,
+            "close": 11.76,
+            "cyan_watch": false,
+            "d": 63.4638,
+            "date": "2024-03-29",
+            "high": 12.06,
+            "j": 62.5021,
+            "k": 63.1432,
+            "low": 11.46,
+            "open": 11.66,
+            "popularity_heat": 43.9012,
+            "rebound_signal": 25.6231,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7561,
+            "swl": 11.6055,
+            "sws": 10.3588,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8859,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1727,
+            "accumulation_strength": 6.4012,
+            "anomaly_heat": 19.6939,
+            "close": 11.82,
+            "cyan_watch": false,
+            "d": 63.4838,
+            "date": "2024-04-01",
+            "high": 12.12,
+            "j": 63.6044,
+            "k": 63.524,
+            "low": 11.52,
+            "open": 11.72,
+            "popularity_heat": 45.102,
+            "rebound_signal": 25.6021,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7282,
+            "swl": 11.6364,
+            "sws": 10.3706,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.6531,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1948,
+            "accumulation_strength": 6.3953,
+            "anomaly_heat": 18.714,
+            "close": 11.84,
+            "cyan_watch": false,
+            "d": 63.5819,
+            "date": "2024-04-02",
+            "high": 12.14,
+            "j": 64.17,
+            "k": 63.7779,
+            "low": 11.54,
+            "open": 11.74,
+            "popularity_heat": 43.8071,
+            "rebound_signal": 25.5916,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7142,
+            "swl": 11.6656,
+            "sws": 10.3826,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8799,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.2095,
+            "accumulation_strength": 6.3923,
+            "anomaly_heat": 18.6824,
+            "close": 11.86,
+            "cyan_watch": false,
+            "d": 63.7036,
+            "date": "2024-04-03",
+            "high": 12.16,
+            "j": 64.4343,
+            "k": 63.9472,
+            "low": 11.56,
+            "open": 11.76,
+            "popularity_heat": 43.7838,
+            "rebound_signal": 25.5864,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7072,
+            "swl": 11.6933,
+            "sws": 10.3947,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8784,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.2193,
+            "accumulation_strength": 6.3909,
+            "anomaly_heat": 18.6509,
+            "close": 11.88,
+            "cyan_watch": false,
+            "d": 63.624,
+            "date": "2024-04-04",
+            "high": 12.18,
+            "j": 63.1463,
+            "k": 63.4648,
+            "low": 11.58,
+            "open": 11.78,
+            "popularity_heat": 43.7605,
+            "rebound_signal": 25.5837,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7037,
+            "swl": 11.7199,
+            "sws": 10.407,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8769,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1732,
+            "accumulation_strength": 6.4116,
+            "anomaly_heat": 18.6195,
+            "close": 11.9,
+            "cyan_watch": false,
+            "d": 63.4638,
+            "date": "2024-04-05",
+            "high": 12.2,
+            "j": 62.5021,
+            "k": 63.1432,
+            "low": 11.6,
+            "open": 11.8,
+            "popularity_heat": 43.7374,
+            "rebound_signal": 25.6207,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7529,
+            "swl": 11.7454,
+            "sws": 10.4194,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8754,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1951,
+            "accumulation_strength": 6.4005,
+            "anomaly_heat": 19.4622,
+            "close": 11.96,
+            "cyan_watch": false,
+            "d": 63.4838,
+            "date": "2024-04-08",
+            "high": 12.26,
+            "j": 63.6044,
+            "k": 63.524,
+            "low": 11.66,
+            "open": 11.86,
+            "popularity_heat": 44.9244,
+            "rebound_signal": 25.6009,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7265,
+            "swl": 11.7763,
+            "sws": 10.432,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.6218,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.2097,
+            "accumulation_strength": 6.3949,
+            "anomaly_heat": 18.495,
+            "close": 11.98,
+            "cyan_watch": false,
+            "d": 63.5819,
+            "date": "2024-04-09",
+            "high": 12.28,
+            "j": 64.17,
+            "k": 63.7779,
+            "low": 11.68,
+            "open": 11.88,
+            "popularity_heat": 43.6455,
+            "rebound_signal": 25.591,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7134,
+            "swl": 11.8055,
+            "sws": 10.4448,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8696,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.2195,
+            "accumulation_strength": 6.3922,
+            "anomaly_heat": 18.4641,
+            "close": 12.0,
+            "cyan_watch": false,
+            "d": 63.7036,
+            "date": "2024-04-10",
+            "high": 12.3,
+            "j": 64.4343,
+            "k": 63.9472,
+            "low": 11.7,
+            "open": 11.9,
+            "popularity_heat": 43.6227,
+            "rebound_signal": 25.5861,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7068,
+            "swl": 11.8333,
+            "sws": 10.4577,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8681,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.226,
+            "accumulation_strength": 6.3908,
+            "anomaly_heat": 18.4333,
+            "close": 12.02,
+            "cyan_watch": false,
+            "d": 63.624,
+            "date": "2024-04-11",
+            "high": 12.32,
+            "j": 63.1463,
+            "k": 63.4648,
+            "low": 11.72,
+            "open": 11.92,
+            "popularity_heat": 43.6,
+            "rebound_signal": 25.5836,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7035,
+            "swl": 11.8598,
+            "sws": 10.4707,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8667,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1777,
+            "accumulation_strength": 6.4116,
+            "anomaly_heat": 18.4027,
+            "close": 12.04,
+            "cyan_watch": false,
+            "d": 63.4638,
+            "date": "2024-04-12",
+            "high": 12.34,
+            "j": 62.5021,
+            "k": 63.1432,
+            "low": 11.74,
+            "open": 11.94,
+            "popularity_heat": 43.5774,
+            "rebound_signal": 25.6206,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7528,
+            "swl": 11.8854,
+            "sws": 10.4839,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8652,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1981,
+            "accumulation_strength": 6.4005,
+            "anomaly_heat": 19.2359,
+            "close": 12.1,
+            "cyan_watch": false,
+            "d": 63.4838,
+            "date": "2024-04-15",
+            "high": 12.4,
+            "j": 63.6044,
+            "k": 63.524,
+            "low": 11.8,
+            "open": 12.0,
+            "popularity_heat": 44.7508,
+            "rebound_signal": 25.6009,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7265,
+            "swl": 11.9163,
+            "sws": 10.4972,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.5914,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.2117,
+            "accumulation_strength": 6.3949,
+            "anomaly_heat": 18.281,
+            "close": 12.12,
+            "cyan_watch": false,
+            "d": 63.5819,
+            "date": "2024-04-16",
+            "high": 12.42,
+            "j": 64.17,
+            "k": 63.7779,
+            "low": 11.82,
+            "open": 12.02,
+            "popularity_heat": 43.4876,
+            "rebound_signal": 25.591,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7133,
+            "swl": 11.9455,
+            "sws": 10.5107,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8595,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.2208,
+            "accumulation_strength": 6.3922,
+            "anomaly_heat": 18.2508,
+            "close": 12.14,
+            "cyan_watch": false,
+            "d": 63.7036,
+            "date": "2024-04-17",
+            "high": 12.44,
+            "j": 64.4343,
+            "k": 63.9472,
+            "low": 11.84,
+            "open": 12.04,
+            "popularity_heat": 43.4653,
+            "rebound_signal": 25.5861,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7068,
+            "swl": 11.9733,
+            "sws": 10.5244,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8581,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.2268,
+            "accumulation_strength": 6.3908,
+            "anomaly_heat": 18.2208,
+            "close": 12.16,
+            "cyan_watch": false,
+            "d": 63.624,
+            "date": "2024-04-18",
+            "high": 12.46,
+            "j": 63.1463,
+            "k": 63.4648,
+            "low": 11.86,
+            "open": 12.06,
+            "popularity_heat": 43.4432,
+            "rebound_signal": 25.5836,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7035,
+            "swl": 11.9998,
+            "sws": 10.5381,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8567,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1783,
+            "accumulation_strength": 6.4116,
+            "anomaly_heat": 18.1908,
+            "close": 12.18,
+            "cyan_watch": false,
+            "d": 63.4638,
+            "date": "2024-04-19",
+            "high": 12.48,
+            "j": 62.5021,
+            "k": 63.1432,
+            "low": 11.88,
+            "open": 12.08,
+            "popularity_heat": 43.4211,
+            "rebound_signal": 25.6206,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7528,
+            "swl": 12.0253,
+            "sws": 10.5521,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8553,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1985,
+            "accumulation_strength": 6.4005,
+            "anomaly_heat": 19.0148,
+            "close": 12.24,
+            "cyan_watch": false,
+            "d": 63.4838,
+            "date": "2024-04-22",
+            "high": 12.54,
+            "j": 63.6044,
+            "k": 63.524,
+            "low": 11.94,
+            "open": 12.14,
+            "popularity_heat": 44.5813,
+            "rebound_signal": 25.6009,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7265,
+            "swl": 12.0563,
+            "sws": 10.5661,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.5616,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.212,
+            "accumulation_strength": 6.3949,
+            "anomaly_heat": 18.0719,
+            "close": 12.26,
+            "cyan_watch": false,
+            "d": 63.5819,
+            "date": "2024-04-23",
+            "high": 12.56,
+            "j": 64.17,
+            "k": 63.7779,
+            "low": 11.96,
+            "open": 12.16,
+            "popularity_heat": 43.3333,
+            "rebound_signal": 25.591,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7133,
+            "swl": 12.0855,
+            "sws": 10.5803,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8497,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.221,
+            "accumulation_strength": 6.3922,
+            "anomaly_heat": 18.0424,
+            "close": 12.28,
+            "cyan_watch": false,
+            "d": 63.7036,
+            "date": "2024-04-24",
+            "high": 12.58,
+            "j": 64.4343,
+            "k": 63.9472,
+            "low": 11.98,
+            "open": 12.18,
+            "popularity_heat": 43.3116,
+            "rebound_signal": 25.5861,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7068,
+            "swl": 12.1132,
+            "sws": 10.5947,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8483,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.227,
+            "accumulation_strength": 6.3908,
+            "anomaly_heat": 18.013,
+            "close": 12.3,
+            "cyan_watch": false,
+            "d": 63.624,
+            "date": "2024-04-25",
+            "high": 12.6,
+            "j": 63.1463,
+            "k": 63.4648,
+            "low": 12.0,
+            "open": 12.2,
+            "popularity_heat": 43.2899,
+            "rebound_signal": 25.5836,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7035,
+            "swl": 12.1398,
+            "sws": 10.6091,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8469,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1783,
+            "accumulation_strength": 6.4116,
+            "anomaly_heat": 17.9837,
+            "close": 12.32,
+            "cyan_watch": false,
+            "d": 63.4638,
+            "date": "2024-04-26",
+            "high": 12.62,
+            "j": 62.5021,
+            "k": 63.1432,
+            "low": 12.02,
+            "open": 12.22,
+            "popularity_heat": 43.2683,
+            "rebound_signal": 25.6206,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7528,
+            "swl": 12.1653,
+            "sws": 10.6237,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8455,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1985,
+            "accumulation_strength": 6.4005,
+            "anomaly_heat": 18.7987,
+            "close": 12.38,
+            "cyan_watch": false,
+            "d": 63.4838,
+            "date": "2024-04-29",
+            "high": 12.68,
+            "j": 63.6044,
+            "k": 63.524,
+            "low": 12.08,
+            "open": 12.28,
+            "popularity_heat": 44.4156,
+            "rebound_signal": 25.6009,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7265,
+            "swl": 12.1963,
+            "sws": 10.6385,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.5325,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.212,
+            "accumulation_strength": 6.3949,
+            "anomaly_heat": 17.8675,
+            "close": 12.4,
+            "cyan_watch": false,
+            "d": 63.5819,
+            "date": "2024-04-30",
+            "high": 12.7,
+            "j": 64.17,
+            "k": 63.7779,
+            "low": 12.1,
+            "open": 12.3,
+            "popularity_heat": 43.1826,
+            "rebound_signal": 25.591,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7133,
+            "swl": 12.2255,
+            "sws": 10.6534,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8401,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.221,
+            "accumulation_strength": 6.3922,
+            "anomaly_heat": 17.8387,
+            "close": 12.42,
+            "cyan_watch": false,
+            "d": 63.7036,
+            "date": "2024-05-01",
+            "high": 12.72,
+            "j": 64.4343,
+            "k": 63.9472,
+            "low": 12.12,
+            "open": 12.32,
+            "popularity_heat": 43.1613,
+            "rebound_signal": 25.5861,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7068,
+            "swl": 12.2532,
+            "sws": 10.6684,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8387,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.227,
+            "accumulation_strength": 6.3908,
+            "anomaly_heat": 17.81,
+            "close": 12.44,
+            "cyan_watch": false,
+            "d": 63.624,
+            "date": "2024-05-02",
+            "high": 12.74,
+            "j": 63.1463,
+            "k": 63.4648,
+            "low": 12.14,
+            "open": 12.34,
+            "popularity_heat": 43.1401,
+            "rebound_signal": 25.5836,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7035,
+            "swl": 12.2798,
+            "sws": 10.6835,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8374,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1783,
+            "accumulation_strength": 6.4116,
+            "anomaly_heat": 17.7814,
+            "close": 12.46,
+            "cyan_watch": false,
+            "d": 63.4638,
+            "date": "2024-05-03",
+            "high": 12.76,
+            "j": 62.5021,
+            "k": 63.1432,
+            "low": 12.16,
+            "open": 12.36,
+            "popularity_heat": 43.119,
+            "rebound_signal": 25.6206,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7528,
+            "swl": 12.3053,
+            "sws": 10.6988,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.836,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1985,
+            "accumulation_strength": 6.4005,
+            "anomaly_heat": 18.5875,
+            "close": 12.52,
+            "cyan_watch": false,
+            "d": 63.4838,
+            "date": "2024-05-06",
+            "high": 12.82,
+            "j": 63.6044,
+            "k": 63.524,
+            "low": 12.22,
+            "open": 12.42,
+            "popularity_heat": 44.2536,
+            "rebound_signal": 25.6009,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7265,
+            "swl": 12.3363,
+            "sws": 10.7142,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.504,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.212,
+            "accumulation_strength": 6.3949,
+            "anomaly_heat": 17.6677,
+            "close": 12.54,
+            "cyan_watch": false,
+            "d": 63.5819,
+            "date": "2024-05-07",
+            "high": 12.84,
+            "j": 64.17,
+            "k": 63.7779,
+            "low": 12.24,
+            "open": 12.44,
+            "popularity_heat": 43.0351,
+            "rebound_signal": 25.591,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7133,
+            "swl": 12.3655,
+            "sws": 10.7297,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8307,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.221,
+            "accumulation_strength": 6.3922,
+            "anomaly_heat": 17.6396,
+            "close": 12.56,
+            "cyan_watch": false,
+            "d": 63.7036,
+            "date": "2024-05-08",
+            "high": 12.86,
+            "j": 64.4343,
+            "k": 63.9472,
+            "low": 12.26,
+            "open": 12.46,
+            "popularity_heat": 43.0144,
+            "rebound_signal": 25.5861,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7068,
+            "swl": 12.3932,
+            "sws": 10.7453,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8293,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.227,
+            "accumulation_strength": 6.3908,
+            "anomaly_heat": 17.6115,
+            "close": 12.58,
+            "cyan_watch": false,
+            "d": 63.624,
+            "date": "2024-05-09",
+            "high": 12.88,
+            "j": 63.1463,
+            "k": 63.4648,
+            "low": 12.28,
+            "open": 12.48,
+            "popularity_heat": 42.9936,
+            "rebound_signal": 25.5836,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7035,
+            "swl": 12.4198,
+            "sws": 10.7611,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.828,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1783,
+            "accumulation_strength": 6.4116,
+            "anomaly_heat": 17.5835,
+            "close": 12.6,
+            "cyan_watch": false,
+            "d": 63.4638,
+            "date": "2024-05-10",
+            "high": 12.9,
+            "j": 62.5021,
+            "k": 63.1432,
+            "low": 12.3,
+            "open": 12.5,
+            "popularity_heat": 42.973,
+            "rebound_signal": 25.6206,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7528,
+            "swl": 12.4453,
+            "sws": 10.777,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8267,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1985,
+            "accumulation_strength": 6.4005,
+            "anomaly_heat": 18.381,
+            "close": 12.66,
+            "cyan_watch": false,
+            "d": 63.4838,
+            "date": "2024-05-13",
+            "high": 12.96,
+            "j": 63.6044,
+            "k": 63.524,
+            "low": 12.36,
+            "open": 12.56,
+            "popularity_heat": 44.0952,
+            "rebound_signal": 25.6009,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7265,
+            "swl": 12.4763,
+            "sws": 10.793,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.4762,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.212,
+            "accumulation_strength": 6.3949,
+            "anomaly_heat": 17.4724,
+            "close": 12.68,
+            "cyan_watch": false,
+            "d": 63.5819,
+            "date": "2024-05-14",
+            "high": 12.98,
+            "j": 64.17,
+            "k": 63.7779,
+            "low": 12.38,
+            "open": 12.58,
+            "popularity_heat": 42.891,
+            "rebound_signal": 25.591,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7133,
+            "swl": 12.5055,
+            "sws": 10.8091,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8215,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.221,
+            "accumulation_strength": 6.3922,
+            "anomaly_heat": 17.4448,
+            "close": 12.7,
+            "cyan_watch": false,
+            "d": 63.7036,
+            "date": "2024-05-15",
+            "high": 13.0,
+            "j": 64.4343,
+            "k": 63.9472,
+            "low": 12.4,
+            "open": 12.6,
+            "popularity_heat": 42.8707,
+            "rebound_signal": 25.5861,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7068,
+            "swl": 12.5332,
+            "sws": 10.8254,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8202,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.227,
+            "accumulation_strength": 6.3908,
+            "anomaly_heat": 17.4173,
+            "close": 12.72,
+            "cyan_watch": false,
+            "d": 63.624,
+            "date": "2024-05-16",
+            "high": 13.02,
+            "j": 63.1463,
+            "k": 63.4648,
+            "low": 12.42,
+            "open": 12.62,
+            "popularity_heat": 42.8504,
+            "rebound_signal": 25.5836,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7035,
+            "swl": 12.5598,
+            "sws": 10.8417,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8189,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1783,
+            "accumulation_strength": 6.4116,
+            "anomaly_heat": 17.3899,
+            "close": 12.74,
+            "cyan_watch": false,
+            "d": 63.4638,
+            "date": "2024-05-17",
+            "high": 13.04,
+            "j": 62.5021,
+            "k": 63.1432,
+            "low": 12.44,
+            "open": 12.64,
+            "popularity_heat": 42.8302,
+            "rebound_signal": 25.6206,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7528,
+            "swl": 12.5853,
+            "sws": 10.8582,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8176,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1985,
+            "accumulation_strength": 6.4005,
+            "anomaly_heat": 18.179,
+            "close": 12.8,
+            "cyan_watch": false,
+            "d": 63.4838,
+            "date": "2024-05-20",
+            "high": 13.1,
+            "j": 63.6044,
+            "k": 63.524,
+            "low": 12.5,
+            "open": 12.7,
+            "popularity_heat": 43.9403,
+            "rebound_signal": 25.6009,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7265,
+            "swl": 12.6163,
+            "sws": 10.8748,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.449,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.212,
+            "accumulation_strength": 6.3949,
+            "anomaly_heat": 17.2812,
+            "close": 12.82,
+            "cyan_watch": false,
+            "d": 63.5819,
+            "date": "2024-05-21",
+            "high": 13.12,
+            "j": 64.17,
+            "k": 63.7779,
+            "low": 12.52,
+            "open": 12.72,
+            "popularity_heat": 42.75,
+            "rebound_signal": 25.591,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7133,
+            "swl": 12.6455,
+            "sws": 10.8915,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8125,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.221,
+            "accumulation_strength": 6.3922,
+            "anomaly_heat": 17.2543,
+            "close": 12.84,
+            "cyan_watch": false,
+            "d": 63.7036,
+            "date": "2024-05-22",
+            "high": 13.14,
+            "j": 64.4343,
+            "k": 63.9472,
+            "low": 12.54,
+            "open": 12.74,
+            "popularity_heat": 42.7301,
+            "rebound_signal": 25.5861,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7068,
+            "swl": 12.6732,
+            "sws": 10.9084,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8112,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.227,
+            "accumulation_strength": 6.3908,
+            "anomaly_heat": 17.2274,
+            "close": 12.86,
+            "cyan_watch": false,
+            "d": 63.624,
+            "date": "2024-05-23",
+            "high": 13.16,
+            "j": 63.1463,
+            "k": 63.4648,
+            "low": 12.56,
+            "open": 12.76,
+            "popularity_heat": 42.7103,
+            "rebound_signal": 25.5836,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7035,
+            "swl": 12.6998,
+            "sws": 10.9253,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.81,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1783,
+            "accumulation_strength": 6.4116,
+            "anomaly_heat": 17.2006,
+            "close": 12.88,
+            "cyan_watch": false,
+            "d": 63.4638,
+            "date": "2024-05-24",
+            "high": 13.18,
+            "j": 62.5021,
+            "k": 63.1432,
+            "low": 12.58,
+            "open": 12.78,
+            "popularity_heat": 42.6905,
+            "rebound_signal": 25.6206,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7528,
+            "swl": 12.7253,
+            "sws": 10.9423,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8087,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.1985,
+            "accumulation_strength": 6.4005,
+            "anomaly_heat": 17.9814,
+            "close": 12.94,
+            "cyan_watch": false,
+            "d": 63.4838,
+            "date": "2024-05-27",
+            "high": 13.24,
+            "j": 63.6044,
+            "k": 63.524,
+            "low": 12.64,
+            "open": 12.84,
+            "popularity_heat": 43.7888,
+            "rebound_signal": 25.6009,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7265,
+            "swl": 12.7563,
+            "sws": 10.9595,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 19.4224,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.212,
+            "accumulation_strength": 6.3949,
+            "anomaly_heat": 17.0943,
+            "close": 12.96,
+            "cyan_watch": false,
+            "d": 63.5819,
+            "date": "2024-05-28",
+            "high": 13.26,
+            "j": 64.17,
+            "k": 63.7779,
+            "low": 12.66,
+            "open": 12.86,
+            "popularity_heat": 42.6121,
+            "rebound_signal": 25.591,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7133,
+            "swl": 12.7855,
+            "sws": 10.9768,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8037,
+            "white_exit": false
+          },
+          {
+            "accumulation_index": -33.221,
+            "accumulation_strength": 6.3922,
+            "anomaly_heat": 17.0679,
+            "close": 12.98,
+            "cyan_watch": false,
+            "d": 63.7036,
+            "date": "2024-05-29",
+            "high": 13.28,
+            "j": 64.4343,
+            "k": 63.9472,
+            "low": 12.68,
+            "open": 12.88,
+            "popularity_heat": 42.5926,
+            "rebound_signal": 25.5861,
+            "red_hold": true,
+            "short_buy": false,
+            "swing_opportunity": 22.7068,
+            "swl": 12.8132,
+            "sws": 10.9941,
+            "trend_heat": 100.0,
+            "volume": 100000.0,
+            "volume_price_heat": 17.8025,
+            "white_exit": false
+          }
+        ],
+        "signal": {
+          "breakout": 13.56,
+          "bull_line": 12.63,
+          "close": 12.98,
+          "close_change": 0.02,
+          "close_change_pct": 0.0015,
+          "code": "000001.SZ",
+          "cyan_watch": false,
+          "d": 63.7036,
+          "date": "2024-05-29",
+          "j": 64.4343,
+          "k": 63.9472,
+          "kdj_dead_cross": false,
+          "kdj_golden_cross": false,
+          "kdj_overbought": false,
+          "kdj_oversold": false,
+          "notes": [
+            "吸筹分析根据日线价量推断，暂未纳入真实筹码分布、龙虎榜席位和主力资金流。",
+            "量化评分满分为90分，筹码分布相关指标尚未纳入。",
+            "长期均线根据量能动态平滑，用于趋势参考。"
+          ],
+          "oversold": false,
+          "pattern_score": 34,
+          "pattern_score_max": 100,
+          "pattern_signals": [],
+          "previous_close": 12.96,
+          "quant_score": 60,
+          "quant_score_max": 90,
+          "reasons": [
+            "red_hold",
+            "swl_above_sws",
+            "high_quant_score"
+          ],
+          "red_hold": true,
+          "resistance": 13.24,
+          "reversal": 12.36,
+          "risk_flags": [],
+          "short_buy": false,
+          "signal_type": "trend_continuation",
+          "star_line": 12.7261,
+          "status": "uptrend",
+          "support": 12.64,
+          "swl": 12.8132,
+          "swl_above_sws": true,
+          "sws": 10.9941,
+          "wait_line": 12.7261,
+          "white_exit": false
+        },
+        "stock": {
+          "amount": null,
+          "change_pct": null,
+          "code": "000001.SZ",
+          "deducted_net_profit_billion": null,
+          "deducted_net_profit_growth_rate": null,
+          "deducted_net_profit_margin": null,
+          "dividend_yield": 0.04,
+          "industry": "银行",
+          "is_st": false,
+          "latest_eps": null,
+          "market_cap_billion": 100.0,
+          "name": "Synthetic bank 0",
+          "pb": 1.2,
+          "pe": 10.0,
+          "price": 12.0,
+          "quote_time": null,
+          "roe": 0.15,
+          "turnover_rate": null,
+          "volume": null,
+          "volume_ratio": null
+        }
+      },
+      "ok": true
+    },
+    "gp_core_trend_screen_with_data_json::synthetic": {
+      "data": {
+        "items": [
+          {
+            "base_score": 13.598848,
+            "explanation": {
+              "basis": [
+                "通过基础筛选，基础评分 13.60。",
+                "风险预警：技术分 81.46、形态分 36.30、质量分 63.00。",
+                "日线截至 2024-05-29，收盘价 12.98 元；K=63.95、D=63.70、J=64.43。"
+              ],
+              "risk_checks": [
+                "MACD动量减弱，存在顶背离风险。",
+                "趋势强度不足：综合技术评分或趋势结构未通过强势确认。"
+              ],
+              "score_breakdown": [
+                {
+                  "contribution": 57.022,
+                  "key": "technical_score",
+                  "label": "技术层",
+                  "tone": "strong",
+                  "value": 81.46
+                },
+                {
+                  "contribution": 7.26,
+                  "key": "pattern_score",
+                  "label": "形态层",
+                  "tone": "neutral",
+                  "value": 36.3
+                },
+                {
+                  "contribution": 6.3,
+                  "key": "quality_score",
+                  "label": "质量层",
+                  "tone": "positive",
+                  "value": 63.0
+                },
+                {
+                  "contribution": -8.0,
+                  "key": "risk_adjustment",
+                  "label": "风险调整",
+                  "tone": "negative",
+                  "value": -8.0
+                }
+              ],
+              "verification": [
+                "观察下一交易日的价格与成交量，确认信号是否延续。",
+                "结合突破、回踩、趋势延续和风险预警状态继续核验。"
+              ]
+            },
+            "final_score": 62.58,
+            "reasons": [
+              "high_quant_score",
+              "ma_bull_stack",
+              "price_above_ma20",
+              "red_hold",
+              "signal_type:risk_warning",
+              "swl_above_sws",
+              "swl_strength",
+              "technical_score_strong",
+              "估值较低",
+              "低热度降权",
+              "基本面较强"
+            ],
+            "signal": {
+              "breakout": 13.56,
+              "bull_line": 12.63,
+              "close": 12.98,
+              "close_change": 0.02,
+              "close_change_pct": 0.0015,
+              "code": "000001.SZ",
+              "cyan_watch": false,
+              "d": 63.7036,
+              "date": "2024-05-29",
+              "j": 64.4343,
+              "k": 63.9472,
+              "kdj_dead_cross": false,
+              "kdj_golden_cross": false,
+              "kdj_overbought": false,
+              "kdj_oversold": false,
+              "notes": [
+                "吸筹分析根据日线价量推断，暂未纳入真实筹码分布、龙虎榜席位和主力资金流。",
+                "量化评分满分为90分，筹码分布相关指标尚未纳入。",
+                "长期均线根据量能动态平滑，用于趋势参考。"
+              ],
+              "oversold": false,
+              "pattern_layer_score": 36.3,
+              "pattern_score": 34,
+              "pattern_score_max": 100,
+              "pattern_signals": [],
+              "previous_close": 12.96,
+              "quality_score": 63.0,
+              "quant_score": 60,
+              "quant_score_max": 90,
+              "reasons": [
+                "red_hold",
+                "swl_above_sws",
+                "high_quant_score"
+              ],
+              "red_hold": true,
+              "resistance": 13.24,
+              "reversal": 12.36,
+              "risk_flags": [
+                "macd_bearish_divergence",
+                "weak_final_score"
+              ],
+              "short_buy": false,
+              "signal_type": "risk_warning",
+              "star_line": 12.7261,
+              "status": "uptrend",
+              "support": 12.64,
+              "swl": 12.8132,
+              "swl_above_sws": true,
+              "sws": 10.9941,
+              "technical_score": 81.46,
+              "wait_line": 12.7261,
+              "white_exit": false
+            },
+            "stock": {
+              "amount": null,
+              "change_pct": null,
+              "code": "000001.SZ",
+              "deducted_net_profit_billion": null,
+              "deducted_net_profit_growth_rate": null,
+              "deducted_net_profit_margin": null,
+              "dividend_yield": 0.04,
+              "industry": "银行",
+              "is_st": false,
+              "latest_eps": null,
+              "market_cap_billion": 100.0,
+              "name": "Synthetic bank 0",
+              "pb": 1.2,
+              "pe": 10.0,
+              "price": 12.0,
+              "quote_time": null,
+              "roe": 0.15,
+              "turnover_rate": null,
+              "volume": null,
+              "volume_ratio": null
+            },
+            "trend_score": 62.58
+          },
+          {
+            "base_score": 13.598848,
+            "explanation": {
+              "basis": [
+                "通过基础筛选，基础评分 13.60。",
+                "风险预警：技术分 81.29、形态分 36.30、质量分 63.00。",
+                "日线截至 2024-05-29，收盘价 13.98 元；K=63.95、D=63.70、J=64.43。"
+              ],
+              "risk_checks": [
+                "MACD动量减弱，存在顶背离风险。",
+                "趋势强度不足：综合技术评分或趋势结构未通过强势确认。"
+              ],
+              "score_breakdown": [
+                {
+                  "contribution": 56.903,
+                  "key": "technical_score",
+                  "label": "技术层",
+                  "tone": "strong",
+                  "value": 81.29
+                },
+                {
+                  "contribution": 7.26,
+                  "key": "pattern_score",
+                  "label": "形态层",
+                  "tone": "neutral",
+                  "value": 36.3
+                },
+                {
+                  "contribution": 6.3,
+                  "key": "quality_score",
+                  "label": "质量层",
+                  "tone": "positive",
+                  "value": 63.0
+                },
+                {
+                  "contribution": -8.0,
+                  "key": "risk_adjustment",
+                  "label": "风险调整",
+                  "tone": "negative",
+                  "value": -8.0
+                }
+              ],
+              "verification": [
+                "观察下一交易日的价格与成交量，确认信号是否延续。",
+                "结合突破、回踩、趋势延续和风险预警状态继续核验。"
+              ]
+            },
+            "final_score": 62.46,
+            "reasons": [
+              "high_quant_score",
+              "ma_bull_stack",
+              "price_above_ma20",
+              "red_hold",
+              "signal_type:risk_warning",
+              "swl_above_sws",
+              "swl_strength",
+              "technical_score_strong",
+              "估值较低",
+              "低热度降权",
+              "基本面较强"
+            ],
+            "signal": {
+              "breakout": 14.56,
+              "bull_line": 13.63,
+              "close": 13.98,
+              "close_change": 0.02,
+              "close_change_pct": 0.0014,
+              "code": "000002.SZ",
+              "cyan_watch": false,
+              "d": 63.7036,
+              "date": "2024-05-29",
+              "j": 64.4343,
+              "k": 63.9472,
+              "kdj_dead_cross": false,
+              "kdj_golden_cross": false,
+              "kdj_overbought": false,
+              "kdj_oversold": false,
+              "notes": [
+                "吸筹分析根据日线价量推断，暂未纳入真实筹码分布、龙虎榜席位和主力资金流。",
+                "量化评分满分为90分，筹码分布相关指标尚未纳入。",
+                "长期均线根据量能动态平滑，用于趋势参考。"
+              ],
+              "oversold": false,
+              "pattern_layer_score": 36.3,
+              "pattern_score": 34,
+              "pattern_score_max": 100,
+              "pattern_signals": [],
+              "previous_close": 13.96,
+              "quality_score": 63.0,
+              "quant_score": 60,
+              "quant_score_max": 90,
+              "reasons": [
+                "red_hold",
+                "swl_above_sws",
+                "high_quant_score"
+              ],
+              "red_hold": true,
+              "resistance": 14.24,
+              "reversal": 13.36,
+              "risk_flags": [
+                "macd_bearish_divergence",
+                "weak_final_score"
+              ],
+              "short_buy": false,
+              "signal_type": "risk_warning",
+              "star_line": 13.7213,
+              "status": "uptrend",
+              "support": 13.64,
+              "swl": 13.8132,
+              "swl_above_sws": true,
+              "sws": 11.9941,
+              "technical_score": 81.29,
+              "wait_line": 13.7213,
+              "white_exit": false
+            },
+            "stock": {
+              "amount": null,
+              "change_pct": null,
+              "code": "000002.SZ",
+              "deducted_net_profit_billion": null,
+              "deducted_net_profit_growth_rate": null,
+              "deducted_net_profit_margin": null,
+              "dividend_yield": 0.04,
+              "industry": "银行",
+              "is_st": false,
+              "latest_eps": null,
+              "market_cap_billion": 101.0,
+              "name": "Synthetic bank 1",
+              "pb": 1.2,
+              "pe": 11.0,
+              "price": 13.0,
+              "quote_time": null,
+              "roe": 0.15,
+              "turnover_rate": null,
+              "volume": null,
+              "volume_ratio": null
+            },
+            "trend_score": 62.46
+          }
+        ],
+        "notes": [
+          "吸筹分析根据日线价量推断，暂未纳入真实筹码分布、龙虎榜席位和主力资金流。",
+          "量化评分满分为90分，筹码分布相关指标尚未纳入。",
+          "长期均线根据量能动态平滑，用于趋势参考。"
+        ],
+        "returned": 2,
+        "screen_style": "balanced_swing",
+        "total": 2
+      },
+      "ok": true
+    },
+    "gp_core_agent_with_data_json::synthetic": {
+      "data": {
+        "action": "screen",
+        "answer_sections": [
+          {
+            "bullets": [
+              "已按板块/主题条件完成本地候选筛选。 仅供选股研究，不构成投资建议。",
+              "仅供选股研究，不构成投资建议。"
+            ],
+            "title": "结论概览"
+          },
+          {
+            "bullets": [
+              "返回 2 条本地记录。"
+            ],
+            "title": "证据摘要"
+          },
+          {
+            "bullets": [
+              "不输出买入、卖出、目标价、仓位或收益承诺。"
+            ],
+            "title": "风险边界"
+          }
+        ],
+        "backtest": null,
+        "criteria": {
+          "include_st": false,
+          "industry": "银行",
+          "limit": 10,
+          "market_scope": null,
+          "max_pb": null,
+          "max_pe": null,
+          "min_deducted_net_profit_billion": null,
+          "min_deducted_net_profit_growth_rate": null,
+          "min_deducted_net_profit_margin": null,
+          "min_market_cap_billion": null,
+          "min_roe": null,
+          "score_profile": "balanced",
+          "sort_by": "score",
+          "sort_dir": "desc"
+        },
+        "data": {
+          "groups": [
+            {
+              "description": "AI上下游、芯片、算力、能源、新材料、医药、游戏等热门方向，按综合分和主题优先级展示。",
+              "items": [],
+              "key": "hot",
+              "returned": 0,
+              "title": "热门股",
+              "total": 0
+            },
+            {
+              "description": "综合分大于 10 的候选，已尽量避免与热门股重复。",
+              "items": [
+                {
+                  "balanced_score": 13.598848,
+                  "concept": "金融地产",
+                  "factor_scores": {
+                    "balanced_score": 0.70448,
+                    "data_quality": 0.8,
+                    "fundamental": 1.0,
+                    "industry_quality_pct": 0.5,
+                    "industry_relative_score": 0.5,
+                    "industry_valuation_pct": 0.5,
+                    "market_heat": 0.243,
+                    "overheat_penalty": 0.0,
+                    "quality_score": 0.9,
+                    "risk": 0.36,
+                    "size": 0.88,
+                    "theme": 0.35,
+                    "trend_score": 0.5441,
+                    "valuation": 1.0
+                  },
+                  "industry_sample_count": null,
+                  "quality_score": 16.56,
+                  "reason_tags": [
+                    "质量较强",
+                    "估值有安全边际",
+                    "行业内相对评分"
+                  ],
+                  "reasons": [
+                    "估值较低",
+                    "基本面较强",
+                    "低热度降权"
+                  ],
+                  "risk_score": 7.2,
+                  "risk_tags": [
+                    "低热度板块降权"
+                  ],
+                  "score": 13.598848,
+                  "score_breakdown": [
+                    {
+                      "contribution": 0.9856,
+                      "key": "theme",
+                      "label": "主题匹配",
+                      "tone": "weak",
+                      "value": 7.0
+                    },
+                    {
+                      "contribution": 4.576,
+                      "key": "fundamental",
+                      "label": "质量盈利",
+                      "tone": "strong",
+                      "value": 20.0
+                    },
+                    {
+                      "contribution": 3.52,
+                      "key": "valuation",
+                      "label": "估值安全",
+                      "tone": "strong",
+                      "value": 20.0
+                    },
+                    {
+                      "contribution": 0.684288,
+                      "key": "market_heat",
+                      "label": "趋势热度",
+                      "tone": "weak",
+                      "value": 4.86
+                    },
+                    {
+                      "contribution": 1.23904,
+                      "key": "size",
+                      "label": "规模流动性",
+                      "tone": "strong",
+                      "value": 17.6
+                    },
+                    {
+                      "contribution": 1.39392,
+                      "key": "risk",
+                      "label": "风险控制",
+                      "tone": "neutral",
+                      "value": 7.2
+                    },
+                    {
+                      "contribution": 0.0,
+                      "key": "overheat_penalty",
+                      "label": "过热惩罚",
+                      "tone": "neutral",
+                      "value": 0.0
+                    },
+                    {
+                      "contribution": 1.2000000000000017,
+                      "key": "industry_relative_score",
+                      "label": "行业内相对评分",
+                      "tone": "neutral",
+                      "value": 10.0
+                    }
+                  ],
+                  "score_explanation": "质量盈利贡献 4.58分；估值安全贡献 3.52分；风险控制贡献 1.39分。",
+                  "stock": {
+                    "amount": null,
+                    "change_pct": null,
+                    "code": "000001.SZ",
+                    "deducted_net_profit_billion": null,
+                    "deducted_net_profit_growth_rate": null,
+                    "deducted_net_profit_margin": null,
+                    "dividend_yield": 0.04,
+                    "industry": "银行",
+                    "is_st": false,
+                    "latest_eps": null,
+                    "market_cap_billion": 100.0,
+                    "name": "Synthetic bank 0",
+                    "pb": 1.2,
+                    "pe": 10.0,
+                    "price": 12.0,
+                    "quote_time": null,
+                    "roe": 0.15,
+                    "turnover_rate": null,
+                    "volume": null,
+                    "volume_ratio": null
+                  },
+                  "suitable_periods": [
+                    "仅观察验证"
+                  ],
+                  "theme_category": null,
+                  "trend_score": 10.882
+                },
+                {
+                  "balanced_score": 13.598848,
+                  "concept": "金融地产",
+                  "factor_scores": {
+                    "balanced_score": 0.70448,
+                    "data_quality": 0.8,
+                    "fundamental": 1.0,
+                    "industry_quality_pct": 0.5,
+                    "industry_relative_score": 0.5,
+                    "industry_valuation_pct": 0.5,
+                    "market_heat": 0.243,
+                    "overheat_penalty": 0.0,
+                    "quality_score": 0.9,
+                    "risk": 0.36,
+                    "size": 0.88,
+                    "theme": 0.35,
+                    "trend_score": 0.5441,
+                    "valuation": 1.0
+                  },
+                  "industry_sample_count": null,
+                  "quality_score": 16.56,
+                  "reason_tags": [
+                    "质量较强",
+                    "估值有安全边际",
+                    "行业内相对评分"
+                  ],
+                  "reasons": [
+                    "估值较低",
+                    "基本面较强",
+                    "低热度降权"
+                  ],
+                  "risk_score": 7.2,
+                  "risk_tags": [
+                    "低热度板块降权"
+                  ],
+                  "score": 13.598848,
+                  "score_breakdown": [
+                    {
+                      "contribution": 0.9856,
+                      "key": "theme",
+                      "label": "主题匹配",
+                      "tone": "weak",
+                      "value": 7.0
+                    },
+                    {
+                      "contribution": 4.576,
+                      "key": "fundamental",
+                      "label": "质量盈利",
+                      "tone": "strong",
+                      "value": 20.0
+                    },
+                    {
+                      "contribution": 3.52,
+                      "key": "valuation",
+                      "label": "估值安全",
+                      "tone": "strong",
+                      "value": 20.0
+                    },
+                    {
+                      "contribution": 0.684288,
+                      "key": "market_heat",
+                      "label": "趋势热度",
+                      "tone": "weak",
+                      "value": 4.86
+                    },
+                    {
+                      "contribution": 1.23904,
+                      "key": "size",
+                      "label": "规模流动性",
+                      "tone": "strong",
+                      "value": 17.6
+                    },
+                    {
+                      "contribution": 1.39392,
+                      "key": "risk",
+                      "label": "风险控制",
+                      "tone": "neutral",
+                      "value": 7.2
+                    },
+                    {
+                      "contribution": 0.0,
+                      "key": "overheat_penalty",
+                      "label": "过热惩罚",
+                      "tone": "neutral",
+                      "value": 0.0
+                    },
+                    {
+                      "contribution": 1.2000000000000017,
+                      "key": "industry_relative_score",
+                      "label": "行业内相对评分",
+                      "tone": "neutral",
+                      "value": 10.0
+                    }
+                  ],
+                  "score_explanation": "质量盈利贡献 4.58分；估值安全贡献 3.52分；风险控制贡献 1.39分。",
+                  "stock": {
+                    "amount": null,
+                    "change_pct": null,
+                    "code": "000002.SZ",
+                    "deducted_net_profit_billion": null,
+                    "deducted_net_profit_growth_rate": null,
+                    "deducted_net_profit_margin": null,
+                    "dividend_yield": 0.04,
+                    "industry": "银行",
+                    "is_st": false,
+                    "latest_eps": null,
+                    "market_cap_billion": 101.0,
+                    "name": "Synthetic bank 1",
+                    "pb": 1.2,
+                    "pe": 11.0,
+                    "price": 13.0,
+                    "quote_time": null,
+                    "roe": 0.15,
+                    "turnover_rate": null,
+                    "volume": null,
+                    "volume_ratio": null
+                  },
+                  "suitable_periods": [
+                    "仅观察验证"
+                  ],
+                  "theme_category": null,
+                  "trend_score": 10.882
+                }
+              ],
+              "key": "potential",
+              "returned": 2,
+              "title": "潜力股",
+              "total": 2
+            }
+          ],
+          "items": [
+            {
+              "balanced_score": 13.598848,
+              "concept": "金融地产",
+              "factor_scores": {
+                "balanced_score": 0.70448,
+                "data_quality": 0.8,
+                "fundamental": 1.0,
+                "industry_quality_pct": 0.5,
+                "industry_relative_score": 0.5,
+                "industry_valuation_pct": 0.5,
+                "market_heat": 0.243,
+                "overheat_penalty": 0.0,
+                "quality_score": 0.9,
+                "risk": 0.36,
+                "size": 0.88,
+                "theme": 0.35,
+                "trend_score": 0.5441,
+                "valuation": 1.0
+              },
+              "industry_sample_count": null,
+              "quality_score": 16.56,
+              "reason_tags": [
+                "质量较强",
+                "估值有安全边际",
+                "行业内相对评分"
+              ],
+              "reasons": [
+                "估值较低",
+                "基本面较强",
+                "低热度降权"
+              ],
+              "risk_score": 7.2,
+              "risk_tags": [
+                "低热度板块降权"
+              ],
+              "score": 13.598848,
+              "score_breakdown": [
+                {
+                  "contribution": 0.9856,
+                  "key": "theme",
+                  "label": "主题匹配",
+                  "tone": "weak",
+                  "value": 7.0
+                },
+                {
+                  "contribution": 4.576,
+                  "key": "fundamental",
+                  "label": "质量盈利",
+                  "tone": "strong",
+                  "value": 20.0
+                },
+                {
+                  "contribution": 3.52,
+                  "key": "valuation",
+                  "label": "估值安全",
+                  "tone": "strong",
+                  "value": 20.0
+                },
+                {
+                  "contribution": 0.684288,
+                  "key": "market_heat",
+                  "label": "趋势热度",
+                  "tone": "weak",
+                  "value": 4.86
+                },
+                {
+                  "contribution": 1.23904,
+                  "key": "size",
+                  "label": "规模流动性",
+                  "tone": "strong",
+                  "value": 17.6
+                },
+                {
+                  "contribution": 1.39392,
+                  "key": "risk",
+                  "label": "风险控制",
+                  "tone": "neutral",
+                  "value": 7.2
+                },
+                {
+                  "contribution": 0.0,
+                  "key": "overheat_penalty",
+                  "label": "过热惩罚",
+                  "tone": "neutral",
+                  "value": 0.0
+                },
+                {
+                  "contribution": 1.2000000000000017,
+                  "key": "industry_relative_score",
+                  "label": "行业内相对评分",
+                  "tone": "neutral",
+                  "value": 10.0
+                }
+              ],
+              "score_explanation": "质量盈利贡献 4.58分；估值安全贡献 3.52分；风险控制贡献 1.39分。",
+              "stock": {
+                "amount": null,
+                "change_pct": null,
+                "code": "000001.SZ",
+                "deducted_net_profit_billion": null,
+                "deducted_net_profit_growth_rate": null,
+                "deducted_net_profit_margin": null,
+                "dividend_yield": 0.04,
+                "industry": "银行",
+                "is_st": false,
+                "latest_eps": null,
+                "market_cap_billion": 100.0,
+                "name": "Synthetic bank 0",
+                "pb": 1.2,
+                "pe": 10.0,
+                "price": 12.0,
+                "quote_time": null,
+                "roe": 0.15,
+                "turnover_rate": null,
+                "volume": null,
+                "volume_ratio": null
+              },
+              "suitable_periods": [
+                "仅观察验证"
+              ],
+              "theme_category": null,
+              "trend_score": 10.882
+            },
+            {
+              "balanced_score": 13.598848,
+              "concept": "金融地产",
+              "factor_scores": {
+                "balanced_score": 0.70448,
+                "data_quality": 0.8,
+                "fundamental": 1.0,
+                "industry_quality_pct": 0.5,
+                "industry_relative_score": 0.5,
+                "industry_valuation_pct": 0.5,
+                "market_heat": 0.243,
+                "overheat_penalty": 0.0,
+                "quality_score": 0.9,
+                "risk": 0.36,
+                "size": 0.88,
+                "theme": 0.35,
+                "trend_score": 0.5441,
+                "valuation": 1.0
+              },
+              "industry_sample_count": null,
+              "quality_score": 16.56,
+              "reason_tags": [
+                "质量较强",
+                "估值有安全边际",
+                "行业内相对评分"
+              ],
+              "reasons": [
+                "估值较低",
+                "基本面较强",
+                "低热度降权"
+              ],
+              "risk_score": 7.2,
+              "risk_tags": [
+                "低热度板块降权"
+              ],
+              "score": 13.598848,
+              "score_breakdown": [
+                {
+                  "contribution": 0.9856,
+                  "key": "theme",
+                  "label": "主题匹配",
+                  "tone": "weak",
+                  "value": 7.0
+                },
+                {
+                  "contribution": 4.576,
+                  "key": "fundamental",
+                  "label": "质量盈利",
+                  "tone": "strong",
+                  "value": 20.0
+                },
+                {
+                  "contribution": 3.52,
+                  "key": "valuation",
+                  "label": "估值安全",
+                  "tone": "strong",
+                  "value": 20.0
+                },
+                {
+                  "contribution": 0.684288,
+                  "key": "market_heat",
+                  "label": "趋势热度",
+                  "tone": "weak",
+                  "value": 4.86
+                },
+                {
+                  "contribution": 1.23904,
+                  "key": "size",
+                  "label": "规模流动性",
+                  "tone": "strong",
+                  "value": 17.6
+                },
+                {
+                  "contribution": 1.39392,
+                  "key": "risk",
+                  "label": "风险控制",
+                  "tone": "neutral",
+                  "value": 7.2
+                },
+                {
+                  "contribution": 0.0,
+                  "key": "overheat_penalty",
+                  "label": "过热惩罚",
+                  "tone": "neutral",
+                  "value": 0.0
+                },
+                {
+                  "contribution": 1.2000000000000017,
+                  "key": "industry_relative_score",
+                  "label": "行业内相对评分",
+                  "tone": "neutral",
+                  "value": 10.0
+                }
+              ],
+              "score_explanation": "质量盈利贡献 4.58分；估值安全贡献 3.52分；风险控制贡献 1.39分。",
+              "stock": {
+                "amount": null,
+                "change_pct": null,
+                "code": "000002.SZ",
+                "deducted_net_profit_billion": null,
+                "deducted_net_profit_growth_rate": null,
+                "deducted_net_profit_margin": null,
+                "dividend_yield": 0.04,
+                "industry": "银行",
+                "is_st": false,
+                "latest_eps": null,
+                "market_cap_billion": 101.0,
+                "name": "Synthetic bank 1",
+                "pb": 1.2,
+                "pe": 11.0,
+                "price": 13.0,
+                "quote_time": null,
+                "roe": 0.15,
+                "turnover_rate": null,
+                "volume": null,
+                "volume_ratio": null
+              },
+              "suitable_periods": [
+                "仅观察验证"
+              ],
+              "theme_category": null,
+              "trend_score": 10.882
+            }
+          ],
+          "notes": [
+            "普通筛选已拆成热门股和综合分大于 10 的潜力股，每类最多 10 只。"
+          ],
+          "returned": 2,
+          "total": 2
+        },
+        "evidence_summary": [
+          {
+            "level": "primary",
+            "source": "本地股票池缓存",
+            "summary": "返回 2 条本地记录。",
+            "title": "运行本地选股"
+          }
+        ],
+        "graph_screen": null,
+        "intent": {
+          "depth": "quick",
+          "kind": "stock_screen",
+          "mode": "quick",
+          "query": "筛选银行股",
+          "symbols": [],
+          "window": null
+        },
+        "next_actions": [
+          "收紧筛选条件",
+          "继续做趋势分析"
+        ],
+        "reply": "已按板块/主题条件完成本地候选筛选。 仅供选股研究，不构成投资建议。",
+        "tool_calls": [
+          {
+            "id": "intent_parser",
+            "input": {
+              "action": "screen"
+            },
+            "label": "Understand request",
+            "output_summary": "Routed to stock_screen.",
+            "status": "ok",
+            "tool": "agent_plan_request",
+            "warnings": []
+          },
+          {
+            "id": "tool_stock_screen",
+            "input": {
+              "action": "screen"
+            },
+            "label": "运行本地选股",
+            "output_summary": "返回 2 条本地记录。",
+            "status": "ok",
+            "tool": "stock_screen",
+            "warnings": [
+              "仅供选股研究，不构成投资建议。"
+            ]
+          },
+          {
+            "id": "synthesizer",
+            "input": {
+              "research_only": true
+            },
+            "label": "Structure answer",
+            "output_summary": "Prepared sections, evidence and risk boundary.",
+            "status": "ok",
+            "tool": "agent_synthesize_response",
+            "warnings": []
+          }
+        ],
+        "trend_screen": null,
+        "warnings": [
+          "仅供选股研究，不构成投资建议。"
+        ]
+      },
+      "ok": true
+    },
+    "gp_core_backtest_with_data_json::snapshot": {
+      "data": {
+        "benchmark_curve": [
+          {
+            "date": "2024-02-01",
+            "equity": 1000000.0
+          },
+          {
+            "date": "2024-02-02",
+            "equity": 1001802.2047836222
+          },
+          {
+            "date": "2024-02-05",
+            "equity": 1007208.8191344881
+          },
+          {
+            "date": "2024-02-06",
+            "equity": 1009011.0239181101
+          },
+          {
+            "date": "2024-02-07",
+            "equity": 1010813.228701732
+          },
+          {
+            "date": "2024-02-08",
+            "equity": 1012615.4334853541
+          },
+          {
+            "date": "2024-02-09",
+            "equity": 1014417.6382689758
+          },
+          {
+            "date": "2024-02-12",
+            "equity": 1019824.2526198417
+          },
+          {
+            "date": "2024-02-13",
+            "equity": 1021626.4574034639
+          },
+          {
+            "date": "2024-02-14",
+            "equity": 1023428.6621870861
+          },
+          {
+            "date": "2024-02-15",
+            "equity": 1025230.8669707078
+          },
+          {
+            "date": "2024-02-16",
+            "equity": 1027033.0717543298
+          },
+          {
+            "date": "2024-02-19",
+            "equity": 1032439.6861051959
+          },
+          {
+            "date": "2024-02-20",
+            "equity": 1034241.8908888176
+          },
+          {
+            "date": "2024-02-21",
+            "equity": 1036044.0956724397
+          },
+          {
+            "date": "2024-02-22",
+            "equity": 1037846.3004560614
+          },
+          {
+            "date": "2024-02-23",
+            "equity": 1039648.5052396836
+          },
+          {
+            "date": "2024-02-26",
+            "equity": 1045055.1195905495
+          },
+          {
+            "date": "2024-02-27",
+            "equity": 1046857.3243741717
+          },
+          {
+            "date": "2024-02-28",
+            "equity": 1048659.5291577934
+          },
+          {
+            "date": "2024-02-29",
+            "equity": 1050461.7339414156
+          },
+          {
+            "date": "2024-03-01",
+            "equity": 1052263.9387250373
+          },
+          {
+            "date": "2024-03-04",
+            "equity": 1057670.553075903
+          },
+          {
+            "date": "2024-03-05",
+            "equity": 1059472.7578595253
+          },
+          {
+            "date": "2024-03-06",
+            "equity": 1061274.9626431474
+          },
+          {
+            "date": "2024-03-07",
+            "equity": 1063077.1674267692
+          },
+          {
+            "date": "2024-03-08",
+            "equity": 1064879.3722103913
+          },
+          {
+            "date": "2024-03-11",
+            "equity": 1070285.9865612574
+          },
+          {
+            "date": "2024-03-12",
+            "equity": 1072088.191344879
+          },
+          {
+            "date": "2024-03-13",
+            "equity": 1073890.396128501
+          },
+          {
+            "date": "2024-03-14",
+            "equity": 1075692.6009121232
+          },
+          {
+            "date": "2024-03-15",
+            "equity": 1077494.8056957452
+          },
+          {
+            "date": "2024-03-18",
+            "equity": 1082901.420046611
+          },
+          {
+            "date": "2024-03-19",
+            "equity": 1084703.6248302332
+          },
+          {
+            "date": "2024-03-20",
+            "equity": 1086505.829613855
+          },
+          {
+            "date": "2024-03-21",
+            "equity": 1088308.0343974768
+          },
+          {
+            "date": "2024-03-22",
+            "equity": 1090110.239181099
+          },
+          {
+            "date": "2024-03-25",
+            "equity": 1095516.853531965
+          },
+          {
+            "date": "2024-03-26",
+            "equity": 1097319.0583155868
+          },
+          {
+            "date": "2024-03-27",
+            "equity": 1099121.263099209
+          },
+          {
+            "date": "2024-03-28",
+            "equity": 1100923.467882831
+          },
+          {
+            "date": "2024-03-29",
+            "equity": 1102725.6726664528
+          },
+          {
+            "date": "2024-04-01",
+            "equity": 1108132.2870173187
+          },
+          {
+            "date": "2024-04-02",
+            "equity": 1109934.4918009408
+          },
+          {
+            "date": "2024-04-03",
+            "equity": 1111736.6965845625
+          },
+          {
+            "date": "2024-04-04",
+            "equity": 1113538.9013681847
+          },
+          {
+            "date": "2024-04-05",
+            "equity": 1115341.106151807
+          },
+          {
+            "date": "2024-04-08",
+            "equity": 1120747.7205026727
+          },
+          {
+            "date": "2024-04-09",
+            "equity": 1122549.9252862947
+          },
+          {
+            "date": "2024-04-10",
+            "equity": 1124352.1300699166
+          },
+          {
+            "date": "2024-04-11",
+            "equity": 1126154.3348535383
+          },
+          {
+            "date": "2024-04-12",
+            "equity": 1127956.5396371605
+          },
+          {
+            "date": "2024-04-15",
+            "equity": 1133363.1539880265
+          },
+          {
+            "date": "2024-04-16",
+            "equity": 1135165.3587716483
+          },
+          {
+            "date": "2024-04-17",
+            "equity": 1136967.5635552704
+          },
+          {
+            "date": "2024-04-18",
+            "equity": 1138769.7683388924
+          },
+          {
+            "date": "2024-04-19",
+            "equity": 1140571.973122514
+          },
+          {
+            "date": "2024-04-22",
+            "equity": 1145978.5874733801
+          },
+          {
+            "date": "2024-04-23",
+            "equity": 1147780.7922570023
+          },
+          {
+            "date": "2024-04-24",
+            "equity": 1149582.9970406243
+          },
+          {
+            "date": "2024-04-25",
+            "equity": 1151385.2018242462
+          },
+          {
+            "date": "2024-04-26",
+            "equity": 1153187.4066078681
+          },
+          {
+            "date": "2024-04-29",
+            "equity": 1158594.0209587342
+          },
+          {
+            "date": "2024-04-30",
+            "equity": 1160396.2257423562
+          },
+          {
+            "date": "2024-05-01",
+            "equity": 1162198.430525978
+          },
+          {
+            "date": "2024-05-02",
+            "equity": 1164000.6353096
+          },
+          {
+            "date": "2024-05-03",
+            "equity": 1165802.8400932222
+          },
+          {
+            "date": "2024-05-06",
+            "equity": 1171209.4544440878
+          },
+          {
+            "date": "2024-05-07",
+            "equity": 1173011.65922771
+          },
+          {
+            "date": "2024-05-08",
+            "equity": 1174813.864011332
+          },
+          {
+            "date": "2024-05-09",
+            "equity": 1176616.0687949539
+          },
+          {
+            "date": "2024-05-10",
+            "equity": 1178418.2735785758
+          }
+        ],
+        "benchmark_symbols": [
+          "000001.SZ",
+          "000002.SZ"
+        ],
+        "equity_curve": [
+          {
+            "date": "2024-02-01",
+            "equity": 999000.0
+          },
+          {
+            "date": "2024-02-02",
+            "equity": 1000800.4025788384
+          },
+          {
+            "date": "2024-02-05",
+            "equity": 1006201.6103153534
+          },
+          {
+            "date": "2024-02-06",
+            "equity": 1008002.0128941919
+          },
+          {
+            "date": "2024-02-07",
+            "equity": 1009802.4154730302
+          },
+          {
+            "date": "2024-02-08",
+            "equity": 1011602.8180518686
+          },
+          {
+            "date": "2024-02-09",
+            "equity": 1013403.2206307069
+          },
+          {
+            "date": "2024-02-12",
+            "equity": 1018804.428367222
+          },
+          {
+            "date": "2024-02-13",
+            "equity": 1020604.8309460604
+          },
+          {
+            "date": "2024-02-14",
+            "equity": 1022405.2335248988
+          },
+          {
+            "date": "2024-02-15",
+            "equity": 1024205.6361037372
+          },
+          {
+            "date": "2024-02-16",
+            "equity": 1026006.0386825753
+          },
+          {
+            "date": "2024-02-19",
+            "equity": 1031407.2464190905
+          },
+          {
+            "date": "2024-02-20",
+            "equity": 1033207.6489979288
+          },
+          {
+            "date": "2024-02-21",
+            "equity": 1035008.0515767671
+          },
+          {
+            "date": "2024-02-22",
+            "equity": 1036808.4541556055
+          },
+          {
+            "date": "2024-02-23",
+            "equity": 1038608.8567344439
+          },
+          {
+            "date": "2024-02-26",
+            "equity": 1044010.0644709589
+          },
+          {
+            "date": "2024-02-27",
+            "equity": 1045810.4670497974
+          },
+          {
+            "date": "2024-02-28",
+            "equity": 1047610.8696286357
+          },
+          {
+            "date": "2024-02-29",
+            "equity": 1049411.272207474
+          },
+          {
+            "date": "2024-03-01",
+            "equity": 1051209.327139065
+          },
+          {
+            "date": "2024-03-04",
+            "equity": 1056610.0073765623
+          },
+          {
+            "date": "2024-03-05",
+            "equity": 1058410.2341223946
+          },
+          {
+            "date": "2024-03-06",
+            "equity": 1060210.460868227
+          },
+          {
+            "date": "2024-03-07",
+            "equity": 1062010.6876140595
+          },
+          {
+            "date": "2024-03-08",
+            "equity": 1063810.9143598918
+          },
+          {
+            "date": "2024-03-11",
+            "equity": 1069211.5945973892
+          },
+          {
+            "date": "2024-03-12",
+            "equity": 1071011.8213432215
+          },
+          {
+            "date": "2024-03-13",
+            "equity": 1072812.048089054
+          },
+          {
+            "date": "2024-03-14",
+            "equity": 1074612.2748348867
+          },
+          {
+            "date": "2024-03-15",
+            "equity": 1076412.501580719
+          },
+          {
+            "date": "2024-03-18",
+            "equity": 1081813.181818216
+          },
+          {
+            "date": "2024-03-19",
+            "equity": 1083613.4085640484
+          },
+          {
+            "date": "2024-03-20",
+            "equity": 1085413.6353098808
+          },
+          {
+            "date": "2024-03-21",
+            "equity": 1087213.8620557133
+          },
+          {
+            "date": "2024-03-22",
+            "equity": 1089014.0888015456
+          },
+          {
+            "date": "2024-03-25",
+            "equity": 1094414.7690390428
+          },
+          {
+            "date": "2024-03-26",
+            "equity": 1096214.9957848752
+          },
+          {
+            "date": "2024-03-27",
+            "equity": 1098015.2225307077
+          },
+          {
+            "date": "2024-03-28",
+            "equity": 1099815.4492765402
+          },
+          {
+            "date": "2024-03-29",
+            "equity": 1101615.6760223727
+          },
+          {
+            "date": "2024-04-01",
+            "equity": 1107013.9713440954
+          },
+          {
+            "date": "2024-04-02",
+            "equity": 1108814.0368253996
+          },
+          {
+            "date": "2024-04-03",
+            "equity": 1110614.102306704
+          },
+          {
+            "date": "2024-04-04",
+            "equity": 1112414.1677880082
+          },
+          {
+            "date": "2024-04-05",
+            "equity": 1114214.2332693124
+          },
+          {
+            "date": "2024-04-08",
+            "equity": 1119614.429713225
+          },
+          {
+            "date": "2024-04-09",
+            "equity": 1121414.4951945292
+          },
+          {
+            "date": "2024-04-10",
+            "equity": 1123214.5606758334
+          },
+          {
+            "date": "2024-04-11",
+            "equity": 1125014.6261571376
+          },
+          {
+            "date": "2024-04-12",
+            "equity": 1126814.6916384418
+          },
+          {
+            "date": "2024-04-15",
+            "equity": 1132214.8880823546
+          },
+          {
+            "date": "2024-04-16",
+            "equity": 1134014.953563659
+          },
+          {
+            "date": "2024-04-17",
+            "equity": 1135815.0190449632
+          },
+          {
+            "date": "2024-04-18",
+            "equity": 1137615.0845262674
+          },
+          {
+            "date": "2024-04-19",
+            "equity": 1139415.1500075716
+          },
+          {
+            "date": "2024-04-22",
+            "equity": 1144815.3464514841
+          },
+          {
+            "date": "2024-04-23",
+            "equity": 1146615.4119327883
+          },
+          {
+            "date": "2024-04-24",
+            "equity": 1148415.4774140925
+          },
+          {
+            "date": "2024-04-25",
+            "equity": 1150215.5428953972
+          },
+          {
+            "date": "2024-04-26",
+            "equity": 1152015.6083767014
+          },
+          {
+            "date": "2024-04-29",
+            "equity": 1157415.804820614
+          },
+          {
+            "date": "2024-04-30",
+            "equity": 1159215.8703019181
+          },
+          {
+            "date": "2024-05-01",
+            "equity": 1161013.744145055
+          },
+          {
+            "date": "2024-05-02",
+            "equity": 1162813.6747380309
+          },
+          {
+            "date": "2024-05-03",
+            "equity": 1164613.605331007
+          },
+          {
+            "date": "2024-05-06",
+            "equity": 1170013.3971099346
+          },
+          {
+            "date": "2024-05-07",
+            "equity": 1171813.3277029102
+          },
+          {
+            "date": "2024-05-08",
+            "equity": 1173613.2582958862
+          },
+          {
+            "date": "2024-05-09",
+            "equity": 1175413.188888862
+          },
+          {
+            "date": "2024-05-10",
+            "equity": 1177213.1194818378
+          }
+        ],
+        "metrics": {
+          "annualized_return": 0.8248762765824855,
+          "benchmark_annualized_return": 0.8317735240816166,
+          "benchmark_max_drawdown": 0.0,
+          "benchmark_total_return": 0.17841827357857576,
+          "evaluated_selection_count": 0,
+          "excess_return": -0.001205154096737937,
+          "max_drawdown": 0.0,
+          "num_stocks": 2,
+          "oos_fold_count": 0,
+          "precision_at_n": null,
+          "rebalance_count": 4,
+          "selection_hit_count": 0,
+          "strategy_mode": "candidate_snapshot",
+          "total_return": 0.17721311948183782,
+          "total_transaction_cost": 1006.9242011891517,
+          "total_turnover": 1.00627533099783
+        },
+        "notes": [
+          "回测采用月度调仓等权组合，交易成本为10.0bps。",
+          "策略模式：candidate_snapshot，展示当前候选池的历史组合表现，不等同于严格可交易的逐日选股策略。",
+          "基准为候选池买入持有等权曲线，用于衡量调仓与成本后的超额收益。",
+          "波动率快照按区间末可见日线计算：ATR14、布林20/2、唐奇安20、凯尔特纳EMA20+2×ATR10、Chaikin 10/10、RVI14；历史不足的指标保持缺失。"
+        ],
+        "rebalance_dates": [
+          "2024-02-01",
+          "2024-03-01",
+          "2024-04-01",
+          "2024-05-01"
+        ],
+        "strategy_mode": "candidate_snapshot",
+        "symbols": [
+          "000001.SZ",
+          "000002.SZ"
+        ],
+        "volatility_snapshots": [
+          {
+            "atr": {
+              "percent_of_close": 4.7619,
+              "period": 14,
+              "value": 0.6
+            },
+            "bollinger_bands": {
+              "bandwidth_percent": 5.1517,
+              "lower": 12.0319,
+              "middle": 12.35,
+              "multiplier": 2.0,
+              "percent_b": 89.2934,
+              "period": 20,
+              "upper": 12.6681
+            },
+            "chaikin_volatility": {
+              "ema_period": 10,
+              "roc_period": 10,
+              "value": 0.0
+            },
+            "close": 12.6,
+            "date": "2024-05-10",
+            "donchian_channel": {
+              "lower": 11.8,
+              "middle": 12.35,
+              "period": 20,
+              "position_percent": 72.7273,
+              "upper": 12.9,
+              "width_percent": 8.9069
+            },
+            "keltner_channel": {
+              "atr_period": 10,
+              "ema_period": 20,
+              "lower": 11.1484,
+              "middle": 12.3484,
+              "multiplier": 2.0,
+              "position_percent": 60.4833,
+              "upper": 13.5484,
+              "width_percent": 19.4357
+            },
+            "name": "Synthetic bank 0",
+            "rvi": {
+              "period": 14,
+              "value": 100.0
+            },
+            "symbol": "000001.SZ"
+          },
+          {
+            "atr": {
+              "percent_of_close": 4.4118,
+              "period": 14,
+              "value": 0.6
+            },
+            "bollinger_bands": {
+              "bandwidth_percent": 4.7658,
+              "lower": 13.0319,
+              "middle": 13.35,
+              "multiplier": 2.0,
+              "percent_b": 89.2934,
+              "period": 20,
+              "upper": 13.6681
+            },
+            "chaikin_volatility": {
+              "ema_period": 10,
+              "roc_period": 10,
+              "value": 0.0
+            },
+            "close": 13.6,
+            "date": "2024-05-10",
+            "donchian_channel": {
+              "lower": 12.8,
+              "middle": 13.35,
+              "period": 20,
+              "position_percent": 72.7273,
+              "upper": 13.9,
+              "width_percent": 8.2397
+            },
+            "keltner_channel": {
+              "atr_period": 10,
+              "ema_period": 20,
+              "lower": 12.1484,
+              "middle": 13.3484,
+              "multiplier": 2.0,
+              "position_percent": 60.4833,
+              "upper": 14.5484,
+              "width_percent": 17.9797
+            },
+            "name": "Synthetic bank 1",
+            "rvi": {
+              "period": 14,
+              "value": 100.0
+            },
+            "symbol": "000002.SZ"
+          }
+        ],
+        "walk_forward_folds": []
+      },
+      "ok": true
+    }
+  }
+}

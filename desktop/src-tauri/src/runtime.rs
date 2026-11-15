@@ -45,15 +45,15 @@ const IO_BOUND_PERMITS: usize = if cfg!(target_os = "android") { 1 } else { 2 };
 const HEAVY_NETWORK_PERMITS: usize = if cfg!(target_os = "android") { 2 } else { 8 };
 const MARKET_REFRESH_PERMITS: usize = 1;
 
-static CPU_BOUND_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+static CPU_BOUND_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
 static IO_BOUND_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
 static HEAVY_NETWORK_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
 static MARKET_REFRESH_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
 static TRANSPORT_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
 static USER_STATE_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
 
-fn cpu_bound_semaphore() -> &'static Semaphore {
-    CPU_BOUND_SEMAPHORE.get_or_init(|| Semaphore::new(CPU_BOUND_PERMITS))
+fn cpu_bound_semaphore() -> &'static Arc<Semaphore> {
+    CPU_BOUND_SEMAPHORE.get_or_init(|| Arc::new(Semaphore::new(CPU_BOUND_PERMITS)))
 }
 
 fn io_bound_semaphore() -> &'static Semaphore {
@@ -82,7 +82,22 @@ where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
-    let permit = acquire_permit(cpu_bound_semaphore(), label).await?;
+    run_cpu_bound_on(Arc::clone(cpu_bound_semaphore()), label, task).await
+}
+
+async fn run_cpu_bound_on<F, R>(
+    lane: Arc<Semaphore>,
+    label: &'static str,
+    task: F,
+) -> Result<R, String>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    let permit = lane
+        .acquire_owned()
+        .await
+        .map_err(|_| format!("{label} concurrency limiter is closed"))?;
     let work = BLOCKING_WORK.try_with(|work| work.begin()).ok();
     tauri::async_runtime::spawn_blocking(move || {
         let _work = work;
@@ -187,6 +202,14 @@ mod tests {
         time::Duration,
     };
 
+    fn run_cpu_test(scenario: impl Future<Output = ()>) {
+        tauri::async_runtime::block_on(async {
+            tokio::time::timeout(Duration::from_secs(10), scenario)
+                .await
+                .expect("CPU test scenario exceeded 10 seconds");
+        });
+    }
+
     #[test]
     fn market_refresh_permit_serializes_work() {
         tauri::async_runtime::block_on(async {
@@ -218,27 +241,119 @@ mod tests {
     }
     #[test]
     fn aborting_waiter_does_not_release_running_worker_permit() {
-        tauri::async_runtime::block_on(async {
-            let initial = cpu_bound_semaphore().available_permits();
+        run_cpu_test(async {
+            let lane = Arc::new(Semaphore::new(1));
+            let work = Arc::new(BlockingWork::default());
+            let worker_lane = Arc::clone(&lane);
+            let worker_work = Arc::clone(&work);
             let (started_tx, started_rx) = tokio::sync::oneshot::channel();
             let (finish_tx, finish_rx) = std::sync::mpsc::channel();
             let task = tauri::async_runtime::spawn(async move {
-                run_cpu_bound("permit cancellation", move || {
-                    let _ = started_tx.send(());
-                    let _ = finish_rx.recv();
-                })
+                with_blocking_work(
+                    worker_work,
+                    run_cpu_bound_on(worker_lane, "permit cancellation", move || {
+                        started_tx.send(()).unwrap();
+                        finish_rx.recv().unwrap();
+                    }),
+                )
                 .await
             });
             started_rx.await.unwrap();
             task.abort();
-            tokio::time::sleep(Duration::from_millis(20)).await;
-            let available = cpu_bound_semaphore().available_permits();
-            finish_tx.send(()).unwrap();
+            assert!(task.await.is_err(), "waiter should be cancelled");
             assert_eq!(
-                available,
-                initial - 1,
+                lane.available_permits(),
+                0,
                 "blocking worker must own its permit until it actually exits"
             );
+            assert!(work.is_active(), "running worker must stay tracked");
+
+            finish_tx.send(()).unwrap();
+            work.wait_idle().await;
+            assert_eq!(lane.available_permits(), 1);
+            assert_eq!(
+                run_cpu_bound_on(Arc::clone(&lane), "subsequent worker", || 7).await,
+                Ok(7)
+            );
+            assert_eq!(lane.available_permits(), 1);
+        });
+    }
+
+    #[test]
+    fn cancelling_pending_cpu_acquire_does_not_start_worker_or_hold_permit() {
+        run_cpu_test(async {
+            let lane = Arc::new(Semaphore::new(1));
+            let held_permit = Arc::clone(&lane).acquire_owned().await.unwrap();
+            let work = Arc::new(BlockingWork::default());
+            let executions = Arc::new(AtomicUsize::new(0));
+            let worker_executions = Arc::clone(&executions);
+            let mut pending = Box::pin(with_blocking_work(
+                Arc::clone(&work),
+                run_cpu_bound_on(Arc::clone(&lane), "pending cancellation", move || {
+                    worker_executions.fetch_add(1, Ordering::SeqCst);
+                }),
+            ));
+
+            assert!(futures::poll!(pending.as_mut()).is_pending());
+            assert!(!work.is_active(), "queued work must not be marked running");
+            assert_eq!(executions.load(Ordering::SeqCst), 0);
+            drop(pending);
+            drop(held_permit);
+
+            assert_eq!(lane.available_permits(), 1);
+            assert_eq!(
+                run_cpu_bound_on(Arc::clone(&lane), "after pending cancellation", || 11).await,
+                Ok(11)
+            );
+            assert_eq!(executions.load(Ordering::SeqCst), 0);
+            assert!(!work.is_active());
+            assert_eq!(lane.available_permits(), 1);
+        });
+    }
+
+    #[test]
+    fn closed_cpu_lane_does_not_start_worker() {
+        run_cpu_test(async {
+            let lane = Arc::new(Semaphore::new(1));
+            lane.close();
+            let work = Arc::new(BlockingWork::default());
+            let result = with_blocking_work(
+                Arc::clone(&work),
+                run_cpu_bound_on(lane, "closed CPU", || panic!("worker must not start")),
+            )
+            .await;
+
+            assert_eq!(
+                result,
+                Err("closed CPU concurrency limiter is closed".into())
+            );
+            assert!(!work.is_active());
+        });
+    }
+
+    #[test]
+    fn panicking_cpu_worker_releases_permit_and_tracking() {
+        run_cpu_test(async {
+            let lane = Arc::new(Semaphore::new(1));
+            let work = Arc::new(BlockingWork::default());
+            let result = with_blocking_work(
+                Arc::clone(&work),
+                run_cpu_bound_on(Arc::clone(&lane), "panicking CPU", || {
+                    panic!("test worker panic")
+                }),
+            )
+            .await;
+
+            assert!(result
+                .unwrap_err()
+                .starts_with("panicking CPU worker panicked or was cancelled: "));
+            assert!(!work.is_active());
+            assert_eq!(lane.available_permits(), 1);
+            assert_eq!(
+                run_cpu_bound_on(Arc::clone(&lane), "after panic", || 13).await,
+                Ok(13)
+            );
+            assert_eq!(lane.available_permits(), 1);
         });
     }
 }

@@ -31,7 +31,9 @@ mod llm;
 mod market;
 mod market_capabilities;
 mod market_domain;
+mod market_events;
 mod metric_units;
+mod network;
 mod news_rag;
 mod observe;
 mod prompt_upgrade;
@@ -48,6 +50,7 @@ mod sentiment_agent;
 mod sentiment_data;
 mod stock_research_runtime;
 mod watchlist;
+mod wire_values;
 #[tauri::command]
 fn api_app_close_handler_ready(ready: bool) {
     CLOSE_HANDLER_READY.store(ready, std::sync::atomic::Ordering::SeqCst);

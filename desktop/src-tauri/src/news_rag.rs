@@ -1,7 +1,9 @@
-use crate::market::{
-    build_http_client_with_proxy, cached_market_data, epoch_millis, normalize_stock_code,
-    powershell_http_get_bytes_with_headers, read_json_file,
-};
+use crate::market::cache::records::cached_market_data;
+use crate::market::store::files::read_json_file;
+use crate::market_domain::codes::normalize_stock_code;
+use crate::market_domain::dates::epoch_millis;
+use crate::network::http::build_http_client_with_proxy;
+use crate::network::powershell::powershell_http_get_bytes_with_headers;
 use futures::StreamExt;
 use scraper::{ElementRef, Html, Selector};
 use serde::Serialize;

@@ -1,5 +1,62 @@
 use super::*;
-use super::{hk_market::*, llm::*, market::*, observe::*, research::*, screening::*};
+use super::{hk_market::*, llm::*, observe::*, research::*, screening::*};
+use crate::market::cache::cached_mobile_market_data_entry;
+use crate::market::cache::forget_mobile_market_data_cache;
+use crate::market::cache::records::market_cache_record;
+use crate::market::cache::remember_mobile_market_data_cache;
+use crate::market::providers::eastmoney::eastmoney_metric_period;
+use crate::market::providers::eastmoney::eastmoney_result_rows;
+use crate::market::providers::eastmoney::fetch_eastmoney_public_json_with_direct_retry;
+use crate::market::providers::eastmoney::normalize_eastmoney_public_json;
+use crate::market::providers::eps::parse_sina_quarterly_eps_html;
+use crate::market::providers::eps::parse_ths_quarterly_eps_json;
+use crate::market::providers::history::choose_longer_history;
+use crate::market::providers::history::fetch_observe_daily_history;
+use crate::market::providers::tencent::candidate_batch_window;
+use crate::market::providers::tencent::parse_tencent_quotes;
+use crate::market::providers::tencent::TENCENT_BATCH_SIZE;
+use crate::market::refresh::market_refresh_history_codes;
+use crate::market::store::files::market_data_patch_codes;
+use crate::market::store::files::retry_with_attempts;
+use crate::market::store::files::MOBILE_MARKET_DATA_FILE;
+use crate::market::store::projection::external_market_domains;
+use crate::market::store::projection::project_market_store;
+use crate::market::store::projection::project_market_store_with_legacy;
+use crate::market::store::projection::store_market_dataset;
+use crate::market_domain::codes::adaptive_benchmark_codes;
+use crate::market_domain::codes::append_tencent_candidate_codes;
+use crate::market_domain::codes::build_candidate_codes;
+use crate::market_domain::codes::normalize_stock_code;
+use crate::market_domain::codes::tencent_symbol;
+use crate::market_domain::datasets::append_all_preserved_seed_stocks;
+use crate::market_domain::datasets::append_preserved_seed_stocks;
+use crate::market_domain::datasets::apply_market_data_patch;
+use crate::market_domain::datasets::filter_seed_histories;
+use crate::market_domain::datasets::market_data_patch_for_codes;
+use crate::market_domain::datasets::market_data_payload_present;
+use crate::market_domain::datasets::parse_mobile_market_data_snapshot;
+use crate::market_domain::datasets::seed_stock_maps;
+use crate::market_domain::datasets::strip_core_side_payload_fields;
+use crate::market_domain::dates::cache_epoch_ms;
+use crate::market_domain::dates::epoch_millis;
+use crate::market_domain::dates::expected_market_quote_date_from_epoch_ms;
+use crate::market_domain::dates::expected_market_quote_date_with_calendar;
+use crate::market_domain::dates::local_yyyymmdd_from_epoch_ms;
+use crate::market_domain::dates::market_quote_cache_stale;
+use crate::market_domain::dates::parse_cache_datetime_epoch_ms;
+use crate::market_domain::financial::enriched_stock_maps;
+use crate::market_domain::financial::filtered_financial_snapshot_map;
+use crate::market_domain::financial::financial_quarterly_eps_count;
+use crate::market_domain::financial::finite_object_number;
+use crate::market_domain::financial::main_fund_involvement;
+use crate::market_domain::financial::merge_basic_financial_from_stock;
+use crate::market_domain::history::filter_daily_history_rows_by_date;
+use crate::market_domain::history::history_cache_has_bars;
+use crate::market_domain::history::tencent_daily_history_param;
+use crate::market_domain::history::OBSERVE_DAILY_HISTORY_LIMIT;
+use crate::wire_values::institution_buy_sell_ratio;
+use crate::wire_values::object_f64;
+use crate::wire_values::payload_usize_field;
 use rusqlite::{params, Connection};
 use std::{
     collections::{HashMap, HashSet},
@@ -3778,7 +3835,7 @@ fn a_share_legacy_market_cache_promotes_to_external_store_with_factor_snapshot_p
     let mut store =
         crate::external_data::DataStore::open(crate::external_data::store_path(&root)).unwrap();
     assert_eq!(
-        crate::market::import_legacy_market_domains(&mut store, &legacy_path)
+        crate::market::store::legacy::import_legacy_market_domains(&mut store, &legacy_path)
             .unwrap()
             .len(),
         7
@@ -3809,14 +3866,19 @@ fn a_share_legacy_market_cache_promotes_to_external_store_with_factor_snapshot_p
         1
     );
 
-    for (domain, market) in crate::market::external_market_domains() {
+    for (domain, market) in crate::market::store::projection::external_market_domains() {
         store.clear_domain(domain, market).unwrap();
     }
-    let promoted = crate::market::import_legacy_market_domains(&mut store, &legacy_path).unwrap();
-    let cleared_projection =
-        crate::market::project_market_store_with_legacy(&store, Some(&fixture), &promoted)
-            .unwrap()
+    let promoted =
+        crate::market::store::legacy::import_legacy_market_domains(&mut store, &legacy_path)
             .unwrap();
+    let cleared_projection = crate::market::store::projection::project_market_store_with_legacy(
+        &store,
+        Some(&fixture),
+        &promoted,
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(cleared_projection["stocks"], json!([]));
     assert_eq!(cleared_projection["histories"], json!({}));
     assert_eq!(std::fs::read(&legacy_path).unwrap(), legacy_bytes);
@@ -3865,7 +3927,7 @@ fn a_share_legacy_market_cache_promotes_to_external_store_with_empty_factor_proj
     let mut store =
         crate::external_data::DataStore::open(crate::external_data::store_path(&root)).unwrap();
     assert_eq!(
-        crate::market::import_legacy_market_domains(&mut store, &legacy_path)
+        crate::market::store::legacy::import_legacy_market_domains(&mut store, &legacy_path)
             .unwrap()
             .len(),
         7
@@ -3933,7 +3995,9 @@ fn a_share_domain_migration_failure_keeps_legacy_projection_for_only_that_domain
         )
         .unwrap();
 
-    let promoted = crate::market::import_legacy_market_domains(&mut store, &legacy_path).unwrap();
+    let promoted =
+        crate::market::store::legacy::import_legacy_market_domains(&mut store, &legacy_path)
+            .unwrap();
     assert!(promoted.contains(&(
         crate::external_data::DataDomain::DailyHistory,
         crate::external_data::Market::China
@@ -3942,10 +4006,13 @@ fn a_share_domain_migration_failure_keeps_legacy_projection_for_only_that_domain
         crate::external_data::DataDomain::Quote,
         crate::external_data::Market::China
     )));
-    let projection =
-        crate::market::project_market_store_with_legacy(&store, Some(&fixture), &promoted)
-            .unwrap()
-            .unwrap();
+    let projection = crate::market::store::projection::project_market_store_with_legacy(
+        &store,
+        Some(&fixture),
+        &promoted,
+    )
+    .unwrap()
+    .unwrap();
     let legacy_core = parse_mobile_market_data_snapshot(&fixture, "legacy")
         .unwrap()
         .0;
@@ -4602,7 +4669,7 @@ fn fundamental_snapshot_period_staleness_tracks_report_publication_cutoffs() {
     assert!(!financial_report_period_is_stale("2026中报", "2026-10-12"));
     assert!(!financial_report_period_is_stale("2026Q1", "2026-07-15"));
 
-    let fresh = crate::market::epoch_millis().to_string();
+    let fresh = crate::market_domain::dates::epoch_millis().to_string();
     let cached = json!({
         "financials": { "688372.SH": {
             "period": "2026Q1", "goodwill_to_net_assets": 0.0,

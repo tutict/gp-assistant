@@ -464,7 +464,9 @@ pub(crate) fn merge_hk_history_record(
     let incoming_rows = incoming
         .bars
         .iter()
-        .filter_map(|bar| crate::market::compact_date_key(&bar.date).map(|key| (key, bar.clone())))
+        .filter_map(|bar| {
+            crate::market_domain::dates::compact_date_key(&bar.date).map(|key| (key, bar.clone()))
+        })
         .collect::<std::collections::BTreeMap<_, _>>();
     let mut bars = std::collections::BTreeMap::new();
     let mut bar_fetched_at = HashMap::new();
@@ -482,7 +484,7 @@ pub(crate) fn merge_hk_history_record(
             };
         }
         for bar in &previous.bars {
-            if let Some(key) = crate::market::compact_date_key(&bar.date) {
+            if let Some(key) = crate::market_domain::dates::compact_date_key(&bar.date) {
                 bar_fetched_at.insert(
                     key.clone(),
                     previous
@@ -603,7 +605,7 @@ pub(crate) fn hk_history_bar_is_prepared(history: &HkHistoryRecord, bar: &HkDail
     if history.request_ranges.is_empty() && history.request_range.is_none() {
         return true;
     }
-    let Some(date) = crate::market::compact_date_key(&bar.date) else {
+    let Some(date) = crate::market_domain::dates::compact_date_key(&bar.date) else {
         return false;
     };
     history
@@ -630,8 +632,9 @@ pub(crate) fn hk_history_bars_for_quote(
     let Some(quote) = quote.filter(|quote| {
         quote.price.is_finite()
             && quote.price > 0.0
-            && (crate::market::compact_date_key(quote.quote_time.as_deref().unwrap_or_default())
-                == crate::market::compact_date_key(&last.date)
+            && (crate::market_domain::dates::compact_date_key(
+                quote.quote_time.as_deref().unwrap_or_default(),
+            ) == crate::market_domain::dates::compact_date_key(&last.date)
                 || hk_history_suspension_matches_quote(history, quote))
     }) else {
         return bars;
@@ -655,8 +658,10 @@ pub(crate) fn hk_history_suspension_matches_quote(
 ) -> bool {
     quote.volume_shares == Some(0)
         && history.suspended_as_of.as_ref().is_some_and(|date| {
-            crate::market::compact_date_key(quote.quote_time.as_deref().unwrap_or_default())
-                .as_ref()
+            crate::market_domain::dates::compact_date_key(
+                quote.quote_time.as_deref().unwrap_or_default(),
+            )
+            .as_ref()
                 == Some(date)
                 && history
                     .request_ranges
@@ -3521,7 +3526,7 @@ fn parse_tencent_hk_price_page(
         .filter(|fields| fields.get(40).and_then(serde_json::Value::as_str) == Some("S"))
         .and_then(|fields| fields.get(30))
         .and_then(serde_json::Value::as_str)
-        .and_then(crate::market::compact_date_key);
+        .and_then(crate::market_domain::dates::compact_date_key);
     let requested_key = format!("{}day", adjustment.query_value());
     // Tencent uses `day` when the requested adjustment has no corporate actions to apply.
     let Some(rows) = stock
@@ -3702,8 +3707,8 @@ pub(crate) async fn fetch_tencent_hk_history_range(
 ) -> Result<HkFetchedHistory, String> {
     let canonical = canonical_hk_code(code).ok_or_else(|| "无效港股代码".to_owned())?;
     let parse_date = |raw: &str| {
-        let compact =
-            crate::market::compact_date_key(raw).ok_or_else(|| format!("无效日线日期：{raw}"))?;
+        let compact = crate::market_domain::dates::compact_date_key(raw)
+            .ok_or_else(|| format!("无效日线日期：{raw}"))?;
         chrono::NaiveDate::parse_from_str(&compact, "%Y%m%d").map_err(|error| error.to_string())
     };
     let start = parse_date(start)?;
@@ -4448,9 +4453,13 @@ impl crate::external_data::provider::DataProvider for TencentHkMarketProvider {
                         let request_range =
                             bars.first().zip(bars.last()).and_then(|(first, last)| {
                                 Some(HkHistoryRequestRange {
-                                    start_date: crate::market::compact_date_key(&first.date)?,
-                                    end_date: crate::market::compact_date_key(&last.date)?
-                                        .max(page.suspended_as_of.clone().unwrap_or_default()),
+                                    start_date: crate::market_domain::dates::compact_date_key(
+                                        &first.date,
+                                    )?,
+                                    end_date: crate::market_domain::dates::compact_date_key(
+                                        &last.date,
+                                    )?
+                                    .max(page.suspended_as_of.clone().unwrap_or_default()),
                                 })
                             });
                         let history = HkHistoryRecord {
@@ -4736,7 +4745,7 @@ pub(crate) async fn resume_explicit_hk_refreshes(app: AppHandle) -> Result<Value
             continue;
         }
         let timeout = std::time::Duration::from_secs(HK_REQUEST_TIMEOUT_SECS);
-        let client = match crate::market::build_tencent_http_client(
+        let client = match crate::network::http::build_tencent_http_client(
             "Mozilla/5.0 GuXuanYou HK recovery",
             timeout,
         ) {
@@ -4818,7 +4827,7 @@ pub(crate) async fn api_explicit_hk_refresh(
         request_id: Some(raw_request_id.clone()),
     };
     let timeout = std::time::Duration::from_secs(HK_REQUEST_TIMEOUT_SECS);
-    let client = crate::market::build_http_client_with_proxy(
+    let client = crate::network::http::build_http_client_with_proxy(
         "Mozilla/5.0 GuXuanYou HK explicit refresh",
         timeout,
         Some(&payload),
@@ -4829,8 +4838,8 @@ pub(crate) async fn api_explicit_hk_refresh(
     let mut context =
         crate::external_data::provider::ProviderContext::new(&raw_request_id, timeout);
     context.network_policy = crate::external_data::provider::ProviderNetworkPolicy {
-        proxy_mode: crate::market::proxy_mode_from_payload(Some(&payload)),
-        proxy_url: crate::market::proxy_from_payload(Some(&payload)),
+        proxy_mode: crate::network::proxy::proxy_mode_from_payload(Some(&payload)),
+        proxy_url: crate::network::proxy::proxy_from_payload(Some(&payload)),
         allow_direct_fallback: false,
     };
     let records =
@@ -5700,7 +5709,12 @@ pub(crate) fn api_hk_market_status(app: AppHandle) -> Result<serde_json::Value, 
     let path = hk_market_data_path(&app)?;
     let cache = read_hk_market_cache(&path)?;
     let external_data = crate::external_data::status_for_app(&app)?;
-    hk_market_status_value(&path, &cache, external_data, crate::market::epoch_millis())
+    hk_market_status_value(
+        &path,
+        &cache,
+        external_data,
+        crate::market_domain::dates::epoch_millis(),
+    )
 }
 
 fn hk_market_status_value(
@@ -5714,7 +5728,7 @@ fn hk_market_status_value(
         .stocks
         .iter()
         .filter_map(|stock| stock.quote_time.as_deref())
-        .filter_map(crate::market::compact_date_key)
+        .filter_map(crate::market_domain::dates::compact_date_key)
         .max();
     let quote_generated_at = data
         .stocks
@@ -5723,7 +5737,8 @@ fn hk_market_status_value(
         .filter_map(|code| cache.quotes.get(code))
         .filter_map(|quote| quote.fetched_at.as_deref())
         .max();
-    let current_trade_date = crate::market::expected_market_quote_date_from_epoch_ms(now);
+    let current_trade_date =
+        crate::market_domain::dates::expected_market_quote_date_from_epoch_ms(now);
     let cache_bytes = external_data
         .get("database_bytes")
         .and_then(serde_json::Value::as_u64);
@@ -5944,7 +5959,7 @@ pub(crate) async fn api_hk_network_probe(
         .and_then(|security| CurrencyCode::new(&security.currency).ok())
         .unwrap_or_else(|| CurrencyCode::new("HKD").expect("HKD is a valid currency code"));
     let timeout = std::time::Duration::from_secs(7);
-    let client = crate::market::build_http_client_with_proxy(
+    let client = crate::network::http::build_http_client_with_proxy(
         "Mozilla/5.0 GuXuanYou HK network probe",
         timeout,
         Some(&payload),
@@ -6023,8 +6038,8 @@ pub(crate) async fn api_hk_network_probe(
     Ok(serde_json::json!({
         "market": "hk",
         "code": code,
-        "proxy_mode": crate::market::proxy_mode_from_payload(Some(&payload)),
-        "proxy_configured": crate::market::proxy_from_payload(Some(&payload)).is_some(),
+        "proxy_mode": crate::network::proxy::proxy_mode_from_payload(Some(&payload)),
+        "proxy_configured": crate::network::proxy::proxy_from_payload(Some(&payload)).is_some(),
         "sources": [checks.0, checks.1, checks.2, checks.3],
     }))
 }
@@ -6067,7 +6082,7 @@ pub(crate) async fn api_hk_market_refresh(
         scope: crate::external_data::RefreshScope::MarketWide,
         request_id: Some(request_id.clone()),
     };
-    let client = crate::market::build_http_client_with_proxy(
+    let client = crate::network::http::build_http_client_with_proxy(
         "Mozilla/5.0 GuXuanYou HK market",
         timeout,
         Some(&payload),
@@ -6238,7 +6253,7 @@ pub(crate) async fn api_hk_observe(
         }
         let timeout = std::time::Duration::from_secs(HK_REQUEST_TIMEOUT_SECS);
         let fetched_at = current_epoch_millis();
-        let client = crate::market::build_http_client_with_proxy(
+        let client = crate::network::http::build_http_client_with_proxy(
             "Mozilla/5.0 GuXuanYou HK observe",
             timeout,
             Some(&payload),
@@ -6274,8 +6289,8 @@ pub(crate) async fn api_hk_observe(
             format!("{request_id}-history"),
             timeout,
         );
-        let proxy_mode = crate::market::proxy_mode_from_payload(Some(&payload));
-        let proxy_url = crate::market::proxy_from_payload(Some(&payload));
+        let proxy_mode = crate::network::proxy::proxy_mode_from_payload(Some(&payload));
+        let proxy_url = crate::network::proxy::proxy_from_payload(Some(&payload));
         let network_policy = crate::external_data::provider::ProviderNetworkPolicy {
             proxy_mode,
             proxy_url,
@@ -6504,7 +6519,7 @@ pub(crate) async fn api_hk_financial_refresh(
             &fetched_at,
         )?;
     }
-    let request_client = crate::market::build_http_client_with_proxy(
+    let request_client = crate::network::http::build_http_client_with_proxy(
         "Mozilla/5.0 GuXuanYou HK financial",
         timeout,
         Some(&payload),
@@ -7652,7 +7667,7 @@ mod currency_contract_tests {
     async fn live_hk_screen_data_probe() {
         let output = std::env::var("GP_HK_SCREEN_OUTPUT")
             .expect("set GP_HK_SCREEN_OUTPUT to a writable diagnostic output path");
-        let client = crate::market::build_http_client_with_proxy(
+        let client = crate::network::http::build_http_client_with_proxy(
             "Mozilla/5.0 GuXuanYou HK screening probe",
             std::time::Duration::from_secs(8),
             None,

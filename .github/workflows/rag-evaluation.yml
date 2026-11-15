@@ -38,14 +38,50 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - name: Run development architecture and public contract guards
+        shell: pwsh
+        env:
+          GP_ARCH_FIXTURES: ${{ github.workspace }}/artifacts/rust-governance/fixtures
+        run: |
+          $taskRepoRoot = (Get-Location).Path
+          cargo test --locked --manifest-path scripts/rust-architecture/Cargo.toml --test architecture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --manifest-path scripts/rust-architecture/Cargo.toml --test architecture -- compare $taskRepoRoot (Join-Path $taskRepoRoot 'scripts/rust-architecture/public-contracts.json')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --manifest-path scripts/rust-architecture/Cargo.toml --test architecture -- check $taskRepoRoot all
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s scripts/rust-architecture -p 'test_*.py' -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build frontend bundle required by Rust tests
         run: npm ci --prefix desktop/frontend; npm --prefix desktop/frontend run build:app
+      - name: Preserve frozen full Rust test identities and ignores
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts/rust-governance | Out-Null
+          cargo test --locked --manifest-path native/gp-core/Cargo.toml > artifacts/rust-governance/core.log 2>&1
+          $taskCargoExit = $LASTEXITCODE
+          Get-Content -LiteralPath artifacts/rust-governance/core.log
+          if ($taskCargoExit -ne 0) { exit $taskCargoExit }
+          python scripts/rust-architecture/verify_tests.py --suite core --log artifacts/rust-governance/core.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --manifest-path native/gp-research/Cargo.toml --all-features > artifacts/rust-governance/research.log 2>&1
+          $taskCargoExit = $LASTEXITCODE
+          Get-Content -LiteralPath artifacts/rust-governance/research.log
+          if ($taskCargoExit -ne 0) { exit $taskCargoExit }
+          python scripts/rust-architecture/verify_tests.py --suite research --log artifacts/rust-governance/research.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml > artifacts/rust-governance/native.log 2>&1
+          $taskCargoExit = $LASTEXITCODE
+          Get-Content -LiteralPath artifacts/rust-governance/native.log
+          if ($taskCargoExit -ne 0) { exit $taskCargoExit }
+          python scripts/rust-architecture/verify_tests.py --suite native --log artifacts/rust-governance/native.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run fixed Rust retrieval and privacy gates
-        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib research::tests::fixed_retrieval_eval_suite_enforces_governance_invariants -- --exact
+        run: python scripts/rust-architecture/run_exact.py --manifest desktop/src-tauri/Cargo.toml --expected research::tests::fixed_retrieval_eval_suite_enforces_governance_invariants --output-dir artifacts/rust-governance/exact-1
       - name: Run Rust privacy and Agent trace gates
         shell: pwsh
         run: |
-          cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib research::tests::schema_v2_migration_keeps_user_imports_private_and_public_docs_exportable -- --exact
+          python scripts/rust-architecture/run_exact.py --manifest desktop/src-tauri/Cargo.toml --expected research::tests::schema_v2_migration_keeps_user_imports_private_and_public_docs_exportable --output-dir artifacts/rust-governance/exact-2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib rig_runtime::tests::remote_agent_evidence_fallback_drops_unapproved_document_text -- --exact
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
