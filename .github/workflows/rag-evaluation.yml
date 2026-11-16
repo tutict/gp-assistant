@@ -58,21 +58,22 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifacts/rust-governance | Out-Null
-          cargo test --locked --manifest-path native/gp-core/Cargo.toml > artifacts/rust-governance/core.log 2>&1
+          cargo test --locked --manifest-path native/gp-core/Cargo.toml 2>&1 | Tee-Object -FilePath artifacts/rust-governance/core.log
           $taskCargoExit = $LASTEXITCODE
-          Get-Content -LiteralPath artifacts/rust-governance/core.log
           if ($taskCargoExit -ne 0) { exit $taskCargoExit }
           python scripts/rust-architecture/verify_tests.py --suite core --log artifacts/rust-governance/core.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --locked --manifest-path native/gp-research/Cargo.toml --all-features > artifacts/rust-governance/research.log 2>&1
+          cargo test --locked --manifest-path native/gp-research/Cargo.toml --all-features 2>&1 | Tee-Object -FilePath artifacts/rust-governance/research.log
           $taskCargoExit = $LASTEXITCODE
-          Get-Content -LiteralPath artifacts/rust-governance/research.log
           if ($taskCargoExit -ne 0) { exit $taskCargoExit }
           python scripts/rust-architecture/verify_tests.py --suite research --log artifacts/rust-governance/research.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml > artifacts/rust-governance/native.log 2>&1
+      - name: Preserve frozen native Rust test identities and ignores
+        timeout-minutes: 120
+        shell: pwsh
+        run: |
+          cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml 2>&1 | Tee-Object -FilePath artifacts/rust-governance/native.log
           $taskCargoExit = $LASTEXITCODE
-          Get-Content -LiteralPath artifacts/rust-governance/native.log
           if ($taskCargoExit -ne 0) { exit $taskCargoExit }
           python scripts/rust-architecture/verify_tests.py --suite native --log artifacts/rust-governance/native.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -119,6 +120,15 @@ jobs:
         run: python -m unittest discover -s evals/deepeval -p test_golden_fixture.py -v
       - name: Run frozen evaluation preflight
         run: python evals/deepeval/runner.py --mode deterministic --track deterministic --output evals/deepeval/deterministic-report.json
+      - name: Preserve Rust governance evidence
+        if: always()
+        timeout-minutes: 10
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-governance-${{ github.run_id }}
+          path: artifacts/rust-governance/
+          retention-days: 7
+          if-no-files-found: warn
 
   judge:
     name: Fixed DeepEval judge (trusted only)
