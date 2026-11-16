@@ -1229,7 +1229,7 @@ async fn dispatch_tool(
         arguments["code"] = json!(code);
         if market == "hk" {
             if let Some(app) = research_app.as_ref() {
-                let result = crate::hk_market::api_hk_observe(
+                let result = crate::hk_market::api::api_hk_observe(
                     app.clone(),
                     json!({"code":code,"data_policy":"cache_only"}),
                 )

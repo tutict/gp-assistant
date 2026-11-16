@@ -2185,6 +2185,28 @@ pub(crate) fn adaptive_release_implementation_fingerprint() -> &'static str {
                         include_bytes!("../../../native/gp-core/src/lib.rs").as_slice(),
                     ),
                     ("lib.rs", include_bytes!("lib.rs").as_slice()),
+                    ("app/mod.rs", include_bytes!("app/mod.rs").as_slice()),
+                    (
+                        "app/bootstrap.rs",
+                        include_bytes!("app/bootstrap.rs").as_slice(),
+                    ),
+                    (
+                        "app/command_registry.rs",
+                        include_bytes!("app/command_registry.rs").as_slice(),
+                    ),
+                    (
+                        "app/commands.rs",
+                        include_bytes!("app/commands.rs").as_slice(),
+                    ),
+                    (
+                        "app/desktop_window.rs",
+                        include_bytes!("app/desktop_window.rs").as_slice(),
+                    ),
+                    (
+                        "app/lifecycle.rs",
+                        include_bytes!("app/lifecycle.rs").as_slice(),
+                    ),
+                    ("app/state.rs", include_bytes!("app/state.rs").as_slice()),
                     ("screening.rs", include_bytes!("screening.rs").as_slice()),
                     (
                         "screening_financial_overlay.rs",

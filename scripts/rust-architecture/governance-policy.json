@@ -455,6 +455,41 @@
           "derived": false
         },
         {
+          "label": "app/mod.rs",
+          "source": "desktop/src-tauri/src/app/mod.rs",
+          "derived": false
+        },
+        {
+          "label": "app/bootstrap.rs",
+          "source": "desktop/src-tauri/src/app/bootstrap.rs",
+          "derived": false
+        },
+        {
+          "label": "app/command_registry.rs",
+          "source": "desktop/src-tauri/src/app/command_registry.rs",
+          "derived": false
+        },
+        {
+          "label": "app/commands.rs",
+          "source": "desktop/src-tauri/src/app/commands.rs",
+          "derived": false
+        },
+        {
+          "label": "app/desktop_window.rs",
+          "source": "desktop/src-tauri/src/app/desktop_window.rs",
+          "derived": false
+        },
+        {
+          "label": "app/lifecycle.rs",
+          "source": "desktop/src-tauri/src/app/lifecycle.rs",
+          "derived": false
+        },
+        {
+          "label": "app/state.rs",
+          "source": "desktop/src-tauri/src/app/state.rs",
+          "derived": false
+        },
+        {
           "label": "screening.rs",
           "source": "desktop/src-tauri/src/screening.rs",
           "derived": false

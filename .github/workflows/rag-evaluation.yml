@@ -38,6 +38,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - name: Check Tauri composition-root architecture
+        run: node scripts/check-tauri-composition-root.test.mjs
       - name: Run development architecture and public contract guards
         shell: pwsh
         env:
